@@ -129,6 +129,9 @@ impl ResourceLoader for NetLoader {
             ResourceKind::Image => lp_net::Destination::Image,
         };
         let mut req = lp_net::Request::get(url, destination);
+        if let Some(page) = browser.page(request.page) {
+            req.defaults = page.request_defaults.clone();
+        }
         if request.kind == ResourceKind::ModuleScript {
             req.mode = lp_net::RequestMode::Cors;
         }
