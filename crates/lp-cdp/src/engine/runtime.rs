@@ -8,9 +8,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use super::remote::{self, Described};
-use super::EngineHost;
+use super::{EngineHost, Queued};
 use crate::msg::{self, CdpError, CdpResult};
-use crate::outbox::Outbox;
 use crate::runtime_protocol::{CallArgument, ExecutionContextId, HandleTable, RemoteObject};
 use crate::target::{PageCommand, PageKey};
 
@@ -50,7 +49,9 @@ pub(crate) const MAX_PENDING_REPLIES: usize = 10_000;
 /// table is held weakly so a closure kept alive by JavaScript cannot keep a
 /// detached session's handles.
 pub(crate) struct Reply {
-    out: Outbox,
+    /// Replies go through the engine notification queue, not straight to the
+    /// connection, so they stay behind events the evaluation produced.
+    collector: Rc<super::Collector>,
     pub(crate) session_id: String,
     id: u64,
     by_value: bool,
@@ -87,13 +88,13 @@ impl Reply {
 
     fn send(&self, result: &serde_json::Value) {
         if !self.done.replace(true) {
-            self.out.push(msg::result_frame(self.id, result, Some(&self.session_id)));
+            self.collector.push(Queued::Frame(msg::result_frame(self.id, result, Some(&self.session_id))));
         }
     }
 
     pub(crate) fn error(&self, error: &CdpError) {
         if !self.done.replace(true) {
-            self.out.push(msg::error_frame(Some(self.id), error, Some(&self.session_id)));
+            self.collector.push(Queued::Frame(msg::error_frame(Some(self.id), error, Some(&self.session_id))));
         }
     }
 
@@ -322,7 +323,7 @@ impl EngineHost {
     ) -> CdpResult<Reply> {
         let session = self.sessions.get(cmd.session_id).ok_or_else(|| CdpError::server("session is gone"))?;
         Ok(Reply {
-            out: self.out.clone(),
+            collector: self.collector.clone(),
             session_id: cmd.session_id.to_owned(),
             id: cmd.command.id,
             by_value,

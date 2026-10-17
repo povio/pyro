@@ -32,12 +32,27 @@ use crate::msg::{self, CdpError, CdpResult, Command, Empty};
 use crate::outbox::Outbox;
 use crate::runtime_protocol::{HandleBudget, HandleTable};
 use crate::target::{ContextKey, Host, PageCommand, PageKey, Sink};
+use crate::ws::OutFrame;
 
 /// Engine notifications waiting to be translated into CDP events.
 pub(crate) enum Queued {
     Page(PageId, PageEvent),
-    Console { realm: RealmId, level: ConsoleLevel, args: Vec<Persistent>, timestamp: f64 },
-    Exception { realm: RealmId, exception: JsException, timestamp: f64 },
+    /// A command reply produced while engine code ran (`Runtime.evaluate`,
+    /// `callFunctionOn`, awaited promises). Queued with the events so that
+    /// everything the evaluation caused (e.g. `Page.navigatedWithinDocument`
+    /// from `history.pushState`) reaches the client before its reply.
+    Frame(OutFrame),
+    Console {
+        realm: RealmId,
+        level: ConsoleLevel,
+        args: Vec<Persistent>,
+        timestamp: f64,
+    },
+    Exception {
+        realm: RealmId,
+        exception: JsException,
+        timestamp: f64,
+    },
 }
 
 /// Most engine notifications queued between flushes. A page producing more
@@ -284,6 +299,7 @@ impl EngineHost {
                         self.on_page_event(key, event);
                     }
                 }
+                Queued::Frame(frame) => self.out.push(frame),
                 Queued::Console { realm, level, args, timestamp } => self.on_console(realm, level, args, timestamp),
                 Queued::Exception { realm, exception, timestamp } => self.on_exception(realm, exception, timestamp),
             }

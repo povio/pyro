@@ -1313,3 +1313,105 @@ fn screen_orientation_override_is_independent_of_dimensions() {
     assert_eq!(cleared[4], "landscape-primary", "clear removes the override: {cleared}");
     assert_eq!(cleared[5], 0);
 }
+
+/// Index of the first message matching `pred`, for ordering assertions.
+fn position(messages: &[Value], what: &str, pred: impl Fn(&Value) -> bool) -> usize {
+    messages.iter().position(pred).unwrap_or_else(|| panic!("{what} missing in {messages:#?}"))
+}
+
+#[test]
+fn events_produced_by_an_evaluation_precede_its_reply() {
+    let mut h = Harness::new();
+    h.page("Runtime.enable", json!({}));
+    let session = h.session.clone();
+    // Synchronous evaluation.
+    let id = h.send(
+        Some(&session),
+        "Runtime.evaluate",
+        json!({"expression":"console.log('during'); 42","returnByValue":true}),
+    );
+    let messages = h.until_response(id);
+    let console = position(&messages, "consoleAPICalled", |m| m["method"] == "Runtime.consoleAPICalled");
+    let reply = position(&messages, "reply", |m| m["id"] == id);
+    assert!(console < reply, "console event must precede the evaluate reply: {messages:#?}");
+    assert_eq!(messages[reply]["result"]["result"]["value"], 42);
+    // Awaited evaluation: the reply is produced in a later microtask.
+    let id = h.send(
+        Some(&session),
+        "Runtime.evaluate",
+        json!({"expression":"Promise.resolve().then(() => { console.log('then'); return 7 })","awaitPromise":true,"returnByValue":true}),
+    );
+    let messages = h.until_response(id);
+    let console = position(&messages, "consoleAPICalled", |m| m["method"] == "Runtime.consoleAPICalled");
+    let reply = position(&messages, "reply", |m| m["id"] == id);
+    assert!(console < reply, "{messages:#?}");
+    assert_eq!(messages[reply]["result"]["result"]["value"], 7);
+}
+
+/// One-shot HTTP server for `responses` sequential requests, each answered
+/// with the same HTML document.
+fn serve_html(responses: usize, html: &'static str) -> (std::net::SocketAddr, std::thread::JoinHandle<()>) {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let server = std::thread::spawn(move || {
+        for _ in 0..responses {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let mut stream = loop {
+                match listener.accept() {
+                    Ok((stream, _)) => break stream,
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(Instant::now() < deadline, "request did not arrive");
+                        std::thread::sleep(Duration::from_millis(1));
+                    }
+                    Err(e) => panic!("{e}"),
+                }
+            };
+            stream.set_nonblocking(false).unwrap();
+            stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+            let mut request = Vec::new();
+            let mut chunk = [0; 1024];
+            while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                let n = stream.read(&mut chunk).unwrap();
+                assert!(n > 0 && request.len() + n <= 8192);
+                request.extend_from_slice(&chunk[..n]);
+            }
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                html.len()
+            );
+            stream.write_all(head.as_bytes()).unwrap();
+            stream.write_all(html.as_bytes()).unwrap();
+        }
+    });
+    (address, server)
+}
+
+/// TOS credit-note shape: after `history.pushState` the client must see
+/// `Page.navigatedWithinDocument` before the reply of the evaluation that
+/// called it, and the frame URL must already be current (Playwright's
+/// `page.url()` reads it right after). Needs the synchronous same-document
+/// commit in lp-browser plus queued replies in lp-cdp.
+#[test]
+fn push_state_event_precedes_the_evaluate_reply() {
+    let (address, server) = serve_html(1, "<!doctype html><p>pushstate</p>");
+    let mut h = Harness::new();
+    h.page("Page.enable", json!({}));
+    let r = h.page("Page.navigate", json!({"url": format!("http://{address}/start")}));
+    assert!(r["result"].get("errorText").is_none(), "{r}");
+    let mut messages = h.drain();
+    messages.extend(h.run_for(50));
+    server.join().unwrap();
+    let messages = h.page_with_events(
+        "Runtime.evaluate",
+        json!({"expression":"history.pushState(null, '', '/pushed-1'); location.pathname","returnByValue":true}),
+    );
+    let pushed = position(&messages, "navigatedWithinDocument", |m| m["method"] == "Page.navigatedWithinDocument");
+    let reply = position(&messages, "evaluate reply", |m| m["result"]["result"]["value"] == "/pushed-1");
+    assert!(pushed < reply, "navigatedWithinDocument must precede the evaluate reply: {messages:#?}");
+    assert_eq!(messages[pushed]["params"]["url"], format!("http://{address}/pushed-1"));
+    assert_eq!(messages[pushed]["params"]["frameId"], h.frame_id.as_str());
+    let tree = h.page("Page.getFrameTree", json!({}));
+    assert_eq!(tree["result"]["frameTree"]["frame"]["url"], format!("http://{address}/pushed-1"));
+}
