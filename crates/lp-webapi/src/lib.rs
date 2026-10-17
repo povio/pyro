@@ -21,6 +21,7 @@ pub mod css;
 pub mod custom;
 pub mod encoding;
 pub mod event;
+pub mod fetch;
 pub mod file;
 pub mod formdata;
 pub mod headers;
@@ -31,6 +32,7 @@ pub mod lifecycle;
 pub mod node;
 pub mod page;
 pub mod range;
+pub mod response;
 pub mod storage;
 pub mod target;
 pub mod traversal;
@@ -43,6 +45,7 @@ use std::rc::Rc;
 use lp_js::{JsResult, Scope, Value};
 
 pub use event::{EventCore, EventData, EventInterface};
+pub use fetch::{FetchLimits, RequestContext};
 pub use node::{wrap_node, NodeData};
 pub use page::{NavigationRequest, PageDom, PageHooks, RemotePoster};
 pub use storage::StorageNamespace;
@@ -68,6 +71,7 @@ pub fn register(engine: &lp_js::Engine) {
     window::register(engine);
     engine.register::<storage::Storage>();
     engine.register::<headers::Headers>();
+    engine.register::<response::Response>();
 }
 
 /// Installs the page's bindings into a freshly created realm.
@@ -80,6 +84,7 @@ pub fn install(scope: &Scope<'_>, page: Rc<PageDom>) -> JsResult<()> {
     realm.set_embedder(page);
     encoding::install(scope)?;
     headers::install(scope)?;
+    fetch::install(scope)?;
     let global = scope.global();
     global.set("CSS", window::css_namespace(scope)?)?;
     Ok(())

@@ -43,6 +43,7 @@ pub struct PageDom {
     pub(crate) last_removals: Cell<u64>,
     next_event: Cell<u64>,
     pub net: RefCell<Option<lp_net::NetClient>>,
+    pub(crate) fetch_state: crate::fetch::FetchState,
     pub(crate) local_storage: RefCell<crate::storage::StorageNamespace>,
     pub(crate) session_storage: RefCell<crate::storage::StorageNamespace>,
     hooks: RefCell<Option<Rc<dyn PageHooks>>>,
@@ -116,6 +117,7 @@ impl PageDom {
             last_removals: Cell::new(u64::MAX),
             next_event: Cell::new(1),
             net: RefCell::new(None),
+            fetch_state: Default::default(),
             local_storage: RefCell::new(Default::default()),
             session_storage: RefCell::new(Default::default()),
             hooks: RefCell::new(None),
@@ -158,6 +160,7 @@ impl PageDom {
         if self.disposed.replace(true) {
             return;
         }
+        crate::fetch::dispose(self);
         self.realms.borrow_mut().clear();
         // Drop roots and embedder hooks outside RefCell borrows: destructors
         // can release wrappers or other resources owned by this page.
