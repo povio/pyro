@@ -65,10 +65,7 @@ where
     def.getter("clientInformation", |s, w| navigator(s, w.page()));
     def.getter("screen", |s, w| {
         let key = lp_js::IdentityKey(w.page().id() | (1 << 57), 1);
-        if let Some(o) = s.lookup_identity(key) {
-            return Ok(o.value());
-        }
-        Ok(s.wrap::<Screen>(w.page().clone(), Some(key))?.value())
+        same_object(s, w.page(), key, || s.wrap::<Screen>(w.page().clone(), Some(key)))
     });
     def.method("getComputedStyle", 1, |s, w, a| {
         let el = crate::node::node_arg(s, a.get(0), "Window.getComputedStyle")?;
@@ -141,12 +138,37 @@ where
     });
 }
 
-fn navigator<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Value<'s>> {
-    let key = lp_js::IdentityKey(page.id() | (1 << 57), 0);
+/// A Window [SameObject] attribute value for this realm: looked up by
+/// `key`, otherwise created by `make` and kept alive until the realm (or
+/// page) is disposed, so expandos and `defineProperty` overrides persist.
+pub(crate) fn same_object<'s>(
+    s: &Scope<'s>,
+    page: &PageDom,
+    key: lp_js::IdentityKey,
+    make: impl FnOnce() -> JsResult<lp_js::Object<'s>>,
+) -> JsResult<Value<'s>> {
     if let Some(o) = s.lookup_identity(key) {
         return Ok(o.value());
     }
-    Ok(s.wrap::<Navigator>(page.clone(), Some(key))?.value())
+    let object = make()?;
+    let realm = s.realm_id();
+    let holder = page.same_objects.borrow().get(&realm).map(|h| h.get(s));
+    let holder = match holder.and_then(|h| h.as_object()) {
+        Some(h) => h,
+        None => {
+            let arr = s.array(&[])?;
+            page.same_objects.borrow_mut().insert(realm, lp_js::Persistent::new(s, arr.value()));
+            arr
+        }
+    };
+    let push = holder.get("push")?.as_object().ok_or_else(|| JsError::Type("Array.prototype.push".into()))?;
+    push.call(Some(holder), &[object.value()])?;
+    Ok(object.value())
+}
+
+fn navigator<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Value<'s>> {
+    let key = lp_js::IdentityKey(page.id() | (1 << 57), 0);
+    same_object(s, page, key, || s.wrap::<Navigator>(page.clone(), Some(key)))
 }
 
 fn user_agent(page: &PageDom) -> String {

@@ -207,10 +207,7 @@ impl JsClass for CustomElementRegistry {
 /// `window.customElements` (one registry object per realm).
 pub fn registry<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Value<'s>> {
     let key = lp_js::IdentityKey(page.id() | (1 << 58), 0);
-    if let Some(o) = s.lookup_identity(key) {
-        return Ok(o.value());
-    }
-    Ok(s.wrap::<CustomElementRegistry>(page.clone(), Some(key))?.value())
+    crate::window::same_object(s, page, key, || s.wrap::<CustomElementRegistry>(page.clone(), Some(key)))
 }
 
 /// Drops a page's registry state (page teardown).

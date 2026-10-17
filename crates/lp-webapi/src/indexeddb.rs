@@ -84,15 +84,14 @@ pub(crate) fn window_factory<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<
         return Err(JsError::ContextDestroyed);
     }
     let key = IdentityKey(page.id() | (1 << 57), 2);
-    if let Some(object) = s.lookup_identity(key) {
-        return Ok(object.value());
-    }
-    let data = FactoryData {
-        page: Rc::downgrade(page),
-        origin: crate::storage::storage_origin(s, page).ok(),
-        namespace: page.local_storage.borrow().indexed_db(),
-    };
-    Ok(s.wrap::<IdbFactory>(data, Some(key))?.value())
+    crate::window::same_object(s, page, key, || {
+        let data = FactoryData {
+            page: Rc::downgrade(page),
+            origin: crate::storage::storage_origin(s, page).ok(),
+            namespace: page.local_storage.borrow().indexed_db(),
+        };
+        s.wrap::<IdbFactory>(data, Some(key))
+    })
 }
 
 #[cfg(test)]

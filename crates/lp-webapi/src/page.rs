@@ -41,6 +41,10 @@ pub struct PageDom {
     /// Per-realm plain object holding Window listeners (page realms use the
     /// default JSC global, which cannot carry private properties).
     pub(crate) window_holders: RefCell<FxHashMap<RealmId, Persistent>>,
+    /// Per-realm array keeping Window [SameObject] wrappers (navigator,
+    /// crypto, ...) alive: the identity map is weak, and script expandos /
+    /// defineProperty overrides on them must survive collection.
+    pub(crate) same_objects: RefCell<FxHashMap<RealmId, Persistent>>,
     pub(crate) last_removals: Cell<u64>,
     next_event: Cell<u64>,
     pub net: RefCell<Option<lp_net::NetClient>>,
@@ -60,6 +64,8 @@ pub struct PageDom {
     submitting: RefCell<Vec<NodeId>>,
     hovered: Cell<Option<NodeId>>,
     press_target: Cell<Option<NodeId>>,
+    /// Control activated by a Space keydown, clicked on the matching keyup.
+    pub(crate) space_target: Cell<Option<NodeId>>,
     dialog_returns: RefCell<FxHashMap<NodeId, String>>,
     sheet_rules: RefCell<FxHashMap<NodeId, Vec<String>>>,
     /// Files selected into `<input type=file>` (CDP DOM.setFileInputFiles).
@@ -122,6 +128,7 @@ impl PageDom {
             pinned: RefCell::new(FxHashMap::default()),
             window_keys: RefCell::new(Vec::new()),
             window_holders: RefCell::new(FxHashMap::default()),
+            same_objects: RefCell::new(FxHashMap::default()),
             last_removals: Cell::new(u64::MAX),
             next_event: Cell::new(1),
             net: RefCell::new(None),
@@ -141,6 +148,7 @@ impl PageDom {
             submitting: RefCell::new(Vec::new()),
             hovered: Cell::new(None),
             press_target: Cell::new(None),
+            space_target: Cell::new(None),
             dialog_returns: RefCell::new(FxHashMap::default()),
             sheet_rules: RefCell::new(FxHashMap::default()),
             files: RefCell::new(FxHashMap::default()),
@@ -186,6 +194,7 @@ impl PageDom {
         drop(self.net.take());
         drop(self.pinned.take());
         drop(self.window_holders.take());
+        drop(self.same_objects.take());
         drop(self.data_view_readers.take());
         drop(self.header_helpers.take());
         drop(self.url_params_helpers.take());
