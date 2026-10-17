@@ -420,8 +420,11 @@ fn global_object_backed_by_host_class() {
         ("alert2()", "alert t"),
         ("ping()", "pong"),
         ("globalThis instanceof Window && globalThis instanceof EventTarget", "true"),
-        ("Object.getPrototypeOf(globalThis) === Window.prototype", "true"),
+        // The default JSC global (required for modules) has an immutable
+        // [[Prototype]]: members are own properties of the global instead.
+        ("alert2 === Window.prototype.alert2 && ping === EventTarget.prototype.ping", "true"),
         ("Object.prototype.toString.call(globalThis)", "[object Window]"),
+        ("({}) instanceof Window", "false"),
         ("(function () { 'use strict'; return EventTarget.prototype.ping.call(undefined) })()", "pong"),
     ];
     for (src, want) in checks {
@@ -432,6 +435,14 @@ fn global_object_backed_by_host_class() {
     assert_eq!(s.unwrap::<EventTarget>(g).map(|d| d.id), Some(77));
     assert_eq!(s.unwrap::<Window>(g).map(|d| d.title.clone()), Some("t".to_string()));
     assert!(s.unwrap::<Node>(g).is_none());
+    assert_eq!(s.global_data::<EventTarget>().map(|d| d.id), Some(77));
+    assert!(r.set_global_data::<Window>(WinData { title: "again".into(), target: node(78, &drops) }).is_err());
+    // Modules work in host-global realms.
+    if e.capabilities().modules {
+        let p = s.eval_module("globalThis.fromModule = winId + 1", "http://site.test/m.js").unwrap();
+        assert!(p.is_object());
+        assert_eq!(s.eval("fromModule", None, 1).unwrap().to_number().unwrap(), 78.0);
+    }
 }
 
 #[test]
@@ -517,4 +528,145 @@ fn isolated_worlds_have_distinct_wrappers() {
     eval_str(&world, "n.nodeName = 'shared-state'");
     assert_eq!(eval_str(&main, "n.nodeName"), "shared-state");
     assert_ne!(main.id(), world.id());
+}
+
+#[test]
+fn unwrap_guard_keeps_payload_alive_across_gc() {
+    let (e, r) = setup();
+    let drops = Rc::new(Cell::new(0));
+    let s = r.scope().unwrap();
+    #[inline(never)]
+    fn temp<'s>(s: &Scope<'s>, drops: &Rc<Cell<u32>>) -> Value<'s> {
+        s.wrap::<Node>(node(42, drops), None).unwrap().value()
+    }
+    let guard = s.unwrap::<Node>(temp(&s, &drops)).unwrap();
+    for _ in 0..3 {
+        e.collect_garbage_now();
+        e.drain_finalized();
+    }
+    assert_eq!(drops.get(), 0, "payload freed while borrowed");
+    assert_eq!(guard.id, 42);
+    drop(guard);
+}
+
+#[test]
+fn nested_termination_cannot_be_swallowed() {
+    let e = engine();
+    let Ok(handle) = e.terminate_handle() else { return };
+    let r = e.create_realm(RealmOptions::default()).unwrap();
+    let s = r.scope().unwrap();
+    let f = s
+        .function("nativeLoop", |s, _this, _args| {
+            // Native code re-entering JS that gets terminated.
+            s.eval("for (;;) {}", None, 1)?;
+            Ok(s.undefined())
+        })
+        .unwrap();
+    s.global().set("nativeLoop", f.value()).unwrap();
+    let t = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        handle.terminate();
+    });
+    let start = std::time::Instant::now();
+    // Page code catches the termination and spins again: it must still end.
+    let res = s.eval("try { nativeLoop() } catch (e) { for (;;) {} }", None, 1);
+    t.join().unwrap();
+    assert!(matches!(res, Err(JsError::Terminated)), "{res:?}");
+    assert!(start.elapsed() < std::time::Duration::from_secs(5));
+    // The VM is usable again afterwards.
+    assert_eq!(s.eval("40 + 2", None, 1).unwrap().to_number().unwrap(), 42.0);
+}
+
+#[test]
+fn engine_teardown_with_persistent_in_closure_allows_new_engine() {
+    {
+        let e = engine();
+        let r = e.create_realm(RealmOptions::default()).unwrap();
+        let s = r.scope().unwrap();
+        let keep = Persistent::new(&s, s.object().value());
+        let f = s
+            .function("holder", move |s, _t, _a| {
+                let _ = &keep;
+                Ok(s.undefined())
+            })
+            .unwrap();
+        s.global().set("holder", f.value()).unwrap();
+        drop(s);
+        drop(r);
+        drop(e);
+    }
+    let e2 = Engine::new().expect("engine slot freed after teardown");
+    let r = e2.create_realm(RealmOptions::default()).unwrap();
+    assert_eq!(eval_str(&r, "1"), "1");
+}
+
+#[test]
+fn property_hooks_inherit_per_kind() {
+    struct Child;
+    impl JsClass for Child {
+        const NAME: &'static str = "Child";
+        type Data = NodeRef;
+        type Parent = List;
+        fn define(def: &mut ClassDef<Self>) {
+            def.named(false, |s, _this, name| Ok((name == "childNamed").then(|| s.number(1.0))));
+        }
+    }
+    let e = engine();
+    e.register::<Child>();
+    let r = e.create_realm(RealmOptions::default()).unwrap();
+    let drops = Rc::new(Cell::new(0));
+    expose::<Child>(&r, "c", node(3, &drops), None);
+    assert_eq!(eval_str(&r, "[c[0], c.childNamed, c.special].join()"), "10,1,");
+}
+
+#[test]
+fn internal_helpers_resist_page_monkey_patching() {
+    let e = engine();
+    let r = e.create_realm(RealmOptions::default()).unwrap();
+    eval_str(
+        &r,
+        "globalThis.stolen = []; const oc = Function.prototype.call, oa = Function.prototype.apply;
+         Function.prototype.call = function (...a) { stolen.push(this); return oc.apply(this, a) };
+         Function.prototype.apply = function (t, a) { stolen.push(this); return Reflect.apply(this, t, a) };
+         globalThis.Map = function FakeMap() {};",
+    );
+    let s = r.scope().unwrap();
+    let seen = Rc::new(Cell::new(0));
+    let seen2 = seen.clone();
+    s.then(s.number(1.0), move |_s, _v| seen2.set(seen2.get() + 1), |_s, _v| {}).unwrap();
+    drop(s);
+    assert_eq!(seen.get(), 1);
+    assert_eq!(eval_str(&r, "stolen.length"), "0");
+    let s = r.scope().unwrap();
+    let d = s
+        .describe(
+            s.eval("new (Object.getPrototypeOf(new WeakMap()).constructor === WeakMap ? WeakMap : Object)()", None, 1)
+                .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(d.subtype.as_deref(), Some("weakmap"));
+    let v = s.call_function("function () { return this.x }", Some(s.eval("({x: 5})", None, 1).unwrap()), &[]).unwrap();
+    assert_eq!(v.to_number().unwrap(), 5.0);
+    drop(s);
+    assert_eq!(eval_str(&r, "stolen.length"), "0");
+    assert_eq!(eval_str(&r, "new DOMException('m', 'toString').code"), "0");
+    assert_eq!(eval_str(&r, "new DOMException('m', 'NotFoundError').code"), "8");
+    assert_eq!(
+        eval_str(&r, "try { Object.getOwnPropertyDescriptor(DOMException.prototype, 'code').get.call({}) } catch (e) { e.constructor.name }"),
+        "TypeError"
+    );
+}
+
+#[test]
+fn panicking_hook_does_not_abort() {
+    struct Panicky;
+    impl EngineHooks for Panicky {
+        fn console_api(&self, _realm: &Realm, _level: ConsoleLevel, _args: &[Value<'_>]) {
+            panic!("hook panic");
+        }
+    }
+    let e = engine();
+    e.set_hooks(Some(Rc::new(Panicky)));
+    let r = e.create_realm(RealmOptions::default()).unwrap();
+    assert_eq!(eval_str(&r, "console.log('x'); 'survived'"), "survived");
 }
