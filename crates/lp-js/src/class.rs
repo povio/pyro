@@ -617,12 +617,32 @@ pub(crate) fn drain_finalized(engine: &EngineInner) -> usize {
 // ---------------------------------------------------------------------------
 // Trampolines
 
+/// Result shapes used by JSC native callbacks. A raw value needs an explicit
+/// temporary root before the scheduling hook can allocate or collect garbage.
+pub(crate) trait CallbackResult {
+    fn root(&self, _scope: &Scope<'_>) -> Option<crate::Persistent> {
+        None
+    }
+}
+impl CallbackResult for bool {}
+impl CallbackResult for () {}
+impl CallbackResult for sys::JSValueRef {
+    fn root(&self, scope: &Scope<'_>) -> Option<crate::Persistent> {
+        if self.is_null() {
+            None
+        } else {
+            // SAFETY: this is the value just returned by the native callback.
+            Some(crate::Persistent::new(scope, unsafe { Value::from_raw(scope.ctx, *self) }))
+        }
+    }
+}
+
 /// Runs a callback body, converting errors and panics into JS exceptions.
 /// Realm lookup, the body, error conversion and the release of the realm
 /// handle (which may dispose it and call hooks) all happen inside the unwind
 /// boundary.
 #[inline]
-pub(crate) unsafe fn guard<R>(
+pub(crate) unsafe fn guard<R: CallbackResult>(
     ctx: sys::JSContextRef,
     exc: *mut sys::JSValueRef,
     fallback: R,
@@ -637,6 +657,17 @@ pub(crate) unsafe fn guard<R>(
         };
         let scope = Scope::new(ctx, &realm);
         let result = body(&scope);
+        let hook = if matches!(result, Err(JsError::Terminated)) || crate::engine::TERMINATING.with(|t| t.get()) {
+            None
+        } else {
+            realm.native_callback_hook()
+        };
+        // Error::Thrown already owns a Persistent. Other errors materialize only
+        // after the hook. Keep successful JS results protected until returning.
+        let _return_root = hook.as_ref().and_then(|_| result.as_ref().ok().and_then(|v| v.root(&scope)));
+        if let Some(hook) = hook {
+            realm.run_native_callback_hook(&scope, hook);
+        }
         // Native code that ignored an inner termination must not let the
         // calling JS continue: treat the callback as terminated as well.
         let result = match result {

@@ -116,6 +116,10 @@ impl Drop for ModuleRequest {
     }
 }
 
+/// Owner-thread scheduling callback run after a native binding returns.
+/// See [`Realm::set_native_callback_hook`] for borrowing and reentrancy rules.
+pub type NativeCallbackHook = Rc<dyn for<'s> Fn(&Scope<'s>)>;
+
 pub(crate) struct RealmInner {
     pub(crate) id: RealmId,
     name: String,
@@ -129,6 +133,8 @@ pub(crate) struct RealmInner {
     dom_exception: RefCell<Option<Persistent>>,
     module_loader: Cell<*mut c_void>,
     module_fetcher: RefCell<Option<Rc<dyn ModuleFetcher>>>,
+    native_callback_hook: RefCell<Option<NativeCallbackHook>>,
+    native_callback_hook_active: Cell<bool>,
     /// Sources of top-level modules passed to `eval_module`; JSC requests the
     /// entry module itself through the fetch hook.
     inline_modules: RefCell<HashMap<String, String>>,
@@ -140,6 +146,26 @@ pub(crate) struct RealmInner {
 }
 
 impl RealmInner {
+    pub(crate) fn native_callback_hook(&self) -> Option<NativeCallbackHook> {
+        if self.ctx.get().is_null() || self.native_callback_hook_active.get() {
+            None
+        } else {
+            self.native_callback_hook.borrow().clone()
+        }
+    }
+
+    pub(crate) fn run_native_callback_hook(&self, scope: &Scope<'_>, hook: NativeCallbackHook) {
+        struct Reset<'a>(&'a Cell<bool>);
+        impl Drop for Reset<'_> {
+            fn drop(&mut self) {
+                self.0.set(false);
+            }
+        }
+        self.native_callback_hook_active.set(true);
+        let _reset = Reset(&self.native_callback_hook_active);
+        hook(scope);
+    }
+
     pub(crate) fn global_ctx(&self) -> JsResult<sys::JSGlobalContextRef> {
         let c = self.ctx.get();
         if c.is_null() {
@@ -184,6 +210,8 @@ impl RealmInner {
             unsafe { sys::modules::lp_jsc_module_loader_release(loader) };
         }
         self.module_fetcher.borrow_mut().take();
+        // Release captured embedder state without holding the hook cell borrow.
+        drop(self.native_callback_hook.take());
         self.protos.borrow_mut().clear();
         self.ctors.borrow_mut().clear();
         self.helpers.borrow_mut().take();
@@ -281,6 +309,23 @@ impl Realm {
     /// Attaches embedder state reachable from callbacks via [`Scope::embedder`].
     pub fn set_embedder<T: Any>(&self, data: Rc<T>) {
         *self.inner.embedder.borrow_mut() = Some(data);
+    }
+
+    /// Installs a scheduling hook after native callback bodies return and before
+    /// JavaScript resumes, including normal error returns. Returned values stay
+    /// rooted while it runs. Termination and destroyed realms skip the hook.
+    ///
+    /// Use this to inspect pending work and enqueue a microtask, not to deliver
+    /// observer callbacks or dispose the realm. The callback body's local borrows
+    /// have ended; an outer reentrant native callback may still hold borrows, so
+    /// embedders must check those safely. Hook-induced callbacks in this realm do
+    /// not recursively invoke the hook. Ordinary nested callbacks do invoke it.
+    /// Capture embedder state weakly to avoid cycles. Disposal clears the hook;
+    /// passing `None` uninstalls it. Panics become native-callback JS errors.
+    pub fn set_native_callback_hook(&self, hook: Option<NativeCallbackHook>) -> JsResult<()> {
+        self.scope()?;
+        drop(self.inner.native_callback_hook.replace(hook));
+        Ok(())
     }
 
     pub fn set_module_fetcher(&self, fetcher: Option<Rc<dyn ModuleFetcher>>) {
@@ -868,6 +913,8 @@ pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResul
         dom_exception: RefCell::new(None),
         module_loader: Cell::new(ptr::null_mut()),
         module_fetcher: RefCell::new(None),
+        native_callback_hook: RefCell::new(None),
+        native_callback_hook_active: Cell::new(false),
         inline_modules: RefCell::new(HashMap::new()),
         embedder: RefCell::new(None),
         global_class: options.global_class,
