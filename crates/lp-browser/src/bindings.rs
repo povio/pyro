@@ -120,8 +120,15 @@ impl Browser {
     pub(crate) fn drain_dom_resources(&mut self, page: PageId) {
         let Some(bindings) = self.page(page).and_then(|p| p.main_frame.page_dom.clone()) else { return };
         let events = bindings.dom.borrow_mut().take_resource_events();
+        let mut stylesheet_nodes = std::collections::HashSet::new();
         for event in events {
-            bindings.apply_style_event(&event);
+            if event.kind == lp_dom::script::ResourceKind::Stylesheet {
+                if stylesheet_nodes.insert(event.node) {
+                    self.stylesheet_event(page, event.node);
+                }
+            } else {
+                bindings.apply_style_event(&event);
+            }
         }
     }
 }
