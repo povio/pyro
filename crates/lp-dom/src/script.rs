@@ -90,14 +90,18 @@ impl Dom {
     pub fn set_resource_tracking(&mut self, on: bool) {
         self.resources.enabled = on;
         if !on {
-            self.resources.events.clear();
+            self.take_resource_events();
         }
     }
 
     /// Drains pending resource events. Node ids stay valid until the next
     /// `collect_garbage`.
     pub fn take_resource_events(&mut self) -> Vec<ResourceEvent> {
-        std::mem::take(&mut self.resources.events)
+        let events = std::mem::take(&mut self.resources.events);
+        for ev in &events {
+            self.release(ev.node);
+        }
+        events
     }
 
     pub(crate) fn resource_kind(&self, idx: u32) -> Option<ResourceKind> {
@@ -223,6 +227,7 @@ impl Dom {
         let ev = ResourceEvent { node: self.id_of(idx), kind, reason };
         // Coalesce consecutive duplicates (e.g. many text appends to one <style>).
         if self.resources.events.last() != Some(&ev) {
+            self.add_ref(ev.node).expect("live resource node");
             self.resources.events.push(ev);
         }
     }

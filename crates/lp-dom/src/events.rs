@@ -198,7 +198,35 @@ impl Dom {
         if list.is_empty() {
             self.events.map.remove(&target);
         }
+        self.events.released.push((target, l.callback));
         Some(l.callback)
+    }
+
+    /// Identity of one registration, distinct from the reusable callback slot.
+    pub fn listener_registration(
+        &self,
+        target: TargetKey,
+        ty: &str,
+        callback: ListenerHandle,
+        capture: bool,
+    ) -> Option<u32> {
+        self.events
+            .map
+            .get(&target)?
+            .iter()
+            .find(|l| l.callback == callback && l.capture == capture && &*l.ty == ty)
+            .map(|l| l.id)
+    }
+
+    /// Removes only the registration originally attached to an AbortSignal.
+    pub fn abort_listener(&mut self, target: TargetKey, registration: u32) {
+        let Some(list) = self.events.map.get_mut(&target) else { return };
+        let Some(pos) = list.iter().position(|l| l.id == registration) else { return };
+        let listener = list.remove(pos);
+        if list.is_empty() {
+            self.events.map.remove(&target);
+        }
+        self.events.released.push((target, listener.callback));
     }
 
     /// Whether any listener entry of `target` still uses `callback`.

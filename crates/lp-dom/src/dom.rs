@@ -861,6 +861,11 @@ impl Dom {
         if reference == n {
             reference = self.n(n).next;
         }
+        // Adopt the replacement before recording the old child's siblings:
+        // it may itself be the previous sibling of the replaced node.
+        if self.n(n).parent != NIL {
+            self.remove(n, false);
+        }
         let previous = self.n(c).prev;
         let mut removed = Vec::new();
         if self.n(c).parent != NIL {
