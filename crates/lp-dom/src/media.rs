@@ -39,6 +39,35 @@ pub enum Pointer {
     Fine,
 }
 
+/// `screen.orientation.type`.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum OrientationType {
+    PortraitPrimary,
+    PortraitSecondary,
+    LandscapePrimary,
+    LandscapeSecondary,
+}
+
+impl OrientationType {
+    /// The `ScreenOrientation.type` string.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            OrientationType::PortraitPrimary => "portrait-primary",
+            OrientationType::PortraitSecondary => "portrait-secondary",
+            OrientationType::LandscapePrimary => "landscape-primary",
+            OrientationType::LandscapeSecondary => "landscape-secondary",
+        }
+    }
+}
+
+/// An emulated screen orientation (CDP `Emulation.ScreenOrientation`).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct ScreenOrientation {
+    pub kind: OrientationType,
+    /// Degrees: 0, 90, 180 or 270.
+    pub angle: u16,
+}
+
 /// The emulated output device. Port of upstream `Viewport.zig:19-44` plus the
 /// emulation fields CDP's `Emulation.setEmulatedMedia` and
 /// `Emulation.setTouchEmulationEnabled` feed.
@@ -59,6 +88,11 @@ pub struct Viewport {
     /// `hover: hover` (primary input can hover).
     pub hover: bool,
     pub pointer: Pointer,
+    /// Emulated `screen.orientation` (upstream `Viewport.orientation`). `None`
+    /// means the screen never rotates: its type follows the screen dimensions
+    /// and its angle is 0. The CSS `(orientation)` feature always follows the
+    /// viewport and ignores this.
+    pub orientation: Option<ScreenOrientation>,
 }
 
 impl Default for Viewport {
@@ -74,6 +108,7 @@ impl Default for Viewport {
             reduced_motion: false,
             hover: true,
             pointer: Pointer::Fine,
+            orientation: None,
         }
     }
 }
