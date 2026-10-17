@@ -306,7 +306,7 @@ fn event_dispatch_order() {
     assert!(l[2].ends_with(":2"), "at-target phase");
     assert!(l[4].ends_with(":3"), "bubbling phase");
     // `once` listener removed and released.
-    assert!(dom.borrow_mut().take_released_listeners().contains(&ListenerHandle(12)));
+    assert!(dom.borrow_mut().take_released_listeners().iter().any(|(_, h)| *h == ListenerHandle(12)));
 
     // stopPropagation in capture at outer stops everything below.
     log.borrow_mut().clear();

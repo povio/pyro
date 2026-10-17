@@ -128,6 +128,10 @@ pub struct ControlState {
     pub selection: (u32, u32),
     /// Selection explicitly set (otherwise caret sits at the end of value).
     pub selection_set: bool,
+    /// Value changed by user editing (enables tooLong/tooShort).
+    pub user_edited: bool,
+    /// `setCustomValidity` message.
+    pub custom_validity: Option<String>,
     /// `<option>` selectedness when explicitly set.
     pub selected: Option<bool>,
 }

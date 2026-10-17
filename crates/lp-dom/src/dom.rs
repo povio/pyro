@@ -397,6 +397,13 @@ impl Dom {
             _ => None,
         })
     }
+    pub fn shadow_root_mode(&self, id: NodeId) -> DomResult<Option<ShadowRootMode>> {
+        let i = self.check(id)?;
+        Ok(match &self.n(i).kind {
+            NodeKind::Fragment(f) => f.shadow,
+            _ => None,
+        })
+    }
     pub fn is_shadow_root(&self, id: NodeId) -> DomResult<bool> {
         let i = self.check(id)?;
         Ok(matches!(&self.n(i).kind, NodeKind::Fragment(f) if f.shadow.is_some()))
@@ -554,6 +561,17 @@ impl Dom {
             return Ok(self.id_of(i));
         }
     }
+    pub(crate) fn is_connected_idx(&self, mut i: u32) -> bool {
+        loop {
+            i = self.root_idx(i);
+            match &self.n(i).kind {
+                NodeKind::Document(_) => return true,
+                NodeKind::Fragment(FragmentData { host, shadow: Some(_) }) => i = *host,
+                _ => return false,
+            }
+        }
+    }
+
     /// `Node.isConnected` (shadow-including).
     pub fn is_connected(&self, id: NodeId) -> DomResult<bool> {
         let root = self.root_node(id, true)?;
@@ -890,8 +908,12 @@ impl Dom {
             self.adopt_idx(k, doc);
             self.link(k, parent, child);
         }
+        let connected = self.is_connected_idx(parent);
         for &k in &nodes {
             self.resources_after_insert(k);
+            if connected {
+                self.note_connected_listeners(k);
+            }
         }
         self.bump();
         if !suppress {
@@ -1466,6 +1488,8 @@ impl Dom {
     }
     pub fn control_state_mut(&mut self, id: NodeId) -> DomResult<&mut ControlState> {
         let i = self.check(id)?;
+        // Control state feeds :checked/:indeterminate/:valid matching.
+        self.bump();
         let el = self.n_mut(i).element_mut().ok_or(DomError::Type("not an element"))?;
         Ok(el.control.get_or_insert_with(Default::default))
     }
