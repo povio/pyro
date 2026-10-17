@@ -110,6 +110,18 @@ impl<'s> Value<'s> {
         self.as_object().is_some_and(|o| o.is_function())
     }
 
+    /// Tests for a native JSC proxy target without reading properties or invoking
+    /// traps. Includes global proxies and may include revoked proxies whose
+    /// target is retained. A false result is not a complete cloneability check.
+    /// Non-objects return false. Objects require the optional proxy-target SPI.
+    pub fn has_proxy_target(&self) -> JsResult<bool> {
+        let Some(object) = self.as_object() else { return Ok(false) };
+        let get_target = sys::spi::get().get_proxy_target.ok_or(JsError::Unsupported("proxy target inspection"))?;
+        // SAFETY: live object on its owning VM thread; SPI only reads its native
+        // type/target under the VM lock. The target is neither exposed nor kept.
+        Ok(unsafe { !get_target(object.raw).is_null() })
+    }
+
     pub fn as_object(&self) -> Option<Object<'s>> {
         if self.is_object() {
             Some(Object { raw: self.raw as sys::JSObjectRef, ctx: self.ctx, _scope: PhantomData })

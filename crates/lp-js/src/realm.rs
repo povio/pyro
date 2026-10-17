@@ -702,6 +702,34 @@ impl<'s> Scope<'s> {
         }
     }
 
+    /// Tests for one of this engine's native wrappers/closures or a same-VM
+    /// global object, without invoking getters, proxy traps, or other JS.
+    /// Includes globals retained by another realm after their owner is disposed.
+    /// This does not classify arbitrary built-in/exotic JS objects or unwrap
+    /// proxies. Non-wrapper objects require the optional global-context SPI.
+    pub fn is_host_object(&self, value: Value<'_>) -> JsResult<bool> {
+        // A value from another still-live engine must not reach this VM's class
+        // inspection API. Keeping its source context in Value makes this check
+        // possible even when the original Engine owner has been dropped.
+        if unsafe { sys::JSContextGetGroup(value.ctx) } != self.realm.engine.group() {
+            return Err(JsError::Type("host-object inspection across engines".into()));
+        }
+        let Some(object) = value.as_object() else { return Ok(false) };
+        let base = self.realm.engine.classes.borrow().base;
+        // The registry borrow ends before entering JSC; no Rust payload is read.
+        if unsafe { sys::JSValueIsObjectOfClass(self.ctx, value.raw, base) } {
+            return Ok(true);
+        }
+        let get_context = sys::spi::get()
+            .get_object_global_context
+            .ok_or(JsError::Unsupported("object global-context inspection"))?;
+        // SAFETY: object is live in this VM. Its native realm remains reachable
+        // through the object, independently of the Rust Realm handle. Reading
+        // the global identity does not execute script or retain another realm.
+        let context = unsafe { get_context(object.raw) };
+        Ok(!context.is_null() && unsafe { sys::JSContextGetGlobalObject(context) } == object.raw)
+    }
+
     /// Payload header of an object: wrappers, or this realm's global.
     unsafe fn header_of_object(&self, obj: sys::JSObjectRef) -> Option<*mut Header> {
         let base = self.realm.engine.classes.borrow().base;
