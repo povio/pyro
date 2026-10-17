@@ -24,6 +24,7 @@ pub mod event;
 pub mod fetch;
 pub mod file;
 pub mod formdata;
+pub mod handlers;
 pub mod headers;
 pub mod html;
 pub mod identity;

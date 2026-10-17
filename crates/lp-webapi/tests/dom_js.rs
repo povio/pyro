@@ -1956,3 +1956,31 @@ fn intersection_observer_element_scroll_changes_geometry_without_dom_mutation() 
     );
     e.page.dispose();
 }
+
+#[test]
+fn global_event_handler_attributes() {
+    let e = env("<body><a id=a href='#x'>a</a><input id=i></body>");
+    let r = &e.main;
+    // ReactDOM isEventSupported('input'): 'oninput' in document, else the content-attribute probe.
+    assert_eq!(eval(r, "['oninput' in document, 'onclick' in window, 'onpopstate' in window, 'onreadystatechange' in document].join()"), "true,true,true,true");
+    assert_eq!(
+        eval(r, "const d=document.createElement('div'); d.setAttribute('oninput','return;'); typeof d.oninput"),
+        "function"
+    );
+    assert_eq!(eval(r, "d.removeAttribute('oninput'); d.oninput"), "null");
+    let out = eval(
+        r,
+        r#"const a=document.getElementById('a'); const log=[];
+        a.addEventListener('click',()=>log.push('first'));
+        a.onclick=function(ev){log.push('handler:'+(this===a)+':'+(ev instanceof MouseEvent)); return false};
+        a.addEventListener('click',e=>log.push('last:'+e.defaultPrevented));
+        a.click();
+        a.onclick=function(){log.push('replaced')}; a.click();
+        a.onclick=null; a.click();
+        a.onclick='not a function'; log.push(String(a.onclick));
+        log.join('|')"#,
+    );
+    assert_eq!(out, "first|handler:true:true|last:true|first|replaced|last:false|first|last:false|null");
+    assert_eq!(eval(r, "let got=0; window.onfoo=1; window.onmessage=null; document.getElementById('i').setAttribute('onclick','window.hit=(window.hit||0)+1'); document.getElementById('i').click(); window.hit"), "1");
+    assert_eq!(eval(r, "let w=0; window.onhashchange=()=>w++; window.dispatchEvent(new Event('hashchange')); const same=typeof window.onhashchange; window.onhashchange=null; window.dispatchEvent(new Event('hashchange')); w+':'+same+':'+window.onhashchange"), "1:function:null");
+}
