@@ -11,17 +11,37 @@
   const getOwnPropertySymbols = O.getOwnPropertySymbols;
   const getOwnPropertyDescriptor = O.getOwnPropertyDescriptor;
   const ArrayProto = Array.prototype;
+  // Intrinsics are invoked only through the captured Reflect.apply: a page
+  // replacing Function.prototype.call/apply/bind cannot intercept them.
+  const apply = Reflect.apply;
+  const reflectGet = Reflect.get;
   const P = Promise;
   const promiseThen = P.prototype.then;
-  const promiseResolve = P.resolve.bind(P);
-  const call = Function.prototype.call;
+  const promiseResolveFn = P.resolve;
+  const promiseResolve = (v) => apply(promiseResolveFn, P, [v]);
+  const hasInstance = Function.prototype[Symbol.hasInstance];
+  const WM = WeakMap;
+  const wmGet = WM.prototype.get;
+  const wmSet = WM.prototype.set;
+  const wmHas = WM.prototype.has;
+  const setAdd = Set.prototype.add;
+  const setHas = Set.prototype.has;
+  const arraySlice = Array.prototype.slice;
+  const stringSlice = String.prototype.slice;
+  const stringToLowerCase = String.prototype.toLowerCase;
+  const arrayPush = Array.prototype.push;
+  const arrayConcat = Array.prototype.concat;
   const isArray = Array.isArray;
   const toStringTag = Symbol.toStringTag;
   const objToString = O.prototype.toString;
   const fnToString = Function.prototype.toString;
   const ErrorCtor = Error;
+  const RegExpC = RegExp, DateC = Date, MapC = Map, SetC = Set, WeakMapC = WeakMap, WeakSetC = WeakSet;
+  const ArrayBufferC = ArrayBuffer, DataViewC = DataView;
+  const isView = ArrayBuffer.isView;
+  const StringC = String;
 
-  const DOM_EXCEPTION_CODES = {
+  const DOM_EXCEPTION_CODES = { __proto__: null,
     IndexSizeError: 1, HierarchyRequestError: 3, WrongDocumentError: 4, InvalidCharacterError: 5,
     NoModificationAllowedError: 7, NotFoundError: 8, NotSupportedError: 9, InUseAttributeError: 10,
     InvalidStateError: 11, SyntaxError: 12, InvalidModificationError: 13, NamespaceError: 14,
@@ -37,14 +57,20 @@
   ];
 
   // DOMException as a JS class (prototype chains to Error.prototype per WebIDL).
-  const names = new WeakMap();
+  const names = new WM();
   class DOMException extends ErrorCtor {
     constructor(message = '', name = 'Error') {
       super(String(message));
-      names.set(this, String(name));
+      apply(wmSet, names, [this, String(name)]);
     }
-    get name() { return names.has(this) ? names.get(this) : 'Error'; }
-    get code() { return DOM_EXCEPTION_CODES[names.get(this)] || 0; }
+    get name() {
+      if (!apply(wmHas, names, [this])) throw new TypeError('Illegal invocation');
+      return apply(wmGet, names, [this]);
+    }
+    get code() {
+      if (!apply(wmHas, names, [this])) throw new TypeError('Illegal invocation');
+      return DOM_EXCEPTION_CODES[apply(wmGet, names, [this])] || 0;
+    }
   }
   defineProperty(DOMException.prototype, toStringTag, { value: 'DOMException', configurable: true });
   DOM_EXCEPTION_CONSTANTS.forEach((n, i) => {
@@ -58,33 +84,33 @@
     let subtype, className, description;
     if (type === 'object' && v !== null) {
       if (isArray(v)) subtype = 'array';
-      else if (v instanceof RegExp) subtype = 'regexp';
-      else if (v instanceof Date) subtype = 'date';
-      else if (v instanceof Map) subtype = 'map';
-      else if (v instanceof Set) subtype = 'set';
-      else if (v instanceof WeakMap) subtype = 'weakmap';
-      else if (v instanceof WeakSet) subtype = 'weakset';
+      else if (v instanceof RegExpC) subtype = 'regexp';
+      else if (v instanceof DateC) subtype = 'date';
+      else if (v instanceof MapC) subtype = 'map';
+      else if (v instanceof SetC) subtype = 'set';
+      else if (v instanceof WeakMapC) subtype = 'weakmap';
+      else if (v instanceof WeakSetC) subtype = 'weakset';
       else if (v instanceof ErrorCtor) subtype = 'error';
       else if (v instanceof P) subtype = 'promise';
-      else if (ArrayBuffer.isView(v)) subtype = v instanceof DataView ? 'dataview' : 'typedarray';
-      else if (v instanceof ArrayBuffer) subtype = 'arraybuffer';
+      else if (isView(v)) subtype = v instanceof DataViewC ? 'dataview' : 'typedarray';
+      else if (v instanceof ArrayBufferC) subtype = 'arraybuffer';
       else if (typeof v.nodeType === 'number' && typeof v.nodeName === 'string') subtype = 'node';
       try {
         const ctor = v.constructor;
         className = (ctor && typeof ctor.name === 'string' && ctor.name) || undefined;
       } catch (_) {}
       if (!className) {
-        const tag = call.call(objToString, v);
-        className = tag.slice(8, -1);
+        const tag = apply(objToString, v, []);
+        className = apply(stringSlice, tag, [8, -1]);
       }
       if (subtype === 'array') description = `${className}(${v.length})`;
-      else if (subtype === 'error') { try { description = String(v.stack || v); } catch (_) { description = className; } }
-      else if (subtype === 'node') description = String(v.nodeName).toLowerCase();
-      else if (subtype === 'regexp' || subtype === 'date') description = String(v);
+      else if (subtype === 'error') { try { description = StringC(v.stack || v); } catch (_) { description = className; } }
+      else if (subtype === 'node') description = apply(stringToLowerCase, StringC(v.nodeName), []);
+      else if (subtype === 'regexp' || subtype === 'date') description = StringC(v);
       else description = className;
     } else if (type === 'function') {
       className = 'Function';
-      try { description = call.call(fnToString, v); } catch (_) { description = 'function'; }
+      try { description = apply(fnToString, v, []); } catch (_) { description = 'function'; }
     }
     return { type, subtype, className, description };
   }
@@ -129,21 +155,45 @@
       try { defineProperty(fn, 'name', { value: name }); } catch (_) {}
     },
     then(value, onFulfilled, onRejected) {
-      call.call(promiseThen, promiseResolve(value), onFulfilled, onRejected);
+      apply(promiseThen, promiseResolve(value), [onFulfilled, onRejected]);
     },
     callWith(fn, thisArg, ...args) {
-      return call.call(fn, thisArg, ...args);
+      return apply(fn, thisArg, args);
+    },
+    // Emulates a host global class on the default JSC global, whose
+    // [[Prototype]] is immutable: copy the interface members of the chain
+    // (root first) onto the global and make `instanceof` accept it.
+    installGlobal(global, protos, ctors, name) {
+      for (let i = 0; i < protos.length; i++) {
+        const proto = protos[i];
+        for (const key of apply(arrayConcat, getOwnPropertyNames(proto), [getOwnPropertySymbols(proto)])) {
+          if (key === 'constructor' || key === toStringTag) continue;
+          defineProperty(global, key, getOwnPropertyDescriptor(proto, key));
+        }
+      }
+      for (let i = 0; i < ctors.length; i++) {
+        const C = ctors[i];
+        defineProperty(C, Symbol.hasInstance, {
+          value: { [Symbol.hasInstance](v) { return v === global || apply(hasInstance, this, [v]); } }[Symbol.hasInstance],
+          configurable: true,
+        });
+      }
+      defineProperty(global, toStringTag, { value: name, writable: false, enumerable: false, configurable: true });
     },
     describe,
     properties(obj, ownOnly) {
       const out = [];
       const seen = new Set();
+      const add = (k) => apply(setAdd, seen, [k]);
+      const has = (k) => apply(setHas, seen, [k]);
       let o = obj;
       let isOwn = true;
       while (o !== null && o !== undefined) {
-        for (const key of [...getOwnPropertyNames(o), ...getOwnPropertySymbols(o)]) {
-          if (seen.has(key)) continue;
-          seen.add(key);
+        const keys = apply(arrayConcat, getOwnPropertyNames(o), [getOwnPropertySymbols(o)]);
+        for (let i = 0; i < keys.length; i++) {
+          const key = keys[i];
+          if (has(key)) continue;
+          add(key);
           const d = getOwnPropertyDescriptor(o, key);
           const e = { name: typeof key === 'symbol' ? String(key) : key, isOwn,
                       writable: !!d.writable, enumerable: !!d.enumerable, configurable: !!d.configurable };
@@ -152,8 +202,8 @@
           if (d.get) e.get = d.get;
           if (d.set) e.set = d.set;
           // Accessors on prototypes: report the current value for convenience.
-          if (!isOwn && d.get) { try { e.value = Reflect.get(o, key, obj); e.isAccessorValue = true; } catch (_) {} }
-          out.push(e);
+          if (!isOwn && d.get) { try { e.value = reflectGet(o, key, obj); e.isAccessorValue = true; } catch (_) {} }
+          apply(arrayPush, out, [e]);
         }
         if (ownOnly) break;
         o = getPrototypeOf(o);
