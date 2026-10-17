@@ -31,7 +31,7 @@ Temporary roots live in the JS call graph; installed closures capture intrinsics
 and stateless native predicates, with no PageDom or persistent native self-root.
 
 The motivating unchanged TOS profile failure is recorded in
-[TOS URL smoke](../validation/TOS_URL_SMOKE.md). That run remains failed evidence;
-passing focused tests does not imply the profile flow or full TOS passes.
+[TOS URL smoke](../validation/TOS_URL_SMOKE.md). That run remains failed evidence. A [new unchanged pinned run](../validation/TOS_CLONE_SMOKE.md)
+passes both profile/settings scenarios; this does not establish full TOS compatibility.
 
 Semantics are compared with the [HTML structured serialization algorithms](https://html.spec.whatwg.org/multipage/structured-data.html#structuredserializeinternal), subject to the explicit limits above.
