@@ -413,12 +413,30 @@ pub fn fire_at_node(page: &Rc<PageDom>, node: NodeId, event: &EventData) -> bool
     fire(page, key, event)
 }
 
+/// Handler state lives in traced hidden properties of the wrapper, except
+/// for the Window: page realms use the default JSC global (no private
+/// properties), so its state goes on the per-realm window listener holder,
+/// which scripts cannot reach.
+fn handler_get<'s>(s: &Scope<'s>, object: Object<'_>, key: &str) -> JsResult<Option<Value<'s>>> {
+    if object.as_raw() == s.global().as_raw() {
+        return Ok(window_listener_array(s, false)?.map(|h| h.get(key)).transpose()?.filter(|v| !v.is_undefined()));
+    }
+    s.get_hidden(object, key)
+}
+fn handler_set(s: &Scope<'_>, object: Object<'_>, key: &str, value: Value<'_>) -> JsResult<()> {
+    if object.as_raw() == s.global().as_raw() {
+        let holder = window_listener_array(s, true)?.expect("created window holder");
+        return holder.set(key, value);
+    }
+    s.set_hidden(object, key, value)
+}
+
 /// IDL event handlers use an ordinary listener slot and a traced hidden value.
 /// Replacing a non-null handler preserves its position among other listeners.
 pub(crate) fn event_handler<'s>(s: &Scope<'s>, target: &EventTargetData, ty: &str) -> JsResult<Value<'s>> {
     let object =
         target_object(s, &target.page, target.key)?.ok_or_else(|| JsError::Type("Illegal invocation".into()))?;
-    Ok(s.get_hidden(object, &format!("__lpHandler_{ty}"))?.unwrap_or(s.null()))
+    Ok(handler_get(s, object, &format!("__lpHandler_{ty}"))?.unwrap_or(s.null()))
 }
 pub(crate) fn set_event_handler(
     s: &Scope<'_>,
@@ -431,13 +449,12 @@ pub(crate) fn set_event_handler(
     let value_key = format!("__lpHandler_{ty}");
     let slot_key = format!("__lpHandlerSlot_{ty}");
     let value = if value.as_object().is_some_and(|o| o.is_function()) { value } else { s.null() };
-    let slot = s
-        .get_hidden(object, &slot_key)?
+    let slot = handler_get(s, object, &slot_key)?
         .filter(|v| !v.is_undefined())
         .map(|v| v.to_number())
         .transpose()?
         .map(|v| v as u32);
-    s.set_hidden(object, &value_key, value)?;
+    handler_set(s, object, &value_key, value)?;
     if let Some(slot) = slot {
         if value.is_null() {
             let handle = handle_for(s.realm_id(), slot);
@@ -445,17 +462,26 @@ pub(crate) fn set_event_handler(
             if let Some(array) = listener_array(s, object, false)? {
                 array.set_index(slot, s.undefined())?;
             }
-            s.set_hidden(object, &slot_key, s.undefined())?;
+            handler_set(s, object, &slot_key, s.undefined())?;
         }
         return Ok(());
     }
     if value.is_null() {
         return Ok(());
     }
+    let cancel_on_false = !matches!(ty, "mouseover" | "error");
     let callback = s.function("eventHandler", move |s, this, args| {
         if let Some(object) = this.as_object() {
-            if let Some(handler) = s.get_hidden(object, &value_key)?.and_then(|v| v.as_object()) {
-                handler.call(Some(object), &[args.get(0)])?;
+            if let Some(handler) = handler_get(s, object, &value_key)?.and_then(|v| v.as_object()) {
+                let result = handler.call(Some(object), &[args.get(0)])?;
+                // HTML "process the event handler return value".
+                if cancel_on_false && result.is_boolean() && !result.to_bool() {
+                    if let Some(event) = args.get(0).as_object() {
+                        if let Some(prevent) = event.get("preventDefault")?.as_object() {
+                            prevent.call(Some(event), &[])?;
+                        }
+                    }
+                }
             }
         }
         Ok(s.undefined())
@@ -470,7 +496,7 @@ pub(crate) fn set_event_handler(
         }
     }
     array.set_index(slot, callback.value())?;
-    s.set_hidden(object, &slot_key, s.number(slot as f64))?;
+    handler_set(s, object, &slot_key, s.number(slot as f64))?;
     target.page.dom.borrow_mut().add_listener(
         target.key,
         ty,

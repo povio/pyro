@@ -410,6 +410,7 @@ impl JsClass for HtmlElement {
     type Data = NodeData;
     type Parent = Element;
     fn define(def: &mut ClassDef<Self>) {
+        crate::handlers::define_global(def);
         def.constructor(0, |s, nt, _a| crate::custom::construct_html_element(s, nt));
         reflect_str!(def, "title", "title");
         reflect_str!(def, "lang", "lang");
@@ -1547,6 +1548,7 @@ impl JsClass for SvgElement {
     type Data = NodeData;
     type Parent = Element;
     fn define(def: &mut ClassDef<Self>) {
+        crate::handlers::define_global(def);
         def.getter("dataset", |s, n| Ok(collections::dataset(s, n.page(), n.id)?.value()));
         def.getter("style", |s, n| Ok(crate::css::inline_style(s, n.page(), n.id)?.value()));
         def.getter("ownerSVGElement", |s, n| {
