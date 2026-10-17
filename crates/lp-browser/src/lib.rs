@@ -10,6 +10,7 @@ mod bindings;
 mod loader;
 mod nav;
 mod stylesheets;
+mod viewport;
 mod window;
 
 use lp_js::{Engine, EngineHooks, JsError, Realm, RealmId, RealmOptions};
@@ -221,6 +222,8 @@ pub struct Page {
     session_storage: lp_webapi::StorageNamespace,
     user_agent_override: Option<lp_webapi::UserAgentOverride>,
     request_defaults: lp_net::RequestDefaults,
+    viewport: lp_dom::media::Viewport,
+    pending_resize: Option<LoaderId>,
 }
 
 /// Browser-thread state: the loop state type for [`EventLoop`].
@@ -448,6 +451,8 @@ impl Browser {
             session_storage: Default::default(),
             user_agent_override: None,
             request_defaults: Default::default(),
+            viewport: Default::default(),
+            pending_resize: None,
         });
         self.navigate(
             id,
