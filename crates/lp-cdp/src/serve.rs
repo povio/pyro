@@ -8,8 +8,8 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::net::{IpAddr, SocketAddr};
 use std::process::ExitCode;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 
 use lp_runtime::RunOutcome;
 use tokio::sync::{mpsc, oneshot, Semaphore};
@@ -166,33 +166,92 @@ pub struct ThreadPerConnection {
     next: AtomicU64,
 }
 
+/// What the I/O side needs to reach a browser thread.
+struct ThreadControl {
+    handle: lp_runtime::LoopHandle<lp_browser::Browser>,
+    /// Interrupts running JavaScript; `None` if this JSC lacks the capability.
+    terminate: Option<lp_js::TerminateHandle>,
+}
+
+impl ThreadControl {
+    /// Connection gone: stop any running script, then queue teardown ahead
+    /// of the per-message permits (the thread may be busy).
+    fn close(&self) {
+        if let Some(t) = &self.terminate {
+            t.terminate();
+        }
+        let _ = self.handle.post(|_| INBOX.with(|q| q.borrow_mut().push_back(Inbound::Closed)));
+    }
+}
+
+/// Close coordination between the connection (I/O side) and its browser thread.
+#[derive(Default)]
+struct CloseState {
+    control: OnceLock<ThreadControl>,
+    closed: AtomicBool,
+}
+
+impl CloseState {
+    /// Connection ended. Whichever of this and the thread's start-up comes
+    /// second performs the close, so a close during engine start is not lost.
+    fn close(&self) {
+        self.closed.store(true, Ordering::SeqCst);
+        if let Some(control) = self.control.get() {
+            control.close();
+        }
+    }
+
+    fn set_control(&self, control: ThreadControl) {
+        if self.control.set(control).is_ok() && self.closed.load(Ordering::SeqCst) {
+            self.control.get().expect("just set").close();
+        }
+    }
+}
+
 impl SessionFactory for ThreadPerConnection {
     fn start(&self, _peer: SocketAddr) -> std::io::Result<SessionChannels> {
         let n = self.next.fetch_add(1, Ordering::Relaxed);
         let (inbound_tx, mut inbound_rx) = mpsc::channel::<Inbound>(INFLIGHT);
         let (outbox, outbound) = Outbox::channel(DEFAULT_OUTBOUND_BUDGET);
-        let (handle_tx, handle_rx) = oneshot::channel();
+        let state = Arc::new(CloseState::default());
+        let (ready_tx, ready_rx) = oneshot::channel::<()>();
+        let (finished_tx, finished_rx) = oneshot::channel::<()>();
+        let (closed_tx, mut closed_rx) = tokio::sync::watch::channel(false);
         let permits = Arc::new(Semaphore::new(INFLIGHT));
-        let thread_permits = permits.clone();
-        std::thread::Builder::new()
-            .name(format!("lp-browser-{n}"))
-            .spawn(move || run_browser_thread(outbox, handle_tx, thread_permits))?;
-        // Forwards socket messages to the browser thread. At most INFLIGHT
-        // messages wait there; beyond that the socket reader stops.
+        let (thread_permits, thread_state) = (permits.clone(), state.clone());
+        std::thread::Builder::new().name(format!("lp-browser-{n}")).spawn(move || {
+            // Dropped when the thread ends, however it ends: releases the slot.
+            let _finished = finished_tx;
+            run_browser_thread(outbox, thread_state, ready_tx, thread_permits);
+        })?;
+        // Forwards socket messages, in order, to the browser thread. At most
+        // INFLIGHT messages wait there; beyond that the socket reader stops.
+        // It never consumes messages it does not forward.
+        let forward_state = state.clone();
         tokio::spawn(async move {
-            let Ok(handle) = handle_rx.await else { return };
-            while let Some(message) = inbound_rx.recv().await {
-                let closed = matches!(message, Inbound::Closed);
-                let Ok(permit) = permits.acquire().await else { return };
+            if ready_rx.await.is_err() {
+                return; // engine failed to start; the thread already ended
+            }
+            let control = forward_state.control.get().expect("set before ready");
+            while let Some(Inbound::Text(text)) = inbound_rx.recv().await {
+                let permit = tokio::select! {
+                    permit = permits.acquire() => permit,
+                    // A busy session must not keep this task alive after close.
+                    _ = closed_rx.wait_for(|closed| *closed) => return,
+                };
+                let Ok(permit) = permit else { return };
                 permit.forget();
-                if handle.post(move |_| INBOX.with(|q| q.borrow_mut().push_back(message))).is_err() || closed {
+                if control.handle.post(move |_| INBOX.with(|q| q.borrow_mut().push_back(Inbound::Text(text)))).is_err()
+                {
                     return;
                 }
             }
-            // Reader gone without an explicit close: tell the session.
-            let _ = handle.post(|_| INBOX.with(|q| q.borrow_mut().push_back(Inbound::Closed)));
         });
-        Ok(SessionChannels { inbound: inbound_tx, outbound })
+        let on_close: Box<dyn FnOnce() + Send> = Box::new(move || {
+            let _ = closed_tx.send(true);
+            state.close();
+        });
+        Ok(SessionChannels { inbound: inbound_tx, outbound, finished: Some(finished_rx), on_close: Some(on_close) })
     }
 }
 
@@ -201,42 +260,43 @@ thread_local! {
     static INBOX: RefCell<VecDeque<Inbound>> = const { RefCell::new(VecDeque::new()) };
 }
 
-fn run_browser_thread(
-    outbox: Outbox,
-    handle_tx: oneshot::Sender<lp_runtime::LoopHandle<lp_browser::Browser>>,
-    permits: Arc<Semaphore>,
-) {
+fn run_browser_thread(outbox: Outbox, state: Arc<CloseState>, ready: oneshot::Sender<()>, permits: Arc<Semaphore>) {
     let host = match EngineHost::new(outbox.clone()) {
         Ok(host) => host,
         Err(e) => {
             eprintln!("lightningpanda: {}", e.message);
-            return; // dropping outbox and handle_tx closes the connection
+            return; // dropping outbox and `ready` closes the connection
         }
     };
     let mut browser = Browser::new(host);
-    if handle_tx.send(browser.host().thread.handle()).is_err() {
+    let terminate = browser.host().thread.browser.engine.terminate_handle().ok();
+    state.set_control(ThreadControl { handle: browser.host().thread.handle(), terminate });
+    if ready.send(()).is_err() {
         return;
     }
     let mut sink = outbox;
+    let closing = || INBOX.with(|q| q.borrow().iter().any(|m| matches!(m, Inbound::Closed)));
     loop {
         let has_mail = || INBOX.with(|q| !q.borrow().is_empty());
         let outcome = browser.host_mut().run_until_work(None, has_mail);
         browser.host_mut().flush();
-        let mut closed = matches!(outcome, RunOutcome::Idle | RunOutcome::Stopped) && !has_mail();
+        if closing() || (matches!(outcome, RunOutcome::Idle | RunOutcome::Stopped) && !has_mail()) {
+            break; // queued commands of a closed connection are not run
+        }
         while let Some(message) = INBOX.with(|q| q.borrow_mut().pop_front()) {
-            permits.add_permits(1);
             match message {
                 Inbound::Text(text) => {
+                    permits.add_permits(1);
                     browser.handle_text(&text, &mut sink);
                     browser.host_mut().flush();
+                    if closing() {
+                        break;
+                    }
                 }
-                Inbound::Closed => {
-                    closed = true;
-                    break;
-                }
+                Inbound::Closed => break,
             }
         }
-        if closed {
+        if closing() {
             break;
         }
     }

@@ -61,7 +61,7 @@ impl SessionFactory for ThreadFactory {
             }
             browser.shutdown();
         });
-        Ok(SessionChannels { inbound: in_tx, outbound: out_rx })
+        Ok(SessionChannels { inbound: in_tx, outbound: out_rx, finished: None, on_close: None })
     }
 }
 
@@ -83,7 +83,7 @@ impl SessionFactory for EndsImmediately {
     fn start(&self, _peer: SocketAddr) -> std::io::Result<SessionChannels> {
         let (in_tx, _in_rx) = mpsc::channel::<Inbound>(1);
         let (_out_tx, out_rx) = Outbox::channel(DEFAULT_OUTBOUND_BUDGET);
-        Ok(SessionChannels { inbound: in_tx, outbound: out_rx })
+        Ok(SessionChannels { inbound: in_tx, outbound: out_rx, finished: None, on_close: None })
     }
 }
 
@@ -96,7 +96,7 @@ impl SessionFactory for NeverReads {
         let (out_tx, out_rx) = Outbox::channel(DEFAULT_OUTBOUND_BUDGET);
         // Keep both ends alive for the test's duration.
         std::mem::forget((in_rx, out_tx));
-        Ok(SessionChannels { inbound: in_tx, outbound: out_rx })
+        Ok(SessionChannels { inbound: in_tx, outbound: out_rx, finished: None, on_close: None })
     }
 }
 
@@ -320,4 +320,78 @@ async fn unresponsive_session_still_releases_slot_on_client_close() {
     drop(s);
     let response = tokio::time::timeout(Duration::from_secs(5), http_get(addr, "/json/version", "127.0.0.1")).await;
     assert!(response.expect("slot was released").starts_with("HTTP/1.1 200"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn unfinished_fragmented_message_times_out() {
+    let addr = start_with(quick(1), ThreadFactory).await;
+    let mut s = upgrade(addr).await;
+    // A complete frame with FIN=0: the raw buffer is empty but a message is open.
+    let mut first = masked(1, br#"{"id":1,"#);
+    first[0] &= 0x7f;
+    s.write_all(&first).await.unwrap();
+    let (opcode, payload) =
+        tokio::time::timeout(Duration::from_secs(5), read_frame(&mut s)).await.expect("closed in time");
+    assert_eq!(opcode, 8);
+    assert_eq!(u16::from_be_bytes([payload[0], payload[1]]), 1008);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn unread_burst_then_half_close_releases_slot() {
+    let addr = start_with(quick(1), NeverReads).await;
+    let mut s = upgrade(addr).await;
+    let message = masked(1, br#"{"id":1,"method":"Browser.getVersion"}"#);
+    let mut burst = Vec::with_capacity(message.len() * 10_000);
+    for _ in 0..10_000 {
+        burst.extend_from_slice(&message);
+    }
+    let _ = s.write_all(&burst).await;
+    let _ = s.shutdown().await; // FIN behind unread data
+    let response = tokio::time::timeout(Duration::from_secs(5), http_get(addr, "/json/version", "127.0.0.1")).await;
+    assert!(response.expect("slot released despite unread data ahead of FIN").starts_with("HTTP/1.1 200"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn connection_tasks_do_not_panic() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static PANICS: AtomicUsize = AtomicUsize::new(0);
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        PANICS.fetch_add(1, Ordering::SeqCst);
+        previous(info);
+    }));
+    let addr = start_with(quick(1), EndsImmediately).await;
+    let mut held = upgrade(addr).await;
+    let (opcode, _) = read_frame(&mut held).await;
+    assert_eq!(opcode, 8);
+    let response = tokio::time::timeout(Duration::from_secs(5), http_get(addr, "/json/version", "127.0.0.1")).await;
+    assert!(response.unwrap().starts_with("HTTP/1.1 200"));
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(PANICS.load(Ordering::SeqCst), 0, "no task panicked (e.g. JoinHandle polled after completion)");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn slot_is_held_until_the_session_finishes() {
+    struct SlowFinish;
+    impl SessionFactory for SlowFinish {
+        fn start(&self, _peer: SocketAddr) -> std::io::Result<SessionChannels> {
+            let (in_tx, mut in_rx) = mpsc::channel::<Inbound>(1);
+            let (out_tx, out_rx) = Outbox::channel(DEFAULT_OUTBOUND_BUDGET);
+            let (done_tx, done_rx) = tokio::sync::oneshot::channel();
+            thread::spawn(move || {
+                while in_rx.blocking_recv().is_some() {}
+                thread::sleep(Duration::from_millis(500)); // teardown work
+                drop(out_tx);
+                drop(done_tx);
+            });
+            Ok(SessionChannels { inbound: in_tx, outbound: out_rx, finished: Some(done_rx), on_close: None })
+        }
+    }
+    let addr = start_with(quick(1), SlowFinish).await;
+    let s = upgrade(addr).await;
+    drop(s);
+    let started = std::time::Instant::now();
+    let response = tokio::time::timeout(Duration::from_secs(5), http_get(addr, "/json/version", "127.0.0.1")).await;
+    assert!(response.unwrap().starts_with("HTTP/1.1 200"));
+    assert!(started.elapsed() >= Duration::from_millis(400), "slot released only after the session thread finished");
 }

@@ -166,12 +166,19 @@ impl EngineHost {
         Ok((p.main_frame.id.0.clone(), p.main_frame.loader_id.0.clone(), p.main_frame.url.clone()))
     }
 
-    fn run_now(&self, page: PageKey, source: &str, world: Option<&str>, id: &str) -> CdpResult<()> {
-        let state = self.pages.get(&page).ok_or_else(|| CdpError::server("page is gone"))?;
-        let Some(p) = self.thread.browser.page(state.id) else { return Ok(()) };
+    /// `runImmediately`: evaluates in the current document, creating the
+    /// isolated world first when it does not exist yet (its context is
+    /// announced like any other).
+    fn run_now(&mut self, page: PageKey, source: &str, world: Option<&str>, id: &str) -> CdpResult<()> {
+        let page_id = self.pages.get(&page).ok_or_else(|| CdpError::server("page is gone"))?.id;
         let realm = match world {
-            Some(name) => p.main_frame.world(name).cloned(),
-            None => p.main_frame.main_realm().cloned(),
+            Some(name) => Some(
+                self.thread
+                    .browser
+                    .isolated_world(page_id, name)
+                    .map_err(|e| CdpError::server(format!("cannot create isolated world: {e}")))?,
+            ),
+            None => self.thread.browser.page(page_id).and_then(|p| p.main_frame.main_realm().cloned()),
         };
         if let Some(realm) = realm {
             if let Ok(scope) = realm.scope() {
@@ -230,8 +237,10 @@ impl EngineHost {
     }
 
     pub(super) fn on_page_event(&mut self, page: PageKey, event: PageEvent) {
-        let all = self.sessions_of(page, |_| true);
-        let lifecycle = self.sessions_of(page, |s| s.lifecycle_events);
+        // Page-domain events go only to sessions that enabled Page (Chrome
+        // semantics); lifecycle additionally needs setLifecycleEventsEnabled.
+        let all = self.sessions_of(page, |s| s.page_enabled);
+        let lifecycle = self.sessions_of(page, |s| s.page_enabled && s.lifecycle_events);
         let runtime = self.sessions_of(page, |s| s.runtime_enabled);
         match event {
             PageEvent::FrameNavigate { frame_id, loader_id, url, reason, .. } => {
@@ -263,6 +272,8 @@ impl EngineHost {
                 }
             }
             PageEvent::RealmDestroyed { realm, .. } => {
+                // Evaluations still awaiting a promise in it can never settle.
+                self.pending.fail_context(context_id(realm));
                 // Handles into a disposed realm can never be used again.
                 for s in &all {
                     if let Some(session) = self.sessions.get(s) {
@@ -335,9 +346,8 @@ impl EngineHost {
                         self.event("Runtime.executionContextCreated", &json!({ "context": context }), s);
                     }
                 }
-                for s in &all {
-                    self.event("DOM.documentUpdated", &json!({}), s);
-                }
+                // DOM.documentUpdated is a DOM-domain event; DOM.enable is not
+                // implemented yet, so no session can have asked for it.
             }
             PageEvent::FrameNavigateFailed { frame_id, loader_id, error, cdp_request_id, .. } => {
                 if let Some(state) = self.pages.get_mut(&page) {

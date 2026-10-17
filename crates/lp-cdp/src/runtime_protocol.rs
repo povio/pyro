@@ -68,37 +68,10 @@ impl RemoteObject {
     }
 }
 
-/// ECMAScript `Number::toString(10)` for finite numbers, built from Rust's
-/// shortest round-trip digits.
+/// ECMAScript `Number::toString(10)` (shortest round-trip digits with the
+/// ECMAScript tie rule and exponent thresholds), via `ryu-js`.
 pub fn format_number(n: f64) -> String {
-    if n == 0.0 {
-        return "0".to_owned();
-    }
-    let sci = format!("{:e}", n.abs()); // e.g. "1.2345e3", "1e21", "5e-7"
-    let (mantissa, exp) = sci.split_once('e').expect("LowerExp has an exponent");
-    let digits: String = mantissa.chars().filter(|c| *c != '.').collect();
-    let k = digits.len() as i32;
-    let point = exp.parse::<i32>().expect("integer exponent") + 1; // value = 0.digits * 10^point
-    let body = if k <= point && point <= 21 {
-        format!("{digits}{}", "0".repeat((point - k) as usize))
-    } else if 0 < point && point <= 21 {
-        format!("{}.{}", &digits[..point as usize], &digits[point as usize..])
-    } else if -6 < point && point <= 0 {
-        format!("0.{}{digits}", "0".repeat((-point) as usize))
-    } else {
-        let e = point - 1;
-        let sign = if e < 0 { '-' } else { '+' };
-        if k == 1 {
-            format!("{digits}e{sign}{}", e.abs())
-        } else {
-            format!("{}.{}e{sign}{}", &digits[..1], &digits[1..], e.abs())
-        }
-    };
-    if n < 0.0 {
-        format!("-{body}")
-    } else {
-        body
-    }
+    ryu_js::Buffer::new().format(n).to_owned()
 }
 
 fn number_value(n: f64) -> Value {
@@ -299,6 +272,10 @@ impl<H> HandleTable<H> {
             .ok_or_else(|| CdpError::server("Could not find object with given id"))
     }
 
+    pub fn group_of(&self, object_id: &str) -> Option<&str> {
+        self.entries.get(object_id).and_then(|e| e.group.as_deref())
+    }
+
     pub fn release(&mut self, object_id: &str) -> Option<H> {
         self.entries.remove(object_id).map(|e| e.handle)
     }
@@ -350,6 +327,7 @@ mod tests {
             (-2.5e30, "-2.5e+30"),
             (0.1, "0.1"),
             (-42.0, "-42"),
+            (f64::from_bits(0x430a8e5672bc7312), "934356417220194.2"),
         ] {
             assert_eq!(format_number(n), js, "{n:e}");
         }

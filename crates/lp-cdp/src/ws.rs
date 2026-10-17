@@ -97,6 +97,11 @@ impl Decoder {
         self.buf.len() - self.pos
     }
 
+    /// True while a frame or a fragmented message is incomplete.
+    pub fn in_progress(&self) -> bool {
+        self.buffered() > 0 || self.partial.is_some()
+    }
+
     /// Decodes the next complete message. After an error the decoder stays
     /// failed: the connection must be closed with [`WsError::close_code`].
     pub fn next_message(&mut self) -> Result<Option<Message>, WsError> {
@@ -390,7 +395,9 @@ mod tests {
         d.feed(&client_frame(true, OP_PING, b"p"));
         d.feed(&client_frame(true, OP_CONTINUATION, b"1}"));
         assert_eq!(d.next_message(), Ok(Some(Message::Ping(b"p".to_vec()))));
+        assert!(d.in_progress(), "fragmented message still open after the ping");
         assert_eq!(d.next_message(), Ok(Some(Message::Text("{\"id\":1}".into()))));
+        assert!(!d.in_progress());
     }
 
     #[test]
