@@ -587,19 +587,20 @@ impl Body {
     pub(crate) fn is_null(&self) -> bool {
         self.wire.lock().unwrap().null_body
     }
+    fn abort_error<'s>(&self, s: &Scope<'s>) -> Value<'s> {
+        let reason = self.abort_reason.borrow().upgrade();
+        reason
+            .as_ref()
+            .and_then(|r| r.borrow().as_ref().map(|v| v.get(s)))
+            .unwrap_or_else(|| JsError::dom("AbortError", "Fetch aborted").to_value(s))
+    }
     fn error<'s>(&self, s: &Scope<'s>) -> Option<Value<'s>> {
         // A null body has no stream for abort or network failure to error.
         if self.is_null() {
             return None;
         }
         if self.aborted.get() {
-            let reason = self.abort_reason.borrow().upgrade();
-            return Some(
-                reason
-                    .as_ref()
-                    .and_then(|r| r.borrow().as_ref().map(|v| v.get(s)))
-                    .unwrap_or_else(|| JsError::dom("AbortError", "Fetch aborted").to_value(s)),
-            );
+            return Some(self.abort_error(s));
         }
         let error = self.wire.lock().unwrap().terminal.as_ref().and_then(|r| r.as_ref().err().cloned());
         if self.disposed.get() {
@@ -708,7 +709,9 @@ impl Body {
                 let deferred = job.promise.borrow_mut().take();
                 if let (Some(deferred), Some(realm)) = (deferred, job.realm.upgrade()) {
                     if let Ok(s) = realm.scope() {
-                        let _ = deferred.reject(&s, self.error(&s).unwrap());
+                        // Fetch itself still rejects if aborted before headers,
+                        // even when its response has no body stream to error.
+                        let _ = deferred.reject(&s, self.abort_error(&s));
                     }
                 }
             }
