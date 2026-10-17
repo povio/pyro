@@ -467,3 +467,129 @@ fn range_text_respects_nested_container_boundaries() {
     );
     assert_eq!(eval(&e.main, "r.collapse(true); r.toString()"), "");
 }
+
+#[test]
+fn storage_methods_properties_and_reentrant_coercion() {
+    let e = env("<body>");
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"
+        localStorage.setItem('first', 'one');
+        localStorage.second = 'two';
+        localStorage.setItem('first', 'updated');
+        JSON.stringify([localStorage instanceof Storage, localStorage === localStorage,
+            localStorage.length, localStorage.key(0), localStorage.key(1), localStorage.key(2),
+            localStorage.getItem('missing'), localStorage.first, Object.keys(localStorage)])
+    "#
+        ),
+        r#"[true,true,2,"first","second",null,null,"updated",["first","second"]]"#
+    );
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"
+        localStorage.setItem({toString(){ localStorage.setItem('nested','yes'); return 'coerced'; }},
+            {toString(){return localStorage.getItem('nested');}});
+        delete localStorage.second;
+        localStorage.removeItem('missing');
+        localStorage.coerced + ':' + localStorage.length + ':' + sessionStorage.length
+    "#
+        ),
+        "yes:3:0"
+    );
+    assert_eq!(
+        eval(&e.main, "localStorage.clear(); localStorage.length + ':' + (localStorage.first === undefined)"),
+        "0:true"
+    );
+    assert_eq!(eval(&e.main, "try {new Storage()} catch(e) {e.name}"), "TypeError");
+}
+
+fn storage_page(
+    engine: &Engine,
+    url: &str,
+    local: StorageNamespace,
+    session: StorageNamespace,
+) -> (Rc<PageDom>, Realm) {
+    let dom = Rc::new(RefCell::new(Dom::new()));
+    let document = parse_document(&dom, url, "<body>");
+    dom.borrow_mut().set_document_active(document, true).unwrap();
+    let page = PageDom::new(dom, document);
+    page.set_storage_namespaces(local, session);
+    let realm = new_realm(engine, engine.register::<TestWindow>(), &page, "");
+    (page, realm)
+}
+
+#[test]
+fn storage_partitions_origins_contexts_and_page_sessions() {
+    let engine = Engine::new().unwrap();
+    register(&engine);
+    let local = StorageNamespace::default();
+    let session = StorageNamespace::default();
+    let (_p1, r1) = storage_page(&engine, "http://example.test/a", local.clone(), session.clone());
+    assert_eq!(
+        eval(&r1, "localStorage.token='synthetic'; sessionStorage.tab='first'; localStorage.token"),
+        "synthetic"
+    );
+    let (_p2, r2) = storage_page(&engine, "http://example.test/b", local.clone(), StorageNamespace::default());
+    assert_eq!(eval(&r2, "localStorage.token + ':' + sessionStorage.getItem('tab')"), "synthetic:null");
+    let (_p3, r3) = storage_page(&engine, "http://example.test/new-document", local.clone(), session);
+    assert_eq!(eval(&r3, "localStorage.token + ':' + sessionStorage.tab"), "synthetic:first");
+    let (_p4, r4) = storage_page(&engine, "https://example.test/", local, StorageNamespace::default());
+    assert_eq!(eval(&r4, "localStorage.getItem('token')"), "null");
+    let (_p5, r5) =
+        storage_page(&engine, "http://example.test/", StorageNamespace::default(), StorageNamespace::default());
+    assert_eq!(eval(&r5, "localStorage.getItem('token')"), "null");
+    let (_p6, r6) =
+        storage_page(&engine, "data:text/html,hello", StorageNamespace::default(), StorageNamespace::default());
+    assert_eq!(eval(&r6, "try {localStorage} catch(e) {e.name}"), "SecurityError");
+}
+
+#[test]
+fn storage_quota_failure_is_atomic_and_replacement_reuses_budget() {
+    let engine = Engine::new().unwrap();
+    register(&engine);
+    let (_p, r) =
+        storage_page(&engine, "http://example.test/", StorageNamespace::with_quota(12), StorageNamespace::default());
+    assert_eq!(
+        eval(
+            &r,
+            r#"
+        localStorage.setItem('a','12345');
+        let failure;
+        try {localStorage.setItem('a','123456')} catch(e) {failure=e.name;}
+        failure + ':' + localStorage.a + ':' + localStorage.length
+    "#
+        ),
+        "QuotaExceededError:12345:1"
+    );
+    assert_eq!(eval(&r, "localStorage.a='1'; localStorage.b='12'; localStorage.length"), "2");
+    assert_eq!(eval(&r, "localStorage.clear(); localStorage.setItem('x','😀😀'); localStorage.x"), "😀😀");
+}
+
+#[test]
+fn storage_is_shared_across_worlds_and_inherited_blank_origin() {
+    let e = env("<body>");
+    let isolated = new_realm(&e.engine, e.engine.register::<TestWindow>(), &e.page, "isolated");
+    assert_eq!(eval(&e.main, "localStorage.setItem('shared','yes'); localStorage.shared"), "yes");
+    assert_eq!(eval(&isolated, "localStorage.shared"), "yes");
+    let document = e.page.document();
+    e.page.dom.borrow_mut().set_document_url(document, "about:blank").unwrap();
+    assert_eq!(eval(&isolated, "try {sessionStorage} catch(e) {e.name}"), "SecurityError");
+    let inherited = e
+        .engine
+        .create_realm(RealmOptions {
+            global_class: Some(e.engine.register::<TestWindow>()),
+            origin: Some("http://localhost:5173".into()),
+            name: "inherited".into(),
+        })
+        .unwrap();
+    inherited
+        .set_global_data::<TestWindow>(TestWindowData {
+            page: e.page.clone(),
+            target: EventTargetData::window(&e.page, e.page.window_target().unwrap()),
+        })
+        .unwrap();
+    install(&inherited.scope().unwrap(), e.page.clone()).unwrap();
+    assert_eq!(eval(&inherited, "localStorage.shared"), "yes");
+}

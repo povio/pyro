@@ -55,6 +55,8 @@ where
     W::Data: WindowHost,
 {
     def.getter("document", |s, w| Ok(crate::node::wrap_node(s, w.page(), w.page().document())?.value()));
+    def.getter("localStorage", |s, w| crate::storage::window_storage(s, w.page(), false));
+    def.getter("sessionStorage", |s, w| crate::storage::window_storage(s, w.page(), true));
     def.getter("customElements", |s, w| crate::custom::registry(s, w.page()));
     def.getter("navigator", |s, w| navigator(s, w.page()));
     def.getter("clientInformation", |s, w| navigator(s, w.page()));
