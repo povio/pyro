@@ -428,4 +428,93 @@ fn deep_trees_do_not_recurse() {
     // Multi-context steps over the whole chain: merge + sort by index.
     assert_eq!(num(&dom, root, "count(.//div/parent::*)"), d * 2.0 - 1.0);
     assert_eq!(num(&dom, root, "count(//div[1])"), d * 2.0 - 1.0);
+    // Multi-context descendant/ancestor steps over the chain stay linear.
+    assert_eq!(num(&dom, root, "count(.//div/descendant::div)"), d * 2.0 - 2.0);
+    assert_eq!(num(&dom, root, "count(.//div/ancestor::*)"), d * 2.0 - 2.0 + 3.0);
+    // + section, body, html
+}
+
+/// Runs `f` on a thread with a deliberately small stack.
+fn small_stack(f: impl FnOnce() + Send + 'static) {
+    std::thread::Builder::new().stack_size(256 * 1024).spawn(f).unwrap().join().expect("no stack overflow");
+}
+
+#[test]
+fn long_operator_chains_do_not_recurse() {
+    small_stack(|| {
+        let (dom, doc) = page("<p>x</p>");
+        const N: usize = 100_000;
+        let chain = |op: &str, term: &str| vec![term; N].join(op);
+        let n = |e: &str| num(&dom, doc, e);
+        let b = |e: &str| boolean(&dom, doc, e);
+        assert_eq!(n(&chain("+", "1")), N as f64);
+        assert_eq!(n(&chain("-", "1")), 2.0 - N as f64);
+        assert_eq!(n(&chain("*", "1")), 1.0);
+        assert_eq!(n(&chain(" div ", "1")), 1.0);
+        assert_eq!(n(&chain(" mod ", "1")), 0.0);
+        assert!(!b(&chain(" or ", "0")));
+        assert!(b(&chain(" and ", "1")));
+        assert!(b(&chain("=", "1")));
+        assert!(!b(&chain("!=", "1")));
+        assert!(!b(&chain("<", "1")));
+        assert!(b(&chain("<=", "1")));
+        assert!(!b(&chain(">", "1")));
+        assert!(b(&chain(">=", "1")));
+        assert_eq!(nodes(&dom, doc, &chain("|", "//p")).len(), 1);
+        assert_eq!(nodes(&dom, doc, &chain(" | ", "//*[@id='a' or @id='b']")).len(), 0);
+        assert_eq!(n(&format!("{}1", "-".repeat(N))), 1.0);
+        assert_eq!(n(&format!("{}1", "-".repeat(N + 1))), -1.0);
+        assert_eq!(nodes(&dom, doc, &chain("/", ".")).len(), 1);
+        // Nesting is capped: a syntax error, never a crash.
+        for deep in [
+            format!("{}1{}", "(".repeat(N), ")".repeat(N)),
+            format!("//p{}{}", "[p".repeat(N), "]".repeat(N)),
+            format!("{}1{}", "not(".repeat(N), ")".repeat(N)),
+        ] {
+            assert!(matches!(evaluate(&dom, &deep, XPathNode::Node(doc)), Err(XPathError::Syntax(_))));
+        }
+        // The deepest accepted nesting still evaluates on the small stack,
+        // with an operator chain at every level.
+        let depth = 31;
+        let short = chain("+", "1");
+        let short = &short[..199]; // 100 terms
+        let mut e = String::from("1");
+        for _ in 0..depth {
+            e = format!("({short} + {e})");
+        }
+        assert_eq!(n(&e), 100.0 * depth as f64 + 1.0);
+        let pred = format!("//p{}{}", "[1 or p".repeat(depth - 1), "]".repeat(depth - 1));
+        assert_eq!(nodes(&dom, doc, &pred).len(), 1);
+    });
+}
+
+#[test]
+fn multi_context_steps_dedup_incrementally() {
+    let rows = 3000;
+    let html = format!("<table>{}</table>", "<tr><td>x</td></tr>".repeat(rows));
+    let (dom, doc) = page(&html);
+    let r = rows as f64;
+    assert_eq!(num(&dom, doc, "count(//tr/following-sibling::tr)"), r - 1.0);
+    assert_eq!(num(&dom, doc, "count(//tr/preceding-sibling::tr)"), r - 1.0);
+    assert_eq!(num(&dom, doc, "count(//td/ancestor::*)"), r + 4.0); // trs, tbody, table, body, html
+    assert_eq!(num(&dom, doc, "count(//tr/following-sibling::tr[1])"), r - 1.0);
+    assert_eq!(num(&dom, doc, "count(//tbody/descendant::td/ancestor-or-self::tr)"), r);
+}
+
+#[test]
+fn review_fixes() {
+    let (mut dom, doc) = page("<!DOCTYPE html><p id=a>x</p>");
+    // sum() of nothing is +0.
+    assert_eq!(num(&dom, doc, "1 div sum(//nothing)"), f64::INFINITY);
+    // node() includes the doctype, like upstream.
+    assert_eq!(num(&dom, doc, "count(/node())"), 2.0);
+    assert_eq!(num(&dom, doc, "count(/*)"), 1.0);
+    // id() finds the tree root itself (detached subtree) in one pass.
+    let detached = dom.create_element(doc, "div").unwrap();
+    dom.set_attribute(detached, "id", "root").unwrap();
+    let child = dom.create_element(doc, "span").unwrap();
+    dom.set_attribute(child, "id", "kid").unwrap();
+    dom.append_child(detached, child).unwrap();
+    assert_eq!(ids(&dom, child, "id('kid root nope root')"), ["root", "kid"]);
+    assert_eq!(ids(&dom, doc, "id('a')"), ["a"]);
 }

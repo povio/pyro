@@ -5,22 +5,37 @@
 //! unknown functions and wrong argument counts are syntax errors at parse
 //! time (as in browsers), and QName node tests keep their prefix so it can
 //! be resolved against a namespace resolver before evaluation.
+//!
+//! Stack safety: operator chains of one precedence level are n-ary nodes
+//! (evaluated left to right in a loop) and repeated unary minus collapses
+//! to one node, so `1+1+...+1` or `//a|//a|...` of any length gives a
+//! shallow tree. Only real nesting (parentheses, predicates, function
+//! arguments) deepens it, and that is capped at `MAX_DEPTH`; the tree
+//! height, and so the recursion depth of evaluation, traversal, clone and
+//! drop, is bounded.
 
 use super::tokenizer::{tokenize, Tok};
 use super::XPathError;
 
-/// Recursion cap so adversarial input (`((((...))))`, `------1`) cannot
-/// overflow the native stack.
-const MAX_DEPTH: u32 = 100;
+/// Nesting cap (parentheses, predicates, function arguments). Each level
+/// adds at most one node per precedence level to the tree height.
+pub(crate) const MAX_DEPTH: u32 = 32;
 
 #[derive(Clone, Debug)]
 pub(crate) enum Expr {
-    Or(Box<Expr>, Box<Expr>),
-    And(Box<Expr>, Box<Expr>),
-    Cmp(CmpOp, Box<Expr>, Box<Expr>),
-    Arith(ArithOp, Box<Expr>, Box<Expr>),
-    Neg(Box<Expr>),
-    Union(Box<Expr>, Box<Expr>),
+    /// `a or b or ...` (two or more operands).
+    Or(Vec<Expr>),
+    /// `a and b and ...` (two or more operands).
+    And(Vec<Expr>),
+    /// Left-associative chain of one comparison level: `a = b != c`.
+    Cmp(Box<Expr>, Vec<(CmpOp, Expr)>),
+    /// Left-associative chain of one arithmetic level: `a + b - c`.
+    Arith(Box<Expr>, Vec<(ArithOp, Expr)>),
+    /// Unary minus; `true` if negated an odd number of times (`--x` is
+    /// still a number conversion).
+    Neg(Box<Expr>, bool),
+    /// `a | b | ...` (two or more operands).
+    Union(Vec<Expr>),
     /// Location path, optionally rooted at a filter expression.
     Path(PathStart, Vec<Step>),
     /// `primary[pred]...` (predicates use document order).
@@ -252,14 +267,6 @@ impl Parser<'_> {
             Err(self.err())
         }
     }
-    fn eat_keyword(&mut self, kw: &str) -> bool {
-        if matches!(self.peek(), Tok::Name(n) if n == kw) {
-            self.pos += 1;
-            true
-        } else {
-            false
-        }
-    }
 
     fn expr(&mut self) -> Result<Expr, XPathError> {
         self.depth += 1;
@@ -271,98 +278,56 @@ impl Parser<'_> {
         r
     }
 
+    /// `OrExpr` down to `MultiplicativeExpr` in one frame: collect the flat
+    /// `operand (op operand)*` sequence, then group it level by level
+    /// (tightest first) into n-ary nodes. After a complete operand, `*` is
+    /// multiplication and `and`/`or`/`div`/`mod` are operator names (XPath
+    /// §3.7 disambiguation). Keeping this out of the per-level recursion
+    /// keeps nested expressions cheap on the native stack.
     fn or_expr(&mut self) -> Result<Expr, XPathError> {
-        let mut l = self.and_expr()?;
-        while self.eat_keyword("or") {
-            l = Expr::Or(Box::new(l), Box::new(self.and_expr()?));
-        }
-        Ok(l)
-    }
-
-    fn and_expr(&mut self) -> Result<Expr, XPathError> {
-        let mut l = self.equality()?;
-        while self.eat_keyword("and") {
-            l = Expr::And(Box::new(l), Box::new(self.equality()?));
-        }
-        Ok(l)
-    }
-
-    fn equality(&mut self) -> Result<Expr, XPathError> {
-        let mut l = self.relational()?;
-        loop {
-            let op = match self.peek() {
-                Tok::Eq => CmpOp::Eq,
-                Tok::Neq => CmpOp::Neq,
-                _ => return Ok(l),
-            };
+        let mut items = vec![self.unary()?];
+        let mut ops = Vec::new();
+        while let Some(op) = self.binary_op() {
             self.pos += 1;
-            l = Expr::Cmp(op, Box::new(l), Box::new(self.relational()?));
+            ops.push(op);
+            items.push(self.unary()?);
         }
+        Ok(group_levels(items, ops))
     }
 
-    fn relational(&mut self) -> Result<Expr, XPathError> {
-        let mut l = self.additive()?;
-        loop {
-            let op = match self.peek() {
-                Tok::Lt => CmpOp::Lt,
-                Tok::Lte => CmpOp::Lte,
-                Tok::Gt => CmpOp::Gt,
-                Tok::Gte => CmpOp::Gte,
-                _ => return Ok(l),
-            };
-            self.pos += 1;
-            l = Expr::Cmp(op, Box::new(l), Box::new(self.additive()?));
-        }
-    }
-
-    fn additive(&mut self) -> Result<Expr, XPathError> {
-        let mut l = self.multiplicative()?;
-        loop {
-            let op = match self.peek() {
-                Tok::Plus => ArithOp::Add,
-                Tok::Minus => ArithOp::Sub,
-                _ => return Ok(l),
-            };
-            self.pos += 1;
-            l = Expr::Arith(op, Box::new(l), Box::new(self.multiplicative()?));
-        }
-    }
-
-    /// After a complete operand, `*` is multiplication and `div`/`mod` are
-    /// operator names (XPath §3.7 disambiguation).
-    fn multiplicative(&mut self) -> Result<Expr, XPathError> {
-        let mut l = self.unary()?;
-        loop {
-            let op = match self.peek() {
-                Tok::Star => ArithOp::Mul,
-                Tok::Name(n) if n == "div" => ArithOp::Div,
-                Tok::Name(n) if n == "mod" => ArithOp::Mod,
-                _ => return Ok(l),
-            };
-            self.pos += 1;
-            l = Expr::Arith(op, Box::new(l), Box::new(self.unary()?));
-        }
+    fn binary_op(&self) -> Option<BinOp> {
+        Some(match self.peek() {
+            Tok::Name(n) => match n.as_str() {
+                "or" => BinOp::Or,
+                "and" => BinOp::And,
+                "div" => BinOp::Arith(ArithOp::Div),
+                "mod" => BinOp::Arith(ArithOp::Mod),
+                _ => return None,
+            },
+            Tok::Eq => BinOp::Cmp(CmpOp::Eq),
+            Tok::Neq => BinOp::Cmp(CmpOp::Neq),
+            Tok::Lt => BinOp::Cmp(CmpOp::Lt),
+            Tok::Lte => BinOp::Cmp(CmpOp::Lte),
+            Tok::Gt => BinOp::Cmp(CmpOp::Gt),
+            Tok::Gte => BinOp::Cmp(CmpOp::Gte),
+            Tok::Plus => BinOp::Arith(ArithOp::Add),
+            Tok::Minus => BinOp::Arith(ArithOp::Sub),
+            Tok::Star => BinOp::Arith(ArithOp::Mul),
+            _ => return None,
+        })
     }
 
     fn unary(&mut self) -> Result<Expr, XPathError> {
-        if self.eat(&Tok::Minus) {
-            self.depth += 1;
-            if self.depth > MAX_DEPTH {
-                return Err(self.err());
-            }
-            let e = self.unary();
-            self.depth -= 1;
-            return Ok(Expr::Neg(Box::new(e?)));
+        let mut negations = 0usize;
+        while self.eat(&Tok::Minus) {
+            negations += 1;
         }
-        self.union()
-    }
-
-    fn union(&mut self) -> Result<Expr, XPathError> {
-        let mut l = self.path_expr()?;
+        let mut terms = vec![self.path_expr()?];
         while self.eat(&Tok::Pipe) {
-            l = Expr::Union(Box::new(l), Box::new(self.path_expr()?));
+            terms.push(self.path_expr()?);
         }
-        Ok(l)
+        let e = if terms.len() == 1 { terms.pop().unwrap() } else { Expr::Union(terms) };
+        Ok(if negations == 0 { e } else { Expr::Neg(Box::new(e), negations % 2 == 1) })
     }
 
     fn path_expr(&mut self) -> Result<Expr, XPathError> {
@@ -520,6 +485,85 @@ impl Parser<'_> {
     }
 }
 
+#[derive(Copy, Clone)]
+enum BinOp {
+    Or,
+    And,
+    Cmp(CmpOp),
+    Arith(ArithOp),
+}
+
+impl BinOp {
+    /// Precedence level, loosest (`or`) first.
+    fn level(self) -> u8 {
+        match self {
+            BinOp::Or => 0,
+            BinOp::And => 1,
+            BinOp::Cmp(CmpOp::Eq | CmpOp::Neq) => 2,
+            BinOp::Cmp(_) => 3,
+            BinOp::Arith(ArithOp::Add | ArithOp::Sub) => 4,
+            BinOp::Arith(_) => 5,
+        }
+    }
+}
+
+/// Groups `items[0] ops[0] items[1] ...` into left-associative n-ary nodes,
+/// one precedence level at a time from the tightest, without recursion.
+fn group_levels(mut items: Vec<Expr>, mut ops: Vec<BinOp>) -> Expr {
+    for level in (0..=5).rev() {
+        if !ops.iter().any(|o| o.level() == level) {
+            continue;
+        }
+        let mut next_items = Vec::new();
+        let mut next_ops = Vec::new();
+        let mut rest_items = items.into_iter();
+        let mut first = rest_items.next().expect("operand");
+        let mut run = Vec::new();
+        for (op, e) in ops.into_iter().zip(rest_items) {
+            if op.level() == level {
+                run.push((op, e));
+            } else {
+                next_items.push(chain_node(first, std::mem::take(&mut run)));
+                next_ops.push(op);
+                first = e;
+            }
+        }
+        next_items.push(chain_node(first, run));
+        items = next_items;
+        ops = next_ops;
+    }
+    items.pop().expect("operand")
+}
+
+/// One n-ary node for `first op e op e ...` (all ops of one level).
+fn chain_node(first: Expr, run: Vec<(BinOp, Expr)>) -> Expr {
+    let Some(&(op, _)) = run.first() else { return first };
+    let operands =
+        |first: Expr, run: Vec<(BinOp, Expr)>| std::iter::once(first).chain(run.into_iter().map(|(_, e)| e)).collect();
+    match op {
+        BinOp::Or => Expr::Or(operands(first, run)),
+        BinOp::And => Expr::And(operands(first, run)),
+        BinOp::Cmp(_) => Expr::Cmp(
+            Box::new(first),
+            run.into_iter()
+                .map(|(o, e)| match o {
+                    BinOp::Cmp(c) => (c, e),
+                    _ => unreachable!("one level per run"),
+                })
+                .collect(),
+        ),
+        BinOp::Arith(_) => Expr::Arith(
+            Box::new(first),
+            run.into_iter()
+                .map(|(o, e)| match o {
+                    BinOp::Arith(a) => (a, e),
+                    _ => unreachable!("one level per run"),
+                })
+                .collect(),
+        ),
+    }
+}
+
 fn descendant_or_self() -> Step {
     Step { axis: Axis::DescendantOrSelf, test: NodeTest::Node, preds: Vec::new() }
 }
@@ -563,7 +607,7 @@ fn position_independent(e: &Expr) -> bool {
 
 fn returns_number(e: &Expr) -> bool {
     match e {
-        Expr::Number(_) | Expr::Arith(..) | Expr::Neg(_) => true,
+        Expr::Number(_) | Expr::Arith(..) | Expr::Neg(..) => true,
         Expr::Call(f, _) => f.returns_number(),
         _ => false,
     }
@@ -572,11 +616,12 @@ fn returns_number(e: &Expr) -> bool {
 fn uses_context_position(e: &Expr) -> bool {
     match e {
         Expr::Call(Func::Position | Func::Last, _) => true,
-        Expr::Call(_, args) => args.iter().any(uses_context_position),
-        Expr::Or(a, b) | Expr::And(a, b) | Expr::Cmp(_, a, b) | Expr::Arith(_, a, b) | Expr::Union(a, b) => {
-            uses_context_position(a) || uses_context_position(b)
+        Expr::Call(_, args) | Expr::Or(args) | Expr::And(args) | Expr::Union(args) => {
+            args.iter().any(uses_context_position)
         }
-        Expr::Neg(a) => uses_context_position(a),
+        Expr::Cmp(a, rest) => uses_context_position(a) || rest.iter().any(|(_, e)| uses_context_position(e)),
+        Expr::Arith(a, rest) => uses_context_position(a) || rest.iter().any(|(_, e)| uses_context_position(e)),
+        Expr::Neg(a, _) => uses_context_position(a),
         // Step and filter predicates have their own context.
         Expr::Path(PathStart::Expr(a), _) | Expr::Filter(a, _) => uses_context_position(a),
         Expr::Path(..) | Expr::Literal(_) | Expr::Number(_) | Expr::Var => false,
@@ -584,14 +629,67 @@ fn uses_context_position(e: &Expr) -> bool {
 }
 
 /// Pre-order visit of every expression node (including predicates).
+pub(crate) fn visit(e: &Expr, f: &mut dyn FnMut(&Expr)) {
+    f(e);
+    match e {
+        Expr::Or(v) | Expr::And(v) | Expr::Union(v) | Expr::Call(_, v) => {
+            for a in v {
+                visit(a, f);
+            }
+        }
+        Expr::Cmp(a, rest) => {
+            visit(a, f);
+            for (_, b) in rest {
+                visit(b, f);
+            }
+        }
+        Expr::Arith(a, rest) => {
+            visit(a, f);
+            for (_, b) in rest {
+                visit(b, f);
+            }
+        }
+        Expr::Neg(a, _) => visit(a, f),
+        Expr::Path(start, steps) => {
+            if let PathStart::Expr(a) = start {
+                visit(a, f);
+            }
+            for p in steps.iter().flat_map(|s| &s.preds) {
+                visit(p, f);
+            }
+        }
+        Expr::Filter(a, preds) => {
+            visit(a, f);
+            for p in preds {
+                visit(p, f);
+            }
+        }
+        Expr::Literal(_) | Expr::Number(_) | Expr::Var => {}
+    }
+}
+
+/// Mutable counterpart of [`visit`].
 pub(crate) fn visit_mut(e: &mut Expr, f: &mut dyn FnMut(&mut Expr)) {
     f(e);
     match e {
-        Expr::Or(a, b) | Expr::And(a, b) | Expr::Cmp(_, a, b) | Expr::Arith(_, a, b) | Expr::Union(a, b) => {
-            visit_mut(a, f);
-            visit_mut(b, f);
+        Expr::Or(v) | Expr::And(v) | Expr::Union(v) => {
+            for a in v {
+                visit_mut(a, f);
+            }
         }
-        Expr::Neg(a) => visit_mut(a, f),
+        Expr::Cmp(a, rest) => {
+            visit_mut(a, f);
+            for (_, b) in rest {
+                visit_mut(b, f);
+            }
+        }
+        Expr::Arith(a, rest) => {
+            visit_mut(a, f);
+            for (_, b) in rest {
+                visit_mut(b, f);
+            }
+        }
+        Expr::Neg(a, _) => visit_mut(a, f),
         Expr::Path(start, steps) => {
             if let PathStart::Expr(a) = start {
                 visit_mut(a, f);
@@ -627,16 +725,55 @@ mod tests {
 
     #[test]
     fn precedence() {
-        assert!(
-            matches!(ok("1 + 2 * 3"), Expr::Arith(ArithOp::Add, _, r) if matches!(*r, Expr::Arith(ArithOp::Mul, ..)))
-        );
-        assert!(
-            matches!(ok("1 - 2 - 3"), Expr::Arith(ArithOp::Sub, l, _) if matches!(*l, Expr::Arith(ArithOp::Sub, ..)))
-        );
-        assert!(matches!(ok("a or b and c"), Expr::Or(_, r) if matches!(*r, Expr::And(..))));
-        assert!(matches!(ok("div div div"), Expr::Arith(ArithOp::Div, ..)));
-        assert!(matches!(ok("-1"), Expr::Neg(_)));
-        assert!(matches!(ok("//a | //b"), Expr::Union(..)));
+        assert!(matches!(ok("1 + 2 * 3"), Expr::Arith(_, r) if matches!(&r[..], [(ArithOp::Add, Expr::Arith(..))])));
+        assert!(matches!(ok("1 - 2 - 3"), Expr::Arith(_, r) if r.len() == 2));
+        assert!(matches!(ok("a or b and c"), Expr::Or(v) if matches!(&v[..], [_, Expr::And(..)])));
+        assert!(matches!(ok("div div div"), Expr::Arith(_, r) if r[0].0 == ArithOp::Div));
+        assert!(matches!(ok("-1"), Expr::Neg(_, true)));
+        assert!(matches!(ok("--1"), Expr::Neg(_, false)));
+        assert!(matches!(ok("//a | //b | //c"), Expr::Union(v) if v.len() == 3));
+    }
+
+    /// Height of the expression tree (Exprs nested in Exprs).
+    fn height(e: &Expr) -> usize {
+        let mut children = Vec::new();
+        match e {
+            Expr::Or(v) | Expr::And(v) | Expr::Union(v) | Expr::Call(_, v) => children.extend(v),
+            Expr::Cmp(a, r) => {
+                children.push(&**a);
+                children.extend(r.iter().map(|(_, e)| e));
+            }
+            Expr::Arith(a, r) => {
+                children.push(&**a);
+                children.extend(r.iter().map(|(_, e)| e));
+            }
+            Expr::Neg(a, _) => children.push(&**a),
+            Expr::Path(s, steps) => {
+                if let PathStart::Expr(a) = s {
+                    children.push(&**a);
+                }
+                children.extend(steps.iter().flat_map(|s| &s.preds));
+            }
+            Expr::Filter(a, p) => {
+                children.push(&**a);
+                children.extend(p);
+            }
+            Expr::Literal(_) | Expr::Number(_) | Expr::Var => {}
+        }
+        1 + children.into_iter().map(height).max().unwrap_or(0)
+    }
+
+    #[test]
+    fn operator_chains_stay_shallow() {
+        for op in ["+", "-", "*", " div ", " mod ", " or ", " and ", "=", "!=", "<", "<=", ">", ">=", "|"] {
+            let src = vec!["1"; 10_000].join(op);
+            assert!(height(&ok(&src)) <= 2, "{op}");
+        }
+        assert!(height(&ok(&format!("{}1", "-".repeat(10_000)))) <= 2);
+        let nested = format!("{}1{}", "(".repeat(MAX_DEPTH as usize - 1), ")".repeat(MAX_DEPTH as usize - 1));
+        ok(&nested);
+        let too_deep = format!("{}1{}", "(".repeat(MAX_DEPTH as usize), ")".repeat(MAX_DEPTH as usize));
+        assert!(parse(&too_deep).is_err());
     }
 
     #[test]
@@ -722,6 +859,6 @@ mod tests {
             assert!(parse(bad).is_err(), "{bad:?} should fail");
         }
         assert!(parse(&"(".repeat(1000)).is_err());
-        assert!(parse(&format!("{}1", "-".repeat(1000))).is_err());
+        assert!(parse(&format!("{}1", "-".repeat(1000))).is_ok());
     }
 }

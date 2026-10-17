@@ -173,32 +173,60 @@ impl<'d> Eval<'d> {
             Expr::Number(n) => Val::Num(*n),
             Expr::Literal(s) => Val::Str(s.clone()),
             Expr::Var => Val::Str(String::new()),
-            Expr::Neg(a) => Val::Num(-self.number(self.eval(a, ctx)?)),
-            Expr::Or(a, b) => Val::Bool(to_bool(&self.eval(a, ctx)?) || to_bool(&self.eval(b, ctx)?)),
-            Expr::And(a, b) => Val::Bool(to_bool(&self.eval(a, ctx)?) && to_bool(&self.eval(b, ctx)?)),
-            Expr::Cmp(op, a, b) => {
-                let l = self.eval(a, ctx)?;
-                let r = self.eval(b, ctx)?;
-                Val::Bool(self.compare(*op, &l, &r))
+            Expr::Neg(a, odd) => {
+                let n = self.number(self.eval(a, ctx)?);
+                Val::Num(if *odd { -n } else { n })
             }
-            Expr::Arith(op, a, b) => {
-                let l = self.number(self.eval(a, ctx)?);
-                let r = self.number(self.eval(b, ctx)?);
-                Val::Num(match op {
-                    ArithOp::Add => l + r,
-                    ArithOp::Sub => l - r,
-                    ArithOp::Mul => l * r,
-                    ArithOp::Div => l / r,
-                    // Truncating remainder, like JS `%` (XPath §3.5).
-                    ArithOp::Mod => l % r,
-                })
+            // Chains are evaluated left to right in a loop (short-circuit
+            // for `or`/`and`), never by recursion per operator.
+            Expr::Or(terms) => {
+                for t in terms {
+                    if to_bool(&self.eval(t, ctx)?) {
+                        return Ok(Val::Bool(true));
+                    }
+                }
+                Val::Bool(false)
             }
-            Expr::Union(a, b) => {
-                let mut l = self.nodes(self.eval(a, ctx)?, "the operands of '|' must be node-sets")?;
-                let r = self.nodes(self.eval(b, ctx)?, "the operands of '|' must be node-sets")?;
-                l.extend(r);
-                self.sort_dedup(&mut l);
-                Val::Nodes(l)
+            Expr::And(terms) => {
+                for t in terms {
+                    if !to_bool(&self.eval(t, ctx)?) {
+                        return Ok(Val::Bool(false));
+                    }
+                }
+                Val::Bool(true)
+            }
+            Expr::Cmp(first, rest) => {
+                let mut l = self.eval(first, ctx)?;
+                for (op, e) in rest {
+                    let r = self.eval(e, ctx)?;
+                    l = Val::Bool(self.compare(*op, &l, &r));
+                }
+                l
+            }
+            Expr::Arith(first, rest) => {
+                let mut acc = self.number(self.eval(first, ctx)?);
+                for (op, e) in rest {
+                    let r = self.number(self.eval(e, ctx)?);
+                    acc = match op {
+                        ArithOp::Add => acc + r,
+                        ArithOp::Sub => acc - r,
+                        ArithOp::Mul => acc * r,
+                        ArithOp::Div => acc / r,
+                        // Truncating remainder, like JS `%` (XPath §3.5).
+                        ArithOp::Mod => acc % r,
+                    };
+                }
+                Val::Num(acc)
+            }
+            Expr::Union(terms) => {
+                let mut seen = FxHashSet::default();
+                let mut out = Vec::new();
+                for t in terms {
+                    let nodes = self.nodes(self.eval(t, ctx)?, "the operands of '|' must be node-sets")?;
+                    out.extend(nodes.into_iter().filter(|n| seen.insert(*n)));
+                }
+                self.sort_dedup(&mut out);
+                Val::Nodes(out)
             }
             Expr::Filter(primary, preds) => {
                 let mut nodes = self.nodes(self.eval(primary, ctx)?, "predicates apply only to node-sets")?;
@@ -233,20 +261,42 @@ impl<'d> Eval<'d> {
 
     fn step(&self, input: &[XN], step: &Step) -> Result<Vec<XN>, XPathError> {
         let mut out = Vec::new();
+        // Several context nodes: dedup as results arrive (overlapping axes
+        // such as following-sibling over many rows would otherwise collect
+        // O(n²) duplicates), then sort the unique nodes once.
+        let mut seen = FxHashSet::default();
+        let mut v = Vec::new();
+        // Without predicates, earlier contexts' output bounds later walks.
+        let prune = step.preds.is_empty() && input.len() > 1;
+        // (tree root, end of pre-order range) of the last subtree the
+        // descendant axes walked.
+        let mut covered: Option<(u32, u32)> = None;
         for &c in input {
-            let mut v = Vec::new();
-            self.axis(c, step.axis, &step.test, &mut v);
+            if prune && matches!(step.axis, Axis::Descendant | Axis::DescendantOrSelf) {
+                // Contexts come in document order: one inside the last walked
+                // subtree has all its descendants (and itself) produced.
+                if let XN::N(i) = c {
+                    let (root, pre, _) = self.order_key(c);
+                    if covered.is_some_and(|(r, end)| r == root && pre < end) {
+                        continue;
+                    }
+                    covered = Some((root, self.subtree_end(i)));
+                }
+            }
+            v.clear();
+            self.axis(c, step.axis, &step.test, prune.then_some(&seen), &mut v);
             for p in &step.preds {
-                v = self.filter(v, p)?;
+                v = self.filter(std::mem::take(&mut v), p)?;
             }
-            if step.axis.is_reverse() {
-                v.reverse();
+            if input.len() == 1 {
+                if step.axis.is_reverse() {
+                    v.reverse();
+                }
+                return Ok(v);
             }
-            out.extend(v);
+            out.extend(v.iter().copied().filter(|n| seen.insert(*n)));
         }
-        if input.len() > 1 {
-            self.sort_dedup(&mut out);
-        }
+        self.sort_dedup(&mut out);
         Ok(out)
     }
 
@@ -276,7 +326,7 @@ impl<'d> Eval<'d> {
     }
 
     /// Pushes the nodes of `axis` from `c` that pass `test`, in axis order.
-    fn axis(&self, c: XN, axis: Axis, test: &NodeTest, out: &mut Vec<XN>) {
+    fn axis(&self, c: XN, axis: Axis, test: &NodeTest, seen: Option<&FxHashSet<XN>>, out: &mut Vec<XN>) {
         let dom = self.dom;
         let mut push = |i: u32| {
             if i != NIL && self.matches(i, test) {
@@ -291,11 +341,11 @@ impl<'d> Eval<'d> {
                     out.push(c);
                 }
                 if axis == Axis::AncestorOrSelf {
-                    self.ancestors(c.owner(), test, out);
+                    self.ancestors(c.owner(), test, seen, out);
                 }
             }
             (XN::A(e, _), Axis::Parent) => push(e),
-            (XN::A(e, _), Axis::Ancestor) => self.ancestors(e, test, out),
+            (XN::A(e, _), Axis::Ancestor) => self.ancestors(e, test, seen, out),
             (XN::A(e, _), Axis::Following) => {
                 // Attributes precede their element's children.
                 let mut cur = dom.n(e).first_child;
@@ -326,18 +376,21 @@ impl<'d> Eval<'d> {
                 }
             }
             (XN::N(i), Axis::Parent) => push(dom.n(i).parent),
-            (XN::N(i), Axis::Ancestor) => self.ancestors(dom.n(i).parent, test, out),
-            (XN::N(i), Axis::AncestorOrSelf) => self.ancestors(i, test, out),
+            (XN::N(i), Axis::Ancestor) => self.ancestors(dom.n(i).parent, test, seen, out),
+            (XN::N(i), Axis::AncestorOrSelf) => self.ancestors(i, test, seen, out),
+            // With `seen` (no predicates, earlier contexts of the same step),
+            // reaching a node another context already produced means the
+            // rest of this walk was produced too.
             (XN::N(i), Axis::FollowingSibling) => {
                 let mut cur = dom.n(i).next;
-                while cur != NIL {
+                while cur != NIL && !seen.is_some_and(|s| s.contains(&XN::N(cur))) {
                     push(cur);
                     cur = dom.n(cur).next;
                 }
             }
             (XN::N(i), Axis::PrecedingSibling) => {
                 let mut cur = dom.n(i).prev;
-                while cur != NIL {
+                while cur != NIL && !seen.is_some_and(|s| s.contains(&XN::N(cur))) {
                     push(cur);
                     cur = dom.n(cur).prev;
                 }
@@ -355,10 +408,11 @@ impl<'d> Eval<'d> {
         }
     }
 
-    /// `from` and its ancestors, nearest first (`from` may be NIL).
-    fn ancestors(&self, from: u32, test: &NodeTest, out: &mut Vec<XN>) {
+    /// `from` and its ancestors, nearest first (`from` may be NIL). Stops at
+    /// a node in `seen` (its ancestors were produced with it).
+    fn ancestors(&self, from: u32, test: &NodeTest, seen: Option<&FxHashSet<XN>>, out: &mut Vec<XN>) {
         let mut cur = from;
-        while cur != NIL {
+        while cur != NIL && !seen.is_some_and(|s| s.contains(&XN::N(cur))) {
             if self.matches(cur, test) {
                 out.push(XN::N(cur));
             }
@@ -418,7 +472,8 @@ impl<'d> Eval<'d> {
     fn matches(&self, i: u32, test: &NodeTest) -> bool {
         let node = self.dom.n(i);
         match test {
-            NodeTest::Node => !matches!(node.kind, NodeKind::Doctype(_)),
+            // Includes the doctype, like upstream (XPath 1.0 has no doctype node).
+            NodeTest::Node => true,
             NodeTest::Text => matches!(node.kind, NodeKind::Text(_) | NodeKind::CData(_)),
             NodeTest::Comment => matches!(node.kind, NodeKind::Comment(_)),
             NodeTest::Pi(target) => match &node.kind {
@@ -542,6 +597,19 @@ impl<'d> Eval<'d> {
         }
         let pre = self.order.borrow().get(&owner).map_or(0, |&(_, p)| p);
         (root, pre, Self::sub_index(n))
+    }
+
+    /// Pre-order index just past the subtree of `i`.
+    fn subtree_end(&self, i: u32) -> u32 {
+        let mut cur = i;
+        while cur != NIL {
+            let next = self.dom.n(cur).next;
+            if next != NIL {
+                return self.order_key(XN::N(next)).1;
+            }
+            cur = self.dom.n(cur).parent;
+        }
+        u32::MAX
     }
 
     // ----- values ----------------------------------------------------------------------
@@ -674,7 +742,8 @@ impl<'d> Eval<'d> {
             Func::Count => Val::Num(self.nodes(arg(0)?, "count() needs a node-set")?.len() as f64),
             Func::Sum => {
                 let nodes = self.nodes(arg(0)?, "sum() needs a node-set")?;
-                Val::Num(nodes.iter().map(|&n| string_to_number(&self.string_value(n))).sum())
+                // fold from +0 (`Iterator::sum` of nothing is -0.0).
+                Val::Num(nodes.iter().fold(0.0, |acc, &n| acc + string_to_number(&self.string_value(n))))
             }
             Func::Id => Val::Nodes(self.id(arg(0)?, ctx.node)),
             Func::LocalName => {
@@ -763,20 +832,27 @@ impl<'d> Eval<'d> {
     }
 
     /// `id()`: whitespace-separated IDs (from every node's string-value for
-    /// a node-set), looked up in the context node's tree.
+    /// a node-set), looked up in the context node's tree (root included)
+    /// in one pre-order pass; the first element per ID wins, as in
+    /// `getElementById`.
     fn id(&self, v: Val, ctx: XN) -> Vec<XN> {
         let ids: Vec<String> = match v {
             Val::Nodes(n) => n.iter().map(|&n| self.string_value(n).into_owned()).collect(),
             v => vec![self.string(v)],
         };
-        let root = self.dom.id_of(self.dom.root_idx(ctx.owner()));
+        let mut wanted: FxHashSet<&str> =
+            ids.iter().flat_map(|s| s.split(is_xml_space)).filter(|t| !t.is_empty()).collect();
+        let root = self.dom.root_idx(ctx.owner());
         let mut out = Vec::new();
-        for token in ids.iter().flat_map(|s| s.split(is_xml_space)).filter(|t| !t.is_empty()) {
-            if let Ok(Some(el)) = self.dom.get_element_by_id(root, token) {
-                out.push(XN::N(el.idx));
+        let mut cur = root;
+        while cur != NIL && !wanted.is_empty() {
+            if let Some(id) = self.dom.n(cur).element().and_then(|e| e.id()) {
+                if wanted.remove(id) {
+                    out.push(XN::N(cur));
+                }
             }
+            cur = self.dom.following_in(cur, root);
         }
-        self.sort_dedup(&mut out);
         out
     }
 

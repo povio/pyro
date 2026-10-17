@@ -12,8 +12,9 @@
 //!   TypeError, not `InvalidStateError`.
 //! - Iterator results become invalid once the DOM changes (any tree,
 //!   attribute or character-data mutation in the page's `Dom`, tracked by
-//!   `Dom::version`): `invalidIteratorState` turns true and `iterateNext()`
-//!   throws `InvalidStateError`. Snapshots are unaffected.
+//!   `Dom::tree_version`; form-control state, focus and hover do not
+//!   count): `invalidIteratorState` turns true and `iterateNext()` throws
+//!   `InvalidStateError`. Snapshots are unaffected.
 //!
 //! Kept from upstream: a null/undefined `contextNode` of
 //! `document.evaluate` means the document; the `result` argument is
@@ -30,7 +31,7 @@ use lp_dom::xpath::{XPathError, XPathExpression as Compiled, XPathNode, XPathVal
 use lp_dom::{Dom, NodeId};
 use lp_js::{Args, ClassDef, JsClass, JsError, JsResult, NoParent, Scope, Value};
 
-use crate::collections::{attr_of, make_attr, NodeHold};
+use crate::collections::{attr_of, make_attr, AttrName, NodeHold};
 use crate::node::{wrap_node, NodeData};
 use crate::page::PageDom;
 use crate::util::*;
@@ -60,8 +61,8 @@ fn xpath_err(e: XPathError) -> JsError {
 /// A node in a result, held for the result's lifetime.
 enum Item {
     Node(NodeHold),
-    /// Owner element and qualified attribute name.
-    Attr(NodeHold, String),
+    /// Owner element and attribute name.
+    Attr(NodeHold, AttrName),
 }
 
 enum ResultValue {
@@ -76,7 +77,7 @@ pub struct XPathResultData {
     kind: u16,
     value: ResultValue,
     cursor: Cell<usize>,
-    /// `Dom::version` when the result was created (iterator validity).
+    /// `Dom::tree_version` when the result was created (iterator validity).
     version: u64,
 }
 
@@ -88,7 +89,7 @@ impl XPathResultData {
         matches!(self.kind, UNORDERED_NODE_SNAPSHOT_TYPE | ORDERED_NODE_SNAPSHOT_TYPE)
     }
     fn invalid(&self) -> bool {
-        self.is_iterator() && self.page.dom.borrow().version() != self.version
+        self.is_iterator() && self.page.dom.borrow().tree_version() != self.version
     }
     fn items(&self) -> &[Item] {
         match &self.value {
@@ -99,7 +100,7 @@ impl XPathResultData {
     fn item<'s>(&self, s: &Scope<'s>, i: usize) -> JsResult<Value<'s>> {
         match self.items().get(i) {
             Some(Item::Node(h)) => Ok(wrap_node(s, &self.page, h.id)?.value()),
-            Some(Item::Attr(h, q)) => make_attr(s, &self.page, h.id, q.clone()),
+            Some(Item::Attr(h, n)) => make_attr(s, &self.page, h.id, n.clone()),
             None => Ok(s.null()),
         }
     }
@@ -172,6 +173,7 @@ impl JsClass for XPathResult {
             r.item(s, i)
         });
         def.method("snapshotItem", 1, |s, r, a| {
+            a.require(1, "XPathResult.snapshotItem")?;
             if !r.is_snapshot() {
                 return Err(mismatch("a snapshot"));
             }
@@ -216,7 +218,7 @@ fn make_result<'s>(s: &Scope<'s>, page: &Rc<PageDom>, value: XPathValue, request
                 targets.push(target(&dom, *n)?);
             }
         }
-        (dom.version(), scalar, targets)
+        (dom.tree_version(), scalar, targets)
     };
     let value = match scalar {
         Some(v) => v,
@@ -226,7 +228,7 @@ fn make_result<'s>(s: &Scope<'s>, page: &Rc<PageDom>, value: XPathValue, request
                 .map(|(id, attr)| {
                     let h = NodeHold::new(page, id)?;
                     Ok(match attr {
-                        Some(q) => Item::Attr(h, q),
+                        Some(n) => Item::Attr(h, n),
                         None => Item::Node(h),
                     })
                 })
@@ -237,13 +239,13 @@ fn make_result<'s>(s: &Scope<'s>, page: &Rc<PageDom>, value: XPathValue, request
     Ok(s.wrap::<XPathResult>(data, None)?.value())
 }
 
-/// Node to hold for a result item (attributes: owner + qualified name).
-fn target(dom: &Dom, n: XPathNode) -> JsResult<(NodeId, Option<String>)> {
+/// Node to hold for a result item (attributes: owner element + name).
+fn target(dom: &Dom, n: XPathNode) -> JsResult<(NodeId, Option<AttrName>)> {
     Ok(match n {
         XPathNode::Node(id) => (id, None),
         XPathNode::Attr { element, index } => {
-            let q = dom.attributes(element).js()?.get(index).map(|a| a.qualified_name()).unwrap_or_default();
-            (element, Some(q))
+            let name = dom.attributes(element).js()?.get(index).map(AttrName::of);
+            (element, Some(name.ok_or_else(|| JsError::dom("InvalidStateError", "The attribute was removed."))?))
         }
     })
 }
@@ -256,8 +258,8 @@ fn context_arg(s: &Scope<'_>, v: Value<'_>, what: &str) -> JsResult<Option<(Rc<P
         return Ok(Some((n.page().clone(), XPathNode::Node(n.id))));
     }
     if let Some(a) = s.unwrap::<crate::collections::Attr>(v) {
-        let (page, element, qualified) = attr_of(&a);
-        let index = page.dom.borrow().attributes(element).js()?.iter().position(|x| x.qualified_name() == qualified);
+        let (page, element, name) = attr_of(&a);
+        let index = name.find(page.dom.borrow().attributes(element).js()?);
         let index = index.ok_or_else(|| JsError::dom("InvalidStateError", "The attribute was removed."))?;
         return Ok(Some((page.clone(), XPathNode::Attr { element, index })));
     }
@@ -333,11 +335,14 @@ fn create_ns_resolver<'s>(s: &Scope<'s>, a: &Args<'s>, what: &str) -> JsResult<V
 
 /// `document.evaluate(expression, contextNode, resolver, type, result)`.
 pub(crate) fn document_evaluate<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
+    // Argument conversions (which may run JS: resolver, valueOf) happen
+    // before the context node is resolved to a DOM position.
     let source = arg_string(&a, 0, "Document.evaluate")?;
+    let expr = compile(s, &source, a.get(2))?;
+    let ty = result_type(a.get(3))?;
     let context =
         context_arg(s, a.get(1), "Document.evaluate")?.unwrap_or_else(|| (n.page().clone(), XPathNode::Node(n.id)));
-    let expr = compile(s, &source, a.get(2))?;
-    run(s, &expr, context, result_type(a.get(3))?)
+    run(s, &expr, context, ty)
 }
 
 pub(crate) fn document_create_expression<'s>(s: &Scope<'s>, _n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
@@ -361,8 +366,9 @@ impl JsClass for XPathExpression {
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
         def.method("evaluate", 1, |s, e, a| {
+            let ty = result_type(a.get(1))?;
             let context = required_context(s, a.get(0), "XPathExpression.evaluate")?;
-            run(s, &e.expr, context, result_type(a.get(1))?)
+            run(s, &e.expr, context, ty)
         });
     }
 }
@@ -376,9 +382,10 @@ impl JsClass for XPathEvaluator {
         def.constructor(0, |s, nt, _a| s.wrap_new::<XPathEvaluator>((), nt, None));
         def.method("evaluate", 2, |s, _e, a| {
             let source = arg_string(&a, 0, "XPathEvaluator.evaluate")?;
-            let context = required_context(s, a.get(1), "XPathEvaluator.evaluate")?;
             let expr = compile(s, &source, a.get(2))?;
-            run(s, &expr, context, result_type(a.get(3))?)
+            let ty = result_type(a.get(3))?;
+            let context = required_context(s, a.get(1), "XPathEvaluator.evaluate")?;
+            run(s, &expr, context, ty)
         });
         def.method("createExpression", 1, |s, _e, a| create_expression(s, &a, "XPathEvaluator.createExpression"));
         def.method("createNSResolver", 1, |s, _e, a| create_ns_resolver(s, &a, "XPathEvaluator.createNSResolver"));

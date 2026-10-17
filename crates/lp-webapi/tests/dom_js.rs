@@ -2386,6 +2386,54 @@ fn xpath_errors_resolvers_and_invalidation() {
         eval(r, "const inv2 = document.evaluate('//p', document, null, 4, null); document.getElementById('p1').setAttribute('data-z', '1'); inv2.invalidIteratorState"),
         "true"
     );
+    assert_eq!(
+        eval(r, "const inv3 = document.evaluate('//p', document, null, 4, null); document.getElementById('p2').firstChild.data = 'changed'; inv3.invalidIteratorState"),
+        "true"
+    );
+}
+
+#[test]
+fn xpath_iterators_survive_form_state_and_focus() {
+    let e = env("<!doctype html><body><input type=checkbox id=c1><input type=checkbox id=c2><input type=radio name=r id=r1><select id=s><option>a</option><option>b</option></select><input id=t></body>");
+    let r = &e.main;
+    // Clicking/checking/focusing/typing during iteration changes no tree,
+    // attribute or character data, so the iterator stays valid (browsers).
+    assert_eq!(
+        eval(r, "const it = document.evaluate('//input | //select', document, null, XPathResult.ORDERED_NODE_ITERATOR_TYPE, null); const seen = []; let n; while ((n = it.iterateNext())) { seen.push(n.id); if (n.type === 'checkbox' || n.type === 'radio') n.click(); if (n.id === 's') n.selectedIndex = 1; if (n.id === 't') { n.focus(); n.value = 'typed'; } } [seen.join(), it.invalidIteratorState, document.getElementById('c2').checked, document.activeElement.id].join(':')"),
+        "c1,c2,r1,s,t:false:true:t"
+    );
+    // Real mutations still invalidate.
+    assert_eq!(
+        eval(r, "const it2 = document.evaluate('//input', document, null, 5, null); it2.iterateNext(); document.body.appendChild(document.createTextNode('x')); try { it2.iterateNext(); 'no' } catch (e) { e.name }"),
+        "InvalidStateError"
+    );
+}
+
+#[test]
+fn xpath_review_fixes() {
+    let e = env(XPATH_PAGE);
+    let r = &e.main;
+    assert_eq!(
+        eval(r, "const sn = document.evaluate('//p', document, null, 7, null); try { sn.snapshotItem() } catch (e) { e.constructor.name }"),
+        "TypeError"
+    );
+    // Attributes are identified by (namespace, local name), not the
+    // qualified name, which two attributes can share.
+    assert_eq!(
+        eval(r, "const ae = document.createElement('i'); ae.setAttributeNS('urn:a', 'p:x', 'one'); ae.setAttributeNS('urn:b', 'p:x', 'two'); const as = document.evaluate('@*', ae, null, 7, null); [as.snapshotLength, as.snapshotItem(0).value, as.snapshotItem(1).value, as.snapshotItem(1).namespaceURI, document.evaluate('string(..)', as.snapshotItem(1), null, 2, null).stringValue === ''].join()"),
+        "2,one,two,urn:b,true"
+    );
+    assert_eq!(
+        eval(r, "const ctxAttr = ae.attributes[1]; document.evaluate('namespace-uri(.)', ctxAttr, null, 2, null).stringValue"),
+        "urn:b"
+    );
+    // The Attr context is located after the resolver (which may mutate) ran.
+    assert_eq!(
+        eval(r, "const re = document.createElement('i'); re.setAttribute('a', '1'); re.setAttribute('b', '2'); const bAttr = re.attributes[1]; document.evaluate('concat(name(.), count(//q:none))', bAttr, () => { re.removeAttribute('a'); return 'urn:q' }, 2, null).stringValue"),
+        "b0"
+    );
+    assert_eq!(eval(r, "document.evaluate('1 div sum(//nothing)', document, null, 1, null).numberValue"), "Infinity");
+    assert_eq!(eval(r, "document.evaluate('count(/node())', document, null, 1, null).numberValue"), "2");
 }
 
 #[test]

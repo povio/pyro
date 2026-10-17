@@ -99,8 +99,7 @@ impl XPathExpression {
     /// Distinct namespace prefixes used by name tests, in source order.
     pub fn prefixes(&self) -> Vec<String> {
         let mut out: Vec<String> = Vec::new();
-        let mut expr = self.expr.clone();
-        parser::visit_mut(&mut expr, &mut |e| {
+        parser::visit(&self.expr, &mut |e| {
             if let parser::Expr::Path(_, steps) = e {
                 for s in steps.iter() {
                     if let parser::NodeTest::Name { prefix: Some(p), .. } = &s.test {
