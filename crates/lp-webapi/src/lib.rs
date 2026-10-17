@@ -68,6 +68,7 @@ pub fn install(scope: &Scope<'_>, page: Rc<PageDom>) -> JsResult<()> {
     let realm = scope.realm();
     page.realms.borrow_mut().insert(realm.id(), realm.downgrade());
     realm.set_embedder(page);
+    encoding::install(scope)?;
     let global = scope.global();
     global.set("CSS", window::css_namespace(scope)?)?;
     Ok(())

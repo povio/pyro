@@ -28,6 +28,7 @@ pub struct PageDom {
     pending_release: RefCell<Vec<NodeId>>,
     current_script: Cell<Option<NodeId>>,
     pub(crate) realms: RefCell<FxHashMap<RealmId, WeakRealm>>,
+    pub(crate) data_view_readers: RefCell<FxHashMap<RealmId, Persistent>>,
     /// Wrappers kept alive because they hold listeners for a connected
     /// node (or an active non-node target): (realm, target) -> wrapper.
     pub(crate) pinned: RefCell<FxHashMap<(RealmId, TargetKey), Persistent>>,
@@ -102,6 +103,7 @@ impl PageDom {
             pending_release: RefCell::new(Vec::new()),
             current_script: Cell::new(None),
             realms: RefCell::new(FxHashMap::default()),
+            data_view_readers: RefCell::new(FxHashMap::default()),
             pinned: RefCell::new(FxHashMap::default()),
             window_keys: RefCell::new(Vec::new()),
             window_holders: RefCell::new(FxHashMap::default()),
@@ -218,6 +220,9 @@ impl PageDom {
     /// listener-holding wrappers of disconnected nodes, re-pins reconnected
     /// ones, and frees unreachable DOM nodes.
     pub fn after_task(&self) {
+        self.data_view_readers.borrow_mut().retain(|realm, _| {
+            self.realms.borrow().get(realm).and_then(|r| r.upgrade()).is_some_and(|r| !r.is_disposed())
+        });
         let pending = std::mem::take(&mut *self.pending_release.borrow_mut());
         let mut dom = self.dom.borrow_mut();
         for id in pending {
