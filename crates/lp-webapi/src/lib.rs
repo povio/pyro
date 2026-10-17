@@ -12,6 +12,8 @@
 //! 5. After every task: `page.after_task()`; drain
 //!    `dom.take_resource_events()` and pass style events to
 //!    `page.apply_style_event`.
+//! 6. Before disposing a document's realms on navigation/page teardown:
+//!    `page.dispose()`. Per-world removal can use `lifecycle::realm_disposed`.
 
 pub mod abort;
 pub mod collections;
@@ -70,6 +72,9 @@ pub fn register(engine: &lp_js::Engine) {
 
 /// Installs the page's bindings into a freshly created realm.
 pub fn install(scope: &Scope<'_>, page: Rc<PageDom>) -> JsResult<()> {
+    if page.is_disposed() {
+        return Err(lp_js::JsError::ContextDestroyed);
+    }
     let realm = scope.realm();
     page.realms.borrow_mut().insert(realm.id(), realm.downgrade());
     realm.set_embedder(page);

@@ -747,3 +747,43 @@ fn abort_any_preserves_cross_realm_reason_identity() {
     isolated_scope.global().set("expected", reason).unwrap();
     assert_eq!(eval(&isolated, "dependent.aborted && dependent.reason === expected"), "true");
 }
+
+struct RetainingHooks {
+    _page: Rc<PageDom>,
+    dropped: Rc<std::cell::Cell<bool>>,
+}
+impl PageHooks for RetainingHooks {
+    fn post_task(&self, _task: Box<dyn FnOnce()>) {}
+    fn navigate(&self, _request: NavigationRequest) {}
+}
+impl Drop for RetainingHooks {
+    fn drop(&mut self) {
+        self.dropped.set(true);
+    }
+}
+
+#[test]
+fn page_disposal_releases_hooks_registry_and_listener_roots() {
+    let Env { engine, page, main } = env("<body><div id=target></div></body>");
+    assert_eq!(eval(&main, "globalThis.fired=0; window.addEventListener('test',()=>fired++); document.querySelector('#target').addEventListener('test',()=>fired++); customElements.define('x-disposal', class extends HTMLElement{}); 'ok'"), "ok");
+    page.after_task();
+    assert!(page.pinned_count() > 0);
+    let dropped = Rc::new(std::cell::Cell::new(false));
+    page.set_hooks(Some(Rc::new(RetainingHooks { _page: page.clone(), dropped: dropped.clone() })));
+    let weak = Rc::downgrade(&page);
+    page.dispose();
+    page.dispose();
+    assert!(page.is_disposed());
+    assert!(dropped.get(), "embedder hook cycle was not broken");
+    assert_eq!(page.pinned_count(), 0);
+    assert_eq!(eval(&main, "window.dispatchEvent(new Event('test')); document.querySelector('#target').dispatchEvent(new Event('test')); fired"), "0");
+    assert!(install(&main.scope().unwrap(), page.clone()).is_err());
+    main.dispose();
+    drop(main);
+    drop(page);
+    for _ in 0..6 {
+        engine.collect_garbage_now();
+        engine.drain_finalized();
+    }
+    assert!(weak.upgrade().is_none(), "disposed bindings kept their PageDom alive");
+}

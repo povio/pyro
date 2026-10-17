@@ -21,6 +21,7 @@ pub(crate) const EVENT_NS: u64 = 1 << 62;
 pub struct PageDom {
     pub dom: DomRef,
     id: u64,
+    disposed: Cell<bool>,
     document: Cell<NodeId>,
     pub(crate) selectors: RefCell<SelectorCache>,
     /// Node references released by finalized wrappers while the DOM was
@@ -101,6 +102,7 @@ impl PageDom {
         Rc::new(PageDom {
             dom,
             id: NEXT_PAGE.fetch_add(1, Ordering::Relaxed),
+            disposed: Cell::new(false),
             document: Cell::new(document),
             selectors: RefCell::new(SelectorCache::default()),
             pending_release: RefCell::new(Vec::new()),
@@ -143,6 +145,35 @@ impl PageDom {
 
     pub fn id(&self) -> u64 {
         self.id
+    }
+    pub fn is_disposed(&self) -> bool {
+        self.disposed.get()
+    }
+
+    /// Release document-owned binding state before disposing its realms.
+    /// Call once on navigation/page teardown, on the browser thread at a safe
+    /// point with no DOM borrow. Idempotent; a disposed PageDom cannot be reused.
+    /// Shared context networking/storage handles remain valid for other pages.
+    pub fn dispose(&self) {
+        if self.disposed.replace(true) {
+            return;
+        }
+        self.realms.borrow_mut().clear();
+        // Drop roots and embedder hooks outside RefCell borrows: destructors
+        // can release wrappers or other resources owned by this page.
+        drop(self.hooks.take());
+        drop(self.net.take());
+        drop(self.pinned.take());
+        drop(self.window_holders.take());
+        drop(self.data_view_readers.take());
+        drop(self.header_helpers.take());
+        crate::custom::forget_page(self.id);
+        let windows = self.window_keys.take();
+        let mut dom = self.dom.borrow_mut();
+        for (doc, key) in windows {
+            dom.set_document_window(doc, None);
+            dom.forget_target(key);
+        }
     }
     pub fn document(&self) -> NodeId {
         self.document.get()
