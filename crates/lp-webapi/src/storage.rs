@@ -176,7 +176,7 @@ impl JsClass for Storage {
 
 /// The realm's tuple origin, or `None` when it is opaque. An explicitly
 /// inherited realm origin handles about:blank/srcdoc.
-fn tuple_origin(s: &Scope<'_>, page: &PageDom) -> Option<String> {
+pub(crate) fn tuple_origin(s: &Scope<'_>, page: &PageDom) -> Option<String> {
     let url = s.realm().origin().map(str::to_owned).unwrap_or_else(|| {
         page.dom.borrow().document_data(page.document()).map(|d| d.url.to_string()).unwrap_or_default()
     });

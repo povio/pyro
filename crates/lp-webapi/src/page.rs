@@ -58,6 +58,10 @@ pub struct PageDom {
     pub(crate) local_storage: RefCell<crate::storage::StorageNamespace>,
     pub(crate) session_storage: RefCell<crate::storage::StorageNamespace>,
     pub(crate) opaque_storage: crate::storage::OpaqueStorage,
+    /// `URL.createObjectURL` store: blob URL -> (bytes, type). Owned by the
+    /// creating document; revocation, document replacement and disposal drop
+    /// the entries (and their bytes).
+    pub(crate) blob_urls: RefCell<FxHashMap<String, (bytes::Bytes, String)>>,
     hooks: RefCell<Option<Rc<dyn PageHooks>>>,
     ready: RefCell<FxHashMap<NodeId, &'static str>>,
     focus_values: RefCell<FxHashMap<NodeId, String>>,
@@ -142,6 +146,7 @@ impl PageDom {
             local_storage: RefCell::new(Default::default()),
             session_storage: RefCell::new(Default::default()),
             opaque_storage: Default::default(),
+            blob_urls: RefCell::new(FxHashMap::default()),
             hooks: RefCell::new(None),
             ready: RefCell::new(FxHashMap::default()),
             focus_values: RefCell::new(FxHashMap::default()),
@@ -170,6 +175,16 @@ impl PageDom {
 
     pub fn id(&self) -> u64 {
         self.id
+    }
+
+    /// Bytes and type registered for a live `URL.createObjectURL` URL.
+    pub fn blob_url(&self, url: &str) -> Option<(bytes::Bytes, String)> {
+        self.blob_urls.borrow().get(url).cloned()
+    }
+
+    /// Number of live object URLs registered by the current document.
+    pub fn blob_url_count(&self) -> usize {
+        self.blob_urls.borrow().len()
     }
     pub fn is_disposed(&self) -> bool {
         self.disposed.get()
@@ -200,6 +215,7 @@ impl PageDom {
         drop(self.header_helpers.take());
         drop(self.url_params_helpers.take());
         self.opaque_storage.clear();
+        drop(self.blob_urls.take());
         crate::custom::forget_page(self.id);
         let windows = self.window_keys.take();
         let mut dom = self.dom.borrow_mut();
@@ -215,6 +231,8 @@ impl PageDom {
     pub fn set_document(&self, doc: NodeId) {
         self.document.set(doc);
         self.opaque_storage.clear();
+        // Object URLs belong to the replaced document.
+        drop(self.blob_urls.take());
         let viewport = self.layout.borrow().viewport().clone();
         *self.layout.borrow_mut() = lp_dom::layout::Layout::with_viewport(doc, viewport);
     }

@@ -1389,7 +1389,7 @@ fn url_component_setters_and_parse_failures_preserve_state() {
     );
     assert_eq!(eval(&e.main, "try{URL.canParse(Symbol())}catch(e){e.name}"), "TypeError");
     assert_eq!(eval(&e.main, "try{new URL()}catch(e){e.name}"), "TypeError");
-    assert_eq!(eval(&e.main, "try{URL.createObjectURL(new Blob())}catch(e){e.name}"), "NotSupportedError");
+    assert_eq!(eval(&e.main, "URL.createObjectURL(new Blob()).startsWith('blob:http://localhost:5173/')"), "true");
 }
 
 #[test]
@@ -2645,4 +2645,74 @@ fn screen_orientation_reports_override_or_follows_screen() {
     e.page.set_viewport(vp);
     assert_eq!(eval(&e.main, probe), "landscape-primary/0", "back to the landscape screen");
     e.page.dispose();
+}
+
+struct RecordingNav(RefCell<Vec<String>>);
+impl PageHooks for RecordingNav {
+    fn post_task(&self, _task: Box<dyn FnOnce()>) {}
+    fn navigate(&self, request: NavigationRequest) {
+        self.0.borrow_mut().push(request.url);
+    }
+}
+
+#[test]
+fn object_urls_register_revoke_and_download_links_do_not_navigate() {
+    let e = env("<body></body>");
+    let r = &e.main;
+    let nav = Rc::new(RecordingNav(RefCell::new(Vec::new())));
+    e.page.set_hooks(Some(nav.clone()));
+    let url = eval(r, "window.u1 = URL.createObjectURL(new Blob(['hi'], {type: 'text/plain'})); u1");
+    assert!(
+        url.starts_with("blob:http://localhost:5173/") && url.len() == "blob:http://localhost:5173/".len() + 36,
+        "{url}"
+    );
+    assert_eq!(e.page.blob_url(&url).map(|(b, t)| (b.to_vec(), t)), Some((b"hi".to_vec(), "text/plain".into())));
+    assert_eq!(
+        eval(r, "const u2 = URL.createObjectURL(new File(['x'], 'f.txt')); [u2 !== u1, (()=>{try{URL.createObjectURL('nope')}catch(e){return e.name}})(), (()=>{try{URL.createObjectURL()}catch(e){return e.name}})()].join()"),
+        "true,TypeError,TypeError"
+    );
+    // Revocation from another origin's URL string is silently ignored; the owner revokes.
+    eval(r, "URL.revokeObjectURL(u1.replace('localhost:5173', 'other.test')); URL.revokeObjectURL('not a url')");
+    assert!(e.page.blob_url(&url).is_some());
+    eval(r, "URL.revokeObjectURL(u1)");
+    assert!(e.page.blob_url(&url).is_none());
+    // TOS file.utils: <a download href=blob:> clicked via a synthetic click must
+    // not navigate (download is a documented gap); plain or cross-origin
+    // download links still navigate.
+    eval(
+        r,
+        "for (const [href, dl] of [[URL.createObjectURL(new Blob(['d'])), 'x.pdf'], ['data:text/plain,a', ''], ['/same', 'f'], ['http://other.test/f', 'f'], ['/plain', null]]) { const a = document.createElement('a'); a.href = href; if (dl !== null) a.download = dl; document.body.appendChild(a); a.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true})); a.remove(); }",
+    );
+    assert_eq!(
+        nav.0.borrow().clone(),
+        vec!["http://other.test/f".to_string(), "http://localhost:5173/plain".to_string()]
+    );
+    // Document replacement drops the old document's URLs (and their bytes);
+    // registrations made afterwards belong to the new document.
+    let old = eval(r, "window.oldUrl = URL.createObjectURL(new Blob(['old-bytes'])); oldUrl");
+    let (held, _) = e.page.blob_url(&old).unwrap();
+    // Finalize the temporary JS Blob first: its byte owner is independent of
+    // the registry and must not be mistaken for a leaked registry reference.
+    for _ in 0..6 {
+        e.engine.collect_garbage_now();
+        e.engine.drain_finalized();
+    }
+    assert!(!held.is_unique(), "the registry still owns the old bytes before replacement");
+    assert!(e.page.blob_url_count() >= 2);
+    let doc = parse_document(&e.page.dom, "http://localhost:5173/next", "<body>");
+    e.page.set_document(doc);
+    assert_eq!(e.page.blob_url_count(), 0);
+    assert!(e.page.blob_url(&old).is_none());
+    // The registry no longer holds the bytes: only our test clone remains.
+    assert!(held.is_unique(), "registry released the old document's bytes");
+    eval(r, "URL.revokeObjectURL(oldUrl)");
+    let fresh = eval(r, "URL.createObjectURL(new Blob(['new']))");
+    assert_ne!(fresh, old);
+    assert_eq!(e.page.blob_url(&fresh).map(|(b, _)| b.to_vec()), Some(b"new".to_vec()));
+    assert_eq!(e.page.blob_url_count(), 1);
+    // Disposal drops every registered URL of the document.
+    let live = eval(r, "URL.createObjectURL(new Blob(['z']))");
+    assert!(e.page.blob_url(&live).is_some());
+    e.page.dispose();
+    assert!(e.page.blob_url(&live).is_none());
 }

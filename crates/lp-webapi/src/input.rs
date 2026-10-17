@@ -354,6 +354,20 @@ fn follow_hyperlink(page: &Rc<PageDom>, el: NodeId) {
         let dom = page.dom.borrow();
         let Some(href) = dom.get_attribute(el, "href").ok().flatten() else { return };
         let url = crate::html::resolve_url(&dom, el, href);
+        // HTML "download the hyperlink": a `download` link to a blob:, data:
+        // or same-origin URL downloads instead of navigating (browsers ignore
+        // the attribute cross-origin). Downloads are not performed yet
+        // (documented gap), but the page must not navigate away.
+        if dom.get_attribute(el, "download").ok().flatten().is_some() {
+            let doc_url = dom.document_data(page.document()).map(|d| d.url.to_string()).unwrap_or_default();
+            let same_origin = |a: &str, b: &str| match (::url::Url::parse(a), ::url::Url::parse(b)) {
+                (Ok(a), Ok(b)) => a.origin().is_tuple() && a.origin() == b.origin(),
+                _ => false,
+            };
+            if url.starts_with("blob:") || url.starts_with("data:") || same_origin(&url, &doc_url) {
+                return;
+            }
+        }
         (url, dom.get_attribute(el, "target").ok().flatten().map(str::to_owned))
     };
     page.navigate(crate::page::NavigationRequest { url, target, method: "GET".into(), body: None, content_type: None });
