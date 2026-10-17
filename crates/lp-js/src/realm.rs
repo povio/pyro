@@ -190,6 +190,28 @@ impl RealmInner {
         h.as_object().expect("helpers object").get(name)?.as_object().ok_or(JsError::Type("missing helper".into()))
     }
 
+    /// Makes the realm's interface objects throw "Execution context was
+    /// destroyed." on property operations from now on (see helpers.js
+    /// `lazyInterface`). Best effort: if JavaScript cannot run (e.g. during a
+    /// termination), never-used interfaces still throw from `populate`.
+    fn mark_interfaces_disposed(&self, ctx: sys::JSGlobalContextRef) {
+        let Some(helpers) = self.helpers.borrow().as_ref().map(|p| p.as_raw()) else { return };
+        let name = JsString::new("markDisposed");
+        let mut exc = ptr::null();
+        // SAFETY: ctx is still retained (released later in dispose); helpers
+        // is protected by its Persistent.
+        unsafe {
+            let ctx = ctx as sys::JSContextRef;
+            if !sys::JSValueIsObject(ctx, helpers) {
+                return;
+            }
+            let f = sys::JSObjectGetProperty(ctx, helpers as sys::JSObjectRef, name.as_raw(), &mut exc);
+            if exc.is_null() && sys::JSValueIsObject(ctx, f) {
+                sys::JSObjectCallAsFunction(ctx, f as sys::JSObjectRef, ptr::null_mut(), 0, ptr::null(), &mut exc);
+            }
+        }
+    }
+
     pub(crate) fn prune_identity(&self, key: IdentityKey) {
         let mut map = self.identity.borrow_mut();
         if let Some(weak) = map.get(&key).copied() {
@@ -209,6 +231,7 @@ impl RealmInner {
         if ctx.is_null() {
             return;
         }
+        self.mark_interfaces_disposed(ctx);
         self.engine.realms.borrow_mut().retain(|(g, _)| *g != ctx);
         let loader = self.module_loader.replace(ptr::null_mut());
         if !loader.is_null() {
@@ -1074,8 +1097,8 @@ fn rooted_array<'s>(scope: &Scope<'s>, items: &crate::RootedVec) -> JsResult<Obj
     Ok(arr)
 }
 
-/// `populate(id)` for the interface proxies. A disposed realm has nothing to
-/// install: return without throwing so its inert objects stay readable.
+/// `populate(id)` for the interface proxies. Installing into a disposed realm
+/// is impossible: throw the same error as every other use of it.
 unsafe extern "C" fn populate_tramp(
     ctx: sys::JSContextRef,
     _function: sys::JSObjectRef,
@@ -1086,7 +1109,8 @@ unsafe extern "C" fn populate_tramp(
 ) -> sys::JSValueRef {
     let undefined = unsafe { sys::JSValueMakeUndefined(ctx) };
     if realm_for_ctx(ctx).is_none() {
-        return undefined;
+        unsafe { crate::error::throw_message(ctx, "Execution context was destroyed.", exc) };
+        return ptr::null();
     }
     unsafe {
         class::guard(ctx, exc, ptr::null(), |s| {
