@@ -1,0 +1,947 @@
+{
+  "startedAt": "2026-10-17T12:34:32.491Z",
+  "config": {
+    "samples": 3,
+    "navigations": 50,
+    "contexts": 20,
+    "idleMs": 10000,
+    "retainedMs": 2000,
+    "samplerIntervalMs": 20
+  },
+  "binaries": [
+    {
+      "name": "upstream",
+      "path": "/private/tmp/lp-w3-cpu-baseline-f537c86-bin/lightningpanda",
+      "sourceSha": "f537c86ee1c31b49e221cc13ee0d7a41ac96e713",
+      "sha256": "73323263e912e4c1060d6466705e235d96c4135b02b3fd403fb561a773569a50",
+      "bytes": 12757472
+    },
+    {
+      "name": "rewrite",
+      "path": "/private/tmp/lp-w3-cpu-candidate-e43a776-bin/lightningpanda",
+      "sourceSha": "e43a7766cf81ab634bb8744bd490a2f04fd4fa02",
+      "sha256": "8b1a0c95e3dca3019be2fff9de564fad54155dd4f92eb947f9bb26c1e72c053e",
+      "bytes": 12757504
+    }
+  ],
+  "sampler": {
+    "path": "/private/tmp/lp-w3-sampler-target/release/rss-sampler",
+    "sha256": "7d31b30cab16622eda1333be012d1aa8fba2bbed6669b2e269c681725d198569"
+  },
+  "harnessSha256": "c70d5f2de867c5f39881a8606996a01c975eeaf377f9ee96391d686a8b550fc7",
+  "host": {
+    "platform": "darwin",
+    "release": "25.6.0",
+    "arch": "arm64",
+    "cpus": 8,
+    "cpuModel": "Apple M1",
+    "totalMemoryBytes": 8589934592,
+    "node": "v26.12.0"
+  },
+  "playwright": "1.59.1",
+  "flags": [
+    "--log-level",
+    "error",
+    "--experimental-features",
+    "cors",
+    "--load-resources",
+    "stylesheet",
+    "--load-resources",
+    "iframe"
+  ],
+  "conditions": "Fresh process per sample; OS/file caches uncontrolled and likely warm. One warmup HTTP navigation before measurement. Alternating AB/BA order; no busy-spin warmup. Host is shared; DVFS/background load uncontrolled. Release binaries supplied by caller; source SHA declarations must match build provenance.",
+  "scope": "Local no-store HTTP + inline JS checksum + response body; 50 repeated navigations and 20 create/navigate/dispose contexts by default. No DOM interaction, subresource/HTTPS/auth/Fetch workload or TOS harness. Results apply only to successful equivalent assertions.",
+  "accounting": "Browser PID only; CPU converted from Mach ticks using mach_timebase_info, all threads included, children excluded. Native 20ms memory trace; peak is sampled, not lifetime maximum. Phase CPU windows bracket snapshot helper launches. Harness Node CPU (Playwright and local server) separate, excludes sampler/helper children. No forced GC. Retained memory measured after context disposal and a fixed quiet interval.",
+  "fixtureSha256": "58c40aa1d87e1769634f6826650ab772d75ddcc008d213514341a43a2fc61697",
+  "runs": [
+    {
+      "tag": "1-0-upstream",
+      "name": "upstream",
+      "sample": 1,
+      "order": 0,
+      "sourceSha": "f537c86ee1c31b49e221cc13ee0d7a41ac96e713",
+      "phases": {
+        "idle": {
+          "workWallMs": 10001.325042,
+          "sampledWallMs": 10013.98225,
+          "browserUserMs": 0.775041,
+          "browserSystemMs": 0.534666,
+          "browserCpuMs": 1.309707,
+          "browserOneCorePercent": 0.013078782918753426,
+          "harnessNodeUserMs": 4.713,
+          "harnessNodeSystemMs": 0.576,
+          "before": {
+            "epochMs": 1792240473093,
+            "residentKiB": 17200,
+            "footprintKiB": 8561,
+            "userNs": 30659500,
+            "systemNs": 15776750,
+            "monotonicNs": 111279885997375
+          },
+          "after": {
+            "epochMs": 1792240483106,
+            "residentKiB": 17216,
+            "footprintKiB": 8241,
+            "userNs": 31434541,
+            "systemNs": 16311416,
+            "monotonicNs": 111289899979625
+          }
+        },
+        "navigations": {
+          "workWallMs": 407.8072080000002,
+          "sampledWallMs": 410.73825,
+          "browserUserMs": 424.7395,
+          "browserSystemMs": 56.279042,
+          "browserCpuMs": 481.018542,
+          "browserOneCorePercent": 117.11072489596476,
+          "harnessNodeUserMs": 118.574,
+          "harnessNodeSystemMs": 11.805,
+          "before": {
+            "epochMs": 1792240483114,
+            "residentKiB": 17216,
+            "footprintKiB": 8241,
+            "userNs": 31434541,
+            "systemNs": 16311416,
+            "monotonicNs": 111289907437875
+          },
+          "after": {
+            "epochMs": 1792240483525,
+            "residentKiB": 19952,
+            "footprintKiB": 8113,
+            "userNs": 456174041,
+            "systemNs": 72590458,
+            "monotonicNs": 111290318176125
+          }
+        },
+        "contexts": {
+          "workWallMs": 283.9096660000014,
+          "sampledWallMs": 286.350666,
+          "browserUserMs": 257.033458,
+          "browserSystemMs": 40.92475,
+          "browserCpuMs": 297.958208,
+          "browserOneCorePercent": 104.05361096663209,
+          "harnessNodeUserMs": 67.434,
+          "harnessNodeSystemMs": 8.731,
+          "before": {
+            "epochMs": 1792240483529,
+            "residentKiB": 19888,
+            "footprintKiB": 8017,
+            "userNs": 456288333,
+            "systemNs": 72689041,
+            "monotonicNs": 111290322304500
+          },
+          "after": {
+            "epochMs": 1792240483815,
+            "residentKiB": 20016,
+            "footprintKiB": 7377,
+            "userNs": 713321791,
+            "systemNs": 113613791,
+            "monotonicNs": 111290608655166
+          }
+        },
+        "retained": {
+          "workWallMs": 2002.3539999999994,
+          "sampledWallMs": 2012.490958,
+          "browserUserMs": 0.515125,
+          "browserSystemMs": 0.327709,
+          "browserCpuMs": 0.8428340000000001,
+          "browserOneCorePercent": 0.041880138474639554,
+          "harnessNodeUserMs": 0.268,
+          "harnessNodeSystemMs": 0.027,
+          "before": {
+            "epochMs": 1792240483817,
+            "residentKiB": 20016,
+            "footprintKiB": 7377,
+            "userNs": 713321791,
+            "systemNs": 113613791,
+            "monotonicNs": 111290610429958
+          },
+          "after": {
+            "epochMs": 1792240485829,
+            "residentKiB": 20016,
+            "footprintKiB": 7361,
+            "userNs": 713836916,
+            "systemNs": 113941500,
+            "monotonicNs": 111292622920916
+          }
+        }
+      },
+      "ok": true,
+      "version": {
+        "Browser": "Chrome/124.0.6367.29",
+        "Protocol-Version": "1.3",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "V8-Version": "",
+        "WebKit-Version": "",
+        "webSocketDebuggerUrl": "ws://127.0.0.1:55422/"
+      },
+      "readinessMs": 513.532167,
+      "browserCumulativeBeforeClose": {
+        "epochMs": 1792240485837,
+        "residentKiB": 20016,
+        "footprintKiB": 7361,
+        "userNs": 713836916,
+        "systemNs": 113941500,
+        "monotonicNs": 111292630072583
+      },
+      "samplerCumulativeBeforeStop": {
+        "epochMs": 1792240485842,
+        "residentKiB": 1568,
+        "footprintKiB": 1024,
+        "userNs": 8236333,
+        "systemNs": 30832375,
+        "monotonicNs": 111292635897750
+      },
+      "memory": {
+        "sampleCount": 642,
+        "peakResidentKiB": 20112,
+        "peakFootprintKiB": 9185,
+        "retainedResidentKiB": 20016,
+        "retainedFootprintKiB": 7361
+      },
+      "exitCode": null,
+      "signal": "SIGTERM"
+    },
+    {
+      "tag": "1-1-rewrite",
+      "name": "rewrite",
+      "sample": 1,
+      "order": 1,
+      "sourceSha": "e43a7766cf81ab634bb8744bd490a2f04fd4fa02",
+      "phases": {
+        "idle": {
+          "workWallMs": 10002.877457999999,
+          "sampledWallMs": 10013.888666,
+          "browserUserMs": 0.890042,
+          "browserSystemMs": 0.623291,
+          "browserCpuMs": 1.513333,
+          "browserOneCorePercent": 0.015112340974372881,
+          "harnessNodeUserMs": 2.517,
+          "harnessNodeSystemMs": 0.508,
+          "before": {
+            "epochMs": 1792240486331,
+            "residentKiB": 17344,
+            "footprintKiB": 8305,
+            "userNs": 45948666,
+            "systemNs": 19826625,
+            "monotonicNs": 111293124776750
+          },
+          "after": {
+            "epochMs": 1792240496345,
+            "residentKiB": 17360,
+            "footprintKiB": 7985,
+            "userNs": 46838708,
+            "systemNs": 20449916,
+            "monotonicNs": 111303138665416
+          }
+        },
+        "navigations": {
+          "workWallMs": 386.424417000002,
+          "sampledWallMs": 389.227792,
+          "browserUserMs": 417.353417,
+          "browserSystemMs": 53.911,
+          "browserCpuMs": 471.264417,
+          "browserOneCorePercent": 121.07676447729095,
+          "harnessNodeUserMs": 74.061,
+          "harnessNodeSystemMs": 8.6,
+          "before": {
+            "epochMs": 1792240496352,
+            "residentKiB": 17360,
+            "footprintKiB": 7985,
+            "userNs": 46838708,
+            "systemNs": 20449916,
+            "monotonicNs": 111303146188541
+          },
+          "after": {
+            "epochMs": 1792240496742,
+            "residentKiB": 20096,
+            "footprintKiB": 7873,
+            "userNs": 464192125,
+            "systemNs": 74360916,
+            "monotonicNs": 111303535416333
+          }
+        },
+        "contexts": {
+          "workWallMs": 271.32766600000105,
+          "sampledWallMs": 273.706333,
+          "browserUserMs": 247.73775,
+          "browserSystemMs": 40.113333,
+          "browserCpuMs": 287.851083,
+          "browserOneCorePercent": 105.16785630970404,
+          "harnessNodeUserMs": 55.811,
+          "harnessNodeSystemMs": 7.853,
+          "before": {
+            "epochMs": 1792240496744,
+            "residentKiB": 20032,
+            "footprintKiB": 7777,
+            "userNs": 464317208,
+            "systemNs": 74471083,
+            "monotonicNs": 111303538111333
+          },
+          "after": {
+            "epochMs": 1792240497018,
+            "residentKiB": 20144,
+            "footprintKiB": 7201,
+            "userNs": 712054958,
+            "systemNs": 114584416,
+            "monotonicNs": 111303811817666
+          }
+        },
+        "retained": {
+          "workWallMs": 2002.3248749999984,
+          "sampledWallMs": 2012.2425,
+          "browserUserMs": 0.381458,
+          "browserSystemMs": 0.287917,
+          "browserCpuMs": 0.669375,
+          "browserOneCorePercent": 0.033265125848400474,
+          "harnessNodeUserMs": 0.278,
+          "harnessNodeSystemMs": 0.067,
+          "before": {
+            "epochMs": 1792240497020,
+            "residentKiB": 20144,
+            "footprintKiB": 7201,
+            "userNs": 712054958,
+            "systemNs": 114584416,
+            "monotonicNs": 111303813576208
+          },
+          "after": {
+            "epochMs": 1792240499032,
+            "residentKiB": 20144,
+            "footprintKiB": 7201,
+            "userNs": 712436416,
+            "systemNs": 114872333,
+            "monotonicNs": 111305825818708
+          }
+        }
+      },
+      "ok": true,
+      "version": {
+        "Browser": "Chrome/124.0.6367.29",
+        "Protocol-Version": "1.3",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "V8-Version": "",
+        "WebKit-Version": "",
+        "webSocketDebuggerUrl": "ws://127.0.0.1:55471/"
+      },
+      "readinessMs": 418.13283299999966,
+      "browserCumulativeBeforeClose": {
+        "epochMs": 1792240499039,
+        "residentKiB": 20144,
+        "footprintKiB": 7201,
+        "userNs": 712436416,
+        "systemNs": 114872333,
+        "monotonicNs": 111305832572916
+      },
+      "samplerCumulativeBeforeStop": {
+        "epochMs": 1792240499044,
+        "residentKiB": 1536,
+        "footprintKiB": 992,
+        "userNs": 8925000,
+        "systemNs": 31724541,
+        "monotonicNs": 111305838191666
+      },
+      "memory": {
+        "sampleCount": 639,
+        "peakResidentKiB": 20240,
+        "peakFootprintKiB": 9121,
+        "retainedResidentKiB": 20144,
+        "retainedFootprintKiB": 7201
+      },
+      "exitCode": null,
+      "signal": "SIGTERM"
+    },
+    {
+      "tag": "2-0-rewrite",
+      "name": "rewrite",
+      "sample": 2,
+      "order": 0,
+      "sourceSha": "e43a7766cf81ab634bb8744bd490a2f04fd4fa02",
+      "phases": {
+        "idle": {
+          "workWallMs": 10002.239249999999,
+          "sampledWallMs": 10009.235792,
+          "browserUserMs": 0.874208,
+          "browserSystemMs": 0.686667,
+          "browserCpuMs": 1.560875,
+          "browserOneCorePercent": 0.015594347385117533,
+          "harnessNodeUserMs": 1.993,
+          "harnessNodeSystemMs": 0.304,
+          "before": {
+            "epochMs": 1792240499118,
+            "residentKiB": 17376,
+            "footprintKiB": 8369,
+            "userNs": 34737083,
+            "systemNs": 9609041,
+            "monotonicNs": 111305911931083
+          },
+          "after": {
+            "epochMs": 1792240509127,
+            "residentKiB": 17392,
+            "footprintKiB": 8081,
+            "userNs": 35611291,
+            "systemNs": 10295708,
+            "monotonicNs": 111315921166875
+          }
+        },
+        "navigations": {
+          "workWallMs": 389.0778749999954,
+          "sampledWallMs": 392.027167,
+          "browserUserMs": 421.970292,
+          "browserSystemMs": 52.333708,
+          "browserCpuMs": 474.304,
+          "browserOneCorePercent": 120.98753349917709,
+          "harnessNodeUserMs": 84.902,
+          "harnessNodeSystemMs": 9.022,
+          "before": {
+            "epochMs": 1792240509134,
+            "residentKiB": 17392,
+            "footprintKiB": 8081,
+            "userNs": 35611291,
+            "systemNs": 10295708,
+            "monotonicNs": 111315927685083
+          },
+          "after": {
+            "epochMs": 1792240509526,
+            "residentKiB": 20160,
+            "footprintKiB": 7985,
+            "userNs": 457581583,
+            "systemNs": 62629416,
+            "monotonicNs": 111316319712250
+          }
+        },
+        "contexts": {
+          "workWallMs": 266.2913750000007,
+          "sampledWallMs": 268.665916,
+          "browserUserMs": 244.722875,
+          "browserSystemMs": 39.266583,
+          "browserCpuMs": 283.989458,
+          "browserOneCorePercent": 105.70356754892572,
+          "harnessNodeUserMs": 54.033,
+          "harnessNodeSystemMs": 8.278,
+          "before": {
+            "epochMs": 1792240509529,
+            "residentKiB": 20096,
+            "footprintKiB": 7889,
+            "userNs": 457688958,
+            "systemNs": 62695625,
+            "monotonicNs": 111316322535250
+          },
+          "after": {
+            "epochMs": 1792240509797,
+            "residentKiB": 20160,
+            "footprintKiB": 7297,
+            "userNs": 702411833,
+            "systemNs": 101962208,
+            "monotonicNs": 111316591201166
+          }
+        },
+        "retained": {
+          "workWallMs": 2002.4094590000022,
+          "sampledWallMs": 2012.363708,
+          "browserUserMs": 0.470542,
+          "browserSystemMs": 0.326917,
+          "browserCpuMs": 0.797459,
+          "browserOneCorePercent": 0.03962797564027626,
+          "harnessNodeUserMs": 0.273,
+          "harnessNodeSystemMs": 0.044,
+          "before": {
+            "epochMs": 1792240509799,
+            "residentKiB": 20160,
+            "footprintKiB": 7297,
+            "userNs": 702411833,
+            "systemNs": 101962208,
+            "monotonicNs": 111316592947958
+          },
+          "after": {
+            "epochMs": 1792240511811,
+            "residentKiB": 20160,
+            "footprintKiB": 7297,
+            "userNs": 702882375,
+            "systemNs": 102289125,
+            "monotonicNs": 111318605311666
+          }
+        }
+      },
+      "ok": true,
+      "version": {
+        "Browser": "Chrome/124.0.6367.29",
+        "Protocol-Version": "1.3",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "V8-Version": "",
+        "WebKit-Version": "",
+        "webSocketDebuggerUrl": "ws://127.0.0.1:55514/"
+      },
+      "readinessMs": 24.90337499999805,
+      "browserCumulativeBeforeClose": {
+        "epochMs": 1792240511818,
+        "residentKiB": 20160,
+        "footprintKiB": 7297,
+        "userNs": 702882375,
+        "systemNs": 102289125,
+        "monotonicNs": 111318612134625
+      },
+      "samplerCumulativeBeforeStop": {
+        "epochMs": 1792240511823,
+        "residentKiB": 1568,
+        "footprintKiB": 1024,
+        "userNs": 8370083,
+        "systemNs": 34211041,
+        "monotonicNs": 111318617363458
+      },
+      "memory": {
+        "sampleCount": 637,
+        "peakResidentKiB": 20256,
+        "peakFootprintKiB": 9073,
+        "retainedResidentKiB": 20160,
+        "retainedFootprintKiB": 7297
+      },
+      "exitCode": null,
+      "signal": "SIGTERM"
+    },
+    {
+      "tag": "2-1-upstream",
+      "name": "upstream",
+      "sample": 2,
+      "order": 1,
+      "sourceSha": "f537c86ee1c31b49e221cc13ee0d7a41ac96e713",
+      "phases": {
+        "idle": {
+          "workWallMs": 10002.469582999998,
+          "sampledWallMs": 10014.242583,
+          "browserUserMs": 0.894291,
+          "browserSystemMs": 0.634833,
+          "browserCpuMs": 1.529124,
+          "browserOneCorePercent": 0.015269492298856567,
+          "harnessNodeUserMs": 1.817,
+          "harnessNodeSystemMs": 0.259,
+          "before": {
+            "epochMs": 1792240511900,
+            "residentKiB": 17312,
+            "footprintKiB": 8273,
+            "userNs": 34761750,
+            "systemNs": 9599500,
+            "monotonicNs": 111318694382333
+          },
+          "after": {
+            "epochMs": 1792240521915,
+            "residentKiB": 17328,
+            "footprintKiB": 8017,
+            "userNs": 35656041,
+            "systemNs": 10234333,
+            "monotonicNs": 111328708624916
+          }
+        },
+        "navigations": {
+          "workWallMs": 388.95891700000357,
+          "sampledWallMs": 391.76675,
+          "browserUserMs": 423.527625,
+          "browserSystemMs": 55.667708,
+          "browserCpuMs": 479.195333,
+          "browserOneCorePercent": 122.31648882913112,
+          "harnessNodeUserMs": 61.283,
+          "harnessNodeSystemMs": 7.422,
+          "before": {
+            "epochMs": 1792240521922,
+            "residentKiB": 17328,
+            "footprintKiB": 8017,
+            "userNs": 35656041,
+            "systemNs": 10234333,
+            "monotonicNs": 111328716228083
+          },
+          "after": {
+            "epochMs": 1792240522314,
+            "residentKiB": 20064,
+            "footprintKiB": 8017,
+            "userNs": 459183666,
+            "systemNs": 65902041,
+            "monotonicNs": 111329107994833
+          }
+        },
+        "contexts": {
+          "workWallMs": 276.83087499999965,
+          "sampledWallMs": 279.158041,
+          "browserUserMs": 258.411584,
+          "browserSystemMs": 40.844042,
+          "browserCpuMs": 299.255626,
+          "browserOneCorePercent": 107.19935737047244,
+          "harnessNodeUserMs": 49.04,
+          "harnessNodeSystemMs": 7.466,
+          "before": {
+            "epochMs": 1792240522317,
+            "residentKiB": 20000,
+            "footprintKiB": 7921,
+            "userNs": 459312166,
+            "systemNs": 65983166,
+            "monotonicNs": 111329110745125
+          },
+          "after": {
+            "epochMs": 1792240522596,
+            "residentKiB": 20112,
+            "footprintKiB": 7409,
+            "userNs": 717723750,
+            "systemNs": 106827208,
+            "monotonicNs": 111329389903166
+          }
+        },
+        "retained": {
+          "workWallMs": 2002.291833000003,
+          "sampledWallMs": 2012.340917,
+          "browserUserMs": 0.426125,
+          "browserSystemMs": 0.31125,
+          "browserCpuMs": 0.737375,
+          "browserOneCorePercent": 0.03664264806081066,
+          "harnessNodeUserMs": 0.217,
+          "harnessNodeSystemMs": 0.027,
+          "before": {
+            "epochMs": 1792240522598,
+            "residentKiB": 20112,
+            "footprintKiB": 7409,
+            "userNs": 717741666,
+            "systemNs": 106845291,
+            "monotonicNs": 111329391647416
+          },
+          "after": {
+            "epochMs": 1792240524610,
+            "residentKiB": 20112,
+            "footprintKiB": 7409,
+            "userNs": 718167791,
+            "systemNs": 107156541,
+            "monotonicNs": 111331403988333
+          }
+        }
+      },
+      "ok": true,
+      "version": {
+        "Browser": "Chrome/124.0.6367.29",
+        "Protocol-Version": "1.3",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "V8-Version": "",
+        "WebKit-Version": "",
+        "webSocketDebuggerUrl": "ws://127.0.0.1:55543/"
+      },
+      "readinessMs": 25.96887499999866,
+      "browserCumulativeBeforeClose": {
+        "epochMs": 1792240524618,
+        "residentKiB": 20112,
+        "footprintKiB": 7409,
+        "userNs": 718167791,
+        "systemNs": 107156541,
+        "monotonicNs": 111331412517625
+      },
+      "samplerCumulativeBeforeStop": {
+        "epochMs": 1792240524624,
+        "residentKiB": 1568,
+        "footprintKiB": 1024,
+        "userNs": 8495083,
+        "systemNs": 32513291,
+        "monotonicNs": 111331418380250
+      },
+      "memory": {
+        "sampleCount": 638,
+        "peakResidentKiB": 20208,
+        "peakFootprintKiB": 9377,
+        "retainedResidentKiB": 20112,
+        "retainedFootprintKiB": 7409
+      },
+      "exitCode": null,
+      "signal": "SIGTERM"
+    },
+    {
+      "tag": "3-0-upstream",
+      "name": "upstream",
+      "sample": 3,
+      "order": 0,
+      "sourceSha": "f537c86ee1c31b49e221cc13ee0d7a41ac96e713",
+      "phases": {
+        "idle": {
+          "workWallMs": 10000.836542000005,
+          "sampledWallMs": 10012.996,
+          "browserUserMs": 0.848959,
+          "browserSystemMs": 0.689417,
+          "browserCpuMs": 1.538376,
+          "browserOneCorePercent": 0.015363793214338648,
+          "harnessNodeUserMs": 1.558,
+          "harnessNodeSystemMs": 0.227,
+          "before": {
+            "epochMs": 1792240524695,
+            "residentKiB": 17120,
+            "footprintKiB": 8481,
+            "userNs": 32720541,
+            "systemNs": 8806833,
+            "monotonicNs": 111331489211166
+          },
+          "after": {
+            "epochMs": 1792240534708,
+            "residentKiB": 17136,
+            "footprintKiB": 8225,
+            "userNs": 33569500,
+            "systemNs": 9496250,
+            "monotonicNs": 111341502207166
+          }
+        },
+        "navigations": {
+          "workWallMs": 389.2200410000005,
+          "sampledWallMs": 392.025959,
+          "browserUserMs": 424.332791,
+          "browserSystemMs": 55.6545,
+          "browserCpuMs": 479.98729099999997,
+          "browserOneCorePercent": 122.4376294427992,
+          "harnessNodeUserMs": 62.569,
+          "harnessNodeSystemMs": 7.422,
+          "before": {
+            "epochMs": 1792240534715,
+            "residentKiB": 17136,
+            "footprintKiB": 8225,
+            "userNs": 33569500,
+            "systemNs": 9496250,
+            "monotonicNs": 111341508890916
+          },
+          "after": {
+            "epochMs": 1792240535107,
+            "residentKiB": 20032,
+            "footprintKiB": 8305,
+            "userNs": 457902291,
+            "systemNs": 65150750,
+            "monotonicNs": 111341900916875
+          }
+        },
+        "contexts": {
+          "workWallMs": 280.32824999999866,
+          "sampledWallMs": 282.683375,
+          "browserUserMs": 261.330125,
+          "browserSystemMs": 42.048542,
+          "browserCpuMs": 303.378667,
+          "browserOneCorePercent": 107.3210148987361,
+          "harnessNodeUserMs": 71.163,
+          "harnessNodeSystemMs": 7.937,
+          "before": {
+            "epochMs": 1792240535109,
+            "residentKiB": 19968,
+            "footprintKiB": 8209,
+            "userNs": 458018875,
+            "systemNs": 65261416,
+            "monotonicNs": 111341903658916
+          },
+          "after": {
+            "epochMs": 1792240535392,
+            "residentKiB": 20112,
+            "footprintKiB": 7425,
+            "userNs": 719349000,
+            "systemNs": 107309958,
+            "monotonicNs": 111342186342291
+          }
+        },
+        "retained": {
+          "workWallMs": 2002.3128330000036,
+          "sampledWallMs": 2012.26775,
+          "browserUserMs": 0.445416,
+          "browserSystemMs": 0.32075,
+          "browserCpuMs": 0.7661659999999999,
+          "browserOneCorePercent": 0.038074754216977334,
+          "harnessNodeUserMs": 0.205,
+          "harnessNodeSystemMs": 0.038,
+          "before": {
+            "epochMs": 1792240535394,
+            "residentKiB": 20112,
+            "footprintKiB": 7425,
+            "userNs": 719349000,
+            "systemNs": 107309958,
+            "monotonicNs": 111342188097375
+          },
+          "after": {
+            "epochMs": 1792240537406,
+            "residentKiB": 20112,
+            "footprintKiB": 7425,
+            "userNs": 719794416,
+            "systemNs": 107630708,
+            "monotonicNs": 111344200365125
+          }
+        }
+      },
+      "ok": true,
+      "version": {
+        "Browser": "Chrome/124.0.6367.29",
+        "Protocol-Version": "1.3",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "V8-Version": "",
+        "WebKit-Version": "",
+        "webSocketDebuggerUrl": "ws://127.0.0.1:55573/"
+      },
+      "readinessMs": 23.4684999999954,
+      "browserCumulativeBeforeClose": {
+        "epochMs": 1792240537413,
+        "residentKiB": 20112,
+        "footprintKiB": 7425,
+        "userNs": 719794416,
+        "systemNs": 107630708,
+        "monotonicNs": 111344206921958
+      },
+      "samplerCumulativeBeforeStop": {
+        "epochMs": 1792240537418,
+        "residentKiB": 1568,
+        "footprintKiB": 1024,
+        "userNs": 8201416,
+        "systemNs": 30593083,
+        "monotonicNs": 111344212616000
+      },
+      "memory": {
+        "sampleCount": 638,
+        "peakResidentKiB": 20208,
+        "peakFootprintKiB": 9729,
+        "retainedResidentKiB": 20112,
+        "retainedFootprintKiB": 7425
+      },
+      "exitCode": null,
+      "signal": "SIGTERM"
+    },
+    {
+      "tag": "3-1-rewrite",
+      "name": "rewrite",
+      "sample": 3,
+      "order": 1,
+      "sourceSha": "e43a7766cf81ab634bb8744bd490a2f04fd4fa02",
+      "phases": {
+        "idle": {
+          "workWallMs": 10002.409874999998,
+          "sampledWallMs": 10014.643083,
+          "browserUserMs": 0.970958,
+          "browserSystemMs": 0.6435,
+          "browserCpuMs": 1.614458,
+          "browserOneCorePercent": 0.016120973924078887,
+          "harnessNodeUserMs": 1.792,
+          "harnessNodeSystemMs": 0.248,
+          "before": {
+            "epochMs": 1792240537494,
+            "residentKiB": 17328,
+            "footprintKiB": 8305,
+            "userNs": 33559000,
+            "systemNs": 9260791,
+            "monotonicNs": 111344288415958
+          },
+          "after": {
+            "epochMs": 1792240547509,
+            "residentKiB": 17344,
+            "footprintKiB": 8017,
+            "userNs": 34529958,
+            "systemNs": 9904291,
+            "monotonicNs": 111354303059041
+          }
+        },
+        "navigations": {
+          "workWallMs": 379.14729200000875,
+          "sampledWallMs": 381.948542,
+          "browserUserMs": 413.950417,
+          "browserSystemMs": 53.789709,
+          "browserCpuMs": 467.74012600000003,
+          "browserOneCorePercent": 122.46155556734656,
+          "harnessNodeUserMs": 56.879,
+          "harnessNodeSystemMs": 7.204,
+          "before": {
+            "epochMs": 1792240547516,
+            "residentKiB": 17344,
+            "footprintKiB": 8017,
+            "userNs": 34529958,
+            "systemNs": 9904291,
+            "monotonicNs": 111354310196458
+          },
+          "after": {
+            "epochMs": 1792240547898,
+            "residentKiB": 20240,
+            "footprintKiB": 8065,
+            "userNs": 448480375,
+            "systemNs": 63694000,
+            "monotonicNs": 111354692145000
+          }
+        },
+        "contexts": {
+          "workWallMs": 270.05337500000314,
+          "sampledWallMs": 272.470708,
+          "browserUserMs": 250.129958,
+          "browserSystemMs": 41.083334,
+          "browserCpuMs": 291.21329199999997,
+          "browserOneCorePercent": 106.87875189871785,
+          "harnessNodeUserMs": 47.703,
+          "harnessNodeSystemMs": 7.634,
+          "before": {
+            "epochMs": 1792240547901,
+            "residentKiB": 20176,
+            "footprintKiB": 7969,
+            "userNs": 448609708,
+            "systemNs": 63784666,
+            "monotonicNs": 111354694995458
+          },
+          "after": {
+            "epochMs": 1792240548173,
+            "residentKiB": 20224,
+            "footprintKiB": 7169,
+            "userNs": 698739666,
+            "systemNs": 104868000,
+            "monotonicNs": 111354967466166
+          }
+        },
+        "retained": {
+          "workWallMs": 2002.375165999998,
+          "sampledWallMs": 2012.48025,
+          "browserUserMs": 0.338875,
+          "browserSystemMs": 0.226834,
+          "browserCpuMs": 0.565709,
+          "browserOneCorePercent": 0.028110039837658033,
+          "harnessNodeUserMs": 0.251,
+          "harnessNodeSystemMs": 0.042,
+          "before": {
+            "epochMs": 1792240548175,
+            "residentKiB": 20224,
+            "footprintKiB": 7169,
+            "userNs": 698757541,
+            "systemNs": 104880666,
+            "monotonicNs": 111354969392333
+          },
+          "after": {
+            "epochMs": 1792240550187,
+            "residentKiB": 20224,
+            "footprintKiB": 7169,
+            "userNs": 699096416,
+            "systemNs": 105107500,
+            "monotonicNs": 111356981872583
+          }
+        }
+      },
+      "ok": true,
+      "version": {
+        "Browser": "Chrome/124.0.6367.29",
+        "Protocol-Version": "1.3",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "V8-Version": "",
+        "WebKit-Version": "",
+        "webSocketDebuggerUrl": "ws://127.0.0.1:55603/"
+      },
+      "readinessMs": 25.75391600000148,
+      "browserCumulativeBeforeClose": {
+        "epochMs": 1792240550194,
+        "residentKiB": 20224,
+        "footprintKiB": 7169,
+        "userNs": 699096416,
+        "systemNs": 105107500,
+        "monotonicNs": 111356988585375
+      },
+      "samplerCumulativeBeforeStop": {
+        "epochMs": 1792240550200,
+        "residentKiB": 1568,
+        "footprintKiB": 1024,
+        "userNs": 8126375,
+        "systemNs": 30213208,
+        "monotonicNs": 111356994174625
+      },
+      "memory": {
+        "sampleCount": 638,
+        "peakResidentKiB": 20320,
+        "peakFootprintKiB": 9329,
+        "retainedResidentKiB": 20224,
+        "retainedFootprintKiB": 7169
+      },
+      "exitCode": null,
+      "signal": "SIGTERM"
+    }
+  ],
+  "finishedAt": "2026-10-17T12:35:50.208Z"
+}
