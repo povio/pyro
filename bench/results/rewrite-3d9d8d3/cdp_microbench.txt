@@ -1,0 +1,33 @@
+# cargo run --release -p lp-cdp --example cdp_microbench (source tree 3d9d8d3 + this example), 2026-10-17T08:44:06Z
+ProductName:		macOS ProductVersion:		26.7.1 BuildVersion:		25G241 
+Apple M1
+8589934592
+rustc 1.99.1 (58cf8f9c3 2026-10-13)
+SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk
+## run 1
+EngineHost::new (JSC VM + browser thread state): 6597.2us
+context+target+Page/Runtime.enable           n=50    median=    432.3us p95=   1789.3us
+Runtime.evaluate 1+1 (by value)              n=500   median=      5.9us p95=     11.5us
+callFunctionOn small fn                      n=300   median=      8.2us p95=      9.7us
+callFunctionOn ~38KB fn                      n=300   median=    171.1us p95=    241.6us
+evaluate handle + releaseObject              n=500   median=      6.8us p95=      8.7us
+Page.navigate about:blank (realm rebuild)    n=100   median=    141.3us p95=    911.9us
+exit=0
+## run 2
+EngineHost::new (JSC VM + browser thread state): 7083.0us
+context+target+Page/Runtime.enable           n=50    median=    458.7us p95=   1780.3us
+Runtime.evaluate 1+1 (by value)              n=500   median=      5.9us p95=     11.5us
+callFunctionOn small fn                      n=300   median=      8.2us p95=     11.8us
+callFunctionOn ~38KB fn                      n=300   median=    172.2us p95=    246.3us
+evaluate handle + releaseObject              n=500   median=      6.8us p95=      8.2us
+Page.navigate about:blank (realm rebuild)    n=100   median=    135.8us p95=   1125.6us
+exit=0
+## run 3
+EngineHost::new (JSC VM + browser thread state): 7064.9us
+context+target+Page/Runtime.enable           n=50    median=    514.8us p95=   1925.6us
+Runtime.evaluate 1+1 (by value)              n=500   median=      6.7us p95=     13.9us
+callFunctionOn small fn                      n=300   median=      8.2us p95=      9.2us
+callFunctionOn ~38KB fn                      n=300   median=    173.0us p95=    264.3us
+evaluate handle + releaseObject              n=500   median=      6.7us p95=      8.5us
+Page.navigate about:blank (realm rebuild)    n=100   median=    137.7us p95=   1133.9us
+exit=0
