@@ -58,7 +58,7 @@ Supported behavior:
 
 Not implemented: Request/public Response constructors and static factories,
 ReadableStream/body streaming, FormData/URLSearchParams bindings and serialization
-through fetch, XHR, URL binding, `<base>` URL selection, full MIME parsing for
+through fetch, URL binding, `<base>` URL selection, full MIME parsing for
 response Blob types, service workers, integrity/referrer policy and HTTP caching.
 Nonempty integrity/referrer/referrerPolicy, keepalive and unsupported cache modes
 are explicitly rejected. HTTPS remains unsupported by the native transport.
@@ -70,3 +70,6 @@ headers-before-body delivery, method/body conversion, redirects/HTTP errors,
 CORS/opaque filtering, cross-realm borrowed methods, abort reason identity,
 limits and refunds, disposal/late tasks, and GC release. It does not exercise
 browser navigation wiring, Playwright/TOS flows, or upstream performance parity.
+
+The separate [XHR binding](XHR.md) now implements an asynchronous subset using
+the same network client and request-context IDs, with its own buffer limits.
