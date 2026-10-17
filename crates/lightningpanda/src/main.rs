@@ -1,9 +1,8 @@
 //! `lightningpanda` executable.
 //!
-//! Implemented: `version`, `eval` (runs JavaScript on real JavaScriptCore in a
-//! page realm with console and timers, until the event loop is idle).
-//! Not yet implemented (exit code 2 with a message): `serve` (CDP, worker 3)
-//! and `fetch` (document loading, worker 2).
+//! Commands: `version`, `eval` (JavaScript in an about:blank page until idle),
+//! `serve` (CDP server, lp-cdp) and `fetch` (load a URL over the network, run
+//! its scripts, dump the resulting DOM).
 
 use lp_browser::{BrowserThread, PageEvent, PageId, PageObserver};
 use lp_js::{ConsoleLevel, EngineHooks, JsException, Realm, Value};
@@ -20,7 +19,8 @@ commands:
   eval [--timeout-ms N] (-e CODE | FILE | -)
                                run JavaScript in an about:blank page until idle
   serve [--host H] [--port P]  CDP server (see `serve --help`)
-  fetch URL                    load a page and dump it (not implemented yet)
+  fetch [--dump html|none] [--wait-ms N] [--timeout-ms N] URL
+                               load a page (scripts run), dump the DOM after `load`
 ";
 
 fn main() -> ExitCode {
@@ -29,10 +29,7 @@ fn main() -> ExitCode {
         Some("version") | Some("--version") => version(),
         Some("eval") => eval(&args[1..]),
         Some("serve") => lp_cdp::serve_main(&args[1..]),
-        Some("fetch") => {
-            eprintln!("lightningpanda: '{}' is not implemented yet in the Rust rewrite", args[0]);
-            ExitCode::from(2)
-        }
+        Some("fetch") => fetch(&args[1..]),
         Some("help") | Some("--help") | Some("-h") | None => {
             print!("{USAGE}");
             ExitCode::SUCCESS
@@ -198,4 +195,112 @@ fn eval(args: &[String]) -> ExitCode {
 fn usage_error(msg: &str) -> ExitCode {
     eprintln!("lightningpanda: {msg}\n\n{USAGE}");
     ExitCode::from(2)
+}
+
+#[derive(Default)]
+struct LoadWatcher {
+    loaded: Cell<bool>,
+    failed: std::cell::RefCell<Option<String>>,
+}
+
+impl PageObserver for LoadWatcher {
+    fn on_page_event(&self, _page: PageId, event: &PageEvent) {
+        match event {
+            PageEvent::FrameLoaded { .. } => self.loaded.set(true),
+            PageEvent::FrameNavigateFailed { error, .. } => *self.failed.borrow_mut() = Some(error.clone()),
+            _ => {}
+        }
+    }
+}
+
+fn fetch(args: &[String]) -> ExitCode {
+    let mut dump_html = true;
+    let mut wait = Duration::ZERO;
+    let mut timeout = Duration::from_secs(30);
+    let mut url: Option<String> = None;
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--dump" => match it.next().map(String::as_str) {
+                Some("html") => dump_html = true,
+                Some("none") => dump_html = false,
+                _ => return usage_error("--dump takes html or none"),
+            },
+            "--wait-ms" => match it.next().and_then(|v| v.parse().ok()) {
+                Some(ms) => wait = Duration::from_millis(ms),
+                None => return usage_error("--wait-ms needs a number"),
+            },
+            "--timeout-ms" => match it.next().and_then(|v| v.parse().ok()) {
+                Some(ms) => timeout = Duration::from_millis(ms),
+                None => return usage_error("--timeout-ms needs a number"),
+            },
+            u if !u.starts_with('-') && url.is_none() => url = Some(u.to_string()),
+            other => return usage_error(&format!("unexpected argument {other}")),
+        }
+    }
+    let Some(url) = url else { return usage_error("fetch needs a URL") };
+    let mut thread = match BrowserThread::new() {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("lightningpanda: engine init failed: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    if let Err(e) = thread.enable_network(lp_net::NetConfig::default()) {
+        eprintln!("lightningpanda: network init failed: {e}");
+        return ExitCode::FAILURE;
+    }
+    let hooks = Rc::new(CliHooks { failed: Cell::new(false) });
+    let watcher = Rc::new(LoadWatcher::default());
+    thread.browser.set_engine_hooks(Some(hooks));
+    thread.browser.set_observer(Some(watcher.clone()));
+    let page = match thread.browser.create_page() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("lightningpanda: page creation failed: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    // The initial about:blank load already fired; wait for the real one.
+    watcher.loaded.set(false);
+    let deadline = Instant::now() + timeout;
+    if let Err(e) = thread.browser.navigate(page, lp_browser::NavigateOpts::address_bar(url.clone())) {
+        eprintln!("lightningpanda: navigation failed: {e}");
+        return ExitCode::FAILURE;
+    }
+    let w = watcher.clone();
+    let outcome = thread.run_until(Some(deadline), move |_| w.loaded.get() || w.failed.borrow().is_some());
+    if let Some(err) = watcher.failed.borrow().clone() {
+        eprintln!("lightningpanda: {url}: {err}");
+        thread.browser.close_all();
+        return ExitCode::FAILURE;
+    }
+    if outcome == lp_runtime::RunOutcome::TimedOut {
+        eprintln!("lightningpanda: timed out waiting for load of {url}");
+        thread.browser.close_all();
+        return ExitCode::from(124);
+    }
+    if !wait.is_zero() {
+        thread.run_until_idle(Some((Instant::now() + wait).min(deadline)));
+    }
+    if dump_html {
+        let html = thread.browser.page(page).and_then(|p| {
+            let dom = p.main_frame.dom.as_ref()?;
+            let doc = p.main_frame.document?;
+            let d = dom.borrow();
+            let mut out = String::new();
+            if d.doctype(doc).ok().flatten().is_some() {
+                out.push_str("<!DOCTYPE html>\n");
+            }
+            let root = d.document_element(doc).ok().flatten()?;
+            out.push_str(&d.outer_html(root).ok()?);
+            Some(out)
+        });
+        match html {
+            Some(h) => println!("{h}"),
+            None => eprintln!("lightningpanda: no document to dump"),
+        }
+    }
+    thread.browser.close_all();
+    ExitCode::SUCCESS
 }

@@ -466,6 +466,7 @@ dependencies = [
  "lp-browser",
  "lp-cdp",
  "lp-js",
+ "lp-net",
  "lp-runtime",
 ]
 
