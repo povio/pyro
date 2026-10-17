@@ -299,7 +299,10 @@ fn radio_group_checked(dom: &Dom, el: NodeId) -> Vec<NodeId> {
         .unwrap_or_default()
 }
 
-/// `HTMLElement.click()`: synthetic (untrusted) PointerEvent click.
+/// `HTMLElement.click()`: synthetic (untrusted) PointerEvent click. As in
+/// browsers (and upstream Html.zig), `detail` is 0, `pointerId` is -1 and
+/// `pointerType` is empty; libraries such as React Aria rely on `detail == 0`
+/// to recognise a virtual click.
 pub fn element_click(page: &Rc<PageDom>, el: NodeId) {
     if page.dom.borrow().is_disabled(el).unwrap_or(false) {
         return;
@@ -308,7 +311,7 @@ pub fn element_click(page: &Rc<PageDom>, el: NodeId) {
         return; // click in progress flag
     }
     let ev = EventCore::new(page, EventInterface::PointerEvent, "click", true, true, true);
-    ev.fields.borrow_mut().detail = 1.0;
+    ev.fields.borrow_mut().pointer_id = -1;
     dispatch_with_activation(page, el, &ev);
     page.end_click(el);
 }

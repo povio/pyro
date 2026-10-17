@@ -2145,3 +2145,13 @@ fn dom_parser_parses_inert_html_documents() {
     assert_eq!(eval(r, "try{new DOMParser().parseFromString('x','text/plain')}catch(e){e.name}"), "TypeError");
     assert_eq!(eval(r, "try{DOMParser()}catch(e){e.name}"), "TypeError");
 }
+
+#[test]
+fn element_click_is_a_virtual_pointer_click() {
+    let e = env("<body><button id=b>go</button></body>");
+    let r = &e.main;
+    assert_eq!(
+        eval(r, "let seen; const b=document.getElementById('b'); b.addEventListener('click', e => seen=[e.constructor.name, e.detail, e.button, e.buttons, e.pointerId, JSON.stringify(e.pointerType), e.isTrusted, e.bubbles, e.cancelable, e.composed].join()); b.click(); seen"),
+        "PointerEvent,0,0,0,-1,\"\",false,true,true,true"
+    );
+}
