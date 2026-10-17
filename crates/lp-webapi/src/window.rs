@@ -60,6 +60,7 @@ where
     def.getter("sessionStorage", |s, w| crate::storage::window_storage(s, w.page(), true));
     def.getter("customElements", |s, w| crate::custom::registry(s, w.page()));
     def.getter("navigator", |s, w| navigator(s, w.page()));
+    def.getter("crypto", |s, _w| crate::crypto::crypto_value(s));
     def.getter("clientInformation", |s, w| navigator(s, w.page()));
     def.getter("screen", |s, w| {
         let key = lp_js::IdentityKey(w.page().id() | (1 << 57), 1);
