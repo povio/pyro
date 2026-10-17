@@ -1,0 +1,56 @@
+# for s in <scenarios>; do memory_caps $s; done  (one process per scenario, 3 rounds)
+# source: main cdf2d33 + rewrite/automation-memory-caps handle budget (see commit)
+2026-10-17T12:50:32Z
+ProductName:		macOS ProductVersion:		26.7.1 BuildVersion:		25G241 
+Apple M1
+8589934592
+rustc 1.99.1 (58cf8f9c3 2026-10-13)
+SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk
+## round 1
+99,999 console.log(i) in one task (+ queued outbound frames)   footprint     6.3 ->    43.3 MiB (+37.0)
+  peak RSS 67.9 MiB
+exit=0
+99,999 console.log({i}) in one task (rooted objects + frames)  footprint     6.2 ->    62.4 MiB (+56.2)
+  peak RSS 101.6 MiB
+exit=0
+99,999 console.log(1 KiB string) in one task (+ frames)        footprint     6.2 ->    50.5 MiB (+44.3)
+  peak RSS 298.7 MiB
+exit=0
+100,000 retained object handles (default handle budget)        footprint     6.2 ->    35.0 MiB (+28.8)
+  peak RSS 50.1 MiB
+exit=0
+9,999 pending awaitPromise replies                             footprint     6.2 ->     7.6 MiB (+1.4)
+  peak RSS 15.1 MiB
+exit=0
+## round 2
+99,999 console.log(i) in one task (+ queued outbound frames)   footprint     6.2 ->    43.2 MiB (+37.0)
+  peak RSS 67.8 MiB
+exit=0
+99,999 console.log({i}) in one task (rooted objects + frames)  footprint     6.2 ->    62.4 MiB (+56.2)
+  peak RSS 101.6 MiB
+exit=0
+99,999 console.log(1 KiB string) in one task (+ frames)        footprint     6.2 ->    50.5 MiB (+44.3)
+  peak RSS 298.7 MiB
+exit=0
+100,000 retained object handles (default handle budget)        footprint     6.2 ->    34.6 MiB (+28.4)
+  peak RSS 49.8 MiB
+exit=0
+9,999 pending awaitPromise replies                             footprint     6.2 ->     7.5 MiB (+1.4)
+  peak RSS 15.1 MiB
+exit=0
+## round 3
+99,999 console.log(i) in one task (+ queued outbound frames)   footprint     6.2 ->    43.2 MiB (+37.0)
+  peak RSS 67.8 MiB
+exit=0
+99,999 console.log({i}) in one task (rooted objects + frames)  footprint     6.2 ->    62.5 MiB (+56.3)
+  peak RSS 101.6 MiB
+exit=0
+99,999 console.log(1 KiB string) in one task (+ frames)        footprint     6.1 ->    50.5 MiB (+44.4)
+  peak RSS 298.7 MiB
+exit=0
+100,000 retained object handles (default handle budget)        footprint     6.2 ->    34.5 MiB (+28.3)
+  peak RSS 49.9 MiB
+exit=0
+9,999 pending awaitPromise replies                             footprint     6.2 ->     7.6 MiB (+1.5)
+  peak RSS 15.2 MiB
+exit=0

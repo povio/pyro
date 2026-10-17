@@ -33,12 +33,23 @@ impl Harness {
     }
 
     fn with_budget(budget: Option<lp_cdp::network_protocol::BodyBudget>) -> Harness {
+        Self::build(budget, None)
+    }
+
+    fn with_handle_limit(limit: usize) -> Harness {
+        Self::build(None, Some(limit))
+    }
+
+    fn build(budget: Option<lp_cdp::network_protocol::BodyBudget>, handle_limit: Option<usize>) -> Harness {
         let (out, rx) = Outbox::channel(lp_cdp::outbox::DEFAULT_OUTBOUND_BUDGET);
-        let host = match budget {
+        let mut host = match budget {
             Some(budget) => EngineHost::with_body_budget(out.clone(), budget),
             None => EngineHost::new(out.clone()),
         }
         .expect("JavaScriptCore engine");
+        if let Some(limit) = handle_limit {
+            host.set_handle_limit(limit);
+        }
         let mut h = Harness {
             browser: Browser::new(host),
             out,
@@ -1215,4 +1226,27 @@ fn device_metrics_reject_invalid_and_unsupported_fields_atomically() {
         )["result"]["result"]["value"],
         json!([800, 600, 1.5])
     );
+}
+
+#[test]
+fn handle_budget_spans_sessions_and_returns_on_release_and_detach() {
+    let mut h = Harness::with_handle_limit(4);
+    let second = h.attach_second_session();
+    let first = h.session.clone();
+    let mut ids = Vec::new();
+    for _ in 0..2 {
+        let r = h.call(Some(&first), "Runtime.evaluate", json!({"expression":"({})"}));
+        ids.push(r["result"]["result"]["objectId"].as_str().unwrap().to_owned());
+        h.call(Some(&second), "Runtime.evaluate", json!({"expression":"({})"}));
+    }
+    let r = h.call(Some(&second), "Runtime.evaluate", json!({"expression":"({})"}));
+    assert_eq!(r["error"]["message"], "Too many remote objects; release unused handles", "aggregate bounded: {r}");
+    h.call(Some(&first), "Runtime.releaseObject", json!({"objectId": ids[0]}));
+    let r = h.call(Some(&second), "Runtime.evaluate", json!({"expression":"({})"}));
+    assert!(r["result"]["result"]["objectId"].is_string(), "release returns capacity: {r}");
+    h.call(None, "Target.detachFromTarget", json!({"sessionId": second}));
+    for _ in 0..3 {
+        let r = h.call(Some(&first), "Runtime.evaluate", json!({"expression":"({})"}));
+        assert!(r["result"]["result"]["objectId"].is_string(), "detach returns the session's handles: {r}");
+    }
 }

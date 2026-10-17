@@ -7,7 +7,9 @@
 //! consumed by Playwright 1.59 (`crExecutionContext.js`, `crProtocolHelper.js`).
 //! The engine-backed domain lives in `engine::runtime`.
 
+use std::cell::Cell;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -231,7 +233,48 @@ fn is_bigint_literal(digits: &str) -> bool {
 pub struct HandleTable<H> {
     entries: HashMap<String, Entry<H>>,
     next: u64,
+    budget: HandleBudget,
+}
+
+/// Remote-object handles a whole connection may retain, shared by the
+/// handle tables of all its sessions (the session count alone does not bound
+/// the aggregate). Single-threaded: lives on the browser thread.
+#[derive(Clone)]
+pub struct HandleBudget(Rc<HandleBudgetInner>);
+
+struct HandleBudgetInner {
     limit: usize,
+    used: Cell<usize>,
+}
+
+impl HandleBudget {
+    /// Default per connection. 100,000 retained small-object handles
+    /// measured +28.3..28.8 MiB process footprint on real JavaScriptCore
+    /// (bench/results/memory-caps-cdf2d33). Larger retained objects cost
+    /// what they hold. Playwright releases handles it no longer needs;
+    /// reaching the limit is a client leak and fails explicitly.
+    pub const DEFAULT_LIMIT: usize = 100_000;
+
+    pub fn new(limit: usize) -> Self {
+        Self(Rc::new(HandleBudgetInner { limit, used: Cell::new(0) }))
+    }
+
+    pub fn used(&self) -> usize {
+        self.0.used.get()
+    }
+
+    fn take(&self) -> bool {
+        let used = self.0.used.get();
+        if used >= self.0.limit {
+            return false;
+        }
+        self.0.used.set(used + 1);
+        true
+    }
+
+    fn give_back(&self, n: usize) {
+        self.0.used.set(self.0.used.get().saturating_sub(n));
+    }
 }
 
 struct Entry<H> {
@@ -241,10 +284,8 @@ struct Entry<H> {
 }
 
 impl<H> HandleTable<H> {
-    pub const DEFAULT_LIMIT: usize = 1 << 20;
-
-    pub fn new(limit: usize) -> Self {
-        Self { entries: HashMap::new(), next: 1, limit }
+    pub fn new(budget: HandleBudget) -> Self {
+        Self { entries: HashMap::new(), next: 1, budget }
     }
 
     pub fn len(&self) -> usize {
@@ -256,7 +297,7 @@ impl<H> HandleTable<H> {
     }
 
     pub fn insert(&mut self, context: ExecutionContextId, group: Option<&str>, handle: H) -> CdpResult<String> {
-        if self.entries.len() >= self.limit {
+        if !self.budget.take() {
             return Err(CdpError::server("Too many remote objects; release unused handles"));
         }
         let id = format!("{context}.{}", self.next);
@@ -277,7 +318,9 @@ impl<H> HandleTable<H> {
     }
 
     pub fn release(&mut self, object_id: &str) -> Option<H> {
-        self.entries.remove(object_id).map(|e| e.handle)
+        let entry = self.entries.remove(object_id)?;
+        self.budget.give_back(1);
+        Some(entry.handle)
     }
 
     pub fn release_group(&mut self, group: &str) -> usize {
@@ -290,13 +333,22 @@ impl<H> HandleTable<H> {
     }
 
     pub fn clear(&mut self) {
+        self.budget.give_back(self.entries.len());
         self.entries.clear();
     }
 
     fn release_where(&mut self, mut pred: impl FnMut(&Entry<H>) -> bool) -> usize {
         let before = self.entries.len();
         self.entries.retain(|_, e| !pred(e));
-        before - self.entries.len()
+        let released = before - self.entries.len();
+        self.budget.give_back(released);
+        released
+    }
+}
+
+impl<H> Drop for HandleTable<H> {
+    fn drop(&mut self) {
+        self.budget.give_back(self.entries.len());
     }
 }
 
@@ -379,8 +431,29 @@ mod tests {
     }
 
     #[test]
+    fn handle_budget_is_shared_and_returned() {
+        let budget = HandleBudget::new(3);
+        let mut a = HandleTable::new(budget.clone());
+        let mut b = HandleTable::new(budget.clone());
+        let a1 = a.insert(1, Some("g"), "a1").unwrap();
+        a.insert(1, None, "a2").unwrap();
+        b.insert(2, None, "b1").unwrap();
+        assert!(b.insert(2, None, "b2").is_err(), "aggregate across tables is bounded");
+        assert_eq!(budget.used(), 3);
+        a.release(&a1);
+        b.insert(2, None, "b2").unwrap();
+        a.clear();
+        assert_eq!(budget.used(), 2);
+        b.release_context(2);
+        assert_eq!(budget.used(), 0);
+        b.insert(2, Some("g"), "b3").unwrap();
+        drop(b);
+        assert_eq!(budget.used(), 0, "dropping a table (session detach) returns its handles");
+    }
+
+    #[test]
     fn handle_table_groups_contexts_and_limits() {
-        let mut t = HandleTable::new(3);
+        let mut t = HandleTable::new(HandleBudget::new(3));
         let a = t.insert(1, Some("g"), "a").unwrap();
         let b = t.insert(1, None, "b").unwrap();
         let c = t.insert(2, Some("g"), "c").unwrap();
