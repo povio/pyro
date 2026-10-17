@@ -282,8 +282,9 @@ impl<'s> Object<'s> {
         }
     }
 
-    /// Calls this object as a function. `args` should live on the stack (see
-    /// module docs); JSC roots them for the duration of the call.
+    /// Calls this object as a function. `args` must be rooted by the caller
+    /// (stack locals, or use [`Object::call_rooted`] for values collected on
+    /// the heap); JSC roots them for the duration of the call.
     pub fn call(&self, this: Option<Object<'_>>, args: &[Value<'_>]) -> JsResult<Value<'s>> {
         let raw_args = RawArgs::new(args);
         let mut exc = ptr::null();
@@ -299,6 +300,17 @@ impl<'s> Object<'s> {
     /// rules for sloppy functions; strict functions see `undefined` for non-objects).
     pub fn call_with_this_value(&self, this: Value<'_>, args: &[Value<'_>]) -> JsResult<Value<'s>> {
         self.call(this.as_object(), args)
+    }
+
+    /// Calls with arguments held in a [`crate::RootedVec`]: the safe way to pass
+    /// many arguments that were produced one by one (each conversion may GC).
+    pub fn call_rooted(&self, this: Option<Object<'_>>, args: &crate::RootedVec) -> JsResult<Value<'s>> {
+        let raw = args.raw();
+        let mut exc = ptr::null();
+        let this_raw = this.map_or(ptr::null_mut(), |o| o.raw);
+        let v = unsafe { sys::JSObjectCallAsFunction(self.ctx, self.raw, this_raw, raw.len(), raw.as_ptr(), &mut exc) };
+        check(self.ctx, exc)?;
+        Ok(unsafe { Value::from_raw(self.ctx, v) })
     }
 
     pub fn construct(&self, args: &[Value<'_>]) -> JsResult<Object<'s>> {
