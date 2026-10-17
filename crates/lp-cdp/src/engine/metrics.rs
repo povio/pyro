@@ -1,8 +1,10 @@
-//! Device metrics over the browser's persistent page viewport. Mobile layout,
-//! orientation overrides and visual viewport transforms remain explicit gaps.
+//! Device metrics over the browser's persistent page viewport. Screen
+//! orientation overrides are stored on the viewport and reported by
+//! `screen.orientation` (as upstream and Chrome). Mobile layout and visual
+//! viewport transforms remain explicit gaps.
 use std::collections::BTreeMap;
 
-use lp_dom::media::Viewport;
+use lp_dom::media::{self, ScreenOrientation, Viewport};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -19,6 +21,17 @@ enum OrientationType {
     PortraitSecondary,
     LandscapePrimary,
     LandscapeSecondary,
+}
+
+impl From<OrientationType> for media::OrientationType {
+    fn from(kind: OrientationType) -> Self {
+        match kind {
+            OrientationType::PortraitPrimary => media::OrientationType::PortraitPrimary,
+            OrientationType::PortraitSecondary => media::OrientationType::PortraitSecondary,
+            OrientationType::LandscapePrimary => media::OrientationType::LandscapePrimary,
+            OrientationType::LandscapeSecondary => media::OrientationType::LandscapeSecondary,
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -61,6 +74,7 @@ impl EngineHost {
             viewport.device_scale_factor = defaults.device_scale_factor;
             viewport.screen_width = defaults.screen_width;
             viewport.screen_height = defaults.screen_height;
+            viewport.orientation = defaults.orientation;
         } else {
             let p: Metrics = cmd.command.params()?;
             if [Some(p.width), Some(p.height), p.screen_width, p.screen_height]
@@ -84,15 +98,19 @@ impl EngineHost {
                 if p.device_scale_factor == 0.0 { defaults.device_scale_factor } else { p.device_scale_factor };
             viewport.screen_width = p.screen_width;
             viewport.screen_height = p.screen_height;
-            if let Some(orientation) = p.screen_orientation {
-                let landscape = viewport.screen_width.unwrap_or(viewport.width)
-                    >= viewport.screen_height.unwrap_or(viewport.height);
-                let native =
-                    if landscape { OrientationType::LandscapePrimary } else { OrientationType::PortraitPrimary };
-                if orientation.angle != 0 || orientation.r#type != native {
-                    return Err(CdpError::unsupported("Emulation screen orientation override"));
+            // CDP and Chrome apply the override independently of the screen
+            // dimensions: Playwright sends landscapePrimary/0 for every
+            // non-mobile viewport, including portrait ones.
+            viewport.orientation = match p.screen_orientation {
+                Some(o) => {
+                    let angle = u16::try_from(o.angle)
+                        .ok()
+                        .filter(|a| matches!(a, 0 | 90 | 180 | 270))
+                        .ok_or_else(|| CdpError::invalid_params("Invalid screen orientation angle"))?;
+                    Some(ScreenOrientation { kind: o.r#type.into(), angle })
                 }
-            }
+                None => None,
+            };
         }
         self.thread.browser.set_viewport(id, viewport).map_err(|error| match error {
             lp_js::JsError::Range(message) | lp_js::JsError::Type(message) => CdpError::invalid_params(message),

@@ -1201,6 +1201,8 @@ fn device_metrics_reject_invalid_and_unsupported_fields_atomically() {
         ("screenWidth", json!(10000001)),
         ("screenHeight", json!(-1)),
         ("screenOrientation", json!({"type":"sideways","angle":0})),
+        ("screenOrientation", json!({"type":"portraitPrimary","angle":45})),
+        ("screenOrientation", json!({"type":"portraitPrimary","angle":-90})),
     ] {
         let mut params = valid.clone();
         params[key] = value;
@@ -1212,7 +1214,6 @@ fn device_metrics_reject_invalid_and_unsupported_fields_atomically() {
         ("scale", json!(0.5)),
         ("positionX", json!(10)),
         ("viewport", json!({"x":0,"y":0,"width":100,"height":100,"scale":1})),
-        ("screenOrientation", json!({"type":"portraitPrimary","angle":90})),
     ] {
         let mut params = valid.clone();
         params[key] = value;
@@ -1275,4 +1276,40 @@ fn handle_limit_cannot_change_after_sessions_attach() {
     }
     let r = h.call(Some(&next), "Runtime.evaluate", json!({"expression":"({})"}));
     assert!(r.get("error").is_some(), "new limit enforced: {r}");
+}
+
+/// Playwright 1.59 sends `screenOrientation {angle:0, type:"landscapePrimary"}`
+/// for every non-mobile viewport; `page.setViewportSize(390x844)` also makes
+/// the screen 390x844. The override is stored and reported by
+/// `screen.orientation` regardless of dimensions (Chrome and upstream).
+#[test]
+fn screen_orientation_override_is_independent_of_dimensions() {
+    let mut h = Harness::new();
+    let probe = "[innerWidth,innerHeight,screen.width,screen.height,screen.orientation.type,screen.orientation.angle,matchMedia('(orientation: portrait)').matches]";
+    let read = |h: &mut Harness| {
+        h.page("Runtime.evaluate", json!({"expression":probe,"returnByValue":true}))["result"]["result"]["value"]
+            .clone()
+    };
+    let desktop = json!({"mobile":false,"width":1440,"height":900,"screenWidth":1440,"screenHeight":900,"deviceScaleFactor":1,"screenOrientation":{"angle":0,"type":"landscapePrimary"},"dontSetVisibleSize":false});
+    assert_eq!(h.page("Emulation.setDeviceMetricsOverride", desktop)["result"], json!({}));
+    assert_eq!(read(&mut h), json!([1440, 900, 1440, 900, "landscape-primary", 0, false]));
+    // The TOS "mobile" case: page.setViewportSize({width: 390, height: 844}).
+    let phone = json!({"mobile":false,"width":390,"height":844,"screenWidth":390,"screenHeight":844,"deviceScaleFactor":1,"screenOrientation":{"angle":0,"type":"landscapePrimary"},"dontSetVisibleSize":false});
+    let r = h.page("Emulation.setDeviceMetricsOverride", phone);
+    assert_eq!(r["result"], json!({}), "{r}");
+    // CSS (orientation) follows the viewport; screen.orientation reports the override.
+    assert_eq!(read(&mut h), json!([390, 844, 390, 844, "landscape-primary", 0, true]));
+    let rotated = json!({"mobile":false,"width":844,"height":390,"deviceScaleFactor":1,"screenOrientation":{"angle":270,"type":"landscapeSecondary"}});
+    assert_eq!(h.page("Emulation.setDeviceMetricsOverride", rotated)["result"], json!({}));
+    assert_eq!(read(&mut h), json!([844, 390, 844, 390, "landscape-secondary", 270, false]));
+    // Without an override the type follows the screen dimensions again.
+    let plain = json!({"mobile":false,"width":390,"height":844,"deviceScaleFactor":1});
+    assert_eq!(h.page("Emulation.setDeviceMetricsOverride", plain)["result"], json!({}));
+    assert_eq!(read(&mut h), json!([390, 844, 390, 844, "portrait-primary", 0, true]));
+    let portrait = json!({"mobile":false,"width":390,"height":844,"deviceScaleFactor":1,"screenOrientation":{"angle":90,"type":"portraitSecondary"}});
+    assert_eq!(h.page("Emulation.setDeviceMetricsOverride", portrait)["result"], json!({}));
+    assert_eq!(h.page("Emulation.clearDeviceMetricsOverride", json!({}))["result"], json!({}));
+    let cleared = read(&mut h);
+    assert_eq!(cleared[4], "landscape-primary", "clear removes the override: {cleared}");
+    assert_eq!(cleared[5], 0);
 }
