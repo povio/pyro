@@ -12,9 +12,11 @@ Rewrite status:
 
 HTTP and `data:` document loading now use the real loader. `Network` emits request/redirect/response/data/completion/failure events to enabled page sessions, with response-body capture. Browser contexts own distinct network clients. DOM/Input protocol wiring remains pending; this is not TOS compatibility. Fetch request-stage interception supports continue overrides, fulfill, abort, disable/detach cleanup and server Basic-auth challenges. Response-stage interception, custom status phrases, binary headers, proxy credentials and non-Basic credential schemes are explicitly unsupported. Only one session per page can own interception; different pages in a context may have separate owners.
 
+Storage cookie commands use the network cookie jar, including HTTP response cookies, expiry and context isolation. Negative CDP expiry values mean session cookies. Invalid batches are validated before modifying the real jar. Partitioned/SameParty cookies, non-default priority and source overrides return explicit errors. This does not install document.cookie or localStorage into browser realms.
+
 Capture uses a shared process payload budget (default 64 MiB, 8 MiB/body), at most 4096 response records per page, and bounded network subscriptions (1024 events/8 MiB logical bytes per context). Observer overflow closes the CDP connection instead of silently losing events. Disabling the last Network session, navigation, or page teardown releases retained bodies. Per-session `Network.enable` buffer options are explicitly unsupported. These are logical retention limits, not an RSS measurement; shared chunk allocations and metadata contribute additional memory.
 
-Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 29 engine, 10 accepted/recorded only, 3 conditional, 59 pending.
+Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 32 engine, 10 accepted/recorded only, 3 conditional, 56 pending.
 
 | Method | Upstream 2ad38773f | Rewrite | Notes |
 | --- | --- | --- | --- |
@@ -105,9 +107,9 @@ Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 29 engi
 | `Runtime.releaseObject` | yes | engine |  |
 | `Runtime.runIfWaitingForDebugger` | yes | engine |  |
 | `Security.setIgnoreCertificateErrors` | yes | pending |  |
-| `Storage.clearCookies` | yes | pending |  |
-| `Storage.getCookies` | yes | pending |  |
-| `Storage.setCookies` | yes | pending |  |
+| `Storage.clearCookies` | yes | engine | per-context native cookie jar; omitted context uses a distinct default context |
+| `Storage.getCookies` | yes | engine | per-context native cookie jar; omitted context uses a distinct default context |
+| `Storage.setCookies` | yes | engine | per-context native cookie jar; omitted context uses a distinct default context |
 | `Target.attachToBrowserTarget` | yes | pending |  |
 | `Target.attachToTarget` | yes | engine |  |
 | `Target.closeTarget` | yes | engine |  |

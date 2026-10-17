@@ -1,6 +1,6 @@
 //! CDP over the real engine (lp-browser + lp-js on JavaScriptCore), driven
-//! in-process with the message sequence Playwright 1.59 uses. Only
-//! about:blank can load until document loading is integrated.
+//! in-process with the message sequence Playwright 1.59 uses, including
+//! HTTP/data navigation, Network/Fetch and per-context storage.
 
 use std::time::{Duration, Instant};
 
@@ -712,4 +712,76 @@ fn detaching_fetch_session_resumes_navigation_for_other_session() {
         response["result"]["errorText"].as_str().unwrap().contains("ERR_CONNECTION_REFUSED"),
         "request resumed: {response}"
     );
+}
+
+#[test]
+fn storage_cookies_are_isolated_and_default_context_is_distinct() {
+    let mut h = Harness::new();
+    let a = h.call(None, "Target.createBrowserContext", json!({}))["result"]["browserContextId"].clone();
+    let b = h.call(None, "Target.createBrowserContext", json!({}))["result"]["browserContextId"].clone();
+    assert_eq!(
+        h.call(
+            None,
+            "Storage.setCookies",
+            json!({"browserContextId":a,"cookies":[
+                {"name":"a","value":"1","url":"https://example.com/path","expires":-1,"httpOnly":true,"sameSite":"Lax"}
+            ]})
+        )["result"],
+        json!({})
+    );
+    let cookies = h.call(None, "Storage.getCookies", json!({"browserContextId":a}))["result"]["cookies"].clone();
+    assert_eq!(cookies[0]["name"], "a");
+    assert_eq!(cookies[0]["domain"], "example.com");
+    assert_eq!(cookies[0]["secure"], true);
+    assert_eq!(cookies[0]["httpOnly"], true);
+    assert_eq!(cookies[0]["session"], true);
+    assert_eq!(cookies[0]["expires"], -1.0);
+    assert_eq!(h.call(None, "Storage.getCookies", json!({"browserContextId":b}))["result"]["cookies"], json!([]));
+    assert_eq!(h.call(None, "Storage.getCookies", json!({}))["result"]["cookies"], json!([]));
+    h.call(None, "Storage.setCookies", json!({"cookies":[{"name":"default","value":"x","domain":".example.com"}]}));
+    assert_eq!(h.call(None, "Storage.getCookies", json!({}))["result"]["cookies"][0]["domain"], ".example.com");
+    h.call(None, "Storage.clearCookies", json!({"browserContextId":a}));
+    assert_eq!(h.call(None, "Storage.getCookies", json!({"browserContextId":a}))["result"]["cookies"], json!([]));
+    assert_eq!(h.call(None, "Storage.getCookies", json!({}))["result"]["cookies"][0]["name"], "default");
+    h.call(None, "Target.disposeBrowserContext", json!({"browserContextId":a}));
+    assert!(h.call(None, "Storage.getCookies", json!({"browserContextId":a}))["error"].is_object());
+}
+
+#[test]
+fn storage_invalid_batch_is_atomic_and_partitioned_cookies_fail_explicitly() {
+    let mut h = Harness::new();
+    for bad in [
+        json!({"name":"bad;name","value":"x","domain":"example.com"}),
+        json!({"name":"x","value":"x","domain":"example.com","path":"relative"}),
+        json!({"name":"x","value":"x","domain":"example.com","partitionKey":{"topLevelSite":"https://example.com","hasCrossSiteAncestor":false}}),
+        json!({"name":"x","value":"x","domain":"example.com","sameSite":"invalid"}),
+    ] {
+        let result = h.call(
+            None,
+            "Storage.setCookies",
+            json!({"cookies":[
+                {"name":"valid","value":"x","domain":"example.com"},bad
+            ]}),
+        );
+        assert!(result["error"].is_object(), "{result}");
+        assert_eq!(h.call(None, "Storage.getCookies", json!({}))["result"]["cookies"], json!([]));
+    }
+    assert!(h.call(None, "Storage.getCookies", json!({"browserContextId":4}))["error"].is_object());
+}
+
+#[test]
+fn storage_negative_expiry_is_session_and_zero_expires_deletes() {
+    let mut h = Harness::new();
+    h.call(
+        None,
+        "Storage.setCookies",
+        json!({"cookies":[{"name":"session","value":"x","domain":"example.com","expires":-10}]}),
+    );
+    assert_eq!(h.call(None, "Storage.getCookies", json!({}))["result"]["cookies"][0]["session"], true);
+    h.call(
+        None,
+        "Storage.setCookies",
+        json!({"cookies":[{"name":"session","value":"x","domain":"example.com","expires":0}]}),
+    );
+    assert_eq!(h.call(None, "Storage.getCookies", json!({}))["result"]["cookies"], json!([]));
 }

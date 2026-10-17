@@ -206,9 +206,21 @@ impl<H: Host> Browser<H> {
                 struct ContextParam {
                     browser_context_id: Option<String>,
                 }
-                let context = match cmd.raw_params().and_then(|p| serde_json::from_str::<ContextParam>(p.get()).ok()) {
-                    Some(ContextParam { browser_context_id: Some(id) }) => Some(self.context(&id)?.key),
-                    _ => None,
+                let context = if matches!(
+                    cmd.method.as_ref(),
+                    "Storage.getCookies" | "Storage.setCookies" | "Storage.clearCookies"
+                ) {
+                    let params: ContextParam = cmd.params()?;
+                    let id = match params.browser_context_id {
+                        Some(id) => id,
+                        None => self.default_context()?,
+                    };
+                    Some(self.context(&id)?.key)
+                } else {
+                    match cmd.raw_params().and_then(|p| serde_json::from_str::<ContextParam>(p.get()).ok()) {
+                        Some(ContextParam { browser_context_id: Some(id) }) => Some(self.context(&id)?.key),
+                        _ => None,
+                    }
                 };
                 self.host.browser_command(cmd, context, out);
                 Ok(())

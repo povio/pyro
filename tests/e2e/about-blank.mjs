@@ -200,6 +200,35 @@ await check('Fetch Basic authentication challenge', async () => {
     await new Promise((resolve) => server.close(resolve));
   }
 });
+await check('context cookies reach HTTP and stay isolated', async () => {
+  const received = [];
+  const server = http.createServer((req, res) => {
+    received.push(req.headers.cookie ?? '');
+    res.writeHead(200, { 'content-type': 'text/html', 'set-cookie': 'fromServer=2; Path=/; HttpOnly; SameSite=Lax' });
+    res.end('<script>globalThis.cookieFixture=45</script>');
+  });
+  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
+  const url = `http://127.0.0.1:${server.address().port}/cookie`;
+  let first, second;
+  try {
+    first = await browser.newContext(); second = await browser.newContext();
+    await first.addCookies([{ name: 'injected', value: '1', url, httpOnly: true, sameSite: 'Lax' }]);
+    assert.deepEqual(await second.cookies(), []);
+    await (await first.newPage()).goto(url, { timeout: 5000 });
+    assert.equal(received[0], 'injected=1');
+    const cookies = await first.cookies(url);
+    assert.deepEqual(cookies.map(c => c.name).sort(), ['fromServer', 'injected']);
+    assert.ok(cookies.every(c => c.httpOnly && c.sameSite === 'Lax' && c.expires === -1));
+    await (await second.newPage()).goto(url, { timeout: 5000 });
+    assert.equal(received[1], '');
+    await first.clearCookies();
+    assert.deepEqual(await first.cookies(), []);
+    assert.equal((await second.cookies())[0].name, 'fromServer');
+  } finally {
+    if (first) await first.close(); if (second) await second.close();
+    server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
+  }
+});
 await check('second context is independent', async () => {
   const other = await browser.newContext();
   const p2 = await other.newPage();

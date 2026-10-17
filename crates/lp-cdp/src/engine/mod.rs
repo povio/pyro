@@ -11,6 +11,7 @@ mod network;
 mod page;
 mod remote;
 mod runtime;
+mod storage;
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
@@ -554,6 +555,12 @@ impl Host for EngineHost {
 
     fn browser_command(&mut self, command: &Command<'_>, context: Option<ContextKey>, out: &mut dyn Sink) {
         match command.method.as_ref() {
+            "Storage.getCookies" | "Storage.setCookies" | "Storage.clearCookies" => {
+                match self.storage_command(command, context) {
+                    Ok(result) => out.send(msg::result_frame(command.id, &result, None)),
+                    Err(error) => out.send(msg::error_frame(Some(command.id), &error, None)),
+                }
+            }
             "Browser.setDownloadBehavior" => {
                 #[derive(Deserialize)]
                 struct P {
