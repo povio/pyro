@@ -246,6 +246,15 @@ impl NetClient {
     pub fn config(&self) -> &NetConfig {
         &self.inner.shared.config
     }
+    /// Current network settings snapshot.
+    pub fn settings(&self) -> NetSettings {
+        self.inner.shared.settings.lock().unwrap().clone()
+    }
+    /// Effective User-Agent (override or configured default).
+    pub fn user_agent(&self) -> String {
+        let s = self.inner.shared.settings.lock().unwrap();
+        s.user_agent.clone().unwrap_or_else(|| self.inner.shared.config.user_agent.clone())
+    }
     pub fn update_settings(&self, f: impl FnOnce(&mut NetSettings)) {
         f(&mut self.inner.shared.settings.lock().unwrap());
     }
