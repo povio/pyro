@@ -569,13 +569,37 @@ fn opaque_origin_storage_is_per_document_and_discarded_on_replacement() {
     assert_eq!(eval(&r3, "localStorage.length + ':' + sessionStorage.length"), "0:0");
     // Quota still applies (namespace quota of 12 UTF-16 bytes).
     assert_eq!(eval(&r2, "try{localStorage.setItem('abc','defg')}catch(e){e.name}"), "QuotaExceededError");
-    // Document replacement discards the areas.
+    // Document replacement discards the areas, including through retained
+    // Storage objects: they read as empty and reject writes.
+    eval(&r1, "var oldLocal = localStorage, oldSession = sessionStorage;");
     let doc = parse_document(&p1.dom, "data:text/html,b", "<body>");
     p1.set_document(doc);
     assert_eq!(eval(&r1, "localStorage.length + ':' + sessionStorage.length + ':' + localStorage.k"), "0:0:undefined");
+    assert_eq!(
+        eval(&r1, "[oldLocal !== localStorage, oldLocal.length, oldLocal.getItem('k'), oldLocal.k, oldLocal.key(0), Object.keys(oldLocal).length, oldSession.length, oldSession.getItem('s')].map(String).join()"),
+        "true,0,null,undefined,null,0,0,null"
+    );
+    assert_eq!(
+        eval(&r1, "[(()=>{try{oldLocal.setItem('k','x')}catch(e){return e.name}})(), (()=>{try{oldSession.z='y'}catch(e){return e.name}})(), (oldLocal.removeItem('k'), oldLocal.clear(), oldLocal.length), localStorage.length].join()"),
+        "InvalidStateError,InvalidStateError,0,0"
+    );
+    // The replacement document's area is independent of the retired one.
+    assert_eq!(eval(&r1, "localStorage.k='2'; oldLocal.length + ':' + localStorage.k"), "0:2");
     // Other opaque-origin restrictions are unchanged.
     assert_eq!(eval(&r1, "try{indexedDB.open('db')}catch(e){e.name}"), "SecurityError");
+    // Disposal retires the current areas too.
+    eval(&w1, "var kept = localStorage;");
+    assert_eq!(eval(&w1, "kept.k"), "2");
     p1.dispose();
+    assert_eq!(
+        eval(
+            &w1,
+            "kept.length + ':' + kept.getItem('k') + ':' + (()=>{try{kept.setItem('k','3')}catch(e){return e.name}})()"
+        ),
+        "0:null:InvalidStateError"
+    );
+    // Tuple-origin storage sharing the same namespaces is unaffected.
+    assert_eq!(eval(&r3, "localStorage.setItem('n','1'); localStorage.n"), "1");
 }
 
 #[test]

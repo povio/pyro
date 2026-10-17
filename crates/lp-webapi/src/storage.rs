@@ -9,8 +9,10 @@
 //! local/session areas instead (documented Chrome deviation). They are shared
 //! only by the worlds of that document — never through a common "null"
 //! bucket or with other documents, pages or contexts — and are discarded on
-//! document replacement or disposal. Other opaque-origin restrictions
-//! (e.g. IndexedDB) are unchanged.
+//! document replacement or disposal. A `Storage` object retained across the
+//! discard reads as empty (length 0, no keys) and throws InvalidStateError on
+//! `setItem`/named assignment; old contents never remain reachable. Other
+//! opaque-origin restrictions (e.g. IndexedDB) are unchanged.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -30,6 +32,9 @@ struct Area {
     entries: Vec<(String, String)>,
     bytes: usize,
     quota: usize,
+    /// Set when an opaque-origin document's area is discarded: contents are
+    /// dropped and retained `Storage` wrappers read as empty and reject writes.
+    retired: bool,
 }
 
 impl Area {
@@ -38,6 +43,12 @@ impl Area {
     }
 
     fn set(&mut self, key: String, value: String) -> JsResult<()> {
+        if self.retired {
+            return Err(JsError::dom(
+                "InvalidStateError",
+                "This storage area was discarded with its opaque-origin document.",
+            ));
+        }
         let index = self.entries.iter().position(|(k, _)| k == &key);
         let old_bytes = index.map_or(0, |i| entry_bytes(&self.entries[i].0, &self.entries[i].1));
         let bytes = self.bytes.saturating_sub(old_bytes).saturating_add(entry_bytes(&key, &value));
@@ -106,6 +117,7 @@ impl StorageNamespace {
             entries: Vec::new(),
             bytes: 0,
             quota: self.0.quota,
+            retired: false,
         }))
     }
 }
@@ -206,9 +218,17 @@ impl OpaqueStorage {
         }
     }
 
-    /// Discards the areas (document replacement or page disposal).
+    /// Discards the areas (document replacement or page disposal). Wrappers
+    /// already handed to script keep their `Rc`, so the areas are emptied and
+    /// retired rather than merely detached.
     pub(crate) fn clear(&self) {
-        drop(self.0.take());
+        let Some((_, local, session)) = self.0.take() else { return };
+        for area in [local, session] {
+            let mut area = area.borrow_mut();
+            area.entries = Vec::new();
+            area.bytes = 0;
+            area.retired = true;
+        }
     }
 }
 
