@@ -251,8 +251,16 @@ await check('context cookies reach HTTP and stay isolated', async () => {
   }
 });
 // Browser binding integration: local HTTP only, without claiming DOM/Input or TOS parity.
+const identityHeaders = [];
 const fixture = http.createServer((req, res) => {
-  if (req.url === '/json') {
+  identityHeaders.push({ url: req.url, agent: req.headers['user-agent'], language: req.headers['accept-language'] });
+  if (req.url === '/checkpoint.css') {
+    res.writeHead(200, { 'content-type': 'text/css' });
+    res.end('#message { display: none }');
+  } else if (req.url === '/identity') {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ agent: req.headers['user-agent'], language: req.headers['accept-language'] }));
+  } else if (req.url === '/json') {
     res.writeHead(201, { 'content-type': 'application/json', 'x-fixture': 'native-fetch' });
     res.end(JSON.stringify({ answer: 47 }));
   } else if (req.url === '/slow') {
@@ -349,6 +357,75 @@ try {
     assert.equal(box.atPoint, 'toggle', JSON.stringify(box));
     await page.mouse.click(box.x, box.y);
     assert.equal(await page.evaluate(() => document.querySelector('#toggle').checked), true);
+  });
+  await check('DOM handles expose owner frame and native geometry', async () => {
+    await page.evaluate(() => {
+      document.body.innerHTML = '<input id="dom-field" aria-label="Name" style="width:80px;height:20px"><button id="dom-button" style="width:80px;height:20px">Commit</button>';
+      globalThis.domClicks = 0;
+      document.querySelector('#dom-button').addEventListener('click', () => domClicks++);
+    });
+    const handle = await page.evaluateHandle(() => document.querySelector('#dom-button'));
+    assert.ok(handle);
+    try {
+      assert.equal(await handle.ownerFrame(), page.mainFrame());
+      const box = await handle.boundingBox();
+      assert.ok(box && box.width > 0 && box.height > 0, JSON.stringify(box));
+    } finally { await handle.dispose(); }
+  });
+  await check('real locator fill and click', async () => {
+    await page.locator('#dom-field').fill('typed through locator', { timeout: 5000 });
+    assert.equal(await page.locator('#dom-field').inputValue(), 'typed through locator');
+    await page.locator('#dom-button').click({ timeout: 5000 });
+    assert.equal(await page.evaluate(() => domClicks), 1);
+  });
+  await check('synchronous CDP DOM insertion starts stylesheet loading while idle', async () => {
+    const isolated = await context.newPage();
+    let timeout;
+    try {
+      await isolated.goto(`${fixtureOrigin}/checkpoint-page`, { timeout: 5000 });
+      // Let navigation work settle; the page schedules no timer or follow-up command.
+      await new Promise(resolve => setTimeout(resolve, 50));
+      const loaded = isolated.evaluate(() => new Promise((resolve, reject) => {
+        const link = document.createElement('link');
+        link.rel = 'stylesheet'; link.href = '/checkpoint.css';
+        link.addEventListener('load', () => resolve(getComputedStyle(document.querySelector('#message')).display));
+        link.addEventListener('error', () => reject(new Error('stylesheet failed')));
+        document.head.appendChild(link);
+      }));
+      assert.equal(await Promise.race([loaded, new Promise((_, reject) => {
+        timeout = setTimeout(() => reject(new Error('stylesheet did not start after CDP evaluation')), 5000);
+      })]), 'none');
+    } finally { clearTimeout(timeout); await isolated.close(); }
+  });
+  await check('page-scoped user agent and locale persist across navigation and requests', async () => {
+    // Exact TOS locale-only context requests userAgent:"", acceptLanguage:"en-US".
+    const identities = await browser.newContext({ locale: 'en-US' });
+    try {
+      const a = await identities.newPage();
+      const b = await identities.newPage();
+      const defaultAgent = await b.evaluate(() => navigator.userAgent);
+      const session = await identities.newCDPSession(a);
+      try {
+        await session.send('Emulation.setUserAgentOverride', { userAgent: 'ProtocolFixture/A', acceptLanguage: 'fr-FR,fr;q=0.8', platform: 'FixturePlatform' });
+        await assert.rejects(session.send('Emulation.setUserAgentOverride', { userAgent: 'bad\r\nheader' }), /Invalid|invalid|header/i);
+        await a.goto(`${fixtureOrigin}/identity-page-a`, { timeout: 5000 });
+        await b.goto(`${fixtureOrigin}/identity-page-b`, { timeout: 5000 });
+        assert.deepEqual(await a.evaluate(() => [navigator.userAgent, navigator.platform, navigator.language, [...navigator.languages]]), ['ProtocolFixture/A', 'FixturePlatform', 'fr-FR', ['fr-FR', 'fr']]);
+        assert.equal(await b.evaluate(() => navigator.userAgent), defaultAgent);
+        assert.equal(identityHeaders.find(r => r.url === '/identity-page-a').agent, 'ProtocolFixture/A');
+        assert.equal(identityHeaders.find(r => r.url === '/identity-page-a').language, 'fr-FR,fr;q=0.8');
+        assert.equal(identityHeaders.find(r => r.url === '/identity-page-b').agent, defaultAgent);
+        assert.deepEqual(await a.evaluate(async () => (await fetch('/identity')).json()), { agent: 'ProtocolFixture/A', language: 'fr-FR,fr;q=0.8' });
+        assert.deepEqual(await b.evaluate(() => new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest(); xhr.open('GET', '/identity');
+          xhr.onload = () => resolve(JSON.parse(xhr.responseText)); xhr.onerror = () => reject(new Error('XHR failed')); xhr.send();
+        })), { agent: defaultAgent, language: 'en-US' });
+        await session.send('Emulation.setUserAgentOverride', { userAgent: '' });
+        await a.goto(`${fixtureOrigin}/identity-reset`, { timeout: 5000 });
+        assert.equal(await a.evaluate(() => navigator.userAgent), defaultAgent);
+        assert.equal(identityHeaders.find(r => r.url === '/identity-reset').agent, defaultAgent);
+      } finally { await session.detach(); }
+    } finally { await identities.close(); }
   });
   await check('Web Storage follows context, page and navigation boundaries', async () => {
     await page.evaluate(() => { localStorage.setItem('local-marker', 'shared'); sessionStorage.setItem('session-marker', 'page'); });

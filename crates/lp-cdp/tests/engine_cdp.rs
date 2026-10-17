@@ -964,3 +964,157 @@ fn input_mouse_hit_tests_and_runs_trusted_checkbox_activation() {
     );
     assert_eq!(r["result"]["result"]["value"], json!([true, [[true, 30, 30]]]));
 }
+
+#[test]
+fn dom_backend_nodes_adopt_across_worlds_and_expire_on_navigation() {
+    let mut h = Harness::new();
+    assert_eq!(h.page("DOM.enable", json!({}))["result"], json!({}));
+    let object = h.page("Runtime.evaluate", json!({"expression":"document.body.innerHTML='<button id=action>Press</button>'; document.querySelector('#action')"}))["result"]["result"]["objectId"].clone();
+    let described = h.page("DOM.describeNode", json!({"objectId":object}));
+    let node = &described["result"]["node"];
+    assert_eq!(node["nodeName"], "BUTTON");
+    assert_eq!(node["localName"], "button");
+    assert_eq!(node["attributes"], json!(["id", "action"]));
+    assert_eq!(node["children"][0]["nodeValue"], "Press");
+    let backend = node["backendNodeId"].clone();
+    assert!(backend.as_u64().unwrap() > 0);
+    let frame = h.frame_id.clone();
+    let world = h.page("Page.createIsolatedWorld", json!({"frameId":frame,"worldName":"dom-adopt"}))["result"]
+        ["executionContextId"]
+        .clone();
+    let resolved =
+        h.page("DOM.resolveNode", json!({"backendNodeId":backend,"executionContextId":world,"objectGroup":"nodes"}));
+    assert_eq!(resolved["result"]["object"]["subtype"], "node");
+    let adopted = resolved["result"]["object"]["objectId"].clone();
+    let r = h.page("Runtime.callFunctionOn", json!({"objectId":adopted,"functionDeclaration":"function(){ return [this.id, this===document.querySelector('#action')] }","returnByValue":true}));
+    assert_eq!(r["result"]["result"]["value"], json!(["action", true]));
+    assert_eq!(
+        h.page("DOM.describeNode", json!({"objectId":adopted,"depth":0}))["result"]["node"]["backendNodeId"],
+        backend
+    );
+    h.page("Runtime.releaseObjectGroup", json!({"objectGroup":"nodes"}));
+    assert!(h.page("DOM.describeNode", json!({"objectId":adopted})).get("error").is_some());
+    let events = h.page_with_events("Page.navigate", json!({"url":"about:blank"}));
+    assert!(events.iter().any(|e| e["method"] == "DOM.documentUpdated"));
+    assert!(h.page("DOM.resolveNode", json!({"backendNodeId":backend})).get("error").is_some());
+    // This session never enabled Page: navigation must still release its roots.
+    assert_eq!(
+        h.page("Runtime.getProperties", json!({"objectId":object}))["error"]["message"],
+        "Could not find object with given id"
+    );
+}
+
+#[test]
+fn dom_geometry_matches_native_rect_and_rejects_detached_or_foreign_objects() {
+    let mut h = Harness::new();
+    let object = h.page("Runtime.evaluate",json!({"expression":"document.body.innerHTML='<input id=box style=\"width:40px;height:30px\">';document.querySelector('#box')"}))["result"]["result"]["objectId"].clone();
+    let r = h.page("Runtime.evaluate",json!({"expression":"JSON.parse(JSON.stringify(document.querySelector('#box').getBoundingClientRect()))","returnByValue":true}));
+    let rect = &r["result"]["result"]["value"];
+    let x = rect["x"].as_f64().unwrap();
+    let y = rect["y"].as_f64().unwrap();
+    let quad = json!([x, y, x + 40.0, y, x + 40.0, y + 30.0, x, y + 30.0]);
+    assert_eq!(h.page("DOM.getContentQuads", json!({"objectId":object}))["result"]["quads"], json!([quad]));
+    assert_eq!(h.page("DOM.getBoxModel", json!({"objectId":object}))["result"]["model"]["border"], quad);
+    assert_eq!(h.page("DOM.focus", json!({"objectId":object}))["result"], json!({}));
+    assert_eq!(
+        h.page("Runtime.evaluate", json!({"expression":"document.activeElement.id","returnByValue":true}))["result"]
+            ["result"]["value"],
+        "box"
+    );
+    // A node connected to an inert document is not rendered in this frame.
+    {
+        let frame = &h.browser.host().thread.browser.pages[0].main_frame;
+        let page = frame.page_dom.as_ref().unwrap().clone();
+        let realm = frame.main_realm().unwrap().clone();
+        let node = {
+            let mut dom = page.dom.borrow_mut();
+            let doc = dom.create_document(lp_dom::DocumentKind::Html, "about:blank");
+            let node = dom.create_element(doc, "input").unwrap();
+            dom.append_child(doc, node).unwrap();
+            node
+        };
+        let scope = realm.scope().unwrap();
+        let wrapper = lp_webapi::wrap_node(&scope, &page, node).unwrap();
+        scope.global().set("inertNode", wrapper.value()).unwrap();
+    }
+    let inert = h.page("Runtime.evaluate", json!({"expression":"inertNode"}))["result"]["result"]["objectId"].clone();
+    assert_eq!(
+        h.page("DOM.getBoxModel", json!({"objectId":inert}))["error"]["message"],
+        "Node is detached from document"
+    );
+    let spoof = h.page("Runtime.evaluate", json!({"expression":"({nodeType:1,nodeName:'DIV'})"}))["result"]["result"]
+        ["objectId"]
+        .clone();
+    assert_eq!(h.page("DOM.describeNode", json!({"objectId":spoof}))["error"]["message"], "Object is not a DOM node");
+    h.page("Runtime.evaluate", json!({"expression":"document.querySelector('#box').remove()"}));
+    assert_eq!(
+        h.page("DOM.scrollIntoViewIfNeeded", json!({"objectId":object}))["error"]["message"],
+        "Node is detached from document"
+    );
+    assert!(
+        h.page("DOM.describeNode", json!({"objectId":object})).get("result").is_some(),
+        "a rooted detached node remains describable"
+    );
+    assert!(h.page("DOM.describeNode", json!({"objectId":object,"backendNodeId":1})).get("error").is_some());
+    assert!(h.page("DOM.describeNode", json!({"objectId":object,"depth":33})).get("error").is_some());
+}
+
+#[test]
+fn user_agent_override_validates_atomically_and_updates_page_worlds() {
+    let mut h = Harness::new();
+    let probe = "[navigator.userAgent,navigator.platform,navigator.language,Array.from(navigator.languages)]";
+    let initial = h.page("Runtime.evaluate", json!({"expression":probe,"returnByValue":true}))["result"]["result"]
+        ["value"]
+        .clone();
+    let locale = h.page("Emulation.setUserAgentOverride", json!({"userAgent":"","acceptLanguage":"en-US"}));
+    assert_eq!(locale["result"], json!({}), "exact TOS locale-only request: {locale}");
+    let language = h.page("Runtime.evaluate", json!({"expression":probe,"returnByValue":true}));
+    assert_eq!(language["result"]["result"]["value"][0], initial[0]);
+    assert_eq!(language["result"]["result"]["value"][2], "en-US");
+    let frame = h.frame_id.clone();
+    let world = h.page("Page.createIsolatedWorld", json!({"frameId":frame,"worldName":"identity"}))["result"]
+        ["executionContextId"]
+        .clone();
+    assert_eq!(
+        h.page(
+            "Emulation.setUserAgentOverride",
+            json!({"userAgent":"Protocol/1","acceptLanguage":"fr-FR,fr;q=0.8","platform":"FixtureOS"})
+        )["result"],
+        json!({})
+    );
+    let expected = json!(["Protocol/1", "FixtureOS", "fr-FR", ["fr-FR", "fr"]]);
+    for params in [
+        json!({"expression":probe,"returnByValue":true}),
+        json!({"expression":probe,"returnByValue":true,"contextId":world}),
+    ] {
+        assert_eq!(h.page("Runtime.evaluate", params)["result"]["result"]["value"], expected);
+    }
+    for params in [
+        json!({}),
+        json!({"userAgent":123}),
+        json!({"userAgent":"ok","acceptLanguage":false}),
+        json!({"userAgent":"ok","platform":[]}),
+        json!({"userAgent":"bad\r\nheader"}),
+        json!({"userAgent":"ok","acceptLanguage":"bad\nheader"}),
+    ] {
+        let response = h.page("Emulation.setUserAgentOverride", params.clone());
+        assert_eq!(response["error"]["code"], -32602, "{params}: {response}");
+    }
+    let metadata = h.page("Emulation.setUserAgentOverride", json!({"userAgent":"ignored","userAgentMetadata":{}}));
+    assert_eq!(metadata["error"]["code"], -32000, "unsupported client hints: {metadata}");
+    assert_eq!(
+        h.page("Runtime.evaluate", json!({"expression":probe,"returnByValue":true}))["result"]["result"]["value"],
+        expected,
+        "invalid requests did not mutate existing state"
+    );
+    assert!(h.page("Page.navigate", json!({"url":"data:text/html,<p>identity</p>"}))["error"].is_null());
+    assert_eq!(
+        h.page("Runtime.evaluate", json!({"expression":probe,"returnByValue":true}))["result"]["result"]["value"],
+        expected
+    );
+    assert_eq!(h.page("Emulation.setUserAgentOverride", json!({"userAgent":""}))["result"], json!({}));
+    assert_eq!(
+        h.page("Runtime.evaluate", json!({"expression":probe,"returnByValue":true}))["result"]["result"]["value"],
+        initial
+    );
+}
