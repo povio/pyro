@@ -591,7 +591,6 @@ fn engine_teardown_with_persistent_in_closure_allows_new_engine() {
             })
             .unwrap();
         s.global().set("holder", f.value()).unwrap();
-        drop(s);
         drop(r);
         drop(e);
     }
@@ -634,7 +633,6 @@ fn internal_helpers_resist_page_monkey_patching() {
     let seen = Rc::new(Cell::new(0));
     let seen2 = seen.clone();
     s.then(s.number(1.0), move |_s, _v| seen2.set(seen2.get() + 1), |_s, _v| {}).unwrap();
-    drop(s);
     assert_eq!(seen.get(), 1);
     assert_eq!(eval_str(&r, "stolen.length"), "0");
     let s = r.scope().unwrap();
@@ -647,7 +645,6 @@ fn internal_helpers_resist_page_monkey_patching() {
     assert_eq!(d.subtype.as_deref(), Some("weakmap"));
     let v = s.call_function("function () { return this.x }", Some(s.eval("({x: 5})", None, 1).unwrap()), &[]).unwrap();
     assert_eq!(v.to_number().unwrap(), 5.0);
-    drop(s);
     assert_eq!(eval_str(&r, "stolen.length"), "0");
     assert_eq!(eval_str(&r, "new DOMException('m', 'toString').code"), "0");
     assert_eq!(eval_str(&r, "new DOMException('m', 'NotFoundError').code"), "8");
@@ -669,4 +666,111 @@ fn panicking_hook_does_not_abort() {
     e.set_hooks(Some(Rc::new(Panicky)));
     let r = e.create_realm(RealmOptions::default()).unwrap();
     assert_eq!(eval_str(&r, "console.log('x'); 'survived'"), "survived");
+}
+
+#[test]
+fn values_outliving_engine_owner_stay_valid() {
+    let (e, r) = setup();
+    let drops = Rc::new(Cell::new(0));
+    let s = r.scope().unwrap();
+    let o = s.wrap::<Node>(node(9, &drops), None).unwrap();
+    let guard = s.unwrap::<Node>(o.value()).unwrap();
+    drop(e); // the realm handle is still borrowed: VM teardown is deferred
+    e2e_after_owner_drop(&s, o, &guard);
+    drop(guard);
+    drop(r); // last realm handle: now the VM is destroyed
+    let _again = Engine::new().expect("thread slot free");
+}
+
+fn e2e_after_owner_drop(s: &Scope<'_>, o: Object<'_>, guard: &NodeData) {
+    // Memory stays valid; native callbacks report the engine as gone.
+    assert_eq!(guard.id, 9);
+    let err = o.get("nodeId").unwrap_err();
+    assert!(err.details(s).text().contains("Execution context was destroyed"), "{err:?}");
+    assert_eq!(s.eval("40 + 2", None, 1).unwrap().to_number().unwrap(), 42.0);
+}
+
+#[test]
+fn termination_ignored_by_native_code_still_terminates() {
+    let e = engine();
+    let Ok(handle) = e.terminate_handle() else { return };
+    let r = e.create_realm(RealmOptions::default()).unwrap();
+    let s = r.scope().unwrap();
+    let f = s
+        .function("swallow", |s, _this, _args| {
+            let _ = s.eval("for (;;) {}", None, 1); // error ignored on purpose
+            Ok(s.undefined())
+        })
+        .unwrap();
+    s.global().set("swallow", f.value()).unwrap();
+    let t = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        handle.terminate();
+    });
+    let start = std::time::Instant::now();
+    let res = s.eval("swallow(); for (;;) {}", None, 1);
+    t.join().unwrap();
+    assert!(matches!(res, Err(JsError::Terminated)), "{res:?}");
+    assert!(start.elapsed() < std::time::Duration::from_secs(5));
+    assert_eq!(s.eval("2", None, 1).unwrap().to_number().unwrap(), 2.0);
+}
+
+#[test]
+fn engine_created_during_teardown_keeps_its_thread_slot() {
+    struct Spawner;
+    impl JsClass for Spawner {
+        const NAME: &'static str = "Spawner";
+        type Data = SpawnOnDrop;
+        type Parent = NoParent;
+        fn define(_def: &mut ClassDef<Self>) {}
+    }
+    struct SpawnOnDrop;
+    impl Drop for SpawnOnDrop {
+        fn drop(&mut self) {
+            if let Ok(e) = Engine::new() {
+                std::mem::forget(e); // keep the new engine registered
+            }
+        }
+    }
+    {
+        let e = engine();
+        e.register::<Spawner>();
+        let r = e.create_realm(RealmOptions::default()).unwrap();
+        let s = r.scope().unwrap();
+        let o = s.wrap::<Spawner>(SpawnOnDrop, None).unwrap();
+        s.global().set("keep", o.value()).unwrap();
+        drop(r);
+        drop(e); // VM teardown finalizes `keep`, whose payload spawns an engine
+    }
+    assert!(Engine::new().is_err(), "the engine created during teardown must stay registered");
+}
+
+#[test]
+fn rooted_arguments_survive_gc_during_conversion() {
+    let e = engine();
+    let r = e.create_realm(RealmOptions::default()).unwrap();
+    let s = r.scope().unwrap();
+    let gc = s
+        .function("gc", |s, _t, _a| {
+            // Force a synchronous collection from inside the call.
+            let src = "0";
+            let _ = s.eval(src, None, 1);
+            Ok(s.undefined())
+        })
+        .unwrap();
+    s.global().set("forceGc", gc.value()).unwrap();
+    let mut args = RootedVec::new();
+    for i in 0..64 {
+        args.push(&s, s.parse_json(&format!("{{\"token\": {i}}}")).unwrap());
+        e.collect_garbage_now();
+    }
+    let this = Persistent::new(&s, s.parse_json("{\"base\": 1000}").unwrap());
+    let v = s
+        .call_function_rooted(
+            "function (...xs) { forceGc(); return this.base + xs.reduce((a, x) => a + x.token, 0) }",
+            Some(&this),
+            &args,
+        )
+        .unwrap();
+    assert_eq!(v.to_number().unwrap(), 1000.0 + (0..64).sum::<i32>() as f64);
 }

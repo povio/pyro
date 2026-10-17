@@ -128,11 +128,11 @@ impl JsClass for Node {
 5. **`Realm::dispose()`** (navigation) releases the global and the prototypes, empties the identity map, and
    unregisters the realm. Any later call into one of its native functions throws `Execution context was destroyed.`
    instead of touching freed state. Timers hold realms weakly.
-6. **`Engine` is the unique owner of the VM.** Dropping it disposes every realm, destroys the VM (which finalizes all
-   remaining objects, including protected ones) and drains their payloads, after which a new engine can be created on
-   the thread. `Persistent`s that outlive it (for example inside closure payloads) become inert, and dropping them is
-   always sound. Teardown is refused, and the VM leaked, while a `Scope` from `Realm::scope()` or a native callback is
-   on the stack.
+6. **`Engine` is the unique owner of the VM.** Dropping it marks the engine as gone, so native callbacks into its
+   realms throw `Execution context was destroyed.` and a new engine can be created on the thread. The VM itself is
+   torn down only once no `Realm` handle remains. Every `Scope`, `Value`, `Object` and `Unwrapped` borrows one, so
+   none can outlive the VM. Teardown disposes the realms, destroys the VM (finalizing every object) and drains the
+   payloads. `Persistent`s hold the engine weakly; after teardown they are inert, so dropping them is always sound.
 7. **Every `extern "C"` entry point** (trampolines, property hooks, closures, console, module fetch) runs realm lookup,
    the body, error conversion and realm-handle release inside one `catch_unwind`. A panic becomes
    `Error("Internal error: …")` and never unwinds into JSC.
@@ -140,8 +140,13 @@ impl JsClass for Node {
    - The C API cannot propagate JSC's uncatchable termination through native frames: a value rethrown from a callback
      is catchable. When native code sees a termination, it rethrows the termination value and re-arms the watchdog,
      so JS that catches it is terminated again within about 50 ms.
+   - Native code that ignores an inner `Terminated` cannot continue the calling JS either: while termination is
+     pending, a callback's `Ok` result is converted to `Terminated` as well.
    - Back at depth 0, the call returns `JsError::Terminated`, and JSC's pending termination state is flushed so it
      cannot abort the next entry.
+9. **Heap-collected call arguments** (for example CDP `callFunctionOn` converting arguments one by one, where each
+   conversion can GC) must use `RootedVec` with `Object::call_rooted` or `Scope::call_function_rooted`, never a
+   `Vec<Value>`.
 
 ### Private SPI (runtime-resolved, capability-gated)
 

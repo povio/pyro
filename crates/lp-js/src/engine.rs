@@ -110,8 +110,9 @@ pub(crate) struct EngineInner {
     pub(crate) finalized: Arc<class::FinalizeQueue>,
     /// Set once the VM has been torn down; `Persistent`s then skip unprotect.
     shut_down: Cell<bool>,
-    /// Live `Scope`s created outside callbacks; shutdown is refused while > 0.
-    pub(crate) live_scopes: Cell<u32>,
+    /// The owning `Engine` handle was dropped: callbacks no longer resolve to
+    /// this engine and a new engine may be created on the thread.
+    owner_dropped: Cell<bool>,
 }
 
 impl EngineInner {
@@ -136,13 +137,17 @@ impl EngineInner {
     /// Disposes every realm, destroys the VM (running all remaining finalizers)
     /// and drops their payloads. Payload-owned `Persistent`s may keep this
     /// struct alive, but never the VM: after shutdown they are inert.
+    ///
+    /// Refused while any `Realm` handle is alive: every `Scope`, `Value`,
+    /// `Object` and `Unwrapped` borrows one, so none can outlive the VM. A
+    /// refused shutdown runs again when the last realm (which holds this
+    /// struct) is dropped.
     fn shutdown(&self) {
         if self.shut_down.get() {
             return;
         }
-        if self.live_scopes.get() > 0 || DEPTH.with(Cell::get) > 0 {
-            // A Scope or native callback is still on the stack: tearing the VM
-            // down now would leave it dangling. Leak instead (safe).
+        let realm_alive = self.realms.borrow().iter().any(|(_, r)| r.strong_count() > 0);
+        if realm_alive || (self.is_current() && DEPTH.with(Cell::get) > 0) {
             return;
         }
         let realms: Vec<Rc<RealmInner>> = self.realms.borrow().iter().filter_map(|(_, r)| r.upgrade()).collect();
@@ -164,10 +169,20 @@ impl EngineInner {
             sys::JSGlobalContextRelease(self.root);
             sys::JSContextGroupRelease(self.group);
         }
+        let was_current = self.is_current();
         class::drain_finalized(self);
         self.classes.borrow_mut().release_all();
-        let _ = CURRENT.try_with(|c| *c.borrow_mut() = Weak::new());
-        let _ = TERMINATING.try_with(|t| t.set(false));
+        // Payload destructors above may have created a new engine on this
+        // thread: only clear the thread state if it still refers to us.
+        if was_current && self.is_current() {
+            let _ = CURRENT.try_with(|c| *c.borrow_mut() = Weak::new());
+            let _ = TERMINATING.try_with(|t| t.set(false));
+        }
+    }
+
+    /// Whether this thread's current-engine slot refers to this engine.
+    fn is_current(&self) -> bool {
+        CURRENT.try_with(|c| std::ptr::eq(c.borrow().as_ptr(), self)).unwrap_or(false)
     }
 }
 
@@ -185,21 +200,34 @@ thread_local! {
     pub(crate) static TERMINATING: Cell<bool> = const { Cell::new(false) };
 }
 
+/// The live engine whose VM `ctx` belongs to, even if its owner was dropped
+/// (for rooting values of a still-referenced realm).
+pub(crate) fn engine_for_ctx(ctx: sys::JSContextRef) -> Option<Rc<EngineInner>> {
+    let e = CURRENT.try_with(|c| c.borrow().upgrade()).ok().flatten()?;
+    // SAFETY: ctx is a live context passed by the caller.
+    let group = unsafe { sys::JSContextGetGroup(ctx) };
+    (!e.is_shut_down() && e.group == group).then_some(e)
+}
+
 pub(crate) fn current_inner() -> Option<Rc<EngineInner>> {
-    CURRENT.try_with(|c| c.borrow().upgrade()).ok().flatten().filter(|e| !e.is_shut_down())
+    CURRENT.try_with(|c| c.borrow().upgrade()).ok().flatten().filter(|e| !e.is_shut_down() && !e.owner_dropped.get())
 }
 
 /// The JavaScript engine of the current thread.
 ///
 /// At most one engine may be alive per thread: values, wrappers and callbacks
 /// locate their engine through thread-local state. `Engine` is `!Send`/`!Sync`
-/// and the unique owner: dropping it disposes all realms and destroys the VM.
+/// and the unique owner: dropping it destroys the VM once no `Realm` handle
+/// remains (immediately, if the embedder dropped its realms first).
 pub struct Engine {
     pub(crate) inner: Rc<EngineInner>,
 }
 
 impl Drop for Engine {
     fn drop(&mut self) {
+        // If realms are still referenced, teardown is deferred until the last
+        // one goes away; meanwhile a new engine may be created on the thread.
+        self.inner.owner_dropped.set(true);
         self.inner.shutdown();
     }
 }
@@ -210,6 +238,8 @@ impl Engine {
         if current_inner().is_some() {
             return Err(JsError::Type("a JavaScript engine already exists on this thread".into()));
         }
+        // A previous engine whose owner was dropped but whose realms are still
+        // referenced keeps running until they go; it is no longer "current".
         let caps = Capabilities::detect();
         if !caps.weak_refs {
             return Err(JsError::Unsupported("JSWeak (wrapper identity maps)"));
@@ -232,7 +262,7 @@ impl Engine {
             terminate: terminate.clone(),
             finalized: Arc::new(class::FinalizeQueue::default()),
             shut_down: Cell::new(false),
-            live_scopes: Cell::new(0),
+            owner_dropped: Cell::new(false),
         });
         if caps.termination {
             // Poll the termination flag every 50 ms of continuous JS execution.
