@@ -322,15 +322,24 @@ impl<H: Host> Browser<H> {
                     return Err(CdpError::server("Only flatten mode is supported"));
                 }
                 // Only page targets exist; a filter excluding pages means no auto-attach.
-                self.auto_attach = params.auto_attach && includes_pages(params.filter.as_deref());
-                out.send(msg::result_frame(id, &Empty {}, cmd.session_id()));
-                if self.auto_attach {
-                    let unattached: Vec<String> = self
-                        .targets
+                let auto_attach = params.auto_attach && includes_pages(params.filter.as_deref());
+                let unattached: Vec<String> = if auto_attach {
+                    self.targets
                         .iter()
                         .filter(|t| !self.sessions.values().any(|s| s.target_id == t.id && s.parent.is_none()))
                         .map(|t| t.id.clone())
-                        .collect();
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                // Reserve capacity for the entire configuration before changing
+                // state or emitting success/events. A failed enable is atomic.
+                if self.sessions.len() + self.browser_sessions.len() + unattached.len() > MAX_SESSIONS {
+                    return Err(CdpError::server("Too many sessions"));
+                }
+                self.auto_attach = auto_attach;
+                out.send(msg::result_frame(id, &Empty {}, cmd.session_id()));
+                if self.auto_attach {
                     for target_id in unattached {
                         self.attach(&target_id, None, true, out)?;
                     }

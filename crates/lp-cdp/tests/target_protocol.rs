@@ -431,3 +431,39 @@ fn disabling_auto_attach_preserves_manual_sessions() {
     assert_eq!(r[1]["params"]["sessionId"], auto);
     assert!(send(&mut b, json!({"id":5,"sessionId":manual,"method":"Page.enable"}))[0].get("result").is_some());
 }
+
+#[test]
+fn auto_attach_capacity_failure_is_atomic_and_has_one_reply() {
+    let mut b = Browser::new(Recorder::default());
+    let first = send(&mut b, json!({"id":1,"method":"Target.createTarget","params":{"url":"about:blank"}}))[0]
+        ["result"]["targetId"]
+        .clone();
+    let second = send(&mut b, json!({"id":2,"method":"Target.createTarget","params":{"url":"about:blank"}}))[0]
+        ["result"]["targetId"]
+        .clone();
+    let mut parents = Vec::new();
+    for id in 3..514 {
+        parents.push(
+            send(&mut b, json!({"id":id,"method":"Target.attachToBrowserTarget"}))[0]["result"]["sessionId"].clone(),
+        );
+    }
+    // Only one slot remains, but enabling needs two. No partial attach or
+    // early success may escape before reporting the capacity error.
+    let r = send(&mut b, json!({"id":514,"method":"Target.setAutoAttach","params":{"autoAttach":true,"flatten":true}}));
+    assert_eq!(r.len(), 1, "one error, without a success or partial attachment: {r:?}");
+    assert!(r[0].get("error").is_some());
+    assert!(!b.host().calls.iter().any(|c| c.starts_with("session_attached")));
+    // The failed configuration must leave auto-attach disabled.
+    let r = send(&mut b, json!({"id":515,"method":"Target.createTarget","params":{"url":"about:blank"}}));
+    assert_eq!(r.len(), 1);
+    assert!(r[0].get("result").is_some());
+    let third = r[0]["result"]["targetId"].clone();
+    for (id, parent) in parents.iter().take(2).enumerate() {
+        send(&mut b, json!({"id":516+id,"method":"Target.detachFromTarget","params":{"sessionId":parent}}));
+    }
+    let r = send(&mut b, json!({"id":518,"method":"Target.setAutoAttach","params":{"autoAttach":true,"flatten":true}}));
+    assert_eq!(r.len(), 4);
+    assert_eq!(r[0], json!({"id":518,"result":{}}));
+    let targets: Vec<_> = r[1..].iter().map(|event| event["params"]["targetInfo"]["targetId"].clone()).collect();
+    assert_eq!(targets, [first, second, third]);
+}
