@@ -7,6 +7,7 @@
 //! come from `lp-dom`/`lp-net` (worker 2) and are not wired in yet: navigating
 //! to anything but `about:blank` currently fails with an explicit error.
 
+mod loader;
 mod window;
 
 use lp_js::{Engine, EngineHooks, JsError, Realm, RealmId, RealmOptions};
@@ -15,6 +16,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Instant;
 
+pub use loader::{FetchDone, FetchRequest, NetLoader, Resource, ResourceKind, ResourceLoader, StaticLoader};
 pub use window::{Window, WindowData};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -167,6 +169,9 @@ pub struct Frame {
     pub url: String,
     pub loader_id: LoaderId,
     pub realms: Vec<FrameRealm>,
+    /// DOM store of the page (shared by its documents) and this frame's document.
+    pub dom: Option<lp_dom::parse::DomRef>,
+    pub document: Option<lp_dom::NodeId>,
 }
 
 impl Frame {
@@ -183,6 +188,9 @@ pub struct Page {
     pub id: PageId,
     pub main_frame: Frame,
     pub init_scripts: Vec<InitScript>,
+    /// Navigation whose document is being fetched (superseded fetches are ignored).
+    pub(crate) pending_loader: Option<LoaderId>,
+    pub(crate) load: Option<loader::DocumentLoad>,
 }
 
 /// Browser-thread state: the loop state type for [`EventLoop`].
@@ -195,6 +203,11 @@ pub struct Browser {
     started: Instant,
     /// Finalized-wrapper payloads released at checkpoints (diagnostics).
     pub released_payloads: RefCell<u64>,
+    /// Cross-thread handle to this browser's own loop (network completions).
+    handle: LoopHandle<Browser>,
+    pub(crate) loader: Option<Rc<dyn ResourceLoader>>,
+    /// Completions of in-flight fetches, keyed by completion id.
+    pub(crate) completions: std::collections::HashMap<u64, FetchDone>,
 }
 
 impl LoopState for Browser {
@@ -224,6 +237,9 @@ impl BrowserThread {
             next_id: Cell::new(1),
             started: Instant::now(),
             released_payloads: RefCell::new(0),
+            handle: event_loop.handle(),
+            loader: None,
+            completions: std::collections::HashMap::new(),
         };
         Ok(BrowserThread { event_loop, browser })
     }
@@ -247,12 +263,21 @@ impl Browser {
         self.sched.clone()
     }
 
+    /// Cross-thread handle to this browser's loop.
+    pub fn loop_handle(&self) -> LoopHandle<Browser> {
+        self.handle.clone()
+    }
+
     pub fn set_observer(&mut self, observer: Option<Rc<dyn PageObserver>>) {
         self.observer = observer;
     }
 
     pub fn set_engine_hooks(&self, hooks: Option<Rc<dyn EngineHooks>>) {
         self.engine.set_hooks(hooks);
+    }
+
+    pub(crate) fn next_completion_id(&self) -> u64 {
+        self.next()
     }
 
     fn next(&self) -> u64 {
@@ -266,7 +291,7 @@ impl Browser {
         self.started.elapsed().as_secs_f64()
     }
 
-    fn emit(&self, page: PageId, event: PageEvent) {
+    pub(crate) fn emit(&self, page: PageId, event: PageEvent) {
         if let Some(o) = &self.observer {
             o.on_page_event(page, &event);
         }
@@ -281,8 +306,10 @@ impl Browser {
             url: "about:blank".into(),
             loader_id: LoaderId(format!("{:032X}", self.next())),
             realms: Vec::new(),
+            dom: None,
+            document: None,
         };
-        self.pages.push(Page { id, main_frame: frame, init_scripts: Vec::new() });
+        self.pages.push(Page { id, main_frame: frame, init_scripts: Vec::new(), pending_loader: None, load: None });
         self.navigate(
             id,
             NavigateOpts {
@@ -299,7 +326,7 @@ impl Browser {
         self.pages.iter().find(|p| p.id == id)
     }
 
-    fn page_mut(&mut self, id: PageId) -> Option<&mut Page> {
+    pub(crate) fn page_mut(&mut self, id: PageId) -> Option<&mut Page> {
         self.pages.iter_mut().find(|p| p.id == id)
     }
 
@@ -340,8 +367,12 @@ impl Browser {
                 cdp_request_id: opts.cdp_request_id,
             },
         );
+        if opts.url != "about:blank" && self.loader.is_some() {
+            self.start_document_fetch(page, opts, loader_id.clone())?;
+            return Ok(loader_id);
+        }
         if opts.url != "about:blank" {
-            let error = "net::ERR_NOT_IMPLEMENTED (document loading is not integrated yet)".to_string();
+            let error = "net::ERR_NOT_IMPLEMENTED (no resource loader configured)".to_string();
             self.emit(
                 page,
                 PageEvent::FrameNavigateFailed {
@@ -375,7 +406,7 @@ impl Browser {
 
     /// Replaces the frame's realms with fresh ones for the new document, runs
     /// init scripts, then emits `FrameNavigated`.
-    fn commit_document(
+    pub(crate) fn commit_document(
         &mut self,
         page: PageId,
         opts: &NavigateOpts,
@@ -387,6 +418,10 @@ impl Browser {
         let (frame_id, old, scripts) = {
             let p = self.page_mut(page).ok_or(JsError::Type("no such page".into()))?;
             let old = std::mem::take(&mut p.main_frame.realms);
+            // The previous document (and its in-flight loads) is gone.
+            p.load = None;
+            p.main_frame.dom = None;
+            p.main_frame.document = None;
             p.main_frame.url = opts.url.clone();
             p.main_frame.loader_id = loader_id.clone();
             (p.main_frame.id.clone(), old, p.init_scripts.clone())
