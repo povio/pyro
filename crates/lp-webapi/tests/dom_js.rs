@@ -1597,3 +1597,362 @@ fn structured_clone_resizable_buffers_and_explicit_limits() {
         "true|8|4|2|9|NotSupportedError|NotSupportedError"
     );
 }
+
+#[derive(Default)]
+struct ObserverTasks(RefCell<std::collections::VecDeque<Box<dyn FnOnce()>>>);
+impl PageHooks for ObserverTasks {
+    fn post_task(&self, task: Box<dyn FnOnce()>) {
+        self.0.borrow_mut().push_back(task);
+    }
+    fn navigate(&self, _: NavigationRequest) {}
+}
+impl ObserverTasks {
+    fn drain(&self) {
+        for _ in 0..100 {
+            let task = self.0.borrow_mut().pop_front();
+            let Some(task) = task else { return };
+            task();
+        }
+        panic!("observer task loop did not settle");
+    }
+}
+
+#[test]
+fn intersection_observer_initial_task_and_geometry() {
+    let e = env("<body><div id=t style='width:100px;height:100px'></div></body>");
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"
+        var target = document.getElementById('t'), entries=[], order=[];
+        var observer = new IntersectionObserver(function (list, obs) {
+            order.push('observer'); entries.push(...list);
+            if(this!==observer || obs!==observer) throw Error('callback identity');
+        }, {threshold:[1,0,.5]});
+        observer.observe(target); observer.observe(target);
+        Promise.resolve().then(()=>order.push('promise'));
+        [entries.length, observer.root, observer.rootMargin, observer.thresholds.join(), Object.isFrozen(observer.thresholds)].join('|')
+    "#
+        ),
+        "0||0px 0px 0px 0px|0,0.5,1|true"
+    );
+    e.page.after_task();
+    assert_eq!(eval(&e.main, "entries.length"), "0");
+    tasks.drain();
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"order.join() + ':' + entries.length + ':' +
+        (entries[0] instanceof IntersectionObserverEntry && entries[0].target===target &&
+         entries[0].isIntersecting && entries[0].intersectionRatio===1 &&
+         entries[0].boundingClientRect.width===target.getBoundingClientRect().width &&
+         entries[0].rootBounds.width===innerWidth && entries[0].time>=0)"#
+        ),
+        "promise,observer:1:true"
+    );
+    e.page.after_task();
+    tasks.drain();
+    assert_eq!(eval(&e.main, "entries.length"), "1");
+    let mut vp = e.page.viewport();
+    vp.height = 50;
+    e.page.set_viewport(vp);
+    e.page.after_task();
+    tasks.drain();
+    assert_eq!(
+        eval(&e.main, "entries.length===2 && entries[1].intersectionRatio>0 && entries[1].intersectionRatio<.5"),
+        "true"
+    );
+    assert_eq!(eval(&e.main, "target.remove(); 'ok'"), "ok");
+    e.page.after_task();
+    tasks.drain();
+    assert_eq!(
+        eval(&e.main, "entries.length===3 && !entries[2].isIntersecting && entries[2].intersectionRatio===0"),
+        "true"
+    );
+    e.page.dispose();
+}
+
+#[test]
+fn intersection_observer_records_survive_disconnect_and_detached_gc() {
+    let e = env("<body><div id=t style='width:10px;height:10px'></div></body>");
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"
+        var target=document.getElementById('t'), deliveries=[];
+        var io=new IntersectionObserver(list=>deliveries.push(...list));io.observe(target);'ok'
+    "#
+        ),
+        "ok"
+    );
+    e.page.after_task();
+    assert_eq!(eval(&e.main, "io.disconnect(); target.remove(); target=null; 'ok'"), "ok");
+    e.engine.collect_garbage_now();
+    tasks.drain();
+    assert_eq!(
+        eval(&e.main, "deliveries.length+':'+deliveries[0].target.id+':'+deliveries[0].isIntersecting"),
+        "1:t:true"
+    );
+    assert_eq!(eval(&e.main, "io.observe(deliveries[0].target); 'ok'"), "ok");
+    e.page.after_task();
+    assert_eq!(
+        eval(
+            &e.main,
+            "var taken=io.takeRecords(); taken.length+':'+taken[0].isIntersecting+':'+io.takeRecords().length"
+        ),
+        "1:false:0"
+    );
+    tasks.drain();
+    assert_eq!(eval(&e.main, "deliveries.length"), "1");
+    assert_eq!(eval(&e.main, "document.body.append(taken[0].target); io.unobserve(taken[0].target); 'ok'"), "ok");
+    e.page.after_task();
+    tasks.drain();
+    assert_eq!(eval(&e.main, "deliveries.length"), "1");
+    e.page.dispose();
+}
+
+#[test]
+fn intersection_observer_options_conversion_and_explicit_limits() {
+    let e = env("<body><div id=t></div></body>");
+    assert_eq!(eval(&e.main,r#"
+        var errors=[];function failure(fn){try{fn();errors.push('BAD')}catch(e){errors.push(e.name)}}
+        failure(()=>new IntersectionObserver({}));
+        for(const threshold of [-1,1.01,NaN,Infinity])failure(()=>new IntersectionObserver(()=>{},{threshold}));
+        failure(()=>new IntersectionObserver(()=>{},{root:document.createTextNode('x')}));
+        failure(()=>new IntersectionObserver(()=>{},{rootMargin:'10em'}));
+        failure(()=>new IntersectionObserver(()=>{},{rootMargin:'0'}));
+        failure(()=>new IntersectionObserver(()=>{},{trackVisibility:true}));
+        failure(()=>new IntersectionObserver(()=>{},{delay:1}));
+        failure(()=>new IntersectionObserver(()=>{},{scrollMargin:'1px'}));
+        var io=new IntersectionObserver(()=>{}, {threshold:[],rootMargin:'10% -2px 3pt'});
+        failure(()=>io.observe(document));failure(()=>io.unobserve());
+        errors.join(',')+'|'+io.thresholds.join()+'|'+io.rootMargin
+    "#),"TypeError,RangeError,RangeError,TypeError,TypeError,TypeError,SyntaxError,SyntaxError,NotSupportedError,NotSupportedError,NotSupportedError,TypeError,TypeError|0|10% -2px 4px -2px");
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"
+        var reads=[];var options={
+          get delay(){reads.push('delay');return 0}, get root(){reads.push('root');return document},
+          get rootMargin(){reads.push('margin');document.body.append(document.createElement('p'));return '0px'},
+          get scrollMargin(){reads.push('scroll');return '0px'},
+          get threshold(){reads.push('threshold');return new Set([.5,0,.5])},
+          get trackVisibility(){reads.push('visibility');return false}
+        }; var converted=new IntersectionObserver(()=>{},options);
+        reads.join()+':'+(converted.root===document)+':'+converted.thresholds.join()
+    "#
+        ),
+        "delay,root,margin,scroll,threshold,visibility:true:0,0.5"
+    );
+    e.page.dispose();
+}
+
+#[test]
+fn intersection_observer_clips_ancestors_and_tracks_scroll_styles() {
+    let e=env("<style>#clip {overflow:hidden;width:50px;height:50px}</style><body><div id=clip><div id=t style='width:100px;height:100px'></div></div><div style='height:2000px'></div></body>");
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"
+        var target=document.getElementById('t'), clip=document.getElementById('clip'), records=[];
+        var io=new IntersectionObserver(list=>records.push(...list),{threshold:[0,.25,.5,1]});io.observe(target);'ok'
+    "#
+        ),
+        "ok"
+    );
+    e.page.after_task();
+    tasks.drain();
+    assert_eq!(eval(&e.main,"records.length===1 && records[0].isIntersecting && records[0].intersectionRatio>0 && records[0].intersectionRatio<.25"),"true");
+    assert_eq!(eval(&e.main, "clip.style.overflow='visible'; 'ok'"), "ok");
+    e.page.after_task();
+    tasks.drain();
+    assert_eq!(eval(&e.main, "records.length===2 && records[1].intersectionRatio===1"), "true");
+    assert_eq!(eval(&e.main, "scrollTo(0,400); scrollY>0"), "true");
+    e.page.after_task();
+    tasks.drain();
+    assert_eq!(eval(&e.main, "records.length===3 && !records[2].isIntersecting"), "true");
+    assert_eq!(eval(&e.main, "scrollTo(0,0); target.style.visibility='hidden'; target.style.opacity='0'; 'ok'"), "ok");
+    e.page.after_task();
+    tasks.drain();
+    assert_eq!(eval(&e.main, "records.length===4 && records[3].intersectionRatio===1"), "true");
+    e.page.dispose();
+}
+
+#[test]
+fn intersection_observer_explicit_root_margin_zero_area_and_edge_contact() {
+    let e=env("<body><div id=root style='width:100px;height:100px'><div id=t style='width:10px;height:10px'></div></div><div id=other></div></body>");
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"
+        var root=document.getElementById('root'), t=document.getElementById('t'), records=[];
+        var io=new IntersectionObserver(list=>records.push(...list),{root,rootMargin:'10%'});
+        io.observe(t);io.observe(document.getElementById('other'));io.observe(root);'ok'
+    "#
+        ),
+        "ok"
+    );
+    e.page.after_task();
+    tasks.drain();
+    assert_eq!(eval(&e.main,"records.length===3 && records[0].intersectionRatio===1 && records[0].rootBounds.width===120 && !records[1].isIntersecting && !records[2].isIntersecting"),"true");
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"
+        var edgeRecords=[], rect=t.getBoundingClientRect();
+        var edge=new IntersectionObserver(list=>edgeRecords.push(...list),{rootMargin:`0px 0px ${rect.top-innerHeight}px 0px`});edge.observe(t);'ok'
+    "#
+        ),
+        "ok"
+    );
+    e.page.after_task();
+    tasks.drain();
+    assert_eq!(
+        eval(
+            &e.main,
+            "edgeRecords.length===1 && edgeRecords[0].isIntersecting && edgeRecords[0].intersectionRatio===0"
+        ),
+        "true"
+    );
+    assert_eq!(eval(&e.main, "t.style.width='0px';t.style.height='0px'; 'ok'"), "ok");
+    e.page.after_task();
+    tasks.drain();
+    assert_eq!(eval(&e.main, "records.length===3"), "true"); // Ratio remains 1 for zero-area intersecting targets.
+    assert_eq!(eval(&e.main, "root.remove(); 'ok'"), "ok");
+    e.page.after_task();
+    tasks.drain();
+    assert_eq!(eval(&e.main, "records.length===4 && !records[3].isIntersecting"), "true");
+    e.page.dispose();
+}
+
+#[test]
+fn intersection_observer_disposal_and_shared_worlds() {
+    let e = env("<body><div id=t></div></body>");
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    let isolated = new_realm(&e.engine, e.engine.register::<TestWindow>(), &e.page, "isolated");
+    for realm in [&e.main, &isolated] {
+        assert_eq!(eval(realm,"var calls=0; var io=new IntersectionObserver(()=>calls++);io.observe(document.getElementById('t')); 'ok'"),"ok");
+    }
+    e.page.after_task();
+    lifecycle::realm_disposed(&e.page, isolated.id());
+    tasks.drain();
+    assert_eq!(eval(&e.main, "calls"), "1");
+    assert_eq!(eval(&isolated, "calls"), "0");
+    assert_eq!(eval(&e.main, "document.getElementById('t').remove(); 'ok'"), "ok");
+    e.page.after_task();
+    e.page.dispose();
+    tasks.drain();
+    assert_eq!(eval(&e.main, "calls"), "1");
+    let weak = Rc::downgrade(&e.page);
+    isolated.dispose();
+    e.main.dispose();
+    drop(isolated);
+    drop(e.main);
+    drop(e.page);
+    for _ in 0..6 {
+        e.engine.collect_garbage_now();
+        e.engine.drain_finalized();
+    }
+    assert!(weak.upgrade().is_none(), "disposed observer state retained the page");
+}
+
+#[test]
+fn intersection_observer_active_gc_callback_reentry_and_exception_isolation() {
+    let e = env("<body><div id=t></div></body>");
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"
+        var calls=[],ref;(()=>{
+            const observer=new IntersectionObserver(function(list,self){
+                calls.push('first:'+list.length);self.disconnect();throw Error('expected observer failure');
+            });ref=new WeakRef(observer);observer.observe(document.getElementById('t'));
+        })();
+        var later=new IntersectionObserver((list,self)=>{calls.push('second');self.disconnect();self.observe(document.getElementById('t'));});
+        later.observe(document.getElementById('t'));'ok'
+    "#
+        ),
+        "ok"
+    );
+    for _ in 0..6 {
+        e.engine.collect_garbage_now();
+        e.engine.drain_finalized();
+    }
+    assert_eq!(eval(&e.main, "ref.deref() instanceof IntersectionObserver"), "true");
+    e.page.after_task();
+    tasks.drain();
+    assert_eq!(eval(&e.main, "calls.join()"), "first:1,second");
+    e.page.after_task();
+    assert_eq!(eval(&e.main, "later.takeRecords().length"), "1");
+    tasks.drain();
+    for _ in 0..6 {
+        e.engine.collect_garbage_now();
+        e.engine.drain_finalized();
+    }
+    assert_eq!(eval(&e.main, "ref.deref()===undefined"), "true");
+    e.page.dispose();
+}
+
+#[test]
+fn intersection_observer_without_task_service_retains_records_without_inline_callback() {
+    let e = env("<body><div id=t></div></body>");
+    assert_eq!(
+        eval(
+            &e.main,
+            "var calls=0;var io=new IntersectionObserver(()=>calls++);io.observe(document.getElementById('t'));'ok'"
+        ),
+        "ok"
+    );
+    e.page.after_task();
+    assert_eq!(eval(&e.main, "calls+':'+io.takeRecords().length"), "0:1");
+    assert_eq!(eval(&e.main, "io.disconnect();io.observe(document.getElementById('t'));'ok'"), "ok");
+    e.page.after_task();
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    e.page.after_task();
+    tasks.drain();
+    assert_eq!(eval(&e.main, "calls"), "1");
+    e.page.dispose();
+}
+
+#[test]
+fn intersection_observer_element_scroll_changes_geometry_without_dom_mutation() {
+    let e=env("<body><div id=root style='overflow:auto;width:100px;height:100px'><div id=t style='width:20px;height:20px'></div><div style='height:1000px'></div></div></body>");
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"
+        var root=document.getElementById('root'),t=document.getElementById('t'),records=[];
+        var io=new IntersectionObserver(list=>records.push(...list),{root});io.observe(t);
+        var top=t.getBoundingClientRect().top;'ok'
+    "#
+        ),
+        "ok"
+    );
+    e.page.after_task();
+    tasks.drain();
+    assert_eq!(eval(&e.main, "records.length===1 && records[0].isIntersecting"), "true");
+    let before = e.page.dom.borrow().version();
+    assert_eq!(eval(&e.main, "root.scrollTop=100;root.scrollTop"), "100");
+    assert_eq!(e.page.dom.borrow().version(), before);
+    e.page.after_task();
+    tasks.drain();
+    assert_eq!(
+        eval(&e.main, "records.length===2 && !records[1].isIntersecting && t.getBoundingClientRect().top===top-100"),
+        "true"
+    );
+    e.page.dispose();
+}

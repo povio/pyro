@@ -29,6 +29,7 @@ pub mod html;
 pub mod identity;
 pub mod indexeddb;
 pub mod input;
+pub mod intersection_observer;
 pub mod layout_api;
 pub mod lifecycle;
 pub mod mutation_observer;
@@ -79,6 +80,7 @@ pub fn register(engine: &lp_js::Engine) {
     validity::register(engine);
     window::register(engine);
     mutation_observer::register(engine);
+    intersection_observer::register(engine);
     engine.register::<storage::Storage>();
     engine.register::<indexeddb::IdbFactory>();
     engine.register::<headers::Headers>();
@@ -99,6 +101,7 @@ pub fn install(scope: &Scope<'_>, page: Rc<PageDom>) -> JsResult<()> {
     xhr::install(scope, &page)?;
     realm.set_embedder(page.clone());
     mutation_observer::install(scope, &page)?;
+    intersection_observer::install(scope, &page)?;
     encoding::install(scope)?;
     headers::install(scope)?;
     url_search_params::install(scope)?;

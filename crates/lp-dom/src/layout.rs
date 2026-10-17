@@ -35,6 +35,11 @@
 //! - `getComputedStyle(el).getPropertyValue(name)` resolution
 //!   (webapi/css/CSSStyleDeclaration.zig:76-151, 203-212, 965-1103).
 //!
+//! Deviation: element scroll offsets shift descendants' client rects and hit
+//! testing (`ancestor_scroll_offset`), and `scrollIntoView[IfNeeded]` reveals
+//! the element inside already-scrolled ancestors; upstream applies only the
+//! window scroll.
+//!
 //! Not ported (honest omissions):
 //! - `scroll` / `scrollend` event scheduling and throttling (Element.zig:
 //!   2277-2357, Window.zig:796-845): scroll writers return whether anything
@@ -137,6 +142,7 @@ impl ScrollWrite {
 pub struct Layout {
     style: StyleEngine,
     window_scroll: (u32, u32),
+    scroll_generation: u64,
     element_scroll: FxHashMap<NodeId, (u32, u32)>,
 }
 
@@ -154,7 +160,12 @@ impl Layout {
     }
 
     pub fn with_style(style: StyleEngine) -> Self {
-        Layout { style, window_scroll: (0, 0), element_scroll: FxHashMap::default() }
+        Layout { style, window_scroll: (0, 0), scroll_generation: 0, element_scroll: FxHashMap::default() }
+    }
+
+    /// Changes when DOM/style/viewport/focus/hover or a scroll offset changes.
+    pub fn observation_stamp(&self, dom: &Dom) -> ((u64, u64, u32, u32), u64) {
+        (self.style.observation_stamp(dom), self.scroll_generation)
     }
 
     pub fn style(&self) -> &StyleEngine {
@@ -598,10 +609,37 @@ impl Layout {
         self.client_rect(dom, el).into_iter().collect()
     }
 
+    /// Sum of the scroll offsets of `el`'s ancestor elements (x, y).
+    ///
+    /// Deviation from upstream (which only subtracts the window scroll,
+    /// Element.zig:1734-1741): scrolling an overflow container moves its
+    /// descendants' client rects, so `scrollTop` writes are observable through
+    /// geometry (IntersectionObserver, getBoundingClientRect) and hit testing
+    /// stays consistent with the rects.
+    pub fn ancestor_scroll_offset(&self, dom: &Dom, el: NodeId) -> (f64, f64) {
+        if self.element_scroll.values().all(|&(x, y)| x == 0 && y == 0) {
+            return (0.0, 0.0);
+        }
+        let Ok(mut cur) = dom.check(el) else { return (0.0, 0.0) };
+        let (mut dx, mut dy) = (0.0, 0.0);
+        loop {
+            let parent = dom.n(cur).parent;
+            if parent == NIL {
+                return (dx, dy);
+            }
+            if let Some(&(x, y)) = self.element_scroll.get(&dom.id_of(parent)) {
+                dx += x as f64;
+                dy += y as f64;
+            }
+            cur = parent;
+        }
+    }
+
     fn bounding_client_rect_for_visible(&self, dom: &Dom, el: NodeId) -> Rect {
+        let (dx, dy) = self.ancestor_scroll_offset(dom, el);
         Rect {
-            x: self.horizontal_position(dom, el) - self.window_scroll.0 as f64,
-            y: self.document_position(dom, el) - self.window_scroll.1 as f64,
+            x: self.horizontal_position(dom, el) - self.window_scroll.0 as f64 - dx,
+            y: self.document_position(dom, el) - self.window_scroll.1 as f64 - dy,
             width: self.box_axis(dom, el, Axis::Width),
             height: self.box_axis(dom, el, Axis::Height),
         }
@@ -689,15 +727,21 @@ impl Layout {
         // the walk stops once the running position passes y. Hidden subtrees
         // still count towards the index so positions agree with
         // getBoundingClientRect.
+        //
+        // Element scroll offsets shift descendants up/left exactly as in
+        // `bounding_client_rect`; tops then decrease by at most the total of
+        // all element scroll offsets, which bounds the early exit.
         let root = dom.check(self.document()).ok()?;
         let x = viewport_x + self.window_scroll.0 as f64;
         let y = viewport_y + self.window_scroll.1 as f64;
+        let max_dy: f64 = self.element_scroll.values().map(|&(_, sy)| sy as f64).sum();
         let mut topmost = None;
-        let mut stack: Vec<(u32, bool)> = vec![(root, false)];
+        // (node, hidden, ancestor scroll x, ancestor scroll y)
+        let mut stack: Vec<(u32, bool, f64, f64)> = vec![(root, false, 0.0, 0.0)];
         let mut preorder_index = 0.0;
-        while let Some((node, mut hidden)) = stack.pop() {
+        while let Some((node, mut hidden, dx, dy)) = stack.pop() {
             let pos = preorder_index * NODE_HEIGHT;
-            if pos > y {
+            if pos - max_dy > y {
                 return topmost;
             }
             preorder_index += 1.0;
@@ -706,24 +750,29 @@ impl Layout {
                 hidden = hidden || self.style.has_display_none(dom, id);
                 // Unlike display:none, a child can opt back in, so the
                 // subtree is still walked.
+                let top = pos - dy;
                 if !hidden
                     && self.style.is_hit_testable(dom, id)
-                    && y >= pos
-                    && y <= pos + self.box_axis_idx(dom, node, Axis::Height)
+                    && y >= top
+                    && y <= top + self.box_axis_idx(dom, node, Axis::Height)
                 {
                     if ignore_x {
                         topmost = Some(id);
                     } else {
-                        let left = self.horizontal_position(dom, id);
+                        let left = self.horizontal_position(dom, id) - dx;
                         if x >= left && x <= left + self.box_axis_idx(dom, node, Axis::Width) {
                             topmost = Some(id);
                         }
                     }
                 }
             }
+            let (cdx, cdy) = match self.element_scroll.get(&dom.id_of(node)) {
+                Some(&(sx, sy)) => (dx + sx as f64, dy + sy as f64),
+                None => (dx, dy),
+            };
             let mut c = dom.n(node).last_child;
             while c != NIL {
-                stack.push((c, hidden));
+                stack.push((c, hidden, cdx, cdy));
                 c = dom.n(c).prev;
             }
         }
@@ -769,6 +818,7 @@ impl Layout {
             return false;
         }
         self.window_scroll = (new_x, new_y);
+        self.scroll_generation = self.scroll_generation.wrapping_add(1);
         true
     }
 
@@ -841,6 +891,7 @@ impl Layout {
             return false;
         }
         self.element_scroll.insert(el, (x, y));
+        self.scroll_generation = self.scroll_generation.wrapping_add(1);
         true
     }
 
@@ -928,24 +979,56 @@ impl Layout {
         moved.then_some(ScrollTarget::Viewport)
     }
 
-    /// `scrollIntoView` (Element.zig:2161-2168): brings the element's top to
-    /// the window's scroll offset (x reset to 0).
-    pub fn scroll_into_view(&mut self, dom: &Dom, el: NodeId) -> bool {
+    /// Brings `el`'s top into view inside every scrolled ancestor container
+    /// whose visible range [scrollTop, scrollTop + clientHeight) excludes it,
+    /// innermost first. Deviation from upstream (window only): needed once
+    /// element scroll offsets move client rects. Containers that were never
+    /// scrolled keep upstream behavior. Returns whether anything moved.
+    fn reveal_in_scrolled_ancestors(&mut self, dom: &Dom, el: NodeId) -> bool {
+        if self.element_scroll.is_empty() {
+            return false;
+        }
         let y = self.document_position(dom, el);
+        let mut moved = false;
+        let mut cur = dom.parent_element(el).ok().flatten();
+        while let Some(a) = cur {
+            if let Some(&(_, sy)) = self.element_scroll.get(&a) {
+                let offset = y - self.document_position(dom, a);
+                let visible = self.client_height(dom, a);
+                if offset < sy as f64 || offset >= sy as f64 + visible {
+                    let top = offset.max(0.0).trunc().min(i32::MAX as f64) as i32;
+                    moved |= self.set_scroll_top(dom, a, top);
+                }
+            }
+            cur = dom.parent_element(a).ok().flatten();
+        }
+        moved
+    }
+
+    /// `scrollIntoView` (Element.zig:2161-2168): brings the element's top to
+    /// the window's scroll offset (x reset to 0), after revealing it inside
+    /// scrolled ancestor containers.
+    pub fn scroll_into_view(&mut self, dom: &Dom, el: NodeId) -> bool {
+        let inner = self.reveal_in_scrolled_ancestors(dom, el);
+        let (_, dy) = self.ancestor_scroll_offset(dom, el);
+        let y = self.document_position(dom, el) - dy;
         let top = y.max(0.0).trunc().min(i32::MAX as f64) as i32;
-        self.window_scroll_to(dom, Some(0), Some(top))
+        self.window_scroll_to(dom, Some(0), Some(top)) || inner
     }
 
     /// `scrollIntoViewIfNeeded` (Element.zig:2146-2155): no-op while the top
-    /// is within [scrollY, scrollY + innerHeight).
+    /// is within [scrollY, scrollY + innerHeight) and visible inside its
+    /// scrolled ancestors.
     pub fn scroll_into_view_if_needed(&mut self, dom: &Dom, el: NodeId) -> bool {
-        let y = self.document_position(dom, el);
+        let inner = self.reveal_in_scrolled_ancestors(dom, el);
+        let (_, dy) = self.ancestor_scroll_offset(dom, el);
+        let y = self.document_position(dom, el) - dy;
         let sy = self.window_scroll.1 as f64;
         let vh = self.inner_height() as f64;
         if y >= sy && y < sy + vh {
-            return false;
+            return inner;
         }
-        self.scroll_into_view(dom, el)
+        self.scroll_into_view(dom, el) || inner
     }
 
     // ----- getComputedStyle --------------------------------------------------

@@ -71,6 +71,7 @@ pub fn realm_disposed(page: &PageDom, realm: RealmId) {
     crate::fetch::cancel_realm(page, realm);
     crate::xhr::cancel_realm(page, realm);
     crate::mutation_observer::cancel_realm(page, realm);
+    crate::intersection_observer::cancel_realm(page, realm);
     page.realms.borrow_mut().remove(&realm);
     page.data_view_readers.borrow_mut().remove(&realm);
     page.header_helpers.borrow_mut().remove(&realm);
