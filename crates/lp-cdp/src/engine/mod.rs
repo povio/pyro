@@ -9,6 +9,7 @@
 mod dom;
 mod fetch;
 mod input;
+mod metrics;
 mod network;
 mod page;
 mod remote;
@@ -124,15 +125,6 @@ pub(crate) struct Session {
     pub(crate) handles: Rc<RefCell<HandleTable<Persistent>>>,
 }
 
-/// Emulated viewport from `Emulation.setDeviceMetricsOverride`.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct Viewport {
-    pub(crate) width: f64,
-    pub(crate) height: f64,
-    pub(crate) device_scale_factor: f64,
-    pub(crate) mobile: bool,
-}
-
 pub(crate) struct PageState {
     pub(crate) id: PageId,
     pub(crate) context: ContextKey,
@@ -143,7 +135,6 @@ pub(crate) struct PageState {
     pub(crate) navigating: bool,
     /// `Page.navigate`/`reload` requests awaiting commit or failure: (request id, session id).
     pub(crate) pending_navigations: Vec<(u64, String)>,
-    pub(crate) viewport: Option<Viewport>,
     /// Bounds recorded by Browser.setWindowBounds, reported back by getWindowForTarget.
     pub(crate) window_bounds: Option<serde_json::Value>,
     pub(crate) emulated_media: Option<serde_json::Value>,
@@ -317,14 +308,15 @@ impl EngineHost {
         }
     }
 
-    /// Headless window per page target. Bounds are recorded but nothing in
-    /// the page observes them yet (no `outerWidth`/screen APIs), like upstream's no-op.
+    /// Headless window metadata. Explicit bounds are recorded separately from
+    /// the native viewport controlled by Emulation device metrics.
     fn window_domain(&mut self, action: &str, cmd: &PageCommand<'_, '_>) -> CdpResult<Option<serde_json::Value>> {
         let state = self.pages.get_mut(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?;
+        let viewport = self.thread.browser.page(state.id).ok_or_else(|| CdpError::server("page is gone"))?.viewport();
+        let (width, height) = (viewport.width, viewport.height);
         match action {
             "getWindowForTarget" => {
                 let bounds = state.window_bounds.clone().unwrap_or_else(|| {
-                    let (width, height) = state.viewport.map_or((1280.0, 720.0), |v| (v.width, v.height));
                     serde_json::json!({ "left": 0, "top": 0, "width": width, "height": height, "windowState": "normal" })
                 });
                 Ok(Some(serde_json::json!({ "windowId": cmd.page, "bounds": bounds })))
@@ -342,7 +334,7 @@ impl EngineHost {
                 }
                 // Merge like Chrome: unspecified fields keep their values.
                 let mut bounds = state.window_bounds.clone().unwrap_or_else(|| {
-                    serde_json::json!({ "left": 0, "top": 0, "width": 1280, "height": 720, "windowState": "normal" })
+                    serde_json::json!({ "left": 0, "top": 0, "width": width, "height": height, "windowState": "normal" })
                 });
                 for (k, v) in p.bounds {
                     if matches!(k.as_str(), "left" | "top" | "width" | "height" | "windowState") {
@@ -360,27 +352,9 @@ impl EngineHost {
         match action {
             // Headless pages always behave as focused; there is no window focus to emulate.
             "setFocusEmulationEnabled" => Ok(Some(serde_json::json!({}))),
-            "setDeviceMetricsOverride" => {
-                #[derive(Deserialize)]
-                #[serde(rename_all = "camelCase")]
-                struct P {
-                    width: f64,
-                    height: f64,
-                    device_scale_factor: f64,
-                    mobile: bool,
-                }
-                let p: P = cmd.command.params()?;
-                let state = self.pages.get_mut(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?;
-                state.viewport = Some(Viewport {
-                    width: p.width,
-                    height: p.height,
-                    device_scale_factor: p.device_scale_factor,
-                    mobile: p.mobile,
-                });
-                Ok(Some(serde_json::json!({})))
-            }
-            // No matchMedia/CSS media evaluation exists yet, so there is no
-            // observable media state to change; the request is recorded.
+            "setDeviceMetricsOverride" | "clearDeviceMetricsOverride" => self.device_metrics(action, cmd),
+            // Mapping these overrides to native media preferences remains a
+            // separate gap; this command currently records its parameters.
             "setEmulatedMedia" => {
                 let p: serde_json::Value = cmd.command.params()?;
                 if let Some(state) = self.pages.get_mut(&cmd.page) {
@@ -448,12 +422,6 @@ impl EngineHost {
                     )))
                 }
             }
-            "clearDeviceMetricsOverride" => {
-                if let Some(state) = self.pages.get_mut(&cmd.page) {
-                    state.viewport = None;
-                }
-                Ok(Some(serde_json::json!({})))
-            }
             _ => Err(CdpError::unsupported(&cmd.command.method)),
         }
     }
@@ -498,7 +466,6 @@ impl Host for EngineHost {
                 pending_realms: Vec::new(),
                 navigating: false,
                 pending_navigations: Vec::new(),
-                viewport: None,
                 window_bounds: None,
                 emulated_media: None,
                 next_script_id: 1,

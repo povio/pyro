@@ -397,6 +397,30 @@ try {
       })]), 'none');
     } finally { clearTimeout(timeout); await isolated.close(); }
   });
+  await check('page viewport changes native dimensions, resize events and navigation state', async () => {
+    const sized = await browser.newContext({ viewport: { width: 640, height: 480 }, screen: { width: 1024, height: 768 }, deviceScaleFactor: 2 });
+    let timeout;
+    try {
+      const a = await sized.newPage();
+      const b = await sized.newPage();
+      assert.deepEqual(await a.evaluate(() => [innerWidth, innerHeight, devicePixelRatio, screen.width, screen.height]), [640, 480, 2, 1024, 768]);
+      await a.evaluate(() => {
+        globalThis.widthQuery = matchMedia('(min-width: 700px)');
+        globalThis.resizeSeen = new Promise(resolve => addEventListener('resize', () => resolve([innerWidth, innerHeight]), { once: true }));
+      });
+      assert.equal(await a.evaluate(() => widthQuery.matches), false);
+      await a.setViewportSize({ width: 800, height: 600 });
+      assert.deepEqual(await Promise.race([a.evaluate(() => resizeSeen), new Promise((_, reject) => {
+        timeout = setTimeout(() => reject(new Error('native resize event missing')), 5000);
+      })]), [800, 600]);
+      assert.equal(await a.evaluate(() => widthQuery.matches), true);
+      assert.deepEqual(await b.evaluate(() => [innerWidth, innerHeight, devicePixelRatio]), [640, 480, 2]);
+      await a.addInitScript(() => { globalThis.initDimensions = [innerWidth, innerHeight, devicePixelRatio]; });
+      await a.goto(`${fixtureOrigin}/viewport-page`, { timeout: 5000 });
+      assert.deepEqual(await a.evaluate(() => initDimensions), [800, 600, 2]);
+      assert.deepEqual(await a.evaluate(() => [innerWidth, innerHeight, devicePixelRatio]), [800, 600, 2]);
+    } finally { clearTimeout(timeout); await sized.close(); }
+  });
   await check('page-scoped user agent and locale persist across navigation and requests', async () => {
     // Exact TOS locale-only context requests userAgent:"", acceptLanguage:"en-US".
     const identities = await browser.newContext({ locale: 'en-US' });
