@@ -25,6 +25,8 @@ pub struct Dom {
     /// Roots of trees that may have become unreachable.
     candidates: Vec<u32>,
     live: u32,
+    /// Bumped whenever a node is removed from its parent.
+    removals: u64,
     pub(crate) mutation: MutationState,
     pub(crate) events: crate::events::ListenerStore,
     pub(crate) resources: crate::script::ResourceQueue,
@@ -54,6 +56,7 @@ impl Dom {
             version: 0,
             candidates: Vec::new(),
             live: 0,
+            removals: 0,
             mutation: MutationState::default(),
             events: Default::default(),
             resources: Default::default(),
@@ -105,6 +108,10 @@ impl Dom {
     }
     pub(crate) fn bump(&mut self) {
         self.version = self.version.wrapping_add(1);
+    }
+    /// Monotonic count of node removals (cheap "did anything disconnect" check).
+    pub fn removal_count(&self) -> u64 {
+        self.removals
     }
     /// Number of live nodes in the store (all documents).
     pub fn live_nodes(&self) -> usize {
@@ -205,6 +212,9 @@ impl Dom {
         }
         if !active {
             self.candidates.push(i);
+            // Nodes of a deactivated document stop counting as "live in a
+            // browsing context" for pin reconciliation.
+            self.removals = self.removals.wrapping_add(1);
         }
         Ok(())
     }
@@ -397,6 +407,13 @@ impl Dom {
             _ => None,
         })
     }
+    pub fn shadow_root_mode(&self, id: NodeId) -> DomResult<Option<ShadowRootMode>> {
+        let i = self.check(id)?;
+        Ok(match &self.n(i).kind {
+            NodeKind::Fragment(f) => f.shadow,
+            _ => None,
+        })
+    }
     pub fn is_shadow_root(&self, id: NodeId) -> DomResult<bool> {
         let i = self.check(id)?;
         Ok(matches!(&self.n(i).kind, NodeKind::Fragment(f) if f.shadow.is_some()))
@@ -554,6 +571,30 @@ impl Dom {
             return Ok(self.id_of(i));
         }
     }
+    pub(crate) fn is_connected_idx(&self, mut i: u32) -> bool {
+        loop {
+            i = self.root_idx(i);
+            match &self.n(i).kind {
+                NodeKind::Document(_) => return true,
+                NodeKind::Fragment(FragmentData { host, shadow: Some(_) }) => i = *host,
+                _ => return false,
+            }
+        }
+    }
+
+    /// Connected to a document that a browsing context currently displays.
+    pub fn is_in_active_document(&self, id: NodeId) -> bool {
+        let Ok(mut i) = self.check(id) else { return false };
+        loop {
+            i = self.root_idx(i);
+            match &self.n(i).kind {
+                NodeKind::Document(d) => return d.active,
+                NodeKind::Fragment(FragmentData { host, shadow: Some(_) }) => i = *host,
+                _ => return false,
+            }
+        }
+    }
+
     /// `Node.isConnected` (shadow-including).
     pub fn is_connected(&self, id: NodeId) -> DomResult<bool> {
         let root = self.root_node(id, true)?;
@@ -820,6 +861,11 @@ impl Dom {
         if reference == n {
             reference = self.n(n).next;
         }
+        // Adopt the replacement before recording the old child's siblings:
+        // it may itself be the previous sibling of the replaced node.
+        if self.n(n).parent != NIL {
+            self.remove(n, false);
+        }
         let previous = self.n(c).prev;
         let mut removed = Vec::new();
         if self.n(c).parent != NIL {
@@ -890,8 +936,12 @@ impl Dom {
             self.adopt_idx(k, doc);
             self.link(k, parent, child);
         }
+        let connected = self.is_connected_idx(parent);
         for &k in &nodes {
             self.resources_after_insert(k);
+            if connected {
+                self.note_connected_listeners(k);
+            }
         }
         self.bump();
         if !suppress {
@@ -948,6 +998,7 @@ impl Dom {
         let prev = self.n(node).prev;
         let next = self.n(node).next;
         self.resources_before_remove(node);
+        self.removals = self.removals.wrapping_add(1);
         self.add_transient_observers(parent, node);
         self.unlink(node);
         self.bump();
@@ -1466,6 +1517,8 @@ impl Dom {
     }
     pub fn control_state_mut(&mut self, id: NodeId) -> DomResult<&mut ControlState> {
         let i = self.check(id)?;
+        // Control state feeds :checked/:indeterminate/:valid matching.
+        self.bump();
         let el = self.n_mut(i).element_mut().ok_or(DomError::Type("not an element"))?;
         Ok(el.control.get_or_insert_with(Default::default))
     }

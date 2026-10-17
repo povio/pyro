@@ -107,6 +107,11 @@ pub enum PseudoClass {
     Defined,
     Default,
     Empty,
+    Valid,
+    Invalid,
+    Open,
+    Modal,
+    PopoverOpen,
 }
 
 impl ToCss for PseudoClass {
@@ -134,6 +139,11 @@ impl ToCss for PseudoClass {
             Defined => ":defined",
             Default => ":default",
             Empty => ":empty",
+            Valid => ":valid",
+            Invalid => ":invalid",
+            Open => ":open",
+            Modal => ":modal",
+            PopoverOpen => ":popover-open",
         })
     }
 }
@@ -218,6 +228,11 @@ impl<'i> selectors::parser::Parser<'i> for SelParser {
                 ("target", Target),
                 ("defined", Defined),
                 ("default", Default),
+                ("valid", Valid),
+                ("invalid", Invalid),
+                ("open", Open),
+                ("modal", Modal),
+                ("popover-open", PopoverOpen),
             ],
         );
         pc.ok_or_else(|| ParseError::custom(SelectorParseErrorKind::UnsupportedPseudoClassOrElement))
@@ -449,6 +464,29 @@ impl Dom {
                     || (e.is_html() && e.name.local == local_name!("option") && e.attr("selected").is_some())
             }
             Empty => false,
+            Valid | Invalid => {
+                let id = self.id_of(idx);
+                let is_form = e.is_html() && matches!(&*e.name.local, "form" | "fieldset");
+                let candidate = self.will_validate(id).unwrap_or(false);
+                if !candidate && !is_form {
+                    return false;
+                }
+                let ok = if is_form {
+                    self.descendants(id).is_ok_and(|mut d| {
+                        d.all(|n| {
+                            !self.will_validate(n).unwrap_or(false)
+                                || self.validity(n).map(|v| v.valid()).unwrap_or(true)
+                        })
+                    })
+                } else {
+                    self.validity(id).map(|v| v.valid()).unwrap_or(true)
+                };
+                (pc == Valid) == ok
+            }
+            Open => e.is_html() && matches!(&*e.name.local, "details" | "dialog") && e.attr("open").is_some(),
+            // Modal dialogs and open popovers are tracked by the style engine,
+            // not by selector matching.
+            Modal | PopoverOpen => false,
         }
     }
 

@@ -138,3 +138,26 @@ fn text_editing() {
     dom.insert_text(m, "abc").unwrap();
     assert!(!dom.insert_text(m, "d").unwrap(), "maxlength");
 }
+
+#[test]
+fn constraint_validation() {
+    let (dom, d) =
+        doc(r#"<form id=f><input id=r required><input id=e type=email value="x"><input id=n type=number min=3 value=1>
+        <input id=h type=hidden required><input id=ok value=fine required></form>"#);
+    let mut dom = dom.borrow_mut();
+    let g = |dom: &Dom, id: &str| dom.get_element_by_id(d, id).unwrap().unwrap();
+    assert!(dom.validity(g(&dom, "r")).unwrap().value_missing);
+    assert!(dom.validity(g(&dom, "e")).unwrap().type_mismatch);
+    assert!(dom.validity(g(&dom, "n")).unwrap().range_underflow);
+    assert!(!dom.will_validate(g(&dom, "h")).unwrap());
+    assert!(dom.validity(g(&dom, "ok")).unwrap().valid());
+    let q = |dom: &Dom, s: &str| ids(dom, &dom.query_selector_all(d, &parse_selectors(s).unwrap()).unwrap());
+    assert_eq!(q(&dom, "input:invalid"), ["r", "e", "n"]);
+    assert_eq!(q(&dom, "form:invalid"), ["f"]);
+    let ok = g(&dom, "ok");
+    dom.set_custom_validity(ok, "bad").unwrap();
+    assert!(dom.validity(ok).unwrap().custom_error);
+    let r = g(&dom, "r");
+    dom.set_value(r, "x").unwrap();
+    assert!(dom.validity(r).unwrap().valid());
+}

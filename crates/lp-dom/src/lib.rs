@@ -6,12 +6,16 @@ pub mod dom;
 pub mod error;
 pub mod events;
 pub mod forms;
+pub mod inner_text;
+pub mod layout;
+pub mod media;
 pub mod mutation;
 pub mod node;
 pub mod parse;
 pub mod script;
 pub mod select;
 pub mod serialize;
+pub mod style;
 
 pub use dom::{position, Dom};
 pub use error::{DomError, DomErrorKind, DomResult};
