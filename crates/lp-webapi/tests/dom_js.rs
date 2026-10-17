@@ -851,3 +851,280 @@ fn indexeddb_opaque_origin_rejects_and_nonempty_operations_are_explicit() {
     assert_eq!(eval(&realm, "try{indexedDB.deleteDatabase('db')}catch(e){e.name}"), "NotSupportedError");
     assert_eq!(eval(&realm, "try{new IDBFactory()}catch(e){e.name}"), "TypeError");
 }
+
+#[test]
+fn mutation_records_are_typed_static_and_keep_removed_nodes() {
+    let e = env("<body><div id=target><span id=child>one</span><i></i></div></body>");
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"
+        var target=document.querySelector('#target'), child=target.firstChild;
+        var observer=new MutationObserver(()=>{});
+        observer.observe(target,{childList:true,subtree:true,attributeOldValue:true,characterDataOldValue:true});
+        child.setAttribute('title','first'); child.setAttribute('title','second');
+        child.firstChild.data='two'; target.removeChild(child);
+        var records=observer.takeRecords();
+        [records.length, records[0] instanceof MutationRecord, records[0].type,
+         records[0].attributeName, records[0].attributeNamespace===null,
+         records[0].oldValue===null, records[1].oldValue, records[2].oldValue,
+         records[3].type, records[3].removedNodes instanceof NodeList,
+         records[3].removedNodes===records[3].removedNodes,
+         records[3].removedNodes[0]===child, records[3].previousSibling===null,
+         records[3].nextSibling===target.firstChild,observer.takeRecords().length].join('|')
+    "#
+        ),
+        "4|true|attributes|title|true|true|first|one|childList|true|true|true|true|true|0"
+    );
+    eval(&e.main, "child=null;observer.disconnect();target.remove();target=null");
+    for _ in 0..3 {
+        e.engine.collect_garbage_now();
+        e.page.after_task();
+    }
+    assert_eq!(eval(&e.main, "records[3].removedNodes[0].textContent+':'+records[3].target.tagName"), "two:DIV");
+}
+
+#[test]
+fn mutation_options_validate_convert_reentrantly_and_filter() {
+    let e = env("<body><div></div></body>");
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"
+        var target=document.querySelector('div'), observer=new MutationObserver(()=>{});
+        var errors=[];
+        for (const options of [{},{attributes:false,attributeOldValue:true},{attributes:false,attributeFilter:[]},
+          {characterData:false,characterDataOldValue:true},{attributeFilter:null},{attributeFilter:['x',Symbol()]}]) {
+          try { observer.observe(target,options); errors.push('wrong'); } catch(e) { errors.push(e.name); }
+        }
+        observer.observe(target,{get attributeFilter(){target.setAttribute('before','1');return [{toString(){target.setAttribute('during','2');return 'title'}}]}});
+        target.setAttribute('ignored','x');target.setAttribute('title','yes');
+        [errors.join(','),observer.takeRecords().map(r=>r.attributeName).join(',')].join('|')
+    "#
+        ),
+        "TypeError,TypeError,TypeError,TypeError,TypeError,TypeError|title"
+    );
+}
+
+#[test]
+fn mutation_delivery_batches_reentrant_changes_and_disconnects() {
+    let e = env("<body><div></div></body>");
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"
+        var target=document.querySelector('div'), batches=[];
+        var observer=new MutationObserver(function(records,self){
+          batches.push([this===observer,self===observer,records.map(r=>r.attributeName).join(',')].join(':'));
+          if(batches.length===1)target.setAttribute('second','2');else observer.disconnect();
+        });
+        observer.observe(target,{attributes:true});target.setAttribute('a','1');target.setAttribute('b','1');
+        batches.length
+    "#
+        ),
+        "0"
+    );
+    e.page.after_task();
+    assert_eq!(eval(&e.main, "batches.join('|')"), "true:true:a,b|true:true:second");
+    eval(&e.main, "target.setAttribute('c','1')");
+    e.page.after_task();
+    assert_eq!(eval(&e.main, "batches.length"), "2");
+}
+
+#[test]
+fn mutation_detached_subtree_transients_end_at_delivery() {
+    let e = env("<body><div><span></span></div></body>");
+    eval(
+        &e.main,
+        r#"
+      var target=document.querySelector('div'), child=target.firstChild, types=[];
+      var observer=new MutationObserver(rs=>types.push(...rs.map(r=>r.type)));
+      observer.observe(target,{childList:true,attributes:true,subtree:true});
+      child.remove(); child.setAttribute('before','x');
+    "#,
+    );
+    e.page.after_task();
+    assert_eq!(eval(&e.main, "types.join()"), "childList,attributes");
+    eval(&e.main, "child.setAttribute('after','x')");
+    e.page.after_task();
+    assert_eq!(eval(&e.main, "types.join()"), "childList,attributes");
+}
+
+#[test]
+fn mutation_observers_remain_attached_without_user_reference() {
+    let e = env("<body><div></div></body>");
+    eval(
+        &e.main,
+        "var calls=0;new MutationObserver(()=>calls++).observe(document.querySelector('div'),{attributes:true})",
+    );
+    for _ in 0..3 {
+        e.engine.collect_garbage_now();
+        e.page.after_task();
+    }
+    eval(&e.main, "document.querySelector('div').setAttribute('a','b')");
+    e.page.after_task();
+    assert_eq!(eval(&e.main, "calls"), "1");
+}
+
+#[test]
+fn mutation_realm_disposal_suppresses_only_its_observers() {
+    let e = env("<body><div></div></body>");
+    let other = new_realm(&e.engine, e.engine.register::<TestWindow>(), &e.page, "isolated");
+    for realm in [&e.main, &other] {
+        eval(realm,"var calls=0;var observer=new MutationObserver(()=>calls++);observer.observe(document.body,{subtree:true,attributes:true})");
+    }
+    eval(&e.main, "document.querySelector('div').setAttribute('before','x')");
+    lifecycle::realm_disposed(&e.page, other.id());
+    other.dispose();
+    e.page.after_task();
+    assert_eq!(eval(&e.main, "calls"), "1");
+    eval(&e.main, "document.querySelector('div').setAttribute('after','x')");
+    e.page.after_task();
+    assert_eq!(eval(&e.main, "calls"), "2");
+    e.page.dispose();
+    assert!(eval(&e.main, "observer.takeRecords()").starts_with("THROW"));
+}
+
+#[test]
+fn mutation_disconnect_clears_queued_records_and_reobserve_replaces_options() {
+    let e = env("<body><div></div></body>");
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"
+      var target=document.querySelector('div'),calls=0,observer=new MutationObserver(()=>calls++);
+      observer.observe(target,{attributes:true});target.id='queued';observer.disconnect();
+      observer.observe(target,{attributeFilter:['title']});target.id='ignored';target.title='included';
+      var result=observer.takeRecords();result.length+':'+result[0].attributeName
+    "#
+        ),
+        "1:title"
+    );
+    e.page.after_task();
+    assert_eq!(eval(&e.main, "calls"), "0");
+}
+
+#[test]
+fn mutation_delivery_reports_callback_exception_and_continues() {
+    let e = env("<body><div></div></body>");
+    eval(
+        &e.main,
+        r#"
+      var target=document.querySelector('div'),calls=[];
+      new MutationObserver(()=>{calls.push('first');throw new Error('observer test')}).observe(target,{attributes:true});
+      new MutationObserver(rs=>calls.push('second:'+rs.length)).observe(target,{attributes:true});
+      target.id='changed';
+    "#,
+    );
+    e.page.after_task();
+    assert_eq!(eval(&e.main, "calls.join()"), "first,second:1");
+}
+
+#[test]
+fn mutation_detached_cycles_collect_and_page_disposal_releases_roots() {
+    let Env { engine, page, main } = env("<body></body>");
+    let before = page.dom.borrow().live_nodes();
+    eval(
+        &main,
+        r#"
+      for(let i=0;i<300;i++) {
+        const node=document.createElement('div');node.textContent='detached';
+        const observer=new MutationObserver(()=>node.textContent);
+        observer.observe(node,{attributes:true});
+      }
+    "#,
+    );
+    for _ in 0..6 {
+        engine.collect_garbage_now();
+        engine.drain_finalized();
+        page.after_task();
+    }
+    assert!(page.dom.borrow().live_nodes() < before + 20, "observer/target closure cycle retained detached nodes");
+    eval(&main,"new MutationObserver(rs=>{window.saved=rs}).observe(document.body,{childList:true});document.body.append(document.createElement('span'))");
+    let weak = Rc::downgrade(&page);
+    page.dispose();
+    main.dispose();
+    drop(main);
+    drop(page);
+    for _ in 0..6 {
+        engine.collect_garbage_now();
+        engine.drain_finalized();
+    }
+    assert!(weak.upgrade().is_none(), "observer records/connected pins retained disposed PageDom");
+}
+
+#[test]
+fn mutation_microtask_order_includes_nested_native_callbacks() {
+    let e = env("<body><div></div></body>");
+    eval(
+        &e.main,
+        r#"
+      var target=document.querySelector('div'),order=[];
+      new MutationObserver(()=>order.push('observer')).observe(target,{attributes:true});
+      Promise.resolve().then(()=>order.push('before'));
+      target.setAttribute('a','value');
+      Promise.resolve().then(()=>order.push('after'));
+      order.push('sync');
+    "#,
+    );
+    assert_eq!(eval(&e.main, "order.join()"), "sync,before,observer,after");
+    eval(
+        &e.main,
+        r#"
+      order=[];
+      target.setAttribute('b',{toString(){
+        target.setAttribute('nested','value');
+        Promise.resolve().then(()=>order.push('nested-promise'));
+        return 'outer';
+      }});
+      Promise.resolve().then(()=>order.push('outer-promise'));
+    "#,
+    );
+    assert_eq!(eval(&e.main, "order.join()"), "observer,nested-promise,outer-promise");
+}
+
+#[test]
+fn mutation_main_and_isolated_callbacks_use_their_own_realm() {
+    let e = env("<body><div></div></body>");
+    let other = new_realm(&e.engine, e.engine.register::<TestWindow>(), &e.page, "isolated");
+    for r in [&e.main, &other] {
+        eval(r,"var calls=[];new MutationObserver(rs=>calls.push((rs instanceof Array)+':'+(rs[0] instanceof MutationRecord)+':'+(rs[0].target===document.querySelector('div')))).observe(document.body,{attributes:true,subtree:true})");
+    }
+    eval(&other, "document.querySelector('div').id='changed'");
+    assert_eq!(eval(&e.main, "calls.join()"), "true:true:true");
+    assert_eq!(eval(&other, "calls.join()"), "true:true:true");
+}
+
+#[test]
+fn mutation_native_safe_point_and_cancelled_delivery_realm() {
+    let e = env("<body><div></div></body>");
+    let other = new_realm(&e.engine, e.engine.register::<TestWindow>(), &e.page, "isolated");
+    for r in [&e.main, &other] {
+        eval(r, "var calls=0;new MutationObserver(()=>calls++).observe(document,{attributes:true,subtree:true})");
+    }
+    let node = e
+        .page
+        .dom
+        .borrow()
+        .query_selector(e.page.document(), &lp_dom::select::parse_selectors("div").unwrap())
+        .unwrap()
+        .unwrap();
+    e.page.dom.borrow_mut().set_attribute(node, "native", "change").unwrap();
+    e.page.after_task();
+    assert_eq!(eval(&e.main, "calls"), "1");
+    assert_eq!(eval(&other, "calls"), "1");
+    let s = e.main.scope().unwrap();
+    let weak = Rc::downgrade(&e.page);
+    let stop = s
+        .function("stopOther", move |s, _, _| {
+            if let Some(page) = weak.upgrade() {
+                lifecycle::realm_disposed(&page, other.id());
+            }
+            other.dispose();
+            Ok(s.undefined())
+        })
+        .unwrap();
+    s.global().set("stopOther", stop.value()).unwrap();
+    eval(&e.main, "document.querySelector('div').id='queued';stopOther()");
+    assert_eq!(eval(&e.main, "calls"), "2", "remaining observer lost delivery when scheduled realm was disposed");
+}

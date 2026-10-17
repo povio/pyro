@@ -31,6 +31,7 @@ pub mod indexeddb;
 pub mod input;
 pub mod layout_api;
 pub mod lifecycle;
+pub mod mutation_observer;
 pub mod node;
 pub mod page;
 pub mod range;
@@ -74,6 +75,7 @@ pub fn register(engine: &lp_js::Engine) {
     encoding::register(engine);
     validity::register(engine);
     window::register(engine);
+    mutation_observer::register(engine);
     engine.register::<storage::Storage>();
     engine.register::<indexeddb::IdbFactory>();
     engine.register::<headers::Headers>();
@@ -89,7 +91,8 @@ pub fn install(scope: &Scope<'_>, page: Rc<PageDom>) -> JsResult<()> {
     let realm = scope.realm();
     page.realms.borrow_mut().insert(realm.id(), realm.downgrade());
     xhr::install(scope, &page)?;
-    realm.set_embedder(page);
+    realm.set_embedder(page.clone());
+    mutation_observer::install(scope, &page)?;
     encoding::install(scope)?;
     headers::install(scope)?;
     fetch::install(scope)?;
