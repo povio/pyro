@@ -112,10 +112,8 @@ impl JsClass for Crypto {
         def.method("randomUUID", 0, |s, _d, _a| Ok(s.string(&random_uuid()?)));
         def.getter("subtle", |s, _d| {
             let key = IdentityKey(1 << 55, 2);
-            if let Some(o) = s.lookup_identity(key) {
-                return Ok(o.value());
-            }
-            Ok(s.wrap::<SubtleCrypto>((), Some(key))?.value())
+            let page = crate::target::page_of(s)?;
+            crate::window::same_object(s, &page, key, || s.wrap::<SubtleCrypto>((), Some(key)))
         });
     }
 }
@@ -197,10 +195,8 @@ impl JsClass for SubtleCrypto {
 /// `window.crypto` (one Crypto object per realm).
 pub fn crypto_value<'s>(s: &Scope<'s>) -> JsResult<Value<'s>> {
     let key = IdentityKey(1 << 55, 1);
-    if let Some(o) = s.lookup_identity(key) {
-        return Ok(o.value());
-    }
-    Ok(s.wrap::<Crypto>((), Some(key))?.value())
+    let page = crate::target::page_of(s)?;
+    crate::window::same_object(s, &page, key, || s.wrap::<Crypto>((), Some(key)))
 }
 
 pub(crate) fn register(engine: &lp_js::Engine) {

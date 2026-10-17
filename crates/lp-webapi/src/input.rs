@@ -316,6 +316,39 @@ pub fn element_click(page: &Rc<PageDom>, el: NodeId) {
     page.end_click(el);
 }
 
+/// Controls a Space keyup clicks: buttons and button-like/checkable inputs.
+fn space_clickable(dom: &Dom, el: NodeId) -> bool {
+    if dom.is_disabled(el).unwrap_or(false) {
+        return false;
+    }
+    match local(dom, el).as_deref() {
+        Some("button") => true,
+        Some("input") => matches!(
+            dom.input_type(el),
+            Ok(InputType::Checkbox
+                | InputType::Radio
+                | InputType::Submit
+                | InputType::Image
+                | InputType::Reset
+                | InputType::Button)
+        ),
+        _ => false,
+    }
+}
+
+/// The simulated click a keyboard activation dispatches: trusted, `detail`
+/// 0, `pointerId` -1, empty `pointerType`.
+fn keyboard_click(page: &Rc<PageDom>, el: NodeId) {
+    if !space_clickable(&page.dom.borrow(), el) || !page.begin_click(el) {
+        return;
+    }
+    let ev = EventCore::trusted(page, EventInterface::PointerEvent, "click", true, true);
+    ev.state.borrow_mut().composed = true;
+    ev.fields.borrow_mut().pointer_id = -1;
+    dispatch_with_activation(page, el, &ev);
+    page.end_click(el);
+}
+
 fn follow_hyperlink(page: &Rc<PageDom>, el: NodeId) {
     let (url, target) = {
         let dom = page.dom.borrow();
@@ -461,6 +494,11 @@ pub fn dispatch_key(page: &Rc<PageDom>, kind: KeyKind, k: &KeyInput) {
             if !ok {
                 return;
             }
+            if k.key == " " && space_clickable(&page.dom.borrow(), target) {
+                // Browsers mark the control active on Space keydown and click
+                // it on the matching keyup (Blink KeyboardClickableInputTypeView).
+                page.space_target.set(Some(target));
+            }
             if kind == KeyKind::KeyDown && !k.text.is_empty() {
                 press_char(page, target, k);
             } else {
@@ -470,7 +508,10 @@ pub fn dispatch_key(page: &Rc<PageDom>, kind: KeyKind, k: &KeyInput) {
         KeyKind::Char => press_char(page, target, k),
         KeyKind::KeyUp => {
             let ev = key_event(page, "keyup", k, 0);
-            fire(page, tkey, &ev);
+            let ok = fire(page, tkey, &ev);
+            if k.key == " " && page.space_target.take() == Some(target) && ok {
+                keyboard_click(page, target);
+            }
         }
     }
 }
@@ -507,14 +548,6 @@ fn default_key_action(page: &Rc<PageDom>, target: NodeId, k: &KeyInput) {
             }
         }
         "ArrowLeft" | "ArrowRight" | "Home" | "End" if editable => move_caret(page, target, &k.key, k.modifiers.shift),
-        " " => {
-            // Space activates buttons/checkboxes on keyup in browsers; emulate
-            // the resulting click immediately for focused controls.
-            let act = activation_for(&page.dom.borrow(), target).is_some();
-            if act && !editable {
-                element_click(page, target);
-            }
-        }
         _ => {}
     }
 }

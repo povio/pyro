@@ -2535,6 +2535,88 @@ fn xpath_evaluator_and_expression() {
 }
 
 #[test]
+fn window_same_object_attributes_keep_expandos_across_gc() {
+    let e = env("<body>");
+    let r = &e.main;
+    // TOS init scripts override navigator.serviceWorker / crypto.subtle with
+    // defineProperty; the override must outlive collection of the wrapper.
+    eval(
+        r,
+        "(() => { for (const [o, n] of [[navigator,'navigator'], [screen,'screen'], [crypto,'crypto'], [crypto.subtle,'subtle'], [customElements,'customElements'], [getSelection(),'selection'], [indexedDB,'indexedDB']]) Object.defineProperty(o, '__mark', { configurable: true, value: n }); Object.defineProperty(navigator, 'serviceWorker', { configurable: true, value: { getRegistration: async () => null } }); })()",
+    );
+    for _ in 0..3 {
+        e.engine.collect_garbage_now();
+        e.engine.drain_finalized();
+        e.page.after_task();
+    }
+    assert_eq!(
+        eval(r, "[navigator.__mark, clientInformation.__mark, screen.__mark, crypto.__mark, crypto.subtle.__mark, customElements.__mark, getSelection().__mark, indexedDB.__mark, typeof navigator.serviceWorker.getRegistration, clientInformation === navigator].join()"),
+        "navigator,navigator,screen,crypto,subtle,customElements,selection,indexedDB,function,true"
+    );
+}
+
+#[test]
+fn space_activates_focused_controls_on_keyup() {
+    let e = env("<body><input type=checkbox role=switch id=c><button type=button id=b>b</button><input id=t><button id=p>p</button></body>");
+    let r = &e.main;
+    eval(
+        r,
+        "window.evs = []; for (const id of ['c','b','t','p']) { const el = document.getElementById(id); for (const k of ['keydown','keyup','click','change']) el.addEventListener(k, ev => evs.push(id + ':' + k + (k === 'click' ? '/' + ev.isTrusted + '/' + ev.detail : ''))); } document.getElementById('p').addEventListener('keyup', ev => ev.preventDefault());",
+    );
+    let page = e.page.clone();
+    // Playwright `keyboard.press('Space')`: keyDown carrying text, then keyUp.
+    let space =
+        input::KeyInput { key: " ".into(), code: "Space".into(), text: " ".into(), key_code: 32, ..Default::default() };
+    let press = |id: &str| {
+        eval(r, &format!("document.getElementById('{id}').focus()"));
+        input::dispatch_key(&page, input::KeyKind::KeyDown, &space);
+        input::dispatch_key(&page, input::KeyKind::KeyUp, &space);
+    };
+    press("c");
+    // No click until keyup: the checkbox is toggled by the keyup-driven click.
+    assert_eq!(
+        eval(r, "evs.join(',') + '|' + document.getElementById('c').checked"),
+        "c:keydown,c:keyup,c:click/true/0,c:change|true"
+    );
+    eval(r, "evs = []");
+    press("b");
+    press("t");
+    press("p"); // t's change fires on blur; p's prevented keyup does not click.
+    assert_eq!(
+        eval(r, "evs.join(',') + '|' + document.getElementById('t').value"),
+        "b:keydown,b:keyup,b:click/true/0,t:keydown,t:keyup,t:change,p:keydown,p:keyup| "
+    );
+    // Focus moving between keydown and keyup cancels the activation.
+    eval(r, "evs = []; document.getElementById('c').focus()");
+    input::dispatch_key(&page, input::KeyKind::KeyDown, &space);
+    eval(r, "document.getElementById('b').focus()");
+    input::dispatch_key(&page, input::KeyKind::KeyUp, &space);
+    assert_eq!(eval(r, "evs.join(',') + '|' + document.getElementById('c').checked"), "c:keydown,b:keyup|true");
+}
+
+#[test]
+fn same_object_retention_ignores_page_patched_builtins() {
+    let e = env("<body>");
+    let r = &e.main;
+    // Page code that replaces Array.prototype.push and installs indexed
+    // setters on Object/Array prototypes must not defeat retention.
+    eval(
+        r,
+        "Array.prototype.push = function () { return 0; }; for (const p of [Object.prototype, Array.prototype]) for (let i = 0; i < 8; i++) Object.defineProperty(p, i, { configurable: true, set() {}, get() { return undefined; } }); Object.defineProperty(navigator, '__mark', { configurable: true, value: 'nav' }); crypto.subtle.__mark = 'subtle'; window.firstNavigator = navigator;",
+    );
+    eval(r, "delete window.firstNavigator");
+    for _ in 0..3 {
+        e.engine.collect_garbage_now();
+        e.engine.drain_finalized();
+        e.page.after_task();
+    }
+    assert_eq!(
+        eval(r, "[navigator.__mark, crypto.subtle.__mark, navigator === clientInformation].join()"),
+        "nav,subtle,true"
+    );
+}
+
+#[test]
 fn screen_orientation_reports_override_or_follows_screen() {
     use lp_dom::media::{OrientationType, ScreenOrientation};
     let e = env("<body></body>");

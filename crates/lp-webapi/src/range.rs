@@ -483,10 +483,9 @@ fn current<'s>(s: &Scope<'s>, sel: &SelectionData) -> Option<impl std::ops::Dere
 /// `getSelection()`: one Selection per page per realm.
 pub fn get_selection<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Value<'s>> {
     let key = lp_js::IdentityKey(page.id() | (1 << 59), 0);
-    if let Some(o) = s.lookup_identity(key) {
-        return Ok(o.value());
-    }
-    Ok(s.wrap::<Selection>(SelectionData { page: page.clone(), range: RefCell::new(None) }, Some(key))?.value())
+    crate::window::same_object(s, page, key, || {
+        s.wrap::<Selection>(SelectionData { page: page.clone(), range: RefCell::new(None) }, Some(key))
+    })
 }
 
 pub(crate) fn register(engine: &lp_js::Engine) {

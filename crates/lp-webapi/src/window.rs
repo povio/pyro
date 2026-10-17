@@ -65,10 +65,7 @@ where
     def.getter("clientInformation", |s, w| navigator(s, w.page()));
     def.getter("screen", |s, w| {
         let key = lp_js::IdentityKey(w.page().id() | (1 << 57), 1);
-        if let Some(o) = s.lookup_identity(key) {
-            return Ok(o.value());
-        }
-        Ok(s.wrap::<Screen>(w.page().clone(), Some(key))?.value())
+        same_object(s, w.page(), key, || s.wrap::<Screen>(w.page().clone(), Some(key)))
     });
     def.method("getComputedStyle", 1, |s, w, a| {
         let el = crate::node::node_arg(s, a.get(0), "Window.getComputedStyle")?;
@@ -141,12 +138,42 @@ where
     });
 }
 
-fn navigator<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Value<'s>> {
-    let key = lp_js::IdentityKey(page.id() | (1 << 57), 0);
+/// A Window [SameObject] attribute value for this realm: looked up by
+/// `key`, otherwise created by `make` and kept alive until the realm (or
+/// page) is disposed, so expandos and `defineProperty` overrides persist.
+pub(crate) fn same_object<'s>(
+    s: &Scope<'s>,
+    page: &PageDom,
+    key: lp_js::IdentityKey,
+    make: impl FnOnce() -> JsResult<lp_js::Object<'s>>,
+) -> JsResult<Value<'s>> {
     if let Some(o) = s.lookup_identity(key) {
         return Ok(o.value());
     }
-    Ok(s.wrap::<Navigator>(page.clone(), Some(key))?.value())
+    let object = make()?;
+    let realm = s.realm_id();
+    // The holder is a private null-prototype object written by index, so no
+    // page-visible method or prototype setter can intercept retention.
+    let existing = page.same_objects.borrow().get(&realm).map(|(h, n)| (h.get(s), *n));
+    let (holder, index) = match existing.and_then(|(h, n)| Some((h.as_object()?, n))) {
+        Some(found) => found,
+        None => {
+            let holder = s.object();
+            holder.set_prototype(s.null());
+            page.same_objects.borrow_mut().insert(realm, (lp_js::Persistent::new(s, holder.value()), 0));
+            (holder, 0)
+        }
+    };
+    holder.set_index(index, object.value())?;
+    if let Some(entry) = page.same_objects.borrow_mut().get_mut(&realm) {
+        entry.1 = index + 1;
+    }
+    Ok(object.value())
+}
+
+fn navigator<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Value<'s>> {
+    let key = lp_js::IdentityKey(page.id() | (1 << 57), 0);
+    same_object(s, page, key, || s.wrap::<Navigator>(page.clone(), Some(key)))
 }
 
 fn user_agent(page: &PageDom) -> String {
