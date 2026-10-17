@@ -11,15 +11,15 @@ Rewrite status:
 - **conditional:** succeeds only when the request is already true of the engine; otherwise it returns an explicit error.
 - **pending:** returns an explicit CDP error (`-32000 … is not supported by lightningpanda`) and never a fabricated success.
 
-HTTP and `data:` document loading now use the real loader. `Network` emits request/redirect/response/data/completion/failure events to enabled page sessions, with response-body capture. Browser contexts own distinct network clients. DOM protocol wiring remains pending; basic native Input dispatch is implemented; this is not TOS compatibility. Fetch request-stage interception supports continue overrides, fulfill, abort, disable/detach cleanup and server Basic-auth challenges. Response-stage interception, custom status phrases, proxy credentials and non-Basic credential schemes are explicitly unsupported. Fulfillment accepts text headers or base64 NUL-separated binary headers, preserving native value bytes and duplicate entries; the existing Network JSON header display uses UTF-8 replacement for invalid text. Redirect hops have distinct linked Fetch IDs; auth retries retain the hop ID. Only one session per page can own interception; different pages in a context may have separate owners.
+HTTP and `data:` document loading now use the real loader. `Network` emits request/redirect/response/data/completion/failure events to enabled page sessions, with response-body capture. Browser contexts own distinct network clients. DOM automation node/geometry commands are implemented; frontend DOM mirrors and file/frame-owner commands remain pending; basic native Input dispatch is implemented; this is not TOS compatibility. Fetch request-stage interception supports continue overrides, fulfill, abort, disable/detach cleanup and server Basic-auth challenges. Response-stage interception, custom status phrases, proxy credentials and non-Basic credential schemes are explicitly unsupported. Fulfillment accepts text headers or base64 NUL-separated binary headers, preserving native value bytes and duplicate entries; the existing Network JSON header display uses UTF-8 replacement for invalid text. Redirect hops have distinct linked Fetch IDs; auth retries retain the hop ID. Only one session per page can own interception; different pages in a context may have separate owners.
 
 Storage cookie commands use the network cookie jar, including HTTP response cookies, expiry and context isolation. Negative CDP expiry values mean session cookies. Invalid batches are validated before modifying the real jar. Partitioned/SameParty cookies, non-default priority and source overrides return explicit errors. Browser WebAPI installation separately supplies the DOM and Web Storage in main and isolated realms.
 
 Capture uses a shared process payload budget (default 64 MiB, 8 MiB/body), at most 4096 response records per page, and bounded network subscriptions (1024 events/8 MiB logical bytes per context). Observer overflow closes the CDP connection instead of silently losing events. Disabling the last Network session, navigation, or page teardown releases retained bodies. Per-session `Network.enable` buffer options are explicitly unsupported. These are logical retention limits, not an RSS measurement; shared chunk allocations and metadata contribute additional memory.
 
-The browser integration smoke also exercises DOM access before init scripts, shared DOM across isolated worlds, page fetch with exact Network frame/loader correlation, route fulfillment/abort after headers, and Web Storage context/page/navigation isolation. These checks use local HTTP and JavaScript evaluation; DOM protocol commands and actual TOS workflows remain unvalidated. A separate Input check covers keyboard typing/text insertion and mouse checkbox activation; editing commands, wheel default scrolling, pen/touch and drag remain unsupported. Mouse coordinates follow the native synthetic layout, not full CSS positioning; the smoke derives its click point from the reported rectangle and verifies the exact hit target.
+The browser integration smoke also exercises DOM access before init scripts, shared DOM across isolated worlds, page fetch with exact Network frame/loader correlation, route fulfillment/abort after headers, and Web Storage context/page/navigation isolation. These checks use local HTTP and JavaScript evaluation; The full DOM protocol and actual TOS workflows remain unvalidated. A separate Input check covers keyboard typing/text insertion and mouse checkbox activation; editing commands, wheel default scrolling, pen/touch and drag remain unsupported. Mouse coordinates follow the native synthetic layout, not full CSS positioning; the smoke derives its click point from the reported rectangle and verifies the exact hit target.
 
-Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 36 engine, 10 accepted/recorded only, 3 conditional, 52 pending.
+Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 40 engine, 10 accepted/recorded only, 3 conditional, 48 pending.
 
 | Method | Upstream 2ad38773f | Rewrite | Notes |
 | --- | --- | --- | --- |
@@ -36,11 +36,11 @@ Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 36 engi
 | `CSS.enable` | yes | pending |  |
 | `CSS.startRuleUsageTracking` | **no** | pending |  |
 | `CSS.stopRuleUsageTracking` | **no** | pending |  |
-| `DOM.describeNode` | yes | pending |  |
-| `DOM.disable` | **no** | pending |  |
-| `DOM.enable` | yes | pending |  |
+| `DOM.describeNode` | yes | engine | native Node wrappers/backend IDs; bounded depth and node count; no frontend mirror IDs or pierced traversal |
+| `DOM.disable` | **no** | engine | stops documentUpdated notifications |
+| `DOM.enable` | yes | engine | documentUpdated notifications; frontend mirror/mutation tracking unsupported |
 | `DOM.getFrameOwner` | yes | pending |  |
-| `DOM.scrollIntoViewIfNeeded` | yes | pending |  |
+| `DOM.scrollIntoViewIfNeeded` | yes | engine | connected visible elements over native synthetic layout; rectangle override unsupported |
 | `DOM.setFileInputFiles` | yes | pending |  |
 | `Debugger.disable` | yes | pending |  |
 | `Debugger.enable` | yes | pending |  |
@@ -146,3 +146,19 @@ Upstream also implements domains Playwright does not send:
 - `DOM.getDocument`, `DOM.querySelector*` and `DOM.getOuterHTML`.
 
 These are out of scope for the first TOS milestone. They stay listed as uncovered until they are implemented.
+
+## Native DOM automation scope
+
+`DOM.describeNode`, `resolveNode`, `getBoxModel`, `getContentQuads`, `scrollIntoViewIfNeeded` and
+`focus` use native nodes and binding worlds. `resolveNode` can adopt a backend node into another
+world of the same page. IDs are connection-unique, bounded to 4096 per page, generation-checked,
+and do not retain nodes or old documents. Descriptions allow depths 0–32 with at most 1024 nodes.
+Frontend node IDs, full-subtree depth -1, pierced traversal, frontend mirrors and mutation events
+are unsupported. Enabling DOM supplies documentUpdated notifications on navigation.
+
+Geometry is the existing synthetic native layout. Its single rectangle supplies every box-model
+quad; this is not full CSS margin/border/padding layout. Scroll rectangle overrides are explicitly
+unsupported. Detached/hidden elements reject geometry/scroll commands. Raw handle owner-frame
+and bounding-box checks pass through real Playwright; the retained locator fill/click check
+currently fails because MutationObserver is absent from the binding layer. No locator/TOS
+compatibility is inferred from native DOM protocol checks.

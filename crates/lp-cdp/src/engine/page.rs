@@ -275,9 +275,9 @@ impl EngineHost {
             PageEvent::RealmDestroyed { realm, .. } => {
                 // Evaluations still awaiting a promise in it can never settle.
                 self.pending.fail_context(context_id(realm));
-                // Handles into a disposed realm can never be used again.
-                for s in &all {
-                    if let Some(session) = self.sessions.get(s) {
+                // Release handles even if their session never enabled Page.
+                for s in self.sessions_of(page, |_| true) {
+                    if let Some(session) = self.sessions.get(&s) {
                         session.handles.borrow_mut().release_context(context_id(realm));
                     }
                 }
@@ -306,6 +306,9 @@ impl EngineHost {
                 }
             }
             PageEvent::FrameNavigated { frame_id, loader_id, url, reason, cdp_request_id, timestamp } => {
+                for session in self.sessions_of(page, |s| s.dom_enabled) {
+                    self.event("DOM.documentUpdated", &json!({}), &session);
+                }
                 if let Some(id) = cdp_request_id {
                     self.navigate_response(page, id, json!({ "frameId": frame_id.0, "loaderId": loader_id.0 }));
                 }

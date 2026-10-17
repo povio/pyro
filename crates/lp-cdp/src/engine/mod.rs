@@ -6,6 +6,7 @@
 //! events by [`EngineHost::flush`] afterwards, so no CDP state is borrowed
 //! while JavaScript is on the stack.
 
+mod dom;
 mod fetch;
 mod input;
 mod network;
@@ -115,6 +116,7 @@ impl EngineHooks for Collector {
 /// replies (`awaitPromise`), which run as engine microtasks.
 pub(crate) struct Session {
     pub(crate) page_enabled: bool,
+    pub(crate) dom_enabled: bool,
     pub(crate) lifecycle_events: bool,
     pub(crate) runtime_enabled: bool,
     pub(crate) network_enabled: bool,
@@ -147,6 +149,7 @@ pub(crate) struct PageState {
     pub(crate) emulated_media: Option<serde_json::Value>,
     pub(crate) next_script_id: u64,
     network: network::NetworkPage,
+    dom_nodes: dom::BackendNodes,
 }
 
 /// The engine side of one CDP connection, living on its browser thread.
@@ -160,6 +163,7 @@ pub struct EngineHost {
     pub(crate) pages: HashMap<PageKey, PageState>,
     pub(crate) sessions: HashMap<String, Session>,
     pub(crate) next_exception_id: i64,
+    next_backend_node: u64,
     pub(crate) pending: runtime::PendingReplies,
 }
 
@@ -190,6 +194,7 @@ impl EngineHost {
             pages: HashMap::new(),
             sessions: HashMap::new(),
             next_exception_id: 1,
+            next_backend_node: 1,
             pending: runtime::PendingReplies::default(),
         })
     }
@@ -298,6 +303,7 @@ impl EngineHost {
             cmd.command.domain_and_action().ok_or_else(|| CdpError::method_not_found(&cmd.command.method))?;
         match domain {
             "Page" => self.page_domain(action, cmd),
+            "DOM" => self.dom_domain(action, cmd),
             "Runtime" => self.runtime_domain(action, cmd),
             "Emulation" => self.emulation_domain(action, cmd),
             "Browser" => self.window_domain(action, cmd),
@@ -470,6 +476,7 @@ impl Host for EngineHost {
                 emulated_media: None,
                 next_script_id: 1,
                 network: network::NetworkPage::new(self.body_budget.clone()),
+                dom_nodes: dom::BackendNodes::default(),
             },
         );
         // Events of the initial about:blank load precede any session.
@@ -519,6 +526,7 @@ impl Host for EngineHost {
             session_id.to_owned(),
             Session {
                 page_enabled: false,
+                dom_enabled: false,
                 lifecycle_events: false,
                 runtime_enabled: false,
                 network_enabled: false,

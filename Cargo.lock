@@ -510,6 +510,7 @@ dependencies = [
  "bytes",
  "http",
  "lp-browser",
+ "lp-dom",
  "lp-js",
  "lp-net",
  "lp-runtime",

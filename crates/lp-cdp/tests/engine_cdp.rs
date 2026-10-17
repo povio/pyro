@@ -964,3 +964,76 @@ fn input_mouse_hit_tests_and_runs_trusted_checkbox_activation() {
     );
     assert_eq!(r["result"]["result"]["value"], json!([true, [[true, 30, 30]]]));
 }
+
+#[test]
+fn dom_backend_nodes_adopt_across_worlds_and_expire_on_navigation() {
+    let mut h = Harness::new();
+    assert_eq!(h.page("DOM.enable", json!({}))["result"], json!({}));
+    let object = h.page("Runtime.evaluate", json!({"expression":"document.body.innerHTML='<button id=action>Press</button>'; document.querySelector('#action')"}))["result"]["result"]["objectId"].clone();
+    let described = h.page("DOM.describeNode", json!({"objectId":object}));
+    let node = &described["result"]["node"];
+    assert_eq!(node["nodeName"], "BUTTON");
+    assert_eq!(node["localName"], "button");
+    assert_eq!(node["attributes"], json!(["id", "action"]));
+    assert_eq!(node["children"][0]["nodeValue"], "Press");
+    let backend = node["backendNodeId"].clone();
+    assert!(backend.as_u64().unwrap() > 0);
+    let frame = h.frame_id.clone();
+    let world = h.page("Page.createIsolatedWorld", json!({"frameId":frame,"worldName":"dom-adopt"}))["result"]
+        ["executionContextId"]
+        .clone();
+    let resolved =
+        h.page("DOM.resolveNode", json!({"backendNodeId":backend,"executionContextId":world,"objectGroup":"nodes"}));
+    assert_eq!(resolved["result"]["object"]["subtype"], "node");
+    let adopted = resolved["result"]["object"]["objectId"].clone();
+    let r = h.page("Runtime.callFunctionOn", json!({"objectId":adopted,"functionDeclaration":"function(){ return [this.id, this===document.querySelector('#action')] }","returnByValue":true}));
+    assert_eq!(r["result"]["result"]["value"], json!(["action", true]));
+    assert_eq!(
+        h.page("DOM.describeNode", json!({"objectId":adopted,"depth":0}))["result"]["node"]["backendNodeId"],
+        backend
+    );
+    h.page("Runtime.releaseObjectGroup", json!({"objectGroup":"nodes"}));
+    assert!(h.page("DOM.describeNode", json!({"objectId":adopted})).get("error").is_some());
+    let events = h.page_with_events("Page.navigate", json!({"url":"about:blank"}));
+    assert!(events.iter().any(|e| e["method"] == "DOM.documentUpdated"));
+    assert!(h.page("DOM.resolveNode", json!({"backendNodeId":backend})).get("error").is_some());
+    // This session never enabled Page: navigation must still release its roots.
+    assert_eq!(
+        h.page("Runtime.getProperties", json!({"objectId":object}))["error"]["message"],
+        "Could not find object with given id"
+    );
+}
+
+#[test]
+fn dom_geometry_matches_native_rect_and_rejects_detached_or_foreign_objects() {
+    let mut h = Harness::new();
+    let object = h.page("Runtime.evaluate",json!({"expression":"document.body.innerHTML='<input id=box style=\"width:40px;height:30px\">';document.querySelector('#box')"}))["result"]["result"]["objectId"].clone();
+    let r = h.page("Runtime.evaluate",json!({"expression":"JSON.parse(JSON.stringify(document.querySelector('#box').getBoundingClientRect()))","returnByValue":true}));
+    let rect = &r["result"]["result"]["value"];
+    let x = rect["x"].as_f64().unwrap();
+    let y = rect["y"].as_f64().unwrap();
+    let quad = json!([x, y, x + 40.0, y, x + 40.0, y + 30.0, x, y + 30.0]);
+    assert_eq!(h.page("DOM.getContentQuads", json!({"objectId":object}))["result"]["quads"], json!([quad]));
+    assert_eq!(h.page("DOM.getBoxModel", json!({"objectId":object}))["result"]["model"]["border"], quad);
+    assert_eq!(h.page("DOM.focus", json!({"objectId":object}))["result"], json!({}));
+    assert_eq!(
+        h.page("Runtime.evaluate", json!({"expression":"document.activeElement.id","returnByValue":true}))["result"]
+            ["result"]["value"],
+        "box"
+    );
+    let spoof = h.page("Runtime.evaluate", json!({"expression":"({nodeType:1,nodeName:'DIV'})"}))["result"]["result"]
+        ["objectId"]
+        .clone();
+    assert_eq!(h.page("DOM.describeNode", json!({"objectId":spoof}))["error"]["message"], "Object is not a DOM node");
+    h.page("Runtime.evaluate", json!({"expression":"document.querySelector('#box').remove()"}));
+    assert_eq!(
+        h.page("DOM.scrollIntoViewIfNeeded", json!({"objectId":object}))["error"]["message"],
+        "Node is detached from document"
+    );
+    assert!(
+        h.page("DOM.describeNode", json!({"objectId":object})).get("result").is_some(),
+        "a rooted detached node remains describable"
+    );
+    assert!(h.page("DOM.describeNode", json!({"objectId":object,"backendNodeId":1})).get("error").is_some());
+    assert!(h.page("DOM.describeNode", json!({"objectId":object,"depth":33})).get("error").is_some());
+}

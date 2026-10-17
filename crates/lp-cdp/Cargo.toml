@@ -12,6 +12,7 @@ lp-js.workspace = true
 lp-runtime.workspace = true
 lp-net.workspace = true
 lp-webapi.workspace = true
+lp-dom.workspace = true
 bytes = "1"
 http = "1"
 ryu-js = "1"

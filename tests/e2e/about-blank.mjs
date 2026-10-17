@@ -350,6 +350,26 @@ try {
     await page.mouse.click(box.x, box.y);
     assert.equal(await page.evaluate(() => document.querySelector('#toggle').checked), true);
   });
+  await check('DOM handles expose owner frame and native geometry', async () => {
+    await page.evaluate(() => {
+      document.body.innerHTML = '<input id="dom-field" aria-label="Name" style="width:80px;height:20px"><button id="dom-button" style="width:80px;height:20px">Commit</button>';
+      globalThis.domClicks = 0;
+      document.querySelector('#dom-button').addEventListener('click', () => domClicks++);
+    });
+    const handle = await page.evaluateHandle(() => document.querySelector('#dom-button'));
+    assert.ok(handle);
+    try {
+      assert.equal(await handle.ownerFrame(), page.mainFrame());
+      const box = await handle.boundingBox();
+      assert.ok(box && box.width > 0 && box.height > 0, JSON.stringify(box));
+    } finally { await handle.dispose(); }
+  });
+  await check('real locator fill and click', async () => {
+    await page.locator('#dom-field').fill('typed through locator', { timeout: 5000 });
+    assert.equal(await page.locator('#dom-field').inputValue(), 'typed through locator');
+    await page.locator('#dom-button').click({ timeout: 5000 });
+    assert.equal(await page.evaluate(() => domClicks), 1);
+  });
   await check('Web Storage follows context, page and navigation boundaries', async () => {
     await page.evaluate(() => { localStorage.setItem('local-marker', 'shared'); sessionStorage.setItem('session-marker', 'page'); });
     const sibling = await context.newPage();

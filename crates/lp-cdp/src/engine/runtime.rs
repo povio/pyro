@@ -302,7 +302,7 @@ impl EngineHost {
         }
     }
 
-    fn target_realm(&self, page: PageKey, context: Option<ExecutionContextId>) -> CdpResult<Realm> {
+    pub(super) fn target_realm(&self, page: PageKey, context: Option<ExecutionContextId>) -> CdpResult<Realm> {
         let not_found = || CdpError::server("Cannot find context with specified id");
         match context {
             Some(id) => {
