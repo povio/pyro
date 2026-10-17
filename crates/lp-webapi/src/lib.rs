@@ -26,6 +26,7 @@ pub mod file;
 pub mod formdata;
 pub mod headers;
 pub mod html;
+pub mod indexeddb;
 pub mod input;
 pub mod layout_api;
 pub mod lifecycle;
@@ -72,6 +73,7 @@ pub fn register(engine: &lp_js::Engine) {
     validity::register(engine);
     window::register(engine);
     engine.register::<storage::Storage>();
+    engine.register::<indexeddb::IdbFactory>();
     engine.register::<headers::Headers>();
     engine.register::<response::Response>();
     engine.register::<xhr::XMLHttpRequest>();

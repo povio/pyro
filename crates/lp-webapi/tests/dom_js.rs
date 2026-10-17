@@ -787,3 +787,67 @@ fn page_disposal_releases_hooks_registry_and_listener_roots() {
     }
     assert!(weak.upgrade().is_none(), "disposed bindings kept their PageDom alive");
 }
+
+#[test]
+fn indexeddb_empty_restore_preserves_context_and_origin_isolation() {
+    let engine = Engine::new().unwrap();
+    register(&engine);
+    let local = StorageNamespace::default();
+    let (page, realm) = storage_page(&engine, "http://example.test/", local.clone(), StorageNamespace::default());
+    assert_eq!(eval(&realm, "indexedDB===indexedDB && indexedDB instanceof IDBFactory"), "true");
+    eval(
+        &realm,
+        r#"
+        globalThis.result='pending';
+        globalThis.savedFactory=indexedDB;
+        globalThis.restore=async state=>{
+            for(const db of await indexedDB.databases())indexedDB.deleteDatabase(db.name);
+            await Promise.all((state.indexedDB||[]).map(async db=>indexedDB.open(db.name,db.version)));
+            sessionStorage.clear();localStorage.clear();
+            for(const item of state.localStorage||[])localStorage.setItem(item.name,item.value);
+        };
+        sessionStorage.setItem('old','old');localStorage.setItem('old','old');
+        restore({localStorage:[{name:'auth-test',value:'synthetic'}]}).then(()=>result='ok',e=>result=e.name);
+    "#,
+    );
+    assert_eq!(
+        eval(
+            &realm,
+            "result+':'+localStorage.getItem('auth-test')+':'+localStorage.getItem('old')+':'+sessionStorage.length"
+        ),
+        "ok:synthetic:null:0"
+    );
+    eval(&realm, "indexedDB.databases().then(a=>{a.push({name:'injected',version:1});return indexedDB.databases()}).then(a=>result=String(a.length))");
+    assert_eq!(eval(&realm, "result"), "0");
+    // The unsupported nonempty restore must fail before clearing existing data.
+    eval(&realm, "restore({indexedDB:[{name:'db',version:1,stores:[]}],localStorage:[]}).then(()=>result='WRONG',e=>result=e.name)");
+    assert_eq!(eval(&realm, "result+':'+localStorage.getItem('auth-test')"), "NotSupportedError:synthetic");
+    let (_next, navigated) =
+        storage_page(&engine, "http://example.test/next", local.clone(), StorageNamespace::default());
+    assert_eq!(eval(&navigated, "localStorage.getItem('auth-test')"), "synthetic");
+    for (url, namespace) in [("https://example.test/", local), ("http://example.test/", StorageNamespace::default())] {
+        let (_other, other) = storage_page(&engine, url, namespace, StorageNamespace::default());
+        eval(&other, "globalThis.result='pending';indexedDB.databases().then(a=>result=a.length)");
+        assert_eq!(eval(&other, "result+':'+localStorage.getItem('auth-test')"), "0:null");
+    }
+    page.dispose();
+    eval(&realm, "savedFactory.databases().then(()=>result='WRONG',e=>result='disposed')");
+    assert_eq!(eval(&realm, "result"), "disposed");
+    // A captured factory also rejects after document disposal.
+    assert!(eval(&realm, "indexedDB").starts_with("THROW"));
+}
+
+#[test]
+fn indexeddb_opaque_origin_rejects_and_nonempty_operations_are_explicit() {
+    let engine = Engine::new().unwrap();
+    register(&engine);
+    let (_page, realm) =
+        storage_page(&engine, "data:text/html,hello", StorageNamespace::default(), StorageNamespace::default());
+    eval(&realm, "globalThis.result='pending';indexedDB.databases().then(()=>result='WRONG',e=>result=e.name)");
+    assert_eq!(eval(&realm, "result"), "SecurityError");
+    assert_eq!(eval(&realm, "try{indexedDB.open('db')}catch(e){e.name}"), "SecurityError");
+    let (_page, realm) =
+        storage_page(&engine, "http://example.test", StorageNamespace::default(), StorageNamespace::default());
+    assert_eq!(eval(&realm, "try{indexedDB.deleteDatabase('db')}catch(e){e.name}"), "NotSupportedError");
+    assert_eq!(eval(&realm, "try{new IDBFactory()}catch(e){e.name}"), "TypeError");
+}
