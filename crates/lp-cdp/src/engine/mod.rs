@@ -30,7 +30,7 @@ use serde::Deserialize;
 
 use crate::msg::{self, CdpError, CdpResult, Command, Empty};
 use crate::outbox::Outbox;
-use crate::runtime_protocol::HandleTable;
+use crate::runtime_protocol::{HandleBudget, HandleTable};
 use crate::target::{ContextKey, Host, PageCommand, PageKey, Sink};
 
 /// Engine notifications waiting to be translated into CDP events.
@@ -154,6 +154,8 @@ pub struct EngineHost {
     pub(crate) pages: HashMap<PageKey, PageState>,
     pub(crate) sessions: HashMap<String, Session>,
     pub(crate) next_exception_id: i64,
+    /// Remote-object handles all sessions of this connection may retain.
+    pub(crate) handle_budget: HandleBudget,
     next_backend_node: u64,
     pub(crate) pending: runtime::PendingReplies,
 }
@@ -185,6 +187,7 @@ impl EngineHost {
             pages: HashMap::new(),
             sessions: HashMap::new(),
             next_exception_id: 1,
+            handle_budget: HandleBudget::new(HandleBudget::DEFAULT_LIMIT),
             next_backend_node: 1,
             pending: runtime::PendingReplies::default(),
         })
@@ -223,6 +226,18 @@ impl EngineHost {
     /// Recomputes whether console/exception notifications are collected.
     pub(crate) fn update_runtime_wanted(&self) {
         self.collector.runtime_wanted.set(self.sessions.values().any(|s| s.runtime_enabled));
+    }
+
+    /// Replaces the connection's handle budget (tests, embedders with other
+    /// memory limits). Only allowed while no session's handle table holds the
+    /// current budget; otherwise existing tables would keep counting against
+    /// the old budget, so the call fails in every build and changes nothing.
+    pub fn set_handle_limit(&mut self, limit: usize) -> CdpResult<()> {
+        if !self.sessions.is_empty() || self.handle_budget.is_shared() {
+            return Err(CdpError::server("The handle limit can only be set before sessions attach"));
+        }
+        self.handle_budget = HandleBudget::new(limit);
+        Ok(())
     }
 
     /// True when engine notifications are waiting for [`EngineHost::flush`].
@@ -526,7 +541,7 @@ impl Host for EngineHost {
                 runtime_enabled: false,
                 network_enabled: false,
                 fetch: fetch::FetchSession::default(),
-                handles: Rc::new(RefCell::new(HandleTable::new(HandleTable::<Persistent>::DEFAULT_LIMIT))),
+                handles: Rc::new(RefCell::new(HandleTable::new(self.handle_budget.clone()))),
             },
         );
     }

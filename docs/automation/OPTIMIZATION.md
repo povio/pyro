@@ -22,6 +22,28 @@ Environment for every measurement below:
 | Spawn → connectOverCDP → newPage → first `evaluate(1+1)` on about:blank, alternating binaries, n=10, medians | upstream 57 / 60.6 / 63 / 64.7 ms; rewrite 6.8 / 10.4 / 12.9 / 14.4 ms (ready/connected/page/evaluated) | `first-page-vs-upstream.json`. **Not comparable as browser performance:** the rewrite realm has no DOM or WebAPIs. Upstream builds its full V8 snapshot-backed environment. |
 | In-process CDP costs (release) | context+target+enables median 0.42–0.51 ms; `Runtime.evaluate` 6–7 µs; `callFunctionOn` small fn 7–8 µs vs ~38 KB fn 172 µs; handle create+release 7 µs; about:blank navigation (realm rebuild) 138–140 µs | `cdp_microbench.txt`, 3 runs |
 
+## Per-connection memory bounds (measured)
+
+Every per-connection queue or table has a limit; exceeding it fails explicitly or closes the connection (1008). It is
+never dropped silently. Figures are macOS `phys_footprint` deltas of one process per scenario. They were measured
+with the real JavaScriptCore engine, a release build, and the state still retained. Source: `crates/lp-cdp/examples/memory_caps.rs`;
+raw output (3 rounds): `bench/results/memory-caps-cdf2d33/memory_caps.txt`. Same host as above, `main` cdf2d33 plus
+the handle-budget change.
+
+| Limit | Default | Measured at the limit | On overflow |
+|---|---|---|---|
+| Outbound encoded frames (`DEFAULT_OUTBOUND_BUDGET`) | 64 MiB | bounded by bytes | close 1008 |
+| Engine events queued within one task (`MAX_QUEUED_EVENTS`) | 100,000 | +37.0 MiB primitive args; +56.2 MiB `{i}` object args; +44.3 MiB 1 KiB strings. These include the encoded frames, measured with the outbound budget disabled; normally that budget closes the connection first. | close 1008 |
+| Remote-object handles, shared by all sessions of a connection (`HandleBudget::DEFAULT_LIMIT`) | 100,000 | +28.3–28.8 MiB (small objects) | `Runtime.*` error "Too many remote objects" |
+| Pending `awaitPromise` replies (`MAX_PENDING_REPLIES`) | 10,000 | +1.4–1.5 MiB (9,999) | error reply |
+| Retained response bodies (`BodyLimits`, process-wide) | 64 MiB total, 8 MiB per body; at most 4,096 records per page | bounded by bytes/records | body not retained; `getResponseBody` errors |
+| Paused Fetch requests (`MAX_PAUSED`) | 4,096 | not measured | request failed |
+| Contexts / targets / sessions | 256 / 256 / 512 | not measured | error |
+
+Before this change, the handle limit was 1,048,576 *per session* (512 sessions), so the aggregate was unbounded in
+practice. Retained objects themselves are not limited by size: a client that keeps handles to large objects keeps
+their memory. That is inherent to the protocol. It is the same in Chrome, which has no handle limit.
+
 ## Hypotheses (unmeasured unless stated)
 
 1. **Process reuse / several contexts per process.**
