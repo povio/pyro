@@ -68,6 +68,7 @@ pub fn resource_loaded(page: &Rc<PageDom>, el: NodeId, ok: bool) {
 /// Forgets per-realm state of a disposed realm (navigation, world removal):
 /// window listener holder and pinned wrappers.
 pub fn realm_disposed(page: &PageDom, realm: RealmId) {
+    crate::fetch::cancel_realm(page, realm);
     page.realms.borrow_mut().remove(&realm);
     page.data_view_readers.borrow_mut().remove(&realm);
     page.header_helpers.borrow_mut().remove(&realm);
