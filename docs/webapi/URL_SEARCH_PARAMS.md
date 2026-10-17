@@ -21,7 +21,7 @@ Content-Type exists. Overriding the object's toString does not alter BodyInit
 serialization. Later mutations do not change an in-flight request body.
 
 The [URL binding](URL.md) provides a live SameObject searchParams association.
-FormData and Response construction remain unsupported. The original missing
+[FormData](FORM_DATA.md) and the [Response constructor](FETCH.md) are bound separately. The original missing
 URLSearchParams exception is preserved in the [pinned TOS identity run](../validation/TOS_IDENTITY_SMOKE.md);
 the [next pinned run](../validation/TOS_QUERY_PARAMS_SMOKE.md) passed URL assertions
 but exposed a missing URL constructor. Neither run establishes TOS compatibility.

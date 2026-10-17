@@ -331,11 +331,12 @@ fn parse_request<'s>(
     Ok((request, signal))
 }
 
-/// Fetch "extract a body" for the supported BodyInit types: Blob,
-/// URLSearchParams, BufferSource, else ToString. Returns (bytes, Content-Type
-/// or "" when the type sets none). ReadableStream/FormData bodies are not
-/// supported by this implementation (FormData has no binding yet; other
-/// objects are stringified as the Web IDL union's last member, USVString).
+/// Fetch "extract a body" for the supported BodyInit types: FormData
+/// (multipart/form-data with a generated boundary), Blob, URLSearchParams,
+/// BufferSource, else ToString. Returns (bytes, Content-Type or "" when the
+/// type sets none). ReadableStream bodies are not supported by this
+/// implementation; other objects are stringified as the Web IDL union's last
+/// member, USVString.
 pub(crate) fn extract_body(s: &Scope<'_>, body: Value<'_>) -> JsResult<(Bytes, String)> {
     if let Some((bytes, mime)) = crate::form_data::multipart_body(s, body) {
         return Ok((bytes, mime));
