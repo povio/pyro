@@ -194,3 +194,24 @@ fn script_ordering_over_real_http() {
     check_order(&rec.log.borrow(), &origin);
     assert!(rec.log.borrow().contains(&format!("event:navigated {origin}/")));
 }
+
+#[test]
+fn contexts_have_isolated_network_state() {
+    let mut thread = BrowserThread::new().unwrap();
+    thread.enable_network(lp_net::NetConfig::default()).unwrap();
+    let b = &mut thread.browser;
+    let c1 = b.create_context().unwrap();
+    let c2 = b.create_context().unwrap();
+    let j0 = b.context_net(DEFAULT_CONTEXT).unwrap().cookies().clone();
+    let j1 = b.context_net(c1).unwrap().cookies().clone();
+    let j2 = b.context_net(c2).unwrap().cookies().clone();
+    assert!(!std::sync::Arc::ptr_eq(&j0, &j1) && !std::sync::Arc::ptr_eq(&j1, &j2));
+    let p1 = b.create_page_in(c1).unwrap();
+    let p2 = b.create_page_in(c2).unwrap();
+    assert_eq!(b.page(p1).unwrap().context, c1);
+    assert!(b.close_context(c1));
+    assert!(b.page(p1).is_none());
+    assert!(b.page(p2).is_some());
+    assert!(b.context_net(c1).is_none());
+    assert!(!b.close_context(DEFAULT_CONTEXT));
+}

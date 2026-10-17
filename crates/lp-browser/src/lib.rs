@@ -22,6 +22,19 @@ pub use window::{Window, WindowData};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct PageId(pub u32);
 
+/// A browser context (CDP `browserContextId`): pages sharing network state
+/// (own `lp_net::NetClient`, hence cookie jar). Context 0 is the default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ContextId(pub u32);
+
+pub const DEFAULT_CONTEXT: ContextId = ContextId(0);
+
+struct ContextState {
+    id: ContextId,
+    loader: Option<Rc<dyn ResourceLoader>>,
+    net: Option<lp_net::NetClient>,
+}
+
 /// CDP frame id (upstream uses a stable string per frame).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FrameId(pub String);
@@ -186,6 +199,7 @@ impl Frame {
 
 pub struct Page {
     pub id: PageId,
+    pub context: ContextId,
     pub main_frame: Frame,
     pub init_scripts: Vec<InitScript>,
     /// Navigation whose document is being fetched (superseded fetches are ignored).
@@ -205,7 +219,11 @@ pub struct Browser {
     pub released_payloads: RefCell<u64>,
     /// Cross-thread handle to this browser's own loop (network completions).
     handle: LoopHandle<Browser>,
+    /// Loader for contexts without their own (tests, about:blank-only setups).
     pub(crate) loader: Option<Rc<dyn ResourceLoader>>,
+    contexts: Vec<ContextState>,
+    /// When set, every new context gets its own NetClient with this config.
+    net_config: Option<lp_net::NetConfig>,
     /// Completions of in-flight fetches, keyed by completion id.
     pub(crate) completions: std::collections::HashMap<u64, FetchDone>,
 }
@@ -239,6 +257,8 @@ impl BrowserThread {
             released_payloads: RefCell::new(0),
             handle: event_loop.handle(),
             loader: None,
+            contexts: vec![ContextState { id: DEFAULT_CONTEXT, loader: None, net: None }],
+            net_config: None,
             completions: std::collections::HashMap::new(),
         };
         Ok(BrowserThread { event_loop, browser })
@@ -246,6 +266,13 @@ impl BrowserThread {
 
     pub fn handle(&self) -> LoopHandle<Browser> {
         self.event_loop.handle()
+    }
+
+    /// Enables real document loading: every browser context (including the
+    /// default one) gets its own lp-net client (I/O thread, cookie jar).
+    pub fn enable_network(&mut self, config: lp_net::NetConfig) -> std::io::Result<()> {
+        self.browser.net_config = Some(config);
+        self.browser.attach_network(DEFAULT_CONTEXT)
     }
 
     /// Runs tasks/timers until idle or the deadline.
@@ -299,7 +326,62 @@ impl Browser {
 
     /// Creates a page showing `about:blank` (with an executable main realm,
     /// unlike the pinned upstream build TOS works around).
+    /// Creates a page in the default context.
     pub fn create_page(&mut self) -> Result<PageId, JsError> {
+        self.create_page_in(DEFAULT_CONTEXT)
+    }
+
+    /// Creates an isolated browser context with its own network state.
+    pub fn create_context(&mut self) -> std::io::Result<ContextId> {
+        let id = ContextId(self.next() as u32);
+        self.contexts.push(ContextState { id, loader: None, net: None });
+        if self.net_config.is_some() {
+            self.attach_network(id)?;
+        }
+        Ok(id)
+    }
+
+    fn attach_network(&mut self, id: ContextId) -> std::io::Result<()> {
+        let config = self.net_config.clone().unwrap_or_default();
+        let client = lp_net::NetClient::new(config)?;
+        if let Some(c) = self.contexts.iter_mut().find(|c| c.id == id) {
+            c.loader = Some(Rc::new(NetLoader::new(client.clone())));
+            c.net = Some(client);
+        }
+        Ok(())
+    }
+
+    /// Closes a context: its pages are closed and its network client dropped.
+    /// The default context cannot be closed.
+    pub fn close_context(&mut self, id: ContextId) -> bool {
+        if id == DEFAULT_CONTEXT {
+            return false;
+        }
+        let pages: Vec<PageId> = self.pages.iter().filter(|p| p.context == id).map(|p| p.id).collect();
+        for p in pages {
+            self.close_page(p);
+        }
+        let before = self.contexts.len();
+        self.contexts.retain(|c| c.id != id);
+        before != self.contexts.len()
+    }
+
+    /// The context's network client (cookies, interception, events).
+    pub fn context_net(&self, id: ContextId) -> Option<&lp_net::NetClient> {
+        self.contexts.iter().find(|c| c.id == id)?.net.as_ref()
+    }
+
+    /// Loader used by `page`: its context's, else the browser default.
+    pub(crate) fn loader_for(&self, page: PageId) -> Option<Rc<dyn ResourceLoader>> {
+        let ctx = self.page(page).map(|p| p.context).unwrap_or(DEFAULT_CONTEXT);
+        self.contexts.iter().find(|c| c.id == ctx).and_then(|c| c.loader.clone()).or_else(|| self.loader.clone())
+    }
+
+    /// Creates a page in context `context`.
+    pub fn create_page_in(&mut self, context: ContextId) -> Result<PageId, JsError> {
+        if !self.contexts.iter().any(|c| c.id == context) {
+            return Err(JsError::Type("no such browser context".into()));
+        }
         let id = PageId(self.next() as u32);
         let frame = Frame {
             id: FrameId(format!("{:032X}", self.next())),
@@ -309,7 +391,14 @@ impl Browser {
             dom: None,
             document: None,
         };
-        self.pages.push(Page { id, main_frame: frame, init_scripts: Vec::new(), pending_loader: None, load: None });
+        self.pages.push(Page {
+            id,
+            context,
+            main_frame: frame,
+            init_scripts: Vec::new(),
+            pending_loader: None,
+            load: None,
+        });
         self.navigate(
             id,
             NavigateOpts {
@@ -367,7 +456,7 @@ impl Browser {
                 cdp_request_id: opts.cdp_request_id,
             },
         );
-        if opts.url != "about:blank" && self.loader.is_some() {
+        if opts.url != "about:blank" && self.loader_for(page).is_some() {
             self.start_document_fetch(page, opts, loader_id.clone())?;
             return Ok(loader_id);
         }

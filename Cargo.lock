@@ -507,6 +507,7 @@ version = "0.1.0"
 dependencies = [
  "lp-browser",
  "lp-js",
+ "lp-net",
  "lp-runtime",
  "serde",
  "serde_json",

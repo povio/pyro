@@ -299,7 +299,7 @@ impl Browser {
         opts: NavigateOpts,
         loader_id: LoaderId,
     ) -> Result<(), JsError> {
-        let Some(loader) = self.loader.clone() else {
+        let Some(loader) = self.loader_for(page) else {
             return Err(JsError::Unsupported("navigation without a resource loader"));
         };
         let frame_id = self.page(page).map(|p| p.main_frame.id.0.clone());
@@ -535,13 +535,15 @@ impl Browser {
         kind: ResourceKind,
         done: impl FnOnce(&mut Browser, Result<String, String>) + 'static,
     ) {
-        let Some(loader) = self.loader.clone() else {
+        let Some(loader) = self.loader_for(page) else {
             self.scheduler().post(TaskSource::Networking, move |b| done(b, Err("no resource loader".into())));
             return;
         };
         let referrer = self.page(page).and_then(|p| p.load.as_ref()).map(|l| l.url.clone());
         let frame_id = self.page(page).map(|p| p.main_frame.id.0.clone());
-        let req = FetchRequest { url, kind, page, referrer, frame_id, loader_id: None };
+        // Subresources carry the document's loader id (CDP Network.* routing).
+        let loader_id = self.page(page).map(|p| p.main_frame.loader_id.0.clone());
+        let req = FetchRequest { url, kind, page, referrer, frame_id, loader_id };
         loader.fetch(
             self,
             req,
