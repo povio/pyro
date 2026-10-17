@@ -363,3 +363,29 @@ fn performance_now_is_monotonic_and_origin_is_wall_time() {
         "true,true,true,function"
     );
 }
+
+#[test]
+fn history_methods_accept_an_unbound_receiver() {
+    // TanStack History: `(push ? h.pushState : h.replaceState)(state, "", url)`.
+    let (mut thread, rec, page) = nav_setup();
+    assert_eq!(
+        js(
+            &thread,
+            page,
+            "const h = history; const len = h.length; \
+             (true ? h.pushState : h.replaceState)({ a: 1 }, '', '/t1'); \
+             (false ? h.pushState : h.replaceState)({ b: 2 }, '', '/t2'); \
+             [location.pathname, JSON.stringify(history.state), history.length - len, \
+              Object.getOwnPropertyDescriptor(History.prototype, 'length').get.call(undefined) === history.length].join('|')"
+        ),
+        "/t2|{\"b\":2}|1|true"
+    );
+    let back = js(&thread, page, "const b = history.back; b(); 'ok'");
+    assert_eq!(back, "ok");
+    thread.run_until_idle(Some(Instant::now() + Duration::from_secs(2)));
+    assert_eq!(js(&thread, page, "location.href"), "http://site.test/a/b?x=1#h");
+    // Foreign receivers are still rejected.
+    assert!(js(&thread, page, "history.pushState.call({}, null, '', '/x')").contains("Illegal invocation"));
+    assert!(js(&thread, page, "history.pushState.call(location, null, '', '/x')").contains("Illegal invocation"));
+    assert!(!rec.log.borrow().iter().any(|l| l.starts_with("exception")), "{:?}", rec.log.borrow());
+}
