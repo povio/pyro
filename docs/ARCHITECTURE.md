@@ -51,14 +51,16 @@ let v = s.eval(src, Some(url), line)?;          // Value<'s>
 let p = s.eval_module(src, url)?;               // promise; imports via ModuleFetcher
 let r = s.call_function("function(a){...}", Some(this), &[arg])?;   // CDP callFunctionOn shape
 let o = s.wrap::<C>(data, Some(IdentityKey(doc, node)))?;           // one wrapper per key per realm
-let d: Option<&C::Data> = s.unwrap::<C>(value);
+let d = s.unwrap::<C>(value);                   // Option<Unwrapped<C::Data>>: protects the wrapper while borrowed
+let d: Option<&C::Data> = s.unwrap_arg::<C>(&args, 0);              // callback args are rooted by the frame
+let w: Option<&Window> = s.global_data::<Window>();                 // realm global payload (set once)
 s.set_hidden(obj, "listeners", v)?; s.get_hidden(obj, key)?;        // GC-traced, cycle-safe
 let f = s.function("name", |s, this, args| Ok(s.undefined()))?;     // capturing native closure
 s.then(value, |s, v| .., |s, err| ..)?;  let d = s.deferred()?;     // promises without nested loops
 s.describe(v)?; s.own_properties(obj, own_only)?;                   // CDP RemoteObject helpers
 s.report_exception(&err);                                           // -> EngineHooks::exception_thrown
 engine.set_hooks(Some(Rc<dyn EngineHooks>));  // console_api / exception_thrown / unhandled_rejection / realm_*
-engine.terminate_handle()?.terminate();       // Send; aborts running JS within ~50 ms
+engine.terminate_handle()?.terminate();       // Send; aborts running JS within ~50 ms -> JsError::Terminated
 let keep = Persistent::new(&s, v);            // JSValueProtect; !Send; Clone; Drop unprotects
 ```
 
@@ -96,17 +98,29 @@ impl JsClass for Node {
   `TypeError: Illegal invocation`.
 - **Errors:** `JsError::{Type, Range, Syntax, Reference, Dom{name,message}, Thrown(Persistent), Terminated,
   ContextDestroyed, Unsupported}`. A `Dom` error becomes a `DOMException` with the right `code`.
-- **Global object:** a realm created with `global_class: Some(Window)` uses a JSC global class. Its generated prototype
-  becomes `Window.prototype`; JSC makes the global's own `[[Prototype]]` immutable. A receiver that is `undefined`,
-  `null` or the global maps to the global's payload.
+- **Global object:** realms always use JSC's default global object, because only it supports the module loader (a
+  custom global `JSClass` rejects modules with "Context does not support module loading"). The default global's
+  `[[Prototype]]` is immutable, so `global_class: Some(Window)` is emulated:
+  - the members of Window and its ancestors are copied onto the global as own properties, as WebIDL does for `[Global]`
+    interfaces;
+  - each interface in the chain gets a `Symbol.hasInstance` that also accepts the global;
+  - `Symbol.toStringTag` is set to `"Window"`.
+
+  Deviations from browsers: `Object.getPrototypeOf(window)` is `Object.prototype`, and patching
+  `EventTarget.prototype.addEventListener` does not affect the copy that lives on `window`. A receiver that is
+  `undefined`, `null` or the global maps to the global's payload. That payload is set once
+  (`Realm::set_global_data`) and freed only when the realm is dropped.
 
 ### GC and lifetime rules (review focus)
 
-1. **`Value<'s>`/`Object<'s>` are stack-only.** JSC scans the native stack conservatively. Anything on the heap must
-   be a `Persistent` or `RootedVec`. Argument buffers of up to 8 values stay on the stack.
-2. **Finalizers run no Rust destructors and make no JSC calls.** The GC finalizer only queues the payload pointer.
-   `Engine::drain_finalized()` drops payloads and prunes dead identity entries at safe points; the loop calls it
-   after every task. Wrapper payloads may therefore safely own `Persistent`s.
+1. **`Value<'s>`/`Object<'s>` are stack-only.** JSC scans the native stack conservatively, so only *live* locals are
+   roots. Anything on the heap must be a `Persistent` or `RootedVec`. Argument buffers of up to 8 values stay on the
+   stack. A borrow derived from a value must not outlive the value's liveness: `Scope::unwrap` returns a guard that
+   protects the wrapper for as long as the borrow lives.
+2. **Finalizers run no Rust destructors and make no JSC calls.** JSC may finalize on any thread, so the finalizer only
+   pushes the payload pointer onto the owning engine's mutex-protected queue. `Engine::drain_finalized()` drops
+   payloads and prunes dead identity entries on the engine thread at safe points; the loop calls it after every task.
+   Wrapper payloads may therefore safely own `Persistent`s.
 3. **Identity maps** are per realm: `IdentityKey -> JSWeak`. `JSWeakGetObject` returns null once the GC has found the
    object dead, so a dead wrapper is never handed out again.
 4. **Prefer hidden properties to `Persistent`** for state a wrapper owns (event listeners, expandos the DOM needs).
@@ -114,7 +128,20 @@ impl JsClass for Node {
 5. **`Realm::dispose()`** (navigation) releases the global and the prototypes, empties the identity map, and
    unregisters the realm. Any later call into one of its native functions throws `Execution context was destroyed.`
    instead of touching freed state. Timers hold realms weakly.
-6. **`Persistent` keeps the engine (VM) alive**, so dropping one later is always sound.
+6. **`Engine` is the unique owner of the VM.** Dropping it disposes every realm, destroys the VM (which finalizes all
+   remaining objects, including protected ones) and drains their payloads, after which a new engine can be created on
+   the thread. `Persistent`s that outlive it (for example inside closure payloads) become inert, and dropping them is
+   always sound. Teardown is refused, and the VM leaked, while a `Scope` from `Realm::scope()` or a native callback is
+   on the stack.
+7. **Every `extern "C"` entry point** (trampolines, property hooks, closures, console, module fetch) runs realm lookup,
+   the body, error conversion and realm-handle release inside one `catch_unwind`. A panic becomes
+   `Error("Internal error: …")` and never unwinds into JSC.
+8. **Termination:**
+   - The C API cannot propagate JSC's uncatchable termination through native frames: a value rethrown from a callback
+     is catchable. When native code sees a termination, it rethrows the termination value and re-arms the watchdog,
+     so JS that catches it is terminated again within about 50 ms.
+   - Back at depth 0, the call returns `JsError::Terminated`, and JSC's pending termination state is flushed so it
+     cannot abort the next entry.
 
 ### Private SPI (runtime-resolved, capability-gated)
 
@@ -132,7 +159,7 @@ load failure or a crash.
 
 Optional extras: `JSReportExtraMemoryCost` and `JSSynchronousGarbageCollectForDebugging`.
 
-### ES modules (macOS only)
+### ES modules (macOS only; works in host-global page realms)
 
 - **Verified on this host:**
   - static imports with live bindings;
@@ -145,6 +172,8 @@ Optional extras: `JSReportExtraMemoryCost` and `JSSynchronousGarbageCollectForDe
 - **Measured caveats:**
   - **Root-relative specifiers:** JSC resolves `"/x.js"` against `file:///`. The runtime fetches the document-origin
     URL, but the module is registered under `file:///x.js`, so that module's `import.meta.url` reads `file:///x.js`.
+    Only `file:///…` (empty authority) is remapped; `file://host/…` stays unchanged. An explicit `import("file:///x")`
+    from an http page is therefore also fetched from the page origin.
   - **Bare specifiers and import maps:** not supported.
   - **Inline modules:** the registry is keyed by URL, so each inline module script needs a distinct URL. The browser
     appends a fragment.

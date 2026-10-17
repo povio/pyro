@@ -8,7 +8,8 @@ use std::rc::Rc;
 
 /// A strong, GC-protected reference to a JavaScript value (`JSValueProtect`).
 ///
-/// Keeps the engine (VM) alive, so it is always safe to drop. Clone re-protects
+/// Safe to drop at any time: after engine shutdown (which destroys the VM even
+/// if `Persistent`s remain, e.g. inside closure payloads) it is inert. Clone re-protects
 /// (JSC protection is counted). `!Send`: it may only be used and dropped on the
 /// engine thread. Reachability through a `Persistent` is invisible to the GC's
 /// cycle detection: do not let a value protected by a native object reference
@@ -56,7 +57,9 @@ impl Persistent {
 
 impl Clone for Persistent {
     fn clone(&self) -> Self {
-        unsafe { sys::JSValueProtect(self.engine.root_ctx(), self.raw) };
+        if !self.engine.is_shut_down() {
+            unsafe { sys::JSValueProtect(self.engine.root_ctx(), self.raw) };
+        }
         Persistent { raw: self.raw, engine: self.engine.clone() }
     }
 }
@@ -64,8 +67,11 @@ impl Clone for Persistent {
 impl Drop for Persistent {
     fn drop(&mut self) {
         // Never called from inside a JSC finalizer: wrapper payloads are dropped
-        // at safe points (see class::drain_finalized), so unprotect is legal here.
-        unsafe { sys::JSValueUnprotect(self.engine.root_ctx(), self.raw) };
+        // at safe points (see class::drain_finalized), so unprotect is legal
+        // here. After engine shutdown the VM is gone and nothing is protected.
+        if !self.engine.is_shut_down() {
+            unsafe { sys::JSValueUnprotect(self.engine.root_ctx(), self.raw) };
+        }
     }
 }
 

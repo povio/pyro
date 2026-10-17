@@ -345,8 +345,17 @@ impl RawArgs {
     }
 }
 
-/// Converts a JSC exception out-parameter into a `JsError`.
+/// Converts a JSC exception out-parameter into a `JsError`. While a
+/// termination is propagating every call reports `Terminated` (even if page
+/// code caught the termination value); back at depth 0 the termination state
+/// is reset.
 pub(crate) fn check(ctx: sys::JSContextRef, exc: sys::JSValueRef) -> JsResult<()> {
+    if crate::engine::TERMINATING.with(|t| t.get()) {
+        if crate::engine::DEPTH.with(|d| d.get()) == 0 {
+            crate::engine::finish_termination(ctx);
+        }
+        return Err(JsError::Terminated);
+    }
     if exc.is_null() {
         Ok(())
     } else {

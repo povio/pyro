@@ -22,7 +22,6 @@ use crate::string::{utf16_of, JsString};
 use crate::value::{Args, Object, Value};
 use lp_jsc_sys as sys;
 use std::any::TypeId;
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ffi::CString;
 use std::marker::PhantomData;
@@ -75,7 +74,7 @@ pub(crate) struct AccessorSpec {
     pub set: Option<RawFn>,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 pub(crate) struct PropertyHooks {
     pub indexed: Option<IndexedFn>,
     pub named: Option<NamedFn>,
@@ -84,6 +83,25 @@ pub(crate) struct PropertyHooks {
     pub named_set: Option<NamedSetFn>,
     pub named_delete: Option<NamedDeleteFn>,
     pub names: Option<NamesFn>,
+}
+
+impl PropertyHooks {
+    fn any(&self) -> bool {
+        self.indexed.is_some() || self.named.is_some() || self.named_set.is_some() || self.named_delete.is_some()
+    }
+
+    /// Own hooks override inherited ones per kind.
+    fn inherit(self, parent: &PropertyHooks) -> PropertyHooks {
+        let named_own = self.named.is_some();
+        PropertyHooks {
+            indexed: self.indexed.or(parent.indexed),
+            named: self.named.or(parent.named),
+            override_builtins: if named_own { self.override_builtins } else { parent.override_builtins },
+            named_set: self.named_set.or(parent.named_set),
+            named_delete: self.named_delete.or(parent.named_delete),
+            names: self.names.or(parent.names),
+        }
+    }
 }
 
 /// Builder passed to [`JsClass::define`].
@@ -283,11 +301,9 @@ impl<C: JsClass> ClassDef<C> {
 pub(crate) struct ClassInfo {
     pub upcast: Option<UpcastFn>,
     pub name: &'static str,
-    pub cname: CString,
     pub data_type: TypeId,
     pub parent: Option<ClassId>,
     pub instance_class: sys::JSClassRef,
-    pub global_class: Option<sys::JSClassRef>,
     pub def: ClassDefErased,
 }
 
@@ -348,39 +364,16 @@ impl ClassRegistry {
         }
     }
 
-    /// Nearest class in the chain (self first) with property hooks.
-    pub fn hooks_of(&self, mut class: ClassId) -> Option<&PropertyHooks> {
-        loop {
-            let info = self.classes.get(class as usize)?;
-            let h = &info.def.hooks;
-            if h.indexed.is_some() || h.named.is_some() {
-                return Some(h);
-            }
-            class = info.parent?;
-        }
-    }
-
-    /// Lazily creates the JSClass used when `class` is a realm's global object.
-    pub fn global_class(&mut self, class: ClassId) -> sys::JSClassRef {
-        let base = self.base;
-        let info = &mut self.classes[class as usize];
-        *info.global_class.get_or_insert_with(|| {
-            let mut def = sys::JSClassDefinition::EMPTY;
-            def.className = info.cname.as_ptr();
-            // Automatic prototype: the global's [[Prototype]] is immutable in
-            // JSC, so this generated object becomes the interface prototype.
-            def.parentClass = base;
-            unsafe { sys::JSClassCreate(&def) }
-        })
+    /// Effective property hooks of `class` (each kind inherited separately).
+    pub fn hooks_of(&self, class: ClassId) -> Option<&PropertyHooks> {
+        let h = &self.classes.get(class as usize)?.def.hooks;
+        h.any().then_some(h)
     }
 
     pub fn release_all(&mut self) {
         unsafe {
             for c in &self.classes {
                 sys::JSClassRelease(c.instance_class);
-                if let Some(g) = c.global_class {
-                    sys::JSClassRelease(g);
-                }
             }
             sys::JSClassRelease(self.closure);
             sys::JSClassRelease(self.base);
@@ -419,8 +412,11 @@ pub(crate) fn register<C: JsClass>(engine: &EngineInner) -> ClassId {
     let mut reg = engine.classes.borrow_mut();
     let id = reg.classes.len() as ClassId;
     let cname = CString::new(C::NAME).expect("class name without NUL");
-    let has_hooks =
-        def.hooks.indexed.is_some() || def.hooks.named.is_some() || parent.is_some_and(|p| reg.hooks_of(p).is_some());
+    if let Some(p) = parent {
+        let inherited = reg.classes[p as usize].def.hooks;
+        def.hooks = def.hooks.inherit(&inherited);
+    }
+    let has_hooks = def.hooks.any();
     let mut jsdef = sys::JSClassDefinition::EMPTY;
     jsdef.className = cname.as_ptr();
     jsdef.attributes = sys::kJSClassAttributeNoAutomaticPrototype;
@@ -431,16 +427,14 @@ pub(crate) fn register<C: JsClass>(engine: &EngineInner) -> ClassId {
         jsdef.deleteProperty = Some(delete_property_hook);
         jsdef.getPropertyNames = Some(property_names_hook);
     }
-    // SAFETY: valid definition; cname outlives the class (stored in ClassInfo).
+    // SAFETY: valid definition; JSClassCreate copies the class name.
     let instance_class = unsafe { sys::JSClassCreate(&jsdef) };
     reg.classes.push(ClassInfo {
         upcast: def.upcast,
         name: C::NAME,
-        cname,
         data_type: TypeId::of::<C::Data>(),
         parent,
         instance_class,
-        global_class: None,
         def: ClassDefErased {
             methods: def.methods,
             statics: def.statics,
@@ -476,6 +470,23 @@ pub(crate) struct Header {
     pub data_type: TypeId,
     pub drop_fn: unsafe fn(*mut Header),
     pub data_ptr: unsafe fn(*mut Header) -> *const u8,
+    /// Owning engine's finalization queue (outlives every payload: the VM is
+    /// destroyed, finalizing all objects, before the queue is dropped).
+    pub queue: *const FinalizeQueue,
+}
+
+/// Payload headers awaiting destruction on the engine thread. Finalizers may
+/// run on any thread, hence the mutex.
+#[derive(Default)]
+pub(crate) struct FinalizeQueue(std::sync::Mutex<Vec<usize>>);
+
+impl FinalizeQueue {
+    fn push(&self, h: *mut Header) {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).push(h as usize);
+    }
+    fn take(&self) -> Vec<usize> {
+        std::mem::take(&mut *self.0.lock().unwrap_or_else(|e| e.into_inner()))
+    }
 }
 
 #[repr(C)]
@@ -495,6 +506,7 @@ unsafe fn drop_boxed<T>(h: *mut Header) {
 }
 
 pub(crate) fn new_payload<T: 'static>(
+    engine: &EngineInner,
     class: ClassId,
     kind: Kind,
     realm: RealmId,
@@ -510,6 +522,7 @@ pub(crate) fn new_payload<T: 'static>(
             data_type: TypeId::of::<T>(),
             drop_fn: drop_boxed::<T>,
             data_ptr: data_ptr_boxed::<T>,
+            queue: std::sync::Arc::as_ptr(&engine.finalized),
         },
         data,
     });
@@ -563,44 +576,35 @@ pub(crate) unsafe fn payload_data<'a, T: 'static>(h: *mut Header) -> Option<&'a 
     }
 }
 
-thread_local! {
-    static FINALIZED: RefCell<Vec<*mut Header>> = const { RefCell::new(Vec::new()) };
-}
-
 unsafe extern "C" fn finalize_wrapper(object: sys::JSObjectRef) {
-    // Runs inside GC: no JSC calls besides GetPrivate, no Rust destructors.
+    // Runs inside GC, possibly on a JSC helper thread: no JSC calls besides
+    // GetPrivate, no Rust destructors. The header is immutable after creation.
     let h = unsafe { sys::JSObjectGetPrivate(object) } as *mut Header;
     if h.is_null() {
         return;
     }
-    let pushed = FINALIZED.try_with(|q| match q.try_borrow_mut() {
-        Ok(mut q) => {
-            q.push(h);
-            true
-        }
-        Err(_) => false,
-    });
-    // Only possible during thread teardown: leak rather than run destructors in GC.
-    let _ = pushed;
+    unsafe { (*(*h).queue).push(h) };
 }
 
 /// Drops payloads of finalized wrappers and prunes dead identity-map entries.
-pub(crate) fn drain_finalized(engine: Option<&EngineInner>) -> usize {
+/// Engine thread only, outside GC.
+pub(crate) fn drain_finalized(engine: &EngineInner) -> usize {
     let mut total = 0;
     loop {
-        let batch = FINALIZED.try_with(|q| std::mem::take(&mut *q.borrow_mut())).unwrap_or_default();
+        let batch = engine.finalized.take();
         if batch.is_empty() {
             return total;
         }
         total += batch.len();
         for h in batch {
+            let h = h as *mut Header;
             // SAFETY: each pointer was enqueued exactly once by finalize_wrapper
             // and its JS object is dead, so we are the sole owner.
             unsafe {
-                if let (Some(engine), Some(key)) = (engine, (*h).key) {
-                    if let Some(realm) =
-                        engine.realms.borrow().iter().filter_map(|(_, r)| r.upgrade()).find(|r| r.id == (*h).realm)
-                    {
+                if let Some(key) = (*h).key {
+                    let realm =
+                        engine.realms.borrow().iter().filter_map(|(_, r)| r.upgrade()).find(|r| r.id == (*h).realm);
+                    if let Some(realm) = realm {
                         realm.prune_identity(key);
                     }
                 }
@@ -614,36 +618,75 @@ pub(crate) fn drain_finalized(engine: Option<&EngineInner>) -> usize {
 // Trampolines
 
 /// Runs a callback body, converting errors and panics into JS exceptions.
+/// Realm lookup, the body, error conversion and the release of the realm
+/// handle (which may dispose it and call hooks) all happen inside the unwind
+/// boundary.
 #[inline]
-unsafe fn guard<R>(
+pub(crate) unsafe fn guard<R>(
     ctx: sys::JSContextRef,
     exc: *mut sys::JSValueRef,
     fallback: R,
     body: impl FnOnce(&Scope<'_>) -> JsResult<R>,
 ) -> R {
-    let realm = match crate::realm::realm_for_ctx(ctx) {
-        Some(r) => r,
-        None => {
+    let mut fallback = Some(fallback);
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        let _depth = DepthGuard::enter();
+        let Some(realm) = crate::realm::realm_for_ctx(ctx) else {
             unsafe { throw_message(ctx, "Execution context was destroyed.", exc) };
-            return fallback;
+            return None;
+        };
+        let scope = Scope::new(ctx, &realm);
+        match body(&scope) {
+            Ok(v) => Some(v),
+            Err(JsError::Terminated) => {
+                // Keep terminating: page code may catch the rethrown value.
+                crate::engine::rearm_termination(ctx);
+                unsafe { throw_message_value(ctx, "JavaScript execution terminated.", exc) };
+                None
+            }
+            Err(e) => {
+                unsafe { throw_into(&scope, &e, exc) };
+                None
+            }
         }
-    };
-    let scope = Scope::new(ctx, &realm);
-    match catch_unwind(AssertUnwindSafe(|| body(&scope))) {
-        Ok(Ok(v)) => v,
-        Ok(Err(e)) => {
-            unsafe { throw_into(&scope, &e, exc) };
-            fallback
-        }
+    }));
+    match outcome {
+        Ok(Some(v)) => v,
+        Ok(None) => fallback.take().expect("fallback"),
         Err(panic) => {
             let msg = panic
                 .downcast_ref::<&str>()
                 .map(|s| s.to_string())
                 .or_else(|| panic.downcast_ref::<String>().cloned())
                 .unwrap_or_else(|| "panic".into());
+            // Creating the error cannot unwind (no Rust callbacks involved).
             unsafe { throw_message(ctx, &format!("Internal error: {msg}"), exc) };
-            fallback
+            fallback.take().expect("fallback")
         }
+    }
+}
+
+/// Tracks native-callback nesting (see `engine::DEPTH`).
+pub(crate) struct DepthGuard;
+
+impl DepthGuard {
+    pub(crate) fn enter() -> DepthGuard {
+        crate::engine::DEPTH.with(|d| d.set(d.get() + 1));
+        DepthGuard
+    }
+}
+
+impl Drop for DepthGuard {
+    fn drop(&mut self) {
+        let _ = crate::engine::DEPTH.try_with(|d| d.set(d.get().saturating_sub(1)));
+    }
+}
+
+/// Throws a primitive string (used to rethrow termination unchanged).
+unsafe fn throw_message_value(ctx: sys::JSContextRef, msg: &str, exc: *mut sys::JSValueRef) {
+    if !exc.is_null() {
+        let s = JsString::new(msg);
+        unsafe { *exc = sys::JSValueMakeString(ctx, s.as_raw()) };
     }
 }
 

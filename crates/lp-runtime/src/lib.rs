@@ -56,6 +56,55 @@ struct Inner<S> {
     next_timer: Cell<u32>,
     seq: Cell<u64>,
     stop: Cell<bool>,
+    /// Live timers with `keeps_alive` (kept in sync with `timers`).
+    keepalive: Cell<usize>,
+}
+
+impl<S> Inner<S> {
+    fn insert_timer(&self, id: TimerId, timer: Timer<S>) {
+        if timer.keeps_alive {
+            self.keepalive.set(self.keepalive.get() + 1);
+        }
+        if let Some(old) = self.timers.borrow_mut().insert(id, timer) {
+            if old.keeps_alive {
+                self.keepalive.set(self.keepalive.get() - 1);
+            }
+        }
+    }
+
+    fn remove_timer(&self, id: TimerId) -> bool {
+        match self.timers.borrow_mut().remove(&id) {
+            Some(t) => {
+                if t.keeps_alive {
+                    self.keepalive.set(self.keepalive.get() - 1);
+                }
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Drops heap heads whose timer was cleared, so `peek` is a live deadline.
+    fn clean_heap_top(&self) {
+        let timers = self.timers.borrow();
+        let mut heap = self.heap.borrow_mut();
+        while let Some(Reverse((_, _, id))) = heap.peek() {
+            if timers.contains_key(id) {
+                break;
+            }
+            heap.pop();
+        }
+    }
+
+    /// Rebuilds the heap when cleared timers dominate it (bounded memory for
+    /// pages that create and clear many long timers).
+    fn maybe_compact(&self) {
+        let live = self.timers.borrow().len();
+        if self.heap.borrow().len() > 2 * live + 64 {
+            let timers = self.timers.borrow();
+            self.heap.borrow_mut().retain(|Reverse((_, _, id))| timers.contains_key(id));
+        }
+    }
 }
 
 /// In-thread scheduling handle.
@@ -86,17 +135,16 @@ impl<S: 'static> Scheduler<S> {
     ) -> TimerId {
         let id = TimerId(self.inner.next_timer.get());
         self.inner.next_timer.set(id.0.wrapping_add(1).max(1));
-        self.inner
-            .timers
-            .borrow_mut()
-            .insert(id, Timer { task: Rc::new(task), interval: repeat.then_some(delay), keeps_alive });
+        self.inner.insert_timer(id, Timer { task: Rc::new(task), interval: repeat.then_some(delay), keeps_alive });
         self.push_deadline(Instant::now() + delay, id);
         id
     }
 
     pub fn clear_timer(&self, id: TimerId) -> bool {
-        // The heap entry becomes stale and is skipped when popped.
-        self.inner.timers.borrow_mut().remove(&id).is_some()
+        // The heap entry becomes stale: skipped at the top, compacted in bulk.
+        let removed = self.inner.remove_timer(id);
+        self.inner.maybe_compact();
+        removed
     }
 
     fn push_deadline(&self, at: Instant, id: TimerId) {
@@ -115,7 +163,7 @@ impl<S: 'static> Scheduler<S> {
     }
 
     pub fn active_timers(&self) -> usize {
-        self.inner.timers.borrow().values().filter(|t| t.keeps_alive).count()
+        self.inner.keepalive.get()
     }
 }
 
@@ -186,6 +234,7 @@ impl<S: LoopState + 'static> EventLoop<S> {
                     next_timer: Cell::new(1),
                     seq: Cell::new(0),
                     stop: Cell::new(false),
+                    keepalive: Cell::new(0),
                 }),
             },
             tx: Some(tx),
@@ -234,6 +283,7 @@ impl<S: LoopState + 'static> EventLoop<S> {
     fn run_due_timer(&mut self, state: &mut S) -> bool {
         let now = Instant::now();
         loop {
+            self.sched.inner.clean_heap_top();
             let top = self.sched.inner.heap.borrow().peek().map(|r| r.0);
             let Some((at, _, id)) = top else { return false };
             if at > now {
@@ -248,7 +298,7 @@ impl<S: LoopState + 'static> EventLoop<S> {
             match interval {
                 Some(d) => self.sched.push_deadline(now + d.max(Duration::from_millis(1)), id),
                 None => {
-                    self.sched.inner.timers.borrow_mut().remove(&id);
+                    self.sched.inner.remove_timer(id);
                 }
             }
             task(state);
@@ -258,8 +308,8 @@ impl<S: LoopState + 'static> EventLoop<S> {
     }
 
     fn next_deadline(&self) -> Option<Instant> {
-        let timers = self.sched.inner.timers.borrow();
-        self.sched.inner.heap.borrow().iter().filter(|r| timers.contains_key(&r.0 .2)).map(|r| r.0 .0).min()
+        self.sched.inner.clean_heap_top();
+        self.sched.inner.heap.borrow().peek().map(|r| r.0 .0)
     }
 
     fn has_keepalive_work(&self) -> bool {
@@ -282,13 +332,14 @@ impl<S: LoopState + 'static> EventLoop<S> {
             if self.sched.inner.stop.replace(false) {
                 return RunOutcome::Stopped;
             }
+            // Checked between tasks too: a busy queue cannot outrun the deadline.
+            if deadline.is_some_and(|d| Instant::now() >= d) {
+                return RunOutcome::TimedOut;
+            }
             if self.run_one(state) {
                 continue;
             }
             let now = Instant::now();
-            if deadline.is_some_and(|d| now >= d) {
-                return RunOutcome::TimedOut;
-            }
             // Idle mode does not wait for future remote messages: there is no
             // way to know whether any will come (queued ones ran in run_one).
             if stop_when_idle && !self.has_keepalive_work() {
@@ -397,6 +448,35 @@ mod tests {
         let h = t.join().unwrap();
         drop(lp);
         assert_eq!(h.post(|_| {}), Err(LoopClosed));
+    }
+
+    #[test]
+    fn busy_queue_respects_deadline() {
+        let mut lp = EventLoop::<St>::new();
+        let s = lp.scheduler();
+        fn repost(s: Scheduler<St>) {
+            let s2 = s.clone();
+            s.post(TaskSource::Internal, move |_| repost(s2));
+        }
+        repost(s.clone());
+        let mut st = St::default();
+        let start = Instant::now();
+        let r = lp.run_until(&mut st, Some(start + Duration::from_millis(30)), false, |_| false);
+        assert_eq!(r, RunOutcome::TimedOut);
+        assert!(start.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn cleared_timers_do_not_accumulate() {
+        let lp = EventLoop::<St>::new();
+        let s = lp.scheduler();
+        for _ in 0..10_000 {
+            let id = s.set_timer(Duration::from_secs(3600), false, true, |_| {});
+            s.clear_timer(id);
+        }
+        assert!(lp.sched.inner.heap.borrow().len() <= 65, "heap {}", lp.sched.inner.heap.borrow().len());
+        assert_eq!(s.active_timers(), 0);
+        assert_eq!(lp.next_deadline(), None);
     }
 
     #[test]

@@ -148,17 +148,44 @@ fn eval(args: &[String]) -> ExitCode {
         }
     };
     let realm = thread.browser.page(page).and_then(|p| p.main_frame.main_realm()).cloned().expect("main realm");
+    // The deadline covers the initial evaluation too: a watchdog thread asks
+    // the engine to terminate running JavaScript once it passes.
+    let deadline = Instant::now() + timeout;
+    let watchdog = thread.browser.engine.terminate_handle().ok().map(|handle| {
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        let t = std::thread::spawn(move || {
+            if rx.recv_timeout(deadline.saturating_duration_since(Instant::now())).is_err() {
+                // Keep requesting until the main thread acknowledges: a single
+                // request can be consumed by a script that catches it.
+                while rx.recv_timeout(Duration::from_millis(50)).is_err() {
+                    handle.terminate();
+                }
+            }
+        });
+        (tx, t)
+    });
+    let mut timed_out = false;
     {
         let scope = realm.scope().expect("live realm");
-        if let Err(e) = scope.eval(&code, Some(&name), 1) {
-            scope.report_exception(&e);
+        match scope.eval(&code, Some(&name), 1) {
+            Ok(_) => {}
+            Err(lp_js::JsError::Terminated) => timed_out = true,
+            Err(e) => scope.report_exception(&e),
         }
     }
-    let deadline = Instant::now() + timeout;
-    let outcome = thread.run_until_idle(Some(deadline));
+    if !timed_out {
+        timed_out =
+            thread.run_until_idle(Some(deadline)) == lp_runtime::RunOutcome::TimedOut || Instant::now() >= deadline;
+    }
+    if let Some((tx, t)) = watchdog {
+        let _ = tx.send(());
+        let _ = t.join();
+    }
+    thread.browser.engine.clear_termination();
+    drop(realm);
     thread.browser.close_all();
-    if outcome == lp_runtime::RunOutcome::TimedOut {
-        eprintln!("lightningpanda: timed out after {} ms with pending work", timeout.as_millis());
+    if timed_out {
+        eprintln!("lightningpanda: timed out after {} ms", timeout.as_millis());
         return ExitCode::from(124);
     }
     if hooks.failed.get() {
