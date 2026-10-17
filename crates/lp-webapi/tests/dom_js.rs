@@ -2121,3 +2121,27 @@ fn form_data_from_form_and_submitter() {
     assert_eq!(eval(r, "new FormData(f, document.getElementById('b')).get('go')"), "yes");
     assert_eq!(eval(r, "try{new FormData(f, document.getElementById('other'))}catch(e){e.name}"), "NotFoundError");
 }
+
+#[test]
+fn dom_parser_parses_inert_html_documents() {
+    let e = env("<body><div id=host></div></body>");
+    let r = &e.main;
+    assert_eq!(
+        eval(r, "const d=new window.DOMParser().parseFromString('<body><p class=x>hi<b>!</b></p>\\n  <script>window.ran=1</script></body>','text/html'); [d instanceof Document, d!==document, d.URL===document.URL, d.contentType, d.body.firstChild.outerHTML, typeof window.ran].join()"),
+        "true,true,true,text/html,<p class=\"x\">hi<b>!</b></p>,undefined"
+    );
+    assert_eq!(
+        eval(r, "d.querySelectorAll('p').length + ':' + d.title + ':' + d.documentElement.localName"),
+        "1::html"
+    );
+    assert_eq!(
+        eval(r, "const p=document.importNode(d.querySelector('p'),true); document.getElementById('host').appendChild(p); document.getElementById('host').textContent"),
+        "hi!"
+    );
+    assert_eq!(
+        eval(r, "try{new DOMParser().parseFromString('<a/>','application/xml')}catch(e){e.name}"),
+        "NotSupportedError"
+    );
+    assert_eq!(eval(r, "try{new DOMParser().parseFromString('x','text/plain')}catch(e){e.name}"), "TypeError");
+    assert_eq!(eval(r, "try{DOMParser()}catch(e){e.name}"), "TypeError");
+}

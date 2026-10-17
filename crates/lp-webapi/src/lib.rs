@@ -20,6 +20,7 @@ pub mod collections;
 pub mod crypto;
 pub mod css;
 pub mod custom;
+pub mod dom_parser;
 pub mod encoding;
 pub mod event;
 pub mod fetch;
@@ -87,6 +88,7 @@ pub fn register(engine: &lp_js::Engine) {
     intersection_observer::register(engine);
     crypto::register(engine);
     form_data::register(engine);
+    dom_parser::register(engine);
     resize_observer::register(engine);
     engine.register::<storage::Storage>();
     engine.register::<indexeddb::IdbFactory>();
