@@ -1,0 +1,750 @@
+{
+  "startedAt": "2026-10-17T08:17:23.464Z",
+  "bin": "~/lp-baseline/browser/zig-out/bin/lightpanda",
+  "flags": [
+    "--log-level",
+    "error",
+    "--experimental-features",
+    "cors",
+    "--load-resources",
+    "stylesheet",
+    "--load-resources",
+    "iframe"
+  ],
+  "siteUrl": "http://127.0.0.1:59637",
+  "startup": {
+    "method": "spawn() -> first HTTP 200 on GET /json/version, polled every ~2ms with fresh TCP connections; process SIGTERMed between runs; 200ms gap",
+    "n": 10,
+    "min": 58.21454099999994,
+    "median": 59.86,
+    "p95": 62.32,
+    "max": 62.320209000000006,
+    "samples": [
+      62.32,
+      60.56,
+      58.21,
+      59.47,
+      60.41,
+      59.08,
+      59.7,
+      60.03,
+      58.33,
+      61.52
+    ],
+    "versionBody": {
+      "Browser": "Lightpanda/1.0",
+      "Protocol-Version": "1.3",
+      "User-Agent": "Lightpanda/1.0",
+      "Lightpanda-Version": "1.1.0-nightly.10716+2ad38773f",
+      "webSocketDebuggerUrl": "ws://127.0.0.1:59638/"
+    }
+  },
+  "smoke": [
+    {
+      "tag": "smoke-direct-1",
+      "viaProxy": false,
+      "lpPid": 87268,
+      "lpAliveAfterSmoke": true,
+      "smokeProcessWallMs": 233.2,
+      "smokeInnerWallMs": 94.5,
+      "passed": 9,
+      "total": 9,
+      "steps": [
+        {
+          "step": "connectOverCDP",
+          "ok": true,
+          "ms": 26.3,
+          "detail": {
+            "version": "124.0.6367.29",
+            "contexts": 1
+          }
+        },
+        {
+          "step": "newContext",
+          "ok": true,
+          "ms": 1.1,
+          "detail": null
+        },
+        {
+          "step": "newPage",
+          "ok": true,
+          "ms": 2.4,
+          "detail": null
+        },
+        {
+          "step": "goto",
+          "ok": true,
+          "ms": 7.5,
+          "detail": {
+            "status": 200,
+            "title": "LP smoke page"
+          }
+        },
+        {
+          "step": "locator.fill",
+          "ok": true,
+          "ms": 15.1,
+          "detail": {
+            "value": "Alice"
+          }
+        },
+        {
+          "step": "click+waitForResponse",
+          "ok": true,
+          "ms": 18.3,
+          "detail": {
+            "url": "http://127.0.0.1:59637/api/data.json?name=Alice",
+            "status": 200,
+            "body": {
+              "greeting": "Hello, Alice"
+            }
+          }
+        },
+        {
+          "step": "evaluate",
+          "ok": true,
+          "ms": 1.6,
+          "detail": {
+            "out": "Hello, Alice",
+            "sum": 6
+          }
+        },
+        {
+          "step": "route.fulfill",
+          "ok": true,
+          "ms": 18.1,
+          "detail": {
+            "out": "fulfilled",
+            "status": 200
+          }
+        },
+        {
+          "step": "close",
+          "ok": true,
+          "ms": 4,
+          "detail": null
+        }
+      ],
+      "smokeStderr": "",
+      "rss": {
+        "psSamples": 15,
+        "psSpanMs": 307,
+        "psEffectiveIntervalMs": 21.9,
+        "psPeakKiB": 37008,
+        "psIdleFirstKiB": 18144,
+        "nativeSamples": 17,
+        "nativeSpanMs": 320,
+        "nativeEffectiveIntervalMs": 20,
+        "nativePeakResidentKiB": 37008,
+        "nativePeakFootprintKiB": 14145,
+        "nativeIdleResidentKiB": 18144,
+        "timeL_maxRssBytes": 38404096,
+        "timeL_peakFootprintBytes": 14599936
+      },
+      "cdpJsonl": null
+    },
+    {
+      "tag": "smoke-direct-2",
+      "viaProxy": false,
+      "lpPid": 87294,
+      "lpAliveAfterSmoke": true,
+      "smokeProcessWallMs": 227.5,
+      "smokeInnerWallMs": 91,
+      "passed": 9,
+      "total": 9,
+      "steps": [
+        {
+          "step": "connectOverCDP",
+          "ok": true,
+          "ms": 26.3,
+          "detail": {
+            "version": "124.0.6367.29",
+            "contexts": 1
+          }
+        },
+        {
+          "step": "newContext",
+          "ok": true,
+          "ms": 1.2,
+          "detail": null
+        },
+        {
+          "step": "newPage",
+          "ok": true,
+          "ms": 2.5,
+          "detail": null
+        },
+        {
+          "step": "goto",
+          "ok": true,
+          "ms": 4.7,
+          "detail": {
+            "status": 200,
+            "title": "LP smoke page"
+          }
+        },
+        {
+          "step": "locator.fill",
+          "ok": true,
+          "ms": 15,
+          "detail": {
+            "value": "Alice"
+          }
+        },
+        {
+          "step": "click+waitForResponse",
+          "ok": true,
+          "ms": 17.7,
+          "detail": {
+            "url": "http://127.0.0.1:59637/api/data.json?name=Alice",
+            "status": 200,
+            "body": {
+              "greeting": "Hello, Alice"
+            }
+          }
+        },
+        {
+          "step": "evaluate",
+          "ok": true,
+          "ms": 1.6,
+          "detail": {
+            "out": "Hello, Alice",
+            "sum": 6
+          }
+        },
+        {
+          "step": "route.fulfill",
+          "ok": true,
+          "ms": 18,
+          "detail": {
+            "out": "fulfilled",
+            "status": 200
+          }
+        },
+        {
+          "step": "close",
+          "ok": true,
+          "ms": 3.9,
+          "detail": null
+        }
+      ],
+      "smokeStderr": "",
+      "rss": {
+        "psSamples": 14,
+        "psSpanMs": 281,
+        "psEffectiveIntervalMs": 21.6,
+        "psPeakKiB": 37168,
+        "psIdleFirstKiB": 18160,
+        "nativeSamples": 17,
+        "nativeSpanMs": 320,
+        "nativeEffectiveIntervalMs": 20,
+        "nativePeakResidentKiB": 37440,
+        "nativePeakFootprintKiB": 14337,
+        "nativeIdleResidentKiB": 18160,
+        "timeL_maxRssBytes": 38486016,
+        "timeL_peakFootprintBytes": 14681856
+      },
+      "cdpJsonl": null
+    },
+    {
+      "tag": "smoke-direct-3",
+      "viaProxy": false,
+      "lpPid": 87320,
+      "lpAliveAfterSmoke": true,
+      "smokeProcessWallMs": 229.9,
+      "smokeInnerWallMs": 92.3,
+      "passed": 9,
+      "total": 9,
+      "steps": [
+        {
+          "step": "connectOverCDP",
+          "ok": true,
+          "ms": 26.7,
+          "detail": {
+            "version": "124.0.6367.29",
+            "contexts": 1
+          }
+        },
+        {
+          "step": "newContext",
+          "ok": true,
+          "ms": 1.2,
+          "detail": null
+        },
+        {
+          "step": "newPage",
+          "ok": true,
+          "ms": 2.4,
+          "detail": null
+        },
+        {
+          "step": "goto",
+          "ok": true,
+          "ms": 4.6,
+          "detail": {
+            "status": 200,
+            "title": "LP smoke page"
+          }
+        },
+        {
+          "step": "locator.fill",
+          "ok": true,
+          "ms": 15.1,
+          "detail": {
+            "value": "Alice"
+          }
+        },
+        {
+          "step": "click+waitForResponse",
+          "ok": true,
+          "ms": 18.7,
+          "detail": {
+            "url": "http://127.0.0.1:59637/api/data.json?name=Alice",
+            "status": 200,
+            "body": {
+              "greeting": "Hello, Alice"
+            }
+          }
+        },
+        {
+          "step": "evaluate",
+          "ok": true,
+          "ms": 1.6,
+          "detail": {
+            "out": "Hello, Alice",
+            "sum": 6
+          }
+        },
+        {
+          "step": "route.fulfill",
+          "ok": true,
+          "ms": 18.1,
+          "detail": {
+            "out": "fulfilled",
+            "status": 200
+          }
+        },
+        {
+          "step": "close",
+          "ok": true,
+          "ms": 3.9,
+          "detail": null
+        }
+      ],
+      "smokeStderr": "",
+      "rss": {
+        "psSamples": 15,
+        "psSpanMs": 302,
+        "psEffectiveIntervalMs": 21.6,
+        "psPeakKiB": 37088,
+        "psIdleFirstKiB": 18144,
+        "nativeSamples": 17,
+        "nativeSpanMs": 320,
+        "nativeEffectiveIntervalMs": 20,
+        "nativePeakResidentKiB": 37152,
+        "nativePeakFootprintKiB": 14273,
+        "nativeIdleResidentKiB": 18144,
+        "timeL_maxRssBytes": 38502400,
+        "timeL_peakFootprintBytes": 14698240
+      },
+      "cdpJsonl": null
+    },
+    {
+      "tag": "smoke-direct-4",
+      "viaProxy": false,
+      "lpPid": 87346,
+      "lpAliveAfterSmoke": true,
+      "smokeProcessWallMs": 229.7,
+      "smokeInnerWallMs": 92.7,
+      "passed": 9,
+      "total": 9,
+      "steps": [
+        {
+          "step": "connectOverCDP",
+          "ok": true,
+          "ms": 27,
+          "detail": {
+            "version": "124.0.6367.29",
+            "contexts": 1
+          }
+        },
+        {
+          "step": "newContext",
+          "ok": true,
+          "ms": 1.2,
+          "detail": null
+        },
+        {
+          "step": "newPage",
+          "ok": true,
+          "ms": 2.5,
+          "detail": null
+        },
+        {
+          "step": "goto",
+          "ok": true,
+          "ms": 4.7,
+          "detail": {
+            "status": 200,
+            "title": "LP smoke page"
+          }
+        },
+        {
+          "step": "locator.fill",
+          "ok": true,
+          "ms": 15.1,
+          "detail": {
+            "value": "Alice"
+          }
+        },
+        {
+          "step": "click+waitForResponse",
+          "ok": true,
+          "ms": 18.5,
+          "detail": {
+            "url": "http://127.0.0.1:59637/api/data.json?name=Alice",
+            "status": 200,
+            "body": {
+              "greeting": "Hello, Alice"
+            }
+          }
+        },
+        {
+          "step": "evaluate",
+          "ok": true,
+          "ms": 1.6,
+          "detail": {
+            "out": "Hello, Alice",
+            "sum": 6
+          }
+        },
+        {
+          "step": "route.fulfill",
+          "ok": true,
+          "ms": 18,
+          "detail": {
+            "out": "fulfilled",
+            "status": 200
+          }
+        },
+        {
+          "step": "close",
+          "ok": true,
+          "ms": 3.9,
+          "detail": null
+        }
+      ],
+      "smokeStderr": "",
+      "rss": {
+        "psSamples": 15,
+        "psSpanMs": 304,
+        "psEffectiveIntervalMs": 21.7,
+        "psPeakKiB": 37024,
+        "psIdleFirstKiB": 18128,
+        "nativeSamples": 17,
+        "nativeSpanMs": 320,
+        "nativeEffectiveIntervalMs": 20,
+        "nativePeakResidentKiB": 37088,
+        "nativePeakFootprintKiB": 14209,
+        "nativeIdleResidentKiB": 18128,
+        "timeL_maxRssBytes": 38420480,
+        "timeL_peakFootprintBytes": 14616320
+      },
+      "cdpJsonl": null
+    },
+    {
+      "tag": "smoke-direct-5",
+      "viaProxy": false,
+      "lpPid": 87372,
+      "lpAliveAfterSmoke": true,
+      "smokeProcessWallMs": 227.5,
+      "smokeInnerWallMs": 91.9,
+      "passed": 9,
+      "total": 9,
+      "steps": [
+        {
+          "step": "connectOverCDP",
+          "ok": true,
+          "ms": 26.3,
+          "detail": {
+            "version": "124.0.6367.29",
+            "contexts": 1
+          }
+        },
+        {
+          "step": "newContext",
+          "ok": true,
+          "ms": 1.2,
+          "detail": null
+        },
+        {
+          "step": "newPage",
+          "ok": true,
+          "ms": 2.5,
+          "detail": null
+        },
+        {
+          "step": "goto",
+          "ok": true,
+          "ms": 4.7,
+          "detail": {
+            "status": 200,
+            "title": "LP smoke page"
+          }
+        },
+        {
+          "step": "locator.fill",
+          "ok": true,
+          "ms": 14.9,
+          "detail": {
+            "value": "Alice"
+          }
+        },
+        {
+          "step": "click+waitForResponse",
+          "ok": true,
+          "ms": 18.8,
+          "detail": {
+            "url": "http://127.0.0.1:59637/api/data.json?name=Alice",
+            "status": 200,
+            "body": {
+              "greeting": "Hello, Alice"
+            }
+          }
+        },
+        {
+          "step": "evaluate",
+          "ok": true,
+          "ms": 1.7,
+          "detail": {
+            "out": "Hello, Alice",
+            "sum": 6
+          }
+        },
+        {
+          "step": "route.fulfill",
+          "ok": true,
+          "ms": 17.8,
+          "detail": {
+            "out": "fulfilled",
+            "status": 200
+          }
+        },
+        {
+          "step": "close",
+          "ok": true,
+          "ms": 4.1,
+          "detail": null
+        }
+      ],
+      "smokeStderr": "",
+      "rss": {
+        "psSamples": 14,
+        "psSpanMs": 284,
+        "psEffectiveIntervalMs": 21.8,
+        "psPeakKiB": 37504,
+        "psIdleFirstKiB": 18160,
+        "nativeSamples": 17,
+        "nativeSpanMs": 320,
+        "nativeEffectiveIntervalMs": 20,
+        "nativePeakResidentKiB": 37504,
+        "nativePeakFootprintKiB": 14385,
+        "nativeIdleResidentKiB": 18160,
+        "timeL_maxRssBytes": 38551552,
+        "timeL_peakFootprintBytes": 14731008
+      },
+      "cdpJsonl": null
+    }
+  ],
+  "proxySmoke": {
+    "tag": "smoke-proxy-1",
+    "viaProxy": true,
+    "lpPid": 87397,
+    "lpAliveAfterSmoke": true,
+    "smokeProcessWallMs": 241.5,
+    "smokeInnerWallMs": 102.1,
+    "passed": 9,
+    "total": 9,
+    "steps": [
+      {
+        "step": "connectOverCDP",
+        "ok": true,
+        "ms": 27.6,
+        "detail": {
+          "version": "124.0.6367.29",
+          "contexts": 1
+        }
+      },
+      {
+        "step": "newContext",
+        "ok": true,
+        "ms": 1.5,
+        "detail": null
+      },
+      {
+        "step": "newPage",
+        "ok": true,
+        "ms": 3.1,
+        "detail": null
+      },
+      {
+        "step": "goto",
+        "ok": true,
+        "ms": 5.4,
+        "detail": {
+          "status": 200,
+          "title": "LP smoke page"
+        }
+      },
+      {
+        "step": "locator.fill",
+        "ok": true,
+        "ms": 18.9,
+        "detail": {
+          "value": "Alice"
+        }
+      },
+      {
+        "step": "click+waitForResponse",
+        "ok": true,
+        "ms": 20.4,
+        "detail": {
+          "url": "http://127.0.0.1:59637/api/data.json?name=Alice",
+          "status": 200,
+          "body": {
+            "greeting": "Hello, Alice"
+          }
+        }
+      },
+      {
+        "step": "evaluate",
+        "ok": true,
+        "ms": 2,
+        "detail": {
+          "out": "Hello, Alice",
+          "sum": 6
+        }
+      },
+      {
+        "step": "route.fulfill",
+        "ok": true,
+        "ms": 18.8,
+        "detail": {
+          "out": "fulfilled",
+          "status": 200
+        }
+      },
+      {
+        "step": "close",
+        "ok": true,
+        "ms": 4.4,
+        "detail": null
+      }
+    ],
+    "smokeStderr": "",
+    "rss": {
+      "psSamples": 18,
+      "psSpanMs": 368,
+      "psEffectiveIntervalMs": 21.6,
+      "psPeakKiB": 37136,
+      "psIdleFirstKiB": 18160,
+      "nativeSamples": 20,
+      "nativeSpanMs": 380,
+      "nativeEffectiveIntervalMs": 20,
+      "nativePeakResidentKiB": 37040,
+      "nativePeakFootprintKiB": 14177,
+      "nativeIdleResidentKiB": 18160,
+      "timeL_maxRssBytes": 38502400,
+      "timeL_peakFootprintBytes": 14698240
+    },
+    "cdpJsonl": "~/lp-baseline/results/warm/smoke-proxy-1.cdp.jsonl"
+  },
+  "smokeAggregate": {
+    "smokeProcessWallMs": {
+      "n": 5,
+      "min": 227.5,
+      "median": 229.7,
+      "p95": 233.2,
+      "max": 233.2,
+      "samples": [
+        233.2,
+        227.5,
+        229.9,
+        229.7,
+        227.5
+      ]
+    },
+    "smokeInnerWallMs": {
+      "n": 5,
+      "min": 91,
+      "median": 92.3,
+      "p95": 94.5,
+      "max": 94.5,
+      "samples": [
+        94.5,
+        91,
+        92.3,
+        92.7,
+        91.9
+      ]
+    },
+    "psPeakRssKiB": {
+      "n": 5,
+      "min": 37008,
+      "median": 37088,
+      "p95": 37504,
+      "max": 37504,
+      "samples": [
+        37008,
+        37168,
+        37088,
+        37024,
+        37504
+      ]
+    },
+    "nativePeakResidentKiB": {
+      "n": 5,
+      "min": 37008,
+      "median": 37152,
+      "p95": 37504,
+      "max": 37504,
+      "samples": [
+        37008,
+        37440,
+        37152,
+        37088,
+        37504
+      ]
+    },
+    "nativePeakFootprintKiB": {
+      "n": 5,
+      "min": 14145,
+      "median": 14273,
+      "p95": 14385,
+      "max": 14385,
+      "samples": [
+        14145,
+        14337,
+        14273,
+        14209,
+        14385
+      ]
+    },
+    "timeL_maxRssBytes": {
+      "n": 5,
+      "min": 38404096,
+      "median": 38486016,
+      "p95": 38551552,
+      "max": 38551552,
+      "samples": [
+        38404096,
+        38486016,
+        38502400,
+        38420480,
+        38551552
+      ]
+    }
+  },
+  "warmCpu": true,
+  "finishedAt": "2026-10-17T08:17:28.928Z"
+}

@@ -1,0 +1,9 @@
+[package]
+name = "rss-sampler"
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-only"
+publish = false
+description = "macOS proc_pid_rusage sampler with a kqueue NOTE_CRITICAL timer (precise 20 ms)"
+
+[workspace]
