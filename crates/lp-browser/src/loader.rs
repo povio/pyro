@@ -15,8 +15,8 @@
 //! because JSC fetches the module graph during evaluation, not before it.
 //!
 //! DOM lifecycle and currentScript are wired through lp-webapi. Script element
-//! load/error events, script-inserted scripts, and external stylesheet/iframe/
-//! image resources remain separate loader work.
+//! load/error events, script-inserted scripts, and iframe/image resources remain
+//! separate loader work. Linked stylesheets are handled by `stylesheets`.
 
 use crate::{Browser, LoaderId, NavigateOpts, PageEvent, PageId};
 use lp_dom::parse::{DocumentParser, DomRef, ParseStep};
