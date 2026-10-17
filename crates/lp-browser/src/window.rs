@@ -101,7 +101,8 @@ impl JsClass for Window {
 
 fn set_timer<'s>(s: &Scope<'s>, w: &WindowData, a: Args<'s>, repeat: bool) -> JsResult<Value<'s>> {
     let handler = a.get(0);
-    let delay = a.get(1).to_number().unwrap_or(0.0);
+    // WebIDL `long timeout = 0`: conversion errors propagate.
+    let delay = a.get(1).to_number()?;
     let delay = if delay.is_finite() && delay > 0.0 { delay.min(i32::MAX as f64) as u64 } else { 0 };
     let cb = if handler.is_function() {
         Persistent::new(s, handler)
@@ -132,13 +133,13 @@ fn schedule<'s>(
         let Some(realm) = realm_weak.upgrade() else { return };
         let Ok(scope) = realm.scope() else { return };
         if !repeat {
-            if let Some(w) = scope.unwrap::<Window>(scope.global().value()) {
+            if let Some(w) = scope.global_data::<Window>() {
                 w.timers.borrow_mut().remove(&handle);
             }
         }
         let Some(f) = cb.get(&scope).as_object() else { return };
         let result = if pass_time {
-            let now = scope.unwrap::<Window>(scope.global().value()).map(|w| w.now_ms()).unwrap_or(0.0);
+            let now = scope.global_data::<Window>().map(|w| w.now_ms()).unwrap_or(0.0);
             f.call(None, &[scope.number(now)])
         } else {
             // Arguments are rooted by `args` (Persistent) while this call runs.
@@ -154,7 +155,7 @@ fn schedule<'s>(
 }
 
 fn clear_timer<'s>(s: &Scope<'s>, w: &WindowData, a: Args<'s>) -> JsResult<Value<'s>> {
-    let n = a.get(0).to_number().unwrap_or(0.0);
+    let n = a.get(0).to_number()?;
     if n.is_finite() && n >= 1.0 && n <= u32::MAX as f64 {
         if let Some(id) = w.timers.borrow_mut().remove(&(n as u32)) {
             w.sched.clear_timer(id);
@@ -166,7 +167,7 @@ fn clear_timer<'s>(s: &Scope<'s>, w: &WindowData, a: Args<'s>) -> JsResult<Value
 /// Cancels every pending timer of a realm's window (navigation/teardown).
 pub(crate) fn cancel_timers(realm: &Realm) {
     let Ok(scope) = realm.scope() else { return };
-    if let Some(w) = scope.unwrap::<Window>(scope.global().value()) {
+    if let Some(w) = scope.global_data::<Window>() {
         for (_, id) in w.timers.borrow_mut().drain() {
             w.sched.clear_timer(id);
         }

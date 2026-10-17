@@ -134,6 +134,9 @@ pub(crate) struct RealmInner {
     inline_modules: RefCell<HashMap<String, String>>,
     embedder: RefCell<Option<Rc<dyn Any>>>,
     global_class: Option<ClassId>,
+    /// Payload of the global object (set once; freed when the realm is dropped,
+    /// never while a callback can still borrow it).
+    global_payload: Cell<*mut Header>,
 }
 
 impl RealmInner {
@@ -170,7 +173,7 @@ impl RealmInner {
         }
     }
 
-    fn dispose(&self) {
+    pub(crate) fn dispose(&self) {
         let ctx = self.ctx.replace(ptr::null_mut());
         if ctx.is_null() {
             return;
@@ -202,6 +205,12 @@ impl RealmInner {
 impl Drop for RealmInner {
     fn drop(&mut self) {
         self.dispose();
+        let h = self.global_payload.replace(ptr::null_mut());
+        if !h.is_null() {
+            // SAFETY: owned payload; no Scope of this realm exists any more
+            // (scopes borrow the Rc that is being dropped).
+            unsafe { ((*h).drop_fn)(h) };
+        }
     }
 }
 
@@ -229,10 +238,13 @@ impl Realm {
         self.inner.ctx.get().is_null()
     }
 
-    /// Enters the realm. Fails after disposal.
+    /// Enters the realm. Fails after disposal. While a scope created here is
+    /// alive the engine refuses to tear the VM down.
     pub fn scope(&self) -> JsResult<Scope<'_>> {
         let ctx = self.inner.global_ctx()?;
-        Ok(Scope::new(ctx as sys::JSContextRef, &self.inner))
+        let e = &self.inner.engine;
+        e.live_scopes.set(e.live_scopes.get() + 1);
+        Ok(Scope { ctx: ctx as sys::JSContextRef, realm: &self.inner, counted: true })
     }
 
     /// Tears the realm down now: callbacks into its functions afterwards throw
@@ -243,22 +255,24 @@ impl Realm {
     }
 
     /// Sets the payload of the global object (realm created with `global_class`).
+    /// May be called once; the payload lives until the realm is dropped.
     pub fn set_global_data<C: JsClass>(&self, data: C::Data) -> JsResult<()> {
-        let ctx = self.inner.global_ctx()?;
-        let reg = self.inner.engine.classes.borrow();
-        let id = reg.id_of::<C>().ok_or(JsError::Type(format!("{} not registered", C::NAME)))?;
+        self.inner.global_ctx()?;
+        let id = self
+            .inner
+            .engine
+            .classes
+            .borrow()
+            .id_of::<C>()
+            .ok_or_else(|| JsError::Type(format!("{} not registered", C::NAME)))?;
         if self.inner.global_class != Some(id) {
             return Err(JsError::Type(format!("realm global is not a {}", C::NAME)));
         }
-        let h = class::new_payload(id, Kind::Instance, self.inner.id, None, data);
-        unsafe {
-            let global = sys::JSContextGetGlobalObject(ctx);
-            let old = sys::JSObjectGetPrivate(global) as *mut Header;
-            sys::JSObjectSetPrivate(global, h as *mut c_void);
-            if !old.is_null() {
-                ((*old).drop_fn)(old);
-            }
+        if !self.inner.global_payload.get().is_null() {
+            return Err(JsError::Type("global data already set".into()));
         }
+        let h = class::new_payload(&self.inner.engine, id, Kind::Instance, self.inner.id, None, data);
+        self.inner.global_payload.set(h);
         Ok(())
     }
 
@@ -303,6 +317,16 @@ impl std::fmt::Debug for Realm {
 pub struct Scope<'s> {
     pub(crate) ctx: sys::JSContextRef,
     pub(crate) realm: &'s Rc<RealmInner>,
+    counted: bool,
+}
+
+impl Drop for Scope<'_> {
+    fn drop(&mut self) {
+        if self.counted {
+            let e = &self.realm.engine;
+            e.live_scopes.set(e.live_scopes.get().saturating_sub(1));
+        }
+    }
 }
 
 pub(crate) fn realm_for_ctx(ctx: sys::JSContextRef) -> Option<Rc<RealmInner>> {
@@ -312,8 +336,9 @@ pub(crate) fn realm_for_ctx(ctx: sys::JSContextRef) -> Option<Rc<RealmInner>> {
 }
 
 impl<'s> Scope<'s> {
+    /// Scope for a native callback (JSC is on the stack; not counted).
     pub(crate) fn new(ctx: sys::JSContextRef, realm: &'s Rc<RealmInner>) -> Scope<'s> {
-        Scope { ctx, realm }
+        Scope { ctx, realm, counted: false }
     }
 
     pub fn ctx(&self) -> sys::JSContextRef {
@@ -445,7 +470,7 @@ impl<'s> Scope<'s> {
         f: impl for<'a> Fn(&Scope<'a>, Value<'a>, Args<'a>) -> JsResult<Value<'a>> + 'static,
     ) -> JsResult<Object<'s>> {
         let data: ClosureData = Box::new(f);
-        let h = class::new_payload(u32::MAX, Kind::Closure, self.realm.id, None, data);
+        let h = class::new_payload(&self.realm.engine, u32::MAX, Kind::Closure, self.realm.id, None, data);
         let closure_class = self.realm.engine.classes.borrow().closure;
         let obj = unsafe { sys::JSObjectMake(self.ctx, closure_class, h as *mut c_void) };
         let obj = unsafe { Object::from_raw(self.ctx, obj) };
@@ -549,7 +574,7 @@ impl<'s> Scope<'s> {
         proto: Value<'_>,
     ) -> JsResult<Object<'s>> {
         let class = self.realm.engine.classes.borrow().classes[id as usize].instance_class;
-        let h = class::new_payload(id, Kind::Instance, self.realm.id, key, data);
+        let h = class::new_payload(&self.realm.engine, id, Kind::Instance, self.realm.id, key, data);
         let obj = unsafe { sys::JSObjectMake(self.ctx, class, h as *mut c_void) };
         let obj = unsafe { Object::from_raw(self.ctx, obj) };
         obj.set_prototype(proto);
@@ -563,22 +588,65 @@ impl<'s> Scope<'s> {
         Ok(obj)
     }
 
-    /// Borrows the payload of a `C` (or subclass) wrapper.
-    pub fn unwrap<C: JsClass>(&self, value: Value<'_>) -> Option<&'s C::Data> {
+    /// Borrows the payload of a `C` (or subclass) wrapper. The returned guard
+    /// keeps the wrapper (and so the payload) alive while it exists.
+    pub fn unwrap<C: JsClass>(&self, value: Value<'_>) -> Option<Unwrapped<'s, C::Data>> {
+        let (data, obj) = self.unwrap_raw::<C>(value)?;
+        if !obj.is_null() {
+            // SAFETY: live object; balanced by Unwrapped::drop.
+            unsafe { sys::JSValueProtect(self.realm.engine.root_ctx(), obj as sys::JSValueRef) };
+        }
+        Some(Unwrapped { data, obj, root: self.realm.engine.root_ctx() })
+    }
+
+    /// Borrows the payload of argument `i` of a native callback. Arguments are
+    /// rooted by the caller's frame for the callback's duration, so no guard
+    /// is needed.
+    pub fn unwrap_arg<C: JsClass>(&self, args: &Args<'s>, i: usize) -> Option<&'s C::Data> {
+        self.unwrap_raw::<C>(args.opt(i)?).map(|(d, _)| d)
+    }
+
+    /// Payload of the realm's global object, if it is (a subclass of) `C`.
+    pub fn global_data<C: JsClass>(&self) -> Option<&'s C::Data> {
+        let h = self.realm.global_payload.get();
+        if h.is_null() {
+            return None;
+        }
+        let reg = self.realm.engine.classes.borrow();
+        // SAFETY: the global payload lives as long as the realm, which this
+        // scope borrows for 's.
+        unsafe { class::class_data::<C::Data>(&reg, h, reg.id_of::<C>()?) }
+    }
+
+    /// Data and object of a `C` wrapper (object is null for the global).
+    fn unwrap_raw<C: JsClass>(&self, value: Value<'_>) -> Option<(&'s C::Data, sys::JSObjectRef)> {
         let o = value.as_object()?;
-        let base = self.realm.engine.classes.borrow().base;
+        let h = unsafe { self.header_of_object(o.raw) }?;
+        let is_global = h == self.realm.global_payload.get();
         unsafe {
-            if !sys::JSValueIsObjectOfClass(self.ctx, o.raw as sys::JSValueRef, base) {
-                return None;
-            }
-            let h = sys::JSObjectGetPrivate(o.raw) as *mut Header;
-            if h.is_null() || (*h).kind != Kind::Instance {
+            if (*h).kind != Kind::Instance {
                 return None;
             }
             let reg = self.realm.engine.classes.borrow();
-            // The payload lives while the wrapper does; `value` is rooted for 's.
-            class::class_data::<C::Data>(&reg, h, reg.id_of::<C>()?)
+            let data = class::class_data::<C::Data>(&reg, h, reg.id_of::<C>()?)?;
+            Some((data, if is_global { ptr::null_mut() } else { o.raw }))
         }
+    }
+
+    /// Payload header of an object: wrappers, or this realm's global.
+    unsafe fn header_of_object(&self, obj: sys::JSObjectRef) -> Option<*mut Header> {
+        let base = self.realm.engine.classes.borrow().base;
+        unsafe {
+            if sys::JSValueIsObjectOfClass(self.ctx, obj as sys::JSValueRef, base) {
+                let h = sys::JSObjectGetPrivate(obj) as *mut Header;
+                return (!h.is_null()).then_some(h);
+            }
+            if obj == sys::JSContextGetGlobalObject(self.ctx) {
+                let h = self.realm.global_payload.get();
+                return (!h.is_null()).then_some(h);
+            }
+        }
+        None
     }
 
     /// Payload header of a callback receiver, mapping `null`/global to the
@@ -587,14 +655,9 @@ impl<'s> Scope<'s> {
     /// # Safety
     /// `this` must be the receiver JSC passed to the current callback.
     pub(crate) unsafe fn header_of_receiver(&self, this: sys::JSObjectRef) -> Option<*mut Header> {
-        let base = self.realm.engine.classes.borrow().base;
         unsafe {
             let obj = if this.is_null() { sys::JSContextGetGlobalObject(self.ctx) } else { this };
-            if !sys::JSValueIsObjectOfClass(self.ctx, obj as sys::JSValueRef, base) {
-                return None;
-            }
-            let h = sys::JSObjectGetPrivate(obj) as *mut Header;
-            (!h.is_null()).then_some(h)
+            self.header_of_object(obj)
         }
     }
 
@@ -644,7 +707,11 @@ impl<'s> Scope<'s> {
     }
 
     /// Reports an uncaught exception to the engine hooks (console/CDP).
+    /// Termination is not an exception and is not reported.
     pub fn report_exception(&self, error: &JsError) {
+        if matches!(error, JsError::Terminated) {
+            return;
+        }
         if let Some(h) = self.realm.engine.hooks() {
             let details = error.details(self);
             h.exception_thrown(&self.realm(), &details);
@@ -669,6 +736,29 @@ impl<'s> Scope<'s> {
     pub fn own_properties(&self, object: Object<'_>, own_only: bool) -> JsResult<Object<'s>> {
         let r = self.realm.helper(self, "properties")?.call(None, &[object.value(), self.boolean(own_only)])?;
         r.as_object().ok_or_else(|| JsError::Type("properties helper failed".into()))
+    }
+}
+
+/// Borrow of a wrapper payload that keeps the wrapper GC-protected.
+pub struct Unwrapped<'s, T> {
+    data: &'s T,
+    obj: sys::JSObjectRef,
+    root: sys::JSContextRef,
+}
+
+impl<T> std::ops::Deref for Unwrapped<'_, T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        self.data
+    }
+}
+
+impl<T> Drop for Unwrapped<'_, T> {
+    fn drop(&mut self) {
+        if !self.obj.is_null() {
+            // SAFETY: protected in Scope::unwrap; the engine outlives 's.
+            unsafe { sys::JSValueUnprotect(self.root, self.obj as sys::JSValueRef) };
+        }
     }
 }
 
@@ -707,30 +797,16 @@ pub(crate) unsafe extern "C" fn closure_call(
     argv: *const sys::JSValueRef,
     exc: *mut sys::JSValueRef,
 ) -> sys::JSValueRef {
-    let Some(realm) = realm_for_ctx(ctx) else {
-        unsafe { crate::error::throw_message(ctx, "Execution context was destroyed.", exc) };
-        return ptr::null();
-    };
-    let scope = Scope::new(ctx, &realm);
-    let h = unsafe { sys::JSObjectGetPrivate(function) } as *mut Header;
-    let f = if h.is_null() { None } else { unsafe { class::payload_data::<ClosureData>(h) } };
-    let Some(f) = f else {
-        unsafe { crate::error::throw_message(ctx, "Illegal invocation", exc) };
-        return ptr::null();
-    };
-    let this_v =
-        if this.is_null() { scope.undefined() } else { unsafe { Value::from_raw(ctx, this as sys::JSValueRef) } };
-    let args = unsafe { Args::from_raw(ctx, argc, argv) };
-    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(&scope, this_v, args))) {
-        Ok(Ok(v)) => v.raw,
-        Ok(Err(e)) => {
-            unsafe { crate::error::throw_into(&scope, &e, exc) };
-            ptr::null()
-        }
-        Err(_) => {
-            unsafe { crate::error::throw_message(ctx, "Internal error: panic in native function", exc) };
-            ptr::null()
-        }
+    unsafe {
+        class::guard(ctx, exc, ptr::null(), |scope| {
+            let h = sys::JSObjectGetPrivate(function) as *mut Header;
+            let f =
+                if h.is_null() || (*h).kind != Kind::Closure { None } else { class::payload_data::<ClosureData>(h) };
+            let f = f.ok_or_else(|| JsError::Type("Illegal invocation".into()))?;
+            let this_v = if this.is_null() { scope.undefined() } else { Value::from_raw(ctx, this as sys::JSValueRef) };
+            let args = Args::from_raw(ctx, argc, argv);
+            f(scope, this_v, args).map(|v| v.raw)
+        })
     }
 }
 
@@ -740,17 +816,19 @@ pub(crate) unsafe extern "C" fn closure_call(
 const HELPERS_JS: &str = include_str!("helpers.js");
 
 pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResult<Realm> {
-    let global_jsclass = match options.global_class {
-        Some(id) => {
-            let mut reg = engine.classes.borrow_mut();
-            if id as usize >= reg.classes.len() {
-                return Err(JsError::Type("unknown global class".into()));
-            }
-            reg.global_class(id)
+    if engine.is_shut_down() {
+        return Err(JsError::ContextDestroyed);
+    }
+    if let Some(id) = options.global_class {
+        if id as usize >= engine.classes.borrow().classes.len() {
+            return Err(JsError::Type("unknown global class".into()));
         }
-        None => ptr::null(),
-    };
-    let ctx = unsafe { sys::JSGlobalContextCreateInGroup(engine.group(), global_jsclass) };
+    }
+    // Always the default global implementation (JSAPIGlobalObject): only it
+    // supports the module loader. Its [[Prototype]] is immutable, so a host
+    // global class is emulated by copying its members onto the global
+    // (WebIDL puts [Global] interface members on the instance anyway).
+    let ctx = unsafe { sys::JSGlobalContextCreateInGroup(engine.group(), ptr::null()) };
     let id = RealmId(engine.next_realm_id.get());
     engine.next_realm_id.set(id.0 + 1);
     let inner = Rc::new(RealmInner {
@@ -769,6 +847,7 @@ pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResul
         inline_modules: RefCell::new(HashMap::new()),
         embedder: RefCell::new(None),
         global_class: options.global_class,
+        global_payload: Cell::new(ptr::null_mut()),
     });
     engine.realms.borrow_mut().push((ctx, Rc::downgrade(&inner)));
     let realm = Realm { inner };
@@ -804,9 +883,8 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
     let set_length = realm.helper(scope, "setLength")?;
     let mut protos: Vec<Option<Persistent>> = Vec::with_capacity(reg.classes.len());
     let mut ctors: Vec<Option<Persistent>> = Vec::with_capacity(reg.classes.len());
-    for (id, info) in reg.classes.iter().enumerate() {
-        let is_global = realm.global_class == Some(id as ClassId);
-        let proto = if is_global { global.prototype().as_object().expect("global prototype") } else { scope.object() };
+    for info in reg.classes.iter() {
+        let proto = scope.object();
         let parent_proto = match info.parent {
             Some(p) => protos[p as usize].as_ref().expect("parent proto").get(scope),
             None => object_proto,
@@ -857,6 +935,22 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
         }
         protos.push(Some(Persistent::new(scope, proto.value())));
         ctors.push(Some(Persistent::new(scope, ctor)));
+    }
+    if let Some(gid) = realm.global_class {
+        // Chain root-first: copy members onto the global, brand instanceof.
+        let mut chain = vec![gid];
+        while let Some(p) = reg.classes[*chain.last().expect("non-empty") as usize].parent {
+            chain.push(p);
+        }
+        chain.reverse();
+        let install_global = realm.helper(scope, "installGlobal")?;
+        let ps: Vec<Value<'_>> =
+            chain.iter().map(|c| protos[*c as usize].as_ref().expect("proto").get(scope)).collect();
+        let cs: Vec<Value<'_>> = chain.iter().map(|c| ctors[*c as usize].as_ref().expect("ctor").get(scope)).collect();
+        let ps = scope.array(&ps)?;
+        let cs = scope.array(&cs)?;
+        install_global
+            .call(None, &[global.value(), ps.value(), cs.value(), scope.string(reg.classes[gid as usize].name)])?;
     }
     *realm.protos.borrow_mut() = protos;
     *realm.ctors.borrow_mut() = ctors;
@@ -919,23 +1013,24 @@ unsafe fn console_call(
     argv: *const sys::JSValueRef,
 ) -> sys::JSValueRef {
     let undefined = unsafe { sys::JSValueMakeUndefined(ctx) };
-    let Some(realm) = realm_for_ctx(ctx) else { return undefined };
-    let Some(hooks) = realm.engine.hooks() else { return undefined };
-    let scope = Scope::new(ctx, &realm);
-    let args = unsafe { Args::from_raw(ctx, argc, argv) };
-    if level == ConsoleLevel::Assert {
-        if args.get(0).to_bool() {
-            return undefined;
-        }
-        let rest: Vec<Value<'_>> = args.iter().skip(1).collect();
-        let _ =
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| hooks.console_api(&scope.realm(), level, &rest)));
-        return undefined;
+    unsafe {
+        class::guard(ctx, ptr::null_mut(), undefined, |scope| {
+            let Some(hooks) = scope.realm.engine.hooks() else { return Ok(undefined) };
+            let args = Args::from_raw(ctx, argc, argv);
+            let skip = if level == ConsoleLevel::Assert {
+                if args.get(0).to_bool() {
+                    return Ok(undefined);
+                }
+                1
+            } else {
+                0
+            };
+            // Arguments stay rooted by the caller's frame.
+            let values: Vec<Value<'_>> = args.iter().skip(skip).collect();
+            hooks.console_api(&scope.realm(), level, &values);
+            Ok(undefined)
+        })
     }
-    let values: Vec<Value<'_>> = args.iter().collect();
-    let _ =
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| hooks.console_api(&scope.realm(), level, &values)));
-    undefined
 }
 
 fn install_rejection_tracking(scope: &Scope<'_>) -> JsResult<()> {
@@ -961,40 +1056,59 @@ unsafe extern "C" fn module_fetch(
     resolve: sys::JSObjectRef,
     reject: sys::JSObjectRef,
 ) {
-    let Some(realm) = realm_for_ctx(ctx as sys::JSContextRef) else { return };
-    let scope = Scope::new(ctx as sys::JSContextRef, &realm);
-    let key = unsafe { crate::string::to_rust_string(identifier) };
-    let mut url = key.clone();
-    // JSC resolves root-relative specifiers ("/x.js") against file:///; the
-    // page's own origin is what the browser semantics require.
-    if let (Some(origin), Some(path)) = (realm.origin.as_deref(), url.strip_prefix("file://")) {
-        if !origin.starts_with("file:") {
-            url = format!("{}{}", origin.trim_end_matches('/'), path);
-        }
+    unsafe {
+        class::guard(ctx as sys::JSContextRef, ptr::null_mut(), (), |scope| {
+            let realm = scope.realm;
+            let key = crate::string::to_rust_string(identifier);
+            let url = remap_module_url(&key, realm.origin.as_deref());
+            let request = ModuleRequest {
+                url: url.clone(),
+                key,
+                realm: Rc::downgrade(realm),
+                resolve: Persistent::new(scope, Value::from_raw(scope.ctx, resolve as sys::JSValueRef)),
+                reject: Persistent::new(scope, Value::from_raw(scope.ctx, reject as sys::JSValueRef)),
+                done: false,
+            };
+            let inline = realm.inline_modules.borrow_mut().remove(&request.key);
+            if let Some(src) = inline {
+                return request.resolve(scope, &src);
+            }
+            let fetcher = realm.module_fetcher.borrow().clone();
+            match fetcher {
+                Some(f) => {
+                    f.fetch(&scope.realm(), url, request);
+                    Ok(())
+                }
+                None => request.reject(scope, &JsError::Type("module loading is not configured for this realm".into())),
+            }
+        })
     }
-    let request = unsafe {
-        ModuleRequest {
-            url: url.clone(),
-            key,
-            realm: Rc::downgrade(&realm),
-            resolve: Persistent::new(&scope, Value::from_raw(scope.ctx, resolve as sys::JSValueRef)),
-            reject: Persistent::new(&scope, Value::from_raw(scope.ctx, reject as sys::JSValueRef)),
-            done: false,
+}
+
+/// JSC resolves root-relative specifiers ("/x.js") against `file:///`; map
+/// exactly those (empty file authority) to the page origin. Other URLs,
+/// including `file://host/...`, are returned unchanged.
+pub(crate) fn remap_module_url(key: &str, origin: Option<&str>) -> String {
+    match (origin, key.strip_prefix("file:///")) {
+        (Some(origin), Some(rest)) if !origin.starts_with("file:") && origin != "null" => {
+            format!("{}/{}", origin.trim_end_matches('/'), rest)
         }
-    };
-    let inline = realm.inline_modules.borrow_mut().remove(&url);
-    if let Some(src) = inline {
-        let _ = request.resolve(&scope, &src);
-        return;
+        _ => key.to_string(),
     }
-    let fetcher = realm.module_fetcher.borrow().clone();
-    match fetcher {
-        Some(f) => {
-            let r = scope.realm();
-            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f.fetch(&r, url, request)));
-        }
-        None => {
-            let _ = request.reject(&scope, &JsError::Type("module loading is not configured for this realm".into()));
-        }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::remap_module_url;
+
+    #[test]
+    fn module_url_remapping_only_touches_root_relative_file_urls() {
+        let o = Some("https://site.test");
+        assert_eq!(remap_module_url("file:///c.js?x#y", o), "https://site.test/c.js?x#y");
+        assert_eq!(remap_module_url("file://attacker.test/a.js", o), "file://attacker.test/a.js");
+        assert_eq!(remap_module_url("https://cdn.test/a.js", o), "https://cdn.test/a.js");
+        assert_eq!(remap_module_url("file:///c.js", Some("file://")), "file:///c.js");
+        assert_eq!(remap_module_url("file:///c.js", Some("null")), "file:///c.js");
+        assert_eq!(remap_module_url("file:///c.js", None), "file:///c.js");
     }
 }

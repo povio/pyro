@@ -106,6 +106,12 @@ pub(crate) struct EngineInner {
     pub(crate) hooks: RefCell<Option<Rc<dyn EngineHooks>>>,
     pub(crate) next_realm_id: Cell<u32>,
     terminate: Arc<TerminateState>,
+    /// Payload headers queued by GC finalizers, which may run on any thread.
+    pub(crate) finalized: Arc<class::FinalizeQueue>,
+    /// Set once the VM has been torn down; `Persistent`s then skip unprotect.
+    shut_down: Cell<bool>,
+    /// Live `Scope`s created outside callbacks; shutdown is refused while > 0.
+    pub(crate) live_scopes: Cell<u32>,
 }
 
 impl EngineInner {
@@ -118,18 +124,37 @@ impl EngineInner {
     pub(crate) fn hooks(&self) -> Option<Rc<dyn EngineHooks>> {
         self.hooks.borrow().clone()
     }
+    pub(crate) fn is_shut_down(&self) -> bool {
+        self.shut_down.get()
+    }
 
     /// Finds the realm owning global context `global`.
     pub(crate) fn realm_for_global(&self, global: sys::JSGlobalContextRef) -> Option<Rc<RealmInner>> {
         self.realms.borrow().iter().find(|(g, _)| *g == global).and_then(|(_, r)| r.upgrade())
     }
-}
 
-impl Drop for EngineInner {
-    fn drop(&mut self) {
-        // SAFETY: last reference; no realm (they hold Rc<EngineInner>) or
-        // Persistent remains. Releasing the group runs remaining finalizers,
-        // whose payloads are then dropped by drain_finalized.
+    /// Disposes every realm, destroys the VM (running all remaining finalizers)
+    /// and drops their payloads. Payload-owned `Persistent`s may keep this
+    /// struct alive, but never the VM: after shutdown they are inert.
+    fn shutdown(&self) {
+        if self.shut_down.get() {
+            return;
+        }
+        if self.live_scopes.get() > 0 || DEPTH.with(Cell::get) > 0 {
+            // A Scope or native callback is still on the stack: tearing the VM
+            // down now would leave it dangling. Leak instead (safe).
+            return;
+        }
+        let realms: Vec<Rc<RealmInner>> = self.realms.borrow().iter().filter_map(|(_, r)| r.upgrade()).collect();
+        for r in &realms {
+            r.dispose();
+        }
+        drop(realms);
+        class::drain_finalized(self);
+        self.shut_down.set(true);
+        // SAFETY: no realm, scope or callback remains; the root context and
+        // group are owned here. Releasing the group destroys the VM, which
+        // finalizes every remaining object (including protected ones).
         unsafe {
             if self.caps.termination {
                 if let Some(clear) = sys::spi::get().clear_execution_time_limit {
@@ -137,28 +162,46 @@ impl Drop for EngineInner {
                 }
             }
             sys::JSGlobalContextRelease(self.root);
-            self.classes.get_mut().release_all();
             sys::JSContextGroupRelease(self.group);
         }
-        class::drain_finalized(None);
+        class::drain_finalized(self);
+        self.classes.borrow_mut().release_all();
+        let _ = CURRENT.try_with(|c| *c.borrow_mut() = Weak::new());
+        let _ = TERMINATING.try_with(|t| t.set(false));
+    }
+}
+
+impl Drop for EngineInner {
+    fn drop(&mut self) {
+        self.shutdown();
     }
 }
 
 thread_local! {
     static CURRENT: RefCell<Weak<EngineInner>> = const { RefCell::new(Weak::new()) };
+    /// Native callback nesting depth on this thread (0 = called from Rust).
+    pub(crate) static DEPTH: Cell<u32> = const { Cell::new(0) };
+    /// A termination is propagating through the VM on this thread.
+    pub(crate) static TERMINATING: Cell<bool> = const { Cell::new(false) };
 }
 
 pub(crate) fn current_inner() -> Option<Rc<EngineInner>> {
-    CURRENT.try_with(|c| c.borrow().upgrade()).ok().flatten()
+    CURRENT.try_with(|c| c.borrow().upgrade()).ok().flatten().filter(|e| !e.is_shut_down())
 }
 
 /// The JavaScript engine of the current thread.
 ///
 /// At most one engine may be alive per thread: values, wrappers and callbacks
-/// locate their engine through thread-local state. `Engine` is `!Send`/`!Sync`.
-#[derive(Clone)]
+/// locate their engine through thread-local state. `Engine` is `!Send`/`!Sync`
+/// and the unique owner: dropping it disposes all realms and destroys the VM.
 pub struct Engine {
     pub(crate) inner: Rc<EngineInner>,
+}
+
+impl Drop for Engine {
+    fn drop(&mut self) {
+        self.inner.shutdown();
+    }
 }
 
 impl Engine {
@@ -187,18 +230,16 @@ impl Engine {
             hooks: RefCell::new(None),
             next_realm_id: Cell::new(1),
             terminate: terminate.clone(),
+            finalized: Arc::new(class::FinalizeQueue::default()),
+            shut_down: Cell::new(false),
+            live_scopes: Cell::new(0),
         });
         if caps.termination {
             // Poll the termination flag every 50 ms of continuous JS execution.
-            // Returning false from the callback re-arms the limit.
-            let set = sys::spi::get().set_execution_time_limit.expect("checked by caps");
-            // SAFETY: the Arc pointer stays valid: EngineInner owns a clone and
-            // clears the limit before it is dropped.
-            unsafe {
-                set(group, WATCHDOG_INTERVAL_SECS, Some(should_terminate), Arc::as_ptr(&terminate) as *mut c_void)
-            };
+            arm_watchdog(group, &terminate);
         }
         CURRENT.with(|c| *c.borrow_mut() = Rc::downgrade(&inner));
+        TERMINATING.with(|t| t.set(false));
         Ok(Engine { inner })
     }
 
@@ -238,7 +279,7 @@ impl Engine {
     /// Releases payloads of wrappers finalized by the GC. Call at safe points
     /// (the event loop does this after each task).
     pub fn drain_finalized(&self) -> usize {
-        class::drain_finalized(Some(&self.inner))
+        class::drain_finalized(&self.inner)
     }
 
     /// Requests a full garbage collection (asynchronous in JSC).
@@ -276,13 +317,18 @@ impl Engine {
 /// How often running JavaScript polls the termination flag.
 const WATCHDOG_INTERVAL_SECS: f64 = 0.05;
 
-struct TerminateState {
+pub(crate) struct TerminateState {
     requested: AtomicBool,
 }
 
 /// `Send + Sync` handle that makes the engine abort running JavaScript at its
-/// next watchdog poll (≤ ~50 ms). The aborted call fails with an uncatchable
-/// termination exception.
+/// next watchdog poll (≤ ~50 ms). The aborted call returns
+/// `JsError::Terminated`.
+///
+/// The C API cannot propagate JSC's uncatchable termination through native
+/// frames: when a native callback sees termination it rethrows and re-arms the
+/// watchdog, so page code that catches it is terminated again within one
+/// polling interval.
 #[derive(Clone)]
 pub struct TerminateHandle(Arc<TerminateState>);
 
@@ -292,10 +338,44 @@ impl TerminateHandle {
     }
 }
 
+fn arm_watchdog(group: sys::JSContextGroupRef, state: &Arc<TerminateState>) {
+    if let Some(set) = sys::spi::get().set_execution_time_limit {
+        // SAFETY: the Arc pointer stays valid: EngineInner owns a clone and
+        // clears the limit before releasing the group.
+        unsafe { set(group, WATCHDOG_INTERVAL_SECS, Some(should_terminate), Arc::as_ptr(state) as *mut c_void) };
+    }
+}
+
+/// Called when native code observed a termination while JS is still on the
+/// stack: request it again and restart the watchdog timer for this entry.
+pub(crate) fn rearm_termination(ctx: sys::JSContextRef) {
+    if let Some(engine) = current_inner() {
+        engine.terminate.requested.store(true, Ordering::SeqCst);
+        let _ = ctx;
+        arm_watchdog(engine.group, &engine.terminate);
+    }
+}
+
+/// Resets termination state once control is back in Rust (depth 0): clears
+/// the request and flushes JSC's pending termination, which otherwise aborts
+/// the next entry when page code caught the termination exception.
+pub(crate) fn finish_termination(ctx: sys::JSContextRef) {
+    TERMINATING.with(|t| t.set(false));
+    if let Some(engine) = current_inner() {
+        engine.terminate.requested.store(false, Ordering::SeqCst);
+    }
+    let src = crate::string::JsString::new("0");
+    let mut exc = std::ptr::null();
+    // SAFETY: live context of this thread's engine.
+    unsafe { sys::JSEvaluateScript(ctx, src.as_raw(), std::ptr::null_mut(), std::ptr::null(), 1, &mut exc) };
+}
+
 unsafe extern "C" fn should_terminate(ctx: sys::JSContextRef, data: *mut c_void) -> bool {
-    // SAFETY: data is the TerminateState kept alive by EngineInner.
+    // SAFETY: data is the TerminateState kept alive by EngineInner. This runs
+    // on the thread executing JavaScript (the engine thread).
     let state = unsafe { &*(data as *const TerminateState) };
     if state.requested.swap(false, Ordering::SeqCst) {
+        let _ = TERMINATING.try_with(|t| t.set(true));
         return true;
     }
     // JSC does not re-arm the limit after the callback declines; re-arming

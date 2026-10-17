@@ -17,9 +17,10 @@ Status values:
 | Wrapper identity + GC | `Identity.zig`, weak finalizers | Done | Per-realm JSWeak maps; finalizers deferred to safe points. |
 | Microtasks | explicit checkpoints | Partial | JSC drains microtasks when the outermost call returns. There is no explicit per-context queue control and no `queueMicrotask` ordering relative to native microtasks such as MutationObserver. |
 | Unhandled rejections | `PromiseRejection.zig` | Partial | Reported through hooks. There is no `unhandledrejection`/`rejectionhandled` DOM event yet. |
-| ES modules | `Module.zig`, `ImportMap.zig` | Partial (macOS) | Static/dynamic import, TLA and `import.meta.url` work. Missing: import maps, bare specifiers, `import.meta.resolve`, correct `import.meta.url` for root-relative imports, module preload, and Linux support. |
+| ES modules | `Module.zig`, `ImportMap.zig` | Partial (macOS) | Static/dynamic import, TLA and `import.meta.url` work, including in Window-global page realms. Missing: import maps, bare specifiers, `import.meta.resolve`, correct `import.meta.url` for root-relative imports, module preload, and Linux support. |
 | Inspector | `v8_inspector` | Not started | CDP `Runtime.*` will be native (W3) on top of `describe`/`own_properties`/`call_function`. There is no `Debugger`/`Profiler`. |
-| Termination / watchdog | `Watchdog.zig` | Partial | `TerminateHandle` aborts within ~50 ms. No stall watchdog policy. |
+| Termination / watchdog | `Watchdog.zig` | Partial | `TerminateHandle` aborts within ~50 ms and returns `JsError::Terminated`. Page code catching termination inside nested native frames is re-terminated within ~50 ms, not immediately. The CLI `eval --timeout-ms` uses it. No stall-watchdog policy. |
+| Window global shape | V8 global template | Partial | Members are own properties of the global (default JSC global for modules). `Object.getPrototypeOf(window)` is `Object.prototype`. |
 | Event loop | `Runner.zig`, `Scheduler.zig` | Partial | Tasks, timers, intervals, remote posting. Missing: HTML timer nesting clamp, task-source prioritization, idle callbacks. |
 | Window timers | `webapi/Timers.zig` | Done | `setTimeout`, `setInterval` and their clears, `queueMicrotask`, `requestAnimationFrame` (fixed 16 ms tick) and `cancelAnimationFrame`. |
 | Console | `webapi/Console.zig` | Partial | Levels are forwarded to hooks. `count`/`time` bookkeeping and format specifiers (`%s`) are not implemented. |

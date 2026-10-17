@@ -10,3 +10,11 @@ lp-jsc-sys.workspace = true
 
 [lints]
 workspace = true
+
+[features]
+# Builds the measurement examples (slow to compile: ~9000 generated callbacks).
+bench = []
+
+[[example]]
+name = "realm_bench"
+required-features = ["bench"]
