@@ -87,6 +87,7 @@ fn insert_node(dom: &mut Dom, parent: u32, before: u32, child: NodeOrText<u32>) 
             let owner = dom.n(parent).owner_doc;
             dom.set_owner_raw(n, owner);
             dom.link_raw(n, parent, before);
+            dom.resources_after_insert(n);
         }
     }
 }
@@ -174,6 +175,9 @@ impl<A: DomAccess> TreeSink for Sink<A> {
                 e.flags |= element_flags::SCRIPT_ALREADY_STARTED;
             }
         });
+    }
+    fn pop(&self, node: &u32) {
+        self.dom.with(|d| d.resources_element_popped(*node));
     }
     fn get_template_contents(&self, target: &u32) -> u32 {
         self.dom.with(|d| d.n(*target).element().map(|e| e.template_contents).unwrap_or(NIL))
@@ -264,6 +268,54 @@ pub struct DocumentParser {
     dom: DomRef,
     doc: NodeId,
     ended: bool,
+    /// Transport-layer charset label (Content-Type), used by `feed_bytes`.
+    transport_charset: Option<&'static encoding_rs::Encoding>,
+    decoder: Option<encoding_rs::Decoder>,
+    decoded: String,
+    /// Bytes held back until 1024 bytes (or EOF) are available for prescan.
+    sniff: Vec<u8>,
+}
+
+/// Charset prescan of the first bytes for `<meta charset>` /
+/// `<meta http-equiv=content-type content="...charset=...">` (simplified
+/// HTML §13.2.3.2).
+pub fn prescan_charset(head: &[u8]) -> Option<&'static encoding_rs::Encoding> {
+    let head = &head[..head.len().min(1024)];
+    let lower: Vec<u8> = head.iter().map(|b| b.to_ascii_lowercase()).collect();
+    let mut pos = 0;
+    while let Some(off) = find(&lower[pos..], b"<meta") {
+        let start = pos + off;
+        let end = find(&lower[start..], b">").map_or(lower.len(), |e| start + e);
+        let tag = &lower[start..end];
+        if let Some(c) = find(tag, b"charset") {
+            let mut rest = &tag[c + 7..];
+            while let [b' ' | b'\t' | b'\n' | b'\r' | b'=', tail @ ..] = rest {
+                rest = tail;
+            }
+            let rest: &[u8] = match rest.first() {
+                Some(b'"') | Some(b'\'') => &rest[1..],
+                _ => rest,
+            };
+            let label_end = rest
+                .iter()
+                .position(|&b| matches!(b, b'"' | b'\'' | b';' | b' ' | b'/' | b'>' | b'\t' | b'\n'))
+                .unwrap_or(rest.len());
+            if let Some(enc) = encoding_rs::Encoding::for_label(&rest[..label_end]) {
+                // UTF-16 declared in a byte-oriented prescan means UTF-8.
+                return Some(if enc == encoding_rs::UTF_16LE || enc == encoding_rs::UTF_16BE {
+                    encoding_rs::UTF_8
+                } else {
+                    enc
+                });
+            }
+        }
+        pos = end.max(start + 5);
+    }
+    None
+}
+
+fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
+    hay.windows(needle.len()).position(|w| w == needle)
 }
 
 impl DocumentParser {
@@ -273,7 +325,76 @@ impl DocumentParser {
         let tb_opts = TreeBuilderOpts { scripting_enabled: scripting, ..Default::default() };
         let tb = TreeBuilder::new(sink, tb_opts);
         let tok = Tokenizer::new(tb, TokenizerOpts::default());
-        Ok(DocumentParser { tok, input: BufferQueue::default(), dom, doc, ended: false })
+        Ok(DocumentParser {
+            tok,
+            input: BufferQueue::default(),
+            dom,
+            doc,
+            ended: false,
+            transport_charset: None,
+            decoder: None,
+            decoded: String::new(),
+            sniff: Vec::new(),
+        })
+    }
+
+    /// Sets the Content-Type charset label for `feed_bytes`.
+    pub fn set_transport_charset(&mut self, label: Option<&str>) {
+        self.transport_charset = label.and_then(|l| encoding_rs::Encoding::for_label(l.as_bytes()));
+    }
+
+    /// Feeds raw network bytes. Encoding: BOM, then transport charset, then
+    /// `<meta>` prescan of the first chunk, then UTF-8 (the spec's
+    /// locale-dependent default is replaced by UTF-8 — documented deviation).
+    pub fn feed_bytes(&mut self, bytes: &[u8]) -> ParseStep {
+        if self.decoder.is_some() {
+            return self.decode(bytes, false);
+        }
+        self.sniff.extend_from_slice(bytes);
+        let decided = encoding_rs::Encoding::for_bom(&self.sniff).is_some() || self.transport_charset.is_some();
+        if !decided && self.sniff.len() < 1024 {
+            return ParseStep::NeedInput;
+        }
+        self.start_decoder();
+        let buf = std::mem::take(&mut self.sniff);
+        self.decode(&buf, false)
+    }
+
+    fn start_decoder(&mut self) {
+        let enc = encoding_rs::Encoding::for_bom(&self.sniff)
+            .map(|(e, _)| e)
+            .or(self.transport_charset)
+            .or_else(|| prescan_charset(&self.sniff))
+            .unwrap_or(encoding_rs::UTF_8);
+        self.decoder = Some(enc.new_decoder_with_bom_removal());
+        if let Ok(mut d) = self.dom.try_borrow_mut() {
+            if let Ok(i) = d.check(self.doc) {
+                if let NodeKind::Document(dd) = &mut d.n_mut(i).kind {
+                    dd.charset = enc.name();
+                }
+            }
+        }
+    }
+
+    /// Flushes buffered bytes and the decoder at end of input (call before
+    /// `end`; resume on `Script` as usual).
+    pub fn finish_bytes(&mut self) -> ParseStep {
+        if self.decoder.is_none() {
+            self.start_decoder();
+        }
+        let buf = std::mem::take(&mut self.sniff);
+        self.decode(&buf, true)
+    }
+
+    fn decode(&mut self, bytes: &[u8], last: bool) -> ParseStep {
+        let dec = self.decoder.as_mut().unwrap();
+        let mut out = std::mem::take(&mut self.decoded);
+        out.clear();
+        out.reserve(dec.max_utf8_buffer_length(bytes.len()).unwrap_or(bytes.len() * 3));
+        let _ = dec.decode_to_string(bytes, &mut out, last);
+        let step = self.feed(&out);
+        self.decoded = out;
+        step
     }
 
     pub fn document(&self) -> NodeId {
@@ -291,9 +412,14 @@ impl DocumentParser {
 
     /// Continues after a script ran.
     pub fn resume(&mut self) -> ParseStep {
-        match self.tok.feed(&self.input) {
-            TokenizerResult::Script(h) => ParseStep::Script(self.dom.borrow().id_of(h)),
-            _ => ParseStep::NeedInput,
+        loop {
+            match self.tok.feed(&self.input) {
+                TokenizerResult::Script(h) => return ParseStep::Script(self.dom.borrow().id_of(h)),
+                // A late <meta charset> after decoding started: the prescan
+                // already chose the encoding; keep parsing (no reparse).
+                TokenizerResult::EncodingIndicator(_) => continue,
+                TokenizerResult::Done => return ParseStep::NeedInput,
+            }
         }
     }
 

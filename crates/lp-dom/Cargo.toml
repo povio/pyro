@@ -7,6 +7,7 @@ license.workspace = true
 
 [dependencies]
 cssparser = "0.38"
+encoding_rs = "0.8"
 html5ever = "0.40"
 markup5ever = "0.40"
 precomputed-hash = "0.1"

@@ -27,6 +27,7 @@ pub struct Dom {
     live: u32,
     pub(crate) mutation: MutationState,
     pub(crate) events: crate::events::ListenerStore,
+    pub(crate) resources: crate::script::ResourceQueue,
 }
 
 impl Default for Dom {
@@ -55,6 +56,7 @@ impl Dom {
             live: 0,
             mutation: MutationState::default(),
             events: Default::default(),
+            resources: Default::default(),
         }
     }
 
@@ -178,6 +180,7 @@ impl Dom {
             kind,
             quirks: QuirksMode::NoQuirks,
             content_type: content_type.into(),
+            charset: "UTF-8",
             url: url.into(),
             inert_doc: NIL,
             owned: 0,
@@ -887,6 +890,9 @@ impl Dom {
             self.adopt_idx(k, doc);
             self.link(k, parent, child);
         }
+        for &k in &nodes {
+            self.resources_after_insert(k);
+        }
         self.bump();
         if !suppress {
             self.queue_child_list(parent, &nodes, &[], prev, child);
@@ -941,6 +947,7 @@ impl Dom {
         debug_assert!(parent != NIL);
         let prev = self.n(node).prev;
         let next = self.n(node).next;
+        self.resources_before_remove(node);
         self.add_transient_observers(parent, node);
         self.unlink(node);
         self.bump();
@@ -1167,11 +1174,13 @@ impl Dom {
         let old = std::mem::replace(&mut self.n_mut(i).element_mut().unwrap().attrs[k].value, value.into());
         self.bump();
         self.queue_attribute(i, &name, Some(&old));
+        self.resources_after_attr(i, &name.local);
     }
     fn append_attr(&mut self, i: u32, name: QualName, value: &str) {
         self.n_mut(i).element_mut().unwrap().attrs.push(Attr { name: name.clone(), value: value.into() });
         self.bump();
         self.queue_attribute(i, &name, None);
+        self.resources_after_attr(i, &name.local);
     }
 
     /// `removeAttribute(qualifiedName)`. Returns whether an attribute was removed.
@@ -1200,6 +1209,7 @@ impl Dom {
         let attr = self.n_mut(i).element_mut().unwrap().attrs.remove(k);
         self.bump();
         self.queue_attribute(i, &attr.name, Some(&attr.value));
+        self.resources_after_attr(i, &attr.name.local);
     }
 
     /// `toggleAttribute(name, force)`.
@@ -1318,6 +1328,7 @@ impl Dom {
         self.n_mut(i).kind.char_data_mut().unwrap().replace_range(a..b, data);
         self.bump();
         self.queue_character_data(i, &old);
+        self.resources_after_text(i);
         Ok(())
     }
 

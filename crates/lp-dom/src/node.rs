@@ -57,6 +57,8 @@ pub struct DocumentData {
     pub kind: DocumentKind,
     pub quirks: QuirksMode,
     pub content_type: Box<str>,
+    /// Encoding name (`document.characterSet`).
+    pub charset: &'static str,
     pub url: Box<str>,
     /// Owner of `<template>` contents created while parsing this document.
     pub(crate) inert_doc: u32,
