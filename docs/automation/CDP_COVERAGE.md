@@ -14,7 +14,7 @@ HTTP and `data:` document loading now use the real loader. `Network` emits reque
 
 Capture uses a shared process payload budget (default 64 MiB, 8 MiB/body), at most 4096 response records per page, and bounded network subscriptions (1024 events/8 MiB logical bytes per context). Observer overflow closes the CDP connection instead of silently losing events. Disabling the last Network session, navigation, or page teardown releases retained bodies. Per-session `Network.enable` buffer options are explicitly unsupported. These are logical retention limits, not an RSS measurement; shared chunk allocations and metadata contribute additional memory.
 
-Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 30 engine, 10 accepted/recorded only, 3 conditional, 58 pending.
+Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 29 engine, 10 accepted/recorded only, 3 conditional, 59 pending.
 
 | Method | Upstream 2ad38773f | Rewrite | Notes |
 | --- | --- | --- | --- |
@@ -82,7 +82,7 @@ Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 30 engi
 | `Page.getLayoutMetrics` | yes | pending |  |
 | `Page.getNavigationHistory` | yes | pending |  |
 | `Page.handleJavaScriptDialog` | yes | pending |  |
-| `Page.navigate` | yes | engine | about:blank commits; other URLs answer with `errorText` net::ERR_NOT_IMPLEMENTED until document loading lands |
+| `Page.navigate` | yes | engine | about:blank, data and HTTP documents; unsupported schemes/network errors return explicit errorText |
 | `Page.navigateToHistoryEntry` | yes | pending |  |
 | `Page.printToPDF` | yes | pending |  |
 | `Page.reload` | yes | engine | same limits as Page.navigate |
@@ -120,7 +120,7 @@ Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 30 engi
 | `Tracing.end` | **no** | pending |  |
 | `Tracing.start` | **no** | pending |  |
 
-Browser-level methods not in Playwright's list but implemented: `Target.getTargets`, `Target.getBrowserContexts`, `Target.setDiscoverTargets` (page filters honored), `Target.activateTarget` (validates the target), `Runtime.releaseObjectGroup`, `Emulation.clearDeviceMetricsOverride`, `Page.disable`, `Runtime.disable`, `Network.disable`.
+Browser-level methods not in Playwright's list but implemented: `Target.getTargets`, `Target.getBrowserContexts`, `Target.setDiscoverTargets` (page filters honored), `Target.activateTarget` (validates the target), `Runtime.releaseObjectGroup`, `Emulation.clearDeviceMetricsOverride`, `Page.disable`, `Runtime.disable`, `Network.disable`. Session methods outside that static list include `Fetch.continueWithAuth` (server Basic).
 
 ## Deliberate differences from upstream
 
