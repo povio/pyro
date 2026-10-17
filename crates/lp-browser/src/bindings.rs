@@ -101,6 +101,9 @@ impl Browser {
         dom.borrow_mut().set_resource_tracking(true);
         let bindings = PageDom::new(dom, doc);
         bindings.set_storage_namespaces(local_storage, session_storage);
+        bindings
+            .set_user_agent_override(state.user_agent_override.clone())
+            .map_err(|e| JsError::Type(format!("invalid user agent request defaults: {e}")))?;
         bindings.set_request_context(lp_webapi::RequestContext {
             frame_id: Some(state.main_frame.id.0.clone()),
             loader_id: Some(loader.0.clone()),

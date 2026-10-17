@@ -219,6 +219,8 @@ pub struct Page {
     pub(crate) load: Option<loader::DocumentLoad>,
     pub(crate) stylesheets: stylesheets::Stylesheets,
     session_storage: lp_webapi::StorageNamespace,
+    user_agent_override: Option<lp_webapi::UserAgentOverride>,
+    request_defaults: lp_net::RequestDefaults,
 }
 
 /// Browser-thread state: the loop state type for [`EventLoop`].
@@ -444,6 +446,8 @@ impl Browser {
             load: None,
             stylesheets: Default::default(),
             session_storage: Default::default(),
+            user_agent_override: None,
+            request_defaults: Default::default(),
         });
         self.navigate(
             id,
@@ -463,6 +467,31 @@ impl Browser {
 
     pub(crate) fn page_mut(&mut self, id: PageId) -> Option<&mut Page> {
         self.pages.iter_mut().find(|p| p.id == id)
+    }
+
+    /// Changes this page's navigator and native request defaults atomically.
+    /// Persists across navigation and isolated worlds; sibling pages keep their defaults.
+    /// An empty user agent uses the context default; `None` clears all overrides.
+    pub fn set_user_agent_override(
+        &mut self,
+        page: PageId,
+        value: Option<lp_webapi::UserAgentOverride>,
+    ) -> Result<(), JsError> {
+        let state = self.page_mut(page).ok_or_else(|| JsError::Type("no such page".into()))?;
+        let defaults = value
+            .as_ref()
+            .map(lp_webapi::UserAgentOverride::request_defaults)
+            .transpose()
+            .map_err(|e| JsError::Type(format!("invalid user agent request defaults: {e}")))?
+            .unwrap_or_default();
+        if let Some(bindings) = &state.main_frame.page_dom {
+            bindings
+                .set_user_agent_override(value.clone())
+                .map_err(|e| JsError::Type(format!("invalid user agent request defaults: {e}")))?;
+        }
+        state.user_agent_override = value;
+        state.request_defaults = defaults;
+        Ok(())
     }
 
     pub fn add_init_script(&mut self, page: PageId, script: InitScript) -> bool {
