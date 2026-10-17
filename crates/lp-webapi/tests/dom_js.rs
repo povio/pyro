@@ -593,3 +593,197 @@ fn storage_is_shared_across_worlds_and_inherited_blank_origin() {
     install(&inherited.scope().unwrap(), e.page.clone()).unwrap();
     assert_eq!(eval(&inherited, "localStorage.shared"), "yes");
 }
+
+#[test]
+fn headers_records_sequences_validation_and_cookie_order() {
+    let e = env("");
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"(() => {
+        const h = new Headers([['X-B',' b '], ['x-a','one'], ['X-A','two'],
+            ['Set-Cookie','a=1'], ['set-cookie','b=2']]);
+        if (h.get('X-A') !== 'one, two' || h.get('missing') !== null) return 'get';
+        if (JSON.stringify([...h]) !== JSON.stringify([
+            ['set-cookie','a=1'],['set-cookie','b=2'],['x-a','one, two'],['x-b','b']])) return 'entries';
+        if (h.getSetCookie().join('|') !== 'a=1|b=2') return 'cookies';
+        h.set('SET-cookie','c=3'); h.delete('x-b');
+        if (h.getSetCookie().join('|') !== 'c=3' || h.has('x-b')) return 'mutation';
+        const copy = new Headers(h); h.set('x-a','changed');
+        if (copy.get('x-a') !== 'one, two') return 'copy';
+        const record = Object.create({inherited:'ignored'}); record.own = 'ok';
+        if (JSON.stringify([...new Headers(record)]) !== '[["own","ok"]]') return 'record';
+        let failed = 0;
+        for (const run of [() => new Headers(null), () => new Headers([['x']]),
+            () => new Headers([['x','y','z']]), () => h.set('bad name','x'),
+            () => h.set('x','a\r\nb'), () => h.append('x','\0'),
+            () => h.get(''), () => h.set('x','\u0100'), () => h.get(Symbol()),
+            () => h.set('x'), () => Headers.prototype.get.call({}, 'x')]) {
+            try { run(); } catch(e) { if (e instanceof TypeError) failed++; }
+        }
+        return failed === 11 ? 'ok' : failed;
+    })()"#
+        ),
+        "ok"
+    );
+}
+
+#[test]
+fn headers_live_iteration_reentry_and_iterator_close() {
+    let e = env("");
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"(() => {
+        const h = new Headers({a:'1',c:'3'}), it = h.entries();
+        if (it[Symbol.iterator]() !== it || it.next().value.join(':') !== 'a:1') return 'iterator';
+        h.set('b','2'); if (it.next().value.join(':') !== 'b:2') return 'live';
+        h.delete('c'); if (!it.next().done) return 'delete';
+        h.set('d','4'); if (!it.next().done) return 'done';
+        let seen = [], receiver = {};
+        h.forEach(function(value, key, self) {
+            if (this !== receiver || self !== h) throw Error('receiver');
+            seen.push(key+value); if (key === 'a') h.set('c','3');
+        }, receiver);
+        if (seen.join(',') !== 'a1,b2,c3,d4') return seen;
+        h.set({toString(){ h.set('nested','yes'); return 'a'; }},
+              {toString(){h.delete('b');return 'changed';}});
+        if (h.get('a') !== 'changed' || h.get('nested') !== 'yes' || h.has('b')) return 'reentry';
+        let closed = false, yielded = 0;
+        function* input(){try { yielded++; yield ['good','1']; yielded++; yield ['bad','\u0100']; yielded++; } finally {closed=true;} }
+        try { new Headers(input()); } catch(e) { if (!(e instanceof TypeError)) return 'error'; }
+        if (!closed || yielded !== 2) return 'close';
+        let converted = false;
+        try { h.set('bad name', {toString(){converted=true;return 'value';}}); } catch {}
+        let consumed = false;
+        function* invalidName() { yield ['bad name','x']; consumed=true; }
+        try { new Headers(invalidName()); } catch {}
+        return converted && consumed ? 'ok' : 'conversion order';
+    })()"#
+        ),
+        "ok"
+    );
+}
+
+#[test]
+fn headers_capture_intrinsics_before_page_scripts() {
+    let e = env("");
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"(() => {
+        const symbol = Symbol.iterator;
+        Symbol = {}; Reflect.ownKeys = () => []; Reflect.apply = () => {throw Error('spoof')};
+        Object.getOwnPropertyDescriptor = () => undefined;
+        const h = new Headers({x:'yes'});
+        const entries = h[symbol]();
+        let count = 0; h.forEach(() => count++);
+        return h.get('x') === 'yes' && entries.next().value[1] === 'yes' && count === 1;
+    })()"#
+        ),
+        "true"
+    );
+}
+
+#[inline(never)]
+fn abandoned_abort_graph(realm: &Realm) -> std::rc::Weak<()> {
+    let scope = realm.scope().unwrap();
+    let source = scope
+        .eval("(() => { const c = new AbortController(); AbortSignal.any([c.signal]); return c.signal; })()", None, 1)
+        .unwrap();
+    let keep = Rc::new(());
+    let weak = Rc::downgrade(&keep);
+    scope.unwrap::<lp_webapi::abort::AbortSignal>(source).unwrap().add_abort_hook(Box::new(move |_| drop(keep)));
+    weak
+}
+
+#[test]
+fn abandoned_abort_any_graph_releases_native_hooks() {
+    let e = env("");
+    let weak = abandoned_abort_graph(&e.main);
+    for _ in 0..6 {
+        eval(&e.main, "Array.from({length:2000}, (_,i)=>({i}))");
+        e.engine.collect_garbage_now();
+        e.engine.drain_finalized();
+        e.page.after_task();
+    }
+    assert!(weak.upgrade().is_none(), "unreachable AbortSignal.any graph retained its native hook");
+}
+
+#[test]
+fn removable_abort_hooks_release_payloads_and_preserve_reason() {
+    let e = env("");
+    let s = e.main.scope().unwrap();
+    let signal = s.eval("globalThis.controller = new AbortController(); controller.signal", None, 1).unwrap();
+    let signal = s.unwrap::<lp_webapi::abort::AbortSignal>(signal).unwrap();
+    let keep = Rc::new(());
+    let weak = Rc::downgrade(&keep);
+    let removed = signal.add_abort_hook(Box::new(move |_| drop(keep))).unwrap();
+    signal.remove_abort_hook(removed);
+    assert!(weak.upgrade().is_none());
+    let fired = Rc::new(std::cell::Cell::new(0));
+    let fired2 = fired.clone();
+    signal.add_abort_hook(Box::new(move |_| fired2.set(fired2.get() + 1)));
+    signal.remove_abort_hook(removed); // old identity must not remove a new step
+    assert_eq!(eval(&e.main, "globalThis.reason = {detail:42}; globalThis.combined = AbortSignal.any([controller.signal]); controller.abort(reason); combined.aborted && combined.reason === reason"), "true");
+    assert_eq!(fired.get(), 1);
+    eval(&e.main, "controller.abort('again')");
+    assert_eq!(fired.get(), 1);
+    let immediate = fired.clone();
+    assert!(signal.add_abort_hook(Box::new(move |_| immediate.set(immediate.get() + 1))).is_none());
+    assert_eq!(fired.get(), 2);
+}
+
+#[test]
+fn abort_any_preserves_cross_realm_reason_identity() {
+    let e = env("");
+    let isolated = new_realm(&e.engine, e.engine.register::<TestWindow>(), &e.page, "isolated");
+    let main_scope = e.main.scope().unwrap();
+    let signal = main_scope.eval("globalThis.ac = new AbortController(); ac.signal", None, 1).unwrap();
+    let isolated_scope = isolated.scope().unwrap();
+    isolated_scope.global().set("source", signal).unwrap();
+    assert_eq!(eval(&isolated, "globalThis.dependent = AbortSignal.any([source]); dependent.aborted"), "false");
+    let reason = main_scope.eval("globalThis.reason = {id:7}; ac.abort(reason); reason", None, 1).unwrap();
+    isolated_scope.global().set("expected", reason).unwrap();
+    assert_eq!(eval(&isolated, "dependent.aborted && dependent.reason === expected"), "true");
+}
+
+struct RetainingHooks {
+    _page: Rc<PageDom>,
+    dropped: Rc<std::cell::Cell<bool>>,
+}
+impl PageHooks for RetainingHooks {
+    fn post_task(&self, _task: Box<dyn FnOnce()>) {}
+    fn navigate(&self, _request: NavigationRequest) {}
+}
+impl Drop for RetainingHooks {
+    fn drop(&mut self) {
+        self.dropped.set(true);
+    }
+}
+
+#[test]
+fn page_disposal_releases_hooks_registry_and_listener_roots() {
+    let Env { engine, page, main } = env("<body><div id=target></div></body>");
+    assert_eq!(eval(&main, "globalThis.fired=0; window.addEventListener('test',()=>fired++); document.querySelector('#target').addEventListener('test',()=>fired++); customElements.define('x-disposal', class extends HTMLElement{}); 'ok'"), "ok");
+    page.after_task();
+    assert!(page.pinned_count() > 0);
+    let dropped = Rc::new(std::cell::Cell::new(false));
+    page.set_hooks(Some(Rc::new(RetainingHooks { _page: page.clone(), dropped: dropped.clone() })));
+    let weak = Rc::downgrade(&page);
+    page.dispose();
+    page.dispose();
+    assert!(page.is_disposed());
+    assert!(dropped.get(), "embedder hook cycle was not broken");
+    assert_eq!(page.pinned_count(), 0);
+    assert_eq!(eval(&main, "window.dispatchEvent(new Event('test')); document.querySelector('#target').dispatchEvent(new Event('test')); fired"), "0");
+    assert!(install(&main.scope().unwrap(), page.clone()).is_err());
+    main.dispose();
+    drop(main);
+    drop(page);
+    for _ in 0..6 {
+        engine.collect_garbage_now();
+        engine.drain_finalized();
+    }
+    assert!(weak.upgrade().is_none(), "disposed bindings kept their PageDom alive");
+}

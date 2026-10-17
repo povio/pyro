@@ -24,6 +24,7 @@ use hyper_util::rt::TokioExecutor;
 use tokio::sync::{mpsc, oneshot, Semaphore};
 use url::Url;
 
+use crate::auth::auth_challenge;
 use crate::cookies::{site_context, CookieJar, SiteContext};
 use crate::cors::{self, PreflightCache};
 use crate::request::*;
@@ -53,6 +54,8 @@ pub struct NetConfig {
     pub enforce_cors: bool,
     /// Concurrent connections per origin (Chromium uses 6).
     pub max_per_origin: usize,
+    /// Maximum credential submissions for one HTTP hop. No unbounded auth loops.
+    pub max_auth_retries: u32,
 }
 
 impl Default for NetConfig {
@@ -65,6 +68,7 @@ impl Default for NetConfig {
             max_body: 256 * 1024 * 1024,
             enforce_cors: true,
             max_per_origin: 6,
+            max_auth_retries: 3,
         }
     }
 }
@@ -137,6 +141,32 @@ pub struct PausedRequest {
     pub request: RequestInfo,
 }
 
+/// A 401/407 challenge. Callbacks run on the I/O thread and must not block.
+#[derive(Clone, Debug)]
+pub struct AuthChallenge {
+    pub id: RequestId,
+    pub request: RequestInfo,
+    pub origin: String,
+    pub scheme: String,
+    pub realm: String,
+    pub proxy: bool,
+}
+
+/// Server Basic credentials use UTF-8. Other schemes and proxy credentials
+/// return explicit errors; this build has no proxy transport or auth cache.
+#[derive(Clone)]
+pub enum AuthDecision {
+    /// Return the challenge response; this headless client has no credential
+    /// cache or interactive authentication prompt.
+    Default,
+    /// Decline credentials and deliver the original 401/407 response.
+    CancelAuth,
+    ProvideCredentials {
+        username: String,
+        password: String,
+    },
+}
+
 #[derive(Clone, Debug)]
 pub enum InterceptDecision {
     Continue {
@@ -157,8 +187,20 @@ pub enum InterceptDecision {
 /// Fetch-domain interception. `paused` must not block; answer through
 /// `reply` whenever the CDP decision arrives. Dropping `reply` fails the
 /// request with net::ERR_FAILED.
+///
+/// Authentication is opt-in. Request cancellation or client shutdown closes
+/// pending reply receivers and emits exactly one terminal event. Replacing the
+/// interceptor affects subsequent hops; embedders must resolve/cancel already
+/// paused requests when disabling interception. Never retain a NetClient clone
+/// inside its interceptor (that would prevent last-client shutdown).
 pub trait Interceptor: Send + Sync {
     fn paused(&self, req: PausedRequest, reply: oneshot::Sender<InterceptDecision>);
+    fn handles_auth(&self) -> bool {
+        false
+    }
+    fn auth_required(&self, _challenge: AuthChallenge, reply: oneshot::Sender<AuthDecision>) {
+        let _ = reply.send(AuthDecision::Default);
+    }
 }
 
 enum Cmd {
@@ -673,7 +715,7 @@ impl Io {
             let interceptor = self.shared.interceptor.lock().unwrap().clone();
             let (mut method, mut url, mut headers, mut body) =
                 (req.method.clone(), req.url.clone(), headers, req.body.clone());
-            if let Some(i) = interceptor {
+            if let Some(i) = &interceptor {
                 let (tx, rx) = oneshot::channel();
                 i.paused(PausedRequest { id, request: info }, tx);
                 match rx.await {
@@ -715,7 +757,75 @@ impl Io {
             }
 
             let permit = self.origin_semaphore(&url).acquire_owned().await;
-            let resp = self.send(method.clone(), &url, headers, body).await?;
+            let mut auth_attempts = 0;
+            let auth_interceptor = interceptor.as_ref().filter(|i| i.handles_auth());
+            let resp = loop {
+                // Ordinary traffic does not need retry copies of the header map.
+                let resp = if auth_interceptor.is_some() {
+                    self.send(method.clone(), &url, headers.clone(), body.clone()).await?
+                } else {
+                    self.send(method.clone(), &url, std::mem::take(&mut headers), body.take()).await?
+                };
+                let proxy = resp.status() == StatusCode::PROXY_AUTHENTICATION_REQUIRED;
+                if resp.status() != StatusCode::UNAUTHORIZED && !proxy {
+                    break resp;
+                }
+                let Some(interceptor) = auth_interceptor else { break resp };
+                let challenge_header = if proxy { header::PROXY_AUTHENTICATE } else { header::WWW_AUTHENTICATE };
+                let Some((scheme, realm)) = auth_challenge(resp.headers(), challenge_header) else { break resp };
+                if auth_attempts >= self.shared.config.max_auth_retries {
+                    return Err(NetError::Blocked("net::ERR_INVALID_AUTH_CREDENTIALS".into()));
+                }
+                let (tx, rx) = oneshot::channel();
+                interceptor.auth_required(
+                    AuthChallenge {
+                        id,
+                        request: RequestInfo {
+                            url: url.clone(),
+                            method: method.clone(),
+                            headers: headers.clone(),
+                            post_data: body.clone(),
+                            destination: req.destination,
+                            frame_id: req.frame_id.clone(),
+                            loader_id: req.loader_id.clone(),
+                        },
+                        origin: url.origin().ascii_serialization(),
+                        scheme: scheme.clone(),
+                        realm,
+                        proxy,
+                    },
+                    tx,
+                );
+                match rx.await {
+                    Ok(AuthDecision::Default | AuthDecision::CancelAuth) => break resp,
+                    Ok(AuthDecision::ProvideCredentials { username, password }) => {
+                        if proxy {
+                            return Err(NetError::Other(
+                                "proxy authentication requires proxy transport support".into(),
+                            ));
+                        }
+                        if scheme != "basic" {
+                            return Err(NetError::Other(format!("unsupported authentication scheme: {scheme}")));
+                        }
+                        if username.contains(':') {
+                            return Err(NetError::Other("Basic authentication username contains ':'".into()));
+                        }
+                        use base64::Engine;
+                        let value = base64::engine::general_purpose::STANDARD.encode(format!("{username}:{password}"));
+                        let name = if proxy { header::PROXY_AUTHORIZATION } else { header::AUTHORIZATION };
+                        headers.insert(
+                            name,
+                            HeaderValue::from_str(&format!("Basic {value}"))
+                                .map_err(|_| NetError::Other("invalid credentials".into()))?,
+                        );
+                        auth_attempts += 1;
+                        // Drop the challenge body without buffering it. Keep the same
+                        // request ID and request-stage pause throughout auth retries.
+                        drop(resp);
+                    }
+                    Err(_) => return Err(NetError::Other("authentication interception dropped".into())),
+                }
+            };
             let status = resp.status();
             let resp_headers = resp.headers().clone();
             let cookies_allowed = match req.credentials {
