@@ -64,7 +64,12 @@ node scripts/compare-resources.mjs \
   --samples 3 --navigations 50 --contexts 20 --idle-ms 10000 --retained-ms 2000
 ```
 
-Use source SHAs corresponding to the actual builds and retain their build recipes. Results include executable
+Use source SHAs corresponding to the actual builds and retain their build recipes. Build every compared SHA from a
+clean checkout into its **own fresh, empty `CARGO_TARGET_DIR`**. A shared target directory can silently reuse
+stale artifacts when new worktrees have older file times: one comparison produced two identical binaries that
+way (`results/build-provenance-audit/`). Before timing, check that the binaries' code differs as expected; to
+verify an existing binary against its source, compare `scripts/macho-section-hash.py` output with a fresh build
+(whole-file hashes are not reproducible across target directories). Results include executable
 SHA-256, source SHA declarations, sampler/harness/fixture hashes, host, flags, version response, sample order,
 raw phase snapshots, native traces, errors and direct exit/signal status. Output directories must be new.
 Any failed behavioral assertion makes the run fail and keeps its evidence; do not aggregate failures as successes.
