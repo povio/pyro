@@ -55,6 +55,7 @@ fn entry_bytes(key: &str, value: &str) -> usize {
 }
 
 struct Namespace {
+    indexed_db: crate::indexeddb::Namespace,
     origins: RefCell<FxHashMap<String, Rc<RefCell<Area>>>>,
     quota: usize,
 }
@@ -73,7 +74,15 @@ impl Default for StorageNamespace {
 impl StorageNamespace {
     /// Per-origin quota in UTF-16 bytes, including keys and values.
     pub fn with_quota(bytes: usize) -> Self {
-        Self(Rc::new(Namespace { origins: RefCell::new(FxHashMap::default()), quota: bytes }))
+        Self(Rc::new(Namespace {
+            indexed_db: Default::default(),
+            origins: RefCell::new(FxHashMap::default()),
+            quota: bytes,
+        }))
+    }
+
+    pub(crate) fn indexed_db(&self) -> crate::indexeddb::Namespace {
+        self.0.indexed_db.clone()
     }
 
     fn area(&self, origin: String) -> Rc<RefCell<Area>> {
@@ -145,7 +154,7 @@ impl JsClass for Storage {
     }
 }
 
-pub(crate) fn window_storage<'s>(s: &Scope<'s>, page: &PageDom, session: bool) -> JsResult<Value<'s>> {
+pub(crate) fn storage_origin(s: &Scope<'_>, page: &PageDom) -> JsResult<String> {
     // An explicitly inherited realm origin handles about:blank/srcdoc. Opaque
     // realms cannot access storage; they must not share a common "null" bucket.
     let url = s.realm().origin().map(str::to_owned).unwrap_or_else(|| {
@@ -157,6 +166,11 @@ pub(crate) fn window_storage<'s>(s: &Scope<'s>, page: &PageDom, session: bool) -
         .filter(|origin| matches!(origin, url::Origin::Tuple(..)))
         .ok_or_else(|| JsError::dom("SecurityError", "Storage is unavailable for an opaque origin."))?
         .ascii_serialization();
+    Ok(origin)
+}
+
+pub(crate) fn window_storage<'s>(s: &Scope<'s>, page: &PageDom, session: bool) -> JsResult<Value<'s>> {
+    let origin = storage_origin(s, page)?;
     let namespace = if session { &page.session_storage } else { &page.local_storage };
     let area = namespace.borrow().area(origin);
     let key = IdentityKey(page.id() | (1 << 56), area.borrow().id);
