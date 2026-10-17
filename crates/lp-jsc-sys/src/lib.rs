@@ -514,6 +514,8 @@ pub mod spi {
         unsafe extern "C" fn(ctx: JSContextRef, object: JSObjectRef, name: JSStringRef) -> bool;
     pub type JSReportExtraMemoryCostFn = unsafe extern "C" fn(ctx: JSContextRef, size: usize);
     pub type JSSynchronousGarbageCollectForDebuggingFn = unsafe extern "C" fn(ctx: JSContextRef);
+    pub type JSObjectGetProxyTargetFn = unsafe extern "C" fn(object: JSObjectRef) -> JSObjectRef;
+    pub type JSObjectGetGlobalContextFn = unsafe extern "C" fn(object: JSObjectRef) -> JSGlobalContextRef;
 
     /// Runtime-resolved SPI table. Each entry is `None` when the running
     /// JavaScriptCore does not export the symbol.
@@ -530,6 +532,8 @@ pub mod spi {
         pub delete_private_property: Option<JSObjectDeletePrivatePropertyFn>,
         pub report_extra_memory_cost: Option<JSReportExtraMemoryCostFn>,
         pub synchronous_gc_for_debugging: Option<JSSynchronousGarbageCollectForDebuggingFn>,
+        pub get_proxy_target: Option<JSObjectGetProxyTargetFn>,
+        pub get_object_global_context: Option<JSObjectGetGlobalContextFn>,
     }
 
     impl Spi {
@@ -574,6 +578,8 @@ pub mod spi {
             delete_private_property: resolve!("JSObjectDeletePrivateProperty"),
             report_extra_memory_cost: resolve!("JSReportExtraMemoryCost"),
             synchronous_gc_for_debugging: resolve!("JSSynchronousGarbageCollectForDebugging"),
+            get_proxy_target: resolve!("JSObjectGetProxyTarget"),
+            get_object_global_context: resolve!("JSObjectGetGlobalContext"),
         })
     }
 }

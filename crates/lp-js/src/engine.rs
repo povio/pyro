@@ -25,6 +25,10 @@ pub struct Capabilities {
     pub termination: bool,
     /// `JSObject{Get,Set}PrivateProperty`: GC-traced hidden slots on wrappers.
     pub hidden_properties: bool,
+    /// No-trap inspection of native proxy targets, including global proxies.
+    pub proxy_targets: bool,
+    /// Native global-object detection, including globals retained after realm disposal.
+    pub object_global_context: bool,
 }
 
 impl Capabilities {
@@ -37,6 +41,8 @@ impl Capabilities {
             unhandled_rejections: spi.set_unhandled_rejection_callback.is_some(),
             termination: spi.set_execution_time_limit.is_some() && spi.clear_execution_time_limit.is_some(),
             hidden_properties: spi.get_private_property.is_some() && spi.set_private_property.is_some(),
+            proxy_targets: spi.get_proxy_target.is_some(),
+            object_global_context: spi.get_object_global_context.is_some(),
         }
     }
 }
