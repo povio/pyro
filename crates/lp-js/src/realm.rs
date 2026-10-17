@@ -360,6 +360,7 @@ impl<'s> Scope<'s> {
 
     /// Evaluates a classic script.
     pub fn eval(&self, source: &str, url: Option<&str>, line: i32) -> JsResult<Value<'s>> {
+        let _pool = crate::autorelease::Pool::new();
         let src = JsString::new(source);
         let url = url.map(JsString::new);
         let mut exc = ptr::null();

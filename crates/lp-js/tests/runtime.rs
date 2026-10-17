@@ -461,7 +461,7 @@ fn es_modules_through_fetcher() {
             let s = realm.scope().unwrap();
             let src = match url.as_str() {
                 "http://site.test/lib/b.js" => "export let b = 1; export function inc() { b++ }",
-                "http://site.test/c.js" => "export const c = 42;",
+                "http://site.test/c.js" => "export const c = 42; export const meta = import.meta.url;",
                 _ => {
                     request.reject(&s, &JsError::Type(format!("404 {url}"))).unwrap();
                     return;
@@ -477,7 +477,7 @@ fn es_modules_through_fetcher() {
     let p = s
         .eval_module(
             "import { b, inc } from './lib/b.js'; inc(); globalThis.out = b + ':' + import.meta.url; \
-             const m = await import('/c.js'); globalThis.dyn = m.c; \
+             const m = await import('/c.js'); globalThis.dyn = m.c; globalThis.dynMeta = m.meta; \
              try { await import('./missing.js') } catch (e) { globalThis.missing = e.message }",
             "http://site.test/main.js",
         )
@@ -485,6 +485,8 @@ fn es_modules_through_fetcher() {
     assert!(p.is_object());
     assert_eq!(eval_str(&r, "out"), "2:http://site.test/main.js");
     assert_eq!(eval_str(&r, "dyn"), "42");
+    // Known limit (docs/COMPATIBILITY.md #3): root-relative modules keep JSC's file:/// key.
+    assert_eq!(eval_str(&r, "dynMeta"), "file:///c.js");
     assert!(eval_str(&r, "missing").contains("404 http://site.test/missing.js"), "{}", eval_str(&r, "missing"));
     assert_eq!(
         *fetcher.requested.borrow(),
@@ -773,4 +775,101 @@ fn rooted_arguments_survive_gc_during_conversion() {
         )
         .unwrap();
     assert_eq!(v.to_number().unwrap(), 1000.0 + (0..64).sum::<i32>() as f64);
+}
+
+#[test]
+fn deferred_modules_release_native_payloads_before_engine_drop_returns() {
+    #[derive(Default)]
+    struct Fetcher(RefCell<Vec<ModuleRequest>>);
+    impl ModuleFetcher for Fetcher {
+        fn fetch(&self, _realm: &Realm, _url: String, request: ModuleRequest) {
+            self.0.borrow_mut().push(request);
+        }
+    }
+    let drops = Rc::new(Cell::new(0));
+    for cycle in 1..=32 {
+        let e = engine();
+        assert!(e.capabilities().modules);
+        e.register::<Node>();
+        let r = e.create_realm(RealmOptions::default()).unwrap();
+        expose::<Node>(&r, "keep", node(cycle, &drops), None);
+        let fetcher = Rc::new(Fetcher::default());
+        r.set_module_fetcher(Some(fetcher.clone()));
+        {
+            let s = r.scope().unwrap();
+            s.eval_module("import './dependency.js'; globalThis.loaded = true", "http://site.test/main.js").unwrap();
+            // Resolve outside the Objective-C shim's evaluate autorelease pool,
+            // just as a network task does after fetching a dependency. The
+            // dependency starts another fetch while C-API microtasks drain.
+            let request = fetcher.0.borrow_mut().pop().expect("pending dependency");
+            request.resolve(&s, "import './nested.js'; export const answer = 42").unwrap();
+            let request = fetcher.0.borrow_mut().pop().expect("pending nested dependency");
+            request.resolve(&s, "export const nested = true").unwrap();
+            assert!(s.eval("loaded", None, 1).unwrap().to_bool());
+        }
+        drop(r);
+        drop(e);
+        // An autoreleased JSContext/JSVirtualMachine must not keep the VM alive
+        // past its Rust finalizer queue and defer native payloads to thread exit.
+        assert_eq!(drops.get(), cycle as u32, "native payload remained alive after engine teardown");
+    }
+}
+
+#[test]
+fn dynamic_import_from_c_api_releases_native_payloads() {
+    struct Fetcher;
+    impl ModuleFetcher for Fetcher {
+        fn fetch(&self, realm: &Realm, _url: String, request: ModuleRequest) {
+            request.resolve(&realm.scope().unwrap(), "export const answer = 42").unwrap();
+        }
+    }
+    // Import can start outside eval_module: getters, coercions and proxy traps
+    // also re-enter JS through the C API and drain module work before returning.
+    for entry in ["eval", "getter", "coercion", "call", "rooted_call", "construct", "proxy"] {
+        let drops = Rc::new(Cell::new(0));
+        let e = engine();
+        e.register::<Node>();
+        let r = e.create_realm(RealmOptions::default()).unwrap();
+        expose::<Node>(&r, "keep", node(1, &drops), None);
+        r.set_module_fetcher(Some(Rc::new(Fetcher)));
+        {
+            let s = r.scope().unwrap();
+            s.eval(
+                "globalThis.start = function() { import('http://site.test/dep.js').then(m => globalThis.answer = m.answer); }; \
+                 globalThis.obj = { get value() { start(); return 1; }, valueOf() { start(); return 1; } }; \
+                 globalThis.proxy = new Proxy({}, { has() { start(); return true; } });",
+                None,
+                1,
+            ).unwrap();
+            let global = s.global();
+            match entry {
+                "eval" => {
+                    s.eval("start()", None, 1).unwrap();
+                }
+                "getter" => {
+                    global.get("obj").unwrap().as_object().unwrap().get("value").unwrap();
+                }
+                "coercion" => {
+                    global.get("obj").unwrap().to_number().unwrap();
+                }
+                "call" => {
+                    global.get("start").unwrap().as_object().unwrap().call(None, &[]).unwrap();
+                }
+                "rooted_call" => {
+                    global.get("start").unwrap().as_object().unwrap().call_rooted(None, &RootedVec::new()).unwrap();
+                }
+                "construct" => {
+                    global.get("start").unwrap().as_object().unwrap().construct(&[]).unwrap();
+                }
+                "proxy" => {
+                    assert!(global.get("proxy").unwrap().as_object().unwrap().has("x"));
+                }
+                _ => unreachable!(),
+            }
+            assert_eq!(s.eval("answer", None, 1).unwrap().to_number().unwrap(), 42.0, "{entry}");
+        }
+        drop(r);
+        drop(e);
+        assert_eq!(drops.get(), 1, "native payload retained by {entry}");
+    }
 }

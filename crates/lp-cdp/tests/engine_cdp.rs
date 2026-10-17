@@ -289,7 +289,7 @@ fn navigation_events_contexts_and_failures() {
     assert_eq!(r["error"]["message"], "Could not find object with given id", "handles die with their realm");
 
     let r = h.page("Page.navigate", json!({"url":"http://127.0.0.1:1/"}));
-    assert!(r["result"]["errorText"].as_str().unwrap().contains("ERR_NOT_IMPLEMENTED"), "explicit failure: {r}");
+    assert!(r["result"]["errorText"].as_str().unwrap().contains("ERR_CONNECTION_REFUSED"), "explicit failure: {r}");
     let r = h.page("Runtime.evaluate", json!({"expression":"40 + 2", "returnByValue": true}));
     assert_eq!(r["result"]["result"]["value"], 42, "page still usable after a failed navigation: {r}");
     assert!(r["result"].get("exceptionDetails").is_none(), "{r}");

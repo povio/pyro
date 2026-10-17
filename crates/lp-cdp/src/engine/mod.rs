@@ -158,6 +158,9 @@ impl EngineHost {
     pub fn new(out: Outbox) -> CdpResult<EngineHost> {
         let mut thread =
             BrowserThread::new().map_err(|e| CdpError::server(format!("JavaScript engine unavailable: {e}")))?;
+        thread
+            .enable_network(lp_net::NetConfig::default())
+            .map_err(|e| CdpError::server(format!("network unavailable: {e}")))?;
         let collector = Rc::new(Collector::new(out.clone()));
         thread.browser.set_observer(Some(collector.clone()));
         thread.browser.set_engine_hooks(Some(collector.clone()));

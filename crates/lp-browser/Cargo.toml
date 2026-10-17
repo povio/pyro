@@ -8,6 +8,9 @@ license.workspace = true
 [dependencies]
 lp-js.workspace = true
 lp-runtime.workspace = true
+lp-dom.workspace = true
+lp-net.workspace = true
+url = "2"
 
 [lints]
 workspace = true

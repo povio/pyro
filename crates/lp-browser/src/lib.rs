@@ -7,6 +7,8 @@
 //! come from `lp-dom`/`lp-net` (worker 2) and are not wired in yet: navigating
 //! to anything but `about:blank` currently fails with an explicit error.
 
+mod loader;
+mod nav;
 mod window;
 
 use lp_js::{Engine, EngineHooks, JsError, Realm, RealmId, RealmOptions};
@@ -15,10 +17,25 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Instant;
 
+pub use loader::{FetchDone, FetchRequest, NetLoader, Resource, ResourceKind, ResourceLoader, StaticLoader};
+pub use nav::{History, Location, PageNav, Performance};
 pub use window::{Window, WindowData};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct PageId(pub u32);
+
+/// A browser context (CDP `browserContextId`): pages sharing network state
+/// (own `lp_net::NetClient`, hence cookie jar). Context 0 is the default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ContextId(pub u32);
+
+pub const DEFAULT_CONTEXT: ContextId = ContextId(0);
+
+struct ContextState {
+    id: ContextId,
+    loader: Option<Rc<dyn ResourceLoader>>,
+    net: Option<lp_net::NetClient>,
+}
 
 /// CDP frame id (upstream uses a stable string per frame).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -167,6 +184,9 @@ pub struct Frame {
     pub url: String,
     pub loader_id: LoaderId,
     pub realms: Vec<FrameRealm>,
+    /// DOM store of the page (shared by its documents) and this frame's document.
+    pub dom: Option<lp_dom::parse::DomRef>,
+    pub document: Option<lp_dom::NodeId>,
 }
 
 impl Frame {
@@ -181,8 +201,16 @@ impl Frame {
 
 pub struct Page {
     pub id: PageId,
+    pub context: ContextId,
     pub main_frame: Frame,
     pub init_scripts: Vec<InitScript>,
+    /// Navigation whose document is being fetched (superseded fetches are ignored).
+    pub(crate) pending_loader: Option<LoaderId>,
+    /// Whether the pending navigation replaces the current history entry.
+    pub(crate) pending_replace: bool,
+    /// Session history and current URL (shared with the page's windows).
+    pub nav: Rc<PageNav>,
+    pub(crate) load: Option<loader::DocumentLoad>,
 }
 
 /// Browser-thread state: the loop state type for [`EventLoop`].
@@ -195,6 +223,15 @@ pub struct Browser {
     started: Instant,
     /// Finalized-wrapper payloads released at checkpoints (diagnostics).
     pub released_payloads: RefCell<u64>,
+    /// Cross-thread handle to this browser's own loop (network completions).
+    handle: LoopHandle<Browser>,
+    /// Loader for contexts without their own (tests, about:blank-only setups).
+    pub(crate) loader: Option<Rc<dyn ResourceLoader>>,
+    contexts: Vec<ContextState>,
+    /// When set, every new context gets its own NetClient with this config.
+    net_config: Option<lp_net::NetConfig>,
+    /// Completions of in-flight fetches, keyed by completion id.
+    pub(crate) completions: std::collections::HashMap<u64, FetchDone>,
 }
 
 impl LoopState for Browser {
@@ -215,6 +252,9 @@ impl BrowserThread {
     pub fn new() -> Result<BrowserThread, JsError> {
         let engine = Engine::new()?;
         engine.register::<Window>();
+        engine.register::<Location>();
+        engine.register::<History>();
+        engine.register::<Performance>();
         let event_loop = EventLoop::new();
         let browser = Browser {
             engine,
@@ -224,12 +264,24 @@ impl BrowserThread {
             next_id: Cell::new(1),
             started: Instant::now(),
             released_payloads: RefCell::new(0),
+            handle: event_loop.handle(),
+            loader: None,
+            contexts: vec![ContextState { id: DEFAULT_CONTEXT, loader: None, net: None }],
+            net_config: None,
+            completions: std::collections::HashMap::new(),
         };
         Ok(BrowserThread { event_loop, browser })
     }
 
     pub fn handle(&self) -> LoopHandle<Browser> {
         self.event_loop.handle()
+    }
+
+    /// Enables real document loading: every browser context (including the
+    /// default one) gets its own lp-net client (I/O thread, cookie jar).
+    pub fn enable_network(&mut self, config: lp_net::NetConfig) -> std::io::Result<()> {
+        self.browser.net_config = Some(config);
+        self.browser.attach_network(DEFAULT_CONTEXT)
     }
 
     /// Runs tasks/timers until idle or the deadline.
@@ -247,12 +299,21 @@ impl Browser {
         self.sched.clone()
     }
 
+    /// Cross-thread handle to this browser's loop.
+    pub fn loop_handle(&self) -> LoopHandle<Browser> {
+        self.handle.clone()
+    }
+
     pub fn set_observer(&mut self, observer: Option<Rc<dyn PageObserver>>) {
         self.observer = observer;
     }
 
     pub fn set_engine_hooks(&self, hooks: Option<Rc<dyn EngineHooks>>) {
         self.engine.set_hooks(hooks);
+    }
+
+    pub(crate) fn next_completion_id(&self) -> u64 {
+        self.next()
     }
 
     fn next(&self) -> u64 {
@@ -266,7 +327,7 @@ impl Browser {
         self.started.elapsed().as_secs_f64()
     }
 
-    fn emit(&self, page: PageId, event: PageEvent) {
+    pub(crate) fn emit(&self, page: PageId, event: PageEvent) {
         if let Some(o) = &self.observer {
             o.on_page_event(page, &event);
         }
@@ -274,15 +335,82 @@ impl Browser {
 
     /// Creates a page showing `about:blank` (with an executable main realm,
     /// unlike the pinned upstream build TOS works around).
+    /// Creates a page in the default context.
     pub fn create_page(&mut self) -> Result<PageId, JsError> {
+        self.create_page_in(DEFAULT_CONTEXT)
+    }
+
+    /// Creates an isolated browser context with its own network state.
+    pub fn create_context(&mut self) -> std::io::Result<ContextId> {
+        let id = ContextId(self.next() as u32);
+        self.contexts.push(ContextState { id, loader: None, net: None });
+        if self.net_config.is_some() {
+            self.attach_network(id)?;
+        }
+        Ok(id)
+    }
+
+    fn attach_network(&mut self, id: ContextId) -> std::io::Result<()> {
+        let config = self.net_config.clone().unwrap_or_default();
+        let client = lp_net::NetClient::new(config)?;
+        if let Some(c) = self.contexts.iter_mut().find(|c| c.id == id) {
+            c.loader = Some(Rc::new(NetLoader::new(client.clone())));
+            c.net = Some(client);
+        }
+        Ok(())
+    }
+
+    /// Closes a context: its pages are closed and its network client dropped.
+    /// The default context cannot be closed.
+    pub fn close_context(&mut self, id: ContextId) -> bool {
+        if id == DEFAULT_CONTEXT {
+            return false;
+        }
+        let pages: Vec<PageId> = self.pages.iter().filter(|p| p.context == id).map(|p| p.id).collect();
+        for p in pages {
+            self.close_page(p);
+        }
+        let before = self.contexts.len();
+        self.contexts.retain(|c| c.id != id);
+        before != self.contexts.len()
+    }
+
+    /// The context's network client (cookies, interception, events).
+    pub fn context_net(&self, id: ContextId) -> Option<&lp_net::NetClient> {
+        self.contexts.iter().find(|c| c.id == id)?.net.as_ref()
+    }
+
+    /// Loader used by `page`: its context's, else the browser default.
+    pub(crate) fn loader_for(&self, page: PageId) -> Option<Rc<dyn ResourceLoader>> {
+        let ctx = self.page(page).map(|p| p.context).unwrap_or(DEFAULT_CONTEXT);
+        self.contexts.iter().find(|c| c.id == ctx).and_then(|c| c.loader.clone()).or_else(|| self.loader.clone())
+    }
+
+    /// Creates a page in context `context`.
+    pub fn create_page_in(&mut self, context: ContextId) -> Result<PageId, JsError> {
+        if !self.contexts.iter().any(|c| c.id == context) {
+            return Err(JsError::Type("no such browser context".into()));
+        }
         let id = PageId(self.next() as u32);
         let frame = Frame {
             id: FrameId(format!("{:032X}", self.next())),
             url: "about:blank".into(),
             loader_id: LoaderId(format!("{:032X}", self.next())),
             realms: Vec::new(),
+            dom: None,
+            document: None,
         };
-        self.pages.push(Page { id, main_frame: frame, init_scripts: Vec::new() });
+        let nav = PageNav::new(id, self.sched.clone());
+        self.pages.push(Page {
+            id,
+            context,
+            main_frame: frame,
+            init_scripts: Vec::new(),
+            pending_loader: None,
+            pending_replace: false,
+            nav,
+            load: None,
+        });
         self.navigate(
             id,
             NavigateOpts {
@@ -299,7 +427,7 @@ impl Browser {
         self.pages.iter().find(|p| p.id == id)
     }
 
-    fn page_mut(&mut self, id: PageId) -> Option<&mut Page> {
+    pub(crate) fn page_mut(&mut self, id: PageId) -> Option<&mut Page> {
         self.pages.iter_mut().find(|p| p.id == id)
     }
 
@@ -327,6 +455,20 @@ impl Browser {
     /// Starts a navigation. Only `about:blank` is supported until document
     /// loading (lp-dom/lp-net) is integrated; other URLs emit
     /// `FrameNavigateFailed` and return an error.
+    /// Starts a navigation that replaces the current history entry when
+    /// `replace` (location.replace/reload, history traversal).
+    pub fn navigate_with_history(
+        &mut self,
+        page: PageId,
+        opts: NavigateOpts,
+        replace: bool,
+    ) -> Result<LoaderId, JsError> {
+        if let Some(p) = self.page_mut(page) {
+            p.pending_replace = replace;
+        }
+        self.navigate(page, opts)
+    }
+
     pub fn navigate(&mut self, page: PageId, opts: NavigateOpts) -> Result<LoaderId, JsError> {
         let loader_id = LoaderId(format!("{:032X}", self.next()));
         let frame_id = self.page(page).ok_or(JsError::Type("no such page".into()))?.main_frame.id.clone();
@@ -340,8 +482,12 @@ impl Browser {
                 cdp_request_id: opts.cdp_request_id,
             },
         );
+        if opts.url != "about:blank" && self.loader_for(page).is_some() {
+            self.start_document_fetch(page, opts, loader_id.clone())?;
+            return Ok(loader_id);
+        }
         if opts.url != "about:blank" {
-            let error = "net::ERR_NOT_IMPLEMENTED (document loading is not integrated yet)".to_string();
+            let error = "net::ERR_NOT_IMPLEMENTED (no resource loader configured)".to_string();
             self.emit(
                 page,
                 PageEvent::FrameNavigateFailed {
@@ -375,7 +521,7 @@ impl Browser {
 
     /// Replaces the frame's realms with fresh ones for the new document, runs
     /// init scripts, then emits `FrameNavigated`.
-    fn commit_document(
+    pub(crate) fn commit_document(
         &mut self,
         page: PageId,
         opts: &NavigateOpts,
@@ -384,12 +530,18 @@ impl Browser {
     ) -> Result<(), JsError> {
         let window_class = self.engine.register::<Window>();
         let sched = self.sched.clone();
-        let (frame_id, old, scripts) = {
+        let (frame_id, old, scripts, nav) = {
             let p = self.page_mut(page).ok_or(JsError::Type("no such page".into()))?;
             let old = std::mem::take(&mut p.main_frame.realms);
+            // The previous document (and its in-flight loads) is gone.
+            p.load = None;
+            p.main_frame.dom = None;
+            p.main_frame.document = None;
             p.main_frame.url = opts.url.clone();
             p.main_frame.loader_id = loader_id.clone();
-            (p.main_frame.id.clone(), old, p.init_scripts.clone())
+            let replace = std::mem::take(&mut p.pending_replace);
+            p.nav.commit_document(&opts.url, replace, None);
+            (p.main_frame.id.clone(), old, p.init_scripts.clone(), p.nav.clone())
         };
         for r in old {
             window::cancel_timers(&r.realm);
@@ -411,7 +563,7 @@ impl Browser {
                 global_class: Some(window_class),
                 origin: (origin != "null").then(|| origin.to_string()),
             })?;
-            realm.set_global_data::<Window>(WindowData::new(sched.clone(), opts.url.clone()))?;
+            realm.set_global_data::<Window>(WindowData::new(sched.clone(), nav.clone()))?;
             for s in scripts.iter().filter(|s| s.world == world) {
                 let scope = realm.scope()?;
                 if let Err(e) = scope.eval(&s.source, Some(&format!("init-script:{}", s.id)), 1) {
@@ -463,7 +615,9 @@ impl Browser {
             global_class: Some(window_class),
             origin: None,
         })?;
-        realm.set_global_data::<Window>(WindowData::new(self.sched.clone(), url))?;
+        let nav = self.page(page).expect("page").nav.clone();
+        let _ = url;
+        realm.set_global_data::<Window>(WindowData::new(self.sched.clone(), nav))?;
         self.page_mut(page)
             .expect("page")
             .main_frame

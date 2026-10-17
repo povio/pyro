@@ -659,3 +659,16 @@ mod tests {
         }
     }
 }
+
+/// Objective-C autorelease boundaries for native threads entering JavaScriptCore.
+pub mod autorelease {
+    use std::os::raw::c_void;
+
+    #[link(name = "objc")]
+    unsafe extern "C" {
+        /// Push a pool on this thread. Pop it in LIFO order before thread exit.
+        pub fn objc_autoreleasePoolPush() -> *mut c_void;
+        /// Drain a pool created on the same thread with no younger live pools.
+        pub fn objc_autoreleasePoolPop(pool: *mut c_void);
+    }
+}

@@ -3,42 +3,42 @@
 //! DOM-facing members (document, location, events) come from lp-webapi once
 //! integrated; `Window` will then inherit `EventTarget` via `ClassDef::upcast`.
 
+use crate::nav::{History, Location, PageNav, Performance, PerformanceData};
 use crate::Browser;
-use lp_js::{Args, ClassDef, JsClass, JsError, JsResult, NoParent, Persistent, Realm, Scope, Value};
+use lp_js::{Args, ClassDef, IdentityKey, JsClass, JsError, JsResult, NoParent, Persistent, Realm, Scope, Value};
 use lp_runtime::{Scheduler, TimerId};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::rc::Rc;
+use std::time::Duration;
 
 pub struct WindowData {
     sched: Scheduler<Browser>,
+    nav: Rc<PageNav>,
     /// JS timer handle -> loop timer.
     timers: RefCell<HashMap<u32, TimerId>>,
     next_handle: Cell<u32>,
-    time_origin: Instant,
-    url: RefCell<String>,
 }
 
 impl WindowData {
-    pub fn new(sched: Scheduler<Browser>, url: String) -> WindowData {
-        WindowData {
-            sched,
-            timers: RefCell::new(HashMap::new()),
-            next_handle: Cell::new(1),
-            time_origin: Instant::now(),
-            url: RefCell::new(url),
-        }
+    pub fn new(sched: Scheduler<Browser>, nav: Rc<PageNav>) -> WindowData {
+        WindowData { sched, nav, timers: RefCell::new(HashMap::new()), next_handle: Cell::new(1) }
     }
 
     pub fn url(&self) -> String {
-        self.url.borrow().clone()
+        self.nav.url()
     }
 
-    /// Milliseconds since the window's time origin (`performance.now()`).
+    /// Milliseconds since the document's time origin (`performance.now()`).
     pub fn now_ms(&self) -> f64 {
-        self.time_origin.elapsed().as_secs_f64() * 1000.0
+        self.nav.now_ms()
     }
 }
+
+/// Identity keys of the per-window singletons (one wrapper per realm).
+const KEY_LOCATION: u64 = 0x4c6f_6361_7469_6f6e;
+const KEY_HISTORY: u64 = 0x4869_7374_6f72_7900;
+const KEY_PERFORMANCE: u64 = 0x5065_7266_6f72_6d00;
 
 pub struct Window;
 
@@ -83,16 +83,42 @@ impl JsClass for Window {
             )?;
             Ok(s.undefined())
         });
+        def.accessor(
+            "location",
+            |s, w| Ok(s.wrap::<Location>(w.nav.clone(), Some(IdentityKey(KEY_LOCATION, 0)))?.value()),
+            |s, w, v| {
+                // `window.location = url` assigns href.
+                let loc = s.wrap::<Location>(w.nav.clone(), Some(IdentityKey(KEY_LOCATION, 0)))?;
+                loc.set("href", v)
+            },
+        );
+        def.getter("history", |s, w| Ok(s.wrap::<History>(w.nav.clone(), Some(IdentityKey(KEY_HISTORY, 0)))?.value()));
+        def.getter("performance", |s, w| {
+            if let Some(o) = s.lookup_identity(IdentityKey(KEY_PERFORMANCE, 0)) {
+                return Ok(o.value());
+            }
+            Ok(s.wrap::<Performance>(PerformanceData::new(w.nav.clone()), Some(IdentityKey(KEY_PERFORMANCE, 0)))?
+                .value())
+        });
+        def.getter("top", |s, _w| Ok(s.global().value()));
+        def.getter("parent", |s, _w| Ok(s.global().value()));
+        def.getter("opener", |s, _w| Ok(s.null()));
+        def.getter("closed", |s, _w| Ok(s.boolean(false)));
+        def.getter("origin", |s, w| {
+            let o =
+                url::Url::parse(&w.url()).map(|u| u.origin().ascii_serialization()).unwrap_or_else(|_| "null".into());
+            Ok(s.string(&o))
+        });
         def.getter("window", |s, _w| Ok(s.global().value()));
         def.getter("self", |s, _w| Ok(s.global().value()));
         def.getter("frames", |s, _w| Ok(s.global().value()));
         def.getter("isSecureContext", |s, w| {
-            let u = w.url.borrow();
+            let u = w.url();
             Ok(s.boolean(
                 u.starts_with("https:")
                     || u.starts_with("http://localhost")
                     || u.starts_with("http://127.0.0.1")
-                    || *u == "about:blank",
+                    || u == "about:blank",
             ))
         });
         def.method("__lpNow", 0, |s, w, _a| Ok(s.number(w.now_ms())));
