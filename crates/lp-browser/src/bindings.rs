@@ -101,6 +101,10 @@ impl Browser {
         dom.borrow_mut().set_resource_tracking(true);
         let bindings = PageDom::new(dom, doc);
         bindings.set_storage_namespaces(local_storage, session_storage);
+        bindings.set_request_context(lp_webapi::RequestContext {
+            frame_id: Some(state.main_frame.id.0.clone()),
+            loader_id: Some(loader.0.clone()),
+        });
         bindings.create_window_target(doc);
         bindings.set_ready_state(doc, "loading");
         *bindings.net.borrow_mut() = self.context_net(context).cloned();
