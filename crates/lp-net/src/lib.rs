@@ -6,6 +6,8 @@ pub mod cookies;
 pub mod cors;
 pub mod data_url;
 pub mod request;
+mod subscription;
+pub use subscription::{NetSubscription, NetWake, SubscriptionError, SubscriptionLimits};
 
 pub use client::{
     InterceptDecision, Interceptor, NetClient, NetConfig, NetEvent, NetSettings, PausedRequest, RequestInfo,

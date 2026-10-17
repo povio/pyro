@@ -27,6 +27,7 @@ use url::Url;
 use crate::cookies::{site_context, CookieJar, SiteContext};
 use crate::cors::{self, PreflightCache};
 use crate::request::*;
+use crate::subscription::{NetSubscription, NetWake, SubscriptionLimits, Subscriptions};
 
 /// Consumer of one request's events; wrap it to post to the browser loop.
 ///
@@ -176,7 +177,7 @@ struct Inner {
 struct Shared {
     config: NetConfig,
     settings: Mutex<NetSettings>,
-    observers: Mutex<Vec<mpsc::UnboundedSender<NetEvent>>>,
+    observers: Subscriptions,
     interceptor: Mutex<Option<Arc<dyn Interceptor>>>,
     epoch: Instant,
 }
@@ -186,14 +187,10 @@ impl Shared {
         self.epoch.elapsed().as_secs_f64()
     }
     fn emit(&self, ev: NetEvent) {
-        let mut obs = self.observers.lock().unwrap();
-        if obs.is_empty() {
-            return;
-        }
-        obs.retain(|tx| tx.send(ev.clone()).is_ok());
+        self.observers.emit(ev);
     }
     fn observed(&self) -> bool {
-        !self.observers.lock().unwrap().is_empty()
+        self.observers.observed()
     }
 }
 
@@ -222,7 +219,7 @@ impl NetClient {
         let shared = Arc::new(Shared {
             config,
             settings: Mutex::new(NetSettings::default()),
-            observers: Mutex::new(Vec::new()),
+            observers: Subscriptions::default(),
             interceptor: Mutex::new(None),
             epoch: Instant::now(),
         });
@@ -258,12 +255,15 @@ impl NetClient {
     pub fn update_settings(&self, f: impl FnOnce(&mut NetSettings)) {
         f(&mut self.inner.shared.settings.lock().unwrap());
     }
-    /// Subscribes to Network events. Unbounded: events are small; bodies
-    /// are refcounted `Bytes` and retention policy belongs to the consumer.
-    pub fn subscribe(&self) -> mpsc::UnboundedReceiver<NetEvent> {
-        let (tx, rx) = mpsc::unbounded_channel();
-        self.inner.shared.observers.lock().unwrap().push(tx);
-        rx
+    /// Subscribes with bounded defaults (1024 events / 8 MiB logical bytes).
+    pub fn subscribe(&self) -> NetSubscription {
+        self.subscribe_with(SubscriptionLimits::default(), None)
+    }
+    /// Wake runs on the publishing thread after all observer locks are released,
+    /// on empty-to-nonempty and terminal transitions. It should post/coalesce a
+    /// browser-loop task. Overflow is explicit and terminates the subscription.
+    pub fn subscribe_with(&self, limits: SubscriptionLimits, wake: Option<NetWake>) -> NetSubscription {
+        self.inner.shared.observers.subscribe(limits, wake)
     }
     pub fn set_interceptor(&self, i: Option<Arc<dyn Interceptor>>) {
         *self.inner.shared.interceptor.lock().unwrap() = i;
@@ -336,6 +336,13 @@ struct Io {
 }
 
 fn io_main(mut rx: mpsc::UnboundedReceiver<Cmd>, shared: Arc<Shared>, cookies: Arc<Mutex<CookieJar>>) {
+    struct CloseObservers(Arc<Shared>);
+    impl Drop for CloseObservers {
+        fn drop(&mut self) {
+            self.0.observers.close();
+        }
+    }
+    let _close_observers = CloseObservers(shared.clone());
     let rt = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
         Ok(rt) => rt,
         Err(_) => return,
@@ -358,6 +365,7 @@ fn io_main(mut rx: mpsc::UnboundedReceiver<Cmd>, shared: Arc<Shared>, cookies: A
         while let Some(cmd) = rx.recv().await {
             match cmd {
                 Cmd::Fetch(id, req, sink) => {
+                    let destination = req.destination;
                     let sink = std::rc::Rc::new(std::cell::RefCell::new(Some(sink)));
                     let (io2, tasks2, sink2) = (io.clone(), tasks.clone(), sink.clone());
                     let handle = tokio::task::spawn_local(async move {
@@ -376,7 +384,7 @@ fn io_main(mut rx: mpsc::UnboundedReceiver<Cmd>, shared: Arc<Shared>, cookies: A
                         sink2.borrow_mut().take();
                         tasks2.borrow_mut().remove(&id);
                     });
-                    tasks.borrow_mut().insert(id, Task { abort: handle.abort_handle(), sink });
+                    tasks.borrow_mut().insert(id, Task { abort: handle.abort_handle(), sink, destination });
                 }
                 Cmd::Cancel(id) => {
                     if let Some(t) = tasks.borrow_mut().remove(&id) {
@@ -385,7 +393,7 @@ fn io_main(mut rx: mpsc::UnboundedReceiver<Cmd>, shared: Arc<Shared>, cookies: A
                             id,
                             error: NetError::Aborted,
                             canceled: true,
-                            destination: Destination::Other,
+                            destination: t.destination,
                             timestamp: io.shared.now(),
                         });
                         deliver(&t.sink, ResponseEvent::Failed(NetError::Aborted));
@@ -396,8 +404,15 @@ fn io_main(mut rx: mpsc::UnboundedReceiver<Cmd>, shared: Arc<Shared>, cookies: A
         }
         // Shutdown: every in-flight request still gets its terminal event.
         let pending: Vec<(RequestId, Task)> = tasks.borrow_mut().drain().collect();
-        for (_, t) in pending {
+        for (id, t) in pending {
             t.abort.abort();
+            io.shared.emit(NetEvent::LoadingFailed {
+                id,
+                error: NetError::Aborted,
+                canceled: true,
+                destination: t.destination,
+                timestamp: io.shared.now(),
+            });
             deliver(&t.sink, ResponseEvent::Failed(NetError::Aborted));
             t.sink.borrow_mut().take();
         }
@@ -405,6 +420,7 @@ fn io_main(mut rx: mpsc::UnboundedReceiver<Cmd>, shared: Arc<Shared>, cookies: A
 }
 
 struct Task {
+    destination: Destination,
     abort: tokio::task::AbortHandle,
     sink: SharedSink,
 }

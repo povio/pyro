@@ -253,7 +253,7 @@ fn cors_preflight_and_rejection() {
 fn cancel_and_observer() {
     let s = start_server();
     let c = NetClient::new(NetConfig::default()).unwrap();
-    let mut events = c.subscribe();
+    let events = c.subscribe();
     let (tx, rx) = mpsc::channel();
     let id = c.fetch(Request::get(url(&s, "/slow"), Destination::Xhr), Box::new(move |ev| tx.send(ev).unwrap()));
     std::thread::sleep(Duration::from_millis(100));
@@ -293,6 +293,7 @@ fn cancel_and_observer() {
 fn drop_fails_in_flight_requests() {
     let s = start_server();
     let c = NetClient::new(NetConfig::default()).unwrap();
+    let events = c.subscribe();
     let (tx, rx) = mpsc::channel();
     c.fetch(Request::get(url(&s, "/slow"), Destination::Fetch), Box::new(move |ev| tx.send(ev).unwrap()));
     std::thread::sleep(Duration::from_millis(100));
@@ -302,4 +303,19 @@ fn drop_fails_in_flight_requests() {
         other => panic!("unexpected {other:?}"),
     }
     assert!(rx.recv_timeout(Duration::from_millis(200)).is_err(), "exactly one terminal event");
+    let mut failures = 0;
+    loop {
+        match events.try_recv() {
+            Ok(NetEvent::LoadingFailed {
+                error: NetError::Aborted,
+                canceled: true,
+                destination: Destination::Fetch,
+                ..
+            }) => failures += 1,
+            Ok(NetEvent::RequestWillBeSent { .. }) => {}
+            Err(SubscriptionError::Closed) => break,
+            other => panic!("unexpected shutdown observation {other:?}"),
+        }
+    }
+    assert_eq!(failures, 1);
 }
