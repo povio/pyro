@@ -9,7 +9,7 @@
 //! lp-webapi's EventTarget; history state is stored as JSON (not a full
 //! structured clone); traversal across documents re-fetches (no bfcache).
 
-use crate::{Browser, NavigateOpts, NavigationReason, PageEvent, PageId, SameDocumentKind};
+use crate::{Browser, FrameId, NavigateOpts, NavigationReason, ObserverCell, PageEvent, PageId, SameDocumentKind};
 use lp_dom::parse::DomRef;
 use lp_dom::NodeId;
 use lp_js::{ClassDef, JsClass, JsError, JsResult, NoParent, Scope, Value};
@@ -40,6 +40,11 @@ struct NavState {
 /// Per-page navigation state shared by the page and its windows.
 pub struct PageNav {
     page: PageId,
+    frame_id: FrameId,
+    observer: ObserverCell,
+    /// URL of a synchronous same-document commit not yet copied to
+    /// `Frame::url` (done at the next checkpoint, outside JavaScript).
+    pending_frame_url: RefCell<Option<String>>,
     sched: Scheduler<Browser>,
     state: RefCell<NavState>,
     /// Current document in the page's DOM (keeps `document.URL` in sync).
@@ -48,9 +53,17 @@ pub struct PageNav {
 }
 
 impl PageNav {
-    pub(crate) fn new(page: PageId, sched: Scheduler<Browser>) -> Rc<PageNav> {
+    pub(crate) fn new(
+        page: PageId,
+        frame_id: FrameId,
+        sched: Scheduler<Browser>,
+        observer: ObserverCell,
+    ) -> Rc<PageNav> {
         Rc::new(PageNav {
             page,
+            frame_id,
+            observer,
+            pending_frame_url: RefCell::new(None),
             sched,
             state: RefCell::new(NavState {
                 url: "about:blank".into(),
@@ -74,6 +87,7 @@ impl PageNav {
 
     /// Records a committed cross-document navigation.
     pub(crate) fn commit_document(&self, url: &str, replace: bool, document: Option<(DomRef, NodeId)>) {
+        self.pending_frame_url.borrow_mut().take();
         let mut st = self.state.borrow_mut();
         st.doc_seq += 1;
         let entry = Entry { url: url.to_string(), state: None, doc: st.doc_seq };
@@ -129,14 +143,17 @@ impl PageNav {
             }
         }
         self.set_url_sync(url);
-        let page = self.page;
-        let url = url.to_string();
-        let document = self.state.borrow().doc_seq;
-        self.sched.post(TaskSource::Navigation, move |b| {
-            if b.page(page).is_some_and(|p| p.nav.state.borrow().doc_seq == document) {
-                b.same_document_committed(page, url, kind);
-            }
-        });
+        // Reported synchronously, like browsers: anything the client observes
+        // after this JavaScript turn (a CDP reply, a network event) must come
+        // after the URL change. Frame::url follows at the next checkpoint.
+        *self.pending_frame_url.borrow_mut() = Some(url.to_string());
+        let event =
+            PageEvent::FrameNavigatedWithinDocument { frame_id: self.frame_id.clone(), url: url.to_string(), kind };
+        crate::emit_to(&self.observer, self.page, &event);
+    }
+
+    pub(crate) fn take_pending_frame_url(&self) -> Option<String> {
+        self.pending_frame_url.borrow_mut().take()
     }
 
     fn navigate(&self, url: String, replace: bool) {
@@ -220,6 +237,14 @@ fn traversing(st: &NavState, url: &str) -> bool {
 }
 
 impl Browser {
+    /// Copies a synchronous same-document commit's URL to the frame.
+    pub(crate) fn apply_same_document_url(&mut self, page: PageId) {
+        let Some(p) = self.page_mut(page) else { return };
+        if let Some(url) = p.nav.take_pending_frame_url() {
+            p.main_frame.url = url;
+        }
+    }
+
     pub(crate) fn same_document_committed(&mut self, page: PageId, url: String, kind: SameDocumentKind) {
         let Some(p) = self.page_mut(page) else { return };
         p.main_frame.url = url.clone();
