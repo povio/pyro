@@ -1415,3 +1415,100 @@ fn push_state_event_precedes_the_evaluate_reply() {
     let tree = h.page("Page.getFrameTree", json!({}));
     assert_eq!(tree["result"]["frameTree"]["frame"]["url"], format!("http://{address}/pushed-1"));
 }
+
+/// Playwright on macOS sends the editing commands its table derives from the
+/// key (crInput `_commandsForCode`), e.g. ArrowRight -> ["moveRight"]. Those are
+/// accepted and the engine's own key default actions run (TOS batch 12,
+/// docubox-templates `keyboard.press("ArrowRight")`). Commands that are not the
+/// key's own encoding still fail explicitly, before any event is delivered.
+#[test]
+fn input_accepts_mac_key_derived_editing_commands() {
+    let mut h = Harness::new();
+    let r = h.page(
+        "Runtime.evaluate",
+        json!({"expression":r#"
+        document.body.innerHTML = '<input id="field" value="abc"><button id="tree">tree</button>';
+        globalThis.field = document.querySelector('#field');
+        globalThis.keys = [];
+        document.addEventListener('keydown', e => keys.push(e.key));
+        field.focus(); field.setSelectionRange(0, 0);
+    "#}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    let press = |h: &mut Harness, key: &str, code: &str, vk: u32, modifiers: u32, commands: Value| {
+        // Exactly the parameters Playwright 1.59 sends on macOS.
+        let down = json!({"type":"rawKeyDown","modifiers":modifiers,"windowsVirtualKeyCode":vk,"code":code,"commands":commands,
+            "key":key,"text":"","unmodifiedText":"","autoRepeat":false,"location":0,"isKeypad":false});
+        let r = h.page("Input.dispatchKeyEvent", down);
+        assert_eq!(r["result"], json!({}), "{key}: {r}");
+        let up =
+            json!({"type":"keyUp","modifiers":modifiers,"key":key,"windowsVirtualKeyCode":vk,"code":code,"location":0});
+        assert_eq!(h.page("Input.dispatchKeyEvent", up)["result"], json!({}));
+    };
+    let selection = |h: &mut Harness| {
+        h.page(
+            "Runtime.evaluate",
+            json!({"expression":"[field.selectionStart, field.selectionEnd]","returnByValue":true}),
+        )["result"]["result"]["value"]
+            .clone()
+    };
+    press(&mut h, "ArrowRight", "ArrowRight", 39, 0, json!(["moveRight"]));
+    assert_eq!(selection(&mut h), json!([1, 1]));
+    press(&mut h, "ArrowRight", "ArrowRight", 39, 8, json!(["moveRightAndModifySelection"]));
+    assert_eq!(selection(&mut h), json!([1, 2]));
+    press(&mut h, "ArrowLeft", "ArrowLeft", 37, 0, json!(["moveLeft"]));
+    assert_eq!(selection(&mut h), json!([1, 1]));
+    press(&mut h, "a", "KeyA", 65, 4, json!(["selectAll"]));
+    assert_eq!(selection(&mut h), json!([0, 3]));
+    // A focused non-editable element (the TOS case) receives the key event too.
+    h.page("Runtime.evaluate", json!({"expression":"document.querySelector('#tree').focus()"}));
+    press(&mut h, "ArrowRight", "ArrowRight", 39, 0, json!(["moveRight"]));
+    assert_eq!(
+        h.page("Runtime.evaluate", json!({"expression":"keys","returnByValue":true}))["result"]["result"]["value"],
+        json!(["ArrowRight", "ArrowRight", "ArrowLeft", "a", "ArrowRight"])
+    );
+    // Commands the engine would not carry out (Playwright derives scrolling,
+    // clipboard, undo and word movement too), and commands that are not the
+    // key's own encoding, are refused without delivering events.
+    for (key, code, modifiers, commands) in [
+        ("Home", "Home", 0, json!(["scrollToBeginningOfDocument"])),
+        ("ArrowLeft", "ArrowLeft", 1, json!(["moveWordLeft"])),
+        ("z", "KeyZ", 4, json!(["undo"])),
+        ("ArrowRight", "ArrowRight", 0, json!(["moveLeft"])),
+        ("c", "KeyC", 4, json!(["copy"])),
+        ("ArrowRight", "ArrowRight", 0, json!(["moveRight", "selectAll"])),
+        ("a", "KeyA", 0, json!(["selectAll"])),
+        // Emacs-style aliases in Playwright's table: the engine's deletion and
+        // caret defaults are keyed on Backspace/Delete/Arrow keys, not these.
+        ("d", "KeyD", 2, json!(["deleteForward"])),
+        ("h", "KeyH", 2, json!(["deleteBackward"])),
+        ("b", "KeyB", 2, json!(["moveBackward"])),
+        ("f", "KeyF", 2, json!(["moveForward"])),
+        // Right shortcut and command, but a key the default action is not keyed on.
+        ("x", "Backspace", 0, json!(["deleteBackward"])),
+    ] {
+        let r = h.page(
+            "Input.dispatchKeyEvent",
+            json!({"type":"rawKeyDown","key":key,"code":code,"modifiers":modifiers,"commands":commands}),
+        );
+        assert_eq!(r["error"]["code"], -32000, "{key} {commands}: {r}");
+    }
+    assert_eq!(
+        h.page("Runtime.evaluate", json!({"expression":"keys.length","returnByValue":true}))["result"]["result"]
+            ["value"],
+        5,
+        "rejected commands deliver no events"
+    );
+    // The supported deletions keep their behavior with their own commands.
+    h.page(
+        "Runtime.evaluate",
+        json!({"expression":"field.focus(); field.value = 'abcd'; field.setSelectionRange(2, 2)"}),
+    );
+    press(&mut h, "Backspace", "Backspace", 8, 0, json!(["deleteBackward"]));
+    press(&mut h, "Delete", "Delete", 46, 8, json!(["deleteForward"]));
+    assert_eq!(
+        h.page("Runtime.evaluate", json!({"expression":"[field.value, field.selectionStart]","returnByValue":true}))
+            ["result"]["result"]["value"],
+        json!(["ad", 1])
+    );
+}

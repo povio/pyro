@@ -357,6 +357,27 @@ try {
       await page.unroute('**/inttra-credentials/binary');
     }
   });
+  await check('keyboard.press arrows, selection, select-all and Backspace with macOS editing commands (TOS docubox case)', async () => {
+    // On macOS Playwright attaches editing commands (ArrowRight -> moveRight); on Linux it sends none.
+    await page.evaluate(() => {
+      document.body.innerHTML = '<input id="caret" value="abcd"><button id="tree">tree</button>';
+      globalThis.treeKeys = [];
+      document.querySelector('#tree').addEventListener('keydown', e => treeKeys.push(e.key));
+      const input = document.querySelector('#caret');
+      input.focus(); input.setSelectionRange(0, 0);
+    });
+    await page.keyboard.press('ArrowRight');
+    await page.keyboard.press('Shift+ArrowRight');
+    assert.deepEqual(await page.evaluate(() => { const c = document.querySelector('#caret'); return [c.selectionStart, c.selectionEnd]; }), [1, 2]);
+    await page.keyboard.press('ArrowLeft');
+    await page.keyboard.press('Backspace');
+    assert.deepEqual(await page.evaluate(() => { const c = document.querySelector('#caret'); return [c.value, c.selectionStart]; }), ['bcd', 0]);
+    await page.keyboard.press('Meta+a');
+    assert.deepEqual(await page.evaluate(() => { const c = document.querySelector('#caret'); return [c.selectionStart, c.selectionEnd]; }), [0, 3]);
+    await page.focus('#tree');
+    await page.keyboard.press('ArrowRight');
+    assert.deepEqual(await page.evaluate(() => treeKeys), ['ArrowRight']);
+  });
   await check('page fetch route fulfillment and abort after headers', async () => {
     await page.route('**/routed-fetch', route => route.fulfill({ status: 202, contentType: 'application/json', body: '{"routed":48}' }));
     try {
