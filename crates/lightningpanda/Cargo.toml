@@ -1,0 +1,18 @@
+[package]
+name = "lightningpanda"
+description = "Headless browser for automation, a Rust + JavaScriptCore rewrite of Lightpanda."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "lightningpanda"
+path = "src/main.rs"
+
+[dependencies]
+lp-js.workspace = true
+lp-runtime.workspace = true
+lp-browser.workspace = true
+
+[lints]
+workspace = true

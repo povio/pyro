@@ -1,0 +1,20 @@
+[package]
+name = "lp-js"
+description = "Safe, thread-affine JavaScriptCore runtime layer: engine, realms, values, host classes, modules."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+lp-jsc-sys.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+# Builds the measurement examples (slow to compile: ~9000 generated callbacks).
+bench = []
+
+[[example]]
+name = "realm_bench"
+required-features = ["bench"]

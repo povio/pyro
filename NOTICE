@@ -1,0 +1,14 @@
+lightningpanda
+Copyright (C) 2026 Povio and contributors
+
+This project is a Rust rewrite of Lightpanda Browser
+(https://github.com/lightpanda-io/browser), Copyright (C) 2023-2026
+Lightpanda (Selecy SAS), Francis Bouvier, Pierre Tachoire; licensed under the GNU Affero General Public License v3.0 only.
+The design, module structure, behaviour and tests are derived from the
+upstream source at commit 2ad38773fd674d3c9cea26a263b814ee46f6ba84.
+
+lightningpanda is distributed under the same license, AGPL-3.0-only; see
+LICENSE. Network users of a modified version must be offered its source
+(AGPL section 13).
+
+It links the platform JavaScriptCore (WebKit, LGPL-2.0+/BSD) dynamically.
