@@ -22,7 +22,8 @@ finishes before load. `DOMContentLoaded` and load dispatch to the document/windo
 interactive/complete ready states. Deferred modules currently wait for full evaluation, including
 TLA, before DCL (a documented JSC integration deviation).
 
-This increment does not load external stylesheets, images, iframes or script-inserted script resources,
+Linked stylesheets now load through the context client; see [stylesheet behavior and limits](STYLESHEETS.md).
+This increment does not load images, iframes or script-inserted script resources,
 and does not dispatch script-element load/error events. Inline style resource events are applied.
 History state is JSON rather than structured clone; popstate/hashchange remain absent. Form POST and
 named browsing targets fail explicitly. Native HTTPS remains unsupported. See [parity](../PARITY.md)
