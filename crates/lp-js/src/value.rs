@@ -125,6 +125,7 @@ impl<'s> Value<'s> {
 
     /// ToNumber (may run user `valueOf` and throw).
     pub fn to_number(&self) -> JsResult<f64> {
+        let _pool = crate::autorelease::Pool::new();
         let mut exc = ptr::null();
         let n = unsafe { sys::JSValueToNumber(self.ctx, self.raw, &mut exc) };
         check(self.ctx, exc).map(|_| n)
@@ -132,6 +133,7 @@ impl<'s> Value<'s> {
 
     /// ToString (may run user `toString` and throw).
     pub fn to_js_string(&self) -> JsResult<JsString> {
+        let _pool = crate::autorelease::Pool::new();
         let mut exc = ptr::null();
         let s = unsafe { sys::JSValueToStringCopy(self.ctx, self.raw, &mut exc) };
         check(self.ctx, exc)?;
@@ -141,6 +143,7 @@ impl<'s> Value<'s> {
 
     /// ToString converted to UTF-8.
     pub fn to_string(&self) -> JsResult<String> {
+        let _pool = crate::autorelease::Pool::new();
         let mut exc = ptr::null();
         let s = unsafe { sys::JSValueToStringCopy(self.ctx, self.raw, &mut exc) };
         check(self.ctx, exc)?;
@@ -163,6 +166,7 @@ impl<'s> Value<'s> {
 
     /// `JSON.stringify(value)`; `Ok(None)` when the result is `undefined`.
     pub fn to_json(&self, indent: u32) -> JsResult<Option<String>> {
+        let _pool = crate::autorelease::Pool::new();
         let mut exc = ptr::null();
         let s = unsafe { sys::JSValueCreateJSONString(self.ctx, self.raw, indent, &mut exc) };
         check(self.ctx, exc)?;
@@ -181,6 +185,7 @@ impl<'s> Value<'s> {
     }
 
     pub fn instance_of(&self, constructor: Object<'_>) -> JsResult<bool> {
+        let _pool = crate::autorelease::Pool::new();
         let mut exc = ptr::null();
         let r = unsafe { sys::JSValueIsInstanceOfConstructor(self.ctx, self.raw, constructor.raw, &mut exc) };
         check(self.ctx, exc).map(|_| r)
@@ -216,6 +221,7 @@ impl<'s> Object<'s> {
     }
 
     pub fn get_js(&self, name: &JsString) -> JsResult<Value<'s>> {
+        let _pool = crate::autorelease::Pool::new();
         let mut exc = ptr::null();
         let v = unsafe { sys::JSObjectGetProperty(self.ctx, self.raw, name.as_raw(), &mut exc) };
         check(self.ctx, exc)?;
@@ -223,6 +229,7 @@ impl<'s> Object<'s> {
     }
 
     pub fn get_index(&self, index: u32) -> JsResult<Value<'s>> {
+        let _pool = crate::autorelease::Pool::new();
         let mut exc = ptr::null();
         let v = unsafe { sys::JSObjectGetPropertyAtIndex(self.ctx, self.raw, index, &mut exc) };
         check(self.ctx, exc)?;
@@ -231,6 +238,7 @@ impl<'s> Object<'s> {
 
     /// `obj[key]` for an arbitrary key value (string, symbol, number).
     pub fn get_key(&self, key: Value<'_>) -> JsResult<Value<'s>> {
+        let _pool = crate::autorelease::Pool::new();
         let mut exc = ptr::null();
         let v = unsafe { sys::JSObjectGetPropertyForKey(self.ctx, self.raw, key.raw, &mut exc) };
         check(self.ctx, exc)?;
@@ -242,37 +250,44 @@ impl<'s> Object<'s> {
     }
 
     pub fn set_with(&self, name: &JsString, value: Value<'_>, attrs: sys::JSPropertyAttributes) -> JsResult<()> {
+        let _pool = crate::autorelease::Pool::new();
         let mut exc = ptr::null();
         unsafe { sys::JSObjectSetProperty(self.ctx, self.raw, name.as_raw(), value.raw, attrs, &mut exc) };
         check(self.ctx, exc)
     }
 
     pub fn set_index(&self, index: u32, value: Value<'_>) -> JsResult<()> {
+        let _pool = crate::autorelease::Pool::new();
         let mut exc = ptr::null();
         unsafe { sys::JSObjectSetPropertyAtIndex(self.ctx, self.raw, index, value.raw, &mut exc) };
         check(self.ctx, exc)
     }
 
     pub fn has(&self, name: &str) -> bool {
+        let _pool = crate::autorelease::Pool::new();
         unsafe { sys::JSObjectHasProperty(self.ctx, self.raw, JsString::new(name).as_raw()) }
     }
 
     pub fn delete(&self, name: &str) -> JsResult<bool> {
+        let _pool = crate::autorelease::Pool::new();
         let mut exc = ptr::null();
         let r = unsafe { sys::JSObjectDeleteProperty(self.ctx, self.raw, JsString::new(name).as_raw(), &mut exc) };
         check(self.ctx, exc).map(|_| r)
     }
 
     pub fn prototype(&self) -> Value<'s> {
+        let _pool = crate::autorelease::Pool::new();
         unsafe { Value::from_raw(self.ctx, sys::JSObjectGetPrototype(self.ctx, self.raw)) }
     }
 
     pub fn set_prototype(&self, proto: Value<'_>) {
+        let _pool = crate::autorelease::Pool::new();
         unsafe { sys::JSObjectSetPrototype(self.ctx, self.raw, proto.raw) }
     }
 
     /// Own enumerable string-keyed property names (`Object.keys` order).
     pub fn keys(&self) -> Vec<String> {
+        let _pool = crate::autorelease::Pool::new();
         unsafe {
             let names = sys::JSObjectCopyPropertyNames(self.ctx, self.raw);
             let n = sys::JSPropertyNameArrayGetCount(names);
@@ -286,6 +301,7 @@ impl<'s> Object<'s> {
     /// (stack locals, or use [`Object::call_rooted`] for values collected on
     /// the heap); JSC roots them for the duration of the call.
     pub fn call(&self, this: Option<Object<'_>>, args: &[Value<'_>]) -> JsResult<Value<'s>> {
+        let _pool = crate::autorelease::Pool::new();
         let raw_args = RawArgs::new(args);
         let mut exc = ptr::null();
         let this_raw = this.map_or(ptr::null_mut(), |o| o.raw);
@@ -305,6 +321,7 @@ impl<'s> Object<'s> {
     /// Calls with arguments held in a [`crate::RootedVec`]: the safe way to pass
     /// many arguments that were produced one by one (each conversion may GC).
     pub fn call_rooted(&self, this: Option<Object<'_>>, args: &crate::RootedVec) -> JsResult<Value<'s>> {
+        let _pool = crate::autorelease::Pool::new();
         let raw = args.raw();
         let mut exc = ptr::null();
         let this_raw = this.map_or(ptr::null_mut(), |o| o.raw);
@@ -314,6 +331,7 @@ impl<'s> Object<'s> {
     }
 
     pub fn construct(&self, args: &[Value<'_>]) -> JsResult<Object<'s>> {
+        let _pool = crate::autorelease::Pool::new();
         let raw_args = RawArgs::new(args);
         let mut exc = ptr::null();
         let o =
