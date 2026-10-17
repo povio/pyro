@@ -992,7 +992,11 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
         for m in &info.def.methods {
             let f = make_native_fn(scope, m.name, m.call);
             proto.set(m.name, f.value())?;
-            set_length.call(None, &[f.value(), scope.number(m.length as f64)])?;
+            // JSC callback functions already have a configurable length of 0.
+            // Avoid re-entering JS to redefine that identical descriptor.
+            if m.length != 0 {
+                set_length.call(None, &[f.value(), scope.number(m.length as f64)])?;
+            }
         }
         for a in &info.def.accessors {
             let g = make_native_fn(scope, a.name, a.get);
@@ -1027,7 +1031,9 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
         for m in &info.def.statics {
             let f = make_native_fn(scope, m.name, m.call);
             ctor_obj.set(m.name, f.value())?;
-            set_length.call(None, &[f.value(), scope.number(m.length as f64)])?;
+            if m.length != 0 {
+                set_length.call(None, &[f.value(), scope.number(m.length as f64)])?;
+            }
         }
         if info.def.indexed_iterable {
             iterable.call(None, &[proto.value()])?;
