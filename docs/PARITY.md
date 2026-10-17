@@ -35,8 +35,18 @@ crypto, streams, canvas, IndexedDB and media are all **not started in this repos
 
 ## Automation (W3)
 
-The CDP server and its domains (Target, Page, Runtime, DOM, Network, Fetch, Input, Emulation, Accessibility, …),
-BiDi, MCP and the TOS E2E harness are **not started in this repository**. W3's branch tracks them.
+Detail per method: [automation/CDP_COVERAGE.md](automation/CDP_COVERAGE.md).
+
+| Area | Upstream | Status | Notes / gaps |
+|---|---|---|---|
+| `serve` CLI, discovery, WebSocket | `server/Server.zig`, `WS.zig`, `http.zig` | Partial | `/json/version`, `/json/list` and the WebSocket on `/`. Implements upstream's connection/message limits and Host/Origin checks, plus request-head, frame and write deadlines and an outbound byte budget. TOS flags are accepted; `--experimental-features`/`--load-resources` have no effect until the loader lands. Missing: `--cookie`, `/metrics`, WebDriver BiDi, `--remote-allow-origins`. |
+| Target/Browser | `domains/target.zig`, `browser.zig` | Partial | Flattened sessions, multiple contexts per process, a separate default context, and page filters. Missing: permissions, downloads, child targets (OOPIF/workers). |
+| Runtime | v8_inspector | Partial | Native over lp-js: `evaluate`, `callFunctionOn` (`awaitPromise`/`returnByValue`), `getProperties`, release, context events, console, exceptions with V8-style descriptions. Missing: `addBinding`, object previews, `queryObjects`, `compileScript`. |
+| Page | `domains/page.zig` | Partial | Frame tree, lifecycle, init scripts with worlds, isolated worlds, navigate/reload with upstream event order. Only about:blank loads. Missing: history, dialogs, screenshots/PDF, child frames. |
+| Emulation | `domains/emulation.zig` | Partial | Viewport, media and user agent are recorded but not observable yet. Locale/timezone succeed only when they match the process. |
+| DOM, Input, Network, Fetch, Storage, Accessibility | yes | Not started | Wire-level pieces exist (`fetch_protocol.rs`), but the domains need W2's DOM, faux layout and network. |
+| BiDi, MCP, LP domain | yes | Not started | |
+| TOS E2E harness | n/a | Partial | `bench/` (Playwright 1.59.1 smoke, startup, RSS, CDP recording proxy) and `tests/e2e/about-blank.mjs`. The TOS lane baseline is pending (see bench/README.md). |
 
 ## Required for the TOS E2E milestone (from tos-monorepo `apps/fe/e2e/LIGHTPANDA.md`)
 

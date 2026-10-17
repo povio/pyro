@@ -25,16 +25,22 @@ The upstream binary is built from source; its provenance and exact commands are 
 ```sh
 node scripts/run-baseline.mjs --bin /abs/lightpanda --results /abs/out [--startup-runs 10] [--smoke-runs 5] [--warm-cpu] [--no-proxy]
 node scripts/cdp-record-proxy.mjs --upstream ws://127.0.0.1:<port> --out /abs/cdp.jsonl [--listen <port>]
-node scripts/cdp-summarize.mjs /abs/cdp.jsonl > inventory.md
+node scripts/cdp-summarize.mjs /abs/cdp.jsonl /abs/inventory.json [/abs/inventory.md]
 ```
 
 The browser is started with the exact flags and environment TOS uses (`apps/fe/e2e/fixtures/lightpanda.ts`).
 `serve --host 127.0.0.1 --port N --log-level error --experimental-features cors --load-resources stylesheet
 --load-resources iframe`, with `LIGHTPANDA_DISABLE_TELEMETRY=true`.
 
+## Exit status
+
+`smoke.mjs` exits 1 unless every step passed (steps blocked by an earlier failure are reported as skipped);
+`run-baseline.mjs` exits 1 if any smoke run or startup run failed. Results are written either way.
+
 ## Methodology and limitations
 
-- Startup = spawn to the first `200` from `GET /json/version`, polled every 10 ms (like the TOS fixture).
+- Startup = spawn to the first `200` from `GET /json/version`, polled every ~2 ms with fresh connections
+  (the TOS fixture polls every 10 ms, so its observed readiness can be up to ~10 ms later).
 - RSS is sampled at 20 ms by `rss-sampler` (kqueue `NOTE_CRITICAL` timer; on the reference host plain sleeps woke
   after 40–170 ms), cross-checked against `ps` sampling and `/usr/bin/time -l` max RSS.
 - Small samples (n=10 startup, n=5 smoke): p95 equals the max. Single host, single build.

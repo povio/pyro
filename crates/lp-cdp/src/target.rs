@@ -54,8 +54,9 @@ pub trait Host {
     /// Creates an isolated browser context (cookies, storage, cache).
     fn create_context(&mut self) -> CdpResult<ContextKey>;
     fn dispose_context(&mut self, context: ContextKey);
-    /// Creates an `about:blank` page whose main frame id is `target_id`.
-    fn create_page(&mut self, context: ContextKey, target_id: &str) -> CdpResult<PageKey>;
+    /// Creates an `about:blank` page. Returns its key and target id; the target
+    /// id is the main frame id, as in Chrome and upstream.
+    fn create_page(&mut self, context: ContextKey) -> CdpResult<(PageKey, String)>;
     /// Starts a navigation (used by `Target.createTarget` with a URL).
     fn navigate(&mut self, page: PageKey, url: &str) -> CdpResult<()>;
     fn close_page(&mut self, page: PageKey);
@@ -78,7 +79,15 @@ pub trait Host {
 struct ContextEntry {
     id: String,
     key: ContextKey,
+    /// The implicit context of `createTarget` without `browserContextId`.
+    /// Not listed by `getBrowserContexts` and not disposable, as in Chrome.
+    is_default: bool,
 }
+
+/// Per-connection budgets: a client cannot grow protocol state without limit.
+pub const MAX_CONTEXTS: usize = 256;
+pub const MAX_TARGETS: usize = 256;
+pub const MAX_SESSIONS: usize = 512;
 
 struct TargetEntry {
     id: String,
@@ -267,7 +276,8 @@ impl<H: Host> Browser<H> {
                 if !params.flatten {
                     return Err(CdpError::server("Only flatten mode is supported"));
                 }
-                self.auto_attach = params.auto_attach;
+                // Only page targets exist; a filter excluding pages means no auto-attach.
+                self.auto_attach = params.auto_attach && includes_pages(params.filter.as_deref());
                 out.send(msg::result_frame(id, &Empty {}, None));
                 if self.auto_attach {
                     let unattached: Vec<String> = self
@@ -290,8 +300,10 @@ impl<H: Host> Browser<H> {
                 #[derive(Deserialize)]
                 struct P {
                     discover: bool,
+                    filter: Option<Vec<TargetFilter>>,
                 }
-                self.discover = cmd.params::<P>()?.discover;
+                let p = cmd.params::<P>()?;
+                self.discover = p.discover && includes_pages(p.filter.as_deref());
                 out.send(msg::result_frame(id, &Empty {}, None));
                 if self.discover {
                     for i in 0..self.targets.len() {
@@ -334,7 +346,7 @@ impl<H: Host> Browser<H> {
                 out.send(msg::result_frame(id, &serde_json::json!({ "targetInfos": infos }), None));
             }
             "getBrowserContexts" => {
-                let ids: Vec<&str> = self.contexts.iter().map(|c| c.id.as_str()).collect();
+                let ids: Vec<&str> = self.contexts.iter().filter(|c| !c.is_default).map(|c| c.id.as_str()).collect();
                 out.send(msg::result_frame(id, &serde_json::json!({ "browserContextIds": ids }), None));
             }
             "createBrowserContext" => {
@@ -349,9 +361,7 @@ impl<H: Host> Browser<H> {
                 if params.proxy_server.is_some() {
                     return Err(CdpError::unsupported("Target.createBrowserContext proxyServer"));
                 }
-                let key = self.host.create_context()?;
-                let context_id = self.mint("");
-                self.contexts.push(ContextEntry { id: context_id.clone(), key });
+                let context_id = self.new_context(false)?;
                 out.send(msg::result_frame(id, &serde_json::json!({ "browserContextId": context_id }), None));
             }
             "disposeBrowserContext" => {
@@ -361,7 +371,9 @@ impl<H: Host> Browser<H> {
                     browser_context_id: String,
                 }
                 let context_id = cmd.params::<P>()?.browser_context_id;
-                self.context(&context_id)?;
+                if self.context(&context_id)?.is_default {
+                    return Err(CdpError::server("Cannot dispose the default browser context"));
+                }
                 self.dispose_context(&context_id, out);
                 out.send(msg::result_frame(id, &Empty {}, None));
             }
@@ -379,8 +391,10 @@ impl<H: Host> Browser<H> {
                     None => self.default_context()?,
                 };
                 let context_key = self.context(&context_id)?.key;
-                let target_id = self.mint("");
-                let page = self.host.create_page(context_key, &target_id)?;
+                if self.targets.len() >= MAX_TARGETS {
+                    return Err(CdpError::server("Too many targets"));
+                }
+                let (page, target_id) = self.host.create_page(context_key)?;
                 self.targets.push(TargetEntry { id: target_id.clone(), context_id, page });
                 if self.discover {
                     self.send_target_created(self.targets.len() - 1, out);
@@ -391,7 +405,11 @@ impl<H: Host> Browser<H> {
                     self.attach(&target_id, out)?;
                 }
                 if !params.url.is_empty() && params.url != "about:blank" {
-                    self.host.navigate(page, &params.url)?;
+                    if let Err(error) = self.host.navigate(page, &params.url) {
+                        // No half-created target survives a failed createTarget.
+                        self.close_target(&target_id, out);
+                        return Err(error);
+                    }
                 }
                 out.send(msg::result_frame(id, &serde_json::json!({ "targetId": target_id }), None));
             }
@@ -449,6 +467,13 @@ impl<H: Host> Browser<H> {
                 out.send(msg::result_frame(id, &Empty {}, None));
             }
             "activateTarget" => {
+                // Pages are never hidden: activation only needs a valid target.
+                #[derive(Deserialize)]
+                #[serde(rename_all = "camelCase")]
+                struct P {
+                    target_id: String,
+                }
+                self.target(&cmd.params::<P>()?.target_id)?;
                 out.send(msg::result_frame(id, &Empty {}, None));
             }
             _ => return Err(CdpError::method_not_found(&cmd.method)),
@@ -456,18 +481,29 @@ impl<H: Host> Browser<H> {
         Ok(())
     }
 
-    /// `Target.createTarget` without a context uses an implicit default context.
+    /// `Target.createTarget` without a context uses the default context,
+    /// created on first use and distinct from every created context.
     fn default_context(&mut self) -> CdpResult<String> {
-        if let Some(c) = self.contexts.first() {
+        if let Some(c) = self.contexts.iter().find(|c| c.is_default) {
             return Ok(c.id.clone());
+        }
+        self.new_context(true)
+    }
+
+    fn new_context(&mut self, is_default: bool) -> CdpResult<String> {
+        if self.contexts.len() >= MAX_CONTEXTS {
+            return Err(CdpError::server("Too many browser contexts"));
         }
         let key = self.host.create_context()?;
         let id = self.mint("");
-        self.contexts.push(ContextEntry { id: id.clone(), key });
+        self.contexts.push(ContextEntry { id: id.clone(), key, is_default });
         Ok(id)
     }
 
     fn attach(&mut self, target_id: &str, out: &mut dyn Sink) -> CdpResult<String> {
+        if self.sessions.len() >= MAX_SESSIONS {
+            return Err(CdpError::server("Too many sessions"));
+        }
         let session_id = self.mint("");
         self.sessions.insert(session_id.clone(), SessionEntry { target_id: target_id.to_owned() });
         let target = self.target(target_id)?;
@@ -560,12 +596,31 @@ impl<H: Host> Browser<H> {
     /// `disposeOnDetach` contexts are disposed: the flag refers to the
     /// connection, not to page sessions.
     pub fn shutdown(&mut self) {
-        let mut sink: Vec<OutFrame> = Vec::new();
+        struct Discard;
+        impl Sink for Discard {
+            fn send(&mut self, _frame: OutFrame) {}
+        }
         let ids: Vec<String> = self.contexts.iter().map(|c| c.id.clone()).collect();
         for id in ids {
-            self.dispose_context(&id, &mut sink);
+            self.dispose_context(&id, &mut Discard);
         }
     }
+}
+
+/// CDP `Target.TargetFilter` entry: the first entry whose `type` matches (or
+/// that has no `type`) decides; no match excludes.
+#[derive(Deserialize)]
+struct TargetFilter {
+    #[serde(rename = "type")]
+    kind: Option<String>,
+    #[serde(default)]
+    exclude: bool,
+}
+
+/// Whether page targets pass `filter` (absent = Chrome's default, which includes pages).
+fn includes_pages(filter: Option<&[TargetFilter]>) -> bool {
+    let Some(filter) = filter else { return true };
+    filter.iter().find(|f| f.kind.as_deref().is_none_or(|k| k == "page")).is_some_and(|f| !f.exclude)
 }
 
 #[derive(Deserialize)]
@@ -577,4 +632,5 @@ struct AutoAttachParams {
     wait_for_debugger_on_start: bool,
     #[serde(default)]
     flatten: bool,
+    filter: Option<Vec<TargetFilter>>,
 }

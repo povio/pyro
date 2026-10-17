@@ -41,6 +41,7 @@ name = "lightningpanda"
 version = "0.1.0"
 dependencies = [
  "lp-browser",
+ "lp-cdp",
  "lp-js",
  "lp-runtime",
 ]
@@ -57,6 +58,9 @@ dependencies = [
 name = "lp-cdp"
 version = "0.1.0"
 dependencies = [
+ "lp-browser",
+ "lp-js",
+ "lp-runtime",
  "serde",
  "serde_json",
  "tokio",

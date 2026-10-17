@@ -1,6 +1,6 @@
 //! Protocol sequencing for Target/Browser commands against a recording host.
-//! These check message order and id bookkeeping only; browser behavior is
-//! covered by the engine integration tests.
+//! These check message order and id bookkeeping only, not browser behavior
+//! (see tests/engine_cdp.rs and tests/e2e for the JSC-backed checks).
 
 use lp_cdp::msg::{self, CdpResult, Command};
 use lp_cdp::target::{Browser, ContextKey, Host, PageCommand, PageKey, Sink};
@@ -11,6 +11,7 @@ use serde_json::{json, Value};
 struct Recorder {
     calls: Vec<String>,
     next: u64,
+    fail_navigation: bool,
 }
 
 impl Host for Recorder {
@@ -22,13 +23,16 @@ impl Host for Recorder {
     fn dispose_context(&mut self, context: ContextKey) {
         self.calls.push(format!("dispose_context {context}"));
     }
-    fn create_page(&mut self, context: ContextKey, _target_id: &str) -> CdpResult<PageKey> {
+    fn create_page(&mut self, context: ContextKey) -> CdpResult<(PageKey, String)> {
         self.next += 1;
         self.calls.push(format!("create_page {context} -> {}", self.next));
-        Ok(self.next)
+        Ok((self.next, format!("{:032X}", self.next)))
     }
     fn navigate(&mut self, page: PageKey, url: &str) -> CdpResult<()> {
         self.calls.push(format!("navigate {page} {url}"));
+        if self.fail_navigation {
+            return Err(msg::CdpError::server("navigation failed"));
+        }
         Ok(())
     }
     fn close_page(&mut self, page: PageKey) {
@@ -198,6 +202,63 @@ fn discover_targets_reports_lifecycle() {
     assert_eq!(r[1], json!({"id":4,"result":{}}));
     let r = send(&mut b, json!({"id":5,"method":"Target.closeTarget","params":{"targetId":target}}));
     assert_eq!(r[0]["method"], "Target.targetDestroyed");
+}
+
+#[test]
+fn default_context_is_separate_from_created_contexts() {
+    let mut b = Browser::new(Recorder::default());
+    let created =
+        send(&mut b, json!({"id":1,"method":"Target.createBrowserContext"}))[0]["result"]["browserContextId"].clone();
+    send(
+        &mut b,
+        json!({"id":2,"method":"Target.setAutoAttach","params":{"autoAttach":true,"waitForDebuggerOnStart":false,"flatten":true}}),
+    );
+    let r = send(&mut b, json!({"id":3,"method":"Target.createTarget","params":{"url":""}}));
+    let default = r[0]["params"]["targetInfo"]["browserContextId"].clone();
+    assert_ne!(default, created, "default target is not placed in a created context");
+    let r = send(&mut b, json!({"id":4,"method":"Target.getBrowserContexts"}));
+    assert_eq!(r[0]["result"]["browserContextIds"], json!([created]));
+    let r = send(&mut b, json!({"id":5,"method":"Target.disposeBrowserContext","params":{"browserContextId":created}}));
+    assert_eq!(r, vec![json!({"id":5,"result":{}})], "disposing the created context leaves the default target alone");
+    let r = send(&mut b, json!({"id":6,"method":"Target.getTargets"}));
+    assert_eq!(r[0]["result"]["targetInfos"].as_array().unwrap().len(), 1);
+    let r = send(&mut b, json!({"id":7,"method":"Target.disposeBrowserContext","params":{"browserContextId":default}}));
+    assert_eq!(r[0]["error"]["code"], -32000);
+}
+
+#[test]
+fn failed_initial_navigation_rolls_back_the_target() {
+    let mut b = Browser::new(Recorder { fail_navigation: true, ..Recorder::default() });
+    send(
+        &mut b,
+        json!({"id":1,"method":"Target.setAutoAttach","params":{"autoAttach":true,"waitForDebuggerOnStart":false,"flatten":true}}),
+    );
+    let r = send(&mut b, json!({"id":2,"method":"Target.createTarget","params":{"url":"http://x/"}}));
+    let methods: Vec<&str> = r.iter().filter_map(|m| m["method"].as_str()).collect();
+    assert_eq!(methods, ["Target.attachedToTarget", "Target.detachedFromTarget"]);
+    assert_eq!(r.last().unwrap()["error"]["code"], -32000);
+    let r = send(&mut b, json!({"id":3,"method":"Target.getTargets"}));
+    assert_eq!(r[0]["result"]["targetInfos"], json!([]));
+}
+
+#[test]
+fn filters_excluding_pages_are_honored() {
+    let mut b = Browser::new(Recorder::default());
+    send(
+        &mut b,
+        json!({"id":1,"method":"Target.setDiscoverTargets","params":{"discover":true,"filter":[{"type":"page","exclude":true}]}}),
+    );
+    send(
+        &mut b,
+        json!({"id":2,"method":"Target.setAutoAttach","params":{"autoAttach":true,"waitForDebuggerOnStart":false,"flatten":true,"filter":[{"type":"page","exclude":true},{}]}}),
+    );
+    let r = send(&mut b, json!({"id":3,"method":"Target.createTarget","params":{}}));
+    assert_eq!(r.len(), 1, "no targetCreated/attachedToTarget for excluded pages: {r:?}");
+    let target = r[0]["result"]["targetId"].clone();
+    let r = send(&mut b, json!({"id":4,"method":"Target.activateTarget","params":{"targetId":"missing"}}));
+    assert_eq!(r[0]["error"]["code"], -32602);
+    let r = send(&mut b, json!({"id":5,"method":"Target.activateTarget","params":{"targetId":target}}));
+    assert_eq!(r[0]["result"], json!({}));
 }
 
 #[test]

@@ -104,6 +104,14 @@ pub struct EnableParams {
     pub handle_auth_requests: bool,
 }
 
+/// Longest accepted `urlPattern`, bounding matcher work per request.
+pub const MAX_PATTERN_LEN: usize = 2048;
+/// Most patterns accepted by one `Fetch.enable`.
+pub const MAX_PATTERNS: usize = 64;
+/// Most requests that may wait for a decision at once; further matching
+/// requests should be failed by the engine instead of parked.
+pub const MAX_PAUSED: usize = 4096;
+
 /// Interception state for the session that enabled `Fetch`.
 pub struct InterceptState<T> {
     patterns: Vec<RequestPattern>,
@@ -122,6 +130,11 @@ impl<T> InterceptState<T> {
     pub fn enable(&mut self, params: EnableParams) -> CdpResult<()> {
         if matches!(&params.patterns, Some(p) if p.is_empty()) && params.handle_auth_requests {
             return Err(CdpError::invalid_params("Can't specify empty patterns with handleAuth set"));
+        }
+        if let Some(patterns) = &params.patterns {
+            if patterns.len() > MAX_PATTERNS || patterns.iter().any(|p| p.url_pattern.len() > MAX_PATTERN_LEN) {
+                return Err(CdpError::invalid_params("Too many or too long Fetch patterns"));
+            }
         }
         self.patterns = params.patterns.unwrap_or_else(|| {
             vec![RequestPattern { url_pattern: star(), resource_type: None, request_stage: RequestStage::Request }]
@@ -151,12 +164,16 @@ impl<T> InterceptState<T> {
         })
     }
 
-    /// Parks a request and returns its `Fetch` request id (`INT-<n>`).
-    pub fn pause(&mut self, request: T) -> String {
+    /// Parks a request and returns its `Fetch` request id (`INT-<n>`), or
+    /// gives the request back when [`MAX_PAUSED`] requests already wait.
+    pub fn pause(&mut self, request: T) -> Result<String, T> {
+        if self.waiting.len() >= MAX_PAUSED {
+            return Err(request);
+        }
         let id = self.next_id;
         self.next_id += 1;
         self.waiting.insert(id, request);
-        format!("INT-{id}")
+        Ok(format!("INT-{id}"))
     }
 
     /// Takes the paused request for a continue/fulfill/fail decision.
@@ -180,7 +197,9 @@ impl<T> InterceptState<T> {
 }
 
 /// `RequestPattern.urlPattern`: `*` matches zero or more characters, `?`
-/// exactly one, `\` escapes the next character. Linear-time backtracking glob.
+/// exactly one, `\` escapes the next character. Backtracks only to the last
+/// `*` (no exponential blow-up); worst case O(pattern × url), bounded by
+/// [`MAX_PATTERN_LEN`].
 pub fn wildcard_match(pattern: &str, value: &str) -> bool {
     let (p, v) = (pattern.as_bytes(), value.as_bytes());
     let (mut pi, mut vi) = (0usize, 0usize);
@@ -235,9 +254,11 @@ fn utf8_len(first: u8) -> usize {
     }
 }
 
-/// Standard base64 decoding (padding optional) for `Fetch.fulfillRequest`
-/// bodies and `postData`. Rejects invalid characters.
+/// Standard base64 decoding for `Fetch.fulfillRequest` bodies and
+/// `postData`. Padding is optional, but when present it must be complete and
+/// only at the end.
 pub fn base64_decode(input: &str) -> CdpResult<Vec<u8>> {
+    let invalid = || CdpError::invalid_params("Invalid base64 data");
     fn val(c: u8) -> Option<u32> {
         match c {
             b'A'..=b'Z' => Some(u32::from(c - b'A')),
@@ -248,15 +269,20 @@ pub fn base64_decode(input: &str) -> CdpResult<Vec<u8>> {
             _ => None,
         }
     }
-    let bytes = input.trim_end_matches('=').as_bytes();
-    if bytes.len() % 4 == 1 {
-        return Err(CdpError::invalid_params("Invalid base64 data"));
+    let raw = input.as_bytes();
+    let padding = raw.iter().rev().take_while(|&&c| c == b'=').count();
+    if padding > 0 && (padding > 2 || raw.len() % 4 != 0) {
+        return Err(invalid());
+    }
+    let bytes = &raw[..raw.len() - padding];
+    if bytes.len() % 4 == 1 || (padding > 0 && 4 - bytes.len() % 4 != padding) {
+        return Err(invalid());
     }
     let mut out = Vec::with_capacity(bytes.len() * 3 / 4);
     for chunk in bytes.chunks(4) {
         let mut n = 0u32;
         for (i, &c) in chunk.iter().enumerate() {
-            n |= val(c).ok_or_else(|| CdpError::invalid_params("Invalid base64 data"))? << (18 - 6 * i);
+            n |= val(c).ok_or_else(invalid)? << (18 - 6 * i);
         }
         let produced = chunk.len() - 1;
         out.extend_from_slice(&n.to_be_bytes()[1..1 + produced]);
@@ -284,7 +310,7 @@ mod tests {
         assert!(!wildcard_match(r"http://h/\*", "http://h/x"));
         assert!(wildcard_match("a*b*c", "aXXbYYc"));
         assert!(!wildcard_match("a*b*c", "aXXbYY"));
-        // Pathological input stays linear-ish rather than exponential.
+        // Backtracking only to the last star: no exponential blow-up.
         let long = "a".repeat(10_000);
         assert!(!wildcard_match("*a*a*a*a*a*b", &long));
     }
@@ -313,19 +339,27 @@ mod tests {
 
         let params: EnableParams = serde_json::from_str(r#"{"patterns":[],"handleAuthRequests":true}"#).unwrap();
         assert!(s.enable(params).is_err());
+        let long = format!(r#"{{"patterns":[{{"urlPattern":"{}"}}]}}"#, "a".repeat(MAX_PATTERN_LEN + 1));
+        assert!(s.enable(serde_json::from_str(&long).unwrap()).is_err());
     }
 
     #[test]
     fn paused_requests_round_trip_and_disable_releases_them() {
         let mut s: InterceptState<&str> = InterceptState::default();
-        let a = s.pause("a");
-        let b = s.pause("b");
+        let a = s.pause("a").unwrap();
+        let b = s.pause("b").unwrap();
         assert_eq!(a, "INT-1");
         assert_eq!(s.take(&a).unwrap(), "a");
         assert!(s.take(&a).is_err(), "decision applies once");
         assert!(s.take("REQ-1").is_err());
         assert_eq!(s.disable(), vec!["b"]);
         assert!(s.take(&b).is_err());
+
+        let mut s: InterceptState<usize> = InterceptState::default();
+        for i in 0..MAX_PAUSED {
+            s.pause(i).unwrap();
+        }
+        assert_eq!(s.pause(usize::MAX), Err(usize::MAX), "bounded");
     }
 
     #[test]
@@ -337,5 +371,9 @@ mod tests {
         assert_eq!(base64_decode("eyJhIjoxfQ==").unwrap(), br#"{"a":1}"#);
         assert!(base64_decode("Z").is_err());
         assert!(base64_decode("Zm9v!").is_err());
+        for bad in ["=", "==", "Zg=====", "Zg===", "Zg=", "Zm8==", "Z===", "Zg==Zg=="] {
+            assert!(base64_decode(bad).is_err(), "{bad}");
+        }
+        assert_eq!(base64_decode("Zm8=").unwrap(), b"fo");
     }
 }

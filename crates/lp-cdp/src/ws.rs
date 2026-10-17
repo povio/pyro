@@ -129,7 +129,11 @@ impl Decoder {
                     if input.len() < 4 {
                         return Ok(None);
                     }
-                    (u64::from(u16::from_be_bytes([input[2], input[3]])), 4)
+                    let len = u16::from_be_bytes([input[2], input[3]]);
+                    if len < 126 {
+                        return Err(WsError::Protocol("payload length is not minimally encoded"));
+                    }
+                    (u64::from(len), 4)
                 }
                 127 => {
                     if input.len() < 10 {
@@ -140,6 +144,9 @@ impl Decoder {
                     let len = u64::from_be_bytes(b);
                     if len >> 63 != 0 {
                         return Err(WsError::Protocol("payload length has the high bit set"));
+                    }
+                    if len <= u64::from(u16::MAX) {
+                        return Err(WsError::Protocol("payload length is not minimally encoded"));
                     }
                     (len, 10)
                 }
@@ -423,6 +430,19 @@ mod tests {
         let mut d = decoder();
         d.feed(&client_frame(true, 0x3, b""));
         assert!(matches!(d.next_message(), Err(WsError::Protocol(_))));
+    }
+
+    #[test]
+    fn rejects_non_minimal_lengths() {
+        let mut d = decoder();
+        d.feed(&[0x81, 0xFE, 0x00, 0x01, 0, 0, 0, 0, b'x']);
+        assert!(matches!(d.next_message(), Err(WsError::Protocol(_))));
+        let mut d = decoder();
+        d.feed(&[0x81, 0xFF, 0, 0, 0, 0, 0, 0, 0x01, 0x00, 0, 0, 0, 0]);
+        assert!(matches!(d.next_message(), Err(WsError::Protocol(_))));
+        let mut d = decoder();
+        d.feed(&[0x89, 0xFE, 0x00, 0x01, 0, 0, 0, 0, b'x']);
+        assert!(d.next_message().is_err(), "control frames too");
     }
 
     #[test]

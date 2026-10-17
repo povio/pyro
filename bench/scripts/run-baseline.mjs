@@ -59,7 +59,7 @@ async function startupRuns() {
   for (let i = 0; i < STARTUP_RUNS; i++) {
     const port = await freePort();
     const t = performance.now();
-    const cp = spawn(BIN, ['serve', '--host', '127.0.0.1', '--port', String(port), ...LP_FLAGS], { stdio: ['ignore', 'ignore', 'pipe'], env: LP_ENV });
+    const cp = track(spawn(BIN, ['serve', '--host', '127.0.0.1', '--port', String(port), ...LP_FLAGS], { stdio: ['ignore', 'ignore', 'pipe'], env: LP_ENV }));
     let err = ''; cp.stderr.on('data', (d) => { err += d; });
     try {
       const r = await waitReady(port);
@@ -78,7 +78,7 @@ async function smokeRun(tag, siteUrl, useProxy) {
   const lpLog = path.join(RES, `${tag}.lightpanda.stderr.log`);
   const timeOut = path.join(RES, `${tag}.time-l.txt`);
   // /usr/bin/time -l reports max RSS of the child at exit.
-  const tp = spawn('/usr/bin/time', ['-l', '-o', timeOut, BIN, 'serve', '--host', '127.0.0.1', '--port', String(port), ...LP_FLAGS], { stdio: ['ignore', 'ignore', fs.openSync(lpLog, 'w')], env: LP_ENV });
+  const tp = track(spawn('/usr/bin/time', ['-l', '-o', timeOut, BIN, 'serve', '--host', '127.0.0.1', '--port', String(port), ...LP_FLAGS], { stdio: ['ignore', 'ignore', fs.openSync(lpLog, 'w')], env: LP_ENV }));
   await waitReady(port);
   // find lightpanda pid (child of /usr/bin/time)
   const lpPid = await new Promise((res) => { const p = spawn('pgrep', ['-P', String(tp.pid)]); let o = ''; p.stdout.on('data', (d) => (o += d)); p.on('exit', () => res(Number(o.trim().split('\n')[0]))); });
@@ -111,6 +111,7 @@ async function smokeRun(tag, siteUrl, useProxy) {
   const sp = spawn(process.execPath, [path.join(HERE, 'smoke.mjs'), `ws://127.0.0.1:${cdpPort}`, siteUrl, smokeOut], { stdio: ['ignore', 'ignore', 'pipe'] });
   let serr = ''; sp.stderr.on('data', (d) => (serr += d));
   await exited(sp);
+  const smokeExitCode = sp.exitCode;
   const smokeProcMs = performance.now() - t;
   await sleep(100);
 
@@ -130,7 +131,7 @@ async function smokeRun(tag, siteUrl, useProxy) {
   const footprint = Number(timeTxt.match(/(\d+)\s+peak memory footprint/)?.[1]);
   const smoke = fs.existsSync(smokeOut) ? JSON.parse(fs.readFileSync(smokeOut, 'utf8')) : { error: serr };
   return {
-    tag, viaProxy: useProxy, lpPid, lpAliveAfterSmoke: lpAlive,
+    tag, viaProxy: useProxy, lpPid, lpAliveAfterSmoke: lpAlive, smokeExitCode,
     smokeProcessWallMs: +smokeProcMs.toFixed(1), smokeInnerWallMs: smoke.wallMs,
     passed: smoke.passed, total: smoke.total, steps: smoke.steps, smokeStderr: serr.slice(0, 2000),
     rss: {
@@ -149,8 +150,14 @@ async function smokeRun(tag, siteUrl, useProxy) {
 }
 
 // ---------- main ----------
-const spinner = WARM_CPU ? spawn(process.execPath, ['-e', 'for(;;){}'], { stdio: 'ignore' }) : null;
-const site = spawn(process.execPath, [path.join(HERE, 'testsite.mjs'), '0'], { stdio: ['ignore', 'pipe', 'inherit'] });
+// Children never outlive the orchestrator, even on an exception.
+const children = new Set();
+const track = (cp) => { children.add(cp); cp.once('exit', () => children.delete(cp)); return cp; };
+process.on('exit', () => { for (const cp of children) { try { cp.kill('SIGKILL'); } catch {} } });
+process.on('uncaughtException', (e) => { console.error(e); process.exit(1); });
+process.on('unhandledRejection', (e) => { console.error(e); process.exit(1); });
+const spinner = WARM_CPU ? track(spawn(process.execPath, ['-e', 'for(;;){}'], { stdio: 'ignore' })) : null;
+const site = track(spawn(process.execPath, [path.join(HERE, 'testsite.mjs'), '0'], { stdio: ['ignore', 'pipe', 'inherit'] }));
 const sitePort = Number((await waitLine(site, /LISTENING (\d+)/))[1]);
 const siteUrl = `http://127.0.0.1:${sitePort}`;
 
@@ -180,6 +187,13 @@ site.kill('SIGTERM');
 spinner?.kill('SIGKILL');
 result.warmCpu = WARM_CPU;
 result.finishedAt = new Date().toISOString();
+const runs = [...direct, ...(result.proxySmoke ? [result.proxySmoke] : [])];
+result.failedSmokeRuns = runs.filter((r) => r.smokeExitCode !== 0).map((r) => r.tag);
+result.failedStartupRuns = STARTUP_RUNS - result.startup.n;
 fs.writeFileSync(path.join(RES, 'baseline.json'), JSON.stringify(result, null, 2));
 console.log(JSON.stringify({ startup: result.startup, smokeAggregate: result.smokeAggregate, firstSmokeSteps: direct[0]?.steps }, null, 2));
+if (result.failedSmokeRuns.length || result.failedStartupRuns) {
+  console.error(`baseline: failed smoke runs ${JSON.stringify(result.failedSmokeRuns)}, failed startup runs ${result.failedStartupRuns}`);
+  process.exit(1);
+}
 process.exit(0);

@@ -19,7 +19,7 @@ commands:
   version                      print version and engine capabilities
   eval [--timeout-ms N] (-e CODE | FILE | -)
                                run JavaScript in an about:blank page until idle
-  serve [--host H] [--port P]  CDP server (not implemented yet)
+  serve [--host H] [--port P]  CDP server (see `serve --help`)
   fetch URL                    load a page and dump it (not implemented yet)
 ";
 
@@ -28,7 +28,8 @@ fn main() -> ExitCode {
     match args.first().map(String::as_str) {
         Some("version") | Some("--version") => version(),
         Some("eval") => eval(&args[1..]),
-        Some("serve") | Some("fetch") => {
+        Some("serve") => lp_cdp::serve_main(&args[1..]),
+        Some("fetch") => {
             eprintln!("lightningpanda: '{}' is not implemented yet in the Rust rewrite", args[0]);
             ExitCode::from(2)
         }

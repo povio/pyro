@@ -2,9 +2,10 @@
 //! objects and exceptions, `callFunctionOn` argument decoding, and the
 //! per-session table that maps `objectId`s to engine handles.
 //!
-//! Upstream delegates all of this to v8_inspector; the rewrite implements it
-//! over lp-js (JavaScriptCore). Shapes follow the CDP `Runtime` domain as
+//! Upstream delegates all of this to v8_inspector; `engine::runtime` builds
+//! the domain on lp-js (JavaScriptCore) using these pieces. Shapes follow the CDP `Runtime` domain as
 //! consumed by Playwright 1.59 (`crExecutionContext.js`, `crProtocolHelper.js`).
+//! The engine-backed domain lives in `engine::runtime`.
 
 use std::collections::HashMap;
 
@@ -67,13 +68,36 @@ impl RemoteObject {
     }
 }
 
-/// JS `Number.prototype.toString` for finite numbers in the common cases
-/// (integers print without a fraction).
+/// ECMAScript `Number::toString(10)` for finite numbers, built from Rust's
+/// shortest round-trip digits.
 pub fn format_number(n: f64) -> String {
-    if n.fract() == 0.0 && n.abs() < 1e21 {
-        format!("{}", n as i128)
+    if n == 0.0 {
+        return "0".to_owned();
+    }
+    let sci = format!("{:e}", n.abs()); // e.g. "1.2345e3", "1e21", "5e-7"
+    let (mantissa, exp) = sci.split_once('e').expect("LowerExp has an exponent");
+    let digits: String = mantissa.chars().filter(|c| *c != '.').collect();
+    let k = digits.len() as i32;
+    let point = exp.parse::<i32>().expect("integer exponent") + 1; // value = 0.digits * 10^point
+    let body = if k <= point && point <= 21 {
+        format!("{digits}{}", "0".repeat((point - k) as usize))
+    } else if 0 < point && point <= 21 {
+        format!("{}.{}", &digits[..point as usize], &digits[point as usize..])
+    } else if -6 < point && point <= 0 {
+        format!("0.{}{digits}", "0".repeat((-point) as usize))
     } else {
-        format!("{n}")
+        let e = point - 1;
+        let sign = if e < 0 { '-' } else { '+' };
+        if k == 1 {
+            format!("{digits}e{sign}{}", e.abs())
+        } else {
+            format!("{}.{}e{sign}{}", &digits[..1], &digits[1..], e.abs())
+        }
+    };
+    if n < 0.0 {
+        format!("-{body}")
+    } else {
+        body
     }
 }
 
@@ -126,8 +150,9 @@ pub fn parse_jsc_stack(stack: &str) -> Vec<CallFrame> {
         .filter(|l| !l.trim().is_empty())
         .map(|line| {
             let (function_name, location) = match line.split_once('@') {
+                // Native frames carry no source location.
+                Some((f, "[native code]")) => (f, ""),
                 Some((f, loc)) => (f, loc),
-                // Native frames have no location ("[native code]" or just a name).
                 None => (line, ""),
             };
             let (url, line_number, column_number) = split_location(location);
@@ -171,12 +196,17 @@ pub fn v8_style_description(name: &str, message: &str, frames: &[CallFrame]) -> 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct CallArgument {
-    #[serde(default)]
+    /// `Some(Value::Null)` for an explicit `"value": null`, `None` when absent.
+    #[serde(default, deserialize_with = "present")]
     pub value: Option<Value>,
     #[serde(default)]
     pub unserializable_value: Option<String>,
     #[serde(default)]
     pub object_id: Option<String>,
+}
+
+fn present<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Value>, D::Error> {
+    Value::deserialize(d).map(Some)
 }
 
 /// Decoded argument, ready to convert into an engine value.
@@ -310,6 +340,19 @@ mod tests {
             json!({"type":"number","value":3,"description":"3"})
         );
         assert_eq!(serde_json::to_value(RemoteObject::number(1.5)).unwrap()["value"], json!(1.5));
+        for (n, js) in [
+            (1e21, "1e+21"),
+            (1e20, "100000000000000000000"),
+            (123.456, "123.456"),
+            (0.000001, "0.000001"),
+            (1e-7, "1e-7"),
+            (1.5e-7, "1.5e-7"),
+            (-2.5e30, "-2.5e+30"),
+            (0.1, "0.1"),
+            (-42.0, "-42"),
+        ] {
+            assert_eq!(format_number(n), js, "{n:e}");
+        }
         assert_eq!(serde_json::to_value(RemoteObject::undefined()).unwrap(), json!({"type":"undefined"}));
     }
 
@@ -324,7 +367,12 @@ mod tests {
             ("foo", "http://h/a.js", 9, 4)
         );
         assert_eq!(frames[1].function_name, "");
-        assert_eq!((frames[2].url.as_str(), frames[2].line_number), ("[native code]", -1));
+        assert_eq!((frames[2].url.as_str(), frames[2].line_number), ("", -1));
+        assert_eq!(
+            v8_style_description("Error", "x", &frames[2..3]),
+            "Error: x\n    at forEach (native)",
+            "native frames are not printed as URLs"
+        );
         assert_eq!(frames[3].function_name, "global code");
         assert_eq!(
             v8_style_description("TypeError", "x is not a function", &frames[..2]),
@@ -336,6 +384,11 @@ mod tests {
     fn decodes_call_arguments() {
         let arg = |v: Value| serde_json::from_value::<CallArgument>(v).unwrap();
         assert_eq!(arg(json!({})).decode().unwrap(), Argument::Undefined);
+        assert_eq!(
+            arg(json!({"value":null})).decode().unwrap(),
+            Argument::Json(&Value::Null),
+            "explicit null is not undefined"
+        );
         let a = arg(json!({"value":{"a":1}}));
         assert_eq!(a.decode().unwrap(), Argument::Json(&json!({"a":1})));
         assert!(

@@ -7,9 +7,12 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+lp-browser.workspace = true
+lp-js.workspace = true
+lp-runtime.workspace = true
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
-tokio = { version = "1", features = ["rt", "net", "io-util", "sync", "macros"] }
+tokio = { version = "1", features = ["rt", "net", "io-util", "sync", "macros", "time"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "time"] }

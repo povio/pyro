@@ -14,12 +14,18 @@ pub const MAX_HEAD: usize = 16 * 1024;
 pub struct RequestHead {
     pub method: String,
     pub path: String,
+    /// `HTTP/1.0` or `HTTP/1.1`.
+    pub version: String,
     headers: Vec<(String, String)>,
 }
 
 impl RequestHead {
     pub fn header(&self, name: &str) -> Option<&str> {
         self.headers.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str())
+    }
+
+    fn header_count(&self, name: &str) -> usize {
+        self.headers.iter().filter(|(k, _)| k.eq_ignore_ascii_case(name)).count()
     }
 
     fn header_has_token(&self, name: &str, token: &str) -> bool {
@@ -54,18 +60,27 @@ pub fn parse_head(buf: &[u8]) -> Result<Option<(RequestHead, usize)>, HeadError>
     else {
         return Err(HeadError::Malformed);
     };
-    if !version.starts_with("HTTP/1.") || method.is_empty() || !path.starts_with('/') {
+    if !matches!(version, "HTTP/1.0" | "HTTP/1.1") || !method.bytes().all(is_tchar) || method.is_empty() {
+        return Err(HeadError::Malformed);
+    }
+    if !path.starts_with('/') || path.bytes().any(|b| b.is_ascii_control()) {
         return Err(HeadError::Malformed);
     }
     let mut headers = Vec::new();
     for line in lines {
         let (name, value) = line.split_once(':').ok_or(HeadError::Malformed)?;
-        if name.is_empty() || name.bytes().any(|b| b.is_ascii_whitespace()) {
+        if name.is_empty() || !name.bytes().all(is_tchar) || value.bytes().any(|b| b.is_ascii_control() && b != b'\t') {
             return Err(HeadError::Malformed);
         }
         headers.push((name.to_owned(), value.trim().to_owned()));
     }
-    Ok(Some((RequestHead { method: method.to_owned(), path: path.to_owned(), headers }, end)))
+    let head = RequestHead { method: method.to_owned(), path: path.to_owned(), version: version.to_owned(), headers };
+    Ok(Some((head, end)))
+}
+
+/// RFC 9110 `tchar`.
+fn is_tchar(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b)
 }
 
 fn find_head_end(buf: &[u8]) -> Option<usize> {
@@ -124,11 +139,18 @@ fn upgrade(head: &RequestHead) -> Routed {
     if head.header("origin").is_some() {
         return Routed::Response(response(403, "text/plain", b"WebSocket connections with an Origin are rejected\n"));
     }
+    // RFC 6455 4.2.1: HTTP/1.1 GET with exactly one Host, Sec-WebSocket-Key
+    // (16 random bytes, base64) and Sec-WebSocket-Version 13.
     let key = head.header("sec-websocket-key").unwrap_or("");
-    if head.header("sec-websocket-version") != Some("13")
-        || key.is_empty()
-        || !head.header_has_token("connection", "upgrade")
-    {
+    let valid = head.version == "HTTP/1.1"
+        && head.header_count("host") == 1
+        && head.header_count("sec-websocket-key") == 1
+        && head.header_count("sec-websocket-version") == 1
+        && head.header("sec-websocket-version") == Some("13")
+        && key.len() == 24
+        && crate::fetch_protocol::base64_decode(key).is_ok_and(|k| k.len() == 16)
+        && head.header_has_token("connection", "upgrade");
+    if !valid {
         return Routed::Response(response(400, "text/plain", b"invalid WebSocket upgrade\n"));
     }
     let handshake = format!(
@@ -244,8 +266,33 @@ mod tests {
     }
 
     #[test]
+    fn websocket_upgrade_requires_rfc6455_handshake() {
+        let ok_key = "dGhlIHNhbXBsZSBub25jZQ==";
+        let build = |version: &str, extra: &str, key: &str| {
+            format!(
+                "GET / {version}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\n\
+                 Sec-WebSocket-Key: {key}\r\n{extra}\r\n"
+            )
+        };
+        let status = |raw: String| body_of(route(&head(&raw), &INFO)).0;
+        assert_eq!(status(build("HTTP/1.0", "", ok_key)), 400, "HTTP/1.0 upgrade");
+        assert_eq!(status(build("HTTP/1.1", "", ok_key)), 400, "missing Host");
+        assert_eq!(status(build("HTTP/1.1", "Host: 127.0.0.1\r\nHost: 127.0.0.2\r\n", ok_key)), 400, "duplicate Host");
+        assert_eq!(status(build("HTTP/1.1", "Host: 127.0.0.1\r\n", "x")), 400, "short key");
+        assert_eq!(
+            status(build("HTTP/1.1", "Host: 127.0.0.1\r\n", "AAAAAAAAAAAAAAAAAAAAAAAAAA==")),
+            400,
+            "key not 16 bytes"
+        );
+        assert!(matches!(route(&head(&build("HTTP/1.1", "Host: 127.0.0.1\r\n", ok_key)), &INFO), Routed::Upgrade(_)));
+        assert_eq!(parse_head(b"GET / HTTP/2.0\r\n\r\n"), Err(HeadError::Malformed));
+        assert_eq!(parse_head(b"GET / HTTP/1.1\r\nBad Name: x\r\n\r\n"), Err(HeadError::Malformed));
+        assert_eq!(parse_head(b"GET / HTTP/1.1\r\nX: a\x01b\r\n\r\n"), Err(HeadError::Malformed));
+    }
+
+    #[test]
     fn websocket_upgrade_rejects_origin_and_bad_version() {
-        let base = "GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: x\r\n";
+        let base = "GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n";
         let (status, _) =
             body_of(route(&head(&format!("{base}Sec-WebSocket-Version: 13\r\nOrigin: http://a\r\n\r\n")), &INFO));
         assert_eq!(status, 403);
