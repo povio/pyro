@@ -28,7 +28,10 @@ messaging within one realm. The behaviour follows upstream Lightpanda
 - **Lifetime.** A started, entangled, open port is pinned so its listeners keep
   running when only closures reference the channel; React's scheduler uses
   this. It is unpinned on `close()` (both sides) and when the page is disposed.
-  An unclosed started port therefore lives until page disposal.
+  An unclosed started port therefore lives until page disposal. The channel
+  references its ports only through traced hidden properties on its wrapper, so
+  listeners or expandos that reference the channel stay collectable once the
+  ports are closed.
 
 Gaps, all explicit:
 - Transferring anything throws NotSupportedError, whether as
@@ -42,3 +45,4 @@ Tests (`crates/lp-webapi/tests/dom_js.rs`):
 - `message_channel_delivers_cloned_messages_fifo_as_tasks`
 - `message_port_start_close_transfer_and_clone_errors`
 - `message_port_lifetime_pins_started_ports_until_close`
+- `message_channel_with_self_referencing_listener_is_collected_after_close`

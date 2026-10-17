@@ -2804,3 +2804,39 @@ fn message_port_lifetime_pins_started_ports_until_close() {
     e.page.dispose();
     tasks.drain();
 }
+
+#[test]
+fn message_channel_with_self_referencing_listener_is_collected_after_close() {
+    let e = env("<body>");
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    let r = &e.main;
+    let base = e.page.pinned_count();
+    // The listener and an expando reference the channel: a cycle that must stay
+    // visible to the GC (no native roots from channel to ports).
+    eval(
+        r,
+        "window.refs = (() => { const ch = new MessageChannel(); ch.self = ch; ch.port1.onmessage = () => ch; ch.port2.onmessage = () => ch.port1; ch.port1.close(); ch.port2.close(); return [new WeakRef(ch), new WeakRef(ch.port1), new WeakRef(ch.port2)]; })(); 1",
+    );
+    assert_eq!(e.page.pinned_count(), base, "closed ports are unpinned");
+    for _ in 0..4 {
+        e.engine.collect_garbage_now();
+        e.engine.drain_finalized();
+        e.page.after_task();
+        tasks.drain();
+    }
+    assert_eq!(eval(r, "refs.map((w) => w.deref() === undefined).join()"), "true,true,true");
+    // A channel that is still referenced keeps both ports reachable.
+    eval(
+        r,
+        "window.kept = new MessageChannel(); window.keptRefs = [new WeakRef(kept.port1), new WeakRef(kept.port2)];",
+    );
+    for _ in 0..3 {
+        e.engine.collect_garbage_now();
+        e.engine.drain_finalized();
+    }
+    assert_eq!(
+        eval(r, "keptRefs.map((w) => w.deref() !== undefined).join() + ':' + (kept.port1 === keptRefs[0].deref())"),
+        "true,true:true"
+    );
+}

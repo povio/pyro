@@ -190,9 +190,22 @@ fn new_port<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<(Object<'s>, Rc<P
     Ok((s.wrap::<MessagePort>(PortData(inner.clone()), Some(key))?, inner))
 }
 
+/// The channel references its ports only through traced hidden properties
+/// on its wrapper (as URL/URLSearchParams), so a listener or expando that
+/// references the channel cannot form a GC-invisible cycle.
 pub struct ChannelData {
-    port1: Persistent,
-    port2: Persistent,
+    realm: WeakRealm,
+    identity: lp_js::IdentityKey,
+}
+
+fn channel_port<'s>(s: &Scope<'s>, c: &ChannelData, name: &str) -> JsResult<lp_js::Value<'s>> {
+    let realm = c.realm.upgrade().ok_or(JsError::ContextDestroyed)?;
+    let owner = realm.scope()?;
+    let object = owner.lookup_identity(c.identity).ok_or(JsError::ContextDestroyed)?;
+    let value = owner.get_hidden(object, name)?.ok_or(JsError::ContextDestroyed)?;
+    // SAFETY: both realms share the VM; the receiver's traced property roots
+    // the port wrapper throughout this getter.
+    Ok(unsafe { lp_js::Value::from_raw(s.ctx(), value.as_raw()) })
 }
 
 pub struct MessageChannel;
@@ -210,11 +223,15 @@ impl JsClass for MessageChannel {
             let (o2, p2) = new_port(s, &page)?;
             p1.peer.replace(Rc::downgrade(&p2));
             p2.peer.replace(Rc::downgrade(&p1));
-            let data = ChannelData { port1: Persistent::new(s, o1.value()), port2: Persistent::new(s, o2.value()) };
-            s.wrap_new::<MessageChannel>(data, nt, None)
+            let identity = page.event_identity(page.next_event_id());
+            let data = ChannelData { realm: s.realm().downgrade(), identity };
+            let object = s.wrap_new::<MessageChannel>(data, nt, Some(identity))?;
+            s.set_hidden(object, "port1", o1.value())?;
+            s.set_hidden(object, "port2", o2.value())?;
+            Ok(object)
         });
-        def.getter("port1", |s, c| Ok(c.port1.get(s)));
-        def.getter("port2", |s, c| Ok(c.port2.get(s)));
+        def.getter("port1", |s, c| channel_port(s, c, "port1"));
+        def.getter("port2", |s, c| channel_port(s, c, "port2"));
     }
 }
 
