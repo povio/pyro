@@ -99,16 +99,26 @@ pub fn opt_node_arg(s: &Scope<'_>, v: Value<'_>, what: &str) -> JsResult<Option<
 /// `(Node or DOMString)...` -> single node (ParentNode/ChildNode helpers).
 fn convert_nodes(s: &Scope<'_>, n: &NodeData, a: &Args<'_>) -> JsResult<Option<NodeId>> {
     let page = n.page();
+    // Convert strings (which may run JS toString) before borrowing the DOM.
+    enum Item {
+        Node(NodeId),
+        Text(String),
+    }
+    let mut items = Vec::with_capacity(a.len());
+    for v in a.iter() {
+        let node = s.unwrap::<Node>(v).map(|nd| nd.id);
+        items.push(match node {
+            Some(id) => Item::Node(id),
+            None => Item::Text(dom_string(v)?),
+        });
+    }
     let mut dom = page.dom.borrow_mut();
     let doc = dom.node_document(n.id).js()?;
-    let mut nodes = Vec::with_capacity(a.len());
-    for v in a.iter() {
-        match s.unwrap::<Node>(v) {
-            Some(nd) => nodes.push(nd.id),
-            None => {
-                let text = dom_string(v)?;
-                nodes.push(dom.create_text(doc, &text).js()?);
-            }
+    let mut nodes = Vec::with_capacity(items.len());
+    for it in items {
+        match it {
+            Item::Node(id) => nodes.push(id),
+            Item::Text(t) => nodes.push(dom.create_text(doc, &t).js()?),
         }
     }
     match nodes.len() {
@@ -431,7 +441,8 @@ impl JsClass for CharacterData {
         def.getter("length", |s, n| Ok(s.number(n.page().dom.borrow().char_length(n.id).js()? as f64)));
         def.method("substringData", 2, |s, n, a| {
             a.require(2, "CharacterData.substringData")?;
-            let r = n.page().dom.borrow().substring_data(n.id, to_u32(a.get(0))?, to_u32(a.get(1))?).js()?;
+            let (off, cnt) = (to_u32(a.get(0))?, to_u32(a.get(1))?);
+            let r = n.page().dom.borrow().substring_data(n.id, off, cnt).js()?;
             Ok(s.string(&r))
         });
         def.method("appendData", 1, |s, n, a| {
@@ -444,18 +455,23 @@ impl JsClass for CharacterData {
         def.method("insertData", 2, |s, n, a| {
             a.require(2, "CharacterData.insertData")?;
             let d = dom_string(a.get(1))?;
-            n.page().dom.borrow_mut().replace_data(n.id, to_u32(a.get(0))?, 0, &d).js()?;
+            let arg0 = to_u32(a.get(0))?;
+            n.page().dom.borrow_mut().replace_data(n.id, arg0, 0, &d).js()?;
             Ok(s.undefined())
         });
         def.method("deleteData", 2, |s, n, a| {
             a.require(2, "CharacterData.deleteData")?;
-            n.page().dom.borrow_mut().replace_data(n.id, to_u32(a.get(0))?, to_u32(a.get(1))?, "").js()?;
+            let arg0 = to_u32(a.get(0))?;
+            let arg1 = to_u32(a.get(1))?;
+            n.page().dom.borrow_mut().replace_data(n.id, arg0, arg1, "").js()?;
             Ok(s.undefined())
         });
         def.method("replaceData", 3, |s, n, a| {
             a.require(3, "CharacterData.replaceData")?;
             let d = dom_string(a.get(2))?;
-            n.page().dom.borrow_mut().replace_data(n.id, to_u32(a.get(0))?, to_u32(a.get(1))?, &d).js()?;
+            let arg0 = to_u32(a.get(0))?;
+            let arg1 = to_u32(a.get(1))?;
+            n.page().dom.borrow_mut().replace_data(n.id, arg0, arg1, &d).js()?;
             Ok(s.undefined())
         });
     }
@@ -663,17 +679,26 @@ impl JsClass for Element {
         def.accessor(
             "id",
             |s, n| Ok(s.string(n.page().dom.borrow().get_attribute(n.id, "id").js()?.unwrap_or(""))),
-            |_s, n, v| n.page().dom.borrow_mut().set_attribute(n.id, "id", &dom_string(v)?).js(),
+            |_s, n, v| {
+                let arg0 = dom_string(v)?;
+                n.page().dom.borrow_mut().set_attribute(n.id, "id", &arg0).js()
+            },
         );
         def.accessor(
             "className",
             |s, n| Ok(s.string(n.page().dom.borrow().get_attribute(n.id, "class").js()?.unwrap_or(""))),
-            |_s, n, v| n.page().dom.borrow_mut().set_attribute(n.id, "class", &dom_string(v)?).js(),
+            |_s, n, v| {
+                let arg0 = dom_string(v)?;
+                n.page().dom.borrow_mut().set_attribute(n.id, "class", &arg0).js()
+            },
         );
         def.accessor(
             "slot",
             |s, n| Ok(s.string(n.page().dom.borrow().get_attribute(n.id, "slot").js()?.unwrap_or(""))),
-            |_s, n, v| n.page().dom.borrow_mut().set_attribute(n.id, "slot", &dom_string(v)?).js(),
+            |_s, n, v| {
+                let arg0 = dom_string(v)?;
+                n.page().dom.borrow_mut().set_attribute(n.id, "slot", &arg0).js()
+            },
         );
         def.getter("classList", |s, n| Ok(collections::token_list(s, n.page(), n.id, "class")?.value()));
         def.getter("part", |s, n| Ok(collections::token_list(s, n.page(), n.id, "part")?.value()));
@@ -1048,7 +1073,8 @@ impl JsClass for Document {
             let name = arg_string(&a, 0, "Document.createElement")?;
             let el = n.page().dom.borrow_mut().create_element(n.id, &name).js()?;
             if let Some(is) = a.get(1).as_object().map(|o| o.get("is")).transpose()?.filter(|v| !v.is_undefined()) {
-                n.page().dom.borrow_mut().set_attribute(el, "is", &dom_string(is)?).js()?;
+                let arg0 = dom_string(is)?;
+                n.page().dom.borrow_mut().set_attribute(el, "is", &arg0).js()?;
             }
             crate::html::upgrade_if_custom(s, n.page(), el)
         });

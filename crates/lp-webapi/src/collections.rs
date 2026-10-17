@@ -308,7 +308,10 @@ impl JsClass for HtmlOptionsCollection {
         def.accessor(
             "selectedIndex",
             |s, c| Ok(s.number(c.root.page.dom.borrow().selected_index(c.root.id).js()? as f64)),
-            |_s, c, v| c.root.page.dom.borrow_mut().set_selected_index(c.root.id, to_i32(v)?).js(),
+            |_s, c, v| {
+                let arg0 = to_i32(v)?;
+                c.root.page.dom.borrow_mut().set_selected_index(c.root.id, arg0).js()
+            },
         );
         def.method("add", 1, |s, c, a| {
             let el = crate::node::node_arg(s, a.get(0), "HTMLOptionsCollection.add")?;
@@ -429,7 +432,10 @@ impl JsClass for DomTokenList {
                 let dom = t.el.page.dom.borrow();
                 Ok(s.string(dom.get_attribute(t.el.id, t.attr).js()?.unwrap_or("")))
             },
-            |_s, t, v| t.el.page.dom.borrow_mut().set_attribute(t.el.id, t.attr, &dom_string(v)?).js(),
+            |_s, t, v| {
+                let arg0 = dom_string(v)?;
+                t.el.page.dom.borrow_mut().set_attribute(t.el.id, t.attr, &arg0).js()
+            },
         );
         def.method("toString", 0, |s, t, _a| {
             let dom = t.el.page.dom.borrow();
@@ -633,12 +639,18 @@ impl JsClass for Attr {
         def.accessor(
             "value",
             |s, a| Ok(s.string(a.el.page.dom.borrow().get_attribute(a.el.id, &a.qualified).js()?.unwrap_or(""))),
-            |_s, a, v| a.el.page.dom.borrow_mut().set_attribute(a.el.id, &a.qualified, &dom_string(v)?).js(),
+            |_s, a, v| {
+                let arg0 = dom_string(v)?;
+                a.el.page.dom.borrow_mut().set_attribute(a.el.id, &a.qualified, &arg0).js()
+            },
         );
         def.accessor(
             "nodeValue",
             |s, a| Ok(s.string(a.el.page.dom.borrow().get_attribute(a.el.id, &a.qualified).js()?.unwrap_or(""))),
-            |_s, a, v| a.el.page.dom.borrow_mut().set_attribute(a.el.id, &a.qualified, &dom_string(v)?).js(),
+            |_s, a, v| {
+                let arg0 = dom_string(v)?;
+                a.el.page.dom.borrow_mut().set_attribute(a.el.id, &a.qualified, &arg0).js()
+            },
         );
         def.getter("textContent", |s, a| {
             Ok(s.string(a.el.page.dom.borrow().get_attribute(a.el.id, &a.qualified).js()?.unwrap_or("")))
@@ -719,7 +731,8 @@ impl JsClass for DomStringMap {
         def.named_setter(|_s, m, name, v| {
             let attr = camel_to_data_attr(name)
                 .ok_or_else(|| JsError::dom("SyntaxError", format!("'{name}' is not a valid property name.")))?;
-            m.el.page.dom.borrow_mut().set_attribute(m.el.id, &attr, &dom_string(v)?).js()?;
+            let arg0 = dom_string(v)?;
+            m.el.page.dom.borrow_mut().set_attribute(m.el.id, &attr, &arg0).js()?;
             Ok(true)
         });
         def.named_deleter(|_s, m, name| {

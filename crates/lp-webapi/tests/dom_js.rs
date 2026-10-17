@@ -266,3 +266,19 @@ fn gc_reclaims_detached_wrapped_nodes_but_keeps_listened_connected_ones() {
     // The connected, listener-bearing wrapper survived GC with its listener.
     assert_eq!(eval(r, "list.firstChild.dispatchEvent(new Event('mark')); window.marked"), "1");
 }
+
+#[test]
+fn reentrant_string_conversion_does_not_double_borrow() {
+    let e = env("<body><div id=a></div></body>");
+    let r = &e.main;
+    // toString() runs JS that mutates the DOM while the setter converts it.
+    let out = eval(
+        r,
+        r#"const a = document.getElementById('a');
+        const evil = { toString() { document.body.appendChild(document.createElement('i')); return 'x'; } };
+        a.id = evil; a.title = evil; a.className = evil; a.textContent = evil; a.append(evil);
+        a.setAttribute('data-k', evil); a.classList.add('ok');
+        a.id + '|' + document.querySelectorAll('i').length + '|' + a.textContent"#,
+    );
+    assert_eq!(out, "x|6|xx");
+}

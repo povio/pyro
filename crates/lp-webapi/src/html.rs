@@ -17,7 +17,10 @@ macro_rules! reflect_str {
         $def.accessor(
             $prop,
             |s, n| Ok(s.string(n.page().dom.borrow().get_attribute(n.id, $attr).js()?.unwrap_or(""))),
-            |_s, n, v| n.page().dom.borrow_mut().set_attribute(n.id, $attr, &dom_string(v)?).js(),
+            |_s, n, v| {
+                let arg0 = dom_string(v)?;
+                n.page().dom.borrow_mut().set_attribute(n.id, $attr, &arg0).js()
+            },
         );
     };
 }
@@ -44,7 +47,10 @@ macro_rules! reflect_url {
                 let Some(v) = dom.get_attribute(n.id, $attr).js()? else { return Ok(s.string("")) };
                 Ok(s.string(&resolve_url(&dom, n.id, v)))
             },
-            |_s, n, v| n.page().dom.borrow_mut().set_attribute(n.id, $attr, &dom_string(v)?).js(),
+            |_s, n, v| {
+                let arg0 = dom_string(v)?;
+                n.page().dom.borrow_mut().set_attribute(n.id, $attr, &arg0).js()
+            },
         );
     };
 }
@@ -58,7 +64,10 @@ macro_rules! reflect_long {
                 let v = dom.get_attribute(n.id, $attr).js()?.and_then(|v| v.trim().parse::<i32>().ok());
                 Ok(s.number(v.unwrap_or($default) as f64))
             },
-            |_s, n, v| n.page().dom.borrow_mut().set_attribute(n.id, $attr, &to_i32(v)?.to_string()).js(),
+            |_s, n, v| {
+                let arg0 = to_i32(v)?;
+                n.page().dom.borrow_mut().set_attribute(n.id, $attr, &arg0.to_string()).js()
+            },
         );
     };
 }
@@ -373,7 +382,8 @@ fn reflect_aria(def: &mut ClassDef<Element>) {
                         n.page().dom.borrow_mut().remove_attribute(n.id, $attr).js()?;
                         Ok(())
                     } else {
-                        n.page().dom.borrow_mut().set_attribute(n.id, $attr, &dom_string(v)?).js()
+                        let value = dom_string(v)?;
+                        n.page().dom.borrow_mut().set_attribute(n.id, $attr, &value).js()
                     }
                 },
             );
@@ -418,7 +428,10 @@ impl JsClass for HtmlElement {
                 let default = if dom.is_focusable(n.id).unwrap_or(false) { 0 } else { -1 };
                 Ok(s.number(explicit.unwrap_or(default) as f64))
             },
-            |_s, n, v| n.page().dom.borrow_mut().set_attribute(n.id, "tabindex", &to_i32(v)?.to_string()).js(),
+            |_s, n, v| {
+                let arg0 = to_i32(v)?;
+                n.page().dom.borrow_mut().set_attribute(n.id, "tabindex", &arg0.to_string()).js()
+            },
         );
         def.accessor(
             "draggable",
@@ -519,7 +532,10 @@ simple_class!(HtmlTitleElement, "HTMLTitleElement", HtmlElement, |def| {
     def.accessor(
         "text",
         |s, n| Ok(s.string(&n.page().dom.borrow().text_content(n.id).js()?.unwrap_or_default())),
-        |_s, n, v| n.page().dom.borrow_mut().set_text_content(n.id, &dom_string(v)?).js(),
+        |_s, n, v| {
+            let arg0 = dom_string(v)?;
+            n.page().dom.borrow_mut().set_text_content(n.id, &arg0).js()
+        },
     );
 });
 simple_class!(HtmlMetaElement, "HTMLMetaElement", HtmlElement, |def| {
@@ -572,7 +588,10 @@ simple_class!(HtmlScriptElement, "HTMLScriptElement", HtmlElement, |def| {
     def.accessor(
         "text",
         |s, n| Ok(s.string(&n.page().dom.borrow().script_info(n.id).js()?.inline_text)),
-        |_s, n, v| n.page().dom.borrow_mut().set_text_content(n.id, &dom_string(v)?).js(),
+        |_s, n, v| {
+            let arg0 = dom_string(v)?;
+            n.page().dom.borrow_mut().set_text_content(n.id, &arg0).js()
+        },
     );
     def.static_method("supports", 1, |s, a| {
         let t = dom_string(a.get(0))?;
@@ -636,7 +655,10 @@ simple_class!(HtmlAnchorElement, "HTMLAnchorElement", HtmlElement, |def| {
     def.accessor(
         "text",
         |s, n| Ok(s.string(&n.page().dom.borrow().text_content(n.id).js()?.unwrap_or_default())),
-        |_s, n, v| n.page().dom.borrow_mut().set_text_content(n.id, &dom_string(v)?).js(),
+        |_s, n, v| {
+            let arg0 = dom_string(v)?;
+            n.page().dom.borrow_mut().set_text_content(n.id, &arg0).js()
+        },
     );
 });
 simple_class!(HtmlAreaElement, "HTMLAreaElement", HtmlElement, |def| {
@@ -701,9 +723,9 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
             Ok(s.number(n.page().dom.borrow().selection(n.id).js()?.0 as f64))
         },
         |_s, n, v| {
+            let st = to_u32(v)?;
             let mut dom = n.page().dom.borrow_mut();
             let (_, e) = dom.selection(n.id).js()?;
-            let st = to_u32(v)?;
             dom.set_selection_range(n.id, st, e.max(st)).js()
         },
     );
@@ -716,9 +738,10 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
             Ok(s.number(n.page().dom.borrow().selection(n.id).js()?.1 as f64))
         },
         |_s, n, v| {
+            let end = to_u32(v)?;
             let mut dom = n.page().dom.borrow_mut();
             let (st, _) = dom.selection(n.id).js()?;
-            dom.set_selection_range(n.id, st, to_u32(v)?).js()
+            dom.set_selection_range(n.id, st, end).js()
         },
     );
     def.accessor("selectionDirection", |s, _n| Ok(s.string("none")), |_s, _n, _v| Ok(()));
@@ -726,7 +749,9 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
         if !has_selection(n) {
             return Err(JsError::dom("InvalidStateError", "The input element's type does not support selection."));
         }
-        n.page().dom.borrow_mut().set_selection_range(n.id, to_u32(a.get(0))?, to_u32(a.get(1))?).js()?;
+        let arg0 = to_u32(a.get(0))?;
+        let arg1 = to_u32(a.get(1))?;
+        n.page().dom.borrow_mut().set_selection_range(n.id, arg0, arg1).js()?;
         Ok(s.undefined())
     });
     def.method("select", 0, |s, n, _a| {
@@ -741,9 +766,10 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
     });
     def.method("setRangeText", 1, |s, n, a| {
         let text = arg_string(&a, 0, "setRangeText")?;
+        let range = if a.len() >= 3 { Some((to_u32(a.get(1))?, to_u32(a.get(2))?)) } else { None };
         let mut dom = n.page().dom.borrow_mut();
-        if a.len() >= 3 {
-            dom.set_selection_range(n.id, to_u32(a.get(1))?, to_u32(a.get(2))?).js()?;
+        if let Some((st, en)) = range {
+            dom.set_selection_range(n.id, st, en).js()?;
         }
         dom.insert_text(n.id, &text).js()?;
         Ok(s.undefined())
@@ -788,17 +814,26 @@ simple_class!(HtmlInputElement, "HTMLInputElement", HtmlElement, |def| {
     def.accessor(
         "type",
         |s, n| Ok(s.string(n.page().dom.borrow().input_type(n.id).js()?.keyword())),
-        |_s, n, v| n.page().dom.borrow_mut().set_attribute(n.id, "type", &dom_string(v)?).js(),
+        |_s, n, v| {
+            let arg0 = dom_string(v)?;
+            n.page().dom.borrow_mut().set_attribute(n.id, "type", &arg0).js()
+        },
     );
     def.accessor(
         "value",
         |s, n| Ok(s.string(&n.page().dom.borrow().value(n.id).js()?)),
-        |_s, n, v| n.page().dom.borrow_mut().set_value(n.id, &null_to_empty(v)?).js(),
+        |_s, n, v| {
+            let arg0 = null_to_empty(v)?;
+            n.page().dom.borrow_mut().set_value(n.id, &arg0).js()
+        },
     );
     def.accessor(
         "defaultValue",
         |s, n| Ok(s.string(n.page().dom.borrow().get_attribute(n.id, "value").js()?.unwrap_or(""))),
-        |_s, n, v| n.page().dom.borrow_mut().set_attribute(n.id, "value", &dom_string(v)?).js(),
+        |_s, n, v| {
+            let arg0 = dom_string(v)?;
+            n.page().dom.borrow_mut().set_attribute(n.id, "value", &arg0).js()
+        },
     );
     def.accessor(
         "checked",
@@ -892,12 +927,18 @@ simple_class!(HtmlTextAreaElement, "HTMLTextAreaElement", HtmlElement, |def| {
     def.accessor(
         "value",
         |s, n| Ok(s.string(&n.page().dom.borrow().value(n.id).js()?)),
-        |_s, n, v| n.page().dom.borrow_mut().set_value(n.id, &null_to_empty(v)?).js(),
+        |_s, n, v| {
+            let arg0 = null_to_empty(v)?;
+            n.page().dom.borrow_mut().set_value(n.id, &arg0).js()
+        },
     );
     def.accessor(
         "defaultValue",
         |s, n| Ok(s.string(&n.page().dom.borrow().text_content(n.id).js()?.unwrap_or_default())),
-        |_s, n, v| n.page().dom.borrow_mut().set_text_content(n.id, &dom_string(v)?).js(),
+        |_s, n, v| {
+            let arg0 = dom_string(v)?;
+            n.page().dom.borrow_mut().set_text_content(n.id, &arg0).js()
+        },
     );
     def.getter("textLength", |s, n| {
         Ok(s.number(lp_dom::dom::utf16_len(&n.page().dom.borrow().value(n.id).js()?) as f64))
@@ -929,12 +970,18 @@ simple_class!(HtmlSelectElement, "HTMLSelectElement", HtmlElement, |def| {
     def.accessor(
         "selectedIndex",
         |s, n| Ok(s.number(n.page().dom.borrow().selected_index(n.id).js()? as f64)),
-        |_s, n, v| n.page().dom.borrow_mut().set_selected_index(n.id, to_i32(v)?).js(),
+        |_s, n, v| {
+            let arg0 = to_i32(v)?;
+            n.page().dom.borrow_mut().set_selected_index(n.id, arg0).js()
+        },
     );
     def.accessor(
         "value",
         |s, n| Ok(s.string(&n.page().dom.borrow().value(n.id).js()?)),
-        |_s, n, v| n.page().dom.borrow_mut().set_value(n.id, &dom_string(v)?).js(),
+        |_s, n, v| {
+            let arg0 = dom_string(v)?;
+            n.page().dom.borrow_mut().set_value(n.id, &arg0).js()
+        },
     );
     def.method("item", 1, |s, n, a| {
         let i = to_u32(a.get(0))? as usize;
@@ -1003,12 +1050,18 @@ simple_class!(HtmlOptionElement, "HTMLOptionElement", HtmlElement, |def| {
     def.accessor(
         "value",
         |s, n| Ok(s.string(&n.page().dom.borrow().option_value(n.id).js()?)),
-        |_s, n, v| n.page().dom.borrow_mut().set_attribute(n.id, "value", &dom_string(v)?).js(),
+        |_s, n, v| {
+            let arg0 = dom_string(v)?;
+            n.page().dom.borrow_mut().set_attribute(n.id, "value", &arg0).js()
+        },
     );
     def.accessor(
         "text",
         |s, n| Ok(s.string(&n.page().dom.borrow().option_text(n.id).js()?)),
-        |_s, n, v| n.page().dom.borrow_mut().set_text_content(n.id, &dom_string(v)?).js(),
+        |_s, n, v| {
+            let arg0 = dom_string(v)?;
+            n.page().dom.borrow_mut().set_text_content(n.id, &arg0).js()
+        },
     );
     def.accessor(
         "label",
@@ -1019,7 +1072,10 @@ simple_class!(HtmlOptionElement, "HTMLOptionElement", HtmlElement, |def| {
                 None => dom.option_text(n.id).js()?,
             }))
         },
-        |_s, n, v| n.page().dom.borrow_mut().set_attribute(n.id, "label", &dom_string(v)?).js(),
+        |_s, n, v| {
+            let arg0 = dom_string(v)?;
+            n.page().dom.borrow_mut().set_attribute(n.id, "label", &arg0).js()
+        },
     );
     def.accessor(
         "selected",
@@ -1067,7 +1123,10 @@ simple_class!(HtmlButtonElement, "HTMLButtonElement", HtmlElement, |def| {
                 _ => "submit",
             }))
         },
-        |_s, n, v| n.page().dom.borrow_mut().set_attribute(n.id, "type", &dom_string(v)?).js(),
+        |_s, n, v| {
+            let arg0 = dom_string(v)?;
+            n.page().dom.borrow_mut().set_attribute(n.id, "type", &arg0).js()
+        },
     );
 });
 
@@ -1089,7 +1148,10 @@ simple_class!(HtmlFormElement, "HTMLFormElement", HtmlElement, |def| {
                 _ => base,
             }))
         },
-        |_s, n, v| n.page().dom.borrow_mut().set_attribute(n.id, "action", &dom_string(v)?).js(),
+        |_s, n, v| {
+            let arg0 = dom_string(v)?;
+            n.page().dom.borrow_mut().set_attribute(n.id, "action", &arg0).js()
+        },
     );
     def.accessor(
         "method",
@@ -1101,7 +1163,10 @@ simple_class!(HtmlFormElement, "HTMLFormElement", HtmlElement, |def| {
                 _ => "get",
             }))
         },
-        |_s, n, v| n.page().dom.borrow_mut().set_attribute(n.id, "method", &dom_string(v)?).js(),
+        |_s, n, v| {
+            let arg0 = dom_string(v)?;
+            n.page().dom.borrow_mut().set_attribute(n.id, "method", &arg0).js()
+        },
     );
     def.getter(
         "elements",
@@ -1430,7 +1495,10 @@ simple_class!(HtmlOutputElement, "HTMLOutputElement", HtmlElement, |def| {
     def.accessor(
         "value",
         |s, n| Ok(s.string(&n.page().dom.borrow().text_content(n.id).js()?.unwrap_or_default())),
-        |_s, n, v| n.page().dom.borrow_mut().set_text_content(n.id, &dom_string(v)?).js(),
+        |_s, n, v| {
+            let arg0 = dom_string(v)?;
+            n.page().dom.borrow_mut().set_text_content(n.id, &arg0).js()
+        },
     );
 });
 simple_class!(HtmlDataListElement, "HTMLDataListElement", HtmlElement, |def| {
@@ -1604,6 +1672,7 @@ impl JsClass for DomImplementation {
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
         def.method("createHTMLDocument", 0, |s, h, a| {
+            let title = if a.get(0).is_undefined() { None } else { Some(dom_string(a.get(0))?) };
             let mut dom = h.page.dom.borrow_mut();
             let doc = dom.create_document(lp_dom::DocumentKind::Html, "about:blank");
             let dt = dom.create_doctype(doc, "html", "", "").js()?;
@@ -1612,9 +1681,9 @@ impl JsClass for DomImplementation {
             dom.append_child(doc, html).js()?;
             let head = dom.create_element(doc, "head").js()?;
             dom.append_child(html, head).js()?;
-            if !a.get(0).is_undefined() {
+            if let Some(title) = title {
                 let t = dom.create_element(doc, "title").js()?;
-                let text = dom.create_text(doc, &dom_string(a.get(0))?).js()?;
+                let text = dom.create_text(doc, &title).js()?;
                 dom.append_child(t, text).js()?;
                 dom.append_child(head, t).js()?;
             }
@@ -1637,10 +1706,9 @@ impl JsClass for DomImplementation {
         });
         def.method("createDocumentType", 3, |s, h, a| {
             a.require(3, "DOMImplementation.createDocumentType")?;
+            let (name, public, system) = (dom_string(a.get(0))?, dom_string(a.get(1))?, dom_string(a.get(2))?);
             let mut dom = h.page.dom.borrow_mut();
-            let dt = dom
-                .create_doctype(h.id, &dom_string(a.get(0))?, &dom_string(a.get(1))?, &dom_string(a.get(2))?)
-                .js()?;
+            let dt = dom.create_doctype(h.id, &name, &public, &system).js()?;
             drop(dom);
             Ok(wrap_node(s, &h.page, dt)?.value())
         });
