@@ -8,6 +8,7 @@
 //! to anything but `about:blank` currently fails with an explicit error.
 
 mod loader;
+mod nav;
 mod window;
 
 use lp_js::{Engine, EngineHooks, JsError, Realm, RealmId, RealmOptions};
@@ -17,6 +18,7 @@ use std::rc::Rc;
 use std::time::Instant;
 
 pub use loader::{FetchDone, FetchRequest, NetLoader, Resource, ResourceKind, ResourceLoader, StaticLoader};
+pub use nav::{History, Location, PageNav, Performance};
 pub use window::{Window, WindowData};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -204,6 +206,10 @@ pub struct Page {
     pub init_scripts: Vec<InitScript>,
     /// Navigation whose document is being fetched (superseded fetches are ignored).
     pub(crate) pending_loader: Option<LoaderId>,
+    /// Whether the pending navigation replaces the current history entry.
+    pub(crate) pending_replace: bool,
+    /// Session history and current URL (shared with the page's windows).
+    pub nav: Rc<PageNav>,
     pub(crate) load: Option<loader::DocumentLoad>,
 }
 
@@ -246,6 +252,9 @@ impl BrowserThread {
     pub fn new() -> Result<BrowserThread, JsError> {
         let engine = Engine::new()?;
         engine.register::<Window>();
+        engine.register::<Location>();
+        engine.register::<History>();
+        engine.register::<Performance>();
         let event_loop = EventLoop::new();
         let browser = Browser {
             engine,
@@ -391,12 +400,15 @@ impl Browser {
             dom: None,
             document: None,
         };
+        let nav = PageNav::new(id, self.sched.clone());
         self.pages.push(Page {
             id,
             context,
             main_frame: frame,
             init_scripts: Vec::new(),
             pending_loader: None,
+            pending_replace: false,
+            nav,
             load: None,
         });
         self.navigate(
@@ -443,6 +455,20 @@ impl Browser {
     /// Starts a navigation. Only `about:blank` is supported until document
     /// loading (lp-dom/lp-net) is integrated; other URLs emit
     /// `FrameNavigateFailed` and return an error.
+    /// Starts a navigation that replaces the current history entry when
+    /// `replace` (location.replace/reload, history traversal).
+    pub fn navigate_with_history(
+        &mut self,
+        page: PageId,
+        opts: NavigateOpts,
+        replace: bool,
+    ) -> Result<LoaderId, JsError> {
+        if let Some(p) = self.page_mut(page) {
+            p.pending_replace = replace;
+        }
+        self.navigate(page, opts)
+    }
+
     pub fn navigate(&mut self, page: PageId, opts: NavigateOpts) -> Result<LoaderId, JsError> {
         let loader_id = LoaderId(format!("{:032X}", self.next()));
         let frame_id = self.page(page).ok_or(JsError::Type("no such page".into()))?.main_frame.id.clone();
@@ -504,7 +530,7 @@ impl Browser {
     ) -> Result<(), JsError> {
         let window_class = self.engine.register::<Window>();
         let sched = self.sched.clone();
-        let (frame_id, old, scripts) = {
+        let (frame_id, old, scripts, nav) = {
             let p = self.page_mut(page).ok_or(JsError::Type("no such page".into()))?;
             let old = std::mem::take(&mut p.main_frame.realms);
             // The previous document (and its in-flight loads) is gone.
@@ -513,7 +539,9 @@ impl Browser {
             p.main_frame.document = None;
             p.main_frame.url = opts.url.clone();
             p.main_frame.loader_id = loader_id.clone();
-            (p.main_frame.id.clone(), old, p.init_scripts.clone())
+            let replace = std::mem::take(&mut p.pending_replace);
+            p.nav.commit_document(&opts.url, replace, None);
+            (p.main_frame.id.clone(), old, p.init_scripts.clone(), p.nav.clone())
         };
         for r in old {
             window::cancel_timers(&r.realm);
@@ -535,7 +563,7 @@ impl Browser {
                 global_class: Some(window_class),
                 origin: (origin != "null").then(|| origin.to_string()),
             })?;
-            realm.set_global_data::<Window>(WindowData::new(sched.clone(), opts.url.clone()))?;
+            realm.set_global_data::<Window>(WindowData::new(sched.clone(), nav.clone()))?;
             for s in scripts.iter().filter(|s| s.world == world) {
                 let scope = realm.scope()?;
                 if let Err(e) = scope.eval(&s.source, Some(&format!("init-script:{}", s.id)), 1) {
@@ -587,7 +615,9 @@ impl Browser {
             global_class: Some(window_class),
             origin: None,
         })?;
-        realm.set_global_data::<Window>(WindowData::new(self.sched.clone(), url))?;
+        let nav = self.page(page).expect("page").nav.clone();
+        let _ = url;
+        realm.set_global_data::<Window>(WindowData::new(self.sched.clone(), nav))?;
         self.page_mut(page)
             .expect("page")
             .main_frame

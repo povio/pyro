@@ -215,3 +215,151 @@ fn contexts_have_isolated_network_state() {
     assert!(b.context_net(c1).is_none());
     assert!(!b.close_context(DEFAULT_CONTEXT));
 }
+
+#[derive(Default)]
+struct NavRecorder {
+    log: RefCell<Vec<String>>,
+}
+
+impl PageObserver for NavRecorder {
+    fn on_page_event(&self, _page: PageId, event: &PageEvent) {
+        let e = match event {
+            PageEvent::FrameNavigated { url, .. } => format!("navigated {url}"),
+            PageEvent::FrameNavigatedWithinDocument { url, kind, .. } => format!("within {kind:?} {url}"),
+            PageEvent::FrameLoaded { .. } => "load".to_string(),
+            PageEvent::FrameNavigateFailed { error, .. } => format!("failed {error}"),
+            _ => return,
+        };
+        self.log.borrow_mut().push(e);
+    }
+}
+
+impl EngineHooks for NavRecorder {
+    fn exception_thrown(&self, _realm: &Realm, e: &JsException) {
+        self.log.borrow_mut().push(format!("exception: {}", e.text()));
+    }
+}
+
+fn nav_setup() -> (BrowserThread, Rc<NavRecorder>, PageId) {
+    let mut thread = BrowserThread::new().unwrap();
+    let rec = Rc::new(NavRecorder::default());
+    thread.browser.set_observer(Some(rec.clone()));
+    thread.browser.set_engine_hooks(Some(rec.clone()));
+    let loader = Rc::new(StaticLoader::default());
+    loader.insert("http://site.test/a/b?x=1#h", "text/html", "<p>a</p>", Duration::ZERO);
+    loader.insert("http://site.test/other", "text/html", "<p>other</p>", Duration::ZERO);
+    thread.browser.set_loader(Some(loader));
+    let page = thread.browser.create_page().unwrap();
+    rec.log.borrow_mut().clear();
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/a/b?x=1#h")).unwrap();
+    let r = thread
+        .run_until(Some(Instant::now() + Duration::from_secs(5)), |_| rec.log.borrow().iter().any(|l| l == "load"));
+    assert_eq!(r, lp_runtime::RunOutcome::Done);
+    rec.log.borrow_mut().clear();
+    (thread, rec, page)
+}
+
+fn js(thread: &BrowserThread, page: PageId, src: &str) -> String {
+    let realm = thread.browser.page(page).unwrap().main_frame.main_realm().unwrap().clone();
+    let s = realm.scope().unwrap();
+    match s.eval(src, None, 1) {
+        Ok(v) => v.to_string().unwrap(),
+        Err(e) => format!("THROW {}", e.details(&s).text()),
+    }
+}
+
+#[test]
+fn location_reflects_current_url() {
+    let (thread, _rec, page) = nav_setup();
+    assert_eq!(
+        js(&thread, page, "[location.href, location.origin, location.protocol, location.host, location.pathname, location.search, location.hash, String(location), window.origin].join('|')"),
+        "http://site.test/a/b?x=1#h|http://site.test|http:|site.test|/a/b|?x=1|#h|http://site.test/a/b?x=1#h|http://site.test"
+    );
+    assert_eq!(
+        js(
+            &thread,
+            page,
+            "location === window.location && history === window.history && performance === window.performance"
+        ),
+        "true"
+    );
+    assert_eq!(js(&thread, page, "location instanceof Location && history instanceof History"), "true");
+}
+
+#[test]
+fn push_and_replace_state_are_same_document() {
+    let (mut thread, rec, page) = nav_setup();
+    let len0: f64 = js(&thread, page, "history.length").parse().unwrap();
+    assert_eq!(
+        js(&thread, page, "history.pushState({n: 1}, '', '/route/1?q=2'); [location.pathname, location.search, JSON.stringify(history.state)].join('|')"),
+        "/route/1|?q=2|{\"n\":1}"
+    );
+    assert_eq!(js(&thread, page, "history.length").parse::<f64>().unwrap(), len0 + 1.0);
+    assert_eq!(
+        js(&thread, page, "history.replaceState(null, '', 'two'); location.pathname + ':' + history.state"),
+        "/route/two:null"
+    );
+    assert_eq!(js(&thread, page, "history.length").parse::<f64>().unwrap(), len0 + 1.0);
+    // document.URL in the DOM follows synchronously.
+    {
+        let p = thread.browser.page(page).unwrap();
+        let dom = p.main_frame.dom.clone().unwrap();
+        let doc = p.main_frame.document.unwrap();
+        assert_eq!(&*dom.borrow().document_data(doc).unwrap().url, "http://site.test/route/two");
+    }
+    assert!(js(&thread, page, "history.pushState(null, '', 'https://evil.test/')").contains("SecurityError"));
+    thread.run_until_idle(Some(Instant::now() + Duration::from_secs(2)));
+    assert_eq!(
+        *rec.log.borrow(),
+        ["within Push http://site.test/route/1?q=2", "within Replace http://site.test/route/two"]
+    );
+    assert_eq!(thread.browser.page(page).unwrap().main_frame.url, "http://site.test/route/two");
+}
+
+#[test]
+fn back_traverses_same_document_and_hash_changes_are_fragments() {
+    let (mut thread, rec, page) = nav_setup();
+    js(&thread, page, "history.pushState(null, '', '/p2'); location.hash = 'frag'");
+    assert_eq!(js(&thread, page, "location.href"), "http://site.test/p2#frag");
+    js(&thread, page, "history.back()");
+    thread.run_until_idle(Some(Instant::now() + Duration::from_secs(2)));
+    assert_eq!(js(&thread, page, "location.href"), "http://site.test/p2");
+    assert_eq!(
+        *rec.log.borrow(),
+        [
+            "within Push http://site.test/p2",
+            "within Fragment http://site.test/p2#frag",
+            "within Push http://site.test/p2"
+        ]
+    );
+}
+
+#[test]
+fn location_assignment_navigates_cross_document_and_back_returns() {
+    let (mut thread, rec, page) = nav_setup();
+    js(&thread, page, "location.href = '/other'");
+    let r = thread
+        .run_until(Some(Instant::now() + Duration::from_secs(5)), |_| rec.log.borrow().iter().any(|l| l == "load"));
+    assert_eq!(r, lp_runtime::RunOutcome::Done, "{:?}", rec.log.borrow());
+    assert_eq!(js(&thread, page, "location.href + ' ' + history.length"), "http://site.test/other 3");
+    rec.log.borrow_mut().clear();
+    js(&thread, page, "history.back()");
+    let r = thread
+        .run_until(Some(Instant::now() + Duration::from_secs(5)), |_| rec.log.borrow().iter().any(|l| l == "load"));
+    assert_eq!(r, lp_runtime::RunOutcome::Done, "{:?}", rec.log.borrow());
+    assert_eq!(js(&thread, page, "location.href + ' ' + history.length"), "http://site.test/a/b?x=1#h 3");
+    assert_eq!(rec.log.borrow()[0], "navigated http://site.test/a/b?x=1#h");
+    js(&thread, page, "location.replace('/other')");
+    rec.log.borrow_mut().clear();
+    thread.run_until(Some(Instant::now() + Duration::from_secs(5)), |_| rec.log.borrow().iter().any(|l| l == "load"));
+    assert_eq!(js(&thread, page, "history.length"), "3", "replace keeps the entry count");
+}
+
+#[test]
+fn performance_now_is_monotonic_and_origin_is_wall_time() {
+    let (thread, _rec, page) = nav_setup();
+    assert_eq!(
+        js(&thread, page, "const a = performance.now(); let b = a; for (let i = 0; i < 1e5; i++) b = performance.now(); [a >= 0, b >= a, Math.abs(performance.timeOrigin + b - Date.now()) < 1000, typeof performance.mark].join()"),
+        "true,true,true,function"
+    );
+}

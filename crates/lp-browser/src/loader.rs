@@ -384,6 +384,7 @@ impl Browser {
         let p = self.page_mut(page).ok_or(JsError::Type("no such page".into()))?;
         p.main_frame.dom = Some(dom.clone());
         p.main_frame.document = Some(doc);
+        p.nav.set_document(Some((dom.clone(), doc)));
         for r in &p.main_frame.realms {
             r.realm.set_module_fetcher(Some(fetcher.clone()));
         }
