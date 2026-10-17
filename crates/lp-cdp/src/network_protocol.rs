@@ -61,9 +61,21 @@ fn response_json(head: &ResponseHead, encoded_len: u64) -> Value {
     response
 }
 
+/// Chromium identifies a document navigation by requestId == loaderId.
+/// Native network ids remain context-local and are used internally.
+fn protocol_request_id(id: RequestId, destination: lp_net::Destination, loader_id: Option<&str>) -> String {
+    if matches!(destination, lp_net::Destination::Document | lp_net::Destination::Iframe) {
+        if let Some(loader) = loader_id.filter(|s| !s.is_empty()) {
+            return loader.to_owned();
+        }
+    }
+    id.to_string()
+}
+
 /// Per-request facts needed by later events of the same request.
 #[derive(Debug, Clone)]
 struct Inflight {
+    request_id: String,
     loader_id: String,
     frame_id: Option<String>,
     resource_type: &'static str,
@@ -89,9 +101,15 @@ impl NetworkTranslator {
                 if !self.inflight.contains_key(id) && self.inflight.len() >= MAX_INFLIGHT {
                     return None;
                 }
+                let request_id = protocol_request_id(*id, request.destination, request.loader_id.as_deref());
                 self.inflight.insert(
                     *id,
-                    Inflight { loader_id: loader_id.clone(), frame_id: request.frame_id.clone(), resource_type },
+                    Inflight {
+                        request_id: request_id.clone(),
+                        loader_id: loader_id.clone(),
+                        frame_id: request.frame_id.clone(),
+                        resource_type,
+                    },
                 );
                 let mut req = json!({
                     "url": request.url.as_str(),
@@ -109,7 +127,7 @@ impl NetworkTranslator {
                 let document_url =
                     if resource_type == "Document" { request.url.as_str().to_owned() } else { String::new() };
                 let mut params = json!({
-                    "requestId": id.to_string(),
+                    "requestId": request_id,
                     "loaderId": loader_id,
                     "documentURL": document_url,
                     "request": req,
@@ -130,7 +148,7 @@ impl NetworkTranslator {
             NetEvent::ResponseReceived { id, head, timestamp, .. } => {
                 let inflight = self.inflight.get(id)?;
                 let mut params = json!({
-                    "requestId": id.to_string(),
+                    "requestId": inflight.request_id,
                     "loaderId": inflight.loader_id,
                     "timestamp": timestamp,
                     "type": inflight.resource_type,
@@ -143,11 +161,11 @@ impl NetworkTranslator {
                 Some(("Network.responseReceived", params))
             }
             NetEvent::DataReceived { id, data, timestamp } => {
-                self.inflight.get(id)?;
+                let inflight = self.inflight.get(id)?;
                 Some((
                     "Network.dataReceived",
                     json!({
-                        "requestId": id.to_string(),
+                        "requestId": inflight.request_id,
                         "timestamp": timestamp,
                         "dataLength": data.len(),
                         "encodedDataLength": data.len(),
@@ -155,10 +173,10 @@ impl NetworkTranslator {
                 ))
             }
             NetEvent::LoadingFinished { id, encoded_len, timestamp } => {
-                self.inflight.remove(id)?;
+                let inflight = self.inflight.remove(id)?;
                 Some((
                     "Network.loadingFinished",
-                    json!({ "requestId": id.to_string(), "timestamp": timestamp, "encodedDataLength": encoded_len }),
+                    json!({ "requestId": inflight.request_id, "timestamp": timestamp, "encodedDataLength": encoded_len }),
                 ))
             }
             NetEvent::LoadingFailed { id, error, canceled, timestamp, .. } => {
@@ -166,7 +184,7 @@ impl NetworkTranslator {
                 Some((
                     "Network.loadingFailed",
                     json!({
-                        "requestId": id.to_string(),
+                        "requestId": inflight.request_id,
                         "timestamp": timestamp,
                         "type": inflight.resource_type,
                         "errorText": error.error_text(),
@@ -275,11 +293,13 @@ pub const MAX_RETAINED_BODIES: usize = 4096;
 pub struct BodyStore {
     budget: BodyBudget,
     bodies: HashMap<RequestId, Body>,
+    protocol_ids: HashMap<String, RequestId>,
     order: VecDeque<RequestId>,
     retained: usize,
 }
 
 struct Body {
+    protocol_id: String,
     chunks: Vec<Bytes>,
     len: usize,
     textual: bool,
@@ -289,13 +309,13 @@ struct Body {
 
 impl BodyStore {
     pub fn new(budget: BodyBudget) -> Self {
-        Self { budget, bodies: HashMap::new(), order: VecDeque::new(), retained: 0 }
+        Self { budget, bodies: HashMap::new(), protocol_ids: HashMap::new(), order: VecDeque::new(), retained: 0 }
     }
 
     /// Feeds an event; only response/data/finish/fail events matter.
     pub fn observe(&mut self, event: &NetEvent) {
         match event {
-            NetEvent::ResponseReceived { id, head, .. } => {
+            NetEvent::ResponseReceived { id, head, destination, loader_id, .. } => {
                 self.remove(*id);
                 if self.bodies.len() >= MAX_RETAINED_BODIES {
                     if let Some(oldest) = self.order.front().copied() {
@@ -307,7 +327,16 @@ impl BodyStore {
                     || head.mime.contains("javascript")
                     || head.mime.contains("xml")
                     || head.mime.is_empty();
-                self.bodies.insert(*id, Body { chunks: Vec::new(), len: 0, textual, complete: false, dropped: None });
+                let protocol_id = protocol_request_id(*id, *destination, loader_id.as_deref());
+                // Replaced captures (e.g. redirects) must not leave stale aliases.
+                if let Some(previous) = self.protocol_ids.get(&protocol_id).copied() {
+                    self.remove(previous);
+                }
+                self.protocol_ids.insert(protocol_id.clone(), *id);
+                self.bodies.insert(
+                    *id,
+                    Body { protocol_id, chunks: Vec::new(), len: 0, textual, complete: false, dropped: None },
+                );
                 self.order.push_back(*id);
             }
             NetEvent::DataReceived { id, data, .. } => self.append(*id, data),
@@ -365,6 +394,7 @@ impl BodyStore {
 
     fn remove(&mut self, id: RequestId) {
         if let Some(body) = self.bodies.remove(&id) {
+            self.protocol_ids.remove(&body.protocol_id);
             self.budget.release(body.len);
             self.retained -= body.len;
             self.order.retain(|r| *r != id);
@@ -376,12 +406,21 @@ impl BodyStore {
         self.budget.release(self.retained);
         self.retained = 0;
         self.bodies.clear();
+        self.protocol_ids.clear();
         self.order.clear();
     }
 
     /// Bytes this store holds.
     pub fn retained_bytes(&self) -> usize {
         self.retained
+    }
+
+    /// Looks up the externally exposed request id, which is the loader id
+    /// for document navigations and the native id for subresources.
+    pub fn get_by_protocol_id(&self, id: &str) -> CdpResult<Value> {
+        let id =
+            self.protocol_ids.get(id).ok_or_else(|| CdpError::server("No resource with given identifier found"))?;
+        self.get(*id)
     }
 
     /// `Network.getResponseBody` result: text bodies as UTF-8 strings,

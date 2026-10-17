@@ -1,5 +1,5 @@
 // Real Playwright 1.59.1 (connectOverCDP) against `lightningpanda serve` on JavaScriptCore.
-// Only about:blank can load until document loading is integrated; other URLs must fail explicitly.
+// Covers about:blank plus real HTTP navigation, redirects, response bodies and explicit network failures.
 //
 // Usage: node tests/e2e/about-blank.mjs /abs/path/to/lightningpanda
 // Requires `bun install` (or npm install) in bench/ for the pinned playwright-core.
@@ -7,6 +7,7 @@
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import net from 'node:net';
+import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
@@ -114,7 +115,36 @@ await check('goto about:blank', async () => {
   assert.equal(await page.evaluate(() => typeof window), 'object');
 });
 await check('goto http fails explicitly', async () => {
-  await assert.rejects(page.goto('http://127.0.0.1:1/x', { timeout: 5000 }), /ERR_NOT_IMPLEMENTED/);
+  await assert.rejects(page.goto('http://127.0.0.1:1/x', { timeout: 5000 }), /ERR_CONNECTION_REFUSED/);
+});
+await check('HTTP redirect, response body and inline script', async () => {
+  const body = '<!doctype html><script>globalThis.loadedFromHttp=42</script>';
+  const server = http.createServer((req, res) => {
+    if (req.url === '/redirect') {
+      res.writeHead(302, { location: '/document' });
+      res.end();
+    } else {
+      res.writeHead(201, { 'content-type': 'text/html' });
+      res.end(body);
+    }
+  });
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  try {
+    const origin = `http://127.0.0.1:${server.address().port}`;
+    const response = await page.goto(`${origin}/redirect`, { timeout: 5000 });
+    assert.ok(response, 'navigation exposes a Network response');
+    assert.equal(response.status(), 201);
+    assert.equal(response.url(), `${origin}/document`);
+    assert.equal(await response.text(), body);
+    assert.equal(response.request().redirectedFrom().url(), `${origin}/redirect`);
+    assert.equal(await page.evaluate(() => globalThis.loadedFromHttp), 42);
+  } finally {
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  }
 });
 await check('second context is independent', async () => {
   const other = await browser.newContext();

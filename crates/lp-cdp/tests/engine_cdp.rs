@@ -29,8 +29,16 @@ fn decode(bytes: &[u8]) -> Value {
 
 impl Harness {
     fn new() -> Harness {
+        Self::with_budget(None)
+    }
+
+    fn with_budget(budget: Option<lp_cdp::network_protocol::BodyBudget>) -> Harness {
         let (out, rx) = Outbox::channel(lp_cdp::outbox::DEFAULT_OUTBOUND_BUDGET);
-        let host = EngineHost::new(out.clone()).expect("JavaScriptCore engine");
+        let host = match budget {
+            Some(budget) => EngineHost::with_body_budget(out.clone(), budget),
+            None => EngineHost::new(out.clone()),
+        }
+        .expect("JavaScriptCore engine");
         let mut h = Harness {
             browser: Browser::new(host),
             out,
@@ -482,4 +490,138 @@ fn window_bounds_round_trip() {
     assert_eq!(w["result"]["bounds"]["width"], 800);
     assert_eq!(w["result"]["bounds"]["height"], 600);
     assert_eq!(w["result"]["bounds"]["left"], 0);
+}
+
+fn wait_for_network_finish(h: &mut Harness, events: &mut Vec<Value>) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !events.iter().any(|e| e["method"] == "Network.loadingFinished") {
+        assert!(Instant::now() < deadline, "missing network finish: {events:#?}");
+        h.browser.host_mut().run_until_work(Some(deadline), || false);
+        h.browser.host_mut().flush();
+        events.extend(h.drain());
+    }
+}
+
+#[test]
+fn network_response_body_and_disable_release_capture() {
+    use lp_cdp::network_protocol::{BodyBudget, BodyLimits};
+    let budget = BodyBudget::new(BodyLimits { total: 1024, per_body: 1024 });
+    let mut h = Harness::with_budget(Some(budget.clone()));
+    assert_eq!(h.page("Network.enable", json!({}))["result"], json!({}));
+    let mut events = h.page_with_events("Page.navigate", json!({"url":"data:text/html,hello"}));
+    wait_for_network_finish(&mut h, &mut events);
+    let request = events.iter().find(|e| e["method"] == "Network.requestWillBeSent").unwrap();
+    let id = request["params"]["requestId"].clone();
+    assert_eq!(request["params"]["frameId"], h.frame_id);
+    assert_eq!(request["params"]["requestId"], request["params"]["loaderId"]);
+    let response = events.iter().find(|e| e["method"] == "Network.responseReceived").unwrap();
+    assert_eq!(response["params"]["requestId"], id);
+    assert_eq!(response["params"]["response"]["status"], 200);
+    assert_eq!(
+        h.page("Network.getResponseBody", json!({"requestId":id}))["result"],
+        json!({"body":"hello","base64Encoded":false})
+    );
+    assert_eq!(budget.used(), 5);
+    assert_eq!(h.page("Network.disable", json!({}))["result"], json!({}));
+    assert_eq!(budget.used(), 0);
+    assert!(h.page("Network.getResponseBody", json!({"requestId":id}))["error"].is_object());
+    let events = h.page_with_events("Page.navigate", json!({"url":"data:text/html,uncaptured"}));
+    assert!(!events.iter().any(|e| e["method"].as_str().is_some_and(|m| m.starts_with("Network."))));
+    assert_eq!(budget.used(), 0);
+}
+
+#[test]
+fn network_events_only_reach_enabled_sessions_and_close_releases_body() {
+    use lp_cdp::network_protocol::{BodyBudget, BodyLimits};
+    let budget = BodyBudget::new(BodyLimits { total: 1024, per_body: 1024 });
+    let mut h = Harness::with_budget(Some(budget.clone()));
+    let target = h.frame_id.clone();
+    let attached = h.call(None, "Target.attachToTarget", json!({"targetId":target,"flatten":true}));
+    let second = attached["result"]["sessionId"].as_str().unwrap().to_owned();
+    h.page("Network.enable", json!({}));
+    let mut events = h.page_with_events("Page.navigate", json!({"url":"data:text/html,body"}));
+    wait_for_network_finish(&mut h, &mut events);
+    for event in events.iter().filter(|e| e["method"].as_str().is_some_and(|m| m.starts_with("Network."))) {
+        assert_eq!(event["sessionId"], h.session);
+        assert_ne!(event["sessionId"], second);
+    }
+    assert_eq!(budget.used(), 4);
+    h.call(None, "Target.closeTarget", json!({"targetId":target}));
+    assert_eq!(budget.used(), 0);
+}
+
+#[test]
+fn cdp_contexts_map_to_distinct_browser_network_contexts() {
+    use lp_cdp::target::Host;
+    let (out, _) = Outbox::channel(1024 * 1024);
+    let mut host = EngineHost::new(out).unwrap();
+    let a = host.create_context().unwrap();
+    let b = host.create_context().unwrap();
+    let (pa, _) = host.create_page(a).unwrap();
+    let (pb, _) = host.create_page(b).unwrap();
+    let ca = host.thread.browser.page(lp_browser::PageId(pa as u32)).unwrap().context;
+    let cb = host.thread.browser.page(lp_browser::PageId(pb as u32)).unwrap().context;
+    assert_ne!(ca, cb);
+    assert!(host.thread.browser.context_net(ca).is_some());
+    assert!(host.thread.browser.context_net(cb).is_some());
+    host.dispose_context(a);
+    assert!(host.thread.browser.context_net(ca).is_none());
+    assert!(host.thread.browser.context_net(cb).is_some());
+    host.close_all();
+    assert!(host.thread.browser.context_net(cb).is_none());
+}
+
+#[test]
+fn network_http_redirect_response_and_body() {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let server = std::thread::spawn(move || {
+        for index in 0..2 {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let mut stream = loop {
+                match listener.accept() {
+                    Ok((stream, _)) => break stream,
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(Instant::now() < deadline, "request did not arrive");
+                        std::thread::sleep(Duration::from_millis(1));
+                    }
+                    Err(e) => panic!("{e}"),
+                }
+            };
+            stream.set_nonblocking(false).unwrap();
+            stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+            let mut request = Vec::new();
+            let mut chunk = [0; 1024];
+            while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                let n = stream.read(&mut chunk).unwrap();
+                assert!(n > 0 && request.len() + n <= 8192);
+                request.extend_from_slice(&chunk[..n]);
+            }
+            let response: &[u8] = if index == 0 {
+                b"HTTP/1.1 302 Found\r\nLocation: /final\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            } else {
+                b"HTTP/1.1 201 Created\r\nContent-Type: text/html\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello"
+            };
+            stream.write_all(response).unwrap();
+        }
+    });
+    let mut h = Harness::new();
+    h.page("Network.enable", json!({}));
+    let mut events = h.page_with_events("Page.navigate", json!({"url":format!("http://{address}/redirect")}));
+    wait_for_network_finish(&mut h, &mut events);
+    let requests: Vec<_> = events.iter().filter(|e| e["method"] == "Network.requestWillBeSent").collect();
+    assert_eq!(requests.len(), 2, "{events:#?}");
+    assert_eq!(requests[0]["params"]["requestId"], requests[1]["params"]["requestId"]);
+    assert_eq!(requests[1]["params"]["redirectResponse"]["status"], 302);
+    let response = events.iter().find(|e| e["method"] == "Network.responseReceived").unwrap();
+    assert_eq!(response["params"]["response"]["status"], 201);
+    assert_eq!(response["params"]["response"]["url"], format!("http://{address}/final"));
+    let id = response["params"]["requestId"].clone();
+    assert_eq!(
+        h.page("Network.getResponseBody", json!({"requestId":id}))["result"],
+        json!({"body":"hello","base64Encoded":false})
+    );
+    server.join().unwrap();
 }

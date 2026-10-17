@@ -36,9 +36,9 @@ options:
   --experimental-features <NAME>        accepted: cors (repeatable)
   --load-resources <KIND>               accepted: stylesheet, iframe (repeatable)
 
-Document loading is not integrated yet: pages can only show about:blank.
---experimental-features and --load-resources are recorded for the loader and
-have no effect until it lands.
+HTTP and data: document loading are supported; browser API coverage is partial.
+--experimental-features and --load-resources are accepted for CLI compatibility;
+the current loader configuration is fixed.
 ";
 
 /// Inbound messages waiting on a browser thread.
