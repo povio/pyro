@@ -148,19 +148,7 @@ fn eval(args: &[String]) -> ExitCode {
     // The deadline covers the initial evaluation too: a watchdog thread asks
     // the engine to terminate running JavaScript once it passes.
     let deadline = Instant::now() + timeout;
-    let watchdog = thread.browser.engine.terminate_handle().ok().map(|handle| {
-        let (tx, rx) = std::sync::mpsc::channel::<()>();
-        let t = std::thread::spawn(move || {
-            if rx.recv_timeout(deadline.saturating_duration_since(Instant::now())).is_err() {
-                // Keep requesting until the main thread acknowledges: a single
-                // request can be consumed by a script that catches it.
-                while rx.recv_timeout(Duration::from_millis(50)).is_err() {
-                    handle.terminate();
-                }
-            }
-        });
-        (tx, t)
-    });
+    let watchdog = Watchdog::start(&thread.browser.engine, deadline);
     let mut timed_out = false;
     {
         let scope = realm.scope().expect("live realm");
@@ -174,10 +162,7 @@ fn eval(args: &[String]) -> ExitCode {
         timed_out =
             thread.run_until_idle(Some(deadline)) == lp_runtime::RunOutcome::TimedOut || Instant::now() >= deadline;
     }
-    if let Some((tx, t)) = watchdog {
-        let _ = tx.send(());
-        let _ = t.join();
-    }
+    drop(watchdog);
     thread.browser.engine.clear_termination();
     drop(realm);
     thread.browser.close_all();
@@ -189,6 +174,41 @@ fn eval(args: &[String]) -> ExitCode {
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS
+    }
+}
+
+/// Interrupts JavaScript at the command deadline, including inside task callbacks.
+/// Drop always stops and joins the thread before the engine is torn down.
+struct Watchdog {
+    stop: std::sync::mpsc::Sender<()>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+impl Watchdog {
+    fn start(engine: &lp_js::Engine, deadline: Instant) -> Option<Self> {
+        let handle = engine.terminate_handle().ok()?;
+        let (stop, rx) = std::sync::mpsc::channel();
+        let thread = std::thread::spawn(move || {
+            if rx.recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                == Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+            {
+                loop {
+                    handle.terminate();
+                    // A caught termination inside a native frame may need another request.
+                    if rx.recv_timeout(Duration::from_millis(50)) != Err(std::sync::mpsc::RecvTimeoutError::Timeout) {
+                        break;
+                    }
+                }
+            }
+        });
+        Some(Self { stop, thread: Some(thread) })
+    }
+}
+impl Drop for Watchdog {
+    fn drop(&mut self) {
+        let _ = self.stop.send(());
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
     }
 }
 
@@ -264,6 +284,7 @@ fn fetch(args: &[String]) -> ExitCode {
     // The initial about:blank load already fired; wait for the real one.
     watcher.loaded.set(false);
     let deadline = Instant::now() + timeout;
+    let watchdog = Watchdog::start(&thread.browser.engine, deadline);
     if let Err(e) = thread.browser.navigate(page, lp_browser::NavigateOpts::address_bar(url.clone())) {
         eprintln!("lightningpanda: navigation failed: {e}");
         return ExitCode::FAILURE;
@@ -275,13 +296,22 @@ fn fetch(args: &[String]) -> ExitCode {
         thread.browser.close_all();
         return ExitCode::FAILURE;
     }
-    if outcome == lp_runtime::RunOutcome::TimedOut {
+    if outcome == lp_runtime::RunOutcome::TimedOut || Instant::now() >= deadline {
+        drop(watchdog);
+        thread.browser.engine.clear_termination();
         eprintln!("lightningpanda: timed out waiting for load of {url}");
         thread.browser.close_all();
         return ExitCode::from(124);
     }
     if !wait.is_zero() {
         thread.run_until_idle(Some((Instant::now() + wait).min(deadline)));
+    }
+    drop(watchdog);
+    thread.browser.engine.clear_termination();
+    if Instant::now() >= deadline {
+        eprintln!("lightningpanda: timed out after {} ms", timeout.as_millis());
+        thread.browser.close_all();
+        return ExitCode::from(124);
     }
     if dump_html {
         let html = thread.browser.page(page).and_then(|p| {

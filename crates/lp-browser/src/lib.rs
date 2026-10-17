@@ -3,10 +3,10 @@
 //! Ownership (see docs/ARCHITECTURE.md): this crate owns the Browser →
 //! Page → Frame tree, navigation state machine, realms per (frame, world),
 //! init-script injection, window timers, and the ordered [`PageEvent`] stream
-//! consumed by the automation layer. Document loading/parsing and networking
-//! come from `lp-dom`/`lp-net` (worker 2) and are not wired in yet: navigating
-//! to anything but `about:blank` currently fails with an explicit error.
+//! consumed by the automation layer. Document loading uses `lp-dom`/`lp-net`;
+//! `lp-webapi` supplies bindings in the main and isolated document worlds.
 
+mod bindings;
 mod loader;
 mod nav;
 mod window;
@@ -35,6 +35,7 @@ struct ContextState {
     id: ContextId,
     loader: Option<Rc<dyn ResourceLoader>>,
     net: Option<lp_net::NetClient>,
+    local_storage: lp_webapi::StorageNamespace,
 }
 
 /// CDP frame id (upstream uses a stable string per frame).
@@ -187,6 +188,8 @@ pub struct Frame {
     /// DOM store of the page (shared by its documents) and this frame's document.
     pub dom: Option<lp_dom::parse::DomRef>,
     pub document: Option<lp_dom::NodeId>,
+    /// Binding state shared by this document's main and isolated worlds.
+    pub page_dom: Option<Rc<lp_webapi::PageDom>>,
 }
 
 impl Frame {
@@ -211,6 +214,7 @@ pub struct Page {
     /// Session history and current URL (shared with the page's windows).
     pub nav: Rc<PageNav>,
     pub(crate) load: Option<loader::DocumentLoad>,
+    session_storage: lp_webapi::StorageNamespace,
 }
 
 /// Browser-thread state: the loop state type for [`EventLoop`].
@@ -238,6 +242,13 @@ impl LoopState for Browser {
     fn after_task(&mut self) {
         let n = self.engine.drain_finalized();
         *self.released_payloads.borrow_mut() += n as u64;
+        let pages: Vec<_> = self.pages.iter().map(|p| p.id).collect();
+        for id in pages {
+            self.drain_dom_resources(id);
+            if let Some(page) = self.page(id).and_then(|p| p.main_frame.page_dom.as_ref()) {
+                page.after_task();
+            }
+        }
     }
 }
 
@@ -251,6 +262,7 @@ impl BrowserThread {
     /// Creates the engine for the current thread (one per thread).
     pub fn new() -> Result<BrowserThread, JsError> {
         let engine = Engine::new()?;
+        lp_webapi::register(&engine);
         engine.register::<Window>();
         engine.register::<Location>();
         engine.register::<History>();
@@ -266,7 +278,12 @@ impl BrowserThread {
             released_payloads: RefCell::new(0),
             handle: event_loop.handle(),
             loader: None,
-            contexts: vec![ContextState { id: DEFAULT_CONTEXT, loader: None, net: None }],
+            contexts: vec![ContextState {
+                id: DEFAULT_CONTEXT,
+                loader: None,
+                net: None,
+                local_storage: Default::default(),
+            }],
             net_config: None,
             completions: std::collections::HashMap::new(),
         };
@@ -343,7 +360,7 @@ impl Browser {
     /// Creates an isolated browser context with its own network state.
     pub fn create_context(&mut self) -> std::io::Result<ContextId> {
         let id = ContextId(self.next() as u32);
-        self.contexts.push(ContextState { id, loader: None, net: None });
+        self.contexts.push(ContextState { id, loader: None, net: None, local_storage: Default::default() });
         if self.net_config.is_some() {
             self.attach_network(id)?;
         }
@@ -399,6 +416,7 @@ impl Browser {
             realms: Vec::new(),
             dom: None,
             document: None,
+            page_dom: None,
         };
         let nav = PageNav::new(id, self.sched.clone());
         self.pages.push(Page {
@@ -410,6 +428,7 @@ impl Browser {
             pending_replace: false,
             nav,
             load: None,
+            session_storage: Default::default(),
         });
         self.navigate(
             id,
@@ -501,6 +520,10 @@ impl Browser {
             return Err(JsError::Unsupported("navigation to non-blank URLs"));
         }
         self.commit_document(page, &opts, loader_id.clone(), "null")?;
+        if let Some(dom) = self.page(page).and_then(|p| p.main_frame.page_dom.clone()) {
+            lp_webapi::lifecycle::dom_content_loaded(&dom, dom.document());
+            lp_webapi::lifecycle::load(&dom, dom.document());
+        }
         let ts = self.timestamp();
         self.emit(
             page,
@@ -530,24 +553,36 @@ impl Browser {
     ) -> Result<(), JsError> {
         let window_class = self.engine.register::<Window>();
         let sched = self.sched.clone();
-        let (frame_id, old, scripts, nav) = {
+        let page_dom = self.create_document_bindings(page, &opts.url, &loader_id)?;
+        let (frame_id, old, scripts, nav, old_dom) = {
             let p = self.page_mut(page).ok_or(JsError::Type("no such page".into()))?;
             let old = std::mem::take(&mut p.main_frame.realms);
             // The previous document (and its in-flight loads) is gone.
             p.load = None;
-            p.main_frame.dom = None;
-            p.main_frame.document = None;
+            let old_dom = p.main_frame.page_dom.replace(page_dom.clone());
+            p.main_frame.dom = Some(page_dom.dom.clone());
+            p.main_frame.document = Some(page_dom.document());
             p.main_frame.url = opts.url.clone();
             p.main_frame.loader_id = loader_id.clone();
             let replace = std::mem::take(&mut p.pending_replace);
             p.nav.commit_document(&opts.url, replace, None);
-            (p.main_frame.id.clone(), old, p.init_scripts.clone(), p.nav.clone())
+            p.nav.set_document(Some((page_dom.dom.clone(), page_dom.document())));
+            (p.main_frame.id.clone(), old, p.init_scripts.clone(), p.nav.clone(), old_dom)
         };
+        if let Some(dom) = &old_dom {
+            dom.dispose();
+        }
         for r in old {
             window::cancel_timers(&r.realm);
             let id = r.realm.id();
+            if let Some(dom) = &old_dom {
+                lp_webapi::lifecycle::realm_disposed(dom, id);
+            }
             r.realm.dispose();
             self.emit(page, PageEvent::RealmDestroyed { frame_id: frame_id.clone(), realm: id });
+        }
+        if let Some(dom) = &old_dom {
+            let _ = dom.dom.borrow_mut().set_document_active(dom.document(), false);
         }
         // Worlds: main plus every world named by an init script.
         let mut worlds: Vec<Option<String>> = vec![None];
@@ -563,7 +598,9 @@ impl Browser {
                 global_class: Some(window_class),
                 origin: (origin != "null").then(|| origin.to_string()),
             })?;
-            realm.set_global_data::<Window>(WindowData::new(sched.clone(), nav.clone()))?;
+            realm.set_global_data::<Window>(WindowData::new(sched.clone(), nav.clone(), &page_dom))?;
+            lp_webapi::install(&realm.scope()?, page_dom.clone())?;
+            self.install_module_fetcher(page, &realm);
             for s in scripts.iter().filter(|s| s.world == world) {
                 let scope = realm.scope()?;
                 if let Err(e) = scope.eval(&s.source, Some(&format!("init-script:{}", s.id)), 1) {
@@ -606,32 +643,31 @@ impl Browser {
             return Ok(r.clone());
         }
         let window_class = self.engine.register::<Window>();
-        let (url, frame_id) = {
+        let (url, frame_id, page_dom) = {
             let p = self.page(page).ok_or(JsError::Type("no such page".into()))?;
-            (p.main_frame.url.clone(), p.main_frame.id.clone())
+            (
+                p.main_frame.url.clone(),
+                p.main_frame.id.clone(),
+                p.main_frame.page_dom.clone().ok_or(JsError::ContextDestroyed)?,
+            )
         };
+        let origin =
+            url::Url::parse(&url).ok().map(|u| u.origin().ascii_serialization()).unwrap_or_else(|| "null".into());
         let realm = self.engine.create_realm(RealmOptions {
             name: name.to_string(),
             global_class: Some(window_class),
-            origin: None,
+            origin: (origin != "null").then(|| origin.clone()),
         })?;
         let nav = self.page(page).expect("page").nav.clone();
-        let _ = url;
-        realm.set_global_data::<Window>(WindowData::new(self.sched.clone(), nav))?;
+        realm.set_global_data::<Window>(WindowData::new(self.sched.clone(), nav, &page_dom))?;
+        lp_webapi::install(&realm.scope()?, page_dom)?;
+        self.install_module_fetcher(page, &realm);
         self.page_mut(page)
             .expect("page")
             .main_frame
             .realms
             .push(FrameRealm { world: Some(name.to_string()), realm: realm.clone() });
-        self.emit(
-            page,
-            PageEvent::RealmCreated {
-                frame_id,
-                realm: realm.id(),
-                world: Some(name.to_string()),
-                origin: "null".into(),
-            },
-        );
+        self.emit(page, PageEvent::RealmCreated { frame_id, realm: realm.id(), world: Some(name.to_string()), origin });
         Ok(realm)
     }
 
@@ -639,9 +675,15 @@ impl Browser {
     pub fn close_page(&mut self, page: PageId) -> bool {
         let Some(pos) = self.pages.iter().position(|p| p.id == page) else { return false };
         let p = self.pages.remove(pos);
+        if let Some(dom) = &p.main_frame.page_dom {
+            dom.dispose();
+        }
         for r in p.main_frame.realms {
             window::cancel_timers(&r.realm);
             let id = r.realm.id();
+            if let Some(dom) = &p.main_frame.page_dom {
+                lp_webapi::lifecycle::realm_disposed(dom, id);
+            }
             r.realm.dispose();
             self.emit(page, PageEvent::RealmDestroyed { frame_id: p.main_frame.id.clone(), realm: id });
         }
@@ -661,3 +703,9 @@ impl Browser {
 
 #[cfg(test)]
 mod tests;
+
+impl Drop for Browser {
+    fn drop(&mut self) {
+        self.close_all();
+    }
+}
