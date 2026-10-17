@@ -53,6 +53,21 @@ impl HeadersData {
     pub(crate) fn pairs(&self) -> Vec<(String, String)> {
         self.0.borrow().values.iter().map(|(n, values)| (n.clone(), values.join(", "))).collect()
     }
+    /// Whether a (lowercase) header name is present.
+    pub(crate) fn contains(&self, name: &str) -> bool {
+        self.0.borrow().values.contains_key(name)
+    }
+    /// Appends a validated (lowercase name, byte-string value) pair.
+    pub(crate) fn append_raw(&self, name: &str, value: &str) {
+        self.0.borrow_mut().append(name.to_owned(), value.to_owned());
+    }
+    /// Removes a (lowercase) header name.
+    pub(crate) fn remove(&self, name: &str) {
+        let mut list = self.0.borrow_mut();
+        if list.values.remove(name).is_some() {
+            list.sorted = None;
+        }
+    }
     fn check_mutable(&self) -> JsResult<()> {
         if self.0.borrow().immutable {
             Err(JsError::Type("Headers are immutable".into()))

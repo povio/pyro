@@ -370,3 +370,45 @@ fn fetch_abort_before_queued_null_headers_rejects_with_original_reason() {
     assert_eq!(env.eval("result"), "aborted");
     assert_eq!(env.page.fetch_usage(), (0, 0));
 }
+
+#[test]
+fn response_constructor_statics_and_body_semantics() {
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    env.eval(
+        r#"globalThis.result='pending'; (async()=>{
+        const check=(c,m)=>{if(!c) throw Error(m)};
+        // TOS redirect chunk pattern: new Response(null,{status,headers}) then an expando.
+        const h=new Headers({'X-Redirect-To':'/platform'});
+        const n=new Response(null,{status:307,headers:h}); n.options={to:'/x'};
+        check(n instanceof Response && n.status===307 && !n.ok && n.type==='default' && n.url==='' && !n.redirected,'null');
+        check(n.headers.get('x-redirect-to')==='/platform' && n.headers!==h && n.options.to==='/x' && n.body===null,'null headers');
+        check(await n.text()==='' && !n.bodyUsed,'null body read');
+        const r=new Response('héllo',{status:201,statusText:'Created',headers:[['Set-Cookie','a=1'],['X-A','1']]});
+        check(r.ok && r.status===201 && r.statusText==='Created','status');
+        check(r.headers.get('content-type')==='text/plain;charset=UTF-8' && !r.headers.has('set-cookie'),'ct');
+        r.headers.set('X-B','2'); check(r.headers.get('x-b')==='2','mutable headers');
+        const c=r.clone(); c.headers.set('X-C','3'); check(!r.headers.has('x-c'),'clone headers independent');
+        check(await r.text()==='héllo' && r.bodyUsed,'text');
+        let reused=false; try{await r.text()}catch(e){reused=e instanceof TypeError} check(reused,'reuse');
+        let cloneUsed=false; try{r.clone()}catch(e){cloneUsed=e instanceof TypeError} check(cloneUsed,'clone after use');
+        check(new TextDecoder().decode(await c.arrayBuffer())==='héllo','clone body');
+        check((await new Response(new Uint8Array([1,2,3])).bytes()).join()==='1,2,3','bytes');
+        check((await new Response(new URLSearchParams({a:'b c'})).text())==='a=b+c','params');
+        const blob=await new Response(new Blob(['x'],{type:'text/x'})).blob(); check(blob.type==='text/x' && blob.size===1,'blob');
+        check(new Response().status===200 && new Response().statusText==='','defaults');
+        const j=Response.json({k:[1]},{status:202}); check(j.status===202 && j.headers.get('content-type')==='application/json' && (await j.json()).k[0]===1,'json');
+        const e=Response.error(); check(e.type==='error' && e.status===0 && !e.ok,'error');
+        let imm=false; try{e.headers.set('a','b')}catch(x){imm=x instanceof TypeError} check(imm,'error headers immutable');
+        const rd=Response.redirect('/next',301); check(rd.status===301 && rd.headers.get('location')===new URL('/next',document.URL).href,'redirect');
+        const throws=(f,T)=>{try{f();return false}catch(x){return x instanceof T}};
+        check(throws(()=>new Response('',{status:199}),RangeError) && throws(()=>new Response('',{status:600}),RangeError),'status range');
+        check(throws(()=>new Response('x',{status:204}),TypeError) && throws(()=>new Response('',{statusText:'a\nb'}),TypeError),'null body status / statusText');
+        check(throws(()=>Response.redirect('/x',200),RangeError),'redirect status');
+        check(throws(()=>Response.json(undefined),TypeError),'json undefined');
+        result='ok';
+    })().catch(e=>result='ERROR '+e.message);"#,
+    );
+    env.until("result!=='pending'");
+    assert_eq!(env.eval("result"), "ok");
+}
