@@ -1021,6 +1021,27 @@ fn dom_geometry_matches_native_rect_and_rejects_detached_or_foreign_objects() {
             ["result"]["value"],
         "box"
     );
+    // A node connected to an inert document is not rendered in this frame.
+    {
+        let frame = &h.browser.host().thread.browser.pages[0].main_frame;
+        let page = frame.page_dom.as_ref().unwrap().clone();
+        let realm = frame.main_realm().unwrap().clone();
+        let node = {
+            let mut dom = page.dom.borrow_mut();
+            let doc = dom.create_document(lp_dom::DocumentKind::Html, "about:blank");
+            let node = dom.create_element(doc, "input").unwrap();
+            dom.append_child(doc, node).unwrap();
+            node
+        };
+        let scope = realm.scope().unwrap();
+        let wrapper = lp_webapi::wrap_node(&scope, &page, node).unwrap();
+        scope.global().set("inertNode", wrapper.value()).unwrap();
+    }
+    let inert = h.page("Runtime.evaluate", json!({"expression":"inertNode"}))["result"]["result"]["objectId"].clone();
+    assert_eq!(
+        h.page("DOM.getBoxModel", json!({"objectId":inert}))["error"]["message"],
+        "Node is detached from document"
+    );
     let spoof = h.page("Runtime.evaluate", json!({"expression":"({nodeType:1,nodeName:'DIV'})"}))["result"]["result"]
         ["objectId"]
         .clone();

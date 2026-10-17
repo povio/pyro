@@ -232,7 +232,7 @@ impl EngineHost {
             _ => {
                 let rect = {
                     let dom = page.dom.borrow();
-                    if !dom.is_connected(node).map_err(dom_error)? {
+                    if dom.root_node(node, true).map_err(dom_error)? != page.document() {
                         return Err(CdpError::server("Node is detached from document"));
                     }
                     if dom.node_type(node).map_err(dom_error)? != NodeType::Element {
