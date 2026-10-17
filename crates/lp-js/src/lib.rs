@@ -8,6 +8,7 @@
 //!
 //! Thread affinity: every type except [`TerminateHandle`] is `!Send`/`!Sync`.
 
+mod autorelease;
 mod class;
 mod engine;
 mod error;

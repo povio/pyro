@@ -238,13 +238,15 @@ impl Realm {
         self.inner.ctx.get().is_null()
     }
 
-    /// Enters the realm. Fails after disposal. While a scope created here is
-    /// alive the engine refuses to tear the VM down.
+    /// Enters the realm. Fails after disposal or once the engine owner was
+    /// dropped. Everything derived from the scope borrows this handle, which
+    /// keeps the VM alive.
     pub fn scope(&self) -> JsResult<Scope<'_>> {
         let ctx = self.inner.global_ctx()?;
-        let e = &self.inner.engine;
-        e.live_scopes.set(e.live_scopes.get() + 1);
-        Ok(Scope { ctx: ctx as sys::JSContextRef, realm: &self.inner, counted: true })
+        if self.inner.engine.is_shut_down() {
+            return Err(JsError::ContextDestroyed);
+        }
+        Ok(Scope { ctx: ctx as sys::JSContextRef, realm: &self.inner })
     }
 
     /// Tears the realm down now: callbacks into its functions afterwards throw
@@ -317,16 +319,6 @@ impl std::fmt::Debug for Realm {
 pub struct Scope<'s> {
     pub(crate) ctx: sys::JSContextRef,
     pub(crate) realm: &'s Rc<RealmInner>,
-    counted: bool,
-}
-
-impl Drop for Scope<'_> {
-    fn drop(&mut self) {
-        if self.counted {
-            let e = &self.realm.engine;
-            e.live_scopes.set(e.live_scopes.get().saturating_sub(1));
-        }
-    }
 }
 
 pub(crate) fn realm_for_ctx(ctx: sys::JSContextRef) -> Option<Rc<RealmInner>> {
@@ -338,7 +330,7 @@ pub(crate) fn realm_for_ctx(ctx: sys::JSContextRef) -> Option<Rc<RealmInner>> {
 impl<'s> Scope<'s> {
     /// Scope for a native callback (JSC is on the stack; not counted).
     pub(crate) fn new(ctx: sys::JSContextRef, realm: &'s Rc<RealmInner>) -> Scope<'s> {
-        Scope { ctx, realm, counted: false }
+        Scope { ctx, realm }
     }
 
     pub fn ctx(&self) -> sys::JSContextRef {
@@ -368,6 +360,7 @@ impl<'s> Scope<'s> {
 
     /// Evaluates a classic script.
     pub fn eval(&self, source: &str, url: Option<&str>, line: i32) -> JsResult<Value<'s>> {
+        let _pool = crate::autorelease::Pool::new();
         let src = JsString::new(source);
         let url = url.map(JsString::new);
         let mut exc = ptr::null();
@@ -460,6 +453,37 @@ impl<'s> Scope<'s> {
             }
             Some(t) => f.call(t.as_object(), args),
             None => f.call(None, args),
+        }
+    }
+
+    /// [`Scope::call_function`] with arguments in a [`crate::RootedVec`]
+    /// (CDP `callFunctionOn` converts arguments one by one; each conversion can
+    /// trigger GC, so they must be rooted, not kept in a `Vec<Value>`).
+    pub fn call_function_rooted(
+        &self,
+        function_source: &str,
+        this: Option<&Persistent>,
+        args: &crate::RootedVec,
+    ) -> JsResult<Value<'s>> {
+        let f = self.eval(&format!("({function_source}\n)"), None, 1)?;
+        let f = f
+            .as_object()
+            .filter(|o| o.is_function())
+            .ok_or_else(|| JsError::Type("Given expression does not evaluate to a function".into()))?;
+        let this_v = this.map(|p| p.get(self));
+        match this_v {
+            Some(t) if !t.is_object() => {
+                let call = self.realm.helper(self, "callWith")?;
+                let mut all = crate::RootedVec::new();
+                all.push(self, f.value());
+                all.push(self, t);
+                for v in args.iter(self) {
+                    all.push(self, v);
+                }
+                call.call_rooted(None, &all)
+            }
+            Some(t) => f.call_rooted(t.as_object(), args),
+            None => f.call_rooted(None, args),
         }
     }
 

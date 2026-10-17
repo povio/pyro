@@ -636,7 +636,14 @@ pub(crate) unsafe fn guard<R>(
             return None;
         };
         let scope = Scope::new(ctx, &realm);
-        match body(&scope) {
+        let result = body(&scope);
+        // Native code that ignored an inner termination must not let the
+        // calling JS continue: treat the callback as terminated as well.
+        let result = match result {
+            Ok(_) if crate::engine::TERMINATING.with(|t| t.get()) => Err(JsError::Terminated),
+            r => r,
+        };
+        match result {
             Ok(v) => Some(v),
             Err(JsError::Terminated) => {
                 // Keep terminating: page code may catch the rethrown value.
