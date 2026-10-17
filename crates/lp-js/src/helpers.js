@@ -15,6 +15,13 @@
   // replacing Function.prototype.call/apply/bind cannot intercept them.
   const apply = Reflect.apply;
   const reflectGet = Reflect.get;
+  const reflectSet = Reflect.set;
+  const reflectHas = Reflect.has;
+  const reflectOwnKeys = Reflect.ownKeys;
+  const reflectGOPD = Reflect.getOwnPropertyDescriptor;
+  const reflectDefine = Reflect.defineProperty;
+  const reflectDelete = Reflect.deleteProperty;
+  const ProxyC = Proxy;
   const P = Promise;
   const promiseThen = P.prototype.then;
   const promiseResolveFn = P.resolve;
@@ -134,6 +141,25 @@
       if (parentCtor) setPrototypeOf(C, parentCtor);
       if (global) defineProperty(global, name, { value: C, writable: true, enumerable: false, configurable: true });
       return C;
+    },
+    // Interface object as seen by script: a Proxy over the constructor whose
+    // property traps first install the class members natively (once), then
+    // forward unchanged. Construction/call/[[GetPrototypeOf]] need no members.
+    lazyInterface(C, proto, global, name, id, populate) {
+      let done = false;
+      const ensure = () => { if (!done) { populate(id); done = true; } };
+      const P = new ProxyC(C, {
+        get(t, k, r) { ensure(); return reflectGet(t, k, r); },
+        set(t, k, v, r) { ensure(); return reflectSet(t, k, v, r); },
+        has(t, k) { ensure(); return reflectHas(t, k); },
+        ownKeys(t) { ensure(); return reflectOwnKeys(t); },
+        getOwnPropertyDescriptor(t, k) { ensure(); return reflectGOPD(t, k); },
+        defineProperty(t, k, d) { ensure(); return reflectDefine(t, k, d); },
+        deleteProperty(t, k) { ensure(); return reflectDelete(t, k); },
+      });
+      defineProperty(proto, 'constructor', { value: P, writable: true, enumerable: false, configurable: true });
+      if (global) defineProperty(global, name, { value: P, writable: true, enumerable: false, configurable: true });
+      return P;
     },
     accessor(proto, name, get, set) {
       try { defineProperty(get, 'name', { value: 'get ' + name }); } catch (_) {}

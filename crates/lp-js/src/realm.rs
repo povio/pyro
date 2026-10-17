@@ -127,7 +127,12 @@ pub(crate) struct RealmInner {
     pub(crate) engine: Rc<EngineInner>,
     ctx: Cell<sys::JSGlobalContextRef>,
     protos: RefCell<Vec<Option<Persistent>>>,
+    /// Interface objects as seen by script (proxies over `targets`).
     ctors: RefCell<Vec<Option<Persistent>>>,
+    /// The constructor functions behind the interface proxies.
+    targets: RefCell<Vec<Option<Persistent>>>,
+    /// Whether each class's members are installed in this realm.
+    populated: RefCell<Vec<bool>>,
     identity: RefCell<HashMap<IdentityKey, sys::JSWeakRef>>,
     helpers: RefCell<Option<Persistent>>,
     dom_exception: RefCell<Option<Persistent>>,
@@ -214,6 +219,8 @@ impl RealmInner {
         drop(self.native_callback_hook.take());
         self.protos.borrow_mut().clear();
         self.ctors.borrow_mut().clear();
+        self.targets.borrow_mut().clear();
+        self.populated.borrow_mut().clear();
         self.helpers.borrow_mut().take();
         self.dom_exception.borrow_mut().take();
         if let Some((_, release, _)) = sys::spi::get().weak() {
@@ -605,6 +612,7 @@ impl<'s> Scope<'s> {
             }
         }
         let id = self.class_id::<C>()?;
+        populate_class(self, id)?;
         let proto = self.proto(id)?;
         self.make_wrapper::<C>(id, data, key, proto)
     }
@@ -618,6 +626,7 @@ impl<'s> Scope<'s> {
         key: Option<IdentityKey>,
     ) -> JsResult<Object<'s>> {
         let id = self.class_id::<C>()?;
+        populate_class(self, id)?;
         let proto = match new_target.get("prototype")?.as_object() {
             Some(p) => p.value(),
             None => self.proto(id)?,
@@ -936,6 +945,8 @@ pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResul
         ctx: Cell::new(ctx),
         protos: RefCell::new(Vec::new()),
         ctors: RefCell::new(Vec::new()),
+        targets: RefCell::new(Vec::new()),
+        populated: RefCell::new(Vec::new()),
         identity: RefCell::new(HashMap::new()),
         helpers: RefCell::new(None),
         dom_exception: RefCell::new(None),
@@ -970,39 +981,32 @@ pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResul
     Ok(realm)
 }
 
+/// Creates every interface object and prototype of the realm, with their
+/// inheritance, eagerly. Prototype/static members are installed on first use
+/// of the class: a wrap of it or a subclass, or any property operation on its
+/// interface object (a Proxy over the constructor whose traps install the
+/// members and then forward). Interface objects stay data properties of the
+/// global, so descriptors and identities match eager installation. The global
+/// class chain is populated eagerly (its members are copied onto the global).
 fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
     let realm = scope.realm;
     let reg = realm.engine.classes.borrow();
     let global = scope.global();
     let object_proto = global.get("Object")?.as_object().expect("Object").get("prototype")?;
     let make_interface = realm.helper(scope, "makeInterface")?;
-    let accessor = realm.helper(scope, "accessor")?;
-    let constant = realm.helper(scope, "constant")?;
-    let iterable = realm.helper(scope, "iterable")?;
-    let set_length = realm.helper(scope, "setLength")?;
-    let mut protos: Vec<Option<Persistent>> = Vec::with_capacity(reg.classes.len());
-    let mut ctors: Vec<Option<Persistent>> = Vec::with_capacity(reg.classes.len());
-    for info in reg.classes.iter() {
+    let lazy_interface = realm.helper(scope, "lazyInterface")?;
+    let populate = make_native_fn(scope, "populate", populate_tramp);
+    let n = reg.classes.len();
+    let mut protos: Vec<Option<Persistent>> = Vec::with_capacity(n);
+    let mut ctors: Vec<Option<Persistent>> = Vec::with_capacity(n);
+    let mut targets: Vec<Option<Persistent>> = Vec::with_capacity(n);
+    for (id, info) in reg.classes.iter().enumerate() {
         let proto = scope.object();
         let parent_proto = match info.parent {
             Some(p) => protos[p as usize].as_ref().expect("parent proto").get(scope),
             None => object_proto,
         };
         proto.set_prototype(parent_proto);
-        for m in &info.def.methods {
-            let f = make_native_fn(scope, m.name, m.call);
-            proto.set(m.name, f.value())?;
-            // JSC callback functions already have a configurable length of 0.
-            // Avoid re-entering JS to redefine that identical descriptor.
-            if m.length != 0 {
-                set_length.call(None, &[f.value(), scope.number(m.length as f64)])?;
-            }
-        }
-        for a in &info.def.accessors {
-            let g = make_native_fn(scope, a.name, a.get);
-            let s = a.set.map(|s| make_native_fn(scope, a.name, s).value()).unwrap_or_else(|| scope.undefined());
-            accessor.call(None, &[proto.value(), scope.string(a.name), g.value(), s])?;
-        }
         let native = match info.def.constructor {
             Some(c) => make_native_fn(scope, info.name, c).value(),
             None => scope.null(),
@@ -1011,8 +1015,7 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
             Some(p) => ctors[p as usize].as_ref().expect("parent ctor").get(scope),
             None => scope.null(),
         };
-        let expose_on = if info.def.exposed { global.value() } else { scope.null() };
-        let ctor = make_interface.call(
+        let target = make_interface.call(
             None,
             &[
                 scope.string(info.name),
@@ -1020,45 +1023,163 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
                 proto.value(),
                 parent_ctor,
                 scope.number(info.def.ctor_length as f64),
-                expose_on,
+                scope.null(),
             ],
         )?;
-        let ctor_obj = ctor.as_object().expect("interface object");
-        for (name, v) in &info.def.constants {
-            constant.call(None, &[ctor, scope.string(name), scope.number(*v)])?;
-            constant.call(None, &[proto.value(), scope.string(name), scope.number(*v)])?;
-        }
-        for m in &info.def.statics {
-            let f = make_native_fn(scope, m.name, m.call);
-            ctor_obj.set(m.name, f.value())?;
-            if m.length != 0 {
-                set_length.call(None, &[f.value(), scope.number(m.length as f64)])?;
-            }
-        }
-        if info.def.indexed_iterable {
-            iterable.call(None, &[proto.value()])?;
-        }
+        let expose_on = if info.def.exposed { global.value() } else { scope.null() };
+        let ctor = lazy_interface.call(
+            None,
+            &[target, proto.value(), expose_on, scope.string(info.name), scope.number(id as f64), populate.value()],
+        )?;
         protos.push(Some(Persistent::new(scope, proto.value())));
         ctors.push(Some(Persistent::new(scope, ctor)));
+        targets.push(Some(Persistent::new(scope, target)));
     }
-    if let Some(gid) = realm.global_class {
-        // Chain root-first: copy members onto the global, brand instanceof.
+    let global_chain = realm.global_class.map(|gid| {
         let mut chain = vec![gid];
         while let Some(p) = reg.classes[*chain.last().expect("non-empty") as usize].parent {
             chain.push(p);
         }
         chain.reverse();
-        let install_global = realm.helper(scope, "installGlobal")?;
-        let ps: Vec<Value<'_>> =
-            chain.iter().map(|c| protos[*c as usize].as_ref().expect("proto").get(scope)).collect();
-        let cs: Vec<Value<'_>> = chain.iter().map(|c| ctors[*c as usize].as_ref().expect("ctor").get(scope)).collect();
-        let ps = scope.array(&ps)?;
-        let cs = scope.array(&cs)?;
-        install_global
-            .call(None, &[global.value(), ps.value(), cs.value(), scope.string(reg.classes[gid as usize].name)])?;
-    }
+        chain
+    });
+    let global_name = realm.global_class.map(|gid| reg.classes[gid as usize].name);
+    drop(reg);
     *realm.protos.borrow_mut() = protos;
     *realm.ctors.borrow_mut() = ctors;
+    *realm.targets.borrow_mut() = targets;
+    *realm.populated.borrow_mut() = vec![false; n];
+    if let (Some(chain), Some(name)) = (global_chain, global_name) {
+        // Chain root-first: copy members onto the global, brand instanceof.
+        populate_class(scope, *chain.last().expect("non-empty"))?;
+        let install_global = realm.helper(scope, "installGlobal")?;
+        let mut ps = crate::RootedVec::new();
+        let mut cs = crate::RootedVec::new();
+        for c in &chain {
+            ps.push(scope, realm.protos.borrow()[*c as usize].as_ref().expect("proto").get(scope));
+            cs.push(scope, realm.ctors.borrow()[*c as usize].as_ref().expect("ctor").get(scope));
+        }
+        let ps = rooted_array(scope, &ps)?;
+        let cs = rooted_array(scope, &cs)?;
+        install_global.call(None, &[global.value(), ps.value(), cs.value(), scope.string(name)])?;
+    }
+    Ok(())
+}
+
+fn rooted_array<'s>(scope: &Scope<'s>, items: &crate::RootedVec) -> JsResult<Object<'s>> {
+    let arr = scope.array(&[])?;
+    for (i, v) in items.iter(scope).enumerate() {
+        arr.set_index(i as u32, v)?;
+    }
+    Ok(arr)
+}
+
+/// `populate(id)` for the interface proxies. A disposed realm has nothing to
+/// install: return without throwing so its inert objects stay readable.
+unsafe extern "C" fn populate_tramp(
+    ctx: sys::JSContextRef,
+    _function: sys::JSObjectRef,
+    _this: sys::JSObjectRef,
+    argc: usize,
+    argv: *const sys::JSValueRef,
+    exc: *mut sys::JSValueRef,
+) -> sys::JSValueRef {
+    let undefined = unsafe { sys::JSValueMakeUndefined(ctx) };
+    if realm_for_ctx(ctx).is_none() {
+        return undefined;
+    }
+    unsafe {
+        class::guard(ctx, exc, ptr::null(), |s| {
+            let id = Args::from_raw(ctx, argc, argv).get(0).to_number()?;
+            populate_class(s, id as ClassId)?;
+            Ok(undefined)
+        })
+    }
+}
+
+/// Installs the prototype/static members of `id` and its ancestors in this
+/// realm, once. No RefCell borrow is held across calls into JavaScript.
+pub(crate) fn populate_class(scope: &Scope<'_>, id: ClassId) -> JsResult<()> {
+    let realm = scope.realm;
+    // Root-first chain of classes still to populate.
+    let chain = {
+        let reg = realm.engine.classes.borrow();
+        let populated = realm.populated.borrow();
+        if populated.get(id as usize).copied().unwrap_or(true) {
+            return Ok(()); // done, or unknown/disposed (callers report those)
+        }
+        let mut chain = Vec::new();
+        let mut c = Some(id);
+        while let Some(cur) = c {
+            if populated.get(cur as usize).copied().unwrap_or(true) {
+                break;
+            }
+            chain.push(cur);
+            c = reg.classes[cur as usize].parent;
+        }
+        chain.reverse();
+        chain
+    };
+    for c in chain {
+        // Marked first: member installation does not re-enter population
+        // (it defines on the prototype and the proxy target directly).
+        realm.populated.borrow_mut()[c as usize] = true;
+        if let Err(e) = install_members(scope, c) {
+            realm.populated.borrow_mut()[c as usize] = false;
+            return Err(e);
+        }
+    }
+    Ok(())
+}
+
+fn install_members(scope: &Scope<'_>, id: ClassId) -> JsResult<()> {
+    let realm = scope.realm;
+    let proto = realm.protos.borrow()[id as usize].as_ref().ok_or(JsError::ContextDestroyed)?.get(scope);
+    let target = realm.targets.borrow()[id as usize].as_ref().ok_or(JsError::ContextDestroyed)?.get(scope);
+    let proto = proto.as_object().expect("prototype object");
+    let target_obj = target.as_object().expect("interface target");
+    // Copied out so no registry borrow spans calls into JavaScript.
+    let (methods, accessors, constants, statics, iterable) = {
+        let reg = realm.engine.classes.borrow();
+        let d = &reg.classes[id as usize].def;
+        (
+            d.methods.iter().map(|m| (m.name, m.length, m.call)).collect::<Vec<_>>(),
+            d.accessors.iter().map(|a| (a.name, a.get, a.set)).collect::<Vec<_>>(),
+            d.constants.clone(),
+            d.statics.iter().map(|m| (m.name, m.length, m.call)).collect::<Vec<_>>(),
+            d.indexed_iterable,
+        )
+    };
+    let set_length = realm.helper(scope, "setLength")?;
+    for (name, length, call) in methods {
+        let f = make_native_fn(scope, name, call);
+        proto.set(name, f.value())?;
+        // JSC callback functions already have a configurable length of 0.
+        if length != 0 {
+            set_length.call(None, &[f.value(), scope.number(length as f64)])?;
+        }
+    }
+    let accessor = realm.helper(scope, "accessor")?;
+    for (name, get, set) in accessors {
+        let g = make_native_fn(scope, name, get);
+        let st = set.map(|f| make_native_fn(scope, name, f).value()).unwrap_or_else(|| scope.undefined());
+        accessor.call(None, &[proto.value(), scope.string(name), g.value(), st])?;
+    }
+    let constant = realm.helper(scope, "constant")?;
+    for (name, v) in constants {
+        constant.call(None, &[target, scope.string(name), scope.number(v)])?;
+        constant.call(None, &[proto.value(), scope.string(name), scope.number(v)])?;
+    }
+    for (name, length, call) in statics {
+        let f = make_native_fn(scope, name, call);
+        target_obj.set(name, f.value())?;
+        if length != 0 {
+            set_length.call(None, &[f.value(), scope.number(length as f64)])?;
+        }
+    }
+    if iterable {
+        realm.helper(scope, "iterable")?.call(None, &[proto.value()])?;
+    }
     Ok(())
 }
 
