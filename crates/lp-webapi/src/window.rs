@@ -148,6 +148,9 @@ fn navigator<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Value<'s>> {
 }
 
 fn user_agent(page: &PageDom) -> String {
+    if let Some(ua) = page.identity.borrow().value.as_ref().map(|v| &v.user_agent).filter(|s| !s.is_empty()) {
+        return ua.clone();
+    }
     page.net.borrow().as_ref().map(|n| n.user_agent()).unwrap_or_else(|| lp_net::NetConfig::default().user_agent)
 }
 
@@ -168,8 +171,14 @@ impl JsClass for Navigator {
         def.getter("productSub", |s, _p| Ok(s.string("20030107")));
         def.getter("vendor", |s, _p| Ok(s.string("")));
         def.getter("vendorSub", |s, _p| Ok(s.string("")));
-        def.getter("platform", |s, _p| {
-            Ok(s.string(if cfg!(target_os = "macos") { "MacIntel" } else { "Linux x86_64" }))
+        def.getter("platform", |s, p| {
+            let identity = p.identity.borrow();
+            let platform = identity
+                .value
+                .as_ref()
+                .and_then(|v| v.platform.as_deref())
+                .unwrap_or(if cfg!(target_os = "macos") { "MacIntel" } else { "Linux x86_64" });
+            Ok(s.string(platform))
         });
         def.getter("language", |s, p| Ok(s.string(&languages(p)[0])));
         def.getter("languages", |s, p| {
@@ -195,10 +204,12 @@ impl JsClass for Navigator {
 
 fn languages(p: &PageDom) -> Vec<String> {
     let header = p
-        .net
+        .identity
         .borrow()
+        .value
         .as_ref()
-        .and_then(|n| n.settings().accept_language)
+        .and_then(|v| v.accept_language.clone())
+        .or_else(|| p.net.borrow().as_ref().and_then(|n| n.settings().accept_language))
         .unwrap_or_else(|| lp_net::NetConfig::default().accept_language);
     let langs: Vec<String> = header
         .split(',')

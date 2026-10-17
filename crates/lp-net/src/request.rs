@@ -2,7 +2,7 @@
 //! the CDP Network/Fetch domains.
 
 use bytes::Bytes;
-use http::{HeaderMap, Method, StatusCode};
+use http::{HeaderMap, HeaderValue, Method, StatusCode};
 use url::Url;
 
 /// Process-unique request id. Also used as CDP `Network.requestId` and as
@@ -72,11 +72,20 @@ pub enum RedirectMode {
     Manual,
 }
 
+/// Browser/page defaults, distinct from author headers for CORS preflight.
+/// Cloned into a request so later page changes do not alter an in-flight hop.
+#[derive(Clone, Debug, Default)]
+pub struct RequestDefaults {
+    pub user_agent: Option<HeaderValue>,
+    pub accept_language: Option<HeaderValue>,
+}
+
 #[derive(Clone, Debug)]
 pub struct Request {
     pub method: Method,
     pub url: Url,
     pub headers: HeaderMap,
+    pub defaults: RequestDefaults,
     pub body: Option<Bytes>,
     pub destination: Destination,
     pub mode: RequestMode,
@@ -104,6 +113,7 @@ impl Request {
             method: Method::GET,
             url,
             headers: HeaderMap::new(),
+            defaults: RequestDefaults::default(),
             body: None,
             destination,
             mode,
