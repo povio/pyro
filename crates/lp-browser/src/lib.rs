@@ -9,6 +9,7 @@
 mod bindings;
 mod loader;
 mod nav;
+mod stylesheets;
 mod window;
 
 use lp_js::{Engine, EngineHooks, JsError, Realm, RealmId, RealmOptions};
@@ -17,7 +18,9 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Instant;
 
-pub use loader::{FetchDone, FetchRequest, NetLoader, Resource, ResourceKind, ResourceLoader, StaticLoader};
+pub use loader::{
+    FetchDone, FetchRequest, NetLoader, Resource, ResourceCancellation, ResourceKind, ResourceLoader, StaticLoader,
+};
 pub use nav::{History, Location, PageNav, Performance};
 pub use window::{Window, WindowData};
 
@@ -214,6 +217,7 @@ pub struct Page {
     /// Session history and current URL (shared with the page's windows).
     pub nav: Rc<PageNav>,
     pub(crate) load: Option<loader::DocumentLoad>,
+    pub(crate) stylesheets: stylesheets::Stylesheets,
     session_storage: lp_webapi::StorageNamespace,
     user_agent_override: Option<lp_webapi::UserAgentOverride>,
     request_defaults: lp_net::RequestDefaults,
@@ -242,6 +246,14 @@ pub struct Browser {
 
 impl LoopState for Browser {
     fn after_task(&mut self) {
+        self.checkpoint();
+    }
+}
+
+impl Browser {
+    /// Owner-thread safe point after synchronous host/inspector JavaScript.
+    /// Call only after releasing DOM borrows. Event-loop tasks invoke it automatically.
+    pub fn checkpoint(&mut self) {
         let n = self.engine.drain_finalized();
         *self.released_payloads.borrow_mut() += n as u64;
         let pages: Vec<_> = self.pages.iter().map(|p| p.id).collect();
@@ -305,10 +317,12 @@ impl BrowserThread {
 
     /// Runs tasks/timers until idle or the deadline.
     pub fn run_until_idle(&mut self, deadline: Option<Instant>) -> RunOutcome {
+        self.browser.checkpoint();
         self.event_loop.run_until_idle(&mut self.browser, deadline)
     }
 
     pub fn run_until(&mut self, deadline: Option<Instant>, done: impl FnMut(&mut Browser) -> bool) -> RunOutcome {
+        self.browser.checkpoint();
         self.event_loop.run_until(&mut self.browser, deadline, false, done)
     }
 }
@@ -430,6 +444,7 @@ impl Browser {
             pending_replace: false,
             nav,
             load: None,
+            stylesheets: Default::default(),
             session_storage: Default::default(),
             user_agent_override: None,
             request_defaults: Default::default(),
@@ -588,6 +603,7 @@ impl Browser {
             let old = std::mem::take(&mut p.main_frame.realms);
             // The previous document (and its in-flight loads) is gone.
             p.load = None;
+            p.stylesheets = Default::default();
             let old_dom = p.main_frame.page_dom.replace(page_dom.clone());
             p.main_frame.dom = Some(page_dom.dom.clone());
             p.main_frame.document = Some(page_dom.document());

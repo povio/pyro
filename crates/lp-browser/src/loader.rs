@@ -15,8 +15,8 @@
 //! because JSC fetches the module graph during evaluation, not before it.
 //!
 //! DOM lifecycle and currentScript are wired through lp-webapi. Script element
-//! load/error events, script-inserted scripts, and external stylesheet/iframe/
-//! image resources remain separate loader work.
+//! load/error events, script-inserted scripts, and iframe/image resources remain
+//! separate loader work. Linked stylesheets are handled by `stylesheets`.
 
 use crate::{Browser, LoaderId, NavigateOpts, PageEvent, PageId};
 use lp_dom::parse::{DocumentParser, DomRef, ParseStep};
@@ -47,6 +47,8 @@ pub struct FetchRequest {
     pub referrer: Option<String>,
     pub frame_id: Option<String>,
     pub loader_id: Option<String>,
+    /// HTML crossorigin attribute (absent uses the resource default).
+    pub crossorigin: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -74,6 +76,37 @@ pub type FetchDone = Box<dyn FnOnce(&mut Browser, Result<Resource, String>)>;
 /// asynchronously (as a later task), never re-entrantly from `fetch`.
 pub trait ResourceLoader {
     fn fetch(&self, browser: &mut Browser, request: FetchRequest, done: FetchDone);
+
+    /// Optional cancellation for document-owned resources. Dropping the returned
+    /// handle cancels transport; a late completion must still be safe to ignore.
+    fn fetch_cancellable(
+        &self,
+        browser: &mut Browser,
+        request: FetchRequest,
+        done: FetchDone,
+    ) -> Option<ResourceCancellation> {
+        self.fetch(browser, request, done);
+        None
+    }
+}
+
+/// Browser-thread cancellation of an in-flight resource. Custom loaders may
+/// return this from `fetch_cancellable`; ordinary `fetch` remains unchanged.
+pub struct ResourceCancellation(Option<Box<dyn FnOnce()>>);
+impl ResourceCancellation {
+    pub fn new(cancel: impl FnOnce() + 'static) -> Self {
+        Self(Some(Box::new(cancel)))
+    }
+    pub fn disarm(mut self) {
+        self.0.take();
+    }
+}
+impl Drop for ResourceCancellation {
+    fn drop(&mut self) {
+        if let Some(cancel) = self.0.take() {
+            cancel();
+        }
+    }
 }
 
 impl Browser {
@@ -110,6 +143,17 @@ impl NetLoader {
 
 impl ResourceLoader for NetLoader {
     fn fetch(&self, browser: &mut Browser, request: FetchRequest, done: FetchDone) {
+        if let Some(cancel) = self.fetch_cancellable(browser, request, done) {
+            cancel.disarm();
+        }
+    }
+
+    fn fetch_cancellable(
+        &self,
+        browser: &mut Browser,
+        request: FetchRequest,
+        done: FetchDone,
+    ) -> Option<ResourceCancellation> {
         let id = browser.register_completion(done);
         let handle = browser.loop_handle();
         let url = match url::Url::parse(&request.url) {
@@ -117,7 +161,7 @@ impl ResourceLoader for NetLoader {
             Err(e) => {
                 let msg = format!("net::ERR_INVALID_URL {}: {e}", request.url);
                 browser.scheduler().post(TaskSource::Networking, move |b| b.complete_fetch(id, Err(msg)));
-                return;
+                return None;
             }
         };
         let destination = match request.kind {
@@ -132,15 +176,28 @@ impl ResourceLoader for NetLoader {
         if let Some(page) = browser.page(request.page) {
             req.defaults = page.request_defaults.clone();
         }
-        if request.kind == ResourceKind::ModuleScript {
+        if request.kind == ResourceKind::ModuleScript || request.crossorigin.is_some() {
             req.mode = lp_net::RequestMode::Cors;
+        }
+        if request.crossorigin.as_deref().is_some_and(|v| v.eq_ignore_ascii_case("use-credentials")) {
+            req.credentials = lp_net::Credentials::Include;
+        }
+        if !matches!(request.kind, ResourceKind::Document | ResourceKind::Iframe) {
+            req.origin =
+                Some(browser.page(request.page).map_or_else(|| "null".into(), |p| origin_of(&p.main_frame.url)));
+        }
+        if request.kind == ResourceKind::Stylesheet {
+            if request.crossorigin.is_none() {
+                req.credentials = lp_net::Credentials::Include;
+            }
+            req.max_body = Some(crate::stylesheets::MAX_SHEET_BYTES.min(self.client.config().max_body));
         }
         req.referrer = request.referrer.as_deref().and_then(|r| url::Url::parse(r).ok());
         req.frame_id = request.frame_id;
         req.loader_id = request.loader_id;
         let mut head: Option<lp_net::ResponseHead> = None;
         let mut body: Vec<u8> = Vec::new();
-        self.client.fetch(
+        let native_id = self.client.fetch(
             req,
             Box::new(move |ev| match ev {
                 lp_net::ResponseEvent::Redirect { .. } => {}
@@ -166,6 +223,8 @@ impl ResourceLoader for NetLoader {
                 }
             }),
         );
+        let client = self.client.clone();
+        Some(ResourceCancellation::new(move || client.cancel(native_id)))
     }
 }
 
@@ -208,19 +267,19 @@ enum ScriptType {
     Module,
 }
 
-struct ScriptElement {
-    dom: DomRef,
-    node: NodeId,
+pub(crate) struct ResourceNode {
+    pub(crate) dom: DomRef,
+    pub(crate) node: NodeId,
 }
 
-impl Drop for ScriptElement {
+impl Drop for ResourceNode {
     fn drop(&mut self) {
         self.dom.borrow_mut().release(self.node);
     }
 }
 
 struct PendingScript {
-    element: Rc<ScriptElement>,
+    element: Rc<ResourceNode>,
     ty: ScriptType,
     url: String,
     /// `None` until fetched (inline scripts start as `Some`).
@@ -247,6 +306,7 @@ pub(crate) struct DocumentLoad {
     parser: Option<DocumentParser>,
     phase: ParsePhase,
     blocked: bool,
+    stylesheet_blocked_script: Option<Rc<ResourceNode>>,
     deferred: VecDeque<Rc<RefCell<PendingScript>>>,
     /// A deferred module is evaluating; wait for its promise.
     awaiting_module: bool,
@@ -328,6 +388,7 @@ impl Browser {
             referrer: opts.referrer.clone(),
             frame_id,
             loader_id: Some(loader_id.0.clone()),
+            crossorigin: None,
         };
         loader.fetch(
             self,
@@ -406,6 +467,7 @@ impl Browser {
             parser: Some(parser),
             phase: ParsePhase::Feed(resource.body),
             blocked: false,
+            stylesheet_blocked_script: None,
             deferred: VecDeque::new(),
             awaiting_module: false,
             parsing_done: false,
@@ -449,7 +511,23 @@ impl Browser {
             };
             self.drain_dom_resources(page);
             match step {
-                ParseStep::Script(node) => self.prepare_script(page, node),
+                ParseStep::Script(node) => {
+                    let blocks = self
+                        .page(page)
+                        .and_then(|p| p.main_frame.page_dom.as_ref())
+                        .and_then(|p| p.dom.borrow().script_info(node).ok())
+                        .is_some_and(|s| s.kind == ScriptKind::Classic && (s.src.is_none() || (!s.async_ && !s.defer)));
+                    if blocks && self.stylesheets_block_scripts(page) {
+                        let load = self.load_mut(page).expect("load");
+                        if load.dom.borrow_mut().add_ref(node).is_ok() {
+                            load.stylesheet_blocked_script =
+                                Some(Rc::new(ResourceNode { dom: load.dom.clone(), node }));
+                            load.blocked = true;
+                            return;
+                        }
+                    }
+                    self.prepare_script(page, node);
+                }
                 ParseStep::NeedInput => {
                     let load = self.load_mut(page).expect("load");
                     match load.phase {
@@ -489,7 +567,7 @@ impl Browser {
         if dom.borrow_mut().add_ref(node).is_err() {
             return;
         }
-        let element = Rc::new(ScriptElement { dom, node });
+        let element = Rc::new(ResourceNode { dom, node });
         let ty = match info.kind {
             ScriptKind::Classic if !info.nomodule => ScriptType::Classic,
             ScriptKind::Module => ScriptType::Module,
@@ -559,11 +637,11 @@ impl Browser {
             self.scheduler().post(TaskSource::Networking, move |b| done(b, Err("no resource loader".into())));
             return;
         };
-        let referrer = self.page(page).and_then(|p| p.load.as_ref()).map(|l| l.url.clone());
+        let referrer = self.page(page).map(|p| p.main_frame.url.clone());
         let frame_id = self.page(page).map(|p| p.main_frame.id.0.clone());
         // Subresources carry the document's loader id (CDP Network.* routing).
         let loader_id = self.page(page).map(|p| p.main_frame.loader_id.0.clone());
-        let req = FetchRequest { url, kind, page, referrer, frame_id, loader_id };
+        let req = FetchRequest { url, kind, page, referrer, frame_id, loader_id, crossorigin: None };
         loader.fetch(
             self,
             req,
@@ -578,7 +656,7 @@ impl Browser {
         );
     }
 
-    fn fetch_deferred(&mut self, page: PageId, ty: ScriptType, url: String, element: Rc<ScriptElement>) {
+    fn fetch_deferred(&mut self, page: PageId, ty: ScriptType, url: String, element: Rc<ResourceNode>) {
         let ps = Rc::new(RefCell::new(PendingScript { element, ty, url: url.clone(), source: None }));
         self.load_mut(page).expect("load").deferred.push_back(ps.clone());
         let kind = if ty == ScriptType::Module { ResourceKind::ModuleScript } else { ResourceKind::Script };
@@ -592,7 +670,7 @@ impl Browser {
         });
     }
 
-    fn fetch_async(&mut self, page: PageId, ty: ScriptType, url: String, element: Rc<ScriptElement>) {
+    fn fetch_async(&mut self, page: PageId, ty: ScriptType, url: String, element: Rc<ResourceNode>) {
         let loader_id = {
             let l = self.load_mut(page).expect("load");
             l.async_pending += 1;
@@ -622,11 +700,16 @@ impl Browser {
     /// `DOMContentLoaded`.
     fn run_deferred(&mut self, page: PageId) {
         loop {
+            self.drain_dom_resources(page);
+            let css_blocked = self.stylesheets_block_scripts(page);
             let Some(load) = self.load_mut(page) else { return };
             if !load.parsing_done || load.awaiting_module || load.dcl_fired {
                 return;
             }
             let Some(next) = load.deferred.front().cloned() else { break };
+            if css_blocked {
+                return;
+            }
             let source = next.borrow().source.clone();
             let Some(source) = source else { return }; // still fetching
             load.deferred.pop_front();
@@ -663,6 +746,10 @@ impl Browser {
     }
 
     fn maybe_fire_load(&mut self, page: PageId) {
+        self.drain_dom_resources(page);
+        if self.page(page).is_some_and(|p| p.stylesheets.pending() != 0) {
+            return;
+        }
         let Some(load) = self.load_mut(page) else { return };
         if !load.dcl_fired || load.load_fired || load.async_pending > 0 {
             return;
@@ -682,11 +769,27 @@ impl Browser {
         self.emit(page, PageEvent::FrameNetworkIdle { frame_id, loader_id });
     }
 
+    /// A stylesheet completed or stopped blocking. Called from a later task,
+    /// never recursively from the parser's resource-event drain.
+    pub(crate) fn stylesheets_changed(&mut self, page: PageId) {
+        self.drain_dom_resources(page);
+        if !self.stylesheets_block_scripts(page) {
+            let pending = self.load_mut(page).and_then(|l| l.stylesheet_blocked_script.take());
+            if let Some(element) = pending {
+                self.load_mut(page).expect("load").blocked = false;
+                self.prepare_script(page, element.node);
+                self.continue_parsing(page);
+            }
+            self.run_deferred(page);
+        }
+        self.maybe_fire_load(page);
+    }
+
     fn main_realm(&self, page: PageId) -> Option<Realm> {
         self.page(page)?.main_frame.main_realm().cloned()
     }
 
-    fn execute_classic(&mut self, page: PageId, text: &str, url: &str, element: &ScriptElement) {
+    fn execute_classic(&mut self, page: PageId, text: &str, url: &str, element: &ResourceNode) {
         let Some(realm) = self.main_realm(page) else { return };
         let Ok(scope) = realm.scope() else { return };
         let bindings = self.page(page).and_then(|p| p.main_frame.page_dom.clone());
