@@ -1,6 +1,6 @@
 # Protocol integration dependency inventory
 
-This follow-up is based on main `aeac8cff2f88575d652e2943aaa3edc7a7fa7167` (PRs 1–3 merged).
+This follow-up is based on main `dab6ea134d1854f574538f6ec94370622769d428` (PRs 1–4 merged).
 The original tested integration branch remains at `f27a3e72d99fe2fd53f7eb8d9305f8b1395dc6fe`.
 The follow-up includes main in its ancestry so the PR diff has a single, current merge base.
 
@@ -39,6 +39,7 @@ ryu-js package block caused by ordering differences.
   Those measurements identify rewrite **d673567**, not this follow-up head. They are not TOS measurements.
 
 DOM/net/WebAPI owner head d2fa35a (including cookie repair 3557e95) is already in main through PR3 and is not
-reintroduced as a source diff. Browser DOM/WebAPI registration, full TOS flows, TLS, response-stage Fetch,
+reintroduced as a source diff. Standalone fetch/Response 8cab864 is also present through merged PR4,
+without new browser registration in this follow-up. Browser DOM/WebAPI registration, full TOS flows, TLS, response-stage Fetch,
 and custom response phrases remain gaps. Static maintainability review and executed tests have distinct
 scopes; neither is presented as the blocked independent correctness/performance review.
