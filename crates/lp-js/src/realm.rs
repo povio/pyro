@@ -190,28 +190,6 @@ impl RealmInner {
         h.as_object().expect("helpers object").get(name)?.as_object().ok_or(JsError::Type("missing helper".into()))
     }
 
-    /// Makes the realm's interface objects throw "Execution context was
-    /// destroyed." on property operations from now on (see helpers.js
-    /// `lazyInterface`). Best effort: if JavaScript cannot run (e.g. during a
-    /// termination), never-used interfaces still throw from `populate`.
-    fn mark_interfaces_disposed(&self, ctx: sys::JSGlobalContextRef) {
-        let Some(helpers) = self.helpers.borrow().as_ref().map(|p| p.as_raw()) else { return };
-        let name = JsString::new("markDisposed");
-        let mut exc = ptr::null();
-        // SAFETY: ctx is still retained (released later in dispose); helpers
-        // is protected by its Persistent.
-        unsafe {
-            let ctx = ctx as sys::JSContextRef;
-            if !sys::JSValueIsObject(ctx, helpers) {
-                return;
-            }
-            let f = sys::JSObjectGetProperty(ctx, helpers as sys::JSObjectRef, name.as_raw(), &mut exc);
-            if exc.is_null() && sys::JSValueIsObject(ctx, f) {
-                sys::JSObjectCallAsFunction(ctx, f as sys::JSObjectRef, ptr::null_mut(), 0, ptr::null(), &mut exc);
-            }
-        }
-    }
-
     pub(crate) fn prune_identity(&self, key: IdentityKey) {
         let mut map = self.identity.borrow_mut();
         if let Some(weak) = map.get(&key).copied() {
@@ -231,7 +209,6 @@ impl RealmInner {
         if ctx.is_null() {
             return;
         }
-        self.mark_interfaces_disposed(ctx);
         self.engine.realms.borrow_mut().retain(|(g, _)| *g != ctx);
         let loader = self.module_loader.replace(ptr::null_mut());
         if !loader.is_null() {
@@ -1109,8 +1086,31 @@ unsafe extern "C" fn populate_tramp(
 ) -> sys::JSValueRef {
     let undefined = unsafe { sys::JSValueMakeUndefined(ctx) };
     if realm_for_ctx(ctx).is_none() {
-        unsafe { crate::error::throw_message(ctx, "Execution context was destroyed.", exc) };
-        return ptr::null();
+        // Disposed realm: install from the state its helper object keeps.
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _depth = class::DepthGuard::enter();
+            let args = unsafe { Args::from_raw(ctx, argc, argv) };
+            let id = args.get(0).to_number()? as ClassId;
+            let h = args.get(1).as_object().ok_or(JsError::ContextDestroyed)?;
+            populate_disposed(ctx, id, h)
+        }));
+        return match outcome {
+            Ok(Ok(())) => undefined,
+            Ok(Err(JsError::Thrown(p))) => {
+                if !exc.is_null() {
+                    unsafe { *exc = p.as_raw() };
+                }
+                ptr::null()
+            }
+            Ok(Err(e)) => {
+                unsafe { crate::error::throw_message(ctx, &e.to_string(), exc) };
+                ptr::null()
+            }
+            Err(_) => {
+                unsafe { crate::error::throw_message(ctx, "Internal error: panic in populate", exc) };
+                ptr::null()
+            }
+        };
     }
     unsafe {
         class::guard(ctx, exc, ptr::null(), |s| {
@@ -1148,7 +1148,7 @@ pub(crate) fn populate_class(scope: &Scope<'_>, id: ClassId) -> JsResult<()> {
         // Marked first: member installation does not re-enter population
         // (it defines on the prototype and the proxy target directly).
         realm.populated.borrow_mut()[c as usize] = true;
-        if let Err(e) = install_members(scope, c) {
+        if let Err(e) = install_members(scope, c).and_then(|()| mirror_populated(scope, c)) {
             realm.populated.borrow_mut()[c as usize] = false;
             return Err(e);
         }
@@ -1156,16 +1156,41 @@ pub(crate) fn populate_class(scope: &Scope<'_>, id: ClassId) -> JsResult<()> {
     Ok(())
 }
 
+/// Mirrors the populated flag into the helper object, which is what
+/// population after disposal consults (`populate_disposed`).
+fn mirror_populated(scope: &Scope<'_>, id: ClassId) -> JsResult<()> {
+    let helpers = scope.realm.helpers.borrow().as_ref().ok_or(JsError::ContextDestroyed)?.get(scope);
+    let flags = helpers.as_object().expect("helpers").get("populated")?.as_object().expect("populated array");
+    flags.set_index(id, scope.boolean(true))
+}
+
 fn install_members(scope: &Scope<'_>, id: ClassId) -> JsResult<()> {
     let realm = scope.realm;
     let proto = realm.protos.borrow()[id as usize].as_ref().ok_or(JsError::ContextDestroyed)?.get(scope);
     let target = realm.targets.borrow()[id as usize].as_ref().ok_or(JsError::ContextDestroyed)?.get(scope);
-    let proto = proto.as_object().expect("prototype object");
-    let target_obj = target.as_object().expect("interface target");
+    let helpers = realm.helpers.borrow().as_ref().ok_or(JsError::ContextDestroyed)?.get(scope);
+    let (Some(proto), Some(target), Some(helpers)) = (proto.as_object(), target.as_object(), helpers.as_object())
+    else {
+        return Err(JsError::Type("invalid interface state".into()));
+    };
+    install_members_raw(scope.ctx, &realm.engine, id, proto, target, helpers)
+}
+
+/// Installs `id`'s members onto `proto`/`target` using only `ctx` and the
+/// realm's helper object, so it also works for a disposed realm (whose
+/// interface objects are still referenced from another realm).
+fn install_members_raw(
+    ctx: sys::JSContextRef,
+    engine: &EngineInner,
+    id: ClassId,
+    proto: Object<'_>,
+    target: Object<'_>,
+    helpers: Object<'_>,
+) -> JsResult<()> {
     // Copied out so no registry borrow spans calls into JavaScript.
     let (methods, accessors, constants, statics, iterable) = {
-        let reg = realm.engine.classes.borrow();
-        let d = &reg.classes[id as usize].def;
+        let reg = engine.classes.borrow();
+        let d = &reg.classes.get(id as usize).ok_or(JsError::Type("unknown class".into()))?.def;
         (
             d.methods.iter().map(|m| (m.name, m.length, m.call)).collect::<Vec<_>>(),
             d.accessors.iter().map(|a| (a.name, a.get, a.set)).collect::<Vec<_>>(),
@@ -1174,35 +1199,84 @@ fn install_members(scope: &Scope<'_>, id: ClassId) -> JsResult<()> {
             d.indexed_iterable,
         )
     };
-    let set_length = realm.helper(scope, "setLength")?;
+    // SAFETY (all raw constructors below): ctx is the live callback/scope context.
+    let num = |n: f64| unsafe { Value::from_raw(ctx, sys::JSValueMakeNumber(ctx, n)) };
+    let string = |t: &str| unsafe { Value::from_raw(ctx, sys::JSValueMakeString(ctx, JsString::new(t).as_raw())) };
+    let undefined = unsafe { Value::from_raw(ctx, sys::JSValueMakeUndefined(ctx)) };
+    let native = |name: &str, call| unsafe {
+        let n = JsString::new(name);
+        Object::from_raw(ctx, sys::JSObjectMakeFunctionWithCallback(ctx, n.as_raw(), Some(call)))
+    };
+    let helper = |name: &str| -> JsResult<Object<'_>> {
+        helpers.get(name)?.as_object().ok_or_else(|| JsError::Type("missing helper".into()))
+    };
+    let set_length = helper("setLength")?;
     for (name, length, call) in methods {
-        let f = make_native_fn(scope, name, call);
+        let f = native(name, call);
         proto.set(name, f.value())?;
         // JSC callback functions already have a configurable length of 0.
         if length != 0 {
-            set_length.call(None, &[f.value(), scope.number(length as f64)])?;
+            set_length.call(None, &[f.value(), num(length as f64)])?;
         }
     }
-    let accessor = realm.helper(scope, "accessor")?;
+    let accessor = helper("accessor")?;
     for (name, get, set) in accessors {
-        let g = make_native_fn(scope, name, get);
-        let st = set.map(|f| make_native_fn(scope, name, f).value()).unwrap_or_else(|| scope.undefined());
-        accessor.call(None, &[proto.value(), scope.string(name), g.value(), st])?;
+        let g = native(name, get);
+        let st = set.map(|f| native(name, f).value()).unwrap_or(undefined);
+        accessor.call(None, &[proto.value(), string(name), g.value(), st])?;
     }
-    let constant = realm.helper(scope, "constant")?;
+    let constant = helper("constant")?;
     for (name, v) in constants {
-        constant.call(None, &[target, scope.string(name), scope.number(v)])?;
-        constant.call(None, &[proto.value(), scope.string(name), scope.number(v)])?;
+        constant.call(None, &[target.value(), string(name), num(v)])?;
+        constant.call(None, &[proto.value(), string(name), num(v)])?;
     }
     for (name, length, call) in statics {
-        let f = make_native_fn(scope, name, call);
-        target_obj.set(name, f.value())?;
+        let f = native(name, call);
+        target.set(name, f.value())?;
         if length != 0 {
-            set_length.call(None, &[f.value(), scope.number(length as f64)])?;
+            set_length.call(None, &[f.value(), num(length as f64)])?;
         }
     }
     if iterable {
-        realm.helper(scope, "iterable")?.call(None, &[proto.value()])?;
+        helper("iterable")?.call(None, &[proto.value()])?;
+    }
+    Ok(())
+}
+
+/// Population of a disposed realm's interface (reachable from another realm):
+/// its state lives in the helper object `h` (`classProtos`, `classTargets`,
+/// `populated`, the last recorded at disposal), so the result is the same API
+/// eager installation exposed; calling native members then throws as before.
+fn populate_disposed(ctx: sys::JSContextRef, id: ClassId, h: Object<'_>) -> JsResult<()> {
+    let engine = crate::engine::engine_for_ctx(ctx).ok_or(JsError::ContextDestroyed)?;
+    let protos = h.get("classProtos")?.as_object().ok_or(JsError::ContextDestroyed)?;
+    let targets = h.get("classTargets")?.as_object().ok_or(JsError::ContextDestroyed)?;
+    let populated = h.get("populated")?.as_object().ok_or(JsError::ContextDestroyed)?;
+    let chain = {
+        let reg = engine.classes.borrow();
+        let mut chain = Vec::new();
+        let mut c = Some(id);
+        while let Some(cur) = c {
+            if cur as usize >= reg.classes.len() || populated.get_index(cur)?.to_bool() {
+                break;
+            }
+            chain.push(cur);
+            c = reg.classes[cur as usize].parent;
+        }
+        chain.reverse();
+        chain
+    };
+    let yes = unsafe { Value::from_raw(ctx, sys::JSValueMakeBoolean(ctx, true)) };
+    let no = unsafe { Value::from_raw(ctx, sys::JSValueMakeBoolean(ctx, false)) };
+    for c in chain {
+        let (Some(proto), Some(target)) = (protos.get_index(c)?.as_object(), targets.get_index(c)?.as_object()) else {
+            return Err(JsError::ContextDestroyed);
+        };
+        populated.set_index(c, yes)?;
+        if let Err(e) = install_members_raw(ctx, &engine, c, proto, target, h) {
+            populated.set_index(c, no)?;
+            return Err(e);
+        }
     }
     Ok(())
 }

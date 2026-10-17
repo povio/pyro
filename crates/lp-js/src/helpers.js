@@ -23,10 +23,13 @@
   const reflectDelete = Reflect.deleteProperty;
   const ProxyC = Proxy;
   const reflectPreventExtensions = Reflect.preventExtensions;
-  // Set when the realm is disposed: interface objects then throw on property
-  // operations whether or not their members were installed, so stale
-  // references from other realms see one consistent behavior.
-  let realmDisposed = false;
+  // Interface state for member installation after disposal (see realm.rs
+  // populate_disposed); `populated` is kept in sync by the native side.
+  // Held here, so it lives exactly as long as some interface proxy (whose
+  // closure references this object) is reachable.
+  const classProtos = [];
+  const classTargets = [];
+  const populated = [];
   const P = Promise;
   const promiseThen = P.prototype.then;
   const promiseResolveFn = P.resolve;
@@ -127,7 +130,10 @@
     return { type, subtype, className, description };
   }
 
-  return {
+  const H = {
+    classProtos,
+    classTargets,
+    populated,
     DOMException,
     makeInterface(name, native, proto, parentCtor, length, global) {
       const C = native
@@ -152,10 +158,9 @@
     // forward unchanged. Construction/call/[[GetPrototypeOf]] need no members.
     lazyInterface(C, proto, global, name, id, populate) {
       let done = false;
-      const ensure = () => {
-        if (realmDisposed) throw new ErrorCtor('Execution context was destroyed.');
-        if (!done) { populate(id); done = true; }
-      };
+      classProtos[id] = proto;
+      classTargets[id] = C;
+      const ensure = () => { if (!done) { populate(id, H); done = true; } };
       const P = new ProxyC(C, {
         get(t, k, r) { ensure(); return reflectGet(t, k, r); },
         set(t, k, v, r) { ensure(); return reflectSet(t, k, v, r); },
@@ -171,7 +176,6 @@
       if (global) defineProperty(global, name, { value: P, writable: true, enumerable: false, configurable: true });
       return P;
     },
-    markDisposed() { realmDisposed = true; },
     accessor(proto, name, get, set) {
       try { defineProperty(get, 'name', { value: 'get ' + name }); } catch (_) {}
       if (set) { try { defineProperty(set, 'name', { value: 'set ' + name }); } catch (_) {} }
@@ -250,4 +254,5 @@
       return out;
     },
   };
+  return H;
 })()

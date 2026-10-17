@@ -1,6 +1,8 @@
-//! Lazy member installation must be unobservable: interface objects, their
-//! prototypes and members have exactly the shape eager installation produced,
-//! whatever touches a class first.
+//! Lazy member installation: interface objects, their prototypes and members
+//! must have exactly the descriptor shape eager installation produced,
+//! whatever touches a class first. Documented differences that remain
+//! (Function.prototype.toString of interface objects, proxy-trap cost) are
+//! listed in docs/COMPATIBILITY.md and pinned below where observable.
 
 use lp_js::*;
 use std::rc::Rc;
@@ -201,45 +203,61 @@ fn realms_populate_independently_and_reentrantly() {
     );
 }
 
+/// Mirrors foreign interfaces into the probing realm under the test names (as
+/// non-enumerable data properties, like real interface bindings).
+const IMPORT: &str = r#"(src) => { for (const n of ['LzBase', 'LzMid', 'LzLeaf']) Object.defineProperty(globalThis, n, { value: src[n], writable: true, enumerable: false, configurable: true }); }"#;
+
+fn export(r: &Realm) -> String {
+    eval(r, "globalThis.__exported = { LzBase, LzMid, LzLeaf }; 'ok'")
+}
+
 #[test]
-fn disposed_realm_interfaces_fail_consistently_whether_used_or_not() {
+fn disposed_realm_interfaces_keep_the_eager_api_whether_used_or_not() {
     let e = Engine::new().unwrap();
     e.register::<Leaf>();
+    // Expected: interfaces of a live realm, seen from another realm.
+    let live = e.create_realm(RealmOptions::default()).unwrap();
+    let probe_live = e.create_realm(RealmOptions { name: "probe-live".into(), ..Default::default() }).unwrap();
     let a = e.create_realm(RealmOptions::default()).unwrap();
-    let b = e.create_realm(RealmOptions { name: "other".into(), ..Default::default() }).unwrap();
+    let probe = e.create_realm(RealmOptions { name: "probe".into(), ..Default::default() }).unwrap();
+    for (src, dst) in [(&live, &probe_live), (&a, &probe)] {
+        export(src);
+        let so = src.scope().unwrap();
+        let exported = so.global().get("__exported").unwrap();
+        let sd = dst.scope().unwrap();
+        let import = sd.eval(IMPORT, None, 1).unwrap().as_object().unwrap();
+        import.call(None, &[exported]).unwrap();
+    }
+    // Realm `a`: LzBase used before disposal, LzMid/LzLeaf never; one instance.
     {
         let sa = a.scope().unwrap();
-        // LzBase is used (members installed) before disposal, LzLeaf is not.
-        sa.eval("LzBase.prototype.ping; globalThis.leafObj = new LzLeaf()", None, 1).unwrap();
-        let sb = b.scope().unwrap();
-        for name in ["LzBase", "LzLeaf", "leafObj"] {
-            sb.global().set(&format!("foreign{name}"), sa.global().get(name).unwrap()).unwrap();
-        }
+        sa.eval("LzBase.prototype.ping; globalThis.inst = new LzLeaf()", None, 1).unwrap();
+        let inst = sa.global().get("inst").unwrap();
+        probe.scope().unwrap().global().set("foreignInst", inst).unwrap();
     }
+    let identity_before = eval(&probe, "globalThis.pingBefore = LzBase.prototype.ping; 'ok'");
+    assert_eq!(identity_before, "ok");
     a.dispose();
-    let probe = |expr: &str| eval(&b, &format!("try {{ {expr}; 'ok' }} catch (e) {{ e.message }}"));
-    for iface in ["foreignLzBase", "foreignLzLeaf"] {
-        for op in [
-            format!("{iface}.prototype"),
-            format!("{iface}.name"),
-            format!("Reflect.ownKeys({iface})"),
-            format!("'x' in {iface}"),
-            format!("({{}}) instanceof {iface}"),
-            format!("{iface}.y = 1"),
-            format!("Object.getOwnPropertyDescriptor({iface}, 'prototype')"),
-            format!("Object.preventExtensions({iface})"),
-        ] {
-            assert_eq!(probe(&op), "Execution context was destroyed.", "{op}");
-        }
-        // Operations that never touch members are plain forwards.
-        assert_eq!(probe(&format!("Object.getPrototypeOf({iface})")), "ok");
-        assert!(probe(&format!("new {iface}()")).contains("Execution context was destroyed"));
-    }
-    // Instances made before disposal keep their (installed) members; calling
-    // native members throws like every other native call into a disposed realm.
-    assert_eq!(probe("typeof foreignleafObj.leafOnly"), "ok");
-    assert_eq!(probe("foreignleafObj.leafOnly()"), "Execution context was destroyed.");
-    drop(b);
+    // Same observable API as live interfaces (all members present).
+    assert_eq!(eval(&probe, DUMP), eval(&probe_live, DUMP));
+    // Members installed before disposal keep their identity.
+    assert_eq!(eval(&probe, "LzBase.prototype.ping === pingBefore"), "true");
+    // Constants are plain data; native members throw like any native call
+    // into a disposed realm, as with eager installation.
+    assert_eq!(
+        eval(&probe, "[LzBase.BASE_CONST, LzMid.prototype.BASE_CONST, typeof LzLeaf.prototype.leafOnly].join()"),
+        "7,7,function"
+    );
+    assert_eq!(
+        eval(&probe, "try { LzLeaf.prototype.leafOnly.call(foreignInst) } catch (e) { e.message }"),
+        "Execution context was destroyed."
+    );
+    assert_eq!(eval(&probe, "try { LzBase.create() } catch (e) { e.message }"), "Execution context was destroyed.");
+    assert!(eval(&probe, "try { new LzLeaf(); 'constructed' } catch (e) { e.message }")
+        .contains("Execution context was destroyed"));
+    // Instances made before disposal: members readable, native calls throw.
+    assert_eq!(eval(&probe, "typeof foreignInst.midOnly"), "function");
+    drop(probe);
     drop(a);
     drop(e);
     let _again = Engine::new().expect("engine slot free after teardown");
