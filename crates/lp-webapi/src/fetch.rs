@@ -371,6 +371,7 @@ pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
         match result {
             Err(error) => deferred.reject(s, error.to_value(s))?,
             Ok((page, mut request, signal, limits, net, poster)) => {
+                page.apply_request_defaults(&mut request);
                 request.max_body = Some(limits.max_body_bytes);
                 let id = net.next_request_id();
                 let wire = Arc::new(Mutex::new(Wire {

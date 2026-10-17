@@ -26,6 +26,7 @@ pub mod file;
 pub mod formdata;
 pub mod headers;
 pub mod html;
+pub mod identity;
 pub mod indexeddb;
 pub mod input;
 pub mod layout_api;
@@ -48,6 +49,7 @@ use lp_js::{JsResult, Scope, Value};
 
 pub use event::{EventCore, EventData, EventInterface};
 pub use fetch::{FetchLimits, RequestContext};
+pub use identity::UserAgentOverride;
 pub use node::{wrap_node, NodeData};
 pub use page::{NavigationRequest, PageDom, PageHooks, RemotePoster};
 pub use storage::StorageNamespace;

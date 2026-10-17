@@ -574,12 +574,12 @@ impl Io {
         let cfg = &self.shared.config;
         let mut h = req.headers.clone();
         let ua = settings.user_agent.as_deref().unwrap_or(&cfg.user_agent);
-        if let Ok(v) = HeaderValue::from_str(ua) {
+        if let Some(v) = req.defaults.user_agent.clone().or_else(|| HeaderValue::from_str(ua).ok()) {
             h.entry(header::USER_AGENT).or_insert(v);
         }
         h.entry(header::ACCEPT).or_insert(HeaderValue::from_static(default_accept(req.destination)));
         let lang = settings.accept_language.as_deref().unwrap_or(&cfg.accept_language);
-        if let Ok(v) = HeaderValue::from_str(lang) {
+        if let Some(v) = req.defaults.accept_language.clone().or_else(|| HeaderValue::from_str(lang).ok()) {
             h.entry(header::ACCEPT_LANGUAGE).or_insert(v);
         }
         h.insert(header::ACCEPT_ENCODING, HeaderValue::from_static("gzip, deflate, br"));
