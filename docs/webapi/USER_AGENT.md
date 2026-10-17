@@ -18,10 +18,9 @@ CORS preflight decisions. A page UA override alone does not trigger preflight.
 The browser embedder owns persistence across navigation: retain the override
 and `UserAgentOverride::request_defaults()` result per Page, apply the override
 to each new PageDom before realm installation, and copy defaults into
-`lp_net::Request.defaults` for document/script/stylesheet loads. This module does
-not implement the browser setter or CDP command; those are separate runtime and
-protocol increments. Never change the shared NetClient's settings to implement
-a page override. Unsupported CDP `userAgentMetadata` must be rejected explicitly.
+`lp_net::Request.defaults` for document/script/stylesheet loads. The integrated
+[browser setter](../browser/USER_AGENT.md) and CDP mapper now provide this wiring.
+Never change the shared NetClient's settings to implement a page override. Unsupported CDP `userAgentMetadata` must be rejected explicitly.
 
 The unchanged TOS smoke after IndexedDB discovery (browser86ff4ee, TOSf9fde4aa0d)
 progressed past storage-state setup but failed both tests at newPage because
@@ -34,3 +33,7 @@ Tests use two pages sharing one network client, real JavaScriptCore and local
 HTTP: navigator/header isolation, atomic invalid-header rejection, empty-UA
 locale behavior, reset, redirect and in-flight snapshots, observed headers and
 a simple cross-origin request that must not issue OPTIONS.
+
+The later [exact integrated TOS smoke](../validation/TOS_IDENTITY_SMOKE.md) passed
+page creation and reached routes, then failed on missing MutationObserver and
+URLSearchParams; the complete flow still does not pass.

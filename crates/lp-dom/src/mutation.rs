@@ -223,6 +223,10 @@ impl Dom {
     pub fn take_pending_observers(&mut self) -> Vec<ObserverId> {
         std::mem::take(&mut self.mutation.pending).into_iter().map(ObserverId).collect()
     }
+    /// Snapshot only newly queued observer ids for binding lifetime roots.
+    pub fn pending_observers_from(&self, start: usize) -> Vec<ObserverId> {
+        self.mutation.pending.get(start..).unwrap_or_default().iter().copied().map(ObserverId).collect()
+    }
     pub fn has_pending_mutations(&self) -> bool {
         !self.mutation.pending.is_empty()
     }
