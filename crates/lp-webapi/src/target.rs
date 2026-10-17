@@ -412,3 +412,71 @@ pub fn fire_at_node(page: &Rc<PageDom>, node: NodeId, event: &EventData) -> bool
     let Some(key) = page.dom.borrow().node_key(node) else { return true };
     fire(page, key, event)
 }
+
+/// IDL event handlers use an ordinary listener slot and a traced hidden value.
+/// Replacing a non-null handler preserves its position among other listeners.
+pub(crate) fn event_handler<'s>(s: &Scope<'s>, target: &EventTargetData, ty: &str) -> JsResult<Value<'s>> {
+    let object =
+        target_object(s, &target.page, target.key)?.ok_or_else(|| JsError::Type("Illegal invocation".into()))?;
+    Ok(s.get_hidden(object, &format!("__lpHandler_{ty}"))?.unwrap_or(s.null()))
+}
+pub(crate) fn set_event_handler(
+    s: &Scope<'_>,
+    target: &EventTargetData,
+    ty: &'static str,
+    value: Value<'_>,
+) -> JsResult<()> {
+    let object =
+        target_object(s, &target.page, target.key)?.ok_or_else(|| JsError::Type("Illegal invocation".into()))?;
+    let value_key = format!("__lpHandler_{ty}");
+    let slot_key = format!("__lpHandlerSlot_{ty}");
+    let value = if value.as_object().is_some_and(|o| o.is_function()) { value } else { s.null() };
+    let slot = s
+        .get_hidden(object, &slot_key)?
+        .filter(|v| !v.is_undefined())
+        .map(|v| v.to_number())
+        .transpose()?
+        .map(|v| v as u32);
+    s.set_hidden(object, &value_key, value)?;
+    if let Some(slot) = slot {
+        if value.is_null() {
+            let handle = handle_for(s.realm_id(), slot);
+            target.page.dom.borrow_mut().remove_listener(target.key, ty, handle, false);
+            if let Some(array) = listener_array(s, object, false)? {
+                array.set_index(slot, s.undefined())?;
+            }
+            s.set_hidden(object, &slot_key, s.undefined())?;
+        }
+        return Ok(());
+    }
+    if value.is_null() {
+        return Ok(());
+    }
+    let callback = s.function("eventHandler", move |s, this, args| {
+        if let Some(object) = this.as_object() {
+            if let Some(handler) = s.get_hidden(object, &value_key)?.and_then(|v| v.as_object()) {
+                handler.call(Some(object), &[args.get(0)])?;
+            }
+        }
+        Ok(s.undefined())
+    })?;
+    let array = listener_array(s, object, true)?.expect("created listener array");
+    let len = array.get("length")?.to_number()? as u32;
+    let mut slot = len;
+    for i in 0..len {
+        if array.get_index(i)?.is_undefined() {
+            slot = i;
+            break;
+        }
+    }
+    array.set_index(slot, callback.value())?;
+    s.set_hidden(object, &slot_key, s.number(slot as f64))?;
+    target.page.dom.borrow_mut().add_listener(
+        target.key,
+        ty,
+        handle_for(s.realm_id(), slot),
+        AddOptions { capture: false, once: false, passive: None },
+    );
+    maybe_pin(s, &target.page, target.key, object);
+    Ok(())
+}

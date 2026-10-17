@@ -98,6 +98,15 @@ pub(crate) fn wrap<'s>(
         credentials,
     };
     let wrapper = s.wrap::<Response>(data, Some(id))?;
+    let headers = s.wrap::<Headers>(filtered_headers(head, credentials), None)?;
+    s.set_hidden(wrapper, HEADERS, headers.value())?;
+    if let Some(signal) = signal {
+        s.set_hidden(wrapper, SIGNAL, signal)?;
+    }
+    Ok(wrapper.value())
+}
+
+pub(crate) fn filtered_headers(head: &ResponseHead, credentials: Credentials) -> HeadersData {
     let exposed = head
         .headers
         .get_all(lp_net::http::header::ACCESS_CONTROL_EXPOSE_HEADERS)
@@ -130,10 +139,5 @@ pub(crate) fn wrap<'s>(
                 || exposed.iter().any(|n| n == name)
         })
         .map(|(name, value)| (name.as_str().to_owned(), value.as_bytes().iter().map(|b| char::from(*b)).collect()));
-    let headers = s.wrap::<Headers>(HeadersData::from_pairs(pairs, true), None)?;
-    s.set_hidden(wrapper, HEADERS, headers.value())?;
-    if let Some(signal) = signal {
-        s.set_hidden(wrapper, SIGNAL, signal)?;
-    }
-    Ok(wrapper.value())
+    HeadersData::from_pairs(pairs, true)
 }
