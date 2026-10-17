@@ -328,6 +328,28 @@ try {
       try { await reading; return 'unexpected success'; } catch (error) { return error; }
     }), 'body stopped');
   });
+  await check('native keyboard text insertion and mouse activation', async () => {
+    await page.evaluate(() => {
+      document.body.innerHTML = '<input id="typing"><input id="toggle" type="checkbox" style="position:absolute;left:20px;top:80px;width:40px;height:40px">';
+      globalThis.inputEvents = [];
+      const field = document.querySelector('#typing');
+      field.addEventListener('input', event => inputEvents.push(event.isTrusted));
+      field.focus();
+    });
+    await page.keyboard.type('abc');
+    await page.keyboard.insertText('β');
+    assert.deepEqual(await page.evaluate(() => [document.querySelector('#typing').value, inputEvents]), ['abcβ', [true, true, true, true]]);
+    const box = await page.evaluate(() => {
+      const rect = document.querySelector('#toggle').getBoundingClientRect();
+      const x = rect.x + rect.width / 2, y = rect.y + rect.height / 2;
+      return { x, y, width: rect.width, height: rect.height,
+        atPoint: document.elementFromPoint(x,y)?.id };
+    });
+    assert.ok(box.width > 0 && box.height > 0, JSON.stringify(box));
+    assert.equal(box.atPoint, 'toggle', JSON.stringify(box));
+    await page.mouse.click(box.x, box.y);
+    assert.equal(await page.evaluate(() => document.querySelector('#toggle').checked), true);
+  });
   await check('Web Storage follows context, page and navigation boundaries', async () => {
     await page.evaluate(() => { localStorage.setItem('local-marker', 'shared'); sessionStorage.setItem('session-marker', 'page'); });
     const sibling = await context.newPage();

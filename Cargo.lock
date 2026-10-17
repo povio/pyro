@@ -513,6 +513,7 @@ dependencies = [
  "lp-js",
  "lp-net",
  "lp-runtime",
+ "lp-webapi",
  "ryu-js",
  "serde",
  "serde_json",

@@ -7,6 +7,7 @@
 //! while JavaScript is on the stack.
 
 mod fetch;
+mod input;
 mod network;
 mod page;
 mod remote;
@@ -304,6 +305,7 @@ impl EngineHost {
             // are no additional Log-domain entries yet.
             "Network" => self.network_domain(action, cmd),
             "Fetch" => self.fetch_domain(action, cmd),
+            "Input" => self.input_domain(action, cmd),
             "Log" if matches!(action, "enable" | "disable") => Ok(Some(serde_json::json!({}))),
             _ => Err(CdpError::unsupported(&cmd.command.method)),
         }

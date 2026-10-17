@@ -2,6 +2,7 @@
 
 Sources:
 - **Playwright side:** every `send("Domain.method")` in `playwright-core@1.59.1/lib/server/chromium/*.js`, the version TOS pins. This is the static superset Playwright *may* send. The subset TOS actually drives will be recorded through `bench/scripts/cdp-record-proxy.mjs` and added here.
+- **Input schema:** [Chrome DevTools Protocol Input domain](https://raw.githubusercontent.com/ChromeDevTools/devtools-protocol/master/pdl/domains/Input.pdl).
 - **Upstream side:** the method enums of `src/server/cdp/domains/*.zig` at lightpanda-io/browser `2ad38773fd674d3c9cea26a263b814ee46f6ba84` (200 methods across 22 domains). "yes" means upstream dispatches the method; it does not imply full Chrome semantics.
 
 Rewrite status:
@@ -10,15 +11,15 @@ Rewrite status:
 - **conditional:** succeeds only when the request is already true of the engine; otherwise it returns an explicit error.
 - **pending:** returns an explicit CDP error (`-32000 … is not supported by lightningpanda`) and never a fabricated success.
 
-HTTP and `data:` document loading now use the real loader. `Network` emits request/redirect/response/data/completion/failure events to enabled page sessions, with response-body capture. Browser contexts own distinct network clients. DOM/Input protocol wiring remains pending; this is not TOS compatibility. Fetch request-stage interception supports continue overrides, fulfill, abort, disable/detach cleanup and server Basic-auth challenges. Response-stage interception, custom status phrases, proxy credentials and non-Basic credential schemes are explicitly unsupported. Fulfillment accepts text headers or base64 NUL-separated binary headers, preserving native value bytes and duplicate entries; the existing Network JSON header display uses UTF-8 replacement for invalid text. Redirect hops have distinct linked Fetch IDs; auth retries retain the hop ID. Only one session per page can own interception; different pages in a context may have separate owners.
+HTTP and `data:` document loading now use the real loader. `Network` emits request/redirect/response/data/completion/failure events to enabled page sessions, with response-body capture. Browser contexts own distinct network clients. DOM protocol wiring remains pending; basic native Input dispatch is implemented; this is not TOS compatibility. Fetch request-stage interception supports continue overrides, fulfill, abort, disable/detach cleanup and server Basic-auth challenges. Response-stage interception, custom status phrases, proxy credentials and non-Basic credential schemes are explicitly unsupported. Fulfillment accepts text headers or base64 NUL-separated binary headers, preserving native value bytes and duplicate entries; the existing Network JSON header display uses UTF-8 replacement for invalid text. Redirect hops have distinct linked Fetch IDs; auth retries retain the hop ID. Only one session per page can own interception; different pages in a context may have separate owners.
 
 Storage cookie commands use the network cookie jar, including HTTP response cookies, expiry and context isolation. Negative CDP expiry values mean session cookies. Invalid batches are validated before modifying the real jar. Partitioned/SameParty cookies, non-default priority and source overrides return explicit errors. Browser WebAPI installation separately supplies the DOM and Web Storage in main and isolated realms.
 
 Capture uses a shared process payload budget (default 64 MiB, 8 MiB/body), at most 4096 response records per page, and bounded network subscriptions (1024 events/8 MiB logical bytes per context). Observer overflow closes the CDP connection instead of silently losing events. Disabling the last Network session, navigation, or page teardown releases retained bodies. Per-session `Network.enable` buffer options are explicitly unsupported. These are logical retention limits, not an RSS measurement; shared chunk allocations and metadata contribute additional memory.
 
-The browser integration smoke also exercises DOM access before init scripts, shared DOM across isolated worlds, page fetch with exact Network frame/loader correlation, route fulfillment/abort after headers, and Web Storage context/page/navigation isolation. These checks use local HTTP and JavaScript evaluation; DOM/Input protocol commands and actual TOS workflows remain unvalidated.
+The browser integration smoke also exercises DOM access before init scripts, shared DOM across isolated worlds, page fetch with exact Network frame/loader correlation, route fulfillment/abort after headers, and Web Storage context/page/navigation isolation. These checks use local HTTP and JavaScript evaluation; DOM protocol commands and actual TOS workflows remain unvalidated. A separate Input check covers keyboard typing/text insertion and mouse checkbox activation; editing commands, wheel default scrolling, pen/touch and drag remain unsupported. Mouse coordinates follow the native synthetic layout, not full CSS positioning; the smoke derives its click point from the reported rectangle and verifies the exact hit target.
 
-Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 33 engine, 10 accepted/recorded only, 3 conditional, 55 pending.
+Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 36 engine, 10 accepted/recorded only, 3 conditional, 52 pending.
 
 | Method | Upstream 2ad38773f | Rewrite | Notes |
 | --- | --- | --- | --- |
@@ -64,10 +65,10 @@ Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 33 engi
 | `IO.close` | yes | pending |  |
 | `IO.read` | yes | pending |  |
 | `Input.dispatchDragEvent` | **no** | pending |  |
-| `Input.dispatchKeyEvent` | yes | pending |  |
-| `Input.dispatchMouseEvent` | yes | pending |  |
+| `Input.dispatchKeyEvent` | yes | engine | native trusted keyboard events and control default actions; explicit editing commands and alternate metadata unsupported |
+| `Input.dispatchMouseEvent` | yes | engine | native hit testing, trusted mouse/pointer events and activation; wheel scrolling, pen and custom pressure unsupported |
 | `Input.dispatchTouchEvent` | yes | pending |  |
-| `Input.insertText` | yes | pending |  |
+| `Input.insertText` | yes | engine | native focus/selection and cancellable beforeinput/input |
 | `Input.setInterceptDrags` | **no** | pending |  |
 | `Log.enable` | yes | accepted, recorded only | console goes through Runtime.consoleAPICalled; no Log entries are produced |
 | `Network.clearBrowserCache` | yes | pending |  |
