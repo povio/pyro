@@ -345,6 +345,9 @@ impl JsClass for History {
     type Parent = NoParent;
 
     fn define(def: &mut ClassDef<Self>) {
+        // Browsers accept an unbound receiver here; TanStack History calls
+        // `(push ? history.pushState : history.replaceState)(state, "", url)`.
+        def.global_receiver(|s| s.global_data::<crate::Window>().map(|w| w.nav()));
         def.getter("length", |s, n| Ok(s.number(n.history_length() as f64)));
         def.getter("state", |s, n| Ok(n.state_json().and_then(|j| s.parse_json(&j)).unwrap_or_else(|| s.null())));
         def.accessor(

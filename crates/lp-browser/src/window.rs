@@ -22,6 +22,11 @@ pub struct WindowData {
 }
 
 impl WindowData {
+    /// The page's session history shared with `window.history`.
+    pub(crate) fn nav(&self) -> &Rc<PageNav> {
+        &self.nav
+    }
+
     pub fn new(sched: Scheduler<Browser>, nav: Rc<PageNav>, page: &Rc<lp_webapi::PageDom>) -> WindowData {
         let key = page.window_target().expect("document window target");
         WindowData {
