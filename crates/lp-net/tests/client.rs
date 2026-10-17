@@ -71,6 +71,28 @@ fn start_server() -> Server {
                         hv("origin")
                     ));
                     match (method.as_str(), path.as_str()) {
+                        (_, "/auth-start") => respond(
+                            &mut stream,
+                            "302 Found",
+                            &[("Location", format!("http://localhost:{port}/auth-end"))],
+                            b"",
+                        ),
+                        ("OPTIONS", "/auth-end") => respond(
+                            &mut stream,
+                            "204 No Content",
+                            &[
+                                ("Access-Control-Allow-Origin", hv("origin")),
+                                ("Access-Control-Allow-Headers", "authorization".into()),
+                            ],
+                            b"",
+                        ),
+                        (_, "/auth-end") => respond(
+                            &mut stream,
+                            "200 OK",
+                            &[("Access-Control-Allow-Origin", hv("origin"))],
+                            hv("authorization").as_bytes(),
+                        ),
+
                         (_, "/plain") => respond(
                             &mut stream,
                             "200 OK",
@@ -318,4 +340,125 @@ fn drop_fails_in_flight_requests() {
         }
     }
     assert_eq!(failures, 1);
+}
+
+#[test]
+fn regression_opaque_origin_requires_cors() {
+    let s = start_server();
+    let c = NetClient::new(NetConfig::default()).unwrap();
+    let mut r = Request::get(url(&s, "/no-cors-headers"), Destination::Fetch);
+    r.origin = Some("null".into());
+    let (_, h, b, e) = collect(&c, r);
+    assert!(matches!(e, Some(NetError::Cors(_))), "opaque origin exposed head={h:?} body={b:?} err={e:?}");
+}
+#[test]
+fn regression_same_origin_mode_blocks_cross_origin() {
+    let s = start_server();
+    let c = NetClient::new(NetConfig::default()).unwrap();
+    let mut r = Request::get(url(&s, "/no-cors-headers"), Destination::Fetch);
+    r.origin = Some("http://localhost:1".into());
+    r.mode = RequestMode::SameOrigin;
+    let (_, h, b, e) = collect(&c, r);
+    assert!(e.is_some(), "same-origin request exposed head={h:?} body={b:?}");
+}
+#[test]
+fn regression_nocors_sameorigin_credentials() {
+    let s = start_server();
+    let c = NetClient::new(NetConfig::default()).unwrap();
+    c.cookies().lock().unwrap().set_from_header(
+        &url(&s, "/"),
+        "sid=secret; Path=/",
+        lp_net::cookies::Access::Http,
+        lp_net::cookies::now_secs(),
+    );
+    let mut r = Request::get(url(&s, "/cookie"), Destination::Fetch);
+    r.origin = Some("http://127.0.0.1:1".into());
+    r.mode = RequestMode::NoCors;
+    let (_, _, b, e) = collect(&c, r);
+    assert_eq!(e, None);
+    assert!(b.is_empty(), "cross-origin SameOrigin credentials sent {}", String::from_utf8_lossy(&b));
+}
+#[test]
+fn regression_authorization_stripped_on_cross_origin_redirect() {
+    let s = start_server();
+    let c = NetClient::new(NetConfig::default()).unwrap();
+    let mut r = Request::get(url(&s, "/auth-start"), Destination::Fetch);
+    r.origin = Some(url(&s, "/").origin().ascii_serialization());
+    r.headers.insert("authorization", "Bearer secret".parse().unwrap());
+    let (_, _, b, e) = collect(&c, r);
+    assert_eq!(e, None);
+    assert!(b.is_empty(), "redirect leaked {}", String::from_utf8_lossy(&b));
+}
+#[test]
+fn regression_data_body_cap() {
+    let c = NetClient::new(NetConfig::default()).unwrap();
+    let mut r = Request::get(Url::parse("data:,123456789").unwrap(), Destination::Fetch);
+    r.max_body = Some(1);
+    let (_, _, b, e) = collect(&c, r);
+    assert_eq!(e, Some(NetError::TooLarge), "delivered {} bytes beyond max_body", b.len());
+}
+#[test]
+fn regression_secure_cookie_overlay() {
+    use lp_net::cookies::{Access, CookieJar, SiteContext};
+    let mut jar = CookieJar::new();
+    let https = Url::parse("https://example.com/").unwrap();
+    let http = Url::parse("http://example.com/").unwrap();
+    assert!(jar.set_from_header(&https, "sid=trusted; Secure; Path=/", Access::Http, 1.0));
+    assert!(
+        !jar.set_from_header(&http, "sid=attacker; Path=/", Access::Http, 1.0),
+        "insecure response replaced Secure cookie; now {:?}",
+        jar.header_for(&https, SiteContext::SameSite, 1.0)
+    );
+}
+#[test]
+fn regression_cookie_domain_bucket_cap() {
+    use lp_net::cookies::{Access, CookieJar, SiteContext};
+    let mut jar = CookieJar::new();
+    for i in 0..10000 {
+        let u = Url::parse(&format!("https://h{i}.example.com/")).unwrap();
+        assert!(jar.set_from_header(&u, "x=1; Max-Age=1", Access::Http, 1.0));
+        jar.header_for(&u, SiteContext::SameSite, 3.0);
+    }
+    assert!(jar.is_empty());
+}
+#[test]
+fn regression_public_suffix_cookie_isolation() {
+    use lp_net::cookies::{Access, CookieJar, SiteContext};
+    let mut jar = CookieJar::new();
+    let evil = Url::parse("https://evil.co.uk/").unwrap();
+    let bank = Url::parse("https://bank.co.uk/").unwrap();
+    let accepted = jar.set_from_header(&evil, "sid=attacker; Domain=co.uk; Path=/; SameSite=Strict", Access::Http, 1.0);
+    let h = jar.header_for(&bank, SiteContext::SameSite, 1.0);
+    assert!(!accepted, "public suffix cookie accepted and sent to bank: {h:?}");
+}
+
+#[test]
+fn observer_starts_data_and_early_failure_requests() {
+    for (url, offline, same_origin, expected) in [
+        ("data:text/plain,hello", false, false, vec!["start", "response", "data", "finished"]),
+        ("http://127.0.0.1:1/", true, false, vec!["start", "failed"]),
+        ("https://example.test/", false, false, vec!["start", "failed"]),
+        ("http://127.0.0.1:1/", false, true, vec!["start", "failed"]),
+    ] {
+        let client = NetClient::new(NetConfig::default()).unwrap();
+        client.update_settings(|s| s.offline = offline);
+        let events = client.subscribe();
+        let mut request = Request::get(Url::parse(url).unwrap(), Destination::Fetch);
+        if same_origin {
+            request.mode = RequestMode::SameOrigin;
+            request.origin = Some("http://elsewhere.test".into());
+        }
+        collect(&client, request);
+        let mut observed = Vec::new();
+        while let Ok(event) = events.try_recv() {
+            observed.push(match event {
+                NetEvent::RequestWillBeSent { .. } => "start",
+                NetEvent::ResponseReceived { .. } => "response",
+                NetEvent::DataReceived { .. } => "data",
+                NetEvent::LoadingFinished { .. } => "finished",
+                NetEvent::LoadingFailed { .. } => "failed",
+            });
+        }
+        assert_eq!(observed, expected, "{url} offline={offline} same_origin={same_origin}");
+    }
 }

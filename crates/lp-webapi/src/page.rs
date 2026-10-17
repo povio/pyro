@@ -28,6 +28,7 @@ pub struct PageDom {
     pending_release: RefCell<Vec<NodeId>>,
     current_script: Cell<Option<NodeId>>,
     pub(crate) realms: RefCell<FxHashMap<RealmId, WeakRealm>>,
+    pub(crate) data_view_readers: RefCell<FxHashMap<RealmId, Persistent>>,
     /// Wrappers kept alive because they hold listeners for a connected
     /// node (or an active non-node target): (realm, target) -> wrapper.
     pub(crate) pinned: RefCell<FxHashMap<(RealmId, TargetKey), Persistent>>,
@@ -40,6 +41,8 @@ pub struct PageDom {
     pub(crate) last_removals: Cell<u64>,
     next_event: Cell<u64>,
     pub net: RefCell<Option<lp_net::NetClient>>,
+    pub(crate) local_storage: RefCell<crate::storage::StorageNamespace>,
+    pub(crate) session_storage: RefCell<crate::storage::StorageNamespace>,
     hooks: RefCell<Option<Rc<dyn PageHooks>>>,
     ready: RefCell<FxHashMap<NodeId, &'static str>>,
     focus_values: RefCell<FxHashMap<NodeId, String>>,
@@ -102,12 +105,15 @@ impl PageDom {
             pending_release: RefCell::new(Vec::new()),
             current_script: Cell::new(None),
             realms: RefCell::new(FxHashMap::default()),
+            data_view_readers: RefCell::new(FxHashMap::default()),
             pinned: RefCell::new(FxHashMap::default()),
             window_keys: RefCell::new(Vec::new()),
             window_holders: RefCell::new(FxHashMap::default()),
             last_removals: Cell::new(u64::MAX),
             next_event: Cell::new(1),
             net: RefCell::new(None),
+            local_storage: RefCell::new(Default::default()),
+            session_storage: RefCell::new(Default::default()),
             hooks: RefCell::new(None),
             ready: RefCell::new(FxHashMap::default()),
             focus_values: RefCell::new(FxHashMap::default()),
@@ -120,6 +126,17 @@ impl PageDom {
             files: RefCell::new(FxHashMap::default()),
             layout: RefCell::new(lp_dom::layout::Layout::new(document)),
         })
+    }
+
+    /// Set before installing realms. Share local storage per browser context
+    /// and session storage per top-level page across document replacements.
+    pub fn set_storage_namespaces(
+        &self,
+        local: crate::storage::StorageNamespace,
+        session: crate::storage::StorageNamespace,
+    ) {
+        *self.local_storage.borrow_mut() = local;
+        *self.session_storage.borrow_mut() = session;
     }
 
     pub fn id(&self) -> u64 {
@@ -218,6 +235,9 @@ impl PageDom {
     /// listener-holding wrappers of disconnected nodes, re-pins reconnected
     /// ones, and frees unreachable DOM nodes.
     pub fn after_task(&self) {
+        self.data_view_readers.borrow_mut().retain(|realm, _| {
+            self.realms.borrow().get(realm).and_then(|r| r.upgrade()).is_some_and(|r| !r.is_disposed())
+        });
         let pending = std::mem::take(&mut *self.pending_release.borrow_mut());
         let mut dom = self.dom.borrow_mut();
         for id in pending {

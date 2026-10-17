@@ -133,37 +133,24 @@ fn range_text(r: &RangeData) -> JsResult<String> {
     let page = r.page();
     let (sn, so, en, eo) = points(r);
     let dom = page.dom.borrow();
-    let is_text = |n: NodeId| matches!(dom.node_type(n), Ok(NodeType::Text | NodeType::CDataSection));
-    if sn == en && is_text(sn) {
-        return dom.substring_data(sn, so, eo.saturating_sub(so)).js();
+    let root = dom.root_node(sn, false).js()?;
+    if root != dom.root_node(en, false).js()? {
+        return Ok(String::new());
     }
     let mut out = String::new();
-    if is_text(sn) {
-        out.push_str(&dom.substring_data(sn, so, u32::MAX).js()?);
-    }
-    let root = dom.root_node(sn, false).js()?;
-    let mut started = false;
-    for n in dom.descendants(root).js()? {
-        if n == sn {
-            started = true;
+    for n in std::iter::once(root).chain(dom.descendants(root).js()?) {
+        if !matches!(dom.node_type(n), Ok(NodeType::Text | NodeType::CDataSection)) {
             continue;
         }
-        if n == en {
-            break;
+        let len = dom.char_length(n).js()?;
+        // A text node contributes only where its interval intersects the range;
+        // compare_points handles offsets into ancestor containers at any depth.
+        if compare_points(&page, (n, len), (sn, so))? <= 0 || compare_points(&page, (n, 0), (en, eo))? >= 0 {
+            continue;
         }
-        if started && is_text(n) && !dom.contains(n, en).js()? {
-            // Skip nodes before the start offset inside the start container.
-            if dom.parent(n).js()? == Some(sn) && dom.index_in_parent(n).js()? < so {
-                continue;
-            }
-            if dom.parent(n).js()? == Some(en) && dom.index_in_parent(n).js()? >= eo {
-                continue;
-            }
-            out.push_str(dom.char_data(n).js()?);
-        }
-    }
-    if is_text(en) && sn != en {
-        out.push_str(&dom.substring_data(en, 0, eo).js()?);
+        let start = if n == sn { so } else { 0 };
+        let end = if n == en { eo } else { len };
+        out.push_str(&dom.substring_data(n, start, end.saturating_sub(start)).js()?);
     }
     Ok(out)
 }

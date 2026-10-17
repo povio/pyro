@@ -52,23 +52,21 @@ pub fn buffer_source_bytes(s: &Scope<'_>, v: Value<'_>) -> JsResult<Option<Vec<u
             }
         }
         sys::kJSTypedArrayTypeNone => {
-            // DataView: read through its buffer.
-            let is_dv = obj
-                .get("constructor")
-                .ok()
-                .and_then(|c| c.as_object())
-                .and_then(|c| c.get("name").ok())
-                .and_then(|n| n.as_string())
-                .as_deref()
-                == Some("DataView");
-            if !is_dv {
+            // Captured native getters perform the DataView brand check and
+            // ignore spoofable constructor/name/buffer properties. Never recurse
+            // through an arbitrary user-provided "buffer" object.
+            let page = crate::target::page_of(s)?;
+            let reader = page
+                .data_view_readers
+                .borrow()
+                .get(&s.realm_id())
+                .cloned()
+                .ok_or_else(|| lp_js::JsError::Type("BufferSource bindings are not installed".into()))?;
+            let view = reader.get(s).as_object().expect("DataView reader").call(None, &[v])?;
+            if view.is_null() {
                 return Ok(None);
             }
-            let buf = obj.get("buffer")?;
-            let off = obj.get("byteOffset")?.to_number()? as usize;
-            let len = obj.get("byteLength")?.to_number()? as usize;
-            let all = buffer_source_bytes(s, buf)?.unwrap_or_default();
-            Ok(Some(all.get(off..off + len).map(|b| b.to_vec()).unwrap_or_default()))
+            buffer_source_bytes(s, view)
         }
         _ => {
             let mut exc = std::ptr::null();
@@ -89,6 +87,28 @@ pub fn buffer_source_bytes(s: &Scope<'_>, v: Value<'_>) -> JsResult<Option<Vec<u
             }
         }
     }
+}
+
+/// Capture builtins before page scripts can replace them. Each reader accepts
+/// only a native DataView and produces a genuine Uint8Array over the same view.
+pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
+    let reader = s.eval(
+        r#"(() => {
+        const get = Object.getOwnPropertyDescriptor, apply = Reflect.apply, U8 = Uint8Array;
+        const buffer = get(DataView.prototype, 'buffer').get;
+        const offset = get(DataView.prototype, 'byteOffset').get;
+        const length = get(DataView.prototype, 'byteLength').get;
+        return value => {
+            let backing;
+            try { backing = apply(buffer, value, []); } catch (_) { return null; }
+            return new U8(backing, apply(offset, value, []), apply(length, value, []));
+        };
+    })()"#,
+        Some("lightningpanda://internal/dataview.js"),
+        1,
+    )?;
+    crate::target::page_of(s)?.data_view_readers.borrow_mut().insert(s.realm_id(), lp_js::Persistent::new(s, reader));
+    Ok(())
 }
 
 /// New `Uint8Array` holding a copy of `bytes`.
