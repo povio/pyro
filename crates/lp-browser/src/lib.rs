@@ -213,8 +213,6 @@ pub struct Page {
     pub init_scripts: Vec<InitScript>,
     /// Navigation whose document is being fetched (superseded fetches are ignored).
     pub(crate) pending_loader: Option<LoaderId>,
-    /// Whether the pending navigation replaces the current history entry.
-    pub(crate) pending_replace: bool,
     /// Session history and current URL (shared with the page's windows).
     pub nav: Rc<PageNav>,
     pub(crate) load: Option<loader::DocumentLoad>,
@@ -444,7 +442,6 @@ impl Browser {
             main_frame: frame,
             init_scripts: Vec::new(),
             pending_loader: None,
-            pending_replace: false,
             nav,
             load: None,
             stylesheets: Default::default(),
@@ -520,26 +517,21 @@ impl Browser {
         }
     }
 
-    /// Starts a navigation. Only `about:blank` is supported until document
-    /// loading (lp-dom/lp-net) is integrated; other URLs emit
-    /// `FrameNavigateFailed` and return an error.
-    /// Starts a navigation that replaces the current history entry when
-    /// `replace` (location.replace/reload, history traversal).
+    /// Starts a navigation, replacing the current history entry when `replace`
+    /// is true (location.replace/reload, history traversal). Replacement intent
+    /// belongs to this request, including while its document is being fetched.
     pub fn navigate_with_history(
         &mut self,
         page: PageId,
         opts: NavigateOpts,
         replace: bool,
     ) -> Result<LoaderId, JsError> {
-        if let Some(p) = self.page_mut(page) {
-            p.pending_replace = replace;
-        }
-        self.navigate(page, opts)
-    }
-
-    pub fn navigate(&mut self, page: PageId, opts: NavigateOpts) -> Result<LoaderId, JsError> {
         let loader_id = LoaderId(format!("{:032X}", self.next()));
-        let frame_id = self.page(page).ok_or(JsError::Type("no such page".into()))?.main_frame.id.clone();
+        let state = self.page_mut(page).ok_or(JsError::Type("no such page".into()))?;
+        // Even a synchronous about:blank commit (or a failed navigation) must
+        // invalidate the previous fetch before its completion can run.
+        state.pending_loader = None;
+        let frame_id = state.main_frame.id.clone();
         self.emit(
             page,
             PageEvent::FrameNavigate {
@@ -551,7 +543,7 @@ impl Browser {
             },
         );
         if opts.url != "about:blank" && self.loader_for(page).is_some() {
-            self.start_document_fetch(page, opts, loader_id.clone())?;
+            self.start_document_fetch(page, opts, loader_id.clone(), replace)?;
             return Ok(loader_id);
         }
         if opts.url != "about:blank" {
@@ -568,7 +560,7 @@ impl Browser {
             );
             return Err(JsError::Unsupported("navigation to non-blank URLs"));
         }
-        self.commit_document(page, &opts, loader_id.clone(), "null")?;
+        self.commit_document(page, &opts, loader_id.clone(), "null", replace)?;
         if let Some(dom) = self.page(page).and_then(|p| p.main_frame.page_dom.clone()) {
             lp_webapi::lifecycle::dom_content_loaded(&dom, dom.document());
             lp_webapi::lifecycle::load(&dom, dom.document());
@@ -591,6 +583,11 @@ impl Browser {
         Ok(loader_id)
     }
 
+    /// Starts an ordinary navigation, adding a session-history entry on commit.
+    pub fn navigate(&mut self, page: PageId, opts: NavigateOpts) -> Result<LoaderId, JsError> {
+        self.navigate_with_history(page, opts, false)
+    }
+
     /// Replaces the frame's realms with fresh ones for the new document, runs
     /// init scripts, then emits `FrameNavigated`.
     pub(crate) fn commit_document(
@@ -599,6 +596,7 @@ impl Browser {
         opts: &NavigateOpts,
         loader_id: LoaderId,
         origin: &str,
+        replace: bool,
     ) -> Result<(), JsError> {
         let window_class = self.engine.register::<Window>();
         let sched = self.sched.clone();
@@ -614,7 +612,6 @@ impl Browser {
             p.main_frame.document = Some(page_dom.document());
             p.main_frame.url = opts.url.clone();
             p.main_frame.loader_id = loader_id.clone();
-            let replace = std::mem::take(&mut p.pending_replace);
             p.nav.commit_document(&opts.url, replace, None);
             p.nav.set_document(Some((page_dom.dom.clone(), page_dom.document())));
             (p.main_frame.id.clone(), old, p.init_scripts.clone(), p.nav.clone(), old_dom)

@@ -16,6 +16,11 @@ Fetch jobs, buffered bytes and retained JS roots are released by the WebAPI life
 page does not shut down the context's network client. Queued old-document binding tasks are discarded. Location/history tasks and
 same-document protocol notifications also check their originating document generation. A queued history
 traversal whose target entry was replaced is discarded, and out-of-range history deltas are no-ops.
+Every new navigation invalidates the previous document fetch, including synchronous `about:blank`
+navigation; late success/error completions cannot replace the new document or emit stale navigation
+events. History replacement intent travels with its own request, so failed or superseded replacements
+cannot overwrite the next navigation's history entry. This invalidates delivery; it does not yet cancel
+document transport (unlike cancellable linked stylesheet requests).
 
 The document loader parses a fetched body incrementally around script pauses. Classic scripts receive
 `document.currentScript`, including deferred elements removed from the live tree. Module scripts see
