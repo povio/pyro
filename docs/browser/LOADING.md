@@ -39,3 +39,6 @@ context/page storage partitions, shared-DOM isolated worlds, stale callbacks, fe
 navigation cleanup. `lightningpanda` CLI tests check script-modified output and infinite-script timeout.
 The merged CDP host enables this loader and supplies Network/Fetch/cookie protocol routing. This
 increment changes no protocol source; DOM/Input protocol integration remains separate automation work.
+
+Page-local user-agent, language and platform overrides persist across document
+replacement; see [USER_AGENT.md](USER_AGENT.md) for loader/default semantics.
