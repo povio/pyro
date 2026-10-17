@@ -6,6 +6,7 @@
 //! events by [`EngineHost::flush`] afterwards, so no CDP state is borrowed
 //! while JavaScript is on the stack.
 
+mod dom;
 mod fetch;
 mod input;
 mod network;
@@ -115,6 +116,7 @@ impl EngineHooks for Collector {
 /// replies (`awaitPromise`), which run as engine microtasks.
 pub(crate) struct Session {
     pub(crate) page_enabled: bool,
+    pub(crate) dom_enabled: bool,
     pub(crate) lifecycle_events: bool,
     pub(crate) runtime_enabled: bool,
     pub(crate) network_enabled: bool,
@@ -147,6 +149,7 @@ pub(crate) struct PageState {
     pub(crate) emulated_media: Option<serde_json::Value>,
     pub(crate) next_script_id: u64,
     network: network::NetworkPage,
+    dom_nodes: dom::BackendNodes,
 }
 
 /// The engine side of one CDP connection, living on its browser thread.
@@ -160,6 +163,7 @@ pub struct EngineHost {
     pub(crate) pages: HashMap<PageKey, PageState>,
     pub(crate) sessions: HashMap<String, Session>,
     pub(crate) next_exception_id: i64,
+    next_backend_node: u64,
     pub(crate) pending: runtime::PendingReplies,
 }
 
@@ -190,6 +194,7 @@ impl EngineHost {
             pages: HashMap::new(),
             sessions: HashMap::new(),
             next_exception_id: 1,
+            next_backend_node: 1,
             pending: runtime::PendingReplies::default(),
         })
     }
@@ -298,6 +303,7 @@ impl EngineHost {
             cmd.command.domain_and_action().ok_or_else(|| CdpError::method_not_found(&cmd.command.method))?;
         match domain {
             "Page" => self.page_domain(action, cmd),
+            "DOM" => self.dom_domain(action, cmd),
             "Runtime" => self.runtime_domain(action, cmd),
             "Emulation" => self.emulation_domain(action, cmd),
             "Browser" => self.window_domain(action, cmd),
@@ -382,10 +388,37 @@ impl EngineHost {
                 }
                 Ok(Some(serde_json::json!({})))
             }
-            // HTTP now loads real requests. A recorded-only override would
-            // report success without changing them; per-page overrides await
-            // the matching loader and navigator implementation.
-            "setUserAgentOverride" => Err(CdpError::unsupported(&cmd.command.method)),
+            "setUserAgentOverride" => {
+                #[derive(Deserialize)]
+                #[serde(rename_all = "camelCase")]
+                struct P {
+                    user_agent: String,
+                    accept_language: Option<String>,
+                    platform: Option<String>,
+                    user_agent_metadata: Option<serde_json::Value>,
+                }
+                let p: P = cmd.command.params()?;
+                if p.user_agent_metadata.is_some() {
+                    return Err(CdpError::unsupported("Emulation user agent client hints"));
+                }
+                let id = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?.id;
+                // Empty UA alone resets the override; with locale/platform it
+                // retains the browser's default UA while applying those fields.
+                let override_ = if p.user_agent.is_empty() && p.accept_language.is_none() && p.platform.is_none() {
+                    None
+                } else {
+                    Some(lp_webapi::UserAgentOverride {
+                        user_agent: p.user_agent,
+                        accept_language: p.accept_language,
+                        platform: p.platform,
+                    })
+                };
+                self.thread.browser.set_user_agent_override(id, override_).map_err(|error| match error {
+                    lp_js::JsError::Type(message) => CdpError::invalid_params(message),
+                    other => remote::js_to_cdp(other),
+                })?;
+                Ok(Some(serde_json::json!({})))
+            }
             // JavaScriptCore's Intl/Date use the process locale and time zone;
             // per-page overrides are not implemented. Requests that match the
             // current values are true no-ops; others are refused.
@@ -470,6 +503,7 @@ impl Host for EngineHost {
                 emulated_media: None,
                 next_script_id: 1,
                 network: network::NetworkPage::new(self.body_budget.clone()),
+                dom_nodes: dom::BackendNodes::default(),
             },
         );
         // Events of the initial about:blank load precede any session.
@@ -481,6 +515,7 @@ impl Host for EngineHost {
     fn navigate(&mut self, page: PageKey, url: &str) -> CdpResult<()> {
         let id = self.pages.get(&page).ok_or_else(|| CdpError::server("page is gone"))?.id;
         let result = self.thread.browser.navigate(id, lp_browser::NavigateOpts::address_bar(url));
+        self.thread.browser.checkpoint();
         self.flush();
         result.map(|_| ()).map_err(|e| CdpError::server(format!("navigation failed: {e}")))
     }
@@ -519,6 +554,7 @@ impl Host for EngineHost {
             session_id.to_owned(),
             Session {
                 page_enabled: false,
+                dom_enabled: false,
                 lifecycle_events: false,
                 runtime_enabled: false,
                 network_enabled: false,
@@ -545,6 +581,9 @@ impl Host for EngineHost {
 
     fn page_command(&mut self, cmd: PageCommand<'_, '_>, _out: &mut dyn Sink) {
         let result = self.page_command_result(&cmd);
+        // Synchronous inspector JS runs outside loop tasks. Release command
+        // borrows before starting DOM resources and dispatching native events.
+        self.thread.browser.checkpoint();
         // Events produced while handling precede the response (Chrome order).
         self.flush();
         match result {
