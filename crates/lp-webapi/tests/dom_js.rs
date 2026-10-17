@@ -1984,3 +1984,75 @@ fn global_event_handler_attributes() {
     assert_eq!(eval(r, "let got=0; window.onfoo=1; window.onmessage=null; document.getElementById('i').setAttribute('onclick','window.hit=(window.hit||0)+1'); document.getElementById('i').click(); window.hit"), "1");
     assert_eq!(eval(r, "let w=0; window.onhashchange=()=>w++; window.dispatchEvent(new Event('hashchange')); const same=typeof window.onhashchange; window.onhashchange=null; window.dispatchEvent(new Event('hashchange')); w+':'+same+':'+window.onhashchange"), "1:function:null");
 }
+
+#[test]
+fn resize_observer_initial_changes_hidden_and_disconnect() {
+    let e = env("<body><div id=t style='width:100px;height:40px'></div><div id=z style='display:none'></div></body>");
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    // TOS table pattern: measure parent clientWidth, observe in a layout effect.
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"var t=document.getElementById('t'), z=document.getElementById('z'), seen=[];
+        var ro=new ResizeObserver(function(list, obs){ if(this!==ro||obs!==ro) throw Error('identity');
+            for (const en of list) seen.push(en.target.id+':'+en.contentRect.width+'x'+en.contentRect.height+':'+en.borderBoxSize[0].inlineSize+'/'+en.contentBoxSize[0].blockSize+':'+(en instanceof ResizeObserverEntry)); });
+        ro.observe(t); ro.observe(t); ro.observe(z, {box:'border-box'});
+        try { ro.observe(t, {box:'nope'}); 'no-throw' } catch (e) { e instanceof TypeError ? 'typed' : 'other' }"#
+        ),
+        "typed"
+    );
+    e.page.after_task();
+    assert_eq!(eval(&e.main, "seen.length"), "0", "delivered as a separate task, not inline");
+    tasks.drain();
+    assert_eq!(eval(&e.main, "seen.join()"), "t:100x40:100/40:true", "hidden 0x0 target has no initial entry");
+    // No change -> no entry.
+    e.page.after_task();
+    tasks.drain();
+    assert_eq!(eval(&e.main, "seen.length"), "1");
+    // Style change resizes; display:none reports 0x0; shown again reports its size.
+    eval(&e.main, "t.style.width='250px'");
+    e.page.after_task();
+    tasks.drain();
+    eval(&e.main, "t.style.display='none'");
+    e.page.after_task();
+    tasks.drain();
+    eval(&e.main, "z.style.display='block'; z.style.width='7px'; z.style.height='3px'");
+    e.page.after_task();
+    tasks.drain();
+    assert_eq!(eval(&e.main, "seen.slice(1).join()"), "t:250x40:250/40:true,t:0x0:0/0:true,z:7x3:7/3:true");
+    eval(&e.main, "ro.unobserve(z); z.style.width='9px'");
+    e.page.after_task();
+    tasks.drain();
+    eval(&e.main, "ro.disconnect(); t.style.display='block'");
+    e.page.after_task();
+    tasks.drain();
+    assert_eq!(eval(&e.main, "seen.length"), "4");
+    assert_eq!(eval(&e.main, "try { new ResizeObserver(1) } catch (x) { x instanceof TypeError }"), "true");
+    e.page.dispose();
+}
+
+#[test]
+fn resize_observer_realm_disposal_releases_observers() {
+    let e = env("<body><div id=t style='width:10px;height:10px'></div></body>");
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    eval(&e.main, "window.n=0; new ResizeObserver(()=>n++).observe(document.getElementById('t'))");
+    // Unreferenced but active observers survive GC (pinned while observing).
+    e.engine.collect_garbage_now();
+    e.engine.drain_finalized();
+    e.page.after_task();
+    tasks.drain();
+    assert_eq!(eval(&e.main, "document.getElementById('t').style.width='20px'; n"), "1");
+    e.engine.collect_garbage_now();
+    e.engine.drain_finalized();
+    e.page.after_task();
+    tasks.drain();
+    assert_eq!(eval(&e.main, "n"), "2");
+    assert_eq!(e.page.resize_observer_pins(), 1);
+    lp_webapi::lifecycle::realm_disposed(&e.page, e.main.id());
+    e.page.after_task();
+    tasks.drain();
+    assert_eq!(e.page.resize_observer_pins(), 0);
+    e.page.dispose();
+}

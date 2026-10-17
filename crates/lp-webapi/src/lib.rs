@@ -37,6 +37,7 @@ pub mod mutation_observer;
 pub mod node;
 pub mod page;
 pub mod range;
+pub mod resize_observer;
 pub mod response;
 pub mod storage;
 mod structured_clone;
@@ -82,6 +83,7 @@ pub fn register(engine: &lp_js::Engine) {
     window::register(engine);
     mutation_observer::register(engine);
     intersection_observer::register(engine);
+    resize_observer::register(engine);
     engine.register::<storage::Storage>();
     engine.register::<indexeddb::IdbFactory>();
     engine.register::<headers::Headers>();
