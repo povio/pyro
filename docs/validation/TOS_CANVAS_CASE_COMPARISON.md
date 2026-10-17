@@ -50,9 +50,13 @@ specs and are not part of this measurement.
 - TOS: unchanged `f9fde4aa0dce7d1d7a1ffebffe3306399973cd80`.
 - Routing manifest `apps/fe/e2e/suites/lightpanda.json`, SHA-256
   `542d479b709249d072e3b57c1324c894c4378fc5373892ae64c0687486f2ae19`.
-- Selection: the nine batch 1 cases. The `selection.json` SHA-256 is
-  `fb93233a2dca8805bb27226fdf7613d84de4af20d719fc8f0c1fef73444472ac`, identical in
-  every routed run. The runner confirmed nine selected tests.
+- Selection: the full-batch runs (`lpcov5`, `lpup9`) used the nine batch 1 cases.
+  Their `selection.json` SHA-256 is
+  `fb93233a2dca8805bb27226fdf7613d84de4af20d719fc8f0c1fef73444472ac`, identical to
+  batch 1, and the runner confirmed nine selected tests. The navigation-only runs
+  (`lpupnav` routed, `lpchrnav` direct) passed only `e2e/platform/navigation.e2e.ts`
+  and ran its three tests, the same three cases that the nine-case selection
+  contains for that file. They have no separate `selection.json`.
 - Rewrite binary: `/private/tmp/lp-tos-browser-fd-916267f/target/release/lightningpanda`.
   - SHA-256 `7bb33527f4a8fe9598c4b91aa0eac52f6ba80f477af01e791e55a81ba8f566a5`,
     verified before execution.
