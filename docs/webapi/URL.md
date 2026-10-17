@@ -22,7 +22,8 @@ existing native fetch/XHR BodyInit snapshot and Content-Type semantics.
 `URL.createObjectURL(blob)` registers the Blob's bytes and type under
 `blob:<origin>/<uuid>`. Opaque origins use `null` as the origin, as upstream does.
 - The registry belongs to the creating document. `PageDom::blob_url` exposes it
-  to embedders, and disposing the document drops it.
+  to embedders. Replacing the document through `PageDom::set_document` or
+  disposing it drops the registry and its byte references.
 - `revokeObjectURL` removes a URL of the caller's origin. Other strings are
   ignored silently.
 - A non-Blob argument throws TypeError.

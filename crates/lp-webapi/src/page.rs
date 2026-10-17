@@ -59,7 +59,8 @@ pub struct PageDom {
     pub(crate) session_storage: RefCell<crate::storage::StorageNamespace>,
     pub(crate) opaque_storage: crate::storage::OpaqueStorage,
     /// `URL.createObjectURL` store: blob URL -> (bytes, type). Owned by the
-    /// creating document; revoked entries and disposal drop the bytes.
+    /// creating document; revocation, document replacement and disposal drop
+    /// the entries (and their bytes).
     pub(crate) blob_urls: RefCell<FxHashMap<String, (bytes::Bytes, String)>>,
     hooks: RefCell<Option<Rc<dyn PageHooks>>>,
     ready: RefCell<FxHashMap<NodeId, &'static str>>,
@@ -180,6 +181,11 @@ impl PageDom {
     pub fn blob_url(&self, url: &str) -> Option<(bytes::Bytes, String)> {
         self.blob_urls.borrow().get(url).cloned()
     }
+
+    /// Number of live object URLs registered by the current document.
+    pub fn blob_url_count(&self) -> usize {
+        self.blob_urls.borrow().len()
+    }
     pub fn is_disposed(&self) -> bool {
         self.disposed.get()
     }
@@ -225,6 +231,8 @@ impl PageDom {
     pub fn set_document(&self, doc: NodeId) {
         self.document.set(doc);
         self.opaque_storage.clear();
+        // Object URLs belong to the replaced document.
+        drop(self.blob_urls.take());
         let viewport = self.layout.borrow().viewport().clone();
         *self.layout.borrow_mut() = lp_dom::layout::Layout::with_viewport(doc, viewport);
     }

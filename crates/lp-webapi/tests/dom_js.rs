@@ -2687,6 +2687,29 @@ fn object_urls_register_revoke_and_download_links_do_not_navigate() {
         nav.0.borrow().clone(),
         vec!["http://other.test/f".to_string(), "http://localhost:5173/plain".to_string()]
     );
+    // Document replacement drops the old document's URLs (and their bytes);
+    // registrations made afterwards belong to the new document.
+    let old = eval(r, "window.oldUrl = URL.createObjectURL(new Blob(['old-bytes'])); oldUrl");
+    let (held, _) = e.page.blob_url(&old).unwrap();
+    // Finalize the temporary JS Blob first: its byte owner is independent of
+    // the registry and must not be mistaken for a leaked registry reference.
+    for _ in 0..6 {
+        e.engine.collect_garbage_now();
+        e.engine.drain_finalized();
+    }
+    assert!(!held.is_unique(), "the registry still owns the old bytes before replacement");
+    assert!(e.page.blob_url_count() >= 2);
+    let doc = parse_document(&e.page.dom, "http://localhost:5173/next", "<body>");
+    e.page.set_document(doc);
+    assert_eq!(e.page.blob_url_count(), 0);
+    assert!(e.page.blob_url(&old).is_none());
+    // The registry no longer holds the bytes: only our test clone remains.
+    assert!(held.is_unique(), "registry released the old document's bytes");
+    eval(r, "URL.revokeObjectURL(oldUrl)");
+    let fresh = eval(r, "URL.createObjectURL(new Blob(['new']))");
+    assert_ne!(fresh, old);
+    assert_eq!(e.page.blob_url(&fresh).map(|(b, _)| b.to_vec()), Some(b"new".to_vec()));
+    assert_eq!(e.page.blob_url_count(), 1);
     // Disposal drops every registered URL of the document.
     let live = eval(r, "URL.createObjectURL(new Blob(['z']))");
     assert!(e.page.blob_url(&live).is_some());
