@@ -1,0 +1,550 @@
+//! CSS selector matching for querySelector(All)/matches/closest using the
+//! servo `selectors` crate (full Selectors 4 syntax incl. :is/:where/:has/
+//! :not/:nth-child(of S)/:scope).
+
+use std::borrow::Borrow;
+use std::fmt;
+
+use cssparser::{CowRcStr, ParseError, Parser as CssParser, ToCss};
+use markup5ever::{local_name, LocalName, Namespace};
+use precomputed_hash::PrecomputedHash;
+use rustc_hash::FxHashMap;
+use selectors::attr::{AttrSelectorOperation, CaseSensitivity, NamespaceConstraint};
+use selectors::bloom::BloomFilter;
+use selectors::context::{
+    MatchingContext, MatchingForInvalidation, MatchingMode, NeedsSelectorFlags, QuirksMode as SelQuirks, SelectorCaches,
+};
+use selectors::matching::{matches_selector_list, ElementSelectorFlags};
+use selectors::parser::{ParseRelative, SelectorList, SelectorParseErrorKind};
+use selectors::OpaqueElement;
+
+use crate::dom::Dom;
+use crate::error::{DomError, DomErrorKind, DomResult};
+use crate::node::{NodeId, NodeKind, NIL};
+
+#[derive(Debug, Clone)]
+pub struct Impl;
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct CssString(pub String);
+impl<'a> From<&'a str> for CssString {
+    fn from(s: &'a str) -> Self {
+        CssString(s.to_owned())
+    }
+}
+impl AsRef<str> for CssString {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+impl ToCss for CssString {
+    fn to_css<W: fmt::Write>(&self, dest: &mut W) -> fmt::Result {
+        cssparser::serialize_string(&self.0, dest)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct CssLocalName(pub LocalName);
+impl<'a> From<&'a str> for CssLocalName {
+    fn from(s: &'a str) -> Self {
+        CssLocalName(LocalName::from(s))
+    }
+}
+impl ToCss for CssLocalName {
+    fn to_css<W: fmt::Write>(&self, dest: &mut W) -> fmt::Result {
+        dest.write_str(&self.0)
+    }
+}
+impl PrecomputedHash for CssLocalName {
+    fn precomputed_hash(&self) -> u32 {
+        self.0.precomputed_hash()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct CssNamespace(pub Namespace);
+impl Borrow<Namespace> for CssNamespace {
+    fn borrow(&self) -> &Namespace {
+        &self.0
+    }
+}
+impl PrecomputedHash for CssNamespace {
+    fn precomputed_hash(&self) -> u32 {
+        self.0.precomputed_hash()
+    }
+}
+impl ToCss for CssNamespace {
+    fn to_css<W: fmt::Write>(&self, dest: &mut W) -> fmt::Result {
+        dest.write_str(&self.0)
+    }
+}
+impl<'a> From<&'a str> for CssNamespace {
+    fn from(s: &'a str) -> Self {
+        CssNamespace(Namespace::from(s))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PseudoClass {
+    AnyLink,
+    Link,
+    Visited,
+    Checked,
+    Indeterminate,
+    Disabled,
+    Enabled,
+    Required,
+    Optional,
+    ReadOnly,
+    ReadWrite,
+    PlaceholderShown,
+    Focus,
+    FocusWithin,
+    FocusVisible,
+    Hover,
+    Active,
+    Target,
+    Defined,
+    Default,
+    Empty,
+}
+
+impl ToCss for PseudoClass {
+    fn to_css<W: fmt::Write>(&self, dest: &mut W) -> fmt::Result {
+        use PseudoClass::*;
+        dest.write_str(match self {
+            AnyLink => ":any-link",
+            Link => ":link",
+            Visited => ":visited",
+            Checked => ":checked",
+            Indeterminate => ":indeterminate",
+            Disabled => ":disabled",
+            Enabled => ":enabled",
+            Required => ":required",
+            Optional => ":optional",
+            ReadOnly => ":read-only",
+            ReadWrite => ":read-write",
+            PlaceholderShown => ":placeholder-shown",
+            Focus => ":focus",
+            FocusWithin => ":focus-within",
+            FocusVisible => ":focus-visible",
+            Hover => ":hover",
+            Active => ":active",
+            Target => ":target",
+            Defined => ":defined",
+            Default => ":default",
+            Empty => ":empty",
+        })
+    }
+}
+
+impl selectors::parser::NonTSPseudoClass for PseudoClass {
+    fn is_active_or_hover(&self) -> bool {
+        matches!(self, PseudoClass::Active | PseudoClass::Hover)
+    }
+    fn is_user_action_state(&self) -> bool {
+        matches!(self, PseudoClass::Active | PseudoClass::Hover | PseudoClass::Focus)
+    }
+}
+
+/// Pseudo-elements parse (so selectors stay valid) but never match an
+/// element, matching browser querySelector behavior.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PseudoElement(pub String);
+impl ToCss for PseudoElement {
+    fn to_css<W: fmt::Write>(&self, dest: &mut W) -> fmt::Result {
+        dest.write_str("::")?;
+        dest.write_str(&self.0)
+    }
+}
+impl selectors::parser::PseudoElement for PseudoElement {}
+
+impl selectors::parser::SelectorImpl for Impl {
+    type ExtraMatchingData<'a> = ();
+    type AttrValue = CssString;
+    type Identifier = CssLocalName;
+    type LocalName = CssLocalName;
+    type NamespaceUrl = CssNamespace;
+    type NamespacePrefix = CssLocalName;
+    type BorrowedNamespaceUrl = Namespace;
+    type BorrowedLocalName = CssLocalName;
+    type NonTSPseudoClass = PseudoClass;
+    type PseudoElement = PseudoElement;
+}
+
+struct SelParser;
+
+impl<'i> selectors::parser::Parser<'i> for SelParser {
+    type Impl = Impl;
+    type Error = SelectorParseErrorKind;
+
+    fn parse_is_and_where(&self) -> bool {
+        true
+    }
+    fn parse_has(&self) -> bool {
+        true
+    }
+    fn parse_nth_child_of(&self) -> bool {
+        true
+    }
+    fn parse_host(&self) -> bool {
+        true
+    }
+    fn is_is_alias(&self, name: &str) -> bool {
+        name.eq_ignore_ascii_case("-webkit-any") || name.eq_ignore_ascii_case("matches")
+    }
+    fn parse_non_ts_pseudo_class(&self, name: CowRcStr<'i>) -> Result<PseudoClass, ParseError<Self::Error>> {
+        use PseudoClass::*;
+        let pc = match_ignore_ascii_case(
+            &name,
+            &[
+                ("any-link", AnyLink),
+                ("link", Link),
+                ("visited", Visited),
+                ("checked", Checked),
+                ("indeterminate", Indeterminate),
+                ("disabled", Disabled),
+                ("enabled", Enabled),
+                ("required", Required),
+                ("optional", Optional),
+                ("read-only", ReadOnly),
+                ("read-write", ReadWrite),
+                ("placeholder-shown", PlaceholderShown),
+                ("focus", Focus),
+                ("focus-within", FocusWithin),
+                ("focus-visible", FocusVisible),
+                ("hover", Hover),
+                ("active", Active),
+                ("target", Target),
+                ("defined", Defined),
+                ("default", Default),
+            ],
+        );
+        pc.ok_or_else(|| ParseError::custom(SelectorParseErrorKind::UnsupportedPseudoClassOrElement))
+    }
+    fn parse_pseudo_element(&self, name: CowRcStr<'i>) -> Result<PseudoElement, ParseError<Self::Error>> {
+        Ok(PseudoElement(name.to_ascii_lowercase()))
+    }
+}
+
+fn match_ignore_ascii_case<T: Copy>(name: &str, table: &[(&str, T)]) -> Option<T> {
+    table.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)).map(|(_, v)| *v)
+}
+
+pub type Selectors = SelectorList<Impl>;
+
+/// Parses a selector list; invalid syntax maps to a `SyntaxError` DOMException.
+pub fn parse_selectors(text: &str) -> DomResult<Selectors> {
+    let mut parser = CssParser::new(text);
+    SelectorList::parse(&SelParser, &mut parser, ParseRelative::No)
+        .map_err(|_| DomError::new(DomErrorKind::Syntax, "is not a valid selector"))
+}
+
+/// Small parse cache: SPA code calls the same selectors repeatedly.
+#[derive(Default)]
+pub struct SelectorCache {
+    map: FxHashMap<Box<str>, Selectors>,
+}
+const SELECTOR_CACHE_CAP: usize = 512;
+impl SelectorCache {
+    pub fn get(&mut self, text: &str) -> DomResult<Selectors> {
+        if let Some(s) = self.map.get(text) {
+            return Ok(s.clone());
+        }
+        let s = parse_selectors(text)?;
+        if self.map.len() >= SELECTOR_CACHE_CAP {
+            self.map.clear();
+        }
+        self.map.insert(text.into(), s.clone());
+        Ok(s)
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct ElemRef<'a> {
+    dom: &'a Dom,
+    idx: u32,
+}
+
+impl fmt::Debug for ElemRef<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "ElemRef({})", self.idx)
+    }
+}
+
+impl<'a> ElemRef<'a> {
+    fn data(&self) -> &'a crate::node::ElementData {
+        self.dom.n(self.idx).element().expect("element")
+    }
+    fn wrap(&self, idx: u32) -> Option<Self> {
+        (idx != NIL && self.dom.n(idx).is_element()).then_some(ElemRef { dom: self.dom, idx })
+    }
+    fn sibling_element(&self, forward: bool) -> Option<Self> {
+        let mut c = self.idx;
+        loop {
+            let n = self.dom.n(c);
+            c = if forward { n.next } else { n.prev };
+            if c == NIL {
+                return None;
+            }
+            if self.dom.n(c).is_element() {
+                return Some(ElemRef { dom: self.dom, idx: c });
+            }
+        }
+    }
+}
+
+impl selectors::Element for ElemRef<'_> {
+    type Impl = Impl;
+
+    fn opaque(&self) -> OpaqueElement {
+        OpaqueElement::new(self.dom.n(self.idx))
+    }
+    fn parent_element(&self) -> Option<Self> {
+        self.wrap(self.dom.n(self.idx).parent)
+    }
+    fn parent_node_is_shadow_root(&self) -> bool {
+        let p = self.dom.n(self.idx).parent;
+        p != NIL && matches!(&self.dom.n(p).kind, NodeKind::Fragment(f) if f.shadow.is_some())
+    }
+    fn containing_shadow_host(&self) -> Option<Self> {
+        let root = self.dom.root_idx(self.idx);
+        match &self.dom.n(root).kind {
+            NodeKind::Fragment(f) if f.shadow.is_some() => self.wrap(f.host),
+            _ => None,
+        }
+    }
+    fn is_pseudo_element(&self) -> bool {
+        false
+    }
+    fn prev_sibling_element(&self) -> Option<Self> {
+        self.sibling_element(false)
+    }
+    fn next_sibling_element(&self) -> Option<Self> {
+        self.sibling_element(true)
+    }
+    fn first_element_child(&self) -> Option<Self> {
+        self.dom
+            .child_idx_iter(self.idx)
+            .find(|&c| self.dom.n(c).is_element())
+            .map(|idx| ElemRef { dom: self.dom, idx })
+    }
+    fn is_html_element_in_html_document(&self) -> bool {
+        self.data().is_html() && self.dom.is_html_doc(self.dom.n(self.idx).owner_doc)
+    }
+    fn has_local_name(&self, name: &CssLocalName) -> bool {
+        self.data().name.local == name.0
+    }
+    fn has_namespace(&self, ns: &Namespace) -> bool {
+        &self.data().name.ns == ns
+    }
+    fn is_same_type(&self, other: &Self) -> bool {
+        let (a, b) = (self.data(), other.data());
+        a.name.local == b.name.local && a.name.ns == b.name.ns
+    }
+    fn attr_matches(
+        &self,
+        ns: &NamespaceConstraint<&CssNamespace>,
+        local_name: &CssLocalName,
+        operation: &AttrSelectorOperation<&CssString>,
+    ) -> bool {
+        self.data().attrs.iter().any(|a| {
+            a.name.local == local_name.0
+                && match ns {
+                    NamespaceConstraint::Any => true,
+                    NamespaceConstraint::Specific(n) => a.name.ns == n.0,
+                }
+                && operation.eval_str(&a.value)
+        })
+    }
+    fn match_non_ts_pseudo_class(&self, pc: &PseudoClass, _ctx: &mut MatchingContext<Impl>) -> bool {
+        self.dom.matches_state(self.idx, *pc)
+    }
+    fn match_pseudo_element(&self, _pe: &PseudoElement, _ctx: &mut MatchingContext<Impl>) -> bool {
+        false
+    }
+    fn apply_selector_flags(&self, _flags: ElementSelectorFlags) {}
+    fn is_link(&self) -> bool {
+        self.dom.is_link(self.idx)
+    }
+    fn is_html_slot_element(&self) -> bool {
+        let d = self.data();
+        d.is_html() && d.name.local == local_name!("slot")
+    }
+    fn has_id(&self, id: &CssLocalName, cs: CaseSensitivity) -> bool {
+        self.data().id().is_some_and(|v| cs.eq(v.as_bytes(), id.0.as_bytes()))
+    }
+    fn has_class(&self, name: &CssLocalName, cs: CaseSensitivity) -> bool {
+        self.data()
+            .attr("class")
+            .is_some_and(|v| v.split_ascii_whitespace().any(|c| cs.eq(c.as_bytes(), name.0.as_bytes())))
+    }
+    fn has_custom_state(&self, _name: &CssLocalName) -> bool {
+        false
+    }
+    fn imported_part(&self, _name: &CssLocalName) -> Option<CssLocalName> {
+        None
+    }
+    fn is_part(&self, _name: &CssLocalName) -> bool {
+        false
+    }
+    fn is_empty(&self) -> bool {
+        self.dom.child_idx_iter(self.idx).all(|c| match &self.dom.n(c).kind {
+            NodeKind::Element(_) => false,
+            NodeKind::Text(s) | NodeKind::CData(s) => s.is_empty(),
+            _ => true,
+        })
+    }
+    fn is_root(&self) -> bool {
+        let p = self.dom.n(self.idx).parent;
+        p != NIL && matches!(self.dom.n(p).kind, NodeKind::Document(_))
+    }
+    fn add_element_unique_hashes(&self, _filter: &mut BloomFilter) -> bool {
+        false
+    }
+}
+
+impl Dom {
+    pub(crate) fn is_html_doc(&self, doc: u32) -> bool {
+        matches!(&self.n(doc).kind, NodeKind::Document(d) if d.kind == crate::node::DocumentKind::Html)
+    }
+
+    fn is_link(&self, idx: u32) -> bool {
+        self.n(idx)
+            .element()
+            .is_some_and(|e| e.is_html() && matches!(&*e.name.local, "a" | "area" | "link") && e.attr("href").is_some())
+    }
+
+    fn matches_state(&self, idx: u32, pc: PseudoClass) -> bool {
+        use PseudoClass::*;
+        let e = self.n(idx).element().expect("element");
+        match pc {
+            AnyLink | Link => self.is_link(idx),
+            Visited | Active | Target => false,
+            Checked => self.checkedness_idx(idx) || self.option_selected_idx(idx),
+            Indeterminate => e.control.as_ref().is_some_and(|c| c.indeterminate),
+            Disabled => self.is_disabled_idx(idx),
+            Enabled => self.is_form_control_idx(idx) && !self.is_disabled_idx(idx),
+            Required => self.is_form_control_idx(idx) && e.attr("required").is_some(),
+            Optional => self.is_form_control_idx(idx) && e.attr("required").is_none(),
+            ReadWrite => self.is_mutable_text_idx(idx),
+            ReadOnly => !self.is_mutable_text_idx(idx),
+            PlaceholderShown => {
+                e.attr("placeholder").is_some()
+                    && self.is_mutable_text_idx(idx)
+                    && self.control_value_idx(idx).is_empty()
+            }
+            Focus | FocusVisible => self.focused_idx(self.n(idx).owner_doc) == idx,
+            FocusWithin => {
+                let f = self.focused_idx(self.n(idx).owner_doc);
+                f != NIL && self.shadow_including_inclusive_ancestor(idx, f)
+            }
+            Hover => {
+                let h = self.hovered_idx(self.n(idx).owner_doc);
+                h != NIL && self.shadow_including_inclusive_ancestor(idx, h)
+            }
+            Defined => !e.name.local.contains('-') || e.flags & crate::node::element_flags::CUSTOM_DEFINED != 0,
+            Default => {
+                (e.is_html() && matches!(&*e.name.local, "input") && e.attr("checked").is_some())
+                    || (e.is_html() && e.name.local == local_name!("option") && e.attr("selected").is_some())
+            }
+            Empty => false,
+        }
+    }
+
+    pub(crate) fn shadow_including_inclusive_ancestor(&self, anc: u32, mut node: u32) -> bool {
+        loop {
+            if self.is_inclusive_ancestor(anc, node) {
+                return true;
+            }
+            let r = self.root_idx(node);
+            match &self.n(r).kind {
+                NodeKind::Fragment(f) if f.shadow.is_some() => node = f.host,
+                _ => return false,
+            }
+        }
+    }
+
+    fn element_ref(&self, idx: u32) -> ElemRef<'_> {
+        ElemRef { dom: self, idx }
+    }
+
+    fn quirks(&self, idx: u32) -> SelQuirks {
+        match &self.n(self.n(idx).owner_doc).kind {
+            NodeKind::Document(d) => match d.quirks {
+                crate::node::QuirksMode::Quirks => SelQuirks::Quirks,
+                crate::node::QuirksMode::LimitedQuirks => SelQuirks::LimitedQuirks,
+                crate::node::QuirksMode::NoQuirks => SelQuirks::NoQuirks,
+            },
+            _ => SelQuirks::NoQuirks,
+        }
+    }
+
+    fn matches_with(&self, sel: &Selectors, idx: u32, scope: u32, caches: &mut SelectorCaches) -> bool {
+        let mut ctx = MatchingContext::new(
+            MatchingMode::Normal,
+            None,
+            caches,
+            self.quirks(idx),
+            NeedsSelectorFlags::No,
+            MatchingForInvalidation::No,
+        );
+        if scope != NIL && self.n(scope).is_element() {
+            ctx.scope_element = Some(OpaqueElement::new(self.n(scope)));
+        }
+        matches_selector_list(sel, &self.element_ref(idx), &mut ctx)
+    }
+
+    /// `Element.matches(selectors)`.
+    pub fn matches(&self, el: NodeId, sel: &Selectors) -> DomResult<bool> {
+        let i = self.check(el)?;
+        if !self.n(i).is_element() {
+            return Err(DomError::Type("not an element"));
+        }
+        let mut caches = SelectorCaches::default();
+        Ok(self.matches_with(sel, i, i, &mut caches))
+    }
+
+    /// `Element.closest(selectors)`.
+    pub fn closest(&self, el: NodeId, sel: &Selectors) -> DomResult<Option<NodeId>> {
+        let start = self.check(el)?;
+        let mut caches = SelectorCaches::default();
+        let mut cur = start;
+        while cur != NIL && self.n(cur).is_element() {
+            if self.matches_with(sel, cur, start, &mut caches) {
+                return Ok(Some(self.id_of(cur)));
+            }
+            cur = self.n(cur).parent;
+        }
+        Ok(None)
+    }
+
+    /// `querySelector` on a Document, DocumentFragment or Element.
+    pub fn query_selector(&self, root: NodeId, sel: &Selectors) -> DomResult<Option<NodeId>> {
+        let r = self.check(root)?;
+        let mut caches = SelectorCaches::default();
+        let mut cur = self.n(r).first_child;
+        while cur != NIL {
+            if self.n(cur).is_element() && self.matches_with(sel, cur, r, &mut caches) {
+                return Ok(Some(self.id_of(cur)));
+            }
+            cur = self.following_in(cur, r);
+        }
+        Ok(None)
+    }
+
+    /// `querySelectorAll` (static result, tree order).
+    pub fn query_selector_all(&self, root: NodeId, sel: &Selectors) -> DomResult<Vec<NodeId>> {
+        let r = self.check(root)?;
+        let mut caches = SelectorCaches::default();
+        let mut out = Vec::new();
+        let mut cur = self.n(r).first_child;
+        while cur != NIL {
+            if self.n(cur).is_element() && self.matches_with(sel, cur, r, &mut caches) {
+                out.push(self.id_of(cur));
+            }
+            cur = self.following_in(cur, r);
+        }
+        Ok(out)
+    }
+}

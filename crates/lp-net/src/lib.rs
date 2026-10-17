@@ -1,4 +1,16 @@
-//! HTTP client, cookies, CORS, fetch model (worker 2).
-//!
-//! Placeholder crate created by the workspace bootstrap; the owning worker
-//! replaces this file. See docs/ARCHITECTURE.md for the interface contract.
+//! lp-net: HTTP client (hyper on a tokio I/O thread), cookie jar, CORS and
+//! the fetch request/response model for lightningpanda. No JS dependency.
+
+pub mod client;
+pub mod cookies;
+pub mod cors;
+pub mod data_url;
+pub mod request;
+
+pub use client::{
+    InterceptDecision, Interceptor, NetClient, NetConfig, NetEvent, NetSettings, PausedRequest, RequestInfo,
+    ResponseSink,
+};
+pub use cookies::CookieJar;
+pub use request::*;
+pub use url::Url;
