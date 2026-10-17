@@ -37,6 +37,7 @@ pub mod page;
 pub mod range;
 pub mod response;
 pub mod storage;
+mod structured_clone;
 pub mod target;
 pub mod traversal;
 pub mod url;
@@ -102,6 +103,7 @@ pub fn install(scope: &Scope<'_>, page: Rc<PageDom>) -> JsResult<()> {
     headers::install(scope)?;
     url_search_params::install(scope)?;
     fetch::install(scope)?;
+    structured_clone::install(scope)?;
     let global = scope.global();
     global.set("CSS", window::css_namespace(scope)?)?;
     Ok(())
