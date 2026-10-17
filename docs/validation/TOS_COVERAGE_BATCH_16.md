@@ -10,8 +10,8 @@ before any run of these files.
 | main `9f100bd` (pinned, not rebuilt) | `lpb16-1017-192408` | 14 | 13 / 1 |
 | upstream `2ad38773` | `lpb16u-1017-192520` | 14 | 14 / 0 |
 
-**Timing-dependent observed failure:** business-partner-accounts "deletes an
-account line from the Accounts tab table".
+**Unresolved, timing-sensitive rewrite failure:** business-partner-accounts
+"deletes an account line from the Accounts tab table". Upstream passes this case.
 - After the details and bookkeeping-mappings responses arrive, the test reads
   every visible row input's value once, through `getInputOrTextareaByValue`
   inside `rowWithText`.
@@ -27,15 +27,14 @@ account line from the Accounts tab table".
   | `lpb16r-1017-192636` | none | failed again (4/5) |
   | `lpb16t-1017-192734` | `DEBUG=pw:protocol` | passed 5/5 |
 
-  Protocol tracing slows the Playwright client. The outcome therefore depends on
-  how much time passes between the response event and the read.
-- This matches the class recorded for the batch 7 credit-note cases: a test reads
-  the page right after a network response, and the rewrite reports responses
-  promptly. Upstream passes this case.
-- No spec or protocol violation is established. No network-event delay heuristic
-  was added, and the tests and assertions are unchanged. It is recorded as an
-  observed, timing-dependent rewrite failure, following the parent's earlier
-  decision for this class.
+  The pass under `DEBUG=pw:protocol` supports timing sensitivity. It does not
+  prove a specific mechanism; client slowdown is not established as the cause.
+- The shape resembles the batch 7 credit-note cases, which upstream also passed:
+  the test reads the page right after a network response. A shared cause is not
+  proven, and neither is a test-only cause.
+- No spec or protocol violation is established. No artificial event delay was
+  added, and the tests and assertions are unchanged. It is recorded as an
+  unresolved, timing-sensitive rewrite failure.
 
 The other 13 cases pass:
 - **dunning levels:** list, details, sorting by identity, amounts, related system,
