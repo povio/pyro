@@ -1,4 +1,80 @@
-//! JavaScript bindings for DOM/network WebAPIs over lp-js (worker 2).
+//! lp-webapi: JavaScript bindings for the DOM and web platform APIs of
+//! lightningpanda, over lp-js (JavaScriptCore), lp-dom and lp-net.
 //!
-//! Placeholder crate created by the workspace bootstrap; the owning worker
-//! replaces this file. See docs/ARCHITECTURE.md for the interface contract.
+//! Embedding (lp-browser):
+//! 1. `register(&engine)` once, before creating realms.
+//! 2. Per page: `PageDom::new(dom, document)`; `page.set_hooks(..)`;
+//!    `dom.set_resource_tracking(true)`.
+//! 3. Per realm (main world and isolated worlds), right after creation and
+//!    before init scripts: `install(&scope, page.clone())`.
+//! 4. lp-browser's `Window` class: `type Parent = EventTarget`,
+//!    `def.upcast(|w| w.event_target())` and `define_members::<Window>(def)`.
+//! 5. After every task: `page.after_task()`; drain
+//!    `dom.take_resource_events()` and pass style events to
+//!    `page.apply_style_event`.
+
+pub mod abort;
+pub mod collections;
+pub mod css;
+pub mod custom;
+pub mod encoding;
+pub mod event;
+pub mod file;
+pub mod formdata;
+pub mod html;
+pub mod input;
+pub mod layout_api;
+pub mod lifecycle;
+pub mod node;
+pub mod page;
+pub mod range;
+pub mod target;
+pub mod traversal;
+pub mod util;
+pub mod validity;
+pub mod window;
+
+use std::rc::Rc;
+
+use lp_js::{JsResult, Scope, Value};
+
+pub use event::{EventCore, EventData, EventInterface};
+pub use node::{wrap_node, NodeData};
+pub use page::{NavigationRequest, PageDom, PageHooks, RemotePoster};
+pub use target::{EventTarget, EventTargetData};
+pub use window::{define_members, WindowHost};
+
+/// Registers every host class with the engine (call before creating realms).
+pub fn register(engine: &lp_js::Engine) {
+    engine.register::<target::EventTarget>();
+    event::register(engine);
+    node::register(engine);
+    html::register(engine);
+    collections::register(engine);
+    css::register(engine);
+    layout_api::register(engine);
+    traversal::register(engine);
+    range::register(engine);
+    abort::register(engine);
+    custom::register(engine);
+    file::register(engine);
+    encoding::register(engine);
+    validity::register(engine);
+    window::register(engine);
+}
+
+/// Installs the page's bindings into a freshly created realm.
+pub fn install(scope: &Scope<'_>, page: Rc<PageDom>) -> JsResult<()> {
+    let realm = scope.realm();
+    page.realms.borrow_mut().insert(realm.id(), realm.downgrade());
+    realm.set_embedder(page);
+    let global = scope.global();
+    global.set("CSS", window::css_namespace(scope)?)?;
+    Ok(())
+}
+
+/// Resolves a JS value to its native node (CDP DOM.describeNode etc.).
+pub fn node_from_value(scope: &Scope<'_>, value: Value<'_>) -> Option<(Rc<PageDom>, lp_dom::NodeId)> {
+    let n = scope.unwrap::<node::Node>(value)?;
+    Some((n.page().clone(), n.id))
+}

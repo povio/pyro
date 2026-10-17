@@ -31,8 +31,22 @@ Status values:
 
 ## DOM / WebAPI / network (W2)
 
-DOM, parser, selectors, events, collections, forms, CSS, storage, fetch/XHR/WebSocket, cookies, URL, encoding,
-crypto, streams, canvas, IndexedDB and media are all **not started in this repository**. W2's branch tracks them.
+The DOM implementation lives in `lp-dom`, bindings in `lp-webapi`, and networking in `lp-net`.
+Unit/integration tests exercise real JavaScriptCore and local HTTP. This is not yet TOS compatibility evidence.
+
+| Area | Status | Notes / gaps |
+|---|---|---|
+| DOM tree, HTML parser, selectors | Partial | Arena identities, mutation records, html5ever incremental script yields, templates, HTML serialization and selector matching. Parser handles and queued resources survive collection. XML/DOMParser bindings not implemented. Character data currently uses Rust UTF-8 strings; lone UTF-16 surrogates are not preserved. |
+| Events, collections, forms and input | Partial | Cross-realm wrappers, event dispatch/activation, listener lifecycle, forms/validation, keyboard/mouse input and basic collections. Range supports a subset; live range adjustment and several content manipulation methods remain unsupported. |
+| Style/layout/media | Partial | CSS declaration/rule subset, cascade, computed style, matchMedia, upstream-style approximate geometry and hit testing. No full CSS layout/rendering. |
+| Encoding, files and form data | Partial | TextEncoder/TextDecoder, base64, Blob/File/FormData primitives. Streaming decoder and full BufferSource fidelity are incomplete. |
+| HTTP, cookies and CORS | Partial | Local HTTP, redirects, compression, cancellation, cookie jar and CORS/preflight subset. HTTPS is explicitly unsupported in this build. Public suffix handling and remaining origin/credential regressions still need repair. |
+| Network observation | Partial | Bounded per-subscription event/logical-byte queues, ordered events, optional wake callback and explicit terminal overflow/closure. Overflow clears retained payloads; consumer must resynchronize. CDP body retention is separately owned by W3. |
+| Fetch/XHR/Headers/URL JS bindings | Not started | Interrupted predecessor tasks performed discovery only; no implementation files recovered. Native HTTP support is not a fetch binding. |
+| Storage and observers | Not started | No localStorage/sessionStorage, MutationObserver, ResizeObserver or IntersectionObserver JS bindings. Native mutation records exist. |
+| Other platform APIs | Not started | WebSocket, crypto, streams, canvas, IndexedDB, workers and media APIs. |
+
+Independent correctness/performance review is unresolved after provider-policy blocks; passing project tests do not satisfy that gate. Separate organization/cleanliness approval on the actual current head is also required before parent merge.
 
 ## Automation (W3)
 

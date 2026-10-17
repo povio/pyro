@@ -572,6 +572,19 @@ version = "0.1.0"
 [[package]]
 name = "lp-webapi"
 version = "0.1.0"
+dependencies = [
+ "base64",
+ "bytes",
+ "cssparser",
+ "encoding_rs",
+ "lp-dom",
+ "lp-js",
+ "lp-net",
+ "markup5ever",
+ "percent-encoding",
+ "rustc-hash",
+ "url",
+]
 
 [[package]]
 name = "markup5ever"

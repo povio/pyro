@@ -570,6 +570,7 @@ impl Dom {
         let c = self.control_state_mut(id)?;
         c.value = Some(value);
         c.dirty_value = true;
+        c.user_edited = true;
         c.selection = (caret, caret);
         c.selection_set = true;
         self.bump();
@@ -662,6 +663,8 @@ impl Dom {
         if let NodeKind::Document(dd) = &mut self.n_mut(d).kind {
             dd.focused = new;
         }
+        // :focus / :focus-within participate in style matching.
+        self.bump();
         Ok(self.opt_id(prev))
     }
     pub fn set_hovered(&mut self, doc: NodeId, el: Option<NodeId>) -> DomResult<()> {
@@ -673,6 +676,150 @@ impl Dom {
         if let NodeKind::Document(dd) = &mut self.n_mut(d).kind {
             dd.hovered = new;
         }
+        self.bump();
         Ok(())
+    }
+
+    /// Whether the element is a candidate for constraint validation.
+    pub fn will_validate(&self, id: NodeId) -> DomResult<bool> {
+        let i = self.check(id)?;
+        let Some(local) = self.html_local(i) else { return Ok(false) };
+        let e = self.n(i).element().unwrap();
+        let listed = match &**local {
+            "input" => !matches!(self.input_type_idx(i), InputType::Hidden | InputType::Reset | InputType::Button),
+            "select" | "textarea" => true,
+            "button" => !matches!(e.attr("type").map(|t| t.to_ascii_lowercase()).as_deref(), Some("reset" | "button")),
+            _ => false,
+        };
+        if !listed || self.is_disabled_idx(i) || (e.attr("readonly").is_some() && &**local != "select") {
+            return Ok(false);
+        }
+        // Not inside a <datalist>.
+        let mut p = self.n(i).parent;
+        while p != NIL {
+            if self.html_local(p).is_some_and(|l| &**l == "datalist") {
+                return Ok(false);
+            }
+            p = self.n(p).parent;
+        }
+        Ok(true)
+    }
+
+    /// `ValidityState` flags (constraint validation, HTML §4.10.20.1).
+    /// `patternMismatch`, `stepMismatch` and `badInput` are not evaluated.
+    pub fn validity(&self, id: NodeId) -> DomResult<Validity> {
+        let mut v = Validity::default();
+        if !self.will_validate(id)? {
+            return Ok(v);
+        }
+        let i = self.check(id)?;
+        let e = self.n(i).element().unwrap();
+        let local = self.html_local(i).map(|l| l.to_string()).unwrap_or_default();
+        v.custom_error =
+            e.control.as_ref().is_some_and(|c| c.custom_validity.as_deref().is_some_and(|m| !m.is_empty()));
+        let required = e.attr("required").is_some();
+        let value = self.value(id)?;
+        match local.as_str() {
+            "input" => {
+                let ty = self.input_type_idx(i);
+                match ty {
+                    InputType::Checkbox => v.value_missing = required && !self.checkedness_idx(i),
+                    InputType::Radio => {
+                        v.value_missing = required && !self.radio_group(i).into_iter().any(|r| self.checkedness_idx(r))
+                    }
+                    InputType::File => {
+                        v.value_missing = required && e.control.as_ref().and_then(|c| c.value.as_ref()).is_none()
+                    }
+                    _ => v.value_missing = required && value.is_empty(),
+                }
+                if !value.is_empty() {
+                    match ty {
+                        InputType::Email => {
+                            let check = |a: &str| {
+                                let Some((l, d)) = a.split_once('@') else { return false };
+                                !l.is_empty()
+                                    && !d.is_empty()
+                                    && !d.starts_with('.')
+                                    && !d.ends_with('.')
+                                    && !a.contains(char::is_whitespace)
+                            };
+                            v.type_mismatch = if e.attr("multiple").is_some() {
+                                !value.split(',').all(|a| check(a.trim()))
+                            } else {
+                                !check(&value)
+                            };
+                        }
+                        InputType::Url => v.type_mismatch = !value.contains(':') || value.starts_with(':'),
+                        InputType::Number | InputType::Range => {
+                            if let Ok(n) = value.parse::<f64>() {
+                                if let Some(min) = e.attr("min").and_then(|m| m.parse::<f64>().ok()) {
+                                    v.range_underflow = n < min;
+                                }
+                                if let Some(max) = e.attr("max").and_then(|m| m.parse::<f64>().ok()) {
+                                    v.range_overflow = n > max;
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            "textarea" => v.value_missing = required && value.is_empty(),
+            "select" => {
+                v.value_missing = required && {
+                    let sel = self.selected_options_idx(i);
+                    // Placeholder label option (first, empty value, size 1 single select).
+                    sel.is_empty()
+                        || (e.attr("multiple").is_none()
+                            && sel.first() == self.select_options_idx(i).first()
+                            && self.option_value(self.id_of(sel[0]))?.is_empty())
+                };
+            }
+            _ => {}
+        }
+        // tooLong/tooShort only apply after user edits (dirty value flag).
+        let dirty = e.control.as_ref().is_some_and(|c| c.dirty_value && c.user_edited);
+        if dirty && !value.is_empty() {
+            let len = crate::dom::utf16_len(&value) as i64;
+            if let Some(max) = e.attr("maxlength").and_then(|m| m.trim().parse::<i64>().ok()) {
+                v.too_long = len > max;
+            }
+            if let Some(min) = e.attr("minlength").and_then(|m| m.trim().parse::<i64>().ok()) {
+                v.too_short = len < min;
+            }
+        }
+        Ok(v)
+    }
+
+    /// `setCustomValidity(message)`.
+    pub fn set_custom_validity(&mut self, id: NodeId, message: &str) -> DomResult<()> {
+        let c = self.control_state_mut(id)?;
+        c.custom_validity = (!message.is_empty()).then(|| message.to_owned());
+        Ok(())
+    }
+    pub fn custom_validity(&self, id: NodeId) -> DomResult<Option<&str>> {
+        let i = self.check(id)?;
+        Ok(self.n(i).element().and_then(|e| e.control.as_ref()).and_then(|c| c.custom_validity.as_deref()))
+    }
+}
+
+/// Constraint-validation flags.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct Validity {
+    pub value_missing: bool,
+    pub type_mismatch: bool,
+    pub pattern_mismatch: bool,
+    pub too_long: bool,
+    pub too_short: bool,
+    pub range_underflow: bool,
+    pub range_overflow: bool,
+    pub step_mismatch: bool,
+    pub bad_input: bool,
+    pub custom_error: bool,
+}
+
+impl Validity {
+    pub fn valid(&self) -> bool {
+        *self == Validity::default()
     }
 }

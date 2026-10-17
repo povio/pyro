@@ -5,5 +5,18 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[dependencies]
+base64 = "0.23.1"
+bytes = "1"
+cssparser = "0.38"
+encoding_rs = "0.8"
+lp-dom = { workspace = true }
+lp-js = { workspace = true }
+lp-net = { workspace = true }
+markup5ever = "0.40"
+percent-encoding = "2.3.2"
+rustc-hash = "2"
+url = "2"
+
 [lints]
 workspace = true

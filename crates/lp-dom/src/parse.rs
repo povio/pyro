@@ -45,11 +45,40 @@ struct Sink<A: DomAccess> {
     quirks: Cell<Option<QuirksMode>>,
     /// First element created (the fragment parser's context element).
     first_created: Cell<u32>,
+    // html5ever keeps raw handles across script pauses, including detached elements.
+    pins: RefCell<Vec<NodeId>>,
 }
 
 impl<A: DomAccess> Sink<A> {
     fn new(dom: A, doc: u32, elem_flags: u8) -> Self {
-        Sink { dom, doc, elem_flags, quirks: Cell::new(None), first_created: Cell::new(NIL) }
+        let id = dom.with(|d| {
+            let id = d.id_of(doc);
+            d.add_ref(id).expect("parser document");
+            id
+        });
+        Sink {
+            dom,
+            doc,
+            elem_flags,
+            quirks: Cell::new(None),
+            first_created: Cell::new(NIL),
+            pins: RefCell::new(vec![id]),
+        }
+    }
+
+    fn release_pins(&self) {
+        let pins = self.pins.take();
+        self.dom.with(|d| {
+            for id in pins {
+                d.release(id);
+            }
+        });
+    }
+}
+
+impl<A: DomAccess> Drop for Sink<A> {
+    fn drop(&mut self) {
+        self.release_pins();
     }
 }
 
@@ -121,6 +150,9 @@ impl<A: DomAccess> TreeSink for Sink<A> {
                 let frag = d.alloc_raw(NodeKind::Fragment(FragmentData { host: i, shadow: None }), inert);
                 d.n_mut(i).element_mut().unwrap().template_contents = frag;
             }
+            let id = d.id_of(i);
+            d.add_ref(id).expect("new parser element");
+            self.pins.borrow_mut().push(id);
             i
         });
         if self.first_created.get() == NIL {
@@ -351,6 +383,13 @@ impl DocumentParser {
             return self.decode(bytes, false);
         }
         self.sniff.extend_from_slice(bytes);
+        // A transport charset cannot win until a partial BOM is ruled out.
+        if [b"\xef\xbb\xbf".as_slice(), b"\xff\xfe", b"\xfe\xff"]
+            .iter()
+            .any(|bom| self.sniff.len() < bom.len() && bom.starts_with(&self.sniff))
+        {
+            return ParseStep::NeedInput;
+        }
         let decided = encoding_rs::Encoding::for_bom(&self.sniff).is_some() || self.transport_charset.is_some();
         if !decided && self.sniff.len() < 1024 {
             return ParseStep::NeedInput;
@@ -404,6 +443,9 @@ impl DocumentParser {
     /// Appends decoded input and runs the tokenizer until it needs more input
     /// or a script must execute.
     pub fn feed(&mut self, chunk: &str) -> ParseStep {
+        if self.ended {
+            return ParseStep::NeedInput;
+        }
         if !chunk.is_empty() {
             self.input.push_back(StrTendril::from_slice(chunk));
         }
@@ -412,6 +454,9 @@ impl DocumentParser {
 
     /// Continues after a script ran.
     pub fn resume(&mut self) -> ParseStep {
+        if self.ended {
+            return ParseStep::NeedInput;
+        }
         loop {
             match self.tok.feed(&self.input) {
                 TokenizerResult::Script(h) => return ParseStep::Script(self.dom.borrow().id_of(h)),
@@ -429,6 +474,7 @@ impl DocumentParser {
         if !self.ended {
             self.ended = true;
             self.tok.end();
+            self.tok.sink.sink.release_pins();
         }
     }
 }

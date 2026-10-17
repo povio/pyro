@@ -41,8 +41,10 @@ pub struct ListenerStore {
     map: FxHashMap<TargetKey, Vec<Listener>>,
     next_id: u32,
     next_key: u64,
-    /// Handles whose listeners were dropped natively (once, target freed).
-    released: Vec<ListenerHandle>,
+    /// Listeners dropped natively (once, target freed), for bindings cleanup.
+    released: Vec<(TargetKey, ListenerHandle)>,
+    /// Nodes holding listeners that were (re)connected since the last drain.
+    reconnected: Vec<u32>,
     /// Document -> Window key for event paths.
     windows: FxHashMap<u32, u64>,
 }
@@ -50,7 +52,7 @@ pub struct ListenerStore {
 impl ListenerStore {
     pub(crate) fn forget(&mut self, key: TargetKey) {
         if let Some(list) = self.map.remove(&key) {
-            self.released.extend(list.into_iter().map(|l| l.callback));
+            self.released.extend(list.into_iter().map(|l| (key, l.callback)));
         }
         if let TargetKey::Node(i) = key {
             self.windows.remove(&i);
@@ -196,7 +198,65 @@ impl Dom {
         if list.is_empty() {
             self.events.map.remove(&target);
         }
+        self.events.released.push((target, l.callback));
         Some(l.callback)
+    }
+
+    /// Identity of one registration, distinct from the reusable callback slot.
+    pub fn listener_registration(
+        &self,
+        target: TargetKey,
+        ty: &str,
+        callback: ListenerHandle,
+        capture: bool,
+    ) -> Option<u32> {
+        self.events
+            .map
+            .get(&target)?
+            .iter()
+            .find(|l| l.callback == callback && l.capture == capture && &*l.ty == ty)
+            .map(|l| l.id)
+    }
+
+    /// Removes only the registration originally attached to an AbortSignal.
+    pub fn abort_listener(&mut self, target: TargetKey, registration: u32) {
+        let Some(list) = self.events.map.get_mut(&target) else { return };
+        let Some(pos) = list.iter().position(|l| l.id == registration) else { return };
+        let listener = list.remove(pos);
+        if list.is_empty() {
+            self.events.map.remove(&target);
+        }
+        self.events.released.push((target, listener.callback));
+    }
+
+    /// Whether any listener entry of `target` still uses `callback`.
+    pub fn handle_in_use(&self, target: TargetKey, callback: ListenerHandle) -> bool {
+        self.events.map.get(&target).is_some_and(|l| l.iter().any(|x| x.callback == callback))
+    }
+
+    /// Nodes with listeners that became connected since the last call.
+    pub fn take_reconnected_listener_nodes(&mut self) -> Vec<NodeId> {
+        let v = std::mem::take(&mut self.events.reconnected);
+        v.into_iter().filter(|&i| self.slot_live(i)).map(|i| self.id_of(i)).collect()
+    }
+
+    /// Records listener-bearing nodes in a newly connected subtree.
+    pub(crate) fn note_connected_listeners(&mut self, root: u32) {
+        if self.events.map.is_empty() {
+            return;
+        }
+        let mut stack = vec![root];
+        while let Some(i) = stack.pop() {
+            if self.events.map.contains_key(&TargetKey::Node(i)) {
+                self.events.reconnected.push(i);
+            }
+            stack.extend(self.child_idx_iter(i));
+            if let Some(e) = self.n(i).element() {
+                if e.shadow_root != NIL {
+                    stack.push(e.shadow_root);
+                }
+            }
+        }
     }
 
     pub fn has_listeners(&self, target: TargetKey) -> bool {
@@ -210,7 +270,7 @@ impl Dom {
 
     /// Handles whose listener entries were removed natively; bindings
     /// release their storage.
-    pub fn take_released_listeners(&mut self) -> Vec<ListenerHandle> {
+    pub fn take_released_listeners(&mut self) -> Vec<(TargetKey, ListenerHandle)> {
         std::mem::take(&mut self.events.released)
     }
 
@@ -397,7 +457,7 @@ fn invoke_listeners(
             }
             if l.once {
                 d.remove_listener_id(cur, l.id);
-                d.events.released.push(l.callback);
+                d.events.released.push((cur, l.callback));
             }
         }
         event.borrow_mut().in_passive_listener = l.passive;
