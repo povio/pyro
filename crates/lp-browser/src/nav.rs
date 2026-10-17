@@ -19,7 +19,7 @@ use std::rc::Rc;
 use std::time::Instant;
 use url::Url;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct Entry {
     url: String,
     /// `JSON.stringify` of the history state (`None` = null).
@@ -131,12 +131,21 @@ impl PageNav {
         self.set_url_sync(url);
         let page = self.page;
         let url = url.to_string();
-        self.sched.post(TaskSource::Navigation, move |b| b.same_document_committed(page, url, kind));
+        let document = self.state.borrow().doc_seq;
+        self.sched.post(TaskSource::Navigation, move |b| {
+            if b.page(page).is_some_and(|p| p.nav.state.borrow().doc_seq == document) {
+                b.same_document_committed(page, url, kind);
+            }
+        });
     }
 
     fn navigate(&self, url: String, replace: bool) {
         let page = self.page;
+        let document = self.state.borrow().doc_seq;
         self.sched.post(TaskSource::Navigation, move |b| {
+            if !b.page(page).is_some_and(|p| p.nav.state.borrow().doc_seq == document) {
+                return;
+            }
             let opts = NavigateOpts { url, reason: NavigationReason::Script, cdp_request_id: None, referrer: None };
             if let Err(e) = b.navigate_with_history(page, opts, replace) {
                 b.report_navigation_error(page, &e);
@@ -147,11 +156,13 @@ impl PageNav {
     fn traverse(&self, delta: i64) {
         let target = {
             let st = self.state.borrow();
-            let t = st.index as i64 + delta;
-            if delta == 0 || t < 0 || t as usize >= st.entries.len() {
+            // The JS number conversion saturates at i64's limits. Add in a
+            // wider type so out-of-range deltas remain no-ops, not panics.
+            let t = st.index as i128 + i128::from(delta);
+            if delta == 0 || t < 0 || t >= st.entries.len() as i128 {
                 None
             } else {
-                Some((t as usize, st.entries[t as usize].clone(), st.entries[st.index].doc))
+                Some((t as usize, st.entries[t as usize].clone(), st.doc_seq))
             }
         };
         let Some((index, entry, current_doc)) = target else {
@@ -165,7 +176,16 @@ impl PageNav {
         let page = self.page;
         self.sched.post(TaskSource::Navigation, move |b| {
             let Some(nav) = b.page(page).map(|p| p.nav.clone()) else { return };
-            nav.state.borrow_mut().index = index;
+            {
+                let mut state = nav.state.borrow_mut();
+                // Navigation can replace the document, or pushState can replace
+                // a forward entry, while this task waits. Never apply an obsolete
+                // entry or write an index that is no longer in the history list.
+                if state.doc_seq != current_doc || state.entries.get(index) != Some(&entry) {
+                    return;
+                }
+                state.index = index;
+            }
             if entry.doc == current_doc {
                 nav.set_url_sync(&entry.url);
                 // TODO(lp-webapi): fire popstate with the entry state (and hashchange).
