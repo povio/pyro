@@ -13,7 +13,9 @@ in-memory and partitioned by origin. Blank pages with opaque origins cannot acce
 Navigation calls `PageDom::dispose` before disposing old realms, cancels realm timers, marks the old
 document inactive and installs fresh bindings. Closing a page performs the same binding/realm cleanup.
 Fetch jobs, buffered bytes and retained JS roots are released by the WebAPI lifecycle; replacing one
-page does not shut down the context's network client. Queued old-document binding tasks are discarded.
+page does not shut down the context's network client. Queued old-document binding tasks are discarded. Location/history tasks and
+same-document protocol notifications also check their originating document generation. A queued history
+traversal whose target entry was replaced is discarded, and out-of-range history deltas are no-ops.
 
 The document loader parses a fetched body incrementally around script pauses. Classic scripts receive
 `document.currentScript`, including deferred elements removed from the live tree. Module scripts see
