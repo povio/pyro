@@ -5,5 +5,13 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[dependencies]
+cssparser = "0.38"
+html5ever = "0.40"
+markup5ever = "0.40"
+precomputed-hash = "0.1"
+rustc-hash = "2"
+selectors = "0.41"
+
 [lints]
 workspace = true
