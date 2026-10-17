@@ -1,0 +1,59 @@
+{
+  "baseline-4168ac9": {
+    "sourceSha": "4168ac99eb68cab56fc9f733acde8cc8ecf9f218",
+    "parentSha": null,
+    "status": "",
+    "binary": "/private/tmp/lp-w3-lazy-baseline-4168ac9-bin/lightningpanda",
+    "sha256": "47eac6a5a20f832b8beef9cc2a60e5e846e71ff8af2b2e840f4cff8b364a86ef",
+    "bytes": 12897840,
+    "buildCommand": "SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk CARGO_TARGET_DIR=/private/tmp/lp-w3-lazy-baseline-4168ac9-target /Users/povioserver/.cargo/bin/cargo build --locked --release -p lightningpanda (fresh, empty target dir)",
+    "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: aarch64-apple-darwin\nrelease: 1.99.1\nLLVM version: 23.1.1\n",
+    "loadAverageBefore": [
+      2.12841796875,
+      2.1328125,
+      1.65380859375
+    ],
+    "loadAverageAfter": [
+      1.3876953125,
+      1.880859375,
+      1.59716796875
+    ],
+    "note": "Built in a fresh, empty per-SHA CARGO_TARGET_DIR. An earlier attempt with the shared target /private/tmp/lp-w3-network-target produced identical binaries for both SHAs (candidate 'Finished in 0.10s', stale reuse) and is preserved as *-bin-INVALID-shared-target; it was not timed."
+  },
+  "candidate-08ad9e2": {
+    "sourceSha": "08ad9e28d1a3b1a6ebf29f845e18a3f566f5becf",
+    "parentSha": "4168ac99eb68cab56fc9f733acde8cc8ecf9f218",
+    "status": "",
+    "binary": "/private/tmp/lp-w3-lazy-candidate-08ad9e2-bin/lightningpanda",
+    "sha256": "0b714171604a25183832b95175add7b951a26b2eeb1fbc405b513dee3fb96ce6",
+    "bytes": 12914016,
+    "buildCommand": "SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk CARGO_TARGET_DIR=/private/tmp/lp-w3-lazy-candidate-08ad9e2-target /Users/povioserver/.cargo/bin/cargo build --locked --release -p lightningpanda (fresh, empty target dir)",
+    "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: aarch64-apple-darwin\nrelease: 1.99.1\nLLVM version: 23.1.1\n",
+    "loadAverageBefore": [
+      2.12841796875,
+      2.1328125,
+      1.65380859375
+    ],
+    "loadAverageAfter": [
+      1.3876953125,
+      1.880859375,
+      1.59716796875
+    ],
+    "focusedTest": "cargo test --locked --release -p lp-js --test lazy_interfaces: 6 passed (log lazy_interfaces.log)",
+    "note": "Built in a fresh, empty per-SHA CARGO_TARGET_DIR. An earlier attempt with the shared target /private/tmp/lp-w3-network-target produced identical binaries for both SHAs (candidate 'Finished in 0.10s', stale reuse) and is preserved as *-bin-INVALID-shared-target; it was not timed."
+  },
+  "discardedSharedTargetBuilds": {
+    "reason": "First attempt built both SHAs into the shared CARGO_TARGET_DIR /private/tmp/lp-w3-network-target from newly created worktrees. The candidate build finished in 0.10s and both binaries had sha256 d0474f54af08237865f32580edc369209dda486dc43fda58f18f75058e110ccc; the candidate's __text equals the parent's (stale reuse). Discarded before timing; never measured.",
+    "preservedAt": [
+      "/private/tmp/lp-w3-lazy-baseline-4168ac9-bin-INVALID-shared-target",
+      "/private/tmp/lp-w3-lazy-candidate-08ad9e2-bin-INVALID-shared-target"
+    ]
+  },
+  "harness": {
+    "runnerSha256": "c70d5f2de867c5f39881a8606996a01c975eeaf377f9ee96391d686a8b550fc7",
+    "samplerSha256": "7d31b30cab16622eda1333be012d1aa8fba2bbed6669b2e269c681725d198569",
+    "command": "NODE_PATH=<bench/node_modules> node bench/scripts/compare-resources.mjs --upstream <parent-bin> --upstream-sha 4168ac99eb68cab56fc9f733acde8cc8ecf9f218 --rewrite <candidate-bin> --rewrite-sha 08ad9e28d1a3b1a6ebf29f845e18a3f566f5becf --sampler <rss-sampler> --out /private/tmp/lp-w3-cpu-lazy-08ad9e2-3 --samples 3 --navigations 50 --contexts 20 --idle-ms 10000 --retained-ms 2000",
+    "runnerExit": 0,
+    "rawResults": "/private/tmp/lp-w3-cpu-lazy-08ad9e2-3 (resources.json byte-identical copy here)"
+  }
+}
