@@ -134,6 +134,20 @@ fn convert_nodes(s: &Scope<'_>, n: &NodeData, a: &Args<'_>) -> JsResult<Option<N
     }
 }
 
+/// Keeps `on*` IDL handlers in sync with `setAttribute`/`removeAttribute`
+/// on HTML and SVG elements.
+fn handler_attribute_changed(s: &Scope<'_>, n: &NodeData, name: &str, value: Option<&str>) -> JsResult<()> {
+    let Some(ty) = crate::handlers::is_handler_attribute(&name.to_ascii_lowercase()) else { return Ok(()) };
+    let eligible = {
+        let dom = n.page().dom.borrow();
+        dom.element(n.id).is_ok_and(|e| e.is_html() || e.namespace() == &markup5ever::ns!(svg))
+    };
+    if eligible {
+        crate::handlers::content_attribute_changed(s, &n.target, ty, value)?;
+    }
+    Ok(())
+}
+
 pub struct Node;
 impl JsClass for Node {
     const NAME: &'static str = "Node";
@@ -732,6 +746,7 @@ impl JsClass for Element {
             let name = dom_string(a.get(0))?;
             let value = dom_string(a.get(1))?;
             n.page().dom.borrow_mut().set_attribute(n.id, &name, &value).js()?;
+            handler_attribute_changed(s, n, &name, Some(&value))?;
             Ok(s.undefined())
         });
         def.method("setAttributeNS", 3, |s, n, a| {
@@ -744,7 +759,10 @@ impl JsClass for Element {
         });
         def.method("removeAttribute", 1, |s, n, a| {
             let name = arg_string(&a, 0, "Element.removeAttribute")?;
-            n.page().dom.borrow_mut().remove_attribute(n.id, &name).js()?;
+            let removed = n.page().dom.borrow_mut().remove_attribute(n.id, &name).js()?;
+            if removed {
+                handler_attribute_changed(s, n, &name, None)?;
+            }
             Ok(s.undefined())
         });
         def.method("removeAttributeNS", 2, |s, n, a| {
@@ -936,6 +954,8 @@ impl JsClass for Document {
     type Parent = Node;
     fn define(def: &mut ClassDef<Self>) {
         define_parent_node(def);
+        crate::handlers::define_global(def);
+        crate::handlers::define_document(def);
         def.constructor(0, |s, nt, _a| {
             let page = page_of(s)?;
             let id = page.dom.borrow_mut().create_document(DocumentKind::Xml, "about:blank");

@@ -68,9 +68,11 @@ in-memory bodies with the same single-use readers, and clones with copied
 headers. `response.body` is `null` for null bodies and otherwise throws
 TypeError (no streams).
 
+URL parsing for fetch inputs uses the [URL binding](URL.md).
+
 Not implemented: the Request constructor, ReadableStream/body streaming,
 FormData bodies, the "response" header guard after construction (later
-`headers.set('set-cookie')` is not filtered), URL binding, `<base>` URL selection, full MIME parsing for
+`headers.set('set-cookie')` is not filtered), `<base>` URL selection, full MIME parsing for
 response Blob types, service workers, integrity/referrer policy and HTTP caching.
 Nonempty integrity/referrer/referrerPolicy, keepalive and unsupported cache modes
 are explicitly rejected. HTTPS remains unsupported by the native transport.

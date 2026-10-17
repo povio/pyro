@@ -54,6 +54,7 @@ where
     W: JsClass,
     W::Data: WindowHost,
 {
+    crate::handlers::define_window(def);
     def.getter("document", |s, w| Ok(crate::node::wrap_node(s, w.page(), w.page().document())?.value()));
     def.getter("indexedDB", |s, w| crate::indexeddb::window_factory(s, w.page()));
     def.getter("localStorage", |s, w| crate::storage::window_storage(s, w.page(), false));

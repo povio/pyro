@@ -45,6 +45,7 @@ pub struct PageDom {
     next_event: Cell<u64>,
     pub net: RefCell<Option<lp_net::NetClient>>,
     pub(crate) intersections: crate::intersection_observer::BindingState,
+    pub(crate) resizes: crate::resize_observer::BindingState,
     pub(crate) mutations: crate::mutation_observer::BindingState,
     pub(crate) identity: RefCell<crate::identity::IdentityState>,
     pub(crate) fetch_state: crate::fetch::FetchState,
@@ -126,6 +127,7 @@ impl PageDom {
             identity: RefCell::new(Default::default()),
             mutations: Default::default(),
             intersections: Default::default(),
+            resizes: Default::default(),
             fetch_state: Default::default(),
             xhr_state: Default::default(),
             local_storage: RefCell::new(Default::default()),
@@ -174,6 +176,7 @@ impl PageDom {
         crate::xhr::dispose(self);
         crate::mutation_observer::dispose(self);
         crate::intersection_observer::dispose(self);
+        crate::resize_observer::dispose(self);
         self.realms.borrow_mut().clear();
         // Drop roots and embedder hooks outside RefCell borrows: destructors
         // can release wrappers or other resources owned by this page.
@@ -281,12 +284,18 @@ impl PageDom {
         }
     }
 
+    /// Wrappers of active ResizeObservers kept alive (diagnostics/tests).
+    pub fn resize_observer_pins(&self) -> usize {
+        self.resizes.pins.borrow().len()
+    }
+
     /// Safe point (after each task): applies deferred releases, unpins
     /// listener-holding wrappers of disconnected nodes, re-pins reconnected
     /// ones, and frees unreachable DOM nodes.
     pub fn after_task(&self) {
         crate::mutation_observer::after_task(self);
         crate::intersection_observer::after_task(self);
+        crate::resize_observer::after_task(self);
         self.url_params_helpers.borrow_mut().retain(|realm, _| {
             self.realms.borrow().get(realm).and_then(|r| r.upgrade()).is_some_and(|r| !r.is_disposed())
         });
