@@ -12,14 +12,19 @@ use crate::target::{fire, page_of, EventTarget, EventTargetData};
 
 type AbortHook = Box<dyn FnOnce(&PageDom)>;
 
+/// Identity of a native abort step; never reused within one signal.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct AbortHookId(u64);
+
 pub struct AbortSignalData {
     pub target: EventTargetData,
     aborted: Cell<bool>,
-    reason: RefCell<Option<Persistent>>,
+    reason: Rc<RefCell<Option<Persistent>>>,
     /// Listener registrations to drop on abort (`{signal}` option).
     remove_on_abort: RefCell<Vec<(TargetKey, u32)>>,
     /// Native abort steps (fetch/XHR cancellation).
-    hooks: RefCell<Vec<AbortHook>>,
+    hooks: RefCell<Vec<(AbortHookId, AbortHook)>>,
+    next_hook: Cell<u64>,
 }
 
 impl AbortSignalData {
@@ -33,12 +38,26 @@ impl AbortSignalData {
         self.remove_on_abort.borrow_mut().push((key, registration));
     }
     /// Registers native abort steps (run once, on abort).
-    pub fn add_abort_hook(&self, hook: AbortHook) {
+    pub fn add_abort_hook(&self, hook: AbortHook) -> Option<AbortHookId> {
         if self.aborted.get() {
             hook(&self.target.page);
+            None
         } else {
-            self.hooks.borrow_mut().push(hook);
+            let id = AbortHookId(self.next_hook.get());
+            self.next_hook.set(id.0.checked_add(1).expect("abort hook identity exhausted"));
+            self.hooks.borrow_mut().push((id, hook));
+            Some(id)
         }
+    }
+
+    /// Releases completed work without waiting for the signal to abort.
+    pub fn remove_abort_hook(&self, id: AbortHookId) {
+        let removed = {
+            let mut hooks = self.hooks.borrow_mut();
+            hooks.iter().position(|(key, _)| *key == id).map(|index| hooks.remove(index))
+        };
+        // A payload destructor can reenter this signal.
+        drop(removed);
     }
 
     /// "signal abort".
@@ -56,7 +75,7 @@ impl AbortSignalData {
         for (key, registration) in self.remove_on_abort.take() {
             page.dom.borrow_mut().abort_listener(key, registration);
         }
-        for hook in self.hooks.take() {
+        for (_, hook) in self.hooks.take() {
             hook(&page);
         }
         let ev = EventCore::new(&page, EventInterface::Event, "abort", false, false, false);
@@ -121,11 +140,18 @@ impl JsClass for AbortSignal {
                 }
                 let target = Persistent::new(s, sig.value());
                 let realm = s.realm().downgrade();
-                let source = Persistent::new(s, v);
+                let source_reason = Rc::downgrade(&src.reason);
                 src.add_abort_hook(Box::new(move |_page| {
                     let Some(realm) = realm.upgrade() else { return };
                     let Ok(s) = realm.scope() else { return };
-                    let reason = s.unwrap::<AbortSignal>(source.get(&s)).map(|d| d.reason(&s)).unwrap_or(s.undefined());
+                    // The caller keeps native source data alive while abort
+                    // steps run, including when the source is from another realm.
+                    // A weak native reference avoids rooting our own JS wrapper.
+                    let source_reason = source_reason.upgrade();
+                    let reason = source_reason
+                        .as_ref()
+                        .and_then(|r| r.borrow().as_ref().map(|r| r.get(&s)))
+                        .unwrap_or(s.undefined());
                     let target_signal = s.unwrap::<AbortSignal>(target.get(&s));
                     if let Some(d) = target_signal {
                         d.abort(&s, reason);
@@ -145,9 +171,10 @@ pub fn new_signal<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
     let data = AbortSignalData {
         target,
         aborted: Cell::new(false),
-        reason: RefCell::new(None),
+        reason: Rc::new(RefCell::new(None)),
         remove_on_abort: RefCell::new(Vec::new()),
         hooks: RefCell::new(Vec::new()),
+        next_hook: Cell::new(1),
     };
     s.wrap::<AbortSignal>(data, Some(key))
 }
