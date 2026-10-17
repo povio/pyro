@@ -24,6 +24,7 @@ pub mod encoding;
 pub mod event;
 pub mod fetch;
 pub mod file;
+pub mod form_data;
 pub mod formdata;
 pub mod handlers;
 pub mod headers;
@@ -85,6 +86,7 @@ pub fn register(engine: &lp_js::Engine) {
     mutation_observer::register(engine);
     intersection_observer::register(engine);
     crypto::register(engine);
+    form_data::register(engine);
     resize_observer::register(engine);
     engine.register::<storage::Storage>();
     engine.register::<indexeddb::IdbFactory>();
@@ -110,6 +112,7 @@ pub fn install(scope: &Scope<'_>, page: Rc<PageDom>) -> JsResult<()> {
     encoding::install(scope)?;
     headers::install(scope)?;
     url_search_params::install(scope)?;
+    form_data::install(scope)?;
     fetch::install(scope)?;
     structured_clone::install(scope)?;
     let global = scope.global();

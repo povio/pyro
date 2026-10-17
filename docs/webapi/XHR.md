@@ -58,8 +58,8 @@ events. A shared context NetClient remains usable by other pages. Call at a
 browser-thread safe point without holding a DOM borrow.
 
 Explicit gaps: synchronous XHR, URL username/password authentication, upload
-observation (`upload`), responseXML/document responses, and FormData/Document
-request serialization. The first four are rejected with NotSupportedError.
+observation (`upload`), responseXML/document responses, and Document request
+serialization (FormData bodies are sent as multipart/form-data). The first four are rejected with NotSupportedError.
 Full MIME/XML sniffing, compressed transfer progress accounting and complete
 XMLHttpRequest compatibility are not claimed. Native HTTPS and the existing
 URL/CORS/string-model limitations still apply. Ordinary response readers are

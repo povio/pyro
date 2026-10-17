@@ -337,6 +337,9 @@ fn parse_request<'s>(
 /// supported by this implementation (FormData has no binding yet; other
 /// objects are stringified as the Web IDL union's last member, USVString).
 pub(crate) fn extract_body(s: &Scope<'_>, body: Value<'_>) -> JsResult<(Bytes, String)> {
+    if let Some((bytes, mime)) = crate::form_data::multipart_body(s, body) {
+        return Ok((bytes, mime));
+    }
     Ok(if let Some(blob) = s.unwrap::<crate::file::Blob>(body) {
         (blob.bytes.clone(), blob.mime.clone())
     } else if let Some(params) = s.unwrap::<crate::url_search_params::URLSearchParams>(body) {

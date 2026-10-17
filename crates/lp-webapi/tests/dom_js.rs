@@ -2109,3 +2109,15 @@ fn resize_observer_realm_disposal_releases_observers() {
     assert_eq!(e.page.resize_observer_pins(), 0);
     e.page.dispose();
 }
+
+#[test]
+fn form_data_from_form_and_submitter() {
+    let e = env("<body><form id=f><input name=q value=1><input type=checkbox name=c checked><input type=checkbox name=d><select name=s><option>x</option><option selected>y</option></select><textarea name=t>a\nb</textarea><button id=b name=go value=yes>go</button></form><button id=other>o</button></body>");
+    let r = &e.main;
+    assert_eq!(
+        eval(r, "const f=document.getElementById('f'); [...new FormData(f)].map(p=>p.join('=')).join('&')"),
+        "q=1&c=on&s=y&t=a\r\nb"
+    );
+    assert_eq!(eval(r, "new FormData(f, document.getElementById('b')).get('go')"), "yes");
+    assert_eq!(eval(r, "try{new FormData(f, document.getElementById('other'))}catch(e){e.name}"), "NotFoundError");
+}
