@@ -1968,6 +1968,12 @@ fn global_event_handler_attributes() {
         "function"
     );
     assert_eq!(eval(r, "d.removeAttribute('oninput'); d.oninput"), "null");
+    // First/last entries of each single-source family: IDL accessor and
+    // content-attribute recognition agree.
+    assert_eq!(
+        eval(r, "['abort','transitioncancel'].every(t=>{const x=document.createElement('p'); x.setAttribute('on'+t,'1'); return ('on'+t) in x && typeof x['on'+t]==='function'}) && ['afterprint','unload'].every(t=>('on'+t) in window) && ['readystatechange','visibilitychange'].every(t=>('on'+t) in document) && !('onunload' in document.body)"),
+        "true"
+    );
     let out = eval(
         r,
         r#"const a=document.getElementById('a'); const log=[];

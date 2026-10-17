@@ -31,129 +31,52 @@ impl HasTarget for NodeData {
     }
 }
 
+// Each event family is written once. The `*_events!` macros pass the list to
+// a callback macro, which either builds the `&[&str]` used for content
+// attributes or registers the IDL accessors, so both stay in sync.
+
 /// GlobalEventHandlers (HTML §8.1.8.2) without touch events (desktop UA).
-pub(crate) const GLOBAL: &[&str] = &[
-    "abort",
-    "auxclick",
-    "beforeinput",
-    "beforetoggle",
-    "blur",
-    "cancel",
-    "canplay",
-    "canplaythrough",
-    "change",
-    "click",
-    "close",
-    "contextlost",
-    "contextmenu",
-    "contextrestored",
-    "copy",
-    "cuechange",
-    "cut",
-    "dblclick",
-    "drag",
-    "dragend",
-    "dragenter",
-    "dragleave",
-    "dragover",
-    "dragstart",
-    "drop",
-    "durationchange",
-    "emptied",
-    "ended",
-    "error",
-    "focus",
-    "formdata",
-    "input",
-    "invalid",
-    "keydown",
-    "keypress",
-    "keyup",
-    "load",
-    "loadeddata",
-    "loadedmetadata",
-    "loadstart",
-    "mousedown",
-    "mouseenter",
-    "mouseleave",
-    "mousemove",
-    "mouseout",
-    "mouseover",
-    "mouseup",
-    "paste",
-    "pause",
-    "play",
-    "playing",
-    "progress",
-    "ratechange",
-    "reset",
-    "resize",
-    "scroll",
-    "scrollend",
-    "securitypolicyviolation",
-    "seeked",
-    "seeking",
-    "select",
-    "selectionchange",
-    "selectstart",
-    "slotchange",
-    "stalled",
-    "submit",
-    "suspend",
-    "timeupdate",
-    "toggle",
-    "volumechange",
-    "waiting",
-    "wheel",
-    "pointerdown",
-    "pointerup",
-    "pointermove",
-    "pointerover",
-    "pointerout",
-    "pointerenter",
-    "pointerleave",
-    "pointercancel",
-    "gotpointercapture",
-    "lostpointercapture",
-    "animationstart",
-    "animationend",
-    "animationiteration",
-    "animationcancel",
-    "transitionstart",
-    "transitionend",
-    "transitionrun",
-    "transitioncancel",
-];
+macro_rules! global_events {
+    ($callback:ident!($($args:tt)*)) => {
+        $callback!($($args)* [
+            "abort", "auxclick", "beforeinput", "beforetoggle", "blur", "cancel", "canplay", "canplaythrough",
+            "change", "click", "close", "contextlost", "contextmenu", "contextrestored", "copy", "cuechange", "cut",
+            "dblclick", "drag", "dragend", "dragenter", "dragleave", "dragover", "dragstart", "drop",
+            "durationchange", "emptied", "ended", "error", "focus", "formdata", "input", "invalid", "keydown",
+            "keypress", "keyup", "load", "loadeddata", "loadedmetadata", "loadstart", "mousedown", "mouseenter",
+            "mouseleave", "mousemove", "mouseout", "mouseover", "mouseup", "paste", "pause", "play", "playing",
+            "progress", "ratechange", "reset", "resize", "scroll", "scrollend", "securitypolicyviolation", "seeked",
+            "seeking", "select", "selectionchange", "selectstart", "slotchange", "stalled", "submit", "suspend",
+            "timeupdate", "toggle", "volumechange", "waiting", "wheel", "pointerdown", "pointerup", "pointermove",
+            "pointerover", "pointerout", "pointerenter", "pointerleave", "pointercancel", "gotpointercapture",
+            "lostpointercapture", "animationstart", "animationend", "animationiteration", "animationcancel",
+            "transitionstart", "transitionend", "transitionrun", "transitioncancel"
+        ])
+    };
+}
 
 /// WindowEventHandlers (HTML §8.1.8.2).
-pub(crate) const WINDOW: &[&str] = &[
-    "afterprint",
-    "beforeprint",
-    "beforeunload",
-    "hashchange",
-    "languagechange",
-    "message",
-    "messageerror",
-    "offline",
-    "online",
-    "pagehide",
-    "pagereveal",
-    "pageshow",
-    "pageswap",
-    "popstate",
-    "rejectionhandled",
-    "storage",
-    "unhandledrejection",
-    "unload",
-];
+macro_rules! window_events {
+    ($callback:ident!($($args:tt)*)) => {
+        $callback!($($args)* [
+            "afterprint", "beforeprint", "beforeunload", "hashchange", "languagechange", "message", "messageerror",
+            "offline", "online", "pagehide", "pagereveal", "pageshow", "pageswap", "popstate", "rejectionhandled",
+            "storage", "unhandledrejection", "unload"
+        ])
+    };
+}
 
 /// Document-only handlers.
-pub(crate) const DOCUMENT: &[&str] = &["readystatechange", "visibilitychange"];
+macro_rules! document_events {
+    ($callback:ident!($($args:tt)*)) => {
+        $callback!($($args)* ["readystatechange", "visibilitychange"])
+    };
+}
 
-/// Whether `on<name>` is a known event handler content attribute.
-pub(crate) fn is_handler_attribute(local: &str) -> Option<&'static str> {
-    let ty = local.strip_prefix("on")?;
-    GLOBAL.iter().chain(WINDOW).chain(DOCUMENT).find(|t| t.eq_ignore_ascii_case(ty)).copied()
+macro_rules! event_list {
+    ([$($ty:literal),* $(,)?]) => {
+        &[$($ty),*]
+    };
 }
 
 macro_rules! handler_accessors {
@@ -168,105 +91,14 @@ macro_rules! handler_accessors {
     };
 }
 
-macro_rules! global_list {
-    ($def:expr, $get:expr) => {
-        handler_accessors!(
-            $def,
-            $get,
-            [
-                "abort",
-                "auxclick",
-                "beforeinput",
-                "beforetoggle",
-                "blur",
-                "cancel",
-                "canplay",
-                "canplaythrough",
-                "change",
-                "click",
-                "close",
-                "contextlost",
-                "contextmenu",
-                "contextrestored",
-                "copy",
-                "cuechange",
-                "cut",
-                "dblclick",
-                "drag",
-                "dragend",
-                "dragenter",
-                "dragleave",
-                "dragover",
-                "dragstart",
-                "drop",
-                "durationchange",
-                "emptied",
-                "ended",
-                "error",
-                "focus",
-                "formdata",
-                "input",
-                "invalid",
-                "keydown",
-                "keypress",
-                "keyup",
-                "load",
-                "loadeddata",
-                "loadedmetadata",
-                "loadstart",
-                "mousedown",
-                "mouseenter",
-                "mouseleave",
-                "mousemove",
-                "mouseout",
-                "mouseover",
-                "mouseup",
-                "paste",
-                "pause",
-                "play",
-                "playing",
-                "progress",
-                "ratechange",
-                "reset",
-                "resize",
-                "scroll",
-                "scrollend",
-                "securitypolicyviolation",
-                "seeked",
-                "seeking",
-                "select",
-                "selectionchange",
-                "selectstart",
-                "slotchange",
-                "stalled",
-                "submit",
-                "suspend",
-                "timeupdate",
-                "toggle",
-                "volumechange",
-                "waiting",
-                "wheel",
-                "pointerdown",
-                "pointerup",
-                "pointermove",
-                "pointerover",
-                "pointerout",
-                "pointerenter",
-                "pointerleave",
-                "pointercancel",
-                "gotpointercapture",
-                "lostpointercapture",
-                "animationstart",
-                "animationend",
-                "animationiteration",
-                "animationcancel",
-                "transitionstart",
-                "transitionend",
-                "transitionrun",
-                "transitioncancel",
-            ]
-        );
-    };
+pub(crate) const GLOBAL: &[&str] = global_events!(event_list!());
+pub(crate) const WINDOW: &[&str] = window_events!(event_list!());
+pub(crate) const DOCUMENT: &[&str] = document_events!(event_list!());
+
+/// Whether `on<name>` is a known event handler content attribute.
+pub(crate) fn is_handler_attribute(local: &str) -> Option<&'static str> {
+    let ty = local.strip_prefix("on")?;
+    GLOBAL.iter().chain(WINDOW).chain(DOCUMENT).find(|t| t.eq_ignore_ascii_case(ty)).copied()
 }
 
 /// Elements and Document: GlobalEventHandlers.
@@ -275,7 +107,7 @@ where
     C: JsClass,
     C::Data: HasTarget,
 {
-    global_list!(def, <C::Data as HasTarget>::event_target_data);
+    global_events!(handler_accessors!(def, <C::Data as HasTarget>::event_target_data,));
 }
 
 /// Document-only handlers (plus GlobalEventHandlers via `define_global`).
@@ -284,7 +116,7 @@ where
     C: JsClass,
     C::Data: HasTarget,
 {
-    handler_accessors!(def, <C::Data as HasTarget>::event_target_data, ["readystatechange", "visibilitychange"]);
+    document_events!(handler_accessors!(def, <C::Data as HasTarget>::event_target_data,));
 }
 
 fn window_target<D: WindowHost>(d: &D) -> &EventTargetData {
@@ -297,31 +129,8 @@ where
     W: JsClass,
     W::Data: WindowHost,
 {
-    global_list!(def, window_target::<W::Data>);
-    handler_accessors!(
-        def,
-        window_target::<W::Data>,
-        [
-            "afterprint",
-            "beforeprint",
-            "beforeunload",
-            "hashchange",
-            "languagechange",
-            "message",
-            "messageerror",
-            "offline",
-            "online",
-            "pagehide",
-            "pagereveal",
-            "pageshow",
-            "pageswap",
-            "popstate",
-            "rejectionhandled",
-            "storage",
-            "unhandledrejection",
-            "unload",
-        ]
-    );
+    global_events!(handler_accessors!(def, window_target::<W::Data>,));
+    window_events!(handler_accessors!(def, window_target::<W::Data>,));
 }
 
 /// `setAttribute('on<type>', body)` on an element: compiles and installs the
