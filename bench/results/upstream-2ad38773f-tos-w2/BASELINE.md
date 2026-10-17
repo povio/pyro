@@ -73,7 +73,7 @@ cd ~/lp-bench/tos-$RUN && perl -e 'alarm 900; exec @ARGV' bun install --frozen-l
 git -C ~/lp-bench/tos-$RUN status --porcelain   # empty
 # runner: ~/lp-bench/$RUN/tools/run-smoke.sh $RUN (starts the RSS sampler, then, in the worktree root):
 FE_E2E_POSTGRES_MODE=native FE_E2E_POSTGRES_PORT=5432 POSTGRES_USER=lp_bench \
-POSTGRES_PASSWORD=<redacted> read from ~/lp-bench/pg_lp_bench.pass>' \
+POSTGRES_PASSWORD='<redacted; read from ~/lp-bench/pg_lp_bench.pass>' \
 FE_E2E_RUN_SLUG=$RUN E2E_TEMPLATE_DATABASE=fe_e2e_${RUN//-/_}_template \
 FE_E2E_REUSE_TEMPLATE_DATABASE=0 E2E_DATABASE_SNAPSHOT_RESTORE_WITH_DOCKER=0 \
 E2E_ROUTING_ENGINE=lightpanda E2E_ROUTING_REPORT=$HOME/lp-bench/$RUN/lightpanda.json \
