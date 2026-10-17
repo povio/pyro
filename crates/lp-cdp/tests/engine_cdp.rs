@@ -1,6 +1,6 @@
 //! CDP over the real engine (lp-browser + lp-js on JavaScriptCore), driven
-//! in-process with the message sequence Playwright 1.59 uses. Only
-//! about:blank can load until document loading is integrated.
+//! in-process with the message sequence Playwright 1.59 uses, including
+//! HTTP/data navigation, Network/Fetch and per-context storage.
 
 use std::time::{Duration, Instant};
 
@@ -29,8 +29,16 @@ fn decode(bytes: &[u8]) -> Value {
 
 impl Harness {
     fn new() -> Harness {
+        Self::with_budget(None)
+    }
+
+    fn with_budget(budget: Option<lp_cdp::network_protocol::BodyBudget>) -> Harness {
         let (out, rx) = Outbox::channel(lp_cdp::outbox::DEFAULT_OUTBOUND_BUDGET);
-        let host = EngineHost::new(out.clone()).expect("JavaScriptCore engine");
+        let host = match budget {
+            Some(budget) => EngineHost::with_body_budget(out.clone(), budget),
+            None => EngineHost::new(out.clone()),
+        }
+        .expect("JavaScriptCore engine");
         let mut h = Harness {
             browser: Browser::new(host),
             out,
@@ -289,7 +297,7 @@ fn navigation_events_contexts_and_failures() {
     assert_eq!(r["error"]["message"], "Could not find object with given id", "handles die with their realm");
 
     let r = h.page("Page.navigate", json!({"url":"http://127.0.0.1:1/"}));
-    assert!(r["result"]["errorText"].as_str().unwrap().contains("ERR_NOT_IMPLEMENTED"), "explicit failure: {r}");
+    assert!(r["result"]["errorText"].as_str().unwrap().contains("ERR_CONNECTION_REFUSED"), "explicit failure: {r}");
     let r = h.page("Runtime.evaluate", json!({"expression":"40 + 2", "returnByValue": true}));
     assert_eq!(r["result"]["result"]["value"], 42, "page still usable after a failed navigation: {r}");
     assert!(r["result"].get("exceptionDetails").is_none(), "{r}");
@@ -298,12 +306,18 @@ fn navigation_events_contexts_and_failures() {
 #[test]
 fn unsupported_commands_fail_explicitly() {
     let mut h = Harness::new();
-    for method in
-        ["DOM.getDocument", "Input.dispatchMouseEvent", "Fetch.enable", "Page.captureScreenshot", "Runtime.addBinding"]
-    {
+    for method in [
+        "DOM.getDocument",
+        "Input.dispatchMouseEvent",
+        "Fetch.getResponseBody",
+        "Page.captureScreenshot",
+        "Runtime.addBinding",
+    ] {
         let r = h.page(method, json!({}));
         assert_eq!(r["error"]["code"], -32000, "{method}: {r}");
     }
+    let r = h.page("Fetch.enable", json!({"patterns":[{"requestStage":"Response"}]}));
+    assert!(r["error"]["message"].as_str().unwrap().contains("not supported"), "{r}");
     let r = h.page("Emulation.setLocaleOverride", json!({"locale":"xx-XX"}));
     assert!(r["error"]["message"].as_str().unwrap().contains("not supported"), "{r}");
 }
@@ -482,4 +496,356 @@ fn window_bounds_round_trip() {
     assert_eq!(w["result"]["bounds"]["width"], 800);
     assert_eq!(w["result"]["bounds"]["height"], 600);
     assert_eq!(w["result"]["bounds"]["left"], 0);
+}
+
+fn wait_for_network_finish(h: &mut Harness, events: &mut Vec<Value>) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !events.iter().any(|e| e["method"] == "Network.loadingFinished") {
+        assert!(Instant::now() < deadline, "missing network finish: {events:#?}");
+        h.browser.host_mut().run_until_work(Some(deadline), || false);
+        h.browser.host_mut().flush();
+        events.extend(h.drain());
+    }
+}
+
+#[test]
+fn network_response_body_and_disable_release_capture() {
+    use lp_cdp::network_protocol::{BodyBudget, BodyLimits};
+    let budget = BodyBudget::new(BodyLimits { total: 1024, per_body: 1024 });
+    let mut h = Harness::with_budget(Some(budget.clone()));
+    assert_eq!(h.page("Network.enable", json!({}))["result"], json!({}));
+    let mut events = h.page_with_events("Page.navigate", json!({"url":"data:text/html,hello"}));
+    wait_for_network_finish(&mut h, &mut events);
+    let request = events.iter().find(|e| e["method"] == "Network.requestWillBeSent").unwrap();
+    let id = request["params"]["requestId"].clone();
+    assert_eq!(request["params"]["frameId"], h.frame_id);
+    assert_eq!(request["params"]["requestId"], request["params"]["loaderId"]);
+    let response = events.iter().find(|e| e["method"] == "Network.responseReceived").unwrap();
+    assert_eq!(response["params"]["requestId"], id);
+    assert_eq!(response["params"]["response"]["status"], 200);
+    assert_eq!(
+        h.page("Network.getResponseBody", json!({"requestId":id}))["result"],
+        json!({"body":"hello","base64Encoded":false})
+    );
+    assert_eq!(budget.used(), 5);
+    assert_eq!(h.page("Network.disable", json!({}))["result"], json!({}));
+    assert_eq!(budget.used(), 0);
+    assert!(h.page("Network.getResponseBody", json!({"requestId":id}))["error"].is_object());
+    let events = h.page_with_events("Page.navigate", json!({"url":"data:text/html,uncaptured"}));
+    assert!(!events.iter().any(|e| e["method"].as_str().is_some_and(|m| m.starts_with("Network."))));
+    assert_eq!(budget.used(), 0);
+}
+
+#[test]
+fn network_events_only_reach_enabled_sessions_and_close_releases_body() {
+    use lp_cdp::network_protocol::{BodyBudget, BodyLimits};
+    let budget = BodyBudget::new(BodyLimits { total: 1024, per_body: 1024 });
+    let mut h = Harness::with_budget(Some(budget.clone()));
+    let target = h.frame_id.clone();
+    let attached = h.call(None, "Target.attachToTarget", json!({"targetId":target,"flatten":true}));
+    let second = attached["result"]["sessionId"].as_str().unwrap().to_owned();
+    h.page("Network.enable", json!({}));
+    let mut events = h.page_with_events("Page.navigate", json!({"url":"data:text/html,body"}));
+    wait_for_network_finish(&mut h, &mut events);
+    for event in events.iter().filter(|e| e["method"].as_str().is_some_and(|m| m.starts_with("Network."))) {
+        assert_eq!(event["sessionId"], h.session);
+        assert_ne!(event["sessionId"], second);
+    }
+    assert_eq!(budget.used(), 4);
+    h.call(None, "Target.closeTarget", json!({"targetId":target}));
+    assert_eq!(budget.used(), 0);
+}
+
+#[test]
+fn cdp_contexts_map_to_distinct_browser_network_contexts() {
+    use lp_cdp::target::Host;
+    let (out, _) = Outbox::channel(1024 * 1024);
+    let mut host = EngineHost::new(out).unwrap();
+    let a = host.create_context().unwrap();
+    let b = host.create_context().unwrap();
+    let (pa, _) = host.create_page(a).unwrap();
+    let (pb, _) = host.create_page(b).unwrap();
+    let ca = host.thread.browser.page(lp_browser::PageId(pa as u32)).unwrap().context;
+    let cb = host.thread.browser.page(lp_browser::PageId(pb as u32)).unwrap().context;
+    assert_ne!(ca, cb);
+    assert!(host.thread.browser.context_net(ca).is_some());
+    assert!(host.thread.browser.context_net(cb).is_some());
+    host.dispose_context(a);
+    assert!(host.thread.browser.context_net(ca).is_none());
+    assert!(host.thread.browser.context_net(cb).is_some());
+    host.close_all();
+    assert!(host.thread.browser.context_net(cb).is_none());
+}
+
+#[test]
+fn network_http_redirect_response_and_body() {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let server = std::thread::spawn(move || {
+        for index in 0..2 {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let mut stream = loop {
+                match listener.accept() {
+                    Ok((stream, _)) => break stream,
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(Instant::now() < deadline, "request did not arrive");
+                        std::thread::sleep(Duration::from_millis(1));
+                    }
+                    Err(e) => panic!("{e}"),
+                }
+            };
+            stream.set_nonblocking(false).unwrap();
+            stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+            let mut request = Vec::new();
+            let mut chunk = [0; 1024];
+            while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                let n = stream.read(&mut chunk).unwrap();
+                assert!(n > 0 && request.len() + n <= 8192);
+                request.extend_from_slice(&chunk[..n]);
+            }
+            let response: &[u8] = if index == 0 {
+                b"HTTP/1.1 302 Found\r\nLocation: /final\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            } else {
+                b"HTTP/1.1 201 Created\r\nContent-Type: text/html\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello"
+            };
+            stream.write_all(response).unwrap();
+        }
+    });
+    let mut h = Harness::new();
+    h.page("Network.enable", json!({}));
+    let mut events = h.page_with_events("Page.navigate", json!({"url":format!("http://{address}/redirect")}));
+    wait_for_network_finish(&mut h, &mut events);
+    let requests: Vec<_> = events.iter().filter(|e| e["method"] == "Network.requestWillBeSent").collect();
+    assert_eq!(requests.len(), 2, "{events:#?}");
+    assert_eq!(requests[0]["params"]["requestId"], requests[1]["params"]["requestId"]);
+    assert_eq!(requests[1]["params"]["redirectResponse"]["status"], 302);
+    let response = events.iter().find(|e| e["method"] == "Network.responseReceived").unwrap();
+    assert_eq!(response["params"]["response"]["status"], 201);
+    assert_eq!(response["params"]["response"]["url"], format!("http://{address}/final"));
+    let id = response["params"]["requestId"].clone();
+    assert_eq!(
+        h.page("Network.getResponseBody", json!({"requestId":id}))["result"],
+        json!({"body":"hello","base64Encoded":false})
+    );
+    server.join().unwrap();
+}
+
+fn until_event(h: &mut Harness, method: &str) -> Vec<Value> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut events = Vec::new();
+    loop {
+        events.extend(h.drain());
+        if events.iter().any(|e| e["method"] == method) {
+            return events;
+        }
+        assert!(Instant::now() < deadline, "missing {method}: {events:#?}");
+        h.browser.host_mut().run_until_work(Some(deadline), || false);
+        h.browser.host_mut().flush();
+    }
+}
+
+#[test]
+fn invalid_fetch_decision_keeps_request_paused_for_valid_retry() {
+    let mut h = Harness::new();
+    h.page("Network.enable", json!({}));
+    h.page("Fetch.enable", json!({"patterns":[{"urlPattern":"*"}]}));
+    let session = h.session.clone();
+    h.send(Some(&session), "Page.navigate", json!({"url":"http://127.0.0.1:1/fulfilled"}));
+    let events = until_event(&mut h, "Fetch.requestPaused");
+    let paused = events.iter().find(|e| e["method"] == "Fetch.requestPaused").unwrap();
+    let id = paused["params"]["requestId"].clone();
+    let request = events.iter().find(|e| e["method"] == "Network.requestWillBeSent").unwrap();
+    assert_eq!(paused["params"]["networkId"], request["params"]["requestId"]);
+    assert!(h.page("Fetch.fulfillRequest", json!({"requestId":id,"responseCode":200,"body":"=="}))["error"].is_object());
+    assert!(h.page("Fetch.fulfillRequest", json!({"requestId":id,"responseCode":200,"binaryResponseHeaders":"=="}))
+        ["error"]
+        .is_object());
+    assert!(h.page(
+        "Fetch.fulfillRequest",
+        json!({"requestId":id,"responseCode":200,"responseHeaders":[],"binaryResponseHeaders":""})
+    )["error"]
+        .is_object());
+    let mut events = h.page_with_events(
+        "Fetch.fulfillRequest",
+        json!({"requestId":id,"responseCode":200,"binaryResponseHeaders":"Y29udGVudC10eXBlOiB0ZXh0L2h0bWwAeC1yb3V0ZTogYmluYXJ5AHgtcm91dGU6IGFnYWluAA==","body":"aGk="}),
+    );
+    assert!(events.iter().any(|e| e["result"] == json!({})), "fulfill accepted: {events:#?}");
+    wait_for_network_finish(&mut h, &mut events);
+    let response = events.iter().find(|e| e["method"] == "Network.responseReceived").unwrap();
+    assert_eq!(response["params"]["response"]["headers"]["x-route"], "binary\nagain");
+    let request_id = paused["params"]["networkId"].clone();
+    assert_eq!(h.page("Network.getResponseBody", json!({"requestId":request_id}))["result"]["body"], "hi");
+    assert!(h.page("Fetch.continueRequest", json!({"requestId":id}))["error"].is_object(), "decision cannot be reused");
+}
+
+#[test]
+fn disabling_fetch_resumes_a_paused_navigation() {
+    let mut h = Harness::new();
+    h.page("Fetch.enable", json!({}));
+    let session = h.session.clone();
+    let navigation = h.send(Some(&session), "Page.navigate", json!({"url":"http://127.0.0.1:1/continued"}));
+    let paused = until_event(&mut h, "Fetch.requestPaused");
+    let id = paused.iter().find(|e| e["method"] == "Fetch.requestPaused").unwrap()["params"]["requestId"].clone();
+    let mut events = h.page_with_events("Fetch.disable", json!({}));
+    if !events.iter().any(|e| e["id"] == navigation) {
+        events.extend(h.until_response(navigation));
+    }
+    let response = events.iter().find(|e| e["id"] == navigation).unwrap();
+    assert!(
+        response["result"]["errorText"].as_str().unwrap().contains("ERR_CONNECTION_REFUSED"),
+        "request resumed: {response}"
+    );
+    assert!(h.page("Fetch.continueRequest", json!({"requestId":id}))["error"].is_object());
+}
+
+#[test]
+fn detaching_fetch_session_resumes_navigation_for_other_session() {
+    let mut h = Harness::new();
+    let target = h.frame_id.clone();
+    let attached = h.call(None, "Target.attachToTarget", json!({"targetId":target,"flatten":true}));
+    let intercepting = attached["result"]["sessionId"].as_str().unwrap().to_owned();
+    h.call(Some(&intercepting), "Fetch.enable", json!({}));
+    let session = h.session.clone();
+    let navigation = h.send(Some(&session), "Page.navigate", json!({"url":"http://127.0.0.1:1/detached"}));
+    let events = until_event(&mut h, "Fetch.requestPaused");
+    assert_eq!(events.iter().find(|e| e["method"] == "Fetch.requestPaused").unwrap()["sessionId"], intercepting);
+    let detach = h.send(None, "Target.detachFromTarget", json!({"sessionId":intercepting}));
+    let mut events = h.until_response(detach);
+    if !events.iter().any(|e| e["id"] == navigation) {
+        events.extend(h.until_response(navigation));
+    }
+    let response = events.iter().find(|e| e["id"] == navigation).unwrap();
+    assert!(
+        response["result"]["errorText"].as_str().unwrap().contains("ERR_CONNECTION_REFUSED"),
+        "request resumed: {response}"
+    );
+}
+
+#[test]
+fn storage_cookies_are_isolated_and_default_context_is_distinct() {
+    let mut h = Harness::new();
+    let a = h.call(None, "Target.createBrowserContext", json!({}))["result"]["browserContextId"].clone();
+    let b = h.call(None, "Target.createBrowserContext", json!({}))["result"]["browserContextId"].clone();
+    assert_eq!(
+        h.call(
+            None,
+            "Storage.setCookies",
+            json!({"browserContextId":a,"cookies":[
+                {"name":"a","value":"1","url":"https://example.com/path","expires":-1,"httpOnly":true,"sameSite":"Lax"}
+            ]})
+        )["result"],
+        json!({})
+    );
+    let cookies = h.call(None, "Storage.getCookies", json!({"browserContextId":a}))["result"]["cookies"].clone();
+    assert_eq!(cookies[0]["name"], "a");
+    assert_eq!(cookies[0]["domain"], "example.com");
+    assert_eq!(cookies[0]["secure"], true);
+    assert_eq!(cookies[0]["httpOnly"], true);
+    assert_eq!(cookies[0]["session"], true);
+    assert_eq!(cookies[0]["expires"], -1.0);
+    assert_eq!(h.call(None, "Storage.getCookies", json!({"browserContextId":b}))["result"]["cookies"], json!([]));
+    assert_eq!(h.call(None, "Storage.getCookies", json!({}))["result"]["cookies"], json!([]));
+    h.call(None, "Storage.setCookies", json!({"cookies":[{"name":"default","value":"x","domain":".example.com"}]}));
+    assert_eq!(h.call(None, "Storage.getCookies", json!({}))["result"]["cookies"][0]["domain"], ".example.com");
+    h.call(None, "Storage.clearCookies", json!({"browserContextId":a}));
+    assert_eq!(h.call(None, "Storage.getCookies", json!({"browserContextId":a}))["result"]["cookies"], json!([]));
+    assert_eq!(h.call(None, "Storage.getCookies", json!({}))["result"]["cookies"][0]["name"], "default");
+    h.call(None, "Target.disposeBrowserContext", json!({"browserContextId":a}));
+    assert!(h.call(None, "Storage.getCookies", json!({"browserContextId":a}))["error"].is_object());
+}
+
+#[test]
+fn storage_invalid_batch_is_atomic_and_partitioned_cookies_fail_explicitly() {
+    let mut h = Harness::new();
+    for bad in [
+        json!({"name":"bad;name","value":"x","domain":"example.com"}),
+        json!({"name":"x","value":"x","domain":"example.com","path":"relative"}),
+        json!({"name":"x","value":"x","domain":"example.com","partitionKey":{"topLevelSite":"https://example.com","hasCrossSiteAncestor":false}}),
+        json!({"name":"x","value":"x","domain":"example.com","sameSite":"invalid"}),
+    ] {
+        let result = h.call(
+            None,
+            "Storage.setCookies",
+            json!({"cookies":[
+                {"name":"valid","value":"x","domain":"example.com"},bad
+            ]}),
+        );
+        assert!(result["error"].is_object(), "{result}");
+        assert_eq!(h.call(None, "Storage.getCookies", json!({}))["result"]["cookies"], json!([]));
+    }
+    assert!(h.call(None, "Storage.getCookies", json!({"browserContextId":4}))["error"].is_object());
+}
+
+#[test]
+fn storage_negative_expiry_is_session_and_zero_expires_deletes() {
+    let mut h = Harness::new();
+    h.call(
+        None,
+        "Storage.setCookies",
+        json!({"cookies":[{"name":"session","value":"x","domain":"example.com","expires":-10}]}),
+    );
+    assert_eq!(h.call(None, "Storage.getCookies", json!({}))["result"]["cookies"][0]["session"], true);
+    h.call(
+        None,
+        "Storage.setCookies",
+        json!({"cookies":[{"name":"session","value":"x","domain":"example.com","expires":0}]}),
+    );
+    assert_eq!(h.call(None, "Storage.getCookies", json!({}))["result"]["cookies"], json!([]));
+}
+
+#[test]
+fn fetch_redirect_issues_a_new_pause_id_and_links_the_previous_hop() {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut stream = loop {
+            match listener.accept() {
+                Ok((stream, _)) => break stream,
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    assert!(Instant::now() < deadline, "intercepted request never continued");
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                Err(e) => panic!("{e}"),
+            }
+        };
+        stream.set_nonblocking(false).unwrap();
+        stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+        let mut request = Vec::new();
+        let mut bytes = [0; 1024];
+        while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+            let n = stream.read(&mut bytes).unwrap();
+            assert!(n > 0 && request.len() + n < 8192);
+            request.extend_from_slice(&bytes[..n]);
+        }
+        stream
+            .write_all(b"HTTP/1.1 302 Found\r\nLocation: /final\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            .unwrap();
+    });
+    let mut h = Harness::new();
+    h.page("Network.enable", json!({}));
+    h.page("Fetch.enable", json!({}));
+    let session = h.session.clone();
+    h.send(Some(&session), "Page.navigate", json!({"url":format!("http://{address}/redirect")}));
+    let events = until_event(&mut h, "Fetch.requestPaused");
+    let first = events.iter().find(|e| e["method"] == "Fetch.requestPaused").unwrap()["params"].clone();
+    h.page("Fetch.continueRequest", json!({"requestId":first["requestId"]}));
+    let events = until_event(&mut h, "Fetch.requestPaused");
+    let second = events.iter().find(|e| e["method"] == "Fetch.requestPaused").unwrap()["params"].clone();
+    server.join().unwrap();
+    assert_ne!(first["requestId"], second["requestId"], "each redirect hop needs its own Fetch id");
+    assert_eq!(second["redirectedRequestId"], first["requestId"]);
+    assert_eq!(second["networkId"], first["networkId"], "Network id spans the redirect chain");
+    assert!(h.page("Fetch.failRequest", json!({"requestId":first["requestId"],"errorReason":"Aborted"}))["error"]
+        .is_object());
+    let mut events = h.page_with_events(
+        "Fetch.fulfillRequest",
+        json!({"requestId":second["requestId"],"responseCode":200,"body":"ZG9uZQ=="}),
+    );
+    wait_for_network_finish(&mut h, &mut events);
+    assert_eq!(h.page("Network.getResponseBody", json!({"requestId":second["networkId"]}))["result"]["body"], "done");
 }

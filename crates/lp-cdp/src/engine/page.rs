@@ -247,6 +247,7 @@ impl EngineHost {
                 if let Some(state) = self.pages.get_mut(&page) {
                     state.navigating = true;
                     state.pending_realms.clear();
+                    state.network.bodies.clear();
                 }
                 for s in &all {
                     if let Some(reason) = reason_name(reason) {

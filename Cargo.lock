@@ -466,6 +466,7 @@ dependencies = [
  "lp-browser",
  "lp-cdp",
  "lp-js",
+ "lp-net",
  "lp-runtime",
 ]
 
@@ -494,16 +495,22 @@ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 name = "lp-browser"
 version = "0.1.0"
 dependencies = [
+ "lp-dom",
  "lp-js",
+ "lp-net",
  "lp-runtime",
+ "url",
 ]
 
 [[package]]
 name = "lp-cdp"
 version = "0.1.0"
 dependencies = [
+ "bytes",
+ "http",
  "lp-browser",
  "lp-js",
+ "lp-net",
  "lp-runtime",
  "ryu-js",
  "serde",

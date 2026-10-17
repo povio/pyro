@@ -11,7 +11,7 @@
 //!
 //! `Target.targetCreated/Destroyed` are only sent after `Target.setDiscoverTargets`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -104,6 +104,8 @@ struct TargetEntry {
 
 struct SessionEntry {
     target_id: String,
+    parent: Option<String>,
+    auto_attached: bool,
 }
 
 /// Per-connection browser protocol state.
@@ -114,6 +116,7 @@ pub struct Browser<H: Host> {
     contexts: Vec<ContextEntry>,
     targets: Vec<TargetEntry>,
     sessions: HashMap<String, SessionEntry>,
+    browser_sessions: HashSet<String>,
     next_id: u64,
 }
 
@@ -140,6 +143,7 @@ impl<H: Host> Browser<H> {
             contexts: Vec::new(),
             targets: Vec::new(),
             sessions: HashMap::new(),
+            browser_sessions: HashSet::new(),
             next_id: 1,
         }
     }
@@ -175,7 +179,17 @@ impl<H: Host> Browser<H> {
 
     fn dispatch(&mut self, cmd: &Command<'_>, out: &mut dyn Sink) -> CdpResult<()> {
         if let Some(session_id) = cmd.session_id() {
-            return self.dispatch_session(session_id, cmd, out);
+            if !self.browser_sessions.contains(session_id) {
+                return self.dispatch_session(session_id, cmd, out);
+            }
+            // Browser sessions share context/target identity, but automatic
+            // discovery/attachment settings are not implemented per session.
+            if matches!(
+                cmd.method.as_ref(),
+                "Target.setAutoAttach" | "Target.setDiscoverTargets" | "Target.attachToBrowserTarget"
+            ) {
+                return Err(CdpError::unsupported(&cmd.method));
+            }
         }
         let (domain, action) = cmd.domain_and_action().ok_or_else(|| CdpError::method_not_found(&cmd.method))?;
         match (domain, action) {
@@ -196,7 +210,11 @@ impl<H: Host> Browser<H> {
                     user_agent: USER_AGENT,
                     js_version: "",
                 };
-                out.send(msg::result_frame(cmd.id, &version, None));
+                out.send(msg::result_frame(cmd.id, &version, cmd.session_id()));
+                Ok(())
+            }
+            ("Runtime", "runIfWaitingForDebugger") if cmd.session_id().is_some() => {
+                out.send(msg::result_frame(cmd.id, &Empty {}, cmd.session_id()));
                 Ok(())
             }
             ("Target", _) => self.target_command(action, cmd, out),
@@ -206,9 +224,21 @@ impl<H: Host> Browser<H> {
                 struct ContextParam {
                     browser_context_id: Option<String>,
                 }
-                let context = match cmd.raw_params().and_then(|p| serde_json::from_str::<ContextParam>(p.get()).ok()) {
-                    Some(ContextParam { browser_context_id: Some(id) }) => Some(self.context(&id)?.key),
-                    _ => None,
+                let context = if matches!(
+                    cmd.method.as_ref(),
+                    "Storage.getCookies" | "Storage.setCookies" | "Storage.clearCookies"
+                ) {
+                    let params: ContextParam = cmd.params()?;
+                    let id = match params.browser_context_id {
+                        Some(id) => id,
+                        None => self.default_context()?,
+                    };
+                    Some(self.context(&id)?.key)
+                } else {
+                    match cmd.raw_params().and_then(|p| serde_json::from_str::<ContextParam>(p.get()).ok()) {
+                        Some(ContextParam { browser_context_id: Some(id) }) => Some(self.context(&id)?.key),
+                        _ => None,
+                    }
                 };
                 self.host.browser_command(cmd, context, out);
                 Ok(())
@@ -278,6 +308,14 @@ impl<H: Host> Browser<H> {
     fn target_command(&mut self, action: &str, cmd: &Command<'_>, out: &mut dyn Sink) -> CdpResult<()> {
         let id = cmd.id;
         match action {
+            "attachToBrowserTarget" => {
+                if self.sessions.len() + self.browser_sessions.len() >= MAX_SESSIONS {
+                    return Err(CdpError::server("Too many sessions"));
+                }
+                let session_id = self.mint("");
+                self.browser_sessions.insert(session_id.clone());
+                out.send(msg::result_frame(id, &serde_json::json!({ "sessionId": session_id }), None));
+            }
             "setAutoAttach" => {
                 let params: AutoAttachParams = cmd.params()?;
                 if !params.flatten {
@@ -285,19 +323,20 @@ impl<H: Host> Browser<H> {
                 }
                 // Only page targets exist; a filter excluding pages means no auto-attach.
                 self.auto_attach = params.auto_attach && includes_pages(params.filter.as_deref());
-                out.send(msg::result_frame(id, &Empty {}, None));
+                out.send(msg::result_frame(id, &Empty {}, cmd.session_id()));
                 if self.auto_attach {
                     let unattached: Vec<String> = self
                         .targets
                         .iter()
-                        .filter(|t| !self.sessions.values().any(|s| s.target_id == t.id))
+                        .filter(|t| !self.sessions.values().any(|s| s.target_id == t.id && s.parent.is_none()))
                         .map(|t| t.id.clone())
                         .collect();
                     for target_id in unattached {
-                        self.attach(&target_id, out)?;
+                        self.attach(&target_id, None, true, out)?;
                     }
                 } else {
-                    let sessions: Vec<String> = self.sessions.keys().cloned().collect();
+                    let sessions: Vec<String> =
+                        self.sessions.iter().filter(|(_, s)| s.auto_attached).map(|(id, _)| id.clone()).collect();
                     for session_id in sessions {
                         self.detach_session(&session_id, out);
                     }
@@ -311,7 +350,7 @@ impl<H: Host> Browser<H> {
                 }
                 let p = cmd.params::<P>()?;
                 self.discover = p.discover && includes_pages(p.filter.as_deref());
-                out.send(msg::result_frame(id, &Empty {}, None));
+                out.send(msg::result_frame(id, &Empty {}, cmd.session_id()));
                 if self.discover {
                     for i in 0..self.targets.len() {
                         self.send_target_created(i, out);
@@ -337,7 +376,7 @@ impl<H: Host> Browser<H> {
                         serde_json::to_value(self.info(target, &url, &title, attached)).expect("serializable")
                     }
                 };
-                out.send(msg::result_frame(id, &serde_json::json!({ "targetInfo": info }), None));
+                out.send(msg::result_frame(id, &serde_json::json!({ "targetInfo": info }), cmd.session_id()));
             }
             "getTargets" => {
                 #[derive(Deserialize)]
@@ -358,11 +397,11 @@ impl<H: Host> Browser<H> {
                         serde_json::to_value(self.info(t, &url, &title, attached)).expect("serializable")
                     })
                     .collect();
-                out.send(msg::result_frame(id, &serde_json::json!({ "targetInfos": infos }), None));
+                out.send(msg::result_frame(id, &serde_json::json!({ "targetInfos": infos }), cmd.session_id()));
             }
             "getBrowserContexts" => {
                 let ids: Vec<&str> = self.contexts.iter().filter(|c| !c.is_default).map(|c| c.id.as_str()).collect();
-                out.send(msg::result_frame(id, &serde_json::json!({ "browserContextIds": ids }), None));
+                out.send(msg::result_frame(id, &serde_json::json!({ "browserContextIds": ids }), cmd.session_id()));
             }
             "createBrowserContext" => {
                 // disposeOnDetach is implied: every context of a connection
@@ -377,7 +416,11 @@ impl<H: Host> Browser<H> {
                     return Err(CdpError::unsupported("Target.createBrowserContext proxyServer"));
                 }
                 let context_id = self.new_context(false)?;
-                out.send(msg::result_frame(id, &serde_json::json!({ "browserContextId": context_id }), None));
+                out.send(msg::result_frame(
+                    id,
+                    &serde_json::json!({ "browserContextId": context_id }),
+                    cmd.session_id(),
+                ));
             }
             "disposeBrowserContext" => {
                 #[derive(Deserialize)]
@@ -390,7 +433,7 @@ impl<H: Host> Browser<H> {
                     return Err(CdpError::server("Cannot dispose the default browser context"));
                 }
                 self.dispose_context(&context_id, out);
-                out.send(msg::result_frame(id, &Empty {}, None));
+                out.send(msg::result_frame(id, &Empty {}, cmd.session_id()));
             }
             "createTarget" => {
                 #[derive(Deserialize)]
@@ -412,7 +455,7 @@ impl<H: Host> Browser<H> {
                 // Preflight every budget the creation needs, so no failure can
                 // happen after the page exists (attach is the only fallible step
                 // left besides navigation, which rolls back below).
-                if self.auto_attach && self.sessions.len() >= MAX_SESSIONS {
+                if self.auto_attach && self.sessions.len() + self.browser_sessions.len() >= MAX_SESSIONS {
                     return Err(CdpError::server("Too many sessions"));
                 }
                 let (page, target_id) = self.host.create_page(context_key)?;
@@ -423,7 +466,7 @@ impl<H: Host> Browser<H> {
                 // attachedToTarget must precede the result: Playwright looks the
                 // page up by targetId as soon as createTarget returns.
                 if self.auto_attach {
-                    self.attach(&target_id, out)?;
+                    self.attach(&target_id, None, true, out)?;
                 }
                 if !params.url.is_empty() && params.url != "about:blank" {
                     if let Err(error) = self.host.navigate(page, &params.url) {
@@ -432,7 +475,7 @@ impl<H: Host> Browser<H> {
                         return Err(error);
                     }
                 }
-                out.send(msg::result_frame(id, &serde_json::json!({ "targetId": target_id }), None));
+                out.send(msg::result_frame(id, &serde_json::json!({ "targetId": target_id }), cmd.session_id()));
             }
             "closeTarget" => {
                 #[derive(Deserialize)]
@@ -443,7 +486,7 @@ impl<H: Host> Browser<H> {
                 let target_id = cmd.params::<P>()?.target_id;
                 self.target(&target_id)?;
                 self.close_target(&target_id, out);
-                out.send(msg::result_frame(id, &serde_json::json!({ "success": true }), None));
+                out.send(msg::result_frame(id, &serde_json::json!({ "success": true }), cmd.session_id()));
             }
             "attachToTarget" => {
                 #[derive(Deserialize)]
@@ -458,8 +501,8 @@ impl<H: Host> Browser<H> {
                     return Err(CdpError::server("Only flatten mode is supported"));
                 }
                 self.target(&params.target_id)?;
-                let session_id = self.attach(&params.target_id, out)?;
-                out.send(msg::result_frame(id, &serde_json::json!({ "sessionId": session_id }), None));
+                let session_id = self.attach(&params.target_id, cmd.session_id(), false, out)?;
+                out.send(msg::result_frame(id, &serde_json::json!({ "sessionId": session_id }), cmd.session_id()));
             }
             "detachFromTarget" => {
                 #[derive(Deserialize)]
@@ -474,18 +517,25 @@ impl<H: Host> Browser<H> {
                     (None, Some(t)) => self
                         .sessions
                         .iter()
-                        .find(|(_, s)| s.target_id == t)
+                        .find(|(_, s)| {
+                            s.target_id == t && (cmd.session_id().is_none() || s.parent.as_deref() == cmd.session_id())
+                        })
                         .map(|(k, _)| k.clone())
                         .ok_or_else(|| CdpError::invalid_params("No session for the given target"))?,
                     (None, None) => {
                         return Err(CdpError::invalid_params("Either sessionId or targetId must be specified"))
                     }
                 };
-                if !self.sessions.contains_key(&session_id) {
+                if cmd.session_id().is_some()
+                    && self.sessions.get(&session_id).is_none_or(|s| s.parent.as_deref() != cmd.session_id())
+                {
+                    return Err(CdpError::new(-32001, "Session is not attached to this browser session."));
+                }
+                if !self.sessions.contains_key(&session_id) && !self.browser_sessions.contains(&session_id) {
                     return Err(CdpError::new(-32001, "Session with given id not found."));
                 }
                 self.detach_session(&session_id, out);
-                out.send(msg::result_frame(id, &Empty {}, None));
+                out.send(msg::result_frame(id, &Empty {}, cmd.session_id()));
             }
             "activateTarget" => {
                 // Pages are never hidden: activation only needs a valid target.
@@ -495,7 +545,7 @@ impl<H: Host> Browser<H> {
                     target_id: String,
                 }
                 self.target(&cmd.params::<P>()?.target_id)?;
-                out.send(msg::result_frame(id, &Empty {}, None));
+                out.send(msg::result_frame(id, &Empty {}, cmd.session_id()));
             }
             _ => return Err(CdpError::method_not_found(&cmd.method)),
         }
@@ -521,12 +571,21 @@ impl<H: Host> Browser<H> {
         Ok(id)
     }
 
-    fn attach(&mut self, target_id: &str, out: &mut dyn Sink) -> CdpResult<String> {
-        if self.sessions.len() >= MAX_SESSIONS {
+    fn attach(
+        &mut self,
+        target_id: &str,
+        parent: Option<&str>,
+        auto_attached: bool,
+        out: &mut dyn Sink,
+    ) -> CdpResult<String> {
+        if self.sessions.len() + self.browser_sessions.len() >= MAX_SESSIONS {
             return Err(CdpError::server("Too many sessions"));
         }
         let session_id = self.mint("");
-        self.sessions.insert(session_id.clone(), SessionEntry { target_id: target_id.to_owned() });
+        self.sessions.insert(
+            session_id.clone(),
+            SessionEntry { target_id: target_id.to_owned(), parent: parent.map(str::to_owned), auto_attached },
+        );
         let target = self.target(target_id)?;
         let page = target.page;
         let url = self.host.page_url(page);
@@ -544,12 +603,25 @@ impl<H: Host> Browser<H> {
             target_info: self.info(target, &url, &title, true),
             waiting_for_debugger: false,
         };
-        out.send(msg::event_frame("Target.attachedToTarget", &event, None));
+        out.send(msg::event_frame("Target.attachedToTarget", &event, parent));
         self.host.session_attached(page, &session_id);
         Ok(session_id)
     }
 
     fn detach_session(&mut self, session_id: &str, out: &mut dyn Sink) {
+        if self.browser_sessions.remove(session_id) {
+            let children: Vec<_> = self
+                .sessions
+                .iter()
+                .filter(|(_, s)| s.parent.as_deref() == Some(session_id))
+                .map(|(id, _)| id.clone())
+                .collect();
+            for child in children {
+                self.detach_session(&child, out);
+            }
+            out.send(msg::event_frame("Target.detachedFromTarget", &serde_json::json!({"sessionId":session_id}), None));
+            return;
+        }
         let Some(session) = self.sessions.remove(session_id) else { return };
         if let Some(target) = self.targets.iter().find(|t| t.id == session.target_id) {
             self.host.session_detached(target.page, session_id);
@@ -557,7 +629,7 @@ impl<H: Host> Browser<H> {
         out.send(msg::event_frame(
             "Target.detachedFromTarget",
             &serde_json::json!({ "sessionId": session_id, "targetId": session.target_id }),
-            None,
+            session.parent.as_deref(),
         ));
     }
 
@@ -572,7 +644,7 @@ impl<H: Host> Browser<H> {
                 out.send(msg::event_frame(
                     "Target.detachedFromTarget",
                     &serde_json::json!({ "sessionId": session_id, "targetId": target_id }),
-                    None,
+                    session.parent.as_deref(),
                 ));
             }
         }
@@ -621,6 +693,7 @@ impl<H: Host> Browser<H> {
         impl Sink for Discard {
             fn send(&mut self, _frame: OutFrame) {}
         }
+        self.browser_sessions.clear();
         let ids: Vec<String> = self.contexts.iter().map(|c| c.id.clone()).collect();
         for id in ids {
             self.dispose_context(&id, &mut Discard);
