@@ -1,0 +1,448 @@
+{
+  "source": "idle/smoke-proxy-1.cdp.jsonl",
+  "records": 218,
+  "wsConnections": 1,
+  "http": [
+    "GET /json/version -> 200"
+  ],
+  "closes": [
+    {
+      "t": 242,
+      "conn": 1,
+      "kind": "ws-close",
+      "by": "client",
+      "code": 1005,
+      "reason": "",
+      "unanswered": []
+    }
+  ],
+  "totals": {
+    "commands": 91,
+    "errors": 0,
+    "events": 33
+  },
+  "commands": [
+    {
+      "method": "Runtime.callFunctionOn",
+      "count": 26,
+      "withSession": 26,
+      "withoutSession": 0,
+      "ok": 26,
+      "error": 0,
+      "errors": []
+    },
+    {
+      "method": "Runtime.releaseObject",
+      "count": 8,
+      "withSession": 8,
+      "withoutSession": 0,
+      "ok": 8,
+      "error": 0,
+      "errors": []
+    },
+    {
+      "method": "Input.dispatchMouseEvent",
+      "count": 6,
+      "withSession": 6,
+      "withoutSession": 0,
+      "ok": 6,
+      "error": 0,
+      "errors": []
+    },
+    {
+      "method": "Page.enable",
+      "count": 4,
+      "withSession": 4,
+      "withoutSession": 0,
+      "ok": 4,
+      "error": 0,
+      "errors": []
+    },
+    {
+      "method": "Runtime.evaluate",
+      "count": 3,
+      "withSession": 3,
+      "withoutSession": 0,
+      "ok": 3,
+      "error": 0,
+      "errors": []
+    },
+    {
+      "method": "Target.setAutoAttach",
+      "count": 3,
+      "withSession": 2,
+      "withoutSession": 1,
+      "ok": 3,
+      "error": 0,
+      "errors": []
+    },
+    {
+      "method": "Browser.setDownloadBehavior",
+      "count": 2,
+      "withSession": 0,
+      "withoutSession": 2,
+      "ok": 2,
+      "error": 0,
+      "errors": []
+    },
+    {
+      "method": "DOM.getContentQuads",
+      "count": 2,
+      "withSession": 2,
+      "withoutSession": 0,
+      "ok": 2,
+      "error": 0,
+      "errors": []
+    },
+    {
+      "method": "DOM.scrollIntoViewIfNeeded",
+      "count": 2,
+      "withSession": 2,
+      "withoutSession": 0,
+      "ok": 2,
+      "error": 0,
+      "errors": []
+    },
+    {
+      "method": "Emulation.setEmulatedMedia",
+      "count": 2,
+      "withSession": 2,
+      "withoutSession": 0,
+      "ok": 2,
+      "error": 0,
+      "errors": []
+    },
+    {
+      "method": "Emulation.setFocusEmulationEnabled",
+      "count": 2,
+      "withSession": 2,
+      "withoutSession": 0,
+      "ok": 2,
+      "error": 0,
+      "errors": []
+    },
+    {
+      "method": "Log.enable",
+      "count": 2,
+      "withSession": 2,
+      "withoutSession": 0,
+      "ok": 2,
+      "error": 0,
+      "errors": []
+    },
+    {
+      "method": "Network.enable",
+      "count": 2,
+      "withSession": 2,
+      "withoutSession": 0,
+      "ok": 2,
+      "error": 0,
+      "errors": []
+    },
+    {
+      "method": "Page.addScriptToEvaluateOnNewDocument",
+      "count": 2,
+      "withSession": 2,
+      "withoutSession": 0,
+      "ok": 2,
+      "error": 0,
+      "errors": []
+    },
+    {
+      "method": "Page.createIsolatedWorld",
+      "count": 2,
+      "withSession": 2,
+      "withoutSession": 0,
+      "ok": 2,
+      "error": 0,
+      "errors": []
+    },
+    {
+      "method": "Page.getFrameTree",
+      "count": 2,
+      "withSession": 2,
+      "withoutSession": 0,
+      "ok": 2,
+      "error": 0,
+      "errors": []
+    },
+    {
+      "method": "Page.setLifecycleEventsEnabled",
+      "count": 2,
+      "withSession": 2,
+      "withoutSession": 0,
+      "ok": 2,
+      "error": 0,
+      "errors": []
+    },
+    {
+      "method": "Runtime.enable",
+      "count": 2,
+      "withSession": 2,
+      "withoutSession": 0,
+      "ok": 2,
+      "error": 0,
+      "errors": []
+    },
+    {
+      "method": "Runtime.runIfWaitingForDebugger",
+      "count": 2,
+      "withSession": 2,
+      "withoutSession": 0,
+      "ok": 2,
+      "error": 0,
+      "errors": []
+    },
+    {
+      "method": "Browser.getVersion",
+      "count": 1,
+      "withSession": 0,
+      "withoutSession": 1,
+      "ok": 1,
+      "error": 0,
+      "errors": []
+    },
+    {
+      "method": "Browser.getWindowForTarget",
+      "count": 1,
+      "withSession": 1,
+      "withoutSession": 0,
+      "ok": 1,
+      "error": 0,
+      "errors": []
+    },
+    {
+      "method": "Browser.setWindowBounds",
+      "count": 1,
+      "withSession": 1,
+      "withoutSession": 0,
+      "ok": 1,
+      "error": 0,
+      "errors": []
+    },
+    {
+      "method": "Emulation.setDeviceMetricsOverride",
+      "count": 1,
+      "withSession": 1,
+      "withoutSession": 0,
+      "ok": 1,
+      "error": 0,
+      "errors": []
+    },
+    {
+      "method": "Fetch.enable",
+      "count": 1,
+      "withSession": 1,
+      "withoutSession": 0,
+      "ok": 1,
+      "error": 0,
+      "errors": []
+    },
+    {
+      "method": "Fetch.fulfillRequest",
+      "count": 1,
+      "withSession": 1,
+      "withoutSession": 0,
+      "ok": 1,
+      "error": 0,
+      "errors": []
+    },
+    {
+      "method": "Input.insertText",
+      "count": 1,
+      "withSession": 1,
+      "withoutSession": 0,
+      "ok": 1,
+      "error": 0,
+      "errors": []
+    },
+    {
+      "method": "Network.getResponseBody",
+      "count": 1,
+      "withSession": 1,
+      "withoutSession": 0,
+      "ok": 1,
+      "error": 0,
+      "errors": []
+    },
+    {
+      "method": "Network.setCacheDisabled",
+      "count": 1,
+      "withSession": 1,
+      "withoutSession": 0,
+      "ok": 1,
+      "error": 0,
+      "errors": []
+    },
+    {
+      "method": "Page.navigate",
+      "count": 1,
+      "withSession": 1,
+      "withoutSession": 0,
+      "ok": 1,
+      "error": 0,
+      "errors": []
+    },
+    {
+      "method": "Target.closeTarget",
+      "count": 1,
+      "withSession": 0,
+      "withoutSession": 1,
+      "ok": 1,
+      "error": 0,
+      "errors": []
+    },
+    {
+      "method": "Target.createBrowserContext",
+      "count": 1,
+      "withSession": 0,
+      "withoutSession": 1,
+      "ok": 1,
+      "error": 0,
+      "errors": []
+    },
+    {
+      "method": "Target.createTarget",
+      "count": 1,
+      "withSession": 0,
+      "withoutSession": 1,
+      "ok": 1,
+      "error": 0,
+      "errors": []
+    },
+    {
+      "method": "Target.disposeBrowserContext",
+      "count": 1,
+      "withSession": 0,
+      "withoutSession": 1,
+      "ok": 1,
+      "error": 0,
+      "errors": []
+    },
+    {
+      "method": "Target.getTargetInfo",
+      "count": 1,
+      "withSession": 0,
+      "withoutSession": 1,
+      "ok": 1,
+      "error": 0,
+      "errors": []
+    }
+  ],
+  "events": [
+    {
+      "method": "Page.lifecycleEvent",
+      "count": 5,
+      "withSession": 5,
+      "withoutSession": 0
+    },
+    {
+      "method": "Runtime.executionContextCreated",
+      "count": 4,
+      "withSession": 4,
+      "withoutSession": 0
+    },
+    {
+      "method": "Network.loadingFinished",
+      "count": 3,
+      "withSession": 3,
+      "withoutSession": 0
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "count": 3,
+      "withSession": 3,
+      "withoutSession": 0
+    },
+    {
+      "method": "Network.responseReceived",
+      "count": 3,
+      "withSession": 3,
+      "withoutSession": 0
+    },
+    {
+      "method": "Target.attachedToTarget",
+      "count": 2,
+      "withSession": 0,
+      "withoutSession": 2
+    },
+    {
+      "method": "DOM.documentUpdated",
+      "count": 1,
+      "withSession": 1,
+      "withoutSession": 0
+    },
+    {
+      "method": "Fetch.requestPaused",
+      "count": 1,
+      "withSession": 1,
+      "withoutSession": 0
+    },
+    {
+      "method": "Inspector.detached",
+      "count": 1,
+      "withSession": 1,
+      "withoutSession": 0
+    },
+    {
+      "method": "Page.domContentEventFired",
+      "count": 1,
+      "withSession": 1,
+      "withoutSession": 0
+    },
+    {
+      "method": "Page.frameNavigated",
+      "count": 1,
+      "withSession": 1,
+      "withoutSession": 0
+    },
+    {
+      "method": "Page.frameStartedLoading",
+      "count": 1,
+      "withSession": 1,
+      "withoutSession": 0
+    },
+    {
+      "method": "Page.frameStartedNavigating",
+      "count": 1,
+      "withSession": 1,
+      "withoutSession": 0
+    },
+    {
+      "method": "Page.frameStoppedLoading",
+      "count": 1,
+      "withSession": 1,
+      "withoutSession": 0
+    },
+    {
+      "method": "Page.loadEventFired",
+      "count": 1,
+      "withSession": 1,
+      "withoutSession": 0
+    },
+    {
+      "method": "Runtime.executionContextsCleared",
+      "count": 1,
+      "withSession": 1,
+      "withoutSession": 0
+    },
+    {
+      "method": "Target.detachedFromTarget",
+      "count": 1,
+      "withSession": 0,
+      "withoutSession": 1
+    },
+    {
+      "method": "Target.targetCreated",
+      "count": 1,
+      "withSession": 0,
+      "withoutSession": 1
+    },
+    {
+      "method": "Target.targetDestroyed",
+      "count": 1,
+      "withSession": 0,
+      "withoutSession": 1
+    }
+  ]
+}
