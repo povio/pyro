@@ -353,8 +353,8 @@ impl EngineHost {
             // Headless pages always behave as focused; there is no window focus to emulate.
             "setFocusEmulationEnabled" => Ok(Some(serde_json::json!({}))),
             "setDeviceMetricsOverride" | "clearDeviceMetricsOverride" => self.device_metrics(action, cmd),
-            // No matchMedia/CSS media evaluation exists yet, so there is no
-            // observable media state to change; the request is recorded.
+            // Mapping these overrides to native media preferences remains a
+            // separate gap; this command currently records its parameters.
             "setEmulatedMedia" => {
                 let p: serde_json::Value = cmd.command.params()?;
                 if let Some(state) = self.pages.get_mut(&cmd.page) {

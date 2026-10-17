@@ -48,7 +48,7 @@ Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 42 engi
 | `Debugger.setSkipAllPauses` | yes | pending |  |
 | `Emulation.setDefaultBackgroundColorOverride` | yes | pending |  |
 | `Emulation.setDeviceMetricsOverride` | yes | engine | persistent native width/height/DPR/screen and resize; mobile, transforms and non-native orientation explicitly unsupported |
-| `Emulation.setEmulatedMedia` | yes | accepted, recorded only | stored; no matchMedia/CSS media evaluation exists yet |
+| `Emulation.setEmulatedMedia` | yes | accepted, recorded only | stored; mapping to native media preferences remains pending |
 | `Emulation.setFocusEmulationEnabled` | yes | accepted, recorded only | headless pages always behave as focused |
 | `Emulation.setGeolocationOverride` | yes | pending |  |
 | `Emulation.setLocaleOverride` | yes | conditional | succeeds only when the requested locale equals the engine (process) locale; otherwise an explicit error |

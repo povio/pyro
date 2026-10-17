@@ -14,7 +14,8 @@ unchanged. Native viewport storage/event delivery and observer scheduling have s
 
 On the affected macOS 26.7.1 M1 host, SDK MacOSX26.5, locked debug validation passes all 373
 workspace tests, including 115 protocol tests. Strict workspace clippy, formatting and diff checks
-pass. Real Playwright 1.59.1 passes 27/27 checks. The new viewport check verifies width/height,
+pass. The release protocol suite also passes 115/115. Real Playwright 1.59.1 passes 27/27
+checks in both debug and release. The new viewport check verifies width/height,
 DPR, screen size, native resize delivery, current media-query matches, sibling-page isolation,
 and dimensions before init scripts after navigation. The previously failing locator fill/click
 check passes unchanged with native MutationObserver.
