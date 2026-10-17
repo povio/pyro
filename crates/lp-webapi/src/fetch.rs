@@ -285,6 +285,8 @@ fn parse_request<'s>(
         }
         let (bytes, mime) = if let Some(blob) = s.unwrap::<crate::file::Blob>(body) {
             (blob.bytes.clone(), blob.mime.clone())
+        } else if let Some(params) = s.unwrap::<crate::url_search_params::URLSearchParams>(body) {
+            (Bytes::from(params.serialize()), "application/x-www-form-urlencoded;charset=UTF-8".into())
         } else if let Some(bytes) = crate::encoding::buffer_source_bytes(s, body)? {
             (Bytes::from(bytes), String::new())
         } else {

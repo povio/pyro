@@ -29,6 +29,7 @@ pub struct PageDom {
     pending_release: RefCell<Vec<NodeId>>,
     current_script: Cell<Option<NodeId>>,
     pub(crate) realms: RefCell<FxHashMap<RealmId, WeakRealm>>,
+    pub(crate) url_params_helpers: RefCell<FxHashMap<RealmId, Persistent>>,
     pub(crate) header_helpers: RefCell<FxHashMap<RealmId, Persistent>>,
     pub(crate) data_view_readers: RefCell<FxHashMap<RealmId, Persistent>>,
     /// Wrappers kept alive because they hold listeners for a connected
@@ -114,6 +115,7 @@ impl PageDom {
             realms: RefCell::new(FxHashMap::default()),
             data_view_readers: RefCell::new(FxHashMap::default()),
             header_helpers: RefCell::new(FxHashMap::default()),
+            url_params_helpers: RefCell::new(FxHashMap::default()),
             pinned: RefCell::new(FxHashMap::default()),
             window_keys: RefCell::new(Vec::new()),
             window_holders: RefCell::new(FxHashMap::default()),
@@ -178,6 +180,7 @@ impl PageDom {
         drop(self.window_holders.take());
         drop(self.data_view_readers.take());
         drop(self.header_helpers.take());
+        drop(self.url_params_helpers.take());
         crate::custom::forget_page(self.id);
         let windows = self.window_keys.take();
         let mut dom = self.dom.borrow_mut();
@@ -280,6 +283,9 @@ impl PageDom {
     /// ones, and frees unreachable DOM nodes.
     pub fn after_task(&self) {
         crate::mutation_observer::after_task(self);
+        self.url_params_helpers.borrow_mut().retain(|realm, _| {
+            self.realms.borrow().get(realm).and_then(|r| r.upgrade()).is_some_and(|r| !r.is_disposed())
+        });
         self.header_helpers.borrow_mut().retain(|realm, _| {
             self.realms.borrow().get(realm).and_then(|r| r.upgrade()).is_some_and(|r| !r.is_disposed())
         });
