@@ -5,6 +5,8 @@ skipped/retried. Eight failures expose missing IntersectionObserver; one exposes
 the unavailable public Response constructor. No CDP/root network defect is
 established by these failures. The earlier [profile/settings 2/2 success](TOS_CLONE_SMOKE.md)
 remains valid for its narrower scope.
+Later reruns of this selection, with an upstream and Chromium comparison, are in
+[TOS_CANVAS_CASE_COMPARISON.md](TOS_CANVAS_CASE_COMPARISON.md).
 
 | File | Selected cases | First observed failure |
 | --- | ---: | --- |
