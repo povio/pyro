@@ -14,7 +14,7 @@ use tokio::sync::oneshot;
 use super::EngineHost;
 use crate::fetch_protocol::{base64_decode, EnableParams, InterceptState, RequestStage, MAX_PAUSED};
 use crate::msg::{CdpError, CdpResult};
-use crate::network_protocol::{fetch_resource_type, headers_json, protocol_request_id};
+use crate::network_protocol::{fetch_resource_type, headers_json, protocol_request_id, write_post_data};
 use crate::outbox::Outbox;
 use crate::target::{ContextKey, PageCommand};
 
@@ -327,15 +327,11 @@ impl EngineHost {
                     item.resume();
                     continue;
                 };
-                let request_json = json!({"url":request.url.as_str(),"method":request.method.as_str(),"headers":headers_json(&request.headers),
-                    "hasPostData":request.post_data.is_some()});
+                let mut request_json = json!({"url":request.url.as_str(),"method":request.method.as_str(),"headers":headers_json(&request.headers),
+                    "hasPostData":false});
+                write_post_data(&mut request_json, request.post_data.as_ref());
                 let mut params = json!({"request":request_json,"frameId":request.frame_id,
                     "resourceType":fetch_resource_type(request.destination).as_str()});
-                if let Some(data) = &request.post_data {
-                    if let Ok(text) = std::str::from_utf8(data) {
-                        params["request"]["postData"] = json!(text);
-                    }
-                }
                 params["networkId"] =
                     json!(protocol_request_id(native_id, request.destination, request.loader_id.as_deref()));
                 let (method, decision) = match item {

@@ -118,12 +118,7 @@ impl NetworkTranslator {
                     "initialPriority": "High",
                     "referrerPolicy": "strict-origin-when-cross-origin",
                 });
-                if let Some(body) = &request.post_data {
-                    req["hasPostData"] = json!(true);
-                    if let Ok(text) = std::str::from_utf8(body) {
-                        req["postData"] = json!(text);
-                    }
-                }
+                write_post_data(&mut req, request.post_data.as_ref());
                 let document_url =
                     if resource_type == "Document" { request.url.as_str().to_owned() } else { String::new() };
                 let mut params = json!({
@@ -198,6 +193,30 @@ impl NetworkTranslator {
     pub fn inflight(&self) -> usize {
         self.inflight.len()
     }
+}
+
+/// Largest request body included inline in `Network.requestWillBeSent` and
+/// `Fetch.requestPaused` (upstream's default `maxPostDataSize`, 64 KiB).
+/// Larger bodies report only `hasPostData: true`, as Chrome and upstream do.
+pub const MAX_POST_DATA: usize = 64 * 1024;
+
+/// Sets `hasPostData`, `postData` and `postDataEntries` on a CDP
+/// `Network.Request` object.
+///
+/// Playwright builds `request.postData()` / `postDataJSON()` only from
+/// `postDataEntries[].bytes` (base64), so the binary-safe entry must be
+/// present. `postData` is the deprecated text form; it is omitted for bodies
+/// that are not valid UTF-8 rather than sent lossily.
+pub fn write_post_data(request: &mut Value, body: Option<&Bytes>) {
+    let Some(body) = body else { return };
+    request["hasPostData"] = json!(true);
+    if body.len() > MAX_POST_DATA {
+        return;
+    }
+    if let Ok(text) = std::str::from_utf8(body) {
+        request["postData"] = json!(text);
+    }
+    request["postDataEntries"] = json!([{ "bytes": base64_encode(body) }]);
 }
 
 /// Fetch-domain resource type of a request destination.
@@ -676,5 +695,45 @@ mod tests {
         });
         assert_eq!(budget.used(), 0);
         assert!(s.get(RequestId(1)).is_err());
+    }
+
+    #[test]
+    fn post_data_entries_carry_exact_bytes() {
+        let write = |body: Option<Bytes>| {
+            let mut request = json!({});
+            write_post_data(&mut request, body.as_ref());
+            request
+        };
+        assert_eq!(write(None), json!({}), "no body: nothing added");
+        assert_eq!(
+            write(Some(Bytes::from_static(br#"{"credentialType":"CLIENT"}"#))),
+            json!({"hasPostData":true,"postData":"{\"credentialType\":\"CLIENT\"}","postDataEntries":[{"bytes":"eyJjcmVkZW50aWFsVHlwZSI6IkNMSUVOVCJ9"}]})
+        );
+        assert_eq!(
+            write(Some(Bytes::from_static(&[0xff, 0x00, 0xfe]))),
+            json!({"hasPostData":true,"postDataEntries":[{"bytes":"/wD+"}]}),
+            "non-UTF-8 body: no lossy text, exact bytes in the entry"
+        );
+        assert_eq!(
+            write(Some(Bytes::new())),
+            json!({"hasPostData":true,"postData":"","postDataEntries":[{"bytes":""}]}),
+            "empty body"
+        );
+        let at_limit = write(Some(Bytes::from(vec![b'a'; MAX_POST_DATA])));
+        assert_eq!(at_limit["postDataEntries"][0]["bytes"].as_str().unwrap().len(), MAX_POST_DATA.div_ceil(3) * 4);
+        assert_eq!(
+            write(Some(Bytes::from(vec![b'a'; MAX_POST_DATA + 1]))),
+            json!({"hasPostData":true}),
+            "over the bound: only hasPostData, like upstream and Chrome"
+        );
+    }
+
+    #[test]
+    fn request_will_be_sent_includes_post_data_entries() {
+        let mut t = NetworkTranslator::default();
+        let (_, p) = t.translate(&request(9, Destination::Fetch)).unwrap();
+        assert_eq!(p["request"]["postDataEntries"], json!([{"bytes":"eyJhIjoxfQ=="}]));
+        assert_eq!(p["request"]["postData"], "{\"a\":1}");
+        assert_eq!(p["request"]["hasPostData"], true);
     }
 }
