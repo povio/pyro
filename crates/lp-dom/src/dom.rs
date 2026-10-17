@@ -22,6 +22,8 @@ pub struct Dom {
     /// Bumped on every tree, attribute or character-data mutation. Live
     /// collections compare against it to reuse cached results.
     version: u64,
+    /// See `tree_version()`.
+    tree_version: u64,
     /// Roots of trees that may have become unreachable.
     candidates: Vec<u32>,
     live: u32,
@@ -54,6 +56,7 @@ impl Dom {
             slots: Vec::new(),
             free: Vec::new(),
             version: 0,
+            tree_version: 0,
             candidates: Vec::new(),
             live: 0,
             removals: 0,
@@ -109,6 +112,17 @@ impl Dom {
     pub(crate) fn bump(&mut self) {
         self.version = self.version.wrapping_add(1);
     }
+    /// Bumped only by node insertion/removal, attribute changes and
+    /// character-data changes (not by form-control state, focus or hover),
+    /// i.e. the mutations that invalidate XPath iterator results.
+    pub fn tree_version(&self) -> u64 {
+        self.tree_version
+    }
+    /// Records a tree, attribute or character-data mutation.
+    pub(crate) fn bump_tree(&mut self) {
+        self.tree_version = self.tree_version.wrapping_add(1);
+        self.bump();
+    }
     /// Monotonic count of node removals (cheap "did anything disconnect" check).
     pub fn removal_count(&self) -> u64 {
         self.removals
@@ -141,11 +155,11 @@ impl Dom {
     }
     pub(crate) fn link_raw(&mut self, node: u32, parent: u32, before: u32) {
         self.link(node, parent, before);
-        self.bump();
+        self.bump_tree();
     }
     pub(crate) fn unlink_raw(&mut self, node: u32) {
         self.unlink(node);
-        self.bump();
+        self.bump_tree();
     }
     pub(crate) fn set_owner_raw(&mut self, node: u32, doc: u32) {
         self.adopt_idx(node, doc);
@@ -943,7 +957,7 @@ impl Dom {
                 self.note_connected_listeners(k);
             }
         }
-        self.bump();
+        self.bump_tree();
         if !suppress {
             self.queue_child_list(parent, &nodes, &[], prev, child);
         }
@@ -1001,7 +1015,7 @@ impl Dom {
         self.removals = self.removals.wrapping_add(1);
         self.add_transient_observers(parent, node);
         self.unlink(node);
-        self.bump();
+        self.bump_tree();
         if !suppress {
             self.queue_child_list(parent, &[], &[node], prev, next);
         }
@@ -1219,17 +1233,38 @@ impl Dom {
         Ok(())
     }
 
+    /// Changes the value of the existing attribute (`ns`, `local`) without
+    /// re-validating its name (`Attr.value` setter). Returns false if the
+    /// element has no such attribute.
+    pub fn set_existing_attribute_ns(
+        &mut self,
+        id: NodeId,
+        ns: Option<&str>,
+        local: &str,
+        value: &str,
+    ) -> DomResult<bool> {
+        let (i, el) = self.el(id)?;
+        let ns = ns.unwrap_or("");
+        match el.attrs.iter().position(|a| &*a.name.ns == ns && &*a.name.local == local) {
+            Some(k) => {
+                self.change_attr(i, k, value);
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+
     fn change_attr(&mut self, i: u32, k: usize, value: &str) {
         let el = self.n(i).element().unwrap();
         let name = el.attrs[k].name.clone();
         let old = std::mem::replace(&mut self.n_mut(i).element_mut().unwrap().attrs[k].value, value.into());
-        self.bump();
+        self.bump_tree();
         self.queue_attribute(i, &name, Some(&old));
         self.resources_after_attr(i, &name.local);
     }
     fn append_attr(&mut self, i: u32, name: QualName, value: &str) {
         self.n_mut(i).element_mut().unwrap().attrs.push(Attr { name: name.clone(), value: value.into() });
-        self.bump();
+        self.bump_tree();
         self.queue_attribute(i, &name, None);
         self.resources_after_attr(i, &name.local);
     }
@@ -1258,7 +1293,7 @@ impl Dom {
     }
     fn remove_attr_at(&mut self, i: u32, k: usize) {
         let attr = self.n_mut(i).element_mut().unwrap().attrs.remove(k);
-        self.bump();
+        self.bump_tree();
         self.queue_attribute(i, &attr.name, Some(&attr.value));
         self.resources_after_attr(i, &attr.name.local);
     }
@@ -1377,7 +1412,7 @@ impl Dom {
         let (a, b) = utf16_range(s, offset, count)?;
         let old = s.to_owned();
         self.n_mut(i).kind.char_data_mut().unwrap().replace_range(a..b, data);
-        self.bump();
+        self.bump_tree();
         self.queue_character_data(i, &old);
         self.resources_after_text(i);
         Ok(())

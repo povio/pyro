@@ -16,6 +16,7 @@ pub mod script;
 pub mod select;
 pub mod serialize;
 pub mod style;
+pub mod xpath;
 
 pub use dom::{position, Dom};
 pub use error::{DomError, DomErrorKind, DomResult};

@@ -536,9 +536,59 @@ pub struct NamedNodeMapData {
     el: NodeHold,
 }
 
+/// Identity of an attribute on its element: (namespace, local name), plus
+/// the qualified name it is exposed under.
+#[derive(Clone)]
+pub(crate) struct AttrName {
+    /// Empty for no namespace.
+    pub ns: String,
+    pub local: String,
+    pub qualified: String,
+}
+
+impl AttrName {
+    pub(crate) fn of(a: &lp_dom::Attr) -> AttrName {
+        AttrName { ns: a.name.ns.to_string(), local: a.name.local.to_string(), qualified: a.qualified_name() }
+    }
+    fn ns(&self) -> Option<&str> {
+        (!self.ns.is_empty()).then_some(self.ns.as_str())
+    }
+    /// Index of this attribute in `attrs`.
+    pub(crate) fn find(&self, attrs: &[lp_dom::Attr]) -> Option<usize> {
+        attrs.iter().position(|a| *a.name.ns == *self.ns && *a.name.local == *self.local)
+    }
+}
+
 pub struct AttrData {
     el: NodeHold,
-    qualified: String,
+    name: AttrName,
+}
+
+impl AttrData {
+    fn value(&self) -> JsResult<String> {
+        let dom = self.el.page.dom.borrow();
+        Ok(dom.get_attribute_ns(self.el.id, self.name.ns(), &self.name.local).js()?.unwrap_or("").to_owned())
+    }
+    fn set_value(&self, v: Value<'_>) -> JsResult<()> {
+        let value = dom_string(v)?;
+        let mut dom = self.el.page.dom.borrow_mut();
+        if !dom.set_existing_attribute_ns(self.el.id, self.name.ns(), &self.name.local, &value).js()? {
+            // The attribute was removed from its element: re-add it.
+            match self.name.ns() {
+                Some(ns) => dom.set_attribute_ns(self.el.id, Some(ns), &self.name.qualified, &value).js()?,
+                None => dom.set_attribute(self.el.id, &self.name.qualified, &value).js()?,
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Attribute of `el` with qualified name `name` (lowercased on HTML
+/// elements, like `getAttribute`).
+fn attr_named(page: &PageDom, el: NodeId, name: &str) -> JsResult<Option<AttrName>> {
+    let dom = page.dom.borrow();
+    let lower = if dom.element(el).js()?.is_html() { name.to_ascii_lowercase() } else { name.to_owned() };
+    Ok(dom.attributes(el).js()?.iter().find(|a| a.qualified_name() == lower).map(AttrName::of))
 }
 
 pub struct NamedNodeMap;
@@ -555,16 +605,10 @@ impl JsClass for NamedNodeMap {
         def.indexed(|s, m, i| attr_at(s, m, i as usize));
         def.method("getNamedItem", 1, |s, m, a| {
             let name = dom_string(a.get(0))?;
-            let exists = m.el.page.dom.borrow().has_attribute(m.el.id, &name).js()?;
-            if !exists {
-                return Ok(s.null());
+            match attr_named(&m.el.page, m.el.id, &name)? {
+                Some(n) => make_attr(s, &m.el.page, m.el.id, n),
+                None => Ok(s.null()),
             }
-            let q = {
-                let dom = m.el.page.dom.borrow();
-                let lower = if dom.element(m.el.id).js()?.is_html() { name.to_ascii_lowercase() } else { name };
-                lower
-            };
-            make_attr(s, &m.el.page, m.el.id, q)
         });
         def.method("getNamedItemNS", 2, |s, m, a| {
             let ns = opt_dom_string(a.get(0))?;
@@ -575,10 +619,10 @@ impl JsClass for NamedNodeMap {
                 .js()?
                 .iter()
                 .find(|x| &*x.name.ns == ns.as_deref().unwrap_or("") && *x.name.local == local)
-                .map(|x| x.qualified_name());
+                .map(AttrName::of);
             drop(dom);
             match found {
-                Some(q) => make_attr(s, &m.el.page, m.el.id, q),
+                Some(n) => make_attr(s, &m.el.page, m.el.id, n),
                 None => Ok(s.null()),
             }
         });
@@ -590,28 +634,29 @@ impl JsClass for NamedNodeMap {
             }
             Ok(s.undefined())
         });
-        def.named(false, |s, m, name| {
-            let exists = m.el.page.dom.borrow().has_attribute(m.el.id, name).js()?;
-            if exists {
-                Ok(Some(make_attr(s, &m.el.page, m.el.id, name.to_owned())?))
-            } else {
-                Ok(None)
-            }
+        def.named(false, |s, m, name| match attr_named(&m.el.page, m.el.id, name)? {
+            Some(n) => Ok(Some(make_attr(s, &m.el.page, m.el.id, n)?)),
+            None => Ok(None),
         });
         def.indexed_iterable();
     }
 }
 
 fn attr_at<'s>(s: &Scope<'s>, m: &NamedNodeMapData, i: usize) -> JsResult<Option<Value<'s>>> {
-    let q = m.el.page.dom.borrow().attributes(m.el.id).js()?.get(i).map(|a| a.qualified_name());
-    match q {
-        Some(q) => Ok(Some(make_attr(s, &m.el.page, m.el.id, q)?)),
+    let n = m.el.page.dom.borrow().attributes(m.el.id).js()?.get(i).map(AttrName::of);
+    match n {
+        Some(n) => Ok(Some(make_attr(s, &m.el.page, m.el.id, n)?)),
         None => Ok(None),
     }
 }
 
-fn make_attr<'s>(s: &Scope<'s>, page: &Rc<PageDom>, el: NodeId, qualified: String) -> JsResult<Value<'s>> {
-    Ok(s.wrap::<Attr>(AttrData { el: NodeHold::new(page, el)?, qualified }, None)?.value())
+/// Owner page, owner element and name of an `Attr`.
+pub(crate) fn attr_of(a: &AttrData) -> (&Rc<PageDom>, NodeId, &AttrName) {
+    (&a.el.page, a.el.id, &a.name)
+}
+
+pub(crate) fn make_attr<'s>(s: &Scope<'s>, page: &Rc<PageDom>, el: NodeId, name: AttrName) -> JsResult<Value<'s>> {
+    Ok(s.wrap::<Attr>(AttrData { el: NodeHold::new(page, el)?, name }, None)?.value())
 }
 
 pub struct Attr;
@@ -620,41 +665,18 @@ impl JsClass for Attr {
     type Data = AttrData;
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
-        def.getter("name", |s, a| Ok(s.string(&a.qualified)));
-        def.getter("nodeName", |s, a| Ok(s.string(&a.qualified)));
+        def.getter("name", |s, a| Ok(s.string(&a.name.qualified)));
+        def.getter("nodeName", |s, a| Ok(s.string(&a.name.qualified)));
         def.getter("nodeType", |s, _a| Ok(s.number(NodeType::Attribute as u16 as f64)));
-        def.getter("localName", |s, a| Ok(s.string(a.qualified.rsplit(':').next().unwrap_or(""))));
-        def.getter("prefix", |s, a| Ok(a.qualified.split_once(':').map_or(s.null(), |(p, _)| s.string(p))));
-        def.getter("namespaceURI", |s, a| {
-            let dom = a.el.page.dom.borrow();
-            let ns = dom
-                .attributes(a.el.id)
-                .js()?
-                .iter()
-                .find(|x| x.qualified_name() == a.qualified)
-                .map(|x| x.name.ns.to_string())
-                .unwrap_or_default();
-            Ok(if ns.is_empty() { s.null() } else { s.string(&ns) })
+        def.getter("localName", |s, a| Ok(s.string(&a.name.local)));
+        def.getter("prefix", |s, a| {
+            let prefix = a.name.qualified.strip_suffix(a.name.local.as_str()).and_then(|p| p.strip_suffix(':'));
+            Ok(prefix.map_or(s.null(), |p| s.string(p)))
         });
-        def.accessor(
-            "value",
-            |s, a| Ok(s.string(a.el.page.dom.borrow().get_attribute(a.el.id, &a.qualified).js()?.unwrap_or(""))),
-            |_s, a, v| {
-                let arg0 = dom_string(v)?;
-                a.el.page.dom.borrow_mut().set_attribute(a.el.id, &a.qualified, &arg0).js()
-            },
-        );
-        def.accessor(
-            "nodeValue",
-            |s, a| Ok(s.string(a.el.page.dom.borrow().get_attribute(a.el.id, &a.qualified).js()?.unwrap_or(""))),
-            |_s, a, v| {
-                let arg0 = dom_string(v)?;
-                a.el.page.dom.borrow_mut().set_attribute(a.el.id, &a.qualified, &arg0).js()
-            },
-        );
-        def.getter("textContent", |s, a| {
-            Ok(s.string(a.el.page.dom.borrow().get_attribute(a.el.id, &a.qualified).js()?.unwrap_or("")))
-        });
+        def.getter("namespaceURI", |s, a| Ok(a.name.ns().map_or(s.null(), |ns| s.string(ns))));
+        def.accessor("value", |s, a| Ok(s.string(&a.value()?)), |_s, a, v| a.set_value(v));
+        def.accessor("nodeValue", |s, a| Ok(s.string(&a.value()?)), |_s, a, v| a.set_value(v));
+        def.getter("textContent", |s, a| Ok(s.string(&a.value()?)));
         def.getter("ownerElement", |s, a| Ok(wrap_node(s, &a.el.page, a.el.id)?.value()));
         def.getter("specified", |s, _a| Ok(s.boolean(true)));
     }

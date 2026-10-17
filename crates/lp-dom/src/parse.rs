@@ -98,6 +98,7 @@ fn append_text(dom: &mut Dom, parent: u32, before: u32, text: &str) {
     if prev != NIL {
         if let NodeKind::Text(s) = &mut dom.n_mut(prev).kind {
             s.push_str(text);
+            dom.bump_tree();
             return;
         }
     }
@@ -241,10 +242,15 @@ impl<A: DomAccess> TreeSink for Sink<A> {
     fn add_attrs_if_missing(&self, target: &u32, attrs: Vec<Attribute>) {
         self.dom.with(|d| {
             let Some(el) = d.n_mut(*target).element_mut() else { return };
+            let mut added = false;
             for a in attrs {
                 if !el.attrs.iter().any(|x| x.name == a.name) {
                     el.attrs.push(crate::node::Attr { name: a.name, value: (&*a.value).into() });
+                    added = true;
                 }
+            }
+            if added {
+                d.bump_tree();
             }
         });
     }
