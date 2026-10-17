@@ -1,0 +1,293 @@
+mod support;
+use lp_webapi::*;
+use std::time::Duration;
+use support::network::*;
+
+#[test]
+fn xhr_json_lifecycle_handler_order_and_network_correlation() {
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    env.page.set_request_context(RequestContext {
+        frame_id: Some("xhr-frame".into()),
+        loader_id: Some("xhr-loader".into()),
+    });
+    let events = env.page.net.borrow().as_ref().unwrap().subscribe();
+    env.eval(r#"globalThis.result='pending';globalThis.log=[];globalThis.x=new XMLHttpRequest();
+        if(!(x instanceof EventTarget)||x.readyState!==0||x.status!==0||x.responseText!==''||x.onload!==null)throw Error('initial');
+        x.onreadystatechange=()=>log.push('state'+x.readyState);
+        x.onloadstart=()=>log.push('start');
+        x.addEventListener('load',()=>log.push('first'));
+        x.onload=()=>log.push('old');
+        x.addEventListener('load',()=>log.push('last'));
+        x.onload=()=>{log.push('handler');if(x.status!==200||x.response.answer!==42||x.response!==x.response)throw Error('json');};
+        x.onloadend=()=>result=log.join(',');x.onerror=()=>result='error';
+        x.open('get','/json');x.responseType='json';x.send();"#);
+    env.until("result!=='pending'");
+    assert_eq!(env.eval("result"), "state1,start,state2,state3,state4,first,handler,last");
+    assert_eq!(env.eval("x.getResponseHeader('Content-Type')"), "application/json");
+    assert_eq!(env.eval("x.getResponseHeader('set-cookie')"), "null");
+    assert_eq!(env.eval("try{x.responseText;'bad'}catch(e){e.name}"), "InvalidStateError");
+    assert_eq!(env.page.xhr_usage(), (0, 13));
+    let mut starts = 0;
+    while let Ok(event) = events.try_recv() {
+        if let lp_net::NetEvent::RequestWillBeSent { request, .. } = event {
+            starts += 1;
+            assert_eq!(request.destination, lp_net::Destination::Xhr);
+            assert_eq!(request.frame_id.as_deref(), Some("xhr-frame"));
+            assert_eq!(request.loader_id.as_deref(), Some("xhr-loader"));
+        }
+    }
+    assert_eq!(starts, 1);
+}
+
+#[test]
+fn xhr_posts_subview_combines_headers_and_reuses_after_completion() {
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    env.eval(r#"globalThis.result='pending';globalThis.x=new XMLHttpRequest();let n=0;
+        x.onloadend=()=>{if(++n===1){if(x.responseText!=='AB')return result='body';x.open('GET','/missing');x.send({toString(){throw Error('GET body converted')}})}else{result=x.status===404&&x.responseText==='missing'?'ok':'404'}};
+        x.open('post','/echo');x.setRequestHeader('x-test','a');x.setRequestHeader('X-Test','b');x.setRequestHeader('Cookie','wrong=1');
+        x.send(new Uint8Array([0,65,66,0]).subarray(1,3));"#);
+    env.until("result!=='pending'");
+    assert_eq!(env.eval("result"), "ok");
+    let requests = server.requests.lock().unwrap();
+    assert!(requests[0].0.starts_with("POST "));
+    assert_eq!(requests[0].2, b"AB");
+    assert!(requests[0].1.contains("x-test: a, b"));
+    assert!(!requests[0].1.contains("wrong"));
+}
+
+#[test]
+fn xhr_abort_at_headers_fires_once_and_resets() {
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    env.eval(r#"globalThis.result='pending';globalThis.log=[];globalThis.x=new XMLHttpRequest();
+        x.onreadystatechange=()=>{log.push(x.readyState);if(x.readyState===2)x.abort()};
+        x.onabort=()=>log.push('abort');x.onload=()=>log.push('BADload');x.onerror=()=>log.push('BADerror');x.onloadend=()=>{log.push('end');result='done'};
+        x.open('GET','/gated');x.send();"#);
+    env.until("result!=='pending'");
+    assert_eq!(env.eval("log.join(',')"), "1,2,4,abort,end");
+    assert_eq!(env.eval("x.readyState+':'+x.status+':'+x.responseText"), "0:0:");
+    assert_eq!(env.page.xhr_usage(), (0, 0));
+    server.release.send(()).unwrap();
+    while let Ok(task) = env.tasks.try_recv() {
+        task();
+    }
+    assert_eq!(env.eval("log.join(',')"), "1,2,4,abort,end");
+}
+
+#[test]
+fn xhr_reopening_in_callback_suppresses_old_completion() {
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    env.eval(
+        r#"globalThis.result='pending';globalThis.x=new XMLHttpRequest();let switched=false;let loads=0;
+        x.onreadystatechange=()=>{if(x.readyState===2&&!switched){switched=true;x.open('GET','/missing');x.send()}};
+        x.onload=()=>{loads++;result=loads===1&&x.status===404&&x.responseText==='missing'?'ok':'wrong'};
+        x.open('GET','/json');x.send();"#,
+    );
+    env.until("result!=='pending'");
+    assert_eq!(env.eval("result"), "ok");
+}
+
+#[test]
+fn xhr_timeout_uses_captured_timer_and_is_measured_from_send() {
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    env.eval(r#"globalThis.result='pending';globalThis.x=new XMLHttpRequest();globalThis.log=[];
+        x.timeout=20;x.ontimeout=()=>log.push('timeout');x.onabort=()=>log.push('BADabort');x.onerror=()=>log.push('BADerror');x.onloadend=()=>result=log.join(',');
+        globalThis.setTimeout=()=>{throw Error('replaced timer')};globalThis.clearTimeout=()=>{throw Error('replaced timer')};
+        x.open('GET','/gated');x.send();"#);
+    env.until("result!=='pending'");
+    assert_eq!(env.eval("result"), "timeout");
+    assert_eq!(env.eval("x.readyState+':'+x.status"), "4:0");
+    assert_eq!(env.page.xhr_usage(), (0, 0));
+    server.release.send(()).unwrap();
+}
+
+#[test]
+fn xhr_limits_error_and_page_disposal_suppress_queued_events() {
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    assert!(env.page.set_xhr_limits(XhrLimits { max_body_bytes: 32, ..Default::default() }));
+    env.eval("globalThis.result='pending';globalThis.x=new XMLHttpRequest();x.onerror=()=>result='error';x.onload=()=>result='BADload';x.open('GET','/large');x.send()");
+    env.until("result!=='pending'");
+    assert_eq!(env.eval("result"), "error");
+    assert_eq!(env.page.xhr_usage(), (0, 0));
+    env.eval("result='pending';x.open('GET','/gated');x.send()");
+    let queued = env.tasks.recv_timeout(Duration::from_secs(5)).unwrap();
+    env.page.dispose();
+    queued();
+    assert_eq!(env.eval("result"), "pending");
+    assert_eq!(env.page.xhr_usage(), (0, 0));
+    server.release.send(()).unwrap();
+}
+
+#[test]
+fn xhr_partial_text_decoder_preserves_split_utf8_and_charset() {
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    env.eval("globalThis.result='pending';globalThis.x=new XMLHttpRequest();x.onreadystatechange=()=>{if(x.readyState===3)result='partial'};x.onload=()=>result=x.responseText;x.open('GET','/split-utf8');x.send()");
+    env.until("result!=='pending'");
+    assert_eq!(env.eval("result"), "partial");
+    assert_eq!(env.eval("x.responseText"), "");
+    server.release.send(()).unwrap();
+    env.until("result!=='partial'");
+    assert_eq!(env.eval("result"), "€");
+    env.eval("result='pending';x.onreadystatechange=null;x.open('GET','/latin1');x.onload=()=>result=x.responseText;x.send()");
+    env.until("result!=='pending'");
+    assert_eq!(env.eval("result"), "é");
+}
+
+#[test]
+fn xhr_binary_json_and_invalid_state_contracts() {
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    assert_eq!(
+        env.eval(
+            r#"(()=>{const x=new XMLHttpRequest();let errors=[];
+        for(const f of [()=>x.send(),()=>x.setRequestHeader('a','b')]){try{f()}catch(e){errors.push(e.name)}}
+        try{x.open('TRACE','/json')}catch(e){errors.push(e.name)}
+        try{x.open('GET','/json',false)}catch(e){errors.push(e.name)}
+        x.open('GET','/json');try{x.setRequestHeader('bad name','v')}catch(e){errors.push(e.name)}
+        return errors.join(',')})()"#
+        ),
+        "InvalidStateError,InvalidStateError,SecurityError,NotSupportedError,SyntaxError"
+    );
+    env.eval(r#"globalThis.result='pending';globalThis.x=new XMLHttpRequest();let phase=0;
+        x.onload=()=>{
+            if(phase===0){if(!(x.response instanceof ArrayBuffer)||x.response.byteLength!==13||x.response!==x.response)return result='buffer';phase++;x.open('GET','/json');x.responseType='blob';x.send()}
+            else if(phase===1){if(!(x.response instanceof Blob)||x.response.size!==13||x.response.type!=='application/json'||x.response!==x.response)return result='blob';phase++;x.open('GET','/bad-json');x.responseType='json';x.send()}
+            else result=x.response===null?'ok':'json';
+        };x.open('GET','/json');x.responseType='arraybuffer';x.send();"#);
+    env.until("result!=='pending'");
+    assert_eq!(env.eval("result"), "ok");
+}
+
+#[test]
+fn xhr_cors_headers_and_failure_have_distinct_events() {
+    let server = Server::new();
+    let other = Server::new();
+    let env = Env::new(&server.url);
+    env.eval(&format!("globalThis.remote='{}'", other.url.replace("/page", "")));
+    env.eval(r#"globalThis.result='pending';globalThis.x=new XMLHttpRequest();let phase=0;
+        x.onload=()=>{if(phase++===0){if(x.getResponseHeader('X-Visible')!=='yes'||x.getResponseHeader('X-Second')!=='second'||x.getResponseHeader('X-Hidden')!==null||x.getResponseHeader('Set-Cookie')!==null)return result='headers';x.open('GET',remote+'/json');x.send()}else result='BADcors'};
+        x.onerror=()=>result=x.status===0&&x.responseText===''?'ok':'error state';x.open('GET',remote+'/cors');x.send();"#);
+    env.until("result!=='pending'");
+    assert_eq!(env.eval("result"), "ok");
+}
+
+#[test]
+fn xhr_reentrant_body_conversion_and_loadstart_abort_do_not_send() {
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    assert_eq!(env.eval(r#"(()=>{const x=new XMLHttpRequest();x.open('POST','/echo');try{x.send({toString(){x.open('GET','/json');return 'old'}})}catch(e){return e.name}})()"#),"InvalidStateError");
+    env.eval(r#"globalThis.result='pending';globalThis.x=new XMLHttpRequest();x.onloadstart=()=>x.abort();x.onabort=()=>result='aborted';x.open('POST','/echo');x.send('body');"#);
+    assert_eq!(env.eval("result"), "aborted");
+    assert_eq!(env.page.xhr_usage(), (0, 0));
+    assert!(server.requests.lock().unwrap().is_empty());
+}
+
+#[test]
+fn xhr_timeout_update_uses_original_start_and_can_be_disabled() {
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    env.eval(r#"globalThis.result='pending';globalThis.x=new XMLHttpRequest();x.ontimeout=()=>result='timeout';x.open('GET','/gated');x.timeout=1000;x.send();setTimeout(()=>x.timeout=5,30);"#);
+    let start = std::time::Instant::now();
+    env.until("result!=='pending'");
+    assert_eq!(env.eval("result"), "timeout");
+    assert!(start.elapsed() < Duration::from_millis(900));
+    server.release.send(()).unwrap();
+    env.eval("result='pending';x.open('GET','/json');x.timeout=1;x.send();x.timeout=0;x.onload=()=>result='loaded'");
+    env.until("result!=='pending'");
+    assert_eq!(env.eval("result"), "loaded");
+}
+
+#[test]
+fn xhr_completed_buffer_and_listener_cycles_are_collectable() {
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    env.eval(r#"globalThis.result='pending';(()=>{const x=new XMLHttpRequest();x.onload=()=>{if(x.responseText.length===13)result='ok'};x.open('GET','/json');x.send()})();"#);
+    env.until("result!=='pending'");
+    assert_eq!(env.eval("result"), "ok");
+    for _ in 0..6 {
+        env.eval("Array.from({length:2000},(_,i)=>({i}))");
+        env.engine.collect_garbage_now();
+        env.engine.drain_finalized();
+        env.page.after_task();
+    }
+    assert_eq!(env.page.xhr_usage(), (0, 0));
+    assert!(env.page.set_xhr_limits(XhrLimits::default()));
+}
+
+#[test]
+fn xhr_aggregate_budget_and_pending_cap_refund_on_reopen_and_abort() {
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    assert!(env.page.set_xhr_limits(XhrLimits { max_requests: 1, max_total_body_bytes: 20, ..Default::default() }));
+    env.eval("globalThis.result='pending';globalThis.a=new XMLHttpRequest();a.open('GET','/json');a.onload=()=>result='first';a.send()");
+    env.until("result!=='pending'");
+    assert_eq!(env.page.xhr_usage(), (0, 13));
+    env.eval("result='pending';globalThis.b=new XMLHttpRequest();b.open('GET','/json');b.onerror=()=>result='overflow';b.send()");
+    env.until("result!=='pending'");
+    assert_eq!(env.eval("result"), "overflow");
+    assert_eq!(env.page.xhr_usage(), (0, 13));
+    env.eval("a.open('GET','/gated');a.onload=null;a.send()");
+    assert_eq!(env.eval("try{b.open('GET','/json');b.send();'bad'}catch(e){e.name}"), "QuotaExceededError");
+    env.eval("a.abort()");
+    assert_eq!(env.page.xhr_usage(), (0, 0));
+    server.release.send(()).unwrap();
+    env.eval("result='pending';b.open('GET','/json');b.onload=()=>result=b.responseText;b.send()");
+    env.until("result!=='pending'");
+    assert_eq!(env.eval("result"), "{\"answer\":42}");
+}
+
+#[test]
+fn xhr_disposal_is_scoped_and_queued_callbacks_release_the_page() {
+    for whole_page in [false, true] {
+        let server = Server::new();
+        let first = Env::new(&server.url);
+        let second = Env::with_engine(&server.url, first.engine.clone());
+        *second.page.net.borrow_mut() = first.page.net.borrow().clone();
+        first.eval("globalThis.result='pending';globalThis.x=new XMLHttpRequest();x.timeout=30;x.onload=x.onerror=x.ontimeout=x.onabort=()=>result='stale';x.open('GET','/gated');x.send()");
+        let stale = first.tasks.recv_timeout(Duration::from_secs(5)).unwrap();
+        if whole_page {
+            first.page.dispose();
+        } else {
+            lifecycle::realm_disposed(&first.page, first.realm.id());
+        }
+        stale();
+        assert_eq!(first.eval("result"), "pending");
+        assert_eq!(first.page.xhr_usage(), (0, 0));
+        let weak = std::rc::Rc::downgrade(&first.page);
+        drop(first);
+        for _ in 0..6 {
+            second.engine.collect_garbage_now();
+            second.engine.drain_finalized();
+        }
+        assert!(weak.upgrade().is_none());
+        server.release.send(()).unwrap();
+        second.eval("globalThis.result='pending';const x=new XMLHttpRequest();x.onload=()=>result=x.responseText;x.open('GET','/json');x.send()");
+        second.until("result!=='pending'");
+        assert_eq!(second.eval("result"), "{\"answer\":42}");
+    }
+}
+
+#[test]
+fn xhr_text_read_is_safe_when_network_failure_precedes_its_browser_task() {
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    assert!(env.page.set_xhr_limits(XhrLimits { max_body_bytes: 2, ..Default::default() }));
+    env.eval("globalThis.result='pending';globalThis.x=new XMLHttpRequest();x.onerror=()=>result='error';x.open('GET','/split-utf8');x.send()");
+    env.until("x.readyState===3");
+    assert_eq!(env.eval("x.responseText"), "");
+    server.release.send(()).unwrap();
+    let task = env.tasks.recv_timeout(Duration::from_secs(5)).expect("failed delivery queued");
+    // The I/O thread has released its buffer, but JS still observes LOADING
+    // until this queued failure is dispatched. A decoder must not index the
+    // released chunks using its previous cursor.
+    assert_eq!(env.eval("x.responseText"), "");
+    task();
+    env.until("result==='error'");
+    assert_eq!(env.page.xhr_usage(), (0, 0));
+}

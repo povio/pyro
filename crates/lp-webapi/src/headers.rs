@@ -145,7 +145,7 @@ impl JsClass for Headers {
     }
 }
 
-fn byte_string(value: Value<'_>) -> JsResult<String> {
+pub(crate) fn byte_string(value: Value<'_>) -> JsResult<String> {
     let value = dom_string(value)?;
     if value.chars().any(|c| u32::from(c) > 255) {
         return Err(JsError::Type("Header name or value is not a ByteString".into()));
@@ -155,13 +155,13 @@ fn byte_string(value: Value<'_>) -> JsResult<String> {
 fn header_name(value: Value<'_>) -> JsResult<String> {
     validate_name(byte_string(value)?)
 }
-fn validate_name(name: String) -> JsResult<String> {
+pub(crate) fn validate_name(name: String) -> JsResult<String> {
     if name.is_empty() || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b)) {
         return Err(JsError::Type("Invalid HTTP header name".into()));
     }
     Ok(name.to_ascii_lowercase())
 }
-fn validate_value(value: String) -> JsResult<String> {
+pub(crate) fn validate_value(value: String) -> JsResult<String> {
     let value = value.trim_matches([' ', '\t', '\r', '\n']);
     if value.bytes().any(|b| matches!(b, 0 | b'\r' | b'\n')) {
         return Err(JsError::Type("Invalid HTTP header value".into()));

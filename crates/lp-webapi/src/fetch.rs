@@ -165,6 +165,9 @@ impl PageDom {
     pub fn set_request_context(&self, context: RequestContext) {
         *self.fetch_state.context.borrow_mut() = context;
     }
+    pub(crate) fn request_context(&self) -> RequestContext {
+        self.fetch_state.context.borrow().clone()
+    }
     /// Active network jobs and logical retained body bytes (diagnostics).
     pub fn fetch_usage(&self) -> (usize, usize) {
         (self.fetch_state.jobs.borrow().len(), self.fetch_state.budget.used.load(Ordering::Acquire))
@@ -186,7 +189,7 @@ fn string_option(s: &Scope<'_>, init: Value<'_>, key: &str, default: &str) -> Js
         dom_string(v)
     }
 }
-fn forbidden_header(name: &str) -> bool {
+pub(crate) fn forbidden_header(name: &str) -> bool {
     matches!(
         name,
         "accept-charset"
