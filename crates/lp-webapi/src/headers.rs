@@ -1,0 +1,239 @@
+//! Fetch Headers storage and validation. JS adapters provide iterator protocol
+//! mechanics; header state stays native and borrows never cross JS execution.
+use std::cell::{Cell, RefCell};
+use std::collections::BTreeMap;
+use std::rc::Rc;
+
+use crate::{target::page_of, util::dom_string};
+use lp_js::{ClassDef, JsClass, JsError, JsResult, NoParent, Persistent, Scope, Value};
+
+type Entries = Rc<Vec<(String, String)>>;
+#[derive(Default)]
+pub struct HeaderList {
+    values: BTreeMap<String, Vec<String>>,
+    sorted: Option<Entries>,
+}
+impl HeaderList {
+    fn append(&mut self, name: String, value: String) {
+        self.values.entry(name).or_default().push(value);
+        self.sorted = None;
+    }
+    fn entries(&mut self) -> Entries {
+        self.sorted
+            .get_or_insert_with(|| {
+                Rc::new(
+                    self.values
+                        .iter()
+                        .flat_map(|(name, values)| {
+                            if name == "set-cookie" {
+                                values.iter().map(|value| (name.clone(), value.clone())).collect::<Vec<_>>()
+                            } else {
+                                vec![(name.clone(), values.join(", "))]
+                            }
+                        })
+                        .collect(),
+                )
+            })
+            .clone()
+    }
+}
+
+pub struct HeadersData(Rc<RefCell<HeaderList>>);
+pub struct Headers;
+impl JsClass for Headers {
+    const NAME: &'static str = "Headers";
+    type Data = HeadersData;
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        def.constructor(0, |s, nt, args| {
+            let list = Rc::new(RefCell::new(HeaderList::default()));
+            if !args.get(0).is_undefined() {
+                let convert = s.function("byteString", |s, _this, args| Ok(s.string(&byte_string(args.get(0))?)))?;
+                let converted = helper(s, "fill")?.as_object().unwrap().call(None, &[args.get(0), convert.value()])?;
+                let entries = converted.as_object().expect("converted sequence");
+                let len = entries.get("length")?.to_number()? as u32;
+                for i in 0..len {
+                    let entry = entries.get_index(i)?.as_object().expect("converted entry");
+                    if entry.get("length")?.to_number()? != 2.0 {
+                        return Err(JsError::Type("Header entry must have two items".into()));
+                    }
+                    let name = header_name(entry.get_index(0)?)?;
+                    let value = validate_value(byte_string(entry.get_index(1)?)?)?;
+                    list.borrow_mut().append(name, value);
+                }
+            }
+            s.wrap_new::<Headers>(HeadersData(list), nt, None)
+        });
+        def.method("append", 2, |s, data, args| {
+            args.require(2, "Headers.append")?;
+            let name = byte_string(args.get(0))?;
+            let value = byte_string(args.get(1))?;
+            let name = validate_name(name)?;
+            let value = validate_value(value)?;
+            data.0.borrow_mut().append(name, value);
+            Ok(s.undefined())
+        });
+        def.method("set", 2, |s, data, args| {
+            args.require(2, "Headers.set")?;
+            let name = byte_string(args.get(0))?;
+            let value = byte_string(args.get(1))?;
+            let name = validate_name(name)?;
+            let value = validate_value(value)?;
+            let mut list = data.0.borrow_mut();
+            list.values.insert(name, vec![value]);
+            list.sorted = None;
+            Ok(s.undefined())
+        });
+        def.method("delete", 1, |s, data, args| {
+            args.require(1, "Headers.delete")?;
+            let name = header_name(args.get(0))?;
+            let mut list = data.0.borrow_mut();
+            list.values.remove(&name);
+            list.sorted = None;
+            Ok(s.undefined())
+        });
+        def.method("has", 1, |s, data, args| {
+            args.require(1, "Headers.has")?;
+            let name = header_name(args.get(0))?;
+            Ok(s.boolean(data.0.borrow().values.contains_key(&name)))
+        });
+        def.method("get", 1, |s, data, args| {
+            args.require(1, "Headers.get")?;
+            let name = header_name(args.get(0))?;
+            Ok(data.0.borrow().values.get(&name).map_or(s.null(), |values| s.string(&values.join(", "))))
+        });
+        def.method("getSetCookie", 0, |s, data, _args| {
+            let mut values = lp_js::RootedVec::new();
+            if let Some(cookies) = data.0.borrow().values.get("set-cookie") {
+                for cookie in cookies {
+                    values.push(s, s.string(cookie));
+                }
+            }
+            Ok(s.array(&values.iter(s).collect::<Vec<_>>())?.value())
+        });
+        def.method("entries", 0, |s, data, _args| iterator(s, data, IterKind::Entries));
+        def.method("keys", 0, |s, data, _args| iterator(s, data, IterKind::Keys));
+        def.method("values", 0, |s, data, _args| iterator(s, data, IterKind::Values));
+    }
+}
+
+fn byte_string(value: Value<'_>) -> JsResult<String> {
+    let value = dom_string(value)?;
+    if value.chars().any(|c| u32::from(c) > 255) {
+        return Err(JsError::Type("Header name or value is not a ByteString".into()));
+    }
+    Ok(value)
+}
+fn header_name(value: Value<'_>) -> JsResult<String> {
+    validate_name(byte_string(value)?)
+}
+fn validate_name(name: String) -> JsResult<String> {
+    if name.is_empty() || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b)) {
+        return Err(JsError::Type("Invalid HTTP header name".into()));
+    }
+    Ok(name.to_ascii_lowercase())
+}
+fn validate_value(value: String) -> JsResult<String> {
+    let value = value.trim_matches([' ', '\t', '\r', '\n']);
+    if value.bytes().any(|b| matches!(b, 0 | b'\r' | b'\n')) {
+        return Err(JsError::Type("Invalid HTTP header value".into()));
+    }
+    Ok(value.to_owned())
+}
+
+enum IterKind {
+    Entries,
+    Keys,
+    Values,
+}
+fn iterator<'s>(s: &Scope<'s>, data: &HeadersData, kind: IterKind) -> JsResult<Value<'s>> {
+    let list = data.0.clone();
+    let index = Cell::new(0usize);
+    let done = Cell::new(false);
+    let next = s.function("next", move |s, _this, _args| {
+        let entries = list.borrow_mut().entries();
+        let entry = (!done.get()).then(|| entries.get(index.get())).flatten();
+        let out = s.object();
+        out.set("done", s.boolean(entry.is_none()))?;
+        let value = match entry {
+            Some((key, value)) => {
+                index.set(index.get() + 1);
+                match kind {
+                    IterKind::Keys => s.string(key),
+                    IterKind::Values => s.string(value),
+                    IterKind::Entries => {
+                        let key = s.string(key);
+                        let value = s.string(value);
+                        s.array(&[key, value])?.value()
+                    }
+                }
+            }
+            None => {
+                done.set(true);
+                s.undefined()
+            }
+        };
+        out.set("value", value)?;
+        Ok(out.value())
+    })?;
+    helper(s, "iterator")?.as_object().unwrap().call(None, &[next.value()])
+}
+
+fn helper<'s>(s: &Scope<'s>, name: &str) -> JsResult<Value<'s>> {
+    let page = page_of(s)?;
+    let helpers = page
+        .header_helpers
+        .borrow()
+        .get(&s.realm_id())
+        .cloned()
+        .ok_or_else(|| JsError::Type("Headers bindings are not installed".into()))?;
+    helpers.get(s).as_object().unwrap().get(name)
+}
+
+pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
+    let helpers = s.eval(
+        r#"(() => {
+        const symbol = Symbol.iterator, keys = Reflect.ownKeys;
+        const descriptor = Object.getOwnPropertyDescriptor, define = Object.defineProperty;
+        const apply = Reflect.apply, entries = Headers.prototype.entries, TypeError_ = TypeError;
+        define(Headers.prototype, symbol, {value: entries, writable: true, configurable: true});
+        define(Headers.prototype, 'forEach', {value: function(callback, thisArg) {
+            const iterator = apply(entries, this, []);
+            if (typeof callback !== 'function') throw new TypeError_('callback must be callable');
+            for (const pair of iterator) apply(callback, thisArg, [pair[1], pair[0], this]);
+        }, writable: true, enumerable: true, configurable: true});
+        return {
+            iterator(next) { return {next, [symbol]() { return this; }}; },
+            fill(init, convert) {
+                const result = [];
+                const append = (a, value) => define(a, a.length, {value, writable:true, enumerable:true, configurable:true});
+                if ((typeof init !== 'object' && typeof init !== 'function') || init === null)
+                    throw new TypeError_('Headers init must be an object');
+                const method = init[symbol];
+                if (method !== undefined && method !== null) {
+                    if (typeof method !== 'function') throw new TypeError_('Invalid iterator');
+                    for (const pair of {[symbol]() { return apply(method, init, []); }}) {
+                        if ((typeof pair !== 'object' && typeof pair !== 'function') || pair === null)
+                            throw new TypeError_('Header entry must be an iterable pair');
+                        const values = [];
+                        for (const value of pair) append(values, convert(value));
+                        append(result, values);
+                    }
+                } else {
+                    for (const key of keys(init)) {
+                        if (descriptor(init, key)?.enumerable) {
+                            const name = convert(key);
+                            append(result, [name, convert(init[key])]);
+                        }
+                    }
+                }
+                return result;
+            }
+        };
+    })()"#,
+        Some("lp-headers.js"),
+        1,
+    )?;
+    page_of(s)?.header_helpers.borrow_mut().insert(s.realm_id(), Persistent::new(s, helpers));
+    Ok(())
+}

@@ -593,3 +593,94 @@ fn storage_is_shared_across_worlds_and_inherited_blank_origin() {
     install(&inherited.scope().unwrap(), e.page.clone()).unwrap();
     assert_eq!(eval(&inherited, "localStorage.shared"), "yes");
 }
+
+#[test]
+fn headers_records_sequences_validation_and_cookie_order() {
+    let e = env("");
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"(() => {
+        const h = new Headers([['X-B',' b '], ['x-a','one'], ['X-A','two'],
+            ['Set-Cookie','a=1'], ['set-cookie','b=2']]);
+        if (h.get('X-A') !== 'one, two' || h.get('missing') !== null) return 'get';
+        if (JSON.stringify([...h]) !== JSON.stringify([
+            ['set-cookie','a=1'],['set-cookie','b=2'],['x-a','one, two'],['x-b','b']])) return 'entries';
+        if (h.getSetCookie().join('|') !== 'a=1|b=2') return 'cookies';
+        h.set('SET-cookie','c=3'); h.delete('x-b');
+        if (h.getSetCookie().join('|') !== 'c=3' || h.has('x-b')) return 'mutation';
+        const copy = new Headers(h); h.set('x-a','changed');
+        if (copy.get('x-a') !== 'one, two') return 'copy';
+        const record = Object.create({inherited:'ignored'}); record.own = 'ok';
+        if (JSON.stringify([...new Headers(record)]) !== '[["own","ok"]]') return 'record';
+        let failed = 0;
+        for (const run of [() => new Headers(null), () => new Headers([['x']]),
+            () => new Headers([['x','y','z']]), () => h.set('bad name','x'),
+            () => h.set('x','a\r\nb'), () => h.append('x','\0'),
+            () => h.get(''), () => h.set('x','\u0100'), () => h.get(Symbol()),
+            () => h.set('x'), () => Headers.prototype.get.call({}, 'x')]) {
+            try { run(); } catch(e) { if (e instanceof TypeError) failed++; }
+        }
+        return failed === 11 ? 'ok' : failed;
+    })()"#
+        ),
+        "ok"
+    );
+}
+
+#[test]
+fn headers_live_iteration_reentry_and_iterator_close() {
+    let e = env("");
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"(() => {
+        const h = new Headers({a:'1',c:'3'}), it = h.entries();
+        if (it[Symbol.iterator]() !== it || it.next().value.join(':') !== 'a:1') return 'iterator';
+        h.set('b','2'); if (it.next().value.join(':') !== 'b:2') return 'live';
+        h.delete('c'); if (!it.next().done) return 'delete';
+        h.set('d','4'); if (!it.next().done) return 'done';
+        let seen = [], receiver = {};
+        h.forEach(function(value, key, self) {
+            if (this !== receiver || self !== h) throw Error('receiver');
+            seen.push(key+value); if (key === 'a') h.set('c','3');
+        }, receiver);
+        if (seen.join(',') !== 'a1,b2,c3,d4') return seen;
+        h.set({toString(){ h.set('nested','yes'); return 'a'; }},
+              {toString(){h.delete('b');return 'changed';}});
+        if (h.get('a') !== 'changed' || h.get('nested') !== 'yes' || h.has('b')) return 'reentry';
+        let closed = false, yielded = 0;
+        function* input(){try { yielded++; yield ['good','1']; yielded++; yield ['bad','\u0100']; yielded++; } finally {closed=true;} }
+        try { new Headers(input()); } catch(e) { if (!(e instanceof TypeError)) return 'error'; }
+        if (!closed || yielded !== 2) return 'close';
+        let converted = false;
+        try { h.set('bad name', {toString(){converted=true;return 'value';}}); } catch {}
+        let consumed = false;
+        function* invalidName() { yield ['bad name','x']; consumed=true; }
+        try { new Headers(invalidName()); } catch {}
+        return converted && consumed ? 'ok' : 'conversion order';
+    })()"#
+        ),
+        "ok"
+    );
+}
+
+#[test]
+fn headers_capture_intrinsics_before_page_scripts() {
+    let e = env("");
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"(() => {
+        const symbol = Symbol.iterator;
+        Symbol = {}; Reflect.ownKeys = () => []; Reflect.apply = () => {throw Error('spoof')};
+        Object.getOwnPropertyDescriptor = () => undefined;
+        const h = new Headers({x:'yes'});
+        const entries = h[symbol]();
+        let count = 0; h.forEach(() => count++);
+        return h.get('x') === 'yes' && entries.next().value[1] === 'yes' && count === 1;
+    })()"#
+        ),
+        "true"
+    );
+}

@@ -21,6 +21,7 @@ pub mod encoding;
 pub mod event;
 pub mod file;
 pub mod formdata;
+pub mod headers;
 pub mod html;
 pub mod input;
 pub mod layout_api;
@@ -64,6 +65,7 @@ pub fn register(engine: &lp_js::Engine) {
     validity::register(engine);
     window::register(engine);
     engine.register::<storage::Storage>();
+    engine.register::<headers::Headers>();
 }
 
 /// Installs the page's bindings into a freshly created realm.
@@ -72,6 +74,7 @@ pub fn install(scope: &Scope<'_>, page: Rc<PageDom>) -> JsResult<()> {
     page.realms.borrow_mut().insert(realm.id(), realm.downgrade());
     realm.set_embedder(page);
     encoding::install(scope)?;
+    headers::install(scope)?;
     let global = scope.global();
     global.set("CSS", window::css_namespace(scope)?)?;
     Ok(())
