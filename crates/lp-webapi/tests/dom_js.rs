@@ -1266,3 +1266,143 @@ fn url_search_params_same_vm_worlds_and_gc_retained_iterator() {
     other.scope().unwrap().global().set("otherNext", next).unwrap();
     assert_eq!(eval(&other, "otherNext.call(copy.values()).value"), "one");
 }
+
+#[test]
+fn url_constructor_resolves_vite_preload_paths_and_components() {
+    let e = env("<body></body>");
+    assert_eq!(eval(&e.main,r#"
+      var u=new URL('../chunk.js','https://example.test/assets/index.js');
+      [u.href,u.origin,u.protocol,u.host,u.hostname,u.port,u.pathname,u.search,u.hash,u.toString(),u.toJSON()].join('|')
+    "#),"https://example.test/chunk.js|https://example.test|https:|example.test|example.test||/chunk.js|||https://example.test/chunk.js|https://example.test/chunk.js");
+}
+
+#[test]
+fn url_live_search_params_keep_identity_and_update_both_directions() {
+    let e = env("<body></body>");
+    assert_eq!(eval(&e.main,r#"
+      var u=new URL('https://example.test/path?a=one%20two&a=last#part'),p=u.searchParams;
+      var same=p===u.searchParams;p.sort();var sorted=u.href;
+      u.search='?x=1&x=2';var changed=p.toString();var it=p.values();it.next();
+      u.href='https://other.test/new?z=first&z=second';var next=it.next().value;
+      p.delete('z');var cleared=u.href;p.append('space','a b');
+      [same,sorted,changed,next,cleared,u.href,p===u.searchParams].join('|')
+    "#),"true|https://example.test/path?a=one+two&a=last#part|x=1&x=2|second|https://other.test/new|https://other.test/new?space=a+b|true");
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"
+      p.set({toString(){u.search='?nested=yes';return 'outer'}},{toString(){u.hash='end';return 'value'}});
+      u.href
+    "#
+        ),
+        "https://other.test/new?nested=yes&outer=value#end"
+    );
+}
+
+#[test]
+fn url_component_setters_and_parse_failures_preserve_state() {
+    let e = env("<body></body>");
+    assert_eq!(eval(&e.main,r#"
+      var u=new URL('https://user:pass@example.test:443/a?x=1#b');
+      u.hostname='EXAMPLE.org';u.port='8443';u.pathname='/a b';u.username='first last';u.password='p@ss';
+      u.hash='hello world';var valid=u.href;u.port='70000';u.hostname='bad host';
+      var same=u.href===valid;var error;try{u.href='not absolute'}catch(e){error=e.name}
+      [valid,same,error,u.href===valid,u.searchParams.get('x'),u.origin].join('|')
+    "#),"https://first%20last:p%40ss@example.org:8443/a%20b?x=1#hello%20world|true|TypeError|true|1|https://example.org:8443");
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"
+      [URL.canParse('/x','https://example.test/'),URL.canParse('/x'),URL.parse('bad')===null,
+       URL.parse('/x',new URL('https://example.test/base')).href,URL.canParse('https://example.test','bad')].join('|')
+    "#
+        ),
+        "true|false|true|https://example.test/x|false"
+    );
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"
+      var calls=[];var parsed=URL.parse({toString(){calls.push('input');return '/path'}},{toString(){calls.push('base');return 'https://example.test'}});
+      calls.join(',')+'|'+parsed.href
+    "#
+        ),
+        "input,base|https://example.test/path"
+    );
+    assert_eq!(eval(&e.main, "try{URL.canParse(Symbol())}catch(e){e.name}"), "TypeError");
+    assert_eq!(eval(&e.main, "try{new URL()}catch(e){e.name}"), "TypeError");
+    assert_eq!(eval(&e.main, "try{URL.createObjectURL(new Blob())}catch(e){e.name}"), "NotSupportedError");
+}
+
+#[test]
+fn url_opaque_idn_ipv6_subclass_and_json_serialization() {
+    let e = env("<body></body>");
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"
+      class MyURL extends URL{};
+      var u=new MyURL('https://bücher.example:443/a');
+      var opaque=new URL('mailto:user@example.test');opaque.hostname='ignored';opaque.username='ignored';
+      var ipv6=new URL('http://[::1]:80/x');
+      [u instanceof MyURL,u instanceof URL,JSON.stringify(u),opaque.href,opaque.origin,ipv6.host,
+       new URL('file:///tmp/../file').href].join('|')
+    "#
+        ),
+        "true|true|\"https://xn--bcher-kva.example/a\"|mailto:user@example.test|null|[::1]|file:///file"
+    );
+}
+
+#[test]
+fn url_search_params_identity_survives_cross_world_getters_and_gc() {
+    let e = env("<body></body>");
+    let other = new_realm(&e.engine, e.engine.register::<TestWindow>(), &e.page, "isolated");
+    let source = e
+        .main
+        .scope()
+        .unwrap()
+        .eval("globalThis.address=new URL('https://example.test/?a=1');address", None, 1)
+        .unwrap();
+    other.scope().unwrap().global().set("source", source).unwrap();
+    assert_eq!(eval(&other,"globalThis.params=Object.getOwnPropertyDescriptor(URL.prototype,'searchParams').get.call(source);params===source.searchParams"),"true");
+    eval(&e.main, "address=null");
+    eval(&other, "source=null");
+    for _ in 0..3 {
+        e.engine.collect_garbage_now();
+        e.engine.drain_finalized();
+        e.page.after_task();
+    }
+    assert_eq!(eval(&other, "params.append('b','2');params.toString()"), "a=1&b=2");
+}
+
+#[test]
+fn url_params_traced_cycles_collect_but_retained_params_keep_url_alive() {
+    let e = env("<body></body>");
+    eval(
+        &e.main,
+        r#"
+      var weakUrls=[];
+      for(let i=0;i<100;i++){const u=new URL('https://example.test/?i='+i);weakUrls.push(new WeakRef(u));}
+      var retainedParams,retainedUrl;
+      {const u=new URL('https://example.test/?kept=yes');retainedParams=u.searchParams;retainedUrl=new WeakRef(u);}
+    "#,
+    );
+    for _ in 0..6 {
+        e.engine.collect_garbage_now();
+        e.engine.drain_finalized();
+        e.page.after_task();
+    }
+    assert_eq!(
+        eval(&e.main, "weakUrls.filter(w=>w.deref()!==undefined).length<5"),
+        "true",
+        "unreachable URL/searchParams cycles stayed rooted"
+    );
+    assert_eq!(eval(&e.main, "retainedUrl.deref().searchParams===retainedParams"), "true");
+    eval(&e.main, "retainedParams=null");
+    for _ in 0..6 {
+        e.engine.collect_garbage_now();
+        e.engine.drain_finalized();
+        e.page.after_task();
+    }
+    assert_eq!(eval(&e.main, "retainedUrl.deref()===undefined"), "true");
+}
