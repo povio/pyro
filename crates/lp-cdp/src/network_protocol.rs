@@ -257,6 +257,10 @@ impl BodyBudget {
     }
 }
 
+/// Maximum response records per page, including empty and discarded bodies.
+/// Payload byte limits alone cannot bound this bookkeeping.
+pub const MAX_RETAINED_BODIES: usize = 4096;
+
 /// Response bodies of one page for `Network.getResponseBody`.
 ///
 /// - Capture is lazy: the engine only feeds events while a session of the page
@@ -265,6 +269,8 @@ impl BodyBudget {
 ///   When the budget is full the store evicts its own oldest bodies; if that is
 ///   not enough, the new body is not retained and asking for it returns an
 ///   explicit error instead of stale or partial data.
+/// - At most [`MAX_RETAINED_BODIES`] records are retained per page. Older
+///   records are evicted even when they contain no payload bytes.
 /// - Dropping or clearing the store returns its bytes to the budget.
 pub struct BodyStore {
     budget: BodyBudget,
@@ -276,7 +282,7 @@ pub struct BodyStore {
 struct Body {
     chunks: Vec<Bytes>,
     len: usize,
-    mime: String,
+    textual: bool,
     complete: bool,
     dropped: Option<&'static str>,
 }
@@ -291,10 +297,17 @@ impl BodyStore {
         match event {
             NetEvent::ResponseReceived { id, head, .. } => {
                 self.remove(*id);
-                self.bodies.insert(
-                    *id,
-                    Body { chunks: Vec::new(), len: 0, mime: head.mime.clone(), complete: false, dropped: None },
-                );
+                if self.bodies.len() >= MAX_RETAINED_BODIES {
+                    if let Some(oldest) = self.order.front().copied() {
+                        self.remove(oldest);
+                    }
+                }
+                let textual = head.mime.starts_with("text/")
+                    || head.mime.contains("json")
+                    || head.mime.contains("javascript")
+                    || head.mime.contains("xml")
+                    || head.mime.is_empty();
+                self.bodies.insert(*id, Body { chunks: Vec::new(), len: 0, textual, complete: false, dropped: None });
                 self.order.push_back(*id);
             }
             NetEvent::DataReceived { id, data, .. } => self.append(*id, data),
@@ -309,12 +322,16 @@ impl BodyStore {
     }
 
     fn append(&mut self, id: RequestId, data: &Bytes) {
+        // Empty notifications must not allocate uncharged chunk metadata.
+        if data.is_empty() {
+            return;
+        }
         let per_body = self.budget.limits().per_body;
         let Some(body) = self.bodies.get(&id) else { return };
         if body.dropped.is_some() {
             return;
         }
-        if body.len + data.len() > per_body {
+        if data.len() > per_body.saturating_sub(body.len) {
             self.drop_body(id, "Response body is too large to be retained");
             return;
         }
@@ -381,13 +398,8 @@ impl BodyStore {
         for chunk in &body.chunks {
             bytes.extend_from_slice(chunk);
         }
-        let textual = body.mime.starts_with("text/")
-            || body.mime.contains("json")
-            || body.mime.contains("javascript")
-            || body.mime.contains("xml")
-            || body.mime.is_empty();
         match String::from_utf8(bytes) {
-            Ok(text) if textual => Ok(json!({ "body": text, "base64Encoded": false })),
+            Ok(text) if body.textual => Ok(json!({ "body": text, "base64Encoded": false })),
             Ok(text) => Ok(json!({ "body": base64_encode(text.as_bytes()), "base64Encoded": true })),
             Err(e) => Ok(json!({ "body": base64_encode(e.as_bytes()), "base64Encoded": true })),
         }
@@ -579,6 +591,36 @@ mod tests {
         assert_eq!(b.get(RequestId(2)).unwrap()["body"], "bbbbbbbb");
         b.clear();
         assert_eq!(budget.used(), 0);
+    }
+
+    #[test]
+    fn empty_and_discarded_response_records_are_bounded() {
+        let (budget, mut s) = store(10, 0);
+        for id in 0..4098 {
+            s.observe(&response(id, "text/plain"));
+            if id % 2 == 0 {
+                s.observe(&data(id, b"x"));
+            }
+            s.observe(&finished(id));
+        }
+        assert_eq!(budget.used(), 0);
+        assert!(s.bodies.len() <= 4096, "zero-byte records need a separate bound");
+        assert!(s.get(RequestId(1)).is_err(), "oldest empty response evicted");
+        assert_eq!(s.get(RequestId(4095)).unwrap()["body"], "");
+        assert!(s.get(RequestId(4096)).unwrap_err().message.contains("too large"));
+    }
+
+    #[test]
+    fn empty_data_events_do_not_retain_chunks() {
+        let (budget, mut s) = store(10, 10);
+        s.observe(&response(1, "text/plain"));
+        s.observe(&data(1, b""));
+        s.observe(&data(1, b"hello"));
+        s.observe(&data(1, b""));
+        s.observe(&finished(1));
+        assert_eq!(s.bodies[&RequestId(1)].chunks.len(), 1);
+        assert_eq!(budget.used(), 5);
+        assert_eq!(s.get(RequestId(1)).unwrap()["body"], "hello");
     }
 
     #[test]
