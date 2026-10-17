@@ -1,0 +1,15 @@
+{
+  "note": "Ad-hoc diagnostics (measured 2026-10-17 ~08:12-08:17Z) explaining the bimodal startup time. Times are spawn -> lightpanda's own first log line ($time of 'server running', which coincides with first successful TCP connect +/-1ms).",
+  "lightpanda_log_vs_client_poll_ms": {"client_poll": [57.6, 97.9, 109.2, 110.1], "lightpanda_log_time": [57, 98, 107, 109]},
+  "zsh_loop_idle_cpu_ms": [57, 108, 105, 108],
+  "zsh_loop_with_one_busy_spinner_core_ms": [59, 58, 58, 58],
+  "zsh_loop_under_taskpolicy_-b_background_ms": [276, 292],
+  "first_log_line_already_server_running": "with --log-level debug the 'startup' and 'server running' lines carry the same ms timestamp; all ~58/~107ms is spent before main's first log (exec/dyld/static init/V8 platform init)",
+  "lightpanda_version_cmd_wall_ms": [103.5, 51.1, 50.6, 50.4],
+  "timer_coalescing_on_this_host": {
+    "nanosleep_20ms_actual_ms": "40-170 (Rust thread::sleep, perl select, Atomics.wait all affected)",
+    "kqueue_EVFILT_TIMER_20ms_NOTE_CRITICAL_actual_ms": 20.0,
+    "node_setTimeout_20ms_actual_ms": 22.1
+  },
+  "interpretation": "Apple Silicon DVFS / cluster idle state: when the machine is otherwise idle, a fresh lightpanda process needs ~107ms to reach listen(); with one core kept busy (CPU clusters awake) ~58ms. First launch in each fresh shell is ~58ms because the shell spawn itself just woke the CPU. Not a lightpanda bug; a measurement-condition effect. Hypothesis-level explanation, consistent with the busy-spinner and taskpolicy -b experiments, not proven with powermetrics (needs sudo)."
+}
