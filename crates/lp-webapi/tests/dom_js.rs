@@ -2546,10 +2546,11 @@ fn screen_orientation_reports_override_or_follows_screen() {
     vp.height = 844;
     e.page.set_viewport(vp.clone());
     assert_eq!(eval(&e.main, probe), "portrait-primary/0");
-    vp.screen_width = Some(900);
-    vp.screen_height = Some(1440);
+    // Landscape screen with a portrait viewport: the fallback follows the screen.
+    vp.screen_width = Some(1440);
+    vp.screen_height = Some(900);
     e.page.set_viewport(vp.clone());
-    assert_eq!(eval(&e.main, probe), "portrait-primary/0", "follows screen, not viewport");
+    assert_eq!(eval(&e.main, probe), "landscape-primary/0", "follows screen, not viewport");
     // Override wins regardless of dimensions; (orientation) still follows the viewport.
     vp.orientation = Some(ScreenOrientation { kind: OrientationType::LandscapePrimary, angle: 0 });
     e.page.set_viewport(vp.clone());
@@ -2560,6 +2561,6 @@ fn screen_orientation_reports_override_or_follows_screen() {
     assert_eq!(eval(&e.main, probe), "portrait-secondary/180");
     vp.orientation = None;
     e.page.set_viewport(vp);
-    assert_eq!(eval(&e.main, probe), "portrait-primary/0");
+    assert_eq!(eval(&e.main, probe), "landscape-primary/0", "back to the landscape screen");
     e.page.dispose();
 }
