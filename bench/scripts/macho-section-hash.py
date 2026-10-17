@@ -4,11 +4,17 @@ Usage: python3 macho-section-hash.py BINARY...  -> JSON {binary: {"SEG,sect": sh
 
 Whole-file hashes of two clean builds of the same source differ when built in
 different target directories (paths end up in debug info), so they cannot show
-which source a benchmark binary was built from. The machine-code and constant
-sections are reproducible across fresh builds of the same SHA on the same
-toolchain (verified in bench/results/build-provenance-audit), so equal section
-hashes identify the source a binary was built from; unequal hashes show it
-was not built from that source.
+which source a benchmark binary was built from. The four selected sections
+(__TEXT,__text, __TEXT,__const, __TEXT,__cstring, __DATA_CONST,__const) were
+reproducible across fresh builds of the same SHA in the recorded build
+conditions (same toolchain, SDK, locked dependencies and release profile; see
+bench/results/build-provenance-audit).
+
+Under those same conditions, matching hashes for these selected sections are
+consistent with a binary having been built from the compared source; they do
+not cover other sections, linking or debug info, and other toolchains or
+settings may not reproduce. Differing hashes, under the same conditions, show
+the binary's code or constants differ from that build.
 """
 import hashlib
 import json
