@@ -81,7 +81,16 @@ impl Browser {
         url: &str,
         loader: &LoaderId,
     ) -> Result<Rc<PageDom>, JsError> {
-        let context = self.page(page).ok_or_else(|| JsError::Type("no such page".into()))?.context;
+        let state = self.page(page).ok_or_else(|| JsError::Type("no such page".into()))?;
+        let context = state.context;
+        let local_storage = self
+            .contexts
+            .iter()
+            .find(|c| c.id == context)
+            .ok_or_else(|| JsError::Type("no such browser context".into()))?
+            .local_storage
+            .clone();
+        let session_storage = state.session_storage.clone();
         let dom = Rc::new(RefCell::new(lp_dom::Dom::new()));
         let doc = if url == "about:blank" {
             lp_dom::parse::parse_document(&dom, url, "<!doctype html><html><head></head><body></body></html>")
@@ -91,6 +100,7 @@ impl Browser {
         dom.borrow_mut().set_document_active(doc, true).map_err(|e| JsError::Type(format!("{e:?}")))?;
         dom.borrow_mut().set_resource_tracking(true);
         let bindings = PageDom::new(dom, doc);
+        bindings.set_storage_namespaces(local_storage, session_storage);
         bindings.create_window_target(doc);
         bindings.set_ready_state(doc, "loading");
         *bindings.net.borrow_mut() = self.context_net(context).cloned();

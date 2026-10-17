@@ -35,6 +35,7 @@ struct ContextState {
     id: ContextId,
     loader: Option<Rc<dyn ResourceLoader>>,
     net: Option<lp_net::NetClient>,
+    local_storage: lp_webapi::StorageNamespace,
 }
 
 /// CDP frame id (upstream uses a stable string per frame).
@@ -213,6 +214,7 @@ pub struct Page {
     /// Session history and current URL (shared with the page's windows).
     pub nav: Rc<PageNav>,
     pub(crate) load: Option<loader::DocumentLoad>,
+    session_storage: lp_webapi::StorageNamespace,
 }
 
 /// Browser-thread state: the loop state type for [`EventLoop`].
@@ -276,7 +278,12 @@ impl BrowserThread {
             released_payloads: RefCell::new(0),
             handle: event_loop.handle(),
             loader: None,
-            contexts: vec![ContextState { id: DEFAULT_CONTEXT, loader: None, net: None }],
+            contexts: vec![ContextState {
+                id: DEFAULT_CONTEXT,
+                loader: None,
+                net: None,
+                local_storage: Default::default(),
+            }],
             net_config: None,
             completions: std::collections::HashMap::new(),
         };
@@ -353,7 +360,7 @@ impl Browser {
     /// Creates an isolated browser context with its own network state.
     pub fn create_context(&mut self) -> std::io::Result<ContextId> {
         let id = ContextId(self.next() as u32);
-        self.contexts.push(ContextState { id, loader: None, net: None });
+        self.contexts.push(ContextState { id, loader: None, net: None, local_storage: Default::default() });
         if self.net_config.is_some() {
             self.attach_network(id)?;
         }
@@ -421,6 +428,7 @@ impl Browser {
             pending_replace: false,
             nav,
             load: None,
+            session_storage: Default::default(),
         });
         self.navigate(
             id,
@@ -561,6 +569,9 @@ impl Browser {
             p.nav.set_document(Some((page_dom.dom.clone(), page_dom.document())));
             (p.main_frame.id.clone(), old, p.init_scripts.clone(), p.nav.clone(), old_dom)
         };
+        if let Some(dom) = &old_dom {
+            dom.dispose();
+        }
         for r in old {
             window::cancel_timers(&r.realm);
             let id = r.realm.id();
@@ -670,6 +681,9 @@ impl Browser {
     pub fn close_page(&mut self, page: PageId) -> bool {
         let Some(pos) = self.pages.iter().position(|p| p.id == page) else { return false };
         let p = self.pages.remove(pos);
+        if let Some(dom) = &p.main_frame.page_dom {
+            dom.dispose();
+        }
         for r in p.main_frame.realms {
             window::cancel_timers(&r.realm);
             let id = r.realm.id();

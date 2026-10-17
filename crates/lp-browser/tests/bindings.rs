@@ -131,3 +131,54 @@ fn async_module_graph_delays_load_until_evaluation_finishes() {
     settle(&mut thread);
     assert_eq!(eval(&thread, page, "moduleValue + ':' + atLoad"), "42:42");
 }
+
+#[test]
+fn storage_survives_navigation_with_context_and_page_partitions() {
+    let mut thread = BrowserThread::new().unwrap();
+    let loader = Rc::new(StaticLoader::default());
+    for url in ["http://site.test/one", "http://site.test/two", "http://other.test/"] {
+        loader.insert(url, "text/html", "<p>storage</p>", Duration::ZERO);
+    }
+    thread.browser.set_loader(Some(loader));
+    let context = thread.browser.create_context().unwrap();
+    let a = thread.browser.create_page_in(context).unwrap();
+    let b = thread.browser.create_page_in(context).unwrap();
+    let isolated_context = thread.browser.create_context().unwrap();
+    let c = thread.browser.create_page_in(isolated_context).unwrap();
+    for page in [a, b, c] {
+        thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/one")).unwrap();
+    }
+    settle(&mut thread);
+    eval(&thread, a, "localStorage.setItem('token', 'synthetic'); sessionStorage.setItem('page', 'a'); 'ok'");
+    assert_eq!(
+        eval(&thread, b, "localStorage.getItem('token') + ':' + sessionStorage.getItem('page')"),
+        "synthetic:null"
+    );
+    assert_eq!(eval(&thread, c, "localStorage.getItem('token')"), "null");
+    let world = thread.browser.isolated_world(a, "automation").unwrap();
+    assert_eq!(
+        world
+            .scope()
+            .unwrap()
+            .eval("localStorage.token + ':' + sessionStorage.page", None, 1)
+            .unwrap()
+            .to_string()
+            .unwrap(),
+        "synthetic:a"
+    );
+    let old = thread.browser.page(a).unwrap().main_frame.page_dom.as_ref().unwrap().clone();
+    thread.browser.navigate(a, NavigateOpts::address_bar("http://site.test/two")).unwrap();
+    settle(&mut thread);
+    assert!(old.is_disposed());
+    assert_eq!(eval(&thread, a, "localStorage.token + ':' + sessionStorage.page"), "synthetic:a");
+    thread.browser.navigate(a, NavigateOpts::address_bar("http://other.test/")).unwrap();
+    settle(&mut thread);
+    assert_eq!(eval(&thread, a, "localStorage.getItem('token') + ':' + sessionStorage.getItem('page')"), "null:null");
+    thread.browser.navigate(a, NavigateOpts::address_bar("http://site.test/one")).unwrap();
+    settle(&mut thread);
+    assert_eq!(eval(&thread, a, "localStorage.token + ':' + sessionStorage.page"), "synthetic:a");
+    let bindings = thread.browser.page(a).unwrap().main_frame.page_dom.as_ref().unwrap().clone();
+    thread.browser.close_context(context);
+    assert!(bindings.is_disposed());
+    assert_eq!(eval(&thread, c, "localStorage.getItem('token')"), "null");
+}
