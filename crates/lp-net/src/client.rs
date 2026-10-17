@@ -567,7 +567,7 @@ impl Io {
         // Cookies.
         let send_cookies = match req.credentials {
             Credentials::Include => true,
-            Credentials::SameOrigin => !cors_cross,
+            Credentials::SameOrigin => cors::is_same_origin_request(req),
             Credentials::Omit => false,
         };
         if send_cookies && !h.contains_key(header::COOKIE) {
@@ -575,6 +575,12 @@ impl Io {
             let safe = matches!(req.method, Method::GET | Method::HEAD);
             let ctx = if req.mode == RequestMode::Navigate && req.origin.is_none() {
                 SiteContext::SameSite
+            } else if req.origin.is_some() && origin_url.is_none() {
+                if top && safe {
+                    SiteContext::CrossSiteTopLevelSafe
+                } else {
+                    SiteContext::CrossSite
+                }
             } else {
                 site_context(origin_url, &req.url, top, safe)
             };
@@ -624,21 +630,10 @@ impl Io {
         let mut redirect_response: Option<ResponseHead> = None;
         let mut tainted = false; // cross-origin redirect in cors mode => Origin "null"
         loop {
-            if req.url.scheme() == "data" {
-                return self.serve_data(id, &req, sink, redirect_response.take());
-            }
-            match req.url.scheme() {
-                "http" => {}
-                "https" => return Err(NetError::UnsupportedScheme("https (built without TLS support)".into())),
-                s => return Err(NetError::UnsupportedScheme(s.to_owned())),
-            }
-            if self.shared.settings.lock().unwrap().offline {
-                return Err(NetError::Blocked("net::ERR_INTERNET_DISCONNECTED".into()));
-            }
-            let cors_cross = self.shared.config.enforce_cors && cors::is_cors_request(&req, origin_url.as_ref());
             if tainted {
                 req.origin = Some("null".into());
             }
+            let cors_cross = self.shared.config.enforce_cors && cors::is_cors_request(&req, origin_url.as_ref());
             let headers = self.build_headers(&req, origin_url.as_ref(), cors_cross);
             let info = RequestInfo {
                 url: req.url.clone(),
@@ -656,6 +651,23 @@ impl Io {
                 timestamp: self.shared.now(),
                 wall_time: wall_time(),
             });
+
+            // Observers must see a start before every terminal/response path,
+            // including local data URLs and requests rejected before I/O.
+            if req.url.scheme() == "data" {
+                return self.serve_data(id, &req, sink, None);
+            }
+            match req.url.scheme() {
+                "http" => {}
+                "https" => return Err(NetError::UnsupportedScheme("https (built without TLS support)".into())),
+                s => return Err(NetError::UnsupportedScheme(s.to_owned())),
+            }
+            if self.shared.settings.lock().unwrap().offline {
+                return Err(NetError::Blocked("net::ERR_INTERNET_DISCONNECTED".into()));
+            }
+            if req.mode == RequestMode::SameOrigin && !cors::is_same_origin_request(&req) {
+                return Err(NetError::Cors("Cross-origin request in same-origin mode".into()));
+            }
 
             // CDP Fetch interception (request stage).
             let interceptor = self.shared.interceptor.lock().unwrap().clone();
@@ -708,7 +720,7 @@ impl Io {
             let resp_headers = resp.headers().clone();
             let cookies_allowed = match req.credentials {
                 Credentials::Include => true,
-                Credentials::SameOrigin => !cors_cross,
+                Credentials::SameOrigin => cors::is_same_origin_request(&req),
                 Credentials::Omit => false,
             };
             self.store_cookies(&url, &resp_headers, cookies_allowed);
@@ -760,8 +772,12 @@ impl Io {
                             req.headers.remove(h);
                         }
                     }
-                    if cors_cross && !cors::same_origin(&url, &target) {
-                        tainted = true;
+                    if !cors::same_origin(&url, &target) {
+                        req.headers.remove(header::AUTHORIZATION);
+                        req.headers.remove(header::COOKIE);
+                        if cors_cross {
+                            tainted = true;
+                        }
                     }
                     req.url = target;
                     redirect_response = Some(head);
@@ -773,9 +789,7 @@ impl Io {
                 cors::cors_check(&resp_headers, req.origin.as_deref().unwrap_or("null"), req.credentials)
                     .map_err(NetError::Cors)?;
                 ResponseKind::Cors
-            } else if req.mode == RequestMode::NoCors
-                && origin_url.as_ref().is_some_and(|o| !cors::same_origin(o, &url))
-            {
+            } else if req.mode == RequestMode::NoCors && !cors::is_same_origin_request(&req) {
                 ResponseKind::Opaque
             } else {
                 ResponseKind::Basic
@@ -888,6 +902,9 @@ impl Io {
         head: ResponseHead,
         body: Bytes,
     ) -> Result<(), NetError> {
+        if body.len() > req.max_body.unwrap_or(self.shared.config.max_body) {
+            return Err(NetError::TooLarge);
+        }
         self.shared.emit(NetEvent::ResponseReceived {
             id,
             head: Box::new(head.clone()),

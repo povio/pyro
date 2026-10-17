@@ -58,9 +58,15 @@ pub fn unsafe_header_names(headers: &HeaderMap) -> Vec<String> {
     names
 }
 
+/// Requests without an initiator are browser-owned. An opaque or invalid
+/// serialized initiator never becomes same-origin merely because URL parsing failed.
+pub fn is_same_origin_request(req: &Request) -> bool {
+    req.origin.as_deref().is_none_or(|o| Url::parse(o).is_ok_and(|o| same_origin(&o, &req.url)))
+}
+
 /// Whether a request needs CORS processing at all.
-pub fn is_cors_request(req: &Request, origin_url: Option<&Url>) -> bool {
-    req.mode == RequestMode::Cors && origin_url.is_some_and(|o| !same_origin(o, &req.url))
+pub fn is_cors_request(req: &Request, _origin_url: Option<&Url>) -> bool {
+    req.mode == RequestMode::Cors && !is_same_origin_request(req)
 }
 
 pub fn needs_preflight(req: &Request) -> bool {

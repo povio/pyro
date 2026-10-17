@@ -75,7 +75,6 @@ fn new_realm(engine: &Engine, class: lp_js::ClassId, page: &Rc<PageDom>, name: &
         .unwrap();
     let s = realm.scope().unwrap();
     install(&s, page.clone()).unwrap();
-    drop(s);
     realm
 }
 
@@ -426,4 +425,45 @@ fn abort_does_not_remove_a_reused_listener_registration() {
     );
     e.page.after_task();
     assert_eq!(eval(&e.main, "document.body.dispatchEvent(new Event('x')); calls"), "2");
+}
+
+#[test]
+fn dataview_brand_check_ignores_script_properties() {
+    let e = env("<body>");
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"
+        const data = new Uint8Array([65,66,67]);
+        const view = new DataView(data.buffer, 1, 1);
+        Object.defineProperty(view, 'buffer', {get(){throw Error('should not run')}});
+        view.constructor = null;
+        new TextDecoder().decode(view)
+    "#
+        ),
+        "B"
+    );
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"
+        const fake = {constructor: {name: 'DataView'}, get buffer(){return this}, byteOffset:0, byteLength:1};
+        try { new TextDecoder().decode(fake); 'accepted' } catch(e) { e.name }
+    "#
+        ),
+        "TypeError"
+    );
+    assert_eq!(eval(&e.main, "new TextDecoder().decode(new DataView(new ArrayBuffer(0)))"), "");
+}
+
+#[test]
+fn range_text_respects_nested_container_boundaries() {
+    let e = env("<body><p id=x><b>abc</b><i>def</i><span>ghi</span></p><p>outside</p></body>");
+    assert_eq!(eval(&e.main, "const r=document.createRange(), x=document.getElementById('x'); r.setStart(x,0); r.setEnd(x,1); r.toString()"), "abc");
+    assert_eq!(eval(&e.main, "r.setStart(x,1); r.setEnd(x,2); r.toString()"), "def");
+    assert_eq!(
+        eval(&e.main, "r.setStart(x.firstChild.firstChild,1); r.setEnd(x.lastChild.firstChild,2); r.toString()"),
+        "bcdefgh"
+    );
+    assert_eq!(eval(&e.main, "r.collapse(true); r.toString()"), "");
 }
