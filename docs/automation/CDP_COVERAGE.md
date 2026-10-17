@@ -10,11 +10,11 @@ Rewrite status:
 - **conditional:** succeeds only when the request is already true of the engine; otherwise it returns an explicit error.
 - **pending:** returns an explicit CDP error (`-32000 … is not supported by lightningpanda`) and never a fabricated success.
 
-HTTP and `data:` document loading now use the real loader. `Network` emits request/redirect/response/data/completion/failure events to enabled page sessions, with response-body capture. Browser contexts own distinct network clients. DOM/Input and Fetch protocol wiring remain pending; this is not TOS compatibility.
+HTTP and `data:` document loading now use the real loader. `Network` emits request/redirect/response/data/completion/failure events to enabled page sessions, with response-body capture. Browser contexts own distinct network clients. DOM/Input protocol wiring remains pending; this is not TOS compatibility. Fetch request-stage interception supports continue overrides, fulfill, abort, disable/detach cleanup and server Basic-auth challenges. Response-stage interception, custom status phrases, binary headers, proxy credentials and non-Basic credential schemes are explicitly unsupported. Only one session per page can own interception; different pages in a context may have separate owners.
 
 Capture uses a shared process payload budget (default 64 MiB, 8 MiB/body), at most 4096 response records per page, and bounded network subscriptions (1024 events/8 MiB logical bytes per context). Observer overflow closes the CDP connection instead of silently losing events. Disabling the last Network session, navigation, or page teardown releases retained bodies. Per-session `Network.enable` buffer options are explicitly unsupported. These are logical retention limits, not an RSS measurement; shared chunk allocations and metadata contribute additional memory.
 
-Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 24 engine, 10 accepted/recorded only, 3 conditional, 64 pending.
+Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 30 engine, 10 accepted/recorded only, 3 conditional, 58 pending.
 
 | Method | Upstream 2ad38773f | Rewrite | Notes |
 | --- | --- | --- | --- |
@@ -51,11 +51,11 @@ Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 24 engi
 | `Emulation.setTimezoneOverride` | yes | conditional | succeeds only when it equals the process time zone; otherwise an explicit error |
 | `Emulation.setTouchEmulationEnabled` | yes | pending |  |
 | `Emulation.setUserAgentOverride` | yes | pending | refused until per-page HTTP and navigator overrides can be applied consistently |
-| `Fetch.continueRequest` | yes | pending |  |
-| `Fetch.disable` | yes | pending |  |
-| `Fetch.enable` | yes | pending |  |
-| `Fetch.failRequest` | yes | pending |  |
-| `Fetch.fulfillRequest` | yes | pending |  |
+| `Fetch.continueRequest` | yes | engine | request stage; see supported scope above |
+| `Fetch.disable` | yes | engine | request stage; see supported scope above |
+| `Fetch.enable` | yes | engine | request stage; see supported scope above |
+| `Fetch.failRequest` | yes | engine | request stage; see supported scope above |
+| `Fetch.fulfillRequest` | yes | engine | request stage; see supported scope above |
 | `HeapProfiler.collectGarbage` | **no** | pending |  |
 | `IO.close` | yes | pending |  |
 | `IO.read` | yes | pending |  |

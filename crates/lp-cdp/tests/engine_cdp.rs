@@ -306,12 +306,18 @@ fn navigation_events_contexts_and_failures() {
 #[test]
 fn unsupported_commands_fail_explicitly() {
     let mut h = Harness::new();
-    for method in
-        ["DOM.getDocument", "Input.dispatchMouseEvent", "Fetch.enable", "Page.captureScreenshot", "Runtime.addBinding"]
-    {
+    for method in [
+        "DOM.getDocument",
+        "Input.dispatchMouseEvent",
+        "Fetch.getResponseBody",
+        "Page.captureScreenshot",
+        "Runtime.addBinding",
+    ] {
         let r = h.page(method, json!({}));
         assert_eq!(r["error"]["code"], -32000, "{method}: {r}");
     }
+    let r = h.page("Fetch.enable", json!({"patterns":[{"requestStage":"Response"}]}));
+    assert!(r["error"]["message"].as_str().unwrap().contains("not supported"), "{r}");
     let r = h.page("Emulation.setLocaleOverride", json!({"locale":"xx-XX"}));
     assert!(r["error"]["message"].as_str().unwrap().contains("not supported"), "{r}");
 }
@@ -624,4 +630,86 @@ fn network_http_redirect_response_and_body() {
         json!({"body":"hello","base64Encoded":false})
     );
     server.join().unwrap();
+}
+
+fn until_event(h: &mut Harness, method: &str) -> Vec<Value> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut events = Vec::new();
+    loop {
+        events.extend(h.drain());
+        if events.iter().any(|e| e["method"] == method) {
+            return events;
+        }
+        assert!(Instant::now() < deadline, "missing {method}: {events:#?}");
+        h.browser.host_mut().run_until_work(Some(deadline), || false);
+        h.browser.host_mut().flush();
+    }
+}
+
+#[test]
+fn invalid_fetch_decision_keeps_request_paused_for_valid_retry() {
+    let mut h = Harness::new();
+    h.page("Network.enable", json!({}));
+    h.page("Fetch.enable", json!({"patterns":[{"urlPattern":"*"}]}));
+    let session = h.session.clone();
+    h.send(Some(&session), "Page.navigate", json!({"url":"http://127.0.0.1:1/fulfilled"}));
+    let events = until_event(&mut h, "Fetch.requestPaused");
+    let paused = events.iter().find(|e| e["method"] == "Fetch.requestPaused").unwrap();
+    let id = paused["params"]["requestId"].clone();
+    let request = events.iter().find(|e| e["method"] == "Network.requestWillBeSent").unwrap();
+    assert_eq!(paused["params"]["networkId"], request["params"]["requestId"]);
+    assert!(h.page("Fetch.fulfillRequest", json!({"requestId":id,"responseCode":200,"body":"=="}))["error"].is_object());
+    let mut events = h.page_with_events(
+        "Fetch.fulfillRequest",
+        json!({"requestId":id,"responseCode":200,
+        "responseHeaders":[{"name":"content-type","value":"text/html"}],"body":"aGk="}),
+    );
+    assert!(events.iter().any(|e| e["result"] == json!({})), "fulfill accepted: {events:#?}");
+    wait_for_network_finish(&mut h, &mut events);
+    let request_id = paused["params"]["networkId"].clone();
+    assert_eq!(h.page("Network.getResponseBody", json!({"requestId":request_id}))["result"]["body"], "hi");
+    assert!(h.page("Fetch.continueRequest", json!({"requestId":id}))["error"].is_object(), "decision cannot be reused");
+}
+
+#[test]
+fn disabling_fetch_resumes_a_paused_navigation() {
+    let mut h = Harness::new();
+    h.page("Fetch.enable", json!({}));
+    let session = h.session.clone();
+    let navigation = h.send(Some(&session), "Page.navigate", json!({"url":"http://127.0.0.1:1/continued"}));
+    let paused = until_event(&mut h, "Fetch.requestPaused");
+    let id = paused.iter().find(|e| e["method"] == "Fetch.requestPaused").unwrap()["params"]["requestId"].clone();
+    let mut events = h.page_with_events("Fetch.disable", json!({}));
+    if !events.iter().any(|e| e["id"] == navigation) {
+        events.extend(h.until_response(navigation));
+    }
+    let response = events.iter().find(|e| e["id"] == navigation).unwrap();
+    assert!(
+        response["result"]["errorText"].as_str().unwrap().contains("ERR_CONNECTION_REFUSED"),
+        "request resumed: {response}"
+    );
+    assert!(h.page("Fetch.continueRequest", json!({"requestId":id}))["error"].is_object());
+}
+
+#[test]
+fn detaching_fetch_session_resumes_navigation_for_other_session() {
+    let mut h = Harness::new();
+    let target = h.frame_id.clone();
+    let attached = h.call(None, "Target.attachToTarget", json!({"targetId":target,"flatten":true}));
+    let intercepting = attached["result"]["sessionId"].as_str().unwrap().to_owned();
+    h.call(Some(&intercepting), "Fetch.enable", json!({}));
+    let session = h.session.clone();
+    let navigation = h.send(Some(&session), "Page.navigate", json!({"url":"http://127.0.0.1:1/detached"}));
+    let events = until_event(&mut h, "Fetch.requestPaused");
+    assert_eq!(events.iter().find(|e| e["method"] == "Fetch.requestPaused").unwrap()["sessionId"], intercepting);
+    let detach = h.send(None, "Target.detachFromTarget", json!({"sessionId":intercepting}));
+    let mut events = h.until_response(detach);
+    if !events.iter().any(|e| e["id"] == navigation) {
+        events.extend(h.until_response(navigation));
+    }
+    let response = events.iter().find(|e| e["id"] == navigation).unwrap();
+    assert!(
+        response["result"]["errorText"].as_str().unwrap().contains("ERR_CONNECTION_REFUSED"),
+        "request resumed: {response}"
+    );
 }

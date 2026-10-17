@@ -6,6 +6,7 @@
 //! events by [`EngineHost::flush`] afterwards, so no CDP state is borrowed
 //! while JavaScript is on the stack.
 
+mod fetch;
 mod network;
 mod page;
 mod remote;
@@ -115,6 +116,7 @@ pub(crate) struct Session {
     pub(crate) lifecycle_events: bool,
     pub(crate) runtime_enabled: bool,
     pub(crate) network_enabled: bool,
+    fetch: fetch::FetchSession,
     pub(crate) handles: Rc<RefCell<HandleTable<Persistent>>>,
 }
 
@@ -274,6 +276,7 @@ impl EngineHost {
             }
         }
         self.flush_network();
+        self.flush_fetch();
     }
 
     /// Page owning `realm`, if any.
@@ -299,6 +302,7 @@ impl EngineHost {
             // Console entries go through Runtime.consoleAPICalled; there
             // are no additional Log-domain entries yet.
             "Network" => self.network_domain(action, cmd),
+            "Fetch" => self.fetch_domain(action, cmd),
             "Log" if matches!(action, "enable" | "disable") => Ok(Some(serde_json::json!({}))),
             _ => Err(CdpError::unsupported(&cmd.command.method)),
         }
@@ -515,6 +519,7 @@ impl Host for EngineHost {
                 lifecycle_events: false,
                 runtime_enabled: false,
                 network_enabled: false,
+                fetch: fetch::FetchSession::default(),
                 handles: Rc::new(RefCell::new(HandleTable::new(HandleTable::<Persistent>::DEFAULT_LIMIT))),
             },
         );
@@ -527,6 +532,7 @@ impl Host for EngineHost {
         // No reply may reach a detached session; its handles go away even if
         // pending promise reactions are still referenced by JavaScript.
         self.pending.cancel_session(session_id);
+        self.disable_fetch(session_id);
         if let Some(session) = self.sessions.remove(session_id) {
             session.handles.borrow_mut().clear();
         }

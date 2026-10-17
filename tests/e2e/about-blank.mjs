@@ -117,13 +117,33 @@ await check('goto about:blank', async () => {
 await check('goto http fails explicitly', async () => {
   await assert.rejects(page.goto('http://127.0.0.1:1/x', { timeout: 5000 }), /ERR_CONNECTION_REFUSED/);
 });
+await check('Fetch fulfill and abort', async () => {
+  const body = '<script>globalThis.fulfilledFromRoute=43</script>';
+  await page.route('**/fulfilled', (route) => route.fulfill({ status: 202, contentType: 'text/html', body }));
+  try {
+    const response = await page.goto('http://127.0.0.1:1/fulfilled', { timeout: 5000 });
+    assert.equal(response.status(), 202);
+    assert.equal(await response.text(), body);
+    assert.equal(await page.evaluate(() => globalThis.fulfilledFromRoute), 43);
+  } finally {
+    await page.unroute('**/fulfilled');
+  }
+  await page.route('**/aborted', (route) => route.abort('aborted'));
+  try {
+    await assert.rejects(page.goto('http://127.0.0.1:1/aborted', { timeout: 5000 }), /ERR_ABORTED/);
+  } finally {
+    await page.unroute('**/aborted');
+  }
+});
 await check('HTTP redirect, response body and inline script', async () => {
   const body = '<!doctype html><script>globalThis.loadedFromHttp=42</script>';
+  let continuedHeader = null;
   const server = http.createServer((req, res) => {
     if (req.url === '/redirect') {
       res.writeHead(302, { location: '/document' });
       res.end();
     } else {
+      continuedHeader = req.headers['x-route-check'];
       res.writeHead(201, { 'content-type': 'text/html' });
       res.end(body);
     }
@@ -134,6 +154,7 @@ await check('HTTP redirect, response body and inline script', async () => {
   });
   try {
     const origin = `http://127.0.0.1:${server.address().port}`;
+    await page.route('**/redirect', (route) => route.continue({ headers: { ...route.request().headers(), 'x-route-check': 'continued' } }));
     const response = await page.goto(`${origin}/redirect`, { timeout: 5000 });
     assert.ok(response, 'navigation exposes a Network response');
     assert.equal(response.status(), 201);
@@ -141,7 +162,40 @@ await check('HTTP redirect, response body and inline script', async () => {
     assert.equal(await response.text(), body);
     assert.equal(response.request().redirectedFrom().url(), `${origin}/redirect`);
     assert.equal(await page.evaluate(() => globalThis.loadedFromHttp), 42);
+    assert.equal(continuedHeader, 'continued');
   } finally {
+    await page.unroute('**/redirect');
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+await check('Fetch Basic authentication challenge', async () => {
+  let requests = 0;
+  const authorization = `Basic ${Buffer.from('fixture:local-test').toString('base64')}`;
+  const server = http.createServer((req, res) => {
+    requests++;
+    if (req.headers.authorization !== authorization) {
+      res.writeHead(401, { 'www-authenticate': 'Basic realm="fixture"', 'content-length': '0' });
+      res.end();
+    } else {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end('<script>globalThis.authenticatedFixture=44</script>');
+    }
+  });
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  let authenticated;
+  try {
+    authenticated = await browser.newContext({ httpCredentials: { username: 'fixture', password: 'local-test' } });
+    const authPage = await authenticated.newPage();
+    const response = await authPage.goto(`http://127.0.0.1:${server.address().port}/auth`, { timeout: 5000 });
+    assert.equal(response.status(), 200);
+    assert.equal(await authPage.evaluate(() => globalThis.authenticatedFixture), 44);
+    assert.equal(requests, 2, 'one challenge followed by one credentialed retry');
+  } finally {
+    if (authenticated) await authenticated.close();
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
   }

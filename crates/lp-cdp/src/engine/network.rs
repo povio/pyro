@@ -25,7 +25,7 @@ impl NetworkWake {
         self.ready.load(Ordering::Acquire)
     }
 
-    fn callback(&self, handle: lp_runtime::LoopHandle<lp_browser::Browser>) -> lp_net::NetWake {
+    pub(super) fn callback(&self, handle: lp_runtime::LoopHandle<lp_browser::Browser>) -> lp_net::NetWake {
         let ready = self.ready.clone();
         let posted = self.posted.clone();
         Arc::new(move || {
@@ -44,11 +44,12 @@ pub(super) struct NetworkContext {
     pub(super) id: ContextId,
     subscription: Option<NetSubscription>,
     routes: HashMap<RequestId, PageKey>,
+    pub(super) fetch: Option<Arc<super::fetch::FetchQueue>>,
 }
 
 impl NetworkContext {
     pub(super) fn new(id: ContextId) -> Self {
-        Self { id, subscription: None, routes: HashMap::new() }
+        Self { id, subscription: None, routes: HashMap::new(), fetch: None }
     }
 }
 
@@ -123,10 +124,14 @@ impl EngineHost {
                 page.network.translator = NetworkTranslator::default();
             }
         }
+        self.update_fetch_interceptors();
         for (key, context) in &mut self.contexts {
             let wanted = self.pages.values().any(|page| {
                 page.context == *key
-                    && page.sessions.iter().any(|s| self.sessions.get(s).is_some_and(|s| s.network_enabled))
+                    && page
+                        .sessions
+                        .iter()
+                        .any(|s| self.sessions.get(s).is_some_and(|s| s.network_enabled || s.fetch.rules.is_enabled()))
             });
             if wanted && context.subscription.is_none() {
                 if let Some(net) = self.thread.browser.context_net(context.id) {
@@ -177,6 +182,9 @@ impl EngineHost {
     }
 
     fn on_network_event(&mut self, context: ContextKey, event: NetEvent) {
+        if let NetEvent::LoadingFinished { id, .. } | NetEvent::LoadingFailed { id, .. } = &event {
+            self.finish_fetch(context, *id);
+        }
         let id = match &event {
             NetEvent::RequestWillBeSent { id, .. }
             | NetEvent::ResponseReceived { id, .. }

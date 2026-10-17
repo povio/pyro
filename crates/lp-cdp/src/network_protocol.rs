@@ -63,7 +63,7 @@ fn response_json(head: &ResponseHead, encoded_len: u64) -> Value {
 
 /// Chromium identifies a document navigation by requestId == loaderId.
 /// Native network ids remain context-local and are used internally.
-fn protocol_request_id(id: RequestId, destination: lp_net::Destination, loader_id: Option<&str>) -> String {
+pub(crate) fn protocol_request_id(id: RequestId, destination: lp_net::Destination, loader_id: Option<&str>) -> String {
     if matches!(destination, lp_net::Destination::Document | lp_net::Destination::Iframe) {
         if let Some(loader) = loader_id.filter(|s| !s.is_empty()) {
             return loader.to_owned();
