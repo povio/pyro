@@ -873,3 +873,43 @@ fn dynamic_import_from_c_api_releases_native_payloads() {
         assert_eq!(drops.get(), 1, "native payload retained by {entry}");
     }
 }
+
+#[test]
+fn global_receiver_fallback_only_for_unbound_receivers() {
+    struct Single;
+    impl JsClass for Single {
+        const NAME: &'static str = "Single";
+        type Data = NodeRef;
+        type Parent = NoParent;
+        fn define(def: &mut ClassDef<Self>) {
+            def.global_receiver(|s| s.global_data::<Holder>().map(|h| &h.0));
+            def.method("who", 0, |s, d, _a| Ok(s.number(d.id as f64)));
+            def.getter("idAttr", |s, d| Ok(s.number(d.id as f64)));
+        }
+    }
+    struct HolderData(NodeRef);
+    struct Holder;
+    impl JsClass for Holder {
+        const NAME: &'static str = "Holder";
+        type Data = HolderData;
+        type Parent = NoParent;
+        fn define(_def: &mut ClassDef<Self>) {}
+    }
+    let e = engine();
+    e.register::<Element>();
+    e.register::<Single>();
+    let gid = e.register::<Holder>();
+    let r = e.create_realm(RealmOptions { global_class: Some(gid), ..Default::default() }).unwrap();
+    let drops = Rc::new(Cell::new(0));
+    r.set_global_data::<Holder>(HolderData(node(41, &drops))).unwrap();
+    expose::<Single>(&r, "single", node(41, &drops), None);
+    expose::<Node>(&r, "other", node(7, &drops), None);
+    assert_eq!(
+        eval_str(&r, "const w = single.who; [w(), single.who.call(undefined), single.who.call(null), single.who.call(globalThis), Object.getOwnPropertyDescriptor(Single.prototype, 'idAttr').get.call(undefined)].join()"),
+        "41,41,41,41,41"
+    );
+    assert_eq!(eval_str(&r, "try { single.who.call(other) } catch (e) { e.message }"), "Illegal invocation");
+    assert_eq!(eval_str(&r, "try { single.who.call({}) } catch (e) { e.message }"), "Illegal invocation");
+    // Without a fallback, unbound receivers still throw.
+    assert_eq!(eval_str(&r, "try { const p = other.ping; p() } catch (e) { e.message }"), "Illegal invocation");
+}

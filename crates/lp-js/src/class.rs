@@ -116,8 +116,13 @@ pub struct ClassDef<C: JsClass> {
     pub(crate) exposed: bool,
     pub(crate) indexed_iterable: bool,
     pub(crate) upcast: Option<UpcastFn>,
+    pub(crate) global_receiver: Option<GlobalReceiverFn>,
     _c: PhantomData<C>,
 }
+
+/// Resolves the data an operation uses when called with an undefined, null or
+/// global receiver (see [`ClassDef::global_receiver`]).
+pub(crate) type GlobalReceiverFn = unsafe fn(&Scope<'_>) -> Option<*const u8>;
 
 /// Projects a pointer to a class's data to a pointer to its parent's data.
 pub(crate) type UpcastFn = unsafe fn(*const u8) -> *const u8;
@@ -154,6 +159,7 @@ impl<C: JsClass> ClassDef<C> {
             exposed: true,
             indexed_iterable: false,
             upcast: None,
+            global_receiver: None,
             _c: PhantomData,
         }
     }
@@ -280,6 +286,20 @@ impl<C: JsClass> ClassDef<C> {
         self
     }
 
+    /// Resolves the instance used when an operation or attribute of this class
+    /// is invoked with an `undefined`/`null`/global receiver, e.g.
+    /// `(cond ? history.pushState : history.replaceState)(...)`, which
+    /// browsers accept and real libraries (TanStack History) rely on. `F`
+    /// returns the realm's singleton (typically from the global's data).
+    pub fn global_receiver<F>(&mut self, _f: F) -> &mut Self
+    where
+        F: for<'s> Fn(&Scope<'s>) -> Option<&'s C::Data> + Copy + 'static,
+    {
+        assert_zst::<F>();
+        self.global_receiver = Some(global_receiver_erased::<C, F>);
+        self
+    }
+
     /// Declares how to borrow the parent interface's data from this class's
     /// data (required when `Data` differs from the parent's `Data`).
     pub fn upcast<F>(&mut self, _f: F) -> &mut Self
@@ -300,6 +320,7 @@ impl<C: JsClass> ClassDef<C> {
 
 pub(crate) struct ClassInfo {
     pub upcast: Option<UpcastFn>,
+    pub global_receiver: Option<GlobalReceiverFn>,
     pub name: &'static str,
     pub data_type: TypeId,
     pub parent: Option<ClassId>,
@@ -431,6 +452,7 @@ pub(crate) fn register<C: JsClass>(engine: &EngineInner) -> ClassId {
     let instance_class = unsafe { sys::JSClassCreate(&jsdef) };
     reg.classes.push(ClassInfo {
         upcast: def.upcast,
+        global_receiver: def.global_receiver,
         name: C::NAME,
         data_type: TypeId::of::<C::Data>(),
         parent,
@@ -732,18 +754,42 @@ unsafe fn throw_message_value(ctx: sys::JSContextRef, msg: &str, exc: *mut sys::
 /// realm's global object (also for `undefined`/`null` receivers).
 unsafe fn this_data<'a, C: JsClass>(scope: &Scope<'_>, this: sys::JSObjectRef) -> JsResult<&'a C::Data> {
     let h = unsafe { scope.header_of_receiver(this) };
-    let Some(h) = h else {
-        return Err(JsError::Type("Illegal invocation".into()));
-    };
     let reg = scope.engine_inner().classes.borrow();
     let want = reg.id_of::<C>().expect("class registered");
     // SAFETY: h is a live payload of a reachable object (receiver on stack).
-    unsafe {
+    let direct = h.and_then(|h| unsafe {
         if (*h).kind != Kind::Instance {
-            return Err(JsError::Type("Illegal invocation".into()));
+            None
+        } else {
+            class_data::<C::Data>(&reg, h, want)
         }
-        class_data::<C::Data>(&reg, h, want).ok_or_else(|| JsError::Type("Illegal invocation".into()))
+    });
+    if let Some(d) = direct {
+        return Ok(d);
     }
+    let fallback = reg.classes[want as usize].global_receiver;
+    drop(reg);
+    if let Some(f) = fallback {
+        // SAFETY: only for receivers that resolve to the realm's global.
+        let global_receiver = this.is_null() || this == unsafe { sys::JSContextGetGlobalObject(scope.ctx) };
+        if global_receiver {
+            if let Some(p) = unsafe { f(scope) } {
+                // SAFETY: the pointer refers to C::Data owned by the realm's
+                // global payload, which outlives this callback.
+                return Ok(unsafe { &*(p as *const C::Data) });
+            }
+        }
+    }
+    Err(JsError::Type("Illegal invocation".into()))
+}
+
+unsafe fn global_receiver_erased<C, F>(scope: &Scope<'_>) -> Option<*const u8>
+where
+    C: JsClass,
+    F: for<'s> Fn(&Scope<'s>) -> Option<&'s C::Data> + Copy + 'static,
+{
+    let f = unsafe { conjure::<F>() };
+    f(scope).map(|d| d as *const C::Data as *const u8)
 }
 
 unsafe extern "C" fn method_tramp<C, F>(
