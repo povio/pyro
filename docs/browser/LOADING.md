@@ -8,7 +8,8 @@ Web Storage and fetch. DOM callbacks enter the owner browser thread and check th
 `enable_network` supplies a NetClient per context. Document/script loads use the context loader;
 WebAPI fetch uses that same client with the main frame and current document loader IDs. A context owns
 its localStorage namespace, while a top-level page owns sessionStorage across navigation. Both are
-in-memory and partitioned by origin. Blank pages with opaque origins cannot access storage.
+in-memory and partitioned by origin. Opaque-origin documents (e.g. a blank page without an inherited
+origin) get per-document ephemeral storage instead, as upstream does (Chrome throws); see PARITY.
 
 Navigation calls `PageDom::dispose` before disposing old realms, cancels realm timers, marks the old
 document inactive and installs fresh bindings. Closing a page performs the same binding/realm cleanup.
