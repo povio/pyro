@@ -1,0 +1,167 @@
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use lp_dom::parse::{prescan_charset, DocumentParser, DomRef, ParseStep};
+use lp_dom::script::{ResourceKind, ResourceReason, ScriptKind};
+use lp_dom::*;
+
+#[test]
+fn parser_yields_scripts_and_reports_resources() {
+    let dom: DomRef = Rc::new(RefCell::new(Dom::new()));
+    dom.borrow_mut().set_resource_tracking(true);
+    let doc = dom.borrow_mut().create_document(DocumentKind::Html, "http://t/");
+    dom.borrow_mut().set_document_active(doc, true).unwrap();
+    let mut p = DocumentParser::new(dom.clone(), doc, true).unwrap();
+    let html = r#"<head><link rel=stylesheet href=a.css><style>p{}</style>
+        <script src=app.js defer></script><script type=module>import x from "/m.js"</script>
+        <script type="text/x-template">t</script></head><body><img src=i.png><iframe src=f.html></iframe>"#;
+    let mut scripts = Vec::new();
+    let mut step = p.feed(html);
+    while let ParseStep::Script(s) = step {
+        scripts.push(dom.borrow().script_info(s).unwrap());
+        step = p.resume();
+    }
+    p.end();
+    let kinds: Vec<_> = scripts.iter().map(|s| (s.kind, s.src.clone(), s.defer, s.parser_inserted)).collect();
+    assert_eq!(
+        kinds,
+        [
+            (ScriptKind::Classic, Some("app.js".to_string()), true, true),
+            (ScriptKind::Module, None, false, true),
+            (ScriptKind::Data, None, false, true),
+        ]
+    );
+    assert_eq!(scripts[1].inline_text, r#"import x from "/m.js""#);
+    let evs = dom.borrow_mut().take_resource_events();
+    let summary: Vec<_> = evs.iter().map(|e| (e.kind, e.reason)).collect();
+    assert!(summary.contains(&(ResourceKind::Stylesheet, ResourceReason::Connected)));
+    assert!(summary.contains(&(ResourceKind::StyleText, ResourceReason::ChildrenChanged)));
+    assert!(summary.contains(&(ResourceKind::Img, ResourceReason::Connected)));
+    assert!(summary.contains(&(ResourceKind::Iframe, ResourceReason::Connected)));
+    assert!(!summary.iter().any(|(k, _)| *k == ResourceKind::Script), "parser scripts go through ParseStep");
+
+    // Script-inserted <link> and <script> (Vite pattern) are reported.
+    let mut d = dom.borrow_mut();
+    let head = d.head(doc).unwrap().unwrap();
+    let link = d.create_element(doc, "link").unwrap();
+    d.set_attribute(link, "rel", "stylesheet").unwrap();
+    d.set_attribute(link, "href", "/v.css").unwrap();
+    assert!(d.take_resource_events().is_empty(), "detached elements load nothing");
+    d.append_child(head, link).unwrap();
+    let script = d.create_element(doc, "script").unwrap();
+    d.set_attribute(script, "src", "/dyn.js").unwrap();
+    d.append_child(head, script).unwrap();
+    let evs = d.take_resource_events();
+    assert_eq!(evs.len(), 2);
+    assert_eq!((evs[0].node, evs[0].kind, evs[0].reason), (link, ResourceKind::Stylesheet, ResourceReason::Connected));
+    assert_eq!((evs[1].node, evs[1].kind), (script, ResourceKind::Script));
+    assert!(!d.script_info(script).unwrap().parser_inserted);
+    d.set_attribute(link, "href", "/w.css").unwrap();
+    d.remove_node(link).unwrap();
+    let evs = d.take_resource_events();
+    assert_eq!(
+        evs.iter().map(|e| e.reason).collect::<Vec<_>>(),
+        [ResourceReason::AttrChanged, ResourceReason::Removed]
+    );
+}
+
+#[test]
+fn byte_decoding() {
+    assert_eq!(prescan_charset(br#"<meta charset="windows-1252">"#).unwrap().name(), "windows-1252");
+    assert_eq!(
+        prescan_charset(br#"<meta http-equiv="Content-Type" content="text/html; charset=ISO-8859-2">"#).unwrap().name(),
+        "ISO-8859-2"
+    );
+    let dom: DomRef = Rc::new(RefCell::new(Dom::new()));
+    let doc = dom.borrow_mut().create_document(DocumentKind::Html, "http://t/");
+    let mut p = DocumentParser::new(dom.clone(), doc, false).unwrap();
+    // "café" in windows-1252, split so the multi-byte boundary logic is exercised.
+    let bytes = b"<meta charset=windows-1252><p id=x>caf\xe9</p>";
+    let (a, b) = bytes.split_at(20);
+    let _ = p.feed_bytes(a);
+    let _ = p.feed_bytes(b);
+    let _ = p.finish_bytes();
+    p.end();
+    let d = dom.borrow();
+    let x = d.get_element_by_id(doc, "x").unwrap().unwrap();
+    assert_eq!(d.text_content(x).unwrap().unwrap(), "café");
+    assert_eq!(d.document_data(doc).unwrap().charset, "windows-1252");
+
+    // UTF-8 split inside a multi-byte sequence.
+    let dom2: DomRef = Rc::new(RefCell::new(Dom::new()));
+    let doc2 = dom2.borrow_mut().create_document(DocumentKind::Html, "http://t/");
+    let mut p2 = DocumentParser::new(dom2.clone(), doc2, false).unwrap();
+    p2.set_transport_charset(Some("utf-8"));
+    let s = "<p id=y>žš😀</p>".as_bytes();
+    let _ = p2.feed_bytes(&s[..10]);
+    let _ = p2.feed_bytes(&s[10..]);
+    let _ = p2.finish_bytes();
+    p2.end();
+    let d2 = dom2.borrow();
+    let y = d2.get_element_by_id(doc2, "y").unwrap().unwrap();
+    assert_eq!(d2.text_content(y).unwrap().unwrap(), "žš😀");
+}
+
+#[test]
+fn regression_parser_roots_detached_open_elements() {
+    let d: DomRef = Rc::new(RefCell::new(Dom::new()));
+    let doc = d.borrow_mut().create_document(DocumentKind::Html, "http://test/");
+    d.borrow_mut().set_document_active(doc, true).unwrap();
+    let mut p = DocumentParser::new(d.clone(), doc, true).unwrap();
+    assert!(matches!(p.feed("<body><div id=x><script></script><span>after</span></div>"), ParseStep::Script(_)));
+    let div = d.borrow().get_element_by_id(doc, "x").unwrap().unwrap();
+    d.borrow_mut().remove_node(div).unwrap();
+    d.borrow_mut().collect_garbage();
+    p.resume();
+    p.end();
+    assert!(d.borrow().is_alive(div), "parser lost the open div");
+    assert_eq!(d.borrow().text_content(div).unwrap().unwrap(), "after");
+    d.borrow_mut().collect_garbage();
+    assert!(!d.borrow().is_alive(div), "ended parser retained detached elements");
+}
+#[test]
+fn regression_replace_child_record_sibling() {
+    use lp_dom::mutation::ObserveInit;
+    let mut d = Dom::new();
+    let doc = d.create_document(DocumentKind::Html, "http://test/");
+    let p = d.create_element(doc, "p").unwrap();
+    let a = d.create_element(doc, "a").unwrap();
+    let b = d.create_element(doc, "b").unwrap();
+    d.append_child(p, a).unwrap();
+    d.append_child(p, b).unwrap();
+    let o = d.create_observer();
+    d.observe(o, p, ObserveInit { child_list: true, ..Default::default() }).unwrap();
+    d.replace_child(p, a, b).unwrap();
+    let records = d.take_records(o);
+    assert_eq!(records.last().unwrap().previous_sibling, None, "previousSibling is the inserted node itself");
+}
+#[test]
+fn regression_split_bom_beats_transport() {
+    let d: DomRef = Rc::new(RefCell::new(Dom::new()));
+    let doc = d.borrow_mut().create_document(DocumentKind::Html, "http://test/");
+    let mut p = DocumentParser::new(d.clone(), doc, false).unwrap();
+    p.set_transport_charset(Some("windows-1252"));
+    p.feed_bytes(&[0xef]);
+    p.feed_bytes(b"\xbb\xbf<p id=x>\xc3\xa9</p>");
+    p.finish_bytes();
+    p.end();
+    let d = d.borrow();
+    let x = d.get_element_by_id(doc, "x").unwrap().unwrap();
+    assert_eq!(d.text_content(x).unwrap().unwrap(), "é");
+}
+#[test]
+fn regression_resource_queue_pins_nodes() {
+    let mut d = Dom::new();
+    let doc = d.create_document(DocumentKind::Html, "http://test/");
+    d.set_document_active(doc, true).unwrap();
+    d.set_resource_tracking(true);
+    let s = d.create_element(doc, "script").unwrap();
+    d.set_attribute(s, "src", "/side-effect.js").unwrap();
+    d.append_child(doc, s).unwrap();
+    d.remove_node(s).unwrap();
+    d.collect_garbage();
+    let events = d.take_resource_events();
+    assert!(events.iter().all(|ev| d.is_alive(ev.node)), "resource event contains a stale node: {events:?}");
+    d.collect_garbage();
+    assert!(!d.is_alive(s), "drained resource queue retained detached script");
+}

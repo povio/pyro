@@ -31,8 +31,23 @@ Status values:
 
 ## DOM / WebAPI / network (W2)
 
-DOM, parser, selectors, events, collections, forms, CSS, storage, fetch/XHR/WebSocket, cookies, URL, encoding,
-crypto, streams, canvas, IndexedDB and media are all **not started in this repository**. W2's branch tracks them.
+The DOM implementation lives in `lp-dom`, bindings in `lp-webapi`, and networking in `lp-net`.
+Unit/integration tests exercise real JavaScriptCore and local HTTP. This is not yet TOS compatibility evidence.
+
+| Area | Status | Notes / gaps |
+|---|---|---|
+| DOM tree, HTML parser, selectors | Partial | Arena identities, mutation records, html5ever incremental script yields, templates, HTML serialization and selector matching. Parser handles and queued resources survive collection. XML/DOMParser bindings not implemented. Character data currently uses Rust UTF-8 strings; lone UTF-16 surrogates are not preserved. |
+| Events, collections, forms and input | Partial | Cross-realm wrappers, event dispatch/activation, listener lifecycle, forms/validation, keyboard/mouse input and basic collections. Range supports a subset; live range adjustment and several content manipulation methods remain unsupported. |
+| Style/layout/media | Partial | CSS declaration/rule subset, cascade, computed style, matchMedia, upstream-style approximate geometry and hit testing. No full CSS layout/rendering. |
+| Encoding, files and form data | Partial | TextEncoder/TextDecoder, base64, Blob/File/FormData primitives. Native DataView brand checks and typed-array subview offsets are covered. Streaming decoder support is incomplete. |
+| HTTP, cookies and CORS | Partial | Local HTTP, redirects, compression, cancellation, cookie jar and CORS/preflight subset. Opt-in auth challenges support bounded server Basic retries; declining returns 401/407, unsupported credential schemes/proxy transport fail explicitly. No credential cache or authentication UI. HTTPS is explicitly unsupported in this build. Embedded PSL handles domain cookies and sites. Direct cookie insertion validates attributes atomically; enumeration excludes expired records. Origin/credential/redirect and Secure-cookie regressions are covered, but full Fetch response filtering and network parity are not claimed. |
+| Network observation | Partial | Bounded per-subscription event/logical-byte queues, ordered events, optional wake callback and explicit terminal overflow/closure. Overflow clears retained payloads; consumer must resynchronize. CDP body retention is separately owned by W3. |
+| Fetch/XHR/Headers/URL JS bindings | Partial | Headers supports records/iterables, ByteString validation, normalization, duplicate cookies, live sorted iteration and reentrant conversions. Fetch, XHR and URL bindings remain unimplemented; native HTTP is not a fetch binding. |
+| Web Storage | Partial | In-memory localStorage/sessionStorage, property access, key order, reentrant conversion and atomic per-origin UTF-16-byte quota. Embedders explicitly share local namespaces per context and session namespaces per top-level page; opaque origins are rejected. No cross-document storage events or disk persistence. Lone UTF-16 surrogates share the current string-model limitation. |
+| Observers | Not started | No MutationObserver, ResizeObserver or IntersectionObserver JS bindings. Native mutation records exist. |
+| Other platform APIs | Not started | WebSocket, crypto, streams, canvas, IndexedDB, workers and media APIs. |
+
+Independent correctness/performance review is unresolved after provider-policy blocks; passing project tests do not satisfy that gate. Separate organization/cleanliness approval on the actual current head is also required before parent merge.
 
 ## Automation (W3)
 
