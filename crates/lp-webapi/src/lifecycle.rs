@@ -74,6 +74,7 @@ pub fn realm_disposed(page: &PageDom, realm: RealmId) {
     page.realms.borrow_mut().remove(&realm);
     page.data_view_readers.borrow_mut().remove(&realm);
     page.header_helpers.borrow_mut().remove(&realm);
+    page.url_params_helpers.borrow_mut().remove(&realm);
     page.window_holders.borrow_mut().remove(&realm);
     page.pinned.borrow_mut().retain(|(r, _), _| *r != realm);
 }

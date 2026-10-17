@@ -39,6 +39,7 @@ pub mod response;
 pub mod storage;
 pub mod target;
 pub mod traversal;
+pub mod url_search_params;
 pub mod util;
 pub mod validity;
 pub mod window;
@@ -79,6 +80,8 @@ pub fn register(engine: &lp_js::Engine) {
     engine.register::<storage::Storage>();
     engine.register::<indexeddb::IdbFactory>();
     engine.register::<headers::Headers>();
+    engine.register::<url_search_params::URLSearchParams>();
+    engine.register::<url_search_params::ParamsIterator>();
     engine.register::<response::Response>();
     engine.register::<xhr::XMLHttpRequest>();
 }
@@ -95,6 +98,7 @@ pub fn install(scope: &Scope<'_>, page: Rc<PageDom>) -> JsResult<()> {
     mutation_observer::install(scope, &page)?;
     encoding::install(scope)?;
     headers::install(scope)?;
+    url_search_params::install(scope)?;
     fetch::install(scope)?;
     let global = scope.global();
     global.set("CSS", window::css_namespace(scope)?)?;

@@ -1128,3 +1128,141 @@ fn mutation_native_safe_point_and_cancelled_delivery_realm() {
     eval(&e.main, "document.querySelector('div').id='queued';stopOther()");
     assert_eq!(eval(&e.main, "calls"), "2", "remaining observer lost delivery when scheduled realm was disposed");
 }
+
+#[test]
+fn url_search_params_parses_duplicates_encoding_and_empty_names() {
+    let e = env("<body></body>");
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"
+      var p=new URLSearchParams('?a=1&a=two+words&empty&=x&&plus=%2B&bad=%FF');
+      [p.size,p.getAll('a').join(','),p.get('missing')===null,p.has('empty'),p.get(''),p.get('plus'),p.get('bad'),p.toString()].join('|')
+    "#
+        ),
+        "6|1,two words|true|true|x|+|�|a=1&a=two+words&empty=&=x&plus=%2B&bad=%EF%BF%BD"
+    );
+}
+
+#[test]
+fn url_search_params_constructor_iterables_records_and_usv_strings() {
+    let e = env("<body></body>");
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"
+      var record=Object.create({inherited:'ignored'});record.a='first';record['\ud800']='old';record['\ud801']='new';
+      Object.defineProperty(record,'hidden',{value:'ignored'});
+      var p=new URLSearchParams(record);
+      var seq=new URLSearchParams(new Map([['x','two words'],['y','~*+']]));
+      [p.toString(),seq.toString(),new URLSearchParams(seq).toString(),
+       new URLSearchParams(null).toString(),new URLSearchParams().size,
+       new URLSearchParams([['\ud800','\udfff']]).toString()].join('|')
+    "#
+        ),
+        "a=first&%EF%BF%BD=new|x=two+words&y=%7E*%2B|x=two+words&y=%7E*%2B|null=|0|%EF%BF%BD=%EF%BF%BD"
+    );
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"
+      var iteratorClosed=false;
+      function* bad(){try{yield ['x',Symbol('value')]}finally{iteratorClosed=true}}
+      var errors=[];
+      for(const init of [[['x']],[['x','y','z']],['not-pair'],{[Symbol('key')]:'v'},bad(),{[Symbol.iterator]:5}]){
+        try{new URLSearchParams(init);errors.push('bad')}catch(e){errors.push(e.name)}
+      }
+      errors.join(',')+'|'+iteratorClosed
+    "#
+        ),
+        "TypeError,TypeError,TypeError,TypeError,TypeError,TypeError|true"
+    );
+}
+
+#[test]
+fn url_search_params_mutation_is_reentrant_and_preserves_duplicate_order() {
+    let e = env("<body></body>");
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"
+      var p=new URLSearchParams('a=1&b=keep&a=2&a=3');
+      p.set({toString(){p.append('c','side');return 'a'}},{toString(){p.append('a','side');return 'new'}});
+      var first=p.toString();p.append('a','last');
+      var has=[p.has('a','new'),p.has('a','missing'),p.has('a',undefined)].join(',');
+      p.delete('a','new');var second=p.toString();p.delete('a',undefined);
+      [first,has,second,p.toString()].join('|')
+    "#
+        ),
+        "a=new&b=keep&c=side|true,false,true|b=keep&c=side&a=last|b=keep&c=side"
+    );
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"
+      var errors=[];for(const name of ['append','set','delete','get','getAll','has']){
+        try{p[name]();errors.push('bad')}catch(e){errors.push(e.name)}
+      }
+      try{p.append('x',Symbol());errors.push('bad')}catch(e){errors.push(e.name)}
+      errors.join(',')
+    "#
+        ),
+        "TypeError,TypeError,TypeError,TypeError,TypeError,TypeError,TypeError"
+    );
+}
+
+#[test]
+fn url_search_params_iterators_and_foreach_are_live_and_sorted_by_utf16() {
+    let e = env("<body></body>");
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"
+      var p=new URLSearchParams('a=1&b=2'),it=p.entries();
+      var first=it.next().value.join(':');p.append('c','3');p.set('b','changed');
+      var rest=[...it].map(p=>p.join(':')).join(',');p.append('d','4');
+      var done=it.next().done,log=[],receiver={};
+      p.forEach(function(value,key,self){log.push((this===receiver&&self===p)+':'+key+':'+value);if(key==='a')p.delete('b');if(key==='c')p.append('e','5')},receiver);
+      [first,rest,done,log.join(','),[...p.keys()].join(','),[...p.values()].join(',')].join('|')
+    "#
+        ),
+        "a:1|b:changed,c:3|true|true:a:1,true:c:3,true:d:4,true:e:5|a,c,d,e|1,3,4,5"
+    );
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"
+      var sorted=new URLSearchParams([['\ue000','private'],['\u{10000}','astral'],['a','first'],['a','second']]);
+      sorted.sort();[...sorted.values()].join(',')
+    "#
+        ),
+        "first,second,astral,private"
+    );
+    assert_eq!(eval(&e.main, "Object.prototype.toString.call(p.entries())"), "[object URLSearchParams Iterator]");
+    assert_eq!(eval(&e.main, "try{p.entries().next.call({})}catch(e){e.name}"), "TypeError");
+    assert_eq!(eval(&e.main, "p.entries().next.call(p.keys()).value"), "a");
+    assert_eq!(eval(&e.main, "try{URLSearchParams.prototype.forEach.call({},()=>{})}catch(e){e.name}"), "TypeError");
+}
+
+#[test]
+fn url_search_params_same_vm_worlds_and_gc_retained_iterator() {
+    let e = env("<body></body>");
+    let other = new_realm(&e.engine, e.engine.register::<TestWindow>(), &e.page, "isolated");
+    let s = e.main.scope().unwrap();
+    let params = s.eval("globalThis.params=new URLSearchParams('a=one&a=two');params", None, 1).unwrap();
+    other.scope().unwrap().global().set("source", params).unwrap();
+    assert_eq!(
+        eval(&other, "globalThis.copy=new URLSearchParams(source);source.append('b','three');copy.toString()"),
+        "a=one&a=two"
+    );
+    assert_eq!(eval(&e.main, "globalThis.iterator=params.values();params=null;iterator.next().value"), "one");
+    for _ in 0..3 {
+        e.engine.collect_garbage_now();
+        e.engine.drain_finalized();
+        e.page.after_task();
+    }
+    assert_eq!(eval(&e.main, "[...iterator].join(',')"), "two,three");
+    let next = e.main.scope().unwrap().eval("iterator.next", None, 1).unwrap();
+    other.scope().unwrap().global().set("otherNext", next).unwrap();
+    assert_eq!(eval(&other, "otherNext.call(copy.values()).value"), "one");
+}
