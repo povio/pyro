@@ -36,5 +36,5 @@ idle or the requested interval/deadline; it is not a network-idle guarantee.
 Tests: `lp-browser` loading/bindings/fetch integration suites cover script order, lifecycle,
 context/page storage partitions, shared-DOM isolated worlds, stale callbacks, fetch correlation and
 navigation cleanup. `lightningpanda` CLI tests check script-modified output and infinite-script timeout.
-The three-line CDP host bootstrap enables this loader; subsequent protocol domain work stays in the
-separate automation PR.
+The merged CDP host enables this loader and supplies Network/Fetch/cookie protocol routing. This
+increment changes no protocol source; DOM/Input protocol integration remains separate automation work.
