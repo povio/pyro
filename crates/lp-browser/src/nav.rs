@@ -234,7 +234,7 @@ fn same_document_except_fragment(a: &Url, b: &Url) -> bool {
 }
 
 /// Location assignment: fragment-only changes are same-document.
-fn assign(s: &Scope<'_>, nav: &PageNav, input: Value<'_>, replace: bool) -> JsResult<()> {
+fn assign(nav: &PageNav, input: Value<'_>, replace: bool) -> JsResult<()> {
     let target = parse(nav, input)?;
     let current = Url::parse(&nav.url()).ok();
     match current {
@@ -260,16 +260,16 @@ impl JsClass for Location {
     type Parent = NoParent;
 
     fn define(def: &mut ClassDef<Self>) {
-        def.accessor("href", |s, n| Ok(s.string(&n.url())), |s, n, v| assign(s, n, v, false));
+        def.accessor("href", |s, n| Ok(s.string(&n.url())), |_s, n, v| assign(n, v, false));
         def.method("toString", 0, |s, n, _a| Ok(s.string(&n.url())));
         def.method("assign", 1, |s, n, a| {
             a.require(1, "assign")?;
-            assign(s, n, a.get(0), false)?;
+            assign(n, a.get(0), false)?;
             Ok(s.undefined())
         });
         def.method("replace", 1, |s, n, a| {
             a.require(1, "replace")?;
-            assign(s, n, a.get(0), true)?;
+            assign(n, a.get(0), true)?;
             Ok(s.undefined())
         });
         def.method("reload", 0, |s, n, _a| {
@@ -311,7 +311,7 @@ impl JsClass for Location {
                 let mut u = Url::parse(&n.url()).map_err(|_| JsError::Type("invalid current URL".into()))?;
                 let h = v.to_string()?;
                 u.set_fragment(Some(h.strip_prefix('#').unwrap_or(&h)));
-                assign(s, n, s.string(u.as_str()), false)
+                assign(n, s.string(u.as_str()), false)
             },
         );
     }
