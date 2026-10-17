@@ -41,10 +41,11 @@ pub struct PageDom {
     /// Per-realm plain object holding Window listeners (page realms use the
     /// default JSC global, which cannot carry private properties).
     pub(crate) window_holders: RefCell<FxHashMap<RealmId, Persistent>>,
-    /// Per-realm array keeping Window [SameObject] wrappers (navigator,
-    /// crypto, ...) alive: the identity map is weak, and script expandos /
-    /// defineProperty overrides on them must survive collection.
-    pub(crate) same_objects: RefCell<FxHashMap<RealmId, Persistent>>,
+    /// Per-realm private holder (null-prototype object, next free index)
+    /// keeping Window [SameObject] wrappers (navigator, crypto, ...) alive:
+    /// the identity map is weak, and script expandos / defineProperty
+    /// overrides on them must survive collection.
+    pub(crate) same_objects: RefCell<FxHashMap<RealmId, (Persistent, u32)>>,
     pub(crate) last_removals: Cell<u64>,
     next_event: Cell<u64>,
     pub net: RefCell<Option<lp_net::NetClient>>,

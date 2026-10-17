@@ -2593,3 +2593,25 @@ fn space_activates_focused_controls_on_keyup() {
     input::dispatch_key(&page, input::KeyKind::KeyUp, &space);
     assert_eq!(eval(r, "evs.join(',') + '|' + document.getElementById('c').checked"), "c:keydown,b:keyup|true");
 }
+
+#[test]
+fn same_object_retention_ignores_page_patched_builtins() {
+    let e = env("<body>");
+    let r = &e.main;
+    // Page code that replaces Array.prototype.push and installs indexed
+    // setters on Object/Array prototypes must not defeat retention.
+    eval(
+        r,
+        "Array.prototype.push = function () { return 0; }; for (const p of [Object.prototype, Array.prototype]) for (let i = 0; i < 8; i++) Object.defineProperty(p, i, { configurable: true, set() {}, get() { return undefined; } }); Object.defineProperty(navigator, '__mark', { configurable: true, value: 'nav' }); crypto.subtle.__mark = 'subtle'; window.firstNavigator = navigator;",
+    );
+    eval(r, "delete window.firstNavigator");
+    for _ in 0..3 {
+        e.engine.collect_garbage_now();
+        e.engine.drain_finalized();
+        e.page.after_task();
+    }
+    assert_eq!(
+        eval(r, "[navigator.__mark, crypto.subtle.__mark, navigator === clientInformation].join()"),
+        "nav,subtle,true"
+    );
+}

@@ -152,17 +152,22 @@ pub(crate) fn same_object<'s>(
     }
     let object = make()?;
     let realm = s.realm_id();
-    let holder = page.same_objects.borrow().get(&realm).map(|h| h.get(s));
-    let holder = match holder.and_then(|h| h.as_object()) {
-        Some(h) => h,
+    // The holder is a private null-prototype object written by index, so no
+    // page-visible method or prototype setter can intercept retention.
+    let existing = page.same_objects.borrow().get(&realm).map(|(h, n)| (h.get(s), *n));
+    let (holder, index) = match existing.and_then(|(h, n)| Some((h.as_object()?, n))) {
+        Some(found) => found,
         None => {
-            let arr = s.array(&[])?;
-            page.same_objects.borrow_mut().insert(realm, lp_js::Persistent::new(s, arr.value()));
-            arr
+            let holder = s.object();
+            holder.set_prototype(s.null());
+            page.same_objects.borrow_mut().insert(realm, (lp_js::Persistent::new(s, holder.value()), 0));
+            (holder, 0)
         }
     };
-    let push = holder.get("push")?.as_object().ok_or_else(|| JsError::Type("Array.prototype.push".into()))?;
-    push.call(Some(holder), &[object.value()])?;
+    holder.set_index(index, object.value())?;
+    if let Some(entry) = page.same_objects.borrow_mut().get_mut(&realm) {
+        entry.1 = index + 1;
+    }
     Ok(object.value())
 }
 
