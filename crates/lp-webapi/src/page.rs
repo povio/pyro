@@ -52,6 +52,7 @@ pub struct PageDom {
     pub(crate) xhr_state: crate::xhr::XhrState,
     pub(crate) local_storage: RefCell<crate::storage::StorageNamespace>,
     pub(crate) session_storage: RefCell<crate::storage::StorageNamespace>,
+    pub(crate) opaque_storage: crate::storage::OpaqueStorage,
     hooks: RefCell<Option<Rc<dyn PageHooks>>>,
     ready: RefCell<FxHashMap<NodeId, &'static str>>,
     focus_values: RefCell<FxHashMap<NodeId, String>>,
@@ -132,6 +133,7 @@ impl PageDom {
             xhr_state: Default::default(),
             local_storage: RefCell::new(Default::default()),
             session_storage: RefCell::new(Default::default()),
+            opaque_storage: Default::default(),
             hooks: RefCell::new(None),
             ready: RefCell::new(FxHashMap::default()),
             focus_values: RefCell::new(FxHashMap::default()),
@@ -187,6 +189,7 @@ impl PageDom {
         drop(self.data_view_readers.take());
         drop(self.header_helpers.take());
         drop(self.url_params_helpers.take());
+        self.opaque_storage.clear();
         crate::custom::forget_page(self.id);
         let windows = self.window_keys.take();
         let mut dom = self.dom.borrow_mut();
@@ -201,6 +204,7 @@ impl PageDom {
     /// Switches the displayed document (navigation commit).
     pub fn set_document(&self, doc: NodeId) {
         self.document.set(doc);
+        self.opaque_storage.clear();
         let viewport = self.layout.borrow().viewport().clone();
         *self.layout.borrow_mut() = lp_dom::layout::Layout::with_viewport(doc, viewport);
     }

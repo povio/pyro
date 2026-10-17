@@ -542,7 +542,40 @@ fn storage_partitions_origins_contexts_and_page_sessions() {
     assert_eq!(eval(&r5, "localStorage.getItem('token')"), "null");
     let (_p6, r6) =
         storage_page(&engine, "data:text/html,hello", StorageNamespace::default(), StorageNamespace::default());
-    assert_eq!(eval(&r6, "try {localStorage} catch(e) {e.name}"), "SecurityError");
+    // Opaque origin: per-document ephemeral area (upstream compatibility),
+    // not the shared namespace.
+    assert_eq!(eval(&r6, "localStorage.token='opaque'; localStorage.length"), "1");
+    assert_eq!(eval(&r5, "localStorage.length"), "0");
+}
+
+#[test]
+fn opaque_origin_storage_is_per_document_and_discarded_on_replacement() {
+    let engine = Engine::new().unwrap();
+    register(&engine);
+    let local = StorageNamespace::with_quota(12);
+    let session = StorageNamespace::default();
+    let (p1, r1) = storage_page(&engine, "data:text/html,a", local.clone(), session.clone());
+    let w1 = new_realm(&engine, engine.register::<TestWindow>(), &p1, "isolated");
+    let (_p2, r2) = storage_page(&engine, "about:blank", local.clone(), session.clone());
+    let (_p3, r3) = storage_page(&engine, "http://example.test/", local.clone(), session.clone());
+    assert_eq!(
+        eval(&r1, "localStorage.setItem('k','1'); sessionStorage.setItem('s','2'); [localStorage===localStorage, localStorage!==sessionStorage, localStorage.k, sessionStorage.s].join()"),
+        "true,true,1,2"
+    );
+    // Shared by the worlds of the same document only.
+    assert_eq!(eval(&w1, "localStorage.k + ':' + sessionStorage.s"), "1:2");
+    // Never a common "null" bucket, and never the tuple-origin namespace.
+    assert_eq!(eval(&r2, "localStorage.length + ':' + sessionStorage.length + ':' + localStorage.k"), "0:0:undefined");
+    assert_eq!(eval(&r3, "localStorage.length + ':' + sessionStorage.length"), "0:0");
+    // Quota still applies (namespace quota of 12 UTF-16 bytes).
+    assert_eq!(eval(&r2, "try{localStorage.setItem('abc','defg')}catch(e){e.name}"), "QuotaExceededError");
+    // Document replacement discards the areas.
+    let doc = parse_document(&p1.dom, "data:text/html,b", "<body>");
+    p1.set_document(doc);
+    assert_eq!(eval(&r1, "localStorage.length + ':' + sessionStorage.length + ':' + localStorage.k"), "0:0:undefined");
+    // Other opaque-origin restrictions are unchanged.
+    assert_eq!(eval(&r1, "try{indexedDB.open('db')}catch(e){e.name}"), "SecurityError");
+    p1.dispose();
 }
 
 #[test]
@@ -575,7 +608,8 @@ fn storage_is_shared_across_worlds_and_inherited_blank_origin() {
     assert_eq!(eval(&isolated, "localStorage.shared"), "yes");
     let document = e.page.document();
     e.page.dom.borrow_mut().set_document_url(document, "about:blank").unwrap();
-    assert_eq!(eval(&isolated, "try {sessionStorage} catch(e) {e.name}"), "SecurityError");
+    // Opaque about:blank (no inherited origin): per-document area, empty.
+    assert_eq!(eval(&isolated, "sessionStorage.length + ':' + localStorage.getItem('shared')"), "0:null");
     let inherited = e
         .engine
         .create_realm(RealmOptions {

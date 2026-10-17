@@ -1,6 +1,16 @@
 //! In-memory Web Storage. Embedders share a local namespace per browser
 //! context and a session namespace per top-level page across navigations.
 //! No disk persistence or cross-document `storage` events yet.
+//!
+//! Opaque origins (e.g. a CDP-created `about:blank` without an inherited
+//! origin, `data:` documents): upstream Lightpanda hands every origin key a
+//! bucket, so `localStorage` never throws; Chrome throws SecurityError. For
+//! upstream compatibility we give such a document its own ephemeral
+//! local/session areas instead (documented Chrome deviation). They are shared
+//! only by the worlds of that document — never through a common "null"
+//! bucket or with other documents, pages or contexts — and are discarded on
+//! document replacement or disposal. Other opaque-origin restrictions
+//! (e.g. IndexedDB) are unchanged.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -86,19 +96,17 @@ impl StorageNamespace {
     }
 
     fn area(&self, origin: String) -> Rc<RefCell<Area>> {
-        self.0
-            .origins
-            .borrow_mut()
-            .entry(origin)
-            .or_insert_with(|| {
-                Rc::new(RefCell::new(Area {
-                    id: NEXT_AREA.fetch_add(1, Ordering::Relaxed),
-                    entries: Vec::new(),
-                    bytes: 0,
-                    quota: self.0.quota,
-                }))
-            })
-            .clone()
+        self.0.origins.borrow_mut().entry(origin).or_insert_with(|| self.new_area()).clone()
+    }
+
+    /// A fresh area outside the origin map (opaque-origin documents).
+    fn new_area(&self) -> Rc<RefCell<Area>> {
+        Rc::new(RefCell::new(Area {
+            id: NEXT_AREA.fetch_add(1, Ordering::Relaxed),
+            entries: Vec::new(),
+            bytes: 0,
+            quota: self.0.quota,
+        }))
     }
 }
 
@@ -154,25 +162,65 @@ impl JsClass for Storage {
     }
 }
 
-pub(crate) fn storage_origin(s: &Scope<'_>, page: &PageDom) -> JsResult<String> {
-    // An explicitly inherited realm origin handles about:blank/srcdoc. Opaque
-    // realms cannot access storage; they must not share a common "null" bucket.
+/// The realm's tuple origin, or `None` when it is opaque. An explicitly
+/// inherited realm origin handles about:blank/srcdoc.
+fn tuple_origin(s: &Scope<'_>, page: &PageDom) -> Option<String> {
     let url = s.realm().origin().map(str::to_owned).unwrap_or_else(|| {
         page.dom.borrow().document_data(page.document()).map(|d| d.url.to_string()).unwrap_or_default()
     });
-    let origin = url::Url::parse(&url)
+    url::Url::parse(&url)
         .ok()
         .map(|url| url.origin())
         .filter(|origin| matches!(origin, url::Origin::Tuple(..)))
-        .ok_or_else(|| JsError::dom("SecurityError", "Storage is unavailable for an opaque origin."))?
-        .ascii_serialization();
-    Ok(origin)
+        .map(|origin| origin.ascii_serialization())
+}
+
+/// Origin key for origin-partitioned storage; opaque realms must not share a
+/// common "null" bucket, so they get SecurityError.
+pub(crate) fn storage_origin(s: &Scope<'_>, page: &PageDom) -> JsResult<String> {
+    tuple_origin(s, page).ok_or_else(|| JsError::dom("SecurityError", "Storage is unavailable for an opaque origin."))
+}
+
+/// Per-document ephemeral areas for an opaque-origin document (see module
+/// docs). Keyed to the document so a replacement starts empty.
+#[derive(Default)]
+pub(crate) struct OpaqueStorage(RefCell<Option<OpaqueAreas>>);
+
+/// (document, local area, session area).
+type OpaqueAreas = (lp_dom::NodeId, Rc<RefCell<Area>>, Rc<RefCell<Area>>);
+
+impl OpaqueStorage {
+    fn area(&self, page: &PageDom, session: bool) -> Rc<RefCell<Area>> {
+        let doc = page.document();
+        let mut slot = self.0.borrow_mut();
+        if slot.as_ref().is_none_or(|(d, _, _)| *d != doc) {
+            let local = page.local_storage.borrow().new_area();
+            let session = page.session_storage.borrow().new_area();
+            *slot = Some((doc, local, session));
+        }
+        let (_, local, session_area) = slot.as_ref().expect("set above");
+        if session {
+            session_area.clone()
+        } else {
+            local.clone()
+        }
+    }
+
+    /// Discards the areas (document replacement or page disposal).
+    pub(crate) fn clear(&self) {
+        drop(self.0.take());
+    }
 }
 
 pub(crate) fn window_storage<'s>(s: &Scope<'s>, page: &PageDom, session: bool) -> JsResult<Value<'s>> {
-    let origin = storage_origin(s, page)?;
-    let namespace = if session { &page.session_storage } else { &page.local_storage };
-    let area = namespace.borrow().area(origin);
+    let area = match tuple_origin(s, page) {
+        Some(origin) => {
+            let namespace = if session { &page.session_storage } else { &page.local_storage };
+            namespace.borrow().area(origin)
+        }
+        None if page.is_disposed() => return Err(JsError::ContextDestroyed),
+        None => page.opaque_storage.area(page, session),
+    };
     let key = IdentityKey(page.id() | (1 << 56), area.borrow().id);
     if let Some(object) = s.lookup_identity(key) {
         return Ok(object.value());
