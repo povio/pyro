@@ -1141,6 +1141,9 @@ impl JsClass for Document {
         def.method("createRange", 0, |s, n, _a| crate::html::create_range(s, n));
         def.method("createTreeWalker", 1, crate::traversal::create_tree_walker);
         def.method("createNodeIterator", 1, crate::traversal::create_node_iterator);
+        def.method("evaluate", 2, crate::xpath::document_evaluate);
+        def.method("createExpression", 1, crate::xpath::document_create_expression);
+        def.method("createNSResolver", 1, crate::xpath::document_create_ns_resolver);
         def.method("importNode", 1, |s, n, a| {
             let src = node_arg(s, a.get(0), "importNode")?;
             let deep = match a.get(1).as_object() {

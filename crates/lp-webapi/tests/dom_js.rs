@@ -2155,3 +2155,275 @@ fn element_click_is_a_virtual_pointer_click() {
         "PointerEvent,0,0,0,-1,\"\",false,true,true,true"
     );
 }
+
+// XPath: ports of upstream src/browser/tests/xpath/{document_evaluate,
+// xpath_result,xpath_evaluator}.html plus the Playwright `xpath=` shape.
+const XPATH_PAGE: &str = r#"<!doctype html><body>
+<h1 id=title>Hello</h1>
+<div class=group><p id=p1 class=x>First</p><p id=p2>Second</p><p id=p3 data-n=3>Third</p></div>
+<span id=span1 data-x="42">x</span>
+<div class="h-[2.625rem] outer"><div class="flex h-[2.625rem] row" id=row><div class=cell><span>Customer</span></div></div></div>
+<svg id=s><rect id=r /></svg>
+</body>"#;
+
+#[test]
+fn xpath_playwright_ancestor_locator() {
+    let e = env(XPATH_PAGE);
+    let r = &e.main;
+    // Playwright's injected `xpath=` engine: ORDERED_NODE_ITERATOR_TYPE + iterateNext().
+    assert_eq!(
+        eval(
+            r,
+            r#"const pwRoot = [...document.querySelectorAll('span')].filter(s => s.textContent === 'Customer').pop();
+               const pwIt = document.evaluate("ancestor::div[contains(@class, 'h-[2.625rem]')][1]", pwRoot, null,
+                   XPathResult.ORDERED_NODE_ITERATOR_TYPE, null);
+               const pwOut = [];
+               for (let n = pwIt.iterateNext(); n; n = pwIt.iterateNext()) pwOut.push(n.id);
+               pwIt.resultType + ':' + pwOut.join(',') + ':' + pwIt.invalidIteratorState"#
+        ),
+        "5:row:false"
+    );
+}
+
+#[test]
+fn xpath_result_types() {
+    let e = env(XPATH_PAGE);
+    let r = &e.main;
+    assert_eq!(
+        eval(r, "['ANY_TYPE', 'NUMBER_TYPE', 'STRING_TYPE', 'BOOLEAN_TYPE', 'UNORDERED_NODE_ITERATOR_TYPE', 'ORDERED_NODE_ITERATOR_TYPE', 'UNORDERED_NODE_SNAPSHOT_TYPE', 'ORDERED_NODE_SNAPSHOT_TYPE', 'ANY_UNORDERED_NODE_TYPE', 'FIRST_ORDERED_NODE_TYPE'].map(k => XPathResult[k]).join()"),
+        "0,1,2,3,4,5,6,7,8,9"
+    );
+    assert_eq!(eval(r, "XPathResult.prototype.ORDERED_NODE_SNAPSHOT_TYPE"), "7");
+    assert_eq!(eval(r, "try { new XPathResult() } catch (x) { x instanceof TypeError }"), "true");
+    // Snapshots.
+    assert_eq!(
+        eval(r, "const snap = document.evaluate('//p', document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null); snap instanceof XPathResult && [snap.resultType, snap.snapshotLength, snap.snapshotItem(0).id, snap.snapshotItem(2).id, snap.snapshotItem(3)].join()"),
+        "7,3,p1,p3,"
+    );
+    assert_eq!(
+        eval(r, "snap.snapshotItem(0) === document.getElementById('p1') && snap.ORDERED_NODE_SNAPSHOT_TYPE === 7"),
+        "true"
+    );
+    assert_eq!(
+        eval(
+            r,
+            "document.evaluate('//p', document, null, XPathResult.UNORDERED_NODE_SNAPSHOT_TYPE, null).snapshotLength"
+        ),
+        "3"
+    );
+    // Single node.
+    assert_eq!(
+        eval(
+            r,
+            "document.evaluate('//p', document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue.id"
+        ),
+        "p1"
+    );
+    assert_eq!(
+        eval(
+            r,
+            "document.evaluate('//nope', document, null, XPathResult.ANY_UNORDERED_NODE_TYPE, null).singleNodeValue"
+        ),
+        "null"
+    );
+    // Scalars and ANY_TYPE resolution.
+    assert_eq!(
+        eval(r, "document.evaluate('count(//p)', document, null, XPathResult.NUMBER_TYPE, null).numberValue"),
+        "3"
+    );
+    assert_eq!(
+        eval(r, "document.evaluate('string(//h1)', document, null, XPathResult.STRING_TYPE, null).stringValue"),
+        "Hello"
+    );
+    assert_eq!(
+        eval(r, "document.evaluate('count(//p) > 2', document, null, XPathResult.BOOLEAN_TYPE, null).booleanValue"),
+        "true"
+    );
+    assert_eq!(
+        eval(r, "document.evaluate('//h1', document, null, XPathResult.STRING_TYPE, null).stringValue"),
+        "Hello"
+    );
+    assert_eq!(
+        eval(r, "document.evaluate('//p[3]/@data-n', document, null, XPathResult.NUMBER_TYPE, null).numberValue"),
+        "3"
+    );
+    assert_eq!(
+        eval(r, "document.evaluate('//p', document, null, XPathResult.BOOLEAN_TYPE, null).booleanValue"),
+        "true"
+    );
+    assert_eq!(
+        eval(r, "['//p', 'count(//p)', 'string(//h1)', 'true()'].map(x => document.evaluate(x, document, null, XPathResult.ANY_TYPE, null).resultType).join()"),
+        "4,1,2,3"
+    );
+    assert_eq!(eval(r, "document.evaluate('//p', document).iterateNext().id"), "p1");
+    assert_eq!(eval(r, "document.evaluate('//p', null, null, 7, null).snapshotLength"), "3");
+    assert_eq!(
+        eval(r, "const ex = document.evaluate('//p', document, null, 5, null); [ex.iterateNext().id, ex.iterateNext().id, ex.iterateNext().id, ex.iterateNext(), ex.iterateNext()].join()"),
+        "p1,p2,p3,,"
+    );
+    // Type mismatches are TypeErrors.
+    assert_eq!(
+        eval(r, "const mm = document.evaluate('//p', document, null, 7, null); let mmc = 0; for (const k of ['numberValue', 'stringValue', 'booleanValue', 'singleNodeValue']) { try { mm[k] } catch (x) { if (x instanceof TypeError) mmc++ } } try { mm.iterateNext() } catch (x) { if (x instanceof TypeError) mmc++ } mmc"),
+        "5"
+    );
+    assert_eq!(
+        eval(r, "try { document.evaluate('count(//p)', document, null, XPathResult.ORDERED_NODE_ITERATOR_TYPE, null) } catch (x) { x.constructor.name }"),
+        "TypeError"
+    );
+    assert_eq!(
+        eval(
+            r,
+            "try { document.evaluate('1', document, null, 3, null).snapshotLength } catch (x) { x.constructor.name }"
+        ),
+        "TypeError"
+    );
+    assert_eq!(
+        eval(r, "try { document.evaluate('//p', document, null, 42, null) } catch (x) { x.name }"),
+        "NotSupportedError"
+    );
+}
+
+#[test]
+fn xpath_axes_predicates_functions() {
+    let e = env(XPATH_PAGE);
+    let r = &e.main;
+    let snap = |expr: &str| {
+        eval(
+            r,
+            &format!(
+                "(() => {{ const s = document.evaluate({expr:?}, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null); const o = []; for (let i = 0; i < s.snapshotLength; i++) {{ const n = s.snapshotItem(i); o.push(n.id || n.nodeName) }} return o.join() }})()"
+            ),
+        )
+    };
+    // The attribute axis yields Attr objects.
+    assert_eq!(
+        eval(r, "const at = document.evaluate('//span/@data-x', document, null, 9, null).singleNodeValue; [at instanceof Attr, at.name, at.value, at.ownerElement.id].join()"),
+        "true,data-x,42,span1"
+    );
+    assert_eq!(snap("//p[1]/@*"), "id,class");
+    assert_eq!(eval(r, "document.evaluate('//span/@data-x', document, null, 2, null).stringValue"), "42");
+    // Union is in document order.
+    assert_eq!(snap("//span[@id='span1'] | //h1 | //p[2]"), "title,p2,span1");
+    // Positional predicates, position()/last(), reverse axes.
+    assert_eq!(snap("//p[last()]"), "p3");
+    assert_eq!(snap("//p[position() < last()]"), "p1,p2");
+    assert_eq!(snap("//p[3]/preceding-sibling::p[1]"), "p2");
+    assert_eq!(snap("(//p)[position() = 2]"), "p2");
+    assert_eq!(snap("//p[@class='x']/following::*[1]"), "p2");
+    // Functions and HTML name tests.
+    assert_eq!(snap("//*[starts-with(@id, 'p') and string-length(@id) = 2][not(@class)]"), "p2,p3");
+    assert_eq!(snap("//p[normalize-space(translate(., 'S', 's')) = 'second']"), "p2");
+    assert_eq!(snap("id('p3 title')"), "title,p3");
+    assert_eq!(snap("//H1"), "title");
+    assert_eq!(snap("//svg"), "");
+    assert_eq!(snap("//*[local-name() = 'rect']"), "r");
+    assert_eq!(
+        eval(r, "document.evaluate('concat(name(//p[1]), \"-\", substring-after(//p[1]/@id, \"p\"), \"-\", round(2.5), \"-\", sum(//p/@data-n))', document, null, 2, null).stringValue"),
+        "p-1-3-3"
+    );
+    // Context node scoping, including an Attr context node.
+    assert_eq!(
+        eval(r, "document.evaluate('./p', document.querySelector('.group'), null, 7, null).snapshotLength"),
+        "3"
+    );
+    assert_eq!(
+        eval(
+            r,
+            "document.evaluate('..', document.getElementById('p1').attributes[0], null, 9, null).singleNodeValue.id"
+        ),
+        "p1"
+    );
+}
+
+#[test]
+fn xpath_errors_resolvers_and_invalidation() {
+    let e = env(XPATH_PAGE);
+    let r = &e.main;
+    // Syntax errors are DOMException SyntaxError.
+    assert_eq!(
+        eval(r, "['//p[', 'bogus()', '', '//', 'a ? b'].map(x => { try { document.evaluate(x, document); return 'ok' } catch (e) { return e instanceof DOMException && e.name } }).join()"),
+        "SyntaxError,SyntaxError,SyntaxError,SyntaxError,SyntaxError"
+    );
+    assert_eq!(eval(r, "try { document.createExpression('//p[') } catch (e) { e.name }"), "SyntaxError");
+    assert_eq!(eval(r, "try { document.evaluate('1 | //p', document) } catch (e) { e.constructor.name }"), "TypeError");
+    // Namespace resolvers: null, function, object, Node.
+    assert_eq!(
+        eval(r, "try { document.evaluate('//svg:rect', document, null, 7, null) } catch (e) { e.name }"),
+        "NamespaceError"
+    );
+    assert_eq!(
+        eval(r, "document.evaluate('//svg:svg/svg:*', document, p => p === 'svg' ? 'http://www.w3.org/2000/svg' : null, 9, null).singleNodeValue.id"),
+        "r"
+    );
+    assert_eq!(
+        eval(r, "let nsCalls = 0; document.evaluate('//h:P[@id=\"p2\"] | //h:h1', document, { lookupNamespaceURI(p) { nsCalls++; return p === 'h' ? 'http://www.w3.org/1999/xhtml' : null } }, 7, null).snapshotLength + ':' + nsCalls"),
+        "2:1"
+    );
+    assert_eq!(
+        eval(r, "try { document.evaluate('//x:p', document, () => null, 7, null) } catch (e) { e.name }"),
+        "NamespaceError"
+    );
+    assert_eq!(
+        eval(r, "try { document.evaluate('//x:p', document, () => { throw new Error('boom') }, 7, null) } catch (e) { e.message }"),
+        "boom"
+    );
+    assert_eq!(eval(r, "document.createNSResolver(document) === document"), "true");
+    assert_eq!(
+        eval(r, "document.evaluate('//p', document, document.createNSResolver(document), 7, null).snapshotLength"),
+        "3"
+    );
+    // XML document with a Node resolver (`xml` prefix via lookupNamespaceURI).
+    assert_eq!(
+        eval(r, "const xd = document.implementation.createDocument(null, 'mu', null); const mu = xd.documentElement; mu.setAttributeNS('http://www.w3.org/XML/1998/namespace', 'xml:id', 'id1'); const rho = xd.createElementNS(null, 'rho'); rho.setAttributeNS('http://www.w3.org/XML/1998/namespace', 'xml:lang', 'en-GB'); mu.appendChild(rho); const xr = xd.evaluate('//mu[@xml:id=\"id1\"]/rho[@xml:lang=\"en-GB\"]', mu, xd.createNSResolver(mu), XPathResult.ANY_TYPE, null); (xr.iterateNext() === rho) + ':' + xr.iterateNext()"),
+        "true:null"
+    );
+    // Iterators are invalidated by mutation; snapshots are not.
+    assert_eq!(
+        eval(r, "const inv = document.evaluate('//p', document, null, 5, null); const invSnap = document.evaluate('//p', document, null, 7, null); inv.iterateNext(); document.body.appendChild(document.createElement('i')); let invName; try { inv.iterateNext() } catch (e) { invName = e.name } [inv.invalidIteratorState, invName, invSnap.snapshotItem(1).id, invSnap.invalidIteratorState].join()"),
+        "true,InvalidStateError,p2,false"
+    );
+    assert_eq!(
+        eval(r, "const inv2 = document.evaluate('//p', document, null, 4, null); document.getElementById('p1').setAttribute('data-z', '1'); inv2.invalidIteratorState"),
+        "true"
+    );
+}
+
+#[test]
+fn xpath_evaluator_and_expression() {
+    let e = env(XPATH_PAGE);
+    let r = &e.main;
+    assert_eq!(
+        eval(r, "const ev = new XPathEvaluator(); ev instanceof XPathEvaluator && [typeof ev.evaluate, typeof ev.createExpression, typeof ev.createNSResolver].join()"),
+        "function,function,function"
+    );
+    assert_eq!(eval(r, "ev.evaluate('//p', document, null, 7, null).snapshotItem(1).id"), "p2");
+    assert_eq!(eval(r, "try { ev.evaluate('//p', null) } catch (e) { e.constructor.name }"), "TypeError");
+    assert_eq!(eval(r, "ev.createNSResolver(document.body) === document.body"), "true");
+    assert_eq!(
+        eval(r, "const xe = document.createExpression('p', null); xe instanceof XPathExpression && [xe.evaluate(document.querySelector('.group'), 7, null).snapshotLength, xe.evaluate(document.body, 7).snapshotLength, xe.evaluate(document.querySelector('h1'), XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue].join()"),
+        "3,0,"
+    );
+    assert_eq!(
+        eval(
+            r,
+            "ev.createExpression('count(//p)', null).evaluate(document, XPathResult.NUMBER_TYPE, null).numberValue"
+        ),
+        "3"
+    );
+    assert_eq!(
+        eval(r, "document.createExpression('//svg:rect', p => 'http://www.w3.org/2000/svg').evaluate(document, 9).singleNodeValue.id"),
+        "r"
+    );
+    // Results keep their (detached) nodes alive across GC.
+    assert_eq!(
+        eval(r, "(() => { const keep = document.createElement('div'); keep.innerHTML = '<b id=kept></b>'; window.keptResult = document.evaluate('.//b', keep, null, 7, null); return 'ok' })()"),
+        "ok"
+    );
+    e.engine.collect_garbage_now();
+    e.engine.drain_finalized();
+    e.page.after_task();
+    assert_eq!(
+        eval(r, "keptResult.snapshotItem(0).id + ':' + keptResult.snapshotItem(0).parentNode.nodeName"),
+        "kept:DIV"
+    );
+}

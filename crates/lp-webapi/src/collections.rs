@@ -610,7 +610,12 @@ fn attr_at<'s>(s: &Scope<'s>, m: &NamedNodeMapData, i: usize) -> JsResult<Option
     }
 }
 
-fn make_attr<'s>(s: &Scope<'s>, page: &Rc<PageDom>, el: NodeId, qualified: String) -> JsResult<Value<'s>> {
+/// Owner page, owner element and qualified name of an `Attr`.
+pub(crate) fn attr_of(a: &AttrData) -> (&Rc<PageDom>, NodeId, &str) {
+    (&a.el.page, a.el.id, &a.qualified)
+}
+
+pub(crate) fn make_attr<'s>(s: &Scope<'s>, page: &Rc<PageDom>, el: NodeId, qualified: String) -> JsResult<Value<'s>> {
     Ok(s.wrap::<Attr>(AttrData { el: NodeHold::new(page, el)?, qualified }, None)?.value())
 }
 

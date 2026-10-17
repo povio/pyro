@@ -52,6 +52,7 @@ pub mod util;
 pub mod validity;
 pub mod window;
 pub mod xhr;
+pub mod xpath;
 
 use std::rc::Rc;
 
@@ -90,6 +91,7 @@ pub fn register(engine: &lp_js::Engine) {
     form_data::register(engine);
     dom_parser::register(engine);
     resize_observer::register(engine);
+    xpath::register(engine);
     engine.register::<storage::Storage>();
     engine.register::<indexeddb::IdbFactory>();
     engine.register::<headers::Headers>();
