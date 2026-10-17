@@ -211,8 +211,13 @@ fn add_listener<'s>(s: &Scope<'s>, t: &EventTargetData, a: Args<'s>) -> JsResult
     // handle matches JS identity.
     let len = arr.get("length")?.to_number()? as u32;
     let mut slot = None;
+    let mut vacant = None;
     for i in 0..len {
-        if arr.get_index(i)?.strict_equals(cb) {
+        let value = arr.get_index(i)?;
+        if value.is_undefined() && vacant.is_none() {
+            vacant = Some(i);
+        }
+        if value.strict_equals(cb) {
             slot = Some(i);
             break;
         }
@@ -220,8 +225,9 @@ fn add_listener<'s>(s: &Scope<'s>, t: &EventTargetData, a: Args<'s>) -> JsResult
     let slot = match slot {
         Some(i) => i,
         None => {
-            arr.set_index(len, cb_obj.value())?;
-            len
+            let slot = vacant.unwrap_or(len);
+            arr.set_index(slot, cb_obj.value())?;
+            slot
         }
     };
     let realm = s.realm();
@@ -232,7 +238,10 @@ fn add_listener<'s>(s: &Scope<'s>, t: &EventTargetData, a: Args<'s>) -> JsResult
         maybe_pin(s, &t.page, t.key, obj);
         if let Some(sig) = signal {
             if let Some(sd) = s.unwrap::<crate::abort::AbortSignal>(sig.value()) {
-                sd.on_abort_remove(t.key, ty, handle, opts.capture);
+                let registration = t.page.dom.borrow().listener_registration(t.key, &ty, handle, opts.capture);
+                if let Some(registration) = registration {
+                    sd.on_abort_remove(t.key, registration);
+                }
             }
         }
     }
@@ -384,8 +393,17 @@ impl ListenerInvoker for Invoker<'_> {
 
 /// Dispatches `event` at `target` (DOM "dispatch"). Returns false if canceled.
 pub fn fire(page: &PageDom, target: TargetKey, event: &EventData) -> bool {
+    event.state.borrow_mut().target = Some(target);
+    event.refresh_wrappers();
+    // A callback can detach ancestors and run GC during dispatch.
+    let path = page.dom.borrow().event_path(target, &event.state.borrow());
+    let ids: Vec<_> = path.iter().filter_map(|(key, _)| page.dom.borrow().key_node(*key)).collect();
+    let _path_holds: Vec<_> =
+        ids.into_iter().filter_map(|id| crate::collections::NodeHold::new(&event.page, id).ok()).collect();
     let mut inv = Invoker { page, event };
-    dispatch(&page.dom, target, &event.state, &mut inv)
+    let result = dispatch(&page.dom, target, &event.state, &mut inv);
+    event.refresh_wrappers();
+    result
 }
 
 /// Convenience: fires a trusted event at a node.

@@ -310,3 +310,120 @@ fn navigation_releases_pinned_listener_wrappers_of_old_document() {
     assert_eq!(e.page.pinned_count(), 0);
     assert!(!e.page.dom.borrow().is_alive(old), "old document reclaimed after its realm and pins are gone");
 }
+
+#[test]
+fn css_rule_values_survive_reentrant_gc() {
+    let e = env("<head><style id=s></style></head><body>");
+    {
+        let s = e.main.scope().unwrap();
+        let gc = s
+            .function("reviewGC", |s, _, _| {
+                if let Some(f) = lp_js::sys::spi::get().synchronous_gc_for_debugging {
+                    unsafe { f(s.ctx()) };
+                }
+                Ok(s.undefined())
+            })
+            .unwrap();
+        s.global().set("reviewGC", gc.value()).unwrap();
+    }
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"
+      const sh=document.getElementById('s').sheet;
+      for(let i=0;i<200;i++)sh.insertRule('.r'+i+'{}',i);
+      window.before=sh.cssRules.every((r,i)=>r.cssText==='.r'+i+'{}');
+      Object.defineProperty(Object.prototype,'cssText',{set(v){reviewGC(); Object.defineProperty(this,'cssText',{value:v});}, configurable:true});
+      const rr=sh.cssRules; delete Object.prototype.cssText;
+      before && rr.length === 200 && rr.every((r,i)=>r.cssText==='.r'+i+'{}')
+    "#
+        ),
+        "true"
+    );
+}
+
+#[test]
+fn regression_typed_array_subview() {
+    let e = env("<body>");
+    assert_eq!(eval(&e.main, "new TextDecoder().decode(new Uint8Array([65,66,67]).subarray(1,2))"), "B");
+}
+#[test]
+fn regression_reentrant_string_coercion() {
+    let e = env("<body>");
+    assert_eq!(eval(&e.main, "document.body.append({toString(){ document.body.setAttribute('x','1'); return 'ok'; }}); document.body.textContent"), "ok");
+}
+#[test]
+fn regression_reentrant_reflected_setter() {
+    let e = env("<body>");
+    assert_eq!(
+        eval(
+            &e.main,
+            "document.body.id = {toString(){ document.body.setAttribute('x','1'); return 'ok'; }}; document.body.id"
+        ),
+        "ok"
+    );
+}
+#[test]
+fn regression_event_target_survives_gc() {
+    let e = env("<body>");
+    eval(&e.main, "window.saved = new Event('ping'); (() => {const n = document.createElement('div'); n.id = 'old'; n.extra = 'retained'; n.dispatchEvent(saved);})();");
+    for _ in 0..4 {
+        e.engine.collect_garbage_now();
+        e.engine.drain_finalized();
+        e.page.after_task();
+    }
+    assert_eq!(eval(&e.main, "saved.target.extra"), "retained");
+    assert_eq!(eval(&e.main, "window.replacement = document.createElement('span'); replacement.id = 'new'; saved.target && saved.target.id"), "old");
+}
+#[test]
+fn regression_abort_releases_listener_slot() {
+    let e = env("<body>");
+    eval(&e.main, "window.ac = new AbortController(); document.body.addEventListener('x', ()=>{}, {signal: ac.signal}); ac.abort();");
+    e.page.after_task();
+    let s = e.main.scope().unwrap();
+    let body = s.eval("document.body", None, 1).unwrap().as_object().unwrap();
+    let arr = s.get_hidden(body, "__lpListeners").unwrap().unwrap().as_object().unwrap();
+    assert!(arr.get_index(0).unwrap().is_undefined(), "aborted callback is still strongly rooted");
+}
+#[test]
+fn regression_listener_slot_growth() {
+    let e = env("<body>");
+    eval(&e.main, "for(let i=0;i<1000;i++){const cb=()=>{}; document.body.addEventListener('x',cb); document.body.removeEventListener('x',cb);}");
+    let s = e.main.scope().unwrap();
+    let body = s.eval("document.body", None, 1).unwrap().as_object().unwrap();
+    let arr = s.get_hidden(body, "__lpListeners").unwrap().unwrap().as_object().unwrap();
+    let len = arr.get("length").unwrap().to_number().unwrap();
+    assert!(len <= 1.0, "empty listener array length grew to {len}");
+}
+#[test]
+fn regression_range_select_element_text() {
+    let e = env("<body><p id=x><b>abc</b><i>def</i></p></body>");
+    assert_eq!(
+        eval(
+            &e.main,
+            "const r=document.createRange(); r.selectNodeContents(document.getElementById('x')); r.toString()"
+        ),
+        "abcdef"
+    );
+}
+
+#[test]
+fn abort_does_not_remove_a_reused_listener_registration() {
+    let e = env("<body>");
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"
+        const ac = new AbortController(); let calls = 0;
+        const cb = () => calls++;
+        document.body.addEventListener('x', cb, {signal: ac.signal});
+        document.body.removeEventListener('x', cb);
+        document.body.addEventListener('x', cb);
+        ac.abort(); document.body.dispatchEvent(new Event('x')); calls
+    "#
+        ),
+        "1"
+    );
+    e.page.after_task();
+    assert_eq!(eval(&e.main, "document.body.dispatchEvent(new Event('x')); calls"), "2");
+}

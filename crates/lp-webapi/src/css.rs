@@ -303,14 +303,14 @@ impl JsClass for CssStyleSheet {
 
 fn rules_value<'s>(s: &Scope<'s>, sh: &SheetData) -> JsResult<Value<'s>> {
     let rules = sh.owner.page.sheet_rules(sh.owner.id);
-    let mut vals = Vec::with_capacity(rules.len());
+    let mut vals = lp_js::RootedVec::new();
     for r in &rules {
         let o = s.object();
         o.set("cssText", s.string(r))?;
         o.set("type", s.number(1.0))?;
-        vals.push(o.value());
+        vals.push(s, o.value());
     }
-    Ok(s.array(&vals)?.value())
+    Ok(s.array(&vals.iter(s).collect::<Vec<_>>())?.value())
 }
 
 pub(crate) fn element_sheet<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {

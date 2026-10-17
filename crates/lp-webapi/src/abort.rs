@@ -3,7 +3,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use lp_dom::events::{ListenerHandle, TargetKey};
+use lp_dom::events::TargetKey;
 use lp_js::{ClassDef, JsClass, JsError, JsResult, NoParent, Object, Persistent, Scope, Value};
 
 use crate::event::{EventCore, EventInterface};
@@ -17,7 +17,7 @@ pub struct AbortSignalData {
     aborted: Cell<bool>,
     reason: RefCell<Option<Persistent>>,
     /// Listener registrations to drop on abort (`{signal}` option).
-    remove_on_abort: RefCell<Vec<(TargetKey, String, ListenerHandle, bool)>>,
+    remove_on_abort: RefCell<Vec<(TargetKey, u32)>>,
     /// Native abort steps (fetch/XHR cancellation).
     hooks: RefCell<Vec<AbortHook>>,
 }
@@ -29,8 +29,8 @@ impl AbortSignalData {
     pub fn reason<'s>(&self, s: &Scope<'s>) -> Value<'s> {
         self.reason.borrow().as_ref().map_or(s.undefined(), |p| p.get(s))
     }
-    pub(crate) fn on_abort_remove(&self, key: TargetKey, ty: String, handle: ListenerHandle, capture: bool) {
-        self.remove_on_abort.borrow_mut().push((key, ty, handle, capture));
+    pub(crate) fn on_abort_remove(&self, key: TargetKey, registration: u32) {
+        self.remove_on_abort.borrow_mut().push((key, registration));
     }
     /// Registers native abort steps (run once, on abort).
     pub fn add_abort_hook(&self, hook: AbortHook) {
@@ -53,8 +53,8 @@ impl AbortSignalData {
         };
         *self.reason.borrow_mut() = Some(Persistent::new(s, reason));
         let page = self.target.page.clone();
-        for (key, ty, handle, capture) in self.remove_on_abort.take() {
-            page.dom.borrow_mut().remove_listener(key, &ty, handle, capture);
+        for (key, registration) in self.remove_on_abort.take() {
+            page.dom.borrow_mut().abort_listener(key, registration);
         }
         for hook in self.hooks.take() {
             hook(&page);

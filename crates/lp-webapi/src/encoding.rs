@@ -73,16 +73,19 @@ pub fn buffer_source_bytes(s: &Scope<'_>, v: Value<'_>) -> JsResult<Option<Vec<u
         _ => {
             let mut exc = std::ptr::null();
             // SAFETY: obj is a typed array; JSObjectGetTypedArrayBytesPtr
-            // already accounts for byteOffset. Copied immediately.
+            // returns the backing store start; add the view byteOffset.
+            // Copied immediately after obtaining the pointer.
             unsafe {
                 let len = sys::JSObjectGetTypedArrayByteLength(ctx, obj.as_raw(), &mut exc);
+                check_exc(s, exc)?;
+                let offset = sys::JSObjectGetTypedArrayByteOffset(ctx, obj.as_raw(), &mut exc);
                 check_exc(s, exc)?;
                 let ptr = sys::JSObjectGetTypedArrayBytesPtr(ctx, obj.as_raw(), &mut exc) as *const u8;
                 check_exc(s, exc)?;
                 if ptr.is_null() || len == 0 {
                     return Ok(Some(Vec::new()));
                 }
-                Ok(Some(std::slice::from_raw_parts(ptr, len).to_vec()))
+                Ok(Some(std::slice::from_raw_parts(ptr.add(offset), len).to_vec()))
             }
         }
     }

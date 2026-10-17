@@ -91,6 +91,7 @@ pub struct EventCore {
     pub iface: EventInterface,
     pub state: RefCell<EventState>,
     pub fields: RefCell<EventFields>,
+    held_nodes: RefCell<Vec<crate::collections::NodeHold>>,
 }
 
 pub type EventData = Rc<EventCore>;
@@ -120,6 +121,7 @@ impl EventCore {
             iface,
             state: RefCell::new(st),
             fields: RefCell::new(EventFields::default()),
+            held_nodes: RefCell::new(Vec::new()),
         })
     }
 
@@ -146,6 +148,50 @@ impl EventCore {
         e
     }
 
+    /// Keep native identities alive as long as the event exposes them.
+    pub(crate) fn retain_targets(&self) {
+        let fields = self.fields.borrow();
+        let keys = [self.state.borrow().target, fields.related_target, fields.submitter];
+        let ids: Vec<_> = {
+            let dom = self.page.dom.borrow();
+            keys.into_iter().flatten().filter_map(|k| dom.key_node(k)).collect()
+        };
+        drop(fields);
+        let mut held = self.held_nodes.borrow_mut();
+        held.retain(|h| ids.contains(&h.id));
+        for id in ids {
+            if !held.iter().any(|h| h.id == id) {
+                if let Ok(h) = crate::collections::NodeHold::new(&self.page, id) {
+                    held.push(h);
+                }
+            }
+        }
+    }
+
+    fn trace_targets(&self, s: &Scope<'_>, wrapper: Object<'_>) -> JsResult<()> {
+        let fields = self.fields.borrow();
+        let keys = [self.state.borrow().target, fields.related_target, fields.submitter];
+        drop(fields);
+        for (name, key) in ["__lpEventTarget", "__lpRelatedTarget", "__lpSubmitter"].into_iter().zip(keys) {
+            // Hidden edges preserve wrapper identity/expandos without native GC cycles.
+            s.set_hidden(wrapper, name, target_value(s, &self.page, key)?)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn refresh_wrappers(&self) {
+        self.retain_targets();
+        let realms: Vec<_> = self.page.realms.borrow().values().filter_map(|r| r.upgrade()).collect();
+        for realm in realms {
+            let Ok(s) = realm.scope() else { continue };
+            if let Some(wrapper) = s.lookup_identity(self.page.event_identity(self.id)) {
+                if let Err(err) = self.trace_targets(&s, wrapper) {
+                    s.report_exception(&err);
+                }
+            }
+        }
+    }
+
     pub fn canceled(&self) -> bool {
         self.state.borrow().canceled
     }
@@ -153,12 +199,14 @@ impl EventCore {
 
 /// Wraps `core` in `s`'s realm using the class matching its interface.
 pub fn wrap_event<'s>(s: &Scope<'s>, core: &EventData) -> JsResult<Object<'s>> {
+    core.retain_targets();
     let key = core.page.event_identity(core.id);
     if let Some(o) = s.lookup_identity(key) {
+        core.trace_targets(s, o)?;
         return Ok(o);
     }
     let d = core.clone();
-    match core.iface {
+    let wrapper = match core.iface {
         EventInterface::Event => s.wrap::<Event>(d, Some(key)),
         EventInterface::CustomEvent => s.wrap::<CustomEvent>(d, Some(key)),
         EventInterface::UiEvent => s.wrap::<UiEvent>(d, Some(key)),
@@ -176,7 +224,9 @@ pub fn wrap_event<'s>(s: &Scope<'s>, core: &EventData) -> JsResult<Object<'s>> {
         EventInterface::HashChangeEvent => s.wrap::<HashChangeEvent>(d, Some(key)),
         EventInterface::PageTransitionEvent => s.wrap::<PageTransitionEvent>(d, Some(key)),
         EventInterface::MessageEvent => s.wrap::<MessageEvent>(d, Some(key)),
-    }
+    }?;
+    core.trace_targets(s, wrapper)?;
+    Ok(wrapper)
 }
 
 fn get_bool(init: Option<Object<'_>>, name: &str) -> JsResult<bool> {
@@ -233,7 +283,10 @@ fn construct<'s, C: JsClass<Data = EventData>>(
     );
     fill(s, &mut core.fields.borrow_mut(), init)?;
     let key = page.event_identity(core.id);
-    s.wrap_new::<C>(core, new_target, Some(key))
+    core.retain_targets();
+    let wrapper = s.wrap_new::<C>(core.clone(), new_target, Some(key))?;
+    core.trace_targets(s, wrapper)?;
+    Ok(wrapper)
 }
 
 fn fill_none<'s>(_: &Scope<'s>, _: &mut EventFields, _: Option<Object<'s>>) -> JsResult<()> {
@@ -458,11 +511,11 @@ impl JsClass for Event {
         });
         def.method("composedPath", 0, |s, e, _a| {
             let path = e.state.borrow().path.clone();
-            let mut vals = Vec::with_capacity(path.len());
+            let mut vals = lp_js::RootedVec::new();
             for k in path {
-                vals.push(target_value(s, &e.page, Some(k))?);
+                vals.push(s, target_value(s, &e.page, Some(k))?);
             }
-            Ok(s.array(&vals)?.value())
+            Ok(s.array(&vals.iter(s).collect::<Vec<_>>())?.value())
         });
         def.method("initEvent", 1, |s, e, a| {
             let ty = arg_string(&a, 0, "Event.initEvent")?;
@@ -479,6 +532,8 @@ impl JsClass for Event {
             st.canceled = false;
             st.is_trusted = false;
             st.target = None;
+            drop(st);
+            e.refresh_wrappers();
             Ok(s.undefined())
         });
     }

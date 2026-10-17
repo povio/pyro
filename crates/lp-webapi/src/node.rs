@@ -709,8 +709,11 @@ impl JsClass for Element {
         def.method("getAttributeNames", 0, |s, n, _a| {
             let names: Vec<String> =
                 n.page().dom.borrow().attributes(n.id).js()?.iter().map(|a| a.qualified_name()).collect();
-            let vals: Vec<Value> = names.iter().map(|x| s.string(x)).collect();
-            Ok(s.array(&vals)?.value())
+            let mut vals = lp_js::RootedVec::new();
+            for name in names {
+                vals.push(s, s.string(&name));
+            }
+            Ok(s.array(&vals.iter(s).collect::<Vec<_>>())?.value())
         });
         def.method("getAttribute", 1, |s, n, a| {
             let name = arg_string(&a, 0, "Element.getAttribute")?;

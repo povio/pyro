@@ -171,8 +171,11 @@ impl JsClass for Navigator {
         def.getter("language", |s, p| Ok(s.string(&languages(p)[0])));
         def.getter("languages", |s, p| {
             let langs = languages(p);
-            let vals: Vec<Value> = langs.iter().map(|l| s.string(l)).collect();
-            Ok(s.array(&vals)?.value())
+            let mut vals = lp_js::RootedVec::new();
+            for lang in langs {
+                vals.push(s, s.string(&lang));
+            }
+            Ok(s.array(&vals.iter(s).collect::<Vec<_>>())?.value())
         });
         def.getter("onLine", |s, p| Ok(s.boolean(!p.net.borrow().as_ref().is_some_and(|n| n.settings().offline))));
         def.getter("cookieEnabled", |s, _p| Ok(s.boolean(true)));

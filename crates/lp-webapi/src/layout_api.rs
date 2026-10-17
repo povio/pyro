@@ -71,11 +71,11 @@ pub(crate) fn bounding_rect<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'
 pub(crate) fn client_rects<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
     let page = n.page();
     let rects = page.layout.borrow().client_rects(&page.dom.borrow(), n.id);
-    let mut vals = Vec::with_capacity(rects.len());
+    let mut vals = lp_js::RootedVec::new();
     for r in rects {
-        vals.push(rect_value(s, r)?);
+        vals.push(s, rect_value(s, r)?);
     }
-    Ok(s.array(&vals)?.value())
+    Ok(s.array(&vals.iter(s).collect::<Vec<_>>())?.value())
 }
 
 pub(crate) fn range_rect<'s>(s: &Scope<'s>, page: &Rc<PageDom>, start: NodeId) -> JsResult<Value<'s>> {
@@ -236,11 +236,11 @@ pub(crate) fn elements_from_point<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) 
     } else {
         Vec::new()
     };
-    let mut vals = Vec::with_capacity(ids.len());
+    let mut vals = lp_js::RootedVec::new();
     for id in ids {
-        vals.push(wrap_node(s, page, id)?.value());
+        vals.push(s, wrap_node(s, page, id)?.value());
     }
-    Ok(s.array(&vals)?.value())
+    Ok(s.array(&vals.iter(s).collect::<Vec<_>>())?.value())
 }
 
 /// Read-only computed style (`getComputedStyle`).
