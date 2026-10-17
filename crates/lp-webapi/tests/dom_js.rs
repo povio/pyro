@@ -1406,3 +1406,194 @@ fn url_params_traced_cycles_collect_but_retained_params_keep_url_alive() {
     }
     assert_eq!(eval(&e.main, "retainedUrl.deref()===undefined"), "true");
 }
+
+#[test]
+fn structured_clone_tos_form_snapshot_preserves_graph_and_values() {
+    let e = env("");
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"
+      (() => {
+        const shared = {name:'Ada'}, value = {firstName:'Ada', lastName:'Lovelace',
+          date: new Date(123456), nil:null, unset:undefined, negativeZero:-0,
+          nan:NaN, infinity:Infinity, big:123n, shared, again:shared, sparse:[, 'x']};
+        value.self=value;
+        const copy=structuredClone(value);
+        copy.shared.name='Changed';
+        return [copy!==value,copy.self===copy,copy.shared===copy.again,shared.name,
+          copy.date instanceof Date,+copy.date,copy.nil===null,'unset' in copy,
+          Object.is(copy.negativeZero,-0),Number.isNaN(copy.nan),copy.infinity,copy.big,
+          copy.sparse.length,0 in copy.sparse,copy.sparse[1]].join('|');
+      })()
+    "#
+        ),
+        "true|true|true|Ada|true|123456|true|true|true|true|Infinity|123|2|false|x"
+    );
+}
+
+#[test]
+fn structured_clone_collections_buffers_and_reentrant_snapshot() {
+    let e = env("");
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"
+      (() => {
+        const buffer=new ArrayBuffer(12), bytes=new Uint8Array(buffer); bytes[3]=77;
+        const key={k:1}, map=new Map(), set=new Set();
+        map.set(key,set); map.set(map,key); set.add(map);
+        const re=/a+/gim; re.lastIndex=5;
+        const value={map,set,key,buffer,view:new Uint8Array(buffer,2,4),data:new DataView(buffer,1,5),re,
+          boxed:new Number(NaN)};
+        const c=structuredClone(value); c.view[1]=88;
+        const source=new Map(); source.set('first',{get v(){source.clear();return 9}});source.set('second',2);
+        const snapshot=structuredClone(source);
+        return [c.map.get(c.key)===c.set,c.set.has(c.map),c.map.get(c.map)===c.key,
+          c.view.buffer===c.buffer,c.data.buffer===c.buffer,c.view.byteOffset,c.view.length,
+          c.data.byteOffset,c.data.byteLength,new Uint8Array(c.buffer)[3],bytes[3],
+          c.re.source,c.re.flags,c.re.lastIndex,c.boxed instanceof Number,Number.isNaN(+c.boxed),
+          snapshot.size,snapshot.get('first').v,snapshot.get('second')].join('|');
+      })()
+    "#
+        ),
+        "true|true|true|true|true|2|4|1|5|88|77|a+|gim|0|true|true|2|9|2"
+    );
+}
+
+#[test]
+fn structured_clone_accessors_descriptors_and_failure_identity() {
+    let e = env("");
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"
+      (() => {
+        let calls=0; const source=Object.create(null);
+        Object.defineProperties(source,{
+          a:{enumerable:true,get(){calls++;delete source.b;source.late=9;return {x:1}}},
+          b:{enumerable:true,configurable:true,value:2},
+          hidden:{value:()=>{}}
+        });
+        Object.defineProperty(source,'__proto__',{value:'data',enumerable:true});
+        source[Symbol('ignored')]=()=>{};
+        const c=structuredClone(source), desc=Object.getOwnPropertyDescriptor(c,'a');
+        const marker={};let same=false;
+        try {structuredClone({get x(){throw marker}})} catch(e){same=e===marker}
+        return [calls,Object.keys(c).join(','),Object.getPrototypeOf(c)===Object.prototype,
+          c.a.x,desc.writable,desc.configurable,desc.get===undefined,same,c.__proto__].join('|');
+      })()
+    "#
+        ),
+        "1|a,__proto__|true|1|true|true|true|true|data"
+    );
+}
+
+#[test]
+fn structured_clone_rejects_unsupported_values_without_proxy_traps_or_detachment() {
+    let e = env("");
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"
+      (() => {
+        let traps=0;
+        const proxy=new Proxy({a:1},{get(){traps++;throw 1},ownKeys(){traps++;throw 2},
+          getPrototypeOf(){traps++;throw 3}});
+        const revoked=Proxy.revocable({},{});revoked.revoke();
+        const values=[proxy,revoked.proxy,document,window,()=>{},Symbol('x'),new WeakMap(),Promise.resolve(1),
+          new URL('https://example.test/'),new Error('not yet supported')];
+        const errors=values.map(v=>{try{structuredClone(v);return 'accepted'}catch(e){return e.name}});
+        const buffer=new ArrayBuffer(4);let transfer;
+        try {structuredClone({buffer},{transfer:[buffer]})}catch(e){transfer=e.name}
+        let custom=0;const tagged={get [Symbol.toStringTag](){custom++;return 'Object'}};
+        let customError;try{structuredClone(tagged)}catch(e){customError=e.name}
+        return [errors.every(n=>n==='DataCloneError'),traps,transfer,buffer.byteLength,
+          structuredClone({ok:1},{transfer:[]}).ok,custom,customError].join('|');
+      })()
+    "#
+        ),
+        "true|0|NotSupportedError|4|1|0|NotSupportedError"
+    );
+}
+
+#[test]
+fn structured_clone_captures_intrinsics_and_releases_temporary_graphs() {
+    let e = env("");
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"
+      var cloneRefs=[];
+      (()=>{
+        const originalMap=Map, originalDate=Date, originalArray=Array;
+        const m=new Map([[1,{a:2}]]),d=new Date(123);
+        Object.keys=()=>{throw 'keys replaced'};
+        Map.prototype.get=()=>{throw 'get replaced'};
+        Map.prototype.set=()=>{throw 'set replaced'};
+        Map=Date=Array=function(){throw 'constructor replaced'};
+        const c=structuredClone({m,d,list:[1,2]});
+        cloneRefs.push(new WeakRef(c),new WeakRef(c.m));
+        return [c.m instanceof originalMap,c.d instanceof originalDate,+c.d,
+          c.list instanceof originalArray,c.list.join(',')].join('|');
+      })()
+    "#
+        ),
+        "true|true|123|true|1,2"
+    );
+    for _ in 0..6 {
+        e.engine.collect_garbage_now();
+    }
+    assert_eq!(eval(&e.main, "cloneRefs.every(r=>r.deref()===undefined)"), "true");
+}
+
+#[test]
+fn structured_clone_cross_world_values_use_destination_intrinsics() {
+    let e = env("");
+    let class = e.engine.register::<TestWindow>();
+    let isolated = new_realm(&e.engine, class, &e.page, "clone-world");
+    {
+        let source = isolated.scope().unwrap();
+        let value = source.eval("({date:new Date(42),map:new Map([[1,{x:2}]]),array:[1,2]})", None, 1).unwrap();
+        e.main.scope().unwrap().global().set("foreignCloneSource", value).unwrap();
+        e.main.scope().unwrap().global().set("foreignCloneWindow", source.global().value()).unwrap();
+    }
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"
+      (()=>{
+        const c=structuredClone(foreignCloneSource);let error;
+        try{structuredClone(foreignCloneWindow)}catch(e){error=e.name}
+        return [Object.getPrototypeOf(c)===Object.prototype,c.date instanceof Date,
+          c.map instanceof Map,c.array instanceof Array,+c.date,c.map.get(1).x,error].join('|');
+      })()
+    "#
+        ),
+        "true|true|true|true|42|2|DataCloneError"
+    );
+}
+
+#[test]
+fn structured_clone_resizable_buffers_and_explicit_limits() {
+    let e = env("");
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"
+      (()=>{
+        const source=new ArrayBuffer(2,{maxByteLength:8});new Uint8Array(source)[0]=9;
+        const cloned=structuredClone(source);cloned.resize(4);
+        const graph={};let tail=graph;
+        for(let i=0;i<520;i++)tail=tail.next={};
+        let depthError;try{structuredClone(graph)}catch(e){depthError=e.name}
+        const large=new ArrayBuffer(64*1024*1024+1);
+        let sizeError;try{structuredClone(large)}catch(e){sizeError=e.name}
+        return [cloned.resizable,cloned.maxByteLength,cloned.byteLength,source.byteLength,
+          new Uint8Array(cloned)[0],depthError,sizeError].join('|');
+      })()
+    "#
+        ),
+        "true|8|4|2|9|NotSupportedError|NotSupportedError"
+    );
+}
