@@ -1958,6 +1958,53 @@ fn intersection_observer_element_scroll_changes_geometry_without_dom_mutation() 
 }
 
 #[test]
+fn web_crypto_random_and_digest() {
+    let e = env("<body></body>");
+    let r = &e.main;
+    assert_eq!(
+        eval(r, "const u=crypto.randomUUID(); [/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(u), u!==crypto.randomUUID(), crypto===window.crypto, crypto instanceof Crypto].join()"),
+        "true,true,true,true"
+    );
+    assert_eq!(
+        eval(r, "const a=new Uint32Array(8); const back=crypto.getRandomValues(a); back===a && a.some(x=>x!==0)"),
+        "true"
+    );
+    // Subview bounds: bytes outside [8, 12) keep a sentinel. The random
+    // bytes themselves may legitimately be any value (including 0xAA), so
+    // only the untouched region is asserted.
+    assert_eq!(
+        eval(r, "const big=new Uint8Array(32).fill(0xaa); const view=new Uint8Array(big.buffer, 8, 4); const ret=crypto.getRandomValues(view); ret===view && big.subarray(0,8).every(x=>x===0xaa) && big.subarray(12).every(x=>x===0xaa)"),
+        "true"
+    );
+    // A fresh-buffer write lands in the view: across 64 four-byte views the
+    // chance of every random byte equalling the sentinel is 2^-2048.
+    assert_eq!(
+        eval(r, "let changed=false; for (let i=0;i<64 && !changed;i++){const b=new Uint8Array(16).fill(0xaa); crypto.getRandomValues(new Uint8Array(b.buffer,4,4)); changed=b.subarray(4,8).some(x=>x!==0xaa);} changed"),
+        "true"
+    );
+    assert_eq!(eval(r, "try{crypto.getRandomValues(new Float32Array(2))}catch(e){e.name}"), "TypeMismatchError");
+    assert_eq!(eval(r, "try{crypto.getRandomValues(new Uint8Array(65537))}catch(e){e.name}"), "QuotaExceededError");
+    assert_eq!(eval(r, "crypto.getRandomValues(new Uint8Array(65536)).length"), "65536");
+    let out = eval(
+        r,
+        r#"globalThis.res='pending';
+        Promise.all([
+          crypto.subtle.digest('SHA-256', new TextEncoder().encode('abc')),
+          crypto.subtle.digest({name:'sha-1'}, new Uint8Array([97,98,99])),
+          crypto.subtle.digest('MD5', new Uint8Array(1)).then(()=>'no',e=>e.name),
+          crypto.subtle.sign().then(()=>'no',e=>e.name),
+        ]).then(([a,b,md5,sign])=>{const hex=x=>[...new Uint8Array(x)].map(v=>v.toString(16).padStart(2,'0')).join('');
+          res=[hex(a),hex(b),md5,sign,crypto.subtle===crypto.subtle].join('|')});
+        'started'"#,
+    );
+    assert_eq!(out, "started");
+    assert_eq!(
+        eval(r, "res"),
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad|a9993e364706816aba3e25717850c26c9cd0d89d|NotSupportedError|NotSupportedError|true"
+    );
+}
+
+#[test]
 fn global_event_handler_attributes() {
     let e = env("<body><a id=a href='#x'>a</a><input id=i></body>");
     let r = &e.main;

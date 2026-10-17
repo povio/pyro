@@ -17,6 +17,7 @@
 
 pub mod abort;
 pub mod collections;
+pub mod crypto;
 pub mod css;
 pub mod custom;
 pub mod encoding;
@@ -83,6 +84,7 @@ pub fn register(engine: &lp_js::Engine) {
     window::register(engine);
     mutation_observer::register(engine);
     intersection_observer::register(engine);
+    crypto::register(engine);
     resize_observer::register(engine);
     engine.register::<storage::Storage>();
     engine.register::<indexeddb::IdbFactory>();
