@@ -74,7 +74,11 @@ fn main() {
         h.id += 1;
         let id = h.id;
         let mut sink = h.out.clone();
-        h.b.handle_text(&json!({"id":id,"method":"Target.createTarget","params":{"url":"about:blank","browserContextId":ctx}}).to_string(), &mut sink);
+        h.b.handle_text(
+            &json!({"id":id,"method":"Target.createTarget","params":{"url":"about:blank","browserContextId":ctx}})
+                .to_string(),
+            &mut sink,
+        );
         h.b.host_mut().flush();
         while let Some(Outbound::Frame(f)) = h.rx.try_recv() {
             let v = decode(f.as_ref());
@@ -104,11 +108,14 @@ fn main() {
     let big = format!("function(a) {{ {body} return a + 1; }}");
     let ctx_id = h.call(Some(&session), "Runtime.evaluate", json!({"expression":"1"}));
     let _ = ctx_id;
-    let realm = h.call(Some(&session), "Runtime.evaluate", json!({"expression":"globalThis"}))["result"]["result"]["objectId"]
+    let realm = h.call(Some(&session), "Runtime.evaluate", json!({"expression":"globalThis"}))["result"]["result"]
+        ["objectId"]
         .as_str()
         .unwrap()
         .to_owned();
-    for (label, source) in [("callFunctionOn small fn", "function(a){return a+1}".to_owned()), ("callFunctionOn ~38KB fn", big)] {
+    for (label, source) in
+        [("callFunctionOn small fn", "function(a){return a+1}".to_owned()), ("callFunctionOn ~38KB fn", big)]
+    {
         let mut samples = Vec::new();
         for _ in 0..300 {
             let t = Instant::now();

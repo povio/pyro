@@ -59,14 +59,14 @@ async function startupRuns() {
   for (let i = 0; i < STARTUP_RUNS; i++) {
     const port = await freePort();
     const t = performance.now();
-    const cp = track(spawn(BIN, ['serve', '--host', '127.0.0.1', '--port', String(port), ...LP_FLAGS], { stdio: ['ignore', 'ignore', 'pipe'], env: LP_ENV }));
+    const cp = track(spawn(BIN, ['serve', '--host', '127.0.0.1', '--port', String(port), ...LP_FLAGS], { stdio: ['ignore', 'ignore', 'pipe'], env: LP_ENV, detached: true }));
     let err = ''; cp.stderr.on('data', (d) => { err += d; });
     try {
       const r = await waitReady(port);
       times.push(performance.now() - t);
       versionBody ??= JSON.parse(r.body);
     } catch (e) { console.error(`startup run ${i}: ${e.message} stderr=${err}`); }
-    cp.kill('SIGTERM'); await exited(cp);
+    killGroup(cp, 'SIGTERM'); await exited(cp);
     await sleep(200);
   }
   return { method: 'spawn() -> first HTTP 200 on GET /json/version, polled every ~2ms with fresh TCP connections; process SIGTERMed between runs; 200ms gap', ...stats(times), versionBody };
@@ -78,7 +78,7 @@ async function smokeRun(tag, siteUrl, useProxy) {
   const lpLog = path.join(RES, `${tag}.lightpanda.stderr.log`);
   const timeOut = path.join(RES, `${tag}.time-l.txt`);
   // /usr/bin/time -l reports max RSS of the child at exit.
-  const tp = track(spawn('/usr/bin/time', ['-l', '-o', timeOut, BIN, 'serve', '--host', '127.0.0.1', '--port', String(port), ...LP_FLAGS], { stdio: ['ignore', 'ignore', fs.openSync(lpLog, 'w')], env: LP_ENV }));
+  const tp = track(spawn('/usr/bin/time', ['-l', '-o', timeOut, BIN, 'serve', '--host', '127.0.0.1', '--port', String(port), ...LP_FLAGS], { stdio: ['ignore', 'ignore', fs.openSync(lpLog, 'w')], env: LP_ENV, detached: true }));
   await waitReady(port);
   // find lightpanda pid (child of /usr/bin/time)
   const lpPid = await new Promise((res) => { const p = spawn('pgrep', ['-P', String(tp.pid)]); let o = ''; p.stdout.on('data', (d) => (o += d)); p.on('exit', () => res(Number(o.trim().split('\n')[0]))); });
@@ -93,13 +93,14 @@ async function smokeRun(tag, siteUrl, useProxy) {
   const sampler = { kill: () => { clearInterval(psTimer); fs.writeFileSync(rssFile, psLines.join('\n') + '\n'); } };
   // native sampler: proc_pid_rusage resident + phys_footprint, 20ms nominal
   const nativeFile = path.join(RES, `${tag}.rss-native.txt`);
-  const nsampler = spawn(process.env.RSS_SAMPLER ?? path.join(HERE, '..', 'rss-sampler', 'target', 'release', 'rss-sampler'), [String(lpPid), nativeFile, '20'], { stdio: 'ignore' });
+  const nsampler = track(spawn(process.env.RSS_SAMPLER ?? path.join(HERE, '..', 'rss-sampler', 'target', 'release', 'rss-sampler'), [String(lpPid), nativeFile, '20'], { stdio: 'ignore', detached: true }));
+  nsampler.on('error', (e) => { console.error(`rss-sampler failed to start: ${e.message}`); process.exit(1); });
 
   let proxy, cdpPort = port, jsonl = null;
   if (useProxy) {
     jsonl = path.join(RES, `${tag}.cdp.jsonl`);
     fs.rmSync(jsonl, { force: true });
-    proxy = spawn(process.execPath, [path.join(HERE, 'cdp-record-proxy.mjs'), '--upstream', `http://127.0.0.1:${port}`, '--out', jsonl, '--listen', '0'], { stdio: ['ignore', 'pipe', 'inherit'] });
+    proxy = track(spawn(process.execPath, [path.join(HERE, 'cdp-record-proxy.mjs'), '--upstream', `http://127.0.0.1:${port}`, '--out', jsonl, '--listen', '0'], { stdio: ['ignore', 'pipe', 'inherit'], detached: true }));
     cdpPort = Number((await waitLine(proxy, /PROXY_LISTENING (\d+)/))[1]);
     // exercise HTTP forwarding (/json/version through the proxy)
     const v = await getJson(`http://127.0.0.1:${cdpPort}/json/version`);
@@ -108,7 +109,7 @@ async function smokeRun(tag, siteUrl, useProxy) {
 
   const smokeOut = path.join(RES, `${tag}.smoke.json`);
   const t = performance.now();
-  const sp = spawn(process.execPath, [path.join(HERE, 'smoke.mjs'), `ws://127.0.0.1:${cdpPort}`, siteUrl, smokeOut], { stdio: ['ignore', 'ignore', 'pipe'] });
+  const sp = track(spawn(process.execPath, [path.join(HERE, 'smoke.mjs'), `ws://127.0.0.1:${cdpPort}`, siteUrl, smokeOut], { stdio: ['ignore', 'ignore', 'pipe'], detached: true }));
   let serr = ''; sp.stderr.on('data', (d) => (serr += d));
   await exited(sp);
   const smokeExitCode = sp.exitCode;
@@ -151,13 +152,19 @@ async function smokeRun(tag, siteUrl, useProxy) {
 
 // ---------- main ----------
 // Children never outlive the orchestrator, even on an exception.
+// Every long-lived child runs in its own process group (detached), and the
+// whole group is killed: killing a wrapper such as /usr/bin/time alone would
+// leave the browser it started running.
 const children = new Set();
 const track = (cp) => { children.add(cp); cp.once('exit', () => children.delete(cp)); return cp; };
-process.on('exit', () => { for (const cp of children) { try { cp.kill('SIGKILL'); } catch {} } });
+const killGroup = (cp, signal = 'SIGKILL') => { try { process.kill(-cp.pid, signal); } catch { try { cp.kill(signal); } catch {} } };
+process.on('exit', () => { for (const cp of children) killGroup(cp); });
+process.on('SIGINT', () => process.exit(130));
+process.on('SIGTERM', () => process.exit(143));
 process.on('uncaughtException', (e) => { console.error(e); process.exit(1); });
 process.on('unhandledRejection', (e) => { console.error(e); process.exit(1); });
-const spinner = WARM_CPU ? track(spawn(process.execPath, ['-e', 'for(;;){}'], { stdio: 'ignore' })) : null;
-const site = track(spawn(process.execPath, [path.join(HERE, 'testsite.mjs'), '0'], { stdio: ['ignore', 'pipe', 'inherit'] }));
+const spinner = WARM_CPU ? track(spawn(process.execPath, ['-e', 'for(;;){}'], { stdio: 'ignore', detached: true })) : null;
+const site = track(spawn(process.execPath, [path.join(HERE, 'testsite.mjs'), '0'], { stdio: ['ignore', 'pipe', 'inherit'], detached: true }));
 const sitePort = Number((await waitLine(site, /LISTENING (\d+)/))[1]);
 const siteUrl = `http://127.0.0.1:${sitePort}`;
 

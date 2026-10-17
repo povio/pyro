@@ -50,6 +50,13 @@ pub struct PageCommand<'a, 'c> {
 }
 
 /// The engine side, implemented on the browser thread.
+///
+/// Output contract: everything for one connection goes through that
+/// connection's single ordered channel. The `out` sinks passed to
+/// [`Host::page_command`] and [`Host::browser_command`] are that channel; a
+/// host that answers later (awaited promises, navigation commits, events)
+/// must hold its own clone of the same channel ([`crate::outbox::Outbox`]),
+/// never a different destination, so that ordering is preserved.
 pub trait Host {
     /// Creates an isolated browser context (cookies, storage, cache).
     fn create_context(&mut self) -> CdpResult<ContextKey>;
@@ -333,9 +340,17 @@ impl<H: Host> Browser<H> {
                 out.send(msg::result_frame(id, &serde_json::json!({ "targetInfo": info }), None));
             }
             "getTargets" => {
+                #[derive(Deserialize)]
+                struct P {
+                    filter: Option<Vec<TargetFilter>>,
+                }
+                // Only page targets exist (the browser target is never listed,
+                // as with Chrome's default filter).
+                let pages = includes_pages(cmd.params::<P>()?.filter.as_deref());
                 let infos: Vec<serde_json::Value> = self
                     .targets
                     .iter()
+                    .filter(|_| pages)
                     .map(|t| {
                         let url = self.host.page_url(t.page);
                         let title = self.host.page_title(t.page);
@@ -393,6 +408,12 @@ impl<H: Host> Browser<H> {
                 let context_key = self.context(&context_id)?.key;
                 if self.targets.len() >= MAX_TARGETS {
                     return Err(CdpError::server("Too many targets"));
+                }
+                // Preflight every budget the creation needs, so no failure can
+                // happen after the page exists (attach is the only fallible step
+                // left besides navigation, which rolls back below).
+                if self.auto_attach && self.sessions.len() >= MAX_SESSIONS {
+                    return Err(CdpError::server("Too many sessions"));
                 }
                 let (page, target_id) = self.host.create_page(context_key)?;
                 self.targets.push(TargetEntry { id: target_id.clone(), context_id, page });

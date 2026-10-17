@@ -290,11 +290,9 @@ fn navigation_events_contexts_and_failures() {
 
     let r = h.page("Page.navigate", json!({"url":"http://127.0.0.1:1/"}));
     assert!(r["result"]["errorText"].as_str().unwrap().contains("ERR_NOT_IMPLEMENTED"), "explicit failure: {r}");
-    let r = h.page(
-        "Runtime.evaluate",
-        json!({"expression":"location === undefined ? 'no-location' : 'x'", "returnByValue": true}),
-    );
-    assert!(r.get("result").is_some(), "page still usable after a failed navigation: {r}");
+    let r = h.page("Runtime.evaluate", json!({"expression":"40 + 2", "returnByValue": true}));
+    assert_eq!(r["result"]["result"]["value"], 42, "page still usable after a failed navigation: {r}");
+    assert!(r["result"].get("exceptionDetails").is_none(), "{r}");
 }
 
 #[test]
@@ -322,4 +320,166 @@ fn closing_target_and_context_releases_pages() {
     let r = h.page("Runtime.evaluate", json!({"expression":"1"}));
     assert_eq!(r["error"]["code"], -32001, "session is gone with its target");
     assert!(h.browser.host().thread.browser.pages.is_empty(), "engine page disposed");
+}
+
+// ---- Regressions for review thr_xhdsjj53cj on 3d9d8d3 ----
+
+impl Harness {
+    /// Installs `reviewGc()`, which runs a synchronous full GC.
+    fn install_gc(&mut self) {
+        let realm = self.browser.host().thread.browser.pages[0].main_frame.main_realm().unwrap().clone();
+        let scope = realm.scope().unwrap();
+        let gc = scope
+            .function("reviewGc", |s, _, _| {
+                let gc = lp_js::sys::spi::get().synchronous_gc_for_debugging.expect("GC SPI");
+                // SAFETY: called on the engine thread with the live context of this callback.
+                unsafe { gc(s.ctx()) };
+                Ok(s.undefined())
+            })
+            .unwrap();
+        scope.global().set("reviewGc", gc.value()).unwrap();
+    }
+
+    fn attach_second_session(&mut self) -> String {
+        let frame = self.frame_id.clone();
+        let r = self.call(None, "Target.attachToTarget", json!({"targetId": frame, "flatten": true}));
+        r["result"]["sessionId"].as_str().unwrap().to_owned()
+    }
+
+    fn run_for(&mut self, ms: u64) -> Vec<Value> {
+        let deadline = Instant::now() + Duration::from_millis(ms);
+        let mut seen = Vec::new();
+        while Instant::now() < deadline {
+            let host = self.browser.host_mut();
+            host.run_until_work(Some(Instant::now() + Duration::from_millis(10)), || false);
+            host.flush();
+            seen.extend(self.drain());
+        }
+        seen
+    }
+}
+
+#[test]
+fn call_arguments_survive_gc_during_compilation() {
+    let mut h = Harness::new();
+    h.install_gc();
+    let args: Vec<Value> =
+        (0..64).map(|i| json!({"value": {"token": format!("token-{i}"), "payload": [i, i, i]}})).collect();
+    let context = h.page("Runtime.evaluate", json!({"expression":"1"}));
+    let _ = context;
+    let realm_id = h.browser.host().thread.browser.pages[0].main_frame.main_realm().unwrap().id().0;
+    let r = h.page(
+        "Runtime.callFunctionOn",
+        json!({
+            "executionContextId": realm_id,
+            "functionDeclaration": "(()=>{ reviewGc(); return function(...args){ return args.map(a => a.token).join(',') } })()",
+            "arguments": args,
+            "returnByValue": true,
+        }),
+    );
+    let expected = (0..64).map(|i| format!("token-{i}")).collect::<Vec<_>>().join(",");
+    assert_eq!(r["result"]["result"]["value"], expected.as_str(), "{r}");
+}
+
+#[test]
+fn no_reply_reaches_a_detached_session() {
+    let mut h = Harness::new();
+    let a = h.attach_second_session();
+    let b = h.session.clone();
+    let id = h.send(
+        Some(&a),
+        "Runtime.evaluate",
+        json!({"expression":"new Promise(r => globalThis.resolveLater = r)","awaitPromise":true}),
+    );
+    h.drain();
+    h.call(None, "Target.detachFromTarget", json!({"sessionId": a}));
+    h.call(Some(&b), "Runtime.evaluate", json!({"expression":"resolveLater({x: 1}); 0"}));
+    let later = h.run_for(50);
+    assert!(later.iter().all(|m| m["id"] != id), "reply sent to detached session: {later:?}");
+    assert!(later.iter().all(|m| m["sessionId"] != a.as_str()), "{later:?}");
+}
+
+#[test]
+fn navigation_fails_pending_awaited_evaluations() {
+    let mut h = Harness::new();
+    let session = h.session.clone();
+    let id =
+        h.send(Some(&session), "Runtime.evaluate", json!({"expression":"new Promise(() => {})","awaitPromise":true}));
+    let mut seen = h.page_with_events("Page.navigate", json!({"url":"about:blank"}));
+    seen.extend(h.run_for(20));
+    let reply = seen.iter().find(|m| m["id"] == id).expect("pending evaluation answered after its context died");
+    assert_eq!(reply["error"]["message"], "Execution context was destroyed.");
+}
+
+#[test]
+fn object_groups_are_inherited() {
+    let mut h = Harness::new();
+    let r = h.page("Runtime.evaluate", json!({"expression":"({inner: {deep: 1}})","objectGroup":"g"}));
+    let outer = r["result"]["result"]["objectId"].as_str().unwrap().to_owned();
+    let r = h.page(
+        "Runtime.callFunctionOn",
+        json!({"functionDeclaration":"function(){ return this.inner }","objectId": outer}),
+    );
+    let inner = r["result"]["result"]["objectId"].as_str().unwrap().to_owned();
+    let props = h.page("Runtime.getProperties", json!({"objectId": inner, "ownProperties": true}));
+    assert!(props["result"]["result"].is_array());
+    h.page("Runtime.releaseObjectGroup", json!({"objectGroup":"g"}));
+    for id in [&outer, &inner] {
+        let r = h.page("Runtime.getProperties", json!({"objectId": id, "ownProperties": true}));
+        assert_eq!(r["error"]["message"], "Could not find object with given id", "inherited group released: {r}");
+    }
+}
+
+#[test]
+fn run_immediately_creates_the_isolated_world() {
+    let mut h = Harness::new();
+    h.page("Runtime.enable", json!({}));
+    let events = h.page_with_events(
+        "Page.addScriptToEvaluateOnNewDocument",
+        json!({"source":"globalThis.reviewImmediate = 123","worldName":"fresh","runImmediately":true}),
+    );
+    let created = events.iter().find(|m| m["method"] == "Runtime.executionContextCreated").expect("world announced");
+    let context = created["params"]["context"]["id"].clone();
+    let frame = h.frame_id.clone();
+    let r = h.page("Page.createIsolatedWorld", json!({"frameId": frame, "worldName":"fresh"}));
+    assert_eq!(r["result"]["executionContextId"], context);
+    let r = h.page(
+        "Runtime.evaluate",
+        json!({"expression":"typeof reviewImmediate","contextId": context,"returnByValue":true}),
+    );
+    assert_eq!(r["result"]["result"]["value"], "number");
+    let r = h.page("Runtime.evaluate", json!({"expression":"typeof reviewImmediate","returnByValue":true}));
+    assert_eq!(r["result"]["result"]["value"], "undefined", "main world untouched");
+}
+
+#[test]
+fn console_without_runtime_is_not_retained_and_floods_close_the_connection() {
+    let mut h = Harness::new();
+    h.page("Runtime.evaluate", json!({"expression":"for (let i = 0; i < 200000; i++) console.log(i, {i})"}));
+    assert!(!h.out.is_exceeded(), "nothing collected without Runtime.enable");
+    h.page("Runtime.enable", json!({}));
+    let session = h.session.clone();
+    h.send(Some(&session), "Runtime.evaluate", json!({"expression":"for (let i = 0; i < 200000; i++) console.log(i)"}));
+    assert!(h.out.is_exceeded(), "a flood beyond the event budget closes the connection");
+}
+
+#[test]
+fn page_disable_suppresses_page_events() {
+    let mut h = Harness::new();
+    h.page("Page.enable", json!({}));
+    h.page("Page.disable", json!({}));
+    let messages = h.page_with_events("Page.navigate", json!({"url":"about:blank"}));
+    assert!(messages.iter().all(|m| !m["method"].as_str().unwrap_or("").starts_with("Page.")), "{messages:?}");
+}
+
+#[test]
+fn window_bounds_round_trip() {
+    let mut h = Harness::new();
+    let w = h.page("Browser.getWindowForTarget", json!({}));
+    let window = w["result"]["windowId"].clone();
+    h.page("Browser.setWindowBounds", json!({"windowId": window, "bounds": {"width": 800, "height": 600}}));
+    let w = h.page("Browser.getWindowForTarget", json!({}));
+    assert_eq!(w["result"]["bounds"]["width"], 800);
+    assert_eq!(w["result"]["bounds"]["height"], 600);
+    assert_eq!(w["result"]["bounds"]["left"], 0);
 }

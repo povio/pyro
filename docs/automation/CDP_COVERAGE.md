@@ -19,12 +19,12 @@ Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 22 engi
 | `Browser.cancelDownload` | **no** | pending |  |
 | `Browser.getVersion` | yes | engine |  |
 | `Browser.getWindowBounds` | **no** | pending |  |
-| `Browser.getWindowForTarget` | yes | accepted, recorded only | one headless window per page; bounds from the emulated viewport (default 1280x720) |
+| `Browser.getWindowForTarget` | yes | accepted, recorded only | one headless window per page; reports bounds set by setWindowBounds, else the emulated viewport (default 1280x720) |
 | `Browser.grantPermissions` | yes | pending |  |
 | `Browser.resetPermissions` | yes | pending |  |
 | `Browser.setDockTile` | **no** | pending |  |
 | `Browser.setDownloadBehavior` | yes | accepted, recorded only | accepted; no network, so no download can start |
-| `Browser.setWindowBounds` | yes | accepted, recorded only | validated window id; nothing observes window bounds yet (upstream: no-op) |
+| `Browser.setWindowBounds` | yes | accepted, recorded only | stores the bounds, which getWindowForTarget reports back; no page API (outerWidth, screen) observes them yet (upstream: no-op) |
 | `CSS.disable` | **no** | pending |  |
 | `CSS.enable` | yes | pending |  |
 | `CSS.startRuleUsageTracking` | **no** | pending |  |

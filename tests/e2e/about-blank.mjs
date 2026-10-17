@@ -22,7 +22,7 @@ if (!bin) {
 }
 
 const deadline = setTimeout(() => {
-  console.error('about-blank: overall deadline exceeded');
+  console.error(`about-blank: overall deadline exceeded; completed ${JSON.stringify(results)}`);
   process.exit(1);
 }, 60_000);
 
@@ -48,6 +48,7 @@ process.on('exit', () => { try { child.kill('SIGKILL'); } catch {} });
 
 const results = [];
 async function check(name, fn) {
+  if (process.env.E2E_VERBOSE) console.error(`check: ${name}`);
   const t = performance.now();
   try {
     await fn();
