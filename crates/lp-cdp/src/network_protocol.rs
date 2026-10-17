@@ -197,15 +197,80 @@ pub fn fetch_resource_type(destination: lp_net::Destination) -> ResourceType {
     }
 }
 
-/// Response bodies retained for `Network.getResponseBody`, bounded by total
-/// bytes (oldest bodies evicted first) and by a per-response cap (larger
-/// bodies are not retained; asking for them returns an explicit error).
+/// Limits for response bodies retained for `Network.getResponseBody`.
+///
+/// The defaults are provisional and need memory measurements on real TOS
+/// workloads before they are relied on (see docs/automation/OPTIMIZATION.md).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BodyLimits {
+    /// Bytes retained across every [`BodyStore`] sharing one [`BodyBudget`]
+    /// (one budget per server process covers all connections and contexts).
+    pub total: usize,
+    /// Largest single body retained; larger bodies are not kept.
+    pub per_body: usize,
+}
+
+impl Default for BodyLimits {
+    fn default() -> Self {
+        Self { total: 64 * 1024 * 1024, per_body: 8 * 1024 * 1024 }
+    }
+}
+
+/// Shared byte budget for retained bodies. Cheap to clone; `Send`, so one
+/// budget can span every browser thread of the process.
+#[derive(Clone)]
+pub struct BodyBudget(std::sync::Arc<BudgetInner>);
+
+struct BudgetInner {
+    limits: BodyLimits,
+    used: std::sync::atomic::AtomicUsize,
+}
+
+impl BodyBudget {
+    pub fn new(limits: BodyLimits) -> Self {
+        Self(std::sync::Arc::new(BudgetInner { limits, used: std::sync::atomic::AtomicUsize::new(0) }))
+    }
+
+    pub fn limits(&self) -> BodyLimits {
+        self.0.limits
+    }
+
+    /// Bytes currently retained by all stores of this budget.
+    pub fn used(&self) -> usize {
+        self.0.used.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn try_charge(&self, bytes: usize) -> bool {
+        use std::sync::atomic::Ordering::Relaxed;
+        let mut used = self.0.used.load(Relaxed);
+        loop {
+            let Some(next) = used.checked_add(bytes).filter(|n| *n <= self.0.limits.total) else { return false };
+            match self.0.used.compare_exchange_weak(used, next, Relaxed, Relaxed) {
+                Ok(_) => return true,
+                Err(actual) => used = actual,
+            }
+        }
+    }
+
+    fn release(&self, bytes: usize) {
+        self.0.used.fetch_sub(bytes, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// Response bodies of one page for `Network.getResponseBody`.
+///
+/// - Capture is lazy: the engine only feeds events while a session of the page
+///   has `Network` enabled, and nothing is retained before a response arrives.
+/// - Bodies are shared `Bytes` chunks (no copy) charged to a [`BodyBudget`].
+///   When the budget is full the store evicts its own oldest bodies; if that is
+///   not enough, the new body is not retained and asking for it returns an
+///   explicit error instead of stale or partial data.
+/// - Dropping or clearing the store returns its bytes to the budget.
 pub struct BodyStore {
+    budget: BodyBudget,
     bodies: HashMap<RequestId, Body>,
     order: VecDeque<RequestId>,
-    total: usize,
-    total_cap: usize,
-    per_body_cap: usize,
+    retained: usize,
 }
 
 struct Body {
@@ -213,21 +278,12 @@ struct Body {
     len: usize,
     mime: String,
     complete: bool,
-    oversized: bool,
-}
-
-pub const DEFAULT_BODY_TOTAL_CAP: usize = 100 * 1024 * 1024;
-pub const DEFAULT_BODY_CAP: usize = 10 * 1024 * 1024;
-
-impl Default for BodyStore {
-    fn default() -> Self {
-        Self::new(DEFAULT_BODY_TOTAL_CAP, DEFAULT_BODY_CAP)
-    }
+    dropped: Option<&'static str>,
 }
 
 impl BodyStore {
-    pub fn new(total_cap: usize, per_body_cap: usize) -> Self {
-        Self { bodies: HashMap::new(), order: VecDeque::new(), total: 0, total_cap, per_body_cap }
+    pub fn new(budget: BodyBudget) -> Self {
+        Self { budget, bodies: HashMap::new(), order: VecDeque::new(), retained: 0 }
     }
 
     /// Feeds an event; only response/data/finish/fail events matter.
@@ -237,28 +293,11 @@ impl BodyStore {
                 self.remove(*id);
                 self.bodies.insert(
                     *id,
-                    Body { chunks: Vec::new(), len: 0, mime: head.mime.clone(), complete: false, oversized: false },
+                    Body { chunks: Vec::new(), len: 0, mime: head.mime.clone(), complete: false, dropped: None },
                 );
                 self.order.push_back(*id);
             }
-            NetEvent::DataReceived { id, data, .. } => {
-                let Some(body) = self.bodies.get_mut(id) else { return };
-                if body.oversized {
-                    return;
-                }
-                if body.len + data.len() > self.per_body_cap {
-                    self.total -= body.len;
-                    body.chunks = Vec::new();
-                    body.len = 0;
-                    body.oversized = true;
-                    return;
-                }
-                // `Bytes` is reference counted: retaining it does not copy.
-                body.chunks.push(data.clone());
-                body.len += data.len();
-                self.total += data.len();
-                self.evict();
-            }
+            NetEvent::DataReceived { id, data, .. } => self.append(*id, data),
             NetEvent::LoadingFinished { id, .. } => {
                 if let Some(body) = self.bodies.get_mut(id) {
                     body.complete = true;
@@ -269,39 +308,71 @@ impl BodyStore {
         }
     }
 
-    fn evict(&mut self) {
-        while self.total > self.total_cap {
-            let Some(oldest) = self.order.pop_front() else { break };
-            if let Some(body) = self.bodies.remove(&oldest) {
-                self.total -= body.len;
+    fn append(&mut self, id: RequestId, data: &Bytes) {
+        let per_body = self.budget.limits().per_body;
+        let Some(body) = self.bodies.get(&id) else { return };
+        if body.dropped.is_some() {
+            return;
+        }
+        if body.len + data.len() > per_body {
+            self.drop_body(id, "Response body is too large to be retained");
+            return;
+        }
+        while !self.budget.try_charge(data.len()) {
+            // Make room from this page's oldest other bodies first.
+            let victim = self.order.iter().copied().find(|r| *r != id && self.bodies.get(r).is_some_and(|b| b.len > 0));
+            match victim {
+                Some(victim) => self.remove(victim),
+                None => {
+                    self.drop_body(id, "Response body was not retained: body memory budget exhausted");
+                    return;
+                }
             }
+        }
+        let body = self.bodies.get_mut(&id).expect("checked above");
+        // `Bytes` is reference counted: retaining it does not copy.
+        body.chunks.push(data.clone());
+        body.len += data.len();
+        self.retained += data.len();
+    }
+
+    fn drop_body(&mut self, id: RequestId, reason: &'static str) {
+        if let Some(body) = self.bodies.get_mut(&id) {
+            self.budget.release(body.len);
+            self.retained -= body.len;
+            body.chunks = Vec::new();
+            body.len = 0;
+            body.dropped = Some(reason);
         }
     }
 
     fn remove(&mut self, id: RequestId) {
         if let Some(body) = self.bodies.remove(&id) {
-            self.total -= body.len;
+            self.budget.release(body.len);
+            self.retained -= body.len;
             self.order.retain(|r| *r != id);
         }
     }
 
     /// Drops every body (navigation of the owning page, like Chrome).
     pub fn clear(&mut self) {
+        self.budget.release(self.retained);
+        self.retained = 0;
         self.bodies.clear();
         self.order.clear();
-        self.total = 0;
     }
 
+    /// Bytes this store holds.
     pub fn retained_bytes(&self) -> usize {
-        self.total
+        self.retained
     }
 
     /// `Network.getResponseBody` result: text bodies as UTF-8 strings,
     /// anything else base64 encoded.
     pub fn get(&self, id: RequestId) -> CdpResult<Value> {
         let body = self.bodies.get(&id).ok_or_else(|| CdpError::server("No resource with given identifier found"))?;
-        if body.oversized {
-            return Err(CdpError::server("Response body is too large to be retained"));
+        if let Some(reason) = body.dropped {
+            return Err(CdpError::server(reason));
         }
         if !body.complete {
             return Err(CdpError::server("Response body is not available yet"));
@@ -320,6 +391,12 @@ impl BodyStore {
             Ok(text) => Ok(json!({ "body": base64_encode(text.as_bytes()), "base64Encoded": true })),
             Err(e) => Ok(json!({ "body": base64_encode(e.as_bytes()), "base64Encoded": true })),
         }
+    }
+}
+
+impl Drop for BodyStore {
+    fn drop(&mut self) {
+        self.budget.release(self.retained);
     }
 }
 
@@ -432,31 +509,91 @@ mod tests {
         assert_eq!(p["type"], "Document");
     }
 
-    #[test]
-    fn bodies_are_bounded_and_text_or_base64() {
-        let mut s = BodyStore::new(10, 6);
-        s.observe(&response(1, "application/json"));
-        s.observe(&data(1, b"{\"a\""));
-        assert!(s.get(RequestId(1)).is_err(), "not complete yet");
-        s.observe(&data(1, b":1}"));
-        assert!(s.get(RequestId(1)).unwrap_err().message.contains("too large"), "per-body cap");
-        assert_eq!(s.retained_bytes(), 0);
+    fn store(total: usize, per_body: usize) -> (BodyBudget, BodyStore) {
+        let budget = BodyBudget::new(BodyLimits { total, per_body });
+        (budget.clone(), BodyStore::new(budget))
+    }
 
+    #[test]
+    fn bodies_are_text_or_base64_and_complete_only() {
+        let (_, mut s) = store(100, 100);
         s.observe(&response(2, "image/png"));
         s.observe(&data(2, &[0xff, 0x00]));
+        assert!(s.get(RequestId(2)).is_err(), "not complete yet");
         s.observe(&finished(2));
         assert_eq!(s.get(RequestId(2)).unwrap(), json!({"body":"/wA=","base64Encoded":true}));
-
         s.observe(&response(3, "text/plain"));
         s.observe(&data(3, b"hello"));
         s.observe(&finished(3));
         assert_eq!(s.get(RequestId(3)).unwrap(), json!({"body":"hello","base64Encoded":false}));
+        assert!(s.get(RequestId(9)).is_err(), "unknown id");
+    }
 
-        s.observe(&response(4, "text/plain"));
-        s.observe(&data(4, b"world!"));
-        assert!(s.retained_bytes() <= 10, "total cap evicts oldest");
-        assert!(s.get(RequestId(2)).is_err(), "oldest evicted");
-        s.clear();
+    #[test]
+    fn oversized_bodies_are_not_retained_and_release_budget() {
+        let (budget, mut s) = store(100, 6);
+        s.observe(&response(1, "application/json"));
+        s.observe(&data(1, b"{\"a\""));
+        assert_eq!(budget.used(), 4);
+        s.observe(&data(1, b":1}"));
+        s.observe(&finished(1));
+        assert!(s.get(RequestId(1)).unwrap_err().message.contains("too large"));
+        assert_eq!(budget.used(), 0);
         assert_eq!(s.retained_bytes(), 0);
+    }
+
+    #[test]
+    fn budget_evicts_own_oldest_then_refuses() {
+        let (budget, mut s) = store(10, 10);
+        s.observe(&response(1, "text/plain"));
+        s.observe(&data(1, b"aaaaaa"));
+        s.observe(&finished(1));
+        s.observe(&response(2, "text/plain"));
+        s.observe(&data(2, b"bbbbbb"));
+        s.observe(&finished(2));
+        assert!(s.get(RequestId(1)).is_err(), "oldest evicted to make room");
+        assert_eq!(s.get(RequestId(2)).unwrap()["body"], "bbbbbb");
+        assert!(budget.used() <= 10);
+    }
+
+    #[test]
+    fn budget_is_shared_across_contexts_and_isolated_per_store() {
+        let budget = BodyBudget::new(BodyLimits { total: 10, per_body: 10 });
+        let mut a = BodyStore::new(budget.clone());
+        let mut b = BodyStore::new(budget.clone());
+        a.observe(&response(1, "text/plain"));
+        a.observe(&data(1, b"aaaaaaaa"));
+        a.observe(&finished(1));
+        // b cannot evict a's bodies: its new body is refused with an explicit error.
+        b.observe(&response(1, "text/plain"));
+        b.observe(&data(1, b"bbbbbbbb"));
+        b.observe(&finished(1));
+        assert_eq!(a.get(RequestId(1)).unwrap()["body"], "aaaaaaaa", "same request id, different store");
+        assert!(b.get(RequestId(1)).unwrap_err().message.contains("budget exhausted"));
+        assert_eq!(budget.used(), 8, "aggregate stays bounded");
+        drop(a);
+        assert_eq!(budget.used(), 0, "teardown returns bytes");
+        b.observe(&response(2, "text/plain"));
+        b.observe(&data(2, b"bbbbbbbb"));
+        b.observe(&finished(2));
+        assert_eq!(b.get(RequestId(2)).unwrap()["body"], "bbbbbbbb");
+        b.clear();
+        assert_eq!(budget.used(), 0);
+    }
+
+    #[test]
+    fn failed_requests_release_their_bytes() {
+        let (budget, mut s) = store(100, 100);
+        s.observe(&response(1, "text/plain"));
+        s.observe(&data(1, b"partial"));
+        s.observe(&NetEvent::LoadingFailed {
+            id: RequestId(1),
+            error: NetError::Aborted,
+            canceled: true,
+            destination: Destination::Fetch,
+            timestamp: 1.0,
+        });
+        assert_eq!(budget.used(), 0);
+        assert!(s.get(RequestId(1)).is_err());
     }
 }
