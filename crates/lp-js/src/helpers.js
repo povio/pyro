@@ -126,7 +126,8 @@
             return native(new.target, args);
           } })[name]
         : ({ [name]: function () { throw new TypeError('Illegal constructor'); } })[name];
-      defineProperty(C, 'length', { value: length });
+      // Both constructor forms above start with length 0.
+      if (length !== 0) defineProperty(C, 'length', { value: length });
       defineProperty(C, 'prototype', { value: proto, writable: false, enumerable: false, configurable: false });
       defineProperty(proto, 'constructor', { value: C, writable: true, enumerable: false, configurable: true });
       defineProperty(proto, toStringTag, { value: name, writable: false, enumerable: false, configurable: true });
