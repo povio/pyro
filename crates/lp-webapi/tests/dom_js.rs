@@ -75,7 +75,6 @@ fn new_realm(engine: &Engine, class: lp_js::ClassId, page: &Rc<PageDom>, name: &
         .unwrap();
     let s = realm.scope().unwrap();
     install(&s, page.clone()).unwrap();
-    drop(s);
     realm
 }
 
