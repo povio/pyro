@@ -684,3 +684,66 @@ fn headers_capture_intrinsics_before_page_scripts() {
         "true"
     );
 }
+
+#[inline(never)]
+fn abandoned_abort_graph(realm: &Realm) -> std::rc::Weak<()> {
+    let scope = realm.scope().unwrap();
+    let source = scope
+        .eval("(() => { const c = new AbortController(); AbortSignal.any([c.signal]); return c.signal; })()", None, 1)
+        .unwrap();
+    let keep = Rc::new(());
+    let weak = Rc::downgrade(&keep);
+    scope.unwrap::<lp_webapi::abort::AbortSignal>(source).unwrap().add_abort_hook(Box::new(move |_| drop(keep)));
+    weak
+}
+
+#[test]
+fn abandoned_abort_any_graph_releases_native_hooks() {
+    let e = env("");
+    let weak = abandoned_abort_graph(&e.main);
+    for _ in 0..6 {
+        eval(&e.main, "Array.from({length:2000}, (_,i)=>({i}))");
+        e.engine.collect_garbage_now();
+        e.engine.drain_finalized();
+        e.page.after_task();
+    }
+    assert!(weak.upgrade().is_none(), "unreachable AbortSignal.any graph retained its native hook");
+}
+
+#[test]
+fn removable_abort_hooks_release_payloads_and_preserve_reason() {
+    let e = env("");
+    let s = e.main.scope().unwrap();
+    let signal = s.eval("globalThis.controller = new AbortController(); controller.signal", None, 1).unwrap();
+    let signal = s.unwrap::<lp_webapi::abort::AbortSignal>(signal).unwrap();
+    let keep = Rc::new(());
+    let weak = Rc::downgrade(&keep);
+    let removed = signal.add_abort_hook(Box::new(move |_| drop(keep))).unwrap();
+    signal.remove_abort_hook(removed);
+    assert!(weak.upgrade().is_none());
+    let fired = Rc::new(std::cell::Cell::new(0));
+    let fired2 = fired.clone();
+    signal.add_abort_hook(Box::new(move |_| fired2.set(fired2.get() + 1)));
+    signal.remove_abort_hook(removed); // old identity must not remove a new step
+    assert_eq!(eval(&e.main, "globalThis.reason = {detail:42}; globalThis.combined = AbortSignal.any([controller.signal]); controller.abort(reason); combined.aborted && combined.reason === reason"), "true");
+    assert_eq!(fired.get(), 1);
+    eval(&e.main, "controller.abort('again')");
+    assert_eq!(fired.get(), 1);
+    let immediate = fired.clone();
+    assert!(signal.add_abort_hook(Box::new(move |_| immediate.set(immediate.get() + 1))).is_none());
+    assert_eq!(fired.get(), 2);
+}
+
+#[test]
+fn abort_any_preserves_cross_realm_reason_identity() {
+    let e = env("");
+    let isolated = new_realm(&e.engine, e.engine.register::<TestWindow>(), &e.page, "isolated");
+    let main_scope = e.main.scope().unwrap();
+    let signal = main_scope.eval("globalThis.ac = new AbortController(); ac.signal", None, 1).unwrap();
+    let isolated_scope = isolated.scope().unwrap();
+    isolated_scope.global().set("source", signal).unwrap();
+    assert_eq!(eval(&isolated, "globalThis.dependent = AbortSignal.any([source]); dependent.aborted"), "false");
+    let reason = main_scope.eval("globalThis.reason = {id:7}; ac.abort(reason); reason", None, 1).unwrap();
+    isolated_scope.global().set("expected", reason).unwrap();
+    assert_eq!(eval(&isolated, "dependent.aborted && dependent.reason === expected"), "true");
+}
