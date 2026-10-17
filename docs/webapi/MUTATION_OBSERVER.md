@@ -32,8 +32,8 @@ Record queues preserve all observable records and are not byte-capped. This is
 not a measured CPU or memory improvement claim.
 
 This increment supports worlds sharing one PageDom. Observing a node from another
-PageDom throws NotSupportedError. ResizeObserver, IntersectionObserver and
-slotchange delivery are not implemented. Strings retain the DOM's existing UTF-8
+PageDom throws NotSupportedError. [IntersectionObserver](INTERSECTION_OBSERVER.md) uses separate task delivery.
+ResizeObserver and slotchange delivery are not implemented. Strings retain the DOM's existing UTF-8
 limitation for lone UTF-16 surrogates. The queue/delivery model follows the
 [DOM mutation observer algorithms](https://dom.spec.whatwg.org/#mutation-observers),
 but these focused tests are not a full WPT conformance result.

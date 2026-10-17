@@ -2293,3 +2293,41 @@ fn hidden_and_foreign_elements_have_no_box() {
     assert!(!p.layout.is_visible(&p.dom, inner));
     assert_eq!(p.rect(inner), Rect::default());
 }
+
+/// Element scroll offsets move descendants' client rects; hit testing and
+/// scrollIntoViewIfNeeded agree with the shifted rects (lightningpanda
+/// deviation from upstream, which only applies the window scroll).
+#[test]
+fn element_scroll_moves_rects_hit_testing_and_reveal() {
+    let mut p = page(
+        "<body><div id=root style='overflow:auto;width:100px;height:100px'><div id=t style='width:20px;height:20px'></div><div style='height:1000px'></div><div id=far style='width:20px;height:20px'></div></div><p id=after>x</p></body>",
+    );
+    let (root, t, far, after) = (p.id("root"), p.id("t"), p.id("far"), p.id("after"));
+    let before = p.layout.bounding_client_rect(&p.dom, t);
+    let after_before = p.layout.bounding_client_rect(&p.dom, after);
+    assert!(p.layout.set_scroll_top(&p.dom, root, 100));
+    let moved = p.layout.bounding_client_rect(&p.dom, t);
+    assert_eq!(moved.y, before.y - 100.0);
+    assert_eq!(moved.x, before.x);
+    assert_eq!(p.layout.bounding_client_rect(&p.dom, after), after_before, "non-descendants unaffected");
+    // Hit testing agrees with the shifted rect at its new center.
+    let f = p.layout.bounding_client_rect(&p.dom, far);
+    let hit = p.layout.element_from_point(&p.dom, f.x + 1.0, f.y + 1.0);
+    assert_eq!(hit, Some(far));
+    // The container itself is still hit at its own (unscrolled) position.
+    let r = p.layout.bounding_client_rect(&p.dom, root);
+    assert_eq!(p.layout.element_from_point(&p.dom, r.x + 90.0, r.y + 1.0), Some(root));
+    // scrollIntoViewIfNeeded reveals `t` inside the scrolled container.
+    // Aligned like `block: start`: t's top lands on the container's top.
+    p.layout.scroll_into_view_if_needed(&p.dom, t);
+    assert!(p.layout.scroll_top(root) < 100);
+    let revealed = p.layout.bounding_client_rect(&p.dom, t);
+    let root_rect = p.layout.bounding_client_rect(&p.dom, root);
+    assert_eq!(revealed.y, root_rect.y);
+    assert_eq!(p.layout.element_from_point(&p.dom, revealed.x + 1.0, revealed.y + 1.0), Some(t));
+    // Never-scrolled containers keep upstream window-only behavior.
+    let mut q = page("<body><div id=c style='overflow:auto;height:10px'><b id=b>x</b></div></body>");
+    let (c, b) = (q.id("c"), q.id("b"));
+    q.layout.scroll_into_view_if_needed(&q.dom, b);
+    assert_eq!(q.layout.scroll_top(c), 0);
+}

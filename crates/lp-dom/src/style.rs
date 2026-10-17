@@ -557,8 +557,8 @@ struct Declared {
     visibility_hidden: Option<Option<bool>>,
     opacity_zero: Option<bool>,
     pointer_events_none: Option<Option<bool>>,
-    overflow_x: Option<bool>,
-    overflow_y: Option<bool>,
+    overflow_x: Option<Overflow>,
+    overflow_y: Option<Overflow>,
     overscroll_x: Option<bool>,
     overscroll_y: Option<bool>,
     width: Option<Length>,
@@ -639,9 +639,9 @@ impl Declared {
                 ],
             );
         } else if n("overflow-x") {
-            self.overflow_x = Some(overflow_scrolls(value));
+            self.overflow_x = Some(Overflow::parse(value));
         } else if n("overflow-y") {
-            self.overflow_y = Some(overflow_scrolls(value));
+            self.overflow_y = Some(Overflow::parse(value));
         } else if n("overscroll-behavior-x") {
             self.overscroll_x = Some(overscroll_contains(value));
         } else if n("overscroll-behavior-y") {
@@ -692,8 +692,26 @@ impl Declared {
 }
 
 /// StyleManager.zig:1536-1540 (`overlay` is Chrome's legacy alias of auto).
-fn overflow_scrolls(value: &str) -> bool {
-    value.eq_ignore_ascii_case("auto") || value.eq_ignore_ascii_case("scroll") || value.eq_ignore_ascii_case("overlay")
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Overflow {
+    #[default]
+    Visible,
+    Clip,
+    Scroll,
+}
+impl Overflow {
+    fn parse(value: &str) -> Self {
+        if value.eq_ignore_ascii_case("auto")
+            || value.eq_ignore_ascii_case("scroll")
+            || value.eq_ignore_ascii_case("overlay")
+        {
+            Self::Scroll
+        } else if value.eq_ignore_ascii_case("hidden") || value.eq_ignore_ascii_case("clip") {
+            Self::Clip
+        } else {
+            Self::Visible
+        }
+    }
 }
 
 /// StyleManager.zig:1544-1547.
@@ -1347,8 +1365,8 @@ struct Cascaded {
     visibility_hidden: Option<bool>,
     opacity_zero: bool,
     pointer_events_none: Option<bool>,
-    overflow_x: bool,
-    overflow_y: bool,
+    overflow_x: Overflow,
+    overflow_y: Overflow,
     overscroll_x: bool,
     overscroll_y: bool,
     width: Length,
@@ -1407,7 +1425,9 @@ pub struct ComputedStyle {
     /// This element or a flat-tree ancestor has opacity:0.
     pub in_opacity_zero: bool,
     pub overflow_x_scrolls: bool,
+    pub overflow_x_clips: bool,
     pub overflow_y_scrolls: bool,
+    pub overflow_y_clips: bool,
     pub overscroll_x_contains: bool,
     pub overscroll_y_contains: bool,
     pub width: Length,
@@ -1441,8 +1461,10 @@ impl ComputedStyle {
             pointer_events_none: own.pointer_events_none.unwrap_or(parent.pointer_events_none),
             in_display_none: own.display == Display::None || parent.in_display_none,
             in_opacity_zero: own.opacity_zero || parent.in_opacity_zero,
-            overflow_x_scrolls: own.overflow_x,
-            overflow_y_scrolls: own.overflow_y,
+            overflow_x_scrolls: own.overflow_x == Overflow::Scroll,
+            overflow_x_clips: own.overflow_x != Overflow::Visible,
+            overflow_y_scrolls: own.overflow_y == Overflow::Scroll,
+            overflow_y_clips: own.overflow_y != Overflow::Visible,
             overscroll_x_contains: own.overscroll_x,
             overscroll_y_contains: own.overscroll_y,
             width: own.width,
@@ -1628,6 +1650,12 @@ impl StyleEngine {
             Err(_) => (NIL, NIL),
         };
         Stamp { version: dom.version(), generation: self.generation, focused, hovered }
+    }
+
+    /// Layout-observer invalidation key, including dynamic selector state.
+    pub fn observation_stamp(&self, dom: &Dom) -> (u64, u64, u32, u32) {
+        let stamp = self.stamp(dom);
+        (stamp.version, stamp.generation, stamp.focused, stamp.hovered)
     }
 
     /// Brings the rule set and memo up to date with `dom`.
@@ -1935,6 +1963,12 @@ impl StyleEngine {
     pub fn overflow_axes(&self, dom: &Dom, el: NodeId) -> ScrollAxes {
         self.computed(dom, el)
             .map_or(ScrollAxes::default(), |c| ScrollAxes { x: c.overflow_x_scrolls, y: c.overflow_y_scrolls })
+    }
+
+    /// Axes clipped by the cascaded overflow declaration, including hidden/clip.
+    pub fn overflow_clip_axes(&self, dom: &Dom, el: NodeId) -> ScrollAxes {
+        self.computed(dom, el)
+            .map_or(ScrollAxes::default(), |c| ScrollAxes { x: c.overflow_x_clips, y: c.overflow_y_clips })
     }
 
     /// StyleManager.zig:714-718.

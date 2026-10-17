@@ -44,6 +44,7 @@ pub struct PageDom {
     pub(crate) last_removals: Cell<u64>,
     next_event: Cell<u64>,
     pub net: RefCell<Option<lp_net::NetClient>>,
+    pub(crate) intersections: crate::intersection_observer::BindingState,
     pub(crate) mutations: crate::mutation_observer::BindingState,
     pub(crate) identity: RefCell<crate::identity::IdentityState>,
     pub(crate) fetch_state: crate::fetch::FetchState,
@@ -124,6 +125,7 @@ impl PageDom {
             net: RefCell::new(None),
             identity: RefCell::new(Default::default()),
             mutations: Default::default(),
+            intersections: Default::default(),
             fetch_state: Default::default(),
             xhr_state: Default::default(),
             local_storage: RefCell::new(Default::default()),
@@ -171,6 +173,7 @@ impl PageDom {
         crate::fetch::dispose(self);
         crate::xhr::dispose(self);
         crate::mutation_observer::dispose(self);
+        crate::intersection_observer::dispose(self);
         self.realms.borrow_mut().clear();
         // Drop roots and embedder hooks outside RefCell borrows: destructors
         // can release wrappers or other resources owned by this page.
@@ -283,6 +286,7 @@ impl PageDom {
     /// ones, and frees unreachable DOM nodes.
     pub fn after_task(&self) {
         crate::mutation_observer::after_task(self);
+        crate::intersection_observer::after_task(self);
         self.url_params_helpers.borrow_mut().retain(|realm, _| {
             self.realms.borrow().get(realm).and_then(|r| r.upgrade()).is_some_and(|r| !r.is_disposed())
         });
@@ -307,7 +311,7 @@ impl PageDom {
     pub fn set_hooks(&self, hooks: Option<Rc<dyn PageHooks>>) {
         *self.hooks.borrow_mut() = hooks;
     }
-    fn hooks(&self) -> Option<Rc<dyn PageHooks>> {
+    pub(crate) fn hooks(&self) -> Option<Rc<dyn PageHooks>> {
         self.hooks.borrow().clone()
     }
     pub(crate) fn post_task(&self, task: Box<dyn FnOnce()>) {
