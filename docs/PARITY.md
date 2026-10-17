@@ -49,7 +49,7 @@ Unit/integration tests exercise real JavaScriptCore and local HTTP. This is not 
 | URL query parameters | Partial | URLSearchParams parsing, ordered mutations, live iteration and fetch/XHR form bodies, including live URL.searchParams association; see [contract](webapi/URL_SEARCH_PARAMS.md). |
 | Web Crypto | Partial | `crypto.getRandomValues`, `crypto.randomUUID` and `crypto.subtle.digest` (SHA-1/256/384/512); other SubtleCrypto operations reject NotSupportedError; see [contract](webapi/CRYPTO.md). |
 | Structured cloning | Partial | Bounded structuredClone supports ordinary graphs and selected builtins with proxy/host rejection. Transfers, Error/host serialization and complete altered-exotic classification remain unsupported; see [contract](webapi/STRUCTURED_CLONE.md). Existing postMessage/history are not upgraded to this serializer. |
-| Other platform APIs | Not started | WebSocket, crypto, streams, canvas, workers and media APIs. |
+| Other platform APIs | Not started | WebSocket, streams, canvas, workers and media APIs. |
 
 Independent correctness/performance review remains unresolved after provider-policy blocks. The user-authorized current merge gate is maintainability review of the actual head plus reported validation; tests are not independent correctness/performance approval. Parent owns review routing and merging.
 

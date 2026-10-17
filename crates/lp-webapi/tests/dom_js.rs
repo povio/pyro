@@ -1969,7 +1969,19 @@ fn web_crypto_random_and_digest() {
         eval(r, "const a=new Uint32Array(8); const back=crypto.getRandomValues(a); back===a && a.some(x=>x!==0)"),
         "true"
     );
-    assert_eq!(eval(r, "const big=new Uint8Array(32); const view=new Uint8Array(big.buffer, 8, 4); crypto.getRandomValues(view); Array.from(big).map(x=>x?1:0).join('')"), "00000000111100000000000000000000");
+    // Subview bounds: bytes outside [8, 12) keep a sentinel. The random
+    // bytes themselves may legitimately be any value (including 0xAA), so
+    // only the untouched region is asserted.
+    assert_eq!(
+        eval(r, "const big=new Uint8Array(32).fill(0xaa); const view=new Uint8Array(big.buffer, 8, 4); const ret=crypto.getRandomValues(view); ret===view && big.subarray(0,8).every(x=>x===0xaa) && big.subarray(12).every(x=>x===0xaa)"),
+        "true"
+    );
+    // A fresh-buffer write lands in the view: across 64 four-byte views the
+    // chance of every random byte equalling the sentinel is 2^-2048.
+    assert_eq!(
+        eval(r, "let changed=false; for (let i=0;i<64 && !changed;i++){const b=new Uint8Array(16).fill(0xaa); crypto.getRandomValues(new Uint8Array(b.buffer,4,4)); changed=b.subarray(4,8).some(x=>x!==0xaa);} changed"),
+        "true"
+    );
     assert_eq!(eval(r, "try{crypto.getRandomValues(new Float32Array(2))}catch(e){e.name}"), "TypeMismatchError");
     assert_eq!(eval(r, "try{crypto.getRandomValues(new Uint8Array(65537))}catch(e){e.name}"), "QuotaExceededError");
     assert_eq!(eval(r, "crypto.getRandomValues(new Uint8Array(65536)).length"), "65536");
