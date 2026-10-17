@@ -295,6 +295,15 @@ impl Dom {
         Ok(())
     }
 
+    /// Marks a custom element as defined (`:defined`).
+    pub fn set_custom_defined(&mut self, el: NodeId) -> DomResult<()> {
+        let i = self.check(el)?;
+        let e = self.n_mut(i).element_mut().ok_or(DomError::Type("not an element"))?;
+        e.flags |= element_flags::CUSTOM_DEFINED;
+        self.bump();
+        Ok(())
+    }
+
     /// Clears the parser-inserted flag (scripts moved/cloned by script; also
     /// "force async" semantics for dynamically inserted scripts).
     pub fn clear_parser_inserted(&mut self, script: NodeId) -> DomResult<()> {

@@ -288,3 +288,18 @@ fn cancel_and_observer() {
     assert_eq!(k, ["response 201", "finished"]);
     assert_eq!(b, b"mock");
 }
+
+#[test]
+fn drop_fails_in_flight_requests() {
+    let s = start_server();
+    let c = NetClient::new(NetConfig::default()).unwrap();
+    let (tx, rx) = mpsc::channel();
+    c.fetch(Request::get(url(&s, "/slow"), Destination::Fetch), Box::new(move |ev| tx.send(ev).unwrap()));
+    std::thread::sleep(Duration::from_millis(100));
+    drop(c);
+    match rx.recv_timeout(Duration::from_secs(2)).unwrap() {
+        ResponseEvent::Failed(NetError::Aborted) => {}
+        other => panic!("unexpected {other:?}"),
+    }
+    assert!(rx.recv_timeout(Duration::from_millis(200)).is_err(), "exactly one terminal event");
+}

@@ -28,8 +28,15 @@ use crate::cookies::{site_context, CookieJar, SiteContext};
 use crate::cors::{self, PreflightCache};
 use crate::request::*;
 
-/// Consumer of one request's events. Called on the I/O thread; wrap it to
-/// post to the browser loop. Receives exactly one terminal event.
+/// Consumer of one request's events; wrap it to post to the browser loop.
+///
+/// Guarantees: every sink passed to [`NetClient::fetch`] receives exactly one
+/// terminal event (`Finished` or `Failed`), after which it is dropped.
+/// Events normally arrive on the I/O thread. If the I/O thread has already
+/// stopped, `fetch` calls the sink synchronously on the caller's thread with
+/// `Failed(Other("network thread stopped"))`. When the last `NetClient`
+/// clone is dropped, in-flight requests receive `Failed(Aborted)` on the I/O
+/// thread before it exits.
 pub type ResponseSink = Box<dyn FnMut(ResponseEvent) + Send>;
 
 #[derive(Clone, Debug)]
@@ -192,8 +199,8 @@ impl Shared {
 
 impl Drop for Inner {
     fn drop(&mut self) {
-        // Closing the channel stops the I/O loop; in-flight requests are
-        // dropped (their sinks receive nothing further).
+        // Closing the channel stops the I/O loop, which fails in-flight
+        // requests with `Aborted` before exiting.
         let (dead, _) = mpsc::unbounded_channel();
         self.tx = dead;
         if let Some(t) = self.thread.lock().unwrap().take() {
@@ -378,8 +385,12 @@ fn io_main(mut rx: mpsc::UnboundedReceiver<Cmd>, shared: Arc<Shared>, cookies: A
                 }
             }
         }
-        for (_, t) in tasks.borrow_mut().drain() {
+        // Shutdown: every in-flight request still gets its terminal event.
+        let pending: Vec<(RequestId, Task)> = tasks.borrow_mut().drain().collect();
+        for (_, t) in pending {
             t.abort.abort();
+            deliver(&t.sink, ResponseEvent::Failed(NetError::Aborted));
+            t.sink.borrow_mut().take();
         }
     });
 }
