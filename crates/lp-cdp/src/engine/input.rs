@@ -71,130 +71,29 @@ struct MouseParams {
     timestamp: Option<f64>,
 }
 
-/// macOS editing commands Playwright 1.59 derives from a key event's code and
-/// modifiers (`_commandsForCode` over playwright-core `macEditingCommands.js`,
-/// Apache-2.0, Copyright Microsoft Corporation), with the `insert*` commands
-/// Playwright filters out already removed. Keys are `Shift+Control+Alt+Meta+code`.
-const MAC_EDITING_COMMANDS: &[(&str, &[&str])] = &[
-    ("Backspace", &["deleteBackward"]),
-    ("Escape", &["cancelOperation"]),
-    ("ArrowUp", &["moveUp"]),
-    ("ArrowDown", &["moveDown"]),
-    ("ArrowLeft", &["moveLeft"]),
-    ("ArrowRight", &["moveRight"]),
-    ("F5", &["complete"]),
-    ("Delete", &["deleteForward"]),
-    ("Home", &["scrollToBeginningOfDocument"]),
-    ("End", &["scrollToEndOfDocument"]),
-    ("PageUp", &["scrollPageUp"]),
-    ("PageDown", &["scrollPageDown"]),
-    ("Shift+Backspace", &["deleteBackward"]),
-    ("Shift+Escape", &["cancelOperation"]),
-    ("Shift+ArrowUp", &["moveUpAndModifySelection"]),
-    ("Shift+ArrowDown", &["moveDownAndModifySelection"]),
-    ("Shift+ArrowLeft", &["moveLeftAndModifySelection"]),
-    ("Shift+ArrowRight", &["moveRightAndModifySelection"]),
-    ("Shift+F5", &["complete"]),
-    ("Shift+Delete", &["deleteForward"]),
-    ("Shift+Home", &["moveToBeginningOfDocumentAndModifySelection"]),
-    ("Shift+End", &["moveToEndOfDocumentAndModifySelection"]),
-    ("Shift+PageUp", &["pageUpAndModifySelection"]),
-    ("Shift+PageDown", &["pageDownAndModifySelection"]),
-    ("Shift+Numpad5", &["delete"]),
-    ("Control+Tab", &["selectNextKeyView"]),
-    ("Control+KeyA", &["moveToBeginningOfParagraph"]),
-    ("Control+KeyB", &["moveBackward"]),
-    ("Control+KeyD", &["deleteForward"]),
-    ("Control+KeyE", &["moveToEndOfParagraph"]),
-    ("Control+KeyF", &["moveForward"]),
-    ("Control+KeyH", &["deleteBackward"]),
-    ("Control+KeyK", &["deleteToEndOfParagraph"]),
-    ("Control+KeyL", &["centerSelectionInVisibleArea"]),
-    ("Control+KeyN", &["moveDown"]),
-    ("Control+KeyO", &["moveBackward"]),
-    ("Control+KeyP", &["moveUp"]),
-    ("Control+KeyT", &["transpose"]),
-    ("Control+KeyV", &["pageDown"]),
-    ("Control+KeyY", &["yank"]),
-    ("Control+Backspace", &["deleteBackwardByDecomposingPreviousCharacter"]),
-    ("Control+ArrowUp", &["scrollPageUp"]),
-    ("Control+ArrowDown", &["scrollPageDown"]),
-    ("Control+ArrowLeft", &["moveToLeftEndOfLine"]),
-    ("Control+ArrowRight", &["moveToRightEndOfLine"]),
-    ("Shift+Control+Tab", &["selectPreviousKeyView"]),
-    ("Shift+Control+KeyA", &["moveToBeginningOfParagraphAndModifySelection"]),
-    ("Shift+Control+KeyB", &["moveBackwardAndModifySelection"]),
-    ("Shift+Control+KeyE", &["moveToEndOfParagraphAndModifySelection"]),
-    ("Shift+Control+KeyF", &["moveForwardAndModifySelection"]),
-    ("Shift+Control+KeyN", &["moveDownAndModifySelection"]),
-    ("Shift+Control+KeyP", &["moveUpAndModifySelection"]),
-    ("Shift+Control+KeyV", &["pageDownAndModifySelection"]),
-    ("Shift+Control+Backspace", &["deleteBackwardByDecomposingPreviousCharacter"]),
-    ("Shift+Control+ArrowUp", &["scrollPageUp"]),
-    ("Shift+Control+ArrowDown", &["scrollPageDown"]),
-    ("Shift+Control+ArrowLeft", &["moveToLeftEndOfLineAndModifySelection"]),
-    ("Shift+Control+ArrowRight", &["moveToRightEndOfLineAndModifySelection"]),
-    ("Alt+Backspace", &["deleteWordBackward"]),
-    ("Alt+Escape", &["complete"]),
-    ("Alt+ArrowUp", &["moveBackward", "moveToBeginningOfParagraph"]),
-    ("Alt+ArrowDown", &["moveForward", "moveToEndOfParagraph"]),
-    ("Alt+ArrowLeft", &["moveWordLeft"]),
-    ("Alt+ArrowRight", &["moveWordRight"]),
-    ("Alt+Delete", &["deleteWordForward"]),
-    ("Alt+PageUp", &["pageUp"]),
-    ("Alt+PageDown", &["pageDown"]),
-    ("Shift+Alt+Backspace", &["deleteWordBackward"]),
-    ("Shift+Alt+Escape", &["complete"]),
-    ("Shift+Alt+ArrowUp", &["moveParagraphBackwardAndModifySelection"]),
-    ("Shift+Alt+ArrowDown", &["moveParagraphForwardAndModifySelection"]),
-    ("Shift+Alt+ArrowLeft", &["moveWordLeftAndModifySelection"]),
-    ("Shift+Alt+ArrowRight", &["moveWordRightAndModifySelection"]),
-    ("Shift+Alt+Delete", &["deleteWordForward"]),
-    ("Shift+Alt+PageUp", &["pageUp"]),
-    ("Shift+Alt+PageDown", &["pageDown"]),
-    ("Control+Alt+KeyB", &["moveWordBackward"]),
-    ("Control+Alt+KeyF", &["moveWordForward"]),
-    ("Control+Alt+Backspace", &["deleteWordBackward"]),
-    ("Shift+Control+Alt+KeyB", &["moveWordBackwardAndModifySelection"]),
-    ("Shift+Control+Alt+KeyF", &["moveWordForwardAndModifySelection"]),
-    ("Shift+Control+Alt+Backspace", &["deleteWordBackward"]),
-    ("Meta+NumpadSubtract", &["cancel"]),
-    ("Meta+Backspace", &["deleteToBeginningOfLine"]),
-    ("Meta+ArrowUp", &["moveToBeginningOfDocument"]),
-    ("Meta+ArrowDown", &["moveToEndOfDocument"]),
-    ("Meta+ArrowLeft", &["moveToLeftEndOfLine"]),
-    ("Meta+ArrowRight", &["moveToRightEndOfLine"]),
-    ("Shift+Meta+NumpadSubtract", &["cancel"]),
-    ("Shift+Meta+Backspace", &["deleteToBeginningOfLine"]),
-    ("Shift+Meta+ArrowUp", &["moveToBeginningOfDocumentAndModifySelection"]),
-    ("Shift+Meta+ArrowDown", &["moveToEndOfDocumentAndModifySelection"]),
-    ("Shift+Meta+ArrowLeft", &["moveToLeftEndOfLineAndModifySelection"]),
-    ("Shift+Meta+ArrowRight", &["moveToRightEndOfLineAndModifySelection"]),
-    ("Meta+KeyA", &["selectAll"]),
-    ("Meta+KeyC", &["copy"]),
-    ("Meta+KeyX", &["cut"]),
-    ("Meta+KeyV", &["paste"]),
-    ("Meta+KeyZ", &["undo"]),
-    ("Shift+Meta+KeyZ", &["redo"]),
+/// macOS editing commands accepted with a key event, keyed by the shortcut
+/// Playwright 1.59 builds (`Shift+Control+Alt+Meta+code`, crInput
+/// `_commandsForCode` over playwright-core `macEditingCommands.js`). Only
+/// shortcuts whose command the engine's key default action performs for the
+/// same key (lp-webapi `default_key_action`) are listed, with the DOM `key`
+/// values that action is keyed on. Aliases such as Control+KeyD
+/// (deleteForward), Control+KeyH (deleteBackward), Control+KeyB/F/N/P or
+/// Alt/Meta+Arrow are absent on purpose: the engine performs nothing for them.
+const NATIVE_KEY_COMMANDS: &[(&str, &[&str], &str)] = &[
+    ("ArrowLeft", &["ArrowLeft"], "moveLeft"),
+    ("ArrowRight", &["ArrowRight"], "moveRight"),
+    ("Shift+ArrowLeft", &["ArrowLeft"], "moveLeftAndModifySelection"),
+    ("Shift+ArrowRight", &["ArrowRight"], "moveRightAndModifySelection"),
+    ("Backspace", &["Backspace"], "deleteBackward"),
+    ("Shift+Backspace", &["Backspace"], "deleteBackward"),
+    ("Delete", &["Delete"], "deleteForward"),
+    ("Shift+Delete", &["Delete"], "deleteForward"),
+    ("Meta+KeyA", &["a", "A"], "selectAll"),
 ];
 
-/// Editing commands whose effect the engine's key default actions perform for
-/// the key they are derived from (lp-webapi `default_key_action`): caret
-/// movement and selection extension by one character, single-character
-/// deletion and select-all in text controls.
-const NATIVE_KEY_COMMANDS: &[&str] = &[
-    "moveLeft",
-    "moveRight",
-    "moveLeftAndModifySelection",
-    "moveRightAndModifySelection",
-    "deleteBackward",
-    "deleteForward",
-    "selectAll",
-];
-
-/// The commands Playwright on macOS sends with this key: the platform
-/// encoding of the key itself, not extra actions.
-fn mac_commands_for(code: &str, bits: u32) -> &'static [&'static str] {
+/// Whether `commands` is exactly the macOS encoding of this key event and the
+/// engine's own default action for the key performs it.
+fn native_key_commands(code: &str, key: &str, bits: u32, commands: &[String]) -> bool {
     let mut shortcut = String::new();
     // Playwright's order: Shift, Control, Alt, Meta (CDP bits 8, 2, 1, 4).
     for (bit, name) in [(8, "Shift"), (2, "Control"), (1, "Alt"), (4, "Meta")] {
@@ -204,7 +103,9 @@ fn mac_commands_for(code: &str, bits: u32) -> &'static [&'static str] {
         }
     }
     shortcut.push_str(code);
-    MAC_EDITING_COMMANDS.iter().find(|(key, _)| *key == shortcut).map_or(&[], |(_, commands)| commands)
+    NATIVE_KEY_COMMANDS.iter().any(|(entry, keys, command)| {
+        *entry == shortcut && keys.contains(&key) && matches!(commands, [c] if c == command)
+    })
 }
 
 fn modifiers(bits: u32) -> CdpResult<Modifiers> {
@@ -251,19 +152,14 @@ impl EngineHost {
                     p.location = 3;
                 }
                 // Playwright on macOS attaches the editing commands its table
-                // derives from the key (e.g. ArrowRight -> ["moveRight"]). Those
-                // whose effect the engine's own key default action already
-                // performs are accepted (upstream ignores commands entirely).
-                // Commands the engine would not carry out (scrolling, clipboard,
-                // undo, word/line movement, or anything not implied by the key)
-                // are refused explicitly.
-                let derived_from_key = p.commands.is_empty()
-                    || (p
-                        .commands
-                        .iter()
-                        .map(String::as_str)
-                        .eq(mac_commands_for(&p.code, p.modifiers).iter().copied())
-                        && p.commands.iter().all(|c| NATIVE_KEY_COMMANDS.contains(&c.as_str())));
+                // derives from the key (e.g. ArrowRight -> ["moveRight"]). They
+                // are accepted only for shortcuts whose command the engine's own
+                // key default action performs (upstream ignores commands
+                // entirely). Anything else (scrolling, clipboard, undo,
+                // word/line movement, Emacs-style Control aliases, or commands
+                // not implied by the key) is refused explicitly.
+                let derived_from_key =
+                    p.commands.is_empty() || native_key_commands(&p.code, &p.key, p.modifiers, &p.commands);
                 if !derived_from_key
                     || p.timestamp.is_some()
                     || p.is_system_key

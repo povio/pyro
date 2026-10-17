@@ -1478,6 +1478,14 @@ fn input_accepts_mac_key_derived_editing_commands() {
         ("c", "KeyC", 4, json!(["copy"])),
         ("ArrowRight", "ArrowRight", 0, json!(["moveRight", "selectAll"])),
         ("a", "KeyA", 0, json!(["selectAll"])),
+        // Emacs-style aliases in Playwright's table: the engine's deletion and
+        // caret defaults are keyed on Backspace/Delete/Arrow keys, not these.
+        ("d", "KeyD", 2, json!(["deleteForward"])),
+        ("h", "KeyH", 2, json!(["deleteBackward"])),
+        ("b", "KeyB", 2, json!(["moveBackward"])),
+        ("f", "KeyF", 2, json!(["moveForward"])),
+        // Right shortcut and command, but a key the default action is not keyed on.
+        ("x", "Backspace", 0, json!(["deleteBackward"])),
     ] {
         let r = h.page(
             "Input.dispatchKeyEvent",
@@ -1490,5 +1498,17 @@ fn input_accepts_mac_key_derived_editing_commands() {
             ["value"],
         5,
         "rejected commands deliver no events"
+    );
+    // The supported deletions keep their behavior with their own commands.
+    h.page(
+        "Runtime.evaluate",
+        json!({"expression":"field.focus(); field.value = 'abcd'; field.setSelectionRange(2, 2)"}),
+    );
+    press(&mut h, "Backspace", "Backspace", 8, 0, json!(["deleteBackward"]));
+    press(&mut h, "Delete", "Delete", 46, 8, json!(["deleteForward"]));
+    assert_eq!(
+        h.page("Runtime.evaluate", json!({"expression":"[field.value, field.selectionStart]","returnByValue":true}))
+            ["result"]["result"]["value"],
+        json!(["ad", 1])
     );
 }
