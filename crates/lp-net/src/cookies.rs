@@ -3,9 +3,8 @@
 //! upstream's full linear scan per request
 //! (browser/src/browser/webapi/storage/Cookie.zig:774-803).
 //!
-//! Known gaps: no Public Suffix List (a Domain attribute must contain a dot
-//! or equal the host); "site" for SameSite is approximated as the last two
-//! host labels (exact for localhost/IPs, which TOS E2E uses).
+//! Domain cookies and schemeful sites use the embedded Public Suffix List
+//! (including private suffixes), pinned through the psl dependency lockfile.
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -103,16 +102,13 @@ pub fn is_trustworthy(url: &Url) -> bool {
     }
 }
 
-/// Approximate registrable domain ("site") without a public suffix list.
+/// Registrable domain using the embedded PSL; IPs and single-label hosts
+/// remain their own site.
 pub fn site_of(host: &str) -> &str {
     if is_ip(host) {
-        return host;
-    }
-    let mut dots = host.rmatch_indices('.');
-    dots.next();
-    match dots.next() {
-        Some((i, _)) => &host[i + 1..],
-        None => host,
+        host
+    } else {
+        psl::domain_str(host).unwrap_or(host)
     }
 }
 
@@ -127,12 +123,16 @@ fn default_path(url: &Url) -> String {
     }
 }
 
+fn domain_matches(host: &str, domain: &str) -> bool {
+    host == domain || (!is_ip(host) && host.strip_suffix(domain).is_some_and(|prefix| prefix.ends_with('.')))
+}
+
 fn domain_match(host: &str, c: &Cookie) -> bool {
     if c.host_only {
-        return host == c.domain;
+        host == c.domain
+    } else {
+        domain_matches(host, &c.domain)
     }
-    host == c.domain
-        || (host.ends_with(&c.domain) && host.as_bytes()[host.len() - c.domain.len() - 1] == b'.' && !is_ip(host))
 }
 
 fn path_match(req: &str, cookie: &str) -> bool {
@@ -165,8 +165,8 @@ impl CookieJar {
         let (domain, host_only) = match parsed.domain() {
             Some(d) if !d.is_empty() => {
                 let d = d.trim_start_matches('.').trim_end_matches('.').to_ascii_lowercase();
-                // Without a PSL: refuse single-label domains other than the host itself.
-                if !d.contains('.') && d != host {
+                let public_suffix = !is_ip(&d) && psl::suffix_str(&d) == Some(d.as_str());
+                if public_suffix && d != host {
                     return false;
                 }
                 let probe = Cookie {
@@ -184,7 +184,7 @@ impl CookieJar {
                 if !domain_match(&host, &probe) {
                     return false;
                 }
-                (d, false)
+                (d, public_suffix)
             }
             _ => (host.clone(), true),
         };
@@ -221,6 +221,20 @@ impl CookieJar {
         } else {
             parsed.expires_datetime().map(|t| t.unix_timestamp() as f64)
         };
+        // An insecure response must not overlay an existing Secure cookie,
+        // including a narrower path or a domain/host-only variant.
+        if !secure
+            && !is_trustworthy(url)
+            && self.by_domain.values().flatten().any(|old| {
+                old.secure
+                    && old.name == name
+                    && old.expires.is_none_or(|e| e > now)
+                    && (domain_matches(&domain, &old.domain) || domain_matches(&old.domain, &domain))
+                    && path_match(&path, &old.path)
+            })
+        {
+            return false;
+        }
         self.seq += 1;
         let c = Cookie {
             name: parsed.name().to_owned(),
@@ -307,6 +321,9 @@ impl CookieJar {
                 let before = l.len();
                 l.retain(|c| c.expires.is_none_or(|e| e > now));
                 self.count -= before - l.len();
+                if l.is_empty() {
+                    self.by_domain.remove(d);
+                }
             }
         }
         let mut out: Vec<&Cookie> = domains
@@ -397,7 +414,9 @@ impl CookieJar {
             same_site,
             creation: self.seq,
         };
-        if c.domain.is_empty() {
+        if c.domain.is_empty()
+            || (!c.host_only && !is_ip(&c.domain) && psl::suffix_str(&c.domain) == Some(c.domain.as_str()))
+        {
             return false;
         }
         self.store(c, Access::Http, now_secs())
@@ -441,5 +460,37 @@ pub fn site_context(initiator: Option<&Url>, target: &Url, top_level_nav: bool, 
         SiteContext::CrossSiteTopLevelSafe
     } else {
         SiteContext::CrossSite
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn expired_domain_buckets_are_reclaimed() {
+        let mut jar = CookieJar::new();
+        for i in 0..1000 {
+            let url = Url::parse(&format!("https://h{i}.example.com/")).unwrap();
+            assert!(jar.set_from_header(&url, "x=1; Max-Age=1", Access::Http, 1.0));
+            jar.header_for(&url, SiteContext::SameSite, 3.0);
+        }
+        assert!(jar.by_domain.is_empty());
+        assert_eq!(jar.count, 0);
+    }
+
+    #[test]
+    fn psl_sites_and_private_suffixes_are_distinct() {
+        assert_eq!(site_of("a.example.co.uk"), "example.co.uk");
+        assert_eq!(site_of("a.github.io"), "a.github.io");
+        let a = Url::parse("https://a.github.io/").unwrap();
+        let b = Url::parse("https://b.github.io/").unwrap();
+        assert_eq!(site_context(Some(&a), &b, false, true), SiteContext::CrossSite);
+        let mut jar = CookieJar::new();
+        assert!(!jar.set_from_header(&a, "x=1; Domain=github.io", Access::Http, 1.0));
+        assert!(!jar.set_cookie("x", "1", ".co.uk", "/", None, false, false, SameSite::Lax));
+        let suffix_host = Url::parse("https://co.uk/").unwrap();
+        assert!(jar.set_from_header(&suffix_host, "x=1; Domain=co.uk", Access::Http, 1.0));
+        assert!(jar.all()[0].host_only);
     }
 }
