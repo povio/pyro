@@ -1,5 +1,6 @@
 //! Browser-owned installation/lifecycle against real JSC and the document loader.
-use lp_browser::{BrowserThread, InitScript, NavigateOpts, PageId, StaticLoader};
+use lp_browser::{BrowserThread, InitScript, NavigateOpts, PageEvent, PageId, PageObserver, StaticLoader};
+use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -21,6 +22,29 @@ fn eval(thread: &BrowserThread, page: PageId, script: &str) -> String {
 
 fn settle(thread: &mut BrowserThread) {
     thread.run_until_idle(Some(Instant::now() + Duration::from_secs(3)));
+}
+
+#[test]
+fn isolated_world_event_reports_the_document_origin() {
+    struct Origins(RefCell<Vec<String>>);
+    impl PageObserver for Origins {
+        fn on_page_event(&self, _page: PageId, event: &PageEvent) {
+            if let PageEvent::RealmCreated { world: Some(_), origin, .. } = event {
+                self.0.borrow_mut().push(origin.clone());
+            }
+        }
+    }
+    let mut thread = BrowserThread::new().unwrap();
+    let page = thread.browser.create_page().unwrap();
+    let origins = Rc::new(Origins(RefCell::new(Vec::new())));
+    thread.browser.set_observer(Some(origins.clone()));
+    let loader = Rc::new(StaticLoader::default());
+    loader.insert("http://site.test/path", "text/html", "<p>world</p>", Duration::ZERO);
+    thread.browser.set_loader(Some(loader));
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/path")).unwrap();
+    settle(&mut thread);
+    thread.browser.isolated_world(page, "automation").unwrap();
+    assert_eq!(&*origins.0.borrow(), &["http://site.test"]);
 }
 
 #[test]

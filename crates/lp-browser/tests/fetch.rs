@@ -29,6 +29,12 @@ impl Server {
                     continue;
                 }
                 let path = request.split_whitespace().nth(1).unwrap_or("/").to_string();
+                loop {
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
+                        break;
+                    }
+                }
                 if path == "/stop" {
                     break;
                 }

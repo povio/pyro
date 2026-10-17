@@ -1,4 +1,4 @@
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
 use std::process::{Command, Stdio};
 use std::thread;
@@ -14,8 +14,13 @@ fn fetch(body: &'static str, args: &[&str]) -> std::process::Output {
             match listener.accept() {
                 Ok((mut stream, _)) => {
                     stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
-                    let mut request = [0; 4096];
-                    let _ = stream.read(&mut request);
+                    let mut reader = BufReader::new(stream.try_clone().unwrap());
+                    loop {
+                        let mut line = String::new();
+                        if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
+                            break;
+                        }
+                    }
                     let _ = write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
                     break;
                 }

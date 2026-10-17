@@ -651,10 +651,12 @@ impl Browser {
                 p.main_frame.page_dom.clone().ok_or(JsError::ContextDestroyed)?,
             )
         };
+        let origin =
+            url::Url::parse(&url).ok().map(|u| u.origin().ascii_serialization()).unwrap_or_else(|| "null".into());
         let realm = self.engine.create_realm(RealmOptions {
             name: name.to_string(),
             global_class: Some(window_class),
-            origin: url::Url::parse(&url).ok().map(|u| u.origin().ascii_serialization()).filter(|o| o != "null"),
+            origin: (origin != "null").then(|| origin.clone()),
         })?;
         let nav = self.page(page).expect("page").nav.clone();
         realm.set_global_data::<Window>(WindowData::new(self.sched.clone(), nav, &page_dom))?;
@@ -665,15 +667,7 @@ impl Browser {
             .main_frame
             .realms
             .push(FrameRealm { world: Some(name.to_string()), realm: realm.clone() });
-        self.emit(
-            page,
-            PageEvent::RealmCreated {
-                frame_id,
-                realm: realm.id(),
-                world: Some(name.to_string()),
-                origin: "null".into(),
-            },
-        );
+        self.emit(page, PageEvent::RealmCreated { frame_id, realm: realm.id(), world: Some(name.to_string()), origin });
         Ok(realm)
     }
 
