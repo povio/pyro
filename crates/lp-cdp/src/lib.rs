@@ -9,6 +9,7 @@ pub mod fetch_protocol;
 mod handshake_crypto;
 pub mod http;
 pub mod msg;
+pub mod network_protocol;
 pub mod outbox;
 pub mod runtime_protocol;
 pub mod serve;

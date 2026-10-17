@@ -326,3 +326,108 @@ fn shutdown_disposes_all_contexts() {
     assert!(calls.contains(&"dispose_context 1".to_owned()));
     assert!(calls.contains(&"dispose_context 3".to_owned()));
 }
+
+#[test]
+fn browser_session_routes_children_and_detaches_without_closing_pages() {
+    let mut b = Browser::new(Recorder::default());
+    let target = send(&mut b, json!({"id":1,"method":"Target.createTarget","params":{"url":"about:blank"}}))[0]
+        ["result"]["targetId"]
+        .clone();
+    let parent =
+        send(&mut b, json!({"id":2,"method":"Target.attachToBrowserTarget"}))[0]["result"]["sessionId"].clone();
+    let other = send(&mut b, json!({"id":3,"method":"Target.attachToBrowserTarget"}))[0]["result"]["sessionId"].clone();
+    let r = send(&mut b, json!({"id":4,"sessionId":parent,"method":"Browser.getVersion"}));
+    assert_eq!(r[0]["sessionId"], parent);
+    assert!(r[0]["result"]["product"].is_string());
+    let r = send(
+        &mut b,
+        json!({"id":5,"sessionId":parent,"method":"Target.attachToTarget","params":{"targetId":target,"flatten":true}}),
+    );
+    assert_eq!(r[0]["method"], "Target.attachedToTarget");
+    assert_eq!(r[0]["sessionId"], parent);
+    assert_eq!(r[1]["sessionId"], parent);
+    let child = r[1]["result"]["sessionId"].clone();
+    let root =
+        send(&mut b, json!({"id":6,"method":"Target.attachToTarget","params":{"targetId":target,"flatten":true}}))[1]
+            ["result"]["sessionId"]
+            .clone();
+    let r =
+        send(&mut b, json!({"id":7,"sessionId":other,"method":"Target.detachFromTarget","params":{"sessionId":child}}));
+    assert_eq!(r[0]["error"]["code"], -32001);
+    assert_eq!(r[0]["sessionId"], other);
+    let r = send(&mut b, json!({"id":8,"method":"Target.detachFromTarget","params":{"sessionId":parent}}));
+    assert_eq!(r.len(), 3);
+    assert_eq!(r[0]["params"]["sessionId"], child);
+    assert_eq!(r[0]["sessionId"], parent);
+    assert_eq!(r[1]["params"]["sessionId"], parent);
+    assert!(r[1].get("sessionId").is_none());
+    assert_eq!(send(&mut b, json!({"id":9,"sessionId":child,"method":"Page.enable"}))[0]["error"]["code"], -32001);
+    assert_eq!(
+        send(&mut b, json!({"id":10,"sessionId":parent,"method":"Browser.getVersion"}))[0]["error"]["code"],
+        -32001
+    );
+    assert!(send(&mut b, json!({"id":11,"sessionId":root,"method":"Page.enable"}))[0].get("result").is_some());
+    assert!(!b.host().calls.iter().any(|c| c.starts_with("close_page")));
+}
+
+#[test]
+fn close_target_routes_detach_to_browser_parent() {
+    let mut b = Browser::new(Recorder::default());
+    let parent =
+        send(&mut b, json!({"id":1,"method":"Target.attachToBrowserTarget"}))[0]["result"]["sessionId"].clone();
+    let r =
+        send(&mut b, json!({"id":2,"sessionId":parent,"method":"Target.createTarget","params":{"url":"about:blank"}}));
+    assert_eq!(r[0]["sessionId"], parent);
+    let target = r[0]["result"]["targetId"].clone();
+    let child = send(
+        &mut b,
+        json!({"id":3,"sessionId":parent,"method":"Target.attachToTarget","params":{"targetId":target,"flatten":true}}),
+    )[1]["result"]["sessionId"]
+        .clone();
+    let r = send(&mut b, json!({"id":4,"sessionId":parent,"method":"Target.closeTarget","params":{"targetId":target}}));
+    assert_eq!(r[0]["method"], "Target.detachedFromTarget");
+    assert_eq!(r[0]["sessionId"], parent);
+    assert_eq!(r[0]["params"]["sessionId"], child);
+    assert_eq!(r[1], json!({"id":4,"sessionId":parent,"result":{"success":true}}));
+}
+
+#[test]
+fn browser_and_page_sessions_share_budget_and_release_slots() {
+    let mut b = Browser::new(Recorder::default());
+    let target = send(&mut b, json!({"id":1,"method":"Target.createTarget","params":{"url":"about:blank"}}))[0]
+        ["result"]["targetId"]
+        .clone();
+    let page =
+        send(&mut b, json!({"id":2,"method":"Target.attachToTarget","params":{"targetId":target,"flatten":true}}))[1]
+            ["result"]["sessionId"]
+            .clone();
+    for id in 3..514 {
+        assert!(send(&mut b, json!({"id":id,"method":"Target.attachToBrowserTarget"}))[0].get("result").is_some());
+    }
+    assert!(send(&mut b, json!({"id":514,"method":"Target.attachToBrowserTarget"}))[0].get("error").is_some());
+    assert!(send(
+        &mut b,
+        json!({"id":515,"method":"Target.attachToTarget","params":{"targetId":target,"flatten":true}})
+    )[0]
+    .get("error")
+    .is_some());
+    send(&mut b, json!({"id":516,"method":"Target.detachFromTarget","params":{"sessionId":page}}));
+    assert!(send(&mut b, json!({"id":517,"method":"Target.attachToBrowserTarget"}))[0].get("result").is_some());
+}
+
+#[test]
+fn disabling_auto_attach_preserves_manual_sessions() {
+    let mut b = Browser::new(Recorder::default());
+    send(&mut b, json!({"id":1,"method":"Target.setAutoAttach","params":{"autoAttach":true,"flatten":true}}));
+    let r = send(&mut b, json!({"id":2,"method":"Target.createTarget","params":{"url":"about:blank"}}));
+    let auto = r[0]["params"]["sessionId"].clone();
+    let target = r[1]["result"]["targetId"].clone();
+    let manual =
+        send(&mut b, json!({"id":3,"method":"Target.attachToTarget","params":{"targetId":target,"flatten":true}}))[1]
+            ["result"]["sessionId"]
+            .clone();
+    let r = send(&mut b, json!({"id":4,"method":"Target.setAutoAttach","params":{"autoAttach":false,"flatten":true}}));
+    assert_eq!(r.len(), 2);
+    assert_eq!(r[1]["params"]["sessionId"], auto);
+    assert!(send(&mut b, json!({"id":5,"sessionId":manual,"method":"Page.enable"}))[0].get("result").is_some());
+}

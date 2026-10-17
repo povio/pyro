@@ -185,6 +185,25 @@ impl<T> InterceptState<T> {
         self.waiting.remove(&id).ok_or_else(|| CdpError::invalid_params("Invalid InterceptionId."))
     }
 
+    /// Inspect a paused decision without consuming it (parameter validation).
+    pub fn pending(&self, request_id: &str) -> CdpResult<&T> {
+        let id = request_id
+            .strip_prefix("INT-")
+            .and_then(|n| n.parse::<u64>().ok())
+            .ok_or_else(|| CdpError::invalid_params("Invalid InterceptionId."))?;
+        self.waiting.get(&id).ok_or_else(|| CdpError::invalid_params("Invalid InterceptionId."))
+    }
+
+    /// Park a later authentication challenge under the same issued Fetch id.
+    pub fn pause_again(&mut self, request_id: &str, request: T) -> Result<(), T> {
+        let Some(id) = request_id.strip_prefix("INT-").and_then(|n| n.parse::<u64>().ok()) else { return Err(request) };
+        if id == 0 || id >= self.next_id || self.waiting.contains_key(&id) || self.waiting.len() >= MAX_PAUSED {
+            return Err(request);
+        }
+        self.waiting.insert(id, request);
+        Ok(())
+    }
+
     pub fn paused(&self) -> usize {
         self.waiting.len()
     }

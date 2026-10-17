@@ -507,6 +507,8 @@ dependencies = [
 name = "lp-cdp"
 version = "0.1.0"
 dependencies = [
+ "bytes",
+ "http",
  "lp-browser",
  "lp-js",
  "lp-net",

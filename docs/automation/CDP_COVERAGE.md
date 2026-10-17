@@ -10,9 +10,13 @@ Rewrite status:
 - **conditional:** succeeds only when the request is already true of the engine; otherwise it returns an explicit error.
 - **pending:** returns an explicit CDP error (`-32000 … is not supported by lightningpanda`) and never a fabricated success.
 
-Only `about:blank` can load until document loading (W2 `lp-dom`/`lp-net`) is integrated, so the DOM, Input, Network events and Fetch domains are pending.
+HTTP and `data:` document loading now use the real loader. `Network` emits request/redirect/response/data/completion/failure events to enabled page sessions, with response-body capture. Browser contexts own distinct network clients. DOM/Input protocol wiring remains pending; this is not TOS compatibility. Fetch request-stage interception supports continue overrides, fulfill, abort, disable/detach cleanup and server Basic-auth challenges. Response-stage interception, custom status phrases, proxy credentials and non-Basic credential schemes are explicitly unsupported. Fulfillment accepts text headers or base64 NUL-separated binary headers, preserving native value bytes and duplicate entries; the existing Network JSON header display uses UTF-8 replacement for invalid text. Redirect hops have distinct linked Fetch IDs; auth retries retain the hop ID. Only one session per page can own interception; different pages in a context may have separate owners.
 
-Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 22 engine, 12 accepted/recorded only, 2 conditional, 65 pending.
+Storage cookie commands use the network cookie jar, including HTTP response cookies, expiry and context isolation. Negative CDP expiry values mean session cookies. Invalid batches are validated before modifying the real jar. Partitioned/SameParty cookies, non-default priority and source overrides return explicit errors. This does not install document.cookie or localStorage into browser realms.
+
+Capture uses a shared process payload budget (default 64 MiB, 8 MiB/body), at most 4096 response records per page, and bounded network subscriptions (1024 events/8 MiB logical bytes per context). Observer overflow closes the CDP connection instead of silently losing events. Disabling the last Network session, navigation, or page teardown releases retained bodies. Per-session `Network.enable` buffer options are explicitly unsupported. These are logical retention limits, not an RSS measurement; shared chunk allocations and metadata contribute additional memory.
+
+Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 33 engine, 10 accepted/recorded only, 3 conditional, 55 pending.
 
 | Method | Upstream 2ad38773f | Rewrite | Notes |
 | --- | --- | --- | --- |
@@ -23,7 +27,7 @@ Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 22 engi
 | `Browser.grantPermissions` | yes | pending |  |
 | `Browser.resetPermissions` | yes | pending |  |
 | `Browser.setDockTile` | **no** | pending |  |
-| `Browser.setDownloadBehavior` | yes | accepted, recorded only | accepted; no network, so no download can start |
+| `Browser.setDownloadBehavior` | yes | accepted, recorded only | accepted; the loader does not implement download delivery yet |
 | `Browser.setWindowBounds` | yes | accepted, recorded only | stores the bounds, which getWindowForTarget reports back; no page API (outerWidth, screen) observes them yet (upstream: no-op) |
 | `CSS.disable` | **no** | pending |  |
 | `CSS.enable` | yes | pending |  |
@@ -48,12 +52,12 @@ Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 22 engi
 | `Emulation.setScriptExecutionDisabled` | yes | pending |  |
 | `Emulation.setTimezoneOverride` | yes | conditional | succeeds only when it equals the process time zone; otherwise an explicit error |
 | `Emulation.setTouchEmulationEnabled` | yes | pending |  |
-| `Emulation.setUserAgentOverride` | yes | accepted, recorded only | stored; no navigator or HTTP loader exists yet |
-| `Fetch.continueRequest` | yes | pending |  |
-| `Fetch.disable` | yes | pending |  |
-| `Fetch.enable` | yes | pending |  |
-| `Fetch.failRequest` | yes | pending |  |
-| `Fetch.fulfillRequest` | yes | pending |  |
+| `Emulation.setUserAgentOverride` | yes | pending | refused until per-page HTTP and navigator overrides can be applied consistently |
+| `Fetch.continueRequest` | yes | engine | request stage; see supported scope above |
+| `Fetch.disable` | yes | engine | request stage; see supported scope above |
+| `Fetch.enable` | yes | engine | request stage; see supported scope above |
+| `Fetch.failRequest` | yes | engine | request stage; see supported scope above |
+| `Fetch.fulfillRequest` | yes | engine | request stage; see supported scope above |
 | `HeapProfiler.collectGarbage` | **no** | pending |  |
 | `IO.close` | yes | pending |  |
 | `IO.read` | yes | pending |  |
@@ -66,10 +70,10 @@ Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 22 engi
 | `Log.enable` | yes | accepted, recorded only | console goes through Runtime.consoleAPICalled; no Log entries are produced |
 | `Network.clearBrowserCache` | yes | pending |  |
 | `Network.emulateNetworkConditions` | yes | pending |  |
-| `Network.enable` | yes | accepted, recorded only | no network exists yet, so there are no events to report |
-| `Network.getResponseBody` | yes | pending |  |
+| `Network.enable` | yes | engine | subscribes to bounded per-context events; filters by page/session; buffer options unsupported |
+| `Network.getResponseBody` | yes | engine | text/base64 completed captures; explicit errors for unavailable or evicted bodies |
 | `Network.loadNetworkResource` | **no** | pending |  |
-| `Network.setCacheDisabled` | yes | pending |  |
+| `Network.setCacheDisabled` | yes | conditional | no response cache exists; disabling is already true, allowing caching does not require entries |
 | `Network.setExtraHTTPHeaders` | yes | pending |  |
 | `Page.addScriptToEvaluateOnNewDocument` | yes | engine |  |
 | `Page.bringToFront` | yes | accepted, recorded only | single foreground page per target |
@@ -80,7 +84,7 @@ Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 22 engi
 | `Page.getLayoutMetrics` | yes | pending |  |
 | `Page.getNavigationHistory` | yes | pending |  |
 | `Page.handleJavaScriptDialog` | yes | pending |  |
-| `Page.navigate` | yes | engine | about:blank commits; other URLs answer with `errorText` net::ERR_NOT_IMPLEMENTED until document loading lands |
+| `Page.navigate` | yes | engine | about:blank, data and HTTP documents; unsupported schemes/network errors return explicit errorText |
 | `Page.navigateToHistoryEntry` | yes | pending |  |
 | `Page.printToPDF` | yes | pending |  |
 | `Page.reload` | yes | engine | same limits as Page.navigate |
@@ -103,10 +107,10 @@ Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 22 engi
 | `Runtime.releaseObject` | yes | engine |  |
 | `Runtime.runIfWaitingForDebugger` | yes | engine |  |
 | `Security.setIgnoreCertificateErrors` | yes | pending |  |
-| `Storage.clearCookies` | yes | pending |  |
-| `Storage.getCookies` | yes | pending |  |
-| `Storage.setCookies` | yes | pending |  |
-| `Target.attachToBrowserTarget` | yes | pending |  |
+| `Storage.clearCookies` | yes | engine | per-context native cookie jar; omitted context uses a distinct default context |
+| `Storage.getCookies` | yes | engine | per-context native cookie jar; omitted context uses a distinct default context |
+| `Storage.setCookies` | yes | engine | per-context native cookie jar; omitted context uses a distinct default context |
+| `Target.attachToBrowserTarget` | yes | engine | flattened browser sessions support explicit page attachment and scoped replies/events; per-browser-session auto-attach/discovery and nested browser sessions are unsupported |
 | `Target.attachToTarget` | yes | engine |  |
 | `Target.closeTarget` | yes | engine |  |
 | `Target.createBrowserContext` | yes | engine | `proxyServer` is refused |
@@ -118,7 +122,7 @@ Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 22 engi
 | `Tracing.end` | **no** | pending |  |
 | `Tracing.start` | **no** | pending |  |
 
-Browser-level methods not in Playwright's list but implemented: `Target.getTargets`, `Target.getBrowserContexts`, `Target.setDiscoverTargets` (page filters honored), `Target.activateTarget` (validates the target), `Runtime.releaseObjectGroup`, `Emulation.clearDeviceMetricsOverride`, `Page.disable`, `Runtime.disable`.
+Browser-level methods not in Playwright's list but implemented: `Target.getTargets`, `Target.getBrowserContexts`, `Target.setDiscoverTargets` (page filters honored), `Target.activateTarget` (validates the target), `Runtime.releaseObjectGroup`, `Emulation.clearDeviceMetricsOverride`, `Page.disable`, `Runtime.disable`, `Network.disable`. Session methods outside that static list include `Fetch.continueWithAuth` (server Basic).
 
 ## Deliberate differences from upstream
 

@@ -6,13 +6,19 @@
 //! events by [`EngineHost::flush`] afterwards, so no CDP state is borrowed
 //! while JavaScript is on the stack.
 
+mod fetch;
+mod network;
 mod page;
 mod remote;
 mod runtime;
+mod storage;
 
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
+use std::sync::OnceLock;
+
+use crate::network_protocol::{BodyBudget, BodyLimits};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use lp_browser::{BrowserThread, PageEvent, PageId, PageObserver};
@@ -110,6 +116,8 @@ pub(crate) struct Session {
     pub(crate) page_enabled: bool,
     pub(crate) lifecycle_events: bool,
     pub(crate) runtime_enabled: bool,
+    pub(crate) network_enabled: bool,
+    fetch: fetch::FetchSession,
     pub(crate) handles: Rc<RefCell<HandleTable<Persistent>>>,
 }
 
@@ -136,8 +144,8 @@ pub(crate) struct PageState {
     /// Bounds recorded by Browser.setWindowBounds, reported back by getWindowForTarget.
     pub(crate) window_bounds: Option<serde_json::Value>,
     pub(crate) emulated_media: Option<serde_json::Value>,
-    pub(crate) user_agent: Option<(String, Option<String>)>,
     pub(crate) next_script_id: u64,
+    network: network::NetworkPage,
 }
 
 /// The engine side of one CDP connection, living on its browser thread.
@@ -145,8 +153,9 @@ pub struct EngineHost {
     pub thread: BrowserThread,
     pub(crate) out: Outbox,
     collector: Rc<Collector>,
-    contexts: HashSet<ContextKey>,
-    next_context: ContextKey,
+    contexts: HashMap<ContextKey, network::NetworkContext>,
+    body_budget: BodyBudget,
+    network_wake: network::NetworkWake,
     pub(crate) pages: HashMap<PageKey, PageState>,
     pub(crate) sessions: HashMap<String, Session>,
     pub(crate) next_exception_id: i64,
@@ -156,6 +165,12 @@ pub struct EngineHost {
 impl EngineHost {
     /// Creates the engine for the current thread (at most one per thread).
     pub fn new(out: Outbox) -> CdpResult<EngineHost> {
+        static BODY_BUDGET: OnceLock<BodyBudget> = OnceLock::new();
+        Self::with_body_budget(out, BODY_BUDGET.get_or_init(|| BodyBudget::new(BodyLimits::default())).clone())
+    }
+
+    /// Uses a caller-supplied process budget (shared by every connection).
+    pub fn with_body_budget(out: Outbox, body_budget: BodyBudget) -> CdpResult<EngineHost> {
         let mut thread =
             BrowserThread::new().map_err(|e| CdpError::server(format!("JavaScript engine unavailable: {e}")))?;
         thread
@@ -168,8 +183,9 @@ impl EngineHost {
             thread,
             out,
             collector,
-            contexts: HashSet::new(),
-            next_context: 1,
+            contexts: HashMap::new(),
+            body_budget,
+            network_wake: network::NetworkWake::default(),
             pages: HashMap::new(),
             sessions: HashMap::new(),
             next_exception_id: 1,
@@ -190,7 +206,10 @@ impl EngineHost {
     ) -> lp_runtime::RunOutcome {
         let collector = &self.collector;
         let thread = &mut self.thread;
-        thread.event_loop.run_until(&mut thread.browser, deadline, false, |_| wake() || !collector.is_empty())
+        let network_wake = &self.network_wake;
+        thread.event_loop.run_until(&mut thread.browser, deadline, false, |_| {
+            wake() || !collector.is_empty() || network_wake.ready()
+        })
     }
 
     /// Disposes every page and realm (connection teardown).
@@ -198,6 +217,9 @@ impl EngineHost {
         self.sessions.clear();
         self.pages.clear();
         self.thread.browser.close_all();
+        for (_, context) in self.contexts.drain() {
+            self.thread.browser.close_context(context.id);
+        }
         self.collector.queue.borrow_mut().clear();
     }
 
@@ -208,7 +230,7 @@ impl EngineHost {
 
     /// True when engine notifications are waiting for [`EngineHost::flush`].
     pub fn has_pending_events(&self) -> bool {
-        !self.collector.is_empty()
+        !self.collector.is_empty() || self.network_wake.ready()
     }
 
     pub(crate) fn page_key(&self, id: PageId) -> Option<PageKey> {
@@ -241,6 +263,11 @@ impl EngineHost {
         while let Some(item) = self.collector.pop() {
             match item {
                 Queued::Page(page, event) => {
+                    // Clear old captures at navigation start before consuming
+                    // network events for the new document.
+                    if !matches!(event, PageEvent::FrameNavigate { .. }) {
+                        self.flush_network();
+                    }
                     if let Some(key) = self.page_key(page) {
                         self.on_page_event(key, event);
                     }
@@ -249,6 +276,8 @@ impl EngineHost {
                 Queued::Exception { realm, exception, timestamp } => self.on_exception(realm, exception, timestamp),
             }
         }
+        self.flush_network();
+        self.flush_fetch();
     }
 
     /// Page owning `realm`, if any.
@@ -271,11 +300,11 @@ impl EngineHost {
             "Runtime" => self.runtime_domain(action, cmd),
             "Emulation" => self.emulation_domain(action, cmd),
             "Browser" => self.window_domain(action, cmd),
-            // Domains with nothing to report yet. Enabling them is truthful:
-            // no network exists before lp-net is integrated (only about:blank
-            // loads), and the engine produces no Log-domain entries (console
-            // goes through Runtime.consoleAPICalled as in Chrome).
-            "Network" | "Log" if matches!(action, "enable" | "disable") => Ok(Some(serde_json::json!({}))),
+            // Console entries go through Runtime.consoleAPICalled; there
+            // are no additional Log-domain entries yet.
+            "Network" => self.network_domain(action, cmd),
+            "Fetch" => self.fetch_domain(action, cmd),
+            "Log" if matches!(action, "enable" | "disable") => Ok(Some(serde_json::json!({}))),
             _ => Err(CdpError::unsupported(&cmd.command.method)),
         }
     }
@@ -351,21 +380,10 @@ impl EngineHost {
                 }
                 Ok(Some(serde_json::json!({})))
             }
-            // navigator and HTTP loading do not exist yet; the override is
-            // recorded for the loader and navigator once they land.
-            "setUserAgentOverride" => {
-                #[derive(Deserialize)]
-                #[serde(rename_all = "camelCase")]
-                struct P {
-                    user_agent: String,
-                    accept_language: Option<String>,
-                }
-                let p: P = cmd.command.params()?;
-                if let Some(state) = self.pages.get_mut(&cmd.page) {
-                    state.user_agent = Some((p.user_agent, p.accept_language));
-                }
-                Ok(Some(serde_json::json!({})))
-            }
+            // HTTP now loads real requests. A recorded-only override would
+            // report success without changing them; per-page overrides await
+            // the matching loader and navigator implementation.
+            "setUserAgentOverride" => Err(CdpError::unsupported(&cmd.command.method)),
             // JavaScriptCore's Intl/Date use the process locale and time zone;
             // per-page overrides are not implemented. Requests that match the
             // current values are true no-ops; others are refused.
@@ -408,9 +426,9 @@ impl EngineHost {
 
 impl Host for EngineHost {
     fn create_context(&mut self) -> CdpResult<ContextKey> {
-        let key = self.next_context;
-        self.next_context += 1;
-        self.contexts.insert(key);
+        let id = self.thread.browser.create_context().map_err(|e| CdpError::server(e.to_string()))?;
+        let key = u64::from(id.0);
+        self.contexts.insert(key, network::NetworkContext::new(id));
         Ok(key)
     }
 
@@ -419,14 +437,22 @@ impl Host for EngineHost {
         for page in pages {
             self.close_page(page);
         }
-        self.contexts.remove(&context);
+        if let Some(context) = self.contexts.remove(&context) {
+            self.thread.browser.close_context(context.id);
+        }
     }
 
     fn create_page(&mut self, context: ContextKey) -> CdpResult<(PageKey, String)> {
-        if !self.contexts.contains(&context) {
-            return Err(CdpError::invalid_params("No browser context with the given id found"));
-        }
-        let id = self.thread.browser.create_page().map_err(|e| CdpError::server(format!("cannot create page: {e}")))?;
+        let context_id = self
+            .contexts
+            .get(&context)
+            .ok_or_else(|| CdpError::invalid_params("No browser context with the given id found"))?
+            .id;
+        let id = self
+            .thread
+            .browser
+            .create_page_in(context_id)
+            .map_err(|e| CdpError::server(format!("cannot create page: {e}")))?;
         let key = PageKey::from(id.0);
         self.pages.insert(
             key,
@@ -440,8 +466,8 @@ impl Host for EngineHost {
                 viewport: None,
                 window_bounds: None,
                 emulated_media: None,
-                user_agent: None,
                 next_script_id: 1,
+                network: network::NetworkPage::new(self.body_budget.clone()),
             },
         );
         // Events of the initial about:blank load precede any session.
@@ -466,6 +492,7 @@ impl Host for EngineHost {
             }
         }
         self.thread.browser.close_page(state.id);
+        self.update_network_subscriptions();
         // Realm/frame teardown events have no session left to go to.
         self.flush();
     }
@@ -492,6 +519,8 @@ impl Host for EngineHost {
                 page_enabled: false,
                 lifecycle_events: false,
                 runtime_enabled: false,
+                network_enabled: false,
+                fetch: fetch::FetchSession::default(),
                 handles: Rc::new(RefCell::new(HandleTable::new(HandleTable::<Persistent>::DEFAULT_LIMIT))),
             },
         );
@@ -504,10 +533,12 @@ impl Host for EngineHost {
         // No reply may reach a detached session; its handles go away even if
         // pending promise reactions are still referenced by JavaScript.
         self.pending.cancel_session(session_id);
+        self.disable_fetch(session_id);
         if let Some(session) = self.sessions.remove(session_id) {
             session.handles.borrow_mut().clear();
         }
         self.update_runtime_wanted();
+        self.update_network_subscriptions();
     }
 
     fn page_command(&mut self, cmd: PageCommand<'_, '_>, _out: &mut dyn Sink) {
@@ -524,29 +555,39 @@ impl Host for EngineHost {
 
     fn browser_command(&mut self, command: &Command<'_>, context: Option<ContextKey>, out: &mut dyn Sink) {
         match command.method.as_ref() {
+            "Storage.getCookies" | "Storage.setCookies" | "Storage.clearCookies" => {
+                match self.storage_command(command, context) {
+                    Ok(result) => out.send(msg::result_frame(command.id, &result, command.session_id())),
+                    Err(error) => out.send(msg::error_frame(Some(command.id), &error, command.session_id())),
+                }
+            }
             "Browser.setDownloadBehavior" => {
                 #[derive(Deserialize)]
                 struct P {
                     behavior: String,
                 }
                 let result = command.params::<P>().and_then(|p| match p.behavior.as_str() {
-                    // Nothing can be downloaded yet (no network), so denying
+                    // Download delivery is not implemented, so denying
                     // and the default are exactly what happens.
                     "deny" | "default" => Ok(()),
                     // Playwright asks for allowAndName on every new context.
-                    // Downloads cannot start without a network stack, so the
-                    // setting is accepted; real download support is tracked in
+                    // Download delivery is not implemented; the setting is
+                    // accepted and the missing support is tracked in
                     // docs/automation/CDP_COVERAGE.md.
                     "allow" | "allowAndName" => Ok(()),
                     _ => Err(CdpError::invalid_params("Unrecognized download behavior")),
                 });
                 let _ = context;
                 match result {
-                    Ok(()) => out.send(msg::result_frame(command.id, &Empty {}, None)),
-                    Err(e) => out.send(msg::error_frame(Some(command.id), &e, None)),
+                    Ok(()) => out.send(msg::result_frame(command.id, &Empty {}, command.session_id())),
+                    Err(e) => out.send(msg::error_frame(Some(command.id), &e, command.session_id())),
                 }
             }
-            _ => out.send(msg::error_frame(Some(command.id), &CdpError::unsupported(&command.method), None)),
+            _ => out.send(msg::error_frame(
+                Some(command.id),
+                &CdpError::unsupported(&command.method),
+                command.session_id(),
+            )),
         }
     }
 }
