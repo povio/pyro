@@ -22,6 +22,16 @@ templates as HTML rows and opens the nested folder details".
   keys work on both.
 - The fix belongs to W3 (lp-cdp) and has been routed there.
 
+After W3's fix, the unchanged docubox-templates file will be rerun. Accepting
+`commands` would only stop rejecting Playwright's macOS key events. It would not
+claim broad keyboard or editing-command support.
+
+**Separate known WebAPI gap, not in the TOS path.** While building the repro,
+`page.setContent` failed on the rewrite with "document.write is not supported",
+because Playwright implements `setContent` with `document.write`. The repro
+served its page over HTTP instead. This gap is recorded but deferred, and no
+implementation is part of this increment.
+
 The other 12 cases pass:
 - **integration channels:** canvas-table listing and details, sorting by name,
   last-polled, created and updated dates, diacritics-insensitive search,
