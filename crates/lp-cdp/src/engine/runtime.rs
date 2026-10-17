@@ -1,9 +1,9 @@
 //! `Runtime` domain over lp-js (upstream delegates this to v8_inspector).
 
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::cell::{Cell, RefCell};
+use std::rc::{Rc, Weak};
 
-use lp_js::{ConsoleLevel, JsException, Persistent, Realm, RealmId, Scope, Value};
+use lp_js::{ConsoleLevel, JsException, Persistent, Realm, RealmId, RootedVec, Scope, Value};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -39,49 +39,92 @@ pub(crate) fn context_description(
     })
 }
 
+/// Most `awaitPromise` replies that may wait for settlement per connection.
+pub(crate) const MAX_PENDING_REPLIES: usize = 10_000;
+
 /// What to do with a value once it is available (now or after a promise settles).
-struct Reply {
+///
+/// A reply is answered at most once. Pending replies are registered with the
+/// host: detaching their session cancels them silently, and destroying their
+/// execution context answers them with an error, as Chrome does. The handle
+/// table is held weakly so a closure kept alive by JavaScript cannot keep a
+/// detached session's handles.
+pub(crate) struct Reply {
     out: Outbox,
-    session_id: String,
+    pub(crate) session_id: String,
     id: u64,
     by_value: bool,
     group: Option<String>,
-    context: ExecutionContextId,
-    handles: Rc<RefCell<HandleTable<Persistent>>>,
+    pub(crate) context: ExecutionContextId,
+    handles: Weak<RefCell<HandleTable<Persistent>>>,
+    done: Cell<bool>,
 }
 
 impl Reply {
     fn value(&self, scope: &Scope<'_>, value: Value<'_>) {
-        let result = remote::describe(scope, value, self.by_value)
-            .and_then(|d| remote::register(d, &self.handles, self.context, self.group.as_deref()));
-        match result {
+        if self.done.get() {
+            return;
+        }
+        let Some(handles) = self.handles.upgrade() else { return self.done.set(true) };
+        let result = remote::describe(scope, value, self.by_value);
+        if self.done.get() {
+            return; // describe ran JavaScript, which may have cancelled us
+        }
+        match result.and_then(|d| remote::register(d, &handles, self.context, self.group.as_deref())) {
             Ok(remote) => self.send(&json!({ "result": remote })),
             Err(e) => self.error(&e),
         }
     }
 
     fn exception(&self, scope: &Scope<'_>, exception: &JsException, exception_id: i64) {
+        if self.done.get() {
+            return;
+        }
         let details = remote::exception_details(scope, exception, exception_id, Some(self.context));
         let result = details.exception.clone().unwrap_or_else(RemoteObject::undefined);
         self.send(&json!({ "result": result, "exceptionDetails": details }));
     }
 
     fn send(&self, result: &serde_json::Value) {
-        self.out.push(msg::result_frame(self.id, result, Some(&self.session_id)));
+        if !self.done.replace(true) {
+            self.out.push(msg::result_frame(self.id, result, Some(&self.session_id)));
+        }
     }
 
-    fn error(&self, error: &CdpError) {
-        self.out.push(msg::error_frame(Some(self.id), error, Some(&self.session_id)));
+    pub(crate) fn error(&self, error: &CdpError) {
+        if !self.done.replace(true) {
+            self.out.push(msg::error_frame(Some(self.id), error, Some(&self.session_id)));
+        }
+    }
+
+    /// Drops the reply without answering (its session is gone).
+    pub(crate) fn cancel(&self) {
+        self.done.set(true);
+    }
+
+    pub(crate) fn is_done(&self) -> bool {
+        self.done.get()
     }
 
     /// Replies with `value`, or with its settlement when `await_promise` is
     /// set and the value is thenable. The awaited reply runs as a microtask.
-    fn settle(self, scope: &Scope<'_>, value: Value<'_>, await_promise: bool, exception_id: i64) {
+    fn settle(
+        self,
+        host_pending: &PendingReplies,
+        scope: &Scope<'_>,
+        value: Value<'_>,
+        await_promise: bool,
+        exception_id: i64,
+    ) {
         if !await_promise || !is_thenable(value) {
             self.value(scope, value);
             return;
         }
         let reply = Rc::new(self);
+        if let Err(e) = host_pending.register(&reply) {
+            reply.error(&e);
+            return;
+        }
         let (ok, err) = (reply.clone(), reply.clone());
         let then = scope.then(
             value,
@@ -93,6 +136,47 @@ impl Reply {
         );
         if let Err(e) = then {
             reply.error(&remote::js_to_cdp(e));
+        }
+    }
+}
+
+/// Replies waiting for a promise to settle, held weakly (the promise
+/// reactions own them).
+#[derive(Default)]
+pub(crate) struct PendingReplies {
+    replies: RefCell<Vec<Weak<Reply>>>,
+}
+
+impl PendingReplies {
+    fn register(&self, reply: &Rc<Reply>) -> CdpResult<()> {
+        let mut replies = self.replies.borrow_mut();
+        replies.retain(|r| r.upgrade().is_some_and(|r| !r.is_done()));
+        if replies.len() >= MAX_PENDING_REPLIES {
+            return Err(CdpError::server("Too many pending awaitPromise evaluations"));
+        }
+        replies.push(Rc::downgrade(reply));
+        Ok(())
+    }
+
+    fn live(&self) -> Vec<Rc<Reply>> {
+        self.replies.borrow().iter().filter_map(Weak::upgrade).filter(|r| !r.is_done()).collect()
+    }
+
+    /// Cancels every pending reply of a detached session.
+    pub(crate) fn cancel_session(&self, session_id: &str) {
+        for reply in self.live() {
+            if reply.session_id == session_id {
+                reply.cancel();
+            }
+        }
+    }
+
+    /// Fails every pending reply whose execution context was destroyed.
+    pub(crate) fn fail_context(&self, context: ExecutionContextId) {
+        for reply in self.live() {
+            if reply.context == context {
+                reply.error(&CdpError::server("Execution context was destroyed."));
+            }
         }
     }
 }
@@ -164,11 +248,13 @@ impl EngineHost {
         match action {
             "enable" => {
                 self.session_mut(cmd.session_id)?.runtime_enabled = true;
+                self.update_runtime_wanted();
                 self.announce_contexts(cmd.page, cmd.session_id);
                 Ok(Some(json!({})))
             }
             "disable" => {
                 self.session_mut(cmd.session_id)?.runtime_enabled = false;
+                self.update_runtime_wanted();
                 Ok(Some(json!({})))
             }
             "evaluate" => self.evaluate(cmd).map(|()| None),
@@ -242,7 +328,8 @@ impl EngineHost {
             by_value,
             group,
             context: context_id(realm.id()),
-            handles: session.handles.clone(),
+            handles: Rc::downgrade(&session.handles),
+            done: Cell::new(false),
         })
     }
 
@@ -253,7 +340,7 @@ impl EngineHost {
         let exception_id = self.next_exception_id();
         let scope = realm.scope().map_err(remote::js_to_cdp)?;
         match scope.eval(&p.expression, None, 1) {
-            Ok(value) => reply.settle(&scope, value, p.await_promise, exception_id),
+            Ok(value) => reply.settle(&self.pending, &scope, value, p.await_promise, exception_id),
             Err(error) => reply.exception(&scope, &error.details(&scope), exception_id),
         }
         Ok(())
@@ -263,29 +350,36 @@ impl EngineHost {
         let p: CallFunctionOnParams = cmd.command.params()?;
         let handles =
             self.sessions.get(cmd.session_id).ok_or_else(|| CdpError::server("session is gone"))?.handles.clone();
-        // The target object decides the realm; otherwise executionContextId.
-        let (realm, this) = match &p.object_id {
+        // The target object decides the realm (and, unless overridden, the
+        // object group, which CDP says is inherited); otherwise executionContextId.
+        let (realm, this, inherited_group) = match &p.object_id {
             Some(object_id) => {
-                let (context, _) = handles.borrow().get(object_id).map(|(c, _)| (c, ()))?;
-                (self.target_realm(cmd.page, Some(context))?, Some(object_id.clone()))
+                let table = handles.borrow();
+                let (context, handle) = table.get(object_id)?;
+                let this = handle.clone();
+                let group = table.group_of(object_id).map(str::to_owned);
+                drop(table);
+                (self.target_realm(cmd.page, Some(context))?, Some(this), group)
             }
-            None if p.execution_context_id.is_some() => (self.target_realm(cmd.page, p.execution_context_id)?, None),
+            None if p.execution_context_id.is_some() => {
+                (self.target_realm(cmd.page, p.execution_context_id)?, None, None)
+            }
             None => return Err(CdpError::invalid_params("Either objectId or executionContextId must be specified")),
         };
         let context = context_id(realm.id());
-        let reply = self.reply_for(cmd, p.return_by_value, p.object_group, &realm)?;
+        let group = p.object_group.or(inherited_group);
+        let reply = self.reply_for(cmd, p.return_by_value, group, &realm)?;
         let exception_id = self.next_exception_id();
         let scope = realm.scope().map_err(remote::js_to_cdp)?;
-        let this_value = match &this {
-            Some(id) => Some(handles.borrow().get(id)?.1.get(&scope)),
-            None => None,
-        };
-        let mut args = Vec::with_capacity(p.arguments.len());
+        // Arguments live on the heap while the function source is compiled
+        // and called, so they must be GC roots (docs/ARCHITECTURE.md rule 1).
+        let mut args = RootedVec::new();
         for arg in &p.arguments {
-            args.push(remote::argument(&scope, arg, &handles, context)?);
+            let value = remote::argument(&scope, arg, &handles, context)?;
+            args.push(&scope, value);
         }
-        match scope.call_function(&p.function_declaration, this_value, &args) {
-            Ok(value) => reply.settle(&scope, value, p.await_promise, exception_id),
+        match scope.call_function_rooted(&p.function_declaration, this.as_ref(), &args) {
+            Ok(value) => reply.settle(&self.pending, &scope, value, p.await_promise, exception_id),
             Err(error) => reply.exception(&scope, &error.details(&scope), exception_id),
         }
         Ok(())
@@ -295,10 +389,14 @@ impl EngineHost {
         let p: GetPropertiesParams = cmd.command.params()?;
         let handles =
             self.sessions.get(cmd.session_id).ok_or_else(|| CdpError::server("session is gone"))?.handles.clone();
-        let (context, _) = handles.borrow().get(&p.object_id).map(|(c, _)| (c, ()))?;
+        let (context, parent, group) = {
+            let table = handles.borrow();
+            let (context, handle) = table.get(&p.object_id)?;
+            (context, handle.clone(), table.group_of(&p.object_id).map(str::to_owned))
+        };
         let realm = self.target_realm(cmd.page, Some(context))?;
         let scope = realm.scope().map_err(remote::js_to_cdp)?;
-        let object = handles.borrow().get(&p.object_id)?.1.get(&scope);
+        let object = parent.get(&scope);
         let object = object.as_object().ok_or_else(|| CdpError::server("Value with given id is not an object"))?;
         let list = scope.own_properties(object, p.own_properties).map_err(remote::js_to_cdp)?;
         let len = list.get("length").and_then(|l| l.to_number()).map_err(remote::js_to_cdp)? as u32;
@@ -340,7 +438,8 @@ impl EngineHost {
         let mut result = Vec::with_capacity(collected.len());
         for (mut descriptor, parts) in collected {
             for (described, slot) in parts {
-                let remote = remote::register(described, &handles, context, None)?;
+                // Property handles inherit the object's group (CDP semantics).
+                let remote = remote::register(described, &handles, context, group.as_deref())?;
                 match slot {
                     Slot::Value => descriptor.value = Some(remote),
                     Slot::Get => descriptor.get = Some(remote),

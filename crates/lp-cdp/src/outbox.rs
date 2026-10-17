@@ -27,13 +27,13 @@ struct Budget {
 /// is queued and the writer closes the connection (1008).
 #[derive(Clone)]
 pub struct Outbox {
-    tx: mpsc::UnboundedSender<FrameBytes>,
+    tx: mpsc::UnboundedSender<Outbound>,
     budget: Arc<Budget>,
 }
 
 /// Receiving end used by the connection writer.
 pub struct OutboundRx {
-    rx: mpsc::UnboundedReceiver<FrameBytes>,
+    rx: mpsc::UnboundedReceiver<Outbound>,
     budget: Arc<Budget>,
 }
 
@@ -59,13 +59,27 @@ impl Outbox {
         let len = frame.as_ref().len();
         let queued = self.budget.queued.fetch_add(len, Ordering::Relaxed) + len;
         if queued > self.budget.limit {
-            self.budget.exceeded.store(true, Ordering::Relaxed);
             self.budget.queued.fetch_sub(len, Ordering::Relaxed);
+            self.exceed();
             return;
         }
-        if self.tx.send(frame).is_err() {
+        if self.tx.send(Outbound::Frame(frame)).is_err() {
             self.budget.queued.fetch_sub(len, Ordering::Relaxed);
         }
+    }
+
+    /// Marks the connection over budget and wakes the writer, which closes
+    /// it (1008). Used for the outbound queue and other per-connection
+    /// budgets (queued engine events).
+    pub fn exceed(&self) {
+        if !self.budget.exceeded.swap(true, Ordering::Relaxed) {
+            // Not counted against the budget: it is the wake-up itself.
+            let _ = self.tx.send(Outbound::Exceeded);
+        }
+    }
+
+    pub fn is_exceeded(&self) -> bool {
+        self.budget.exceeded.load(Ordering::Relaxed)
     }
 
     /// Encoded bytes waiting to be written (diagnostics/tests).
@@ -80,9 +94,18 @@ impl OutboundRx {
         if self.budget.exceeded.load(Ordering::Relaxed) {
             return Some(Outbound::Exceeded);
         }
-        let frame = self.rx.recv().await?;
-        self.budget.queued.fetch_sub(frame.as_ref().len(), Ordering::Relaxed);
-        Some(Outbound::Frame(frame))
+        let item = self.rx.recv().await?;
+        Some(self.account(item))
+    }
+
+    fn account(&self, item: Outbound) -> Outbound {
+        match item {
+            Outbound::Frame(frame) => {
+                self.budget.queued.fetch_sub(frame.as_ref().len(), Ordering::Relaxed);
+                Outbound::Frame(frame)
+            }
+            Outbound::Exceeded => Outbound::Exceeded,
+        }
     }
 }
 
@@ -92,9 +115,8 @@ impl OutboundRx {
         if self.budget.exceeded.load(Ordering::Relaxed) {
             return Some(Outbound::Exceeded);
         }
-        let frame = self.rx.try_recv().ok()?;
-        self.budget.queued.fetch_sub(frame.as_ref().len(), Ordering::Relaxed);
-        Some(Outbound::Frame(frame))
+        let item = self.rx.try_recv().ok()?;
+        Some(self.account(item))
     }
 }
 
@@ -123,6 +145,17 @@ mod tests {
         out.push(frame(100)); // exceeds 300 with headers
         out.push(frame(1));
         assert!(matches!(rx.recv().await, Some(Outbound::Exceeded)));
+    }
+
+    #[tokio::test]
+    async fn overflow_wakes_a_waiting_receiver() {
+        let (out, mut rx) = Outbox::channel(50);
+        let waiter = tokio::spawn(async move { rx.recv().await });
+        tokio::task::yield_now().await;
+        out.push(frame(100)); // larger than the whole budget
+        let woke = tokio::time::timeout(std::time::Duration::from_secs(2), waiter).await;
+        assert!(matches!(woke, Ok(Ok(Some(Outbound::Exceeded)))), "receiver must wake on overflow");
+        drop(out);
     }
 
     #[tokio::test]

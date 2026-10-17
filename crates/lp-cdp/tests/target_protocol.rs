@@ -262,6 +262,41 @@ fn filters_excluding_pages_are_honored() {
 }
 
 #[test]
+fn session_budget_is_checked_before_creating_targets() {
+    let mut b = Browser::new(Recorder::default());
+    let target =
+        send(&mut b, json!({"id":1,"method":"Target.createTarget","params":{}}))[0]["result"]["targetId"].clone();
+    for i in 0..lp_cdp::target::MAX_SESSIONS {
+        let r = send(
+            &mut b,
+            json!({"id": 10 + i, "method":"Target.attachToTarget","params":{"targetId":target,"flatten":true}}),
+        );
+        assert!(r.last().unwrap().get("result").is_some(), "attach {i}");
+    }
+    send(
+        &mut b,
+        json!({"id":2,"method":"Target.setAutoAttach","params":{"autoAttach":true,"waitForDebuggerOnStart":false,"flatten":true}}),
+    );
+    let r = send(&mut b, json!({"id":3,"method":"Target.createTarget","params":{}}));
+    assert_eq!(r.last().unwrap()["error"]["message"], "Too many sessions");
+    let r = send(&mut b, json!({"id":4,"method":"Target.getTargets"}));
+    assert_eq!(r[0]["result"]["targetInfos"].as_array().unwrap().len(), 1, "no target leaked");
+}
+
+#[test]
+fn get_targets_honors_filters() {
+    let mut b = Browser::new(Recorder::default());
+    send(&mut b, json!({"id":1,"method":"Target.createTarget","params":{}}));
+    let r = send(
+        &mut b,
+        json!({"id":2,"method":"Target.getTargets","params":{"filter":[{"type":"page","exclude":true},{}]}}),
+    );
+    assert_eq!(r[0]["result"]["targetInfos"], json!([]));
+    let r = send(&mut b, json!({"id":3,"method":"Target.getTargets","params":{"filter":[{}]}}));
+    assert_eq!(r[0]["result"]["targetInfos"].as_array().unwrap().len(), 1);
+}
+
+#[test]
 fn errors_are_reported_with_ids() {
     let mut b = Browser::new(Recorder::default());
     let r = send(&mut b, json!({"id":1,"method":"Nope.nope"}));

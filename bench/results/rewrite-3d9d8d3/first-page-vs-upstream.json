@@ -1,0 +1,173 @@
+{
+  "runs": 10,
+  "flags": [
+    "--log-level",
+    "error",
+    "--experimental-features",
+    "cors",
+    "--load-resources",
+    "stylesheet",
+    "--load-resources",
+    "iframe"
+  ],
+  "summary": {
+    "/Users/povioserver/lp-baseline/browser/zig-out/bin/lightpanda": {
+      "ready": 57,
+      "connected": 60.6,
+      "page": 63,
+      "evaluated": 64.7
+    },
+    "/Users/povioserver/Documents/GitHub/lightningpanda/bench/../target/release/lightningpanda": {
+      "ready": 6.8,
+      "connected": 10.4,
+      "page": 12.9,
+      "evaluated": 14.4
+    }
+  },
+  "results": {
+    "/Users/povioserver/lp-baseline/browser/zig-out/bin/lightpanda": [
+      {
+        "ready": 103.4,
+        "connected": 139.1,
+        "page": 151.7,
+        "evaluated": 162.5,
+        "error": null
+      },
+      {
+        "ready": 57.4,
+        "connected": 61.8,
+        "page": 64.4,
+        "evaluated": 66.1,
+        "error": null
+      },
+      {
+        "ready": 57.7,
+        "connected": 61.2,
+        "page": 63.8,
+        "evaluated": 65.5,
+        "error": null
+      },
+      {
+        "ready": 57,
+        "connected": 60.6,
+        "page": 63,
+        "evaluated": 64.7,
+        "error": null
+      },
+      {
+        "ready": 55.9,
+        "connected": 59.2,
+        "page": 61.4,
+        "evaluated": 63.2,
+        "error": null
+      },
+      {
+        "ready": 56.4,
+        "connected": 59.6,
+        "page": 61.8,
+        "evaluated": 63.6,
+        "error": null
+      },
+      {
+        "ready": 55.4,
+        "connected": 58.6,
+        "page": 61,
+        "evaluated": 62.8,
+        "error": null
+      },
+      {
+        "ready": 58.2,
+        "connected": 61.2,
+        "page": 63.6,
+        "evaluated": 65.2,
+        "error": null
+      },
+      {
+        "ready": 55.2,
+        "connected": 58.2,
+        "page": 60.6,
+        "evaluated": 62.3,
+        "error": null
+      },
+      {
+        "ready": 56.1,
+        "connected": 59.2,
+        "page": 61.5,
+        "evaluated": 63.3,
+        "error": null
+      }
+    ],
+    "/Users/povioserver/Documents/GitHub/lightningpanda/bench/../target/release/lightningpanda": [
+      {
+        "ready": 7.4,
+        "connected": 11.2,
+        "page": 13.9,
+        "evaluated": 15.3,
+        "error": null
+      },
+      {
+        "ready": 7,
+        "connected": 11,
+        "page": 14,
+        "evaluated": 15.5,
+        "error": null
+      },
+      {
+        "ready": 7,
+        "connected": 10.7,
+        "page": 13.3,
+        "evaluated": 14.6,
+        "error": null
+      },
+      {
+        "ready": 6.8,
+        "connected": 10.3,
+        "page": 12.8,
+        "evaluated": 14.1,
+        "error": null
+      },
+      {
+        "ready": 6.7,
+        "connected": 10.5,
+        "page": 12.9,
+        "evaluated": 14.2,
+        "error": null
+      },
+      {
+        "ready": 6.8,
+        "connected": 10.2,
+        "page": 12.6,
+        "evaluated": 13.9,
+        "error": null
+      },
+      {
+        "ready": 6.7,
+        "connected": 10.2,
+        "page": 13,
+        "evaluated": 14.4,
+        "error": null
+      },
+      {
+        "ready": 6.8,
+        "connected": 10.2,
+        "page": 12.5,
+        "evaluated": 13.8,
+        "error": null
+      },
+      {
+        "ready": 6.7,
+        "connected": 10.1,
+        "page": 12.6,
+        "evaluated": 13.9,
+        "error": null
+      },
+      {
+        "ready": 6.8,
+        "connected": 10.4,
+        "page": 12.7,
+        "evaluated": 14.8,
+        "error": null
+      }
+    ]
+  }
+}

@@ -10,7 +10,7 @@ mod page;
 mod remote;
 mod runtime;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -31,14 +31,32 @@ pub(crate) enum Queued {
     Exception { realm: RealmId, exception: JsException, timestamp: f64 },
 }
 
-#[derive(Default)]
+/// Most engine notifications queued between flushes. A page producing more
+/// within one task (e.g. a tight console.log loop) exceeds the connection's
+/// budget: the connection is closed (1008) rather than growing without bound.
+pub(crate) const MAX_QUEUED_EVENTS: usize = 100_000;
+
 pub(crate) struct Collector {
     queue: RefCell<VecDeque<Queued>>,
+    out: Outbox,
+    /// Whether any session wants console/exception events; when none does,
+    /// console arguments are not rooted at all.
+    runtime_wanted: Cell<bool>,
 }
 
 impl Collector {
+    fn new(out: Outbox) -> Self {
+        Self { queue: RefCell::new(VecDeque::new()), out, runtime_wanted: Cell::new(false) }
+    }
+
     fn push(&self, item: Queued) {
-        self.queue.borrow_mut().push_back(item);
+        let mut queue = self.queue.borrow_mut();
+        if queue.len() >= MAX_QUEUED_EVENTS {
+            drop(queue);
+            self.out.exceed();
+            return;
+        }
+        queue.push_back(item);
     }
 
     fn pop(&self) -> Option<Queued> {
@@ -63,16 +81,25 @@ impl PageObserver for Collector {
 
 impl EngineHooks for Collector {
     fn console_api(&self, realm: &Realm, level: ConsoleLevel, args: &[Value<'_>]) {
+        if !self.runtime_wanted.get() || self.out.is_exceeded() {
+            return;
+        }
         let Ok(scope) = realm.scope() else { return };
         let args = args.iter().map(|v| Persistent::new(&scope, *v)).collect();
         self.push(Queued::Console { realm: realm.id(), level, args, timestamp: epoch_ms() });
     }
 
     fn exception_thrown(&self, realm: &Realm, exception: &JsException) {
+        if !self.runtime_wanted.get() {
+            return;
+        }
         self.push(Queued::Exception { realm: realm.id(), exception: exception.clone(), timestamp: epoch_ms() });
     }
 
     fn unhandled_rejection(&self, realm: &Realm, exception: &JsException) {
+        if !self.runtime_wanted.get() {
+            return;
+        }
         self.push(Queued::Exception { realm: realm.id(), exception: exception.clone(), timestamp: epoch_ms() });
     }
 }
@@ -106,6 +133,8 @@ pub(crate) struct PageState {
     /// `Page.navigate`/`reload` requests awaiting commit or failure: (request id, session id).
     pub(crate) pending_navigations: Vec<(u64, String)>,
     pub(crate) viewport: Option<Viewport>,
+    /// Bounds recorded by Browser.setWindowBounds, reported back by getWindowForTarget.
+    pub(crate) window_bounds: Option<serde_json::Value>,
     pub(crate) emulated_media: Option<serde_json::Value>,
     pub(crate) user_agent: Option<(String, Option<String>)>,
     pub(crate) next_script_id: u64,
@@ -121,6 +150,7 @@ pub struct EngineHost {
     pub(crate) pages: HashMap<PageKey, PageState>,
     pub(crate) sessions: HashMap<String, Session>,
     pub(crate) next_exception_id: i64,
+    pub(crate) pending: runtime::PendingReplies,
 }
 
 impl EngineHost {
@@ -131,7 +161,7 @@ impl EngineHost {
         thread
             .enable_network(lp_net::NetConfig::default())
             .map_err(|e| CdpError::server(format!("network unavailable: {e}")))?;
-        let collector = Rc::new(Collector::default());
+        let collector = Rc::new(Collector::new(out.clone()));
         thread.browser.set_observer(Some(collector.clone()));
         thread.browser.set_engine_hooks(Some(collector.clone()));
         Ok(EngineHost {
@@ -143,6 +173,7 @@ impl EngineHost {
             pages: HashMap::new(),
             sessions: HashMap::new(),
             next_exception_id: 1,
+            pending: runtime::PendingReplies::default(),
         })
     }
 
@@ -168,6 +199,11 @@ impl EngineHost {
         self.pages.clear();
         self.thread.browser.close_all();
         self.collector.queue.borrow_mut().clear();
+    }
+
+    /// Recomputes whether console/exception notifications are collected.
+    pub(crate) fn update_runtime_wanted(&self) {
+        self.collector.runtime_wanted.set(self.sessions.values().any(|s| s.runtime_enabled));
     }
 
     /// True when engine notifications are waiting for [`EngineHost::flush`].
@@ -250,21 +286,33 @@ impl EngineHost {
         let state = self.pages.get_mut(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?;
         match action {
             "getWindowForTarget" => {
-                let (width, height) = state.viewport.map_or((1280.0, 720.0), |v| (v.width, v.height));
-                Ok(Some(serde_json::json!({
-                    "windowId": cmd.page,
-                    "bounds": { "left": 0, "top": 0, "width": width, "height": height, "windowState": "normal" },
-                })))
+                let bounds = state.window_bounds.clone().unwrap_or_else(|| {
+                    let (width, height) = state.viewport.map_or((1280.0, 720.0), |v| (v.width, v.height));
+                    serde_json::json!({ "left": 0, "top": 0, "width": width, "height": height, "windowState": "normal" })
+                });
+                Ok(Some(serde_json::json!({ "windowId": cmd.page, "bounds": bounds })))
             }
             "setWindowBounds" => {
                 #[derive(Deserialize)]
                 #[serde(rename_all = "camelCase")]
                 struct P {
                     window_id: u64,
+                    bounds: serde_json::Map<String, serde_json::Value>,
                 }
-                if cmd.command.params::<P>()?.window_id != cmd.page {
+                let p: P = cmd.command.params()?;
+                if p.window_id != cmd.page {
                     return Err(CdpError::server("Browser window not found"));
                 }
+                // Merge like Chrome: unspecified fields keep their values.
+                let mut bounds = state.window_bounds.clone().unwrap_or_else(|| {
+                    serde_json::json!({ "left": 0, "top": 0, "width": 1280, "height": 720, "windowState": "normal" })
+                });
+                for (k, v) in p.bounds {
+                    if matches!(k.as_str(), "left" | "top" | "width" | "height" | "windowState") {
+                        bounds[k] = v;
+                    }
+                }
+                state.window_bounds = Some(bounds);
                 Ok(Some(serde_json::json!({})))
             }
             _ => Err(CdpError::unsupported(&cmd.command.method)),
@@ -390,6 +438,7 @@ impl Host for EngineHost {
                 navigating: false,
                 pending_navigations: Vec::new(),
                 viewport: None,
+                window_bounds: None,
                 emulated_media: None,
                 user_agent: None,
                 next_script_id: 1,
@@ -411,7 +460,10 @@ impl Host for EngineHost {
     fn close_page(&mut self, page: PageKey) {
         let Some(state) = self.pages.remove(&page) else { return };
         for session in &state.sessions {
-            self.sessions.remove(session);
+            self.pending.cancel_session(session);
+            if let Some(session) = self.sessions.remove(session) {
+                session.handles.borrow_mut().clear();
+            }
         }
         self.thread.browser.close_page(state.id);
         // Realm/frame teardown events have no session left to go to.
@@ -449,8 +501,13 @@ impl Host for EngineHost {
         if let Some(state) = self.pages.get_mut(&page) {
             state.sessions.retain(|s| s != session_id);
         }
-        // Dropping the session releases its Persistent handles.
-        self.sessions.remove(session_id);
+        // No reply may reach a detached session; its handles go away even if
+        // pending promise reactions are still referenced by JavaScript.
+        self.pending.cancel_session(session_id);
+        if let Some(session) = self.sessions.remove(session_id) {
+            session.handles.borrow_mut().clear();
+        }
+        self.update_runtime_wanted();
     }
 
     fn page_command(&mut self, cmd: PageCommand<'_, '_>, _out: &mut dyn Sink) {
