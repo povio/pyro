@@ -240,10 +240,18 @@ impl JsClass for Screen {
         def.getter("colorDepth", |s, _p| Ok(s.number(24.0)));
         def.getter("pixelDepth", |s, _p| Ok(s.number(24.0)));
         def.getter("orientation", |s, p| {
-            let (w, h) = screen(p);
+            // An emulated orientation wins (upstream Screen.zig:105-120);
+            // otherwise the screen never rotates and follows its dimensions.
+            let (kind, angle) = match p.viewport().orientation {
+                Some(o) => (o.kind.as_str(), f64::from(o.angle)),
+                None => {
+                    let (w, h) = screen(p);
+                    (if w >= h { "landscape-primary" } else { "portrait-primary" }, 0.0)
+                }
+            };
             let o = s.object();
-            o.set("type", s.string(if w >= h { "landscape-primary" } else { "portrait-primary" }))?;
-            o.set("angle", s.number(0.0))?;
+            o.set("type", s.string(kind))?;
+            o.set("angle", s.number(angle))?;
             Ok(o.value())
         });
     }

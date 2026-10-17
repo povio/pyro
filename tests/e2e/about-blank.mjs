@@ -421,6 +421,21 @@ try {
       assert.deepEqual(await a.evaluate(() => [innerWidth, innerHeight, devicePixelRatio]), [800, 600, 2]);
     } finally { clearTimeout(timeout); await sized.close(); }
   });
+  await check('portrait setViewportSize keeps Playwright screen orientation (TOS notification-settings mobile case)', async () => {
+    // Mirrors e2e/chat/notification-settings.e2e.ts: a 1440x900 context resized to 390x844.
+    // Playwright sends screenOrientation landscapePrimary/0 for non-mobile viewports.
+    const desktop = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    try {
+      const page = await desktop.newPage();
+      await page.setViewportSize({ width: 390, height: 844 });
+      assert.deepEqual(
+        await page.evaluate(() => [innerWidth, innerHeight, screen.width, screen.height, screen.orientation.type, screen.orientation.angle, matchMedia('(orientation: portrait)').matches]),
+        [390, 844, 390, 844, 'landscape-primary', 0, true],
+      );
+      await page.setViewportSize({ width: 1440, height: 900 });
+      assert.deepEqual(await page.evaluate(() => [innerWidth, innerHeight, matchMedia('(orientation: portrait)').matches]), [1440, 900, false]);
+    } finally { await desktop.close(); }
+  });
   await check('page-scoped user agent and locale persist across navigation and requests', async () => {
     // Exact TOS locale-only context requests userAgent:"", acceptLanguage:"en-US".
     const identities = await browser.newContext({ locale: 'en-US' });
