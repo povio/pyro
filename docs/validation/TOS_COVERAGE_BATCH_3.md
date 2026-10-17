@@ -11,7 +11,8 @@ canvas-table search/sort.
 | main `e9123f7` | `lpb3m-1017-142312` | 8 / 6 |
 | `da71ea7` (DOMParser) | `lpb3dp-1017-143750` | 10 / 4 |
 | `ee9dbde` (PR #45 head: DOMParser + virtual `click()`) | `lpb3c-1017-144937` | 11 / 3 |
-| `a2afd29` (XPath branch, on main `c29d754`) | `lpb3x-1017-145758` | 12 / 2 |
+| `a2afd29` (PR #46 pre-review head, on main `c29d754`) | `lpb3x-1017-145758` | 12 / 2 |
+| `361ee22` (PR #46 head, review fixes) | `lpb3y-1017-153940` | 12 / 2 |
 | upstream `2ad38773` | `lpb3u-1017-142535` | 12 / 2 |
 
 Rewrite-specific failures and the fixes for them:
@@ -28,7 +29,7 @@ Rewrite-specific failures and the fixes for them:
   - React Aria's `usePress` treats a click as virtual only if `detail` is 0 and
     `pointerType` is empty.
   - Browsers and upstream fire `click()` with `detail` 0 and `pointerId` -1.
-- **XPath (XPath branch).** quotes-copy failed because its Playwright `xpath=`
+- **XPath (PR #46).** quotes-copy failed because its Playwright `xpath=`
   locator (`ancestor::div[contains(@class, 'h-[2.625rem]')][1]`) threw
   "Can't find variable: XPathResult". There was no `document.evaluate`.
 
@@ -81,6 +82,7 @@ No failure referenced interface objects or prototypes.
   | `da71ea7` | `de5a1539df832247ce8f8c7703057c2651e1138f0cab49228481e64b85e317e8` |
   | `ee9dbde` | `2adc21918226420919bf069d4071c9bf8cb5d553ff93528f05641563045295c9` |
   | `a2afd29` | `f431aa5f53fbed8c8b4e1bd987c610b1fb111a51284afb3763ebb377ede8ab3c` |
+  | `361ee22` | `d3afc0fb18c060de5b47d12d341f4924dd1c32ea8a48af57846a4c7492bf44ff` |
   | upstream `2ad38773` | `7f76ccfece22e7130d39c8884321f5dea51f4bb2e195542944c3440a86dc4339` |
 
 - Chromium: Playwright 1.59.1 chromium-headless-shell 147.0.7727.15. It ran on the
@@ -104,7 +106,7 @@ No failure referenced interface objects or prototypes.
   performance comparison.
 
 Artifacts:
-- `/private/tmp/lp-tos-batch3{,-main,-dp,-click,-xpath,-up}`
+- `/private/tmp/lp-tos-batch3{,-main,-dp,-click,-xpath,-xpath2,-up}`
 - `/private/tmp/lp-tos-chrclose`
 - `/private/tmp/lp-tos-smoke-main`
 - `/private/tmp/lp-tos-coverage-main`
