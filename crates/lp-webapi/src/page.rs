@@ -65,12 +65,21 @@ pub struct NavigationRequest {
     pub content_type: Option<String>,
 }
 
+/// Posts a `Send` closure to run on the browser thread as a separate task.
+pub type RemotePoster = std::sync::Arc<dyn Fn(Box<dyn FnOnce() + Send>) + Send + Sync>;
+
 /// Embedder (lp-browser) services the bindings need.
 pub trait PageHooks {
     /// Schedules `task` on the page's event loop as a separate task.
     fn post_task(&self, task: Box<dyn FnOnce()>);
     /// Starts a navigation of the frame showing the document.
     fn navigate(&self, request: NavigationRequest);
+    /// Thread-safe poster that runs a closure as a task on the page's
+    /// browser thread (lp-net sinks run on the I/O thread). `None` when the
+    /// embedder cannot post across threads (network APIs then fail).
+    fn remote_poster(&self) -> Option<RemotePoster> {
+        None
+    }
     /// Document of the child browsing context of `iframe`, if any.
     fn frame_document(&self, _iframe: NodeId) -> Option<NodeId> {
         None
@@ -229,6 +238,9 @@ impl PageDom {
         if let Some(h) = self.hooks() {
             h.navigate(req);
         }
+    }
+    pub fn remote_poster(&self) -> Option<RemotePoster> {
+        self.hooks().and_then(|h| h.remote_poster())
     }
     pub(crate) fn frame_document(&self, iframe: NodeId) -> Option<NodeId> {
         self.hooks().and_then(|h| h.frame_document(iframe))

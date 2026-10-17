@@ -40,7 +40,7 @@ use lp_js::{JsResult, Scope, Value};
 
 pub use event::{EventCore, EventData, EventInterface};
 pub use node::{wrap_node, NodeData};
-pub use page::{NavigationRequest, PageDom, PageHooks};
+pub use page::{NavigationRequest, PageDom, PageHooks, RemotePoster};
 pub use target::{EventTarget, EventTargetData};
 pub use window::{define_members, WindowHost};
 
