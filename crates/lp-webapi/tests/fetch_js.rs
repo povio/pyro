@@ -548,3 +548,27 @@ fn fetch_disposal_before_queued_headers_preserves_shared_context_network() {
     second.until("result!=='pending'");
     assert_eq!(second.eval("result"), "42");
 }
+
+#[test]
+fn fetch_head_abort_before_headers_rejects_without_panicking() {
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    env.eval("globalThis.result='pending';globalThis.reason={head:true};globalThis.ac=new AbortController();fetch('/gated',{method:'HEAD',signal:ac.signal}).then(()=>result='unexpected',e=>result=e===reason?'aborted':'wrong reason');ac.abort(reason)");
+    env.until("result!=='pending'");
+    assert_eq!(env.eval("result"), "aborted");
+    assert_eq!(env.page.fetch_usage(), (0, 0));
+    server.release.send(()).unwrap();
+}
+
+#[test]
+fn fetch_abort_before_queued_null_headers_rejects_with_original_reason() {
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    env.eval("globalThis.result='pending';globalThis.reason={empty:true};globalThis.ac=new AbortController();fetch('/empty',{signal:ac.signal}).then(()=>result='unexpected',e=>result=e===reason?'aborted':'wrong reason')");
+    let queued_headers = env.tasks.recv_timeout(Duration::from_secs(5)).unwrap();
+    env.eval("ac.abort(reason)");
+    assert_eq!(env.eval("result"), "aborted");
+    queued_headers();
+    assert_eq!(env.eval("result"), "aborted");
+    assert_eq!(env.page.fetch_usage(), (0, 0));
+}
