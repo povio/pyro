@@ -461,7 +461,7 @@ fn es_modules_through_fetcher() {
             let s = realm.scope().unwrap();
             let src = match url.as_str() {
                 "http://site.test/lib/b.js" => "export let b = 1; export function inc() { b++ }",
-                "http://site.test/c.js" => "export const c = 42;",
+                "http://site.test/c.js" => "export const c = 42; export const meta = import.meta.url;",
                 _ => {
                     request.reject(&s, &JsError::Type(format!("404 {url}"))).unwrap();
                     return;
@@ -477,7 +477,7 @@ fn es_modules_through_fetcher() {
     let p = s
         .eval_module(
             "import { b, inc } from './lib/b.js'; inc(); globalThis.out = b + ':' + import.meta.url; \
-             const m = await import('/c.js'); globalThis.dyn = m.c; \
+             const m = await import('/c.js'); globalThis.dyn = m.c; globalThis.dynMeta = m.meta; \
              try { await import('./missing.js') } catch (e) { globalThis.missing = e.message }",
             "http://site.test/main.js",
         )
@@ -485,6 +485,8 @@ fn es_modules_through_fetcher() {
     assert!(p.is_object());
     assert_eq!(eval_str(&r, "out"), "2:http://site.test/main.js");
     assert_eq!(eval_str(&r, "dyn"), "42");
+    // Known limit (docs/COMPATIBILITY.md #3): root-relative modules keep JSC's file:/// key.
+    assert_eq!(eval_str(&r, "dynMeta"), "file:///c.js");
     assert!(eval_str(&r, "missing").contains("404 http://site.test/missing.js"), "{}", eval_str(&r, "missing"));
     assert_eq!(
         *fetcher.requested.borrow(),
