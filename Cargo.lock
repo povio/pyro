@@ -499,6 +499,7 @@ dependencies = [
  "lp-js",
  "lp-net",
  "lp-runtime",
+ "lp-webapi",
  "url",
 ]
 

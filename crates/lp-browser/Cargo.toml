@@ -10,6 +10,7 @@ lp-js.workspace = true
 lp-runtime.workspace = true
 lp-dom.workspace = true
 lp-net.workspace = true
+lp-webapi.workspace = true
 url = "2"
 
 [lints]

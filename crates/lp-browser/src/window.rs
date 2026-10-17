@@ -1,11 +1,11 @@
 //! The `Window` global: timers and scheduling primitives.
 //!
-//! DOM-facing members (document, location, events) come from lp-webapi once
-//! integrated; `Window` will then inherit `EventTarget` via `ClassDef::upcast`.
+//! DOM-facing members and EventTarget inheritance come from lp-webapi;
+//! location/history and timer scheduling stay in lp-browser.
 
 use crate::nav::{History, Location, PageNav, Performance, PerformanceData};
 use crate::Browser;
-use lp_js::{Args, ClassDef, IdentityKey, JsClass, JsError, JsResult, NoParent, Persistent, Realm, Scope, Value};
+use lp_js::{Args, ClassDef, IdentityKey, JsClass, JsError, JsResult, Persistent, Realm, Scope, Value};
 use lp_runtime::{Scheduler, TimerId};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -15,14 +15,22 @@ use std::time::Duration;
 pub struct WindowData {
     sched: Scheduler<Browser>,
     nav: Rc<PageNav>,
+    target: lp_webapi::EventTargetData,
     /// JS timer handle -> loop timer.
     timers: RefCell<HashMap<u32, TimerId>>,
     next_handle: Cell<u32>,
 }
 
 impl WindowData {
-    pub fn new(sched: Scheduler<Browser>, nav: Rc<PageNav>) -> WindowData {
-        WindowData { sched, nav, timers: RefCell::new(HashMap::new()), next_handle: Cell::new(1) }
+    pub fn new(sched: Scheduler<Browser>, nav: Rc<PageNav>, page: &Rc<lp_webapi::PageDom>) -> WindowData {
+        let key = page.window_target().expect("document window target");
+        WindowData {
+            sched,
+            nav,
+            target: lp_webapi::EventTargetData::window(page, key),
+            timers: RefCell::new(HashMap::new()),
+            next_handle: Cell::new(1),
+        }
     }
 
     pub fn url(&self) -> String {
@@ -40,14 +48,25 @@ const KEY_LOCATION: u64 = 0x4c6f_6361_7469_6f6e;
 const KEY_HISTORY: u64 = 0x4869_7374_6f72_7900;
 const KEY_PERFORMANCE: u64 = 0x5065_7266_6f72_6d00;
 
+impl lp_webapi::WindowHost for WindowData {
+    fn page(&self) -> &Rc<lp_webapi::PageDom> {
+        &self.target.page
+    }
+    fn event_target(&self) -> &lp_webapi::EventTargetData {
+        &self.target
+    }
+}
+
 pub struct Window;
 
 impl JsClass for Window {
     const NAME: &'static str = "Window";
     type Data = WindowData;
-    type Parent = NoParent;
+    type Parent = lp_webapi::EventTarget;
 
     fn define(def: &mut ClassDef<Self>) {
+        def.upcast(|w| &w.target);
+        lp_webapi::define_members::<Window>(def);
         def.method("setTimeout", 1, |s, w, a| set_timer(s, w, a, false));
         def.method("setInterval", 1, |s, w, a| set_timer(s, w, a, true));
         def.method("clearTimeout", 0, clear_timer);
@@ -102,13 +121,6 @@ impl JsClass for Window {
         });
         def.getter("top", |s, _w| Ok(s.global().value()));
         def.getter("parent", |s, _w| Ok(s.global().value()));
-        def.getter("opener", |s, _w| Ok(s.null()));
-        def.getter("closed", |s, _w| Ok(s.boolean(false)));
-        def.getter("origin", |s, w| {
-            let o =
-                url::Url::parse(&w.url()).map(|u| u.origin().ascii_serialization()).unwrap_or_else(|_| "null".into());
-            Ok(s.string(&o))
-        });
         def.getter("window", |s, _w| Ok(s.global().value()));
         def.getter("self", |s, _w| Ok(s.global().value()));
         def.getter("frames", |s, _w| Ok(s.global().value()));

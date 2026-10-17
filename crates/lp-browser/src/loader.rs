@@ -14,14 +14,14 @@
 //! await) is awaited before the next deferred script/`DOMContentLoaded`,
 //! because JSC fetches the module graph during evaluation, not before it.
 //!
-//! Not yet wired (needs lp-webapi): DOM `DOMContentLoaded`/`load` events,
-//! `document.readyState`, `document.currentScript`, script `load`/`error`
-//! events, script-inserted scripts and stylesheet/iframe/img resource events.
+//! DOM lifecycle and currentScript are wired through lp-webapi. Script element
+//! load/error events, script-inserted scripts, and external stylesheet/iframe/
+//! image resources remain separate loader work.
 
 use crate::{Browser, LoaderId, NavigateOpts, PageEvent, PageId};
 use lp_dom::parse::{DocumentParser, DomRef, ParseStep};
 use lp_dom::script::ScriptKind;
-use lp_dom::{DocumentKind, Dom, NodeId};
+use lp_dom::NodeId;
 use lp_js::{JsError, ModuleFetcher, ModuleRequest, Persistent, Realm};
 use lp_runtime::TaskSource;
 use std::cell::RefCell;
@@ -205,7 +205,19 @@ enum ScriptType {
     Module,
 }
 
+struct ScriptElement {
+    dom: DomRef,
+    node: NodeId,
+}
+
+impl Drop for ScriptElement {
+    fn drop(&mut self) {
+        self.dom.borrow_mut().release(self.node);
+    }
+}
+
 struct PendingScript {
+    element: Rc<ScriptElement>,
     ty: ScriptType,
     url: String,
     /// `None` until fetched (inline scripts start as `Some`).
@@ -362,6 +374,10 @@ impl Browser {
         );
     }
 
+    pub(crate) fn install_module_fetcher(&self, page: PageId, realm: &Realm) {
+        realm.set_module_fetcher(Some(Rc::new(PageModuleFetcher { page, sched: self.scheduler() })));
+    }
+
     fn begin_document(
         &mut self,
         page: PageId,
@@ -371,23 +387,15 @@ impl Browser {
     ) -> Result<(), JsError> {
         let origin = origin_of(&resource.url);
         self.commit_document(page, opts, loader_id.clone(), &origin)?;
-        let dom: DomRef = Rc::new(RefCell::new(Dom::new()));
-        let doc = {
-            let mut d = dom.borrow_mut();
-            let doc = d.create_document(DocumentKind::Html, &resource.url);
-            d.set_document_active(doc, true).map_err(|e| JsError::Type(format!("{e:?}")))?;
-            doc
-        };
+        let page_dom = self.page(page).and_then(|p| p.main_frame.page_dom.clone()).ok_or(JsError::ContextDestroyed)?;
+        let dom = page_dom.dom.clone();
+        let doc = page_dom.document();
         let mut parser = DocumentParser::new(dom.clone(), doc, true).map_err(|e| JsError::Type(format!("{e:?}")))?;
         parser.set_transport_charset(resource.charset.as_deref());
-        let fetcher: Rc<dyn ModuleFetcher> = Rc::new(PageModuleFetcher { page, sched: self.scheduler() });
         let p = self.page_mut(page).ok_or(JsError::Type("no such page".into()))?;
         p.main_frame.dom = Some(dom.clone());
         p.main_frame.document = Some(doc);
         p.nav.set_document(Some((dom.clone(), doc)));
-        for r in &p.main_frame.realms {
-            r.realm.set_module_fetcher(Some(fetcher.clone()));
-        }
         p.load = Some(DocumentLoad {
             loader_id,
             url: resource.url.clone(),
@@ -436,6 +444,7 @@ impl Browser {
                 }
                 ParsePhase::Done => return,
             };
+            self.drain_dom_resources(page);
             match step {
                 ParseStep::Script(node) => self.prepare_script(page, node),
                 ParseStep::NeedInput => {
@@ -448,6 +457,9 @@ impl Browser {
                                 p.end();
                             }
                             load.parsing_done = true;
+                            if let Some(dom) = self.page(page).and_then(|p| p.main_frame.page_dom.clone()) {
+                                lp_webapi::lifecycle::set_ready_state(&dom, dom.document(), "interactive");
+                            }
                             self.run_deferred(page);
                             return;
                         }
@@ -471,6 +483,10 @@ impl Browser {
             let _ = d.mark_script_started(node);
             info
         };
+        if dom.borrow_mut().add_ref(node).is_err() {
+            return;
+        }
+        let element = Rc::new(ScriptElement { dom, node });
         let ty = match info.kind {
             ScriptKind::Classic if !info.nomodule => ScriptType::Classic,
             ScriptKind::Module => ScriptType::Module,
@@ -485,9 +501,9 @@ impl Browser {
             None => None,
         };
         match (ty, src_url) {
-            (ScriptType::Classic, None) => self.execute_classic(page, &info.inline_text, &base),
-            (ScriptType::Classic, Some(url)) if info.async_ => self.fetch_async(page, ty, url),
-            (ScriptType::Classic, Some(url)) if info.defer => self.fetch_deferred(page, ty, url),
+            (ScriptType::Classic, None) => self.execute_classic(page, &info.inline_text, &base, &element),
+            (ScriptType::Classic, Some(url)) if info.async_ => self.fetch_async(page, ty, url, element),
+            (ScriptType::Classic, Some(url)) if info.defer => self.fetch_deferred(page, ty, url, element),
             (ScriptType::Classic, Some(url)) => {
                 // Parser-blocking: pause until fetched and executed.
                 let loader_id = self.current_loader(page);
@@ -500,7 +516,7 @@ impl Browser {
                         return;
                     }
                     match res {
-                        Ok(text) => b.execute_classic(page, &text, &u),
+                        Ok(text) => b.execute_classic(page, &text, &u, &element),
                         Err(e) => b.report_load_error(page, &e),
                     }
                     if let Some(l) = b.load_mut(page) {
@@ -509,8 +525,8 @@ impl Browser {
                     b.continue_parsing(page);
                 });
             }
-            (ScriptType::Module, Some(url)) if info.async_ => self.fetch_async(page, ty, url),
-            (ScriptType::Module, Some(url)) => self.fetch_deferred(page, ty, url),
+            (ScriptType::Module, Some(url)) if info.async_ => self.fetch_async(page, ty, url, element),
+            (ScriptType::Module, Some(url)) => self.fetch_deferred(page, ty, url, element),
             (ScriptType::Module, None) => {
                 let url = {
                     let l = self.load_mut(page).expect("load");
@@ -521,7 +537,7 @@ impl Browser {
                 if info.async_ {
                     self.execute_module(page, &info.inline_text, &url, false);
                 } else {
-                    let ps = PendingScript { ty, url, source: Some(Ok(info.inline_text)) };
+                    let ps = PendingScript { element, ty, url, source: Some(Ok(info.inline_text)) };
                     self.load_mut(page).expect("load").deferred.push_back(Rc::new(RefCell::new(ps)));
                 }
             }
@@ -559,8 +575,8 @@ impl Browser {
         );
     }
 
-    fn fetch_deferred(&mut self, page: PageId, ty: ScriptType, url: String) {
-        let ps = Rc::new(RefCell::new(PendingScript { ty, url: url.clone(), source: None }));
+    fn fetch_deferred(&mut self, page: PageId, ty: ScriptType, url: String, element: Rc<ScriptElement>) {
+        let ps = Rc::new(RefCell::new(PendingScript { element, ty, url: url.clone(), source: None }));
         self.load_mut(page).expect("load").deferred.push_back(ps.clone());
         let kind = if ty == ScriptType::Module { ResourceKind::ModuleScript } else { ResourceKind::Script };
         let loader_id = self.current_loader(page);
@@ -573,7 +589,7 @@ impl Browser {
         });
     }
 
-    fn fetch_async(&mut self, page: PageId, ty: ScriptType, url: String) {
+    fn fetch_async(&mut self, page: PageId, ty: ScriptType, url: String, element: Rc<ScriptElement>) {
         let loader_id = {
             let l = self.load_mut(page).expect("load");
             l.async_pending += 1;
@@ -586,7 +602,7 @@ impl Browser {
                 return;
             }
             match res {
-                Ok(text) if ty == ScriptType::Classic => b.execute_classic(page, &text, &u),
+                Ok(text) if ty == ScriptType::Classic => b.execute_classic(page, &text, &u, &element),
                 Ok(text) => {
                     b.execute_module(page, &text, &u, false);
                 }
@@ -611,12 +627,12 @@ impl Browser {
             let source = next.borrow().source.clone();
             let Some(source) = source else { return }; // still fetching
             load.deferred.pop_front();
-            let (ty, url) = {
+            let (ty, url, element) = {
                 let n = next.borrow();
-                (n.ty, n.url.clone())
+                (n.ty, n.url.clone(), n.element.clone())
             };
             match source {
-                Ok(text) if ty == ScriptType::Classic => self.execute_classic(page, &text, &url),
+                Ok(text) if ty == ScriptType::Classic => self.execute_classic(page, &text, &url, &element),
                 Ok(text) => {
                     if self.execute_module(page, &text, &url, true) {
                         return; // resumes when the module's promise settles
@@ -636,6 +652,9 @@ impl Browser {
         load.dcl_fired = true;
         let loader_id = load.loader_id.clone();
         let frame_id = self.page(page).expect("page").main_frame.id.clone();
+        if let Some(dom) = self.page(page).and_then(|p| p.main_frame.page_dom.clone()) {
+            lp_webapi::lifecycle::dom_content_loaded(&dom, dom.document());
+        }
         self.emit(page, PageEvent::FrameDomContentLoaded { frame_id, loader_id, timestamp: self.timestamp() });
         self.maybe_fire_load(page);
     }
@@ -648,6 +667,9 @@ impl Browser {
         load.load_fired = true;
         let loader_id = load.loader_id.clone();
         let frame_id = self.page(page).expect("page").main_frame.id.clone();
+        if let Some(dom) = self.page(page).and_then(|p| p.main_frame.page_dom.clone()) {
+            lp_webapi::lifecycle::load(&dom, dom.document());
+        }
         let ts = self.timestamp();
         self.emit(
             page,
@@ -661,11 +683,18 @@ impl Browser {
         self.page(page)?.main_frame.main_realm().cloned()
     }
 
-    fn execute_classic(&mut self, page: PageId, text: &str, url: &str) {
+    fn execute_classic(&mut self, page: PageId, text: &str, url: &str, element: &ScriptElement) {
         let Some(realm) = self.main_realm(page) else { return };
         let Ok(scope) = realm.scope() else { return };
+        let bindings = self.page(page).and_then(|p| p.main_frame.page_dom.clone());
+        if let Some(dom) = &bindings {
+            dom.set_current_script(Some(element.node));
+        }
         if let Err(e) = scope.eval(text, Some(url), 1) {
             scope.report_exception(&e);
+        }
+        if let Some(dom) = &bindings {
+            dom.set_current_script(None);
         }
     }
 
@@ -684,18 +713,23 @@ impl Browser {
         let loader_id = self.current_loader(page);
         let sched = self.scheduler();
         let resume = move || {
-            if !deferred {
-                return;
-            }
             let loader_id = loader_id.clone();
             sched.post(TaskSource::Networking, move |b| {
                 if b.current_loader(page) != loader_id {
                     return;
                 }
                 if let Some(l) = b.load_mut(page) {
-                    l.awaiting_module = false;
+                    if deferred {
+                        l.awaiting_module = false;
+                    } else {
+                        l.async_pending -= 1;
+                    }
                 }
-                b.run_deferred(page);
+                if deferred {
+                    b.run_deferred(page);
+                } else {
+                    b.maybe_fire_load(page);
+                }
             });
         };
         let resume = Rc::new(resume);
@@ -708,11 +742,16 @@ impl Browser {
                 err()
             },
         );
-        if r.is_err() || !deferred {
+        if let Err(e) = r {
+            scope.report_exception(&e);
             return false;
         }
         if let Some(l) = self.load_mut(page) {
-            l.awaiting_module = true;
+            if deferred {
+                l.awaiting_module = true;
+            } else {
+                l.async_pending += 1;
+            }
         }
         true
     }
