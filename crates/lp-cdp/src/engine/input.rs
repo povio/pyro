@@ -182,7 +182,6 @@ impl EngineHost {
             }
             _ => return Err(CdpError::unsupported(&cmd.command.method)),
         }
-        page.after_task();
         Ok(Some(json!({})))
     }
 }

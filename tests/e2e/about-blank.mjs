@@ -254,7 +254,10 @@ await check('context cookies reach HTTP and stay isolated', async () => {
 const identityHeaders = [];
 const fixture = http.createServer((req, res) => {
   identityHeaders.push({ url: req.url, agent: req.headers['user-agent'], language: req.headers['accept-language'] });
-  if (req.url === '/identity') {
+  if (req.url === '/checkpoint.css') {
+    res.writeHead(200, { 'content-type': 'text/css' });
+    res.end('#message { display: none }');
+  } else if (req.url === '/identity') {
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ agent: req.headers['user-agent'], language: req.headers['accept-language'] }));
   } else if (req.url === '/json') {
@@ -374,6 +377,25 @@ try {
     assert.equal(await page.locator('#dom-field').inputValue(), 'typed through locator');
     await page.locator('#dom-button').click({ timeout: 5000 });
     assert.equal(await page.evaluate(() => domClicks), 1);
+  });
+  await check('synchronous CDP DOM insertion starts stylesheet loading while idle', async () => {
+    const isolated = await context.newPage();
+    let timeout;
+    try {
+      await isolated.goto(`${fixtureOrigin}/checkpoint-page`, { timeout: 5000 });
+      // Let navigation work settle; the page schedules no timer or follow-up command.
+      await new Promise(resolve => setTimeout(resolve, 50));
+      const loaded = isolated.evaluate(() => new Promise((resolve, reject) => {
+        const link = document.createElement('link');
+        link.rel = 'stylesheet'; link.href = '/checkpoint.css';
+        link.addEventListener('load', () => resolve(getComputedStyle(document.querySelector('#message')).display));
+        link.addEventListener('error', () => reject(new Error('stylesheet failed')));
+        document.head.appendChild(link);
+      }));
+      assert.equal(await Promise.race([loaded, new Promise((_, reject) => {
+        timeout = setTimeout(() => reject(new Error('stylesheet did not start after CDP evaluation')), 5000);
+      })]), 'none');
+    } finally { clearTimeout(timeout); await isolated.close(); }
   });
   await check('page-scoped user agent and locale persist across navigation and requests', async () => {
     // Exact TOS locale-only context requests userAgent:"", acceptLanguage:"en-US".

@@ -263,7 +263,6 @@ impl EngineHost {
                             return Err(CdpError::server("Node is not focusable"));
                         }
                         lp_webapi::input::focus_element(&page, node);
-                        page.after_task();
                         json!({})
                     }
                     "scrollIntoViewIfNeeded" => {

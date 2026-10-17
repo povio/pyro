@@ -162,3 +162,8 @@ unsupported. Detached/hidden elements reject geometry/scroll commands. Raw handl
 and bounding-box checks pass through real Playwright; the retained locator fill/click check
 currently fails because MutationObserver is absent from the binding layer. No locator/TOS
 compatibility is inferred from native DOM protocol checks.
+
+Protocol commands invoke `Browser::checkpoint()` after releasing command borrows and before event
+flush. This starts resources inserted by synchronous Runtime calls while idle and drains native
+events from Input/DOM actions. The Playwright stylesheet check awaits a real local HTTP response
+without a page timer or follow-up CDP command to trigger loading.

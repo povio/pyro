@@ -488,6 +488,7 @@ impl Host for EngineHost {
     fn navigate(&mut self, page: PageKey, url: &str) -> CdpResult<()> {
         let id = self.pages.get(&page).ok_or_else(|| CdpError::server("page is gone"))?.id;
         let result = self.thread.browser.navigate(id, lp_browser::NavigateOpts::address_bar(url));
+        self.thread.browser.checkpoint();
         self.flush();
         result.map(|_| ()).map_err(|e| CdpError::server(format!("navigation failed: {e}")))
     }
@@ -553,6 +554,9 @@ impl Host for EngineHost {
 
     fn page_command(&mut self, cmd: PageCommand<'_, '_>, _out: &mut dyn Sink) {
         let result = self.page_command_result(&cmd);
+        // Synchronous inspector JS runs outside loop tasks. Release command
+        // borrows before starting DOM resources and dispatching native events.
+        self.thread.browser.checkpoint();
         // Events produced while handling precede the response (Chrome order).
         self.flush();
         match result {
