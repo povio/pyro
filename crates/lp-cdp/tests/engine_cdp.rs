@@ -1118,3 +1118,101 @@ fn user_agent_override_validates_atomically_and_updates_page_worlds() {
         initial
     );
 }
+
+#[test]
+fn device_metrics_change_native_dimensions_persist_and_clear() {
+    let mut h = Harness::new();
+    let probe =
+        "[innerWidth,innerHeight,devicePixelRatio,screen.width,screen.height,matchMedia('(width: 640px)').matches]";
+    let baseline = h.page("Runtime.evaluate", json!({"expression":probe,"returnByValue":true}))["result"]["result"]
+        ["value"]
+        .clone();
+    let metrics = json!({"width":640,"height":480,"deviceScaleFactor":2,"mobile":false,"screenWidth":1024,"screenHeight":768,"screenOrientation":{"angle":0,"type":"landscapePrimary"},"dontSetVisibleSize":false});
+    assert_eq!(h.page("Emulation.setDeviceMetricsOverride", metrics)["result"], json!({}));
+    let expected = json!([640, 480, 2, 1024, 768, true]);
+    assert_eq!(
+        h.page("Runtime.evaluate", json!({"expression":probe,"returnByValue":true}))["result"]["result"]["value"],
+        expected
+    );
+    let frame = h.frame_id.clone();
+    let world = h.page("Page.createIsolatedWorld", json!({"frameId":frame,"worldName":"metrics"}))["result"]
+        ["executionContextId"]
+        .clone();
+    assert_eq!(
+        h.page("Runtime.evaluate", json!({"expression":probe,"returnByValue":true,"contextId":world}))["result"]
+            ["result"]["value"],
+        expected
+    );
+    h.page(
+        "Page.addScriptToEvaluateOnNewDocument",
+        json!({"source":"globalThis.initDimensions=[innerWidth,innerHeight,devicePixelRatio]"}),
+    );
+    h.page("Page.navigate", json!({"url":"data:text/html,<p>metrics</p>"}));
+    assert_eq!(
+        h.page("Runtime.evaluate", json!({"expression":"initDimensions","returnByValue":true}))["result"]["result"]
+            ["value"],
+        json!([640, 480, 2])
+    );
+    assert_eq!(
+        h.page("Runtime.evaluate", json!({"expression":probe,"returnByValue":true}))["result"]["result"]["value"],
+        expected
+    );
+    assert_eq!(h.page("Emulation.clearDeviceMetricsOverride", json!({}))["result"], json!({}));
+    assert_eq!(
+        h.page("Runtime.evaluate", json!({"expression":probe,"returnByValue":true}))["result"]["result"]["value"],
+        baseline
+    );
+    assert_eq!(
+        h.page(
+            "Emulation.setDeviceMetricsOverride",
+            json!({"width":0,"height":0,"deviceScaleFactor":0,"mobile":false})
+        )["result"],
+        json!({})
+    );
+    assert_eq!(
+        h.page("Runtime.evaluate", json!({"expression":probe,"returnByValue":true}))["result"]["result"]["value"],
+        baseline
+    );
+}
+
+#[test]
+fn device_metrics_reject_invalid_and_unsupported_fields_atomically() {
+    let mut h = Harness::new();
+    let valid = json!({"width":800,"height":600,"deviceScaleFactor":1.5,"mobile":false});
+    assert_eq!(h.page("Emulation.setDeviceMetricsOverride", valid.clone())["result"], json!({}));
+    for (key, value) in [
+        ("width", json!(-1)),
+        ("height", json!(10000001)),
+        ("width", json!(800.5)),
+        ("height", json!("600")),
+        ("deviceScaleFactor", json!(-1)),
+        ("mobile", json!("no")),
+        ("screenWidth", json!(10000001)),
+        ("screenHeight", json!(-1)),
+        ("screenOrientation", json!({"type":"sideways","angle":0})),
+    ] {
+        let mut params = valid.clone();
+        params[key] = value;
+        let result = h.page("Emulation.setDeviceMetricsOverride", params.clone());
+        assert_eq!(result["error"]["code"], -32602, "{params}: {result}");
+    }
+    for (key, value) in [
+        ("mobile", json!(true)),
+        ("scale", json!(0.5)),
+        ("positionX", json!(10)),
+        ("viewport", json!({"x":0,"y":0,"width":100,"height":100,"scale":1})),
+        ("screenOrientation", json!({"type":"portraitPrimary","angle":90})),
+    ] {
+        let mut params = valid.clone();
+        params[key] = value;
+        let result = h.page("Emulation.setDeviceMetricsOverride", params.clone());
+        assert_eq!(result["error"]["code"], -32000, "{params}: {result}");
+    }
+    assert_eq!(
+        h.page(
+            "Runtime.evaluate",
+            json!({"expression":"[innerWidth,innerHeight,devicePixelRatio]","returnByValue":true})
+        )["result"]["result"]["value"],
+        json!([800, 600, 1.5])
+    );
+}

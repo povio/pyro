@@ -19,7 +19,7 @@ Capture uses a shared process payload budget (default 64 MiB, 8 MiB/body), at mo
 
 The browser integration smoke also exercises DOM access before init scripts, shared DOM across isolated worlds, page fetch with exact Network frame/loader correlation, route fulfillment/abort after headers, and Web Storage context/page/navigation isolation. These checks use local HTTP and JavaScript evaluation; The full DOM protocol and actual TOS workflows remain unvalidated. A separate Input check covers keyboard typing/text insertion and mouse checkbox activation; editing commands, wheel default scrolling, pen/touch and drag remain unsupported. Mouse coordinates follow the native synthetic layout, not full CSS positioning; the smoke derives its click point from the reported rectangle and verifies the exact hit target.
 
-Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 41 engine, 10 accepted/recorded only, 3 conditional, 47 pending.
+Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 42 engine, 9 accepted/recorded only, 3 conditional, 47 pending.
 
 | Method | Upstream 2ad38773f | Rewrite | Notes |
 | --- | --- | --- | --- |
@@ -47,7 +47,7 @@ Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 41 engi
 | `Debugger.resume` | yes | pending |  |
 | `Debugger.setSkipAllPauses` | yes | pending |  |
 | `Emulation.setDefaultBackgroundColorOverride` | yes | pending |  |
-| `Emulation.setDeviceMetricsOverride` | yes | accepted, recorded only | stored per page; no window metrics/layout API exists yet to apply it |
+| `Emulation.setDeviceMetricsOverride` | yes | engine | persistent native width/height/DPR/screen and resize; mobile, transforms and non-native orientation explicitly unsupported |
 | `Emulation.setEmulatedMedia` | yes | accepted, recorded only | stored; no matchMedia/CSS media evaluation exists yet |
 | `Emulation.setFocusEmulationEnabled` | yes | accepted, recorded only | headless pages always behave as focused |
 | `Emulation.setGeolocationOverride` | yes | pending |  |
@@ -159,9 +159,9 @@ are unsupported. Enabling DOM supplies documentUpdated notifications on navigati
 Geometry is the existing synthetic native layout. Its single rectangle supplies every box-model
 quad; this is not full CSS margin/border/padding layout. Scroll rectangle overrides are explicitly
 unsupported. Detached/hidden elements reject geometry/scroll commands. Raw handle owner-frame
-and bounding-box checks pass through real Playwright; the retained locator fill/click check
-currently fails because MutationObserver is absent from the binding layer. No locator/TOS
-compatibility is inferred from native DOM protocol checks.
+and bounding-box checks pass through real Playwright. With the native MutationObserver dependency,
+the retained locator fill/click regression also passes unchanged. This focused local fixture does
+not establish general locator or TOS compatibility.
 
 Protocol commands invoke `Browser::checkpoint()` after releasing command borrows and before event
 flush. This starts resources inserted by synchronous Runtime calls while idle and drains native
@@ -177,3 +177,18 @@ before mutation. This is navigator/request identity, not Intl locale or timezone
 The [CDP Emulation schema](https://raw.githubusercontent.com/ChromeDevTools/devtools-protocol/master/pdl/domains/Emulation.pdl)
 is the parameter reference; browser persistence and transport limits are documented in
 [USER_AGENT.md](../browser/USER_AGENT.md).
+
+Device metrics validate integer dimensions in 0–10,000,000 and finite, nonnegative DPR before
+changing the browser. Zero width/height/DPR restores that field's native default; clear resets
+metrics while preserving unrelated media/input preferences. Existing and new worlds, init scripts,
+navigation, screen dimensions and current media-query matches observe the page's stored viewport.
+CSS dimension changes produce a native coalesced resize event; sibling pages stay independent.
+There is no separate visible OS window, so dontSetVisibleSize does not alter native metrics.
+
+Mobile layout and additional transform/visual-viewport options fail explicitly before mutation.
+Until native orientation overrides exist, an explicit screenOrientation is accepted only when
+its angle is zero and its primary type already matches the resulting native screen dimensions.
+In particular, Playwright's desktop portrait packet that requests landscapePrimary is unsupported;
+this limitation must not be mistaken for complete page.setViewportSize support. MediaQueryList
+change notifications and full CSS/mobile layout remain native binding gaps. The browser viewport
+contract is documented in [VIEWPORT.md](../browser/VIEWPORT.md).
