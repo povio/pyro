@@ -90,7 +90,7 @@ fn get_random_values<'s>(s: &Scope<'s>, v: Value<'s>) -> JsResult<Value<'s>> {
 }
 
 /// RFC 4122 version 4 UUID string.
-fn random_uuid() -> JsResult<String> {
+pub(crate) fn random_uuid() -> JsResult<String> {
     let mut b = [0u8; 16];
     fill_random(&mut b)?;
     b[6] = (b[6] & 0x0f) | 0x40;

@@ -45,11 +45,32 @@ impl JsClass for URL {
             Some(url) => Ok(wrap(s, url, None)?.value()),
             None => Ok(s.null()),
         });
-        for name in ["createObjectURL", "revokeObjectURL"] {
-            def.static_method(name, 1, |_, _| {
-                Err(JsError::dom("NotSupportedError", "Object URLs are not implemented"))
-            });
-        }
+        def.static_method("createObjectURL", 1, |s, args| {
+            args.require(1, "URL.createObjectURL")?;
+            let blob = s.unwrap::<crate::file::Blob>(args.get(0)).ok_or_else(|| {
+                JsError::Type("Failed to execute 'createObjectURL' on 'URL': parameter 1 is not of type 'Blob'.".into())
+            })?;
+            let page = page_of(s)?;
+            let origin = crate::storage::tuple_origin(s, &page).unwrap_or_else(|| "null".into());
+            let url = format!("blob:{origin}/{}", crate::crypto::random_uuid()?);
+            page.blob_urls.borrow_mut().insert(url.clone(), (blob.bytes.clone(), blob.mime.clone()));
+            Ok(s.string(&url))
+        });
+        def.static_method("revokeObjectURL", 1, |s, args| {
+            args.require(1, "URL.revokeObjectURL")?;
+            let url = dom_string(args.get(0))?;
+            let page = page_of(s)?;
+            // Only the creating origin may revoke; other attempts fail silently.
+            let origin = crate::storage::tuple_origin(s, &page).unwrap_or_else(|| "null".into());
+            if url
+                .strip_prefix("blob:")
+                .and_then(|rest| rest.strip_prefix(origin.as_str()))
+                .is_some_and(|r| r.starts_with('/'))
+            {
+                page.blob_urls.borrow_mut().remove(&url);
+            }
+            Ok(s.undefined())
+        });
         def.getter("origin", |s, data| Ok(s.string(&quirks::origin(data.params.0.url.borrow().as_ref().unwrap()))));
         def.accessor(
             "href",

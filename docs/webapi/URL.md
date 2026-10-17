@@ -17,8 +17,23 @@ query replacement allocate proportional to the affected query; no performance or
 full WPT conformance claim is made.
 
 URL objects work with fetch's string conversion. Associated params retain the
-existing native fetch/XHR BodyInit snapshot and Content-Type semantics. Object URL
-creation/revocation throw NotSupportedError; Blob URL registration is unsupported.
+existing native fetch/XHR BodyInit snapshot and Content-Type semantics.
+
+`URL.createObjectURL(blob)` registers the Blob's bytes and type under
+`blob:<origin>/<uuid>`. Opaque origins use `null` as the origin, as upstream does.
+- The registry belongs to the creating document. `PageDom::blob_url` exposes it
+  to embedders, and disposing the document drops it.
+- `revokeObjectURL` removes a URL of the caller's origin. Other strings are
+  ignored silently.
+- A non-Blob argument throws TypeError.
+- Hyperlinks with a `download` attribute that target a `blob:`, `data:` or
+  same-origin URL do not navigate. Cross-origin download links navigate, since
+  browsers ignore the attribute there.
+
+Gaps:
+- The download itself is not performed, and no CDP download events are emitted.
+- `fetch`, XHR and navigation of `blob:` URLs are not implemented (upstream
+  resolves them).
 
 The reproduced application failure was Vite's preload helper calling new URL in
 the [unchanged TOS query-parameters run](../validation/TOS_QUERY_PARAMS_SMOKE.md).
