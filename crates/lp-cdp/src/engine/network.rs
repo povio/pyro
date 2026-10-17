@@ -131,7 +131,7 @@ impl EngineHost {
                     && page
                         .sessions
                         .iter()
-                        .any(|s| self.sessions.get(s).is_some_and(|s| s.network_enabled || s.fetch.rules.is_enabled()))
+                        .any(|s| self.sessions.get(s).is_some_and(|s| s.network_enabled || s.fetch.needs_observation()))
             });
             if wanted && context.subscription.is_none() {
                 if let Some(net) = self.thread.browser.context_net(context.id) {
