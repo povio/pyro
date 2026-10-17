@@ -308,7 +308,7 @@ fn unsupported_commands_fail_explicitly() {
     let mut h = Harness::new();
     for method in [
         "DOM.getDocument",
-        "Input.dispatchMouseEvent",
+        "Input.dispatchTouchEvent",
         "Fetch.getResponseBody",
         "Page.captureScreenshot",
         "Runtime.addBinding",
@@ -848,4 +848,119 @@ fn fetch_redirect_issues_a_new_pause_id_and_links_the_previous_hop() {
     );
     wait_for_network_finish(&mut h, &mut events);
     assert_eq!(h.page("Network.getResponseBody", json!({"requestId":second["networkId"]}))["result"]["body"], "done");
+}
+
+#[test]
+fn input_keyboard_uses_native_focus_default_actions_and_cancellation() {
+    let mut h = Harness::new();
+    let r = h.page(
+        "Runtime.evaluate",
+        json!({"expression":r#"
+        document.body.innerHTML = '<input id="field"><button id="next">Next</button>';
+        globalThis.field = document.querySelector('#field');
+        globalThis.events = [];
+        for (const type of ['keydown','keypress','keyup','beforeinput','input'])
+          field.addEventListener(type, e => events.push([e.type, e.isTrusted]));
+        field.focus();
+    "#}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    for (method, params) in [
+        (
+            "Input.dispatchKeyEvent",
+            json!({"type":"keyDown","key":"a","code":"KeyA","text":"a","windowsVirtualKeyCode":65}),
+        ),
+        ("Input.dispatchKeyEvent", json!({"type":"keyUp","key":"a","code":"KeyA","windowsVirtualKeyCode":65})),
+        ("Input.insertText", json!({"text":"β"})),
+    ] {
+        assert_eq!(h.page(method, params)["result"], json!({}));
+    }
+    let r = h.page("Runtime.evaluate", json!({"expression":"[field.value, events]","returnByValue":true}));
+    assert_eq!(
+        r["result"]["result"]["value"],
+        json!([
+            "aβ",
+            [
+                ["keydown", true],
+                ["keypress", true],
+                ["beforeinput", true],
+                ["input", true],
+                ["keyup", true],
+                ["beforeinput", true],
+                ["input", true]
+            ]
+        ])
+    );
+    h.page("Runtime.evaluate", json!({"expression":"field.addEventListener('beforeinput', e => e.preventDefault(), {once:true}); field.setSelectionRange(0,2)"}));
+    assert_eq!(h.page("Input.insertText", json!({"text":"blocked"}))["result"], json!({}));
+    assert_eq!(
+        h.page("Runtime.evaluate", json!({"expression":"field.value","returnByValue":true}))["result"]["result"]
+            ["value"],
+        "aβ"
+    );
+    assert_eq!(h.page("Input.insertText", json!({"text":"replacement"}))["result"], json!({}));
+    assert_eq!(
+        h.page("Runtime.evaluate", json!({"expression":"field.value","returnByValue":true}))["result"]["result"]
+            ["value"],
+        "replacement"
+    );
+    h.page("Input.dispatchKeyEvent", json!({"type":"rawKeyDown","key":"Tab","code":"Tab"}));
+    assert_eq!(
+        h.page("Runtime.evaluate", json!({"expression":"document.activeElement.id","returnByValue":true}))["result"]
+            ["result"]["value"],
+        "next"
+    );
+}
+
+#[test]
+fn input_validation_rejects_before_delivering_events() {
+    let mut h = Harness::new();
+    h.page(
+        "Runtime.evaluate",
+        json!({"expression":"globalThis.keyEvents=0; document.addEventListener('keydown',()=>keyEvents++)"}),
+    );
+    for params in [
+        json!({"type":"invalid"}),
+        json!({"type":"keyDown","modifiers":16}),
+        json!({"type":"keyDown","location":4}),
+        json!({"type":"keyDown","commands":["undo"]}),
+        json!({"type":"keyDown","timestamp":1}),
+        json!({"type":"keyDown","windowsVirtualKeyCode":256}),
+    ] {
+        assert!(h.page("Input.dispatchKeyEvent", params).get("error").is_some());
+    }
+    for params in [
+        json!({"type":"mousePressed","x":0,"y":0,"button":"invalid"}),
+        json!({"type":"mousePressed","x":0,"y":0,"buttons":32}),
+        json!({"type":"mousePressed","x":0,"y":0,"pointerType":"pen"}),
+        json!({"type":"mousePressed","x":0,"y":0,"force":0.8}),
+    ] {
+        assert!(h.page("Input.dispatchMouseEvent", params).get("error").is_some());
+    }
+    assert_eq!(
+        h.page("Runtime.evaluate", json!({"expression":"keyEvents","returnByValue":true}))["result"]["result"]["value"],
+        0
+    );
+}
+
+#[test]
+fn input_mouse_hit_tests_and_runs_trusted_checkbox_activation() {
+    let mut h = Harness::new();
+    h.page("Runtime.evaluate", json!({"expression":r#"
+      document.body.innerHTML='<input id="check" type="checkbox" style="position:absolute;left:20px;top:20px;width:40px;height:40px">';
+      globalThis.clicks=[];
+      document.querySelector('#check').addEventListener('click', e => clicks.push([e.isTrusted,e.clientX,e.clientY]));
+    "#}));
+    for (kind, buttons) in [("mousePressed", 1), ("mouseReleased", 0)] {
+        let r = h.page(
+            "Input.dispatchMouseEvent",
+            json!({"type":kind,"x":30,"y":30,"button":"left","buttons":buttons,"clickCount":1}),
+        );
+        assert_eq!(r["result"], json!({}), "{r}");
+    }
+    let r = h.page(
+        "Runtime.evaluate",
+        json!({"expression":"[document.querySelector('#check').checked,clicks]","returnByValue":true}),
+    );
+    assert_eq!(r["result"]["result"]["value"], json!([true, [[true, 30, 30]]]));
 }

@@ -26,6 +26,7 @@ pub mod file;
 pub mod formdata;
 pub mod headers;
 pub mod html;
+pub mod indexeddb;
 pub mod input;
 pub mod layout_api;
 pub mod lifecycle;
@@ -39,6 +40,7 @@ pub mod traversal;
 pub mod util;
 pub mod validity;
 pub mod window;
+pub mod xhr;
 
 use std::rc::Rc;
 
@@ -51,6 +53,7 @@ pub use page::{NavigationRequest, PageDom, PageHooks, RemotePoster};
 pub use storage::StorageNamespace;
 pub use target::{EventTarget, EventTargetData};
 pub use window::{define_members, WindowHost};
+pub use xhr::XhrLimits;
 
 /// Registers every host class with the engine (call before creating realms).
 pub fn register(engine: &lp_js::Engine) {
@@ -70,8 +73,10 @@ pub fn register(engine: &lp_js::Engine) {
     validity::register(engine);
     window::register(engine);
     engine.register::<storage::Storage>();
+    engine.register::<indexeddb::IdbFactory>();
     engine.register::<headers::Headers>();
     engine.register::<response::Response>();
+    engine.register::<xhr::XMLHttpRequest>();
 }
 
 /// Installs the page's bindings into a freshly created realm.
@@ -81,6 +86,7 @@ pub fn install(scope: &Scope<'_>, page: Rc<PageDom>) -> JsResult<()> {
     }
     let realm = scope.realm();
     page.realms.borrow_mut().insert(realm.id(), realm.downgrade());
+    xhr::install(scope, &page)?;
     realm.set_embedder(page);
     encoding::install(scope)?;
     headers::install(scope)?;

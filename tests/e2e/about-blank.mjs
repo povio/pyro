@@ -250,6 +250,124 @@ await check('context cookies reach HTTP and stay isolated', async () => {
     server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
   }
 });
+// Browser binding integration: local HTTP only, without claiming DOM/Input or TOS parity.
+const fixture = http.createServer((req, res) => {
+  if (req.url === '/json') {
+    res.writeHead(201, { 'content-type': 'application/json', 'x-fixture': 'native-fetch' });
+    res.end(JSON.stringify({ answer: 47 }));
+  } else if (req.url === '/slow') {
+    res.writeHead(200, { 'content-type': 'text/plain' });
+    res.flushHeaders();
+    res.write('partial'); // Deliberately pending until the caller aborts/disposes it.
+  } else {
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end('<!doctype html><title>Binding fixture</title><div id="message">native DOM</div>' +
+      '<script>globalThis.inlineSawInit=globalThis.initBindingTypes;' +
+      'globalThis.lifecycle=[];document.addEventListener("DOMContentLoaded",()=>lifecycle.push(document.readyState));' +
+      'window.addEventListener("load",()=>lifecycle.push(document.readyState));</script>');
+  }
+});
+await new Promise((resolve, reject) => { fixture.once('error', reject); fixture.listen(0, '127.0.0.1', resolve); });
+const fixtureOrigin = `http://127.0.0.1:${fixture.address().port}`;
+try {
+  await check('DOM installed before init scripts and shared across isolated worlds', async () => {
+    await page.addInitScript(() => { globalThis.initBindingTypes = [typeof document, typeof fetch, typeof localStorage]; });
+    await page.goto(`${fixtureOrigin}/document`, { timeout: 5000 });
+    assert.deepEqual(await page.evaluate(() => inlineSawInit), ['object', 'function', 'object']);
+    assert.deepEqual(await page.evaluate(() => lifecycle), ['interactive', 'complete']);
+    assert.equal(await page.title(), 'Binding fixture');
+    await page.evaluate(() => { document.querySelector('#message').textContent = 'changed in main'; });
+    const session = await context.newCDPSession(page);
+    try {
+      const { frameTree } = await session.send('Page.getFrameTree');
+      const { executionContextId } = await session.send('Page.createIsolatedWorld', { frameId: frameTree.frame.id, worldName: 'binding-check' });
+      const { result, exceptionDetails } = await session.send('Runtime.evaluate', {
+        contextId: executionContextId, returnByValue: true,
+        expression: '[document.querySelector("#message").textContent, typeof globalThis.inlineSawInit]',
+      });
+      assert.equal(exceptionDetails, undefined);
+      assert.deepEqual(result.value, ['changed in main', 'undefined']);
+    } finally { await session.detach(); }
+  });
+  await check('page fetch uses current frame and loader in Network events', async () => {
+    const session = await context.newCDPSession(page);
+    const requests = [];
+    session.on('Network.requestWillBeSent', event => requests.push(event));
+    try {
+      await session.send('Network.enable');
+      const { frameTree } = await session.send('Page.getFrameTree');
+      const responseEvent = page.waitForResponse(`${fixtureOrigin}/json`, { timeout: 5000 });
+      const value = await page.evaluate(async () => {
+        const response = await fetch('/json');
+        return [response.status, response.headers.get('x-fixture'), await response.json()];
+      });
+      assert.deepEqual(value, [201, 'native-fetch', { answer: 47 }]);
+      const response = await responseEvent;
+      assert.equal(response.request().resourceType(), 'fetch');
+      assert.deepEqual(await response.json(), { answer: 47 });
+      const event = requests.find(event => event.request.url === `${fixtureOrigin}/json`);
+      assert.ok(event, 'native fetch request is observed through CDP');
+      assert.equal(event.frameId, frameTree.frame.id);
+      assert.equal(event.loaderId, frameTree.frame.loaderId);
+      assert.notEqual(event.requestId, event.loaderId, 'subresource retains native request identity');
+    } finally { await session.detach(); }
+  });
+  await check('page fetch route fulfillment and abort after headers', async () => {
+    await page.route('**/routed-fetch', route => route.fulfill({ status: 202, contentType: 'application/json', body: '{"routed":48}' }));
+    try {
+      assert.deepEqual(await page.evaluate(async () => {
+        const response = await fetch('/routed-fetch');
+        return [response.status, await response.json()];
+      }), [202, { routed: 48 }]);
+    } finally { await page.unroute('**/routed-fetch'); }
+    assert.equal(await page.evaluate(async () => {
+      const controller = new AbortController();
+      const response = await fetch('/slow', { signal: controller.signal });
+      const reading = response.text();
+      controller.abort('body stopped');
+      try { await reading; return 'unexpected success'; } catch (error) { return error; }
+    }), 'body stopped');
+  });
+  await check('native keyboard text insertion and mouse activation', async () => {
+    await page.evaluate(() => {
+      document.body.innerHTML = '<input id="typing"><input id="toggle" type="checkbox" style="position:absolute;left:20px;top:80px;width:40px;height:40px">';
+      globalThis.inputEvents = [];
+      const field = document.querySelector('#typing');
+      field.addEventListener('input', event => inputEvents.push(event.isTrusted));
+      field.focus();
+    });
+    await page.keyboard.type('abc');
+    await page.keyboard.insertText('β');
+    assert.deepEqual(await page.evaluate(() => [document.querySelector('#typing').value, inputEvents]), ['abcβ', [true, true, true, true]]);
+    const box = await page.evaluate(() => {
+      const rect = document.querySelector('#toggle').getBoundingClientRect();
+      const x = rect.x + rect.width / 2, y = rect.y + rect.height / 2;
+      return { x, y, width: rect.width, height: rect.height,
+        atPoint: document.elementFromPoint(x,y)?.id };
+    });
+    assert.ok(box.width > 0 && box.height > 0, JSON.stringify(box));
+    assert.equal(box.atPoint, 'toggle', JSON.stringify(box));
+    await page.mouse.click(box.x, box.y);
+    assert.equal(await page.evaluate(() => document.querySelector('#toggle').checked), true);
+  });
+  await check('Web Storage follows context, page and navigation boundaries', async () => {
+    await page.evaluate(() => { localStorage.setItem('local-marker', 'shared'); sessionStorage.setItem('session-marker', 'page'); });
+    const sibling = await context.newPage();
+    const other = await browser.newContext();
+    try {
+      await sibling.goto(`${fixtureOrigin}/sibling`, { timeout: 5000 });
+      assert.deepEqual(await sibling.evaluate(() => [localStorage.getItem('local-marker'), sessionStorage.getItem('session-marker')]), ['shared', null]);
+      const isolated = await other.newPage();
+      await isolated.goto(`${fixtureOrigin}/isolated`, { timeout: 5000 });
+      assert.deepEqual(await isolated.evaluate(() => [localStorage.getItem('local-marker'), sessionStorage.getItem('session-marker')]), [null, null]);
+      await page.goto(`${fixtureOrigin}/next`, { timeout: 5000 });
+      assert.deepEqual(await page.evaluate(() => [localStorage.getItem('local-marker'), sessionStorage.getItem('session-marker')]), ['shared', 'page']);
+    } finally { await sibling.close(); await other.close(); }
+  });
+} finally {
+  fixture.closeAllConnections();
+  await new Promise(resolve => fixture.close(resolve));
+}
 await check('second context is independent', async () => {
   const other = await browser.newContext();
   const p2 = await other.newPage();
