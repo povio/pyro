@@ -1,5 +1,7 @@
 # Protocol integration dependency inventory
 
+## Original Network/Fetch integration (PR6)
+
 This follow-up is based on main `dab6ea134d1854f574538f6ec94370622769d428` (PRs 1–4 merged).
 The original tested integration branch remains at `f27a3e72d99fe2fd53f7eb8d9305f8b1395dc6fe`.
 The follow-up includes main in its ancestry so the PR diff has a single, current merge base.
@@ -43,3 +45,17 @@ reintroduced as a source diff. Standalone fetch/Response 8cab864 is also present
 without new browser registration in this follow-up. Browser DOM/WebAPI registration, full TOS flows, TLS, response-stage Fetch,
 and custom response phrases remain gaps. Static maintainability review and executed tests have distinct
 scopes; neither is presented as the blocked independent correctness/performance review.
+
+
+## Subsequent browser integration
+
+Published browser candidate `7551f073a8cc4fc65a5e641da44410a8d36551fc` is merged normally
+above main `f76ad90513c029beab900f5878eb1e868fa9f638`. Its browser/CLI source is unchanged
+by the protocol worker. It installs the DOM and WebAPI bindings, storage namespaces,
+disposal and fetch request metadata; see `docs/browser/LOADING.md` for its exact scope.
+The protocol increment preflights Target auto-attach capacity atomically and adds real
+Playwright checks for the installed bindings and Network/Fetch interaction.
+
+The earlier browser-registration gap above describes PR6 before this dependency. Remaining
+gaps include DOM/Input protocol integration, TLS, response-stage interception, broader resource
+loading and full TOS workflows. Historical CPU/memory measurements remain tied to d673567.
