@@ -19,7 +19,7 @@ Capture uses a shared process payload budget (default 64 MiB, 8 MiB/body), at mo
 
 The browser integration smoke also exercises DOM access before init scripts, shared DOM across isolated worlds, page fetch with exact Network frame/loader correlation, route fulfillment/abort after headers, and Web Storage context/page/navigation isolation. These checks use local HTTP and JavaScript evaluation; The full DOM protocol and actual TOS workflows remain unvalidated. A separate Input check covers keyboard typing/text insertion and mouse checkbox activation; editing commands, wheel default scrolling, pen/touch and drag remain unsupported. Mouse coordinates follow the native synthetic layout, not full CSS positioning; the smoke derives its click point from the reported rectangle and verifies the exact hit target.
 
-Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 40 engine, 10 accepted/recorded only, 3 conditional, 48 pending.
+Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 41 engine, 10 accepted/recorded only, 3 conditional, 47 pending.
 
 | Method | Upstream 2ad38773f | Rewrite | Notes |
 | --- | --- | --- | --- |
@@ -55,7 +55,7 @@ Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 40 engi
 | `Emulation.setScriptExecutionDisabled` | yes | pending |  |
 | `Emulation.setTimezoneOverride` | yes | conditional | succeeds only when it equals the process time zone; otherwise an explicit error |
 | `Emulation.setTouchEmulationEnabled` | yes | pending |  |
-| `Emulation.setUserAgentOverride` | yes | pending | refused until per-page HTTP and navigator overrides can be applied consistently |
+| `Emulation.setUserAgentOverride` | yes | engine | page-local navigator and request defaults, persistent across navigation; client hints unsupported |
 | `Fetch.continueRequest` | yes | engine | request stage; see supported scope above |
 | `Fetch.disable` | yes | engine | request stage; see supported scope above |
 | `Fetch.enable` | yes | engine | request stage; see supported scope above |
@@ -167,3 +167,13 @@ Protocol commands invoke `Browser::checkpoint()` after releasing command borrows
 flush. This starts resources inserted by synchronous Runtime calls while idle and drains native
 events from Input/DOM actions. The Playwright stylesheet check awaits a real local HTTP response
 without a page timer or follow-up CDP command to trigger loading.
+
+`Emulation.setUserAgentOverride` validates CDP field types and delegates atomic HTTP header
+validation to the browser/native identity API. An empty userAgent alone resets the override;
+with acceptLanguage/platform it keeps the default UA while applying those fields. Current and
+future worlds and navigation/fetch/XHR use the page override without changing sibling pages.
+Already-started requests retain their snapshot. userAgentMetadata is explicitly unsupported
+before mutation. This is navigator/request identity, not Intl locale or timezone emulation.
+The [CDP Emulation schema](https://raw.githubusercontent.com/ChromeDevTools/devtools-protocol/master/pdl/domains/Emulation.pdl)
+is the parameter reference; browser persistence and transport limits are documented in
+[USER_AGENT.md](../browser/USER_AGENT.md).

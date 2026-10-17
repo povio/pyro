@@ -1058,3 +1058,63 @@ fn dom_geometry_matches_native_rect_and_rejects_detached_or_foreign_objects() {
     assert!(h.page("DOM.describeNode", json!({"objectId":object,"backendNodeId":1})).get("error").is_some());
     assert!(h.page("DOM.describeNode", json!({"objectId":object,"depth":33})).get("error").is_some());
 }
+
+#[test]
+fn user_agent_override_validates_atomically_and_updates_page_worlds() {
+    let mut h = Harness::new();
+    let probe = "[navigator.userAgent,navigator.platform,navigator.language,Array.from(navigator.languages)]";
+    let initial = h.page("Runtime.evaluate", json!({"expression":probe,"returnByValue":true}))["result"]["result"]
+        ["value"]
+        .clone();
+    let locale = h.page("Emulation.setUserAgentOverride", json!({"userAgent":"","acceptLanguage":"en-US"}));
+    assert_eq!(locale["result"], json!({}), "exact TOS locale-only request: {locale}");
+    let language = h.page("Runtime.evaluate", json!({"expression":probe,"returnByValue":true}));
+    assert_eq!(language["result"]["result"]["value"][0], initial[0]);
+    assert_eq!(language["result"]["result"]["value"][2], "en-US");
+    let frame = h.frame_id.clone();
+    let world = h.page("Page.createIsolatedWorld", json!({"frameId":frame,"worldName":"identity"}))["result"]
+        ["executionContextId"]
+        .clone();
+    assert_eq!(
+        h.page(
+            "Emulation.setUserAgentOverride",
+            json!({"userAgent":"Protocol/1","acceptLanguage":"fr-FR,fr;q=0.8","platform":"FixtureOS"})
+        )["result"],
+        json!({})
+    );
+    let expected = json!(["Protocol/1", "FixtureOS", "fr-FR", ["fr-FR", "fr"]]);
+    for params in [
+        json!({"expression":probe,"returnByValue":true}),
+        json!({"expression":probe,"returnByValue":true,"contextId":world}),
+    ] {
+        assert_eq!(h.page("Runtime.evaluate", params)["result"]["result"]["value"], expected);
+    }
+    for params in [
+        json!({}),
+        json!({"userAgent":123}),
+        json!({"userAgent":"ok","acceptLanguage":false}),
+        json!({"userAgent":"ok","platform":[]}),
+        json!({"userAgent":"bad\r\nheader"}),
+        json!({"userAgent":"ok","acceptLanguage":"bad\nheader"}),
+    ] {
+        let response = h.page("Emulation.setUserAgentOverride", params.clone());
+        assert_eq!(response["error"]["code"], -32602, "{params}: {response}");
+    }
+    let metadata = h.page("Emulation.setUserAgentOverride", json!({"userAgent":"ignored","userAgentMetadata":{}}));
+    assert_eq!(metadata["error"]["code"], -32000, "unsupported client hints: {metadata}");
+    assert_eq!(
+        h.page("Runtime.evaluate", json!({"expression":probe,"returnByValue":true}))["result"]["result"]["value"],
+        expected,
+        "invalid requests did not mutate existing state"
+    );
+    assert!(h.page("Page.navigate", json!({"url":"data:text/html,<p>identity</p>"}))["error"].is_null());
+    assert_eq!(
+        h.page("Runtime.evaluate", json!({"expression":probe,"returnByValue":true}))["result"]["result"]["value"],
+        expected
+    );
+    assert_eq!(h.page("Emulation.setUserAgentOverride", json!({"userAgent":""}))["result"], json!({}));
+    assert_eq!(
+        h.page("Runtime.evaluate", json!({"expression":probe,"returnByValue":true}))["result"]["result"]["value"],
+        initial
+    );
+}

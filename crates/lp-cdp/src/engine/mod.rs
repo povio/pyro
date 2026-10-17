@@ -388,10 +388,37 @@ impl EngineHost {
                 }
                 Ok(Some(serde_json::json!({})))
             }
-            // HTTP now loads real requests. A recorded-only override would
-            // report success without changing them; per-page overrides await
-            // the matching loader and navigator implementation.
-            "setUserAgentOverride" => Err(CdpError::unsupported(&cmd.command.method)),
+            "setUserAgentOverride" => {
+                #[derive(Deserialize)]
+                #[serde(rename_all = "camelCase")]
+                struct P {
+                    user_agent: String,
+                    accept_language: Option<String>,
+                    platform: Option<String>,
+                    user_agent_metadata: Option<serde_json::Value>,
+                }
+                let p: P = cmd.command.params()?;
+                if p.user_agent_metadata.is_some() {
+                    return Err(CdpError::unsupported("Emulation user agent client hints"));
+                }
+                let id = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?.id;
+                // Empty UA alone resets the override; with locale/platform it
+                // retains the browser's default UA while applying those fields.
+                let override_ = if p.user_agent.is_empty() && p.accept_language.is_none() && p.platform.is_none() {
+                    None
+                } else {
+                    Some(lp_webapi::UserAgentOverride {
+                        user_agent: p.user_agent,
+                        accept_language: p.accept_language,
+                        platform: p.platform,
+                    })
+                };
+                self.thread.browser.set_user_agent_override(id, override_).map_err(|error| match error {
+                    lp_js::JsError::Type(message) => CdpError::invalid_params(message),
+                    other => remote::js_to_cdp(other),
+                })?;
+                Ok(Some(serde_json::json!({})))
+            }
             // JavaScriptCore's Intl/Date use the process locale and time zone;
             // per-page overrides are not implemented. Requests that match the
             // current values are true no-ops; others are refused.
