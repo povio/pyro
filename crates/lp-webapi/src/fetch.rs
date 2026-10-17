@@ -283,15 +283,7 @@ fn parse_request<'s>(
         if matches!(request.method, Method::GET | Method::HEAD) {
             return Err(JsError::Type("GET/HEAD cannot have a body".into()));
         }
-        let (bytes, mime) = if let Some(blob) = s.unwrap::<crate::file::Blob>(body) {
-            (blob.bytes.clone(), blob.mime.clone())
-        } else if let Some(params) = s.unwrap::<crate::url_search_params::URLSearchParams>(body) {
-            (Bytes::from(params.serialize()), "application/x-www-form-urlencoded;charset=UTF-8".into())
-        } else if let Some(bytes) = crate::encoding::buffer_source_bytes(s, body)? {
-            (Bytes::from(bytes), String::new())
-        } else {
-            (Bytes::from(dom_string(body)?), "text/plain;charset=UTF-8".into())
-        };
+        let (bytes, mime) = extract_body(s, body)?;
         if !mime.is_empty() && !request.headers.contains_key(header::CONTENT_TYPE) {
             request.headers.insert(
                 header::CONTENT_TYPE,
@@ -337,6 +329,23 @@ fn parse_request<'s>(
     request.frame_id = context.frame_id.clone();
     request.loader_id = context.loader_id.clone();
     Ok((request, signal))
+}
+
+/// Fetch "extract a body" for the supported BodyInit types: Blob,
+/// URLSearchParams, BufferSource, else ToString. Returns (bytes, Content-Type
+/// or "" when the type sets none). ReadableStream/FormData bodies are not
+/// supported by this implementation (FormData has no binding yet; other
+/// objects are stringified as the Web IDL union's last member, USVString).
+pub(crate) fn extract_body(s: &Scope<'_>, body: Value<'_>) -> JsResult<(Bytes, String)> {
+    Ok(if let Some(blob) = s.unwrap::<crate::file::Blob>(body) {
+        (blob.bytes.clone(), blob.mime.clone())
+    } else if let Some(params) = s.unwrap::<crate::url_search_params::URLSearchParams>(body) {
+        (Bytes::from(params.serialize()), "application/x-www-form-urlencoded;charset=UTF-8".into())
+    } else if let Some(bytes) = crate::encoding::buffer_source_bytes(s, body)? {
+        (Bytes::from(bytes), String::new())
+    } else {
+        (Bytes::from(dom_string(body)?), "text/plain;charset=UTF-8".into())
+    })
 }
 
 pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
@@ -558,6 +567,37 @@ fn pump(page_id: u64, id: RequestId) {
 }
 
 impl Body {
+    /// A complete in-memory body for script-constructed Responses
+    /// (`new Response(body)`, `Response.json`, `Response.error`). `None` is a
+    /// null body. Not tied to a page, request or network budget.
+    pub(crate) fn constructed(s: &Scope<'_>, bytes: Option<Bytes>, mime: String) -> Rc<Body> {
+        let len = bytes.as_ref().map_or(0, Bytes::len);
+        let wire = Wire {
+            head: None,
+            chunks: bytes.iter().filter(|b| !b.is_empty()).cloned().collect(),
+            bytes: len,
+            terminal: Some(Ok(())),
+            closed: true,
+            scheduled: false,
+            null_body: bytes.is_none(),
+            // Private budget pre-charged with this body so clear_body balances.
+            budget: Arc::new(Budget { used: AtomicUsize::new(len), limit: AtomicUsize::new(usize::MAX) }),
+        };
+        Rc::new(Body {
+            wire: Arc::new(Mutex::new(wire)),
+            page: Weak::new(),
+            id: RequestId(0),
+            realm_id: s.realm_id(),
+            readers: RefCell::new(Vec::new()),
+            consumers: Cell::new(0),
+            abort_registration: RefCell::new(None),
+            abort_reason: RefCell::new(Weak::new()),
+            aborted: Cell::new(false),
+            disposed: Cell::new(false),
+            mime: RefCell::new(mime),
+        })
+    }
+
     pub(crate) fn add_consumer(&self) {
         if !self.is_null() {
             self.consumers.set(self.consumers.get() + 1);

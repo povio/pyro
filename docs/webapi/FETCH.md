@@ -56,9 +56,21 @@ Supported behavior:
   Body consumption is single-use except for null bodies. HTTP errors such as
   404 resolve normally; network errors reject.
 
-Not implemented: Request/public Response constructors and static factories,
-ReadableStream/body streaming, FormData/URLSearchParams bindings and serialization
-through fetch, URL binding, `<base>` URL selection, full MIME parsing for
+Script-created responses: `new Response(body, init)` (null, string,
+Blob, BufferSource or URLSearchParams body with the matching Content-Type;
+status 200-599 else RangeError; statusText reason-phrase check; null-body
+statuses 101/103/204/205/304 reject a body), `Response.json(data, init)`,
+`Response.redirect(url, status)` (301/302/303/307/308, absolute Location
+resolved against the document URL) and `Response.error()` (type "error",
+status 0, immutable headers). They have type "default", empty URL, mutable
+headers (Set-Cookie/Set-Cookie2 dropped from the init only), complete
+in-memory bodies with the same single-use readers, and clones with copied
+headers. `response.body` is `null` for null bodies and otherwise throws
+TypeError (no streams).
+
+Not implemented: the Request constructor, ReadableStream/body streaming,
+FormData bodies, the "response" header guard after construction (later
+`headers.set('set-cookie')` is not filtered), URL binding, `<base>` URL selection, full MIME parsing for
 response Blob types, service workers, integrity/referrer policy and HTTP caching.
 Nonempty integrity/referrer/referrerPolicy, keepalive and unsupported cache modes
 are explicitly rejected. HTTPS remains unsupported by the native transport.
