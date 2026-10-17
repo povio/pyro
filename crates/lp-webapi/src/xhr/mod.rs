@@ -461,6 +461,7 @@ impl Xhr {
         let context = page.request_context();
         request.frame_id = context.frame_id;
         request.loader_id = context.loader_id;
+        page.apply_request_defaults(&mut request);
         request.max_body = Some(limits.max_body_bytes);
         let id = net.next_request_id();
         let wire = Arc::new(Mutex::new(Delivery::new(page.xhr_state.budget.clone())));
