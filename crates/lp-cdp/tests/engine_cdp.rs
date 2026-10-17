@@ -48,7 +48,7 @@ impl Harness {
         }
         .expect("JavaScriptCore engine");
         if let Some(limit) = handle_limit {
-            host.set_handle_limit(limit);
+            host.set_handle_limit(limit).expect("limit set before any session");
         }
         let mut h = Harness {
             browser: Browser::new(host),
@@ -1249,4 +1249,30 @@ fn handle_budget_spans_sessions_and_returns_on_release_and_detach() {
         let r = h.call(Some(&first), "Runtime.evaluate", json!({"expression":"({})"}));
         assert!(r["result"]["result"]["objectId"].is_string(), "detach returns the session's handles: {r}");
     }
+}
+
+#[test]
+fn handle_limit_cannot_change_after_sessions_attach() {
+    let mut h = Harness::with_handle_limit(2);
+    // A late change must fail without touching the budget the session uses.
+    let late = h.browser.host_mut().set_handle_limit(1_000);
+    assert!(late.is_err(), "late configuration rejected in every build");
+    let session = h.session.clone();
+    for _ in 0..2 {
+        let r = h.call(Some(&session), "Runtime.evaluate", json!({"expression":"({})"}));
+        assert!(r["result"]["result"]["objectId"].is_string(), "{r}");
+    }
+    let r = h.call(Some(&session), "Runtime.evaluate", json!({"expression":"({})"}));
+    assert_eq!(r["error"]["message"], "Too many remote objects; release unused handles", "original capacity kept: {r}");
+    // Once no session (and no table) shares the budget, a new limit applies
+    // to sessions attached afterwards.
+    h.call(None, "Target.detachFromTarget", json!({"sessionId": session}));
+    h.browser.host_mut().set_handle_limit(3).expect("no session holds the budget any more");
+    let next = h.attach_second_session();
+    for _ in 0..3 {
+        let r = h.call(Some(&next), "Runtime.evaluate", json!({"expression":"({})"}));
+        assert!(r["result"]["result"]["objectId"].is_string(), "{r}");
+    }
+    let r = h.call(Some(&next), "Runtime.evaluate", json!({"expression":"({})"}));
+    assert!(r.get("error").is_some(), "new limit enforced: {r}");
 }

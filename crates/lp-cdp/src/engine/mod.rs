@@ -228,11 +228,16 @@ impl EngineHost {
         self.collector.runtime_wanted.set(self.sessions.values().any(|s| s.runtime_enabled));
     }
 
-    /// Replaces the connection's handle budget. Only before sessions attach
-    /// (tests, embedders with other memory limits).
-    pub fn set_handle_limit(&mut self, limit: usize) {
-        debug_assert!(self.sessions.is_empty(), "handle limit changed after sessions attached");
+    /// Replaces the connection's handle budget (tests, embedders with other
+    /// memory limits). Only allowed while no session's handle table holds the
+    /// current budget; otherwise existing tables would keep counting against
+    /// the old budget, so the call fails in every build and changes nothing.
+    pub fn set_handle_limit(&mut self, limit: usize) -> CdpResult<()> {
+        if !self.sessions.is_empty() || self.handle_budget.is_shared() {
+            return Err(CdpError::server("The handle limit can only be set before sessions attach"));
+        }
         self.handle_budget = HandleBudget::new(limit);
+        Ok(())
     }
 
     /// True when engine notifications are waiting for [`EngineHost::flush`].

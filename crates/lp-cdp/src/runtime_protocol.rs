@@ -263,6 +263,11 @@ impl HandleBudget {
         self.0.used.get()
     }
 
+    /// True while a handle table (or any other holder) shares this budget.
+    pub fn is_shared(&self) -> bool {
+        Rc::strong_count(&self.0) > 1
+    }
+
     fn take(&self) -> bool {
         let used = self.0.used.get();
         if used >= self.0.limit {
@@ -433,8 +438,10 @@ mod tests {
     #[test]
     fn handle_budget_is_shared_and_returned() {
         let budget = HandleBudget::new(3);
+        assert!(!budget.is_shared());
         let mut a = HandleTable::new(budget.clone());
         let mut b = HandleTable::new(budget.clone());
+        assert!(budget.is_shared());
         let a1 = a.insert(1, Some("g"), "a1").unwrap();
         a.insert(1, None, "a2").unwrap();
         b.insert(2, None, "b1").unwrap();
