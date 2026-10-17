@@ -1,0 +1,184 @@
+use super::*;
+use lp_js::{ConsoleLevel, Value};
+use std::time::Duration;
+
+#[derive(Default)]
+struct Recorder {
+    events: RefCell<Vec<String>>,
+    console: RefCell<Vec<String>>,
+    errors: RefCell<Vec<String>>,
+}
+
+impl PageObserver for Recorder {
+    fn on_page_event(&self, _page: PageId, event: &PageEvent) {
+        let name = match event {
+            PageEvent::FrameNavigate { .. } => "navigate".to_string(),
+            PageEvent::FrameNavigated { .. } => "navigated".to_string(),
+            PageEvent::FrameNavigateFailed { error, .. } => format!("failed:{error}"),
+            PageEvent::RealmCreated { world, .. } => format!("realm:{}", world.as_deref().unwrap_or("main")),
+            PageEvent::RealmDestroyed { .. } => "realm-destroyed".to_string(),
+            PageEvent::FrameDomContentLoaded { .. } => "dcl".to_string(),
+            PageEvent::FrameLoaded { .. } => "load".to_string(),
+            PageEvent::FrameNetworkAlmostIdle { .. } => "almost-idle".to_string(),
+            PageEvent::FrameNetworkIdle { .. } => "idle".to_string(),
+            other => format!("{other:?}"),
+        };
+        self.events.borrow_mut().push(name);
+    }
+}
+
+impl EngineHooks for Recorder {
+    fn console_api(&self, _realm: &Realm, level: ConsoleLevel, args: &[Value<'_>]) {
+        let parts: Vec<String> = args.iter().map(|a| a.to_string().unwrap_or_default()).collect();
+        self.console.borrow_mut().push(format!("{}:{}", level.cdp_type(), parts.join(" ")));
+    }
+    fn exception_thrown(&self, _realm: &Realm, e: &lp_js::JsException) {
+        self.errors.borrow_mut().push(e.text());
+    }
+}
+
+fn setup() -> (BrowserThread, Rc<Recorder>, PageId) {
+    let mut t = BrowserThread::new().unwrap();
+    let rec = Rc::new(Recorder::default());
+    t.browser.set_observer(Some(rec.clone()));
+    t.browser.set_engine_hooks(Some(rec.clone()));
+    let page = t.browser.create_page().unwrap();
+    (t, rec, page)
+}
+
+fn eval(t: &BrowserThread, page: PageId, src: &str) {
+    let realm = t.browser.page(page).unwrap().main_frame.main_realm().unwrap().clone();
+    let s = realm.scope().unwrap();
+    if let Err(e) = s.eval(src, Some("test.js"), 1) {
+        s.report_exception(&e);
+    }
+}
+
+#[test]
+fn initial_navigation_event_order() {
+    let (_t, rec, _page) = setup();
+    assert_eq!(*rec.events.borrow(), ["navigate", "realm:main", "navigated", "dcl", "load", "almost-idle", "idle"]);
+}
+
+#[test]
+fn timers_run_in_order_and_clear() {
+    let (mut t, rec, page) = setup();
+    eval(
+        &t,
+        page,
+        "setTimeout(() => console.log('b'), 20);
+         setTimeout((x, y) => console.log('a', x, y), 5, 1, 2);
+         const c = setTimeout(() => console.log('never'), 1); clearTimeout(c);
+         let n = 0; const i = setInterval(() => { console.log('i' + (++n)); if (n === 3) clearInterval(i) }, 2);
+         queueMicrotask(() => console.log('micro'));
+         setTimeout('console.log(\"string handler\")', 1);
+         requestAnimationFrame(ts => console.log('raf', typeof ts));
+         console.log('sync');",
+    );
+    let r = t.run_until_idle(Some(Instant::now() + Duration::from_secs(5)));
+    assert_eq!(r, RunOutcome::Idle);
+    let log = rec.console.borrow().clone();
+    assert_eq!(log[0], "log:sync");
+    assert_eq!(log[1], "log:micro");
+    for want in ["log:a 1 2", "log:b", "log:i1", "log:i2", "log:i3", "log:string handler", "log:raf number"] {
+        assert!(log.contains(&want.to_string()), "missing {want} in {log:?}");
+    }
+    assert!(!log.iter().any(|l| l.contains("never")));
+    let pos = |s: &str| log.iter().position(|l| l == s).unwrap();
+    assert!(pos("log:a 1 2") < pos("log:b"));
+}
+
+#[test]
+fn timer_exceptions_are_reported_and_do_not_stop_loop() {
+    let (mut t, rec, page) = setup();
+    eval(&t, page, "setTimeout(() => { throw new Error('boom') }, 1); setTimeout(() => console.log('after'), 3);");
+    t.run_until_idle(Some(Instant::now() + Duration::from_secs(5)));
+    assert_eq!(*rec.errors.borrow(), ["Error: boom"]);
+    assert_eq!(*rec.console.borrow(), ["log:after"]);
+}
+
+#[test]
+fn init_scripts_run_per_world_before_page_scripts() {
+    let (mut t, rec, page) = setup();
+    t.browser.add_init_script(
+        page,
+        InitScript { id: "1".into(), source: "globalThis.injected = 'main'".into(), world: None },
+    );
+    t.browser.add_init_script(
+        page,
+        InitScript {
+            id: "2".into(),
+            source: "globalThis.injected = 'utility'".into(),
+            world: Some("__playwright_utility_world__".into()),
+        },
+    );
+    rec.events.borrow_mut().clear();
+    t.browser.navigate(page, NavigateOpts::address_bar("about:blank")).unwrap();
+    assert_eq!(
+        *rec.events.borrow(),
+        [
+            "navigate",
+            "realm-destroyed",
+            "realm:main",
+            "realm:__playwright_utility_world__",
+            "navigated",
+            "dcl",
+            "load",
+            "almost-idle",
+            "idle"
+        ]
+    );
+    eval(&t, page, "console.log(injected)");
+    let world = t.browser.page(page).unwrap().main_frame.world("__playwright_utility_world__").unwrap().clone();
+    let s = world.scope().unwrap();
+    assert_eq!(s.eval("injected", None, 1).unwrap().to_string().unwrap(), "utility");
+    assert_eq!(*rec.console.borrow(), ["log:main"]);
+}
+
+#[test]
+fn navigation_cancels_old_timers_and_disposes_realm() {
+    let (mut t, rec, page) = setup();
+    eval(&t, page, "setTimeout(() => console.log('stale'), 5)");
+    let old = t.browser.page(page).unwrap().main_frame.main_realm().unwrap().clone();
+    t.browser.navigate(page, NavigateOpts::address_bar("about:blank")).unwrap();
+    assert!(old.is_disposed());
+    t.run_until_idle(Some(Instant::now() + Duration::from_secs(2)));
+    assert!(rec.console.borrow().is_empty());
+}
+
+#[test]
+fn unsupported_navigation_is_explicit() {
+    let (mut t, rec, page) = setup();
+    rec.events.borrow_mut().clear();
+    let r = t.browser.navigate(page, NavigateOpts::address_bar("http://127.0.0.1:1/"));
+    assert!(matches!(r, Err(lp_js::JsError::Unsupported(_))));
+    assert_eq!(rec.events.borrow()[0], "navigate");
+    assert!(rec.events.borrow()[1].starts_with("failed:net::ERR_NOT_IMPLEMENTED"));
+}
+
+#[test]
+fn remote_tasks_reach_browser_state() {
+    let (mut t, rec, page) = setup();
+    let h = t.handle();
+    std::thread::spawn(move || {
+        h.post(move |b: &mut Browser| {
+            let realm = b.page(page).unwrap().main_frame.main_realm().unwrap().clone();
+            realm.scope().unwrap().eval("console.log('from remote')", None, 1).unwrap();
+        })
+        .unwrap();
+    });
+    let r = t.run_until(Some(Instant::now() + Duration::from_secs(5)), |_| !rec.console.borrow().is_empty());
+    assert_eq!(r, RunOutcome::Done);
+    assert_eq!(*rec.console.borrow(), ["log:from remote"]);
+}
+
+#[test]
+fn window_globals() {
+    let (t, rec, page) = setup();
+    eval(
+        &t,
+        page,
+        "console.log(window === globalThis, self === window, typeof setTimeout, globalThis instanceof Window, Object.prototype.toString.call(window))",
+    );
+    assert_eq!(*rec.console.borrow(), ["log:true true function true [object Window]"]);
+}

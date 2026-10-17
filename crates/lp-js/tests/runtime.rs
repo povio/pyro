@@ -1,0 +1,520 @@
+//! Integration tests against the real system JavaScriptCore.
+
+use lp_js::*;
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
+
+fn engine() -> Engine {
+    Engine::new().expect("engine")
+}
+
+fn eval_str(realm: &Realm, src: &str) -> String {
+    let s = realm.scope().unwrap();
+    match s.eval(src, Some("test.js"), 1) {
+        Ok(v) => v.to_string().unwrap(),
+        Err(e) => format!("THROW {}", e.details(&s).text()),
+    }
+}
+
+// -- a small class hierarchy resembling DOM bindings -------------------------
+
+struct NodeData {
+    id: u64,
+    name: RefCell<String>,
+    children: RefCell<Vec<u64>>,
+    drops: Rc<Cell<u32>>,
+}
+
+impl Drop for NodeData {
+    fn drop(&mut self) {
+        self.drops.set(self.drops.get() + 1);
+    }
+}
+
+type NodeRef = Rc<NodeData>;
+
+struct EventTarget;
+impl JsClass for EventTarget {
+    const NAME: &'static str = "EventTarget";
+    type Data = NodeRef;
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        def.method("ping", 0, |s, _this, _args| Ok(s.string("pong")));
+    }
+}
+
+struct Node;
+impl JsClass for Node {
+    const NAME: &'static str = "Node";
+    type Data = NodeRef;
+    type Parent = EventTarget;
+    fn define(def: &mut ClassDef<Self>) {
+        def.constant("ELEMENT_NODE", 1.0);
+        def.getter("nodeId", |s, this| Ok(s.number(this.id as f64)));
+        def.accessor(
+            "nodeName",
+            |s, this| Ok(s.string(&this.name.borrow())),
+            |_s, this, v| {
+                *this.name.borrow_mut() = v.to_string()?;
+                Ok(())
+            },
+        );
+        def.method("fail", 0, |_s, _this, _args| Err(JsError::dom("NotFoundError", "no such node")));
+        def.method("panics", 0, |_s, _this, _args| panic!("boom"));
+        def.method("childAt", 1, |s, this, args| {
+            args.require(1, "childAt")?;
+            let i = args.get(0).to_number()? as usize;
+            match this.children.borrow().get(i) {
+                Some(id) => Ok(s.number(*id as f64)),
+                None => Err(JsError::Range("out of range".into())),
+            }
+        });
+    }
+}
+
+struct Element;
+impl JsClass for Element {
+    const NAME: &'static str = "Element";
+    type Data = NodeRef;
+    type Parent = Node;
+    fn define(def: &mut ClassDef<Self>) {
+        def.constructor(1, |s, new_target, args| {
+            let name = args.get(0).to_string()?;
+            let data = Rc::new(NodeData {
+                id: 1000,
+                name: RefCell::new(name),
+                children: RefCell::new(vec![]),
+                drops: Rc::new(Cell::new(0)),
+            });
+            s.wrap_new::<Element>(data, new_target, None)
+        });
+    }
+}
+
+struct List;
+impl JsClass for List {
+    const NAME: &'static str = "List";
+    type Data = NodeRef;
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        def.getter("length", |s, this| Ok(s.number(this.children.borrow().len() as f64)));
+        def.method("item", 1, |s, this, args| {
+            let i = args.get(0).to_number()? as usize;
+            Ok(this.children.borrow().get(i).map(|v| s.number(*v as f64)).unwrap_or_else(|| s.null()))
+        });
+        def.indexed(|s, this, i| Ok(this.children.borrow().get(i as usize).map(|v| s.number(*v as f64))));
+        def.named(false, |s, this, name| Ok(if name == "special" { Some(s.number(this.id as f64)) } else { None }));
+        def.indexed_iterable();
+    }
+}
+
+fn node(id: u64, drops: &Rc<Cell<u32>>) -> NodeRef {
+    Rc::new(NodeData {
+        id,
+        name: RefCell::new(format!("n{id}")),
+        children: RefCell::new(vec![10, 20, 30]),
+        drops: drops.clone(),
+    })
+}
+
+fn setup() -> (Engine, Realm) {
+    let e = engine();
+    e.register::<Element>();
+    e.register::<List>();
+    let realm = e.create_realm(RealmOptions::default()).unwrap();
+    (e, realm)
+}
+
+fn expose<C: JsClass>(realm: &Realm, name: &str, data: C::Data, key: Option<IdentityKey>) {
+    let s = realm.scope().unwrap();
+    let o = s.wrap::<C>(data, key).unwrap();
+    s.global().set(name, o.value()).unwrap();
+}
+
+#[test]
+fn evaluates_and_reports_syntax_errors() {
+    let e = engine();
+    let r = e.create_realm(RealmOptions::default()).unwrap();
+    assert_eq!(eval_str(&r, "1 + 2"), "3");
+    assert_eq!(eval_str(&r, "throw new TypeError('x')"), "THROW TypeError: x");
+    let s = r.scope().unwrap();
+    let err = s.eval("let = ;", Some("bad.js"), 1).unwrap_err();
+    let d = err.details(&s);
+    assert_eq!(d.name.as_deref(), Some("SyntaxError"));
+    assert_eq!(d.line, Some(1));
+}
+
+#[test]
+fn only_one_engine_per_thread() {
+    let _e = engine();
+    assert!(Engine::new().is_err());
+}
+
+#[test]
+fn class_shape_matches_webidl_expectations() {
+    let (_e, r) = setup();
+    let drops = Rc::new(Cell::new(0));
+    expose::<Node>(&r, "n", node(7, &drops), Some(IdentityKey(1, 7)));
+    let checks = [
+        ("n.nodeId", "7"),
+        ("n.nodeName", "n7"),
+        ("n.nodeName = 'x'; n.nodeName", "x"),
+        ("n.ping()", "pong"),
+        ("n instanceof Node && n instanceof EventTarget", "true"),
+        ("Object.getPrototypeOf(Node.prototype) === EventTarget.prototype", "true"),
+        ("Object.getPrototypeOf(Node) === EventTarget", "true"),
+        ("typeof Object.getOwnPropertyDescriptor(Node.prototype, 'nodeName').set", "function"),
+        ("Object.getOwnPropertyDescriptor(Node.prototype, 'nodeName').get.name", "get nodeName"),
+        ("n.hasOwnProperty('nodeName')", "false"),
+        ("Object.prototype.toString.call(n)", "[object Node]"),
+        ("Node.ELEMENT_NODE + n.ELEMENT_NODE", "2"),
+        ("typeof Node.prototype.ping", "function"),
+        ("Node.prototype.ping.call(n)", "pong"),
+        ("'nodeId' in n", "true"),
+        ("Object.keys(Node.prototype).includes('nodeName')", "true"),
+        ("Node.prototype.childAt.length", "1"),
+    ];
+    for (src, want) in checks {
+        assert_eq!(eval_str(&r, src), want, "{src}");
+    }
+}
+
+#[test]
+fn brand_checks_and_errors() {
+    let (_e, r) = setup();
+    let drops = Rc::new(Cell::new(0));
+    expose::<Node>(&r, "n", node(1, &drops), None);
+    expose::<List>(&r, "l", node(2, &drops), None);
+    let checks = [
+        ("try { Node.prototype.ping.call({}) } catch (e) { e.constructor.name + ': ' + e.message }", "TypeError: Illegal invocation"),
+        ("try { Object.getOwnPropertyDescriptor(Node.prototype, 'nodeId').get.call(l) } catch (e) { e.message }", "Illegal invocation"),
+        ("try { n.fail() } catch (e) { [e instanceof DOMException, e instanceof Error, e.name, e.code, e.message].join() }", "true,true,NotFoundError,8,no such node"),
+        ("try { n.childAt() } catch (e) { e.constructor.name }", "TypeError"),
+        ("try { n.childAt(9) } catch (e) { e.constructor.name }", "RangeError"),
+        ("try { n.panics() } catch (e) { e.message }", "Internal error: boom"),
+        ("n.childAt(1)", "20"),
+        ("try { new Node() } catch (e) { e.message }", "Illegal constructor"),
+        ("try { Element('x') } catch (e) { e.constructor.name }", "TypeError"),
+    ];
+    for (src, want) in checks {
+        assert_eq!(eval_str(&r, src), want, "{src}");
+    }
+}
+
+#[test]
+fn constructors_support_subclassing() {
+    let (_e, r) = setup();
+    let checks = [
+        ("new Element('div').nodeName", "div"),
+        ("new Element('a') instanceof Node", "true"),
+        ("class Fancy extends Element { constructor() { super('fancy'); this.extra = 1 } hi() { return this.nodeName + this.extra } }; new Fancy().hi()", "fancy1"),
+        ("new Fancy() instanceof Element && Object.getPrototypeOf(new Fancy()) === Fancy.prototype", "true"),
+        ("Element.length", "1"),
+    ];
+    for (src, want) in checks {
+        assert_eq!(eval_str(&r, src), want, "{src}");
+    }
+}
+
+#[test]
+fn indexed_and_named_properties() {
+    let (_e, r) = setup();
+    let drops = Rc::new(Cell::new(0));
+    expose::<List>(&r, "l", node(5, &drops), None);
+    let checks = [
+        ("l[0] + l[2]", "40"),
+        ("l[3]", "undefined"),
+        ("l.length", "3"),
+        ("l.item(1)", "20"),
+        ("l.special", "5"),
+        ("l.item === List.prototype.item", "true"),
+        ("[...l].join()", "10,20,30"),
+        ("Array.from(l.entries()).length", "3"),
+        ("Object.keys(l).join()", "0,1,2"),
+        ("l.expando = 4; l.expando", "4"),
+        ("l[0] = 99; l[0]", "10"),
+    ];
+    for (src, want) in checks {
+        assert_eq!(eval_str(&r, src), want, "{src}");
+    }
+}
+
+#[test]
+fn identity_is_stable_and_payloads_are_released_after_gc() {
+    let (e, r) = setup();
+    let drops = Rc::new(Cell::new(0));
+    {
+        let s = r.scope().unwrap();
+        let a = s.wrap::<Node>(node(1, &drops), Some(IdentityKey(9, 1))).unwrap();
+        let b = s.wrap::<Node>(node(1, &drops), Some(IdentityKey(9, 1))).unwrap();
+        assert!(a.value().strict_equals(b.value()));
+        // The second payload was dropped immediately since the wrapper existed.
+        assert_eq!(drops.get(), 1);
+    }
+    // Create unreachable wrappers inside a helper so no stack slot keeps them.
+    #[inline(never)]
+    fn make_garbage(r: &Realm, drops: &Rc<Cell<u32>>) {
+        let s = r.scope().unwrap();
+        for i in 0..200 {
+            s.wrap::<Node>(node(100 + i, drops), Some(IdentityKey(7, i))).unwrap();
+        }
+    }
+    make_garbage(&r, &drops);
+    for _ in 0..5 {
+        e.collect_garbage_now();
+        e.drain_finalized();
+    }
+    assert!(drops.get() > 150, "expected most of 200 payloads released, got {}", drops.get());
+}
+
+#[test]
+fn disposed_realm_throws_context_destroyed() {
+    let (e, r) = setup();
+    let other = e.create_realm(RealmOptions { name: "other".into(), ..Default::default() }).unwrap();
+    let drops = Rc::new(Cell::new(0));
+    expose::<Node>(&r, "n", node(3, &drops), None);
+    // Leak a function from the first realm into the second.
+    {
+        let s = r.scope().unwrap();
+        let f = s.eval("(() => n.ping())", None, 1).unwrap();
+        let direct = s.eval("Node.prototype.ping.bind(n)", None, 1).unwrap();
+        let so = other.scope().unwrap();
+        so.global().set("leaked", f).unwrap();
+        so.global().set("leakedNative", direct).unwrap();
+    }
+    assert_eq!(eval_str(&other, "leakedNative()"), "pong");
+    r.dispose();
+    assert!(r.scope().is_err());
+    assert_eq!(eval_str(&other, "try { leakedNative() } catch (e) { e.message }"), "Execution context was destroyed.");
+}
+
+#[test]
+fn console_and_exception_hooks() {
+    #[derive(Default)]
+    struct Hooks {
+        log: RefCell<Vec<String>>,
+        rejections: RefCell<Vec<String>>,
+    }
+    impl EngineHooks for Hooks {
+        fn console_api(&self, _realm: &Realm, level: ConsoleLevel, args: &[Value<'_>]) {
+            let parts: Vec<String> = args.iter().map(|a| a.to_string().unwrap_or_default()).collect();
+            self.log.borrow_mut().push(format!("{}:{}", level.cdp_type(), parts.join(" ")));
+        }
+        fn unhandled_rejection(&self, _realm: &Realm, exception: &JsException) {
+            self.rejections.borrow_mut().push(exception.text());
+        }
+    }
+    let e = engine();
+    let hooks = Rc::new(Hooks::default());
+    e.set_hooks(Some(hooks.clone()));
+    let r = e.create_realm(RealmOptions::default()).unwrap();
+    eval_str(
+        &r,
+        "console.log('a', 1, {}); console.warn('w'); console.assert(false, 'bad'); console.assert(true, 'ok')",
+    );
+    assert_eq!(*hooks.log.borrow(), vec!["log:a 1 [object Object]", "warning:w", "assert:bad"]);
+    if e.capabilities().unhandled_rejections {
+        eval_str(&r, "Promise.reject(new Error('nope')); Promise.reject(1).catch(() => {});");
+        assert_eq!(*hooks.rejections.borrow(), vec!["Error: nope"]);
+    }
+}
+
+#[test]
+fn native_closures_promises_and_microtasks() {
+    let e = engine();
+    let r = e.create_realm(RealmOptions::default()).unwrap();
+    let seen = Rc::new(RefCell::new(Vec::<String>::new()));
+    {
+        let s = r.scope().unwrap();
+        let seen2 = seen.clone();
+        let f = s
+            .function("record", move |s, _this, args| {
+                seen2.borrow_mut().push(args.get(0).to_string()?);
+                Ok(s.undefined())
+            })
+            .unwrap();
+        s.global().set("record", f.value()).unwrap();
+        // Microtasks run when the outermost API call returns.
+        s.eval("record('sync'); Promise.resolve().then(() => record('micro')); record('sync2')", None, 1).unwrap();
+        assert_eq!(*seen.borrow(), vec!["sync", "sync2", "micro"]);
+        assert_eq!(s.eval("typeof record + record.name", None, 1).unwrap().to_string().unwrap(), "functionrecord");
+
+        let d = s.deferred().unwrap();
+        let seen3 = seen.clone();
+        let seen4 = seen.clone();
+        s.then(
+            d.promise.get(&s),
+            move |_s, v| seen3.borrow_mut().push(format!("ok:{}", v.to_string().unwrap())),
+            move |_s, v| seen4.borrow_mut().push(format!("err:{}", v.to_string().unwrap())),
+        )
+        .unwrap();
+        d.resolve(&s, s.number(42.0)).unwrap();
+    }
+    assert_eq!(seen.borrow().last().unwrap(), "ok:42");
+}
+
+#[test]
+fn call_function_and_describe() {
+    let e = engine();
+    let r = e.create_realm(RealmOptions::default()).unwrap();
+    let s = r.scope().unwrap();
+    let v = s
+        .call_function(
+            "function (a, b) { return this.x + a + b }",
+            Some(s.eval("({x: 1})", None, 1).unwrap()),
+            &[s.number(2.0), s.number(3.0)],
+        )
+        .unwrap();
+    assert_eq!(v.to_number().unwrap(), 6.0);
+    let v = s.call_function("function () { return typeof this }", Some(s.number(1.0)), &[]).unwrap();
+    assert_eq!(v.to_string().unwrap(), "object");
+    let d = s.describe(s.eval("new Map()", None, 1).unwrap()).unwrap();
+    assert_eq!((d.ty.as_str(), d.subtype.as_deref(), d.class_name.as_deref()), ("object", Some("map"), Some("Map")));
+    let d = s.describe(s.eval("[1,2]", None, 1).unwrap()).unwrap();
+    assert_eq!(d.description.as_deref(), Some("Array(2)"));
+    let props = s
+        .own_properties(s.eval("({a: 1, get b() { return 2 }})", None, 1).unwrap().as_object().unwrap(), true)
+        .unwrap();
+    assert_eq!(props.get("length").unwrap().to_number().unwrap(), 2.0);
+}
+
+#[test]
+fn hidden_properties_on_wrappers() {
+    let (_e, r) = setup();
+    let s = r.scope().unwrap();
+    let drops = Rc::new(Cell::new(0));
+    let o = s.wrap::<Node>(node(1, &drops), None).unwrap();
+    s.set_hidden(o, "listeners", s.string("L")).unwrap();
+    assert_eq!(s.get_hidden(o, "listeners").unwrap().unwrap().to_string().unwrap(), "L");
+    assert!(s.get_hidden(o, "other").unwrap().is_none());
+    s.global().set("o", o.value()).unwrap();
+    assert_eq!(s.eval("Object.getOwnPropertyNames(o).length", None, 1).unwrap().to_number().unwrap(), 0.0);
+}
+
+#[test]
+fn global_object_backed_by_host_class() {
+    // Window's Data differs from EventTarget's: inherited members borrow the
+    // projected parent data through the declared upcast.
+    struct WinData {
+        title: String,
+        target: NodeRef,
+    }
+    struct Window;
+    impl JsClass for Window {
+        const NAME: &'static str = "Window";
+        type Data = WinData;
+        type Parent = EventTarget;
+        fn define(def: &mut ClassDef<Self>) {
+            def.upcast(|w: &WinData| &w.target);
+            def.getter("winId", |s, this| Ok(s.number(this.target.id as f64)));
+            def.method("alert2", 0, |s, this, _a| Ok(s.string(&format!("alert {}", this.title))));
+        }
+    }
+    let e = engine();
+    let id = e.register::<Window>();
+    let r = e.create_realm(RealmOptions { global_class: Some(id), ..Default::default() }).unwrap();
+    let drops = Rc::new(Cell::new(0));
+    r.set_global_data::<Window>(WinData { title: "t".into(), target: node(77, &drops) }).unwrap();
+    let checks = [
+        ("winId", "77"),
+        ("alert2()", "alert t"),
+        ("ping()", "pong"),
+        ("globalThis instanceof Window && globalThis instanceof EventTarget", "true"),
+        ("Object.getPrototypeOf(globalThis) === Window.prototype", "true"),
+        ("Object.prototype.toString.call(globalThis)", "[object Window]"),
+        ("(function () { 'use strict'; return EventTarget.prototype.ping.call(undefined) })()", "pong"),
+    ];
+    for (src, want) in checks {
+        assert_eq!(eval_str(&r, src), want, "{src}");
+    }
+    let s = r.scope().unwrap();
+    let g = s.global().value();
+    assert_eq!(s.unwrap::<EventTarget>(g).map(|d| d.id), Some(77));
+    assert_eq!(s.unwrap::<Window>(g).map(|d| d.title.clone()), Some("t".to_string()));
+    assert!(s.unwrap::<Node>(g).is_none());
+}
+
+#[test]
+fn es_modules_through_fetcher() {
+    let e = engine();
+    if !e.capabilities().modules {
+        eprintln!("module SPI unavailable; skipping");
+        return;
+    }
+    struct Fetcher {
+        requested: RefCell<Vec<String>>,
+    }
+    impl ModuleFetcher for Fetcher {
+        fn fetch(&self, realm: &Realm, url: String, request: ModuleRequest) {
+            self.requested.borrow_mut().push(url.clone());
+            let s = realm.scope().unwrap();
+            let src = match url.as_str() {
+                "http://site.test/lib/b.js" => "export let b = 1; export function inc() { b++ }",
+                "http://site.test/c.js" => "export const c = 42;",
+                _ => {
+                    request.reject(&s, &JsError::Type(format!("404 {url}"))).unwrap();
+                    return;
+                }
+            };
+            request.resolve(&s, src).unwrap();
+        }
+    }
+    let r = e.create_realm(RealmOptions { origin: Some("http://site.test".into()), ..Default::default() }).unwrap();
+    let fetcher = Rc::new(Fetcher { requested: RefCell::new(vec![]) });
+    r.set_module_fetcher(Some(fetcher.clone()));
+    let s = r.scope().unwrap();
+    let p = s
+        .eval_module(
+            "import { b, inc } from './lib/b.js'; inc(); globalThis.out = b + ':' + import.meta.url; \
+             const m = await import('/c.js'); globalThis.dyn = m.c; \
+             try { await import('./missing.js') } catch (e) { globalThis.missing = e.message }",
+            "http://site.test/main.js",
+        )
+        .unwrap();
+    assert!(p.is_object());
+    assert_eq!(eval_str(&r, "out"), "2:http://site.test/main.js");
+    assert_eq!(eval_str(&r, "dyn"), "42");
+    assert!(eval_str(&r, "missing").contains("404 http://site.test/missing.js"), "{}", eval_str(&r, "missing"));
+    assert_eq!(
+        *fetcher.requested.borrow(),
+        vec!["http://site.test/lib/b.js", "http://site.test/c.js", "http://site.test/missing.js"]
+    );
+}
+
+#[test]
+fn terminate_handle_stops_infinite_loop() {
+    let e = engine();
+    let Ok(handle) = e.terminate_handle() else {
+        eprintln!("termination SPI unavailable; skipping");
+        return;
+    };
+    let r = e.create_realm(RealmOptions::default()).unwrap();
+    let t = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        handle.terminate();
+    });
+    let start = std::time::Instant::now();
+    let s = r.scope().unwrap();
+    let res = s.eval("for (;;) {}", None, 1);
+    t.join().unwrap();
+    assert!(res.is_err());
+    assert!(start.elapsed() < std::time::Duration::from_secs(5));
+    // The engine keeps working afterwards.
+    assert_eq!(s.eval("1 + 1", None, 1).unwrap().to_number().unwrap(), 2.0);
+}
+
+#[test]
+fn isolated_worlds_have_distinct_wrappers() {
+    let (e, main) = setup();
+    let world =
+        e.create_realm(RealmOptions { name: "__playwright_utility_world__".into(), ..Default::default() }).unwrap();
+    let drops = Rc::new(Cell::new(0));
+    let shared = node(5, &drops);
+    expose::<Node>(&main, "n", shared.clone(), Some(IdentityKey(1, 5)));
+    expose::<Node>(&world, "n", shared.clone(), Some(IdentityKey(1, 5)));
+    eval_str(&main, "n.expando = 'main'");
+    assert_eq!(eval_str(&world, "n.expando"), "undefined");
+    eval_str(&world, "n.nodeName = 'shared-state'");
+    assert_eq!(eval_str(&main, "n.nodeName"), "shared-state");
+    assert_ne!(main.id(), world.id());
+}

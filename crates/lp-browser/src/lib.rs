@@ -1,0 +1,509 @@
+//! Browser/page orchestration on the browser thread.
+//!
+//! Ownership (see docs/ARCHITECTURE.md): this crate owns the Browser →
+//! Page → Frame tree, navigation state machine, realms per (frame, world),
+//! init-script injection, window timers, and the ordered [`PageEvent`] stream
+//! consumed by the automation layer. Document loading/parsing and networking
+//! come from `lp-dom`/`lp-net` (worker 2) and are not wired in yet: navigating
+//! to anything but `about:blank` currently fails with an explicit error.
+
+mod window;
+
+use lp_js::{Engine, EngineHooks, JsError, Realm, RealmId, RealmOptions};
+use lp_runtime::{EventLoop, LoopHandle, LoopState, RunOutcome, Scheduler};
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
+use std::time::Instant;
+
+pub use window::{Window, WindowData};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct PageId(pub u32);
+
+/// CDP frame id (upstream uses a stable string per frame).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct FrameId(pub String);
+
+/// CDP loader id; changes for every cross-document navigation.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct LoaderId(pub String);
+
+/// Why a navigation started (CDP `Page.frameRequestedNavigation.reason` subset,
+/// mirroring upstream `Notification.zig`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NavigationReason {
+    AddressBar,
+    Anchor,
+    FormGet,
+    FormPost,
+    Script,
+    History,
+    InitialFrameNavigation,
+}
+
+#[derive(Debug, Clone)]
+pub struct NavigateOpts {
+    pub url: String,
+    pub reason: NavigationReason,
+    /// CDP request id of `Page.navigate`, so the response can be ordered after
+    /// `frameStartedLoading` and before lifecycle events.
+    pub cdp_request_id: Option<u64>,
+    pub referrer: Option<String>,
+}
+
+impl NavigateOpts {
+    pub fn address_bar(url: impl Into<String>) -> Self {
+        NavigateOpts { url: url.into(), reason: NavigationReason::AddressBar, cdp_request_id: None, referrer: None }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SameDocumentKind {
+    Push,
+    Replace,
+    Fragment,
+}
+
+/// Ordered page lifecycle events (upstream `Notification` equivalents).
+#[derive(Debug, Clone)]
+pub enum PageEvent {
+    FrameNavigate {
+        frame_id: FrameId,
+        loader_id: LoaderId,
+        url: String,
+        reason: NavigationReason,
+        cdp_request_id: Option<u64>,
+    },
+    FrameNavigated {
+        frame_id: FrameId,
+        loader_id: LoaderId,
+        url: String,
+        reason: NavigationReason,
+        cdp_request_id: Option<u64>,
+        timestamp: f64,
+    },
+    FrameNavigatedWithinDocument {
+        frame_id: FrameId,
+        url: String,
+        kind: SameDocumentKind,
+    },
+    FrameNavigateFailed {
+        frame_id: FrameId,
+        loader_id: LoaderId,
+        url: String,
+        error: String,
+        cdp_request_id: Option<u64>,
+    },
+    /// A realm became available for (frame, world); init scripts already ran.
+    RealmCreated {
+        frame_id: FrameId,
+        realm: RealmId,
+        world: Option<String>,
+        origin: String,
+    },
+    RealmDestroyed {
+        frame_id: FrameId,
+        realm: RealmId,
+    },
+    FrameDomContentLoaded {
+        frame_id: FrameId,
+        loader_id: LoaderId,
+        timestamp: f64,
+    },
+    FrameLoaded {
+        frame_id: FrameId,
+        loader_id: LoaderId,
+        timestamp: f64,
+    },
+    FrameNetworkAlmostIdle {
+        frame_id: FrameId,
+        loader_id: LoaderId,
+    },
+    FrameNetworkIdle {
+        frame_id: FrameId,
+        loader_id: LoaderId,
+    },
+    FrameChildFrameCreated {
+        parent: FrameId,
+        frame_id: FrameId,
+    },
+    FrameChildFrameDetached {
+        parent: FrameId,
+        frame_id: FrameId,
+    },
+    FrameDestroyed {
+        frame_id: FrameId,
+    },
+    JavascriptDialogOpening {
+        frame_id: FrameId,
+        kind: String,
+        message: String,
+        default_prompt: Option<String>,
+    },
+}
+
+/// Receives page events in emission order on the browser thread.
+pub trait PageObserver {
+    fn on_page_event(&self, page: PageId, event: &PageEvent);
+}
+
+/// Script evaluated in every new document before page scripts
+/// (`Page.addScriptToEvaluateOnNewDocument`).
+#[derive(Debug, Clone)]
+pub struct InitScript {
+    pub id: String,
+    pub source: String,
+    /// `None` = main world; `Some(name)` = isolated world created on demand.
+    pub world: Option<String>,
+}
+
+pub struct FrameRealm {
+    pub world: Option<String>,
+    pub realm: Realm,
+}
+
+pub struct Frame {
+    pub id: FrameId,
+    pub url: String,
+    pub loader_id: LoaderId,
+    pub realms: Vec<FrameRealm>,
+}
+
+impl Frame {
+    pub fn main_realm(&self) -> Option<&Realm> {
+        self.realms.iter().find(|r| r.world.is_none()).map(|r| &r.realm)
+    }
+
+    pub fn world(&self, name: &str) -> Option<&Realm> {
+        self.realms.iter().find(|r| r.world.as_deref() == Some(name)).map(|r| &r.realm)
+    }
+}
+
+pub struct Page {
+    pub id: PageId,
+    pub main_frame: Frame,
+    pub init_scripts: Vec<InitScript>,
+}
+
+/// Browser-thread state: the loop state type for [`EventLoop`].
+pub struct Browser {
+    pub engine: Engine,
+    sched: Scheduler<Browser>,
+    pub pages: Vec<Page>,
+    observer: Option<Rc<dyn PageObserver>>,
+    next_id: Cell<u64>,
+    started: Instant,
+    /// Finalized-wrapper payloads released at checkpoints (diagnostics).
+    pub released_payloads: RefCell<u64>,
+}
+
+impl LoopState for Browser {
+    fn after_task(&mut self) {
+        let n = self.engine.drain_finalized();
+        *self.released_payloads.borrow_mut() += n as u64;
+    }
+}
+
+/// A browser thread's loop plus its state.
+pub struct BrowserThread {
+    pub event_loop: EventLoop<Browser>,
+    pub browser: Browser,
+}
+
+impl BrowserThread {
+    /// Creates the engine for the current thread (one per thread).
+    pub fn new() -> Result<BrowserThread, JsError> {
+        let engine = Engine::new()?;
+        engine.register::<Window>();
+        let event_loop = EventLoop::new();
+        let browser = Browser {
+            engine,
+            sched: event_loop.scheduler(),
+            pages: Vec::new(),
+            observer: None,
+            next_id: Cell::new(1),
+            started: Instant::now(),
+            released_payloads: RefCell::new(0),
+        };
+        Ok(BrowserThread { event_loop, browser })
+    }
+
+    pub fn handle(&self) -> LoopHandle<Browser> {
+        self.event_loop.handle()
+    }
+
+    /// Runs tasks/timers until idle or the deadline.
+    pub fn run_until_idle(&mut self, deadline: Option<Instant>) -> RunOutcome {
+        self.event_loop.run_until_idle(&mut self.browser, deadline)
+    }
+
+    pub fn run_until(&mut self, deadline: Option<Instant>, done: impl FnMut(&mut Browser) -> bool) -> RunOutcome {
+        self.event_loop.run_until(&mut self.browser, deadline, false, done)
+    }
+}
+
+impl Browser {
+    pub fn scheduler(&self) -> Scheduler<Browser> {
+        self.sched.clone()
+    }
+
+    pub fn set_observer(&mut self, observer: Option<Rc<dyn PageObserver>>) {
+        self.observer = observer;
+    }
+
+    pub fn set_engine_hooks(&self, hooks: Option<Rc<dyn EngineHooks>>) {
+        self.engine.set_hooks(hooks);
+    }
+
+    fn next(&self) -> u64 {
+        let n = self.next_id.get();
+        self.next_id.set(n + 1);
+        n
+    }
+
+    /// Seconds since the browser started (monotonic CDP event timestamps).
+    pub fn timestamp(&self) -> f64 {
+        self.started.elapsed().as_secs_f64()
+    }
+
+    fn emit(&self, page: PageId, event: PageEvent) {
+        if let Some(o) = &self.observer {
+            o.on_page_event(page, &event);
+        }
+    }
+
+    /// Creates a page showing `about:blank` (with an executable main realm,
+    /// unlike the pinned upstream build TOS works around).
+    pub fn create_page(&mut self) -> Result<PageId, JsError> {
+        let id = PageId(self.next() as u32);
+        let frame = Frame {
+            id: FrameId(format!("{:032X}", self.next())),
+            url: "about:blank".into(),
+            loader_id: LoaderId(format!("{:032X}", self.next())),
+            realms: Vec::new(),
+        };
+        self.pages.push(Page { id, main_frame: frame, init_scripts: Vec::new() });
+        self.navigate(
+            id,
+            NavigateOpts {
+                url: "about:blank".into(),
+                reason: NavigationReason::InitialFrameNavigation,
+                cdp_request_id: None,
+                referrer: None,
+            },
+        )?;
+        Ok(id)
+    }
+
+    pub fn page(&self, id: PageId) -> Option<&Page> {
+        self.pages.iter().find(|p| p.id == id)
+    }
+
+    fn page_mut(&mut self, id: PageId) -> Option<&mut Page> {
+        self.pages.iter_mut().find(|p| p.id == id)
+    }
+
+    pub fn add_init_script(&mut self, page: PageId, script: InitScript) -> bool {
+        match self.page_mut(page) {
+            Some(p) => {
+                p.init_scripts.push(script);
+                true
+            }
+            None => false,
+        }
+    }
+
+    pub fn remove_init_script(&mut self, page: PageId, id: &str) -> bool {
+        match self.page_mut(page) {
+            Some(p) => {
+                let before = p.init_scripts.len();
+                p.init_scripts.retain(|s| s.id != id);
+                before != p.init_scripts.len()
+            }
+            None => false,
+        }
+    }
+
+    /// Starts a navigation. Only `about:blank` is supported until document
+    /// loading (lp-dom/lp-net) is integrated; other URLs emit
+    /// `FrameNavigateFailed` and return an error.
+    pub fn navigate(&mut self, page: PageId, opts: NavigateOpts) -> Result<LoaderId, JsError> {
+        let loader_id = LoaderId(format!("{:032X}", self.next()));
+        let frame_id = self.page(page).ok_or(JsError::Type("no such page".into()))?.main_frame.id.clone();
+        self.emit(
+            page,
+            PageEvent::FrameNavigate {
+                frame_id: frame_id.clone(),
+                loader_id: loader_id.clone(),
+                url: opts.url.clone(),
+                reason: opts.reason,
+                cdp_request_id: opts.cdp_request_id,
+            },
+        );
+        if opts.url != "about:blank" {
+            let error = "net::ERR_NOT_IMPLEMENTED (document loading is not integrated yet)".to_string();
+            self.emit(
+                page,
+                PageEvent::FrameNavigateFailed {
+                    frame_id,
+                    loader_id,
+                    url: opts.url,
+                    error: error.clone(),
+                    cdp_request_id: opts.cdp_request_id,
+                },
+            );
+            return Err(JsError::Unsupported("navigation to non-blank URLs"));
+        }
+        self.commit_document(page, &opts, loader_id.clone(), "null")?;
+        let ts = self.timestamp();
+        self.emit(
+            page,
+            PageEvent::FrameDomContentLoaded {
+                frame_id: frame_id.clone(),
+                loader_id: loader_id.clone(),
+                timestamp: ts,
+            },
+        );
+        self.emit(
+            page,
+            PageEvent::FrameLoaded { frame_id: frame_id.clone(), loader_id: loader_id.clone(), timestamp: ts },
+        );
+        self.emit(page, PageEvent::FrameNetworkAlmostIdle { frame_id: frame_id.clone(), loader_id: loader_id.clone() });
+        self.emit(page, PageEvent::FrameNetworkIdle { frame_id, loader_id: loader_id.clone() });
+        Ok(loader_id)
+    }
+
+    /// Replaces the frame's realms with fresh ones for the new document, runs
+    /// init scripts, then emits `FrameNavigated`.
+    fn commit_document(
+        &mut self,
+        page: PageId,
+        opts: &NavigateOpts,
+        loader_id: LoaderId,
+        origin: &str,
+    ) -> Result<(), JsError> {
+        let window_class = self.engine.register::<Window>();
+        let sched = self.sched.clone();
+        let (frame_id, old, scripts) = {
+            let p = self.page_mut(page).ok_or(JsError::Type("no such page".into()))?;
+            let old = std::mem::take(&mut p.main_frame.realms);
+            p.main_frame.url = opts.url.clone();
+            p.main_frame.loader_id = loader_id.clone();
+            (p.main_frame.id.clone(), old, p.init_scripts.clone())
+        };
+        for r in old {
+            window::cancel_timers(&r.realm);
+            let id = r.realm.id();
+            r.realm.dispose();
+            self.emit(page, PageEvent::RealmDestroyed { frame_id: frame_id.clone(), realm: id });
+        }
+        // Worlds: main plus every world named by an init script.
+        let mut worlds: Vec<Option<String>> = vec![None];
+        for s in &scripts {
+            if s.world.is_some() && !worlds.contains(&s.world) {
+                worlds.push(s.world.clone());
+            }
+        }
+        let mut created = Vec::new();
+        for world in worlds {
+            let realm = self.engine.create_realm(RealmOptions {
+                name: world.clone().unwrap_or_default(),
+                global_class: Some(window_class),
+                origin: (origin != "null").then(|| origin.to_string()),
+            })?;
+            realm.set_global_data::<Window>(WindowData::new(sched.clone(), opts.url.clone()))?;
+            for s in scripts.iter().filter(|s| s.world == world) {
+                let scope = realm.scope()?;
+                if let Err(e) = scope.eval(&s.source, Some(&format!("init-script:{}", s.id)), 1) {
+                    scope.report_exception(&e);
+                }
+            }
+            created.push(FrameRealm { world, realm });
+        }
+        let events: Vec<PageEvent> = created
+            .iter()
+            .map(|r| PageEvent::RealmCreated {
+                frame_id: frame_id.clone(),
+                realm: r.realm.id(),
+                world: r.world.clone(),
+                origin: origin.to_string(),
+            })
+            .collect();
+        self.page_mut(page).expect("page").main_frame.realms = created;
+        for e in events {
+            self.emit(page, e);
+        }
+        self.emit(
+            page,
+            PageEvent::FrameNavigated {
+                frame_id,
+                loader_id,
+                url: opts.url.clone(),
+                reason: opts.reason,
+                cdp_request_id: opts.cdp_request_id,
+                timestamp: self.timestamp(),
+            },
+        );
+        Ok(())
+    }
+
+    /// Creates (or returns) an isolated world realm in the page's main frame
+    /// (`Page.createIsolatedWorld`).
+    pub fn isolated_world(&mut self, page: PageId, name: &str) -> Result<Realm, JsError> {
+        if let Some(r) = self.page(page).and_then(|p| p.main_frame.world(name)) {
+            return Ok(r.clone());
+        }
+        let window_class = self.engine.register::<Window>();
+        let (url, frame_id) = {
+            let p = self.page(page).ok_or(JsError::Type("no such page".into()))?;
+            (p.main_frame.url.clone(), p.main_frame.id.clone())
+        };
+        let realm = self.engine.create_realm(RealmOptions {
+            name: name.to_string(),
+            global_class: Some(window_class),
+            origin: None,
+        })?;
+        realm.set_global_data::<Window>(WindowData::new(self.sched.clone(), url))?;
+        self.page_mut(page)
+            .expect("page")
+            .main_frame
+            .realms
+            .push(FrameRealm { world: Some(name.to_string()), realm: realm.clone() });
+        self.emit(
+            page,
+            PageEvent::RealmCreated {
+                frame_id,
+                realm: realm.id(),
+                world: Some(name.to_string()),
+                origin: "null".into(),
+            },
+        );
+        Ok(realm)
+    }
+
+    /// Closes a page, disposing its realms and cancelling timers.
+    pub fn close_page(&mut self, page: PageId) -> bool {
+        let Some(pos) = self.pages.iter().position(|p| p.id == page) else { return false };
+        let p = self.pages.remove(pos);
+        for r in p.main_frame.realms {
+            window::cancel_timers(&r.realm);
+            let id = r.realm.id();
+            r.realm.dispose();
+            self.emit(page, PageEvent::RealmDestroyed { frame_id: p.main_frame.id.clone(), realm: id });
+        }
+        self.emit(page, PageEvent::FrameDestroyed { frame_id: p.main_frame.id });
+        true
+    }
+
+    /// Disposes every page (connection teardown).
+    pub fn close_all(&mut self) {
+        let ids: Vec<PageId> = self.pages.iter().map(|p| p.id).collect();
+        for id in ids {
+            self.close_page(id);
+        }
+        self.engine.drain_finalized();
+    }
+}
+
+#[cfg(test)]
+mod tests;

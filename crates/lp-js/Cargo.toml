@@ -1,0 +1,12 @@
+[package]
+name = "lp-js"
+description = "Safe, thread-affine JavaScriptCore runtime layer: engine, realms, values, host classes, modules."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+lp-jsc-sys.workspace = true
+
+[lints]
+workspace = true

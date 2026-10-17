@@ -1,0 +1,9 @@
+[package]
+name = "lp-cdp"
+description = "Chrome DevTools Protocol server and domains (worker 3)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true

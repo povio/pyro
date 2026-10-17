@@ -1,0 +1,13 @@
+[package]
+name = "lp-browser"
+description = "Browser/Session/Page/Frame orchestration, navigation, worlds, window timers."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+lp-js.workspace = true
+lp-runtime.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,9 @@
+[package]
+name = "lp-webapi"
+description = "JavaScript bindings for DOM/network WebAPIs over lp-js (worker 2)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
