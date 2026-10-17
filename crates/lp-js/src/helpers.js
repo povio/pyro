@@ -15,6 +15,21 @@
   // replacing Function.prototype.call/apply/bind cannot intercept them.
   const apply = Reflect.apply;
   const reflectGet = Reflect.get;
+  const reflectSet = Reflect.set;
+  const reflectHas = Reflect.has;
+  const reflectOwnKeys = Reflect.ownKeys;
+  const reflectGOPD = Reflect.getOwnPropertyDescriptor;
+  const reflectDefine = Reflect.defineProperty;
+  const reflectDelete = Reflect.deleteProperty;
+  const ProxyC = Proxy;
+  const reflectPreventExtensions = Reflect.preventExtensions;
+  // Interface state for member installation after disposal (see realm.rs
+  // populate_disposed); `populated` is kept in sync by the native side.
+  // Held here, so it lives exactly as long as some interface proxy (whose
+  // closure references this object) is reachable.
+  const classProtos = [];
+  const classTargets = [];
+  const populated = [];
   const P = Promise;
   const promiseThen = P.prototype.then;
   const promiseResolveFn = P.resolve;
@@ -115,7 +130,10 @@
     return { type, subtype, className, description };
   }
 
-  return {
+  const H = {
+    classProtos,
+    classTargets,
+    populated,
     DOMException,
     makeInterface(name, native, proto, parentCtor, length, global) {
       const C = native
@@ -134,6 +152,29 @@
       if (parentCtor) setPrototypeOf(C, parentCtor);
       if (global) defineProperty(global, name, { value: C, writable: true, enumerable: false, configurable: true });
       return C;
+    },
+    // Interface object as seen by script: a Proxy over the constructor whose
+    // property traps first install the class members natively (once), then
+    // forward unchanged. Construction/call/[[GetPrototypeOf]] need no members.
+    lazyInterface(C, proto, global, name, id, populate) {
+      let done = false;
+      classProtos[id] = proto;
+      classTargets[id] = C;
+      const ensure = () => { if (!done) { populate(id, H); done = true; } };
+      const P = new ProxyC(C, {
+        get(t, k, r) { ensure(); return reflectGet(t, k, r); },
+        set(t, k, v, r) { ensure(); return reflectSet(t, k, v, r); },
+        has(t, k) { ensure(); return reflectHas(t, k); },
+        ownKeys(t) { ensure(); return reflectOwnKeys(t); },
+        getOwnPropertyDescriptor(t, k) { ensure(); return reflectGOPD(t, k); },
+        defineProperty(t, k, d) { ensure(); return reflectDefine(t, k, d); },
+        deleteProperty(t, k) { ensure(); return reflectDelete(t, k); },
+        // Members must exist before the target stops accepting properties.
+        preventExtensions(t) { ensure(); return reflectPreventExtensions(t); },
+      });
+      defineProperty(proto, 'constructor', { value: P, writable: true, enumerable: false, configurable: true });
+      if (global) defineProperty(global, name, { value: P, writable: true, enumerable: false, configurable: true });
+      return P;
     },
     accessor(proto, name, get, set) {
       try { defineProperty(get, 'name', { value: 'get ' + name }); } catch (_) {}
@@ -213,4 +254,5 @@
       return out;
     },
   };
+  return H;
 })()
