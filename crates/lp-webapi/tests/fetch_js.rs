@@ -412,3 +412,37 @@ fn response_constructor_statics_and_body_semantics() {
     env.until("result!=='pending'");
     assert_eq!(env.eval("result"), "ok");
 }
+
+#[test]
+fn form_data_entries_iteration_and_multipart_bodies() {
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    env.eval(
+        r#"globalThis.result='pending'; (async()=>{
+        const check=(c,m)=>{if(!c) throw Error(m)};
+        const fd=new FormData();
+        // TOS native REST client checks `data instanceof FormData` for every body.
+        check(!({a:1} instanceof FormData) && fd instanceof FormData,'instanceof');
+        fd.append('a','1'); fd.append('a',2); fd.append('b','x');
+        check(fd.get('a')==='1' && fd.getAll('a').join()==='1,2' && fd.has('b') && fd.get('zz')===null,'get');
+        fd.set('a','3'); check(fd.getAll('a').join()==='3' && [...fd.keys()].join()==='a,b','set keeps position');
+        const blob=new Blob(['hello'],{type:'text/plain'});
+        fd.append('f',blob); fd.append('g',blob,'g.txt');
+        const f=fd.get('f'); check(f instanceof File && f.name==='blob' && fd.get('f')===f,'blob->File identity');
+        check(fd.get('g').name==='g.txt','filename');
+        const named=new File(['z'],'z.bin'); fd.append('h',named); check(fd.get('h')===named,'file identity');
+        const seen=[]; fd.forEach((v,k)=>seen.push(k)); check(seen.join()==='a,b,f,g,h','forEach');
+        check([...fd].map(p=>p[0]).join()==='a,b,f,g,h' && [...fd.entries()][0][1]==='3','iterator');
+        fd.delete('h'); check(!fd.has('h'),'delete');
+        const r=await fetch('/echo',{method:'POST',body:fd});
+        const text=await r.text();
+        check(/name="a"\r\n\r\n3\r\n/.test(text) && /name="f"; filename="blob"\r\nContent-Type: text\/plain\r\n\r\nhello\r\n/.test(text),'multipart body');
+        const x=new XMLHttpRequest(); x.open('POST','/echo'); await new Promise((res,rej)=>{x.onload=res;x.onerror=rej;x.send(fd)});
+        check(/name="g"; filename="g.txt"/.test(x.responseText),'xhr multipart');
+        let threw=false; try{ new FormData({}) }catch(e){ threw=e instanceof TypeError } check(threw,'non-form arg');
+        result='ok';
+    })().catch(e=>result='ERROR '+e.message);"#,
+    );
+    env.until("result!=='pending'");
+    assert_eq!(env.eval("result"), "ok");
+}

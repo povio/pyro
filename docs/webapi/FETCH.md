@@ -70,8 +70,11 @@ TypeError (no streams).
 
 URL parsing for fetch inputs uses the [URL binding](URL.md).
 
+FormData request/response bodies are serialized as multipart/form-data
+(see [FormData](FORM_DATA.md)).
+
 Not implemented: the Request constructor, ReadableStream/body streaming,
-FormData bodies, the "response" header guard after construction (later
+the "response" header guard after construction (later
 `headers.set('set-cookie')` is not filtered), `<base>` URL selection, full MIME parsing for
 response Blob types, service workers, integrity/referrer policy and HTTP caching.
 Nonempty integrity/referrer/referrerPolicy, keepalive and unsupported cache modes
