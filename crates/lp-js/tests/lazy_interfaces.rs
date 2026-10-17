@@ -228,17 +228,27 @@ fn disposed_realm_interfaces_keep_the_eager_api_whether_used_or_not() {
         let import = sd.eval(IMPORT, None, 1).unwrap().as_object().unwrap();
         import.call(None, &[exported]).unwrap();
     }
-    // Realm `a`: LzBase used before disposal, LzMid/LzLeaf never; one instance.
+    // Realm `a`: only LzBase is touched before disposal (members installed);
+    // LzMid and LzLeaf are never touched, so their members are never
+    // installed before disposal (exporting reads the global bindings only,
+    // which does not go through the interface proxies).
     {
         let sa = a.scope().unwrap();
-        sa.eval("LzBase.prototype.ping; globalThis.inst = new LzLeaf()", None, 1).unwrap();
-        let inst = sa.global().get("inst").unwrap();
+        sa.eval("LzBase.prototype.ping", None, 1).unwrap();
+    }
+    assert_eq!(eval(&probe, "globalThis.pingBefore = LzBase.prototype.ping; 'ok'"), "ok");
+    // A separate realm provides an instance made before its disposal (a
+    // construction populates the whole chain, so it is kept out of `a`).
+    let a2 = e.create_realm(RealmOptions { name: "with-instance".into(), ..Default::default() }).unwrap();
+    {
+        let s2 = a2.scope().unwrap();
+        let inst = s2.eval("new LzLeaf()", None, 1).unwrap();
         probe.scope().unwrap().global().set("foreignInst", inst).unwrap();
     }
-    let identity_before = eval(&probe, "globalThis.pingBefore = LzBase.prototype.ping; 'ok'");
-    assert_eq!(identity_before, "ok");
     a.dispose();
-    // Same observable API as live interfaces (all members present).
+    a2.dispose();
+    // The never-populated LzMid/LzLeaf and the populated LzBase all expose the
+    // same API as live interfaces.
     assert_eq!(eval(&probe, DUMP), eval(&probe_live, DUMP));
     // Members installed before disposal keep their identity.
     assert_eq!(eval(&probe, "LzBase.prototype.ping === pingBefore"), "true");
@@ -256,7 +266,12 @@ fn disposed_realm_interfaces_keep_the_eager_api_whether_used_or_not() {
     assert!(eval(&probe, "try { new LzLeaf(); 'constructed' } catch (e) { e.message }")
         .contains("Execution context was destroyed"));
     // Instances made before disposal: members readable, native calls throw.
-    assert_eq!(eval(&probe, "typeof foreignInst.midOnly"), "function");
+    assert_eq!(eval(&probe, "[typeof foreignInst.midOnly, typeof foreignInst.ping].join()"), "function,function");
+    assert_eq!(
+        eval(&probe, "try { foreignInst.midOnly() } catch (e) { e.message }"),
+        "Execution context was destroyed."
+    );
+    drop(a2);
     drop(probe);
     drop(a);
     drop(e);
