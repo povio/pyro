@@ -321,14 +321,15 @@ impl EngineHost {
                 };
                 let fetch = &mut self.sessions.get_mut(&session_id).expect("selected session").fetch;
                 let pending = Pending { native_id, decision };
-                let id = if let Some(id) = fetch.ids.get(&native_id).cloned() {
+                let previous = fetch.ids.get(&native_id).cloned();
+                let id = if let Some(id) = previous.as_ref().filter(|_| method == "Fetch.authRequired") {
                     if fetch.rules.pause_again(&id, pending).is_err() {
                         self.out.exceed();
                         continue;
                     }
-                    id
+                    id.clone()
                 } else {
-                    if fetch.ids.len() >= MAX_PAUSED {
+                    if previous.is_none() && fetch.ids.len() >= MAX_PAUSED {
                         self.out.exceed();
                         continue;
                     }
@@ -336,6 +337,11 @@ impl EngineHost {
                         self.out.exceed();
                         continue;
                     };
+                    // A redirect preserves Network.requestId, but each hop
+                    // has a distinct Fetch id. Auth retries reuse that hop's id.
+                    if let Some(previous) = previous {
+                        params["redirectedRequestId"] = json!(previous);
+                    }
                     fetch.ids.insert(native_id, id.clone());
                     id
                 };

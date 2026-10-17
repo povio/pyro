@@ -785,3 +785,58 @@ fn storage_negative_expiry_is_session_and_zero_expires_deletes() {
     );
     assert_eq!(h.call(None, "Storage.getCookies", json!({}))["result"]["cookies"], json!([]));
 }
+
+#[test]
+fn fetch_redirect_issues_a_new_pause_id_and_links_the_previous_hop() {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut stream = loop {
+            match listener.accept() {
+                Ok((stream, _)) => break stream,
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    assert!(Instant::now() < deadline, "intercepted request never continued");
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                Err(e) => panic!("{e}"),
+            }
+        };
+        stream.set_nonblocking(false).unwrap();
+        stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+        let mut request = Vec::new();
+        let mut bytes = [0; 1024];
+        while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+            let n = stream.read(&mut bytes).unwrap();
+            assert!(n > 0 && request.len() + n < 8192);
+            request.extend_from_slice(&bytes[..n]);
+        }
+        stream
+            .write_all(b"HTTP/1.1 302 Found\r\nLocation: /final\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            .unwrap();
+    });
+    let mut h = Harness::new();
+    h.page("Network.enable", json!({}));
+    h.page("Fetch.enable", json!({}));
+    let session = h.session.clone();
+    h.send(Some(&session), "Page.navigate", json!({"url":format!("http://{address}/redirect")}));
+    let events = until_event(&mut h, "Fetch.requestPaused");
+    let first = events.iter().find(|e| e["method"] == "Fetch.requestPaused").unwrap()["params"].clone();
+    h.page("Fetch.continueRequest", json!({"requestId":first["requestId"]}));
+    let events = until_event(&mut h, "Fetch.requestPaused");
+    let second = events.iter().find(|e| e["method"] == "Fetch.requestPaused").unwrap()["params"].clone();
+    server.join().unwrap();
+    assert_ne!(first["requestId"], second["requestId"], "each redirect hop needs its own Fetch id");
+    assert_eq!(second["redirectedRequestId"], first["requestId"]);
+    assert_eq!(second["networkId"], first["networkId"], "Network id spans the redirect chain");
+    assert!(h.page("Fetch.failRequest", json!({"requestId":first["requestId"],"errorReason":"Aborted"}))["error"]
+        .is_object());
+    let mut events = h.page_with_events(
+        "Fetch.fulfillRequest",
+        json!({"requestId":second["requestId"],"responseCode":200,"body":"ZG9uZQ=="}),
+    );
+    wait_for_network_finish(&mut h, &mut events);
+    assert_eq!(h.page("Network.getResponseBody", json!({"requestId":second["networkId"]}))["result"]["body"], "done");
+}
