@@ -506,6 +506,7 @@ name = "lp-dom"
 version = "0.1.0"
 dependencies = [
  "cssparser",
+ "encoding_rs",
  "html5ever",
  "markup5ever",
  "precomputed-hash",

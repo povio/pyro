@@ -9,6 +9,7 @@ pub mod forms;
 pub mod mutation;
 pub mod node;
 pub mod parse;
+pub mod script;
 pub mod select;
 pub mod serialize;
 
