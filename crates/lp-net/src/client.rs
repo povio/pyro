@@ -630,22 +630,8 @@ impl Io {
         let mut redirect_response: Option<ResponseHead> = None;
         let mut tainted = false; // cross-origin redirect in cors mode => Origin "null"
         loop {
-            if req.url.scheme() == "data" {
-                return self.serve_data(id, &req, sink, redirect_response.take());
-            }
-            match req.url.scheme() {
-                "http" => {}
-                "https" => return Err(NetError::UnsupportedScheme("https (built without TLS support)".into())),
-                s => return Err(NetError::UnsupportedScheme(s.to_owned())),
-            }
-            if self.shared.settings.lock().unwrap().offline {
-                return Err(NetError::Blocked("net::ERR_INTERNET_DISCONNECTED".into()));
-            }
             if tainted {
                 req.origin = Some("null".into());
-            }
-            if req.mode == RequestMode::SameOrigin && !cors::is_same_origin_request(&req) {
-                return Err(NetError::Cors("Cross-origin request in same-origin mode".into()));
             }
             let cors_cross = self.shared.config.enforce_cors && cors::is_cors_request(&req, origin_url.as_ref());
             let headers = self.build_headers(&req, origin_url.as_ref(), cors_cross);
@@ -665,6 +651,23 @@ impl Io {
                 timestamp: self.shared.now(),
                 wall_time: wall_time(),
             });
+
+            // Observers must see a start before every terminal/response path,
+            // including local data URLs and requests rejected before I/O.
+            if req.url.scheme() == "data" {
+                return self.serve_data(id, &req, sink, None);
+            }
+            match req.url.scheme() {
+                "http" => {}
+                "https" => return Err(NetError::UnsupportedScheme("https (built without TLS support)".into())),
+                s => return Err(NetError::UnsupportedScheme(s.to_owned())),
+            }
+            if self.shared.settings.lock().unwrap().offline {
+                return Err(NetError::Blocked("net::ERR_INTERNET_DISCONNECTED".into()));
+            }
+            if req.mode == RequestMode::SameOrigin && !cors::is_same_origin_request(&req) {
+                return Err(NetError::Cors("Cross-origin request in same-origin mode".into()));
+            }
 
             // CDP Fetch interception (request stage).
             let interceptor = self.shared.interceptor.lock().unwrap().clone();

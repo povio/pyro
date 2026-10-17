@@ -431,3 +431,34 @@ fn regression_public_suffix_cookie_isolation() {
     let h = jar.header_for(&bank, SiteContext::SameSite, 1.0);
     assert!(!accepted, "public suffix cookie accepted and sent to bank: {h:?}");
 }
+
+#[test]
+fn observer_starts_data_and_early_failure_requests() {
+    for (url, offline, same_origin, expected) in [
+        ("data:text/plain,hello", false, false, vec!["start", "response", "data", "finished"]),
+        ("http://127.0.0.1:1/", true, false, vec!["start", "failed"]),
+        ("https://example.test/", false, false, vec!["start", "failed"]),
+        ("http://127.0.0.1:1/", false, true, vec!["start", "failed"]),
+    ] {
+        let client = NetClient::new(NetConfig::default()).unwrap();
+        client.update_settings(|s| s.offline = offline);
+        let events = client.subscribe();
+        let mut request = Request::get(Url::parse(url).unwrap(), Destination::Fetch);
+        if same_origin {
+            request.mode = RequestMode::SameOrigin;
+            request.origin = Some("http://elsewhere.test".into());
+        }
+        collect(&client, request);
+        let mut observed = Vec::new();
+        while let Ok(event) = events.try_recv() {
+            observed.push(match event {
+                NetEvent::RequestWillBeSent { .. } => "start",
+                NetEvent::ResponseReceived { .. } => "response",
+                NetEvent::DataReceived { .. } => "data",
+                NetEvent::LoadingFinished { .. } => "finished",
+                NetEvent::LoadingFailed { .. } => "failed",
+            });
+        }
+        assert_eq!(observed, expected, "{url} offline={offline} same_origin={same_origin}");
+    }
+}
