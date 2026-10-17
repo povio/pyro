@@ -263,6 +263,16 @@ const fixture = http.createServer((req, res) => {
   } else if (req.url === '/json') {
     res.writeHead(201, { 'content-type': 'application/json', 'x-fixture': 'native-fetch' });
     res.end(JSON.stringify({ answer: 47 }));
+  } else if (req.url.startsWith('/inttra-credentials')) {
+    // Mirrors TOS offices-inttra-credentials: the app POSTs/PATCHes JSON and
+    // the test matches requests by their JSON body.
+    const chunks = [];
+    req.on('data', chunk => chunks.push(chunk));
+    req.on('end', () => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ method: req.method, bytes: Buffer.concat(chunks).length }));
+    });
+    return;
   } else if (req.url === '/slow') {
     res.writeHead(200, { 'content-type': 'text/plain' });
     res.flushHeaders();
@@ -319,6 +329,33 @@ try {
       assert.equal(event.loaderId, frameTree.frame.loaderId);
       assert.notEqual(event.requestId, event.loaderId, 'subresource retains native request identity');
     } finally { await session.detach(); }
+  });
+  await check('request bodies reach postDataJSON in waitForRequest, waitForResponse and routes (TOS INTTRA case)', async () => {
+    const credentials = { credentialType: 'CLIENT', notificationEmail: 'ops@example.test' };
+    const requested = page.waitForRequest(r => r.url().endsWith('/inttra-credentials') && r.postDataJSON()?.credentialType === 'CLIENT', { timeout: 5000 });
+    const responded = page.waitForResponse(r => r.url().endsWith('/inttra-credentials') && r.request().postDataJSON()?.notificationEmail === 'ops@example.test', { timeout: 5000 });
+    const status = await page.evaluate(async body => (await fetch('/inttra-credentials', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })).status, credentials);
+    assert.equal(status, 200);
+    // Await both together so a failure of either stays inside this check.
+    const [request, response] = await Promise.all([requested, responded]);
+    assert.deepEqual(request.postDataJSON(), credentials);
+    assert.deepEqual(response.request().postDataJSON(), credentials);
+    // Intercepted requests carry the body too (Fetch.requestPaused), including non-UTF-8 bytes.
+    const seen = [];
+    await page.route('**/inttra-credentials/7', route => { seen.push([route.request().method(), route.request().postDataJSON()]); return route.continue(); });
+    await page.route('**/inttra-credentials/binary', route => { seen.push([route.request().method(), [...route.request().postDataBuffer()]]); return route.continue(); });
+    try {
+      const patched = await page.evaluate(async () => {
+        const json = await fetch('/inttra-credentials/7', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ notificationEmail: 'new@example.test' }) });
+        const binary = await fetch('/inttra-credentials/binary', { method: 'POST', body: new Uint8Array([0xff, 0x00, 0xfe]) });
+        return [await json.json(), await binary.json()];
+      });
+      assert.deepEqual(patched, [{ method: 'PATCH', bytes: JSON.stringify({ notificationEmail: 'new@example.test' }).length }, { method: 'POST', bytes: 3 }]);
+      assert.deepEqual(seen, [['PATCH', { notificationEmail: 'new@example.test' }], ['POST', [0xff, 0x00, 0xfe]]]);
+    } finally {
+      await page.unroute('**/inttra-credentials/7');
+      await page.unroute('**/inttra-credentials/binary');
+    }
   });
   await check('page fetch route fulfillment and abort after headers', async () => {
     await page.route('**/routed-fetch', route => route.fulfill({ status: 202, contentType: 'application/json', body: '{"routed":48}' }));
