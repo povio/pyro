@@ -10,6 +10,7 @@ before any run of these files.
 | main `8a50785` | `lpb5-1017-163317` | 9 / 4 |
 | upstream `2ad38773` | `lpb5u-1017-163518` | 13 / 0 |
 | `89ef88f` (PR #50) | `lpb5f-1017-164538` | 12 / 1 |
+| integrated main `b0f0319` (PR #50 + PR #52) | `lpb5m-1017-165911` | 13 / 0 |
 
 All four main failures are rewrite-specific:
 - **Window [SameObject] expandos lost after GC (PR #50).** Affected cases:
@@ -35,6 +36,17 @@ All four main failures are rewrite-specific:
   - W3 reproduced it. Upstream stores the override for `screen.orientation`. The
     fix belongs to W3's lp-cdp increment, which will include a minimal
     `Viewport.orientation`/`Screen.orientation` change reviewed by W2.
+
+Integrated main `b0f0319` contains PR #50 (with its review repair) and W3's
+orientation PR #52. It passes all 13 cases, matching upstream.
+- Release binary: SHA-256
+  `6210596644b56bf0e5865ab5c66eef7374d114215908b7380dba218635b3d8a2`, built from a
+  fresh `--no-hardlinks` clone with its own target directory.
+- Fixture: a fresh, clean `/private/tmp/lp-tos-f9f-batch5-main`.
+- Run: one Playwright worker and isolated native PostgreSQL. After cleanup the
+  test role owned zero databases.
+- Time: 28.4 s Playwright and 67.0 s whole harness.
+- Artifacts: `/private/tmp/lp-tos-batch5-main`.
 
 ## Provenance
 
