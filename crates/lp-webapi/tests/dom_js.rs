@@ -2716,3 +2716,91 @@ fn object_urls_register_revoke_and_download_links_do_not_navigate() {
     e.page.dispose();
     assert!(e.page.blob_url(&live).is_none());
 }
+
+#[test]
+fn message_channel_delivers_cloned_messages_fifo_as_tasks() {
+    let e = env("<body>");
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    let r = &e.main;
+    assert_eq!(
+        eval(
+            r,
+            "window.log = []; const mc = new MessageChannel(); window.mc = mc;
+             const o = {n: 1, nested: {list: [1, 2]}};
+             mc.port2.onmessage = (ev) => log.push([ev.data.n, ev.data === o, ev.data.nested.list.join('-'), JSON.stringify(ev.origin), String(ev.source), ev.ports.length, ev.isTrusted, ev instanceof MessageEvent, ev.target === mc.port2].join(':'));
+             mc.port1.postMessage(o); o.n = 99; mc.port1.postMessage({n: 2, nested: {list: []}});
+             Promise.resolve().then(() => log.push('microtask'));
+             [mc.port1 === mc.port1, mc.port1 instanceof MessagePort, mc.port1 instanceof EventTarget, typeof mc.port1.start, log.length].join()",
+        ),
+        "true,true,true,function,0"
+    );
+    // Delivery happens in later tasks, after microtasks, one message per task.
+    tasks.drain();
+    assert_eq!(
+        eval(r, "log.join('|')"),
+        "microtask|1:false:1-2:\"\":null:0:true:true:true|2:false::\"\":null:0:true:true:true"
+    );
+}
+
+#[test]
+fn message_port_start_close_transfer_and_clone_errors() {
+    let e = env("<body>");
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    let r = &e.main;
+    // addEventListener does not start the port; messages wait until start().
+    eval(r, "window.log = []; window.a = new MessageChannel(); a.port2.addEventListener('message', (ev) => log.push('l:' + ev.data)); a.port1.postMessage('x'); a.port1.postMessage('y');");
+    tasks.drain();
+    assert_eq!(eval(r, "log.join()"), "");
+    eval(r, "a.port2.start(); a.port2.start();");
+    tasks.drain();
+    assert_eq!(eval(r, "log.join()"), "l:x,l:y");
+    // Both directions work; close() disentangles and drops pending messages.
+    eval(r, "log = []; a.port1.onmessage = (ev) => log.push('back:' + ev.data); a.port2.postMessage('b'); a.port1.postMessage('pending'); a.port2.close(); a.port1.postMessage('after'); a.port2.postMessage('afterClose');");
+    tasks.drain();
+    assert_eq!(eval(r, "log.join()"), "back:b");
+    // Transfers are explicitly unsupported; non-cloneable data and ports throw.
+    assert_eq!(
+        eval(
+            r,
+            "const c = new MessageChannel(); const err = (f) => { try { f(); return 'ok'; } catch (e) { return e.name; } };
+             [err(() => c.port1.postMessage(1, [c.port2])), err(() => c.port1.postMessage(1, {transfer: [new ArrayBuffer(1)]})),
+              err(() => c.port1.postMessage(() => 1)), err(() => c.port1.postMessage({p: c.port2})), err(() => c.port1.postMessage()),
+              err(() => c.port1.postMessage(1, [])), err(() => c.port1.postMessage(1, {}))].join()",
+        ),
+        "NotSupportedError,NotSupportedError,DataCloneError,DataCloneError,TypeError,ok,ok"
+    );
+    // Page reassignment of structuredClone does not affect port cloning.
+    eval(r, "log = []; structuredClone = () => { throw Error('page clone'); }; const d = new MessageChannel(); d.port2.onmessage = (ev) => log.push(ev.data.k); d.port1.postMessage({k: 'native'});");
+    tasks.drain();
+    assert_eq!(eval(r, "log.join()"), "native");
+}
+
+#[test]
+fn message_port_lifetime_pins_started_ports_until_close() {
+    let e = env("<body>");
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    let r = &e.main;
+    let base = e.page.pinned_count();
+    // React-scheduler shape: only the closures reference the channel.
+    eval(r, "window.got = []; (() => { const ch = new MessageChannel(); ch.port1.onmessage = (ev) => got.push(ev.data); window.send = (v) => ch.port2.postMessage(v); window.closeIt = () => ch.port1.close(); })();");
+    assert_eq!(e.page.pinned_count(), base + 1, "started entangled port is pinned");
+    for _ in 0..3 {
+        e.engine.collect_garbage_now();
+        e.engine.drain_finalized();
+        e.page.after_task();
+    }
+    eval(r, "send('kept'); send('alive');");
+    tasks.drain();
+    assert_eq!(eval(r, "got.join()"), "kept,alive");
+    eval(r, "closeIt(); send('dropped');");
+    tasks.drain();
+    assert_eq!(eval(r, "got.join()"), "kept,alive");
+    assert_eq!(e.page.pinned_count(), base, "close() releases the pin");
+    // Messages queued for an open port are not delivered after page disposal.
+    eval(r, "(() => { const z = new MessageChannel(); z.port1.onmessage = () => got.push('late'); z.port2.postMessage(1); })();");
+    e.page.dispose();
+    tasks.drain();
+}

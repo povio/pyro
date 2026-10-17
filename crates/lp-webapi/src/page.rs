@@ -46,6 +46,8 @@ pub struct PageDom {
     /// the identity map is weak, and script expandos / defineProperty
     /// overrides on them must survive collection.
     pub(crate) same_objects: RefCell<FxHashMap<RealmId, (Persistent, u32)>>,
+    /// Each realm's original `structuredClone` (MessagePort cloning).
+    pub(crate) structured_clones: RefCell<FxHashMap<RealmId, Persistent>>,
     pub(crate) last_removals: Cell<u64>,
     next_event: Cell<u64>,
     pub net: RefCell<Option<lp_net::NetClient>>,
@@ -134,6 +136,7 @@ impl PageDom {
             window_keys: RefCell::new(Vec::new()),
             window_holders: RefCell::new(FxHashMap::default()),
             same_objects: RefCell::new(FxHashMap::default()),
+            structured_clones: RefCell::new(FxHashMap::default()),
             last_removals: Cell::new(u64::MAX),
             next_event: Cell::new(1),
             net: RefCell::new(None),
@@ -211,6 +214,7 @@ impl PageDom {
         drop(self.pinned.take());
         drop(self.window_holders.take());
         drop(self.same_objects.take());
+        drop(self.structured_clones.take());
         drop(self.data_view_readers.take());
         drop(self.header_helpers.take());
         drop(self.url_params_helpers.take());
