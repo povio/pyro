@@ -165,8 +165,23 @@ pub enum PageEvent {
 }
 
 /// Receives page events in emission order on the browser thread.
+///
+/// `FrameNavigatedWithinDocument` for `history.pushState`/`replaceState` and
+/// fragment navigation is delivered synchronously from inside the JavaScript
+/// call that caused it (as browsers do), so implementations must not run
+/// JavaScript or re-enter the browser; queueing the event is the intent.
 pub trait PageObserver {
     fn on_page_event(&self, page: PageId, event: &PageEvent);
+}
+
+pub(crate) type ObserverCell = Rc<RefCell<Option<Rc<dyn PageObserver>>>>;
+
+/// Delivers `event` without holding the cell borrow during the callback.
+pub(crate) fn emit_to(cell: &ObserverCell, page: PageId, event: &PageEvent) {
+    let observer = cell.borrow().clone();
+    if let Some(o) = observer {
+        o.on_page_event(page, event);
+    }
 }
 
 /// Script evaluated in every new document before page scripts
@@ -229,7 +244,9 @@ pub struct Browser {
     pub engine: Engine,
     sched: Scheduler<Browser>,
     pub pages: Vec<Page>,
-    observer: Option<Rc<dyn PageObserver>>,
+    /// Shared with every page's [`PageNav`], which reports same-document
+    /// commits synchronously (see [`PageObserver`]).
+    observer: ObserverCell,
     next_id: Cell<u64>,
     started: Instant,
     /// Finalized-wrapper payloads released at checkpoints (diagnostics).
@@ -259,6 +276,7 @@ impl Browser {
         *self.released_payloads.borrow_mut() += n as u64;
         let pages: Vec<_> = self.pages.iter().map(|p| p.id).collect();
         for id in pages {
+            self.apply_same_document_url(id);
             self.drain_dom_resources(id);
             if let Some(page) = self.page(id).and_then(|p| p.main_frame.page_dom.as_ref()) {
                 page.after_task();
@@ -287,7 +305,7 @@ impl BrowserThread {
             engine,
             sched: event_loop.scheduler(),
             pages: Vec::new(),
-            observer: None,
+            observer: Rc::new(RefCell::new(None)),
             next_id: Cell::new(1),
             started: Instant::now(),
             released_payloads: RefCell::new(0),
@@ -339,7 +357,7 @@ impl Browser {
     }
 
     pub fn set_observer(&mut self, observer: Option<Rc<dyn PageObserver>>) {
-        self.observer = observer;
+        *self.observer.borrow_mut() = observer;
     }
 
     pub fn set_engine_hooks(&self, hooks: Option<Rc<dyn EngineHooks>>) {
@@ -362,9 +380,7 @@ impl Browser {
     }
 
     pub(crate) fn emit(&self, page: PageId, event: PageEvent) {
-        if let Some(o) = &self.observer {
-            o.on_page_event(page, &event);
-        }
+        emit_to(&self.observer, page, &event);
     }
 
     /// Creates a page showing `about:blank` (with an executable main realm,
@@ -435,7 +451,7 @@ impl Browser {
             document: None,
             page_dom: None,
         };
-        let nav = PageNav::new(id, self.sched.clone());
+        let nav = PageNav::new(id, frame.id.clone(), self.sched.clone(), self.observer.clone());
         self.pages.push(Page {
             id,
             context,

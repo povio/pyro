@@ -389,3 +389,64 @@ fn history_methods_accept_an_unbound_receiver() {
     assert!(js(&thread, page, "history.pushState.call(location, null, '', '/x')").contains("Illegal invocation"));
     assert!(!rec.log.borrow().iter().any(|l| l.starts_with("exception")), "{:?}", rec.log.borrow());
 }
+
+#[derive(Default)]
+struct OrderRecorder {
+    log: RefCell<Vec<String>>,
+}
+
+impl PageObserver for OrderRecorder {
+    fn on_page_event(&self, _page: PageId, event: &PageEvent) {
+        if let PageEvent::FrameNavigatedWithinDocument { url, kind, .. } = event {
+            self.log.borrow_mut().push(format!("within {kind:?} {url}"));
+        }
+    }
+}
+
+impl EngineHooks for OrderRecorder {
+    fn console_api(&self, _realm: &Realm, _level: ConsoleLevel, args: &[Value<'_>]) {
+        let parts: Vec<String> = args.iter().map(|a| a.to_string().unwrap_or_default()).collect();
+        self.log.borrow_mut().push(format!("console {}", parts.join(" ")));
+    }
+}
+
+#[test]
+fn same_document_commits_are_reported_within_the_causing_turn() {
+    let (mut thread, _rec, page) = nav_setup();
+    let order = Rc::new(OrderRecorder::default());
+    thread.browser.set_observer(Some(order.clone()));
+    thread.browser.set_engine_hooks(Some(order.clone()));
+    // Directly from a script turn (CDP Runtime.evaluate shape): the event is
+    // delivered before the call returns, before later output of the turn.
+    js(&thread, page, "history.pushState(null, '', '/pushed-1'); console.log('after push')");
+    assert_eq!(*order.log.borrow(), ["within Push http://site.test/pushed-1", "console after push"]);
+    // Frame::url follows at the next checkpoint (before any CDP reply).
+    thread.browser.checkpoint();
+    assert_eq!(thread.browser.page(page).unwrap().main_frame.url, "http://site.test/pushed-1");
+    // From a task (fetch continuation shape): replace and fragment are reported
+    // inside the same task, ahead of what the next task does.
+    order.log.borrow_mut().clear();
+    js(
+        &thread,
+        page,
+        "setTimeout(() => { history.replaceState(null, '', '/replaced'); location.hash = 'frag'; console.log('same task') }, 0);
+         setTimeout(() => console.log('next task'), 0);",
+    );
+    thread.run_until_idle(Some(Instant::now() + Duration::from_secs(2)));
+    assert_eq!(
+        *order.log.borrow(),
+        [
+            "within Replace http://site.test/replaced",
+            "within Fragment http://site.test/replaced#frag",
+            "console same task",
+            "console next task"
+        ]
+    );
+    assert_eq!(thread.browser.page(page).unwrap().main_frame.url, "http://site.test/replaced#frag");
+    // History traversal stays asynchronous (queued as a task, like browsers).
+    order.log.borrow_mut().clear();
+    js(&thread, page, "history.back(); console.log('after back call')");
+    assert_eq!(*order.log.borrow(), ["console after back call"]);
+    thread.run_until_idle(Some(Instant::now() + Duration::from_secs(2)));
+    assert_eq!(order.log.borrow()[1], "within Push http://site.test/replaced");
+}
