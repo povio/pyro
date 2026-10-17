@@ -23,11 +23,33 @@ pub struct AbortSignalData {
     /// Listener registrations to drop on abort (`{signal}` option).
     remove_on_abort: RefCell<Vec<(TargetKey, u32)>>,
     /// Native abort steps (fetch/XHR cancellation).
-    hooks: RefCell<Vec<(AbortHookId, AbortHook)>>,
+    hooks: Rc<RefCell<Vec<(AbortHookId, AbortHook)>>>,
     next_hook: Cell<u64>,
 }
 
+pub(crate) struct AbortRegistration {
+    hooks: std::rc::Weak<RefCell<Vec<(AbortHookId, AbortHook)>>>,
+    id: AbortHookId,
+}
+impl Drop for AbortRegistration {
+    fn drop(&mut self) {
+        if let Some(hooks) = self.hooks.upgrade() {
+            let removed = {
+                let mut hooks = hooks.borrow_mut();
+                hooks.iter().position(|(id, _)| *id == self.id).map(|i| hooks.remove(i))
+            };
+            drop(removed);
+        }
+    }
+}
+
 impl AbortSignalData {
+    pub(crate) fn reason_weak(&self) -> std::rc::Weak<RefCell<Option<Persistent>>> {
+        Rc::downgrade(&self.reason)
+    }
+    pub(crate) fn register_native(&self, hook: AbortHook) -> Option<AbortRegistration> {
+        self.add_abort_hook(hook).map(|id| AbortRegistration { hooks: Rc::downgrade(&self.hooks), id })
+    }
     pub fn aborted(&self) -> bool {
         self.aborted.get()
     }
@@ -173,7 +195,7 @@ pub fn new_signal<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         aborted: Cell::new(false),
         reason: Rc::new(RefCell::new(None)),
         remove_on_abort: RefCell::new(Vec::new()),
-        hooks: RefCell::new(Vec::new()),
+        hooks: Rc::new(RefCell::new(Vec::new())),
         next_hook: Cell::new(1),
     };
     s.wrap::<AbortSignal>(data, Some(key))

@@ -8,10 +8,11 @@ use crate::{target::page_of, util::dom_string};
 use lp_js::{ClassDef, JsClass, JsError, JsResult, NoParent, Persistent, Scope, Value};
 
 type Entries = Rc<Vec<(String, String)>>;
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct HeaderList {
     values: BTreeMap<String, Vec<String>>,
     sorted: Option<Entries>,
+    immutable: bool,
 }
 impl HeaderList {
     fn append(&mut self, name: String, value: String) {
@@ -38,38 +39,63 @@ impl HeaderList {
     }
 }
 
+#[derive(Clone)]
 pub struct HeadersData(Rc<RefCell<HeaderList>>);
+impl HeadersData {
+    pub(crate) fn from_pairs(pairs: impl IntoIterator<Item = (String, String)>, immutable: bool) -> Self {
+        let mut list = HeaderList::default();
+        for (name, value) in pairs {
+            list.append(name, value);
+        }
+        list.immutable = immutable;
+        Self(Rc::new(RefCell::new(list)))
+    }
+    pub(crate) fn pairs(&self) -> Vec<(String, String)> {
+        self.0.borrow().values.iter().map(|(n, values)| (n.clone(), values.join(", "))).collect()
+    }
+    fn check_mutable(&self) -> JsResult<()> {
+        if self.0.borrow().immutable {
+            Err(JsError::Type("Headers are immutable".into()))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+pub(crate) fn from_init(s: &Scope<'_>, init: Value<'_>) -> JsResult<HeadersData> {
+    let list = Rc::new(RefCell::new(HeaderList::default()));
+    if !init.is_undefined() {
+        let convert = s.function("byteString", |s, _this, args| Ok(s.string(&byte_string(args.get(0))?)))?;
+        let converted = helper(s, "fill")?.as_object().unwrap().call(None, &[init, convert.value()])?;
+        let entries = converted.as_object().expect("converted sequence");
+        let len = entries.get("length")?.to_number()? as u32;
+        for i in 0..len {
+            let entry = entries.get_index(i)?.as_object().expect("converted entry");
+            if entry.get("length")?.to_number()? != 2.0 {
+                return Err(JsError::Type("Header entry must have two items".into()));
+            }
+            let name = header_name(entry.get_index(0)?)?;
+            let value = validate_value(byte_string(entry.get_index(1)?)?)?;
+            list.borrow_mut().append(name, value);
+        }
+    }
+    Ok(HeadersData(list))
+}
+
 pub struct Headers;
 impl JsClass for Headers {
     const NAME: &'static str = "Headers";
     type Data = HeadersData;
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
-        def.constructor(0, |s, nt, args| {
-            let list = Rc::new(RefCell::new(HeaderList::default()));
-            if !args.get(0).is_undefined() {
-                let convert = s.function("byteString", |s, _this, args| Ok(s.string(&byte_string(args.get(0))?)))?;
-                let converted = helper(s, "fill")?.as_object().unwrap().call(None, &[args.get(0), convert.value()])?;
-                let entries = converted.as_object().expect("converted sequence");
-                let len = entries.get("length")?.to_number()? as u32;
-                for i in 0..len {
-                    let entry = entries.get_index(i)?.as_object().expect("converted entry");
-                    if entry.get("length")?.to_number()? != 2.0 {
-                        return Err(JsError::Type("Header entry must have two items".into()));
-                    }
-                    let name = header_name(entry.get_index(0)?)?;
-                    let value = validate_value(byte_string(entry.get_index(1)?)?)?;
-                    list.borrow_mut().append(name, value);
-                }
-            }
-            s.wrap_new::<Headers>(HeadersData(list), nt, None)
-        });
+        def.constructor(0, |s, nt, args| s.wrap_new::<Headers>(from_init(s, args.get(0))?, nt, None));
         def.method("append", 2, |s, data, args| {
             args.require(2, "Headers.append")?;
             let name = byte_string(args.get(0))?;
             let value = byte_string(args.get(1))?;
             let name = validate_name(name)?;
             let value = validate_value(value)?;
+            data.check_mutable()?;
             data.0.borrow_mut().append(name, value);
             Ok(s.undefined())
         });
@@ -79,6 +105,7 @@ impl JsClass for Headers {
             let value = byte_string(args.get(1))?;
             let name = validate_name(name)?;
             let value = validate_value(value)?;
+            data.check_mutable()?;
             let mut list = data.0.borrow_mut();
             list.values.insert(name, vec![value]);
             list.sorted = None;
@@ -87,6 +114,7 @@ impl JsClass for Headers {
         def.method("delete", 1, |s, data, args| {
             args.require(1, "Headers.delete")?;
             let name = header_name(args.get(0))?;
+            data.check_mutable()?;
             let mut list = data.0.borrow_mut();
             list.values.remove(&name);
             list.sorted = None;

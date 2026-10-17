@@ -15,5 +15,7 @@ pub use client::{
     PausedRequest, RequestInfo, ResponseSink,
 };
 pub use cookies::CookieJar;
+/// HTTP types used by Request/ResponseHead for native consumers.
+pub use http;
 pub use request::*;
 pub use url::Url;
