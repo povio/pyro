@@ -117,5 +117,102 @@ Artifacts:
   Diagnostics 2 and 3 and the minimal repro were made after writer ownership
   returned.
 
+## Rerun of the failing files on integrated main `82477c9`
+
+Integrated main `82477c9ed06c88f4baf3e9d19c84b0759c93db47` contains PR #56 (CDP
+`postDataEntries`) and PRs #58/#59 (synchronous same-document commit, and command
+replies queued behind the events they produce).
+
+The rerun used the two affected files from the recorded selection, all cases of
+each: `direct-invoice-credit-note` (4) and `offices-inttra-credentials` (4), 8 of
+the 13 cases. The other 5 were not rerun. These 6/8 results are separate from the
+9/13 run above; no fresh 13-case run was made, and no combined 11/13 result is
+claimed.
+
+| Binary | Run | Cases | Passed / failed |
+| --- | --- | --- | --- |
+| `82477c9` | `lpb7f-1017-181417` | 8 | 6 / 2 |
+
+- **INTTRA: 4/4.** Both earlier failures pass.
+- **Credit note: 2/4.** "creates an actual Credit Note from the draft
+  direct-invoice Credit Note" and "renders the actual direct-invoice Credit Note"
+  still time out waiting for the issue response. They are recorded as observed,
+  timing-dependent failures.
+
+**Observed ordering.** These observations come from diagnostic runs and protocol
+traces, all labelled below.
+- The test reads the new credit-note id from `page.url()` as soon as
+  `waitForResponse` matches any invoice-detail GET. The app calls `pushState` to
+  the credit note only after it has consumed that refetch.
+- On the rewrite, the Playwright protocol trace shows this order:
+  1. `Network.responseReceived` and `loadingFinished` for the source invoice's
+     detail GET, the last of four refetches;
+  2. then `Page.navigatedWithinDocument`.
+
+  The test captured the source id.
+- On the Chromium lane, the trace shows `Page.navigatedWithinDocument` arriving
+  before `Network.responseReceived` for that detail GET. The test captured the
+  credit-note id and passed 4/4.
+- On upstream, the four refetches completed in request order, with the detail
+  second of four rather than last. The test captured the credit-note id and passed.
+- A controlled repro of the same shape (wait for a response, then read
+  `page.url()`, while the page calls `pushState` after reading that body) returns
+  the previous URL on the rewrite, upstream and Chrome alike. The test's own
+  timing decides the outcome.
+
+**Inferred, not established.** Chrome probably wins the race because of DevTools
+transport latency across processes. Upstream probably wins it because of its
+response completion order. No spec or protocol violation by the rewrite has been
+established. No network-event delay heuristic was added, and the tests and
+assertions are unchanged.
+
+**The real defect is fixed.** The minimal repro (`page.url()` right after a
+`page.evaluate` that calls `history.pushState` resolves) returned the stale URL on
+`43f9415`. On `82477c9` it returns the updated URL in 2/2 rounds, matching upstream
+and Chrome (`/private/tmp/lp-pushstate-repro/results-82477c9.txt`).
+
+### Rerun provenance
+
+- Source: fresh `--no-hardlinks` clone, detached and clean; tree
+  `762ba4ca218c73172ffda6a8383aba6a4ebcd6be`.
+- Release binary: SHA-256
+  `a70a6b5590d555f947d16afbedaeaf62118b27aaebb60235e16832101ecbc8d9`, built with
+  its own target directory.
+- Fixture: to save disk space, the rerun reused the original
+  `/private/tmp/lp-tos-f9f-batch7` at `f9fde4aa0d`. Its e2e tree was verified
+  unchanged; the only change was the harness-generated pdfgen model.
+- Databases:
+  - The harness left the run's base template database in addition to the snapshot.
+  - The original `cleanup.py` refused it, because its assertion only allowed
+    snapshot names, so nothing was dropped.
+  - A second script, `cleanup2.py`, also allowed that exact template name. Both
+    databases carried this run's slug, were owned by the test role and were absent
+    before the run. They were dropped, and the role then owned zero databases.
+  - Both scripts are kept in the artifact directory.
+- Time: Playwright 41.7 s and 72.0 s whole harness. This is not a performance
+  measurement.
+- Artifacts: `/private/tmp/lp-tos-batch7-fixed`, including `SUMMARY.md`.
+
+### Rerun diagnostics (not compatibility evidence)
+
+All of these used fresh run-owned databases, and none are left. Protocol traces
+have tokens and auth headers redacted and are kept locally only.
+
+| Run | Fixture | Binary | Purpose | Result |
+| --- | --- | --- | --- | --- |
+| `lpb7d4-1017-181616` | instrumented diagnostic | `82477c9` | capture-time URL | 2 / 2 |
+| `lpb7d5-1017-182029` | instrumented diagnostic | `82477c9` | `DEBUG=pw:protocol` trace | 2 / 2 |
+| `lpchrb7-1017-181831` | unchanged | Chromium lane | comparison | 4 / 0 |
+| `lpchrb7d-1017-181922` | instrumented diagnostic | Chromium lane | capture-time URL | 4 / 0 |
+| `lpchrb7e-1017-182220` | instrumented diagnostic | Chromium lane | protocol trace | 4 / 0 |
+
+- The Chromium-lane runs use the direct `playwright.e2e.config.ts`. Unlike the
+  Lightpanda lane, this lane reuses a shared authenticated context.
+- Artifacts:
+  - `/private/tmp/lp-tos-batch7-{diag4,diag5,chr,chr-diag,chr-diag2}`
+  - `/private/tmp/lp-pushstate-repro`: the original `repro-v1.mjs` and
+    `results.txt`; `repro.mjs` with the added response-then-pushState shape and
+    `results-v2.txt`.
+
 Limits: the batch 1 caveats on router bootstrap, synthetic activation and
 assertion depth apply. Single runs do not establish flake rates.
