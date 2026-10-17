@@ -659,13 +659,22 @@ fn invalid_fetch_decision_keeps_request_paused_for_valid_retry() {
     let request = events.iter().find(|e| e["method"] == "Network.requestWillBeSent").unwrap();
     assert_eq!(paused["params"]["networkId"], request["params"]["requestId"]);
     assert!(h.page("Fetch.fulfillRequest", json!({"requestId":id,"responseCode":200,"body":"=="}))["error"].is_object());
+    assert!(h.page("Fetch.fulfillRequest", json!({"requestId":id,"responseCode":200,"binaryResponseHeaders":"=="}))
+        ["error"]
+        .is_object());
+    assert!(h.page(
+        "Fetch.fulfillRequest",
+        json!({"requestId":id,"responseCode":200,"responseHeaders":[],"binaryResponseHeaders":""})
+    )["error"]
+        .is_object());
     let mut events = h.page_with_events(
         "Fetch.fulfillRequest",
-        json!({"requestId":id,"responseCode":200,
-        "responseHeaders":[{"name":"content-type","value":"text/html"}],"body":"aGk="}),
+        json!({"requestId":id,"responseCode":200,"binaryResponseHeaders":"Y29udGVudC10eXBlOiB0ZXh0L2h0bWwAeC1yb3V0ZTogYmluYXJ5AHgtcm91dGU6IGFnYWluAA==","body":"aGk="}),
     );
     assert!(events.iter().any(|e| e["result"] == json!({})), "fulfill accepted: {events:#?}");
     wait_for_network_finish(&mut h, &mut events);
+    let response = events.iter().find(|e| e["method"] == "Network.responseReceived").unwrap();
+    assert_eq!(response["params"]["response"]["headers"]["x-route"], "binary\nagain");
     let request_id = paused["params"]["networkId"].clone();
     assert_eq!(h.page("Network.getResponseBody", json!({"requestId":request_id}))["result"]["body"], "hi");
     assert!(h.page("Fetch.continueRequest", json!({"requestId":id}))["error"].is_object(), "decision cannot be reused");

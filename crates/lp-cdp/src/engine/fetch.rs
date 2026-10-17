@@ -198,6 +198,33 @@ fn headers(values: Option<Vec<Header>>) -> CdpResult<Option<HeaderMap>> {
         .transpose()
 }
 
+fn binary_headers(encoded: &str) -> CdpResult<HeaderMap> {
+    let bytes = base64_decode(encoded)?;
+    let bytes = bytes.strip_suffix(&[0]).unwrap_or(&bytes);
+    let mut headers = HeaderMap::new();
+    if bytes.is_empty() {
+        return Ok(headers);
+    }
+    for entry in bytes.split(|b| *b == 0) {
+        let colon = entry
+            .iter()
+            .position(|b| *b == b':')
+            .ok_or_else(|| CdpError::invalid_params("Invalid binary response header"))?;
+        let name =
+            HeaderName::from_bytes(&entry[..colon]).map_err(|_| CdpError::invalid_params("Unsafe header name"))?;
+        let mut value = &entry[colon + 1..];
+        while value.first().is_some_and(|b| matches!(b, b' ' | b'\t')) {
+            value = &value[1..];
+        }
+        while value.last().is_some_and(|b| matches!(b, b' ' | b'\t')) {
+            value = &value[..value.len() - 1];
+        }
+        let value = HeaderValue::from_bytes(value).map_err(|_| CdpError::invalid_params("Unsafe header value"))?;
+        headers.append(name, value);
+    }
+    Ok(headers)
+}
+
 impl EngineHost {
     pub(super) fn disable_fetch(&mut self, session: &str) {
         if let Some(session) = self.sessions.get_mut(session) {
@@ -323,7 +350,7 @@ impl EngineHost {
                 let pending = Pending { native_id, decision };
                 let previous = fetch.ids.get(&native_id).cloned();
                 let id = if let Some(id) = previous.as_ref().filter(|_| method == "Fetch.authRequired") {
-                    if fetch.rules.pause_again(&id, pending).is_err() {
+                    if fetch.rules.pause_again(id, pending).is_err() {
                         self.out.exceed();
                         continue;
                     }
@@ -447,12 +474,18 @@ impl EngineHost {
                 if p.response_phrase.as_deref().is_some_and(|p| Some(p) != status.canonical_reason()) {
                     return Err(CdpError::server("Custom response phrases are not supported"));
                 }
-                if p.binary_response_headers.is_some() {
-                    return Err(CdpError::server("binaryResponseHeaders are not supported"));
-                }
+                let headers = match (p.response_headers, p.binary_response_headers) {
+                    (Some(_), Some(_)) => {
+                        return Err(CdpError::invalid_params(
+                            "Specify responseHeaders or binaryResponseHeaders, not both",
+                        ))
+                    }
+                    (None, Some(binary)) => binary_headers(&binary)?,
+                    (text, None) => headers(text)?.unwrap_or_default(),
+                };
                 request_decision = Some(InterceptDecision::Fulfill {
                     status: code,
-                    headers: headers(p.response_headers)?.unwrap_or_default(),
+                    headers,
                     body: base64_decode(p.body.as_deref().unwrap_or(""))?.into(),
                 });
             }
@@ -512,6 +545,20 @@ impl EngineHost {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn binary_response_headers_preserve_bytes_duplicates_and_validate_framing() {
+        let map = binary_headers("eC1ieXRlczog/4AAU2V0LUNvb2tpZTogYT0xAHNldC1jb29raWU6IGI9MgA=").unwrap();
+        assert_eq!(map["x-bytes"].as_bytes(), &[0xff, 0x80]);
+        assert_eq!(
+            map.get_all("set-cookie").iter().map(|v| v.as_bytes()).collect::<Vec<_>>(),
+            vec![b"a=1".as_slice(), b"b=2".as_slice()]
+        );
+        assert!(binary_headers("").unwrap().is_empty());
+        for invalid in ["bm8gY29sb24=", "OiBlbXB0eSBuYW1l", "eDogdmFsdWUNCmluamVjdGVkOiB4", "eDogYQAAeTogYg==", "=="] {
+            assert!(binary_headers(invalid).is_err(), "{invalid}");
+        }
+    }
 
     #[test]
     fn empty_fetch_patterns_still_observe_terminals_of_existing_pauses() {

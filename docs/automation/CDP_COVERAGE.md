@@ -10,13 +10,13 @@ Rewrite status:
 - **conditional:** succeeds only when the request is already true of the engine; otherwise it returns an explicit error.
 - **pending:** returns an explicit CDP error (`-32000 … is not supported by lightningpanda`) and never a fabricated success.
 
-HTTP and `data:` document loading now use the real loader. `Network` emits request/redirect/response/data/completion/failure events to enabled page sessions, with response-body capture. Browser contexts own distinct network clients. DOM/Input protocol wiring remains pending; this is not TOS compatibility. Fetch request-stage interception supports continue overrides, fulfill, abort, disable/detach cleanup and server Basic-auth challenges. Response-stage interception, custom status phrases, binary headers, proxy credentials and non-Basic credential schemes are explicitly unsupported. Only one session per page can own interception; different pages in a context may have separate owners.
+HTTP and `data:` document loading now use the real loader. `Network` emits request/redirect/response/data/completion/failure events to enabled page sessions, with response-body capture. Browser contexts own distinct network clients. DOM/Input protocol wiring remains pending; this is not TOS compatibility. Fetch request-stage interception supports continue overrides, fulfill, abort, disable/detach cleanup and server Basic-auth challenges. Response-stage interception, custom status phrases, proxy credentials and non-Basic credential schemes are explicitly unsupported. Fulfillment accepts text headers or base64 NUL-separated binary headers, preserving native value bytes and duplicate entries; the existing Network JSON header display uses UTF-8 replacement for invalid text. Redirect hops have distinct linked Fetch IDs; auth retries retain the hop ID. Only one session per page can own interception; different pages in a context may have separate owners.
 
 Storage cookie commands use the network cookie jar, including HTTP response cookies, expiry and context isolation. Negative CDP expiry values mean session cookies. Invalid batches are validated before modifying the real jar. Partitioned/SameParty cookies, non-default priority and source overrides return explicit errors. This does not install document.cookie or localStorage into browser realms.
 
 Capture uses a shared process payload budget (default 64 MiB, 8 MiB/body), at most 4096 response records per page, and bounded network subscriptions (1024 events/8 MiB logical bytes per context). Observer overflow closes the CDP connection instead of silently losing events. Disabling the last Network session, navigation, or page teardown releases retained bodies. Per-session `Network.enable` buffer options are explicitly unsupported. These are logical retention limits, not an RSS measurement; shared chunk allocations and metadata contribute additional memory.
 
-Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 32 engine, 10 accepted/recorded only, 3 conditional, 56 pending.
+Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 33 engine, 10 accepted/recorded only, 3 conditional, 55 pending.
 
 | Method | Upstream 2ad38773f | Rewrite | Notes |
 | --- | --- | --- | --- |
@@ -110,7 +110,7 @@ Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 32 engi
 | `Storage.clearCookies` | yes | engine | per-context native cookie jar; omitted context uses a distinct default context |
 | `Storage.getCookies` | yes | engine | per-context native cookie jar; omitted context uses a distinct default context |
 | `Storage.setCookies` | yes | engine | per-context native cookie jar; omitted context uses a distinct default context |
-| `Target.attachToBrowserTarget` | yes | pending |  |
+| `Target.attachToBrowserTarget` | yes | engine | flattened browser sessions support explicit page attachment and scoped replies/events; per-browser-session auto-attach/discovery and nested browser sessions are unsupported |
 | `Target.attachToTarget` | yes | engine |  |
 | `Target.closeTarget` | yes | engine |  |
 | `Target.createBrowserContext` | yes | engine | `proxyServer` is refused |

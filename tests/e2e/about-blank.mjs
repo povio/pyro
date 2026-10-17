@@ -135,6 +135,27 @@ await check('Fetch fulfill and abort', async () => {
     await page.unroute('**/aborted');
   }
 });
+await check('Fetch binary response headers through CDP', async () => {
+  const session = await context.newCDPSession(page);
+  let decisionError;
+  session.on('Fetch.requestPaused', event => {
+    session.send('Fetch.fulfillRequest', {
+      requestId: event.requestId, responseCode: 203,
+      binaryResponseHeaders: Buffer.from('content-type: text/html\0x-route: binary\0').toString('base64'),
+      body: Buffer.from('<script>globalThis.binaryRoute=46</script>').toString('base64'),
+    }).catch(error => { decisionError = error; });
+  });
+  try {
+    await session.send('Fetch.enable', { patterns: [{ urlPattern: '**/binary-headers' }] });
+    const response = await page.goto('http://127.0.0.1:1/binary-headers', { timeout: 5000 });
+    assert.equal(decisionError, undefined);
+    assert.equal(response.status(), 203);
+    assert.equal(await response.headerValue('x-route'), 'binary');
+    assert.equal(await page.evaluate(() => globalThis.binaryRoute), 46);
+  } finally {
+    await session.detach();
+  }
+});
 await check('HTTP redirect, response body and inline script', async () => {
   const body = '<!doctype html><script>globalThis.loadedFromHttp=42</script>';
   let continuedHeader = null;

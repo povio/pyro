@@ -557,8 +557,8 @@ impl Host for EngineHost {
         match command.method.as_ref() {
             "Storage.getCookies" | "Storage.setCookies" | "Storage.clearCookies" => {
                 match self.storage_command(command, context) {
-                    Ok(result) => out.send(msg::result_frame(command.id, &result, None)),
-                    Err(error) => out.send(msg::error_frame(Some(command.id), &error, None)),
+                    Ok(result) => out.send(msg::result_frame(command.id, &result, command.session_id())),
+                    Err(error) => out.send(msg::error_frame(Some(command.id), &error, command.session_id())),
                 }
             }
             "Browser.setDownloadBehavior" => {
@@ -579,11 +579,15 @@ impl Host for EngineHost {
                 });
                 let _ = context;
                 match result {
-                    Ok(()) => out.send(msg::result_frame(command.id, &Empty {}, None)),
-                    Err(e) => out.send(msg::error_frame(Some(command.id), &e, None)),
+                    Ok(()) => out.send(msg::result_frame(command.id, &Empty {}, command.session_id())),
+                    Err(e) => out.send(msg::error_frame(Some(command.id), &e, command.session_id())),
                 }
             }
-            _ => out.send(msg::error_frame(Some(command.id), &CdpError::unsupported(&command.method), None)),
+            _ => out.send(msg::error_frame(
+                Some(command.id),
+                &CdpError::unsupported(&command.method),
+                command.session_id(),
+            )),
         }
     }
 }
