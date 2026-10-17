@@ -25,6 +25,8 @@ pub struct Dom {
     /// Roots of trees that may have become unreachable.
     candidates: Vec<u32>,
     live: u32,
+    /// Bumped whenever a node is removed from its parent.
+    removals: u64,
     pub(crate) mutation: MutationState,
     pub(crate) events: crate::events::ListenerStore,
     pub(crate) resources: crate::script::ResourceQueue,
@@ -54,6 +56,7 @@ impl Dom {
             version: 0,
             candidates: Vec::new(),
             live: 0,
+            removals: 0,
             mutation: MutationState::default(),
             events: Default::default(),
             resources: Default::default(),
@@ -105,6 +108,10 @@ impl Dom {
     }
     pub(crate) fn bump(&mut self) {
         self.version = self.version.wrapping_add(1);
+    }
+    /// Monotonic count of node removals (cheap "did anything disconnect" check).
+    pub fn removal_count(&self) -> u64 {
+        self.removals
     }
     /// Number of live nodes in the store (all documents).
     pub fn live_nodes(&self) -> usize {
@@ -205,6 +212,9 @@ impl Dom {
         }
         if !active {
             self.candidates.push(i);
+            // Nodes of a deactivated document stop counting as "live in a
+            // browsing context" for pin reconciliation.
+            self.removals = self.removals.wrapping_add(1);
         }
         Ok(())
     }
@@ -566,6 +576,19 @@ impl Dom {
             i = self.root_idx(i);
             match &self.n(i).kind {
                 NodeKind::Document(_) => return true,
+                NodeKind::Fragment(FragmentData { host, shadow: Some(_) }) => i = *host,
+                _ => return false,
+            }
+        }
+    }
+
+    /// Connected to a document that a browsing context currently displays.
+    pub fn is_in_active_document(&self, id: NodeId) -> bool {
+        let Ok(mut i) = self.check(id) else { return false };
+        loop {
+            i = self.root_idx(i);
+            match &self.n(i).kind {
+                NodeKind::Document(d) => return d.active,
                 NodeKind::Fragment(FragmentData { host, shadow: Some(_) }) => i = *host,
                 _ => return false,
             }
@@ -970,6 +993,7 @@ impl Dom {
         let prev = self.n(node).prev;
         let next = self.n(node).next;
         self.resources_before_remove(node);
+        self.removals = self.removals.wrapping_add(1);
         self.add_transient_observers(parent, node);
         self.unlink(node);
         self.bump();

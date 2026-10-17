@@ -32,10 +32,12 @@ pub struct PageDom {
     /// node (or an active non-node target): (realm, target) -> wrapper.
     pub(crate) pinned: RefCell<FxHashMap<(RealmId, TargetKey), Persistent>>,
     /// Window event-target keys (document -> window parent in event paths).
-    pub(crate) window_keys: RefCell<Vec<TargetKey>>,
+    /// (document, Window event-target key) pairs.
+    pub(crate) window_keys: RefCell<Vec<(NodeId, TargetKey)>>,
     /// Per-realm plain object holding Window listeners (page realms use the
     /// default JSC global, which cannot carry private properties).
     pub(crate) window_holders: RefCell<FxHashMap<RealmId, Persistent>>,
+    pub(crate) last_removals: Cell<u64>,
     next_event: Cell<u64>,
     pub net: RefCell<Option<lp_net::NetClient>>,
     hooks: RefCell<Option<Rc<dyn PageHooks>>>,
@@ -103,6 +105,7 @@ impl PageDom {
             pinned: RefCell::new(FxHashMap::default()),
             window_keys: RefCell::new(Vec::new()),
             window_holders: RefCell::new(FxHashMap::default()),
+            last_removals: Cell::new(u64::MAX),
             next_event: Cell::new(1),
             net: RefCell::new(None),
             hooks: RefCell::new(None),
@@ -174,13 +177,18 @@ impl PageDom {
         let mut dom = self.dom.borrow_mut();
         let key = dom.new_target_key();
         dom.set_document_window(document, Some(key));
-        self.window_keys.borrow_mut().push(key);
+        self.window_keys.borrow_mut().push((document, key));
         key
     }
 
     /// The Window event-target key created by `create_window_target`.
     pub fn window_target(&self) -> Option<TargetKey> {
-        self.window_keys.borrow().first().copied()
+        let doc = self.document();
+        self.window_keys.borrow().iter().find(|(d, _)| *d == doc).map(|(_, k)| *k)
+    }
+
+    pub(crate) fn is_window_key(&self, key: TargetKey) -> bool {
+        self.window_keys.borrow().iter().any(|(_, k)| *k == key)
     }
 
     pub(crate) fn node_identity(&self, id: NodeId) -> IdentityKey {
@@ -327,6 +335,11 @@ impl PageDom {
         self.dom.borrow_mut().set_file_names(input, &names)?;
         self.files.borrow_mut().insert(input, files);
         Ok(())
+    }
+
+    /// Number of wrappers pinned for listeners (diagnostics/tests).
+    pub fn pinned_count(&self) -> usize {
+        self.pinned.borrow().len()
     }
 
     /// Borrow helper for bindings.

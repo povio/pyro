@@ -41,7 +41,7 @@ impl Drop for EventTargetData {
     fn drop(&mut self) {
         // Non-node, non-window targets own their listener list.
         if let TargetKey::Other(_) = self.key {
-            if !self.page.window_keys.borrow().contains(&self.key) {
+            if !self.page.is_window_key(self.key) {
                 if let Ok(mut d) = self.page.dom.try_borrow_mut() {
                     d.forget_target(self.key);
                 }
@@ -112,7 +112,7 @@ pub fn page_of(s: &Scope<'_>) -> JsResult<Rc<PageDom>> {
 /// Wrapper object of a target in `s`'s realm, if it exists (nodes are
 /// wrapped on demand).
 pub(crate) fn target_object<'s>(s: &Scope<'s>, page: &PageDom, key: TargetKey) -> JsResult<Option<Object<'s>>> {
-    if page.window_keys.borrow().contains(&key) {
+    if page.is_window_key(key) {
         return Ok(Some(s.global()));
     }
     match key {
@@ -270,7 +270,7 @@ fn maybe_pin(s: &Scope<'_>, page: &PageDom, key: TargetKey, obj: Object<'_>) {
     if let TargetKey::Node(_) = key {
         let connected = {
             let d = page.dom.borrow();
-            d.key_node(key).and_then(|id| d.is_connected(id).ok()).unwrap_or(false)
+            d.key_node(key).is_some_and(|id| d.is_in_active_document(id))
         };
         if !connected {
             return;
@@ -291,10 +291,11 @@ pub fn unpin_target(s: &Scope<'_>, page: &PageDom, key: TargetKey) {
 /// Safe-point maintenance (see `PageDom::after_task`).
 pub(crate) fn reconcile_pins(page: &PageDom, dom: &mut Dom) {
     let reconnected = dom.take_reconnected_listener_nodes();
-    {
+    // Pins only become stale when a node is removed somewhere.
+    if page.last_removals.replace(dom.removal_count()) != dom.removal_count() {
         let mut pinned = page.pinned.borrow_mut();
         pinned.retain(|(_, key), _| match key {
-            TargetKey::Node(_) => dom.key_node(*key).is_some_and(|id| dom.is_connected(id).unwrap_or(false)),
+            TargetKey::Node(_) => dom.key_node(*key).is_some_and(|id| dom.is_in_active_document(id)),
             TargetKey::Other(_) => true,
         });
     }
@@ -305,7 +306,7 @@ pub(crate) fn reconcile_pins(page: &PageDom, dom: &mut Dom) {
     for realm in realms {
         let Ok(s) = realm.scope() else { continue };
         for &id in &reconnected {
-            if !dom.is_connected(id).unwrap_or(false) {
+            if !dom.is_in_active_document(id) {
                 continue;
             }
             if let Some(obj) = s.lookup_identity(page.node_identity(id)) {

@@ -282,3 +282,31 @@ fn reentrant_string_conversion_does_not_double_borrow() {
     );
     assert_eq!(out, "x|6|xx");
 }
+
+#[test]
+fn navigation_releases_pinned_listener_wrappers_of_old_document() {
+    let e = env("<body><div id=a></div></body>");
+    eval(&e.main, "for (let i = 0; i < 50; i++) { const d = document.createElement('div'); d.addEventListener('x', () => {}); document.body.appendChild(d); }");
+    e.page.after_task();
+    let pinned_before = e.page.pinned_count();
+    assert!(pinned_before >= 50, "listener wrappers of connected nodes are pinned: {pinned_before}");
+    // Navigate: a new document replaces the old one in the same Dom store.
+    let old = e.page.document();
+    let new_doc = {
+        let mut d = e.page.dom.borrow_mut();
+        let nd = d.create_document(lp_dom::DocumentKind::Html, "http://localhost:5173/next");
+        d.set_document_active(nd, true).unwrap();
+        d.set_document_active(old, false).unwrap();
+        nd
+    };
+    e.page.set_document(new_doc);
+    lp_webapi::lifecycle::realm_disposed(&e.page, e.main.id());
+    e.main.dispose();
+    for _ in 0..3 {
+        e.engine.collect_garbage_now();
+        e.engine.drain_finalized();
+        e.page.after_task();
+    }
+    assert_eq!(e.page.pinned_count(), 0);
+    assert!(!e.page.dom.borrow().is_alive(old), "old document reclaimed after its realm and pins are gone");
+}
