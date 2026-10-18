@@ -1,0 +1,111 @@
+{
+  "binary": "/private/tmp/lp-hbl-focus-validation/lightningpanda-3f11e0c",
+  "version": "124.0.6367.29",
+  "samples": [
+    {
+      "mode": "default",
+      "before": {
+        "y": 2025,
+        "height": 5,
+        "scrollY": 0,
+        "active": false
+      },
+      "after": {
+        "y": 447,
+        "height": 5,
+        "scrollY": 1578,
+        "active": true
+      },
+      "events": [
+        {
+          "type": "focus",
+          "y": 447,
+          "height": 5,
+          "scrollY": 1578,
+          "active": true
+        },
+        {
+          "type": "focusin",
+          "y": 447,
+          "height": 5,
+          "scrollY": 1578,
+          "active": true
+        }
+      ],
+      "viewport": [
+        1440,
+        900
+      ]
+    },
+    {
+      "mode": "prevent",
+      "before": {
+        "y": 2025,
+        "height": 5,
+        "scrollY": 0,
+        "active": false
+      },
+      "after": {
+        "y": 2025,
+        "height": 5,
+        "scrollY": 0,
+        "active": true
+      },
+      "events": [
+        {
+          "type": "focus",
+          "y": 2025,
+          "height": 5,
+          "scrollY": 0,
+          "active": true
+        },
+        {
+          "type": "focusin",
+          "y": 2025,
+          "height": 5,
+          "scrollY": 0,
+          "active": true
+        }
+      ],
+      "viewport": [
+        1440,
+        900
+      ]
+    },
+    {
+      "mode": "allow",
+      "before": {
+        "y": 2025,
+        "height": 5,
+        "scrollY": 0,
+        "active": false
+      },
+      "after": {
+        "y": 447,
+        "height": 5,
+        "scrollY": 1578,
+        "active": true
+      },
+      "events": [
+        {
+          "type": "focus",
+          "y": 447,
+          "height": 5,
+          "scrollY": 1578,
+          "active": true
+        },
+        {
+          "type": "focusin",
+          "y": 447,
+          "height": 5,
+          "scrollY": 1578,
+          "active": true
+        }
+      ],
+      "viewport": [
+        1440,
+        900
+      ]
+    }
+  ]
+}

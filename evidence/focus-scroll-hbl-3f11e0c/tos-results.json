@@ -1,0 +1,57 @@
+{
+  "source": "3f11e0cf6327789dc2d34eca9e6de1934df2298e",
+  "tree": "31f8732da7ffe4295fa31fe52e1a66a86108b020",
+  "browser_sha256": "3c487d8b0289d6f3b3b76c8078e92003ff633152e7f5f26da3eb4e53dfb21919",
+  "tos_commit": "f9fde4aa0dce7d1d7a1ffebffe3306399973cd80",
+  "run_slug": "lpfocusscroll-1018-184759",
+  "cases": [
+    {
+      "title": "updates the Route tab incoterm",
+      "file": "e2e/logistics/positions-route.e2e.ts",
+      "status": "expected",
+      "results": [
+        {
+          "status": "passed",
+          "duration_ms": 3497
+        }
+      ]
+    },
+    {
+      "title": "updates the Route tab transport mode",
+      "file": "e2e/logistics/positions-route.e2e.ts",
+      "status": "expected",
+      "results": [
+        {
+          "status": "passed",
+          "duration_ms": 2999
+        }
+      ]
+    },
+    {
+      "title": "keeps Document Party rows in place when assigning an HBL reference",
+      "file": "e2e/logistics/positions-commercial-parties.e2e.ts",
+      "status": "expected",
+      "results": [
+        {
+          "status": "passed",
+          "duration_ms": 2475
+        }
+      ]
+    }
+  ],
+  "cleanup": "run DBs left: 0 | retained ledger templates: ['fe_e2e_w2tpl_f9fde4aa_batch16fx_template', 'fe_e2e_w2tpl_f9fde4aa_batch7_template', 'fe_e2e_w2tpl_f9fde4aa_batch7diag_template']",
+  "auth": "backend test-token -> localStorage; no UI login",
+  "version_gate": "direct scripts/run-fe-e2e.mjs with playwright.routed.config.ts; same documented bypass as upstream baseline",
+  "template_database": "fe_e2e_w2tpl_f9fde4aa_batch16fx_template",
+  "template_reuse": "same UTC build date/fixture/commit/input stamp; fresh run-owned DB clones; three ledger templates retained",
+  "cache": "shared64MiB/private64MiB; JSC_usePollingTraps=true",
+  "assertions": "original specs, original activation/auth helpers, no changes/instrumentation in this run",
+  "scope": "three selected cases only, not full TOS/iframe input/layout conformance or performance",
+  "hashes": {
+    "selection.json": "cfafaad8b5924dbc6e1f42018d857907421064f2339dc1c61b64e522385aaa7e",
+    "run.py": "b8f1e05a99c131e1a77542678eca6110f78f8c948f2018ff71182d251bec9b65",
+    "coverage.log": "2aef2b4d8cdbb6435e4c0c1902a7d8ae296855afe8ca78564346c431f87ff3e9",
+    "lightpanda.json": "ece8f1ca92bbe834c99615b56a9e06a967ff82f9491c15c3bf8ca8768c1a118c",
+    "db-post-cleanup.txt": "a9df6597f2eb4b0ee5f2d1e2178d6630088ff455e1a53c9244065c03e8211f70"
+  }
+}
