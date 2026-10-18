@@ -32,13 +32,78 @@ page.goBack: Protocol error (Page.getNavigationHistory): Page.getNavigationHisto
 - This failure is caused by a missing protocol method; it is not a timing or
   test problem.
 - The fix is in draft PR #82 (head `3f9b73d`). That PR is not in `6e44bcd`, so this
-  table is unchanged by it. The TOS re-run of W3-02 on the PR head will be
-  recorded separately.
+  table is unchanged by it. Its TOS re-run is recorded below.
 
 All other 25 selected cases pass on both binaries. They cover:
 - direct-route rendering of Control Tower, Finances and office-settings pages;
 - unauthorized-route redirects that make no forbidden API request;
 - email log listing, filtering, date ranges, bookmarks and attribution.
+
+## PR #82 verification on the W3 host (Docker PostgreSQL 17)
+
+Draft PR #82 (`3f9b73d0e9fad3661fdcae77fd870e25b0c38a90`) was re-run on the
+worker 3 host against the unchanged W3-02 selection (`d5ee9317…`). The run was
+repeated, and main `6e44bcd` was run as a control on the same host.
+
+| Run | Binary | Passed / failed | email-logs Back/Forward |
+| --- | --- | --- | --- |
+| `w3l02p-1018-063002` | PR #82 `3f9b73d` | 15 / 0 | passed |
+| `w3l02pr-1018-063059` | PR #82 `3f9b73d` (repeat) | 15 / 0 | passed |
+| `w3l02-1018-063149` | main `6e44bcd` (control) | 14 / 1 | failed: `Page.getNavigationHistory` unsupported |
+| `w3l01-1018-062830` | main `6e44bcd` | W3-01: 11 / 0 | — |
+
+- **What the runs show:**
+  - The W3 host reproduces the W2-host results for main on both selections.
+  - PR #82 passes the regressed case in both runs, and the other 14 cases.
+  - Two single runs do not establish a flake rate.
+- **Binaries:** fresh `git clone --no-hardlinks` at the exact SHAs, each built
+  with a fresh target, `CARGO_INCREMENTAL=0`, `--locked --release` and SDK 26.5.
+  Each build compiled 140 crates.
+
+  | Build | SHA-256 |
+  | --- | --- |
+  | `3f9b73d` | `5b08a7a4c9353cb235a150fec5dbd0c9226991594e640577217fa7f848b2dd3f` |
+  | `6e44bcd` | `b1d041fbd8a85b47c045556a478e486a16cba456f67df64a0566304d83c04923` |
+
+  - Signing: ad hoc, linker-signed, with no entitlements.
+  - These whole-file hashes differ from the W2-host builds of the same SHAs.
+    The Mach-O section hashes also differ; the builds used different
+    directories. No cross-host binary equivalence is claimed.
+  - An exact-head `3f9b73d` build was also made on W2's host (SHA-256
+    `2cb35ae4de6e8cd46752f6127a9c15b37d5f484e8184d70022170413c7c96e67`). It was
+    not run there, because the host lock stayed busy and the local setup became
+    ready first.
+- **Fixture:** a fresh `git worktree add --detach` at the TOS commit
+  (`/private/tmp/lp-w3-lfix-1`), then `bun install --frozen-lockfile`. All four
+  runs reused it. Before each run, the e2e tree was checked unchanged and the
+  manifest hash was rechecked.
+- **Template preparation:** identical to W2's host. The baseline snapshot's
+  migration prefix diverges, so the runner falls back to Prisma migrate reset
+  (828 migrations), then the synthetic seeds.
+- **Database cleanup:** each run created one database, which cleanup dropped by
+  exact name. The test role then owned 0 databases.
+
+**Setup deviation (Docker).** The W3 host has no Homebrew, and `sudo` needs a
+password. At the user's request, PostgreSQL runs in Docker:
+
+- The engine runs in a user-local Colima/Lima VM. Docker Desktop was not
+  installed, because its license must be accepted by the user.
+- The server is one persistent `postgres:17.11` container, pinned by digest,
+  with a named volume, published only on `127.0.0.1:5432`.
+- It uses a dedicated `LOGIN CREATEDB` non-superuser test role, whose password
+  is in a mode-600 file. Host connections authenticate with SCRAM.
+- The host has no PostgreSQL client tools. The runner's `psql`, `pg_isready`,
+  `pg_dump` and `pg_restore` run inside the container through wrappers.
+- The only runner setting added beyond W2's template is
+  `E2E_DATABASE_SNAPSHOT_CREATE_WITH_DOCKER=0`, which the native docs list.
+- The TOS source, tests, authentication, assertions and manifest are unchanged.
+  `CI` is not set.
+- The full setup handoff is kept on the W3 host
+  (`~/.local/share/lp-w3-tos-setup/SETUP.md`).
+
+Upstream was not re-run on the W3 host: no pinned upstream binary is available
+there yet. The upstream baseline for W3-01 and W3-02 remains the W2-host runs
+above.
 
 ## Selection coverage
 
