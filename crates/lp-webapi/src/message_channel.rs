@@ -1,0 +1,294 @@
+//! `MessageChannel` / `MessagePort` (HTML §9.4) for same-realm messaging.
+//!
+//! Each port is a non-node EventTarget. `postMessage` structured-clones the
+//! message (the realm's original `structuredClone`, so non-cloneable values
+//! throw DataCloneError) and queues it on the entangled port. A started port
+//! delivers each message as its own task, in FIFO order, as a trusted
+//! `MessageEvent` (`origin` "", no `source`, no `ports`). Messages wait while
+//! the port is not started; `start()` or assigning `onmessage` starts it,
+//! `addEventListener("message")` does not.
+//!
+//! `close()` disentangles both ports; later posts on either side are dropped
+//! and the closed port drops its undelivered messages (upstream
+//! MessagePort.zig, Chromium).
+//!
+//! Lifetime: a started, open port that is entangled or still holds
+//! undelivered messages is pinned so its listeners keep running without a JS
+//! reference (HTML keeps such ports alive). The pin is re-evaluated on
+//! enqueue, start, delivery, close (including the peer's) and when the peer
+//! is collected, and every pin is released with the page. A queued but
+//! unstarted port is not pinned.
+//!
+//! Gaps (explicit): transferring anything, including MessagePorts, throws
+//! NotSupportedError (`postMessage(m, [port])` or `{transfer}`), so ports never
+//! leave their realm; a MessagePort is not cloneable as data
+//! (DataCloneError); there is no `messageerror` source because same-realm
+//! deserialization cannot fail.
+use std::cell::{Cell, RefCell};
+use std::collections::VecDeque;
+use std::rc::{Rc, Weak};
+
+use lp_js::{ClassDef, JsClass, JsError, JsResult, NoParent, Object, Persistent, Scope, WeakRealm};
+
+use crate::event::{EventCore, EventInterface};
+use crate::page::PageDom;
+use crate::target::{fire, page_of, pin_target, target_object, unpin_target, EventTarget, EventTargetData};
+use lp_dom::events::TargetKey;
+
+pub(crate) struct PortInner {
+    target: EventTargetData,
+    realm: WeakRealm,
+    peer: RefCell<Weak<PortInner>>,
+    queue: RefCell<VecDeque<Persistent>>,
+    started: Cell<bool>,
+    closed: Cell<bool>,
+    /// Whether the wrapper is currently pinned (see `update_pin`).
+    pinned: Cell<bool>,
+}
+
+impl PortInner {
+    fn page(&self) -> &Rc<PageDom> {
+        &self.target.page
+    }
+
+    /// Queues `data` (already cloned into this port's realm).
+    fn enqueue(self: &Rc<Self>, data: Persistent) {
+        if self.closed.get() {
+            return;
+        }
+        self.queue.borrow_mut().push_back(data);
+        if self.started.get() {
+            self.schedule_one();
+        }
+        self.update_pin();
+    }
+
+    /// Keeps the wrapper (and so this `PortInner` and its listeners) alive
+    /// exactly while the port can still deliver: started, open, and either
+    /// entangled or holding undelivered messages (HTML keeps such ports
+    /// alive). Re-evaluated on enqueue, start, delivery and close (including
+    /// the peer's), so the pin is dropped once it is no longer needed. A
+    /// queued but unstarted port is not pinned: its messages wait for
+    /// `start()`, so if nothing can reach the port to start it, it may go.
+    fn update_pin(&self) {
+        let desired = self.started.get()
+            && !self.closed.get()
+            && (self.peer.borrow().upgrade().is_some() || !self.queue.borrow().is_empty());
+        if desired == self.pinned.get() {
+            return;
+        }
+        let Some(realm) = self.realm.upgrade() else { return };
+        let Ok(s) = realm.scope() else { return };
+        if desired {
+            if let Ok(Some(wrapper)) = target_object(&s, self.page(), self.target.key) {
+                pin_target(&s, self.page(), self.target.key, wrapper);
+                self.pinned.set(true);
+            }
+        } else {
+            unpin_target(&s, self.page(), self.target.key);
+            self.pinned.set(false);
+        }
+    }
+
+    /// One task per queued message keeps FIFO order and task boundaries.
+    fn schedule_one(self: &Rc<Self>) {
+        let port = Rc::downgrade(self);
+        self.page().post_task(Box::new(move || {
+            if let Some(port) = port.upgrade() {
+                port.deliver_next();
+            }
+        }));
+    }
+
+    fn deliver_next(&self) {
+        if self.closed.get() || self.page().is_disposed() {
+            return;
+        }
+        let Some(data) = self.queue.borrow_mut().pop_front() else { return };
+        let ev = EventCore::trusted(self.page(), EventInterface::MessageEvent, "message", false, false);
+        {
+            let mut f = ev.fields.borrow_mut();
+            f.message_data = Some(data);
+            f.origin = String::new();
+        }
+        fire(self.page(), self.target.key, &ev);
+        self.update_pin();
+    }
+
+    fn start(self: &Rc<Self>) {
+        if self.started.get() || self.closed.get() {
+            return;
+        }
+        self.started.set(true);
+        self.update_pin();
+        for _ in 0..self.queue.borrow().len() {
+            self.schedule_one();
+        }
+    }
+
+    fn close(&self) {
+        if self.closed.replace(true) {
+            return;
+        }
+        self.queue.borrow_mut().clear();
+        self.update_pin();
+        if let Some(peer) = self.peer.take().upgrade() {
+            peer.peer.replace(Weak::new());
+            // The peer keeps its pin only while it still has undelivered
+            // messages (a sender's close does not drop queued messages).
+            peer.update_pin();
+        }
+    }
+}
+
+impl Drop for PortInner {
+    /// When a port's native state goes away (its wrapper was collected), its
+    /// surviving peer can no longer be posted to. The drop only records the
+    /// peer (pure Rust, no JS, independent of page hooks); `PageDom::after_task`
+    /// reconciles its pin at the next safe point, so a started, drained
+    /// receiver whose sender became unreachable is released instead of being
+    /// retained until page disposal. Queued messages keep it pinned until
+    /// delivered.
+    fn drop(&mut self) {
+        let Some(peer) = self.peer.get_mut().upgrade() else { return };
+        let page = peer.page().clone();
+        if !page.is_disposed() {
+            page.pending_port_reconcile.borrow_mut().push(Rc::downgrade(&peer));
+        }
+    }
+}
+
+/// Safe-point step (`PageDom::after_task`): re-evaluates the pins of ports
+/// whose peer was collected since the last checkpoint.
+pub(crate) fn reconcile_ports(page: &PageDom) {
+    let pending = std::mem::take(&mut *page.pending_port_reconcile.borrow_mut());
+    for port in pending.iter().filter_map(Weak::upgrade) {
+        port.update_pin();
+    }
+}
+
+pub struct PortData(Rc<PortInner>);
+
+pub struct MessagePort;
+impl JsClass for MessagePort {
+    const NAME: &'static str = "MessagePort";
+    type Data = PortData;
+    type Parent = EventTarget;
+    fn define(def: &mut ClassDef<Self>) {
+        def.upcast(|d: &PortData| &d.0.target);
+        def.method("postMessage", 1, |s, d, a| {
+            a.require(1, "MessagePort.postMessage")?;
+            let options = match a.opt(1) {
+                // `postMessage(message, transfer)`: a sequence is the transfer list.
+                Some(v) if v.is_array() => {
+                    let o = s.object();
+                    o.set("transfer", v)?;
+                    o.value()
+                }
+                Some(v) => v,
+                None => s.undefined(),
+            };
+            // Clone even when the message will be dropped, as in the spec
+            // (errors are reported regardless of entanglement).
+            let cloned = crate::structured_clone::clone_value(s, a.get(0), options)?;
+            if d.0.closed.get() {
+                return Ok(s.undefined());
+            }
+            if let Some(peer) = d.0.peer.borrow().upgrade() {
+                peer.enqueue(Persistent::new(s, cloned));
+            }
+            Ok(s.undefined())
+        });
+        def.method("start", 0, |s, d, _a| {
+            d.0.start();
+            Ok(s.undefined())
+        });
+        def.method("close", 0, |s, d, _a| {
+            d.0.close();
+            Ok(s.undefined())
+        });
+        def.accessor(
+            "onmessage",
+            |s, d| crate::target::event_handler(s, &d.0.target, "message"),
+            |s, d, value| {
+                crate::target::set_event_handler(s, &d.0.target, "message", value)?;
+                // Setting onmessage implicitly starts the port (HTML §9.4.4).
+                if value.as_object().is_some() {
+                    d.0.start();
+                }
+                Ok(())
+            },
+        );
+        def.accessor(
+            "onmessageerror",
+            |s, d| crate::target::event_handler(s, &d.0.target, "messageerror"),
+            |s, d, value| crate::target::set_event_handler(s, &d.0.target, "messageerror", value),
+        );
+    }
+}
+
+fn new_port<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<(Object<'s>, Rc<PortInner>)> {
+    let target = EventTargetData::new(page);
+    let TargetKey::Other(k) = target.key else { unreachable!() };
+    let key = page.other_identity(k);
+    let inner = Rc::new(PortInner {
+        target,
+        realm: s.realm().downgrade(),
+        peer: RefCell::new(Weak::new()),
+        queue: RefCell::new(VecDeque::new()),
+        started: Cell::new(false),
+        closed: Cell::new(false),
+        pinned: Cell::new(false),
+    });
+    Ok((s.wrap::<MessagePort>(PortData(inner.clone()), Some(key))?, inner))
+}
+
+/// The channel references its ports only through traced hidden properties
+/// on its wrapper (as URL/URLSearchParams), so a listener or expando that
+/// references the channel cannot form a GC-invisible cycle.
+pub struct ChannelData {
+    realm: WeakRealm,
+    identity: lp_js::IdentityKey,
+}
+
+fn channel_port<'s>(s: &Scope<'s>, c: &ChannelData, name: &str) -> JsResult<lp_js::Value<'s>> {
+    let realm = c.realm.upgrade().ok_or(JsError::ContextDestroyed)?;
+    let owner = realm.scope()?;
+    let object = owner.lookup_identity(c.identity).ok_or(JsError::ContextDestroyed)?;
+    let value = owner.get_hidden(object, name)?.ok_or(JsError::ContextDestroyed)?;
+    // SAFETY: both realms share the VM; the receiver's traced property roots
+    // the port wrapper throughout this getter.
+    Ok(unsafe { lp_js::Value::from_raw(s.ctx(), value.as_raw()) })
+}
+
+pub struct MessageChannel;
+impl JsClass for MessageChannel {
+    const NAME: &'static str = "MessageChannel";
+    type Data = ChannelData;
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        def.constructor(0, |s, nt, _a| {
+            let page = page_of(s)?;
+            if page.is_disposed() {
+                return Err(JsError::ContextDestroyed);
+            }
+            let (o1, p1) = new_port(s, &page)?;
+            let (o2, p2) = new_port(s, &page)?;
+            p1.peer.replace(Rc::downgrade(&p2));
+            p2.peer.replace(Rc::downgrade(&p1));
+            let identity = page.event_identity(page.next_event_id());
+            let data = ChannelData { realm: s.realm().downgrade(), identity };
+            let object = s.wrap_new::<MessageChannel>(data, nt, Some(identity))?;
+            s.set_hidden(object, "port1", o1.value())?;
+            s.set_hidden(object, "port2", o2.value())?;
+            Ok(object)
+        });
+        def.getter("port1", |s, c| channel_port(s, c, "port1"));
+        def.getter("port2", |s, c| channel_port(s, c, "port2"));
+    }
+}
+
+pub(crate) fn register(engine: &lp_js::Engine) {
+    engine.register::<MessagePort>();
+    engine.register::<MessageChannel>();
+}

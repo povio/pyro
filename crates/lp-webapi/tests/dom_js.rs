@@ -2716,3 +2716,255 @@ fn object_urls_register_revoke_and_download_links_do_not_navigate() {
     e.page.dispose();
     assert!(e.page.blob_url(&live).is_none());
 }
+
+#[test]
+fn message_channel_delivers_cloned_messages_fifo_as_tasks() {
+    let e = env("<body>");
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    let r = &e.main;
+    assert_eq!(
+        eval(
+            r,
+            "window.log = []; const mc = new MessageChannel(); window.mc = mc;
+             const o = {n: 1, nested: {list: [1, 2]}};
+             mc.port2.onmessage = (ev) => log.push([ev.data.n, ev.data === o, ev.data.nested.list.join('-'), JSON.stringify(ev.origin), String(ev.source), ev.ports.length, ev.isTrusted, ev instanceof MessageEvent, ev.target === mc.port2].join(':'));
+             mc.port1.postMessage(o); o.n = 99; mc.port1.postMessage({n: 2, nested: {list: []}});
+             Promise.resolve().then(() => log.push('microtask'));
+             [mc.port1 === mc.port1, mc.port1 instanceof MessagePort, mc.port1 instanceof EventTarget, typeof mc.port1.start, log.length].join()",
+        ),
+        "true,true,true,function,0"
+    );
+    // Delivery happens in later tasks, after microtasks, one message per task.
+    tasks.drain();
+    assert_eq!(
+        eval(r, "log.join('|')"),
+        "microtask|1:false:1-2:\"\":null:0:true:true:true|2:false::\"\":null:0:true:true:true"
+    );
+}
+
+#[test]
+fn message_port_start_close_transfer_and_clone_errors() {
+    let e = env("<body>");
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    let r = &e.main;
+    // addEventListener does not start the port; messages wait until start().
+    eval(r, "window.log = []; window.a = new MessageChannel(); a.port2.addEventListener('message', (ev) => log.push('l:' + ev.data)); a.port1.postMessage('x'); a.port1.postMessage('y');");
+    tasks.drain();
+    assert_eq!(eval(r, "log.join()"), "");
+    eval(r, "a.port2.start(); a.port2.start();");
+    tasks.drain();
+    assert_eq!(eval(r, "log.join()"), "l:x,l:y");
+    // Both directions work; close() disentangles and drops pending messages.
+    eval(r, "log = []; a.port1.onmessage = (ev) => log.push('back:' + ev.data); a.port2.postMessage('b'); a.port1.postMessage('pending'); a.port2.close(); a.port1.postMessage('after'); a.port2.postMessage('afterClose');");
+    tasks.drain();
+    assert_eq!(eval(r, "log.join()"), "back:b");
+    // Transfers are explicitly unsupported; non-cloneable data and ports throw.
+    assert_eq!(
+        eval(
+            r,
+            "const c = new MessageChannel(); const err = (f) => { try { f(); return 'ok'; } catch (e) { return e.name; } };
+             [err(() => c.port1.postMessage(1, [c.port2])), err(() => c.port1.postMessage(1, {transfer: [new ArrayBuffer(1)]})),
+              err(() => c.port1.postMessage(() => 1)), err(() => c.port1.postMessage({p: c.port2})), err(() => c.port1.postMessage()),
+              err(() => c.port1.postMessage(1, [])), err(() => c.port1.postMessage(1, {}))].join()",
+        ),
+        "NotSupportedError,NotSupportedError,DataCloneError,DataCloneError,TypeError,ok,ok"
+    );
+    // Page reassignment of structuredClone does not affect port cloning.
+    eval(r, "log = []; structuredClone = () => { throw Error('page clone'); }; const d = new MessageChannel(); d.port2.onmessage = (ev) => log.push(ev.data.k); d.port1.postMessage({k: 'native'});");
+    tasks.drain();
+    assert_eq!(eval(r, "log.join()"), "native");
+}
+
+#[test]
+fn message_port_lifetime_pins_started_ports_until_close() {
+    let e = env("<body>");
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    let r = &e.main;
+    let base = e.page.pinned_count();
+    // React-scheduler shape: only the closures reference the channel.
+    eval(r, "window.got = []; (() => { const ch = new MessageChannel(); ch.port1.onmessage = (ev) => got.push(ev.data); window.send = (v) => ch.port2.postMessage(v); window.closeIt = () => ch.port1.close(); })();");
+    assert_eq!(e.page.pinned_count(), base + 1, "started entangled port is pinned");
+    for _ in 0..3 {
+        e.engine.collect_garbage_now();
+        e.engine.drain_finalized();
+        e.page.after_task();
+    }
+    eval(r, "send('kept'); send('alive');");
+    tasks.drain();
+    assert_eq!(eval(r, "got.join()"), "kept,alive");
+    eval(r, "closeIt(); send('dropped');");
+    tasks.drain();
+    assert_eq!(eval(r, "got.join()"), "kept,alive");
+    assert_eq!(e.page.pinned_count(), base, "close() releases the pin");
+    // Messages queued for an open port are not delivered after page disposal.
+    eval(r, "(() => { const z = new MessageChannel(); z.port1.onmessage = () => got.push('late'); z.port2.postMessage(1); })();");
+    e.page.dispose();
+    tasks.drain();
+}
+
+#[test]
+fn message_channel_with_self_referencing_listener_is_collected_after_close() {
+    let e = env("<body>");
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    let r = &e.main;
+    let base = e.page.pinned_count();
+    // The listener and an expando reference the channel: a cycle that must stay
+    // visible to the GC (no native roots from channel to ports).
+    eval(
+        r,
+        "window.refs = (() => { const ch = new MessageChannel(); ch.self = ch; ch.port1.onmessage = () => ch; ch.port2.onmessage = () => ch.port1; ch.port1.close(); ch.port2.close(); return [new WeakRef(ch), new WeakRef(ch.port1), new WeakRef(ch.port2)]; })(); 1",
+    );
+    assert_eq!(e.page.pinned_count(), base, "closed ports are unpinned");
+    for _ in 0..4 {
+        e.engine.collect_garbage_now();
+        e.engine.drain_finalized();
+        e.page.after_task();
+        tasks.drain();
+    }
+    assert_eq!(eval(r, "refs.map((w) => w.deref() === undefined).join()"), "true,true,true");
+    // A channel that is still referenced keeps both ports reachable.
+    eval(
+        r,
+        "window.kept = new MessageChannel(); window.keptRefs = [new WeakRef(kept.port1), new WeakRef(kept.port2)];",
+    );
+    for _ in 0..3 {
+        e.engine.collect_garbage_now();
+        e.engine.drain_finalized();
+    }
+    assert_eq!(
+        eval(r, "keptRefs.map((w) => w.deref() !== undefined).join() + ':' + (kept.port1 === keptRefs[0].deref())"),
+        "true,true:true"
+    );
+}
+
+fn gc(e: &Env, tasks: &ObserverTasks) {
+    for _ in 0..3 {
+        e.engine.collect_garbage_now();
+        e.engine.drain_finalized();
+        e.page.after_task();
+    }
+    let _ = tasks;
+}
+
+#[test]
+fn message_port_keeps_queued_messages_across_gc_when_the_peer_closes() {
+    let e = env("<body>");
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    let r = &e.main;
+    let base = e.page.pinned_count();
+    // V1: the receiver is started; the sender posts and then closes before delivery.
+    eval(r, "window.got = []; window.ref1 = (() => { const ch = new MessageChannel(); ch.port1.onmessage = (ev) => got.push(ev.data); ch.port2.postMessage('v1'); ch.port2.close(); return new WeakRef(ch.port1); })(); 1");
+    gc(&e, &tasks);
+    tasks.drain();
+    assert_eq!(eval(r, "got.join()"), "v1", "queued message survives GC after the peer closed");
+    // After draining, the disentangled receiver is no longer pinned and can be collected.
+    gc(&e, &tasks);
+    assert_eq!(e.page.pinned_count(), base);
+    assert_eq!(eval(r, "ref1.deref() === undefined"), "true");
+}
+
+#[test]
+fn message_port_started_late_with_a_collected_peer_still_delivers_across_gc() {
+    let e = env("<body>");
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    let r = &e.main;
+    let base = e.page.pinned_count();
+    // V2: the sender posts before the receiver starts, then the sender is collected.
+    eval(r, "window.got = []; window.held = (() => { const ch = new MessageChannel(); ch.port2.postMessage('v2'); return ch.port1; })(); 1");
+    gc(&e, &tasks);
+    // Queued but unstarted: not pinned (it waits for start()).
+    assert_eq!(e.page.pinned_count(), base);
+    eval(r, "held.onmessage = (ev) => got.push(ev.data); window.ref2 = new WeakRef(held); held = null; 1");
+    gc(&e, &tasks);
+    tasks.drain();
+    assert_eq!(eval(r, "got.join()"), "v2", "message queued on a late-started port survives GC");
+    gc(&e, &tasks);
+    assert_eq!(e.page.pinned_count(), base, "drained, peerless port is unpinned");
+    assert_eq!(eval(r, "ref2.deref() === undefined"), "true");
+}
+
+#[test]
+fn message_port_unstarted_queued_ports_and_disposal_hold_no_roots() {
+    let e = env("<body>");
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    let r = &e.main;
+    let base = e.page.pinned_count();
+    // Nobody can start this port, so its queued message does not keep it alive.
+    eval(r, "window.refs = (() => { const ch = new MessageChannel(); ch.port2.postMessage('never'); return [new WeakRef(ch), new WeakRef(ch.port1), new WeakRef(ch.port2)]; })(); 1");
+    gc(&e, &tasks);
+    tasks.drain();
+    assert_eq!(e.page.pinned_count(), base);
+    assert_eq!(eval(r, "refs.map((w) => w.deref() === undefined).join()"), "true,true,true");
+    // A started, entangled port stays pinned (React-scheduler shape) until disposal releases it.
+    eval(r, "window.got2 = []; (() => { const ch = new MessageChannel(); ch.port1.onmessage = (ev) => got2.push(ev.data); window.sendIt = (v) => ch.port2.postMessage(v); })();");
+    gc(&e, &tasks);
+    eval(r, "sendIt('alive')");
+    tasks.drain();
+    assert_eq!(eval(r, "got2.join()"), "alive");
+    assert_eq!(e.page.pinned_count(), base + 1);
+    e.page.dispose();
+    assert_eq!(e.page.pinned_count(), 0, "disposal releases port pins");
+}
+
+#[test]
+fn message_port_receiver_is_released_when_its_sender_becomes_unreachable() {
+    let e = env("<body>");
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    let r = &e.main;
+    let base = e.page.pinned_count();
+    // Started, drained receiver; the sender and the channel become unreachable.
+    eval(r, "window.got = []; window.refs = (() => { const ch = new MessageChannel(); ch.port1.onmessage = (ev) => got.push(ev.data); ch.port2.postMessage('once'); return [new WeakRef(ch), new WeakRef(ch.port1), new WeakRef(ch.port2)]; })(); 1");
+    tasks.drain();
+    assert_eq!(eval(r, "got.join()"), "once");
+    assert_eq!(e.page.pinned_count(), base + 1, "entangled started receiver is pinned while its sender lives");
+    // Collect the sender, run the reconciliation task, collect again.
+    gc(&e, &tasks);
+    tasks.drain();
+    gc(&e, &tasks);
+    assert_eq!(e.page.pinned_count(), base, "receiver unpinned once its peer was collected");
+    assert_eq!(eval(r, "refs.map((w) => w.deref() === undefined).join()"), "true,true,true");
+    // A queued message still keeps the receiver alive until delivered, even if the sender goes.
+    eval(r, "window.got2 = []; window.refs2 = (() => { const ch = new MessageChannel(); ch.port1.onmessage = (ev) => got2.push(ev.data); ch.port2.postMessage('a'); ch.port2.postMessage('b'); return [new WeakRef(ch.port1), new WeakRef(ch.port2)]; })(); 1");
+    gc(&e, &tasks);
+    tasks.drain();
+    gc(&e, &tasks);
+    tasks.drain();
+    assert_eq!(eval(r, "got2.join()"), "a,b");
+    gc(&e, &tasks);
+    tasks.drain();
+    gc(&e, &tasks);
+    assert_eq!(e.page.pinned_count(), base);
+    assert_eq!(eval(r, "refs2.map((w) => w.deref() === undefined).join()"), "true,true");
+}
+
+#[test]
+fn message_port_peer_collection_is_reconciled_at_after_task_without_hooks() {
+    // Default configuration: no page hooks (PageDom::post_task would run inline).
+    let e = env("<body>");
+    let r = &e.main;
+    let base = e.page.pinned_count();
+    eval(r, "window.ref = (() => { const ch = new MessageChannel(); ch.port1.onmessage = () => {}; return new WeakRef(ch.port1); })(); 1");
+    assert_eq!(e.page.pinned_count(), base + 1);
+    for _ in 0..3 {
+        e.engine.collect_garbage_now();
+        e.engine.drain_finalized();
+    }
+    // The sender's drop only recorded the receiver: nothing ran from inside the drop.
+    assert_eq!(e.page.pinned_count(), base + 1, "reconciliation is deferred, not inline in Drop");
+    e.page.after_task();
+    assert_eq!(e.page.pinned_count(), base, "reconciled at the safe point");
+    for _ in 0..3 {
+        e.engine.collect_garbage_now();
+        e.engine.drain_finalized();
+        e.page.after_task();
+    }
+    assert_eq!(eval(r, "ref.deref() === undefined"), "true");
+}

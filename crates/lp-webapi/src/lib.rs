@@ -36,6 +36,7 @@ pub mod input;
 pub mod intersection_observer;
 pub mod layout_api;
 pub mod lifecycle;
+pub mod message_channel;
 pub mod mutation_observer;
 pub mod node;
 pub mod page;
@@ -80,6 +81,7 @@ pub fn register(engine: &lp_js::Engine) {
     traversal::register(engine);
     range::register(engine);
     abort::register(engine);
+    message_channel::register(engine);
     custom::register(engine);
     file::register(engine);
     encoding::register(engine);
@@ -118,7 +120,7 @@ pub fn install(scope: &Scope<'_>, page: Rc<PageDom>) -> JsResult<()> {
     url_search_params::install(scope)?;
     form_data::install(scope)?;
     fetch::install(scope)?;
-    structured_clone::install(scope)?;
+    structured_clone::install(scope, &page)?;
     let global = scope.global();
     global.set("CSS", window::css_namespace(scope)?)?;
     Ok(())
