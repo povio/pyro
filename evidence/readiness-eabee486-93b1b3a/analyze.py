@@ -42,8 +42,13 @@ def compare(values):
 
 def analyze(rows):
     assert len(rows)==8, 'Partial matrix: retain raw data; no complete comparison'
+    assert len({p['pid'] for p in rows})==8, 'Expected distinct browser processes'
     navs=[]
+    groups_seen={'A':0,'B':0}
     for launch,p in enumerate(rows,1):
+        assert p['variant']==ORDER[launch-1] and p['launchOrdinal']==launch
+        groups_seen[p['variant']]+=1
+        assert p['groupOrdinal']==groups_seen[p['variant']] and p['blockOrdinal']==(launch-1)//4+1
         assert p.get('completed') and not p.get('failed'), f'incomplete launch{launch}'
         assert len(p['navigations'])==3
         assert p['cacheMiB']==64

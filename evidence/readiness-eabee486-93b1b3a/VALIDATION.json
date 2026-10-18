@@ -1,0 +1,17 @@
+{
+  "raw_evidence_commit": "30608fafe45be864aaf11275af08f93c2eeef905",
+  "raw_artifacts_verified": 27,
+  "source_collector_sha256": "15df21569518e8f091c45a9f146f406b4369d4112b9aa553cc03ee6db2a8f564",
+  "collector_sha256": "dac431328d13ff35ba630ded618c6540e19c6e79dc33d43e55070529f55e0f4e",
+  "navigation_assertion_timing_tail_byte_identical": true,
+  "distinct_pids": 8,
+  "completed_navigation_contracts": 24,
+  "original_assertions_per_navigation": 7,
+  "analysis_regenerates": true,
+  "tables_regenerate": true,
+  "pure_arithmetic_controls_pass": true,
+  "jwt_bearer_literal_scan": "no matches",
+  "new_workloads_during_analysis": 0,
+  "product_changes_in_report": false,
+  "performance_experiments_stopped": true
+}
