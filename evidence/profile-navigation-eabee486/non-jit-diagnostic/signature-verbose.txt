@@ -1,0 +1,16 @@
+Executable=/private/tmp/lp-profile-main-eabee486/target/release/lightningpanda
+Identifier=lightningpanda-e62a7ec9026cab12
+Format=Mach-O thin (arm64)
+CodeDirectory v=20400 size=119832 flags=0x20002(adhoc,linker-signed) hashes=3741+0 location=embedded
+Hash type=sha256 size=32
+CandidateCDHash sha256=5a931c30d76dbb59fb34b9007fff2dd8b625880f
+CandidateCDHashFull sha256=5a931c30d76dbb59fb34b9007fff2dd8b625880f2bf11340b03b24aaa5b869d5
+Hash choices=sha256
+CMSDigest=5a931c30d76dbb59fb34b9007fff2dd8b625880f2bf11340b03b24aaa5b869d5
+CMSDigestType=2
+CDHash=5a931c30d76dbb59fb34b9007fff2dd8b625880f
+Signature=adhoc
+Info.plist=not bound
+TeamIdentifier=not set
+Sealed Resources=none
+Internal requirements=none

@@ -1,0 +1,148 @@
+{
+  "pid": 89570,
+  "workerId": "0",
+  "startedAt": "2026-10-18T17:17:16.990Z",
+  "finishedAt": "2026-10-18T17:17:35.801Z",
+  "rows": [
+    {
+      "label": "auth.tokens-test-token-request",
+      "durationMs": 21.3767499999999,
+      "startedAtMs": 766.664833
+    },
+    {
+      "label": "auth.tokens-cache-hit",
+      "durationMs": 0.005250000000046384,
+      "startedAtMs": 805.195792
+    },
+    {
+      "label": "auth.tokens-cache-hit",
+      "durationMs": 0.001082999999994172,
+      "startedAtMs": 805.896167
+    },
+    {
+      "label": "auth.context.get-tokens",
+      "durationMs": 0.027207999999973254,
+      "startedAtMs": 805.87675
+    },
+    {
+      "label": "auth.account-cache-hit",
+      "durationMs": 0.0049999999999954525,
+      "startedAtMs": 805.99225
+    },
+    {
+      "label": "auth.context.get-account",
+      "durationMs": 0.09504199999992125,
+      "startedAtMs": 805.907
+    },
+    {
+      "label": "auth.context.browser-new-context",
+      "durationMs": 556.8377499999999,
+      "startedAtMs": 806.079708
+    },
+    {
+      "label": "auth.tokens-cache-hit",
+      "durationMs": 0.001959000000169908,
+      "startedAtMs": 6016.750833
+    },
+    {
+      "label": "auth.tokens-cache-hit",
+      "durationMs": 0.0010409999995317776,
+      "startedAtMs": 6019.966542
+    },
+    {
+      "label": "auth.tokens-cache-hit",
+      "durationMs": 0.0006659999999101274,
+      "startedAtMs": 6020.349292
+    },
+    {
+      "label": "auth.context.get-tokens",
+      "durationMs": 0.020040999999764608,
+      "startedAtMs": 6020.337042
+    },
+    {
+      "label": "auth.account-cache-hit",
+      "durationMs": 0.001042000000779808,
+      "startedAtMs": 6020.36425
+    },
+    {
+      "label": "auth.context.get-account",
+      "durationMs": 0.0072909999998955755,
+      "startedAtMs": 6020.360792
+    },
+    {
+      "label": "auth.context.browser-new-context",
+      "durationMs": 33.13495799999964,
+      "startedAtMs": 6020.408
+    },
+    {
+      "label": "auth.tokens-cache-hit",
+      "durationMs": 0.0015419999999721767,
+      "startedAtMs": 10504.323
+    },
+    {
+      "label": "auth.tokens-cache-hit",
+      "durationMs": 0.0006250000005820766,
+      "startedAtMs": 10505.266042
+    },
+    {
+      "label": "auth.tokens-cache-hit",
+      "durationMs": 0.0008340000003954628,
+      "startedAtMs": 10505.586333
+    },
+    {
+      "label": "auth.context.get-tokens",
+      "durationMs": 0.021708000000216998,
+      "startedAtMs": 10505.571417
+    },
+    {
+      "label": "auth.account-cache-hit",
+      "durationMs": 0.0005830000009154901,
+      "startedAtMs": 10505.59925
+    },
+    {
+      "label": "auth.context.get-account",
+      "durationMs": 0.005834000001414097,
+      "startedAtMs": 10505.596708
+    },
+    {
+      "label": "auth.context.browser-new-context",
+      "durationMs": 32.18212499999936,
+      "startedAtMs": 10505.640375
+    },
+    {
+      "label": "auth.tokens-cache-hit",
+      "durationMs": 0.0057500000002619345,
+      "startedAtMs": 14997.4065
+    },
+    {
+      "label": "auth.tokens-cache-hit",
+      "durationMs": 0.0005419999997684499,
+      "startedAtMs": 14998.394375
+    },
+    {
+      "label": "auth.tokens-cache-hit",
+      "durationMs": 0.0003329999999550637,
+      "startedAtMs": 14998.726542
+    },
+    {
+      "label": "auth.context.get-tokens",
+      "durationMs": 0.017584000001079403,
+      "startedAtMs": 14998.717083
+    },
+    {
+      "label": "auth.account-cache-hit",
+      "durationMs": 0.0005830000009154901,
+      "startedAtMs": 14998.74
+    },
+    {
+      "label": "auth.context.get-account",
+      "durationMs": 0.005332999999154708,
+      "startedAtMs": 14998.737875
+    },
+    {
+      "label": "auth.context.browser-new-context",
+      "durationMs": 34.017416000000594,
+      "startedAtMs": 14998.783292
+    }
+  ]
+}
