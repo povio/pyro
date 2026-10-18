@@ -121,6 +121,10 @@ fn start_server() -> Server {
                             b"ok",
                         ),
                         (_, "/cookie") => respond(&mut stream, "200 OK", &[], hv("cookie").as_bytes()),
+                        (_, "/headers") => {
+                            let all: String = headers.iter().map(|(k, v)| format!("{k}: {v}\n")).collect();
+                            respond(&mut stream, "200 OK", &[], all.as_bytes())
+                        }
                         ("OPTIONS", "/api") => respond(
                             &mut stream,
                             "204 No Content",
@@ -460,5 +464,43 @@ fn observer_starts_data_and_early_failure_requests() {
             });
         }
         assert_eq!(observed, expected, "{url} offline={offline} same_origin={same_origin}");
+    }
+}
+
+#[test]
+fn page_extra_headers_are_per_request_and_take_precedence() {
+    let s = start_server();
+    let client = NetClient::new(NetConfig::default()).unwrap();
+    client.update_settings(|st| {
+        st.extra_headers.insert("x-context", "context".parse().unwrap());
+        st.extra_headers.insert("x-shared", "context".parse().unwrap());
+    });
+    let send = |page: &[(&'static str, &'static str)]| {
+        let mut req = Request::get(url(&s, "/headers"), Destination::Script);
+        req.headers.insert("x-shared", "explicit".parse().unwrap());
+        req.headers.insert("x-explicit", "explicit".parse().unwrap());
+        req.headers.insert("user-agent", "explicit-agent".parse().unwrap());
+        for (k, v) in page {
+            req.defaults.extra_headers.insert(*k, v.parse().unwrap());
+        }
+        let (_, _, body, err) = collect(&client, req);
+        assert!(err.is_none());
+        let text = String::from_utf8(body).unwrap();
+        let lines: Vec<String> = text.lines().map(str::to_owned).collect();
+        lines
+    };
+    let page = send(&[("x-page", "page"), ("x-shared", "page"), ("user-agent", "page-agent")]);
+    for expected in
+        ["x-page: page", "x-shared: page", "x-context: context", "x-explicit: explicit", "user-agent: page-agent"]
+    {
+        assert!(page.iter().any(|l| l == expected), "missing {expected:?} in {page:?}");
+    }
+    assert_eq!(page.iter().filter(|l| l.starts_with("x-shared:")).count(), 1, "replaced, not appended: {page:?}");
+    // Another request on the same client without page defaults: no page header leaks;
+    // the context value still replaces the explicit one, as before this change.
+    let other = send(&[]);
+    assert!(!other.iter().any(|l| l.starts_with("x-page:")), "{other:?}");
+    for expected in ["x-shared: context", "x-context: context", "user-agent: explicit-agent"] {
+        assert!(other.iter().any(|l| l == expected), "missing {expected:?} in {other:?}");
     }
 }

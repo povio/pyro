@@ -525,3 +525,67 @@ fn fetch_disposal_stops_later_frontiers() {
     env.drain_for(Duration::from_millis(300));
     assert_eq!(env.log.borrow().len(), before, "no hook after disposal: {:?}", env.log.borrow());
 }
+
+#[test]
+fn page_extra_http_headers_are_page_scoped_replaced_and_cleared() {
+    let server = Server::new();
+    let first = Env::new(&server.url);
+    let second = Env::with_engine(&server.url, first.engine.clone());
+    *second.page.net.borrow_mut() = first.page.net.borrow().clone();
+    let headers_of = |path: &str| -> String {
+        let requests = server.requests.lock().unwrap();
+        let (_, headers, _) = requests.iter().rev().find(|(line, _, _)| line.contains(path)).expect(path);
+        headers.to_ascii_lowercase()
+    };
+    let fetch = |env: &Env, path: &str| {
+        env.eval(&format!("globalThis.result='pending';fetch('{path}').then(r=>r.text()).then(()=>result='done')"));
+        env.until("result==='done'");
+    };
+    let xhr = |env: &Env, path: &str| {
+        env.eval(&format!("globalThis.result='pending';globalThis.x=new XMLHttpRequest();x.onload=()=>result='done';x.open('GET','{path}');x.send()"));
+        env.until("result==='done'");
+    };
+    let mut map = lp_net::http::HeaderMap::new();
+    map.insert("x-page", "a".parse().unwrap());
+    map.insert("cache-control", "no-cache".parse().unwrap());
+    first
+        .page
+        .set_user_agent_override(Some(UserAgentOverride {
+            user_agent: "page-a-agent".into(),
+            accept_language: None,
+            platform: None,
+        }))
+        .unwrap();
+    first.page.set_extra_http_headers(map);
+
+    fetch(&first, "/json?a1");
+    let a1 = headers_of("/json?a1");
+    assert!(a1.contains("x-page: a") && a1.contains("cache-control: no-cache"), "{a1}");
+    assert!(a1.contains("user-agent: page-a-agent"), "the UA override is kept alongside: {a1}");
+    xhr(&first, "/json?a2");
+    assert!(headers_of("/json?a2").contains("x-page: a"));
+
+    // A sibling page on the same context network client never sees them.
+    fetch(&second, "/json?b1");
+    xhr(&second, "/json?b2");
+    for path in ["/json?b1", "/json?b2"] {
+        let h = headers_of(path);
+        assert!(!h.contains("x-page") && !h.contains("cache-control"), "{path}: {h}");
+    }
+
+    // Replace: the whole set changes. A later UA override keeps the extra headers.
+    let mut map = lp_net::http::HeaderMap::new();
+    map.insert("x-other", "b".parse().unwrap());
+    first.page.set_extra_http_headers(map);
+    first.page.set_user_agent_override(None).unwrap();
+    fetch(&first, "/json?a3");
+    let a3 = headers_of("/json?a3");
+    assert!(a3.contains("x-other: b") && !a3.contains("x-page") && !a3.contains("cache-control"), "{a3}");
+    assert!(!a3.contains("page-a-agent"), "{a3}");
+
+    // Clear.
+    first.page.set_extra_http_headers(lp_net::http::HeaderMap::new());
+    assert!(first.page.extra_http_headers().is_empty());
+    fetch(&first, "/json?a4");
+    assert!(!headers_of("/json?a4").contains("x-other"));
+}
