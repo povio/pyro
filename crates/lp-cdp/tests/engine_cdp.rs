@@ -1740,6 +1740,46 @@ fn push_state_precedes_network_events_published_after_it() {
     assert!(pushed < index_of(&order, "Network.responseReceived", "/data"), "{order:#?}");
 }
 
+/// Responses received by the I/O thread during author JavaScript are not
+/// delivered until a browser task can run. A pushState at the end of that
+/// JavaScript therefore precedes response/data/terminal notifications, even
+/// when the server has already replied. The microtask variants keep the same
+/// boundary: promise/queueMicrotask work is part of the current task.
+fn response_delivery_after_busy_push(start: &str, microtasks: bool) {
+    let push = "history.pushState(null, '', '/pushed')";
+    let expression = if microtasks {
+        format!("{start}; queueMicrotask(() => {{ {BUSY_300MS} }}); queueMicrotask(() => {{ {push}; }}); 1")
+    } else {
+        format!("{start}; {BUSY_300MS} {push}; 1")
+    };
+    let order = events_around(&expression, 2, 200);
+    let pushed = index_of(&order, "Page.navigatedWithinDocument", "/pushed");
+    for method in ["Network.responseReceived", "Network.dataReceived", "Network.loadingFinished"] {
+        let suffix = if method == "Network.responseReceived" { "/data" } else { "" };
+        assert!(pushed < index_of(&order, method, suffix), "{order:#?}");
+    }
+}
+
+#[test]
+fn response_delivery_follows_synchronous_fetch_push() {
+    response_delivery_after_busy_push("fetch('/data')", false);
+}
+
+#[test]
+fn response_delivery_follows_microtask_fetch_push() {
+    response_delivery_after_busy_push("fetch('/data')", true);
+}
+
+#[test]
+fn response_delivery_follows_synchronous_xhr_push() {
+    response_delivery_after_busy_push("const xhr = new XMLHttpRequest(); xhr.open('GET', '/data'); xhr.send()", false);
+}
+
+#[test]
+fn response_delivery_follows_microtask_xhr_push() {
+    response_delivery_after_busy_push("const xhr = new XMLHttpRequest(); xhr.open('GET', '/data'); xhr.send()", true);
+}
+
 /// Causal variant (W1 repro): a request issued after pushState is announced
 /// after the navigation event.
 #[test]
@@ -1816,4 +1856,89 @@ fn navigation_start_separates_old_and_new_document_network_events() {
     let navigating = index_of(&order, "Page.frameRequestedNavigation", "/next");
     assert!(index_of(&order, "Network.responseReceived", "/data") < navigating, "{order:#?}");
     assert!(navigating < index_of(&order, "Network.requestWillBeSent", "/next"), "{order:#?}");
+}
+
+/// Serves `/start` (HTML), then one more request whose response headers are
+/// sent immediately and whose body follows after `gap_ms`.
+fn serve_headers_then_body(gap_ms: u64) -> (std::net::SocketAddr, std::thread::JoinHandle<()>) {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = std::thread::spawn(move || {
+        for index in 0..2 {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+            let mut request = Vec::new();
+            let mut chunk = [0; 1024];
+            while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                let n = stream.read(&mut chunk).unwrap();
+                assert!(n > 0);
+                request.extend_from_slice(&chunk[..n]);
+            }
+            let body = if index == 0 { "<!doctype html><p>start</p>" } else { "slow body" };
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            stream.write_all(head.as_bytes()).unwrap();
+            stream.flush().unwrap();
+            if index == 1 {
+                std::thread::sleep(Duration::from_millis(gap_ms));
+            }
+            stream.write_all(body.as_bytes()).unwrap();
+        }
+    });
+    (address, server)
+}
+
+/// Response events reach the client when the page's consumer exposes them
+/// (the lp-webapi/lp-browser delivery frontier), in order with what the
+/// page's script then does: headers before the script that sees the
+/// Response, body and terminal before the script that sees the text.
+fn frontier_order(expression: &str) {
+    let (address, server) = serve_headers_then_body(300);
+    let mut h = Harness::new();
+    h.page("Page.enable", json!({}));
+    h.page("Network.enable", json!({}));
+    let r = h.page("Page.navigate", json!({"url": format!("http://{address}/start")}));
+    assert!(r["result"].get("errorText").is_none(), "{r}");
+    h.run_for(100);
+    let mut messages = h.page_with_events(
+        "Runtime.evaluate",
+        json!({"expression": expression, "awaitPromise": true, "returnByValue": true}),
+    );
+    messages.extend(h.run_for(100));
+    server.join().unwrap();
+    let order = page_and_network_order(&messages);
+    let response = index_of(&order, "Network.responseReceived", "/slow");
+    let headers = index_of(&order, "Page.navigatedWithinDocument", "/headers");
+    let data = index_of(&order, "Network.dataReceived", "");
+    let finished = index_of(&order, "Network.loadingFinished", "");
+    let body = index_of(&order, "Page.navigatedWithinDocument", "/body");
+    assert!(response < headers, "{order:#?}");
+    assert!(headers < data && data < body, "{order:#?}");
+    assert!(headers < finished && finished < body, "{order:#?}");
+}
+
+#[test]
+fn fetch_frontier_orders_headers_and_body_with_script() {
+    frontier_order(
+        "fetch('/slow').then(r => { history.pushState(null, '', '/headers'); return r.text(); })
+            .then(() => { history.pushState(null, '', '/body'); return 1; })",
+    );
+}
+
+#[test]
+fn xhr_frontier_orders_headers_and_body_with_script() {
+    frontier_order(
+        "new Promise(resolve => {
+            const xhr = new XMLHttpRequest();
+            xhr.open('GET', '/slow');
+            xhr.onreadystatechange = () => {
+                if (xhr.readyState === 2) history.pushState(null, '', '/headers');
+            };
+            xhr.onload = () => { history.pushState(null, '', '/body'); resolve(1); };
+            xhr.send();
+        })",
+    );
 }
