@@ -634,6 +634,9 @@ impl Io {
         for (k, v) in settings.extra_headers.iter() {
             h.insert(k.clone(), v.clone());
         }
+        for (k, v) in req.defaults.extra_headers.iter() {
+            h.insert(k.clone(), v.clone());
+        }
         h
     }
 

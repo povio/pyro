@@ -78,6 +78,10 @@ pub enum RedirectMode {
 pub struct RequestDefaults {
     pub user_agent: Option<HeaderValue>,
     pub accept_language: Option<HeaderValue>,
+    /// Page-scoped extra headers (CDP `Network.setExtraHTTPHeaders` on a page
+    /// session). Applied after the client's context-wide `NetSettings`
+    /// extra headers, so a page value replaces a context value of the same name.
+    pub extra_headers: HeaderMap,
 }
 
 #[derive(Clone, Debug)]
