@@ -331,13 +331,17 @@ impl EngineHost {
         Ok(())
     }
 
-    /// Replaces the byte limit of network events queued between flushes
-    /// (tests, embedders with other memory limits).
+    /// Replaces the byte limit of the connection's network observations
+    /// (tests, embedders with other memory limits). It bounds everything the
+    /// shared budget charges: staged responses awaiting delivery, events
+    /// queued for the next flush, and per-request bookkeeping.
     pub fn set_queued_network_byte_limit(&mut self, limit: usize) {
         self.collector.network_budget.set_limit(limit);
     }
 
-    /// Bytes of network events queued for the next flush (diagnostics/tests).
+    /// Bytes currently charged to the connection's network budget
+    /// (diagnostics/tests): staged responses awaiting delivery, events queued
+    /// for the next flush, and per-request bookkeeping.
     pub fn queued_network_bytes(&self) -> usize {
         self.collector.network_budget.used()
     }
