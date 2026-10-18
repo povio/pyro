@@ -1512,3 +1512,122 @@ fn input_accepts_mac_key_derived_editing_commands() {
         json!(["ad", 1])
     );
 }
+
+fn eval_value(h: &mut Harness, expression: &str) -> Value {
+    let r = h.page("Runtime.evaluate", json!({"expression": expression, "returnByValue": true}));
+    assert!(r["result"].get("exceptionDetails").is_none(), "{r}");
+    r["result"]["result"]["value"].clone()
+}
+
+fn history(h: &mut Harness) -> (u64, Vec<(u64, String)>) {
+    let r = h.page("Page.getNavigationHistory", json!({}));
+    let entries = r["result"]["entries"].as_array().unwrap_or_else(|| panic!("{r}"));
+    for e in entries {
+        assert_eq!(e["userTypedURL"], e["url"], "{r}");
+        assert_eq!(e["transitionType"], "other", "{r}");
+    }
+    let entries = entries.iter().map(|e| (e["id"].as_u64().unwrap(), e["url"].as_str().unwrap().to_string())).collect();
+    (r["result"]["currentIndex"].as_u64().unwrap(), entries)
+}
+
+/// TOS W3-02 email-logs "restores text drafts on Back and Forward": Playwright
+/// `page.goBack()`/`goForward()` read `Page.getNavigationHistory` and send
+/// `Page.navigateToHistoryEntry`. A same-document traversal (an SPA router's
+/// pushState entries) commits as `Page.navigatedWithinDocument` and fires
+/// `popstate` with the entry state, which is what routers re-render from.
+#[test]
+fn navigation_history_traverses_same_document_entries_with_popstate() {
+    let (address, server) = serve_html(1, "<!doctype html><p>history</p>");
+    let mut h = Harness::new();
+    h.page("Page.enable", json!({}));
+    let r = h.page("Page.navigate", json!({"url": format!("http://{address}/start")}));
+    assert!(r["result"].get("errorText").is_none(), "{r}");
+    h.run_for(50);
+    server.join().unwrap();
+    eval_value(
+        &mut h,
+        r#"globalThis.seen = [];
+        addEventListener('popstate', e => seen.push(['popstate', location.pathname + location.hash, e.state]));
+        addEventListener('hashchange', e => seen.push(['hashchange', new URL(e.oldURL).hash, new URL(e.newURL).hash]));
+        history.pushState({n: 1}, '', '/one');
+        history.pushState({n: 2}, '', '/two');
+        location.hash = 'x';"#,
+    );
+    h.run_for(50);
+    assert_eq!(eval_value(&mut h, "seen"), json!([["hashchange", "", "#x"]]));
+    let (index, entries) = history(&mut h);
+    let urls: Vec<_> = entries.iter().map(|(_, u)| u.as_str()).collect();
+    let base = format!("http://{address}");
+    // The initial about:blank entry is kept (Chrome replaces it; see nav.rs).
+    assert_eq!(
+        urls,
+        [
+            "about:blank".to_string(),
+            format!("{base}/start"),
+            format!("{base}/one"),
+            format!("{base}/two"),
+            format!("{base}/two#x")
+        ]
+    );
+    assert_eq!(index, 4);
+
+    let error = h.page("Page.navigateToHistoryEntry", json!({"entryId": 999_999}));
+    assert_eq!(error["error"]["code"], -32602, "{error}");
+
+    let one = entries[2].0;
+    let messages = h.page_with_events("Page.navigateToHistoryEntry", json!({"entryId": one}));
+    assert!(messages.iter().any(|m| m["result"] == json!({})), "{messages:#?}");
+    let mut messages = messages;
+    messages.extend(h.run_for(50));
+    let within = position(&messages, "navigatedWithinDocument", |m| m["method"] == "Page.navigatedWithinDocument");
+    assert_eq!(messages[within]["params"]["url"], format!("{base}/one"));
+    assert!(!messages.iter().any(|m| m["method"] == "Page.frameNavigated"), "same-document: {messages:#?}");
+    assert_eq!(eval_value(&mut h, "seen.slice(1)"), json!([["popstate", "/one", {"n": 1}]]));
+    assert_eq!(history(&mut h).0, 2);
+
+    // Forward to the fragment entry of the same pushState entry: popstate (no
+    // state), then hashchange.
+    let fragment = entries[4].0;
+    assert_eq!(h.page("Page.navigateToHistoryEntry", json!({"entryId": fragment}))["result"], json!({}));
+    h.run_for(50);
+    assert_eq!(eval_value(&mut h, "location.href"), format!("{base}/two#x"));
+    assert_eq!(history(&mut h).0, 4);
+    let frame = h.page("Page.getFrameTree", json!({}));
+    assert_eq!(frame["result"]["frameTree"]["frame"]["url"], format!("{base}/two#x"));
+    // /one -> /two#x is not a fragment-only change: no hashchange.
+    assert_eq!(eval_value(&mut h, "seen.slice(2)"), json!([["popstate", "/two#x", null]]));
+    // history.back() over a fragment entry fires both events.
+    eval_value(&mut h, "history.back()");
+    h.run_for(50);
+    assert_eq!(eval_value(&mut h, "seen.slice(3)"), json!([["popstate", "/two", {"n": 2}], ["hashchange", "#x", ""]]));
+}
+
+/// Cross-document traversal re-fetches the entry (no bfcache) and commits as an
+/// ordinary navigation (`Page.frameNavigated`) without adding an entry.
+#[test]
+fn navigation_history_traverses_across_documents() {
+    let mut h = Harness::new();
+    h.page("Page.enable", json!({}));
+    for body in ["first", "second"] {
+        let r = h.page("Page.navigate", json!({"url": format!("data:text/html,<p>{body}</p>")}));
+        assert!(r["result"].get("errorText").is_none(), "{r}");
+    }
+    let (index, entries) = history(&mut h);
+    assert_eq!(index, 2);
+    assert_eq!(entries.len(), 3);
+    let first = entries[1].0;
+    assert_eq!(h.page("Page.navigateToHistoryEntry", json!({"entryId": first}))["result"], json!({}));
+    let messages = h.run_for(100);
+    let navigated = position(&messages, "frameNavigated", |m| m["method"] == "Page.frameNavigated");
+    assert_eq!(messages[navigated]["params"]["frame"]["url"], "data:text/html,<p>first</p>");
+    assert_eq!(eval_value(&mut h, "document.body.textContent"), "first");
+    let (index, after) = history(&mut h);
+    assert_eq!(index, 1);
+    assert_eq!(after, entries, "traversal keeps the entry list and ids");
+    // Forward again.
+    let second = entries[2].0;
+    assert_eq!(h.page("Page.navigateToHistoryEntry", json!({"entryId": second}))["result"], json!({}));
+    h.run_for(100);
+    assert_eq!(eval_value(&mut h, "document.body.textContent"), "second");
+    assert_eq!(history(&mut h).0, 2);
+}

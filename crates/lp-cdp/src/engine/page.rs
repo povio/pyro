@@ -153,6 +153,35 @@ impl EngineHost {
                 let (_, _, url) = self.main_frame(cmd.page)?;
                 self.start_navigation(cmd, url, None, NavigationReason::AddressBar)
             }
+            "getNavigationHistory" => {
+                let page_id = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?.id;
+                let p = self.thread.browser.page(page_id).ok_or_else(|| CdpError::server("page is gone"))?;
+                let (index, entries) = p.nav.history_entries();
+                // Titles are not tracked per entry (page_title is empty too).
+                let entries: Vec<_> = entries
+                    .into_iter()
+                    .map(|e| {
+                        json!({ "id": e.id, "url": e.url, "userTypedURL": e.url, "title": "", "transitionType": "other" })
+                    })
+                    .collect();
+                Ok(Some(json!({ "currentIndex": index, "entries": entries })))
+            }
+            "navigateToHistoryEntry" => {
+                #[derive(Deserialize)]
+                #[serde(rename_all = "camelCase")]
+                struct P {
+                    entry_id: u64,
+                }
+                let p: P = cmd.command.params()?;
+                let page_id = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?.id;
+                let page = self.thread.browser.page(page_id).ok_or_else(|| CdpError::server("page is gone"))?;
+                // Like Chrome, the traversal is only started here: its commit is
+                // reported by navigation events, not by this response.
+                if !page.nav.traverse_to_entry(p.entry_id) {
+                    return Err(CdpError::invalid_params("No entry with passed id"));
+                }
+                Ok(Some(json!({})))
+            }
             // Accepted because there is nothing to change: the engine enforces
             // no CSP, opens no file chooser and has a single foreground page.
             "setBypassCSP" | "setInterceptFileChooserDialog" | "bringToFront" => Ok(Some(json!({}))),

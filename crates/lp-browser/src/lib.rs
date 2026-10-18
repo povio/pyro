@@ -22,7 +22,7 @@ use std::time::Instant;
 pub use loader::{
     FetchDone, FetchRequest, NetLoader, Resource, ResourceCancellation, ResourceKind, ResourceLoader, StaticLoader,
 };
-pub use nav::{History, Location, PageNav, Performance};
+pub use nav::{History, HistoryEntry, Location, PageNav, Performance};
 pub use window::{Window, WindowData};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
