@@ -72,12 +72,22 @@ impl EngineHost {
                 let navigating = self.pages.get(&cmd.page).is_some_and(|p| p.navigating);
                 self.session_mut(cmd.session_id)?.lifecycle_events = enabled;
                 if enabled && !navigating {
-                    // The current document is fully loaded (only about:blank
-                    // loads today and it makes no requests): replay its
-                    // lifecycle like upstream does for a completed frame.
+                    // Replay the current document's lifecycle like upstream
+                    // does for a committed frame. The network quiet milestones
+                    // are asynchronous (lp-browser's idle detector): replay
+                    // only those already reached; later ones arrive live.
                     let (frame_id, loader_id, _) = self.main_frame(cmd.page)?;
+                    let page_id = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?.id;
+                    let reached =
+                        self.thread.browser.page(page_id).map(|p| p.main_frame.network_idle).unwrap_or_default();
                     let now = self.thread.browser.timestamp();
-                    for name in ["DOMContentLoaded", "load", "networkAlmostIdle", "networkIdle"] {
+                    let milestones = [
+                        ("DOMContentLoaded", true),
+                        ("load", true),
+                        ("networkAlmostIdle", reached.almost_idle),
+                        ("networkIdle", reached.idle),
+                    ];
+                    for (name, _) in milestones.iter().filter(|(_, reached)| *reached) {
                         self.lifecycle(cmd.session_id, name, &frame_id, &loader_id, now);
                     }
                 }
