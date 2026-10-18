@@ -11,6 +11,12 @@ classified only as far as the evidence goes, and unknowns are left explicit.
 
 ## Results
 
+Three categories of confirmed TOS drift account for 16 failing cases: W3-17 (13
+cases), W3-19 (2) and W3-07 (1). The W3-07 finding is from source only. The
+remaining 5 cases (W3-18: 1, W3-10: 2, W3-12: 2) are not shown to be TOS drift:
+W3-18 and W3-10 are unresolved, and W3-12 is narrowed to Lightpanda's synthetic
+layout (see below). Unresolved does not mean the cause is outside TOS.
+
 | Batch | Case(s) | Classification | Evidence |
 | --- | --- | --- | --- |
 | W3-17 | `positions-analytics`, 13 cases | **TOS data drift, confirmed** | Template database query, source, and a Chromium diagnostic run |
@@ -18,7 +24,7 @@ classified only as far as the evidence goes, and unknowns are left explicit.
 | W3-07 | `business-partner` "lists seeded business partners as rendered table rows" | **TOS renderer drift, confirmed** from source; no run | Source |
 | W3-18 | `positions-finances` "lists finance rows inside the Position details Finances tab" | **Backend deadlock during API fixture setup** | Server log |
 | W3-10 | master position "marks a Position as Master Position", and quotes-cargo "adds and deletes a Package" | **Fails on all three engines; cause unresolved** | Chromium diagnostic run |
-| W3-12 | route "updates the Route tab incoterm" and "…transport mode" | **Fails only in the Lightpanda lanes; Chromium passes; cause unresolved** | Chromium diagnostic run |
+| W3-12 | route "updates the Route tab incoterm" and "…transport mode" | **Fails only in the Lightpanda lanes; Chromium passes. On the rewrite, narrowed to synthetic layout boxes that do not enclose a `pointer-events: none` trigger** | Chromium diagnostic run, rewrite-only probe runs, static repro |
 
 ### W3-17: analytics month buckets (TOS data drift)
 
@@ -103,9 +109,78 @@ no cause is claimed. It was not run on Chromium.
     found in the transshipment row (`prepareRouteInlineOption`).
   - Transport mode: `scrollIntoViewIfNeeded` on the visible "Transshipment Port"
     row waits until teardown.
-- **Status.** These cases are specific to the Lightpanda lane: browser behaviour,
-  layout visibility, or the lane's DOM-activation adaptations. They are not a
-  rewrite-only regression. The cause is not established.
+
+#### Rewrite-only narrowing (added after merge)
+
+The probes below ran only on the rewrite, main `2641569`. Upstream fails the same
+two cases in the batch runs, but it was not probed on the page, so nothing here
+is claimed about why upstream fails. The static repro at the end did run on both.
+
+- **Probe runs.** Both used the fresh signed build of main `2641569` (SHA-256
+  `b7937265…`), unchanged TOS, and a diagnostic CDP recording proxy. Before each
+  `mousePressed`, the proxy injects one `Runtime.evaluate`; its reply is recorded
+  and not forwarded. They are not coverage evidence.
+  - `w3l12h-1018-112330`: `positions-route.e2e.ts` alone (10 cases), 8 passed and
+    the same 2 failed. The probe recorded `document.elementFromPoint` at the click
+    point and the select-trigger rectangles.
+  - `w3l12s-1018-112717`: the "Route tab inline field updates" subset (7 cases),
+    5 passed and the same 2 failed. The probe recorded a bounded, scrubbed
+    snapshot: the hit element's chain, the trigger's ancestor chain with rects
+    and selected computed styles, and the row markup.
+  - A third attempt with Playwright tracing on (`w3l12d`) is excluded: tracing
+    in the Lightpanda lane adds a `CSSGroupingRule` page error from Playwright's
+    snapshotter, which fails cases on its own.
+- **How the test clicks.** Its helper `clickVisibleCenter` calls
+  `page.mouse.click` at the centre of the trigger's own bounding box.
+- **What the page has at the click.** For incoterm, the "CPT" trigger
+  (`BUTTON[data-type=select-trigger]`) reports (207, 0, 5, 5).
+  - Its parent is a `DIV` with the class `pointer-events-none`, so the button is
+    not hit-testable, in Chrome as well.
+  - The focusable select `DIV[tabindex=0]` that should receive the click reports
+    (207, −15, 5, 15). That covers y −15…0, not the click point (209.5, 2.5).
+  - `elementFromPoint` there returns the enclosing `TR` (56, −115, 1480, 286). So
+    the click never reaches the select, and the option list never appears.
+  - For transport mode, the same structure gives `BODY`.
+- **Static repro** ([`evidence/tos-coverage-w3/w3-12-hit-test`](../../evidence/tos-coverage-w3/w3-12-hit-test),
+  script and the three engines' outputs). It uses the
+  same shape: a 26 px table cell, a focusable wrapper with a click listener, a
+  `pointer-events: none` element, and the button. It clicks the button's centre.
+
+  | Variant | Chrome 147 | rewrite `2641569` | upstream `2ad38773` |
+  | --- | --- | --- | --- |
+  | `pointer-events: none`, inline style | hit inside the wrapper; click reaches it | hit `BODY`; click misses | hit `BODY`; click misses |
+  | `pointer-events: none`, stylesheet class | hit inside the wrapper; click reaches it | hit `BODY`; click misses | hit `BODY`; click misses |
+  | Control: cell `overflow: hidden`, no `pointer-events: none` | hit the button; click reaches it | hit the button; click reaches it | hit the button; click reaches it |
+
+  - In Chrome the wrapper and the button share one box (11, 13, 43, 21).
+  - In both Lightpanda engines, every element gets a 5×5 box stacked in
+    document order, so ancestors do not enclose their descendants. The wrapper
+    is (0, 60, 5, 5) and the button (0, 75, 5, 5).
+- **Classification.**
+  - The target is reachable under Chrome geometry, and Chromium passes the cases.
+  - Lightpanda's hit test agrees with the rects Lightpanda reports, and it honours
+    `pointer-events: none`. The miss comes from the synthetic rects: once the
+    button is skipped, no ancestor box covers the point.
+  - So this is a synthetic-layout inaccuracy, not a hit-test pruning defect.
+    Overflow clipping is not involved.
+  - It is not a TOS issue. The static repro behaves the same on the rewrite and
+    on upstream. That upstream's TOS failures have this cause is likely but was
+    not probed.
+  - The repro has been sent to W2, who owns layout and hit-testing (lp-dom and
+    lp-webapi). There is no production change here.
+- **Limits.**
+  - Two simpler repros did not reproduce the miss on any engine. They had no
+    `pointer-events: none`, and they stay on the W3 host in
+    `/private/tmp/lp-w3-probes`:
+    - `hit-test-repro.mjs`: overflow-hidden cells and nested flex;
+    - `hit-test-min.mjs`: six nested divs in a 26 px cell.
+  - The probe adds one evaluation and one local WebSocket hop per press.
+  - The snapshot's style filter drops `none` values, so `pointer-events: none`
+    was read from the class list and confirmed by the static repro. It does not
+    appear in the recorded styles.
+  - The snapshots stay on the W3 host, and only their hashes are given below.
+    Before saving, UUIDs, `value` attributes, ids and ARIA references were
+    removed, and text was replaced with `x` except the option labels.
 
 ## Provenance
 
@@ -113,12 +188,33 @@ no cause is claimed. It was not run on Chromium.
   `542d479b…`, fixture `/private/tmp/lp-w3-lfix-1`.
 - **Selections:** the same files as the original batches, so the same hashes
   (see `evidence/tos-coverage-w3/selections`).
-- **Diagnostic runs:** Chromium lane, `playwright.e2e.config.ts`, Playwright
-  1.59.1 headless shell 1217. They are not coverage evidence, and selected and
-  extra cases are counted separately.
-  - Each run used the harness's retained template and
+- **Chromium diagnostic runs** (`w3l17c`, `w3l10c`, `w3l12c`): Chromium lane,
+  `playwright.e2e.config.ts`, Playwright 1.59.1 headless shell 1217. They are
+  not coverage evidence, and selected and extra cases are counted separately.
+  This scope covers only these three runs.
+- **Lightpanda probe runs** (`w3l12h`, `w3l12s`): routed config, rewrite main
+  `2641569`, SHA-256
+  `b79372659084464730fc1a64589d8a7c82c0137e0afe21f34d37548fcef3e4ff`. These are
+  not coverage evidence.
+  - Recording wrapper `lp-record-wrapper.mjs`: `f0c15757…`.
+  - Proxies: `cdp-hittest-proxy.mjs` `81f2b411…` and `cdp-snapshot-proxy.mjs`
+    `e2b6cf7a…`.
+  - Snapshot SHA-256 values:
+
+    | Snapshot | SHA-256 |
+    | --- | --- |
+    | `incoterm-click.json` | `a5b39dce…` |
+    | `incoterm-click.tr.html` | `b4557898…` |
+    | `transport-mode-click.json` | `f730598f…` |
+    | `transport-mode-click.tr.html` | `0739cef7…` |
+
+- **Static repro:** run with Playwright 1.59.1 against Chrome 147.0.7727.15
+  (headless shell), the rewrite binary above, and upstream `2ad38773`
+  (`7f76ccfe…`).
+- **All diagnostic runs:**
+  - Each used the harness's retained template and
     `LIGHTNINGPANDA_SHARED_ASSET_CACHE_MB=64`, which the Chromium lane ignores.
-  - Each run created one database and dropped it by exact name, leaving 0 run
+  - Each created one database and dropped it by exact name, leaving 0 run
     databases.
 - **Retained template ledger:**
   - The template is `fe_e2e_w3_f9fde4aa_lfix1_template`, owned by the test role.
@@ -128,5 +224,6 @@ no cause is claimed. It was not run on Chromium.
   - It is retained until W3 TOS work ends, and then dropped by exact name.
   - The template database query was read-only
     (`default_transaction_read_only`).
-- **Artifacts:** on the W3 host in `/private/tmp/lp-w3-l17c`, `-l10c` and
-  `-l12c`, plus the original batch run directories.
+- **Artifacts:** on the W3 host in `/private/tmp/lp-w3-l17c`, `-l10c`, `-l12c`,
+  `-l12h`, `-l12s` and `-l12d` (excluded), and `/private/tmp/lp-w3-probes`, plus
+  the original batch run directories.
