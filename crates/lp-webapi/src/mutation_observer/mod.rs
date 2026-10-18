@@ -371,6 +371,7 @@ pub(crate) fn install(s: &Scope<'_>, page: &Rc<PageDom>) -> JsResult<()> {
     let weak = Rc::downgrade(page);
     s.realm().set_native_callback_hook(Some(Rc::new(move |_| {
         if let Some(page) = weak.upgrade() {
+            page.flush_iframe_events();
             checkpoint(&page);
         }
     })))?;

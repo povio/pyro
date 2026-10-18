@@ -113,6 +113,9 @@ impl Env {
         Self::with_engine(url, Rc::new(Engine::new().unwrap()))
     }
     pub fn with_engine(url: &str, engine: Rc<Engine>) -> Self {
+        Self::with_engine_origin(url, engine, None)
+    }
+    pub fn with_engine_origin(url: &str, engine: Rc<Engine>, origin: Option<String>) -> Self {
         register(&engine);
         let class = engine.register::<Window>();
         let dom = Rc::new(RefCell::new(lp_dom::Dom::new()));
@@ -124,7 +127,8 @@ impl Env {
         let posts = Arc::new(AtomicUsize::new(0));
         let log: Log = Rc::default();
         page.set_hooks(Some(Rc::new(Hooks { tx, posts: posts.clone(), log: log.clone() })));
-        let realm = engine.create_realm(RealmOptions { global_class: Some(class), ..Default::default() }).unwrap();
+        let realm =
+            engine.create_realm(RealmOptions { global_class: Some(class), origin, ..Default::default() }).unwrap();
         let key = page.create_window_target(doc);
         realm
             .set_global_data::<Window>(WindowData { page: page.clone(), target: EventTargetData::window(&page, key) })

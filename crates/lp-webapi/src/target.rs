@@ -358,6 +358,9 @@ struct Invoker<'a> {
 
 impl ListenerInvoker for Invoker<'_> {
     fn invoke(&mut self, callback: ListenerHandle, current: TargetKey, _target: TargetKey) {
+        if self.page.scripting_disabled() {
+            return;
+        }
         let realm_id = RealmId((callback.0 >> 32) as u32);
         let slot = callback.0 as u32;
         let realm = self.page.realms.borrow().get(&realm_id).and_then(|w| w.upgrade());
