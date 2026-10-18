@@ -26,3 +26,6 @@ CDP dataLength and data-event encodedDataLength both count decoded chunks on thi
 The preceding /private/tmp/lp-profile-nav-eabee486 run lacked allow-jit and is separate diagnostic evidence. No pooled signed/non-JIT speed claim; sequential runs confound drift. No full TOS, general load-performance or memory-leak conclusion.
 
 Baseline host timestamps are monotonic performance.now values; timeOrigin was not persisted. Native sample epoch and its host invocation interval are retained, so absolute navigation epochs are bounded rather than exact. The subsequent attribution collector explicitly records epoch markers.
+
+## Collector qualification and follow-up
+The original optional document MutationObserver scanned inputs and labels on every delivery and never produced its marker/disconnected. It is active instrumentation, so the initial12-navigation matrix must not establish a production bottleneck. Observer-free confirmation and diagnostic-only attribution are retained in separate subdirectories. No original assertions/auth changed.

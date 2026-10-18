@@ -1,0 +1,1 @@
+Bounded native sample during navigation1 adds diagnostic overhead; static native frame lines only, full sample retained locally. Occurrence counts are stack observations, not CPU percentages. Sample may cover only part of navigation/horizon.
