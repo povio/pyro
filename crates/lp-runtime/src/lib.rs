@@ -420,11 +420,15 @@ mod tests {
     fn tasks_then_timers_in_deadline_order() {
         let mut lp = EventLoop::<St>::new();
         let s = lp.scheduler();
-        s.set_timer(Duration::from_millis(20), false, true, |st| st.log.push("t20".into()));
+        // Queued before any timer is registered, so it is ready before every
+        // deadline regardless of scheduling pauses (readiness order).
+        s.post(TaskSource::DomManipulation, |st| st.log.push("task".into()));
+        // Registered shortest first: each later deadline is at least as late
+        // as the earlier ones however long the gap between registrations.
         s.set_timer(Duration::from_millis(5), false, true, |st| st.log.push("t5".into()));
+        s.set_timer(Duration::from_millis(20), false, true, |st| st.log.push("t20".into()));
         let cleared = s.set_timer(Duration::from_millis(1), false, true, |st| st.log.push("never".into()));
         assert!(s.clear_timer(cleared));
-        s.post(TaskSource::DomManipulation, |st| st.log.push("task".into()));
         let mut st = St::default();
         let r = lp.run_until_idle(&mut st, Some(Instant::now() + Duration::from_secs(2)));
         assert_eq!(r, RunOutcome::Idle);
@@ -531,7 +535,10 @@ mod tests {
             st.log.push("task1".into());
             // Queued before the timer: runs first.
             chain(&s2, 2, 2);
+            // Strictly separate the readiness instants (ties favor the timer).
+            std::thread::sleep(Duration::from_micros(50));
             s2.set_timer(Duration::ZERO, false, true, |st| st.log.push("timer".into()));
+            std::thread::sleep(Duration::from_micros(50));
             // Queued after the timer became ready: runs after it.
             chain(&s2, 3, 5);
         });
