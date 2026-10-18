@@ -71,12 +71,12 @@ Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 42 engi
 | `Input.insertText` | yes | engine | native focus/selection and cancellable beforeinput/input |
 | `Input.setInterceptDrags` | **no** | pending |  |
 | `Log.enable` | yes | accepted, recorded only | console goes through Runtime.consoleAPICalled; no Log entries are produced |
-| `Network.clearBrowserCache` | yes | pending |  |
+| `Network.clearBrowserCache` | yes | pending | awaiting lp-cdp wiring to `NetClient::clear_http_cache()` (per-context HTTP cache, lp-net); until wired, entries are not cleared |
 | `Network.emulateNetworkConditions` | yes | pending |  |
 | `Network.enable` | yes | engine | subscribes to bounded per-context events; filters by page/session; buffer options unsupported |
 | `Network.getResponseBody` | yes | engine | text/base64 completed captures; explicit errors for unavailable or evicted bodies |
 | `Network.loadNetworkResource` | **no** | pending |  |
-| `Network.setCacheDisabled` | yes | conditional | no response cache exists; disabling is already true, allowing caching does not require entries |
+| `Network.setCacheDisabled` | yes | pending | a per-context HTTP cache now exists in lp-net and is enabled by default; awaiting lp-cdp wiring to `NetSettings.cache_disabled` (bypass plus `Pragma`/`Cache-Control: no-cache`, like DevTools). Until wired, `cacheDisabled: true` does not disable it |
 | `Network.setExtraHTTPHeaders` | yes | pending |  |
 | `Page.addScriptToEvaluateOnNewDocument` | yes | engine |  |
 | `Page.bringToFront` | yes | accepted, recorded only | single foreground page per target |
