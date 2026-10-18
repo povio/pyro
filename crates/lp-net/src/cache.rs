@@ -1,5 +1,7 @@
 //! Private HTTP cache (RFC 9111) owned by one `NetClient`, i.e. one browser
-//! context. Entries never cross contexts and die with the client.
+//! context. Its entries never cross contexts and die with the client. The only
+//! cross-context storage is the separate, explicit opt-in [`SharedAssetCache`]
+//! (off by default), whose eligibility contract is documented there.
 //!
 //! Supported:
 //! - GET only. Keyed by the URL without its fragment, with up to
@@ -438,11 +440,25 @@ fn shared_storable(status: StatusCode, response: &HeaderMap, request: &HeaderMap
         && !response.contains_key(header::CONTENT_RANGE)
 }
 
-/// Opt-in, process-wide cache of public static assets shared by every
-/// `NetClient` (browser context) configured with the same handle. It only ever
-/// holds responses that pass [`shared_storable`] for requests without
-/// credentials, and only serves fresh entries (no revalidation). Cookies,
-/// authentication, API responses and app state stay per context.
+/// Opt-in, process-wide shared cache used by every `NetClient` (browser context)
+/// configured with the same handle; off unless explicitly enabled.
+///
+/// The contract is header- and credential-based, not MIME-, path- or
+/// destination-based. ANY response is shared across those contexts when it is a
+/// GET 200 explicitly marked `public` with a positive `s-maxage`/`max-age`; is
+/// not `private`/`no-store`/`no-cache`; has no `Set-Cookie`, `Vary` or
+/// `Content-Range`; and the request carried no `Authorization`,
+/// `Proxy-Authorization` or `Cookie` ([`shared_storable`],
+/// [`shared_request_eligible`]). Only fresh entries are served; there is no
+/// revalidation.
+/// - Never shared: cookie jars, credentialed or non-`public` responses, and
+///   page state.
+/// - A server that marks a response `public` and long-lived is trusted to mean
+///   it for every client of that origin, as with any shared HTTP cache.
+/// - In the TOS workload that motivated it, only content-hashed `/assets/` files
+///   qualify. Its documents and API responses carry no such headers and are
+///   requested with credentials. That is an observation about that workload,
+///   not a guarantee for other sites.
 #[derive(Clone)]
 pub struct SharedAssetCache(std::sync::Arc<std::sync::Mutex<HttpCache>>);
 

@@ -212,8 +212,10 @@ fn with(s: &Server, path: &str, f: impl FnOnce(&mut Request)) -> Request {
     r
 }
 
+/// An isolated context: explicitly no shared store, whatever the process
+/// environment (`LIGHTNINGPANDA_SHARED_ASSET_CACHE_MB` is a supported setting).
 fn client() -> NetClient {
-    NetClient::new(NetConfig::default()).unwrap()
+    NetClient::new(NetConfig { shared_asset_cache: None, ..NetConfig::default() }).unwrap()
 }
 
 #[test]
@@ -530,13 +532,46 @@ fn opt_in_shared_assets_cross_fresh_contexts_and_nothing_else_does() {
 }
 
 #[test]
-fn default_contexts_do_not_share_assets() {
-    // The environment opt-in is unset in tests, so the default has no shared store.
-    assert!(std::env::var(SHARED_ASSET_CACHE_ENV).is_err());
-    assert!(NetConfig::default().shared_asset_cache.is_none());
+fn isolated_contexts_do_not_share_assets() {
     let s = start();
     let (a, b) = (client(), client());
     get(&s, &a, "/asset?v=1");
     assert!(!get(&s, &b, "/asset?v=1").head.unwrap().from_cache);
     assert_eq!(s.hits("/asset"), 2);
+}
+
+/// `NetConfig::default()` reads the opt-in once into a process-wide store, so it
+/// is checked in child processes with a controlled environment: the parent's
+/// own environment, its global and parallel tests are unaffected.
+#[test]
+fn default_config_follows_the_environment_opt_in() {
+    if let Ok(expect) = std::env::var("LP_NET_CACHE_ENV_CHILD") {
+        let a = NetConfig::default().shared_asset_cache;
+        let b = NetConfig::default().shared_asset_cache;
+        match expect.as_str() {
+            "off" => assert!(a.is_none() && b.is_none()),
+            _ => {
+                let (a, b) = (a.expect("opt-in enables the shared store"), b.unwrap());
+                a.clear();
+                let s = start();
+                let one = NetClient::new(NetConfig { shared_asset_cache: Some(a), ..NetConfig::default() }).unwrap();
+                let two = NetClient::new(NetConfig { shared_asset_cache: Some(b), ..NetConfig::default() }).unwrap();
+                get(&s, &one, "/asset?v=env");
+                assert!(get(&s, &two, "/asset?v=env").head.unwrap().from_cache, "one process-wide store");
+            }
+        }
+        return;
+    }
+    let exe = std::env::current_exe().unwrap();
+    for (expect, value) in [("off", None), ("off", Some("0")), ("off", Some("junk")), ("on", Some("4"))] {
+        let mut cmd = std::process::Command::new(&exe);
+        cmd.args(["--exact", "default_config_follows_the_environment_opt_in", "--test-threads=1"]);
+        cmd.env("LP_NET_CACHE_ENV_CHILD", expect);
+        match value {
+            Some(v) => cmd.env(SHARED_ASSET_CACHE_ENV, v),
+            None => cmd.env_remove(SHARED_ASSET_CACHE_ENV),
+        };
+        let out = cmd.output().unwrap();
+        assert!(out.status.success(), "{expect} {value:?}: {}", String::from_utf8_lossy(&out.stdout));
+    }
 }
