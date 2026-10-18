@@ -45,7 +45,7 @@ macro_rules! reflect_url {
             |s, n| {
                 let dom = n.page().dom.borrow();
                 let Some(v) = dom.get_attribute(n.id, $attr).js()? else { return Ok(s.string("")) };
-                Ok(s.string(&resolve_url(&dom, n.id, v)))
+                Ok(s.string(&resolve_reflected_url(n.page(), &dom, n.id, v)))
             },
             |_s, n, v| {
                 let arg0 = dom_string(v)?;
@@ -99,10 +99,44 @@ macro_rules! simple_class {
 /// Resolves a URL attribute against the node document's inherited base or URL.
 pub fn resolve_url(dom: &Dom, node: NodeId, value: &str) -> String {
     let base = dom.node_document(node).ok().and_then(|d| dom.document_base_url(d).ok());
-    match base.and_then(|b| lp_net::Url::parse(b).ok()) {
+    let parsed = base.and_then(|b| lp_net::Url::parse(b).ok());
+    resolve_against(parsed.as_ref(), value)
+}
+
+fn resolve_against(base: Option<&lp_net::Url>, value: &str) -> String {
+    match base {
         Some(b) => b.join(value.trim()).map(|u| u.to_string()).unwrap_or_else(|_| value.to_owned()),
         None => value.to_owned(),
     }
+}
+
+/// One bounded entry, with no node or JavaScript references. The actual base
+/// string is the key: document URL/base setters do not increment DOM version,
+/// and a retained wrapper can be adopted into a different owner document.
+pub(crate) struct ReflectedUrlBase {
+    source: String,
+    parsed: Option<lp_net::Url>,
+}
+
+fn resolve_reflected_url(page: &PageDom, dom: &Dom, node: NodeId, value: &str) -> String {
+    const MAX_BASE_BYTES: usize = 4096;
+    let Some(base) = dom.node_document(node).ok().and_then(|d| dom.document_base_url(d).ok()) else {
+        return value.to_owned();
+    };
+    if page.is_disposed() || base.len() > MAX_BASE_BYTES {
+        return resolve_url(dom, node, value);
+    }
+    let mut cache = page.reflected_url_base.borrow_mut();
+    if cache.as_ref().is_none_or(|entry| entry.source != base) {
+        let parsed = lp_net::Url::parse(base).ok();
+        // Canonicalization can expand non-ASCII input. Oversized bases remain
+        // fully supported, but neither source nor parsed strings are retained.
+        if parsed.as_ref().is_some_and(|url| url.as_str().len() > MAX_BASE_BYTES) {
+            return resolve_against(parsed.as_ref(), value);
+        }
+        *cache = Some(ReflectedUrlBase { source: base.to_owned(), parsed });
+    }
+    resolve_against(cache.as_ref().and_then(|entry| entry.parsed.as_ref()), value)
 }
 
 // ----- class selection --------------------------------------------------------
