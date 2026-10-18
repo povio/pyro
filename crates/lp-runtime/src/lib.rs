@@ -180,9 +180,12 @@ impl std::fmt::Display for LoopClosed {
 
 impl std::error::Error for LoopClosed {}
 
+/// A remote task with the time it was posted (its readiness time).
+type Stamped<S> = (Instant, RemoteTask<S>);
+
 /// Cross-thread posting handle. Tasks are delivered in posting order.
 pub struct LoopHandle<S> {
-    tx: mpsc::Sender<RemoteTask<S>>,
+    tx: mpsc::Sender<Stamped<S>>,
 }
 
 impl<S> Clone for LoopHandle<S> {
@@ -193,7 +196,7 @@ impl<S> Clone for LoopHandle<S> {
 
 impl<S> LoopHandle<S> {
     pub fn post(&self, task: impl FnOnce(&mut S) + Send + 'static) -> Result<(), LoopClosed> {
-        self.tx.send(Box::new(task)).map_err(|_| LoopClosed)
+        self.tx.send((Instant::now(), Box::new(task))).map_err(|_| LoopClosed)
     }
 }
 
@@ -212,8 +215,10 @@ pub enum RunOutcome {
 
 pub struct EventLoop<S> {
     sched: Scheduler<S>,
-    tx: Option<mpsc::Sender<RemoteTask<S>>>,
-    rx: mpsc::Receiver<RemoteTask<S>>,
+    tx: Option<mpsc::Sender<Stamped<S>>>,
+    rx: mpsc::Receiver<Stamped<S>>,
+    /// Remote tasks received from `rx`, in posting order, awaiting their turn.
+    remote: VecDeque<Stamped<S>>,
     remote_open: bool,
 }
 
@@ -240,6 +245,7 @@ impl<S: LoopState + 'static> EventLoop<S> {
             },
             tx: Some(tx),
             rx,
+            remote: VecDeque::new(),
             remote_open: true,
         }
     }
@@ -262,25 +268,35 @@ impl<S: LoopState + 'static> EventLoop<S> {
 
     /// Runs one ready task or due timer. Returns false if nothing was ready.
     pub fn run_one(&mut self, state: &mut S) -> bool {
-        // Remote messages first: they are external events in arrival order.
-        match self.rx.try_recv() {
-            Ok(task) => {
+        self.pull_remote();
+        // Remote tasks (posted from other threads: network completions, CDP
+        // deliveries), local tasks and due timers run in readiness order:
+        // remote post time, local queue time, timer due time. Each source
+        // stays FIFO. On equal instants: timer, then local, then remote.
+        // Page work that became ready before a remote message was posted runs
+        // first; anything posted after it runs after it, so no source can
+        // starve another.
+        let remote = self.remote.front().map(|(at, _)| *at);
+        let local = self.sched.inner.tasks.borrow().front().map(|(at, _, _)| *at);
+        let timer = self.next_due_timer();
+        let earliest_page = match (local, timer) {
+            (Some(l), Some(t)) => Some(l.min(t)),
+            (l, t) => l.or(t),
+        };
+        if let Some(r) = remote {
+            if earliest_page.is_none_or(|p| r < p) {
+                let (_, task) = self.remote.pop_front().expect("remote front");
                 task(state);
                 state.after_task();
                 return true;
             }
-            Err(mpsc::TryRecvError::Disconnected) => self.remote_open = false,
-            Err(mpsc::TryRecvError::Empty) => {}
         }
-        // Local tasks and due timers run in readiness order (task queue time
-        // vs timer due time), like a browser's equal-priority task sources.
-        // Never letting timers run while local tasks are queued starved them
-        // behind self-reposting work (e.g. a MessageChannel scheduler loop).
-        let task_ready = self.sched.inner.tasks.borrow().front().map(|(at, _, _)| *at);
-        if let Some(task_ready) = task_ready {
-            if self.next_due_timer().is_some_and(|due| due <= task_ready) {
+        if let (Some(l), Some(t)) = (local, timer) {
+            if t <= l {
                 return self.run_due_timer(state);
             }
+        }
+        if local.is_some() {
             let next = self.sched.inner.tasks.borrow_mut().pop_front();
             if let Some((_, _, task)) = next {
                 task(state);
@@ -289,6 +305,20 @@ impl<S: LoopState + 'static> EventLoop<S> {
             }
         }
         self.run_due_timer(state)
+    }
+
+    /// Moves every remote task already posted into the ordered remote queue.
+    fn pull_remote(&mut self) {
+        loop {
+            match self.rx.try_recv() {
+                Ok(task) => self.remote.push_back(task),
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.remote_open = false;
+                    return;
+                }
+                Err(mpsc::TryRecvError::Empty) => return,
+            }
+        }
     }
 
     /// Deadline of the earliest live timer if it is already due.
@@ -331,7 +361,7 @@ impl<S: LoopState + 'static> EventLoop<S> {
     }
 
     fn has_keepalive_work(&self) -> bool {
-        !self.sched.inner.tasks.borrow().is_empty() || self.sched.active_timers() > 0
+        !self.remote.is_empty() || !self.sched.inner.tasks.borrow().is_empty() || self.sched.active_timers() > 0
     }
 
     /// Runs until `done(state)` is true, the deadline passes, the loop is
@@ -378,10 +408,9 @@ impl<S: LoopState + 'static> EventLoop<S> {
                 None => self.rx.recv().map_err(|_| true),
             };
             match msg {
-                Ok(task) => {
-                    task(state);
-                    state.after_task();
-                }
+                // Ordered against page work by run_one on the next iteration
+                // (a timer may have become due before this was posted).
+                Ok(task) => self.remote.push_back(task),
                 Err(true) => {
                     // Every sender is gone (including ours after close_remote).
                     self.remote_open = false;
@@ -594,6 +623,117 @@ mod tests {
         let last_task = st.log.iter().rposition(|l| l.starts_with("task")).unwrap();
         assert!(first_tick < last_task, "ticks starved behind the chain: {:?}", st.log);
         assert_eq!(st.log.iter().filter(|l| *l == "tick").count(), 3);
+    }
+
+    #[test]
+    fn remote_posted_while_a_task_runs_waits_for_page_work_ready_before_it() {
+        let mut lp = EventLoop::<St>::new();
+        let s = lp.scheduler();
+        let h = lp.handle();
+        let s2 = s.clone();
+        s.post(TaskSource::DomManipulation, move |st| {
+            st.log.push("task".into());
+            // Due-vs-CDP shape: a zero-delay timer, then a message from another
+            // thread (a CDP command) arrives while this task is still running.
+            s2.set_timer(Duration::ZERO, false, true, |st| st.log.push("timer".into()));
+            std::thread::sleep(Duration::from_micros(50));
+            let h = h.clone();
+            std::thread::spawn(move || h.post(|st| st.log.push("remote".into())).unwrap()).join().unwrap();
+            std::thread::sleep(Duration::from_micros(50));
+            // Queued after the remote was posted: runs after it.
+            chain(&s2, 1, 1);
+        });
+        let mut st = St::default();
+        lp.run_until_idle(&mut st, Some(Instant::now() + Duration::from_secs(5)));
+        assert_eq!(st.log, ["task", "timer", "remote", "task1"]);
+        assert_eq!(st.checkpoints, 4);
+    }
+
+    #[test]
+    fn remote_posted_before_page_work_runs_first_in_posting_order() {
+        let mut lp = EventLoop::<St>::new();
+        let s = lp.scheduler();
+        let h = lp.handle();
+        h.post(|st| st.log.push("remote1".into())).unwrap();
+        h.post(|st| st.log.push("remote2".into())).unwrap();
+        std::thread::sleep(Duration::from_micros(50));
+        s.set_timer(Duration::ZERO, false, true, |st| st.log.push("timer".into()));
+        chain(&s, 1, 1);
+        let mut st = St::default();
+        lp.run_until_idle(&mut st, Some(Instant::now() + Duration::from_secs(5)));
+        assert_eq!(st.log, ["remote1", "remote2", "timer", "task1"]);
+    }
+
+    #[test]
+    fn self_reposting_page_work_does_not_starve_remote_messages() {
+        let mut lp = EventLoop::<St>::new();
+        let s = lp.scheduler();
+        let h = lp.handle();
+        // An endless chain (a MessageChannel scheduler that never yields) and
+        // an endless zero-delay timer loop: a remote message posted meanwhile
+        // runs once the work that was ready before it is done.
+        fn forever(s: &Scheduler<St>, h: LoopHandle<St>, n: u32) {
+            let s2 = s.clone();
+            s.post(TaskSource::DomManipulation, move |st| {
+                st.log.push(format!("task{n}"));
+                let h2 = h.clone();
+                forever(&s2, h, n + 1);
+                if n == 3 {
+                    std::thread::sleep(Duration::from_micros(50));
+                    h2.post(|st| st.log.push("remote".into())).unwrap();
+                }
+            });
+        }
+        fn ticks(s: &Scheduler<St>) {
+            let s2 = s.clone();
+            s.set_timer(Duration::ZERO, false, true, move |_| ticks(&s2));
+        }
+        forever(&s, lp.handle(), 1);
+        ticks(&s);
+        drop(h);
+        let mut st = St::default();
+        let r = lp.run_until(&mut st, Some(Instant::now() + Duration::from_secs(5)), false, |st| {
+            st.log.iter().any(|l| l == "remote")
+        });
+        assert_eq!(r, RunOutcome::Done);
+        // task4 was queued before the remote was posted, task5 after it; the
+        // timer loop's deadlines before the post ran in between.
+        assert_eq!(st.log, ["task1", "task2", "task3", "task4", "remote"]);
+    }
+
+    #[test]
+    fn remote_and_local_chains_interleave_by_readiness() {
+        let mut lp = EventLoop::<St>::new();
+        let s = lp.scheduler();
+        // Each task waits before re-posting, so every re-post is strictly
+        // later than the other chain's pending entry.
+        fn remote(h: LoopHandle<St>, n: u32) {
+            let h2 = h.clone();
+            h.post(move |st| {
+                st.log.push(format!("r{n}"));
+                std::thread::sleep(Duration::from_micros(50));
+                if n < 3 {
+                    remote(h2, n + 1);
+                }
+            })
+            .unwrap();
+        }
+        fn local(s: &Scheduler<St>, n: u32) {
+            let s2 = s.clone();
+            s.post(TaskSource::DomManipulation, move |st| {
+                st.log.push(format!("l{n}"));
+                std::thread::sleep(Duration::from_micros(50));
+                if n < 3 {
+                    local(&s2, n + 1);
+                }
+            });
+        }
+        local(&s, 1);
+        std::thread::sleep(Duration::from_micros(50));
+        remote(lp.handle(), 1);
+        let mut st = St::default();
+        lp.run_until(&mut st, Some(Instant::now() + Duration::from_secs(5)), false, |st| st.log.len() == 6);
+        assert_eq!(st.log, ["l1", "r1", "l2", "r2", "l3", "r3"]);
     }
 
     #[test]
