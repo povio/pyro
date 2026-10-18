@@ -127,9 +127,60 @@ Side observation, deferred: in a repro server launched without TOS's
 `--load-resources` flags, a dynamically inserted `<script src>` never ran on
 `b6fb762`. This was not investigated and is not TOS-relevant.
 
+## Runtime fix validation (PR #78), 2026-10-18
+
+W1's lp-runtime fix (PR #78, final head `ca2ada7`) runs local tasks and due timers
+in readiness order. Before it, every queued local task ran before any due timer,
+so a self-reposting MessageChannel loop starved due timers.
+
+The release builds below were made from `e0812a5`. Between `e0812a5` and `ca2ada7`
+only `#[cfg(test)] mod tests` changed; the non-test source is byte-identical
+(verified). The binaries are labelled with the SHA actually built.
+
+Builds: fresh `--no-hardlinks` clones with their own target directories,
+`CARGO_INCREMENTAL=0`, no V8. Integrations are local throwaway merges, never
+pushed.
+
+| Candidate | Commit / tree | Release SHA-256 |
+| --- | --- | --- |
+| main `4872e20` + fix | `e0812a5` / `1e9b7815…` | `3de2ef064082e78698ceb5cebdcdac7042363738f30bb1138c1f7ef10f666fb7` |
+| PR #75 `b6fb762` + fix | local `6adc0a6` / `d44b2eaed0b6165880ad599c494a3f91ee261171` | `04a1ebaf854c01d6dfe5072eb1688733e56ee34684500cfa516e499f0ee244d6` |
+| PR #76 `994f9f9` + fix | local `b1fe3fa` / `3d353841a45dc64f46adb25b43bc68252256b538` | `fc6cfeef57dae697f3a8961926516bbf58a5fbca3b4beb0caa73fa2261531163` |
+
+Unchanged TOS:
+- Same selections as above.
+- A fresh fixture per candidate and batch; the repeat reused it with the e2e tree
+  verified unchanged.
+- Fresh run-owned DBs, 0 left.
+
+| Selection | main + fix | PR #75 + fix | PR #76 + fix |
+| --- | --- | --- | --- |
+| batch 19 | **10/10, 10/10** (`lpb19fx1/2`) | **10/10, 10/10** (`lpb19fxmc1/2`) | **10/10, 10/10** (`lpb19fxwe1/2`) |
+| batch 16 | 14/14, 14/14 (`lpb16fx1/2`) | 13/14, 13/14 (`lpb16fxmc1/2`) | 13/14, 13/14 (`lpb16fxwe1/2`) |
+
+Ports (batch 19):
+- Repaired on all three fixed candidates, in both runs.
+- This establishes the TOS link for the ports regression: due timers starved
+  behind chained local MessageChannel tasks.
+- The fix also repairs the 4 ports failures on `9f100bd`, without MessageChannel.
+
+Residual batch 16 limit:
+- Business-partner-accounts "deletes an account line…" passes 2/2 with the fix
+  alone and fails 2/2 on each MessageChannel stack with the fix. It also failed
+  on `9f100bd` and `994f9f9`.
+- Diagnostic only, on a separate fixture (`instrumentation-step7.patch`): the row
+  is present and visible at the read.
+- On PR #75 + fix the target input value is written about 28.6 ms after the test
+  starts its single read, with React MessageChannel work still running after it;
+  on upstream, about 8.8 ms.
+- The observation recorder shifts timing: main + fix failed once under it.
+- No scheduling or semantic defect is established for this case. It remains
+  under investigation.
+
 ## Status
 
-- There is no established cause for the batch 19 worsening with `MessageChannel`.
+- The batch 19 worsening with `MessageChannel` is explained and repaired by the
+  lp-runtime fix (PR #78). Evidence is per binary, above.
 - Diagnostics and product expansion are stopped by the parent.
 - PR #75 and PR #76 remain held pending focused review of #76 and a combined
   decision.
