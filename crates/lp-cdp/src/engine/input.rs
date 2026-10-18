@@ -89,6 +89,10 @@ const NATIVE_KEY_COMMANDS: &[(&str, &[&str], &str)] = &[
     ("Delete", &["Delete"], "deleteForward"),
     ("Shift+Delete", &["Delete"], "deleteForward"),
     ("Meta+KeyA", &["a", "A"], "selectAll"),
+    // Escape's command edits nothing (Blink has no editor command for it), so
+    // like the engine's default action (none) it only delivers the key events.
+    ("Escape", &["Escape"], "cancelOperation"),
+    ("Shift+Escape", &["Escape"], "cancelOperation"),
 ];
 
 /// Whether `commands` is exactly the macOS encoding of this key event and the
