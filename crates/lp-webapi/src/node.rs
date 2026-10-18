@@ -311,19 +311,15 @@ impl JsClass for Node {
         def.method("lookupNamespaceURI", 1, |s, n, a| {
             let prefix = opt_dom_string(a.get(0))?;
             let dom = n.page().dom.borrow();
-            let html = dom.element(n.id).ok().map(|e| e.namespace().to_string());
-            Ok(match (prefix.as_deref(), html) {
-                (None | Some(""), Some(ns)) if !ns.is_empty() => s.string(&ns),
-                (Some("xml"), _) => s.string("http://www.w3.org/XML/1998/namespace"),
-                (Some("xmlns"), _) => s.string("http://www.w3.org/2000/xmlns/"),
-                _ => s.null(),
+            Ok(match dom.lookup_namespace_uri(n.id, prefix.as_deref()).js()? {
+                Some(namespace) => s.string(namespace),
+                None => s.null(),
             })
         });
         def.method("isDefaultNamespace", 1, |s, n, a| {
-            let ns = opt_dom_string(a.get(0))?;
+            let namespace = opt_dom_string(a.get(0))?;
             let dom = n.page().dom.borrow();
-            let own = dom.element(n.id).ok().map(|e| e.namespace().to_string());
-            Ok(s.boolean(own.as_deref().filter(|x| !x.is_empty()) == ns.as_deref().filter(|x| !x.is_empty())))
+            Ok(s.boolean(dom.lookup_namespace_uri(n.id, None).js()? == namespace.as_deref().filter(|s| !s.is_empty())))
         });
     }
 }
@@ -800,8 +796,10 @@ impl JsClass for Element {
             Ok(collections::collection(s, n.page(), n.id, CollectionKind::TagName(name))?.value())
         });
         def.method("getElementsByTagNameNS", 2, |s, n, a| {
+            a.require(2, "getElementsByTagNameNS")?;
+            let namespace = opt_dom_string(a.get(0))?.unwrap_or_default();
             let local = dom_string(a.get(1))?;
-            Ok(collections::collection(s, n.page(), n.id, CollectionKind::TagName(local))?.value())
+            Ok(collections::collection(s, n.page(), n.id, CollectionKind::TagNameNs(namespace, local))?.value())
         });
         def.method("getElementsByClassName", 1, |s, n, a| {
             let names = arg_string(&a, 0, "getElementsByClassName")?;
@@ -1092,8 +1090,10 @@ impl JsClass for Document {
             Ok(collections::collection(s, n.page(), n.id, CollectionKind::TagName(name))?.value())
         });
         def.method("getElementsByTagNameNS", 2, |s, n, a| {
+            a.require(2, "getElementsByTagNameNS")?;
+            let namespace = opt_dom_string(a.get(0))?.unwrap_or_default();
             let local = dom_string(a.get(1))?;
-            Ok(collections::collection(s, n.page(), n.id, CollectionKind::TagName(local))?.value())
+            Ok(collections::collection(s, n.page(), n.id, CollectionKind::TagNameNs(namespace, local))?.value())
         });
         def.method("getElementsByClassName", 1, |s, n, a| {
             let names = arg_string(&a, 0, "getElementsByClassName")?;

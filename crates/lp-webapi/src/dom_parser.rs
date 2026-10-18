@@ -1,11 +1,7 @@
 //! `DOMParser` (HTML §8.5.1; upstream src/browser/webapi/DOMParser.zig).
 //!
-//! `parseFromString(string, "text/html")` parses a complete HTML document with
-//! scripting disabled; its URL is the parser's window document URL. The XML
-//! types (`text/xml`, `application/xml`, `application/xhtml+xml`,
-//! `image/svg+xml`) throw NotSupportedError because there is no XML parser yet
-//! (documented gap; upstream parses them). Other types throw TypeError, as for
-//! a Web IDL enum mismatch.
+//! HTML uses html5ever; XML types use the bounded inert XML 1.0 parser.
+//! Malformed XML and unsupported DTDs return a parsererror document.
 
 use lp_js::{ClassDef, JsClass, JsError, NoParent};
 
@@ -26,20 +22,18 @@ impl JsClass for DomParser {
             a.require(2, "DOMParser.parseFromString")?;
             let html = dom_string(a.get(0))?;
             let mime = dom_string(a.get(1))?;
-            if XML_TYPES.contains(&mime.as_str()) {
-                return Err(JsError::dom(
-                    "NotSupportedError",
-                    format!("DOMParser does not support '{mime}' in lightningpanda yet (no XML parser)"),
-                ));
-            }
-            if mime != "text/html" {
+            if mime != "text/html" && !XML_TYPES.contains(&mime.as_str()) {
                 return Err(JsError::Type(format!(
                     "Failed to execute 'parseFromString' on 'DOMParser': The provided value '{mime}' is not a valid enum value of type DOMParserSupportedType."
                 )));
             }
             let page = page_of(s)?;
             let url = page.dom.borrow().document_data(page.document()).map(|d| d.url.to_string()).unwrap_or_default();
-            let doc = lp_dom::parse::parse_document(&page.dom, &url, &html);
+            let doc = if mime == "text/html" {
+                lp_dom::parse::parse_document(&page.dom, &url, &html)
+            } else {
+                lp_dom::xml::parse_document(&mut page.dom.borrow_mut(), &url, &html, &mime)
+            };
             Ok(wrap_node(s, &page, doc)?.value())
         });
     }
