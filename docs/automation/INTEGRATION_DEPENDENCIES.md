@@ -59,3 +59,21 @@ Playwright checks for the installed bindings and Network/Fetch interaction.
 The earlier browser-registration gap above describes PR6 before this dependency. Remaining
 gaps include DOM/Input protocol integration, TLS, response-stage interception, broader resource
 loading and full TOS workflows. Historical CPU/memory measurements remain tied to d673567.
+
+## Child-frame protocol integration
+
+`rewrite/automation-child-frames` normally merges W1 browser candidate
+`17cc11a84db2d5c147f731b75cdad4424536ad53`, which includes W2 iframe hooks
+`a05fb6fcb0742efc848b982fd6735c4880cfe494`. The retained four feature contracts
+were checkpointed at `f68b6d6556a97e8cf37195fe2d52a263846b0347`; merging only the
+browser dependency left all four red at missing protocol child-frame discovery.
+The integration merge is `8e5cecd985ffc7fd0622f68bc4999ffa0132dfbc`.
+
+The W3 delta above the browser candidate is confined to lp-cdp, its real
+Playwright harness, and automation documentation. It makes page sessions route
+native child frames, worlds, DOM identity, lifecycle and Network/Fetch traffic.
+It does not modify W1/W2 sources or dependency manifests/lockfiles, and does not
+include the separate DOMParser XML candidate `c2d8711`. See [phase-1 scope and
+explicit input/geometry limits](FRAMES.md). Earlier coverage/benchmark artifacts
+and their pinned binaries remain unchanged; no new TOS result is inferred from
+these protocol/local HTTP tests.

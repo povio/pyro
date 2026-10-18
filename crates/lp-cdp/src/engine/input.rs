@@ -126,6 +126,14 @@ fn modifiers(bits: u32) -> CdpResult<Modifiers> {
 impl EngineHost {
     pub(super) fn input_domain(&mut self, action: &str, cmd: &PageCommand<'_, '_>) -> CdpResult<Option<Value>> {
         let state = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?;
+        // There is no native focused-frame chain yet. A child and the root
+        // can both retain focused nodes, and Window.focus is not implemented.
+        // Never silently send a frame-ambiguous key/text command to the root.
+        if matches!(action, "dispatchKeyEvent" | "insertText")
+            && self.thread.browser.frames(state.id).iter().any(|frame| frame.parent.is_some())
+        {
+            return Err(CdpError::unsupported("Input with live child frames (focused-frame routing)"));
+        }
         let page = self
             .thread
             .browser
@@ -232,6 +240,11 @@ impl EngineHost {
                     delta_x: p.delta_x,
                     delta_y: p.delta_y,
                 };
+                if lp_webapi::layout_api::hit_test(&page, p.x, p.y)
+                    .is_some_and(|node| self.thread.browser.frame_of_owner(state.id, node).is_some())
+                {
+                    return Err(CdpError::unsupported("Input mouse targeting a child frame"));
+                }
                 input::dispatch_mouse(&page, kind, &mouse).map_err(CdpError::server)?;
             }
             _ => return Err(CdpError::unsupported(&cmd.command.method)),

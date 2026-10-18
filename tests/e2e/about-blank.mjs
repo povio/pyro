@@ -274,6 +274,12 @@ const fixture = http.createServer((req, res) => {
       'addEventListener("popstate", render); globalThis.go = path => { history.pushState({ path }, "", path); render(); }; render();</script>');
     return;
   }
+  if (req.url === '/frames-parsed') {
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end('<!doctype html><iframe name="parsed" src="/frame-inner"></iframe>' +
+      '<iframe name="inline" srcdoc="&lt;p&gt;inline child&lt;/p&gt;"></iframe>');
+    return;
+  }
   if (req.url === '/checkpoint.css') {
     res.writeHead(200, { 'content-type': 'text/css' });
     res.end('#message { display: none }');
@@ -640,6 +646,113 @@ try {
       await page.goto(`${fixtureOrigin}/next`, { timeout: 5000 });
       assert.deepEqual(await page.evaluate(() => [localStorage.getItem('local-marker'), sessionStorage.getItem('session-marker')]), ['shared', 'page']);
     } finally { await sibling.close(); await other.close(); }
+  });
+  await check('parser-created frames load with the parent and are replaced on parent reload', async () => {
+    const p = await context.newPage();
+    p.setDefaultTimeout(5000);
+    try {
+      await p.goto(`${fixtureOrigin}/frames-parsed`, { timeout: 5000 });
+      assert.equal(p.frames().length, 3);
+      const old = p.frame({ name: 'parsed' });
+      assert.equal(await old.locator('#message').textContent(), 'native DOM');
+      assert.equal(await p.frameLocator('iframe[name="inline"]').locator('p').textContent(), 'inline child');
+      await p.reload({ timeout: 5000 });
+      assert.equal(old.isDetached(), true);
+      assert.equal(p.frames().length, 3);
+      assert.notEqual(p.frame({ name: 'parsed' }), old);
+      assert.equal(await p.frameLocator('iframe[name="parsed"]').locator('#message').textContent(), 'native DOM');
+    } finally { await p.close(); }
+  });
+  await check('sandbox srcdoc frameLocator uses real child worlds and native owner identity', async () => {
+    const p = await context.newPage();
+    p.setDefaultTimeout(5000);
+    try {
+      await p.goto(`${fixtureOrigin}/frame-parent`, { timeout: 5000 });
+      await p.evaluate(() => {
+        const f = document.createElement('iframe'); f.id = 'sandbox'; f.name = 'sandbox';
+        f.setAttribute('sandbox', 'allow-downloads');
+        f.srcdoc = '<p>sandbox content</p><script>globalThis.authorRan = true</script>';
+        document.body.appendChild(f);
+      });
+      assert.equal(await p.frameLocator('#sandbox').locator('p').textContent(), 'sandbox content');
+      const owner = await p.locator('#sandbox').elementHandle();
+      const f = await owner.contentFrame();
+      assert.ok(f && f !== p.mainFrame());
+      assert.equal(f.parentFrame(), p.mainFrame());
+      assert.equal(await f.evaluate(() => typeof authorRan), 'undefined');
+      assert.equal(await p.evaluate(() => document.querySelector('iframe').contentDocument), null);
+      const resolvedOwner = await f.frameElement();
+      assert.equal(await resolvedOwner.evaluate(el => el.id), 'sandbox');
+      await resolvedOwner.dispose(); await owner.dispose();
+      // Playwright converts DOM.getBoxModel protocol errors into null.
+      // The native CDP regression separately asserts the explicit child-frame error.
+      assert.equal(await f.locator('p').boundingBox(), null);
+    } finally { await p.close(); }
+  });
+  await check('child HTTP navigation, response body, fetch and route retain frame identity', async () => {
+    const p = await context.newPage();
+    p.setDefaultTimeout(5000);
+    try {
+      await p.goto(`${fixtureOrigin}/frame-parent`, { timeout: 5000 });
+      await p.evaluate(() => {
+        const f = document.createElement('iframe'); f.name = 'http-child'; f.srcdoc = '<p>initial</p>';
+        document.body.appendChild(f);
+      });
+      assert.equal(await p.frameLocator('iframe').locator('p').textContent(), 'initial');
+      const f = p.frame({ name: 'http-child' });
+      assert.ok(f);
+      const response = await f.goto(`${fixtureOrigin}/frame-http`, { timeout: 5000 });
+      assert.equal(response.request().frame(), f);
+      assert.match(await response.text(), /Binding fixture/);
+      assert.equal(await f.locator('#message').textContent(), 'native DOM');
+      const responseWait = p.waitForResponse(`${fixtureOrigin}/json`, { timeout: 5000 });
+      assert.deepEqual(await f.evaluate(() => fetch('/json').then(r => r.json())), { answer: 47 });
+      const fetched = await responseWait;
+      assert.equal(fetched.request().frame(), f);
+      assert.deepEqual(await fetched.json(), { answer: 47 });
+      await p.route('**/frame-route', async route => {
+        assert.equal(route.request().frame(), f);
+        await route.fulfill({ status: 200, contentType: 'text/html', body: '<p>routed child</p>' });
+      });
+      const routed = await f.goto(`${fixtureOrigin}/frame-route`, { timeout: 5000 });
+      assert.equal(routed.request().frame(), f);
+      assert.equal(await f.locator('p').textContent(), 'routed child');
+      assert.equal(p.url(), `${fixtureOrigin}/frame-parent`);
+    } finally { await p.close(); }
+  });
+  await check('nested child removal preserves sibling worlds and invalidates old handles', async () => {
+    const p = await context.newPage();
+    p.setDefaultTimeout(5000);
+    try {
+      await p.goto(`${fixtureOrigin}/frame-parent`, { timeout: 5000 });
+      await p.evaluate(() => {
+        for (const name of ['outer', 'sibling']) {
+          const f = document.createElement('iframe'); f.id = name; f.name = name; f.srcdoc = '<p>' + name + '</p>';
+          document.body.appendChild(f);
+        }
+      });
+      assert.equal(await p.frameLocator('#outer').locator('p').textContent(), 'outer');
+      assert.equal(await p.frameLocator('#sibling').locator('p').textContent(), 'sibling');
+      const outer = p.frame({ name: 'outer' }); const sibling = p.frame({ name: 'sibling' });
+      await sibling.evaluate(() => { globalThis.marker = 23; });
+      await outer.evaluate(() => {
+        const f = document.createElement('iframe'); f.id = 'nested'; f.name = 'nested'; f.srcdoc = '<p>nested</p>';
+        document.body.appendChild(f);
+      });
+      assert.equal(await p.frameLocator('#outer').frameLocator('#nested').locator('p').textContent(), 'nested');
+      const nested = p.frame({ name: 'nested' });
+      assert.equal(nested.parentFrame(), outer);
+      const old = await nested.evaluateHandle(() => document.body);
+      const detached = p.waitForEvent('framedetached', { predicate: f => f === outer, timeout: 5000 });
+      await p.evaluate(() => document.getElementById('outer').remove());
+      await detached;
+      assert.equal(nested.isDetached(), true);
+      assert.equal(outer.isDetached(), true);
+      await assert.rejects(() => old.evaluate(el => el.textContent));
+      await old.dispose();
+      assert.equal(await sibling.evaluate(() => marker), 23);
+      assert.equal(p.frames().length, 2);
+    } finally { await p.close(); }
   });
 } finally {
   fixture.closeAllConnections();

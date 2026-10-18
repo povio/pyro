@@ -25,7 +25,7 @@ use std::sync::{Arc, OnceLock, Weak};
 use crate::network_protocol::{BodyBudget, BodyLimits};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use lp_browser::{BrowserThread, PageEvent, PageId, PageObserver};
+use lp_browser::{BrowserThread, Frame, FrameId, PageEvent, PageId, PageObserver};
 use lp_js::{ConsoleLevel, EngineHooks, JsException, Persistent, Realm, RealmId, Value};
 
 use serde::Deserialize;
@@ -222,12 +222,10 @@ pub(crate) struct PageState {
     pub(crate) id: PageId,
     pub(crate) context: ContextKey,
     pub(crate) sessions: Vec<String>,
-    /// Realms created by the navigation in progress; announced after
-    /// `Page.frameNavigated`, matching upstream's event order.
-    pub(crate) pending_realms: Vec<(RealmId, Option<String>, String)>,
-    pub(crate) navigating: bool,
-    /// `Page.navigate`/`reload` requests awaiting commit or failure: (request id, session id).
-    pub(crate) pending_navigations: Vec<(u64, String)>,
+    /// Ordered protocol notification state; native snapshots remain the source
+    /// of truth for live documents, realms, and reached lifecycle milestones.
+    pub(crate) frames: HashMap<FrameId, page::FrameEvents>,
+    pub(crate) pending_navigations: Vec<page::PendingNavigation>,
     /// Bounds recorded by Browser.setWindowBounds, reported back by getWindowForTarget.
     pub(crate) window_bounds: Option<serde_json::Value>,
     pub(crate) emulated_media: Option<serde_json::Value>,
@@ -358,9 +356,27 @@ impl EngineHost {
     }
 
     pub(crate) fn realm(&self, page: PageKey, realm: RealmId) -> Option<Realm> {
-        let state = self.pages.get(&page)?;
-        let page = self.thread.browser.page(state.id)?;
-        page.main_frame.realms.iter().find(|r| r.realm.id() == realm).map(|r| r.realm.clone())
+        self.frame_for_realm(page, realm)?.realms.iter().find(|r| r.realm.id() == realm).map(|r| r.realm.clone())
+    }
+
+    fn frame_for_realm(&self, page: PageKey, realm: RealmId) -> Option<Frame> {
+        let id = self.pages.get(&page)?.id;
+        self.thread.browser.frames(id).into_iter().find_map(|info| {
+            let frame = self.thread.browser.frame(id, &info.id)?;
+            frame.realms.iter().any(|r| r.realm.id() == realm).then_some(frame)
+        })
+    }
+
+    fn frame_for_document(&self, page: PageKey, document: &Rc<lp_webapi::PageDom>) -> Option<Frame> {
+        let id = self.pages.get(&page)?.id;
+        self.thread.browser.frames(id).into_iter().find_map(|info| {
+            let frame = self.thread.browser.frame(id, &info.id)?;
+            frame.page_dom.as_ref().is_some_and(|dom| Rc::ptr_eq(dom, document)).then_some(frame)
+        })
+    }
+
+    fn owns_frame(&self, page: PageId, frame: Option<&String>) -> bool {
+        frame.is_some_and(|id| self.thread.browser.frame(page, &FrameId(id.clone())).is_some())
     }
 
     pub(crate) fn main_realm(&self, page: PageKey) -> Option<Realm> {
@@ -401,10 +417,7 @@ impl EngineHost {
 
     /// Page owning `realm`, if any.
     pub(crate) fn page_of_realm(&self, realm: RealmId) -> Option<PageKey> {
-        self.pages.iter().find_map(|(key, state)| {
-            let page = self.thread.browser.page(state.id)?;
-            page.main_frame.realms.iter().any(|r| r.realm.id() == realm).then_some(*key)
-        })
+        self.pages.keys().copied().find(|key| self.frame_for_realm(*key, realm).is_some())
     }
 
     fn reply<T: serde::Serialize + ?Sized>(&self, cmd: &PageCommand<'_, '_>, result: &T) {
@@ -585,8 +598,7 @@ impl Host for EngineHost {
                 id,
                 context,
                 sessions: Vec::new(),
-                pending_realms: Vec::new(),
-                navigating: false,
+                frames: HashMap::new(),
                 pending_navigations: Vec::new(),
                 window_bounds: None,
                 emulated_media: None,

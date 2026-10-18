@@ -181,7 +181,7 @@ fn child_frame_late_runtime_and_lifecycle_enable_replay_each_live_frame() {
     for frame in [&h.frame_id, child_id] {
         let names: Vec<_> = events
             .iter()
-            .filter(|m| m["method"] == "Page.lifecycleEvent" && m["params"]["frameId"] == frame.as_ref())
+            .filter(|m| m["method"] == "Page.lifecycleEvent" && m["params"]["frameId"] == *frame)
             .map(|m| m["params"]["name"].as_str().unwrap())
             .collect();
         assert_eq!(
@@ -190,4 +190,230 @@ fn child_frame_late_runtime_and_lifecycle_enable_replay_each_live_frame() {
             "frame {frame}: {events:#?}"
         );
     }
+}
+
+#[test]
+fn child_http_navigation_fetch_and_body_capture_preserve_other_frames() {
+    let (address, server) = serve_html(4, "<!doctype html><p>http-child</p>");
+    let mut h = Harness::new();
+    enable(&mut h);
+    h.page("Network.enable", json!({}));
+    h.page("Page.setLifecycleEventsEnabled", json!({"enabled":true}));
+    let root = h.page("Page.navigate", json!({"url":format!("http://{address}/root")}));
+    let root_loader = root["result"]["loaderId"].clone();
+    h.run_for(80);
+    add_srcdoc(&mut h, "http-first", "first", None);
+    add_srcdoc(&mut h, "http-second", "second", None);
+    let first = child(&mut h, "http-first")["frame"]["id"].as_str().unwrap().to_owned();
+    let second = child(&mut h, "http-second")["frame"]["id"].as_str().unwrap().to_owned();
+    let second_reply = h.page("Page.navigate", json!({"frameId":second,"url":format!("http://{address}/second")}));
+    let second_loader = second_reply["result"]["loaderId"].clone();
+    h.run_for(80);
+    let mut events =
+        h.page_with_events("Page.navigate", json!({"frameId":first,"url":format!("http://{address}/first")}));
+    events.extend(h.run_for(80));
+    let first_context = default_context(&events, &first);
+    let first_loader = child(&mut h, "http-first")["frame"]["loaderId"].clone();
+    let request =
+        events.iter().find(|e| e["method"] == "Network.requestWillBeSent" && e["params"]["frameId"] == first).unwrap();
+    assert_eq!(request["params"]["requestId"], first_loader);
+    assert_eq!(request["params"]["type"], "Document");
+    assert!(events.iter().any(|e| e["method"] == "Network.responseReceived" && e["params"]["frameId"] == first));
+    assert!(!events.iter().any(|e| matches!(
+        e["method"].as_str(),
+        Some("Page.loadEventFired" | "Page.domContentEventFired" | "Runtime.executionContextsCleared")
+    )));
+    for loader in [&root_loader, &second_loader, &first_loader] {
+        let body = h.page("Network.getResponseBody", json!({"requestId":loader}));
+        assert!(body["result"]["body"].as_str().is_some_and(|s| s.contains("http-child")), "{body}");
+    }
+    let mut events = h.page_with_events(
+        "Runtime.evaluate",
+        json!({"contextId":first_context,
+        "expression":"fetch('/body').then(r => r.text())","awaitPromise":true,"returnByValue":true}),
+    );
+    events.extend(h.run_for(80));
+    let request =
+        events.iter().find(|e| e["method"] == "Network.requestWillBeSent" && e["params"]["type"] == "Fetch").unwrap();
+    assert_eq!(request["params"]["frameId"], first);
+    assert_eq!(request["params"]["loaderId"], first_loader);
+    let fetch_id = request["params"]["requestId"].clone();
+    assert!(h.page("Network.getResponseBody", json!({"requestId":fetch_id}))["result"]["body"].is_string());
+    h.page("Page.navigate", json!({"frameId":first,"url":"about:blank"}));
+    assert!(h.page("Network.getResponseBody", json!({"requestId":fetch_id}))["error"].is_object());
+    assert!(h.page("Network.getResponseBody", json!({"requestId":second_loader}))["result"]["body"].is_string());
+    let history = h.page("Page.getNavigationHistory", json!({}));
+    assert_eq!(
+        history["result"]["entries"].as_array().unwrap().len(),
+        2,
+        "child navigation does not alter root history: {history}"
+    );
+    server.join().unwrap();
+}
+
+#[test]
+fn child_fetch_interception_and_detach_reply_are_frame_scoped() {
+    let mut h = Harness::new();
+    enable(&mut h);
+    h.page("Network.enable", json!({}));
+    h.page("Page.setLifecycleEventsEnabled", json!({"enabled":true}));
+    add_srcdoc(&mut h, "routed", "before", None);
+    let frame = child(&mut h, "routed")["frame"]["id"].as_str().unwrap().to_owned();
+    h.page("Fetch.enable", json!({}));
+    let session = h.session.clone();
+    let navigation = h.send(Some(&session), "Page.navigate", json!({"frameId":frame,"url":"http://127.0.0.1:1/child"}));
+    let paused = until_event(&mut h, "Fetch.requestPaused");
+    let paused = paused.iter().find(|e| e["method"] == "Fetch.requestPaused").unwrap();
+    assert_eq!(paused["params"]["frameId"], frame);
+    assert_eq!(paused["params"]["resourceType"], "Document");
+    let mut events = h.page_with_events("Fetch.fulfillRequest", json!({"requestId":paused["params"]["requestId"],
+        "responseCode":200,"responseHeaders":[{"name":"content-type","value":"text/html"}],"body":"PHA+cm91dGVkPC9wPg=="}));
+    if !events.iter().any(|e| e["id"] == navigation) {
+        events.extend(h.until_response(navigation));
+    }
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !events.iter().any(|e| {
+        e["method"] == "Page.lifecycleEvent" && e["params"]["frameId"] == frame && e["params"]["name"] == "load"
+    }) {
+        assert!(Instant::now() < deadline, "child load missing: {events:#?}");
+        h.browser.host_mut().run_until_work(Some(deadline), || false);
+        h.browser.host_mut().flush();
+        events.extend(h.drain());
+    }
+    let context = default_context(&events, &frame);
+    assert_eq!(eval_in(&mut h, context, "document.querySelector('p').textContent"), "routed");
+    let navigation =
+        h.send(Some(&session), "Page.navigate", json!({"frameId":frame,"url":"http://127.0.0.1:1/detached"}));
+    until_event(&mut h, "Fetch.requestPaused");
+    let mut events =
+        h.page_with_events("Runtime.evaluate", json!({"expression":"document.querySelector('iframe').remove()"}));
+    if !events.iter().any(|e| e["id"] == navigation) {
+        events.extend(h.until_response(navigation));
+    }
+    let reply = events.iter().find(|e| e["id"] == navigation).unwrap();
+    assert!(reply["result"]["errorText"].is_string(), "{events:#?}");
+    assert_eq!(events.iter().filter(|e| e["id"] == navigation).count(), 1);
+    assert_eq!(h.page("Fetch.disable", json!({}))["result"], json!({}));
+}
+
+#[test]
+fn child_backend_ids_are_document_scoped_and_input_does_not_silently_target_root() {
+    let mut h = Harness::new();
+    enable(&mut h);
+    let root = h.page("Runtime.evaluate", json!({"expression":"document.body"}));
+    let root = h.page("DOM.describeNode", json!({"objectId":root["result"]["result"]["objectId"],"depth":0}));
+    let root_id = root["result"]["node"]["backendNodeId"].clone();
+    let events = add_srcdoc(&mut h, "nodes", "child", None);
+    let frame = child(&mut h, "nodes")["frame"]["id"].as_str().unwrap().to_owned();
+    let context = default_context(&events, &frame);
+    let object = h.page("Runtime.evaluate", json!({"contextId":context,"expression":"document.body"}));
+    let object_id = object["result"]["result"]["objectId"].clone();
+    let body = h.page("DOM.describeNode", json!({"objectId":object_id,"depth":0}));
+    let backend = body["result"]["node"]["backendNodeId"].clone();
+    let resolved = h.page("DOM.resolveNode", json!({"backendNodeId":backend}));
+    assert!(resolved["result"]["object"]["objectId"].is_string(), "{resolved}");
+    let root_context = default_context(&h.page_with_events("Runtime.enable", json!({})), &h.frame_id);
+    assert!(h.page("DOM.resolveNode", json!({"backendNodeId":backend,"executionContextId":root_context}))["error"]
+        .is_object());
+    for method in ["DOM.focus", "DOM.scrollIntoViewIfNeeded", "DOM.getBoxModel"] {
+        let error = h.page(method, json!({"backendNodeId":backend}));
+        assert!(error["error"]["message"].as_str().is_some_and(|s| s.contains("child frame")), "{error}");
+    }
+    for (method, params) in
+        [("Input.insertText", json!({"text":"x"})), ("Input.dispatchKeyEvent", json!({"type":"keyDown","key":"x"}))]
+    {
+        let error = h.page(method, params);
+        assert!(error["error"]["message"].as_str().is_some_and(|s| s.contains("child frames")), "{error}");
+    }
+    h.page("Page.navigate", json!({"frameId":frame,"url":"about:blank"}));
+    assert!(h.page("DOM.describeNode", json!({"backendNodeId":backend}))["error"].is_object());
+    assert!(h.page("DOM.describeNode", json!({"objectId":object_id}))["error"].is_object());
+    assert_eq!(
+        h.page("DOM.describeNode", json!({"backendNodeId":root_id,"depth":0}))["result"]["node"]["nodeName"],
+        "BODY"
+    );
+}
+
+#[test]
+fn concurrent_child_navigation_world_installation_and_origin_are_isolated() {
+    let (address, server) = serve_html(1, "<!doctype html><p>parent</p>");
+    let mut h = Harness::new();
+    enable(&mut h);
+    h.page("Page.navigate", json!({"url":format!("http://{address}/root")}));
+    h.run_for(80);
+    let first_events = add_srcdoc(&mut h, "first", "one", None);
+    let second_events = add_srcdoc(&mut h, "second", "two", Some("allow-scripts"));
+    let first = child(&mut h, "first")["frame"].clone();
+    let second = child(&mut h, "second")["frame"].clone();
+    assert_eq!(first["securityOrigin"], format!("http://{address}"));
+    assert_eq!(second["securityOrigin"], "://");
+    let first_id = first["id"].as_str().unwrap();
+    let second_id = second["id"].as_str().unwrap();
+    let first_old = default_context(&first_events, first_id);
+    let second_old = default_context(&second_events, second_id);
+    let events = h.page_with_events(
+        "Page.addScriptToEvaluateOnNewDocument",
+        json!({"source":"globalThis.utilityMarker = 91",
+        "worldName":"utility","runImmediately":true}),
+    );
+    let root_id = h.frame_id.clone();
+    for id in [root_id.as_str(), first_id, second_id] {
+        let context = events
+            .iter()
+            .find(|e| {
+                e["method"] == "Runtime.executionContextCreated"
+                    && e["params"]["context"]["auxData"]["frameId"] == *id
+                    && e["params"]["context"]["name"] == "utility"
+            })
+            .unwrap_or_else(|| panic!("missing utility for {id}: {events:#?}"))["params"]["context"]["id"]
+            .as_i64()
+            .unwrap();
+        assert_eq!(
+            h.page("Runtime.evaluate", json!({"contextId":context,"expression":"utilityMarker","returnByValue":true}))
+                ["result"]["result"]["value"],
+            91
+        );
+    }
+    assert_eq!(eval_in(&mut h, first_old, "typeof utilityMarker"), "undefined");
+    h.page("Fetch.enable", json!({}));
+    let session = h.session.clone();
+    let one =
+        h.send(Some(&session), "Page.navigate", json!({"frameId":first_id,"url":format!("http://{address}/one")}));
+    let paused_one = until_event(&mut h, "Fetch.requestPaused");
+    let paused_one =
+        paused_one.iter().find(|e| e["method"] == "Fetch.requestPaused").unwrap()["params"]["requestId"].clone();
+    let two =
+        h.send(Some(&session), "Page.navigate", json!({"frameId":second_id,"url":format!("http://{address}/two")}));
+    let paused_two = until_event(&mut h, "Fetch.requestPaused");
+    let paused_two =
+        paused_two.iter().find(|e| e["method"] == "Fetch.requestPaused").unwrap()["params"]["requestId"].clone();
+    for (pause, request, frame, old) in
+        [(paused_two, two, second_id, second_old), (paused_one, one, first_id, first_old)]
+    {
+        let mut events = h.page_with_events(
+            "Fetch.fulfillRequest",
+            json!({"requestId":pause,"responseCode":200,"body":"PHA+bmV3PC9wPg=="}),
+        );
+        if !events.iter().any(|e| e["id"] == request) {
+            events.extend(h.until_response(request));
+        }
+        assert_eq!(events.iter().find(|e| e["id"] == request).unwrap()["result"]["frameId"], frame);
+        assert!(!events.iter().any(|e| e["method"] == "Runtime.executionContextsCleared"));
+        assert!(events
+            .iter()
+            .any(|e| e["method"] == "Runtime.executionContextDestroyed" && e["params"]["executionContextId"] == old));
+        let current = default_context(&events, frame);
+        assert_eq!(eval_in(&mut h, current, "typeof utilityMarker"), "undefined");
+        let utility = events
+            .iter()
+            .find(|e| {
+                e["method"] == "Runtime.executionContextCreated"
+                    && e["params"]["context"]["auxData"]["frameId"] == frame
+                    && e["params"]["context"]["name"] == "utility"
+            })
+            .unwrap();
+        assert_eq!(eval_in(&mut h, utility["params"]["context"]["id"].as_i64().unwrap(), "utilityMarker"), 91);
+    }
+    h.page("Fetch.disable", json!({}));
+    server.join().unwrap();
 }
