@@ -133,12 +133,16 @@ impl EngineHost {
             }
             "clearBrowserCache" => {
                 // Chrome clears the cache shared by the target's browser
-                // context: other pages of that context miss afterwards.
+                // context: other pages of that context miss afterwards. With
+                // the opt-in shared public-asset cache, its process-wide store
+                // is part of what this context reads, so it is cleared too (a
+                // no-op when sharing is off).
                 let state = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?;
                 let context =
                     self.contexts.get(&state.context).ok_or_else(|| CdpError::server("Browser context is gone"))?;
                 if let Some(net) = self.thread.browser.context_net(context.id) {
                     net.clear_http_cache();
+                    net.clear_shared_asset_cache();
                 }
                 Ok(Some(json!({})))
             }
