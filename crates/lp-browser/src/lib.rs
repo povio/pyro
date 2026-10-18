@@ -7,6 +7,7 @@
 //! `lp-webapi` supplies bindings in the main and isolated document worlds.
 
 mod bindings;
+mod focus;
 mod frames;
 mod loader;
 mod nav;
@@ -760,6 +761,7 @@ impl Browser {
     ) -> Result<(), JsError> {
         let host = self.page(page.page).ok_or(JsError::ContextDestroyed)?.frames.clone();
         self.cancel_pending_document(page);
+        host.invalidate_focus(page, false);
         host.retire_children(page);
         host.drain_retired();
         if page.child.is_none() {
@@ -885,6 +887,7 @@ impl Browser {
         let Some(pos) = self.pages.iter().position(|p| p.id == page) else { return false };
         self.cancel_pending_document(page.into());
         let host = self.pages[pos].frames.clone();
+        host.invalidate_focus(page.into(), false);
         host.retire_children(page.into());
         host.drain_retired();
         let loader = self.pages[pos].main_frame.loader_id.clone();

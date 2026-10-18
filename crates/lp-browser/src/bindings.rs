@@ -22,6 +22,21 @@ struct Hooks {
 }
 
 impl PageHooks for Hooks {
+    fn focus_document_is_live(&self) -> bool {
+        self.frames.upgrade().is_some_and(|host| {
+            host.matches(self.page, &self.loader)
+                && host.frame(self.page).and_then(|f| f.page_dom).is_some_and(|p| !p.is_disposed())
+        })
+    }
+
+    fn is_focused(&self) -> bool {
+        self.frames.upgrade().is_some_and(|host| host.is_focused(self.page, &self.loader))
+    }
+
+    fn request_focus(&self, target: lp_webapi::FocusTarget, token: &lp_webapi::FocusTransition) -> bool {
+        self.frames.upgrade().is_some_and(|host| host.request_focus(self.page, &self.loader, target, token))
+    }
+
     fn post_task(&self, task: Box<dyn FnOnce()>) {
         let page = self.page;
         let loader = self.loader.clone();
