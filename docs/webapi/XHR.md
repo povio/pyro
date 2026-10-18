@@ -57,9 +57,24 @@ request IDs, clears timers/buffers and active roots, and suppresses stale queued
 events. A shared context NetClient remains usable by other pages. Call at a
 browser-thread safe point without holding a DOM borrow.
 
-Explicit gaps: synchronous XHR, URL username/password authentication, upload
-observation (`upload`), responseXML/document responses, and Document request
-serialization (FormData bodies are sent as multipart/form-data). The first four are rejected with NotSupportedError.
+Upload observation: `xhr.upload` is an `XMLHttpRequestUpload` (one per request,
+illegal constructor, the seven `on*` handlers). It follows the XHR flags.
+- The upload listener flag is captured at `send()`, so listeners added later
+  do not count.
+- With no request body the upload complete flag is set at once: no upload
+  events.
+- Upload `loadstart` (0, body length) fires after the request's `loadstart`.
+- When the response headers arrive, upload `progress`/`load`/`loadend` fire
+  with (length, length) before readyState 2.
+- Error, abort and timeout fire the upload event and `loadend` with (0, 0)
+  after `readystatechange` and before the request's own events.
+- The native transport sends a body in one piece, so there is one upload
+  `progress` event rather than intermediate ones.
+
+Explicit gaps: synchronous XHR, URL username/password authentication,
+responseXML/document responses, and Document request serialization (FormData
+bodies are sent as multipart/form-data). The first three are rejected with
+NotSupportedError.
 Full MIME/XML sniffing, compressed transfer progress accounting and complete
 XMLHttpRequest compatibility are not claimed. Native HTTPS and the existing
 URL/CORS/string-model limitations still apply. Ordinary response readers are
