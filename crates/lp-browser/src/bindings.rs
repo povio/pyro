@@ -1,6 +1,6 @@
 //! Connects document bindings to the browser's lifecycle and task queues.
 
-use crate::{Browser, LoaderId, NavigateOpts, NavigationReason, PageId};
+use crate::{Browser, ContextId, LoaderId, NavigateOpts, NavigationReason, ObserverCell, PageId};
 use lp_js::JsError;
 use lp_runtime::{LoopHandle, Scheduler, TaskSource};
 use lp_webapi::{NavigationRequest, PageDom, PageHooks, RemotePoster};
@@ -10,9 +10,14 @@ use std::sync::Arc;
 
 struct Hooks {
     page: PageId,
+    /// Browser context of the page: native request ids are only unique
+    /// within its `NetClient`.
+    context: ContextId,
     loader: LoaderId,
     sched: Scheduler<Browser>,
     handle: LoopHandle<Browser>,
+    /// The browser's observer cell (shared, so later `set_observer` calls apply).
+    observer: ObserverCell,
 }
 
 impl PageHooks for Hooks {
@@ -57,6 +62,15 @@ impl PageHooks for Hooks {
                 }
             }
         });
+    }
+
+    fn network_delivery(&self, id: lp_net::RequestId, frontier: lp_net::NetworkDelivery) {
+        // Clone the observer out of the cell first, as `emit_to` does: the
+        // callback must not run under the cell borrow.
+        let observer = self.observer.borrow().clone();
+        if let Some(observer) = observer {
+            observer.on_network_delivery(self.page, self.context, &self.loader, id, frontier);
+        }
     }
 
     fn remote_poster(&self) -> Option<RemotePoster> {
@@ -114,9 +128,11 @@ impl Browser {
         *bindings.net.borrow_mut() = self.context_net(context).cloned();
         bindings.set_hooks(Some(Rc::new(Hooks {
             page,
+            context,
             loader: loader.clone(),
             sched: self.scheduler(),
             handle: self.loop_handle(),
+            observer: self.observer.clone(),
         })));
         Ok(bindings)
     }
@@ -134,5 +150,65 @@ impl Browser {
                 bindings.apply_style_event(&event);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{PageEvent, PageObserver};
+    use std::cell::Cell;
+
+    type Seen = (PageId, ContextId, LoaderId, lp_net::RequestId, lp_net::NetworkDelivery);
+
+    /// Unregisters itself from the browser's observer cell during the
+    /// callback, which needs the cell not to be borrowed at that point.
+    struct SelfRemoving {
+        cell: ObserverCell,
+        calls: Cell<u32>,
+        seen: RefCell<Vec<Seen>>,
+    }
+
+    impl PageObserver for SelfRemoving {
+        fn on_page_event(&self, _page: PageId, _event: &PageEvent) {}
+        fn on_network_delivery(
+            &self,
+            page: PageId,
+            context: ContextId,
+            loader: &LoaderId,
+            request: lp_net::RequestId,
+            frontier: lp_net::NetworkDelivery,
+        ) {
+            self.calls.set(self.calls.get() + 1);
+            self.seen.borrow_mut().push((page, context, loader.clone(), request, frontier));
+            *self.cell.try_borrow_mut().expect("observer cell borrowed during the callback") = None;
+        }
+    }
+
+    #[test]
+    fn network_delivery_forwards_identity_without_holding_the_observer_cell() {
+        let event_loop = lp_runtime::EventLoop::<Browser>::new();
+        let cell: ObserverCell = Rc::new(RefCell::new(None));
+        let observer =
+            Rc::new(SelfRemoving { cell: cell.clone(), calls: Cell::new(0), seen: RefCell::new(Vec::new()) });
+        *cell.borrow_mut() = Some(observer.clone());
+        let hooks = Hooks {
+            page: PageId(3),
+            context: ContextId(7),
+            loader: LoaderId("L1".into()),
+            sched: event_loop.scheduler(),
+            handle: event_loop.handle(),
+            observer: cell.clone(),
+        };
+        let frontier = lp_net::NetworkDelivery { response: true, data_bytes: 5, terminal: false };
+        hooks.network_delivery(lp_net::RequestId(1), frontier);
+        // The observer removed itself: later deliveries reach nobody.
+        hooks.network_delivery(lp_net::RequestId(1), lp_net::NetworkDelivery { terminal: true, ..frontier });
+        assert_eq!(observer.calls.get(), 1);
+        assert_eq!(
+            observer.seen.borrow().as_slice(),
+            [(PageId(3), ContextId(7), LoaderId("L1".into()), lp_net::RequestId(1), frontier)]
+        );
+        assert!(cell.borrow().is_none());
     }
 }
