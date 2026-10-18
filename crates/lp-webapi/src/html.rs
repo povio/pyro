@@ -96,10 +96,10 @@ macro_rules! simple_class {
     };
 }
 
-/// Resolves a URL attribute against the node document's URL.
+/// Resolves a URL attribute against the node document's inherited base or URL.
 pub fn resolve_url(dom: &Dom, node: NodeId, value: &str) -> String {
-    let base = dom.node_document(node).ok().and_then(|d| dom.document_data(d).ok().map(|dd| dd.url.to_string()));
-    match base.as_deref().and_then(|b| lp_net::Url::parse(b).ok()) {
+    let base = dom.node_document(node).ok().and_then(|d| dom.document_base_url(d).ok());
+    match base.and_then(|b| lp_net::Url::parse(b).ok()) {
         Some(b) => b.join(value.trim()).map(|u| u.to_string()).unwrap_or_else(|_| value.to_owned()),
         None => value.to_owned(),
     }
@@ -1376,6 +1376,9 @@ simple_class!(HtmlIFrameElement, "HTMLIFrameElement", HtmlElement, |def| {
     reflect_bool!(def, "allowFullscreen", "allowfullscreen");
     def.getter("sandbox", |s, n| Ok(collections::token_list(s, n.page(), n.id, "sandbox")?.value()));
     def.getter("contentDocument", |s, n| {
+        if let Some(document) = n.page().frame_document_value(s, n.id)? {
+            return Ok(document);
+        }
         let doc = n.page().frame_document(n.id);
         node_value(s, n.page(), doc)
     });

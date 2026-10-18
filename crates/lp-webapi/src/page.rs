@@ -6,11 +6,12 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use lp_dom::events::TargetKey;
+pub use lp_dom::iframe::IframeAttribute;
 use lp_dom::parse::DomRef;
 use lp_dom::select::SelectorCache;
 use lp_dom::{Dom, NodeId};
 use lp_js::{IdentityKey, Persistent, RealmId, WeakRealm};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 static NEXT_PAGE: AtomicU64 = AtomicU64::new(1);
 
@@ -23,6 +24,9 @@ pub struct PageDom {
     id: u64,
     disposed: Cell<bool>,
     document: Cell<NodeId>,
+    scripting_disabled: Cell<bool>,
+    flushing_iframes: Cell<bool>,
+    connected_iframes: RefCell<FxHashSet<NodeId>>,
     pub(crate) selectors: RefCell<SelectorCache>,
     /// Node references released by finalized wrappers while the DOM was
     /// borrowed; applied at the next safe point.
@@ -117,7 +121,21 @@ pub trait PageHooks {
     /// Called after the delivery snapshot and before any resulting JS, with
     /// binding locks/borrows released. Default embedders need no observer.
     fn network_delivery(&self, _id: lp_net::RequestId, _frontier: lp_net::NetworkDelivery) {}
-    /// Document of the child browsing context of `iframe`, if any.
+    /// Called without DOM/hook borrows before the inserting native call returns.
+    fn iframe_connected(&self, _iframe: NodeId) {}
+    /// Removed iframe owners, descendants before ancestors.
+    fn iframe_disconnected(&self, _iframe: NodeId) {}
+    fn iframe_attribute_changed(&self, _iframe: NodeId, _attribute: IframeAttribute) {}
+    /// Actual child document wrapper, bound to the child's PageDom/world.
+    /// `Some(null)` denies access; `None` opts into the legacy NodeId fallback.
+    fn frame_document_value<'s>(
+        &self,
+        _scope: &lp_js::Scope<'s>,
+        _iframe: NodeId,
+    ) -> lp_js::JsResult<Option<lp_js::Value<'s>>> {
+        Ok(None)
+    }
+    /// Legacy document lookup for embedders sharing the parent's binding state.
     fn frame_document(&self, _iframe: NodeId) -> Option<NodeId> {
         None
     }
@@ -129,11 +147,15 @@ pub trait PageHooks {
 
 impl PageDom {
     pub fn new(dom: DomRef, document: NodeId) -> Rc<PageDom> {
+        dom.borrow_mut().watch_iframes(document).expect("page document");
         Rc::new(PageDom {
             dom,
             id: NEXT_PAGE.fetch_add(1, Ordering::Relaxed),
             disposed: Cell::new(false),
             document: Cell::new(document),
+            scripting_disabled: Cell::new(false),
+            flushing_iframes: Cell::new(false),
+            connected_iframes: RefCell::new(FxHashSet::default()),
             selectors: RefCell::new(SelectorCache::default()),
             pending_release: RefCell::new(Vec::new()),
             current_script: Cell::new(None),
@@ -212,6 +234,8 @@ impl PageDom {
         if self.disposed.replace(true) {
             return;
         }
+        self.dom.borrow_mut().unwatch_iframes(self.document());
+        self.connected_iframes.borrow_mut().clear();
         crate::fetch::dispose(self);
         crate::xhr::dispose(self);
         crate::mutation_observer::dispose(self);
@@ -246,12 +270,96 @@ impl PageDom {
     }
     /// Switches the displayed document (navigation commit).
     pub fn set_document(&self, doc: NodeId) {
+        {
+            let mut dom = self.dom.borrow_mut();
+            dom.unwatch_iframes(self.document());
+            dom.watch_iframes(doc).expect("replacement document");
+        }
+        self.connected_iframes.borrow_mut().clear();
         self.document.set(doc);
         self.opaque_storage.clear();
         // Object URLs belong to the replaced document.
         drop(self.blob_urls.take());
         let viewport = self.layout.borrow().viewport().clone();
         *self.layout.borrow_mut() = lp_dom::layout::Layout::with_viewport(doc, viewport);
+    }
+
+    /// Browser-owned sandbox policy. Explicit inspector/Realm evaluation is
+    /// unaffected; parser, dynamic-script and timer checks belong to the embedder.
+    pub fn set_scripting_disabled(&self, disabled: bool) {
+        self.scripting_disabled.set(disabled);
+    }
+    pub fn scripting_disabled(&self) -> bool {
+        self.scripting_disabled.get()
+    }
+
+    /// Flush after parser/native mutation before entering page script. Native
+    /// binding callbacks call this automatically after releasing their borrows.
+    /// Reentrant mutations are drained by the outer flush; a held DOM borrow
+    /// defers work until the next safe point.
+    pub fn flush_iframe_events(&self) {
+        use lp_dom::iframe::IframeChange;
+        if self.is_disposed() || self.flushing_iframes.replace(true) {
+            return;
+        }
+        struct Reset<'a>(&'a Cell<bool>);
+        impl Drop for Reset<'_> {
+            fn drop(&mut self) {
+                self.0.set(false);
+            }
+        }
+        let _reset = Reset(&self.flushing_iframes);
+        loop {
+            let events = {
+                let Ok(mut dom) = self.dom.try_borrow_mut() else { return };
+                dom.take_iframe_events(self.document())
+            };
+            if events.is_empty() {
+                break;
+            }
+            struct Pins<'a> {
+                page: &'a PageDom,
+                events: Vec<lp_dom::iframe::IframeEvent>,
+            }
+            impl Drop for Pins<'_> {
+                fn drop(&mut self) {
+                    let mut dom = self.page.dom.borrow_mut();
+                    for event in &self.events {
+                        dom.release(event.node);
+                    }
+                }
+            }
+            let pins = Pins { page: self, events };
+            for event in &pins.events {
+                if self.is_disposed() {
+                    return;
+                }
+                let Some(hooks) = self.hooks() else { continue };
+                let connected = {
+                    let dom = self.dom.borrow();
+                    dom.is_connected(event.node).unwrap_or(false)
+                        && dom.node_document(event.node).ok() == Some(self.document())
+                };
+                match event.change {
+                    IframeChange::Connected if connected => {
+                        let new = self.connected_iframes.borrow_mut().insert(event.node);
+                        if new {
+                            hooks.iframe_connected(event.node);
+                        }
+                    }
+                    IframeChange::Disconnected => {
+                        let removed = self.connected_iframes.borrow_mut().remove(&event.node);
+                        if removed {
+                            hooks.iframe_disconnected(event.node);
+                        }
+                    }
+                    IframeChange::AttributeChanged(attribute) if connected => {
+                        hooks.iframe_attribute_changed(event.node, attribute);
+                    }
+                    _ => (),
+                }
+            }
+        }
     }
 
     /// Emulated viewport (CDP Emulation.setDeviceMetricsOverride etc.).
@@ -342,6 +450,7 @@ impl PageDom {
     /// listener-holding wrappers of disconnected nodes, re-pins reconnected
     /// ones, and frees unreachable DOM nodes.
     pub fn after_task(&self) {
+        self.flush_iframe_events();
         crate::message_channel::reconcile_ports(self);
         crate::mutation_observer::after_task(self);
         crate::intersection_observer::after_task(self);
@@ -368,7 +477,14 @@ impl PageDom {
     }
 
     pub fn set_hooks(&self, hooks: Option<Rc<dyn PageHooks>>) {
-        *self.hooks.borrow_mut() = hooks;
+        let seed = self.hooks.borrow().is_none() && hooks.is_some();
+        drop(self.hooks.replace(hooks));
+        if seed && !self.is_disposed() {
+            let mut dom = self.dom.borrow_mut();
+            dom.unwatch_iframes(self.document());
+            dom.watch_iframes(self.document()).expect("page document");
+            self.connected_iframes.borrow_mut().clear();
+        }
     }
     pub(crate) fn hooks(&self) -> Option<Rc<dyn PageHooks>> {
         self.hooks.borrow().clone()
@@ -380,6 +496,9 @@ impl PageDom {
         }
     }
     pub(crate) fn navigate(&self, req: NavigationRequest) {
+        if self.scripting_disabled() && lp_net::Url::parse(&req.url).is_ok_and(|url| url.scheme() == "javascript") {
+            return;
+        }
         if let Some(h) = self.hooks() {
             h.navigate(req);
         }
@@ -397,6 +516,16 @@ impl PageDom {
     }
     pub(crate) fn frame_document(&self, iframe: NodeId) -> Option<NodeId> {
         self.hooks().and_then(|h| h.frame_document(iframe))
+    }
+    pub(crate) fn frame_document_value<'s>(
+        &self,
+        s: &lp_js::Scope<'s>,
+        iframe: NodeId,
+    ) -> lp_js::JsResult<Option<lp_js::Value<'s>>> {
+        match self.hooks() {
+            Some(hooks) => hooks.frame_document_value(s, iframe),
+            None => Ok(None),
+        }
     }
     pub(crate) fn frame_window<'s>(
         &self,
