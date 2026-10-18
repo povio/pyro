@@ -5,7 +5,7 @@ use bytes::Bytes;
 use http::{HeaderMap, HeaderValue, Method, StatusCode};
 use url::Url;
 
-/// Process-unique request id. Also used as CDP `Network.requestId` and as
+/// Request id, unique per `NetClient` (each context client counts from 1). Also used as CDP `Network.requestId` and as
 /// `Fetch.requestPaused.networkId`.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct RequestId(pub u64);
