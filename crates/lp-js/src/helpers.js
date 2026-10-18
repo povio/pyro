@@ -34,6 +34,13 @@
   const promiseThen = P.prototype.then;
   const promiseResolveFn = P.resolve;
   const promiseResolve = (v) => apply(promiseResolveFn, P, [v]);
+  // Native microtask scheduling must not consult page-controlled Promise
+  // constructors/species. A polyfill may itself use queueMicrotask there,
+  // causing unbounded recursive scheduling through the host bridge.
+  // This private settled seed selects the intrinsic default constructor and
+  // never escapes the helper closure; ordinary value assimilation is unchanged.
+  const microtaskSeed = promiseResolve(undefined);
+  defineProperty(microtaskSeed, 'constructor', { value: undefined });
   const hasInstance = Function.prototype[Symbol.hasInstance];
   const WM = WeakMap;
   const wmGet = WM.prototype.get;
@@ -197,7 +204,7 @@
       try { defineProperty(fn, 'name', { value: name }); } catch (_) {}
     },
     then(value, onFulfilled, onRejected) {
-      apply(promiseThen, promiseResolve(value), [onFulfilled, onRejected]);
+      apply(promiseThen, value === undefined ? microtaskSeed : promiseResolve(value), [onFulfilled, onRejected]);
     },
     callWith(fn, thisArg, ...args) {
       return apply(fn, thisArg, args);
