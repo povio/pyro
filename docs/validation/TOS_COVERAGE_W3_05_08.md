@@ -109,8 +109,12 @@ W2 and worker 3 have agreed to split the remaining 53 uncovered files:
   | upstream `2ad38773` | `7f76ccfece22e7130d39c8884321f5dea51f4bb2e195542944c3440a86dc4339` | W2's build, copied read-only |
 
   - Main `e56e787` includes PR75, PR76, PR80 and PR82. Its tree is `551b01bf`,
-    the same tree as W2's tested integration candidate. PR85, merged later, is
-    docs-only and leaves the tree unchanged.
+    the same tree as W2's tested integration candidate. All results here are
+    for the binary built from exactly `e56e787`.
+  - PR84 and PR85 merged later (current main `09c05b3`). Between `e56e787` and
+    `09c05b3` only documentation and evidence files change, so the Git tree
+    differs but the production sources do not. `09c05b3` was not built or run
+    for this evidence.
   - The main binary came from a fresh `git clone --no-hardlinks` at the exact
     SHA, built in the clone's root so the repository's
     `scripts/macos/link-and-sign.sh` linker applied, with a fresh target,
