@@ -1755,6 +1755,65 @@ impl ObserverTasks {
 }
 
 #[test]
+fn window_message_source_allows_task_schedulers_in_each_world() {
+    let e = env("<body>");
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    let class = e.engine.register::<TestWindow>();
+    let isolated = new_realm(&e.engine, class, &e.page, "message-source");
+    for realm in [&e.main, &isolated] {
+        assert_eq!(
+            eval(
+                realm,
+                r#"
+            globalThis.delivered = [];
+            addEventListener('message', event => {
+                if (event.source === window && event.data === 'scheduler-task') {
+                    globalThis.retainedMessage = event;
+                    delivered.push(event.isTrusted && event.target === window);
+                }
+            });
+            new MessageEvent('message').source === null
+        "#
+            ),
+            "true"
+        );
+    }
+    eval(&e.main, "postMessage('scheduler-task', '*')");
+    assert_eq!(eval(&e.main, "delivered.length"), "0", "delivery remains a separate task");
+    tasks.drain();
+    for realm in [&e.main, &isolated] {
+        assert_eq!(eval(realm, "delivered.join()"), "true");
+        assert_eq!(eval(realm, "retainedMessage.source === window"), "true");
+    }
+}
+
+#[test]
+fn window_message_source_does_not_root_a_released_event_cycle() {
+    let e = env("<body>");
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    eval(
+        &e.main,
+        r#"
+        addEventListener('message', event => {
+            globalThis.eventRef = new WeakRef(event);
+            event.source.retainedMessage = event;
+        }, {once:true});
+        postMessage('cycle', '*');
+    "#,
+    );
+    tasks.drain();
+    assert_eq!(eval(&e.main, "retainedMessage.source === window"), "true");
+    eval(&e.main, "retainedMessage = null; 1");
+    for _ in 0..6 {
+        e.engine.collect_garbage_now();
+        e.engine.drain_finalized();
+    }
+    assert_eq!(eval(&e.main, "eventRef.deref() === undefined"), "true");
+}
+
+#[test]
 fn intersection_observer_initial_task_and_geometry() {
     let e = env("<body><div id=t style='width:100px;height:100px'></div></body>");
     let tasks = Rc::new(ObserverTasks::default());

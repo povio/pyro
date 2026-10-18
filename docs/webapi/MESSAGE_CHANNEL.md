@@ -52,6 +52,18 @@ Gaps, all explicit:
 - `window.postMessage` still passes values without cloning; see
   [STRUCTURED_CLONE](STRUCTURED_CLONE.md).
 
+Same-window `window.postMessage` events expose the receiving world's Window
+as `event.source`. The source is stored as a native window target key, with no
+event-to-global JavaScript persistent root. This supports schedulers that accept
+only messages where `event.source === window`, including JSZip's `setImmediate`
+fallback. Delivery uses the embedder's queued `PageHooks::post_task`; embedders
+without hooks retain the existing inline fallback. Port events and constructed
+MessageEvents without a source continue to return `null`.
+
+This does not add cross-window messaging, target-origin enforcement, transfer
+support, or `MessageEventInit.source` handling. It does not change message-data
+retention or cloning semantics.
+
 Tests (`crates/lp-webapi/tests/dom_js.rs`):
 - `message_channel_delivers_cloned_messages_fifo_as_tasks`
 - `message_port_start_close_transfer_and_clone_errors`
