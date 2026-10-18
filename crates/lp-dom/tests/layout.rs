@@ -2420,3 +2420,18 @@ fn automatic_height_invalidates_for_hidden_subtrees_and_stylesheet_changes() {
     p.set(child, "class", "tall");
     assert_eq!(p.rect(outer).height, tall);
 }
+
+#[test]
+fn focus_reveals_auto_scroller_before_viewport_and_preserves_visible_axes() {
+    let mut p = page_with(&format!("<!doctype html><body><div id=c style='overflow:auto;width:100px;height:100px'>{}<button id=b style='width:20px;height:20px'>target</button><div style='height:300px'>tail</div></div></body>", "<div style='height:20px'>row</div>".repeat(50)), Viewport { width: 1440, height: 900, ..Default::default() });
+    let c = p.id("c");
+    let b = p.id("b");
+    let before = p.layout.bounding_client_rect(&p.dom, b);
+    assert!(before.top() > p.layout.bounding_client_rect(&p.dom, c).bottom());
+    assert_eq!(p.layout.reveal_for_focus(&p.dom, b), vec![ScrollTarget::Container(c)]);
+    let target = p.layout.bounding_client_rect(&p.dom, b);
+    let container = p.layout.bounding_client_rect(&p.dom, c);
+    assert!(target.top() >= container.top() && target.bottom() <= container.bottom());
+    assert!((target.top() - container.top() - 40.0).abs() < 1.0);
+    assert!(p.layout.reveal_for_focus(&p.dom, b).is_empty());
+}

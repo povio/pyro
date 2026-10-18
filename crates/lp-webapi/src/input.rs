@@ -83,12 +83,12 @@ fn live_element(page: &PageDom, doc: NodeId, el: NodeId) -> bool {
     dom.node_document(el).ok() == Some(doc) && dom.is_connected(el).unwrap_or(false)
 }
 
-fn request_focus(page: &Rc<PageDom>, target: FocusTarget) -> Option<FocusTransition> {
+fn request_focus(page: &Rc<PageDom>, target: FocusTarget, prevent_scroll: bool) -> Option<FocusTransition> {
     if !focus_document_is_live(page) {
         return None;
     }
     let doc = page.document();
-    let token = FocusTransition::new();
+    let token = FocusTransition::with_prevent_scroll(prevent_scroll);
     adopt_transition(page, &token);
     let hooks = page.hooks();
     let apply = hooks.is_none_or(|h| h.request_focus(target, &token));
@@ -97,11 +97,16 @@ fn request_focus(page: &Rc<PageDom>, target: FocusTarget) -> Option<FocusTransit
 
 /// HTML focusing steps, coordinated with the browsing-context owner.
 pub fn focus_element(page: &Rc<PageDom>, el: NodeId) {
+    focus_element_with_options(page, el, false);
+}
+
+/// Focus with the already-converted preventScroll option.
+pub fn focus_element_with_options(page: &Rc<PageDom>, el: NodeId, prevent_scroll: bool) {
     let doc = page.document();
     if !live_element(page, doc, el) || !page.dom.borrow().is_focusable(el).unwrap_or(false) {
         return;
     }
-    if let Some(token) = request_focus(page, FocusTarget::Element(el)) {
+    if let Some(token) = request_focus(page, FocusTarget::Element(el), prevent_scroll) {
         focus_element_with_transition(page, el, &token);
     }
 }
@@ -134,11 +139,25 @@ pub fn focus_element_with_transition(page: &Rc<PageDom>, el: NodeId, token: &Foc
         page.editing_target.set(Some(el));
     }
     page.remember_focus_value(el);
+    let scrolled = if token.prevents_scroll() {
+        Vec::new()
+    } else {
+        page.layout.borrow_mut().reveal_for_focus(&page.dom.borrow(), el)
+    };
     fire_focus_event(page, el, "focus", false, prev);
     if !live_document(page, doc, token) || !live_element(page, doc, el) {
         return;
     }
     fire_focus_event(page, el, "focusin", true, prev);
+    if live_document(page, doc, token) {
+        for target in scrolled {
+            let node = match target {
+                lp_dom::layout::ScrollTarget::Viewport => None,
+                lp_dom::layout::ScrollTarget::Container(node) => Some(node),
+            };
+            crate::layout_api::fire_scroll(page, node);
+        }
+    }
 }
 
 fn run_blur(page: &Rc<PageDom>, doc: NodeId, el: NodeId, related: Option<NodeId>, token: &FocusTransition) {
@@ -163,7 +182,7 @@ pub fn blur_element(page: &Rc<PageDom>, el: NodeId) {
     if page.dom.borrow().focused(page.document()).ok().flatten() != Some(el) {
         return;
     }
-    if let Some(token) = request_focus(page, FocusTarget::Blur(el)) {
+    if let Some(token) = request_focus(page, FocusTarget::Blur(el), false) {
         // Owner callbacks may already have changed the active element.
         if page.dom.borrow().focused(page.document()).ok().flatten() == Some(el) {
             blur_document_with_transition(page, &token);
@@ -172,7 +191,7 @@ pub fn blur_element(page: &Rc<PageDom>, el: NodeId) {
 }
 
 pub fn focus_window(page: &Rc<PageDom>) {
-    if let Some(token) = request_focus(page, FocusTarget::Window) {
+    if let Some(token) = request_focus(page, FocusTarget::Window, false) {
         focus_window_with_transition(page, &token);
     }
 }

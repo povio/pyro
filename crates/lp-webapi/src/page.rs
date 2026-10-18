@@ -112,7 +112,10 @@ pub type RemotePoster = std::sync::Arc<dyn Fn(Box<dyn FnOnce() + Send>) + Send +
 /// Cancellation shared by native focus steps and the browsing-context owner.
 /// A nested transition cancels the interrupted one across document boundaries.
 #[derive(Clone, Debug)]
-pub struct FocusTransition(Rc<Cell<bool>>);
+pub struct FocusTransition {
+    current: Rc<Cell<bool>>,
+    prevent_scroll: bool,
+}
 
 impl Default for FocusTransition {
     fn default() -> Self {
@@ -121,16 +124,22 @@ impl Default for FocusTransition {
 }
 impl FocusTransition {
     pub fn new() -> Self {
-        Self(Rc::new(Cell::new(true)))
+        Self::with_prevent_scroll(false)
+    }
+    pub(crate) fn with_prevent_scroll(prevent_scroll: bool) -> Self {
+        Self { current: Rc::new(Cell::new(true)), prevent_scroll }
+    }
+    pub(crate) fn prevents_scroll(&self) -> bool {
+        self.prevent_scroll
     }
     pub fn is_current(&self) -> bool {
-        self.0.get()
+        self.current.get()
     }
     pub fn cancel(&self) {
-        self.0.set(false);
+        self.current.set(false);
     }
     pub fn ptr_eq(&self, other: &Self) -> bool {
-        Rc::ptr_eq(&self.0, &other.0)
+        Rc::ptr_eq(&self.current, &other.current)
     }
 }
 
