@@ -206,6 +206,17 @@ fn head_bytes(head: &ResponseHead) -> usize {
         + opt_bytes(&head.remote_addr)
 }
 
+impl NetEvent {
+    /// Logical retained bytes of this observation: exactly the charge a
+    /// [`NetSubscription`] applies against [`SubscriptionLimits::max_bytes`].
+    /// Allocation-free and deterministic for an unchanged event, so an embedder
+    /// that moves observations into its own bounded queue can charge and later
+    /// release the identical amount.
+    pub fn retained_bytes(&self) -> usize {
+        event_bytes(self)
+    }
+}
+
 fn event_bytes(event: &NetEvent) -> usize {
     std::mem::size_of::<NetEvent>()
         + match event {
@@ -279,6 +290,35 @@ mod tests {
             hub.close();
             assert!(matches!(sub.try_recv(), Err(SubscriptionError::Overflow)));
         }
+    }
+
+    #[test]
+    fn retained_bytes_is_the_subscription_charge() {
+        let hub = Subscriptions::default();
+        let sub = hub.subscribe(SubscriptionLimits::default(), None);
+        let events = [
+            event(7),
+            NetEvent::LoadingFinished { id: crate::RequestId(1), encoded_len: 7, timestamp: 0.0 },
+            NetEvent::LoadingFailed {
+                id: crate::RequestId(2),
+                error: crate::NetError::Other("boom".into()),
+                canceled: false,
+                destination: crate::request::Destination::Document,
+                timestamp: 0.0,
+            },
+        ];
+        let expected: usize = events.iter().map(NetEvent::retained_bytes).sum();
+        assert!(expected > 0);
+        for e in events {
+            hub.emit(e);
+        }
+        assert_eq!(sub.queued_usage(), (3, expected));
+        let mut released = 0;
+        while let Ok(e) = sub.try_recv() {
+            released += e.retained_bytes();
+        }
+        assert_eq!(released, expected);
+        assert_eq!(sub.queued_usage(), (0, 0));
     }
 
     #[test]
