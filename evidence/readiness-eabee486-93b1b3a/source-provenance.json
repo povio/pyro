@@ -1,0 +1,19 @@
+{
+  "baseline": "eabee486709f79167520a46887cd6f303b26711d",
+  "current": "93b1b3a7c360cd892084a7e4d538024ead798fdc",
+  "current_tree": "1daa4a31a0e4ea69e5b29fd0448486f3f5172063",
+  "source_hashes": {
+    "crates/lp-js/src/class.rs": {
+      "eabee486": "ad69b19a47b6db909df2e22d663fcde026d6c0e95bfd60d9fa1a35ffe8e0a64e",
+      "93b1b3a": "ad69b19a47b6db909df2e22d663fcde026d6c0e95bfd60d9fa1a35ffe8e0a64e"
+    },
+    "Cargo.toml": {
+      "eabee486": "823c7cc7ef7f11d3ea2c5aae402432e76658082192973fc966d3218d0cc249a4",
+      "93b1b3a": "5edb0cdb2cc0329a3feea759479473962e76bb7c39ec59465241bbe4f3ff859b"
+    },
+    "Cargo.lock": {
+      "eabee486": "0e816ff799b59a421c516dfb00792ec7869b379aae36558e1e8578a72ed6cb49",
+      "93b1b3a": "0e816ff799b59a421c516dfb00792ec7869b379aae36558e1e8578a72ed6cb49"
+    }
+  }
+}
