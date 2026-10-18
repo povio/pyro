@@ -120,6 +120,7 @@ impl Browser {
             .set_user_agent_override(state.user_agent_override.clone())
             .map_err(|e| JsError::Type(format!("invalid user agent request defaults: {e}")))?;
         bindings.set_extra_http_headers(state.extra_http_headers.clone());
+        bindings.set_cache_disabled(state.cache_disabled);
         bindings.set_request_context(lp_webapi::RequestContext {
             frame_id: Some(state.main_frame.id.0.clone()),
             loader_id: Some(loader.0.clone()),
