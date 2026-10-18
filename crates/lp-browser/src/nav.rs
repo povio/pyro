@@ -366,6 +366,23 @@ fn parse(nav: &PageNav, input: Value<'_>) -> JsResult<Url> {
         .map_err(|_| JsError::dom("SyntaxError", format!("Failed to resolve URL '{href}'")))
 }
 
+/// HTML "can have its URL rewritten", as Chrome applies it: scheme,
+/// credentials, host and port must match; outside HTTP(S) (`about:`,
+/// `data:`, `file:`) the path must match too, while the query and fragment may
+/// change. Compared by components, so documents with opaque origins (such as
+/// `about:blank`) can still change their own fragment.
+fn can_rewrite_url(document: &Url, target: &Url) -> bool {
+    if document.scheme() != target.scheme()
+        || document.username() != target.username()
+        || document.password() != target.password()
+        || document.host_str() != target.host_str()
+        || document.port() != target.port()
+    {
+        return false;
+    }
+    matches!(target.scheme(), "http" | "https") || document.path() == target.path()
+}
+
 fn same_document_except_fragment(a: &Url, b: &Url) -> bool {
     let mut a = a.clone();
     let mut b = b.clone();
@@ -510,16 +527,21 @@ fn change_state<'s>(s: &Scope<'s>, n: &PageNav, a: lp_js::Args<'s>, kind: SameDo
     };
     let url = match a.opt(2).filter(|v| !v.is_nullish()) {
         Some(v) => {
-            let target = parse(n, v)?;
-            let current = Url::parse(&n.url()).ok();
-            if current.as_ref().map(|c| c.origin()) != Some(target.origin()) {
-                return Err(JsError::dom(
+            let document = n.url();
+            let current = Url::parse(&document).ok();
+            let rejected = |target: &str| {
+                let origin = current.as_ref().map_or("null".into(), |c| c.origin().ascii_serialization());
+                JsError::dom(
                     "SecurityError",
                     format!(
-                        "A history state object with URL '{target}' cannot be created in a document with origin '{}'",
-                        n.url()
+                        "A history state object with URL '{target}' cannot be created in a document with origin '{origin}' and URL '{document}'"
                     ),
-                ));
+                )
+            };
+            // HTML: a URL that fails to parse is a SecurityError here.
+            let target = parse(n, v).map_err(|_| rejected(&v.to_string().unwrap_or_default()))?;
+            if !current.as_ref().is_some_and(|c| can_rewrite_url(c, &target)) {
+                return Err(rejected(target.as_str()));
             }
             target.to_string()
         }
