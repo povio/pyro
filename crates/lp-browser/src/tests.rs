@@ -54,9 +54,20 @@ fn eval(t: &BrowserThread, page: PageId, src: &str) {
     }
 }
 
+/// Runs the loop until the network idle milestones of the current document
+/// (reported a quiet window after `load`) have been observed.
+fn until_network_idle(t: &mut BrowserThread, rec: &Recorder) {
+    let r = t.run_until(Some(Instant::now() + Duration::from_secs(5)), |_| {
+        rec.events.borrow().last().is_some_and(|e| e == "idle")
+    });
+    assert_eq!(r, lp_runtime::RunOutcome::Done, "{:?}", rec.events.borrow());
+}
+
 #[test]
 fn initial_navigation_event_order() {
-    let (_t, rec, _page) = setup();
+    let (mut t, rec, _page) = setup();
+    assert_eq!(*rec.events.borrow(), ["navigate", "realm:main", "navigated", "dcl", "load"]);
+    until_network_idle(&mut t, &rec);
     assert_eq!(*rec.events.borrow(), ["navigate", "realm:main", "navigated", "dcl", "load", "almost-idle", "idle"]);
 }
 
@@ -114,6 +125,7 @@ fn init_scripts_run_per_world_before_page_scripts() {
     );
     rec.events.borrow_mut().clear();
     t.browser.navigate(page, NavigateOpts::address_bar("about:blank")).unwrap();
+    until_network_idle(&mut t, &rec);
     assert_eq!(
         *rec.events.borrow(),
         [

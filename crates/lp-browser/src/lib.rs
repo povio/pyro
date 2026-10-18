@@ -9,6 +9,7 @@
 mod bindings;
 mod loader;
 mod nav;
+mod network_idle;
 mod stylesheets;
 mod viewport;
 mod window;
@@ -23,6 +24,7 @@ pub use loader::{
     FetchDone, FetchRequest, NetLoader, Resource, ResourceCancellation, ResourceKind, ResourceLoader, StaticLoader,
 };
 pub use nav::{History, HistoryEntry, Location, PageNav, Performance};
+pub use network_idle::NetworkIdle;
 pub use window::{Window, WindowData};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -242,6 +244,8 @@ pub struct Frame {
     pub document: Option<lp_dom::NodeId>,
     /// Binding state shared by this document's main and isolated worlds.
     pub page_dom: Option<Rc<lp_webapi::PageDom>>,
+    /// Network quiet milestones the current document has reported.
+    pub network_idle: NetworkIdle,
 }
 
 impl Frame {
@@ -487,6 +491,7 @@ impl Browser {
             dom: None,
             document: None,
             page_dom: None,
+            network_idle: NetworkIdle::default(),
         };
         let nav = PageNav::new(id, frame.id.clone(), self.sched.clone(), self.observer.clone());
         self.pages.push(Page {
@@ -655,12 +660,8 @@ impl Browser {
                 timestamp: ts,
             },
         );
-        self.emit(
-            page,
-            PageEvent::FrameLoaded { frame_id: frame_id.clone(), loader_id: loader_id.clone(), timestamp: ts },
-        );
-        self.emit(page, PageEvent::FrameNetworkAlmostIdle { frame_id: frame_id.clone(), loader_id: loader_id.clone() });
-        self.emit(page, PageEvent::FrameNetworkIdle { frame_id, loader_id: loader_id.clone() });
+        self.emit(page, PageEvent::FrameLoaded { frame_id, loader_id: loader_id.clone(), timestamp: ts });
+        self.watch_network_idle(page, loader_id.clone());
         Ok(loader_id)
     }
 
@@ -682,8 +683,12 @@ impl Browser {
         let window_class = self.engine.register::<Window>();
         let sched = self.sched.clone();
         let page_dom = self.create_document_bindings(page, &opts.url, &loader_id)?;
+        if let Some(previous) = self.page(page).map(|p| p.main_frame.loader_id.clone()) {
+            self.forget_network_activity(page, &previous);
+        }
         let (frame_id, old, scripts, nav, old_dom) = {
             let p = self.page_mut(page).ok_or(JsError::Type("no such page".into()))?;
+            p.main_frame.network_idle = NetworkIdle::default();
             let old = std::mem::take(&mut p.main_frame.realms);
             // The previous document (and its in-flight loads) is gone.
             p.load = None;
@@ -802,6 +807,8 @@ impl Browser {
     /// Closes a page, disposing its realms and cancelling timers.
     pub fn close_page(&mut self, page: PageId) -> bool {
         let Some(pos) = self.pages.iter().position(|p| p.id == page) else { return false };
+        let loader = self.pages[pos].main_frame.loader_id.clone();
+        self.forget_network_activity(page, &loader);
         let p = self.pages.remove(pos);
         if let Some(dom) = &p.main_frame.page_dom {
             dom.dispose();

@@ -763,12 +763,8 @@ impl Browser {
             lp_webapi::lifecycle::load(&dom, dom.document());
         }
         let ts = self.timestamp();
-        self.emit(
-            page,
-            PageEvent::FrameLoaded { frame_id: frame_id.clone(), loader_id: loader_id.clone(), timestamp: ts },
-        );
-        self.emit(page, PageEvent::FrameNetworkAlmostIdle { frame_id: frame_id.clone(), loader_id: loader_id.clone() });
-        self.emit(page, PageEvent::FrameNetworkIdle { frame_id, loader_id });
+        self.emit(page, PageEvent::FrameLoaded { frame_id, loader_id: loader_id.clone(), timestamp: ts });
+        self.watch_network_idle(page, loader_id);
     }
 
     /// A stylesheet completed or stopped blocking. Called from a later task,
