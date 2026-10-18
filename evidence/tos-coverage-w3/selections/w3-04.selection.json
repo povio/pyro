@@ -1,0 +1,109 @@
+{
+  "manifest_sha256": "542d479b709249d072e3b57c1324c894c4378fc5373892ae64c0687486f2ae19",
+  "manifest_read_from": "git show f9fde4aa0dce7d1d7a1ffebffe3306399973cd80:apps/fe/e2e/suites/lightpanda.json (W3 host, sha256 verified)",
+  "recorded_utc": "2026-10-18T06:00:27+00:00",
+  "ledger_sha256": "3d1de5a08cf4add614432f30ea316d97472ffe42ea73d00a7e775655aef09016",
+  "criteria": "W3-04: whole manifest-routed groups of three files from the W2 ledger uncovered_files, not in W3-01..W3-03 (overview table configuration; roles overviews); chosen before any run of these files",
+  "files": [
+    "e2e/platform/overview-table-config.e2e.ts",
+    "e2e/configuration/roles-overview.e2e.ts",
+    "e2e/master-data/office/roles-overview.e2e.ts"
+  ],
+  "cases": [
+    {
+      "file": "e2e/platform/overview-table-config.e2e.ts",
+      "titlePath": [
+        "POSITION_PARTIES does not expose column configuration or resizing in its detail drawer"
+      ]
+    },
+    {
+      "file": "e2e/platform/overview-table-config.e2e.ts",
+      "titlePath": [
+        "POSITION_TODOS does not expose column configuration or resizing in its detail drawer"
+      ]
+    },
+    {
+      "file": "e2e/platform/overview-table-config.e2e.ts",
+      "titlePath": [
+        "WORKING_DOCUMENTS does not expose column configuration or resizing in its detail drawer"
+      ]
+    },
+    {
+      "file": "e2e/platform/overview-table-config.e2e.ts",
+      "titlePath": [
+        "DOCUBOX does not expose column configuration or resizing in its detail drawer"
+      ]
+    },
+    {
+      "file": "e2e/platform/overview-table-config.e2e.ts",
+      "titlePath": [
+        "DOCUBOX_FILES does not expose column configuration or resizing in its detail drawer"
+      ]
+    },
+    {
+      "file": "e2e/platform/overview-table-config.e2e.ts",
+      "titlePath": [
+        "POSITION_ROUTE does not expose column configuration or resizing in its detail drawer"
+      ]
+    },
+    {
+      "file": "e2e/configuration/roles-overview.e2e.ts",
+      "titlePath": [
+        "Configuration Roles Overview tab FE E2E",
+        "deletes a role from the overview tab and removes it from the rendered list"
+      ]
+    },
+    {
+      "file": "e2e/configuration/roles-overview.e2e.ts",
+      "titlePath": [
+        "Configuration Roles Overview tab FE E2E",
+        "updates role overview fields from the details modal"
+      ]
+    },
+    {
+      "file": "e2e/master-data/office/roles-overview.e2e.ts",
+      "titlePath": [
+        "Master Data Office Roles Overview FE E2E",
+        "does not render an Office selector in existing office role details"
+      ]
+    },
+    {
+      "file": "e2e/master-data/office/roles-overview.e2e.ts",
+      "titlePath": [
+        "Master Data Office Roles Overview FE E2E",
+        "duplicates an office role from the details drawer"
+      ]
+    },
+    {
+      "file": "e2e/master-data/office/roles-overview.e2e.ts",
+      "titlePath": [
+        "Master Data Office Roles Overview FE E2E",
+        "opens shared office role details from the office roles route"
+      ]
+    },
+    {
+      "file": "e2e/platform/overview-table-config.e2e.ts",
+      "titlePath": [
+        "INVOICE_CHARGES does not expose column configuration or resizing in its detail drawer"
+      ]
+    },
+    {
+      "file": "e2e/platform/overview-table-config.e2e.ts",
+      "titlePath": [
+        "INVOICE_VAT does not expose column configuration or resizing in its detail drawer"
+      ]
+    },
+    {
+      "file": "e2e/platform/overview-table-config.e2e.ts",
+      "titlePath": [
+        "QUOTE_PARTIES does not expose column configuration or resizing in its detail drawer"
+      ]
+    },
+    {
+      "file": "e2e/platform/overview-table-config.e2e.ts",
+      "titlePath": [
+        "QUOTE_ROUTE does not expose column configuration or resizing in its detail drawer"
+      ]
+    }
+  ]
+}

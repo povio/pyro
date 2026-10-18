@@ -1,0 +1,104 @@
+{
+  "manifest_sha256": "542d479b709249d072e3b57c1324c894c4378fc5373892ae64c0687486f2ae19",
+  "manifest_read_from": "git show f9fde4aa0dce7d1d7a1ffebffe3306399973cd80:apps/fe/e2e/suites/lightpanda.json (W3 host, sha256 verified)",
+  "recorded_utc": "2026-10-18T06:00:27+00:00",
+  "ledger_sha256": "3d1de5a08cf4add614432f30ea316d97472ffe42ea73d00a7e775655aef09016",
+  "criteria": "W3-03: whole manifest-routed groups of two files from the W2 ledger uncovered_files, not in W3-01/W3-02 (control-tower calendar; uninvoiced charges listing); chosen before any run of these files",
+  "files": [
+    "e2e/control-tower/calendar.e2e.ts",
+    "e2e/finances/uninvoiced-charges.e2e.ts"
+  ],
+  "cases": [
+    {
+      "file": "e2e/control-tower/calendar.e2e.ts",
+      "titlePath": [
+        "Control Tower calendar workflows",
+        "searches events and restores matches after an empty result"
+      ]
+    },
+    {
+      "file": "e2e/control-tower/calendar.e2e.ts",
+      "titlePath": [
+        "Control Tower calendar workflows",
+        "switches to week view and advances to the shipment events"
+      ]
+    },
+    {
+      "file": "e2e/control-tower/calendar.e2e.ts",
+      "titlePath": [
+        "Control Tower calendar workflows",
+        "changes month and returns to today without losing search"
+      ]
+    },
+    {
+      "file": "e2e/control-tower/calendar.e2e.ts",
+      "titlePath": [
+        "Control Tower calendar workflows",
+        "opens Booking event details using the selected calendar type"
+      ]
+    },
+    {
+      "file": "e2e/control-tower/calendar.e2e.ts",
+      "titlePath": [
+        "Control Tower calendar workflows",
+        "opens CustomerReference event details using the selected calendar type"
+      ]
+    },
+    {
+      "file": "e2e/control-tower/calendar.e2e.ts",
+      "titlePath": [
+        "Control Tower calendar workflows",
+        "opens Container event details using the selected calendar type"
+      ]
+    },
+    {
+      "file": "e2e/control-tower/calendar.e2e.ts",
+      "titlePath": [
+        "Control Tower calendar workflows",
+        "opens Package event details using the selected calendar type"
+      ]
+    },
+    {
+      "file": "e2e/finances/uninvoiced-charges.e2e.ts",
+      "titlePath": [
+        "Finances Uninvoiced Charges FE E2E",
+        "lists filtered incoming charges with the independently expected total"
+      ]
+    },
+    {
+      "file": "e2e/finances/uninvoiced-charges.e2e.ts",
+      "titlePath": [
+        "Finances Uninvoiced Charges FE E2E",
+        "switches direction while preserving the position filter"
+      ]
+    },
+    {
+      "file": "e2e/finances/uninvoiced-charges.e2e.ts",
+      "titlePath": [
+        "Finances Uninvoiced Charges FE E2E",
+        "exposes all page-specific filter and column configuration choices"
+      ]
+    },
+    {
+      "file": "e2e/finances/uninvoiced-charges.e2e.ts",
+      "titlePath": [
+        "Finances Uninvoiced Charges FE E2E",
+        "sorts identity columns through their rendered headers"
+      ]
+    },
+    {
+      "file": "e2e/finances/uninvoiced-charges.e2e.ts",
+      "titlePath": [
+        "Finances Uninvoiced Charges FE E2E",
+        "sorts financial columns through their rendered headers"
+      ]
+    },
+    {
+      "file": "e2e/finances/uninvoiced-charges.e2e.ts",
+      "titlePath": [
+        "Finances Uninvoiced Charges FE E2E",
+        "submits the filtered export with the selected receiver output"
+      ]
+    }
+  ]
+}
