@@ -253,7 +253,12 @@ await check('context cookies reach HTTP and stay isolated', async () => {
 // Browser binding integration: local HTTP only, without claiming DOM/Input or TOS parity.
 const identityHeaders = [];
 const fixture = http.createServer((req, res) => {
-  identityHeaders.push({ url: req.url, agent: req.headers['user-agent'], language: req.headers['accept-language'] });
+  identityHeaders.push({ url: req.url, agent: req.headers['user-agent'], language: req.headers['accept-language'], extra: req.headers['x-extra'] ?? null });
+  if (req.url === '/extra-headers') {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ extra: req.headers['x-extra'] ?? null, cache: req.headers['cache-control'] ?? null }));
+    return;
+  }
   if (req.url.startsWith('/spa')) {
     // A minimal SPA router: renders the route from history and re-renders on popstate.
     res.writeHead(200, { 'content-type': 'text/html' });
@@ -567,6 +572,25 @@ try {
       assert.equal(await spa.goForward({ timeout: 5000 }), null);
       assert.equal(spa.url(), `${fixtureOrigin}/spa-next`);
     } finally { await spa.close(); }
+  });
+  await check('page.setExtraHTTPHeaders is page-scoped, replaces and clears (TOS positions-overview case)', async () => {
+    const shared = await browser.newContext();
+    try {
+      const a = await shared.newPage();
+      const b = await shared.newPage();
+      const read = p => p.evaluate(() => fetch('/extra-headers').then(r => r.json()));
+      await a.setExtraHTTPHeaders({ 'X-Extra': 'a', 'Cache-Control': 'no-cache' });
+      await a.goto(`${fixtureOrigin}/extra-nav-a`, { timeout: 5000 });
+      await b.goto(`${fixtureOrigin}/extra-nav-b`, { timeout: 5000 });
+      assert.equal(identityHeaders.find(h => h.url === '/extra-nav-a')?.extra, 'a');
+      assert.equal(identityHeaders.find(h => h.url === '/extra-nav-b')?.extra, null, 'no leak to a sibling page');
+      assert.deepEqual(await read(a), { extra: 'a', cache: 'no-cache' });
+      assert.deepEqual(await read(b), { extra: null, cache: null });
+      await a.setExtraHTTPHeaders({ 'X-Extra': 'replaced' });
+      assert.deepEqual(await read(a), { extra: 'replaced', cache: null });
+      await a.setExtraHTTPHeaders({});
+      assert.deepEqual(await read(a), { extra: null, cache: null });
+    } finally { await shared.close(); }
   });
   await check('Web Storage follows context, page and navigation boundaries', async () => {
     await page.evaluate(() => { localStorage.setItem('local-marker', 'shared'); sessionStorage.setItem('session-marker', 'page'); });

@@ -12,8 +12,8 @@ mod subscription;
 pub use subscription::{NetSubscription, NetWake, SubscriptionError, SubscriptionLimits};
 
 pub use client::{
-    AuthChallenge, AuthDecision, InterceptDecision, Interceptor, NetClient, NetConfig, NetEvent, NetSettings,
-    PausedRequest, RequestInfo, ResponseSink,
+    AuthChallenge, AuthDecision, InterceptDecision, Interceptor, NetActivity, NetClient, NetConfig, NetEvent,
+    NetSettings, PausedRequest, RequestInfo, ResponseSink,
 };
 pub use cookies::CookieJar;
 /// HTTP types used by Request/ResponseHead for native consumers.
