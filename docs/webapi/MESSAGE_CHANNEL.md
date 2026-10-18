@@ -31,7 +31,10 @@ messaging within one realm. The behaviour follows upstream Lightpanda
   - Queued messages survive GC even after the peer closes, or when the receiver
     starts after its peer was collected.
   - The pin is re-evaluated on enqueue, start, delivery and close (including the
-    peer's), and every pin is released when the page is disposed.
+    peer's), and when the peer is collected (reconciled in a separate task).
+    Every pin is released when the page is disposed.
+  - A started, drained receiver whose sender became unreachable is released,
+    not retained until page disposal.
   - A queued but unstarted port is not pinned: if nothing can reach it to call
     `start()`, it is collectable together with its queue.
   - An unclosed, started, entangled port lives until page disposal. The channel
@@ -55,3 +58,4 @@ Tests (`crates/lp-webapi/tests/dom_js.rs`):
 - `message_port_keeps_queued_messages_across_gc_when_the_peer_closes`
 - `message_port_started_late_with_a_collected_peer_still_delivers_across_gc`
 - `message_port_unstarted_queued_ports_and_disposal_hold_no_roots`
+- `message_port_receiver_is_released_when_its_sender_becomes_unreachable`

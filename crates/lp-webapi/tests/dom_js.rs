@@ -3004,3 +3004,35 @@ fn message_port_unstarted_queued_ports_and_disposal_hold_no_roots() {
     e.page.dispose();
     assert_eq!(e.page.pinned_count(), 0, "disposal releases port pins");
 }
+
+#[test]
+fn message_port_receiver_is_released_when_its_sender_becomes_unreachable() {
+    let e = env("<body>");
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    let r = &e.main;
+    let base = e.page.pinned_count();
+    // Started, drained receiver; the sender and the channel become unreachable.
+    eval(r, "window.got = []; window.refs = (() => { const ch = new MessageChannel(); ch.port1.onmessage = (ev) => got.push(ev.data); ch.port2.postMessage('once'); return [new WeakRef(ch), new WeakRef(ch.port1), new WeakRef(ch.port2)]; })(); 1");
+    tasks.drain();
+    assert_eq!(eval(r, "got.join()"), "once");
+    assert_eq!(e.page.pinned_count(), base + 1, "entangled started receiver is pinned while its sender lives");
+    // Collect the sender, run the reconciliation task, collect again.
+    gc(&e, &tasks);
+    tasks.drain();
+    gc(&e, &tasks);
+    assert_eq!(e.page.pinned_count(), base, "receiver unpinned once its peer was collected");
+    assert_eq!(eval(r, "refs.map((w) => w.deref() === undefined).join()"), "true,true,true");
+    // A queued message still keeps the receiver alive until delivered, even if the sender goes.
+    eval(r, "window.got2 = []; window.refs2 = (() => { const ch = new MessageChannel(); ch.port1.onmessage = (ev) => got2.push(ev.data); ch.port2.postMessage('a'); ch.port2.postMessage('b'); return [new WeakRef(ch.port1), new WeakRef(ch.port2)]; })(); 1");
+    gc(&e, &tasks);
+    tasks.drain();
+    gc(&e, &tasks);
+    tasks.drain();
+    assert_eq!(eval(r, "got2.join()"), "a,b");
+    gc(&e, &tasks);
+    tasks.drain();
+    gc(&e, &tasks);
+    assert_eq!(e.page.pinned_count(), base);
+    assert_eq!(eval(r, "refs2.map((w) => w.deref() === undefined).join()"), "true,true");
+}

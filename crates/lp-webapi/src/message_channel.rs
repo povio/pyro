@@ -15,8 +15,9 @@
 //! Lifetime: a started, open port that is entangled or still holds
 //! undelivered messages is pinned so its listeners keep running without a JS
 //! reference (HTML keeps such ports alive). The pin is re-evaluated on
-//! enqueue, start, delivery and close (including the peer's), and every pin is
-//! released with the page. A queued but unstarted port is not pinned.
+//! enqueue, start, delivery, close (including the peer's) and when the peer
+//! is collected, and every pin is released with the page. A queued but
+//! unstarted port is not pinned.
 //!
 //! Gaps (explicit): transferring anything, including MessagePorts, throws
 //! NotSupportedError (`postMessage(m, [port])` or `{transfer}`), so ports never
@@ -137,6 +138,22 @@ impl PortInner {
             // messages (a sender's close does not drop queued messages).
             peer.update_pin();
         }
+    }
+}
+
+impl Drop for PortInner {
+    /// When a port's native state goes away (its wrapper was collected), its
+    /// surviving peer can no longer be posted to: reconcile the peer's pin in
+    /// a separate task (never from inside the drop) so a started, drained
+    /// receiver whose sender became unreachable is released, not retained
+    /// until page disposal. Queued messages keep it pinned until delivered.
+    fn drop(&mut self) {
+        let Some(peer) = self.peer.get_mut().upgrade() else { return };
+        let page = peer.page().clone();
+        if page.is_disposed() {
+            return;
+        }
+        page.post_task(Box::new(move || peer.update_pin()));
     }
 }
 
