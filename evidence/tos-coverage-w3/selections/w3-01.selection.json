@@ -1,0 +1,90 @@
+{
+  "manifest_sha256": "542d479b709249d072e3b57c1324c894c4378fc5373892ae64c0687486f2ae19",
+  "manifest_read_from": "git show f9fde4aa0dce7d1d7a1ffebffe3306399973cd80:apps/fe/e2e/suites/lightpanda.json (W3 host, sha256 verified)",
+  "recorded_utc": "2026-10-18T05:35:29+00:00",
+  "ledger_sha256": "3d1de5a08cf4add614432f30ea316d97472ffe42ea73d00a7e775655aef09016",
+  "criteria": "W3-01: whole manifest-routed groups of two navigation files from the W2 ledger uncovered_files (direct-route rendering and unauthorized-route redirects; protocol/automation scope: navigation, routing, network); chosen before any run of these files",
+  "files": [
+    "e2e/control-tower/navigation.e2e.ts",
+    "e2e/finances/navigation.e2e.ts"
+  ],
+  "cases": [
+    {
+      "file": "e2e/control-tower/navigation.e2e.ts",
+      "titlePath": [
+        "Control Tower navigation FE E2E",
+        "renders Bookings from its direct route"
+      ]
+    },
+    {
+      "file": "e2e/control-tower/navigation.e2e.ts",
+      "titlePath": [
+        "Control Tower navigation FE E2E",
+        "renders Containers from its direct route"
+      ]
+    },
+    {
+      "file": "e2e/control-tower/navigation.e2e.ts",
+      "titlePath": [
+        "Control Tower navigation FE E2E",
+        "renders Packages from its direct route"
+      ]
+    },
+    {
+      "file": "e2e/control-tower/navigation.e2e.ts",
+      "titlePath": [
+        "Control Tower navigation FE E2E",
+        "does not request unauthorized /control-tower/users content"
+      ]
+    },
+    {
+      "file": "e2e/finances/navigation.e2e.ts",
+      "titlePath": [
+        "Finances navigation FE E2E",
+        "redirects unauthorized /platform/finances/bookkeeping-exports access without a forbidden API request"
+      ]
+    },
+    {
+      "file": "e2e/finances/navigation.e2e.ts",
+      "titlePath": [
+        "Finances navigation FE E2E",
+        "redirects unauthorized /platform/finances/dunnings-history access without a forbidden API request"
+      ]
+    },
+    {
+      "file": "e2e/control-tower/navigation.e2e.ts",
+      "titlePath": [
+        "Control Tower navigation FE E2E",
+        "renders Calendar from its direct route"
+      ]
+    },
+    {
+      "file": "e2e/finances/navigation.e2e.ts",
+      "titlePath": [
+        "Finances navigation FE E2E",
+        "renders Dunning - Monitoring from its direct route"
+      ]
+    },
+    {
+      "file": "e2e/finances/navigation.e2e.ts",
+      "titlePath": [
+        "Finances navigation FE E2E",
+        "renders Outstanding Invoices from its direct route"
+      ]
+    },
+    {
+      "file": "e2e/finances/navigation.e2e.ts",
+      "titlePath": [
+        "Finances navigation FE E2E",
+        "renders Payments from its direct route"
+      ]
+    },
+    {
+      "file": "e2e/finances/navigation.e2e.ts",
+      "titlePath": [
+        "Finances navigation FE E2E",
+        "renders Uninvoiced Charges from its direct route"
+      ]
+    }
+  ]
+}

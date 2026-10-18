@@ -1,0 +1,118 @@
+{
+  "manifest_sha256": "542d479b709249d072e3b57c1324c894c4378fc5373892ae64c0687486f2ae19",
+  "manifest_read_from": "git show f9fde4aa0dce7d1d7a1ffebffe3306399973cd80:apps/fe/e2e/suites/lightpanda.json (W3 host, sha256 verified)",
+  "recorded_utc": "2026-10-18T05:42:11+00:00",
+  "ledger_sha256": "3d1de5a08cf4add614432f30ea316d97472ffe42ea73d00a7e775655aef09016",
+  "criteria": "W3-02: whole manifest-routed groups of two files from the W2 ledger uncovered_files, not in W3-01 (uncovered master-data navigation routes; email logs listing/filtering); chosen before any run of these files",
+  "files": [
+    "e2e/master-data/uncovered-navigation.e2e.ts",
+    "e2e/email-logs.e2e.ts"
+  ],
+  "cases": [
+    {
+      "file": "e2e/email-logs.e2e.ts",
+      "titlePath": [
+        "Email Logs",
+        "restores text drafts on Back and Forward after duplicate blur commits"
+      ]
+    },
+    {
+      "file": "e2e/email-logs.e2e.ts",
+      "titlePath": [
+        "Email Logs",
+        "global reader can discover office and global logs"
+      ]
+    },
+    {
+      "file": "e2e/email-logs.e2e.ts",
+      "titlePath": [
+        "Email Logs",
+        "includes the complete viewer-local To day and excludes the next day"
+      ]
+    },
+    {
+      "file": "e2e/email-logs.e2e.ts",
+      "titlePath": [
+        "Email Logs",
+        "preserves historical actor and office attribution after source records change"
+      ]
+    },
+    {
+      "file": "e2e/email-logs.e2e.ts",
+      "titlePath": [
+        "Email Logs",
+        "returns list-safe stable pages for combined server-side filters"
+      ]
+    },
+    {
+      "file": "e2e/email-logs.e2e.ts",
+      "titlePath": [
+        "Email Logs",
+        "preserves quickly typed text filters through URL updates"
+      ]
+    },
+    {
+      "file": "e2e/email-logs.e2e.ts",
+      "titlePath": [
+        "Email Logs",
+        "explains a reversed date range"
+      ]
+    },
+    {
+      "file": "e2e/email-logs.e2e.ts",
+      "titlePath": [
+        "Email Logs",
+        "old email log bookmarks redirect to Configuration and retain filters"
+      ]
+    },
+    {
+      "file": "e2e/email-logs.e2e.ts",
+      "titlePath": [
+        "Email Logs",
+        "malformed bookmarked filters recover without crashing the route"
+      ]
+    },
+    {
+      "file": "e2e/master-data/uncovered-navigation.e2e.ts",
+      "titlePath": [
+        "Previously uncovered Master Data navigation FE E2E",
+        "renders Add Bank Account office settings"
+      ]
+    },
+    {
+      "file": "e2e/master-data/uncovered-navigation.e2e.ts",
+      "titlePath": [
+        "Previously uncovered Master Data navigation FE E2E",
+        "renders Carrier Credentials office settings"
+      ]
+    },
+    {
+      "file": "e2e/master-data/uncovered-navigation.e2e.ts",
+      "titlePath": [
+        "Previously uncovered Master Data navigation FE E2E",
+        "renders General Bookkeeping Settings office settings"
+      ]
+    },
+    {
+      "file": "e2e/master-data/uncovered-navigation.e2e.ts",
+      "titlePath": [
+        "Previously uncovered Master Data navigation FE E2E",
+        "renders Integration Messages from its direct route"
+      ]
+    },
+    {
+      "file": "e2e/master-data/uncovered-navigation.e2e.ts",
+      "titlePath": [
+        "Previously uncovered Master Data navigation FE E2E",
+        "renders INTTRA Credentials office settings"
+      ]
+    },
+    {
+      "file": "e2e/master-data/uncovered-navigation.e2e.ts",
+      "titlePath": [
+        "Previously uncovered Master Data navigation FE E2E",
+        "renders Office Information office settings"
+      ]
+    }
+  ]
+}
