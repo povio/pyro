@@ -14,8 +14,10 @@ classified only as far as the evidence goes, and unknowns are left explicit.
 Three categories of confirmed TOS drift account for 16 failing cases: W3-17 (13
 cases), W3-19 (2) and W3-07 (1). The W3-07 finding is from source only. The
 remaining 5 cases (W3-18: 1, W3-10: 2, W3-12: 2) are not shown to be TOS drift:
-W3-18 and W3-10 are unresolved, and W3-12 is narrowed to Lightpanda's synthetic
-layout (see below). Unresolved does not mean the cause is outside TOS.
+Their broader causes remain unresolved. W3-12 has a reduced synthetic-geometry
+mismatch consistent with the rewrite-only page observations (see below); it has
+not been shown to explain every failure in either Lightpanda lane. Unresolved
+does not mean the cause is outside TOS.
 
 | Batch | Case(s) | Classification | Evidence |
 | --- | --- | --- | --- |
@@ -24,7 +26,7 @@ layout (see below). Unresolved does not mean the cause is outside TOS.
 | W3-07 | `business-partner` "lists seeded business partners as rendered table rows" | **TOS renderer drift, confirmed** from source; no run | Source |
 | W3-18 | `positions-finances` "lists finance rows inside the Position details Finances tab" | **Backend deadlock during API fixture setup** | Server log |
 | W3-10 | master position "marks a Position as Master Position", and quotes-cargo "adds and deletes a Package" | **Fails on all three engines; cause unresolved** | Chromium diagnostic run |
-| W3-12 | route "updates the Route tab incoterm" and "…transport mode" | **Fails only in the Lightpanda lanes; Chromium passes. On the rewrite, narrowed to synthetic layout boxes that do not enclose a `pointer-events: none` trigger** | Chromium diagnostic run, rewrite-only probe runs, static repro |
+| W3-12 | route "updates the Route tab incoterm" and "…transport mode" | **Fails in both Lightpanda lanes; Chromium passes. Rewrite-only page observations are consistent with a reduced synthetic-geometry mismatch; full failure causes remain unresolved** | Chromium diagnostic run, rewrite-only probe runs, static repro |
 
 ### W3-17: analytics month buckets (TOS data drift)
 
@@ -135,7 +137,8 @@ is claimed about why upstream fails. The static repro at the end did run on both
 - **What the page has at the click.** For incoterm, the "CPT" trigger
   (`BUTTON[data-type=select-trigger]`) reports (207, 0, 5, 5).
   - Its parent is a `DIV` with the class `pointer-events-none`, so the button is
-    not hit-testable, in Chrome as well.
+    not hit-testable in the reduced case on all three engines. The full TOS
+    page's computed pointer-events value was not retained by this snapshot.
   - The focusable select `DIV[tabindex=0]` that should receive the click reports
     (207, −15, 5, 15). That covers y −15…0, not the click point (209.5, 2.5).
   - `elementFromPoint` there returns the enclosing `TR` (56, −115, 1480, 286). So
@@ -153,19 +156,24 @@ is claimed about why upstream fails. The static repro at the end did run on both
   | Control: cell `overflow: hidden`, no `pointer-events: none` | hit the button; click reaches it | hit the button; click reaches it | hit the button; click reaches it |
 
   - In Chrome the wrapper and the button share one box (11, 13, 43, 21).
-  - In both Lightpanda engines, every element gets a 5×5 box stacked in
-    document order, so ancestors do not enclose their descendants. The wrapper
-    is (0, 60, 5, 5) and the button (0, 75, 5, 5).
+  - In both Lightpanda engines, the reduced example's nested divs and button
+    get 5×5 boxes stacked in document order. The stylesheet-class variant's
+    wrapper is (0, 60, 5, 5) and its button (0, 75, 5, 5), so the wrapper does
+    not enclose the button. The cell itself retains its explicit 26 px height.
 - **Classification.**
-  - The target is reachable under Chrome geometry, and Chromium passes the cases.
-  - Lightpanda's hit test agrees with the rects Lightpanda reports, and it honours
-    `pointer-events: none`. The miss comes from the synthetic rects: once the
-    button is skipped, no ancestor box covers the point.
-  - So this is a synthetic-layout inaccuracy, not a hit-test pruning defect.
-    Overflow clipping is not involved.
-  - It is not a TOS issue. The static repro behaves the same on the rewrite and
-    on upstream. That upstream's TOS failures have this cause is likely but was
-    not probed.
+  - The reduced target is reachable under Chrome geometry. Separately, the
+    Chromium diagnostic run passes the selected TOS cases.
+  - In the reduced case, both Lightpanda engines honour inherited
+    `pointer-events: none`, but the wrapper geometry does not cover the button
+    centre. This reproduces a synthetic-layout difference independently of TOS;
+    it does not establish that hit testing should ignore geometry or clipping.
+  - The failing static variants do not set overflow clipping. The separate
+    overflow control does not exclude clipping, stacking or scroll effects in
+    the full TOS page; those are not established by the truncated snapshots.
+  - The rewrite-only TOS observations support this as a candidate explanation
+    for the missed clicks. A native repair and unchanged-case rerun are still
+    needed to establish their contribution to each failure. Upstream's full-page
+    failure mechanism was not probed and remains unresolved.
   - The repro has been sent to W2, who owns layout and hit-testing (lp-dom and
     lp-webapi). There is no production change here.
 - **Limits.**
@@ -211,11 +219,11 @@ is claimed about why upstream fails. The static repro at the end did run on both
 - **Static repro:** run with Playwright 1.59.1 against Chrome 147.0.7727.15
   (headless shell), the rewrite binary above, and upstream `2ad38773`
   (`7f76ccfe…`).
-- **All diagnostic runs:**
+- **TOS harness diagnostic runs:**
   - Each used the harness's retained template and
     `LIGHTNINGPANDA_SHARED_ASSET_CACHE_MB=64`, which the Chromium lane ignores.
   - Each created one database and dropped it by exact name, leaving 0 run
-    databases.
+    databases. The static data-URL probes use no backend or database.
 - **Retained template ledger:**
   - The template is `fe_e2e_w3_f9fde4aa_lfix1_template`, owned by the test role.
     It was created by run `w3l19h-1018-093618` and reused since; the stamp hash
