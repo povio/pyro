@@ -11,6 +11,7 @@ pub mod request;
 mod subscription;
 pub use subscription::{NetSubscription, NetWake, SubscriptionError, SubscriptionLimits};
 
+pub use cache::{SharedAssetCache, SHARED_ASSET_CACHE_ENV};
 pub use client::{
     AuthChallenge, AuthDecision, InterceptDecision, Interceptor, NetClient, NetConfig, NetEvent, NetSettings,
     PausedRequest, RequestInfo, ResponseSink,
