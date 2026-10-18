@@ -15,31 +15,34 @@ use crate::target::{PageCommand, PageKey};
 const MAX_BACKEND_NODES: usize = 4096;
 const MAX_DESCRIPTION_NODES: usize = 1024;
 
+struct BackendNode {
+    document: Weak<PageDom>,
+    node: NodeId,
+}
+
 #[derive(Default)]
 pub(super) struct BackendNodes {
-    document: Weak<PageDom>,
-    ids: HashMap<u64, NodeId>,
-    reverse: HashMap<NodeId, u64>,
+    ids: HashMap<u64, BackendNode>,
+    reverse: HashMap<(usize, NodeId), u64>,
 }
 
 impl BackendNodes {
-    fn sync(&mut self, page: &Rc<PageDom>) {
-        if !self.document.upgrade().is_some_and(|old| Rc::ptr_eq(&old, page)) {
-            self.ids.clear();
-            self.reverse.clear();
-            self.document = Rc::downgrade(page);
-        }
-    }
-
     fn identify(&mut self, page: &Rc<PageDom>, node: NodeId, next: &mut u64) -> CdpResult<u64> {
-        self.sync(page);
-        if let Some(id) = self.reverse.get(&node) {
-            return Ok(*id);
+        let key = (Rc::as_ptr(page) as usize, node);
+        if let Some(id) = self.reverse.get(&key) {
+            if self.ids.get(id).is_some_and(|entry| entry.document.upgrade().is_some_and(|old| Rc::ptr_eq(&old, page)))
+            {
+                return Ok(*id);
+            }
         }
         if self.ids.len() >= MAX_BACKEND_NODES {
-            let dom = page.dom.borrow();
-            self.ids.retain(|_, node| dom.node(*node).is_ok());
-            self.reverse.retain(|node, _| dom.node(*node).is_ok());
+            self.ids.retain(|_, entry| {
+                entry
+                    .document
+                    .upgrade()
+                    .is_some_and(|document| !document.is_disposed() && document.dom.borrow().node(entry.node).is_ok())
+            });
+            self.reverse.retain(|_, id| self.ids.contains_key(id));
             if self.ids.len() >= MAX_BACKEND_NODES {
                 return Err(CdpError::server("Too many backend node IDs"));
             }
@@ -49,8 +52,8 @@ impl BackendNodes {
         }
         let id = *next;
         *next += 1;
-        self.ids.insert(id, node);
-        self.reverse.insert(node, id);
+        self.ids.insert(id, BackendNode { document: Rc::downgrade(page), node });
+        self.reverse.insert(key, id);
         Ok(id)
     }
 }
@@ -71,11 +74,6 @@ fn dom_error(error: lp_dom::DomError) -> CdpError {
 }
 
 impl EngineHost {
-    fn document_bindings(&self, key: PageKey) -> CdpResult<Rc<PageDom>> {
-        let state = self.pages.get(&key).ok_or_else(stale)?;
-        self.thread.browser.page(state.id).and_then(|p| p.main_frame.page_dom.clone()).ok_or_else(stale)
-    }
-
     fn resolve_dom_node(&mut self, cmd: &PageCommand<'_, '_>, p: &NodeParams) -> CdpResult<(Rc<PageDom>, NodeId)> {
         if usize::from(p.node_id.is_some())
             + usize::from(p.backend_node_id.is_some())
@@ -87,11 +85,10 @@ impl EngineHost {
         if p.node_id.is_some() {
             return Err(CdpError::unsupported("DOM frontend node IDs"));
         }
-        let page = self.document_bindings(cmd.page)?;
-        let node = if let Some(id) = p.backend_node_id {
-            let state = self.pages.get_mut(&cmd.page).ok_or_else(stale)?;
-            state.dom_nodes.sync(&page);
-            *state.dom_nodes.ids.get(&id).ok_or_else(stale)?
+        let (page, node) = if let Some(id) = p.backend_node_id {
+            let state = self.pages.get(&cmd.page).ok_or_else(stale)?;
+            let entry = state.dom_nodes.ids.get(&id).ok_or_else(stale)?;
+            (entry.document.upgrade().ok_or_else(stale)?, entry.node)
         } else {
             let handles = self.sessions.get(cmd.session_id).ok_or_else(stale)?.handles.clone();
             let (context, object) = {
@@ -103,11 +100,10 @@ impl EngineHost {
             let scope = realm.scope().map_err(remote::js_to_cdp)?;
             let data =
                 scope.unwrap::<Node>(object.get(&scope)).ok_or_else(|| CdpError::server("Object is not a DOM node"))?;
-            if !Rc::ptr_eq(data.page(), &page) {
-                return Err(stale());
-            }
-            data.id
+            (data.page().clone(), data.id)
         };
+        // A surviving remote wrapper does not make a replaced document live.
+        self.frame_for_document(cmd.page, &page).ok_or_else(stale)?;
         page.dom.borrow().node(node).map_err(dom_error)?;
         Ok((page, node))
     }
@@ -156,10 +152,19 @@ impl EngineHost {
                 node == page.document() || dom.document_element(page.document()).map_err(dom_error)? == Some(node);
             (value, children, owns_frame)
         };
+        let state = self.pages.get(&key).ok_or_else(stale)?;
+        let page_id = state.id;
         if owns_frame {
-            let state = self.pages.get(&key).ok_or_else(stale)?;
-            let frame = &self.thread.browser.page(state.id).ok_or_else(stale)?.main_frame;
-            value["frameId"] = json!(frame.id.0);
+            value["frameId"] = json!(self.frame_for_document(key, page).ok_or_else(stale)?.id.0);
+        }
+        if let Some(child_id) = self.thread.browser.frame_of_owner(page_id, node) {
+            value["frameId"] = json!(child_id.0);
+            if depth > 0 {
+                if let Some(child) = self.thread.browser.frame(page_id, &child_id).and_then(|f| f.page_dom) {
+                    value["contentDocument"] =
+                        self.describe_dom_node(key, &child, child.document(), depth - 1, remaining)?;
+                }
+            }
         }
         if depth > 0 {
             if children.len() > *remaining {
@@ -188,6 +193,29 @@ impl EngineHost {
                 }
                 self.session_mut(cmd.session_id)?.dom_enabled = action == "enable";
                 return Ok(Some(json!({})));
+            }
+            "getFrameOwner" => {
+                #[derive(Deserialize)]
+                #[serde(rename_all = "camelCase")]
+                struct P {
+                    frame_id: String,
+                }
+                let p: P = cmd.command.params()?;
+                let state = self.pages.get(&cmd.page).ok_or_else(stale)?;
+                let frame = self.thread.browser.frame(state.id, &lp_browser::FrameId(p.frame_id)).ok_or_else(stale)?;
+                let owner = frame.owner.ok_or_else(stale)?;
+                let parent = self
+                    .thread
+                    .browser
+                    .frame(state.id, frame.parent.as_ref().ok_or_else(stale)?)
+                    .and_then(|f| f.page_dom)
+                    .ok_or_else(stale)?;
+                let backend = self.pages.get_mut(&cmd.page).ok_or_else(stale)?.dom_nodes.identify(
+                    &parent,
+                    owner,
+                    &mut self.next_backend_node,
+                )?;
+                return Ok(Some(json!({"backendNodeId": backend})));
             }
             "describeNode" | "resolveNode" | "getBoxModel" | "getContentQuads" | "scrollIntoViewIfNeeded" | "focus" => {
             }
@@ -222,7 +250,16 @@ impl EngineHost {
                     object_group: Option<String>,
                 }
                 let p: P = cmd.command.params()?;
-                let realm = self.target_realm(cmd.page, p.execution_context_id)?;
+                let frame = self.frame_for_document(cmd.page, &page).ok_or_else(stale)?;
+                let realm = if let Some(id) = p.execution_context_id {
+                    let realm = self.target_realm(cmd.page, Some(id))?;
+                    if !frame.realms.iter().any(|r| r.realm.id() == realm.id()) {
+                        return Err(CdpError::server("Execution context belongs to a different frame"));
+                    }
+                    realm
+                } else {
+                    frame.main_realm().cloned().ok_or_else(stale)?
+                };
                 let scope = realm.scope().map_err(remote::js_to_cdp)?;
                 let object = lp_webapi::wrap_node(&scope, &page, node).map_err(remote::js_to_cdp)?;
                 let described = remote::describe(&scope, object.value(), false)?;
@@ -230,6 +267,9 @@ impl EngineHost {
                 json!({"object":remote::register(described,&handles,context_id(realm.id()),p.object_group.as_deref())?})
             }
             _ => {
+                if self.frame_for_document(cmd.page, &page).ok_or_else(stale)?.parent.is_some() {
+                    return Err(CdpError::unsupported("DOM geometry/focus/scroll in a child frame"));
+                }
                 let rect = {
                     let dom = page.dom.borrow();
                     if dom.root_node(node, true).map_err(dom_error)? != page.document() {
@@ -259,6 +299,10 @@ impl EngineHost {
                     }
                     "getContentQuads" => json!({"quads":[quad]}),
                     "focus" => {
+                        let native = self.pages.get(&cmd.page).ok_or_else(stale)?.id;
+                        if self.thread.browser.frame_of_owner(native, node).is_some() {
+                            return Err(CdpError::unsupported("DOM.focus of a child frame owner"));
+                        }
                         if !page.dom.borrow().is_focusable(node).map_err(dom_error)? {
                             return Err(CdpError::server("Node is not focusable"));
                         }
@@ -316,6 +360,6 @@ mod tests {
         assert_ne!(replacement_id, first_id);
         assert!(!table.ids.contains_key(&first_id), "full-table sweep discards dead generations");
         drop(page);
-        assert!(table.document.upgrade().is_none());
+        assert!(table.ids.values().all(|entry| entry.document.upgrade().is_none()));
     }
 }

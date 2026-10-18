@@ -54,7 +54,7 @@ impl Browser {
             }
             // Media matching can stop a pending sheet from blocking a parser
             // script even when CSS width/height did not change.
-            browser.stylesheets_changed(page);
+            browser.stylesheets_changed(page.into());
         });
         Ok(())
     }

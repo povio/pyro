@@ -1,7 +1,8 @@
 //! `Page` domain and translation of `lp_browser::PageEvent`s into CDP
 //! events, following upstream `src/server/cdp/domains/page.zig` ordering.
 
-use lp_browser::{HistoryHandling, InitScript, NavigateOpts, NavigationReason, PageEvent};
+use lp_browser::{FrameId, FrameInfo, HistoryHandling, InitScript, NavigateOpts, NavigationReason, PageEvent};
+use lp_js::RealmId;
 use serde::Deserialize;
 use serde_json::json;
 
@@ -21,13 +22,48 @@ fn reason_name(reason: NavigationReason) -> Option<&'static str> {
     }
 }
 
-fn security_origin(url: &str) -> &str {
-    // Opaque origins (about:blank before any load) report an empty origin.
-    if url.starts_with("about:") {
-        ""
-    } else {
-        url
+#[derive(Default)]
+pub(crate) struct FrameEvents {
+    parent: Option<FrameId>,
+    navigating: bool,
+    pending_realms: Vec<(RealmId, Option<String>, String)>,
+}
+
+pub(crate) struct PendingNavigation {
+    frame: FrameId,
+    request: u64,
+    session: String,
+}
+
+fn frame_description(
+    id: &str,
+    parent: Option<&FrameId>,
+    loader: &str,
+    url: &str,
+    name: &str,
+    origin: &str,
+) -> serde_json::Value {
+    let mut value = json!({
+        "id": id, "loaderId": loader, "url": url, "name": name,
+        "domainAndRegistry": "", "securityOrigin": if origin == "null" { "://" } else { origin },
+        "mimeType": "text/html", "secureContextType": "InsecureScheme",
+        "crossOriginIsolatedContextType": "NotIsolated", "gatedAPIFeatures": [],
+    });
+    if let Some(parent) = parent {
+        value["parentId"] = json!(parent.0);
     }
+    value
+}
+
+fn frame_tree(frame: &FrameInfo, frames: &[FrameInfo]) -> serde_json::Value {
+    let mut value = json!({"frame": frame_description(&frame.id.0, frame.parent.as_ref(), &frame.loader_id.0,
+        &frame.url, &frame.name, &frame.origin)});
+    let children: Vec<_> =
+        frames.iter().filter(|f| f.parent.as_ref() == Some(&frame.id)).map(|f| frame_tree(f, frames)).collect();
+    if !children.is_empty() {
+        value["childFrames"] = json!(children);
+    }
+    value
 }
 
 impl EngineHost {
@@ -46,22 +82,11 @@ impl EngineHost {
                 Ok(Some(json!({})))
             }
             "getFrameTree" => {
-                let (frame_id, loader_id, url) = self.main_frame(cmd.page)?;
-                Ok(Some(json!({
-                    "frameTree": {
-                        "frame": {
-                            "id": frame_id,
-                            "loaderId": loader_id,
-                            "url": url,
-                            "domainAndRegistry": "",
-                            "securityOrigin": security_origin(&url),
-                            "mimeType": "text/html",
-                            "secureContextType": "InsecureScheme",
-                            "crossOriginIsolatedContextType": "NotIsolated",
-                            "gatedAPIFeatures": [],
-                        },
-                    },
-                })))
+                let page = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?;
+                let frames = self.thread.browser.frames(page.id);
+                let root =
+                    frames.iter().find(|f| f.parent.is_none()).ok_or_else(|| CdpError::server("page is gone"))?;
+                Ok(Some(json!({"frameTree": frame_tree(root, &frames)})))
             }
             "setLifecycleEventsEnabled" => {
                 #[derive(Deserialize)]
@@ -69,26 +94,24 @@ impl EngineHost {
                     enabled: bool,
                 }
                 let enabled = cmd.command.params::<P>()?.enabled;
-                let navigating = self.pages.get(&cmd.page).is_some_and(|p| p.navigating);
                 self.session_mut(cmd.session_id)?.lifecycle_events = enabled;
-                if enabled && !navigating {
-                    // Replay the current document's lifecycle like upstream
-                    // does for a committed frame. The network quiet milestones
-                    // are asynchronous (lp-browser's idle detector): replay
-                    // only those already reached; later ones arrive live.
-                    let (frame_id, loader_id, _) = self.main_frame(cmd.page)?;
-                    let page_id = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?.id;
-                    let reached =
-                        self.thread.browser.page(page_id).map(|p| p.main_frame.network_idle).unwrap_or_default();
+                if enabled {
+                    let state = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?;
                     let now = self.thread.browser.timestamp();
-                    let milestones = [
-                        ("DOMContentLoaded", true),
-                        ("load", true),
-                        ("networkAlmostIdle", reached.almost_idle),
-                        ("networkIdle", reached.idle),
-                    ];
-                    for (name, _) in milestones.iter().filter(|(_, reached)| *reached) {
-                        self.lifecycle(cmd.session_id, name, &frame_id, &loader_id, now);
+                    for frame in self.thread.browser.frames(state.id) {
+                        if state.frames.get(&frame.id).is_some_and(|f| f.navigating) {
+                            continue;
+                        }
+                        for (name, reached) in [
+                            ("DOMContentLoaded", frame.dom_content_loaded),
+                            ("load", frame.loaded),
+                            ("networkAlmostIdle", frame.network_idle.almost_idle),
+                            ("networkIdle", frame.network_idle.idle),
+                        ] {
+                            if reached {
+                                self.lifecycle(cmd.session_id, name, &frame.id.0, &frame.loader_id.0, now);
+                            }
+                        }
                     }
                 }
                 Ok(Some(json!({})))
@@ -132,15 +155,11 @@ impl EngineHost {
                     world_name: String,
                 }
                 let p: P = cmd.command.params()?;
-                let (frame_id, _, _) = self.main_frame(cmd.page)?;
-                if p.frame_id != frame_id {
-                    return Err(CdpError::server("Frame with the given id does not belong to the target."));
-                }
                 let page_id = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?.id;
                 let realm = self
                     .thread
                     .browser
-                    .isolated_world(page_id, &p.world_name)
+                    .isolated_world_in_frame(page_id, &FrameId(p.frame_id), &p.world_name)
                     .map_err(|e| CdpError::server(format!("cannot create isolated world: {e}")))?;
                 Ok(Some(json!({ "executionContextId": context_id(realm.id()) })))
             }
@@ -153,16 +172,13 @@ impl EngineHost {
                     frame_id: Option<String>,
                 }
                 let p: P = cmd.command.params()?;
-                let (frame_id, _, _) = self.main_frame(cmd.page)?;
-                if p.frame_id.as_ref().is_some_and(|f| *f != frame_id) {
-                    return Err(CdpError::unsupported("Page.navigate of a child frame"));
-                }
-                self.start_navigation(cmd, p.url, p.referrer, NavigationReason::AddressBar, HistoryHandling::Push)
+                let (root, _, _) = self.main_frame(cmd.page)?;
+                let frame = FrameId(p.frame_id.unwrap_or(root));
+                self.start_navigation(cmd, frame, p.url, p.referrer, HistoryHandling::Push)
             }
             "reload" => {
-                let (_, _, url) = self.main_frame(cmd.page)?;
-                // The entry keeps its id and history state, as in browsers.
-                self.start_navigation(cmd, url, None, NavigationReason::AddressBar, HistoryHandling::Reload)
+                let (frame, _, url) = self.main_frame(cmd.page)?;
+                self.start_navigation(cmd, FrameId(frame), url, None, HistoryHandling::Reload)
             }
             "getNavigationHistory" => {
                 let page_id = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?.id;
@@ -211,19 +227,24 @@ impl EngineHost {
     /// announced like any other).
     fn run_now(&mut self, page: PageKey, source: &str, world: Option<&str>, id: &str) -> CdpResult<()> {
         let page_id = self.pages.get(&page).ok_or_else(|| CdpError::server("page is gone"))?.id;
-        let realm = match world {
-            Some(name) => Some(
-                self.thread
-                    .browser
-                    .isolated_world(page_id, name)
-                    .map_err(|e| CdpError::server(format!("cannot create isolated world: {e}")))?,
-            ),
-            None => self.thread.browser.page(page_id).and_then(|p| p.main_frame.main_realm().cloned()),
-        };
-        if let Some(realm) = realm {
-            if let Ok(scope) = realm.scope() {
-                if let Err(e) = scope.eval(source, Some(&format!("init-script:{id}")), 1) {
-                    scope.report_exception(&e);
+        for info in self.thread.browser.frames(page_id) {
+            // An earlier script can synchronously remove a later frame from
+            // this snapshot. Skip it without failing future installation.
+            let Some(frame) = self.thread.browser.frame(page_id, &info.id) else { continue };
+            let realm = match world {
+                Some(name) => Some(
+                    self.thread
+                        .browser
+                        .isolated_world_in_frame(page_id, &info.id, name)
+                        .map_err(|e| CdpError::server(format!("cannot create isolated world: {e}")))?,
+                ),
+                None => frame.main_realm().cloned(),
+            };
+            if let Some(realm) = realm {
+                if let Ok(scope) = realm.scope() {
+                    if let Err(e) = scope.eval(source, Some(&format!("init-script:{id}")), 1) {
+                        scope.report_exception(&e);
+                    }
                 }
             }
         }
@@ -234,27 +255,39 @@ impl EngineHost {
     fn start_navigation(
         &mut self,
         cmd: &PageCommand<'_, '_>,
+        frame: FrameId,
         url: String,
         referrer: Option<String>,
-        reason: NavigationReason,
         history: HistoryHandling,
     ) -> CdpResult<Option<serde_json::Value>> {
         let state = self.pages.get_mut(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?;
-        state.pending_navigations.push((cmd.command.id, cmd.session_id.to_owned()));
         let page_id = state.id;
-        let opts = NavigateOpts { url, reason, cdp_request_id: Some(cmd.command.id), referrer };
-        // Failures are reported through FrameNavigateFailed, which carries the
-        // request id and produces the response (with errorText), as Chrome does.
-        if let Err(error) = self.thread.browser.navigate_with_handling(page_id, opts, history) {
-            let state = self.pages.get_mut(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?;
-            let still_pending = state.pending_navigations.iter().any(|(id, _)| *id == cmd.command.id);
-            let failed_event_queued = self.has_pending_events();
-            if still_pending && !failed_event_queued {
-                // Rejected before the navigation started (no event will answer).
-                let state = self.pages.get_mut(&cmd.page).expect("checked above");
-                state.pending_navigations.retain(|(id, _)| *id != cmd.command.id);
-                return Err(CdpError::server(format!("navigation failed: {error}")));
-            }
+        let native = self
+            .thread
+            .browser
+            .frame(page_id, &frame)
+            .ok_or_else(|| CdpError::server("Frame with the given id does not belong to the target."))?;
+        state.pending_navigations.push(PendingNavigation {
+            frame: frame.clone(),
+            request: cmd.command.id,
+            session: cmd.session_id.to_owned(),
+        });
+        let opts =
+            NavigateOpts { url, reason: NavigationReason::AddressBar, cdp_request_id: Some(cmd.command.id), referrer };
+        let result = if native.parent.is_some() {
+            self.thread.browser.navigate_frame(page_id, &frame, opts)
+        } else {
+            self.thread.browser.navigate_with_handling(page_id, opts, history)
+        };
+        if let Err(error) = result {
+            // Reject immediately; a queued FrameNavigateFailed may still emit
+            // lifecycle notifications but cannot send a duplicate reply.
+            self.pages
+                .get_mut(&cmd.page)
+                .expect("page exists")
+                .pending_navigations
+                .retain(|p| p.request != cmd.command.id || p.session != cmd.session_id);
+            return Err(CdpError::server(format!("navigation failed: {error}")));
         }
         Ok(None)
     }
@@ -268,10 +301,13 @@ impl EngineHost {
     }
 
     /// Sends a `Page.navigate`/`Page.reload` response on the session that issued it.
-    fn navigate_response(&mut self, page: PageKey, request_id: u64, result: serde_json::Value) {
+    fn navigate_response(&mut self, page: PageKey, frame: &FrameId, request_id: u64, result: serde_json::Value) {
         let Some(state) = self.pages.get_mut(&page) else { return };
-        let Some(pos) = state.pending_navigations.iter().position(|(id, _)| *id == request_id) else { return };
-        let (_, session) = state.pending_navigations.swap_remove(pos);
+        let Some(pos) = state.pending_navigations.iter().position(|p| p.request == request_id && p.frame == *frame)
+        else {
+            return;
+        };
+        let session = state.pending_navigations.swap_remove(pos).session;
         if self.sessions.contains_key(&session) {
             self.out.push(msg::result_frame(request_id, &result, Some(&session)));
         }
@@ -283,12 +319,31 @@ impl EngineHost {
         let all = self.sessions_of(page, |s| s.page_enabled);
         let lifecycle = self.sessions_of(page, |s| s.page_enabled && s.lifecycle_events);
         let runtime = self.sessions_of(page, |s| s.runtime_enabled);
+        let root = self.main_frame(page).ok().map(|(id, _, _)| FrameId(id));
         match event {
-            PageEvent::FrameNavigate { frame_id, loader_id, url, reason, .. } => {
+            PageEvent::FrameNavigate { frame_id, loader_id, url, reason, cdp_request_id, .. } => {
                 if let Some(state) = self.pages.get_mut(&page) {
-                    state.navigating = true;
-                    state.pending_realms.clear();
-                    state.network.bodies.clear();
+                    let frame = state.frames.entry(frame_id.clone()).or_default();
+                    frame.navigating = true;
+                    frame.pending_realms.clear();
+                    if root.as_ref() == Some(&frame_id) {
+                        state.network.bodies.clear();
+                    } else {
+                        state.network.bodies.clear_frame(&frame_id.0);
+                    }
+                    let mut retained = Vec::new();
+                    for pending in state.pending_navigations.drain(..) {
+                        if pending.frame == frame_id && Some(pending.request) != cdp_request_id {
+                            self.out.push(msg::result_frame(
+                                pending.request,
+                                &json!({"frameId":frame_id.0,"errorText":"Navigation superseded"}),
+                                Some(&pending.session),
+                            ));
+                        } else {
+                            retained.push(pending);
+                        }
+                    }
+                    state.pending_navigations = retained;
                 }
                 for s in &all {
                     if let Some(reason) = reason_name(reason) {
@@ -313,7 +368,7 @@ impl EngineHost {
                     self.event("Page.frameStartedLoading", &json!({ "frameId": frame_id.0 }), s);
                 }
             }
-            PageEvent::RealmDestroyed { realm, .. } => {
+            PageEvent::RealmDestroyed { frame_id, realm } => {
                 // Evaluations still awaiting a promise in it can never settle.
                 self.pending.fail_context(context_id(realm));
                 // Release handles even if their session never enabled Page.
@@ -322,8 +377,9 @@ impl EngineHost {
                         session.handles.borrow_mut().release_context(context_id(realm));
                     }
                 }
-                let navigating = self.pages.get(&page).is_some_and(|p| p.navigating);
-                if !navigating {
+                let navigating =
+                    self.pages.get(&page).and_then(|p| p.frames.get(&frame_id)).is_some_and(|f| f.navigating);
+                if !navigating || root.as_ref() != Some(&frame_id) {
                     for s in &runtime {
                         self.event(
                             "Runtime.executionContextDestroyed",
@@ -334,10 +390,11 @@ impl EngineHost {
                 }
             }
             PageEvent::RealmCreated { frame_id, realm, world, origin } => {
-                let navigating = self.pages.get(&page).is_some_and(|p| p.navigating);
+                let navigating =
+                    self.pages.get(&page).and_then(|p| p.frames.get(&frame_id)).is_some_and(|f| f.navigating);
                 if navigating {
                     if let Some(state) = self.pages.get_mut(&page) {
-                        state.pending_realms.push((realm, world, origin));
+                        state.frames.entry(frame_id.clone()).or_default().pending_realms.push((realm, world, origin));
                     }
                 } else {
                     let context = context_description(realm, world.as_deref(), &origin, &frame_id.0);
@@ -347,11 +404,18 @@ impl EngineHost {
                 }
             }
             PageEvent::FrameNavigated { frame_id, loader_id, url, reason, cdp_request_id, timestamp } => {
-                for session in self.sessions_of(page, |s| s.dom_enabled) {
-                    self.event("DOM.documentUpdated", &json!({}), &session);
+                if root.as_ref() == Some(&frame_id) {
+                    for session in self.sessions_of(page, |s| s.dom_enabled) {
+                        self.event("DOM.documentUpdated", &json!({}), &session);
+                    }
                 }
                 if let Some(id) = cdp_request_id {
-                    self.navigate_response(page, id, json!({ "frameId": frame_id.0, "loaderId": loader_id.0 }));
+                    self.navigate_response(
+                        page,
+                        &frame_id,
+                        id,
+                        json!({ "frameId": frame_id.0, "loaderId": loader_id.0 }),
+                    );
                 }
                 for s in &lifecycle {
                     self.lifecycle(s, "init", &frame_id.0, &loader_id.0, timestamp);
@@ -361,47 +425,48 @@ impl EngineHost {
                         self.event("Page.frameClearedScheduledNavigation", &json!({ "frameId": frame_id.0 }), s);
                     }
                 }
-                for s in &runtime {
-                    self.event("Runtime.executionContextsCleared", &json!({}), s);
-                }
-                let frame = json!({
-                    "id": frame_id.0,
-                    "loaderId": loader_id.0,
-                    "url": url,
-                    "domainAndRegistry": "",
-                    "securityOrigin": security_origin(&url),
-                    "mimeType": "text/html",
-                    "secureContextType": "InsecureScheme",
-                    "crossOriginIsolatedContextType": "NotIsolated",
-                    "gatedAPIFeatures": [],
-                });
-                for s in &all {
-                    self.event("Page.frameNavigated", &json!({ "frame": frame, "type": "Navigation" }), s);
-                }
-                let pending = match self.pages.get_mut(&page) {
-                    Some(state) => {
-                        state.navigating = false;
-                        std::mem::take(&mut state.pending_realms)
+                if root.as_ref() == Some(&frame_id) {
+                    for s in &runtime {
+                        self.event("Runtime.executionContextsCleared", &json!({}), s);
                     }
-                    None => Vec::new(),
+                }
+                let (parent, pending) = match self.pages.get_mut(&page) {
+                    Some(state) => {
+                        let frame = state.frames.entry(frame_id.clone()).or_default();
+                        frame.navigating = false;
+                        (frame.parent.clone(), std::mem::take(&mut frame.pending_realms))
+                    }
+                    None => (None, Vec::new()),
                 };
+                let info = self.pages.get(&page).and_then(|p| self.thread.browser.frame(p.id, &frame_id));
+                let origin = pending
+                    .iter()
+                    .find(|(_, world, _)| world.is_none())
+                    .map(|(_, _, origin)| origin.as_str())
+                    .or_else(|| info.as_ref().map(|f| f.origin.as_str()))
+                    .unwrap_or("null");
+                let name = info.as_ref().map_or("", |f| f.name.as_str());
+                let frame = frame_description(&frame_id.0, parent.as_ref(), &loader_id.0, &url, name, origin);
+                for s in &all {
+                    self.event("Page.frameNavigated", &json!({"frame":frame,"type":"Navigation"}), s);
+                }
                 for (realm, world, origin) in pending {
                     let context = context_description(realm, world.as_deref(), &origin, &frame_id.0);
                     for s in &runtime {
                         self.event("Runtime.executionContextCreated", &json!({ "context": context }), s);
                     }
                 }
-                // DOM.documentUpdated is a DOM-domain event; DOM.enable is not
-                // implemented yet, so no session can have asked for it.
             }
             PageEvent::FrameNavigateFailed { frame_id, loader_id, error, cdp_request_id, .. } => {
                 if let Some(state) = self.pages.get_mut(&page) {
-                    state.navigating = false;
-                    state.pending_realms.clear();
+                    let frame = state.frames.entry(frame_id.clone()).or_default();
+                    frame.navigating = false;
+                    frame.pending_realms.clear();
                 }
                 if let Some(id) = cdp_request_id {
                     self.navigate_response(
                         page,
+                        &frame_id,
                         id,
                         json!({ "frameId": frame_id.0, "loaderId": loader_id.0, "errorText": error }),
                     );
@@ -411,16 +476,20 @@ impl EngineHost {
                 }
             }
             PageEvent::FrameDomContentLoaded { frame_id, loader_id, timestamp } => {
-                for s in &all {
-                    self.event("Page.domContentEventFired", &json!({ "timestamp": timestamp }), s);
+                if root.as_ref() == Some(&frame_id) {
+                    for s in &all {
+                        self.event("Page.domContentEventFired", &json!({ "timestamp": timestamp }), s);
+                    }
                 }
                 for s in &lifecycle {
                     self.lifecycle(s, "DOMContentLoaded", &frame_id.0, &loader_id.0, timestamp);
                 }
             }
             PageEvent::FrameLoaded { frame_id, loader_id, timestamp } => {
-                for s in &all {
-                    self.event("Page.loadEventFired", &json!({ "timestamp": timestamp }), s);
+                if root.as_ref() == Some(&frame_id) {
+                    for s in &all {
+                        self.event("Page.loadEventFired", &json!({ "timestamp": timestamp }), s);
+                    }
                 }
                 for s in &lifecycle {
                     self.lifecycle(s, "load", &frame_id.0, &loader_id.0, timestamp);
@@ -447,11 +516,32 @@ impl EngineHost {
                 }
             }
             PageEvent::FrameChildFrameCreated { parent, frame_id } => {
+                if let Some(state) = self.pages.get_mut(&page) {
+                    state.frames.insert(
+                        frame_id.clone(),
+                        FrameEvents { parent: Some(parent.clone()), navigating: true, pending_realms: Vec::new() },
+                    );
+                }
                 for s in &all {
                     self.event("Page.frameAttached", &json!({ "frameId": frame_id.0, "parentFrameId": parent.0 }), s);
                 }
             }
             PageEvent::FrameChildFrameDetached { frame_id, .. } => {
+                if let Some(state) = self.pages.get_mut(&page) {
+                    state.frames.remove(&frame_id);
+                    state.network.bodies.clear_frame(&frame_id.0);
+                    state.pending_navigations.retain(|p| {
+                        if p.frame != frame_id {
+                            return true;
+                        }
+                        self.out.push(msg::result_frame(
+                            p.request,
+                            &json!({"frameId":frame_id.0,"errorText":"Frame detached"}),
+                            Some(&p.session),
+                        ));
+                        false
+                    });
+                }
                 for s in &all {
                     self.event("Page.frameDetached", &json!({ "frameId": frame_id.0, "reason": "remove" }), s);
                 }
