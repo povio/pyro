@@ -1630,4 +1630,20 @@ fn navigation_history_traverses_across_documents() {
     h.run_for(100);
     assert_eq!(eval_value(&mut h, "document.body.textContent"), "second");
     assert_eq!(history(&mut h).0, 2);
+
+    // Page.reload keeps the entry (id and state); Page.navigate to the same
+    // URL replaces it with a new entry.
+    eval_value(&mut h, "history.replaceState({k: 1}, '')");
+    let (_, before) = history(&mut h);
+    assert!(h.page("Page.reload", json!({}))["result"].get("errorText").is_none());
+    h.run_for(50);
+    assert_eq!(eval_value(&mut h, "JSON.stringify(history.state)"), r#"{"k":1}"#);
+    assert_eq!(history(&mut h), (2, before.clone()));
+    let r = h.page("Page.navigate", json!({"url": "data:text/html,<p>second</p>"}));
+    assert!(r["result"].get("errorText").is_none(), "{r}");
+    h.run_for(50);
+    assert_eq!(eval_value(&mut h, "history.state"), Value::Null);
+    let (index, after) = history(&mut h);
+    assert_eq!((index, &after[..2], after[2].1.as_str()), (2, &before[..2], before[2].1.as_str()));
+    assert_ne!(after[2].0, before[2].0, "a same-URL navigation is a new (replacing) entry");
 }

@@ -1,7 +1,7 @@
 //! `Page` domain and translation of `lp_browser::PageEvent`s into CDP
 //! events, following upstream `src/server/cdp/domains/page.zig` ordering.
 
-use lp_browser::{InitScript, NavigateOpts, NavigationReason, PageEvent};
+use lp_browser::{HistoryHandling, InitScript, NavigateOpts, NavigationReason, PageEvent};
 use serde::Deserialize;
 use serde_json::json;
 
@@ -147,11 +147,12 @@ impl EngineHost {
                 if p.frame_id.as_ref().is_some_and(|f| *f != frame_id) {
                     return Err(CdpError::unsupported("Page.navigate of a child frame"));
                 }
-                self.start_navigation(cmd, p.url, p.referrer, NavigationReason::AddressBar)
+                self.start_navigation(cmd, p.url, p.referrer, NavigationReason::AddressBar, HistoryHandling::Push)
             }
             "reload" => {
                 let (_, _, url) = self.main_frame(cmd.page)?;
-                self.start_navigation(cmd, url, None, NavigationReason::AddressBar)
+                // The entry keeps its id and history state, as in browsers.
+                self.start_navigation(cmd, url, None, NavigationReason::AddressBar, HistoryHandling::Reload)
             }
             "getNavigationHistory" => {
                 let page_id = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?.id;
@@ -226,6 +227,7 @@ impl EngineHost {
         url: String,
         referrer: Option<String>,
         reason: NavigationReason,
+        history: HistoryHandling,
     ) -> CdpResult<Option<serde_json::Value>> {
         let state = self.pages.get_mut(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?;
         state.pending_navigations.push((cmd.command.id, cmd.session_id.to_owned()));
@@ -233,7 +235,7 @@ impl EngineHost {
         let opts = NavigateOpts { url, reason, cdp_request_id: Some(cmd.command.id), referrer };
         // Failures are reported through FrameNavigateFailed, which carries the
         // request id and produces the response (with errorText), as Chrome does.
-        if let Err(error) = self.thread.browser.navigate(page_id, opts) {
+        if let Err(error) = self.thread.browser.navigate_with_handling(page_id, opts, history) {
             let state = self.pages.get_mut(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?;
             let still_pending = state.pending_navigations.iter().any(|(id, _)| *id == cmd.command.id);
             let failed_event_queued = self.has_pending_events();

@@ -63,6 +63,21 @@ pub enum NavigationReason {
     InitialFrameNavigation,
 }
 
+/// How a navigation's commit changes the session history (HTML "history
+/// handling"), decided by the navigation's intent rather than its URL.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HistoryHandling {
+    /// A new entry after the current one (a same-URL push replaces instead).
+    Push,
+    /// A new entry in place of the current one (`location.replace`).
+    Replace,
+    /// Traversal to the current index, set by `history.go()`: the entry keeps
+    /// its id and state.
+    Traverse,
+    /// Reload of the current entry, which keeps its id and state.
+    Reload,
+}
+
 #[derive(Debug, Clone)]
 pub struct NavigateOpts {
     pub url: String,
@@ -534,13 +549,24 @@ impl Browser {
     }
 
     /// Starts a navigation, replacing the current history entry when `replace`
-    /// is true (location.replace/reload, history traversal). Replacement intent
-    /// belongs to this request, including while its document is being fetched.
+    /// is true (`location.replace`).
     pub fn navigate_with_history(
         &mut self,
         page: PageId,
         opts: NavigateOpts,
         replace: bool,
+    ) -> Result<LoaderId, JsError> {
+        let history = if replace { HistoryHandling::Replace } else { HistoryHandling::Push };
+        self.navigate_with_handling(page, opts, history)
+    }
+
+    /// Starts a navigation with explicit history handling. The handling belongs
+    /// to this request, including while its document is being fetched.
+    pub fn navigate_with_handling(
+        &mut self,
+        page: PageId,
+        opts: NavigateOpts,
+        history: HistoryHandling,
     ) -> Result<LoaderId, JsError> {
         let loader_id = LoaderId(format!("{:032X}", self.next()));
         let state = self.page_mut(page).ok_or(JsError::Type("no such page".into()))?;
@@ -559,7 +585,7 @@ impl Browser {
             },
         );
         if opts.url != "about:blank" && self.loader_for(page).is_some() {
-            self.start_document_fetch(page, opts, loader_id.clone(), replace)?;
+            self.start_document_fetch(page, opts, loader_id.clone(), history)?;
             return Ok(loader_id);
         }
         if opts.url != "about:blank" {
@@ -576,7 +602,7 @@ impl Browser {
             );
             return Err(JsError::Unsupported("navigation to non-blank URLs"));
         }
-        self.commit_document(page, &opts, loader_id.clone(), "null", replace)?;
+        self.commit_document(page, &opts, loader_id.clone(), "null", history)?;
         if let Some(dom) = self.page(page).and_then(|p| p.main_frame.page_dom.clone()) {
             lp_webapi::lifecycle::dom_content_loaded(&dom, dom.document());
             lp_webapi::lifecycle::load(&dom, dom.document());
@@ -612,7 +638,7 @@ impl Browser {
         opts: &NavigateOpts,
         loader_id: LoaderId,
         origin: &str,
-        replace: bool,
+        history: HistoryHandling,
     ) -> Result<(), JsError> {
         let window_class = self.engine.register::<Window>();
         let sched = self.sched.clone();
@@ -628,7 +654,7 @@ impl Browser {
             p.main_frame.document = Some(page_dom.document());
             p.main_frame.url = opts.url.clone();
             p.main_frame.loader_id = loader_id.clone();
-            p.nav.commit_document(&opts.url, replace, None);
+            p.nav.commit_document(&opts.url, history, None);
             p.nav.set_document(Some((page_dom.dom.clone(), page_dom.document())));
             (p.main_frame.id.clone(), old, p.init_scripts.clone(), p.nav.clone(), old_dom)
         };

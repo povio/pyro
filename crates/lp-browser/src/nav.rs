@@ -10,7 +10,10 @@
 //! the initial about:blank entry is kept by the first navigation (browsers
 //! replace it), so `history.length` counts it.
 
-use crate::{Browser, FrameId, NavigateOpts, NavigationReason, ObserverCell, PageEvent, PageId, SameDocumentKind};
+use crate::{
+    Browser, FrameId, HistoryHandling, NavigateOpts, NavigationReason, ObserverCell, PageEvent, PageId,
+    SameDocumentKind,
+};
 use lp_dom::parse::DomRef;
 use lp_dom::NodeId;
 use lp_js::{ClassDef, JsClass, JsError, JsResult, NoParent, Scope, Value};
@@ -128,29 +131,42 @@ impl PageNav {
     }
 
     /// Records a committed cross-document navigation.
-    pub(crate) fn commit_document(&self, url: &str, replace: bool, document: Option<(DomRef, NodeId)>) {
+    pub(crate) fn commit_document(&self, url: &str, history: HistoryHandling, document: Option<(DomRef, NodeId)>) {
         self.pending_frame_url.borrow_mut().take();
         let mut st = self.state.borrow_mut();
         st.doc_seq += 1;
         let id = st.next_entry_id();
         let entry = Entry { url: url.to_string(), state: None, doc: st.doc_seq, id };
-        if st.entries.is_empty() {
-            st.entries.push(entry);
-            st.index = 0;
-        } else if traversing(&st, url) {
-            // A history traversal (or reload) committed: index was set by
-            // traverse(); the entry keeps its id and state. Checked before
-            // `replace`, which traversals also pass.
-            let i = st.index;
-            st.entries[i].doc = st.doc_seq;
-        } else if replace {
-            let i = st.index;
-            st.entries[i] = entry;
-        } else {
-            let i = st.index + 1;
-            st.entries.truncate(i);
-            st.entries.push(entry);
-            st.index = i;
+        // A push to the current entry's URL replaces it (HTML navigate step:
+        // "url equals the active document's URL" -> replace).
+        let same_url = st.entries.get(st.index).is_some_and(|e| e.url == url);
+        match history {
+            _ if st.entries.is_empty() => {
+                st.entries.push(entry);
+                st.index = 0;
+            }
+            HistoryHandling::Traverse | HistoryHandling::Reload => {
+                // The entry at the index (set by traverse() for traversals)
+                // keeps its id and state; a redirect updates its URL.
+                let (i, doc) = (st.index, st.doc_seq);
+                let e = &mut st.entries[i];
+                e.doc = doc;
+                e.url = url.to_string();
+            }
+            HistoryHandling::Replace => {
+                let i = st.index;
+                st.entries[i] = entry;
+            }
+            HistoryHandling::Push if same_url => {
+                let i = st.index;
+                st.entries[i] = entry;
+            }
+            HistoryHandling::Push => {
+                let i = st.index + 1;
+                st.entries.truncate(i);
+                st.entries.push(entry);
+                st.index = i;
+            }
         }
         st.url = url.to_string();
         drop(st);
@@ -202,7 +218,7 @@ impl PageNav {
         self.pending_frame_url.borrow_mut().take()
     }
 
-    fn navigate(&self, url: String, replace: bool) {
+    fn navigate(&self, url: String, history: HistoryHandling) {
         let page = self.page;
         let document = self.state.borrow().doc_seq;
         self.sched.post(TaskSource::Navigation, move |b| {
@@ -210,7 +226,7 @@ impl PageNav {
                 return;
             }
             let opts = NavigateOpts { url, reason: NavigationReason::Script, cdp_request_id: None, referrer: None };
-            if let Err(e) = b.navigate_with_history(page, opts, replace) {
+            if let Err(e) = b.navigate_with_handling(page, opts, history) {
                 b.report_navigation_error(page, &e);
             }
         });
@@ -231,7 +247,7 @@ impl PageNav {
         let Some((index, entry, current_doc)) = target else {
             if delta == 0 {
                 let url = self.url();
-                self.navigate(url, true);
+                self.navigate(url, HistoryHandling::Reload);
             }
             return;
         };
@@ -261,7 +277,7 @@ impl PageNav {
                     cdp_request_id: None,
                     referrer: None,
                 };
-                if let Err(e) = b.navigate_with_history(page, opts, true) {
+                if let Err(e) = b.navigate_with_handling(page, opts, HistoryHandling::Traverse) {
                     b.report_navigation_error(page, &e);
                 }
             }
@@ -298,10 +314,6 @@ impl PageNav {
     pub fn now_ms(&self) -> f64 {
         self.time_origin.get().elapsed().as_secs_f64() * 1000.0
     }
-}
-
-fn traversing(st: &NavState, url: &str) -> bool {
-    st.entries.get(st.index).is_some_and(|e| e.url == url && e.doc != st.doc_seq)
 }
 
 impl Browser {
@@ -372,7 +384,7 @@ fn assign(nav: &PageNav, input: Value<'_>, replace: bool) -> JsResult<()> {
             nav.same_document(target.as_str(), None, kind);
             nav.queue_hashchange(cur.as_str(), target.as_str());
         }
-        _ => nav.navigate(target.to_string(), replace),
+        _ => nav.navigate(target.to_string(), if replace { HistoryHandling::Replace } else { HistoryHandling::Push }),
     }
     Ok(())
 }
@@ -402,7 +414,7 @@ impl JsClass for Location {
             Ok(s.undefined())
         });
         def.method("reload", 0, |s, n, _a| {
-            n.navigate(n.url(), true);
+            n.navigate(n.url(), HistoryHandling::Reload);
             Ok(s.undefined())
         });
         def.getter("origin", |s, n| {

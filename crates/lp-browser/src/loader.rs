@@ -18,7 +18,7 @@
 //! load/error events, script-inserted scripts, and iframe/image resources remain
 //! separate loader work. Linked stylesheets are handled by `stylesheets`.
 
-use crate::{Browser, LoaderId, NavigateOpts, PageEvent, PageId};
+use crate::{Browser, HistoryHandling, LoaderId, NavigateOpts, PageEvent, PageId};
 use lp_dom::parse::{DocumentParser, DomRef, ParseStep};
 use lp_dom::script::ScriptKind;
 use lp_dom::NodeId;
@@ -373,7 +373,7 @@ impl Browser {
         page: PageId,
         opts: NavigateOpts,
         loader_id: LoaderId,
-        replace: bool,
+        history: HistoryHandling,
     ) -> Result<(), JsError> {
         let Some(loader) = self.loader_for(page) else {
             return Err(JsError::Unsupported("navigation without a resource loader"));
@@ -406,7 +406,7 @@ impl Browser {
                     Ok(resource) if (200..300).contains(&resource.status) || resource.status == 0 => {
                         let mut opts = opts;
                         opts.url = resource.url.clone();
-                        if let Err(e) = b.begin_document(page, &opts, loader_id.clone(), resource, replace) {
+                        if let Err(e) = b.begin_document(page, &opts, loader_id.clone(), resource, history) {
                             b.navigation_failed(page, &opts, loader_id, e.to_string());
                         }
                     }
@@ -414,7 +414,7 @@ impl Browser {
                         // Error pages still commit in browsers; keep their body.
                         let mut opts = opts;
                         opts.url = resource.url.clone();
-                        if let Err(e) = b.begin_document(page, &opts, loader_id.clone(), resource, replace) {
+                        if let Err(e) = b.begin_document(page, &opts, loader_id.clone(), resource, history) {
                             b.navigation_failed(page, &opts, loader_id, e.to_string());
                         }
                     }
@@ -449,10 +449,10 @@ impl Browser {
         opts: &NavigateOpts,
         loader_id: LoaderId,
         resource: Resource,
-        replace: bool,
+        history: HistoryHandling,
     ) -> Result<(), JsError> {
         let origin = origin_of(&resource.url);
-        self.commit_document(page, opts, loader_id.clone(), &origin, replace)?;
+        self.commit_document(page, opts, loader_id.clone(), &origin, history)?;
         let page_dom = self.page(page).and_then(|p| p.main_frame.page_dom.clone()).ok_or(JsError::ContextDestroyed)?;
         let dom = page_dom.dom.clone();
         let doc = page_dom.document();
