@@ -651,3 +651,26 @@ fn page_cache_disabled_bypasses_only_that_page() {
     load(&first, false);
     assert_eq!(hits(), 3, "re-enabled: the page hits again");
 }
+
+#[test]
+fn inherited_document_base_is_used_by_fetch_and_xhr_without_replacing_url() {
+    let server = Server::new();
+    let env = Env::with_engine_origin(
+        &server.url,
+        Rc::new(lp_js::Engine::new().unwrap()),
+        Some(lp_net::Url::parse(&server.url).unwrap().origin().ascii_serialization()),
+    );
+    let doc = env.page.document();
+    {
+        let mut dom = env.page.dom.borrow_mut();
+        dom.set_document_url(doc, "about:srcdoc").unwrap();
+        dom.set_document_base_url(doc, Some(&server.url)).unwrap();
+    }
+    env.eval("globalThis.result='pending';fetch('json').then(r=>r.text()).then(v=>result=v,e=>result=String(e))");
+    env.until("result!=='pending'");
+    assert_eq!(env.eval("result"), "{\"answer\":42}");
+    env.eval("result='pending';const x=new XMLHttpRequest();x.onload=()=>result=x.responseText;x.onerror=()=>result='error';x.open('GET','json');x.send()");
+    env.until("result!=='pending'");
+    assert_eq!(env.eval("result"), "{\"answer\":42}");
+    assert_eq!(env.eval("document.URL"), "about:srcdoc");
+}
