@@ -20,6 +20,7 @@ pub mod collections;
 pub mod crypto;
 pub mod css;
 pub mod custom;
+pub mod data_transfer;
 pub mod dom_parser;
 pub mod encoding;
 pub mod event;
@@ -84,6 +85,7 @@ pub fn register(engine: &lp_js::Engine) {
     message_channel::register(engine);
     custom::register(engine);
     file::register(engine);
+    data_transfer::register(engine);
     encoding::register(engine);
     validity::register(engine);
     window::register(engine);

@@ -6,7 +6,7 @@ use std::rc::Rc;
 use std::time::Instant;
 
 use lp_dom::events::{EventState, TargetKey};
-use lp_js::{Args, ClassDef, JsClass, JsResult, Object, Persistent, Scope};
+use lp_js::{Args, ClassDef, JsClass, JsError, JsResult, Object, Persistent, Scope};
 
 use crate::page::PageDom;
 use crate::target::{page_of, target_value};
@@ -21,6 +21,7 @@ pub enum EventInterface {
     MouseEvent,
     PointerEvent,
     WheelEvent,
+    DragEvent,
     KeyboardEvent,
     InputEvent,
     CompositionEvent,
@@ -83,6 +84,7 @@ pub struct EventFields {
     pub persisted: bool,
     pub message_data: Option<Persistent>,
     pub origin: String,
+    pub(crate) data_transfer: Option<crate::data_transfer::DataTransferRef>,
 }
 
 pub struct EventCore {
@@ -141,6 +143,7 @@ impl EventCore {
                     | EventInterface::InputEvent
                     | EventInterface::FocusEvent
                     | EventInterface::WheelEvent
+                    | EventInterface::DragEvent
                     | EventInterface::UiEvent
             ),
         );
@@ -171,7 +174,11 @@ impl EventCore {
     fn trace_targets(&self, s: &Scope<'_>, wrapper: Object<'_>) -> JsResult<()> {
         let fields = self.fields.borrow();
         let keys = [self.state.borrow().target, fields.related_target, fields.submitter];
+        let data_transfer = fields.data_transfer.clone();
         drop(fields);
+        if let Some(data_transfer) = data_transfer {
+            s.set_hidden(wrapper, "__lpEventDataTransfer", data_transfer.get(s)?.value())?;
+        }
         for (name, key) in ["__lpEventTarget", "__lpRelatedTarget", "__lpSubmitter"].into_iter().zip(keys) {
             // Hidden edges preserve wrapper identity/expandos without native GC cycles.
             s.set_hidden(wrapper, name, target_value(s, &self.page, key)?)?;
@@ -214,6 +221,7 @@ pub fn wrap_event<'s>(s: &Scope<'s>, core: &EventData) -> JsResult<Object<'s>> {
         EventInterface::MouseEvent => s.wrap::<MouseEvent>(d, Some(key)),
         EventInterface::PointerEvent => s.wrap::<PointerEvent>(d, Some(key)),
         EventInterface::WheelEvent => s.wrap::<WheelEvent>(d, Some(key)),
+        EventInterface::DragEvent => s.wrap::<DragEvent>(d, Some(key)),
         EventInterface::KeyboardEvent => s.wrap::<KeyboardEvent>(d, Some(key)),
         EventInterface::InputEvent => s.wrap::<InputEvent>(d, Some(key)),
         EventInterface::CompositionEvent => s.wrap::<CompositionEvent>(d, Some(key)),
@@ -577,9 +585,10 @@ impl JsClass for UiEvent {
             let f = e.fields.borrow();
             Ok(s.number(match e.iface {
                 EventInterface::KeyboardEvent => f.key_code as f64,
-                EventInterface::MouseEvent | EventInterface::PointerEvent | EventInterface::WheelEvent => {
-                    (f.button + 1) as f64
-                }
+                EventInterface::MouseEvent
+                | EventInterface::PointerEvent
+                | EventInterface::WheelEvent
+                | EventInterface::DragEvent => (f.button + 1) as f64,
                 _ => 0.0,
             }))
         });
@@ -683,6 +692,46 @@ impl JsClass for WheelEvent {
         def.getter("deltaY", |s, e| Ok(s.number(e.fields.borrow().delta_y)));
         def.getter("deltaZ", |s, e| Ok(s.number(e.fields.borrow().delta_z)));
         def.getter("deltaMode", |s, e| Ok(s.number(e.fields.borrow().delta_mode as f64)));
+    }
+}
+
+pub struct DragEvent;
+impl JsClass for DragEvent {
+    const NAME: &'static str = "DragEvent";
+    type Data = EventData;
+    type Parent = MouseEvent;
+    fn define(def: &mut ClassDef<Self>) {
+        def.constructor(1, |s, nt, a| {
+            let init = a.get(1).as_object();
+            let wrapper = construct::<DragEvent>(s, nt, a, EventInterface::DragEvent, fill_mouse)?;
+            // The dictionary getter may reenter JS or force GC. Root only for
+            // construction, then keep the value on the event's traced wrapper.
+            let _root = Persistent::new(s, wrapper.value());
+            let value = match init {
+                Some(init) => init.get("dataTransfer")?,
+                None => s.null(),
+            };
+            if !value.is_nullish() {
+                let transfer_root = Persistent::new(s, value);
+                let transfer = s.unwrap::<crate::data_transfer::DataTransfer>(value).ok_or_else(|| {
+                    JsError::Type(
+                        "Failed to construct 'DragEvent': member dataTransfer is not of type DataTransfer.".into(),
+                    )
+                })?;
+                let reference = transfer.reference.clone();
+                s.set_hidden(wrapper, "__lpEventDataTransfer", transfer_root.get(s))?;
+                s.unwrap::<DragEvent>(wrapper.value()).expect("new event").fields.borrow_mut().data_transfer =
+                    Some(reference);
+            }
+            Ok(wrapper)
+        });
+        def.getter("dataTransfer", |s, e| {
+            let reference = e.fields.borrow().data_transfer.clone();
+            Ok(match reference {
+                Some(reference) => reference.get(s)?.value(),
+                None => s.null(),
+            })
+        });
     }
 }
 
@@ -853,6 +902,7 @@ pub(crate) fn register(engine: &lp_js::Engine) {
     engine.register::<MouseEvent>();
     engine.register::<PointerEvent>();
     engine.register::<WheelEvent>();
+    engine.register::<DragEvent>();
     engine.register::<KeyboardEvent>();
     engine.register::<InputEvent>();
     engine.register::<CompositionEvent>();

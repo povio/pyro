@@ -3130,3 +3130,161 @@ fn message_port_peer_collection_is_reconciled_at_after_task_without_hooks() {
     }
     assert_eq!(eval(r, "ref.deref() === undefined"), "true");
 }
+
+#[test]
+fn data_transfer_store_items_and_files() {
+    let e = env("<body>");
+    let r = &e.main;
+    assert_eq!(
+        eval(
+            r,
+            r#"
+        const dt = new DataTransfer();
+        const out = [dt.dropEffect, dt.effectAllowed, dt.items === dt.items, dt.items.length, dt.files.length];
+        dt.setData('Text', 'hi');
+        dt.setData('text/html', '<b>x</b>');
+        dt.setData('text/plain', 'hello');
+        out.push(dt.getData('text'), dt.getData('TEXT/HTML'), dt.getData('missing') === '', dt.types.join(), Object.isFrozen(dt.types));
+        const it = dt.items.add(new File(['abc'], 'a.txt', { type: 'text/plain', lastModified: 5 }));
+        out.push(it.kind, it.type, dt.types.join(), dt.items.length, dt.files.length, dt.files[0].name, dt.files[0].size,
+                 dt.files[0].lastModified, dt.files[0] instanceof File, it.getAsFile().name, dt.items[0].getAsFile());
+        try { dt.items.add('again', 'text/html'); out.push('no throw'); } catch (err) { out.push(err.name); }
+        try { dt.items.add('x'); out.push('no throw'); } catch (err) { out.push(err.constructor.name); }
+        dt.clearData('text/html');
+        out.push(dt.types.join());
+        dt.clearData();
+        out.push(dt.types.join(), dt.items.length);
+        dt.items.remove(0);
+        out.push(it.kind === '' && it.type === '', it.getAsFile(), dt.files.length, dt.types.length);
+        dt.dropEffect = 'bogus'; dt.effectAllowed = 'nope';
+        out.push(dt.dropEffect, dt.effectAllowed);
+        dt.dropEffect = 'copy'; dt.effectAllowed = 'copyMove';
+        out.push(dt.dropEffect, dt.effectAllowed);
+        dt.setData('URL', '# comment\nhttps://a.example/\nhttps://b.example/');
+        out.push(dt.getData('url'), dt.types.join());
+        dt.items.clear();
+        out.push(dt.items.length, [...dt.items].length);
+        out.join('|')
+    "#
+        ),
+        "none|none|true|0|0|hello|<b>x</b>|true|text/html,text/plain|true|file|text/plain|text/html,text/plain,Files|3|1|a.txt|3|5|true|a.txt||NotSupportedError|TypeError|text/plain,Files|Files|1|true||0|0|none|none|copy|copyMove|https://a.example/|text/uri-list|0|0"
+    );
+}
+
+#[test]
+fn drag_event_carries_its_data_transfer() {
+    let e = env("<body><div id=d></div></body>");
+    let r = &e.main;
+    assert_eq!(
+        eval(
+            r,
+            r#"
+        const dt = new DataTransfer();
+        dt.items.add(new File([new Uint8Array([1, 2])], 'x.bin', { type: 'application/octet-stream' }));
+        let seen = '';
+        document.body.addEventListener('drop', (ev) => {
+            seen = [ev instanceof DragEvent, ev instanceof MouseEvent, ev.dataTransfer === dt, ev.dataTransfer.files[0].name,
+                    ev.dataTransfer.types.join(), ev.type, ev.bubbles, ev.isTrusted, ev.clientX].join(',');
+            ev.preventDefault();
+        });
+        const ok = document.getElementById('d').dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt, clientX: 3 }));
+        const out = [seen, ok, new DragEvent('dragover').dataTransfer, new DragEvent('dragover', { dataTransfer: null }).dataTransfer];
+        try { new DragEvent('drop', { dataTransfer: {} }); out.push('no throw'); } catch (err) { out.push(err.constructor.name); }
+        const created = document.createEvent('DragEvent');
+        out.push(created instanceof DragEvent, created.dataTransfer, DragEvent.prototype.__proto__ === MouseEvent.prototype);
+        out.join('|')
+    "#
+        ),
+        "true,true,true,x.bin,Files,drop,true,false,3|false|||TypeError|true||true"
+    );
+}
+
+#[test]
+fn data_transfer_holds_no_roots_and_get_as_string_is_queued() {
+    let e = env("<body>");
+    let r = &e.main;
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    eval(
+        r,
+        "window.got = []; const dt = new DataTransfer(); dt.items.add('payload', 'text/plain'); dt.items.add(new File(['f'], 'f.txt')); \
+         dt.items[0].getAsString((s) => got.push(s)); dt.items[1].getAsString(() => got.push('file item: no callback')); \
+         dt.items[0].getAsString('not a function'); got.push('sync');",
+    );
+    assert_eq!(eval(r, "got.join()"), "sync", "the callback runs in a later task");
+    tasks.drain();
+    assert_eq!(eval(r, "got.join()"), "sync,payload");
+    // Neither the store, its cached item list, nor an event that carried it keeps anything alive.
+    eval(
+        r,
+        "window.refs = (() => { const dt = new DataTransfer(); dt.setData('text', 'x'); dt.items.add(new File(['abc'], 'a.txt')); \
+         const items = dt.items; const ev = new DragEvent('drop', { dataTransfer: dt }); document.body.dispatchEvent(ev); \
+         return [new WeakRef(dt), new WeakRef(items), new WeakRef(ev)]; })(); 1",
+    );
+    for _ in 0..4 {
+        e.engine.collect_garbage_now();
+        e.engine.drain_finalized();
+        e.page.after_task();
+        tasks.drain();
+    }
+    assert_eq!(eval(r, "refs.map((w) => w.deref() === undefined).join()"), "true,true,true");
+}
+
+#[test]
+fn data_transfer_items_back_reference_is_collectable() {
+    let e = env("<body>");
+    let r = &e.main;
+    eval(r, "window.kept = new DataTransfer(); kept.items.owner = kept; kept.items.marker = 17; window.refs = [new WeakRef(kept), new WeakRef(kept.items)]; 1");
+    for _ in 0..6 {
+        e.engine.collect_garbage_now();
+        e.engine.drain_finalized();
+    }
+    assert_eq!(
+        eval(r, "[kept.items === refs[1].deref(), kept.items.owner === kept, kept.items.marker].join()"),
+        "true,true,17"
+    );
+    eval(r, "kept = null; 1");
+    for _ in 0..6 {
+        e.engine.collect_garbage_now();
+        e.engine.drain_finalized();
+    }
+    assert_eq!(eval(r, "refs.map(w => w.deref() === undefined).join()"), "true,true");
+}
+
+#[test]
+fn drag_event_data_transfer_back_reference_is_collectable() {
+    let e = env("<body>");
+    let r = &e.main;
+    eval(r, "window.kept = (() => { const dt = new DataTransfer(); dt.setData('text', 'payload'); dt.ev = new DragEvent('drop', {dataTransfer: dt}); return dt.ev; })(); window.refs = [new WeakRef(kept), new WeakRef(kept.dataTransfer)]; 1");
+    for _ in 0..6 {
+        e.engine.collect_garbage_now();
+        e.engine.drain_finalized();
+    }
+    assert_eq!(eval(r, "[kept.dataTransfer === refs[1].deref(), kept.dataTransfer.ev === kept, kept.dataTransfer.getData('text')].join()"), "true,true,payload");
+    eval(r, "kept = null; 1");
+    for _ in 0..6 {
+        e.engine.collect_garbage_now();
+        e.engine.drain_finalized();
+    }
+    assert_eq!(eval(r, "refs.map(w => w.deref() === undefined).join()"), "true,true");
+}
+
+#[test]
+fn drag_event_data_transfer_identity_survives_isolated_world_and_gc() {
+    let e = env("<body>");
+    let isolated = new_realm(&e.engine, e.engine.register::<TestWindow>(), &e.page, "isolated");
+    eval(&isolated, "document.body.addEventListener('drop', ev => { window.saved = ev; });");
+    eval(&e.main, "window.refs = (() => { const dt = new DataTransfer(); dt.items.owner = dt; dt.items.marker = 42; dt.ev = new DragEvent('drop', {dataTransfer: dt}); document.body.dispatchEvent(dt.ev); return [new WeakRef(dt), new WeakRef(dt.items), new WeakRef(dt.ev)]; })(); 1");
+    for _ in 0..6 {
+        e.engine.collect_garbage_now();
+        e.engine.drain_finalized();
+    }
+    assert_eq!(eval(&isolated, "[saved.dataTransfer === saved.dataTransfer.ev.dataTransfer, Object.getOwnPropertyDescriptor(DataTransfer.prototype, 'items').get.call(saved.dataTransfer) === saved.dataTransfer.items, saved.dataTransfer.items.marker].join()"), "true,true,42");
+    assert_eq!(eval(&e.main, "refs.map(w => w.deref() !== undefined).join()"), "true,true,true");
+    eval(&isolated, "saved = null; 1");
+    for _ in 0..6 {
+        e.engine.collect_garbage_now();
+        e.engine.drain_finalized();
+    }
+    assert_eq!(eval(&e.main, "refs.map(w => w.deref() === undefined).join()"), "true,true,true");
+}

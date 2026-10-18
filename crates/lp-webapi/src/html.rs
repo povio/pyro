@@ -1626,6 +1626,7 @@ pub(crate) fn create_event<'s>(s: &Scope<'s>, page: &Rc<PageDom>, iface: &str) -
         "uievent" | "uievents" => EventInterface::UiEvent,
         "focusevent" => EventInterface::FocusEvent,
         "mouseevent" | "mouseevents" => EventInterface::MouseEvent,
+        "dragevent" => EventInterface::DragEvent,
         "keyboardevent" => EventInterface::KeyboardEvent,
         "messageevent" => EventInterface::MessageEvent,
         "hashchangeevent" => EventInterface::HashChangeEvent,
