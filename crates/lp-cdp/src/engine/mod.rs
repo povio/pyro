@@ -209,6 +209,9 @@ pub(crate) struct Session {
     pub(crate) lifecycle_events: bool,
     pub(crate) runtime_enabled: bool,
     pub(crate) network_enabled: bool,
+    /// `Network.setExtraHTTPHeaders` of this session. Like Chrome, kept while
+    /// Network is disabled but applied to the page only while it is enabled.
+    pub(crate) extra_headers: http::HeaderMap,
     fetch: fetch::FetchSession,
     pub(crate) handles: Rc<RefCell<HandleTable<Persistent>>>,
 }
@@ -638,6 +641,7 @@ impl Host for EngineHost {
                 lifecycle_events: false,
                 runtime_enabled: false,
                 network_enabled: false,
+                extra_headers: http::HeaderMap::new(),
                 fetch: fetch::FetchSession::default(),
                 handles: Rc::new(RefCell::new(HandleTable::new(self.handle_budget.clone()))),
             },
@@ -657,6 +661,7 @@ impl Host for EngineHost {
         }
         self.update_runtime_wanted();
         self.update_network_subscriptions();
+        self.apply_extra_headers(page);
     }
 
     fn page_command(&mut self, cmd: PageCommand<'_, '_>, _out: &mut dyn Sink) {
