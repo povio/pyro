@@ -1,0 +1,75 @@
+{
+  "manifest_sha256": "542d479b709249d072e3b57c1324c894c4378fc5373892ae64c0687486f2ae19",
+  "manifest_read_from": "git show f9fde4aa0dce7d1d7a1ffebffe3306399973cd80:apps/fe/e2e/suites/lightpanda.json (W3 host, sha256 verified)",
+  "recorded_utc": "2026-10-18T08:19:00+00:00",
+  "ledger_sha256": "3d1de5a08cf4add614432f30ea316d97472ffe42ea73d00a7e775655aef09016",
+  "criteria": "W3-15: the whole manifest-routed group of one file from the W3 share of the W2/W3 split of ledger uncovered_files, not in W3-01..W3-14; chosen before any run of this file",
+  "files": [
+    "e2e/logistics/positions-todos.e2e.ts"
+  ],
+  "cases": [
+    {
+      "file": "e2e/logistics/positions-todos.e2e.ts",
+      "titlePath": [
+        "Position To-Dos tab FE E2E",
+        "lists position To-Dos in the details modal To-Dos tab"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-todos.e2e.ts",
+      "titlePath": [
+        "Position To-Dos tab FE E2E",
+        "shows an empty state when the details modal To-Dos tab has no To-Dos"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-todos.e2e.ts",
+      "titlePath": [
+        "Position To-Dos tab FE E2E",
+        "renders a static To-Do due date in the To-Dos tab"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-todos.e2e.ts",
+      "titlePath": [
+        "Position To-Dos tab FE E2E",
+        "updates To-Do notes from the To-Dos tab"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-todos.e2e.ts",
+      "titlePath": [
+        "Position To-Dos tab FE E2E",
+        "clears To-Do assignees from the To-Dos tab"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-todos.e2e.ts",
+      "titlePath": [
+        "Position To-Dos tab FE E2E",
+        "adds a new To-Do from the To-Dos tab autocomplete"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-todos.e2e.ts",
+      "titlePath": [
+        "Position To-Dos tab FE E2E",
+        "marks a To-Do as done from the To-Dos tab"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-todos.e2e.ts",
+      "titlePath": [
+        "Position To-Dos tab FE E2E",
+        "removes a To-Do from the To-Dos tab"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-todos.e2e.ts",
+      "titlePath": [
+        "Position To-Dos tab FE E2E",
+        "adds the seeded To-Dos template from the To-Dos tab"
+      ]
+    }
+  ]
+}

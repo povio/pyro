@@ -1,0 +1,105 @@
+{
+  "manifest_sha256": "542d479b709249d072e3b57c1324c894c4378fc5373892ae64c0687486f2ae19",
+  "manifest_read_from": "git show f9fde4aa0dce7d1d7a1ffebffe3306399973cd80:apps/fe/e2e/suites/lightpanda.json (W3 host, sha256 verified)",
+  "recorded_utc": "2026-10-18T07:39:16+00:00",
+  "ledger_sha256": "3d1de5a08cf4add614432f30ea316d97472ffe42ea73d00a7e775655aef09016",
+  "criteria": "W3-10: whole manifest-routed groups of three files from the W3 share of the W2/W3 split of ledger uncovered_files, not in W3-01..W3-09; chosen before any run of these files",
+  "files": [
+    "e2e/logistics/quotes-cargo.e2e.ts",
+    "e2e/logistics/positions-master-sub-positions.e2e.ts",
+    "e2e/logistics/positions-overview-autosave.e2e.ts"
+  ],
+  "cases": [
+    {
+      "file": "e2e/logistics/positions-master-sub-positions.e2e.ts",
+      "titlePath": [
+        "Positions master and sub-position FE E2E",
+        "mark Master Position",
+        "marks a Position as Master Position from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-overview-autosave.e2e.ts",
+      "titlePath": [
+        "keeps both sea bill requirements enabled across sequential autosaves"
+      ]
+    },
+    {
+      "file": "e2e/logistics/quotes-cargo.e2e.ts",
+      "titlePath": [
+        "Quotes Cargo tab FE E2E",
+        "adds and deletes a Package from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/quotes-cargo.e2e.ts",
+      "titlePath": [
+        "Quotes Cargo tab FE E2E",
+        "deletes a Transport Unit from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/quotes-cargo.e2e.ts",
+      "titlePath": [
+        "Quotes Cargo tab FE E2E",
+        "duplicates a Package from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/quotes-cargo.e2e.ts",
+      "titlePath": [
+        "Quotes Cargo tab FE E2E",
+        "lists Quote Cargo transport units and packages in rendered HTML"
+      ]
+    },
+    {
+      "file": "e2e/logistics/quotes-cargo.e2e.ts",
+      "titlePath": [
+        "Quotes Cargo tab FE E2E",
+        "queues rapid autosaves for the same package instead of sending concurrent PATCH requests"
+      ]
+    },
+    {
+      "file": "e2e/logistics/quotes-cargo.e2e.ts",
+      "titlePath": [
+        "Quotes Cargo tab FE E2E",
+        "queues rapid autosaves for the same transport unit instead of sending concurrent PATCH requests"
+      ]
+    },
+    {
+      "file": "e2e/logistics/quotes-cargo.e2e.ts",
+      "titlePath": [
+        "Quotes Cargo tab FE E2E",
+        "toggles package auto-calculate totals from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/quotes-cargo.e2e.ts",
+      "titlePath": [
+        "Quotes Cargo tab FE E2E",
+        "updates editable Package dimensions from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/quotes-cargo.e2e.ts",
+      "titlePath": [
+        "Quotes Cargo tab FE E2E",
+        "updates editable Package text fields from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/quotes-cargo.e2e.ts",
+      "titlePath": [
+        "Quotes Cargo tab FE E2E",
+        "updates editable Transport Unit identity fields from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/quotes-cargo.e2e.ts",
+      "titlePath": [
+        "Quotes Cargo tab FE E2E",
+        "updates editable Transport Unit totals from the FE"
+      ]
+    }
+  ]
+}

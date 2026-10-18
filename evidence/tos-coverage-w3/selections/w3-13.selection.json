@@ -1,0 +1,126 @@
+{
+  "manifest_sha256": "542d479b709249d072e3b57c1324c894c4378fc5373892ae64c0687486f2ae19",
+  "manifest_read_from": "git show f9fde4aa0dce7d1d7a1ffebffe3306399973cd80:apps/fe/e2e/suites/lightpanda.json (W3 host, sha256 verified)",
+  "recorded_utc": "2026-10-18T08:12:28+00:00",
+  "ledger_sha256": "3d1de5a08cf4add614432f30ea316d97472ffe42ea73d00a7e775655aef09016",
+  "criteria": "W3-13: whole manifest-routed groups of two files from the W3 share of the W2/W3 split of ledger uncovered_files, not in W3-01..W3-12; chosen before any run of these files",
+  "files": [
+    "e2e/logistics/positions-house-bl-document.e2e.ts",
+    "e2e/logistics/positions-route-subpositions.e2e.ts"
+  ],
+  "cases": [
+    {
+      "file": "e2e/logistics/positions-route-subpositions.e2e.ts",
+      "titlePath": [
+        "Positions Route subpositions FE E2E",
+        "updates a master route point from the Route tab"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-route-subpositions.e2e.ts",
+      "titlePath": [
+        "Positions Route subpositions FE E2E",
+        "propagates the master route point update to a linked subposition"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-route-subpositions.e2e.ts",
+      "titlePath": [
+        "Positions Route subpositions FE E2E",
+        "removes the propagated transshipment point from the linked subposition"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-route-subpositions.e2e.ts",
+      "titlePath": [
+        "Positions Route subpositions FE E2E",
+        "renders linked subposition master route points readonly and keeps child route points editable"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-route-subpositions.e2e.ts",
+      "titlePath": [
+        "Positions Route subpositions FE E2E",
+        "syncs default route ports to split routes and renders split route ports readonly"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-route-subpositions.e2e.ts",
+      "titlePath": [
+        "Positions Route subpositions FE E2E",
+        "master transshipment deletion propagation",
+        "propagates a master transshipment point deletion from the Route tab to a linked subposition"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-house-bl-document.e2e.ts",
+      "titlePath": [
+        "Positions House Bill of Lading document FE E2E",
+        "adds a House Bill of Lading document from the Position Documents tab"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-house-bl-document.e2e.ts",
+      "titlePath": [
+        "Positions House Bill of Lading document FE E2E",
+        "maps explicitly assigned Notify parties into a new House Bill of Lading"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-house-bl-document.e2e.ts",
+      "titlePath": [
+        "Positions House Bill of Lading document FE E2E",
+        "updates House Bill of Lading header and reference fields from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-house-bl-document.e2e.ts",
+      "titlePath": [
+        "Positions House Bill of Lading document FE E2E",
+        "updates House Bill of Lading party address fields from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-house-bl-document.e2e.ts",
+      "titlePath": [
+        "Positions House Bill of Lading document FE E2E",
+        "updates House Bill of Lading vessel and loading fields from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-house-bl-document.e2e.ts",
+      "titlePath": [
+        "Positions House Bill of Lading document FE E2E",
+        "updates House Bill of Lading originals release field from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-house-bl-document.e2e.ts",
+      "titlePath": [
+        "Positions House Bill of Lading document FE E2E",
+        "updates House Bill of Lading formatting and issuer fields from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-house-bl-document.e2e.ts",
+      "titlePath": [
+        "Positions House Bill of Lading document FE E2E",
+        "opens House Bill of Lading HTML preview from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-house-bl-document.e2e.ts",
+      "titlePath": [
+        "Positions House Bill of Lading document FE E2E",
+        "denies House Bill of Lading issuing without working-document permission"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-route-subpositions.e2e.ts",
+      "titlePath": [
+        "Positions Route subpositions FE E2E",
+        "syncs the master carrier without changing the child Ocean Carrier Agent"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,125 @@
+{
+  "manifest_sha256": "542d479b709249d072e3b57c1324c894c4378fc5373892ae64c0687486f2ae19",
+  "manifest_read_from": "git show f9fde4aa0dce7d1d7a1ffebffe3306399973cd80:apps/fe/e2e/suites/lightpanda.json (W3 host, sha256 verified)",
+  "recorded_utc": "2026-10-18T08:04:08+00:00",
+  "ledger_sha256": "3d1de5a08cf4add614432f30ea316d97472ffe42ea73d00a7e775655aef09016",
+  "criteria": "W3-12: whole manifest-routed groups of two files from the W3 share of the W2/W3 split of ledger uncovered_files, not in W3-01..W3-11; chosen before any run of these files",
+  "files": [
+    "e2e/logistics/positions-route.e2e.ts",
+    "e2e/logistics/positions-route-tracking.e2e.ts"
+  ],
+  "cases": [
+    {
+      "file": "e2e/logistics/positions-route-tracking.e2e.ts",
+      "titlePath": [
+        "Positions Route tracking FE E2E",
+        "exposes MarineTraffic tracking only on editable split route Port of Loading rows"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-route-tracking.e2e.ts",
+      "titlePath": [
+        "Positions Route tracking FE E2E",
+        "auto-selects MarineTraffic and skips provider choice when it is the only available tracking provider"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-route.e2e.ts",
+      "titlePath": [
+        "Positions Route details modal FE E2E",
+        "lists route points in the Route tab"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-route.e2e.ts",
+      "titlePath": [
+        "Positions Route details modal FE E2E",
+        "uses pick-up reference labels for discharge port terminal route points"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-route.e2e.ts",
+      "titlePath": [
+        "Positions Route details modal FE E2E",
+        "removes a route point from the Route tab"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-route.e2e.ts",
+      "titlePath": [
+        "Positions Route details modal FE E2E",
+        "Route tab inline field updates",
+        "updates the Route tab incoterm"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-route.e2e.ts",
+      "titlePath": [
+        "Positions Route details modal FE E2E",
+        "Route tab inline field updates",
+        "updates the Route tab transport mode"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-route.e2e.ts",
+      "titlePath": [
+        "Positions Route details modal FE E2E",
+        "Route tab inline field updates",
+        "updates the Route tab primary reference"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-route.e2e.ts",
+      "titlePath": [
+        "Positions Route details modal FE E2E",
+        "Route tab inline field updates",
+        "updates the Route tab secondary reference"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-route.e2e.ts",
+      "titlePath": [
+        "Positions Route details modal FE E2E",
+        "Route tab inline field updates",
+        "updates the Route tab vessel"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-route.e2e.ts",
+      "titlePath": [
+        "Positions Route details modal FE E2E",
+        "Route tab inline field updates",
+        "updates the Route tab vessel IMO"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-route.e2e.ts",
+      "titlePath": [
+        "Positions Route details modal FE E2E",
+        "Route tab inline field updates",
+        "updates the Route tab voyage"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-route-tracking.e2e.ts",
+      "titlePath": [
+        "Positions Route tracking FE E2E",
+        "colors the tracking and sync actions when both are active"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-route-tracking.e2e.ts",
+      "titlePath": [
+        "Positions Route tracking FE E2E",
+        "does not expose MarineTraffic tracking on readonly split subposition Port of Loading rows"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-route-tracking.e2e.ts",
+      "titlePath": [
+        "Positions Route tracking FE E2E",
+        "auto-selects ShipsGo and skips provider choice when it is the only available tracking provider"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,159 @@
+{
+  "manifest_sha256": "542d479b709249d072e3b57c1324c894c4378fc5373892ae64c0687486f2ae19",
+  "manifest_read_from": "git show f9fde4aa0dce7d1d7a1ffebffe3306399973cd80:apps/fe/e2e/suites/lightpanda.json (W3 host, sha256 verified)",
+  "recorded_utc": "2026-10-18T08:22:02+00:00",
+  "ledger_sha256": "3d1de5a08cf4add614432f30ea316d97472ffe42ea73d00a7e775655aef09016",
+  "criteria": "W3-18: the whole manifest-routed group of one file from the W3 share of the W2/W3 split of ledger uncovered_files, not in W3-01..W3-17; chosen before any run of this file",
+  "files": [
+    "e2e/logistics/positions-finances.e2e.ts"
+  ],
+  "cases": [
+    {
+      "file": "e2e/logistics/positions-finances.e2e.ts",
+      "titlePath": [
+        "Position Finances FE E2E",
+        "adds multiple charge lines through the Finances tab"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-finances.e2e.ts",
+      "titlePath": [
+        "Position Finances FE E2E",
+        "lists finance rows inside the Position details Finances tab"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-finances.e2e.ts",
+      "titlePath": [
+        "Position Finances FE E2E",
+        "updates charge note from rendered Finances controls"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-finances.e2e.ts",
+      "titlePath": [
+        "Position Finances FE E2E",
+        "prepares currencies and exchange rate from rendered Finances controls"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-finances.e2e.ts",
+      "titlePath": [
+        "Position Finances FE E2E",
+        "updates the prepared currencies and exchange rate"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-finances.e2e.ts",
+      "titlePath": [
+        "Position Finances FE E2E",
+        "adds a single charge line through the Finances tab"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-finances.e2e.ts",
+      "titlePath": [
+        "Position Finances FE E2E",
+        "deletes a single charge line from the Finances tab"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-finances.e2e.ts",
+      "titlePath": [
+        "Position Finances FE E2E",
+        "deletes multiple selected charge lines from the Finances tab"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-finances.e2e.ts",
+      "titlePath": [
+        "Position Finances FE E2E",
+        "copies a single charge line from the Finances tab"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-finances.e2e.ts",
+      "titlePath": [
+        "Position Finances FE E2E",
+        "copies multiple selected charge lines from the Finances tab"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-finances.e2e.ts",
+      "titlePath": [
+        "Position Finances FE E2E",
+        "changes quantities in bulk and keeps the charge lines selected"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-finances.e2e.ts",
+      "titlePath": [
+        "Position Finances FE E2E",
+        "shows a clear validation error instead of submitting zero as a bulk quantity"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-finances.e2e.ts",
+      "titlePath": [
+        "Position Finances FE E2E",
+        "opens clear-vendor confirmation for a selected charge row"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-finances.e2e.ts",
+      "titlePath": [
+        "Position Finances FE E2E",
+        "submits clear-vendor confirmation for a selected charge row"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-finances.e2e.ts",
+      "titlePath": [
+        "Position Finances FE E2E",
+        "clears vendor from the submitted charge row"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-finances.e2e.ts",
+      "titlePath": [
+        "Position Finances FE E2E",
+        "opens clear-customer confirmation for a selected charge row"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-finances.e2e.ts",
+      "titlePath": [
+        "Position Finances FE E2E",
+        "submits clear-customer confirmation for a selected charge row"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-finances.e2e.ts",
+      "titlePath": [
+        "Position Finances FE E2E",
+        "clears customer from the submitted charge row"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-finances.e2e.ts",
+      "titlePath": [
+        "Position Finances FE E2E",
+        "clears selected finance rows when navigating from a master position to a sub-position"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-finances.e2e.ts",
+      "titlePath": [
+        "Position Finances FE E2E",
+        "opens a draft invoice for selected charge and text rows"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-finances.e2e.ts",
+      "titlePath": [
+        "Position Finances FE E2E",
+        "issues the prepared draft invoice"
+      ]
+    }
+  ]
+}
