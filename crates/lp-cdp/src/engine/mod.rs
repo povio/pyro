@@ -26,7 +26,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use lp_browser::{BrowserThread, PageEvent, PageId, PageObserver};
 use lp_js::{ConsoleLevel, EngineHooks, JsException, Persistent, Realm, RealmId, Value};
-use lp_net::{NetEvent, NetSubscription};
+use lp_net::{NetEvent, NetSubscription, SubscriptionLimits};
 use serde::Deserialize;
 
 use crate::msg::{self, CdpError, CdpResult, Command, Empty};
@@ -64,12 +64,6 @@ pub(crate) enum Queued {
 /// budget: the connection is closed (1008) rather than growing without bound.
 pub(crate) const MAX_QUEUED_EVENTS: usize = 100_000;
 
-/// Most bytes of network observations moved into the collector between
-/// flushes (the per-subscription limit of lp-net's default
-/// `SubscriptionLimits`). More closes the connection like an overflowing
-/// subscription does: events are never dropped selectively.
-pub(crate) const MAX_QUEUED_NETWORK_BYTES: usize = 8 * 1024 * 1024;
-
 pub(crate) struct Collector {
     queue: RefCell<VecDeque<Queued>>,
     out: Outbox,
@@ -79,7 +73,13 @@ pub(crate) struct Collector {
     /// The connection's network subscriptions, drained in front of every
     /// queued item (the subscription itself is owned by its context).
     network: RefCell<Vec<(ContextKey, Weak<NetSubscription>)>>,
+    /// Bytes of network observations moved into the queue, charged with
+    /// lp-net's own `NetEvent::retained_bytes`. Beyond `network_limit` (by
+    /// default that of a default `SubscriptionLimits` subscription) the
+    /// connection closes like an overflowing subscription does: events are
+    /// never dropped selectively.
     network_bytes: Cell<usize>,
+    network_limit: Cell<usize>,
 }
 
 impl Collector {
@@ -90,6 +90,7 @@ impl Collector {
             runtime_wanted: Cell::new(false),
             network: RefCell::new(Vec::new()),
             network_bytes: Cell::new(0),
+            network_limit: Cell::new(SubscriptionLimits::default().max_bytes),
         }
     }
 
@@ -128,8 +129,8 @@ impl Collector {
             // Overflow and closure are terminal and sticky: the next
             // `flush_network` sees them and tears the subscription down.
             while let Ok(event) = subscription.try_recv() {
-                let bytes = self.network_bytes.get() + network_event_bytes(&event);
-                if bytes > MAX_QUEUED_NETWORK_BYTES {
+                let bytes = self.network_bytes.get() + event.retained_bytes();
+                if bytes > self.network_limit.get() {
                     self.out.exceed();
                     return;
                 }
@@ -142,7 +143,7 @@ impl Collector {
     fn pop(&self) -> Option<Queued> {
         let item = self.queue.borrow_mut().pop_front();
         if let Some(Queued::Network(_, event)) = &item {
-            self.network_bytes.set(self.network_bytes.get().saturating_sub(network_event_bytes(event)));
+            self.network_bytes.set(self.network_bytes.get().saturating_sub(event.retained_bytes()));
         }
         item
     }
@@ -155,24 +156,6 @@ impl Collector {
     pub(crate) fn is_empty(&self) -> bool {
         self.queue.borrow().is_empty()
     }
-}
-
-/// Approximate retained size of a network observation (payloads, URL and
-/// header strings), for [`MAX_QUEUED_NETWORK_BYTES`].
-fn network_event_bytes(event: &NetEvent) -> usize {
-    let headers = |h: &http::HeaderMap| h.iter().map(|(k, v)| k.as_str().len() + v.len()).sum::<usize>();
-    std::mem::size_of::<NetEvent>()
-        + match event {
-            NetEvent::RequestWillBeSent { request, redirect_response, .. } => {
-                request.url.as_str().len()
-                    + headers(&request.headers)
-                    + request.post_data.as_ref().map_or(0, |d| d.len())
-                    + redirect_response.as_ref().map_or(0, |r| headers(&r.headers))
-            }
-            NetEvent::ResponseReceived { head, .. } => headers(&head.headers),
-            NetEvent::DataReceived { data, .. } => data.len(),
-            NetEvent::LoadingFinished { .. } | NetEvent::LoadingFailed { .. } => 0,
-        }
 }
 
 /// Milliseconds since the Unix epoch (CDP `Runtime.Timestamp`).
@@ -336,6 +319,17 @@ impl EngineHost {
         }
         self.handle_budget = HandleBudget::new(limit);
         Ok(())
+    }
+
+    /// Replaces the byte limit of network events queued between flushes
+    /// (tests, embedders with other memory limits).
+    pub fn set_queued_network_byte_limit(&mut self, limit: usize) {
+        self.collector.network_limit.set(limit);
+    }
+
+    /// Bytes of network events queued for the next flush (diagnostics/tests).
+    pub fn queued_network_bytes(&self) -> usize {
+        self.collector.network_bytes.get()
     }
 
     /// True when engine notifications are waiting for [`EngineHost::flush`].

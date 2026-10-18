@@ -1735,6 +1735,49 @@ fn network_events_published_before_push_state_precede_it() {
     assert!(index_of(&order, "Network.responseReceived", "/data") < pushed, "{order:#?}");
 }
 
+/// Network events moved in front of queued items are charged with lp-net's
+/// `NetEvent::retained_bytes` and released when handled; beyond the limit the
+/// connection closes rather than dropping events.
+#[test]
+fn queued_network_events_are_bounded_and_released() {
+    for limit in [None, Some(1)] {
+        let (address, server) = serve_html(2, "<!doctype html><p>x</p>");
+        let mut h = Harness::new();
+        h.page("Page.enable", json!({}));
+        h.page("Network.enable", json!({}));
+        let r = h.page("Page.navigate", json!({"url": format!("http://{address}/start")}));
+        assert!(r["result"].get("errorText").is_none(), "{r}");
+        h.run_for(100);
+        if let Some(limit) = limit {
+            h.browser.host_mut().set_queued_network_byte_limit(limit);
+        }
+        // The response is published while the evaluation is busy, so it is
+        // moved into the queue in front of the pushState event.
+        let session = h.session.clone();
+        h.send(
+            Some(&session),
+            "Runtime.evaluate",
+            json!({"expression": format!("fetch('/data'); {BUSY_300MS} history.pushState(null, '', '/pushed'); 1")}),
+        );
+        // Run the engine without reading frames: an exceeded connection has
+        // no frames left to read.
+        let deadline = Instant::now() + Duration::from_millis(600);
+        while Instant::now() < deadline {
+            let host = h.browser.host_mut();
+            host.run_until_work(Some(Instant::now() + Duration::from_millis(10)), || false);
+            host.flush();
+        }
+        server.join().unwrap();
+        match limit {
+            None => {
+                assert!(!h.out.is_exceeded());
+                assert_eq!(h.browser.host_mut().queued_network_bytes(), 0, "handled events release their charge");
+            }
+            Some(_) => assert!(h.out.is_exceeded(), "a queue beyond the byte limit closes the connection"),
+        }
+    }
+}
+
 /// Navigation start: the old document's network events published before the
 /// navigation are emitted before it, and the new document's request after it
 /// (previously the old document's events were held until after the navigation
