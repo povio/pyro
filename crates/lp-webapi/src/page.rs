@@ -113,6 +113,10 @@ pub trait PageHooks {
     fn remote_poster(&self) -> Option<RemotePoster> {
         None
     }
+    /// Transport progress made visible by fetch/XHR on the owner thread.
+    /// Called after the delivery snapshot and before any resulting JS, with
+    /// binding locks/borrows released. Default embedders need no observer.
+    fn network_delivery(&self, _id: lp_net::RequestId, _frontier: lp_net::NetworkDelivery) {}
     /// Document of the child browsing context of `iframe`, if any.
     fn frame_document(&self, _iframe: NodeId) -> Option<NodeId> {
         None
@@ -378,6 +382,14 @@ impl PageDom {
     pub(crate) fn navigate(&self, req: NavigationRequest) {
         if let Some(h) = self.hooks() {
             h.navigate(req);
+        }
+    }
+    pub(crate) fn network_delivery(&self, id: lp_net::RequestId, frontier: lp_net::NetworkDelivery) {
+        if !self.is_disposed() {
+            let hooks = self.hooks();
+            if let Some(hooks) = hooks {
+                hooks.network_delivery(id, frontier);
+            }
         }
     }
     pub fn remote_poster(&self) -> Option<RemotePoster> {

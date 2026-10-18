@@ -40,19 +40,16 @@ impl Xhr {
             Text { decoder: encoding.new_decoder_with_bom_removal(), chunks: 0, done: false, value: String::new() }
         });
         let wire = wire.lock().unwrap();
-        // Failure can release buffers on the I/O thread before its browser
-        // notification changes readyState. Never reuse a cursor into that
-        // released buffer.
-        if matches!(wire.terminal, Some(Err(_))) {
-            return Ok(s.string(""));
-        }
-        for chunk in &wire.chunks[text.chunks..] {
+        // Only decode the owner task's snapshot. I/O may append more bytes
+        // or record a failure while JS is running, but cannot change this view.
+        let visible = self.visible_chunks.get();
+        for chunk in &wire.chunks[text.chunks..visible] {
             text.value
                 .reserve(text.decoder.max_utf8_buffer_length(chunk.len()).unwrap_or(chunk.len().saturating_mul(3)));
             let (result, _, _) = text.decoder.decode_to_string(chunk, &mut text.value, false);
             debug_assert_eq!(result, encoding_rs::CoderResult::InputEmpty);
         }
-        text.chunks = wire.chunks.len();
+        text.chunks = visible;
         if self.ready.get() == 4 && !text.done {
             text.value.reserve(16);
             let _ = text.decoder.decode_to_string(&[], &mut text.value, true);

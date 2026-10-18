@@ -207,6 +207,17 @@ impl std::fmt::Display for NetError {
 
 impl std::error::Error for NetError {}
 
+/// Cumulative transport progress exposed by a response consumer on its owner
+/// thread. Bytes count decoded transport data, even when the consumer discards
+/// it. `terminal` means an observed transport Finished/Failed, never a local
+/// abort, disposal or consumer quota error. Request IDs are context-local.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct NetworkDelivery {
+    pub response: bool,
+    pub data_bytes: u64,
+    pub terminal: bool,
+}
+
 /// Events delivered to the request's consumer, in order:
 /// `Redirect*`, `Response`, `Data*`, then exactly one of `Finished`/`Failed`
 /// (`Failed` may also occur before `Response`).

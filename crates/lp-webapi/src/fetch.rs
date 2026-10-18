@@ -18,7 +18,8 @@ use bytes::Bytes;
 use lp_js::{Deferred, JsError, JsResult, Persistent, RealmId, Scope, Value, WeakRealm};
 use lp_net::http::{header, HeaderName, HeaderValue, Method};
 use lp_net::{
-    Credentials, Destination, NetError, RedirectMode, Request, RequestId, RequestMode, ResponseEvent, ResponseHead,
+    Credentials, Destination, NetError, NetworkDelivery, RedirectMode, Request, RequestId, RequestMode, ResponseEvent,
+    ResponseHead,
 };
 use rustc_hash::FxHashMap;
 
@@ -83,6 +84,7 @@ impl Budget {
     }
 }
 struct Wire {
+    frontier: NetworkDelivery,
     head: Option<ResponseHead>,
     chunks: Vec<Bytes>,
     bytes: usize,
@@ -128,6 +130,7 @@ pub(crate) enum ReadKind {
 }
 pub(crate) struct Body {
     wire: Arc<Mutex<Wire>>,
+    visible_terminal: RefCell<Option<Result<(), NetError>>>,
     page: Weak<PageDom>,
     id: RequestId,
     realm_id: RealmId,
@@ -390,6 +393,7 @@ pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
                 request.max_body = Some(limits.max_body_bytes);
                 let id = net.next_request_id();
                 let wire = Arc::new(Mutex::new(Wire {
+                    frontier: NetworkDelivery::default(),
                     head: None,
                     chunks: Vec::new(),
                     bytes: 0,
@@ -401,6 +405,7 @@ pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
                 }));
                 let body = Rc::new(Body {
                     wire: wire.clone(),
+                    visible_terminal: RefCell::new(None),
                     page: Rc::downgrade(&page),
                     id,
                     realm_id: s.realm_id(),
@@ -462,6 +467,7 @@ fn receive(
         let notify = match event {
             ResponseEvent::Redirect { .. } => false,
             ResponseEvent::Response(head) => {
+                wire.frontier.response = true;
                 wire.null_body |=
                     matches!(head.kind, lp_net::ResponseKind::Opaque | lp_net::ResponseKind::OpaqueRedirect)
                         || matches!(head.status.as_u16(), 204 | 205 | 304);
@@ -469,6 +475,7 @@ fn receive(
                 true
             }
             ResponseEvent::Data(bytes) => {
+                wire.frontier.data_bytes = wire.frontier.data_bytes.saturating_add(bytes.len() as u64);
                 if wire.null_body || bytes.is_empty() {
                     false
                 } else if wire.chunks.len() >= limits.max_body_chunks
@@ -486,11 +493,13 @@ fn receive(
                 }
             }
             ResponseEvent::Finished { .. } => {
+                wire.frontier.terminal = true;
                 wire.terminal = Some(Ok(()));
                 wire.closed = true;
                 true
             }
             ResponseEvent::Failed(error) => {
+                wire.frontier.terminal = true;
                 wire.terminal = Some(Err(error));
                 wire.closed = true;
                 wire.clear_body();
@@ -522,11 +531,16 @@ fn pump(page_id: u64, id: RequestId) {
         cancel_realm(&page, job.realm_id);
         return;
     };
-    let (head, terminal) = {
+    let (head, terminal, frontier) = {
         let mut wire = job.body.wire.lock().unwrap();
         wire.scheduled = false;
-        (wire.head.take(), wire.terminal.clone())
+        (wire.head.take(), wire.terminal.clone(), wire.frontier)
     };
+    *job.body.visible_terminal.borrow_mut() = terminal.clone();
+    page.network_delivery(id, frontier);
+    if page.is_disposed() || job.body.disposed.get() || job.body.aborted.get() {
+        return;
+    }
     if let Some(head) = head {
         *job.body.mime.borrow_mut() =
             if matches!(head.kind, lp_net::ResponseKind::Opaque | lp_net::ResponseKind::OpaqueRedirect) {
@@ -577,6 +591,7 @@ impl Body {
     pub(crate) fn constructed(s: &Scope<'_>, bytes: Option<Bytes>, mime: String) -> Rc<Body> {
         let len = bytes.as_ref().map_or(0, Bytes::len);
         let wire = Wire {
+            frontier: NetworkDelivery::default(),
             head: None,
             chunks: bytes.iter().filter(|b| !b.is_empty()).cloned().collect(),
             bytes: len,
@@ -589,6 +604,7 @@ impl Body {
         };
         Rc::new(Body {
             wire: Arc::new(Mutex::new(wire)),
+            visible_terminal: RefCell::new(Some(Ok(()))),
             page: Weak::new(),
             id: RequestId(0),
             realm_id: s.realm_id(),
@@ -652,7 +668,7 @@ impl Body {
         if self.aborted.get() {
             return Some(self.abort_error(s));
         }
-        let error = self.wire.lock().unwrap().terminal.as_ref().and_then(|r| r.as_ref().err().cloned());
+        let error = self.visible_terminal.borrow().as_ref().and_then(|r| r.as_ref().err().cloned());
         if self.disposed.get() {
             Some(JsError::dom("AbortError", "Document disposed").to_value(s))
         } else {
@@ -662,7 +678,7 @@ impl Body {
     pub(crate) fn read<'s>(&self, s: &Scope<'s>, kind: ReadKind, already_used: bool) -> JsResult<Value<'s>> {
         let deferred = s.deferred()?;
         let promise = deferred.promise.get(s);
-        let ready = self.is_null() || self.wire.lock().unwrap().terminal.is_some();
+        let ready = self.is_null() || self.visible_terminal.borrow().is_some();
         if already_used {
             deferred.reject(s, JsError::Type("Response body has already been consumed".into()).to_value(s))?;
         } else if let Some(error) = self.error(s) {
@@ -818,6 +834,7 @@ mod tests {
     fn body_delivery_bounds_chunks_and_coalesces_wakes() {
         let budget = Arc::new(Budget::default());
         let wire = Arc::new(Mutex::new(Wire {
+            frontier: NetworkDelivery::default(),
             head: None,
             chunks: Vec::new(),
             bytes: 0,
@@ -842,6 +859,12 @@ mod tests {
         assert_eq!(posts.load(Ordering::Relaxed), 1);
         assert_eq!(budget.used.load(Ordering::Relaxed), 0);
         assert!(matches!(wire.lock().unwrap().terminal, Some(Err(NetError::TooLarge))));
+        let frontier = wire.lock().unwrap().frontier;
+        assert_eq!(
+            frontier,
+            NetworkDelivery { response: false, data_bytes: 4, terminal: false },
+            "quota is not transport terminal"
+        );
         for _ in 0..100 {
             receive(&wire, 0, RequestId(1), &poster, limits, ResponseEvent::Data(Bytes::from_static(b"x")));
         }

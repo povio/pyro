@@ -2,6 +2,7 @@
 use super::*;
 
 pub(super) struct Delivery {
+    frontier: NetworkDelivery,
     pub head: Option<ResponseHead>,
     pub chunks: Vec<Bytes>,
     pub bytes: usize,
@@ -14,6 +15,7 @@ pub(super) struct Delivery {
 impl Delivery {
     pub fn new(budget: Arc<AtomicUsize>) -> Self {
         Self {
+            frontier: NetworkDelivery::default(),
             head: None,
             chunks: Vec::new(),
             bytes: 0,
@@ -57,11 +59,13 @@ pub(super) fn receive(
         let notify = match event {
             ResponseEvent::Redirect { .. } => false,
             ResponseEvent::Response(head) => {
+                wire.frontier.response = true;
                 wire.head = Some(head);
                 true
             }
             ResponseEvent::Data(bytes) if bytes.is_empty() => false,
             ResponseEvent::Data(bytes) => {
+                wire.frontier.data_bytes = wire.frontier.data_bytes.saturating_add(bytes.len() as u64);
                 let fits = wire.chunks.len() < limits.max_body_chunks
                     && wire.bytes.saturating_add(bytes.len()) <= limits.max_body_bytes;
                 let reserved = fits
@@ -74,7 +78,7 @@ pub(super) fn receive(
                 if !reserved {
                     wire.terminal = Some(Err(NetError::TooLarge));
                     wire.closed = true;
-                    wire.clear();
+                    // Keep already-visible bytes and their budget charge until owner delivery.
                     true
                 } else {
                     wire.bytes += bytes.len();
@@ -87,14 +91,16 @@ pub(super) fn receive(
                 }
             }
             ResponseEvent::Finished { .. } => {
+                wire.frontier.terminal = true;
                 wire.terminal = Some(Ok(()));
                 wire.closed = true;
                 true
             }
             ResponseEvent::Failed(error) => {
+                wire.frontier.terminal = true;
                 wire.terminal = Some(Err(error));
                 wire.closed = true;
-                wire.clear();
+                // Owner delivery clears buffers after making the failure visible.
                 true
             }
         };
@@ -127,11 +133,16 @@ fn pump(page_id: u64, id: RequestId) {
         return;
     };
     let Some(wire) = xhr.wire.borrow().clone() else { return };
-    let (head, bytes, terminal) = {
+    let (head, bytes, terminal, chunks, frontier) = {
         let mut wire = wire.lock().unwrap();
         wire.scheduled = false;
-        (wire.head.take(), wire.bytes, wire.terminal.clone())
+        (wire.head.take(), wire.bytes, wire.terminal.clone(), wire.chunks.len(), wire.frontier)
     };
+    xhr.visible_chunks.set(chunks);
+    page.network_delivery(id, frontier);
+    if !xhr.current(generation, id) {
+        return;
+    }
     if let Some(head) = head {
         *xhr.head.borrow_mut() = Some(head);
         xhr.ready.set(2);
@@ -210,10 +221,17 @@ mod tests {
         assert_eq!(wakes.load(Ordering::Relaxed), 2);
         assert_eq!(budget.load(Ordering::Acquire), 3);
         data();
-        assert_eq!(budget.load(Ordering::Acquire), 0, "overflow refunds all retained bytes");
+        assert_eq!(budget.load(Ordering::Acquire), 3, "visible bytes remain charged until owner cleanup");
         assert!(matches!(wire.lock().unwrap().terminal, Some(Err(NetError::TooLarge))));
+        let frontier = wire.lock().unwrap().frontier;
+        assert_eq!(
+            frontier,
+            NetworkDelivery { response: false, data_bytes: 4, terminal: false },
+            "quota is not transport terminal"
+        );
         data();
         assert_eq!(wakes.load(Ordering::Relaxed), 2, "terminal notification coalesces and late data is ignored");
-        assert_eq!(budget.load(Ordering::Acquire), 0);
+        wire.lock().unwrap().close();
+        assert_eq!(budget.load(Ordering::Acquire), 0, "owner cleanup refunds retained bytes");
     }
 }

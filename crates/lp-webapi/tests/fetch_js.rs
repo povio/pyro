@@ -446,3 +446,82 @@ fn form_data_entries_iteration_and_multipart_bodies() {
     env.until("result!=='pending'");
     assert_eq!(env.eval("result"), "ok");
 }
+
+fn assert_fetch_owner_delivery(path: &str, expected: &str) {
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    env.eval(&format!("globalThis.response=null;globalThis.result='pending';fetch('{path}').then(r=>response=r)"));
+    env.until("response!==null");
+    server.release.send(()).unwrap();
+    let completion = env.tasks.recv_timeout(Duration::from_secs(5)).expect("transport completion queued");
+    env.eval("response.text().then(v=>result=v,()=>result='error')");
+    assert_eq!(env.eval("result"), "pending", "transport completion must not escape before its owner task");
+    completion();
+    env.until("result!=='pending'");
+    assert_eq!(env.eval("result"), expected);
+}
+
+#[test]
+fn fetch_body_waits_for_owner_delivery() {
+    assert_fetch_owner_delivery("/gated", "abcdef");
+}
+
+#[test]
+fn fetch_error_waits_for_owner_delivery() {
+    assert_fetch_owner_delivery("/gated-failure", "error");
+}
+
+#[test]
+fn fetch_delivery_frontier_reaches_the_hook_before_dependent_js() {
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    env.eval("globalThis.stage='pending';fetch('/gated').then(r=>{__log('js response');stage='response';return r.text()}).then(t=>{__log('js text '+t);stage='done'})");
+    env.until("stage==='response'");
+    server.release.send(()).unwrap();
+    env.until("stage==='done'");
+    let frontiers = env.frontiers();
+    assert_eq!(frontiers.first(), Some(&(true, 0, false)), "headers are delivered before the body: {frontiers:?}");
+    assert_eq!(frontiers.last(), Some(&(true, 6, true)));
+    let first = env.log_index(|l| l.starts_with("delivery ")).unwrap();
+    let terminal = env.log_index(|l| l.starts_with("delivery ") && l.ends_with("t=true")).unwrap();
+    assert!(first < env.log_index(|l| l == "js response").unwrap(), "{:?}", env.log.borrow());
+    assert!(terminal < env.log_index(|l| l == "js text abcdef").unwrap(), "{:?}", env.log.borrow());
+}
+
+#[test]
+fn fetch_null_body_frontier_is_terminal_without_bytes() {
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    env.eval("globalThis.stage='pending';fetch('/empty').then(r=>r.text()).then(t=>{__log('js text');stage='done'})");
+    env.until("stage==='done'");
+    assert_eq!(env.frontiers().last(), Some(&(true, 0, true)));
+    assert!(env.log_index(|l| l.ends_with("t=true")).unwrap() < env.log_index(|l| l == "js text").unwrap());
+}
+
+#[test]
+fn fetch_local_abort_reports_no_transport_terminal() {
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    env.eval("globalThis.ac=new AbortController();globalThis.stage='pending';fetch('/gated',{signal:ac.signal}).then(r=>{stage='response';return r.text()}).then(()=>stage='text',e=>stage='error:'+e.name)");
+    env.until("stage==='response'");
+    env.eval("ac.abort()");
+    env.until("stage!=='response'");
+    assert_eq!(env.eval("stage"), "error:AbortError");
+    server.release.send(()).unwrap();
+    env.drain_for(Duration::from_millis(300));
+    assert!(env.frontiers().iter().all(|f| !f.2), "a local abort is not a transport terminal: {:?}", env.log.borrow());
+}
+
+#[test]
+fn fetch_disposal_stops_later_frontiers() {
+    // Frontiers already reported stay; none follow disposal.
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    env.eval("globalThis.stage='pending';fetch('/gated').then(r=>{stage='response';return r.text()})");
+    env.until("stage==='response'");
+    let before = env.log.borrow().len();
+    env.page.dispose();
+    server.release.send(()).unwrap();
+    env.drain_for(Duration::from_millis(300));
+    assert_eq!(env.log.borrow().len(), before, "no hook after disposal: {:?}", env.log.borrow());
+}
