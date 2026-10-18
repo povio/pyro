@@ -116,6 +116,7 @@ pub(crate) struct FrameHost {
     pub started: Instant,
     retired: RefCell<Vec<DocumentState>>,
     class: Cell<lp_js::ClassId>,
+    pub(crate) focus: RefCell<crate::focus::FocusState>,
 }
 impl FrameHost {
     pub fn new(browser: &Browser, page: PageId, context: ContextId, root: Frame, nav: Rc<PageNav>) -> Rc<Self> {
@@ -144,6 +145,7 @@ impl FrameHost {
             started: browser.started,
             retired: RefCell::new(Vec::new()),
             class: Cell::new(browser.engine.register::<Window>()),
+            focus: RefCell::new(crate::focus::FocusState::new(page)),
         })
     }
     fn next(&self) -> u64 {
@@ -351,6 +353,7 @@ impl FrameHost {
         self.sched.post(lp_runtime::TaskSource::Navigation, move |b| b.process_iframe_attributes(key, &loader));
     }
     pub fn detach(self: &Rc<Self>, key: FrameKey) {
+        self.invalidate_focus(key, true);
         let Some(frame) = self.frame(key) else { return };
         let descendants: Vec<_> = self
             .children
@@ -574,7 +577,18 @@ impl lp_js::JsClass for CrossWindow {
                 "top" => host.window_value(s, w.source, host.page.into())?,
                 "length" => s.number(host.child_keys(w.target).len() as f64),
                 "closed" => s.boolean(host.frame(w.target).is_none()),
-                "close" | "focus" | "blur" => s.function(name, |s, _, _| Ok(s.undefined()))?.value(),
+                "focus" => {
+                    let weak = w.host.clone();
+                    let target = w.target;
+                    s.function(name, move |s, _, _| {
+                        if let Some(page) = weak.upgrade().and_then(|h| h.frame(target)).and_then(|f| f.page_dom) {
+                            lp_webapi::input::focus_window(&page);
+                        }
+                        Ok(s.undefined())
+                    })?
+                    .value()
+                }
+                "close" | "blur" => s.function(name, |s, _, _| Ok(s.undefined()))?.value(),
                 _ => return Err(JsError::dom("SecurityError", "Blocked cross-origin frame access")),
             };
             Ok(Some(value))
