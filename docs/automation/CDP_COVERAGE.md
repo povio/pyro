@@ -71,7 +71,7 @@ Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 42 engi
 | `Input.insertText` | yes | engine | native focus/selection and cancellable beforeinput/input |
 | `Input.setInterceptDrags` | **no** | pending |  |
 | `Log.enable` | yes | accepted, recorded only | console goes through Runtime.consoleAPICalled; no Log entries are produced |
-| `Network.clearBrowserCache` | yes | engine | empties the HTTP cache of the page's browser context (shared by its pages, as in Chrome 147); cache hits report `fromDiskCache: true` with `encodedDataLength: 0` |
+| `Network.clearBrowserCache` | yes | engine | empties the HTTP cache of the page's browser context (shared by its pages, as in Chrome 147) via `NetClient::clear_http_cache()`, and, when the opt-in shared public-asset cache is on (`LIGHTNINGPANDA_SHARED_ASSET_CACHE_MB`), its process-wide store via `clear_shared_asset_cache()`; cache hits, including shared ones, report `fromDiskCache: true` with `encodedDataLength: 0` |
 | `Network.emulateNetworkConditions` | yes | pending |  |
 | `Network.enable` | yes | engine | subscribes to bounded per-context events; filters by page/session; buffer options unsupported |
 | `Network.getResponseBody` | yes | engine | text/base64 completed captures; explicit errors for unavailable or evicted bodies |
