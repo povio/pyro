@@ -1,0 +1,104 @@
+{
+  "manifest_sha256": "542d479b709249d072e3b57c1324c894c4378fc5373892ae64c0687486f2ae19",
+  "manifest_read_from": "git show f9fde4aa0dce7d1d7a1ffebffe3306399973cd80:apps/fe/e2e/suites/lightpanda.json (W3 host, sha256 verified)",
+  "recorded_utc": "2026-10-18T08:19:00+00:00",
+  "ledger_sha256": "3d1de5a08cf4add614432f30ea316d97472ffe42ea73d00a7e775655aef09016",
+  "criteria": "W3-16: the whole manifest-routed group of one file from the W3 share of the W2/W3 split of ledger uncovered_files, not in W3-01..W3-15; chosen before any run of this file",
+  "files": [
+    "e2e/logistics/positions.e2e.ts"
+  ],
+  "cases": [
+    {
+      "file": "e2e/logistics/positions.e2e.ts",
+      "titlePath": [
+        "Positions FE E2E",
+        "shows the default currency ISO code in footer totals"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions.e2e.ts",
+      "titlePath": [
+        "Positions FE E2E",
+        "shows Shipping Events after Change History in the position detail tabs"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions.e2e.ts",
+      "titlePath": [
+        "Positions FE E2E",
+        "sorts positions by number descending"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions.e2e.ts",
+      "titlePath": [
+        "Positions FE E2E",
+        "sorts positions by number ascending"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions.e2e.ts",
+      "titlePath": [
+        "Positions FE E2E",
+        "sorts positions by teu descending"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions.e2e.ts",
+      "titlePath": [
+        "Positions FE E2E",
+        "sorts positions by teu ascending"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions.e2e.ts",
+      "titlePath": [
+        "Positions FE E2E",
+        "sorts positions by externalSystemId descending"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions.e2e.ts",
+      "titlePath": [
+        "Positions FE E2E",
+        "sorts positions by externalSystemId ascending"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions.e2e.ts",
+      "titlePath": [
+        "Positions FE E2E",
+        "emits the order request for customer descending"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions.e2e.ts",
+      "titlePath": [
+        "Positions FE E2E",
+        "emits the order request for customer ascending"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions.e2e.ts",
+      "titlePath": [
+        "Positions FE E2E",
+        "emits the order request for customerReference descending"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions.e2e.ts",
+      "titlePath": [
+        "Positions FE E2E",
+        "emits the order request for customerReference ascending"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions.e2e.ts",
+      "titlePath": [
+        "Positions FE E2E",
+        "configure filters dialog",
+        "opens configure filters from the positions top filters without leaving the list"
+      ]
+    }
+  ]
+}

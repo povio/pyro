@@ -1,0 +1,82 @@
+{
+  "manifest_sha256": "542d479b709249d072e3b57c1324c894c4378fc5373892ae64c0687486f2ae19",
+  "manifest_read_from": "git show f9fde4aa0dce7d1d7a1ffebffe3306399973cd80:apps/fe/e2e/suites/lightpanda.json (W3 host, sha256 verified)",
+  "recorded_utc": "2026-10-18T08:12:28+00:00",
+  "ledger_sha256": "3d1de5a08cf4add614432f30ea316d97472ffe42ea73d00a7e775655aef09016",
+  "criteria": "W3-14: the whole manifest-routed group of one file from the W3 share of the W2/W3 split of ledger uncovered_files, not in W3-01..W3-13; chosen before any run of this file",
+  "files": [
+    "e2e/logistics/positions-shipping-instructions-document.e2e.ts"
+  ],
+  "cases": [
+    {
+      "file": "e2e/logistics/positions-shipping-instructions-document.e2e.ts",
+      "titlePath": [
+        "Positions Shipping Instructions document FE E2E",
+        "updates Shipping Instructions text and delivery fields from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-shipping-instructions-document.e2e.ts",
+      "titlePath": [
+        "Positions Shipping Instructions document FE E2E",
+        "updates Shipping Instructions primary charge payment fields from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-shipping-instructions-document.e2e.ts",
+      "titlePath": [
+        "Positions Shipping Instructions document FE E2E",
+        "updates Shipping Instructions port charge payment fields from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-shipping-instructions-document.e2e.ts",
+      "titlePath": [
+        "Positions Shipping Instructions document FE E2E",
+        "adds a Shipping Instructions document from the Position Documents tab"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-shipping-instructions-document.e2e.ts",
+      "titlePath": [
+        "Positions Shipping Instructions document FE E2E",
+        "updates Shipping Instructions party address fields from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-shipping-instructions-document.e2e.ts",
+      "titlePath": [
+        "Positions Shipping Instructions document FE E2E",
+        "updates Shipping Instructions transport fields from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-shipping-instructions-document.e2e.ts",
+      "titlePath": [
+        "Positions Shipping Instructions document FE E2E",
+        "updates Shipping Instructions additional reference fields from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-shipping-instructions-document.e2e.ts",
+      "titlePath": [
+        "Positions Shipping Instructions document FE E2E",
+        "opens Shipping Instructions preview from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-shipping-instructions-document.e2e.ts",
+      "titlePath": [
+        "Positions Shipping Instructions document FE E2E",
+        "shows user-friendly validation messages when message creation is invalid"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-shipping-instructions-document.e2e.ts",
+      "titlePath": [
+        "Positions Shipping Instructions document FE E2E",
+        "issues Shipping Instructions document from the FE"
+      ]
+    }
+  ]
+}

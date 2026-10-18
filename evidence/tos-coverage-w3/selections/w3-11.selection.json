@@ -1,0 +1,106 @@
+{
+  "manifest_sha256": "542d479b709249d072e3b57c1324c894c4378fc5373892ae64c0687486f2ae19",
+  "manifest_read_from": "git show f9fde4aa0dce7d1d7a1ffebffe3306399973cd80:apps/fe/e2e/suites/lightpanda.json (W3 host, sha256 verified)",
+  "recorded_utc": "2026-10-18T08:04:08+00:00",
+  "ledger_sha256": "3d1de5a08cf4add614432f30ea316d97472ffe42ea73d00a7e775655aef09016",
+  "criteria": "W3-11: whole manifest-routed groups of five files from the W3 share of the W2/W3 split of ledger uncovered_files, not in W3-01..W3-10; chosen before any run of these files",
+  "files": [
+    "e2e/logistics/positions-air-transport-order.e2e.ts",
+    "e2e/logistics/positions-incoming-invoice-credit-note.e2e.ts",
+    "e2e/logistics/positions-outgoing-invoice-payments.e2e.ts",
+    "e2e/logistics/positions-register-incoming-pro-forma.e2e.ts",
+    "e2e/logistics/positions-route-autosave.e2e.ts"
+  ],
+  "cases": [
+    {
+      "file": "e2e/logistics/positions-route-autosave.e2e.ts",
+      "titlePath": [
+        "persists all vessel fields after idle autosave and reload"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-register-incoming-pro-forma.e2e.ts",
+      "titlePath": [
+        "Position Register Incoming Pro Forma FE E2E",
+        "generates a PDF for a registered incoming Pro Forma from the invoice details drawer"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-incoming-invoice-credit-note.e2e.ts",
+      "titlePath": [
+        "Position Incoming Invoice Credit Note FE E2E",
+        "adds an actual Credit Note inside an actual Incoming Invoice from the Position details modal"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-incoming-invoice-credit-note.e2e.ts",
+      "titlePath": [
+        "Position Incoming Invoice Credit Note FE E2E",
+        "generates a payment confirmation after adding an actual Incoming Credit Note"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-incoming-invoice-credit-note.e2e.ts",
+      "titlePath": [
+        "Position Incoming Invoice Credit Note FE E2E",
+        "generates a new document version for the actual Incoming Credit Note"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-outgoing-invoice-payments.e2e.ts",
+      "titlePath": [
+        "Position Outgoing Invoice Payments FE E2E",
+        "opens the New Payment drawer from an issued outgoing Invoice"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-outgoing-invoice-payments.e2e.ts",
+      "titlePath": [
+        "Position Outgoing Invoice Payments FE E2E",
+        "renders the added outgoing Invoice payment state"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-outgoing-invoice-payments.e2e.ts",
+      "titlePath": [
+        "Position Outgoing Invoice Payments FE E2E",
+        "removes an existing outgoing Invoice payment"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-outgoing-invoice-payments.e2e.ts",
+      "titlePath": [
+        "Position Outgoing Invoice Payments FE E2E",
+        "generates a payment confirmation for an added outgoing Invoice payment from the invoice details modal"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-air-transport-order.e2e.ts",
+      "titlePath": [
+        "Air Transport Order",
+        "renders the Air-only working document"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-air-transport-order.e2e.ts",
+      "titlePath": [
+        "Air Transport Order",
+        "persists Air Transport Order unit toggles"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-air-transport-order.e2e.ts",
+      "titlePath": [
+        "Air Transport Order",
+        "toggles HS codes"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-air-transport-order.e2e.ts",
+      "titlePath": [
+        "Air Transport Order",
+        "previews HS codes"
+      ]
+    }
+  ]
+}
