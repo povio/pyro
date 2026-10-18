@@ -79,7 +79,7 @@ impl EngineHost {
                     .ok_or_else(|| CdpError::server("session is gone"))?
                     .network_enabled = true;
                 self.update_network_subscriptions();
-                self.apply_extra_headers(cmd.page);
+                self.apply_network_overrides(cmd.page);
                 Ok(Some(json!({})))
             }
             "disable" => {
@@ -87,7 +87,7 @@ impl EngineHost {
                     session.network_enabled = false;
                 }
                 self.update_network_subscriptions();
-                self.apply_extra_headers(cmd.page);
+                self.apply_network_overrides(cmd.page);
                 Ok(Some(json!({})))
             }
             "setExtraHTTPHeaders" => {
@@ -101,7 +101,7 @@ impl EngineHost {
                     .get_mut(cmd.session_id)
                     .ok_or_else(|| CdpError::server("session is gone"))?
                     .extra_headers = headers;
-                self.apply_extra_headers(cmd.page);
+                self.apply_network_overrides(cmd.page);
                 Ok(Some(json!({})))
             }
             "getResponseBody" => {
@@ -124,31 +124,47 @@ impl EngineHost {
                     cache_disabled: bool,
                 }
                 let params: Params = cmd.command.params()?;
-                // lp-net has no response cache: disabling it is already true,
-                // and allowing caching does not require responses to be cached.
-                let _ = params.cache_disabled;
+                self.sessions
+                    .get_mut(cmd.session_id)
+                    .ok_or_else(|| CdpError::server("session is gone"))?
+                    .cache_disabled = params.cache_disabled;
+                self.apply_network_overrides(cmd.page);
+                Ok(Some(json!({})))
+            }
+            "clearBrowserCache" => {
+                // Chrome clears the cache shared by the target's browser
+                // context: other pages of that context miss afterwards.
+                let state = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?;
+                let context =
+                    self.contexts.get(&state.context).ok_or_else(|| CdpError::server("Browser context is gone"))?;
+                if let Some(net) = self.thread.browser.context_net(context.id) {
+                    net.clear_http_cache();
+                }
                 Ok(Some(json!({})))
             }
             _ => Err(CdpError::unsupported(&cmd.command.method)),
         }
     }
 
-    /// Hands the page the extra headers of its sessions that have Network
-    /// enabled (Chrome applies a session's headers only while its Network
-    /// domain is enabled; later sessions override earlier ones). Each call
-    /// replaces the page's set; an empty set clears it. Sibling pages, even
-    /// in the same browser context, are unaffected.
-    pub(super) fn apply_extra_headers(&mut self, page: PageKey) {
+    /// Hands the page the request overrides of its sessions that have Network
+    /// enabled (Chrome applies a session's settings only while its Network
+    /// domain is enabled): the merged extra headers (later sessions override
+    /// earlier ones; an empty set clears) and cache bypass (any session).
+    /// Sibling pages, even in the same browser context, are unaffected.
+    pub(super) fn apply_network_overrides(&mut self, page: PageKey) {
         let Some(state) = self.pages.get(&page) else { return };
         let mut headers = http::HeaderMap::new();
+        let mut cache_disabled = false;
         for session in state.sessions.iter().filter_map(|s| self.sessions.get(s)).filter(|s| s.network_enabled) {
             for (name, value) in &session.extra_headers {
                 headers.insert(name.clone(), value.clone());
             }
+            cache_disabled |= session.cache_disabled;
         }
         // False only for a page lp-browser no longer has, which then has no
-        // requests left to apply headers to.
+        // requests left to apply them to.
         let _ = self.thread.browser.set_extra_http_headers(state.id, headers);
+        let _ = self.thread.browser.set_cache_disabled(state.id, cache_disabled);
     }
 
     pub(super) fn update_network_subscriptions(&mut self) {

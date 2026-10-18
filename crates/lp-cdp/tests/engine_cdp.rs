@@ -2035,3 +2035,100 @@ fn extra_http_headers_replace_clear_and_follow_network_enable() {
         assert_eq!(r["error"]["message"], message, "{r}");
     }
 }
+
+/// Serves `responses` requests: `/asset*` as a cacheable script
+/// (`public, max-age=3600`), anything else as HTML; records request heads.
+fn serve_cacheable(
+    responses: usize,
+) -> (std::net::SocketAddr, std::thread::JoinHandle<()>, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log = seen.clone();
+    let server = std::thread::spawn(move || {
+        for _ in 0..responses {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+            let mut request = Vec::new();
+            let mut chunk = [0; 1024];
+            while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                let n = stream.read(&mut chunk).unwrap();
+                assert!(n > 0);
+                request.extend_from_slice(&chunk[..n]);
+            }
+            let request = String::from_utf8_lossy(&request).to_ascii_lowercase();
+            let asset = request.starts_with("get /asset");
+            log.lock().unwrap().push(request);
+            let (kind, cache, body) = if asset {
+                ("text/javascript", "Cache-Control: public, max-age=3600\r\n", "1;")
+            } else {
+                ("text/html", "", "<!doctype html><p>cache</p>")
+            };
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: {kind}\r\n{cache}Content-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            stream.write_all(head.as_bytes()).unwrap();
+            stream.write_all(body.as_bytes()).unwrap();
+        }
+    });
+    (address, server, seen)
+}
+
+/// Network.setCacheDisabled / clearBrowserCache and cache-hit reporting, as
+/// observed in Chrome 147 (W3 probes cache-controls.mjs,
+/// cache-disabled-enable.mjs): a hit reports fromDiskCache with
+/// encodedDataLength 0; disabling bypasses the cache (with no-cache request
+/// headers) only while the session has Network enabled; clearing empties the
+/// context's cache.
+#[test]
+fn cache_disabled_and_clear_browser_cache_follow_chrome() {
+    let (address, server, seen) = serve_cacheable(4);
+    let mut h = Harness::new();
+    let r = h.page("Page.navigate", json!({"url": format!("http://{address}/start")}));
+    assert!(r["result"].get("errorText").is_none(), "{r}");
+    h.page("Network.enable", json!({}));
+    let fetch = |h: &mut Harness| {
+        let session = h.session.clone();
+        let id = h.send(
+            Some(&session),
+            "Runtime.evaluate",
+            json!({"expression": "fetch('/asset').then(r => r.text())", "awaitPromise": true, "returnByValue": true}),
+        );
+        let mut messages = h.until_response(id);
+        messages.extend(h.run_for(50));
+        let reply = messages.iter().find(|m| m["id"] == id).unwrap();
+        assert_eq!(reply["result"]["result"]["value"], "1;", "{reply}");
+        let response = messages.iter().find(|m| m["method"] == "Network.responseReceived").cloned();
+        let finished = messages.iter().find(|m| m["method"] == "Network.loadingFinished").cloned();
+        (response, finished)
+    };
+    let requests = |seen: &std::sync::Arc<std::sync::Mutex<Vec<String>>>| seen.lock().unwrap().len();
+    fetch(&mut h); // primes the cache
+    assert_eq!(requests(&seen), 2);
+    let (response, finished) = fetch(&mut h);
+    assert_eq!(requests(&seen), 2, "hit");
+    let (response, finished) = (response.expect("responseReceived"), finished.expect("loadingFinished"));
+    assert_eq!(response["params"]["response"]["fromDiskCache"], true, "{response}");
+    assert_eq!(response["params"]["response"]["encodedDataLength"], 0, "{response}");
+    assert_eq!(finished["params"]["encodedDataLength"], 0, "{finished}");
+
+    assert_eq!(h.page("Network.setCacheDisabled", json!({"cacheDisabled": true}))["result"], json!({}));
+    fetch(&mut h);
+    assert_eq!(requests(&seen), 3, "bypassed");
+    let last = seen.lock().unwrap().last().cloned().unwrap();
+    assert!(last.contains("\r\ncache-control: no-cache\r\n") && last.contains("\r\npragma: no-cache\r\n"), "{last}");
+    h.page("Network.disable", json!({}));
+    fetch(&mut h);
+    assert_eq!(requests(&seen), 3, "kept but not applied while Network is disabled");
+    h.page("Network.enable", json!({}));
+    assert_eq!(h.page("Network.setCacheDisabled", json!({"cacheDisabled": false}))["result"], json!({}));
+    fetch(&mut h);
+    assert_eq!(requests(&seen), 3, "hit again");
+
+    assert_eq!(h.page("Network.clearBrowserCache", json!({}))["result"], json!({}));
+    fetch(&mut h);
+    assert_eq!(requests(&seen), 4, "miss after clearing");
+    server.join().unwrap();
+}

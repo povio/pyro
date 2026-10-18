@@ -71,12 +71,12 @@ Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 42 engi
 | `Input.insertText` | yes | engine | native focus/selection and cancellable beforeinput/input |
 | `Input.setInterceptDrags` | **no** | pending |  |
 | `Log.enable` | yes | accepted, recorded only | console goes through Runtime.consoleAPICalled; no Log entries are produced |
-| `Network.clearBrowserCache` | yes | pending | awaiting lp-cdp wiring to `NetClient::clear_http_cache()` (per-context HTTP cache, lp-net); until wired, entries are not cleared |
+| `Network.clearBrowserCache` | yes | engine | empties the HTTP cache of the page's browser context (shared by its pages, as in Chrome 147); cache hits report `fromDiskCache: true` with `encodedDataLength: 0` |
 | `Network.emulateNetworkConditions` | yes | pending |  |
 | `Network.enable` | yes | engine | subscribes to bounded per-context events; filters by page/session; buffer options unsupported |
 | `Network.getResponseBody` | yes | engine | text/base64 completed captures; explicit errors for unavailable or evicted bodies |
 | `Network.loadNetworkResource` | **no** | pending |  |
-| `Network.setCacheDisabled` | yes | pending | a per-context HTTP cache now exists in lp-net and is enabled by default; awaiting lp-cdp wiring to `NetSettings.cache_disabled` (bypass plus `Pragma`/`Cache-Control: no-cache`, like DevTools). Until wired, `cacheDisabled: true` does not disable it |
+| `Network.setCacheDisabled` | yes | engine | per page, as in Chrome 147: the page's requests bypass the per-context HTTP cache (no lookup or store, `Pragma`/`Cache-Control: no-cache` added) while its session has Network enabled; sibling pages of the same context still use the cache |
 | `Network.setExtraHTTPHeaders` | yes | engine | per page (sibling pages, even in the same browser context, are unaffected); each call replaces the map and {} clears it; applied to navigations, subresources, fetch and XHR only while the session has Network enabled (kept while disabled), as in Chrome 147; page headers override same-name request headers including User-Agent; invalid names/values rejected with Chrome's messages |
 | `Page.addScriptToEvaluateOnNewDocument` | yes | engine |  |
 | `Page.bringToFront` | yes | accepted, recorded only | single foreground page per target |
