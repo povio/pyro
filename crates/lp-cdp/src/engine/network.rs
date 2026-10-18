@@ -250,13 +250,7 @@ impl EngineHost {
         };
         if let NetEvent::RequestWillBeSent { request, .. } = &event {
             let page = self.pages.iter().find_map(|(key, page)| {
-                (page.context == context
-                    && self
-                        .thread
-                        .browser
-                        .page(page.id)
-                        .is_some_and(|p| Some(&p.main_frame.id.0) == request.frame_id.as_ref()))
-                .then_some(*key)
+                (page.context == context && self.owns_frame(page.id, request.frame_id.as_ref())).then_some(*key)
             });
             let Some(page) = page else { return };
             if self.sessions_of(page, |s| s.network_enabled).is_empty() {

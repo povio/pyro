@@ -300,13 +300,7 @@ impl EngineHost {
                 }
                 let (request, native_id) = item.request();
                 let page = self.pages.iter().find_map(|(key, p)| {
-                    (p.context == context
-                        && self
-                            .thread
-                            .browser
-                            .page(p.id)
-                            .is_some_and(|p| Some(&p.main_frame.id.0) == request.frame_id.as_ref()))
-                    .then_some(*key)
+                    (p.context == context && self.owns_frame(p.id, request.frame_id.as_ref())).then_some(*key)
                 });
                 let Some(page) = page else {
                     item.resume();

@@ -319,6 +319,7 @@ pub struct BodyStore {
 
 struct Body {
     protocol_id: String,
+    frame_id: Option<String>,
     chunks: Vec<Bytes>,
     len: usize,
     textual: bool,
@@ -334,7 +335,7 @@ impl BodyStore {
     /// Feeds an event; only response/data/finish/fail events matter.
     pub fn observe(&mut self, event: &NetEvent) {
         match event {
-            NetEvent::ResponseReceived { id, head, destination, loader_id, .. } => {
+            NetEvent::ResponseReceived { id, head, destination, loader_id, frame_id, .. } => {
                 self.remove(*id);
                 if self.bodies.len() >= MAX_RETAINED_BODIES {
                     if let Some(oldest) = self.order.front().copied() {
@@ -354,7 +355,15 @@ impl BodyStore {
                 self.protocol_ids.insert(protocol_id.clone(), *id);
                 self.bodies.insert(
                     *id,
-                    Body { protocol_id, chunks: Vec::new(), len: 0, textual, complete: false, dropped: None },
+                    Body {
+                        protocol_id,
+                        frame_id: frame_id.clone(),
+                        chunks: Vec::new(),
+                        len: 0,
+                        textual,
+                        complete: false,
+                        dropped: None,
+                    },
                 );
                 self.order.push_back(*id);
             }
@@ -417,6 +426,18 @@ impl BodyStore {
             self.budget.release(body.len);
             self.retained -= body.len;
             self.order.retain(|r| *r != id);
+        }
+    }
+
+    /// A child navigation must not evict captures from its siblings or parent.
+    pub fn clear_frame(&mut self, frame: &str) {
+        let ids: Vec<_> = self
+            .bodies
+            .iter()
+            .filter_map(|(id, body)| (body.frame_id.as_deref() == Some(frame)).then_some(*id))
+            .collect();
+        for id in ids {
+            self.remove(id);
         }
     }
 
