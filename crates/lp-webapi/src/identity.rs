@@ -19,6 +19,7 @@ impl UserAgentOverride {
             user_agent: if self.user_agent.is_empty() { None } else { Some(HeaderValue::from_str(&self.user_agent)?) },
             accept_language: self.accept_language.as_deref().map(HeaderValue::from_str).transpose()?,
             extra_headers: HeaderMap::new(),
+            cache_disabled: false,
         })
     }
 }
@@ -29,6 +30,8 @@ pub(crate) struct IdentityState {
     defaults: RequestDefaults,
     /// Page-scoped `Network.setExtraHTTPHeaders`; independent of the UA override.
     extra_headers: HeaderMap,
+    /// Page-scoped `Network.setCacheDisabled`.
+    cache_disabled: bool,
 }
 impl PageDom {
     /// Applies atomically to existing navigator wrappers/worlds and future
@@ -52,9 +55,21 @@ impl PageDom {
     pub fn extra_http_headers(&self) -> HeaderMap {
         self.identity.borrow().extra_headers.clone()
     }
+    /// Page-scoped HTTP cache bypass for future fetch/XHR requests, as CDP
+    /// `Network.setCacheDisabled` on this page's session. Sibling pages sharing
+    /// the context's network client keep using its cache.
+    pub fn set_cache_disabled(&self, disabled: bool) {
+        self.identity.borrow_mut().cache_disabled = disabled;
+    }
+    pub fn cache_disabled(&self) -> bool {
+        self.identity.borrow().cache_disabled
+    }
     pub(crate) fn apply_request_defaults(&self, request: &mut Request) {
         let identity = self.identity.borrow();
-        request.defaults =
-            RequestDefaults { extra_headers: identity.extra_headers.clone(), ..identity.defaults.clone() };
+        request.defaults = RequestDefaults {
+            extra_headers: identity.extra_headers.clone(),
+            cache_disabled: identity.cache_disabled,
+            ..identity.defaults.clone()
+        };
     }
 }

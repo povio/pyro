@@ -419,3 +419,24 @@ fn hits_are_reported_to_network_observers() {
     assert_eq!(responses, vec![false, true]);
     assert!(finished[0] > 0 && finished[1] == 0, "{finished:?}");
 }
+
+#[test]
+fn page_scoped_cache_disabled_bypasses_only_that_request() {
+    let s = start();
+    let c = client();
+    let disabled = || with(&s, "/fresh", |r| r.defaults.cache_disabled = true);
+    get(&s, &c, "/fresh");
+    // The disabled page's request goes to the network with the DevTools headers...
+    let r = fetch(&c, disabled());
+    assert!(!r.head.unwrap().from_cache);
+    assert_eq!(s.header("/fresh", 1, "pragma").as_deref(), Some("no-cache"));
+    assert_eq!(s.header("/fresh", 1, "cache-control").as_deref(), Some("no-cache"));
+    // ...while a sibling page on the same context still hits the entry, which the bypass neither replaced nor dropped.
+    assert!(get(&s, &c, "/fresh").head.unwrap().from_cache);
+    assert_eq!(s.hits("/fresh"), 2);
+    // A disabled page does not store.
+    c.clear_http_cache();
+    fetch(&c, disabled());
+    assert_eq!(c.http_cache_usage().0, 0);
+    assert_eq!(s.header("/fresh", 2, "cache-control").as_deref(), Some("no-cache"));
+}

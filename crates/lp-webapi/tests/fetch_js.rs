@@ -618,3 +618,36 @@ fn fetch_cache_modes_use_the_context_http_cache() {
     assert_eq!(env.eval("errors"), "rejected:TypeError,rejected:TypeError");
     assert_eq!(hits(), 3, "rejected inits never reach the network");
 }
+
+#[test]
+fn page_cache_disabled_bypasses_only_that_page() {
+    let server = Server::new();
+    let first = Env::new(&server.url);
+    let second = Env::with_engine(&server.url, first.engine.clone());
+    *second.page.net.borrow_mut() = first.page.net.borrow().clone();
+    let hits = || server.requests.lock().unwrap().iter().filter(|(line, _, _)| line.contains("/cacheable")).count();
+    let last_headers = || server.requests.lock().unwrap().last().unwrap().1.to_ascii_lowercase();
+    let load = |env: &Env, xhr: bool| {
+        if xhr {
+            env.eval("globalThis.result='pending';globalThis.x=new XMLHttpRequest();x.onload=()=>result='done';x.open('GET','/cacheable');x.send()");
+        } else {
+            env.eval("globalThis.result='pending';fetch('/cacheable').then(r=>r.text()).then(()=>result='done')");
+        }
+        env.until("result==='done'");
+    };
+    load(&second, false);
+    assert_eq!(hits(), 1);
+    first.page.set_cache_disabled(true);
+    assert!(first.page.cache_disabled());
+    load(&first, false);
+    assert_eq!(hits(), 2, "the disabled page bypasses the context cache");
+    assert!(last_headers().contains("pragma: no-cache") && last_headers().contains("cache-control: no-cache"));
+    load(&first, true);
+    assert_eq!(hits(), 3, "XHR bypasses too");
+    load(&second, false);
+    load(&second, true);
+    assert_eq!(hits(), 3, "the sibling page keeps hitting the shared context cache");
+    first.page.set_cache_disabled(false);
+    load(&first, false);
+    assert_eq!(hits(), 3, "re-enabled: the page hits again");
+}

@@ -1173,7 +1173,7 @@ impl Io {
     /// Effective cache mode, applying the Fetch "HTTP-network-or-cache fetch"
     /// request header rules and Network.setCacheDisabled.
     fn cache_mode(&self, req: &Request, headers: &mut HeaderMap) -> CacheMode {
-        let disabled = self.shared.settings.lock().unwrap().cache_disabled;
+        let disabled = req.defaults.cache_disabled || self.shared.settings.lock().unwrap().cache_disabled;
         let mut mode = if disabled { CacheMode::NoStore } else { req.cache };
         let conditional = [
             header::IF_MODIFIED_SINCE,
