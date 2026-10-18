@@ -1,4 +1,4 @@
-# Child-frame CDP integration, phase 1
+# Child-frame CDP integration
 
 The page's existing CDP session owns its native child frames. `Page.getFrameTree`
 returns the nested browser snapshots; children do not create additional Target
@@ -37,22 +37,39 @@ See [browser frame design and limits](../browser/FRAMES-DESIGN.md).
   parent/sibling response bodies. The existing process/page byte and record
   budgets still apply across all frames.
 
-## Explicit boundary
+## Native focus and keyboard routing
 
-Cross-frame geometry and focus routing are not implemented by the browser.
-`DOM.getBoxModel`, `getContentQuads`, `focus`, and `scrollIntoViewIfNeeded` reject
-nodes inside child documents. Focusing a native iframe owner also rejects.
-Mouse dispatch rejects a hit on an iframe owner instead of treating the point
-as a main-document target. `Input.dispatchKeyEvent` and `insertText` reject while
-any child frame is live: documents can independently retain focused nodes, and
-there is no native focused-frame chain. `Window.focus` is currently a no-op, so
-root `activeElement` cannot establish a safe narrower policy. Accurate input
-requires a subsequent native focus-transition hook and browser focus chain.
+With browser dependency `40f9b4ea786f63088f9dd217b6cece49b9762135` and native
+focus transitions `59a940ea855a7506a714c34e1646ec15dffa5fdf`, key/text commands
+resolve a fresh owned `Browser::focused_frame` snapshot for their page. A missing
+snapshot is an error, never a fallback to the parent editable. Runtime context
+selection does not select the input frame. Parent inputs remain usable while
+children are live, and native child, sibling, window and owner focus transitions
+select the target document. `DOM.focus` accepts connected, focusable child nodes
+and iframe owners without exposing child coordinates.
 
-Read-only Playwright `frameLocator` lookups/evaluation and frame navigation are
-covered. Child locator click/fill are not supported by this phase. Playwright
-converts `DOM.getBoxModel` errors into a `null` bounding box; the direct CDP test
-also checks the explicit protocol error. There is no fake child geometry.
+Native event dispatch revalidates focus after handlers. Same-document keydown
+focus changes retarget editing; cross-document changes suppress that command's
+old default action. For split CDP key sequences, a raw keydown which changes the
+focused document suppresses one subsequent char. A second char, keyup or new
+keydown clears that suppression; `insertText` is independent. State is per page,
+not per inspector realm or session, and invalid commands do not consume it.
+
+Removing a focused subtree clears the old chain and routes subsequent keys to
+root BODY; it does not restore a previously focused parent input. Navigation
+uses the native current document. Remembered editing selection after explicit
+blur/window focus, complete cross-frame Tab traversal, OS focus and IME are not
+claimed by this increment; frame identity does not substitute for those APIs.
+
+## Explicit geometry boundary
+
+`DOM.getBoxModel`, `getContentQuads` and `scrollIntoViewIfNeeded` still reject
+nodes inside child documents. Mouse dispatch rejects a hit on an iframe owner.
+No parent/child coordinate translation is inferred. Playwright child locator
+focus/fill/press is covered through native focus and keyboard dispatch; child
+locator clicks and cross-frame scrolling remain unsupported. Playwright converts
+`DOM.getBoxModel` errors into a null bounding box, also checked by direct CDP
+error assertions. There is no fake child geometry.
 
 Stable WindowProxy behavior across replacement, cross-frame messages, full
 sandbox/permissions policy, cross-frame coordinates, joint history, and frame
@@ -66,7 +83,7 @@ opaque sandbox srcdoc, native owner/DOM identity, stale handles, sibling-safe
 navigation/removal, late lifecycle replay, HTTP document/fetch response routing,
 per-frame body cleanup, Fetch fulfillment and detach cancellation, concurrent
 child navigation, inherited/opaque origins, isolated-world init scripts, and
-explicit input/geometry rejection. A script that removes another frame during
+explicit geometry rejection and native focus/key routing. A script that removes another frame during
 `runImmediately` is also covered: removed snapshots are skipped and future
 script installation still succeeds. The initial four feature contracts all
 failed on the browser-only dependency before the CDP implementation.
@@ -78,3 +95,14 @@ Use the existing pinned `bench/package.json` dependencies and pass the exact
 browser binary as the script's argument. Validation counts and immutable build
 provenance belong in the implementation PR and retained local logs, separately
 from W1's browser-only validation and any future unchanged TOS run.
+
+The focus increment retains ten direct-CDP contracts for parent/child/sandbox
+routing, sibling and page isolation, nested removal, child DOM.focus,
+same-document handler reentrancy, cross-frame default suppression and raw-char
+sequence boundaries/invalid input. Eight initial contracts were captured red
+before integration; the same-document native bug turned green on W2's dependency.
+The Chromium147 HTTP reference scripts/results remain on preparation commit
+`f28ee99b3ee75ab46543214125be165b55927c26` under `diag/frame-focus`, independently
+of this production delta. Two real Playwright flows add parent/child fill/press
+across three sandbox modes and raw-key/nested-removal routing. These local flows
+are not a new TOS or performance result.

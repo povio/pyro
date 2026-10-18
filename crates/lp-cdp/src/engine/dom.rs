@@ -267,8 +267,8 @@ impl EngineHost {
                 json!({"object":remote::register(described,&handles,context_id(realm.id()),p.object_group.as_deref())?})
             }
             _ => {
-                if self.frame_for_document(cmd.page, &page).ok_or_else(stale)?.parent.is_some() {
-                    return Err(CdpError::unsupported("DOM geometry/focus/scroll in a child frame"));
+                if action != "focus" && self.frame_for_document(cmd.page, &page).ok_or_else(stale)?.parent.is_some() {
+                    return Err(CdpError::unsupported("DOM geometry/scroll in a child frame"));
                 }
                 let rect = {
                     let dom = page.dom.borrow();
@@ -299,10 +299,6 @@ impl EngineHost {
                     }
                     "getContentQuads" => json!({"quads":[quad]}),
                     "focus" => {
-                        let native = self.pages.get(&cmd.page).ok_or_else(stale)?.id;
-                        if self.thread.browser.frame_of_owner(native, node).is_some() {
-                            return Err(CdpError::unsupported("DOM.focus of a child frame owner"));
-                        }
                         if !page.dom.borrow().is_focusable(node).map_err(dom_error)? {
                             return Err(CdpError::server("Node is not focusable"));
                         }

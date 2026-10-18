@@ -720,6 +720,75 @@ try {
       assert.equal(p.url(), `${fixtureOrigin}/frame-parent`);
     } finally { await p.close(); }
   });
+  await check('parent and child locator fill and keyboard input follow native focus across sandbox modes', async () => {
+    const p = await context.newPage();
+    p.setDefaultTimeout(5000);
+    try {
+      for (const sandbox of [null, 'allow-scripts', '']) {
+        await p.goto(`${fixtureOrigin}/frame-parent`, { timeout: 5000 });
+        await p.evaluate(sandbox => {
+          const root = document.createElement('input'); root.id = 'root'; document.body.appendChild(root);
+          for (const name of ['a', 'b']) {
+            const f = document.createElement('iframe'); f.id = name; f.name = name;
+            if (sandbox !== null) f.setAttribute('sandbox', sandbox);
+            f.srcdoc = '<input id="field">'; document.body.appendChild(f);
+          }
+        }, sandbox);
+        const a = p.frameLocator('#a').locator('#field');
+        const b = p.frameLocator('#b').locator('#field');
+        await p.locator('#root').fill('parent');
+        await a.fill('child');
+        await a.press('x');
+        assert.equal(await a.inputValue(), 'childx');
+        assert.equal(await p.locator('#root').inputValue(), 'parent');
+        await b.fill('sibling');
+        await p.keyboard.insertText('!');
+        assert.equal(await b.inputValue(), 'sibling!');
+        await p.locator('#root').focus();
+        await p.keyboard.insertText('R');
+        assert.equal(await p.locator('#root').inputValue(), 'parentR');
+        assert.equal(await a.inputValue(), 'childx');
+        assert.equal(await b.inputValue(), 'sibling!');
+        assert.equal(await a.boundingBox(), null, 'child geometry remains explicitly unsupported');
+      }
+    } finally { await p.close(); }
+  });
+  await check('raw key focus switch suppresses one char and nested detach returns input to root body', async () => {
+    const p = await context.newPage(); p.setDefaultTimeout(5000);
+    try {
+      await p.goto(`${fixtureOrigin}/frame-parent`, { timeout: 5000 });
+      await p.evaluate(() => {
+        const root = document.createElement('input'); root.id = 'root'; document.body.appendChild(root);
+        const f = document.createElement('iframe'); f.id = 'outer'; f.name = 'outer';
+        f.srcdoc = '<input id="field"><iframe id="inner" name="inner"></iframe>'; document.body.appendChild(f);
+      });
+      const outer = p.frameLocator('#outer');
+      await outer.locator('#field').waitFor();
+      await p.evaluate(() => {
+        const root = document.querySelector('#root');
+        root.addEventListener('keydown', () => document.querySelector('iframe').contentDocument.querySelector('#field').focus(), { once: true });
+        root.focus();
+      });
+      const cdp = await context.newCDPSession(p);
+      await cdp.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'x', code: 'KeyX' });
+      await cdp.send('Input.dispatchKeyEvent', { type: 'char', key: 'x', text: 'x' });
+      assert.equal(await outer.locator('#field').inputValue(), '');
+      await cdp.send('Input.dispatchKeyEvent', { type: 'char', key: 'x', text: 'x' });
+      assert.equal(await outer.locator('#field').inputValue(), 'x');
+      assert.equal(await p.locator('#root').inputValue(), '');
+      await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'x', code: 'KeyX' });
+      const f = p.frame({ name: 'outer' });
+      await f.evaluate(() => { document.querySelector('#inner').srcdoc = '<input id="nested">'; });
+      await outer.frameLocator('#inner').locator('#nested').fill('nested');
+      await f.evaluate(() => document.querySelector('#inner').remove());
+      await p.evaluate(() => { globalThis.keyTargets = []; document.addEventListener('keydown', e => keyTargets.push(e.target.tagName)); });
+      await cdp.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'z', code: 'KeyZ' });
+      assert.deepEqual(await p.evaluate(() => keyTargets), ['BODY']);
+      assert.equal(await p.evaluate(() => document.activeElement.tagName), 'BODY');
+      assert.equal(await f.evaluate(() => document.activeElement.tagName), 'BODY');
+      await cdp.detach();
+    } finally { await p.close(); }
+  });
   await check('nested child removal preserves sibling worlds and invalidates old handles', async () => {
     const p = await context.newPage();
     p.setDefaultTimeout(5000);

@@ -297,7 +297,7 @@ fn child_fetch_interception_and_detach_reply_are_frame_scoped() {
 }
 
 #[test]
-fn child_backend_ids_are_document_scoped_and_input_does_not_silently_target_root() {
+fn child_backend_ids_are_document_scoped_and_geometry_stays_unsupported() {
     let mut h = Harness::new();
     enable(&mut h);
     let root = h.page("Runtime.evaluate", json!({"expression":"document.body"}));
@@ -315,15 +315,9 @@ fn child_backend_ids_are_document_scoped_and_input_does_not_silently_target_root
     let root_context = default_context(&h.page_with_events("Runtime.enable", json!({})), &h.frame_id);
     assert!(h.page("DOM.resolveNode", json!({"backendNodeId":backend,"executionContextId":root_context}))["error"]
         .is_object());
-    for method in ["DOM.focus", "DOM.scrollIntoViewIfNeeded", "DOM.getBoxModel"] {
+    for method in ["DOM.scrollIntoViewIfNeeded", "DOM.getBoxModel"] {
         let error = h.page(method, json!({"backendNodeId":backend}));
         assert!(error["error"]["message"].as_str().is_some_and(|s| s.contains("child frame")), "{error}");
-    }
-    for (method, params) in
-        [("Input.insertText", json!({"text":"x"})), ("Input.dispatchKeyEvent", json!({"type":"keyDown","key":"x"}))]
-    {
-        let error = h.page(method, params);
-        assert!(error["error"]["message"].as_str().is_some_and(|s| s.contains("child frames")), "{error}");
     }
     h.page("Page.navigate", json!({"frameId":frame,"url":"about:blank"}));
     assert!(h.page("DOM.describeNode", json!({"backendNodeId":backend}))["error"].is_object());
@@ -442,4 +436,255 @@ fn run_immediately_tolerates_a_script_removing_a_later_frame() {
         .as_i64()
         .unwrap();
     assert_eq!(eval_in(&mut h, context, "initCompleted"), true);
+}
+
+// Focus routing contracts: Input commands belong to the page's native focus
+// chain, independently of which Runtime context last executed inspector JS.
+fn focus_fixture(h: &mut Harness, name: &str, sandbox: Option<&str>) -> (String, i64) {
+    let messages = add_srcdoc(h, name, "focus fixture", sandbox);
+    let id = child(h, name)["frame"]["id"].as_str().unwrap().to_owned();
+    let context = default_context(&messages, &id);
+    eval_in(h, context, "document.body.innerHTML = '<input id=field><input id=other>'; true");
+    (id, context)
+}
+
+fn insert(h: &mut Harness, text: &str) {
+    let result = h.page("Input.insertText", json!({"text":text}));
+    assert_eq!(result["result"], json!({}), "{result}");
+}
+
+#[test]
+fn frame_focus_parent_input_remains_usable_with_live_children() {
+    let mut h = Harness::new();
+    enable(&mut h);
+    let (_, child_context) = focus_fixture(&mut h, "child", None);
+    eval_value(&mut h, "const field=document.createElement('input');field.id='parent';document.body.appendChild(field);field.focus();true");
+    // Inspector evaluation in a child is not a focus transition.
+    eval_in(&mut h, child_context, "document.querySelector('#field').value");
+    insert(&mut h, "parent");
+    assert_eq!(eval_value(&mut h, "document.querySelector('#parent').value"), "parent");
+    assert_eq!(eval_in(&mut h, child_context, "document.querySelector('#field').value"), "");
+}
+
+#[test]
+fn frame_focus_child_text_and_keys_follow_native_focus_in_each_sandbox() {
+    for sandbox in [None, Some("allow-scripts"), Some("")] {
+        let mut h = Harness::new();
+        enable(&mut h);
+        let (_, child_context) = focus_fixture(&mut h, "child", sandbox);
+        eval_value(&mut h, "const field=document.createElement('input');field.id='parent';document.body.appendChild(field);field.focus();true");
+        eval_in(&mut h, child_context, "document.querySelector('#field').focus();true");
+        // Root inspector work must not steal child focus either.
+        assert_eq!(eval_value(&mut h, "document.querySelector('#parent').value"), "");
+        insert(&mut h, "child");
+        let key = h.page(
+            "Input.dispatchKeyEvent",
+            json!({"type":"keyDown","key":"X","code":"KeyX","text":"X","windowsVirtualKeyCode":88}),
+        );
+        assert_eq!(key["result"], json!({}), "{key}");
+        let key = h.page("Input.dispatchKeyEvent", json!({"type":"keyUp","key":"X","code":"KeyX"}));
+        assert_eq!(key["result"], json!({}), "{key}");
+        assert_eq!(eval_in(&mut h, child_context, "document.querySelector('#field').value"), "childX");
+        assert_eq!(eval_value(&mut h, "document.querySelector('#parent').value"), "");
+        eval_value(&mut h, "document.querySelector('#parent').focus();true");
+        insert(&mut h, "root");
+        assert_eq!(eval_value(&mut h, "document.querySelector('#parent').value"), "root");
+        assert_eq!(eval_in(&mut h, child_context, "document.querySelector('#field').value"), "childX");
+    }
+}
+
+#[test]
+fn frame_focus_sibling_switch_and_detach_never_redirect_to_old_parent_input() {
+    let mut h = Harness::new();
+    enable(&mut h);
+    let (_, a) = focus_fixture(&mut h, "a", None);
+    let (_, b) = focus_fixture(&mut h, "b", None);
+    eval_value(&mut h, "const field=document.createElement('input');field.id='parent';document.body.appendChild(field);field.focus();true");
+    eval_in(&mut h, a, "document.querySelector('#field').focus();true");
+    insert(&mut h, "A");
+    eval_in(&mut h, b, "document.querySelector('#field').focus();true");
+    insert(&mut h, "B");
+    assert_eq!(eval_in(&mut h, a, "document.querySelector('#field').value"), "A");
+    assert_eq!(eval_in(&mut h, b, "document.querySelector('#field').value"), "B");
+    eval_value(&mut h, "document.querySelector('#b').remove();true");
+    insert(&mut h, "discarded");
+    assert_eq!(eval_value(&mut h, "document.querySelector('#parent').value"), "");
+    assert_eq!(eval_in(&mut h, a, "document.querySelector('#field').value"), "A");
+    eval_value(&mut h, "document.querySelector('#parent').focus();true");
+    insert(&mut h, "P");
+    assert_eq!(eval_value(&mut h, "document.querySelector('#parent').value"), "P");
+}
+
+#[test]
+fn frame_focus_dom_focus_accepts_child_node_without_claiming_child_geometry() {
+    let mut h = Harness::new();
+    enable(&mut h);
+    let (_, context) = focus_fixture(&mut h, "child", None);
+    let object =
+        h.page("Runtime.evaluate", json!({"contextId":context,"expression":"document.querySelector('#field')"}));
+    let object = object["result"]["result"]["objectId"].as_str().unwrap();
+    let focus = h.page("DOM.focus", json!({"objectId":object}));
+    assert_eq!(focus["result"], json!({}), "{focus}");
+    insert(&mut h, "focused");
+    assert_eq!(eval_in(&mut h, context, "document.querySelector('#field').value"), "focused");
+    let geometry = h.page("DOM.getBoxModel", json!({"objectId":object}));
+    assert!(geometry["error"]["message"].as_str().is_some_and(|m| m.contains("child frame")), "{geometry}");
+}
+
+#[test]
+fn frame_focus_keydown_retargets_text_within_same_document() {
+    let mut h = Harness::new();
+    enable(&mut h);
+    eval_value(&mut h, "document.body.innerHTML='<input id=first><input id=second>';const first=document.querySelector('#first');const second=document.querySelector('#second');first.addEventListener('keydown',()=>second.focus(),{once:true});first.focus();true");
+    let key = h.page(
+        "Input.dispatchKeyEvent",
+        json!({"type":"keyDown","key":"x","code":"KeyX","text":"x","windowsVirtualKeyCode":88}),
+    );
+    assert_eq!(key["result"], json!({}), "{key}");
+    assert_eq!(
+        eval_value(&mut h, "[document.querySelector('#first').value,document.querySelector('#second').value]"),
+        json!(["", "x"])
+    );
+}
+
+#[test]
+fn frame_focus_keydown_cross_frame_switch_suppresses_old_key_text() {
+    for raw in [false, true] {
+        let mut h = Harness::new();
+        enable(&mut h);
+        let (_, context) = focus_fixture(&mut h, "child", None);
+        eval_value(&mut h, "const first=document.createElement('input');first.id='first';document.body.appendChild(first);first.addEventListener('keydown',()=>document.querySelector('iframe').contentDocument.querySelector('#field').focus(),{once:true});first.focus();true");
+        let key = h.page(
+            "Input.dispatchKeyEvent",
+            json!({"type":if raw {"rawKeyDown"} else {"keyDown"},"key":"x","code":"KeyX","text":if raw {""} else {"x"},"windowsVirtualKeyCode":88}),
+        );
+        assert_eq!(key["result"], json!({}), "{key}");
+        if raw {
+            let key = h.page("Input.dispatchKeyEvent", json!({"type":"char","key":"x","text":"x","code":"KeyX"}));
+            assert_eq!(key["result"], json!({}), "{key}");
+        }
+        let key = h.page("Input.dispatchKeyEvent", json!({"type":"keyUp","key":"x","code":"KeyX"}));
+        assert_eq!(key["result"], json!({}), "{key}");
+        assert_eq!(eval_value(&mut h, "document.querySelector('#first').value"), "");
+        assert_eq!(eval_in(&mut h, context, "document.querySelector('#field').value"), "");
+        insert(&mut h, "next");
+        assert_eq!(eval_in(&mut h, context, "document.querySelector('#field').value"), "next");
+    }
+}
+
+#[test]
+fn frame_focus_nested_detach_returns_key_target_to_root_body() {
+    let mut h = Harness::new();
+    enable(&mut h);
+    let (_, outer) = focus_fixture(&mut h, "outer", None);
+    let mut messages = h.page_with_events("Runtime.evaluate", json!({"contextId":outer,"expression":"const f=document.createElement('iframe');f.id='inner';f.name='inner';f.srcdoc='<input id=field>';document.body.appendChild(f);true"}));
+    messages.extend(h.run_for(150));
+    let inner_tree = &child(&mut h, "outer")["childFrames"][0];
+    let inner_id = inner_tree["frame"]["id"].as_str().unwrap();
+    let inner = default_context(&messages, inner_id);
+    eval_value(
+        &mut h,
+        "globalThis.keyTargets=[];document.addEventListener('keydown',e=>keyTargets.push(e.target.tagName));true",
+    );
+    eval_in(&mut h, inner, "document.querySelector('#field').focus();true");
+    assert_eq!(eval_value(&mut h, "document.activeElement.id"), "outer");
+    assert_eq!(eval_in(&mut h, outer, "document.activeElement.id"), "inner");
+    eval_in(&mut h, outer, "document.querySelector('#inner').remove();true");
+    assert_eq!(eval_value(&mut h, "document.activeElement.tagName"), "BODY");
+    assert_eq!(eval_in(&mut h, outer, "document.activeElement.tagName"), "BODY");
+    let key = h.page("Input.dispatchKeyEvent", json!({"type":"rawKeyDown","key":"x","code":"KeyX"}));
+    assert_eq!(key["result"], json!({}), "{key}");
+    assert_eq!(eval_value(&mut h, "keyTargets"), json!(["BODY"]));
+}
+
+#[test]
+fn frame_focus_raw_char_suppression_is_one_shot_and_reset_by_key_boundaries() {
+    fn key(h: &mut Harness, kind: &str, text: &str) {
+        let result = h.page(
+            "Input.dispatchKeyEvent",
+            json!({"type":kind,"key":"x","code":"KeyX","text":text,"windowsVirtualKeyCode":88}),
+        );
+        assert_eq!(result["result"], json!({}), "{result}");
+    }
+    for scenario in ["one-shot", "keyup-reset", "keydown-reset", "insert-independent", "combined", "empty-down"] {
+        let mut h = Harness::new();
+        enable(&mut h);
+        let (_, context) = focus_fixture(&mut h, "child", None);
+        eval_value(&mut h, "const first=document.createElement('input');first.id='first';document.body.appendChild(first);first.addEventListener('keydown',()=>document.querySelector('iframe').contentDocument.querySelector('#field').focus(),{once:true});first.focus();true");
+        let combined = matches!(scenario, "combined" | "empty-down");
+        key(&mut h, if combined { "keyDown" } else { "rawKeyDown" }, if scenario == "combined" { "x" } else { "" });
+        match scenario {
+            "one-shot" => {
+                key(&mut h, "char", "x");
+                assert_eq!(eval_in(&mut h, context, "document.querySelector('#field').value"), "");
+            }
+            "keyup-reset" => key(&mut h, "keyUp", ""),
+            "keydown-reset" => key(&mut h, "rawKeyDown", ""),
+            "insert-independent" => insert(&mut h, "I"),
+            _ => {}
+        }
+        key(&mut h, "char", "x");
+        assert_eq!(eval_value(&mut h, "document.querySelector('#first').value"), "", "{scenario}");
+        assert_eq!(
+            eval_in(&mut h, context, "document.querySelector('#field').value"),
+            if scenario == "insert-independent" { "I" } else { "x" },
+            "{scenario}"
+        );
+    }
+}
+
+#[test]
+fn frame_focus_invalid_char_does_not_consume_pending_suppression() {
+    let mut h = Harness::new();
+    enable(&mut h);
+    let (_, context) = focus_fixture(&mut h, "child", None);
+    eval_value(&mut h, "const field=document.createElement('input');document.body.appendChild(field);field.addEventListener('keydown',()=>document.querySelector('iframe').contentDocument.querySelector('#field').focus(),{once:true});field.focus();true");
+    let raw = h.page("Input.dispatchKeyEvent", json!({"type":"rawKeyDown","key":"x","code":"KeyX"}));
+    assert_eq!(raw["result"], json!({}), "{raw}");
+    let invalid = h.page("Input.dispatchKeyEvent", json!({"type":"char","text":"x","modifiers":32}));
+    assert_eq!(invalid["error"]["code"], -32602, "{invalid}");
+    let key = h.page("Input.dispatchKeyEvent", json!({"type":"char","text":"x"}));
+    assert_eq!(key["result"], json!({}), "{key}");
+    assert_eq!(eval_in(&mut h, context, "document.querySelector('#field').value"), "");
+    let key = h.page("Input.dispatchKeyEvent", json!({"type":"char","text":"x"}));
+    assert_eq!(key["result"], json!({}), "{key}");
+    assert_eq!(eval_in(&mut h, context, "document.querySelector('#field').value"), "x");
+}
+
+#[test]
+fn frame_focus_char_suppression_is_page_scoped() {
+    let mut h = Harness::new();
+    enable(&mut h);
+    let (_, context) = focus_fixture(&mut h, "child", None);
+    eval_value(&mut h, "const field=document.createElement('input');document.body.appendChild(field);field.addEventListener('keydown',()=>document.querySelector('iframe').contentDocument.querySelector('#field').focus(),{once:true});field.focus();true");
+    let raw = h.page("Input.dispatchKeyEvent", json!({"type":"rawKeyDown","key":"x","code":"KeyX"}));
+    assert_eq!(raw["result"], json!({}), "{raw}");
+    let other_context = h.call(None, "Target.createBrowserContext", json!({}))["result"]["browserContextId"].clone();
+    let target = h.send(None, "Target.createTarget", json!({"url":"about:blank","browserContextId":other_context}));
+    let messages = h.until_response(target);
+    let other_session = messages.iter().find(|m| m["method"] == "Target.attachedToTarget").unwrap()["params"]
+        ["sessionId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let other = h.call(
+        Some(&other_session),
+        "Runtime.evaluate",
+        json!({"expression":"document.body.innerHTML='<input>';document.querySelector('input').focus();true"}),
+    );
+    assert!(other["result"].get("exceptionDetails").is_none(), "{other}");
+    let key = h.call(Some(&other_session), "Input.dispatchKeyEvent", json!({"type":"char","text":"B"}));
+    assert_eq!(key["result"], json!({}), "{key}");
+    let other = h.call(
+        Some(&other_session),
+        "Runtime.evaluate",
+        json!({"expression":"document.querySelector('input').value","returnByValue":true}),
+    );
+    assert_eq!(other["result"]["result"]["value"], "B");
+    let key = h.page("Input.dispatchKeyEvent", json!({"type":"char","text":"A"}));
+    assert_eq!(key["result"], json!({}), "{key}");
+    assert_eq!(eval_in(&mut h, context, "document.querySelector('#field').value"), "");
+    let key = h.page("Input.dispatchKeyEvent", json!({"type":"char","text":"A"}));
+    assert_eq!(key["result"], json!({}), "{key}");
+    assert_eq!(eval_in(&mut h, context, "document.querySelector('#field').value"), "A");
 }

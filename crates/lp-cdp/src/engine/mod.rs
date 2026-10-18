@@ -230,6 +230,9 @@ pub(crate) struct PageState {
     pub(crate) window_bounds: Option<serde_json::Value>,
     pub(crate) emulated_media: Option<serde_json::Value>,
     pub(crate) next_script_id: u64,
+    /// A raw keydown which changes documents suppresses one following char.
+    /// Keyboard input is page-scoped, including across attached sessions.
+    pub(crate) suppress_next_char: bool,
     network: network::NetworkPage,
     dom_nodes: dom::BackendNodes,
 }
@@ -603,6 +606,7 @@ impl Host for EngineHost {
                 window_bounds: None,
                 emulated_media: None,
                 next_script_id: 1,
+                suppress_next_char: false,
                 network: network::NetworkPage::new(self.body_budget.clone()),
                 dom_nodes: dom::BackendNodes::default(),
             },

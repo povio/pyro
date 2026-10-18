@@ -2,6 +2,7 @@
 use lp_webapi::input::{self, KeyInput, KeyKind, Modifiers, MouseButton, MouseInput, MouseKind};
 use serde::Deserialize;
 use serde_json::{json, Value};
+use std::rc::Rc;
 
 use super::EngineHost;
 use crate::msg::{CdpError, CdpResult};
@@ -125,21 +126,13 @@ fn modifiers(bits: u32) -> CdpResult<Modifiers> {
 
 impl EngineHost {
     pub(super) fn input_domain(&mut self, action: &str, cmd: &PageCommand<'_, '_>) -> CdpResult<Option<Value>> {
-        let state = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?;
-        // There is no native focused-frame chain yet. A child and the root
-        // can both retain focused nodes, and Window.focus is not implemented.
-        // Never silently send a frame-ambiguous key/text command to the root.
-        if matches!(action, "dispatchKeyEvent" | "insertText")
-            && self.thread.browser.frames(state.id).iter().any(|frame| frame.parent.is_some())
-        {
-            return Err(CdpError::unsupported("Input with live child frames (focused-frame routing)"));
+        let native_id = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?.id;
+        let page = if matches!(action, "dispatchKeyEvent" | "insertText") {
+            self.thread.browser.focused_frame(native_id).and_then(|frame| frame.page_dom)
+        } else {
+            self.thread.browser.page(native_id).and_then(|page| page.main_frame.page_dom.clone())
         }
-        let page = self
-            .thread
-            .browser
-            .page(state.id)
-            .and_then(|p| p.main_frame.page_dom.clone())
-            .ok_or_else(|| CdpError::server("document bindings are unavailable"))?;
+        .ok_or_else(|| CdpError::server("input document bindings are unavailable"))?;
         match action {
             "insertText" => {
                 #[derive(Deserialize)]
@@ -196,7 +189,29 @@ impl EngineHost {
                     auto_repeat: p.auto_repeat,
                     key_code: p.windows_virtual_key_code,
                 };
+                // Chrome consumes a pending suppression only for char. A new
+                // keydown or keyup clears it; insertText is independent. Do not
+                // change sequence state until all command parameters validate.
+                let state = self.pages.get_mut(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?;
+                if kind == KeyKind::Char {
+                    if std::mem::take(&mut state.suppress_next_char) {
+                        return Ok(Some(json!({})));
+                    }
+                } else {
+                    state.suppress_next_char = false;
+                }
                 input::dispatch_key(&page, kind, &key);
+                if kind == KeyKind::RawKeyDown {
+                    let same_document = self
+                        .thread
+                        .browser
+                        .focused_frame(native_id)
+                        .and_then(|frame| frame.page_dom)
+                        .is_some_and(|current| Rc::ptr_eq(&page, &current));
+                    if let Some(state) = self.pages.get_mut(&cmd.page) {
+                        state.suppress_next_char = !same_document;
+                    }
+                }
             }
             "dispatchMouseEvent" => {
                 let p: MouseParams = cmd.command.params()?;
@@ -241,7 +256,7 @@ impl EngineHost {
                     delta_y: p.delta_y,
                 };
                 if lp_webapi::layout_api::hit_test(&page, p.x, p.y)
-                    .is_some_and(|node| self.thread.browser.frame_of_owner(state.id, node).is_some())
+                    .is_some_and(|node| self.thread.browser.frame_of_owner(native_id, node).is_some())
                 {
                     return Err(CdpError::unsupported("Input mouse targeting a child frame"));
                 }
