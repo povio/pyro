@@ -65,7 +65,7 @@ Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 42 engi
 | `IO.close` | yes | pending |  |
 | `IO.read` | yes | pending |  |
 | `Input.dispatchDragEvent` | **no** | pending |  |
-| `Input.dispatchKeyEvent` | yes | engine | native trusted keyboard events and control default actions. The macOS editing commands Playwright derives are accepted only where the engine's default action matches: ArrowLeft/Right with or without Shift, Backspace, Delete, Meta+A, and Escape (`cancelOperation`, events only). Other commands and alternate metadata are unsupported |
+| `Input.dispatchKeyEvent` | yes | engine | native trusted keyboard events and control default actions. The macOS editing commands Playwright derives are accepted only where the engine's default action matches: ArrowLeft/Right/Up/Down with or without Shift (Up/Down in single-line text inputs and textareas), Backspace, Delete, Meta+A, and Escape (`cancelOperation`, events only). Other commands and alternate metadata are unsupported |
 | `Input.dispatchMouseEvent` | yes | engine | native hit testing, trusted mouse/pointer events and activation; wheel scrolling, pen and custom pressure unsupported |
 | `Input.dispatchTouchEvent` | yes | pending |  |
 | `Input.insertText` | yes | engine | native focus/selection and cancellable beforeinput/input |

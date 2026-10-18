@@ -1467,9 +1467,33 @@ fn input_accepts_mac_key_derived_editing_commands() {
     // QuerySelect. Playwright sends ["cancelOperation"]; the events are
     // delivered and nothing is edited.
     press(&mut h, "Escape", "Escape", 27, 0, json!(["cancelOperation"]));
+    // TOS W3-08 QuerySelect opener: ArrowUp/ArrowDown move the caret to the
+    // start/end of a single-line input (lp-webapi default action) and carry
+    // moveUp/moveDown; Shift extends.
+    h.page("Runtime.evaluate", json!({"expression":"field.focus(); field.setSelectionRange(1, 1)"}));
+    press(&mut h, "ArrowDown", "ArrowDown", 40, 0, json!(["moveDown"]));
+    assert_eq!(selection(&mut h), json!([3, 3]));
+    press(&mut h, "ArrowUp", "ArrowUp", 38, 8, json!(["moveUpAndModifySelection"]));
+    assert_eq!(selection(&mut h), json!([0, 3]));
+    press(&mut h, "ArrowUp", "ArrowUp", 38, 0, json!(["moveUp"]));
+    assert_eq!(selection(&mut h), json!([0, 0]));
+    press(&mut h, "ArrowDown", "ArrowDown", 40, 8, json!(["moveDownAndModifySelection"]));
+    assert_eq!(selection(&mut h), json!([0, 3]));
+    h.page("Runtime.evaluate", json!({"expression":"document.querySelector('#tree').focus()"}));
     assert_eq!(
         h.page("Runtime.evaluate", json!({"expression":"keys","returnByValue":true}))["result"]["result"]["value"],
-        json!(["ArrowRight", "ArrowRight", "ArrowLeft", "a", "ArrowRight", "Escape"])
+        json!([
+            "ArrowRight",
+            "ArrowRight",
+            "ArrowLeft",
+            "a",
+            "ArrowRight",
+            "Escape",
+            "ArrowDown",
+            "ArrowUp",
+            "ArrowUp",
+            "ArrowDown"
+        ])
     );
     // Commands the engine would not carry out (Playwright derives scrolling,
     // clipboard, undo and word movement too), and commands that are not the
@@ -1492,6 +1516,10 @@ fn input_accepts_mac_key_derived_editing_commands() {
         ("x", "Backspace", 0, json!(["deleteBackward"])),
         // Escape's command on a key that is not Escape.
         ("q", "Escape", 0, json!(["cancelOperation"])),
+        // Vertical commands only with their own key and modifiers.
+        ("ArrowDown", "ArrowDown", 0, json!(["moveUp"])),
+        ("ArrowDown", "ArrowDown", 4, json!(["moveToEndOfDocument"])),
+        ("j", "KeyJ", 0, json!(["moveDown"])),
     ] {
         let r = h.page(
             "Input.dispatchKeyEvent",
@@ -1502,7 +1530,7 @@ fn input_accepts_mac_key_derived_editing_commands() {
     assert_eq!(
         h.page("Runtime.evaluate", json!({"expression":"keys.length","returnByValue":true}))["result"]["result"]
             ["value"],
-        6,
+        10,
         "rejected commands deliver no events"
     );
     // The supported deletions keep their behavior with their own commands.
