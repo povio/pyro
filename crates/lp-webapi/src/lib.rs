@@ -26,6 +26,7 @@ pub mod encoding;
 pub mod event;
 pub mod fetch;
 pub mod file;
+pub mod file_reader;
 pub mod form_data;
 pub mod formdata;
 pub mod handlers;
@@ -62,6 +63,7 @@ use lp_js::{JsResult, Scope, Value};
 
 pub use event::{EventCore, EventData, EventInterface};
 pub use fetch::{FetchLimits, RequestContext};
+pub use file_reader::FileReaderLimits;
 pub use identity::UserAgentOverride;
 pub use node::{wrap_node, NodeData};
 pub use page::{IframeAttribute, NavigationRequest, PageDom, PageHooks, RemotePoster};
@@ -85,6 +87,7 @@ pub fn register(engine: &lp_js::Engine) {
     message_channel::register(engine);
     custom::register(engine);
     file::register(engine);
+    engine.register::<file_reader::FileReader>();
     data_transfer::register(engine);
     encoding::register(engine);
     validity::register(engine);
