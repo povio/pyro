@@ -1,0 +1,1 @@
+Bounded confirmation: exact signedmain66e7448, oneprocess shared64/private64,3hardnavigations. Remove optional unsuccessful MutationObserver only; same original seven assertions/auth/network/horizon/PID sampler. No native sample or tracing. Optional DOM-readiness timestamp unavailable by design. No fresh fullmatrix. Preserve previous observer-on diagnostic qualification.

@@ -91,9 +91,11 @@ W2's ledger records 241 selected cases in 70 files, of 742 cases in 141 files.
 | W3-01 to W3-08 | 102 | 17 |
 | W3-09 to W3-18 | 141 | 21 |
 
-Worker 3's share has one file left, `positions-overview`, with 32 cases. These
-are selected cases, not passing cases. Each binary's results stand on their own
-and must not be added to another binary's results.
+At the time of these runs, worker 3's share had one file left,
+`positions-overview`, with 32 cases. That file was subsequently completed; see
+the [W3-19 recovery and failure reconciliation](TOS_W3_FAILURE_LEDGER.md).
+These are selected cases, not passing cases. Each binary's results stand on its
+own and must not be added to another binary's results.
 
 ## Provenance
 

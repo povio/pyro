@@ -1,0 +1,1 @@
+Completed12 navigation diagnostic retained. Browser47a56639 has linker ad-hoc signature only; allow-jit missing. JSC_usePollingTraps was unset in invoking environment (runtime default needs separate interpretation). This is not the requested explicit-JIT/polling baseline. Do not relabel. Optional DOM-readiness marker null. Original binary preserved unmodified.

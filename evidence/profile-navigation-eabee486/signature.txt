@@ -1,0 +1,5 @@
+Executable=/private/tmp/lp-profile-main-eabee486/target/release/lightningpanda-jit
+[Dict]
+	[Key] com.apple.security.cs.allow-jit
+	[Value]
+		[Bool] true

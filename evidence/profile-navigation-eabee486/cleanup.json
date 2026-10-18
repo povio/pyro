@@ -1,0 +1,9 @@
+{
+  "runner_exit": 0,
+  "diagnostic_tests_passed": 1,
+  "navigations_completed": 12,
+  "run_databases_remaining": 0,
+  "retained_ledger_templates": 3,
+  "template_reuse": "sameUTCdate, exactf9f fixturebatch16-fx; ledger2026-10-18T09:43:46Z/inputf28ccca07b5e",
+  "fixture_pre_post_status": "only preexisting apps/pdfgen/src/data/common/common.models.ts modified; original tests/auth/manifest unchanged"
+}

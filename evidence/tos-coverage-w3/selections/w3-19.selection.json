@@ -1,0 +1,236 @@
+{
+  "manifest_sha256": "542d479b709249d072e3b57c1324c894c4378fc5373892ae64c0687486f2ae19",
+  "manifest_read_from": "git show f9fde4aa0dce7d1d7a1ffebffe3306399973cd80:apps/fe/e2e/suites/lightpanda.json (W3 host, sha256 verified)",
+  "recorded_utc": "2026-10-18T08:57:09+00:00",
+  "ledger_sha256": "3d1de5a08cf4add614432f30ea316d97472ffe42ea73d00a7e775655aef09016",
+  "criteria": "W3-19: the whole manifest-routed group of the last file in the W3 share of the W2/W3 split of ledger uncovered_files; chosen before any run of this file",
+  "files": [
+    "e2e/logistics/positions-overview.e2e.ts"
+  ],
+  "cases": [
+    {
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "shows clear actions for readonly split route points in Overview"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "opens only the Overview tab in the position details modal"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "updates sea overview external ID"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "updates sea overview house bill of lading"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "toggles sea overview house bill requirement"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "updates sea overview master bill of lading"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "toggles sea overview master bill requirement"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "locks required sea document selections while their working documents exist"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "updates sea export buying contract"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "updates sea export selling contract"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "updates sea export routing"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "updates sea export INTTRA service type"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "autosaves Route fields with overview To-Dos present"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "keeps the Overview Route provider when Ocean Carrier Agent changes"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "updates sea import buying contract"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "updates sea import selling contract"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "updates sea import buy rate reference"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "updates sea import sell service contract"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "updates sea import routing"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "updates sea import INTTRA service type"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "renders the migrated office-notes surface without the legacy editor"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "updates team"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "updates air export house bill"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "toggles air export house bill requirement"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "updates air export master bill"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "toggles air export master bill requirement"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "toggles air export courier"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "updates air import house bill"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "updates air import master bill"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "updates air import customs reference"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "updates air import customs status"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "toggles air import courier"
+      ]
+    }
+  ]
+}

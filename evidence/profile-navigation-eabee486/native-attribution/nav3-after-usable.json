@@ -1,0 +1,214 @@
+{
+  "files": {
+    "lp-js-90879-ThreadId(2).csv": {
+      "sha256": "ba342a717912a47b364895155b015916ba94213445f64755fa76334f9b02b2d6",
+      "root_count": 78223
+    },
+    "lp-runtime-90879-ThreadId(2).csv": {
+      "sha256": "9c3c11c5637968e974ae2d4a3f891cfb2d332b7d0aebf3b62135033bc9a3cfa1",
+      "root_count": 2142
+    }
+  },
+  "crates": {
+    "lp-js": {
+      "roots": 6,
+      "cpu_ms": 14.986791,
+      "wall_ms": 15.017,
+      "boundary_roots": [
+        {
+          "file": "lp-js-90879-ThreadId(2).csv",
+          "root": "78217",
+          "tag": "js.call",
+          "start_ms": 1792344223586.77,
+          "end_ms": 1792344223587.1,
+          "cpu_ms": 0.32975
+        }
+      ],
+      "exclusive_categories": {
+        "js.call": {
+          "calls": 6,
+          "cpu_ms": 9.991175,
+          "wall_ms": 9.674
+        },
+        "native.guard": {
+          "calls": 618,
+          "cpu_ms": 2.6935720000000005,
+          "wall_ms": 2.822
+        },
+        "HTMLLinkElement": {
+          "calls": 293,
+          "cpu_ms": 1.676546,
+          "wall_ms": 1.846
+        },
+        "Document": {
+          "calls": 4,
+          "cpu_ms": 0.198541,
+          "wall_ms": 0.203
+        },
+        "js.module_script_create": {
+          "calls": 1,
+          "cpu_ms": 0.145041,
+          "wall_ms": 0.146
+        },
+        "HTMLCollection": {
+          "calls": 1,
+          "cpu_ms": 0.07575,
+          "wall_ms": 0.076
+        },
+        "js.get": {
+          "calls": 40,
+          "cpu_ms": 0.062084,
+          "wall_ms": 0.085
+        },
+        "EventTarget": {
+          "calls": 1,
+          "cpu_ms": 0.056458,
+          "wall_ms": 0.057
+        },
+        "Window": {
+          "calls": 8,
+          "cpu_ms": 0.029126,
+          "wall_ms": 0.037
+        },
+        "URL": {
+          "calls": 8,
+          "cpu_ms": 0.021333,
+          "wall_ms": 0.025
+        },
+        "Node": {
+          "calls": 1,
+          "cpu_ms": 0.013416,
+          "wall_ms": 0.014
+        },
+        "Response": {
+          "calls": 2,
+          "cpu_ms": 0.01025,
+          "wall_ms": 0.01
+        },
+        "js.coerce": {
+          "calls": 10,
+          "cpu_ms": 0.010249000000000001,
+          "wall_ms": 0.019000000000000003
+        },
+        "js.module_resolve": {
+          "calls": 1,
+          "cpu_ms": 0.00275,
+          "wall_ms": 0.002
+        },
+        "js.set": {
+          "calls": 1,
+          "cpu_ms": 0.0005,
+          "wall_ms": 0.001
+        }
+      },
+      "root_kinds": {
+        "js.set": {
+          "count": 1,
+          "cpu_ms": 0.0005,
+          "wall_ms": 0.001,
+          "value_median_ms": 0.0,
+          "value_max_ms": 0.0
+        },
+        "js.call": {
+          "count": 4,
+          "cpu_ms": 12.561375,
+          "wall_ms": 12.59,
+          "value_median_ms": 0.0,
+          "value_max_ms": 0.0
+        },
+        "js.module_resolve": {
+          "count": 1,
+          "cpu_ms": 2.424916,
+          "wall_ms": 2.426,
+          "value_median_ms": 0.0,
+          "value_max_ms": 0.0
+        }
+      }
+    },
+    "lp-runtime": {
+      "roots": 18,
+      "cpu_ms": 16.003791,
+      "wall_ms": 726.744,
+      "boundary_roots": [
+        {
+          "file": "lp-runtime-90879-ThreadId(2).csv",
+          "root": "2114",
+          "tag": "task.local",
+          "start_ms": 1792344223586.751,
+          "end_ms": 1792344223587.121,
+          "cpu_ms": 0.370666
+        },
+        {
+          "file": "lp-runtime-90879-ThreadId(2).csv",
+          "root": "2133",
+          "tag": "wait.remote",
+          "start_ms": 1792344224315.116,
+          "end_ms": 1792344224601.811,
+          "cpu_ms": 0.0155
+        }
+      ],
+      "exclusive_categories": {
+        "task.timer": {
+          "calls": 6,
+          "cpu_ms": 12.920706000000001,
+          "wall_ms": 12.948
+        },
+        "task.remote": {
+          "calls": 5,
+          "cpu_ms": 2.5687930000000003,
+          "wall_ms": 2.569
+        },
+        "task.checkpoint": {
+          "calls": 12,
+          "cpu_ms": 0.362833,
+          "wall_ms": 0.37000000000000005
+        },
+        "wait.remote": {
+          "calls": 6,
+          "cpu_ms": 0.11995900000000001,
+          "wall_ms": 710.8249999999999
+        },
+        "task.local": {
+          "calls": 1,
+          "cpu_ms": 0.0315,
+          "wall_ms": 0.032
+        }
+      },
+      "root_kinds": {
+        "task.remote": {
+          "count": 5,
+          "cpu_ms": 2.58575,
+          "wall_ms": 2.5869999999999997,
+          "value_median_ms": 0.043334,
+          "value_max_ms": 0.126834
+        },
+        "wait.remote": {
+          "count": 6,
+          "cpu_ms": 0.11995900000000001,
+          "wall_ms": 710.8249999999999,
+          "value_median_ms": 60.6499585,
+          "value_max_ms": 92.691625
+        },
+        "task.timer": {
+          "count": 6,
+          "cpu_ms": 13.261957,
+          "wall_ms": 13.294999999999998,
+          "value_median_ms": 118.3945205,
+          "value_max_ms": 145.601958
+        },
+        "task.local": {
+          "count": 1,
+          "cpu_ms": 0.036125,
+          "wall_ms": 0.037,
+          "value_median_ms": 0.317792,
+          "value_max_ms": 0.317792
+        }
+      }
+    }
+  },
+  "window_epoch_ms": [
+    1792344223586.9817,
+    1792344224588.4697
+  ],
+  "limits": "Separate crate interval trees overlap: do not add lp-js to lp-runtime. Boundary roots excluded without prorating. Native categories may include unwrapped FFI/JS; diagnostics overhead is not a baseline speed measurement."
+}
