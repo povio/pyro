@@ -80,8 +80,14 @@ response Blob types, service workers and integrity/referrer policy.
 Nonempty integrity/referrer/referrerPolicy and keepalive are explicitly rejected.
 
 HTTP cache: each browser context has a private, in-memory, byte-bounded cache in
-lp-net (`crates/lp-net/src/cache.rs`, an RFC 9111 subset). Contexts never share
-entries, and a context's entries are freed with it.
+lp-net (`crates/lp-net/src/cache.rs`, an RFC 9111 subset). By default contexts
+never share entries, and a context's entries are freed with it.
+- The one exception is an explicit opt-in process-wide shared cache
+  (`LIGHTNINGPANDA_SHARED_ASSET_CACHE_MB` or `NetConfig.shared_asset_cache`).
+- It shares credential-free GET 200 responses that are explicitly `public` and
+  fresh, with no `Set-Cookie`/`Vary`/`private`/`no-store`/`no-cache`, across
+  every context of the process. The contract is header-based, not limited to a
+  MIME type or path; see `SharedAssetCache`.
 - `init.cache` maps to it: `default`, `no-store`, `reload`, `no-cache`,
   `force-cache` and `only-if-cached` follow the Fetch cache-mode rules, including
   the `Pragma`/`Cache-Control` request headers that no-store, reload and no-cache add.

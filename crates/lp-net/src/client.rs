@@ -61,6 +61,10 @@ pub struct NetConfig {
     pub http_cache_max_bytes: usize,
     /// Largest single response body the HTTP cache stores.
     pub http_cache_max_entry_bytes: usize,
+    /// Opt-in cross-context cache of public static assets (one handle per
+    /// browser process). `None` (the default unless `LIGHTNINGPANDA_SHARED_ASSET_CACHE_MB`
+    /// is set) keeps every context fully isolated.
+    pub shared_asset_cache: Option<crate::cache::SharedAssetCache>,
 }
 
 impl Default for NetConfig {
@@ -76,6 +80,7 @@ impl Default for NetConfig {
             max_auth_retries: 3,
             http_cache_max_bytes: 64 * 1024 * 1024,
             http_cache_max_entry_bytes: 8 * 1024 * 1024,
+            shared_asset_cache: crate::cache::SharedAssetCache::from_env(),
         }
     }
 }
@@ -380,6 +385,13 @@ impl NetClient {
     /// HTTP cache (entries, logical bytes).
     pub fn http_cache_usage(&self) -> (usize, usize) {
         self.inner.shared.cache.lock().unwrap().usage()
+    }
+    /// Clears the opt-in shared asset cache this client uses (all contexts
+    /// sharing it are affected). No-op when sharing is off.
+    pub fn clear_shared_asset_cache(&self) {
+        if let Some(s) = &self.inner.shared.config.shared_asset_cache {
+            s.clear();
+        }
     }
 
     pub fn next_request_id(&self) -> RequestId {
@@ -897,6 +909,20 @@ impl Io {
                     _ => {}
                 }
             }
+            // Opt-in shared public assets: only after a private miss, only for
+            // credential-free requests, fresh entries only (never revalidated).
+            let shared_assets = self
+                .shared
+                .config
+                .shared_asset_cache
+                .as_ref()
+                .filter(|_| cacheable && crate::cache::shared_request_eligible(&headers));
+            if let (Some(store), None) = (shared_assets, revalidating.as_ref()) {
+                let lookup = store.with(|c| c.lookup(&url, &headers, cache_mode, request_time));
+                if let crate::cache::Lookup::Hit(cached) = lookup {
+                    return self.serve_cached(id, &req, sink, &url, cached, cors_cross, redirects > 0, true, 0);
+                }
+            }
             if cache_mode == CacheMode::OnlyIfCached && revalidating.is_none() {
                 return Err(NetError::Other("net::ERR_CACHE_MISS".into()));
             }
@@ -1088,12 +1114,19 @@ impl Io {
                 ResponseKind::Basic
             };
             let encoding = resp_headers.get(header::CONTENT_ENCODING).and_then(|v| v.to_str().ok()).map(str::to_owned);
-            let (store, max_entry) = {
+            let (store, mut max_entry) = {
                 let cache = self.shared.cache.lock().unwrap();
                 let store = sent.as_ref().is_some_and(|s| cache.storable(status, &resp_headers, s, cache_mode));
-                (store.then(|| resp_headers.clone()), cache.max_entry_bytes())
+                (store.then(|| resp_headers.clone()), if store { cache.max_entry_bytes() } else { 0 })
             };
-            let mut stored: Option<Vec<Bytes>> = store.as_ref().map(|_| Vec::new());
+            let shared_store = shared_assets.filter(|s| {
+                sent.as_ref().is_some_and(|sent| s.with(|c| c.storable(status, &resp_headers, sent, cache_mode)))
+            });
+            if let Some(s) = shared_store {
+                max_entry = max_entry.max(s.with(|c| c.max_entry_bytes()));
+            }
+            let shared_response = shared_store.map(|_| resp_headers.clone());
+            let mut stored: Option<Vec<Bytes>> = (store.is_some() || shared_store.is_some()).then(Vec::new);
             let head = self.head(&url, status, resp_headers, kind, redirects > 0);
             self.shared.emit(NetEvent::ResponseReceived {
                 id,
@@ -1154,18 +1187,16 @@ impl Io {
                 deliver(sink, ResponseEvent::Data(tail));
             }
             drop(permit);
-            if let (Some(chunks), Some(response), Some(sent)) = (stored, store, sent.as_ref()) {
+            if let (Some(chunks), Some(sent)) = (stored, sent.as_ref()) {
                 let body =
                     if chunks.len() == 1 { chunks.into_iter().next().unwrap() } else { Bytes::from(chunks.concat()) };
-                self.shared.cache.lock().unwrap().insert(
-                    &url,
-                    sent,
-                    status,
-                    &response,
-                    body,
-                    request_time,
-                    response_time,
-                );
+                if let Some(response) = store {
+                    let mut cache = self.shared.cache.lock().unwrap();
+                    cache.insert(&url, sent, status, &response, body.clone(), request_time, response_time);
+                }
+                if let (Some(s), Some(response)) = (shared_store, shared_response) {
+                    s.with(|c| c.insert(&url, sent, status, &response, body, request_time, response_time));
+                }
             }
             self.shared.emit(NetEvent::LoadingFinished { id, encoded_len: encoded, timestamp: self.shared.now() });
             deliver(sink, ResponseEvent::Finished { encoded_len: encoded, decoded_len: decoded });
@@ -1201,14 +1232,21 @@ impl Io {
     /// RFC 9111 §4.4: a non-error response to an unsafe method invalidates the
     /// target URI, and same-origin Location / Content-Location targets.
     fn invalidate_after_unsafe(&self, url: &Url, headers: &HeaderMap) {
-        let mut cache = self.shared.cache.lock().unwrap();
-        cache.invalidate(url);
+        let mut targets = vec![url.clone()];
         for name in [header::LOCATION, header::CONTENT_LOCATION] {
             if let Some(target) = headers.get(name).and_then(|v| v.to_str().ok()).and_then(|v| url.join(v).ok()) {
                 if cors::same_origin(url, &target) {
-                    cache.invalidate(&target);
+                    targets.push(target);
                 }
             }
+        }
+        let mut cache = self.shared.cache.lock().unwrap();
+        for target in &targets {
+            cache.invalidate(target);
+        }
+        drop(cache);
+        if let Some(s) = &self.shared.config.shared_asset_cache {
+            s.with(|c| targets.iter().for_each(|t| c.invalidate(t)));
         }
     }
 
