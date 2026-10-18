@@ -56,6 +56,11 @@ pub struct NetConfig {
     pub max_per_origin: usize,
     /// Maximum credential submissions for one HTTP hop. No unbounded auth loops.
     pub max_auth_retries: u32,
+    /// Private in-memory HTTP cache budget for this client (one browser
+    /// context), in logical bytes. 0 disables the cache.
+    pub http_cache_max_bytes: usize,
+    /// Largest single response body the HTTP cache stores.
+    pub http_cache_max_entry_bytes: usize,
 }
 
 impl Default for NetConfig {
@@ -69,6 +74,8 @@ impl Default for NetConfig {
             enforce_cors: true,
             max_per_origin: 6,
             max_auth_retries: 3,
+            http_cache_max_bytes: 64 * 1024 * 1024,
+            http_cache_max_entry_bytes: 8 * 1024 * 1024,
         }
     }
 }
@@ -83,6 +90,9 @@ pub struct NetSettings {
     /// Network.setUserAgentOverride / Emulation.setUserAgentOverride.
     pub user_agent: Option<String>,
     pub accept_language: Option<String>,
+    /// Network.setCacheDisabled: bypass the HTTP cache (no lookup, no store) and
+    /// send `Pragma: no-cache` / `Cache-Control: no-cache`, like DevTools.
+    pub cache_disabled: bool,
 }
 
 /// Snapshot of a request as sent (after cookies and extra headers).
@@ -221,6 +231,7 @@ struct Shared {
     settings: Mutex<NetSettings>,
     observers: Subscriptions,
     interceptor: Mutex<Option<Arc<dyn Interceptor>>>,
+    cache: Mutex<crate::cache::HttpCache>,
     epoch: Instant,
 }
 
@@ -258,11 +269,13 @@ pub struct NetClient {
 impl NetClient {
     pub fn new(config: NetConfig) -> std::io::Result<Self> {
         let (tx, rx) = mpsc::unbounded_channel();
+        let cache = crate::cache::HttpCache::new(config.http_cache_max_bytes, config.http_cache_max_entry_bytes);
         let shared = Arc::new(Shared {
             config,
             settings: Mutex::new(NetSettings::default()),
             observers: Subscriptions::default(),
             interceptor: Mutex::new(None),
+            cache: Mutex::new(cache),
             epoch: Instant::now(),
         });
         let cookies = Arc::new(Mutex::new(CookieJar::new()));
@@ -309,6 +322,14 @@ impl NetClient {
     }
     pub fn set_interceptor(&self, i: Option<Arc<dyn Interceptor>>) {
         *self.inner.shared.interceptor.lock().unwrap() = i;
+    }
+    /// Network.clearBrowserCache: drops every HTTP cache entry of this context.
+    pub fn clear_http_cache(&self) {
+        self.inner.shared.cache.lock().unwrap().clear();
+    }
+    /// HTTP cache (entries, logical bytes).
+    pub fn http_cache_usage(&self) -> (usize, usize) {
+        self.inner.shared.cache.lock().unwrap().usage()
     }
 
     pub fn next_request_id(&self) -> RequestId {
@@ -674,12 +695,14 @@ impl Io {
         let mut redirects = 0u32;
         let mut redirect_response: Option<ResponseHead> = None;
         let mut tainted = false; // cross-origin redirect in cors mode => Origin "null"
+        let mut unconditional = false; // a 304 no longer matched its entry: refetch without validators
         loop {
             if tainted {
                 req.origin = Some("null".into());
             }
             let cors_cross = self.shared.config.enforce_cors && cors::is_cors_request(&req, origin_url.as_ref());
-            let headers = self.build_headers(&req, origin_url.as_ref(), cors_cross);
+            let mut headers = self.build_headers(&req, origin_url.as_ref(), cors_cross);
+            let cache_mode = self.cache_mode(&req, &mut headers);
             let info = RequestInfo {
                 url: req.url.clone(),
                 method: req.method.clone(),
@@ -757,6 +780,31 @@ impl Io {
                     drop(resp.into_body().collect().await);
                     self.preflight.lock().unwrap().record(status, &rh, &req, &origin).map_err(NetError::Cors)?;
                 }
+            }
+
+            // HTTP cache (RFC 9111), after request-stage interception and CORS
+            // preflight so that both still apply to cached responses.
+            let cacheable = method == Method::GET && body.is_none() && !headers.contains_key(header::RANGE);
+            let request_time = wall_time();
+            let sent = if cacheable { Some(headers.clone()) } else { None };
+            let mut revalidating = None;
+            if cacheable {
+                let lookup = self.shared.cache.lock().unwrap().lookup(&url, &headers, cache_mode, request_time);
+                match lookup {
+                    crate::cache::Lookup::Hit(cached) => {
+                        return self.serve_cached(id, &req, sink, &url, cached, cors_cross, redirects > 0, true, 0);
+                    }
+                    crate::cache::Lookup::Revalidate(cached) if !unconditional => {
+                        for (name, value) in cached.validators() {
+                            headers.insert(name, value);
+                        }
+                        revalidating = Some(cached);
+                    }
+                    _ => {}
+                }
+            }
+            if cache_mode == CacheMode::OnlyIfCached && revalidating.is_none() {
+                return Err(NetError::Other("net::ERR_CACHE_MISS".into()));
             }
 
             let permit = self.origin_semaphore(&url).acquire_owned().await;
@@ -837,6 +885,44 @@ impl Io {
                 Credentials::Omit => false,
             };
             self.store_cookies(&url, &resp_headers, cookies_allowed);
+            let response_time = wall_time();
+            if !matches!(method, Method::GET | Method::HEAD | Method::OPTIONS | Method::TRACE)
+                && (status.is_success() || status.is_redirection())
+            {
+                self.invalidate_after_unsafe(&url, &resp_headers);
+            }
+            if status == StatusCode::NOT_MODIFIED {
+                if let Some(cached) = revalidating.take() {
+                    drop(resp);
+                    drop(permit);
+                    let updated = self.shared.cache.lock().unwrap().update_from_304(
+                        &url,
+                        cached.id,
+                        &resp_headers,
+                        request_time,
+                        response_time,
+                    );
+                    match updated {
+                        Some(updated) => {
+                            return self.serve_cached(
+                                id,
+                                &req,
+                                sink,
+                                &url,
+                                updated,
+                                cors_cross,
+                                redirects > 0,
+                                false,
+                                0,
+                            )
+                        }
+                        None => {
+                            unconditional = true;
+                            continue;
+                        }
+                    }
+                }
+            }
 
             // Redirects.
             if status.is_redirection() && status != StatusCode::NOT_MODIFIED {
@@ -908,6 +994,12 @@ impl Io {
                 ResponseKind::Basic
             };
             let encoding = resp_headers.get(header::CONTENT_ENCODING).and_then(|v| v.to_str().ok()).map(str::to_owned);
+            let (store, max_entry) = {
+                let cache = self.shared.cache.lock().unwrap();
+                let store = sent.as_ref().is_some_and(|s| cache.storable(status, &resp_headers, s, cache_mode));
+                (store.then(|| resp_headers.clone()), cache.max_entry_bytes())
+            };
+            let mut stored: Option<Vec<Bytes>> = store.as_ref().map(|_| Vec::new());
             let head = self.head(&url, status, resp_headers, kind, redirects > 0);
             self.shared.emit(NetEvent::ResponseReceived {
                 id,
@@ -941,6 +1033,12 @@ impl Io {
                             timestamp: self.shared.now(),
                         });
                     }
+                    if decoded as usize > max_entry {
+                        stored = None;
+                    }
+                    if let Some(s) = stored.as_mut() {
+                        s.push(out.clone());
+                    }
                     deliver(sink, ResponseEvent::Data(out));
                 }
             }
@@ -953,13 +1051,123 @@ impl Io {
                 if observed {
                     self.shared.emit(NetEvent::DataReceived { id, data: tail.clone(), timestamp: self.shared.now() });
                 }
+                if decoded as usize > max_entry {
+                    stored = None;
+                }
+                if let Some(s) = stored.as_mut() {
+                    s.push(tail.clone());
+                }
                 deliver(sink, ResponseEvent::Data(tail));
             }
             drop(permit);
+            if let (Some(chunks), Some(response), Some(sent)) = (stored, store, sent.as_ref()) {
+                let body =
+                    if chunks.len() == 1 { chunks.into_iter().next().unwrap() } else { Bytes::from(chunks.concat()) };
+                self.shared.cache.lock().unwrap().insert(
+                    &url,
+                    sent,
+                    status,
+                    &response,
+                    body,
+                    request_time,
+                    response_time,
+                );
+            }
             self.shared.emit(NetEvent::LoadingFinished { id, encoded_len: encoded, timestamp: self.shared.now() });
             deliver(sink, ResponseEvent::Finished { encoded_len: encoded, decoded_len: decoded });
             return Ok(());
         }
+    }
+
+    /// Effective cache mode, applying the Fetch "HTTP-network-or-cache fetch"
+    /// request header rules and Network.setCacheDisabled.
+    fn cache_mode(&self, req: &Request, headers: &mut HeaderMap) -> CacheMode {
+        let disabled = self.shared.settings.lock().unwrap().cache_disabled;
+        let mut mode = if disabled { CacheMode::NoStore } else { req.cache };
+        let conditional = [
+            header::IF_MODIFIED_SINCE,
+            header::IF_NONE_MATCH,
+            header::IF_UNMODIFIED_SINCE,
+            header::IF_MATCH,
+            header::IF_RANGE,
+        ];
+        if mode == CacheMode::Default && conditional.iter().any(|h| headers.contains_key(h)) {
+            mode = CacheMode::NoStore; // the page's own conditional request passes through untouched
+        }
+        if mode == CacheMode::NoCache && !headers.contains_key(header::CACHE_CONTROL) {
+            headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("max-age=0"));
+        }
+        if matches!(mode, CacheMode::NoStore | CacheMode::Reload) && (disabled || req.cache != CacheMode::Default) {
+            headers.entry(header::PRAGMA).or_insert(HeaderValue::from_static("no-cache"));
+            headers.entry(header::CACHE_CONTROL).or_insert(HeaderValue::from_static("no-cache"));
+        }
+        mode
+    }
+
+    /// RFC 9111 §4.4: a non-error response to an unsafe method invalidates the
+    /// target URI, and same-origin Location / Content-Location targets.
+    fn invalidate_after_unsafe(&self, url: &Url, headers: &HeaderMap) {
+        let mut cache = self.shared.cache.lock().unwrap();
+        cache.invalidate(url);
+        for name in [header::LOCATION, header::CONTENT_LOCATION] {
+            if let Some(target) = headers.get(name).and_then(|v| v.to_str().ok()).and_then(|v| url.join(v).ok()) {
+                if cors::same_origin(url, &target) {
+                    cache.invalidate(&target);
+                }
+            }
+        }
+    }
+
+    /// Delivers a stored response: a fresh hit (`from_cache`, no network) or one
+    /// just revalidated with a 304. CORS and response tainting are re-applied to
+    /// the stored headers exactly as for a network response.
+    #[allow(clippy::too_many_arguments)]
+    fn serve_cached(
+        &self,
+        id: RequestId,
+        req: &Request,
+        sink: &SharedSink,
+        url: &Url,
+        cached: crate::cache::Cached,
+        cors_cross: bool,
+        redirected: bool,
+        from_cache: bool,
+        encoded_len: u64,
+    ) -> Result<(), NetError> {
+        let kind = if cors_cross {
+            cors::cors_check(&cached.headers, req.origin.as_deref().unwrap_or("null"), req.credentials)
+                .map_err(NetError::Cors)?;
+            ResponseKind::Cors
+        } else if req.mode == RequestMode::NoCors && !cors::is_same_origin_request(req) {
+            ResponseKind::Opaque
+        } else {
+            ResponseKind::Basic
+        };
+        let body = cached.body;
+        if body.len() > req.max_body.unwrap_or(self.shared.config.max_body) {
+            return Err(NetError::TooLarge);
+        }
+        let mut head = self.head(url, cached.status, cached.headers, kind, redirected);
+        head.from_cache = from_cache;
+        self.shared.emit(NetEvent::ResponseReceived {
+            id,
+            head: Box::new(head.clone()),
+            destination: req.destination,
+            frame_id: req.frame_id.clone(),
+            loader_id: req.loader_id.clone(),
+            timestamp: self.shared.now(),
+        });
+        deliver(sink, ResponseEvent::Response(head));
+        let decoded_len = body.len() as u64;
+        if !body.is_empty() {
+            if self.shared.observed() {
+                self.shared.emit(NetEvent::DataReceived { id, data: body.clone(), timestamp: self.shared.now() });
+            }
+            deliver(sink, ResponseEvent::Data(body));
+        }
+        self.shared.emit(NetEvent::LoadingFinished { id, encoded_len, timestamp: self.shared.now() });
+        deliver(sink, ResponseEvent::Finished { encoded_len, decoded_len });
+        Ok(())
     }
 
     fn head(

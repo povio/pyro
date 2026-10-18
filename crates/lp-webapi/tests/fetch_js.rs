@@ -589,3 +589,32 @@ fn page_extra_http_headers_are_page_scoped_replaced_and_cleared() {
     fetch(&first, "/json?a4");
     assert!(!headers_of("/json?a4").contains("x-other"));
 }
+
+#[test]
+fn fetch_cache_modes_use_the_context_http_cache() {
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    let hits = || server.requests.lock().unwrap().iter().filter(|(line, _, _)| line.contains("/cacheable")).count();
+    let fetch = |init: &str| {
+        env.eval(&format!(
+            "globalThis.result='pending';fetch('/cacheable',{init}).then(r=>r.text().then(t=>result=r.status+':'+t),e=>result=e.name)"
+        ));
+        env.until("result!=='pending'");
+        env.eval("result")
+    };
+    assert_eq!(fetch("{}"), "200:cached");
+    assert_eq!(fetch("{}"), "200:cached");
+    assert_eq!(hits(), 1, "the second load is a fresh cache hit");
+    assert_eq!(fetch("{cache:'no-store'}"), "200:cached");
+    assert_eq!(hits(), 2);
+    let last = server.requests.lock().unwrap().last().unwrap().1.to_ascii_lowercase();
+    assert!(last.contains("pragma: no-cache") && last.contains("cache-control: no-cache"), "{last}");
+    assert_eq!(fetch("{cache:'reload'}"), "200:cached");
+    assert_eq!(fetch("{cache:'force-cache'}"), "200:cached");
+    assert_eq!(fetch("{cache:'only-if-cached',mode:'same-origin'}"), "200:cached");
+    assert_eq!(hits(), 3, "reload goes to the network; force-cache and only-if-cached do not");
+    env.eval("globalThis.errors=null;Promise.allSettled([{cache:'bogus'},{cache:'only-if-cached'}].map(i=>fetch('/cacheable',i))).then(r=>errors=r.map(x=>x.status+':'+(x.reason&&x.reason.name)).join())");
+    env.until("errors!==null");
+    assert_eq!(env.eval("errors"), "rejected:TypeError,rejected:TypeError");
+    assert_eq!(hits(), 3, "rejected inits never reach the network");
+}
