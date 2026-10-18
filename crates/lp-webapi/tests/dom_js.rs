@@ -3159,3 +3159,62 @@ fn data_transfer_holds_no_roots_and_get_as_string_is_queued() {
     }
     assert_eq!(eval(r, "refs.map((w) => w.deref() === undefined).join()"), "true,true,true");
 }
+
+#[test]
+fn data_transfer_items_back_reference_is_collectable() {
+    let e = env("<body>");
+    let r = &e.main;
+    eval(r, "window.kept = new DataTransfer(); kept.items.owner = kept; kept.items.marker = 17; window.refs = [new WeakRef(kept), new WeakRef(kept.items)]; 1");
+    for _ in 0..6 {
+        e.engine.collect_garbage_now();
+        e.engine.drain_finalized();
+    }
+    assert_eq!(
+        eval(r, "[kept.items === refs[1].deref(), kept.items.owner === kept, kept.items.marker].join()"),
+        "true,true,17"
+    );
+    eval(r, "kept = null; 1");
+    for _ in 0..6 {
+        e.engine.collect_garbage_now();
+        e.engine.drain_finalized();
+    }
+    assert_eq!(eval(r, "refs.map(w => w.deref() === undefined).join()"), "true,true");
+}
+
+#[test]
+fn drag_event_data_transfer_back_reference_is_collectable() {
+    let e = env("<body>");
+    let r = &e.main;
+    eval(r, "window.kept = (() => { const dt = new DataTransfer(); dt.setData('text', 'payload'); dt.ev = new DragEvent('drop', {dataTransfer: dt}); return dt.ev; })(); window.refs = [new WeakRef(kept), new WeakRef(kept.dataTransfer)]; 1");
+    for _ in 0..6 {
+        e.engine.collect_garbage_now();
+        e.engine.drain_finalized();
+    }
+    assert_eq!(eval(r, "[kept.dataTransfer === refs[1].deref(), kept.dataTransfer.ev === kept, kept.dataTransfer.getData('text')].join()"), "true,true,payload");
+    eval(r, "kept = null; 1");
+    for _ in 0..6 {
+        e.engine.collect_garbage_now();
+        e.engine.drain_finalized();
+    }
+    assert_eq!(eval(r, "refs.map(w => w.deref() === undefined).join()"), "true,true");
+}
+
+#[test]
+fn drag_event_data_transfer_identity_survives_isolated_world_and_gc() {
+    let e = env("<body>");
+    let isolated = new_realm(&e.engine, e.engine.register::<TestWindow>(), &e.page, "isolated");
+    eval(&isolated, "document.body.addEventListener('drop', ev => { window.saved = ev; });");
+    eval(&e.main, "window.refs = (() => { const dt = new DataTransfer(); dt.items.owner = dt; dt.items.marker = 42; dt.ev = new DragEvent('drop', {dataTransfer: dt}); document.body.dispatchEvent(dt.ev); return [new WeakRef(dt), new WeakRef(dt.items), new WeakRef(dt.ev)]; })(); 1");
+    for _ in 0..6 {
+        e.engine.collect_garbage_now();
+        e.engine.drain_finalized();
+    }
+    assert_eq!(eval(&isolated, "[saved.dataTransfer === saved.dataTransfer.ev.dataTransfer, Object.getOwnPropertyDescriptor(DataTransfer.prototype, 'items').get.call(saved.dataTransfer) === saved.dataTransfer.items, saved.dataTransfer.items.marker].join()"), "true,true,42");
+    assert_eq!(eval(&e.main, "refs.map(w => w.deref() !== undefined).join()"), "true,true,true");
+    eval(&isolated, "saved = null; 1");
+    for _ in 0..6 {
+        e.engine.collect_garbage_now();
+        e.engine.drain_finalized();
+    }
+    assert_eq!(eval(&e.main, "refs.map(w => w.deref() === undefined).join()"), "true,true,true");
+}

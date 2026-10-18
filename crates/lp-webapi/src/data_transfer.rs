@@ -11,7 +11,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use bytes::Bytes;
-use lp_js::{ClassDef, JsClass, JsError, JsResult, NoParent, Object, Persistent, Scope, Value};
+use lp_js::{ClassDef, IdentityKey, JsClass, JsError, JsResult, NoParent, Object, Persistent, Scope, Value, WeakRealm};
 
 use crate::file::{BlobData, File, FileList, FileListData};
 use crate::target::page_of;
@@ -63,7 +63,24 @@ fn normalize_format(format: &str) -> String {
 
 pub struct DataTransferData {
     store: Rc<Store>,
-    items: RefCell<Option<Persistent>>,
+    pub(crate) reference: DataTransferRef,
+}
+
+/// Non-rooting identity. Every JS owner must also hold a traced wrapper edge.
+#[derive(Clone)]
+pub(crate) struct DataTransferRef {
+    realm: WeakRealm,
+    identity: IdentityKey,
+}
+
+impl DataTransferRef {
+    pub(crate) fn get<'s>(&self, s: &Scope<'s>) -> JsResult<Object<'s>> {
+        let realm = self.realm.upgrade().ok_or(JsError::ContextDestroyed)?;
+        let owner = realm.scope()?;
+        let wrapper = owner.lookup_identity(self.identity).ok_or(JsError::ContextDestroyed)?;
+        // SAFETY: the caller's live receiver traces this same-VM wrapper.
+        Ok(unsafe { Value::from_raw(s.ctx(), wrapper.value().as_raw()) }.as_object().expect("wrapper"))
+    }
 }
 
 pub struct DataTransfer;
@@ -76,7 +93,10 @@ impl JsClass for DataTransfer {
             let store = Store::default();
             *store.drop_effect.borrow_mut() = "none".into();
             *store.effect_allowed.borrow_mut() = "none".into();
-            s.wrap_new::<DataTransfer>(DataTransferData { store: Rc::new(store), items: RefCell::new(None) }, nt, None)
+            let page = page_of(s)?;
+            let identity = page.event_identity(page.next_event_id());
+            let reference = DataTransferRef { realm: s.realm().downgrade(), identity };
+            s.wrap_new::<DataTransfer>(DataTransferData { store: Rc::new(store), reference }, nt, Some(identity))
         });
         def.accessor(
             "dropEffect",
@@ -104,13 +124,15 @@ impl JsClass for DataTransfer {
             },
         );
         def.getter("items", |s, d| {
-            if let Some(p) = d.items.borrow().as_ref() {
-                return Ok(p.get(s));
+            let wrapper = d.reference.get(s)?;
+            if let Some(list) = s.get_hidden(wrapper, "__lpDataTransferItems")? {
+                return Ok(list);
             }
-            // The list references only the native store, never this
-            // DataTransfer, so caching it here creates no cycle.
             let list = s.wrap::<DataTransferItemList>(ItemListData { store: d.store.clone() }, None)?.value();
-            *d.items.borrow_mut() = Some(Persistent::new(s, list));
+            // JS may add a back-reference to the owner. A traced edge keeps
+            // stable identity while allowing the entire cycle to be collected.
+            let root = Persistent::new(s, list);
+            s.set_hidden(wrapper, "__lpDataTransferItems", root.get(s))?;
             Ok(list)
         });
         def.getter("types", |s, d| {

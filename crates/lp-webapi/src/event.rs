@@ -84,7 +84,7 @@ pub struct EventFields {
     pub persisted: bool,
     pub message_data: Option<Persistent>,
     pub origin: String,
-    pub data_transfer: Option<Persistent>,
+    pub(crate) data_transfer: Option<crate::data_transfer::DataTransferRef>,
 }
 
 pub struct EventCore {
@@ -174,7 +174,11 @@ impl EventCore {
     fn trace_targets(&self, s: &Scope<'_>, wrapper: Object<'_>) -> JsResult<()> {
         let fields = self.fields.borrow();
         let keys = [self.state.borrow().target, fields.related_target, fields.submitter];
+        let data_transfer = fields.data_transfer.clone();
         drop(fields);
+        if let Some(data_transfer) = data_transfer {
+            s.set_hidden(wrapper, "__lpEventDataTransfer", data_transfer.get(s)?.value())?;
+        }
         for (name, key) in ["__lpEventTarget", "__lpRelatedTarget", "__lpSubmitter"].into_iter().zip(keys) {
             // Hidden edges preserve wrapper identity/expandos without native GC cycles.
             s.set_hidden(wrapper, name, target_value(s, &self.page, key)?)?;
@@ -329,22 +333,6 @@ fn fill_mouse<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) 
     f.button = get_num(init, "button", 0.0)? as i16;
     f.buttons = get_num(init, "buttons", 0.0)? as u16;
     f.related_target = related(s, init)?;
-    Ok(())
-}
-
-fn fill_drag<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
-    fill_mouse(s, f, init)?;
-    let Some(o) = init else { return Ok(()) };
-    let v = o.get("dataTransfer")?;
-    if v.is_nullish() {
-        return Ok(());
-    }
-    if s.unwrap::<crate::data_transfer::DataTransfer>(v).is_none() {
-        return Err(JsError::Type(
-            "Failed to construct 'DragEvent': member dataTransfer is not of type DataTransfer.".into(),
-        ));
-    }
-    f.data_transfer = Some(Persistent::new(s, v));
     Ok(())
 }
 
@@ -713,8 +701,37 @@ impl JsClass for DragEvent {
     type Data = EventData;
     type Parent = MouseEvent;
     fn define(def: &mut ClassDef<Self>) {
-        def.constructor(1, |s, nt, a| construct::<DragEvent>(s, nt, a, EventInterface::DragEvent, fill_drag));
-        def.getter("dataTransfer", |s, e| Ok(e.fields.borrow().data_transfer.as_ref().map_or(s.null(), |p| p.get(s))));
+        def.constructor(1, |s, nt, a| {
+            let init = a.get(1).as_object();
+            let wrapper = construct::<DragEvent>(s, nt, a, EventInterface::DragEvent, fill_mouse)?;
+            // The dictionary getter may reenter JS or force GC. Root only for
+            // construction, then keep the value on the event's traced wrapper.
+            let _root = Persistent::new(s, wrapper.value());
+            let value = match init {
+                Some(init) => init.get("dataTransfer")?,
+                None => s.null(),
+            };
+            if !value.is_nullish() {
+                let transfer_root = Persistent::new(s, value);
+                let transfer = s.unwrap::<crate::data_transfer::DataTransfer>(value).ok_or_else(|| {
+                    JsError::Type(
+                        "Failed to construct 'DragEvent': member dataTransfer is not of type DataTransfer.".into(),
+                    )
+                })?;
+                let reference = transfer.reference.clone();
+                s.set_hidden(wrapper, "__lpEventDataTransfer", transfer_root.get(s))?;
+                s.unwrap::<DragEvent>(wrapper.value()).expect("new event").fields.borrow_mut().data_transfer =
+                    Some(reference);
+            }
+            Ok(wrapper)
+        });
+        def.getter("dataTransfer", |s, e| {
+            let reference = e.fields.borrow().data_transfer.clone();
+            Ok(match reference {
+                Some(reference) => reference.get(s)?.value(),
+                None => s.null(),
+            })
+        });
     }
 }
 
