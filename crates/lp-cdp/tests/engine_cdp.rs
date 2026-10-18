@@ -1463,9 +1463,13 @@ fn input_accepts_mac_key_derived_editing_commands() {
     // A focused non-editable element (the TOS case) receives the key event too.
     h.page("Runtime.evaluate", json!({"expression":"document.querySelector('#tree').focus()"}));
     press(&mut h, "ArrowRight", "ArrowRight", 39, 0, json!(["moveRight"]));
+    // TOS W3-08 quotes-finances: `keyboard.press("Escape")` closes a
+    // QuerySelect. Playwright sends ["cancelOperation"]; the events are
+    // delivered and nothing is edited.
+    press(&mut h, "Escape", "Escape", 27, 0, json!(["cancelOperation"]));
     assert_eq!(
         h.page("Runtime.evaluate", json!({"expression":"keys","returnByValue":true}))["result"]["result"]["value"],
-        json!(["ArrowRight", "ArrowRight", "ArrowLeft", "a", "ArrowRight"])
+        json!(["ArrowRight", "ArrowRight", "ArrowLeft", "a", "ArrowRight", "Escape"])
     );
     // Commands the engine would not carry out (Playwright derives scrolling,
     // clipboard, undo and word movement too), and commands that are not the
@@ -1486,6 +1490,8 @@ fn input_accepts_mac_key_derived_editing_commands() {
         ("f", "KeyF", 2, json!(["moveForward"])),
         // Right shortcut and command, but a key the default action is not keyed on.
         ("x", "Backspace", 0, json!(["deleteBackward"])),
+        // Escape's command on a key that is not Escape.
+        ("q", "Escape", 0, json!(["cancelOperation"])),
     ] {
         let r = h.page(
             "Input.dispatchKeyEvent",
@@ -1496,7 +1502,7 @@ fn input_accepts_mac_key_derived_editing_commands() {
     assert_eq!(
         h.page("Runtime.evaluate", json!({"expression":"keys.length","returnByValue":true}))["result"]["result"]
             ["value"],
-        5,
+        6,
         "rejected commands deliver no events"
     );
     // The supported deletions keep their behavior with their own commands.

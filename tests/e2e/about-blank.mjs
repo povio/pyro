@@ -385,6 +385,12 @@ try {
     await page.focus('#tree');
     await page.keyboard.press('ArrowRight');
     assert.deepEqual(await page.evaluate(() => treeKeys), ['ArrowRight']);
+    // TOS W3-08 quotes-finances closes a QuerySelect with Escape (macOS command cancelOperation).
+    await page.keyboard.press('Escape');
+    assert.deepEqual(await page.evaluate(() => treeKeys), ['ArrowRight', 'Escape']);
+    await page.focus('#caret');
+    await page.keyboard.press('Escape');
+    assert.equal(await page.evaluate(() => document.querySelector('#caret').value), 'bcd');
   });
   await check('page fetch route fulfillment and abort after headers', async () => {
     await page.route('**/routed-fetch', route => route.fulfill({ status: 202, contentType: 'application/json', body: '{"routed":48}' }));
