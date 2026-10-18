@@ -82,6 +82,11 @@ pub struct RequestDefaults {
     /// session). Applied after the client's context-wide `NetSettings`
     /// extra headers, so a page value replaces a context value of the same name.
     pub extra_headers: HeaderMap,
+    /// Page-scoped HTTP cache bypass (CDP `Network.setCacheDisabled` on a page
+    /// session): no cache lookup or store for this request, plus `Pragma:
+    /// no-cache` / `Cache-Control: no-cache` like DevTools. Sibling pages in the
+    /// same context keep using the context cache.
+    pub cache_disabled: bool,
 }
 
 #[derive(Clone, Debug)]
