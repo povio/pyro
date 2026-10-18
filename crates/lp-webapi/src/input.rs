@@ -11,7 +11,7 @@ use lp_dom::forms::InputType;
 use lp_dom::{Dom, NodeId};
 
 use crate::event::{EventCore, EventData, EventInterface};
-use crate::page::PageDom;
+use crate::page::{FocusTarget, FocusTransition, PageDom};
 use crate::target::fire;
 
 fn key_of(page: &PageDom, id: NodeId) -> Option<TargetKey> {
@@ -61,42 +61,159 @@ fn fire_focus_event(page: &Rc<PageDom>, node: NodeId, ty: &str, bubbles: bool, r
 
 // ----- focus --------------------------------------------------------------
 
-/// HTML focusing steps for `el` (no-op when not focusable).
+fn adopt_transition(page: &PageDom, token: &FocusTransition) {
+    let previous = page.focus_transition.replace(Some(token.clone()));
+    if let Some(previous) = previous {
+        if !previous.ptr_eq(token) {
+            previous.cancel();
+        }
+    }
+}
+
+fn live_document(page: &PageDom, doc: NodeId, token: &FocusTransition) -> bool {
+    token.is_current() && focus_document_is_live(page) && page.document() == doc
+}
+
+fn focus_document_is_live(page: &PageDom) -> bool {
+    !page.is_disposed() && page.hooks().is_none_or(|h| h.focus_document_is_live())
+}
+
+fn live_element(page: &PageDom, doc: NodeId, el: NodeId) -> bool {
+    let dom = page.dom.borrow();
+    dom.node_document(el).ok() == Some(doc) && dom.is_connected(el).unwrap_or(false)
+}
+
+fn request_focus(page: &Rc<PageDom>, target: FocusTarget) -> Option<FocusTransition> {
+    if !focus_document_is_live(page) {
+        return None;
+    }
+    let doc = page.document();
+    let token = FocusTransition::new();
+    adopt_transition(page, &token);
+    let hooks = page.hooks();
+    let apply = hooks.is_none_or(|h| h.request_focus(target, &token));
+    (apply && live_document(page, doc, &token)).then_some(token)
+}
+
+/// HTML focusing steps, coordinated with the browsing-context owner.
 pub fn focus_element(page: &Rc<PageDom>, el: NodeId) {
-    let (doc, focusable, prev) = {
-        let dom = page.dom.borrow();
-        let Ok(doc) = dom.node_document(el) else { return };
-        (doc, dom.is_focusable(el).unwrap_or(false), dom.focused(doc).ok().flatten())
-    };
-    if !focusable || prev == Some(el) {
+    let doc = page.document();
+    if !live_element(page, doc, el) || !page.dom.borrow().is_focusable(el).unwrap_or(false) {
         return;
     }
-    if let Some(p) = prev {
-        run_blur(page, doc, p, Some(el));
+    if let Some(token) = request_focus(page, FocusTarget::Element(el)) {
+        focus_element_with_transition(page, el, &token);
+    }
+}
+
+/// Owner application of focus without recursively requesting owner policy.
+pub fn focus_element_with_transition(page: &Rc<PageDom>, el: NodeId, token: &FocusTransition) {
+    if !token.is_current() || !focus_document_is_live(page) {
+        return;
+    }
+    adopt_transition(page, token);
+    let doc = page.document();
+    if !live_element(page, doc, el) || !page.dom.borrow().is_focusable(el).unwrap_or(false) {
+        return;
+    }
+    let prev = page.dom.borrow().focused(doc).ok().flatten();
+    if prev == Some(el) {
+        return;
+    }
+    if let Some(prev) = prev {
+        run_blur(page, doc, prev, Some(el), token);
+    }
+    if !live_document(page, doc, token)
+        || !live_element(page, doc, el)
+        || !page.dom.borrow().is_focusable(el).unwrap_or(false)
+    {
+        return;
     }
     let _ = page.dom.borrow_mut().set_focused(doc, Some(el));
+    if is_text_control(&page.dom.borrow(), el) {
+        page.editing_target.set(Some(el));
+    }
     page.remember_focus_value(el);
     fire_focus_event(page, el, "focus", false, prev);
+    if !live_document(page, doc, token) || !live_element(page, doc, el) {
+        return;
+    }
     fire_focus_event(page, el, "focusin", true, prev);
 }
 
-fn run_blur(page: &Rc<PageDom>, doc: NodeId, el: NodeId, related: Option<NodeId>) {
+fn run_blur(page: &Rc<PageDom>, doc: NodeId, el: NodeId, related: Option<NodeId>, token: &FocusTransition) {
     let _ = page.dom.borrow_mut().set_focused(doc, None);
+    page.space_target.set(None);
+    if !live_element(page, doc, el) {
+        return;
+    }
     fire_change_if_dirty(page, el);
+    if !live_document(page, doc, token) || !live_element(page, doc, el) {
+        return;
+    }
     fire_focus_event(page, el, "blur", false, related);
+    if !live_document(page, doc, token) || !live_element(page, doc, el) {
+        return;
+    }
     fire_focus_event(page, el, "focusout", true, related);
 }
 
-/// `HTMLElement.blur()`.
+/// Explicit blur keeps the owner's selected frame and remembered edit target.
 pub fn blur_element(page: &Rc<PageDom>, el: NodeId) {
-    let doc = {
-        let dom = page.dom.borrow();
-        match dom.node_document(el) {
-            Ok(d) if dom.focused(d).ok().flatten() == Some(el) => d,
-            _ => return,
+    if page.dom.borrow().focused(page.document()).ok().flatten() != Some(el) {
+        return;
+    }
+    if let Some(token) = request_focus(page, FocusTarget::Blur(el)) {
+        // Owner callbacks may already have changed the active element.
+        if page.dom.borrow().focused(page.document()).ok().flatten() == Some(el) {
+            blur_document_with_transition(page, &token);
         }
-    };
-    run_blur(page, doc, el, None);
+    }
+}
+
+pub fn focus_window(page: &Rc<PageDom>) {
+    if let Some(token) = request_focus(page, FocusTarget::Window) {
+        focus_window_with_transition(page, &token);
+    }
+}
+
+/// Window activation clears local activeElement, retaining editing selection.
+pub fn focus_window_with_transition(page: &Rc<PageDom>, token: &FocusTransition) {
+    blur_document_with_transition(page, token);
+}
+
+/// Owner blur of an old document, without recursively invoking the owner hook.
+pub fn blur_document_with_transition(page: &Rc<PageDom>, token: &FocusTransition) {
+    if !token.is_current() || !focus_document_is_live(page) {
+        return;
+    }
+    adopt_transition(page, token);
+    let doc = page.document();
+    let prev = page.dom.borrow().focused(doc).ok().flatten();
+    if let Some(prev) = prev {
+        run_blur(page, doc, prev, None, token);
+    }
+}
+
+/// Non-event teardown. Never resurrects selection after detach/navigation.
+pub fn clear_document_focus(page: &PageDom) {
+    if let Some(token) = page.focus_transition.take() {
+        token.cancel();
+    }
+    let _ = page.dom.borrow_mut().set_focused(page.document(), None);
+    page.focus_values.borrow_mut().clear();
+    page.editing_target.set(None);
+    page.space_target.set(None);
+}
+
+/// A remembered text control is distinct from document.activeElement.
+/// The returned node must still belong to this connected document.
+pub fn remembered_editing_target(page: &PageDom) -> Option<NodeId> {
+    page.editing_target.get().filter(|&el| focus_document_is_live(page) && live_element(page, page.document(), el))
+}
+
+fn accepts_keyboard(page: &PageDom) -> bool {
+    focus_document_is_live(page) && page.hooks().is_none_or(|h| h.is_focused())
 }
 
 /// Text controls fire `change` on commit when their value differs from the
@@ -499,15 +616,20 @@ fn key_event(page: &Rc<PageDom>, ty: &str, k: &KeyInput, char_code: u32) -> Even
 
 /// CDP `Input.dispatchKeyEvent`.
 pub fn dispatch_key(page: &Rc<PageDom>, kind: KeyKind, k: &KeyInput) {
+    if !accepts_keyboard(page) {
+        return;
+    }
+    let doc = page.document();
     let Some(target) = key_target(page) else { return };
     let Some(tkey) = key_of(page, target) else { return };
     match kind {
         KeyKind::KeyDown | KeyKind::RawKeyDown => {
             let ev = key_event(page, "keydown", k, 0);
             let ok = fire(page, tkey, &ev);
-            if !ok {
+            if !ok || page.document() != doc || !accepts_keyboard(page) {
                 return;
             }
+            let Some(target) = key_target(page) else { return };
             if k.key == " " && space_clickable(&page.dom.borrow(), target) {
                 // Browsers mark the control active on Space keydown and click
                 // it on the matching keyup (Blink KeyboardClickableInputTypeView).
@@ -523,7 +645,13 @@ pub fn dispatch_key(page: &Rc<PageDom>, kind: KeyKind, k: &KeyInput) {
         KeyKind::KeyUp => {
             let ev = key_event(page, "keyup", k, 0);
             let ok = fire(page, tkey, &ev);
-            if k.key == " " && page.space_target.take() == Some(target) && ok {
+            if k.key == " "
+                && page.space_target.take() == Some(target)
+                && ok
+                && page.document() == doc
+                && accepts_keyboard(page)
+                && key_target(page) == Some(target)
+            {
                 keyboard_click(page, target);
             }
         }
@@ -534,9 +662,11 @@ fn press_char(page: &Rc<PageDom>, target: NodeId, k: &KeyInput) {
     let code = k.text.chars().next().map_or(0, |c| c as u32);
     let ev = key_event(page, "keypress", k, code);
     let Some(tkey) = key_of(page, target) else { return };
-    if !fire(page, tkey, &ev) {
+    let doc = page.document();
+    if !fire(page, tkey, &ev) || page.document() != doc || !accepts_keyboard(page) {
         return;
     }
+    let Some(target) = key_target(page) else { return };
     if k.modifiers.ctrl || k.modifiers.meta {
         return;
     }
@@ -683,7 +813,12 @@ fn move_caret(page: &Rc<PageDom>, el: NodeId, key: &str, extend: bool) {
 }
 
 fn delete(page: &Rc<PageDom>, el: NodeId, input_type: &str, backward: bool) {
-    if !fire_input_event(page, el, "beforeinput", input_type, None, true) {
+    let doc = page.document();
+    if !fire_input_event(page, el, "beforeinput", input_type, None, true)
+        || page.document() != doc
+        || !accepts_keyboard(page)
+        || !live_element(page, doc, el)
+    {
         return;
     }
     let changed = {
@@ -734,7 +869,12 @@ fn insert_text_at(page: &Rc<PageDom>, el: NodeId, text: &str) {
     }
     let input_type = if text == "\n" { "insertLineBreak" } else { "insertText" };
     let data = (text != "\n").then_some(text);
-    if !fire_input_event(page, el, "beforeinput", input_type, data, true) {
+    let doc = page.document();
+    if !fire_input_event(page, el, "beforeinput", input_type, data, true)
+        || page.document() != doc
+        || !accepts_keyboard(page)
+        || !live_element(page, doc, el)
+    {
         return;
     }
     let changed = page.dom.borrow_mut().insert_text(el, text).unwrap_or(false);
@@ -743,10 +883,15 @@ fn insert_text_at(page: &Rc<PageDom>, el: NodeId, text: &str) {
     }
 }
 
-/// CDP `Input.insertText`: inserts into the focused text control, replacing
-/// its selection (empty text deletes the selection), with beforeinput/input.
+/// CDP `Input.insertText`: inserts into the focused text control, or the live
+/// remembered editing control after blur/window activation. Empty text deletes
+/// the selection. Owner focus and document lifetime are checked after events.
 pub fn insert_text(page: &Rc<PageDom>, text: &str) {
-    let Some(target) = key_target(page) else { return };
+    if !accepts_keyboard(page) {
+        return;
+    }
+    let target = page.dom.borrow().focused(page.document()).ok().flatten();
+    let Some(target) = target.or_else(|| remembered_editing_target(page)) else { return };
     if text.is_empty() {
         let has_selection = page.dom.borrow().selection(target).map(|(s, e)| s != e).unwrap_or(false);
         if has_selection {

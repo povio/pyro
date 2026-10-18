@@ -1,0 +1,13 @@
+# Focus ownership and reentrant native steps
+
+`FocusTransition` is a cloneable owner-thread cancellation token (`new`, `is_current`, `cancel`, `ptr_eq`). `FocusTarget` distinguishes element, window and explicit element-blur requests. Before starting a valid request, native bindings replace their local token and cancel the previous token. Same-local-target element requests still reach `PageHooks::request_focus`; the browser may need to reconcile an ancestor frame chain.
+
+The owner hook runs without DOM or hook borrows. Returning true allows the native final step; false means handled or rejected. Owner code uses `input::focus_element_with_transition`, `focus_window_with_transition` and `blur_document_with_transition` with the same token, without recursively invoking owner policy. Adopting the identical token does not cancel it. Native steps check cancellation, document identity and connectivity after reentrant change/blur/focus events. The browser must also check frame and loader identity after callbacks.
+
+`focus_document_is_live` is an observation-only, non-JavaScript owner query, independent of whether the frame is selected. Its preflight rejects retained but retired iframe documents before they can cancel a shared token. `is_focused` is the separate selected-frame query for keyboard default actions. Both default to true for standalone single-document embedders.
+
+Window focus and explicit blur clear the local active element while preserving the remembered text-control selection. `remembered_editing_target` returns only a still-connected node in the current document; `Input.insertText` can use it when no element is active. `clear_document_focus` silently cancels pending focus, clears active element, editing target/change snapshot and pending Space activation. Disposal and document replacement call it; the browser also uses it when removing a focused frame. Cleanup fires no events and cannot restore a detached document's selection.
+
+After keydown, native defaults re-read the current target. A handler focusing another input in the same document sends text to that input. If the owner selects another frame, defaults on the old document stop. Keypress and beforeinput also revalidate document/owner lifetime. Cross-command rawKeyDown-to-Char suppression belongs to the protocol adapter because the next command may be delivered to a different PageDom; this API does not fabricate an input sequence across documents.
+
+This increment supplies native steps and owner contracts. Browser focus-chain reconciliation and CDP frame routing are separate dependencies; it does not establish complete child-frame input, CSS focusability or TOS compatibility.
