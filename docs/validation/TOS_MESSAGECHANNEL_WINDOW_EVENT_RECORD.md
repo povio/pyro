@@ -176,6 +176,30 @@ Residual batch 16 limit:
 - The observation recorder shifts timing: main + fix failed once under it.
 - No scheduling or semantic defect is established for this case. It remains
   under investigation.
+- The 14/14 versus 13/14 split in the table above does **not** establish
+  MessageChannel-specific causation. The additional native-trace runs below show
+  the case also fails without MessageChannel.
+
+Additional single-case runs (native task trace, diagnostic):
+- Unchanged test, `--grep "deletes an account line"`.
+- Fixture `/private/tmp/lp-tos-f9f-batch16-fxmc`, reused; its e2e tree was
+  verified unchanged.
+- Fresh run-owned DBs, 0 left.
+- W1's diagnostic-only trace branch `diag/runtime-task-trace` at `142840e` (main
+  `6ad00f2` + PR #78 + an `LP_TRACE_TASKS` native task trace; never for merge),
+  built fresh with `CARGO_INCREMENTAL=0`.
+
+| Build | Release SHA-256 | Native trace only | With `DEBUG=pw:protocol` |
+| --- | --- | --- | --- |
+| main + PR #78 + trace (`142840e`, tree `8cfa3e9d…`) | `add744d26cc9202aff8145b530d8935640950ea14edd628ac44b6b02a2044046` | **fail, fail** | pass, pass, pass |
+| PR #75 `b6fb762` + trace (local merge `51dd97a`, tree `0b26bda5…`) | `c7be4c0e9beb553dcacdb167debdd5e7ff8b1106bc40988f611928141ae0206c` | **pass, fail, fail** | pass, pass, pass |
+
+- Without MessageChannel the case fails 2/2; with PR #75 it is 1/3.
+- Client-side Playwright protocol logging flips it to pass 6/6. That supports
+  timing sensitivity but proves no mechanism.
+- Trace directories:
+  `/private/tmp/lp-tos-b16acct-ntrace-{diag,diagmc}-r*` and
+  `/private/tmp/lp-tos-b16acct-trace-{diag,diagmc}-r*`.
 
 ## Status
 
