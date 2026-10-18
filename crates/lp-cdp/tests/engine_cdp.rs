@@ -1817,3 +1817,96 @@ fn navigation_start_separates_old_and_new_document_network_events() {
     assert!(index_of(&order, "Network.responseReceived", "/data") < navigating, "{order:#?}");
     assert!(navigating < index_of(&order, "Network.requestWillBeSent", "/next"), "{order:#?}");
 }
+
+/// Serves `responses` requests and records each request head (lowercased).
+fn record_requests(
+    responses: usize,
+) -> (std::net::SocketAddr, std::thread::JoinHandle<()>, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log = seen.clone();
+    let server = std::thread::spawn(move || {
+        for _ in 0..responses {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+            let mut request = Vec::new();
+            let mut chunk = [0; 1024];
+            while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                let n = stream.read(&mut chunk).unwrap();
+                assert!(n > 0);
+                request.extend_from_slice(&chunk[..n]);
+            }
+            log.lock().unwrap().push(String::from_utf8_lossy(&request).to_ascii_lowercase());
+            let body = "<!doctype html><p>ok</p>";
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            stream.write_all(head.as_bytes()).unwrap();
+            stream.write_all(body.as_bytes()).unwrap();
+        }
+    });
+    (address, server, seen)
+}
+
+/// TOS W3-19 positions-overview: `page.setExtraHTTPHeaders`. Behaviour
+/// matches Chrome 147 (W3 probes): the whole map is replaced on each call, {}
+/// clears it, headers apply to navigations and fetches only while the session
+/// has Network enabled (they are kept while it is disabled), and invalid input
+/// is rejected with Chrome's messages.
+#[test]
+fn extra_http_headers_replace_clear_and_follow_network_enable() {
+    let (address, server, seen) = record_requests(6);
+    let mut h = Harness::new();
+    let base = format!("http://{address}");
+    let fetch = |h: &mut Harness, path: &str| {
+        let r = h.page(
+            "Runtime.evaluate",
+            json!({"expression": format!("fetch('{path}').then(r => r.status)"), "awaitPromise": true, "returnByValue": true}),
+        );
+        assert_eq!(r["result"]["result"]["value"], 200, "{r}");
+    };
+    // Kept while Network is disabled, but not applied.
+    let set = |h: &mut Harness, headers: Value| h.page("Network.setExtraHTTPHeaders", json!({"headers": headers}));
+    assert_eq!(set(&mut h, json!({"X-A": "1", "Cache-Control": "no-cache"}))["result"], json!({}));
+    let r = h.page("Page.navigate", json!({"url": format!("{base}/nav-disabled")}));
+    assert!(r["result"].get("errorText").is_none(), "{r}");
+    h.page("Network.enable", json!({}));
+    let r = h.page("Page.navigate", json!({"url": format!("{base}/nav-enabled")}));
+    assert!(r["result"].get("errorText").is_none(), "{r}");
+    fetch(&mut h, "/fetch-enabled");
+    assert_eq!(set(&mut h, json!({"X-B": "2"}))["result"], json!({}));
+    fetch(&mut h, "/fetch-replaced");
+    assert_eq!(set(&mut h, json!({}))["result"], json!({}));
+    fetch(&mut h, "/fetch-cleared");
+    assert_eq!(set(&mut h, json!({"X-A": "1"}))["result"], json!({}));
+    h.page("Network.disable", json!({}));
+    fetch(&mut h, "/fetch-disabled-again");
+    server.join().unwrap();
+    let seen = seen.lock().unwrap();
+    let has = |path: &str, header: &str| {
+        let request =
+            seen.iter().find(|r| r.starts_with(&format!("get {path} "))).unwrap_or_else(|| panic!("{path}: {seen:#?}"));
+        request.contains(&format!("\r\n{header}\r\n"))
+    };
+    assert!(!has("/nav-disabled", "x-a: 1"));
+    assert!(has("/nav-enabled", "x-a: 1") && has("/nav-enabled", "cache-control: no-cache"));
+    assert!(has("/fetch-enabled", "x-a: 1"));
+    assert!(has("/fetch-replaced", "x-b: 2") && !has("/fetch-replaced", "x-a: 1"));
+    assert!(!has("/fetch-replaced", "cache-control: no-cache"));
+    assert!(!has("/fetch-cleared", "x-b: 2"));
+    assert!(!has("/fetch-disabled-again", "x-a: 1"));
+
+    for (headers, message) in [
+        (json!({"Bad Name": "x"}), "Invalid header name"),
+        (json!({"X-V": "a\nb"}), "Invalid header value"),
+        (json!({"X-N": 1}), "Invalid header value, string expected"),
+        (json!({"X-N": null}), "Invalid header value, string expected"),
+    ] {
+        let r = h.page("Network.setExtraHTTPHeaders", json!({"headers": headers}));
+        assert_eq!(r["error"]["code"], -32602, "{r}");
+        assert_eq!(r["error"]["message"], message, "{r}");
+    }
+}
