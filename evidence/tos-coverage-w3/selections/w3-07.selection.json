@@ -1,0 +1,90 @@
+{
+  "manifest_sha256": "542d479b709249d072e3b57c1324c894c4378fc5373892ae64c0687486f2ae19",
+  "manifest_read_from": "git show f9fde4aa0dce7d1d7a1ffebffe3306399973cd80:apps/fe/e2e/suites/lightpanda.json (W3 host, sha256 verified)",
+  "recorded_utc": "2026-10-18T07:17:25+00:00",
+  "ledger_sha256": "3d1de5a08cf4add614432f30ea316d97472ffe42ea73d00a7e775655aef09016",
+  "criteria": "W3-07: whole manifest-routed groups of two files from the W2 ledger uncovered_files, not in W3-01..W3-06 (business partner; quote commercial parties); chosen before any run of these files",
+  "files": [
+    "e2e/master-data/business-entities/business-partner.e2e.ts",
+    "e2e/logistics/quotes-commercial-parties.e2e.ts"
+  ],
+  "cases": [
+    {
+      "file": "e2e/logistics/quotes-commercial-parties.e2e.ts",
+      "titlePath": [
+        "Quote Commercial Parties tab FE E2E",
+        "adds a new Quote commercial party from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/quotes-commercial-parties.e2e.ts",
+      "titlePath": [
+        "Quote Commercial Parties tab FE E2E",
+        "applies a commercial party template from the Quote details modal"
+      ]
+    },
+    {
+      "file": "e2e/logistics/quotes-commercial-parties.e2e.ts",
+      "titlePath": [
+        "Quote Commercial Parties tab FE E2E",
+        "autosaves a Quote commercial party reference inline from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/quotes-commercial-parties.e2e.ts",
+      "titlePath": [
+        "Quote Commercial Parties tab FE E2E",
+        "lists the seeded Quote commercial parties in rendered HTML"
+      ]
+    },
+    {
+      "file": "e2e/logistics/quotes-commercial-parties.e2e.ts",
+      "titlePath": [
+        "Quote Commercial Parties tab FE E2E",
+        "removes a Quote commercial party from the FE"
+      ]
+    },
+    {
+      "file": "e2e/master-data/business-entities/business-partner.e2e.ts",
+      "titlePath": [
+        "Master Data Business Partners FE E2E",
+        "creates a business partner and verifies it from the list HTML"
+      ]
+    },
+    {
+      "file": "e2e/master-data/business-entities/business-partner.e2e.ts",
+      "titlePath": [
+        "Master Data Business Partners FE E2E",
+        "filters archived business partners without opening the details modal"
+      ]
+    },
+    {
+      "file": "e2e/master-data/business-entities/business-partner.e2e.ts",
+      "titlePath": [
+        "Master Data Business Partners FE E2E",
+        "filters business partners by debtor and creditor IDs in the rendered table"
+      ]
+    },
+    {
+      "file": "e2e/master-data/business-entities/business-partner.e2e.ts",
+      "titlePath": [
+        "Master Data Business Partners FE E2E",
+        "lists seeded business partners as rendered table rows"
+      ]
+    },
+    {
+      "file": "e2e/master-data/business-entities/business-partner.e2e.ts",
+      "titlePath": [
+        "Master Data Business Partners FE E2E",
+        "sorts business partners by remarks from the visible table header"
+      ]
+    },
+    {
+      "file": "e2e/master-data/business-entities/business-partner.e2e.ts",
+      "titlePath": [
+        "Master Data Business Partners FE E2E",
+        "sorts business partners by short name and address with missing values last"
+      ]
+    }
+  ]
+}
