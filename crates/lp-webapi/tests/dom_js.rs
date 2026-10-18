@@ -3952,3 +3952,226 @@ fn file_reader_abort_releases_traced_blob_and_isolated_world_works() {
     assert_eq!(eval(&isolated, "done && new Uint8Array(r.result).length===5"), "true");
     assert_eq!(e.page.file_reader_usage(), (0, 0));
 }
+
+#[test]
+fn focus_transition_reentrant_blur_and_focus_do_not_overwrite_new_intent() {
+    let e = env("<body><input id=a><input id=b><input id=c></body>");
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"
+        globalThis.events=[]; const [a,b,c]=['a','b','c'].map(id=>document.getElementById(id));
+        for(const n of [a,b,c]) for(const ty of ['focus','focusin','blur','focusout'])
+            n.addEventListener(ty,()=>events.push(n.id+':'+ty));
+        a.focus();events=[];a.onblur=()=>c.focus();b.focus();
+        document.activeElement.id+'|'+events.join(',')
+    "#
+        ),
+        "c|a:blur,c:focus,c:focusin"
+    );
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"
+        a.onblur=null;c.blur();events=[];a.onfocus=()=>b.focus();a.focus();
+        document.activeElement.id+'|'+events.join(',')
+    "#
+        ),
+        "b|a:focus,a:blur,a:focusout,b:focus,b:focusin"
+    );
+}
+
+#[test]
+fn focus_transition_revalidates_detachment_and_document_replacement() {
+    let e = env("<body><input id=a><input id=b></body>");
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"
+        const a=document.getElementById('a'),b=document.getElementById('b');
+        a.focus();a.onblur=()=>b.remove();b.focus();document.activeElement.tagName
+    "#
+        ),
+        "BODY"
+    );
+    struct ReplaceOnFocus {
+        page: std::rc::Weak<PageDom>,
+        replacement: lp_dom::NodeId,
+    }
+    impl PageHooks for ReplaceOnFocus {
+        fn post_task(&self, _: Box<dyn FnOnce()>) {}
+        fn navigate(&self, _: NavigationRequest) {}
+        fn request_focus(&self, _: FocusTarget, token: &FocusTransition) -> bool {
+            let page = self.page.upgrade().unwrap();
+            assert!(page.dom.try_borrow_mut().is_ok());
+            page.set_document(self.replacement);
+            assert!(!token.is_current());
+            true
+        }
+    }
+    let replacement = parse_document(&e.page.dom, "http://localhost/new", "<body>new</body>");
+    e.page.set_hooks(Some(Rc::new(ReplaceOnFocus { page: Rc::downgrade(&e.page), replacement })));
+    eval(&e.main, "a.focus()");
+    assert_eq!(e.page.document(), replacement);
+    assert_eq!(e.page.dom.borrow().focused(replacement).unwrap(), None);
+}
+
+#[test]
+fn focus_owner_helpers_share_tokens_without_recursive_hooks_and_cleanup_selection() {
+    struct Hooks {
+        page: std::rc::Weak<PageDom>,
+        calls: Rc<RefCell<Vec<FocusTarget>>>,
+    }
+    impl PageHooks for Hooks {
+        fn post_task(&self, _: Box<dyn FnOnce()>) {}
+        fn navigate(&self, _: NavigationRequest) {}
+        fn request_focus(&self, target: FocusTarget, token: &FocusTransition) -> bool {
+            self.calls.borrow_mut().push(target);
+            let page = self.page.upgrade().unwrap();
+            assert!(page.dom.try_borrow_mut().is_ok());
+            // This also proves the PageHooks RefCell borrow was released.
+            page.set_hooks(None);
+            match target {
+                FocusTarget::Element(node) => input::focus_element_with_transition(&page, node, token),
+                FocusTarget::Window => input::focus_window_with_transition(&page, token),
+                FocusTarget::Blur(_) => input::blur_document_with_transition(&page, token),
+            }
+            assert!(token.is_current());
+            false
+        }
+    }
+    let e = env("<body><input id=a value=abcd></body>");
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let hooks = Rc::new(Hooks { page: Rc::downgrade(&e.page), calls: calls.clone() });
+    e.page.set_hooks(Some(hooks.clone()));
+    assert_eq!(
+        eval(
+            &e.main,
+            "const a=document.getElementById('a');a.focus();a.setSelectionRange(1,3);document.activeElement.id"
+        ),
+        "a"
+    );
+    e.page.set_hooks(Some(hooks.clone()));
+    eval(&e.main, "a.focus()"); // Same-local-target must still reach owner.
+    assert_eq!(calls.borrow().len(), 2);
+    e.page.set_hooks(Some(hooks.clone()));
+    assert_eq!(eval(&e.main, "window.focus();document.activeElement.tagName"), "BODY");
+    input::insert_text(&e.page, "X");
+    assert_eq!(eval(&e.main, "a.value"), "aXd");
+    let token = FocusTransition::new();
+    input::focus_window_with_transition(&e.page, &token);
+    input::focus_window_with_transition(&e.page, &token.clone());
+    assert!(token.is_current());
+    input::clear_document_focus(&e.page);
+    assert!(!token.is_current());
+    assert!(input::remembered_editing_target(&e.page).is_none());
+    input::insert_text(&e.page, "Y");
+    assert_eq!(eval(&e.main, "a.value"), "aXd");
+}
+
+#[test]
+fn keydown_default_action_retargets_within_document_and_stops_after_owner_switch() {
+    use std::cell::Cell;
+    struct Hooks(Rc<Cell<bool>>);
+    impl PageHooks for Hooks {
+        fn post_task(&self, _: Box<dyn FnOnce()>) {}
+        fn navigate(&self, _: NavigationRequest) {}
+        fn is_focused(&self) -> bool {
+            self.0.get()
+        }
+        fn request_focus(&self, target: FocusTarget, _: &FocusTransition) -> bool {
+            if target == FocusTarget::Window {
+                self.0.set(false);
+                return false;
+            }
+            true
+        }
+    }
+    let e = env("<body><input id=a><input id=b></body>");
+    eval(
+        &e.main,
+        "const a=document.getElementById('a'),b=document.getElementById('b');a.focus();a.onkeydown=()=>b.focus()",
+    );
+    let key = input::KeyInput { key: "x".into(), text: "x".into(), ..Default::default() };
+    input::dispatch_key(&e.page, input::KeyKind::KeyDown, &key);
+    assert_eq!(eval(&e.main, "a.value+'|'+b.value"), "|x");
+    let selected = Rc::new(Cell::new(true));
+    e.page.set_hooks(Some(Rc::new(Hooks(selected.clone()))));
+    eval(&e.main, "b.onkeydown=()=>window.focus()");
+    input::dispatch_key(&e.page, input::KeyKind::KeyDown, &key);
+    assert_eq!(eval(&e.main, "a.value+'|'+b.value"), "|x");
+    input::dispatch_key(&e.page, input::KeyKind::Char, &key);
+    input::insert_text(&e.page, "z");
+    assert_eq!(eval(&e.main, "b.value"), "x");
+    selected.set(true);
+    eval(&e.main, "b.onkeydown=null;b.onkeypress=()=>a.focus()");
+    input::dispatch_key(&e.page, input::KeyKind::KeyDown, &key);
+    assert_eq!(eval(&e.main, "a.value+'|'+b.value"), "x|x");
+}
+
+#[test]
+fn focus_transition_change_reentry_and_disposal_stop_remaining_events() {
+    let e = env("<body><input id=a><input id=b><input id=c></body>");
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"
+        const a=document.getElementById('a'),b=document.getElementById('b'),c=document.getElementById('c');
+        globalThis.events=[];a.focus();a.value='changed';
+        a.onchange=()=>{events.push('change');c.focus()};a.onblur=()=>events.push('stale blur');
+        b.onfocus=()=>events.push('stale focus');b.focus();document.activeElement.id+'|'+events.join()
+    "#
+        ),
+        "c|change"
+    );
+    let token = FocusTransition::new();
+    let page = e.page.clone();
+    let scope = e.main.scope().unwrap();
+    let dispose = scope
+        .function("dispose", move |s, _, _| {
+            page.dispose();
+            Ok(s.undefined())
+        })
+        .unwrap();
+    scope.global().set("disposePage", dispose.value()).unwrap();
+    eval(&e.main, "a.onchange=null;a.onblur=null;a.onfocus=()=>disposePage();a.onfocusin=()=>events.push('stale focusin');events=[]");
+    let a = e.page.dom.borrow().get_element_by_id(e.page.document(), "a").unwrap().unwrap();
+    input::focus_element_with_transition(&e.page, a, &token);
+    assert!(!token.is_current());
+    assert!(e.page.is_disposed());
+    assert_eq!(eval(&e.main, "events.join()"), "");
+}
+
+#[test]
+fn retired_focus_document_cannot_cancel_live_shared_transition() {
+    use std::cell::Cell;
+    struct Live(Rc<Cell<bool>>);
+    impl PageHooks for Live {
+        fn post_task(&self, _: Box<dyn FnOnce()>) {}
+        fn navigate(&self, _: NavigationRequest) {}
+        fn focus_document_is_live(&self) -> bool {
+            self.0.get()
+        }
+        fn request_focus(&self, _: FocusTarget, _: &FocusTransition) -> bool {
+            panic!("retired owner hook")
+        }
+    }
+    let retired = env("<body><input id=a></body>");
+    let dom = Rc::new(RefCell::new(Dom::new()));
+    let doc = parse_document(&dom, "http://localhost/child", "<body><input id=b></body>");
+    dom.borrow_mut().set_document_active(doc, true).unwrap();
+    let live_page = PageDom::new(dom, doc);
+    let live_realm = new_realm(&retired.engine, retired.engine.register::<TestWindow>(), &live_page, "child");
+    let token = FocusTransition::new();
+    input::focus_window_with_transition(&retired.page, &token);
+    input::focus_window_with_transition(&live_page, &token);
+    retired.page.set_hooks(Some(Rc::new(Live(Rc::new(Cell::new(false))))));
+    eval(&retired.main, "document.getElementById('a').focus();window.focus()");
+    assert!(token.is_current(), "stale requests must not cancel the owner's current transition");
+    let node = live_page.dom.borrow().get_element_by_id(live_page.document(), "b").unwrap().unwrap();
+    input::focus_element_with_transition(&live_page, node, &token);
+    assert_eq!(eval(&live_realm, "document.activeElement.id"), "b");
+    let invalid = FocusTransition::new();
+    input::focus_window_with_transition(&retired.page, &invalid);
+    assert!(token.is_current(), "stale helper must not adopt/cancel local state either");
+}

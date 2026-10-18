@@ -76,7 +76,9 @@ pub struct PageDom {
     pub(crate) blob_urls: RefCell<FxHashMap<String, (bytes::Bytes, String)>>,
     hooks: RefCell<Option<Rc<dyn PageHooks>>>,
     ready: RefCell<FxHashMap<NodeId, &'static str>>,
-    focus_values: RefCell<FxHashMap<NodeId, String>>,
+    pub(crate) focus_values: RefCell<FxHashMap<NodeId, String>>,
+    pub(crate) focus_transition: RefCell<Option<FocusTransition>>,
+    pub(crate) editing_target: Cell<Option<NodeId>>,
     clicking: RefCell<Vec<NodeId>>,
     submitting: RefCell<Vec<NodeId>>,
     hovered: Cell<Option<NodeId>>,
@@ -106,8 +108,57 @@ pub struct NavigationRequest {
 /// Posts a `Send` closure to run on the browser thread as a separate task.
 pub type RemotePoster = std::sync::Arc<dyn Fn(Box<dyn FnOnce() + Send>) + Send + Sync>;
 
+/// Cancellation shared by native focus steps and the browsing-context owner.
+/// A nested transition cancels the interrupted one across document boundaries.
+#[derive(Clone, Debug)]
+pub struct FocusTransition(Rc<Cell<bool>>);
+
+impl Default for FocusTransition {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+impl FocusTransition {
+    pub fn new() -> Self {
+        Self(Rc::new(Cell::new(true)))
+    }
+    pub fn is_current(&self) -> bool {
+        self.0.get()
+    }
+    pub fn cancel(&self) {
+        self.0.set(false);
+    }
+    pub fn ptr_eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FocusTarget {
+    Element(NodeId),
+    Window,
+    Blur(NodeId),
+}
+
 /// Embedder (lp-browser) services the bindings need.
 pub trait PageHooks {
+    /// Observation-only (no JS): this document still belongs to a live owner
+    /// frame/loader. Unlike is_focused, unselected frames also return true.
+    /// Checked before a request can cancel a shared transition token.
+    fn focus_document_is_live(&self) -> bool {
+        true
+    }
+    /// Called outside binding borrows, including same-local-target requests.
+    /// False means the owner handled or rejected the request. Owners applying
+    /// native helpers must pass this same token and check it after callbacks.
+    fn request_focus(&self, _target: FocusTarget, _transition: &FocusTransition) -> bool {
+        true
+    }
+    /// Whether this live document is the owner's selected keyboard frame.
+    fn is_focused(&self) -> bool {
+        true
+    }
+
     /// Schedules `task` on the page's event loop as a separate task.
     fn post_task(&self, task: Box<dyn FnOnce()>);
     /// Starts a navigation of the frame showing the document.
@@ -188,6 +239,8 @@ impl PageDom {
             hooks: RefCell::new(None),
             ready: RefCell::new(FxHashMap::default()),
             focus_values: RefCell::new(FxHashMap::default()),
+            focus_transition: RefCell::new(None),
+            editing_target: Cell::new(None),
             clicking: RefCell::new(Vec::new()),
             submitting: RefCell::new(Vec::new()),
             hovered: Cell::new(None),
@@ -236,6 +289,7 @@ impl PageDom {
         if self.disposed.replace(true) {
             return;
         }
+        crate::input::clear_document_focus(self);
         self.dom.borrow_mut().unwatch_iframes(self.document());
         self.connected_iframes.borrow_mut().clear();
         crate::fetch::dispose(self);
@@ -273,6 +327,7 @@ impl PageDom {
     }
     /// Switches the displayed document (navigation commit).
     pub fn set_document(&self, doc: NodeId) {
+        crate::input::clear_document_focus(self);
         {
             let mut dom = self.dom.borrow_mut();
             dom.unwatch_iframes(self.document());
