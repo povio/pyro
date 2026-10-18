@@ -66,6 +66,7 @@ pub struct PageDom {
     pub(crate) identity: RefCell<crate::identity::IdentityState>,
     pub(crate) fetch_state: crate::fetch::FetchState,
     pub(crate) xhr_state: crate::xhr::XhrState,
+    pub(crate) file_readers: crate::file_reader::ReaderState,
     pub(crate) local_storage: RefCell<crate::storage::StorageNamespace>,
     pub(crate) session_storage: RefCell<crate::storage::StorageNamespace>,
     pub(crate) opaque_storage: crate::storage::OpaqueStorage,
@@ -179,6 +180,7 @@ impl PageDom {
             resizes: Default::default(),
             fetch_state: Default::default(),
             xhr_state: Default::default(),
+            file_readers: Default::default(),
             local_storage: RefCell::new(Default::default()),
             session_storage: RefCell::new(Default::default()),
             opaque_storage: Default::default(),
@@ -238,6 +240,7 @@ impl PageDom {
         self.connected_iframes.borrow_mut().clear();
         crate::fetch::dispose(self);
         crate::xhr::dispose(self);
+        crate::file_reader::dispose(self);
         crate::mutation_observer::dispose(self);
         crate::intersection_observer::dispose(self);
         crate::resize_observer::dispose(self);

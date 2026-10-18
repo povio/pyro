@@ -3689,3 +3689,266 @@ fn explicit_opaque_realm_blocks_http_document_cookies_and_storage() {
     assert_eq!(eval(&opaque, "document.URL"), "http://localhost:5173/app");
     assert_eq!(eval(&e.main, "document.domain"), "localhost");
 }
+
+#[test]
+fn file_reader_array_buffer_task_order_and_reuse() {
+    let e = env("<body></body>");
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"
+        var reader=new FileReader(), events=[];
+        for (const type of ['loadstart','progress','load','error','abort','loadend'])
+            reader.addEventListener(type,e=>events.push([e.type,reader.readyState,e.loaded,e.total,
+                e.lengthComputable,e.isTrusted,e.target===reader,e instanceof ProgressEvent].join(':')));
+        var initial=[reader.readyState,reader.result===null,reader.error===null,
+                     reader.EMPTY,FileReader.LOADING,reader.DONE].join();
+        reader.readAsArrayBuffer(new File([new Uint8Array([0,127,255])],'a.bin'));
+        var repeated; try { reader.readAsText(new Blob(['wrong'])); } catch(e) { repeated=e.name; }
+        [initial,reader.readyState,reader.result===null,events.length,repeated].join('|')
+    "#
+        ),
+        "0,true,true,0,1,2|1|true|0|InvalidStateError"
+    );
+    tasks.drain();
+    assert_eq!(eval(&e.main, "events.join('|')"),
+        "loadstart:1:0:3:true:true:true:true|progress:1:3:3:true:true:true:true|load:2:3:3:true:true:true:true|loadend:2:3:3:true:true:true:true");
+    assert_eq!(
+        eval(
+            &e.main,
+            "[new Uint8Array(reader.result).join(),reader.result===reader.result,reader.error===null].join('|')"
+        ),
+        "0,127,255|true|true"
+    );
+    eval(&e.main, "events=[];reader.readAsText(new Blob(['again']));");
+    tasks.drain();
+    assert_eq!(eval(&e.main, "reader.result"), "again");
+}
+
+#[test]
+fn file_reader_conversions_empty_bom_and_encoding() {
+    let e = env("<body></body>");
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    eval(
+        &e.main,
+        r#"
+        var results=[], pending=[];
+        function read(method,blob,label) { let r=new FileReader(); pending.push(r);
+            r.onload=()=>results.push(r.result instanceof ArrayBuffer ? r.result.byteLength : r.result);
+            r[method](blob,label); }
+        read('readAsText',new Blob([new Uint8Array([0x80])],{type:'text/plain;charset=windows-1252'}));
+        read('readAsText',new Blob([new Uint8Array([0xff,0xfe,0x61,0])]),'utf-8');
+        read('readAsText',new Blob([new Uint8Array([0xc3,0xa9])]),'unknown-label');
+        read('readAsDataURL',new Blob([new Uint8Array([0,255])],{type:'application/octet-stream'}));
+        read('readAsDataURL',new Blob([])); read('readAsArrayBuffer',new Blob([]));
+        read('readAsBinaryString',new Blob([new Uint8Array([0,255])]));
+    "#,
+    );
+    tasks.drain();
+    assert_eq!(
+        eval(&e.main, "JSON.stringify(results)"),
+        r#"["€","a","é","data:application/octet-stream;base64,AP8=","data:application/octet-stream;base64,",0,"\u0000ÿ"]"#
+    );
+}
+
+#[test]
+fn file_reader_abort_and_reentrant_read_suppress_stale_tasks() {
+    let e = env("<body></body>");
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"
+        var r=new FileReader(), log=[];
+        for(const t of ['loadstart','progress','abort','load','loadend']) r.addEventListener(t,()=>log.push(t));
+        r.abort(); r.readAsText(new Blob(['old'])); r.abort();
+        [r.readyState,r.result===null,r.error===null,log.join()].join('|')
+    "#
+        ),
+        "2|true|true|abort,loadend"
+    );
+    tasks.drain();
+    assert_eq!(eval(&e.main, "log.join()"), "abort,loadend");
+    eval(
+        &e.main,
+        r#"
+        log=[]; r.onloadstart=()=>{r.onloadstart=null;r.abort();r.readAsText(new Blob(['new']));};
+        r.readAsText(new Blob(['discard']));
+    "#,
+    );
+    tasks.drain();
+    assert_eq!(eval(&e.main, "log.join()+'|'+r.result"), "loadstart,abort,loadend,loadstart,progress,load,loadend|new");
+    eval(
+        &e.main,
+        r#"
+        log=[]; r.onload=()=>{r.onload=null;r.readAsText(new Blob(['second']));};
+        r.readAsText(new Blob(['first']));
+    "#,
+    );
+    tasks.drain();
+    assert_eq!(
+        eval(&e.main, "log.join()+'|'+r.result"),
+        "loadstart,progress,load,loadstart,progress,load,loadend|second"
+    );
+}
+
+#[test]
+fn file_reader_blob_and_result_cycles_are_traced() {
+    let e = env("<body></body>");
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    eval(
+        &e.main,
+        r#"
+        var weakReader,weakBlob,weakResult,finished=0;
+        (()=>{let r=new FileReader(),b=new Blob(['cycle']); b.owner=r;
+            weakReader=new WeakRef(r); weakBlob=new WeakRef(b);
+            r.onload=()=>{finished++;r.result.owner=r;weakResult=new WeakRef(r.result);};
+            r.readAsArrayBuffer(b);})();
+    "#,
+    );
+    for _ in 0..6 {
+        e.engine.collect_garbage_now();
+    }
+    assert_eq!(eval(&e.main, "!!weakReader.deref() && !!weakBlob.deref()"), "true");
+    tasks.drain();
+    assert_eq!(eval(&e.main, "finished"), "1");
+    for _ in 0..6 {
+        e.engine.collect_garbage_now();
+    }
+    assert_eq!(
+        eval(&e.main, "[weakReader.deref(),weakBlob.deref(),weakResult.deref()].every(x=>x===undefined)"),
+        "true"
+    );
+}
+
+#[test]
+fn file_reader_limits_errors_and_abort_queue_are_bounded() {
+    let e = env("<body></body>");
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    assert!(e.page.set_file_reader_limits(FileReaderLimits {
+        max_read_bytes: 3,
+        max_pending_bytes: 3,
+        max_pending_reads: 2,
+    }));
+    eval(
+        &e.main,
+        r#"
+        var good=new FileReader(), bad=new FileReader(), errors=[];
+        for(const t of ['loadstart','progress','load','error','loadend']) bad.addEventListener(t,e=>errors.push(e.type));
+        good.readAsText(new Blob(['abc'])); bad.readAsText(new Blob(['d']));
+        var cap;try {new FileReader().readAsText(new Blob([]));} catch(e) {cap=e.name;}
+    "#,
+    );
+    assert_eq!(e.page.file_reader_usage(), (2, 3));
+    assert_eq!(eval(&e.main, "cap"), "QuotaExceededError");
+    assert!(!e.page.set_file_reader_limits(FileReaderLimits::default()));
+    tasks.drain();
+    assert_eq!(eval(&e.main, "[good.result,bad.readyState,bad.result===null,bad.error instanceof DOMException,bad.error.name,errors.join()].join('|')"), "abc|2|true|true|NotReadableError|loadstart,error,loadend");
+    assert_eq!(e.page.file_reader_usage(), (0, 0));
+    eval(&e.main, "for(let i=0;i<1000;i++){good.readAsText(new Blob(['abc']));good.abort();}");
+    assert_eq!(tasks.0.borrow().len(), 1, "aborted reads must not enqueue unbounded weak tombstones");
+    assert_eq!(e.page.file_reader_usage(), (0, 0));
+    tasks.drain();
+    eval(&e.main, "bad.readAsText(new Blob(['ok']));");
+    tasks.drain();
+    assert_eq!(eval(&e.main, "bad.result==='ok' && bad.error===null"), "true");
+}
+
+#[test]
+fn file_reader_disposal_releases_pending_blob_and_skips_callbacks() {
+    let e = env("<body></body>");
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    eval(
+        &e.main,
+        r#"
+        var calls=0,wr,wb;
+        (()=>{let r=new FileReader(),b=new Blob(['payload']);b.reader=r;
+            wr=new WeakRef(r);wb=new WeakRef(b);r.onloadend=()=>calls++;r.readAsText(b);})();
+    "#,
+    );
+    assert_eq!(e.page.file_reader_usage(), (1, 7));
+    lifecycle::realm_disposed(&e.page, e.main.id());
+    assert_eq!(e.page.file_reader_usage(), (0, 0));
+    tasks.drain();
+    for _ in 0..6 {
+        e.engine.collect_garbage_now();
+    }
+    assert_eq!(eval(&e.main, "[calls,wr.deref()===undefined,wb.deref()===undefined].join()"), "0,true,true");
+}
+
+#[test]
+fn file_reader_document_disposal_skips_callbacks() {
+    let e = env("<body></body>");
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    eval(&e.main, "var calls=0,r=new FileReader();r.onloadend=()=>calls++;r.readAsText(new Blob(['x']));");
+    e.page.dispose();
+    tasks.drain();
+    assert_eq!(e.page.file_reader_usage(), (0, 0));
+    assert_eq!(eval(&e.main, "[calls,r.readyState,r.result===null].join()"), "0,2,true");
+}
+
+#[test]
+fn file_reader_progress_abort_conversion_reentry_and_missing_queue() {
+    let e = env("<body></body>");
+    assert_eq!(
+        eval(&e.main, "(()=>{try{new FileReader().readAsText(new Blob([]))}catch(e){return e.name}})()"),
+        "NotSupportedError"
+    );
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    eval(
+        &e.main,
+        r#"
+        var r=new FileReader(),log=[];
+        for(const t of ['progress','abort','load','loadend']) r.addEventListener(t,()=>log.push(t));
+        r.onprogress=()=>r.abort(); r.readAsText(new Blob(['x']));
+    "#,
+    );
+    tasks.drain();
+    assert_eq!(eval(&e.main, "log.join()+'|'+(r.result===null)"), "progress,abort,loadend|true");
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"
+        r.onprogress=null;var conversion;
+        try{r.readAsText(new Blob(['outer']),{toString(){r.readAsText(new Blob(['inner']));return 'utf-8'}})}catch(e){conversion=e.name}
+        conversion
+    "#
+        ),
+        "InvalidStateError"
+    );
+    tasks.drain();
+    assert_eq!(eval(&e.main, "r.result"), "inner");
+}
+
+#[test]
+fn file_reader_abort_releases_traced_blob_and_isolated_world_works() {
+    let e = env("<body></body>");
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    eval(
+        &e.main,
+        r#"
+        var weakAbortReader,weakAbortBlob;
+        (()=>{let r=new FileReader(),b=new Blob(['abort']);b.reader=r;
+            weakAbortReader=new WeakRef(r);weakAbortBlob=new WeakRef(b);r.readAsText(b);r.abort();})();
+    "#,
+    );
+    for _ in 0..6 {
+        e.engine.collect_garbage_now();
+    }
+    assert_eq!(eval(&e.main, "weakAbortReader.deref()===undefined && weakAbortBlob.deref()===undefined"), "true");
+    let isolated = new_realm(&e.engine, e.engine.register::<TestWindow>(), &e.page, "file-reader-world");
+    eval(&isolated, "var done=false,r=new FileReader();r.onload=e=>done=e.target===r && r.result instanceof ArrayBuffer;r.readAsArrayBuffer(new Blob(['world']));");
+    tasks.drain();
+    assert_eq!(eval(&isolated, "done && new Uint8Array(r.result).length===5"), "true");
+    assert_eq!(e.page.file_reader_usage(), (0, 0));
+}

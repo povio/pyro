@@ -70,6 +70,7 @@ pub fn resource_loaded(page: &Rc<PageDom>, el: NodeId, ok: bool) {
 pub fn realm_disposed(page: &PageDom, realm: RealmId) {
     crate::fetch::cancel_realm(page, realm);
     crate::xhr::cancel_realm(page, realm);
+    crate::file_reader::cancel_realm(page, realm);
     crate::mutation_observer::cancel_realm(page, realm);
     crate::intersection_observer::cancel_realm(page, realm);
     crate::resize_observer::cancel_realm(page, realm);
