@@ -199,6 +199,76 @@ fn keyboard_and_focus_through_native_input() {
 }
 
 #[test]
+fn arrow_up_and_down_move_the_caret_in_text_controls() {
+    let e = env("<body><input id=t value=hello><textarea id=ta></textarea><input id=n type=number value=5></body>");
+    let r = &e.main;
+    eval(r, "document.getElementById('ta').value = 'ab\\ncdef\\ng';");
+    let page = e.page.clone();
+    let press = |key: &str, shift: bool| {
+        let k = input::KeyInput {
+            key: key.into(),
+            code: key.into(),
+            key_code: if key == "ArrowUp" { 38 } else { 40 },
+            modifiers: input::Modifiers { shift, ..Default::default() },
+            ..Default::default()
+        };
+        input::dispatch_key(&page, input::KeyKind::RawKeyDown, &k);
+        input::dispatch_key(&page, input::KeyKind::KeyUp, &k);
+    };
+    let sel =
+        |id: &str| eval(r, &format!("(x => x.selectionStart + ',' + x.selectionEnd)(document.getElementById('{id}'))"));
+    let set = |id: &str, s: u32, end: u32| {
+        eval(r, &format!("(x => {{ x.focus(); x.setSelectionRange({s}, {end}); }})(document.getElementById('{id}'))"))
+    };
+
+    // Single-line input: Up to the start, Down to the end; Shift extends.
+    set("t", 2, 2);
+    press("ArrowUp", false);
+    assert_eq!(sel("t"), "0,0");
+    press("ArrowDown", false);
+    assert_eq!(sel("t"), "5,5");
+    set("t", 2, 2);
+    press("ArrowDown", true);
+    assert_eq!(sel("t"), "2,5");
+    set("t", 2, 3);
+    press("ArrowUp", true);
+    assert_eq!(sel("t"), "0,3");
+
+    // Textarea "ab|cdef|g": by logical line, column clamped; start/end past the edges.
+    set("ta", 5, 5);
+    press("ArrowUp", false);
+    assert_eq!(sel("ta"), "2,2");
+    press("ArrowUp", false);
+    assert_eq!(sel("ta"), "0,0");
+    set("ta", 1, 1);
+    press("ArrowDown", false);
+    assert_eq!(sel("ta"), "4,4");
+    set("ta", 6, 6);
+    press("ArrowDown", false);
+    assert_eq!(sel("ta"), "9,9");
+    press("ArrowDown", false);
+    assert_eq!(sel("ta"), "9,9");
+    set("ta", 4, 4);
+    press("ArrowUp", true);
+    assert_eq!(sel("ta"), "1,4");
+    // Down with a selection moves from its end (offset 3, column 0 of line 2).
+    set("ta", 0, 3);
+    press("ArrowDown", false);
+    assert_eq!(sel("ta"), "8,8");
+
+    // A canceled keydown has no default action.
+    eval(r, "document.getElementById('t').addEventListener('keydown', e => e.preventDefault());");
+    set("t", 2, 2);
+    press("ArrowDown", false);
+    assert_eq!(sel("t"), "2,2");
+
+    // Number inputs step values in browsers (not modelled): untouched here.
+    eval(r, "document.getElementById('n').focus();");
+    press("ArrowUp", false);
+    assert_eq!(eval(r, "document.getElementById('n').value"), "5");
+}
+
+#[test]
 fn style_layout_and_media() {
     let e = env("<html><head><style>.hidden{display:none} @media (min-width: 37.5rem){ .wide{visibility: hidden} }</style></head><body><div id=v>visible</div><div id=h class=hidden>x</div><p id=w class=wide>w</p></body></html>");
     let r = &e.main;
