@@ -294,12 +294,13 @@ impl EngineHost {
     /// `Runtime.executionContextCreated` for every live realm of the page.
     pub(super) fn announce_contexts(&self, page: PageKey, session_id: &str) {
         let Some(state) = self.pages.get(&page) else { return };
-        let Some(p) = self.thread.browser.page(state.id) else { return };
-        let frame_id = &p.main_frame.id.0;
-        for r in &p.main_frame.realms {
-            let origin = r.realm.origin().unwrap_or("").to_owned();
-            let context = context_description(r.realm.id(), r.world.as_deref(), &origin, frame_id);
-            self.event("Runtime.executionContextCreated", &json!({ "context": context }), session_id);
+        for info in self.thread.browser.frames(state.id) {
+            let Some(frame) = self.thread.browser.frame(state.id, &info.id) else { continue };
+            for r in &frame.realms {
+                let origin = r.realm.origin().unwrap_or("");
+                let context = context_description(r.realm.id(), r.world.as_deref(), origin, &info.id.0);
+                self.event("Runtime.executionContextCreated", &json!({ "context": context }), session_id);
+            }
         }
     }
 

@@ -577,6 +577,8 @@ impl<'s> Scope<'s> {
 
     /// `Promise.resolve(value).then(on_fulfilled, on_rejected)` with native
     /// reactions (run as microtasks). Uses the realm's original `Promise`.
+    /// An undefined value uses a private settled promise whose constructor
+    /// cannot be replaced, so native scheduling never invokes author species.
     pub fn then(
         &self,
         value: Value<'_>,

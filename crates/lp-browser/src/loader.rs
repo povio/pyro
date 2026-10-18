@@ -18,6 +18,7 @@
 //! load/error events, script-inserted scripts, and iframe/image resources remain
 //! separate loader work. Linked stylesheets are handled by `stylesheets`.
 
+use crate::frames::FrameKey;
 use crate::{Browser, HistoryHandling, LoaderId, NavigateOpts, PageEvent, PageId};
 use lp_dom::parse::{DocumentParser, DomRef, ParseStep};
 use lp_dom::script::ScriptKind;
@@ -183,8 +184,13 @@ impl ResourceLoader for NetLoader {
             req.credentials = lp_net::Credentials::Include;
         }
         if !matches!(request.kind, ResourceKind::Document | ResourceKind::Iframe) {
-            req.origin =
-                Some(browser.page(request.page).map_or_else(|| "null".into(), |p| origin_of(&p.main_frame.url)));
+            req.origin = Some(
+                request
+                    .frame_id
+                    .as_ref()
+                    .and_then(|id| browser.frame(request.page, &crate::FrameId(id.clone())))
+                    .map_or_else(|| "null".into(), |f| f.origin),
+            );
         }
         if request.kind == ResourceKind::Stylesheet {
             if request.crossorigin.is_none() {
@@ -319,7 +325,7 @@ pub(crate) struct DocumentLoad {
 
 /// The realm's ES module source: fetches through the page's loader.
 struct PageModuleFetcher {
-    page: PageId,
+    page: FrameKey,
     sched: lp_runtime::Scheduler<Browser>,
 }
 
@@ -332,6 +338,9 @@ impl ModuleFetcher for PageModuleFetcher {
         let request = RefCell::new(Some(request));
         self.sched.post(TaskSource::Networking, move |b| {
             let Some(request) = request.borrow_mut().take() else { return };
+            if realm.upgrade().is_none_or(|r| r.is_disposed()) {
+                return;
+            }
             b.fetch_text(page, url, ResourceKind::ModuleScript, move |_b, res| {
                 let Some(realm) = realm.upgrade() else { return };
                 let Ok(scope) = realm.scope() else { return };
@@ -367,10 +376,23 @@ impl Browser {
         self.loader = loader;
     }
 
+    /// Cancel and forget an uncommitted document independently of the active
+    /// document's loader. Release the state guard before cancellation callbacks.
+    pub(crate) fn cancel_pending_document(&mut self, page: FrameKey) {
+        let Some(mut state) = self.doc_mut(page) else { return };
+        let pending = state.pending_loader.take();
+        let cancel = state.pending_cancel.take();
+        drop(state);
+        drop(cancel);
+        if let Some(loader) = pending {
+            self.forget_network_activity(page, &loader);
+        }
+    }
+
     /// Starts fetching a document for a non-blank navigation.
     pub(crate) fn start_document_fetch(
         &mut self,
-        page: PageId,
+        page: FrameKey,
         opts: NavigateOpts,
         loader_id: LoaderId,
         history: HistoryHandling,
@@ -378,29 +400,33 @@ impl Browser {
         let Some(loader) = self.loader_for(page) else {
             return Err(JsError::Unsupported("navigation without a resource loader"));
         };
-        let frame_id = self.page(page).map(|p| p.main_frame.id.0.clone());
-        if let Some(p) = self.page_mut(page) {
+        let frame_id = self.doc(page).map(|p| p.main_frame.id.0.clone());
+        if let Some(mut p) = self.doc_mut(page) {
             p.pending_loader = Some(loader_id.clone());
         }
         let req = FetchRequest {
             url: opts.url.clone(),
-            kind: ResourceKind::Document,
-            page,
+            kind: if page.child.is_some() { ResourceKind::Iframe } else { ResourceKind::Document },
+            page: page.page,
             referrer: opts.referrer.clone(),
             frame_id,
             loader_id: Some(loader_id.0.clone()),
             crossorigin: None,
         };
-        loader.fetch(
+        let pending_id = loader_id.clone();
+        let cancel = loader.fetch_cancellable(
             self,
             req,
             Box::new(move |b, res| {
-                let current = b.page(page).and_then(|p| p.pending_loader.clone());
+                let current = b.doc(page).and_then(|p| p.pending_loader.clone());
                 if current.as_ref() != Some(&loader_id) {
                     return; // superseded by another navigation
                 }
-                if let Some(p) = b.page_mut(page) {
+                if let Some(mut p) = b.doc_mut(page) {
                     p.pending_loader = None;
+                    if let Some(cancel) = p.pending_cancel.take() {
+                        cancel.disarm();
+                    }
                 }
                 match res {
                     Ok(resource) if (200..300).contains(&resource.status) || resource.status == 0 => {
@@ -422,13 +448,23 @@ impl Browser {
                 }
             }),
         );
+        if let Some(mut d) = self.doc_mut(page).filter(|d| d.pending_loader.as_ref() == Some(&pending_id)) {
+            d.pending_cancel = cancel;
+        }
         Ok(())
     }
 
-    pub(crate) fn navigation_failed(&mut self, page: PageId, opts: &NavigateOpts, loader_id: LoaderId, error: String) {
-        let Some(frame_id) = self.page(page).map(|p| p.main_frame.id.clone()) else { return };
+    pub(crate) fn navigation_failed(
+        &mut self,
+        page: FrameKey,
+        opts: &NavigateOpts,
+        loader_id: LoaderId,
+        error: String,
+    ) {
+        let Some(frame_id) = self.doc(page).map(|p| p.main_frame.id.clone()) else { return };
+        self.forget_network_activity(page, &loader_id);
         self.emit(
-            page,
+            page.page,
             PageEvent::FrameNavigateFailed {
                 frame_id,
                 loader_id,
@@ -437,15 +473,16 @@ impl Browser {
                 cdp_request_id: opts.cdp_request_id,
             },
         );
+        // A failed initial child navigation leaves its initial empty document
+        // usable, but must release the parent's load-event blocker.
+        if page.child.is_some() {
+            self.finish_blank_document(page);
+        }
     }
 
-    pub(crate) fn install_module_fetcher(&self, page: PageId, realm: &Realm) {
-        realm.set_module_fetcher(Some(Rc::new(PageModuleFetcher { page, sched: self.scheduler() })));
-    }
-
-    fn begin_document(
+    pub(crate) fn begin_document(
         &mut self,
-        page: PageId,
+        page: FrameKey,
         opts: &NavigateOpts,
         loader_id: LoaderId,
         resource: Resource,
@@ -453,18 +490,19 @@ impl Browser {
     ) -> Result<(), JsError> {
         let origin = origin_of(&resource.url);
         self.commit_document(page, opts, loader_id.clone(), &origin, history)?;
-        let page_dom = self.page(page).and_then(|p| p.main_frame.page_dom.clone()).ok_or(JsError::ContextDestroyed)?;
+        let page_dom = self.doc(page).and_then(|p| p.main_frame.page_dom.clone()).ok_or(JsError::ContextDestroyed)?;
         let dom = page_dom.dom.clone();
         let doc = page_dom.document();
-        let mut parser = DocumentParser::new(dom.clone(), doc, true).map_err(|e| JsError::Type(format!("{e:?}")))?;
+        let mut parser = DocumentParser::new(dom.clone(), doc, !page_dom.scripting_disabled())
+            .map_err(|e| JsError::Type(format!("{e:?}")))?;
         parser.set_transport_charset(resource.charset.as_deref());
-        let p = self.page_mut(page).ok_or(JsError::Type("no such page".into()))?;
+        let mut p = self.doc_mut(page).ok_or(JsError::Type("no such page".into()))?;
         p.main_frame.dom = Some(dom.clone());
         p.main_frame.document = Some(doc);
         p.nav.set_document(Some((dom.clone(), doc)));
         p.load = Some(DocumentLoad {
             loader_id,
-            url: resource.url.clone(),
+            url: p.main_frame.base_url.clone(),
             dom,
             parser: Some(parser),
             phase: ParsePhase::Feed(resource.body),
@@ -478,49 +516,53 @@ impl Browser {
             async_pending: 0,
             inline_module_seq: 0,
         });
+        drop(p);
         self.scheduler().post(TaskSource::Networking, move |b| b.continue_parsing(page));
         Ok(())
     }
 
-    fn load_mut(&mut self, page: PageId) -> Option<&mut DocumentLoad> {
-        self.page_mut(page)?.load.as_mut()
+    fn load_mut(&mut self, page: FrameKey) -> Option<crate::frames::StateMut<'_, DocumentLoad>> {
+        self.doc_mut(page)?.filter_map(|p| p.load.as_mut())
     }
 
-    fn current_loader(&self, page: PageId) -> Option<LoaderId> {
-        self.page(page)?.load.as_ref().map(|l| l.loader_id.clone())
+    fn current_loader(&self, page: FrameKey) -> Option<LoaderId> {
+        self.doc(page)?.load.as_ref().map(|l| l.loader_id.clone())
     }
 
     /// Runs the parser until it blocks on a script or finishes.
-    fn continue_parsing(&mut self, page: PageId) {
+    fn continue_parsing(&mut self, page: FrameKey) {
         loop {
-            let Some(load) = self.load_mut(page) else { return };
-            if load.blocked || load.parsing_done {
-                return;
-            }
-            let Some(parser) = load.parser.as_mut() else { return };
-            let step = match std::mem::replace(&mut load.phase, ParsePhase::Resume) {
-                ParsePhase::Feed(body) => parser.feed_bytes(&body),
-                ParsePhase::Resume => parser.resume(),
-                ParsePhase::Finish => {
-                    load.phase = ParsePhase::FinishResume;
-                    parser.finish_bytes()
+            let step = {
+                let Some(mut guard) = self.load_mut(page) else { return };
+                let load = &mut *guard;
+                if load.blocked || load.parsing_done {
+                    return;
                 }
-                ParsePhase::FinishResume => {
-                    load.phase = ParsePhase::FinishResume;
-                    parser.resume()
+                let Some(parser) = load.parser.as_mut() else { return };
+                match std::mem::replace(&mut load.phase, ParsePhase::Resume) {
+                    ParsePhase::Feed(body) => parser.feed_bytes(&body),
+                    ParsePhase::Resume => parser.resume(),
+                    ParsePhase::Finish => {
+                        load.phase = ParsePhase::FinishResume;
+                        parser.finish_bytes()
+                    }
+                    ParsePhase::FinishResume => {
+                        load.phase = ParsePhase::FinishResume;
+                        parser.resume()
+                    }
+                    ParsePhase::Done => return,
                 }
-                ParsePhase::Done => return,
             };
             self.drain_dom_resources(page);
             match step {
                 ParseStep::Script(node) => {
                     let blocks = self
-                        .page(page)
-                        .and_then(|p| p.main_frame.page_dom.as_ref())
+                        .doc(page)
+                        .and_then(|p| p.main_frame.page_dom.clone())
                         .and_then(|p| p.dom.borrow().script_info(node).ok())
                         .is_some_and(|s| s.kind == ScriptKind::Classic && (s.src.is_none() || (!s.async_ && !s.defer)));
                     if blocks && self.stylesheets_block_scripts(page) {
-                        let load = self.load_mut(page).expect("load");
+                        let mut load = self.load_mut(page).expect("load");
                         if load.dom.borrow_mut().add_ref(node).is_ok() {
                             load.stylesheet_blocked_script =
                                 Some(Rc::new(ResourceNode { dom: load.dom.clone(), node }));
@@ -531,7 +573,7 @@ impl Browser {
                     self.prepare_script(page, node);
                 }
                 ParseStep::NeedInput => {
-                    let load = self.load_mut(page).expect("load");
+                    let mut load = self.load_mut(page).expect("load");
                     match load.phase {
                         ParsePhase::Resume => load.phase = ParsePhase::Finish,
                         _ => {
@@ -540,7 +582,8 @@ impl Browser {
                                 p.end();
                             }
                             load.parsing_done = true;
-                            if let Some(dom) = self.page(page).and_then(|p| p.main_frame.page_dom.clone()) {
+                            drop(load);
+                            if let Some(dom) = self.doc(page).and_then(|p| p.main_frame.page_dom.clone()) {
                                 lp_webapi::lifecycle::set_ready_state(&dom, dom.document(), "interactive");
                             }
                             self.run_deferred(page);
@@ -553,10 +596,14 @@ impl Browser {
     }
 
     /// "Prepare the script element" for a parser-inserted script.
-    fn prepare_script(&mut self, page: PageId, node: NodeId) {
-        let Some(load) = self.page(page).and_then(|p| p.load.as_ref()) else { return };
+    fn prepare_script(&mut self, page: FrameKey, node: NodeId) {
+        let Some(load) = self.doc(page).and_then(|p| p.filter_map(|p| p.load.as_ref())) else { return };
         let dom = load.dom.clone();
         let base = load.url.clone();
+        drop(load);
+        if self.doc(page).is_some_and(|d| d.main_frame.sandbox.scripts_disabled) {
+            return;
+        }
         let info = {
             let mut d = dom.borrow_mut();
             let Ok(info) = d.script_info(node) else { return };
@@ -590,7 +637,7 @@ impl Browser {
             (ScriptType::Classic, Some(url)) => {
                 // Parser-blocking: pause until fetched and executed.
                 let loader_id = self.current_loader(page);
-                if let Some(l) = self.load_mut(page) {
+                if let Some(mut l) = self.load_mut(page) {
                     l.blocked = true;
                 }
                 let u = url.clone();
@@ -602,7 +649,7 @@ impl Browser {
                         Ok(text) => b.execute_classic(page, &text, &u, &element),
                         Err(e) => b.report_load_error(page, &e),
                     }
-                    if let Some(l) = b.load_mut(page) {
+                    if let Some(mut l) = b.load_mut(page) {
                         l.blocked = false;
                     }
                     b.continue_parsing(page);
@@ -612,7 +659,7 @@ impl Browser {
             (ScriptType::Module, Some(url)) => self.fetch_deferred(page, ty, url, element),
             (ScriptType::Module, None) => {
                 let url = {
-                    let l = self.load_mut(page).expect("load");
+                    let mut l = self.load_mut(page).expect("load");
                     l.inline_module_seq += 1;
                     // Distinct registry key per inline module (see lp_js::Scope::eval_module).
                     format!("{}#inline-module-{}", base.split('#').next().unwrap_or(&base), l.inline_module_seq)
@@ -630,7 +677,7 @@ impl Browser {
     /// Fetches `url` and decodes it as text; non-2xx statuses are errors.
     pub(crate) fn fetch_text(
         &mut self,
-        page: PageId,
+        page: FrameKey,
         url: String,
         kind: ResourceKind,
         done: impl FnOnce(&mut Browser, Result<String, String>) + 'static,
@@ -639,11 +686,11 @@ impl Browser {
             self.scheduler().post(TaskSource::Networking, move |b| done(b, Err("no resource loader".into())));
             return;
         };
-        let referrer = self.page(page).map(|p| p.main_frame.url.clone());
-        let frame_id = self.page(page).map(|p| p.main_frame.id.0.clone());
+        let referrer = self.doc(page).map(|p| p.main_frame.url.clone());
+        let frame_id = self.doc(page).map(|p| p.main_frame.id.0.clone());
         // Subresources carry the document's loader id (CDP Network.* routing).
-        let loader_id = self.page(page).map(|p| p.main_frame.loader_id.0.clone());
-        let req = FetchRequest { url, kind, page, referrer, frame_id, loader_id, crossorigin: None };
+        let loader_id = self.doc(page).map(|p| p.main_frame.loader_id.0.clone());
+        let req = FetchRequest { url, kind, page: page.page, referrer, frame_id, loader_id, crossorigin: None };
         loader.fetch(
             self,
             req,
@@ -658,7 +705,7 @@ impl Browser {
         );
     }
 
-    fn fetch_deferred(&mut self, page: PageId, ty: ScriptType, url: String, element: Rc<ResourceNode>) {
+    fn fetch_deferred(&mut self, page: FrameKey, ty: ScriptType, url: String, element: Rc<ResourceNode>) {
         let ps = Rc::new(RefCell::new(PendingScript { element, ty, url: url.clone(), source: None }));
         self.load_mut(page).expect("load").deferred.push_back(ps.clone());
         let kind = if ty == ScriptType::Module { ResourceKind::ModuleScript } else { ResourceKind::Script };
@@ -672,9 +719,9 @@ impl Browser {
         });
     }
 
-    fn fetch_async(&mut self, page: PageId, ty: ScriptType, url: String, element: Rc<ResourceNode>) {
+    fn fetch_async(&mut self, page: FrameKey, ty: ScriptType, url: String, element: Rc<ResourceNode>) {
         let loader_id = {
-            let l = self.load_mut(page).expect("load");
+            let mut l = self.load_mut(page).expect("load");
             l.async_pending += 1;
             l.loader_id.clone()
         };
@@ -691,7 +738,7 @@ impl Browser {
                 }
                 Err(e) => b.report_load_error(page, &e),
             }
-            if let Some(l) = b.load_mut(page) {
+            if let Some(mut l) = b.load_mut(page) {
                 l.async_pending -= 1;
             }
             b.maybe_fire_load(page);
@@ -700,11 +747,11 @@ impl Browser {
 
     /// Runs ready deferred scripts in order once parsing is done, then fires
     /// `DOMContentLoaded`.
-    fn run_deferred(&mut self, page: PageId) {
+    fn run_deferred(&mut self, page: FrameKey) {
         loop {
             self.drain_dom_resources(page);
             let css_blocked = self.stylesheets_block_scripts(page);
-            let Some(load) = self.load_mut(page) else { return };
+            let Some(mut load) = self.load_mut(page) else { return };
             if !load.parsing_done || load.awaiting_module || load.dcl_fired {
                 return;
             }
@@ -715,6 +762,7 @@ impl Browser {
             let source = next.borrow().source.clone();
             let Some(source) = source else { return }; // still fetching
             load.deferred.pop_front();
+            drop(load);
             let (ty, url, element) = {
                 let n = next.borrow();
                 (n.ty, n.url.clone(), n.element.clone())
@@ -732,47 +780,79 @@ impl Browser {
         self.fire_dom_content_loaded(page);
     }
 
-    fn fire_dom_content_loaded(&mut self, page: PageId) {
-        let Some(load) = self.load_mut(page) else { return };
+    fn fire_dom_content_loaded(&mut self, page: FrameKey) {
+        let Some(mut load) = self.load_mut(page) else { return };
         if load.dcl_fired {
             return;
         }
         load.dcl_fired = true;
         let loader_id = load.loader_id.clone();
-        let frame_id = self.page(page).expect("page").main_frame.id.clone();
-        if let Some(dom) = self.page(page).and_then(|p| p.main_frame.page_dom.clone()) {
+        drop(load);
+        let frame_id = self.doc(page).expect("page").main_frame.id.clone();
+        self.doc_mut(page).expect("frame").main_frame.dom_content_loaded = true;
+        self.sync_root(page.page);
+        if let Some(dom) = self.doc(page).and_then(|p| p.main_frame.page_dom.clone()) {
             lp_webapi::lifecycle::dom_content_loaded(&dom, dom.document());
         }
-        self.emit(page, PageEvent::FrameDomContentLoaded { frame_id, loader_id, timestamp: self.timestamp() });
+        self.emit(page.page, PageEvent::FrameDomContentLoaded { frame_id, loader_id, timestamp: self.timestamp() });
         self.maybe_fire_load(page);
     }
 
-    fn maybe_fire_load(&mut self, page: PageId) {
+    pub(crate) fn maybe_fire_load(&mut self, page: FrameKey) {
         self.drain_dom_resources(page);
-        if self.page(page).is_some_and(|p| p.stylesheets.pending() != 0) {
+        let Some(host) = self.page(page.page).map(|p| p.frames.clone()) else { return };
+        if host
+            .child_keys(page)
+            .iter()
+            .any(|k| self.doc(*k).is_some_and(|d| !d.main_frame.loaded || d.pending_loader.is_some()))
+        {
             return;
         }
-        let Some(load) = self.load_mut(page) else { return };
-        if !load.dcl_fired || load.load_fired || load.async_pending > 0 {
+        let Some(mut state) = self.doc_mut(page) else { return };
+        if state.main_frame.loaded || !state.main_frame.dom_content_loaded || state.stylesheets.pending() != 0 {
             return;
         }
-        load.load_fired = true;
-        let loader_id = load.loader_id.clone();
-        let frame_id = self.page(page).expect("page").main_frame.id.clone();
-        if let Some(dom) = self.page(page).and_then(|p| p.main_frame.page_dom.clone()) {
+        if let Some(load) = &mut state.load {
+            if load.async_pending > 0 || !load.dcl_fired {
+                return;
+            }
+            load.load_fired = true;
+        }
+        state.main_frame.loaded = true;
+        let frame = state.main_frame.clone();
+        drop(state);
+        self.sync_root(page.page);
+        if let Some(dom) = frame.page_dom {
             lp_webapi::lifecycle::load(&dom, dom.document());
         }
-        let ts = self.timestamp();
-        self.emit(page, PageEvent::FrameLoaded { frame_id, loader_id: loader_id.clone(), timestamp: ts });
-        self.watch_network_idle(page, loader_id);
+        if !host.matches(page, &frame.loader_id) {
+            return;
+        }
+        self.emit(
+            page.page,
+            PageEvent::FrameLoaded {
+                frame_id: frame.id,
+                loader_id: frame.loader_id.clone(),
+                timestamp: self.timestamp(),
+            },
+        );
+        self.watch_network_idle(page, frame.loader_id);
+        if let Some(parent) = frame.parent.and_then(|id| host.key(&id)) {
+            if let Some(owner) = frame.owner {
+                if let Some(dom) = host.frame(parent).and_then(|f| f.page_dom) {
+                    lp_webapi::lifecycle::resource_loaded(&dom, owner, true);
+                }
+            }
+            self.maybe_fire_load(parent);
+        }
     }
 
     /// A stylesheet completed or stopped blocking. Called from a later task,
     /// never recursively from the parser's resource-event drain.
-    pub(crate) fn stylesheets_changed(&mut self, page: PageId) {
+    pub(crate) fn stylesheets_changed(&mut self, page: FrameKey) {
         self.drain_dom_resources(page);
         if !self.stylesheets_block_scripts(page) {
-            let pending = self.load_mut(page).and_then(|l| l.stylesheet_blocked_script.take());
+            let pending = self.load_mut(page).and_then(|mut l| l.stylesheet_blocked_script.take());
             if let Some(element) = pending {
                 self.load_mut(page).expect("load").blocked = false;
                 self.prepare_script(page, element.node);
@@ -783,14 +863,14 @@ impl Browser {
         self.maybe_fire_load(page);
     }
 
-    fn main_realm(&self, page: PageId) -> Option<Realm> {
-        self.page(page)?.main_frame.main_realm().cloned()
+    fn main_realm(&self, page: FrameKey) -> Option<Realm> {
+        self.doc(page)?.main_frame.main_realm().cloned()
     }
 
-    fn execute_classic(&mut self, page: PageId, text: &str, url: &str, element: &ResourceNode) {
+    fn execute_classic(&mut self, page: FrameKey, text: &str, url: &str, element: &ResourceNode) {
         let Some(realm) = self.main_realm(page) else { return };
         let Ok(scope) = realm.scope() else { return };
-        let bindings = self.page(page).and_then(|p| p.main_frame.page_dom.clone());
+        let bindings = self.doc(page).and_then(|p| p.main_frame.page_dom.clone());
         if let Some(dom) = &bindings {
             dom.set_current_script(Some(element.node));
         }
@@ -804,7 +884,7 @@ impl Browser {
 
     /// Starts a module; with `deferred`, parsing-completion work waits for its
     /// evaluation promise. Returns whether such a wait was set up.
-    fn execute_module(&mut self, page: PageId, text: &str, url: &str, deferred: bool) -> bool {
+    fn execute_module(&mut self, page: FrameKey, text: &str, url: &str, deferred: bool) -> bool {
         let Some(realm) = self.main_realm(page) else { return false };
         let Ok(scope) = realm.scope() else { return false };
         let promise = match scope.eval_module(text, url) {
@@ -822,7 +902,7 @@ impl Browser {
                 if b.current_loader(page) != loader_id {
                     return;
                 }
-                if let Some(l) = b.load_mut(page) {
+                if let Some(mut l) = b.load_mut(page) {
                     if deferred {
                         l.awaiting_module = false;
                     } else {
@@ -850,7 +930,7 @@ impl Browser {
             scope.report_exception(&e);
             return false;
         }
-        if let Some(l) = self.load_mut(page) {
+        if let Some(mut l) = self.load_mut(page) {
             if deferred {
                 l.awaiting_module = true;
             } else {
@@ -860,9 +940,13 @@ impl Browser {
         true
     }
 
-    fn report_load_error(&mut self, page: PageId, error: &str) {
+    fn report_load_error(&mut self, page: FrameKey, error: &str) {
         let Some(realm) = self.main_realm(page) else { return };
         let Ok(scope) = realm.scope() else { return };
         scope.report_exception(&JsError::Type(format!("Failed to load script: {error}")));
     }
+}
+
+pub(crate) fn install_module_fetcher(sched: lp_runtime::Scheduler<Browser>, page: FrameKey, realm: &Realm) {
+    realm.set_module_fetcher(Some(Rc::new(PageModuleFetcher { page, sched })));
 }

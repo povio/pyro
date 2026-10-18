@@ -60,6 +60,8 @@ pub struct DocumentData {
     /// Encoding name (`document.characterSet`).
     pub charset: &'static str,
     pub url: Box<str>,
+    /// Embedder-supplied inherited base for initial blank/srcdoc documents.
+    pub(crate) base_url: Option<Box<str>>,
     /// Owner of `<template>` contents created while parsing this document.
     pub(crate) inert_doc: u32,
     /// Number of live nodes (including itself) whose owner document is this.

@@ -141,6 +141,9 @@ pub(crate) fn content_attribute_changed(
     ty: &'static str,
     body: Option<&str>,
 ) -> JsResult<()> {
+    if target.page.scripting_disabled() {
+        return set_event_handler(s, target, ty, s.null());
+    }
     let handler: Value<'_> = match body {
         Some(body) => {
             let ctor = s.global().get("Function")?;

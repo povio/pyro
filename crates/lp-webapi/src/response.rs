@@ -193,7 +193,7 @@ fn parse_init(s: &Scope<'_>, init: Value<'_>) -> JsResult<(u16, String, HeadersD
 fn resolve(s: &Scope<'_>, target: &str) -> JsResult<String> {
     let base = crate::target::page_of(s)
         .ok()
-        .and_then(|p| p.dom.borrow().document_data(p.document()).ok().map(|d| d.url.to_string()));
+        .and_then(|p| p.dom.borrow().document_base_url(p.document()).ok().map(str::to_owned));
     let parsed = match base.as_deref().and_then(|b| lp_net::Url::parse(b).ok()) {
         Some(b) => b.join(target),
         None => lp_net::Url::parse(target),

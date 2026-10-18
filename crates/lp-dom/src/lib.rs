@@ -6,6 +6,7 @@ pub mod dom;
 pub mod error;
 pub mod events;
 pub mod forms;
+pub mod iframe;
 pub mod inner_text;
 pub mod layout;
 pub mod media;

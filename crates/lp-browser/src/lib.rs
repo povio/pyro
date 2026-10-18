@@ -7,6 +7,7 @@
 //! `lp-webapi` supplies bindings in the main and isolated document worlds.
 
 mod bindings;
+mod frames;
 mod loader;
 mod nav;
 mod network_idle;
@@ -20,6 +21,8 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Instant;
 
+pub use frames::FrameInfo;
+use frames::{FrameHost, FrameKey};
 pub use loader::{
     FetchDone, FetchRequest, NetLoader, Resource, ResourceCancellation, ResourceKind, ResourceLoader, StaticLoader,
 };
@@ -229,13 +232,20 @@ pub struct InitScript {
     pub world: Option<String>,
 }
 
+#[derive(Clone)]
 pub struct FrameRealm {
     pub world: Option<String>,
     pub realm: Realm,
 }
 
+#[derive(Clone)]
 pub struct Frame {
     pub id: FrameId,
+    pub parent: Option<FrameId>,
+    pub owner: Option<lp_dom::NodeId>,
+    pub name: String,
+    pub base_url: String,
+    pub(crate) sandbox: frames::Sandbox,
     pub url: String,
     pub loader_id: LoaderId,
     pub realms: Vec<FrameRealm>,
@@ -246,6 +256,10 @@ pub struct Frame {
     pub page_dom: Option<Rc<lp_webapi::PageDom>>,
     /// Network quiet milestones the current document has reported.
     pub network_idle: NetworkIdle,
+    pub origin: String,
+    pub(crate) opaque_origin: u64,
+    pub dom_content_loaded: bool,
+    pub loaded: bool,
 }
 
 impl Frame {
@@ -258,28 +272,42 @@ impl Frame {
     }
 }
 
+/// Document state is shared by the main-frame and child-frame loading paths.
+pub struct DocumentState {
+    pub main_frame: Frame,
+    pub nav: Rc<PageNav>,
+    pub(crate) pending_loader: Option<LoaderId>,
+    pub(crate) pending_cancel: Option<ResourceCancellation>,
+    pub(crate) load: Option<loader::DocumentLoad>,
+    pub(crate) stylesheets: stylesheets::Stylesheets,
+    pub(crate) _owner_pin: Option<loader::ResourceNode>,
+}
+
 pub struct Page {
     pub id: PageId,
     pub context: ContextId,
-    pub main_frame: Frame,
     pub init_scripts: Vec<InitScript>,
-    /// Navigation whose document is being fetched (superseded fetches are ignored).
-    pub(crate) pending_loader: Option<LoaderId>,
-    /// Session history and current URL (shared with the page's windows).
-    pub nav: Rc<PageNav>,
-    pub(crate) load: Option<loader::DocumentLoad>,
-    pub(crate) stylesheets: stylesheets::Stylesheets,
+    document: DocumentState,
+    pub(crate) frames: Rc<FrameHost>,
     session_storage: lp_webapi::StorageNamespace,
     user_agent_override: Option<lp_webapi::UserAgentOverride>,
-    /// Page-scoped extra request headers (CDP `Network.setExtraHTTPHeaders`).
     extra_http_headers: lp_net::http::HeaderMap,
-    /// Page-scoped HTTP cache bypass (CDP `Network.setCacheDisabled`).
     cache_disabled: bool,
-    /// Native defaults for this page's loader requests: the user agent
-    /// override plus the page options (see [`Page::apply_request_options`]).
     request_defaults: lp_net::RequestDefaults,
     viewport: lp_dom::media::Viewport,
     pending_resize: Option<LoaderId>,
+}
+
+impl std::ops::Deref for Page {
+    type Target = DocumentState;
+    fn deref(&self) -> &DocumentState {
+        &self.document
+    }
+}
+impl std::ops::DerefMut for Page {
+    fn deref_mut(&mut self) -> &mut DocumentState {
+        &mut self.document
+    }
 }
 
 impl Page {
@@ -299,7 +327,7 @@ pub struct Browser {
     /// Shared with every page's [`PageNav`], which reports same-document
     /// commits synchronously (see [`PageObserver`]).
     observer: ObserverCell,
-    next_id: Cell<u64>,
+    next_id: Rc<Cell<u64>>,
     started: Instant,
     /// Finalized-wrapper payloads released at checkpoints (diagnostics).
     pub released_payloads: RefCell<u64>,
@@ -328,10 +356,28 @@ impl Browser {
         *self.released_payloads.borrow_mut() += n as u64;
         let pages: Vec<_> = self.pages.iter().map(|p| p.id).collect();
         for id in pages {
+            let Some(host) = self.page(id).map(|p| p.frames.clone()) else { continue };
             self.apply_same_document_url(id);
-            self.drain_dom_resources(id);
-            if let Some(page) = self.page(id).and_then(|p| p.main_frame.page_dom.as_ref()) {
-                page.after_task();
+            self.sync_root(id);
+            for key in host.keys() {
+                self.drain_dom_resources(key);
+                if let Some(bindings) = self.doc(key).and_then(|p| p.main_frame.page_dom.clone()) {
+                    bindings.after_task();
+                }
+                if key.child.is_some() {
+                    if let Some(mut d) = self.doc_mut(key) {
+                        if let Some(url) = d.nav.take_pending_frame_url() {
+                            if !matches!(d.main_frame.url.as_str(), "about:blank" | "about:srcdoc") {
+                                d.main_frame.base_url = url.clone();
+                            }
+                            d.main_frame.url = url;
+                        }
+                    }
+                }
+            }
+            host.drain_retired();
+            for key in host.keys() {
+                self.maybe_fire_load(key);
             }
         }
     }
@@ -348,6 +394,7 @@ impl BrowserThread {
     pub fn new() -> Result<BrowserThread, JsError> {
         let engine = Engine::new()?;
         lp_webapi::register(&engine);
+        engine.register::<frames::CrossWindow>();
         engine.register::<Window>();
         engine.register::<Location>();
         engine.register::<History>();
@@ -358,7 +405,7 @@ impl BrowserThread {
             sched: event_loop.scheduler(),
             pages: Vec::new(),
             observer: Rc::new(RefCell::new(None)),
-            next_id: Cell::new(1),
+            next_id: Rc::new(Cell::new(1)),
             started: Instant::now(),
             released_payloads: RefCell::new(0),
             handle: event_loop.handle(),
@@ -483,8 +530,8 @@ impl Browser {
     }
 
     /// Loader used by `page`: its context's, else the browser default.
-    pub(crate) fn loader_for(&self, page: PageId) -> Option<Rc<dyn ResourceLoader>> {
-        let ctx = self.page(page).map(|p| p.context).unwrap_or(DEFAULT_CONTEXT);
+    pub(crate) fn loader_for(&self, page: impl Into<PageId>) -> Option<Rc<dyn ResourceLoader>> {
+        let ctx = self.page(page.into()).map(|p| p.context).unwrap_or(DEFAULT_CONTEXT);
         self.contexts.iter().find(|c| c.id == ctx).and_then(|c| c.loader.clone()).or_else(|| self.loader.clone())
     }
 
@@ -496,6 +543,11 @@ impl Browser {
         let id = PageId(self.next() as u32);
         let frame = Frame {
             id: FrameId(format!("{:032X}", self.next())),
+            parent: None,
+            owner: None,
+            name: String::new(),
+            base_url: "about:blank".into(),
+            sandbox: Default::default(),
             url: "about:blank".into(),
             loader_id: LoaderId(format!("{:032X}", self.next())),
             realms: Vec::new(),
@@ -503,18 +555,29 @@ impl Browser {
             document: None,
             page_dom: None,
             network_idle: NetworkIdle::default(),
+            origin: "null".into(),
+            opaque_origin: self.next(),
+            dom_content_loaded: false,
+            loaded: false,
         };
         let nav = PageNav::new(id, frame.id.clone(), self.sched.clone(), self.observer.clone());
+        let frames = FrameHost::new(self, id, context, frame.clone(), nav.clone());
+        let session_storage = frames.settings.borrow().session.clone();
         self.pages.push(Page {
             id,
             context,
-            main_frame: frame,
             init_scripts: Vec::new(),
-            pending_loader: None,
-            nav,
-            load: None,
-            stylesheets: Default::default(),
-            session_storage: Default::default(),
+            frames,
+            document: DocumentState {
+                main_frame: frame,
+                pending_loader: None,
+                pending_cancel: None,
+                nav,
+                load: None,
+                stylesheets: Default::default(),
+                _owner_pin: None,
+            },
+            session_storage,
             user_agent_override: None,
             extra_http_headers: Default::default(),
             cache_disabled: false,
@@ -566,6 +629,7 @@ impl Browser {
         }
         state.user_agent_override = value;
         state.request_defaults = defaults;
+        self.refresh_frame_settings(page);
         Ok(())
     }
 
@@ -580,6 +644,7 @@ impl Browser {
         }
         state.request_defaults.extra_headers = headers.clone();
         state.extra_http_headers = headers;
+        self.refresh_frame_settings(page);
         true
     }
 
@@ -594,6 +659,7 @@ impl Browser {
         }
         state.cache_disabled = disabled;
         state.request_defaults.cache_disabled = disabled;
+        self.refresh_frame_settings(page);
         true
     }
 
@@ -601,6 +667,7 @@ impl Browser {
         match self.page_mut(page) {
             Some(p) => {
                 p.init_scripts.push(script);
+                p.frames.settings.borrow_mut().scripts = p.init_scripts.clone();
                 true
             }
             None => false,
@@ -612,6 +679,7 @@ impl Browser {
             Some(p) => {
                 let before = p.init_scripts.len();
                 p.init_scripts.retain(|s| s.id != id);
+                p.frames.settings.borrow_mut().scripts = p.init_scripts.clone();
                 before != p.init_scripts.len()
             }
             None => false,
@@ -638,14 +706,21 @@ impl Browser {
         opts: NavigateOpts,
         history: HistoryHandling,
     ) -> Result<LoaderId, JsError> {
+        self.navigate_frame_with_handling(page.into(), opts, history)
+    }
+
+    pub(crate) fn navigate_frame_with_handling(
+        &mut self,
+        page: FrameKey,
+        opts: NavigateOpts,
+        history: HistoryHandling,
+    ) -> Result<LoaderId, JsError> {
         let loader_id = LoaderId(format!("{:032X}", self.next()));
-        let state = self.page_mut(page).ok_or(JsError::Type("no such page".into()))?;
-        // Even a synchronous about:blank commit (or a failed navigation) must
-        // invalidate the previous fetch before its completion can run.
-        state.pending_loader = None;
-        let frame_id = state.main_frame.id.clone();
+        // Invalidate the previous fetch even for blank or failed navigation.
+        self.cancel_pending_document(page);
+        let frame_id = self.doc(page).ok_or(JsError::Type("no such page".into()))?.main_frame.id.clone();
         self.emit(
-            page,
+            page.page,
             PageEvent::FrameNavigate {
                 frame_id: frame_id.clone(),
                 loader_id: loader_id.clone(),
@@ -660,34 +735,11 @@ impl Browser {
         }
         if opts.url != "about:blank" {
             let error = "net::ERR_NOT_IMPLEMENTED (no resource loader configured)".to_string();
-            self.emit(
-                page,
-                PageEvent::FrameNavigateFailed {
-                    frame_id,
-                    loader_id,
-                    url: opts.url,
-                    error: error.clone(),
-                    cdp_request_id: opts.cdp_request_id,
-                },
-            );
+            self.navigation_failed(page, &opts, loader_id, error);
             return Err(JsError::Unsupported("navigation to non-blank URLs"));
         }
         self.commit_document(page, &opts, loader_id.clone(), "null", history)?;
-        if let Some(dom) = self.page(page).and_then(|p| p.main_frame.page_dom.clone()) {
-            lp_webapi::lifecycle::dom_content_loaded(&dom, dom.document());
-            lp_webapi::lifecycle::load(&dom, dom.document());
-        }
-        let ts = self.timestamp();
-        self.emit(
-            page,
-            PageEvent::FrameDomContentLoaded {
-                frame_id: frame_id.clone(),
-                loader_id: loader_id.clone(),
-                timestamp: ts,
-            },
-        );
-        self.emit(page, PageEvent::FrameLoaded { frame_id, loader_id: loader_id.clone(), timestamp: ts });
-        self.watch_network_idle(page, loader_id.clone());
+        self.finish_blank_document(page);
         Ok(loader_id)
     }
 
@@ -700,23 +752,73 @@ impl Browser {
     /// init scripts, then emits `FrameNavigated`.
     pub(crate) fn commit_document(
         &mut self,
-        page: PageId,
+        page: FrameKey,
         opts: &NavigateOpts,
         loader_id: LoaderId,
         origin: &str,
         history: HistoryHandling,
     ) -> Result<(), JsError> {
-        let window_class = self.engine.register::<Window>();
-        let sched = self.sched.clone();
+        let host = self.page(page.page).ok_or(JsError::ContextDestroyed)?.frames.clone();
+        self.cancel_pending_document(page);
+        host.retire_children(page);
+        host.drain_retired();
+        if page.child.is_none() {
+            self.page_mut(page.page).expect("page").main_frame.realms = host.root.borrow().realms.clone();
+        }
+        let inherited = self
+            .doc(page)
+            .and_then(|d| d.main_frame.parent.clone())
+            .and_then(|id| host.key(&id))
+            .and_then(|key| host.frame(key));
+        // Attribute changes do not alter the active document's policy. Apply
+        // the owner and ancestor restrictions when the next document commits.
+        let sandbox = if let Some(owner) = self.doc(page).and_then(|d| d.main_frame.owner) {
+            let mut flags = frames::Sandbox::parse(host.dom.borrow().get_attribute(owner, "sandbox").ok().flatten());
+            if let Some(parent) = &inherited {
+                flags.opaque |= parent.sandbox.opaque;
+                flags.scripts_disabled |= parent.sandbox.scripts_disabled;
+            }
+            flags
+        } else {
+            frames::Sandbox::default()
+        };
+        self.doc_mut(page).ok_or(JsError::ContextDestroyed)?.main_frame.sandbox = sandbox;
+        let inherit_url = matches!(opts.url.as_str(), "about:blank" | "about:srcdoc") && inherited.is_some();
+        let actual_origin = if sandbox.opaque {
+            "null".to_string()
+        } else if inherit_url {
+            inherited.as_ref().expect("parent").origin.clone()
+        } else {
+            origin.to_string()
+        };
+        let token = if inherit_url && !sandbox.opaque {
+            inherited.as_ref().expect("parent").opaque_origin
+        } else {
+            self.next()
+        };
+        {
+            let mut state = self.doc_mut(page).ok_or(JsError::ContextDestroyed)?;
+            state.main_frame.origin = actual_origin.clone();
+            state.main_frame.opaque_origin = token;
+            state.main_frame.base_url =
+                if inherit_url { inherited.as_ref().expect("parent").base_url.clone() } else { opts.url.clone() };
+        }
+        self.sync_root(page.page);
         let page_dom = self.create_document_bindings(page, &opts.url, &loader_id)?;
-        if let Some(previous) = self.page(page).map(|p| p.main_frame.loader_id.clone()) {
+        if let Some(previous) = self.doc(page).map(|p| p.main_frame.loader_id.clone()) {
             self.forget_network_activity(page, &previous);
         }
+        let scripts = self.page(page.page).ok_or(JsError::ContextDestroyed)?.init_scripts.clone();
         let (frame_id, old, scripts, nav, old_dom) = {
-            let p = self.page_mut(page).ok_or(JsError::Type("no such page".into()))?;
+            let mut p = self.doc_mut(page).ok_or(JsError::Type("no such page".into()))?;
             p.main_frame.network_idle = NetworkIdle::default();
+            p.main_frame.origin = actual_origin.clone();
+            p.main_frame.dom_content_loaded = false;
+            p.main_frame.loaded = false;
             let old = std::mem::take(&mut p.main_frame.realms);
             // The previous document (and its in-flight loads) is gone.
+            p.pending_loader = None;
+            p.pending_cancel = None;
             p.load = None;
             p.stylesheets = Default::default();
             let old_dom = p.main_frame.page_dom.replace(page_dom.clone());
@@ -726,7 +828,7 @@ impl Browser {
             p.main_frame.loader_id = loader_id.clone();
             p.nav.commit_document(&opts.url, history, None);
             p.nav.set_document(Some((page_dom.dom.clone(), page_dom.document())));
-            (p.main_frame.id.clone(), old, p.init_scripts.clone(), p.nav.clone(), old_dom)
+            (p.main_frame.id.clone(), old, scripts.clone(), p.nav.clone(), old_dom)
         };
         if let Some(dom) = &old_dom {
             dom.dispose();
@@ -738,7 +840,7 @@ impl Browser {
                 lp_webapi::lifecycle::realm_disposed(dom, id);
             }
             r.realm.dispose();
-            self.emit(page, PageEvent::RealmDestroyed { frame_id: frame_id.clone(), realm: id });
+            self.emit(page.page, PageEvent::RealmDestroyed { frame_id: frame_id.clone(), realm: id });
         }
         if let Some(dom) = &old_dom {
             let _ = dom.dom.borrow_mut().set_document_active(dom.document(), false);
@@ -750,39 +852,15 @@ impl Browser {
                 worlds.push(s.world.clone());
             }
         }
-        let mut created = Vec::new();
+        self.sync_root(page.page);
         for world in worlds {
-            let realm = self.engine.create_realm(RealmOptions {
-                name: world.clone().unwrap_or_default(),
-                global_class: Some(window_class),
-                origin: (origin != "null").then(|| origin.to_string()),
-            })?;
-            realm.set_global_data::<Window>(WindowData::new(sched.clone(), nav.clone(), &page_dom))?;
-            lp_webapi::install(&realm.scope()?, page_dom.clone())?;
-            self.install_module_fetcher(page, &realm);
-            for s in scripts.iter().filter(|s| s.world == world) {
-                let scope = realm.scope()?;
-                if let Err(e) = scope.eval(&s.source, Some(&format!("init-script:{}", s.id)), 1) {
-                    scope.report_exception(&e);
-                }
-            }
-            created.push(FrameRealm { world, realm });
+            host.make_realm(page, nav.clone(), world)?;
         }
-        let events: Vec<PageEvent> = created
-            .iter()
-            .map(|r| PageEvent::RealmCreated {
-                frame_id: frame_id.clone(),
-                realm: r.realm.id(),
-                world: r.world.clone(),
-                origin: origin.to_string(),
-            })
-            .collect();
-        self.page_mut(page).expect("page").main_frame.realms = created;
-        for e in events {
-            self.emit(page, e);
+        if page.child.is_none() {
+            self.page_mut(page.page).expect("page").main_frame.realms = host.root.borrow().realms.clone();
         }
         self.emit(
-            page,
+            page.page,
             PageEvent::FrameNavigated {
                 frame_id,
                 loader_id,
@@ -798,48 +876,25 @@ impl Browser {
     /// Creates (or returns) an isolated world realm in the page's main frame
     /// (`Page.createIsolatedWorld`).
     pub fn isolated_world(&mut self, page: PageId, name: &str) -> Result<Realm, JsError> {
-        if let Some(r) = self.page(page).and_then(|p| p.main_frame.world(name)) {
-            return Ok(r.clone());
-        }
-        let window_class = self.engine.register::<Window>();
-        let (url, frame_id, page_dom) = {
-            let p = self.page(page).ok_or(JsError::Type("no such page".into()))?;
-            (
-                p.main_frame.url.clone(),
-                p.main_frame.id.clone(),
-                p.main_frame.page_dom.clone().ok_or(JsError::ContextDestroyed)?,
-            )
-        };
-        let origin =
-            url::Url::parse(&url).ok().map(|u| u.origin().ascii_serialization()).unwrap_or_else(|| "null".into());
-        let realm = self.engine.create_realm(RealmOptions {
-            name: name.to_string(),
-            global_class: Some(window_class),
-            origin: (origin != "null").then(|| origin.clone()),
-        })?;
-        let nav = self.page(page).expect("page").nav.clone();
-        realm.set_global_data::<Window>(WindowData::new(self.sched.clone(), nav, &page_dom))?;
-        lp_webapi::install(&realm.scope()?, page_dom)?;
-        self.install_module_fetcher(page, &realm);
-        self.page_mut(page)
-            .expect("page")
-            .main_frame
-            .realms
-            .push(FrameRealm { world: Some(name.to_string()), realm: realm.clone() });
-        self.emit(page, PageEvent::RealmCreated { frame_id, realm: realm.id(), world: Some(name.to_string()), origin });
-        Ok(realm)
+        let frame = self.page(page).ok_or(JsError::ContextDestroyed)?.main_frame.id.clone();
+        self.isolated_world_in_frame(page, &frame, name)
     }
 
     /// Closes a page, disposing its realms and cancelling timers.
     pub fn close_page(&mut self, page: PageId) -> bool {
         let Some(pos) = self.pages.iter().position(|p| p.id == page) else { return false };
+        self.cancel_pending_document(page.into());
+        let host = self.pages[pos].frames.clone();
+        host.retire_children(page.into());
+        host.drain_retired();
         let loader = self.pages[pos].main_frame.loader_id.clone();
-        self.forget_network_activity(page, &loader);
+        self.forget_network_activity(page.into(), &loader);
+        self.pages[pos].main_frame.realms = host.root.borrow().realms.clone();
         let p = self.pages.remove(pos);
         if let Some(dom) = &p.main_frame.page_dom {
             dom.dispose();
         }
-        for r in p.main_frame.realms {
+        for r in &p.document.main_frame.realms {
             window::cancel_timers(&r.realm);
             let id = r.realm.id();
             if let Some(dom) = &p.main_frame.page_dom {
@@ -848,7 +903,7 @@ impl Browser {
             r.realm.dispose();
             self.emit(page, PageEvent::RealmDestroyed { frame_id: p.main_frame.id.clone(), realm: id });
         }
-        self.emit(page, PageEvent::FrameDestroyed { frame_id: p.main_frame.id });
+        self.emit(page, PageEvent::FrameDestroyed { frame_id: p.main_frame.id.clone() });
         true
     }
 

@@ -60,9 +60,18 @@ fn env(html: &str) -> Env {
 }
 
 fn new_realm(engine: &Engine, class: lp_js::ClassId, page: &Rc<PageDom>, name: &str) -> Realm {
-    let realm = engine
-        .create_realm(RealmOptions { name: name.into(), global_class: Some(class), origin: None })
-        .expect("realm");
+    new_realm_with_origin(engine, class, page, name, None)
+}
+
+fn new_realm_with_origin(
+    engine: &Engine,
+    class: lp_js::ClassId,
+    page: &Rc<PageDom>,
+    name: &str,
+    origin: Option<String>,
+) -> Realm {
+    let realm =
+        engine.create_realm(RealmOptions { name: name.into(), global_class: Some(class), origin }).expect("realm");
     let key = {
         let existing = page.window_target();
         existing.unwrap_or_else(|| page.create_window_target(page.document()))
@@ -3339,4 +3348,285 @@ fn dom_parser_xml_types_case_cdata_errors_and_inert_adoption() {
 fn dom_parser_xml_argument_reentry_and_detached_document_isolation() {
     let e = env("<body>");
     assert_eq!(eval(&e.main, "const old=document; const d=new DOMParser().parseFromString({toString(){document.body.textContent='converted';return '<r a=\"ok\"/>'}},{toString(){document.body.appendChild(document.createElement('p'));return 'text/xml'}});[d!==document,old===document,document.body.textContent,d.documentElement.getAttribute('a'),d.defaultView===null].join()"), "true,true,converted,ok,true");
+}
+
+#[derive(Default)]
+struct IframeHookState {
+    calls: RefCell<Vec<String>>,
+    documents: RefCell<std::collections::HashMap<lp_dom::NodeId, lp_dom::NodeId>>,
+    navigations: RefCell<Vec<String>>,
+}
+struct IframeHooks {
+    page: std::rc::Weak<PageDom>,
+    state: Rc<IframeHookState>,
+}
+impl PageHooks for IframeHooks {
+    fn post_task(&self, task: Box<dyn FnOnce()>) {
+        task();
+    }
+    fn navigate(&self, request: NavigationRequest) {
+        self.state.navigations.borrow_mut().push(request.url);
+    }
+    fn iframe_connected(&self, iframe: lp_dom::NodeId) {
+        let page = self.page.upgrade().unwrap();
+        let dom = page.dom.borrow_mut(); // Must not be called under a DOM borrow.
+        let name = dom.get_attribute(iframe, "name").unwrap().unwrap_or("").to_owned();
+        let srcdoc = dom.get_attribute(iframe, "srcdoc").unwrap().unwrap_or("").to_owned();
+        assert!(dom.is_connected(iframe).unwrap());
+        drop(dom);
+        let child = parse_document(&page.dom, "about:blank", "<body></body>");
+        page.dom.borrow_mut().set_document_active(child, true).unwrap();
+        self.state.documents.borrow_mut().insert(iframe, child);
+        self.state.calls.borrow_mut().push(format!("connect:{name}:{srcdoc}"));
+    }
+    fn iframe_disconnected(&self, iframe: lp_dom::NodeId) {
+        let page = self.page.upgrade().unwrap();
+        let mut dom = page.dom.borrow_mut();
+        dom.collect_garbage(); // Remaining notifications must still hold live node IDs.
+        let name = dom.get_attribute(iframe, "name").unwrap().unwrap_or("").to_owned();
+        if let Some(child) = self.state.documents.borrow_mut().remove(&iframe) {
+            dom.set_document_active(child, false).unwrap();
+        }
+        self.state.calls.borrow_mut().push(format!("disconnect:{name}"));
+    }
+    fn iframe_attribute_changed(&self, iframe: lp_dom::NodeId, attribute: IframeAttribute) {
+        let page = self.page.upgrade().unwrap();
+        let dom = page.dom.borrow_mut();
+        assert!(dom.is_connected(iframe).unwrap());
+        self.state.calls.borrow_mut().push(format!("attr:{attribute:?}"));
+    }
+    fn frame_document(&self, iframe: lp_dom::NodeId) -> Option<lp_dom::NodeId> {
+        self.state.documents.borrow().get(&iframe).copied()
+    }
+    fn frame_window<'s>(&self, s: &lp_js::Scope<'s>, iframe: lp_dom::NodeId) -> Option<lp_js::Value<'s>> {
+        self.state.documents.borrow().contains_key(&iframe).then(|| s.global().value())
+    }
+}
+fn iframe_hooks(e: &Env) -> Rc<IframeHookState> {
+    let state = Rc::new(IframeHookState::default());
+    e.page.set_hooks(Some(Rc::new(IframeHooks { page: Rc::downgrade(&e.page), state: state.clone() })));
+    state
+}
+
+#[test]
+fn iframe_hooks_connect_before_append_returns_and_report_attributes() {
+    let e = env("<body>");
+    let state = iframe_hooks(&e);
+    assert_eq!(eval(&e.main, "globalThis.f=document.createElement('iframe'); f.name='first'; f.srcdoc='hello'; document.body.appendChild(f); !!f.contentDocument && f.contentWindow===window"), "true");
+    assert_eq!(&*state.calls.borrow(), &["connect:first:hello"]);
+    eval(&e.main, "f.src='/next'; f.srcdoc='next'; f.name='second'; f.sandbox.add('allow-scripts'); f.removeAttribute('srcdoc'); f.width='90'");
+    assert_eq!(&state.calls.borrow()[1..], &["attr:Src", "attr:Srcdoc", "attr:Name", "attr:Sandbox", "attr:Srcdoc"]);
+    eval(&e.main, "f.remove(); f.name='detached'; f.srcdoc='detached'; document.body.appendChild(f)");
+    assert_eq!(&state.calls.borrow()[6..], &["disconnect:second", "connect:detached:detached"]);
+    assert_eq!(eval(&e.main, "!!f.contentDocument"), "true");
+}
+
+#[test]
+fn iframe_hooks_cover_subtree_fragment_inner_html_and_stale_native_events() {
+    let e = env("<body>");
+    let state = iframe_hooks(&e);
+    eval(&e.main, "globalThis.box=document.createElement('div'); box.innerHTML='<iframe name=a></iframe><span><iframe name=b></iframe></span>'; document.body.appendChild(box)");
+    assert_eq!(&*state.calls.borrow(), &["connect:a:", "connect:b:"]);
+    eval(&e.main, "box.remove()");
+    assert_eq!(&state.calls.borrow()[2..], &["disconnect:b", "disconnect:a"]);
+    eval(&e.main, "const frag=document.createDocumentFragment(); frag.appendChild(box); document.body.appendChild(frag); box.innerHTML='<iframe name=c></iframe>'");
+    assert_eq!(&state.calls.borrow()[4..], &["connect:a:", "connect:b:", "disconnect:a", "disconnect:b", "connect:c:"]);
+    let f = {
+        let mut dom = e.page.dom.borrow_mut();
+        let f = dom.create_element(e.page.document(), "iframe").unwrap();
+        let body = dom.body(e.page.document()).unwrap().unwrap();
+        dom.append_child(body, f).unwrap();
+        dom.remove_child(body, f).unwrap();
+        f
+    };
+    e.page.flush_iframe_events();
+    assert_eq!(state.calls.borrow().len(), 9, "do not attach a node removed before native flush");
+    e.page.dom.borrow_mut().take_resource_events();
+    e.page.dom.borrow_mut().collect_garbage();
+    assert!(!e.page.dom.borrow().is_alive(f), "discarded notifications release their pins");
+}
+
+#[test]
+fn iframe_hooks_parser_flush_and_document_routing() {
+    let e = env("<body><iframe name=parser></iframe>");
+    let state = iframe_hooks(&e);
+    e.page.flush_iframe_events();
+    assert_eq!(&*state.calls.borrow(), &["connect:parser:"]);
+    let other = parse_document(&e.page.dom, "http://localhost/child", "<body><iframe name=other></iframe>");
+    let other_page = PageDom::new(e.page.dom.clone(), other);
+    let other_state = Rc::new(IframeHookState::default());
+    other_page.set_hooks(Some(Rc::new(IframeHooks { page: Rc::downgrade(&other_page), state: other_state.clone() })));
+    e.page.after_task();
+    assert_eq!(state.calls.borrow().len(), 1);
+    other_page.flush_iframe_events();
+    assert_eq!(&*other_state.calls.borrow(), &["connect:other:"]);
+    other_page.dispose();
+    e.page.flush_iframe_events();
+    assert_eq!(state.calls.borrow().len(), 1);
+}
+
+#[test]
+fn scripting_disabled_blocks_handlers_and_javascript_navigation_but_not_eval() {
+    let e = env("<body><button id=b></button><a id=a href='javascript:globalThis.ran=99'>link</a>");
+    let state = iframe_hooks(&e);
+    eval(&e.main, "globalThis.b=document.getElementById('b'); globalThis.a=document.getElementById('a'); globalThis.ran=0; b.setAttribute('onclick','ran++'); b.addEventListener('click',()=>ran+=10)");
+    e.page.set_scripting_disabled(true);
+    assert_eq!(eval(&e.main, "b.click(); a.click(); ran"), "0");
+    assert!(state.navigations.borrow().is_empty());
+    assert_eq!(
+        eval(&e.main, "b.setAttribute('onclick','not valid {'); 6*7"),
+        "42",
+        "disabled attributes must not compile, inspector evaluation remains available"
+    );
+    e.page.set_scripting_disabled(false);
+    assert_eq!(eval(&e.main, "b.setAttribute('onclick','ran++'); b.click(); ran"), "11");
+    eval(&e.main, "a.click()");
+    assert_eq!(state.navigations.borrow().len(), 1);
+}
+
+#[test]
+fn iframe_hooks_disconnect_nested_owners_before_ancestors_and_drop_disposed_queue() {
+    let e = env("<body>");
+    let state = iframe_hooks(&e);
+    eval(&e.main, "globalThis.outer=document.createElement('iframe'); outer.name='outer'; const inner=document.createElement('iframe'); inner.name='inner'; outer.appendChild(inner); document.body.appendChild(outer); outer.remove()");
+    assert_eq!(&*state.calls.borrow(), &["connect:outer:", "connect:inner:", "disconnect:inner", "disconnect:outer"]);
+    let f = {
+        let mut dom = e.page.dom.borrow_mut();
+        let f = dom.create_element(e.page.document(), "iframe").unwrap();
+        let body = dom.body(e.page.document()).unwrap().unwrap();
+        dom.append_child(body, f).unwrap();
+        dom.remove_child(body, f).unwrap();
+        f
+    };
+    e.page.dispose();
+    e.page.flush_iframe_events();
+    e.page.dom.borrow_mut().take_resource_events();
+    e.page.dom.borrow_mut().collect_garbage();
+    assert!(!e.page.dom.borrow().is_alive(f));
+    assert_eq!(state.calls.borrow().len(), 4);
+}
+
+#[test]
+fn iframe_hooks_ignore_inert_documents_and_survive_adoption_and_shadow_removal() {
+    let e = env("<body>");
+    let state = iframe_hooks(&e);
+    eval(&e.main, "globalThis.parsed=new DOMParser().parseFromString('<iframe name=inert></iframe>','text/html'); globalThis.f=parsed.querySelector('iframe'); f.srcdoc='before-connect'");
+    assert!(state.calls.borrow().is_empty());
+    eval(&e.main, "globalThis.host=document.createElement('div'); const shadow=host.attachShadow({mode:'open'}); shadow.appendChild(f); document.body.appendChild(host)");
+    assert_eq!(&*state.calls.borrow(), &["connect:inert:before-connect"]);
+    eval(&e.main, "host.remove()");
+    assert_eq!(&state.calls.borrow()[1..], &["disconnect:inert"]);
+}
+
+#[test]
+fn iframe_hooks_defer_while_dom_is_borrowed_and_replace_document_queue() {
+    let e = env("<body>");
+    let state = iframe_hooks(&e);
+    let replacement = parse_document(&e.page.dom, "http://localhost/new", "<body><iframe name=new></iframe>");
+    {
+        let mut dom = e.page.dom.borrow_mut();
+        let f = dom.create_element(e.page.document(), "iframe").unwrap();
+        let body = dom.body(e.page.document()).unwrap().unwrap();
+        dom.append_child(body, f).unwrap();
+        e.page.flush_iframe_events();
+        assert!(state.calls.borrow().is_empty());
+    }
+    e.page.set_document(replacement);
+    e.page.flush_iframe_events();
+    assert_eq!(&*state.calls.borrow(), &["connect:new:"]);
+}
+
+#[test]
+fn iframe_document_value_preserves_child_binding_state_and_null_denies_fallback() {
+    struct ChildDocumentHook {
+        document: lp_js::Persistent,
+        legacy: lp_dom::NodeId,
+        deny: Rc<std::cell::Cell<bool>>,
+    }
+    impl PageHooks for ChildDocumentHook {
+        fn post_task(&self, task: Box<dyn FnOnce()>) {
+            task();
+        }
+        fn navigate(&self, _: NavigationRequest) {}
+        fn frame_document_value<'s>(
+            &self,
+            s: &lp_js::Scope<'s>,
+            _: lp_dom::NodeId,
+        ) -> lp_js::JsResult<Option<lp_js::Value<'s>>> {
+            Ok(Some(if self.deny.get() { s.null() } else { self.document.get(s) }))
+        }
+        fn frame_document(&self, _: lp_dom::NodeId) -> Option<lp_dom::NodeId> {
+            Some(self.legacy)
+        }
+    }
+    let e = env("<body><iframe></iframe>");
+    let doc = parse_document(&e.page.dom, "http://child.example/", "<body><p>child</p>");
+    e.page.dom.borrow_mut().set_document_active(doc, true).unwrap();
+    let child = PageDom::new(e.page.dom.clone(), doc);
+    let class = e.engine.register::<TestWindow>();
+    let realm = new_realm(&e.engine, class, &child, "child");
+    let document = {
+        let s = realm.scope().unwrap();
+        lp_js::Persistent::new(&s, s.eval("document", None, 1).unwrap())
+    };
+    let deny = Rc::new(std::cell::Cell::new(false));
+    e.page.set_hooks(Some(Rc::new(ChildDocumentHook { document, legacy: e.page.document(), deny: deny.clone() })));
+    assert_eq!(eval(&e.main, "globalThis.f=document.querySelector('iframe'); f.contentDocument===f.contentDocument && f.contentDocument.body.textContent==='child'"), "true");
+    {
+        let s = e.main.scope().unwrap();
+        let value = s.eval("f.contentDocument", None, 1).unwrap();
+        let node = s.unwrap::<lp_webapi::node::Node>(value).unwrap();
+        assert!(Rc::ptr_eq(node.page(), &child));
+        let value = s.eval("f.contentDocument.body.firstChild", None, 1).unwrap();
+        let node = s.unwrap::<lp_webapi::node::Node>(value).unwrap();
+        assert!(Rc::ptr_eq(node.page(), &child));
+    }
+    deny.set(true);
+    assert_eq!(eval(&e.main, "f.contentDocument===null"), "true");
+    e.page.set_hooks(None);
+    child.dispose();
+}
+
+#[test]
+fn inherited_base_resolves_resources_without_changing_document_url() {
+    let e = env("<body><a href='next'>next</a><script src='script.js'></script>");
+    let doc = e.page.document();
+    {
+        let mut dom = e.page.dom.borrow_mut();
+        dom.set_document_url(doc, "about:srcdoc").unwrap();
+        dom.set_document_base_url(doc, Some("https://parent.example/dir/page")).unwrap();
+    }
+    assert_eq!(eval(&e.main, "[document.URL,document.documentURI,document.baseURI,document.body.baseURI,document.querySelector('a').href,document.querySelector('script').src,Response.redirect('next').headers.get('location')].join('|')"),
+        "about:srcdoc|about:srcdoc|https://parent.example/dir/page|https://parent.example/dir/page|https://parent.example/dir/next|https://parent.example/dir/script.js|https://parent.example/dir/next");
+    assert_eq!(
+        eval(&e.main, "let relativeXHR=new XMLHttpRequest();relativeXHR.open('GET','data');relativeXHR.readyState"),
+        "1"
+    );
+    let detached = parse_document(&e.page.dom, "https://other.example/", "<body><a href='next'>");
+    assert_eq!(e.page.dom.borrow().document_base_url(detached).unwrap(), "https://other.example/");
+    e.page.dom.borrow_mut().set_document_url(doc, "about:blank").unwrap();
+    assert_eq!(
+        eval(&e.main, "[document.URL,document.baseURI].join('|')"),
+        "about:blank|https://parent.example/dir/page"
+    );
+    e.page.dom.borrow_mut().set_document_base_url(doc, None).unwrap();
+    assert_eq!(eval(&e.main, "document.baseURI"), "about:blank");
+}
+
+#[test]
+fn explicit_opaque_realm_blocks_http_document_cookies_and_storage() {
+    let e = env("<body>");
+    let class = e.engine.register::<TestWindow>();
+    let opaque = new_realm_with_origin(&e.engine, class, &e.page, "opaque", Some("null".into()));
+    assert_eq!(eval(&opaque, "[()=>document.cookie,()=>document.cookie='x=y'].map(f=>{try{f();return 'allowed'}catch(e){return e.name}}).join()"), "SecurityError,SecurityError");
+    eval(&e.main, "localStorage.setItem('secret','parent');sessionStorage.setItem('secret','parent')");
+    assert_eq!(eval(&opaque, "[localStorage.getItem('secret'),sessionStorage.getItem('secret')].join()"), ",");
+    eval(&opaque, "localStorage.setItem('secret','opaque');sessionStorage.setItem('secret','opaque')");
+    assert_eq!(
+        eval(&e.main, "[localStorage.getItem('secret'),sessionStorage.getItem('secret')].join()"),
+        "parent,parent"
+    );
+    assert_eq!(eval(&opaque, "document.domain"), "");
+    assert_eq!(eval(&opaque, "document.URL"), "http://localhost:5173/app");
+    assert_eq!(eval(&e.main, "document.domain"), "localhost");
 }
