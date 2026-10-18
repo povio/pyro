@@ -4175,3 +4175,69 @@ fn retired_focus_document_cannot_cancel_live_shared_transition() {
     input::focus_window_with_transition(&retired.page, &invalid);
     assert!(token.is_current(), "stale helper must not adopt/cancel local state either");
 }
+
+#[test]
+fn reflected_urls_follow_attributes_bases_adoption_and_document_replacement() {
+    let e = env("<head><link id=r href='../asset.js'></head><body></body>");
+    let doc = e.page.document();
+    assert_eq!(eval(&e.main, "globalThis.r=document.getElementById('r');r.href"), "http://localhost:5173/asset.js");
+    assert_eq!(eval(&e.main, "r.setAttribute('href',' second.js ');r.href"), "http://localhost:5173/second.js");
+    assert_eq!(eval(&e.main, "r.removeAttribute('href');r.href"), "");
+    eval(&e.main, "r.href='relative.js'");
+    {
+        let mut dom = e.page.dom.borrow_mut();
+        dom.set_document_url(doc, "about:srcdoc").unwrap();
+        dom.set_document_base_url(doc, Some("https://parent.example/dir/page")).unwrap();
+    }
+    assert_eq!(eval(&e.main, "r.href"), "https://parent.example/dir/relative.js");
+    let isolated = new_realm(&e.engine, e.engine.register::<TestWindow>(), &e.page, "isolated");
+    assert_eq!(eval(&isolated, "document.getElementById('r').href"), "https://parent.example/dir/relative.js");
+    {
+        let mut dom = e.page.dom.borrow_mut();
+        dom.set_document_url(doc, "about:blank").unwrap();
+        dom.set_document_base_url(doc, Some("https://changed.example/new/")).unwrap();
+    }
+    assert_eq!(eval(&isolated, "document.getElementById('r').href"), "https://changed.example/new/relative.js");
+    let node = e.page.dom.borrow().get_element_by_id(doc, "r").unwrap().unwrap();
+    let other = parse_document(
+        &e.page.dom,
+        "https://adopted.example/other/page",
+        "<head><link id=new href='new.js'></head><body>",
+    );
+    e.page.dom.borrow_mut().adopt_node(other, node).unwrap();
+    assert_eq!(eval(&e.main, "r.href"), "https://adopted.example/other/relative.js");
+    e.page.dom.borrow_mut().set_document_url(other, "https://moved.example/").unwrap();
+    assert_eq!(eval(&e.main, "r.href"), "https://moved.example/relative.js");
+    e.page.set_document(other);
+    assert_eq!(
+        eval(&e.main, "[r.href,document.getElementById('new').href].join('|')"),
+        "https://moved.example/relative.js|https://moved.example/new.js"
+    );
+    e.page.dom.borrow_mut().adopt_node(doc, node).unwrap();
+    e.page.dom.borrow_mut().set_document_base_url(doc, None).unwrap();
+    assert_eq!(eval(&e.main, "r.href"), "relative.js", "opaque base preserves existing fallback");
+    e.page.dom.borrow_mut().set_document_url(doc, "invalid base").unwrap();
+    assert_eq!(
+        eval(&e.main, "r.setAttribute('href',' https://absolute.example/ ');r.href"),
+        " https://absolute.example/ "
+    );
+    e.page.dom.borrow_mut().set_document_url(doc, "https://restored.example/base/").unwrap();
+    assert_eq!(eval(&e.main, "r.href='final.js';r.href"), "https://restored.example/base/final.js");
+    e.page.dispose();
+    assert_eq!(eval(&e.main, "r.href"), "https://restored.example/base/final.js");
+}
+
+#[test]
+fn reflected_urls_preserve_oversized_and_canonicalized_base_semantics() {
+    let e = env("<head><link id=r href='asset.js'></head>");
+    eval(&e.main, "globalThis.r=document.getElementById('r');r.href");
+    for base in
+        [format!("https://example.test/{}/", "a".repeat(5000)), format!("https://example.test/{}/", "é".repeat(1000))]
+    {
+        e.page.dom.borrow_mut().set_document_base_url(e.page.document(), Some(&base)).unwrap();
+        let expected = lp_net::Url::parse(&base).unwrap().join("asset.js").unwrap().to_string();
+        assert_eq!(eval(&e.main, "r.href"), expected);
+    }
+    e.page.dom.borrow_mut().set_document_base_url(e.page.document(), None).unwrap();
+    assert_eq!(eval(&e.main, "r.href"), "http://localhost:5173/asset.js");
+}
