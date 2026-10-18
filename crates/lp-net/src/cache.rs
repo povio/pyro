@@ -50,6 +50,10 @@ pub(crate) struct Directives {
     pub max_age: Option<Option<u64>>,
     pub min_fresh: Option<u64>,
     pub only_if_cached: bool,
+    /// Response-only, for the shared asset cache (RFC 9111 §5.2.2).
+    pub public: bool,
+    pub private: bool,
+    pub s_maxage: Option<Option<u64>>,
 }
 
 impl Directives {
@@ -74,6 +78,9 @@ impl Directives {
                     // Field-qualified no-cache is treated as unqualified: conservative.
                     "no-cache" => d.no_cache = true,
                     "max-age" => d.max_age = Some(if d.max_age.is_some() { None } else { seconds() }),
+                    "s-maxage" if !request => d.s_maxage = Some(if d.s_maxage.is_some() { None } else { seconds() }),
+                    "public" if !request => d.public = true,
+                    "private" if !request => d.private = true,
                     "min-fresh" if request => d.min_fresh = seconds(),
                     "only-if-cached" if request => d.only_if_cached = true,
                     _ => {}
@@ -150,9 +157,11 @@ impl Entry {
         corrected_initial_age + (now - self.response_time).max(0.0)
     }
 
-    fn freshness_lifetime(&self) -> f64 {
+    fn freshness_lifetime(&self, shared: bool) -> f64 {
         let d = Directives::parse(&self.headers, false);
-        match d.max_age {
+        // A shared cache uses s-maxage in preference to max-age (RFC 9111 §5.2.2.10).
+        let max_age = if shared && d.s_maxage.is_some() { d.s_maxage } else { d.max_age };
+        match max_age {
             Some(Some(s)) => s as f64,
             Some(None) => 0.0,
             None => match self.headers.get(header::EXPIRES) {
@@ -185,6 +194,8 @@ impl Entry {
 }
 
 pub(crate) struct HttpCache {
+    /// Shared (cross-context) asset store: stricter storability, s-maxage.
+    shared: bool,
     entries: HashMap<String, Vec<Entry>>,
     bytes: usize,
     max_bytes: usize,
@@ -196,6 +207,7 @@ pub(crate) struct HttpCache {
 impl HttpCache {
     pub fn new(max_bytes: usize, max_entry_bytes: usize) -> Self {
         HttpCache {
+            shared: false,
             entries: HashMap::new(),
             bytes: 0,
             max_bytes,
@@ -240,7 +252,7 @@ impl HttpCache {
         };
         entry.used = tick;
         let age = entry.current_age(now);
-        let lifetime = entry.freshness_lifetime();
+        let lifetime = entry.freshness_lifetime(self.shared);
         if matches!(mode, CacheMode::ForceCache | CacheMode::OnlyIfCached) {
             return Lookup::Hit(entry.cached(age));
         }
@@ -264,6 +276,9 @@ impl HttpCache {
     pub fn storable(&self, status: StatusCode, response: &HeaderMap, request: &HeaderMap, mode: CacheMode) -> bool {
         if !self.enabled() || mode == CacheMode::NoStore {
             return false;
+        }
+        if self.shared {
+            return shared_storable(status, response, request);
         }
         if !matches!(status.as_u16(), 200 | 203 | 204 | 404 | 410) {
             return false;
@@ -392,6 +407,85 @@ impl HttpCache {
                 self.entries.remove(&k);
             }
         }
+    }
+}
+
+/// Requests that may use or fill the shared asset cache: no credential-bearing
+/// headers, so nothing personalized can be keyed or served by URL alone.
+pub(crate) fn shared_request_eligible(request: &HeaderMap) -> bool {
+    ![header::AUTHORIZATION, header::PROXY_AUTHORIZATION, header::COOKIE].iter().any(|h| request.contains_key(h))
+}
+
+/// Shared asset storability: a 200 explicitly marked `public` with an explicit
+/// positive lifetime (`s-maxage` or `max-age`). Never `private`, `no-store` or
+/// `no-cache`; no `Set-Cookie`; no `Vary` (one representation per URL); no
+/// `Content-Range`. The request must carry no credential-bearing headers.
+fn shared_storable(status: StatusCode, response: &HeaderMap, request: &HeaderMap) -> bool {
+    if status != StatusCode::OK || !shared_request_eligible(request) {
+        return false;
+    }
+    let (req, resp) = (Directives::parse(request, true), Directives::parse(response, false));
+    if req.no_store || !resp.public || resp.private || resp.no_store || resp.no_cache {
+        return false;
+    }
+    let lifetime = match (resp.s_maxage, resp.max_age) {
+        (Some(s), _) => s,
+        (None, m) => m.flatten(),
+    };
+    lifetime.is_some_and(|l| l > 0)
+        && !response.contains_key(header::SET_COOKIE)
+        && !response.contains_key(header::VARY)
+        && !response.contains_key(header::CONTENT_RANGE)
+}
+
+/// Opt-in, process-wide cache of public static assets shared by every
+/// `NetClient` (browser context) configured with the same handle. It only ever
+/// holds responses that pass [`shared_storable`] for requests without
+/// credentials, and only serves fresh entries (no revalidation). Cookies,
+/// authentication, API responses and app state stay per context.
+#[derive(Clone)]
+pub struct SharedAssetCache(std::sync::Arc<std::sync::Mutex<HttpCache>>);
+
+impl std::fmt::Debug for SharedAssetCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (entries, bytes) = self.usage();
+        f.debug_struct("SharedAssetCache").field("entries", &entries).field("bytes", &bytes).finish()
+    }
+}
+
+/// Environment opt-in: whole MiB for the process-wide shared asset cache.
+pub const SHARED_ASSET_CACHE_ENV: &str = "LIGHTNINGPANDA_SHARED_ASSET_CACHE_MB";
+
+impl SharedAssetCache {
+    pub fn new(max_bytes: usize, max_entry_bytes: usize) -> Self {
+        let mut cache = HttpCache::new(max_bytes, max_entry_bytes);
+        cache.shared = true;
+        SharedAssetCache(std::sync::Arc::new(std::sync::Mutex::new(cache)))
+    }
+
+    /// The process-wide instance when `LIGHTNINGPANDA_SHARED_ASSET_CACHE_MB` is
+    /// a positive integer (read once; the first size wins), else `None`.
+    pub fn from_env() -> Option<Self> {
+        static GLOBAL: std::sync::OnceLock<Option<SharedAssetCache>> = std::sync::OnceLock::new();
+        GLOBAL
+            .get_or_init(|| {
+                let mb = std::env::var(SHARED_ASSET_CACHE_ENV).ok()?.trim().parse::<usize>().ok()?;
+                (mb > 0).then(|| SharedAssetCache::new(mb * 1024 * 1024, (mb * 1024 * 1024).min(16 * 1024 * 1024)))
+            })
+            .clone()
+    }
+
+    /// (entries, logical bytes).
+    pub fn usage(&self) -> (usize, usize) {
+        self.0.lock().unwrap().usage()
+    }
+
+    pub fn clear(&self) {
+        self.0.lock().unwrap().clear();
+    }
+
+    pub(crate) fn with<R>(&self, f: impl FnOnce(&mut HttpCache) -> R) -> R {
+        f(&mut self.0.lock().unwrap())
     }
 }
 

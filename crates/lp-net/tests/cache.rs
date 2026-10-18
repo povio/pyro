@@ -89,6 +89,30 @@ fn start() -> Server {
                 match (method.as_str(), path.as_str()) {
                     ("POST", _) => respond(s, "200 OK", &[], b"posted"),
                     (_, "/fresh") => respond(s, "200 OK", &[fresh], b"fresh-body"),
+                    (_, "/asset") => respond(
+                        s,
+                        "200 OK",
+                        &[("Cache-Control", "public, max-age=3600, immutable".into())],
+                        target.as_bytes(),
+                    ),
+                    (_, "/asset-cookie") => respond(
+                        s,
+                        "200 OK",
+                        &[("Cache-Control", "public, max-age=3600".into()), ("Set-Cookie", "c=1".into())],
+                        b"x",
+                    ),
+                    (_, "/asset-private") => {
+                        respond(s, "200 OK", &[("Cache-Control", "private, max-age=3600".into())], b"x")
+                    }
+                    (_, "/asset-vary") => respond(
+                        s,
+                        "200 OK",
+                        &[("Cache-Control", "public, max-age=3600".into()), ("Vary", "Accept-Encoding".into())],
+                        b"x",
+                    ),
+                    (_, "/asset-smax") => {
+                        respond(s, "200 OK", &[("Cache-Control", "public, max-age=3600, s-maxage=0".into())], b"x")
+                    }
                     (_, "/etag") if hv("if-none-match").as_deref() == Some("\"v1\"") => respond(
                         s,
                         "304 Not Modified",
@@ -439,4 +463,80 @@ fn page_scoped_cache_disabled_bypasses_only_that_request() {
     fetch(&c, disabled());
     assert_eq!(c.http_cache_usage().0, 0);
     assert_eq!(s.header("/fresh", 2, "cache-control").as_deref(), Some("no-cache"));
+}
+
+fn shared_client(shared: &SharedAssetCache) -> NetClient {
+    NetClient::new(NetConfig { shared_asset_cache: Some(shared.clone()), ..NetConfig::default() }).unwrap()
+}
+
+#[test]
+fn opt_in_shared_assets_cross_fresh_contexts_and_nothing_else_does() {
+    let s = start();
+    let shared = SharedAssetCache::new(1 << 20, 1 << 18);
+    let (a, b) = (shared_client(&shared), shared_client(&shared));
+    // Versioned public asset: the first context fetches it, a fresh second context hits.
+    assert!(!get(&s, &a, "/asset?v=1").head.unwrap().from_cache);
+    let hit = get(&s, &b, "/asset?v=1");
+    assert_eq!((hit.body.as_slice(), hit.head.unwrap().from_cache, hit.encoded), (&b"/asset?v=1"[..], true, 0));
+    assert_eq!(s.hits("/asset"), 1);
+    // A changed version is a different URL.
+    assert!(!get(&s, &b, "/asset?v=2").head.unwrap().from_cache);
+    assert_eq!(s.hits("/asset"), 2);
+    // Not shared: private freshness without `public`, Set-Cookie, `private`, Vary, s-maxage=0.
+    for path in ["/fresh", "/asset-cookie", "/asset-private", "/asset-vary", "/asset-smax"] {
+        get(&s, &a, path);
+        let other = get(&s, &b, path);
+        assert!(!other.head.unwrap().from_cache, "{path} must not cross contexts");
+        assert_eq!(s.hits(path), 2, "{path}");
+    }
+    // Credential-bearing requests neither fill nor read the shared store.
+    let c = shared_client(&shared);
+    let creds = |h: &'static str, v: &'static str| {
+        with(&s, "/asset?v=3", move |r| {
+            r.headers.insert(h, v.parse().unwrap());
+        })
+    };
+    fetch(&c, creds("authorization", "Bearer x"));
+    // A separate context: c's own private cache may legitimately hold its authenticated response.
+    fetch(&shared_client(&shared), creds("cookie", "sid=1"));
+    assert!(!get(&s, &b, "/asset?v=3").head.unwrap().from_cache, "nothing stored from credentialed requests");
+    assert_eq!(s.hits("/asset"), 5);
+    let before = s.hits("/asset");
+    let d = shared_client(&shared);
+    assert!(
+        !fetch(&d, creds("authorization", "Bearer z")).head.unwrap().from_cache,
+        "credentialed lookups bypass the shared store"
+    );
+    assert_eq!(s.hits("/asset"), before + 1);
+    // Page or context cache bypass also bypasses the shared store.
+    let off = fetch(&d, with(&s, "/asset?v=1", |r| r.defaults.cache_disabled = true));
+    assert!(!off.head.unwrap().from_cache);
+    // An unsafe method invalidates the shared entry too.
+    let mut post = Request::get(s.url("/asset?v=1"), Destination::Fetch);
+    post.method = Method::POST;
+    post.body = Some(Bytes::from_static(b"x"));
+    fetch(&a, post);
+    let e = shared_client(&shared);
+    assert!(!get(&s, &e, "/asset?v=1").head.unwrap().from_cache);
+    // Clear and bounds.
+    a.clear_shared_asset_cache();
+    assert_eq!(shared.usage(), (0, 0));
+    let small = SharedAssetCache::new(2048, 1024);
+    let f = shared_client(&small);
+    for i in 0..30 {
+        get(&s, &f, &format!("/asset?n={i}"));
+    }
+    assert!(small.usage().1 <= 2048, "{:?}", small.usage());
+}
+
+#[test]
+fn default_contexts_do_not_share_assets() {
+    // The environment opt-in is unset in tests, so the default has no shared store.
+    assert!(std::env::var(SHARED_ASSET_CACHE_ENV).is_err());
+    assert!(NetConfig::default().shared_asset_cache.is_none());
+    let s = start();
+    let (a, b) = (client(), client());
+    get(&s, &a, "/asset?v=1");
+    assert!(!get(&s, &b, "/asset?v=1").head.unwrap().from_cache);
+    assert_eq!(s.hits("/asset"), 2);
 }
