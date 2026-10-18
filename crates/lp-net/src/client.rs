@@ -90,8 +90,11 @@ pub struct NetSettings {
     /// Network.setUserAgentOverride / Emulation.setUserAgentOverride.
     pub user_agent: Option<String>,
     pub accept_language: Option<String>,
-    /// Network.setCacheDisabled: bypass the HTTP cache (no lookup, no store) and
-    /// send `Pragma: no-cache` / `Cache-Control: no-cache`, like DevTools.
+    /// Context-wide HTTP cache bypass (no lookup, no store; sends
+    /// `Pragma: no-cache` / `Cache-Control: no-cache`, like DevTools). CDP
+    /// `Network.setCacheDisabled` is page-scoped and uses
+    /// `RequestDefaults::cache_disabled` instead; this is for embedders that
+    /// want the whole context uncached.
     pub cache_disabled: bool,
 }
 

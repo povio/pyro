@@ -252,8 +252,15 @@ await check('context cookies reach HTTP and stay isolated', async () => {
 });
 // Browser binding integration: local HTTP only, without claiming DOM/Input or TOS parity.
 const identityHeaders = [];
+const cacheableHits = [];
 const fixture = http.createServer((req, res) => {
   identityHeaders.push({ url: req.url, agent: req.headers['user-agent'], language: req.headers['accept-language'], extra: req.headers['x-extra'] ?? null });
+  if (req.url.startsWith('/cacheable')) {
+    cacheableHits.push(req.url);
+    res.writeHead(200, { 'content-type': 'text/javascript', 'cache-control': 'public, max-age=3600' });
+    res.end('1;');
+    return;
+  }
   if (req.url === '/extra-headers') {
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ extra: req.headers['x-extra'] ?? null, cache: req.headers['cache-control'] ?? null }));
@@ -590,6 +597,34 @@ try {
       assert.deepEqual(await read(a), { extra: 'replaced', cache: null });
       await a.setExtraHTTPHeaders({});
       assert.deepEqual(await read(a), { extra: null, cache: null });
+    } finally { await shared.close(); }
+  });
+  await check('HTTP cache: hits report fromDiskCache, setCacheDisabled is page-scoped, clearBrowserCache empties the context', async () => {
+    const shared = await browser.newContext();
+    try {
+      const a = await shared.newPage();
+      const b = await shared.newPage();
+      await a.goto(`${fixtureOrigin}/cache-a`, { timeout: 5000 });
+      await b.goto(`${fixtureOrigin}/cache-b`, { timeout: 5000 });
+      const cdpA = await shared.newCDPSession(a);
+      await cdpA.send('Network.enable');
+      const fromDisk = [];
+      cdpA.on('Network.responseReceived', e => { if (e.response.url.includes('/cacheable')) fromDisk.push(e.response.fromDiskCache); });
+      const load = p => p.evaluate(() => fetch('/cacheable').then(r => r.text()));
+      const before = cacheableHits.length;
+      await load(a);
+      await load(a);
+      await load(b);
+      assert.equal(cacheableHits.length - before, 1, 'one network request, then hits in both pages');
+      await cdpA.send('Network.setCacheDisabled', { cacheDisabled: true });
+      await load(a);
+      await load(b);
+      assert.equal(cacheableHits.length - before, 2, 'A bypasses, sibling B still hits');
+      await cdpA.send('Network.setCacheDisabled', { cacheDisabled: false });
+      await cdpA.send('Network.clearBrowserCache');
+      await load(b);
+      assert.equal(cacheableHits.length - before, 3, 'cleared for the whole context');
+      assert.deepEqual(fromDisk, [false, true, false]);
     } finally { await shared.close(); }
   });
   await check('Web Storage follows context, page and navigation boundaries', async () => {
