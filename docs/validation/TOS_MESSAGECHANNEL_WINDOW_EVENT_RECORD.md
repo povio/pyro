@@ -300,6 +300,17 @@ Build rules:
 | jfmc | PR #75 `fbc3c13` + main `ccef1bf` + PR #80 | `b3ab5a9` / `3ab6638c…` | `ee8918b9e72b03e615003be40ff831f7ce65dd18a7f092e38b56395859bafff6` | `16989c96…` |
 | jfwe | PR #76 `567ab17` + main `ccef1bf` + PR #80 | `d8abe39` / `9c592e27…` | `3acaf346d4cf1fdfb494424888f73045e5570badceb3f280269908927cc41498` | `91d02384…` |
 
+Provenance of jfwe:
+- Its GitHub ref fetch **failed**: `fix/macos-jit-entitlement` had already
+  been deleted after PR #80 merged as `a756213`. That fetch therefore updated no
+  refs.
+- The exact commits came from the local clone source.
+- After the merge, `567ab17`, `ccef1bf` and `306ceac` were each verified as
+  ancestors with `git merge-base --is-ancestor`. That checks commit objects;
+  it does not show that the fetch succeeded.
+- The jfmc fetch succeeded. The integration build below fetched only refs that
+  still exist, and verified that GitHub `main` resolved to `a756213`.
+
 Unchanged TOS run + repeat:
 - Fixtures `lp-tos-f9f-batch{19,16}-fx` reused, with the e2e tree and status
   verified unchanged.
