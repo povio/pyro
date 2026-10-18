@@ -269,11 +269,22 @@ pub struct Page {
     user_agent_override: Option<lp_webapi::UserAgentOverride>,
     /// Page-scoped extra request headers (CDP `Network.setExtraHTTPHeaders`).
     extra_http_headers: lp_net::http::HeaderMap,
+    /// Page-scoped HTTP cache bypass (CDP `Network.setCacheDisabled`).
+    cache_disabled: bool,
     /// Native defaults for this page's loader requests: the user agent
-    /// override plus `extra_http_headers`.
+    /// override plus the page options (see [`Page::apply_request_options`]).
     request_defaults: lp_net::RequestDefaults,
     viewport: lp_dom::media::Viewport,
     pending_resize: Option<LoaderId>,
+}
+
+impl Page {
+    /// Copies the page's own request options (extra headers, cache bypass)
+    /// into `defaults`, e.g. those derived from a user agent override.
+    fn apply_request_options(&self, defaults: &mut lp_net::RequestDefaults) {
+        defaults.extra_headers = self.extra_http_headers.clone();
+        defaults.cache_disabled = self.cache_disabled;
+    }
 }
 
 /// Browser-thread state: the loop state type for [`EventLoop`].
@@ -501,6 +512,7 @@ impl Browser {
             session_storage: Default::default(),
             user_agent_override: None,
             extra_http_headers: Default::default(),
+            cache_disabled: false,
             request_defaults: Default::default(),
             viewport: Default::default(),
             pending_resize: None,
@@ -540,8 +552,8 @@ impl Browser {
             .transpose()
             .map_err(|e| JsError::Type(format!("invalid user agent request defaults: {e}")))?
             .unwrap_or_default();
-        // The user agent override does not own the page's extra headers.
-        defaults.extra_headers = state.extra_http_headers.clone();
+        // The user agent override owns none of the page's other request options.
+        state.apply_request_options(&mut defaults);
         if let Some(bindings) = &state.main_frame.page_dom {
             bindings
                 .set_user_agent_override(value.clone())
@@ -563,6 +575,20 @@ impl Browser {
         }
         state.request_defaults.extra_headers = headers.clone();
         state.extra_http_headers = headers;
+        true
+    }
+
+    /// Bypasses the HTTP cache for this page's requests (document,
+    /// subresources, fetch, XHR) while `disabled`: no lookup or store, plus
+    /// no-cache request headers. Sibling pages keep using the context cache.
+    /// Persists across navigation. Returns false if there is no such page.
+    pub fn set_cache_disabled(&mut self, page: PageId, disabled: bool) -> bool {
+        let Some(state) = self.page_mut(page) else { return false };
+        if let Some(bindings) = &state.main_frame.page_dom {
+            bindings.set_cache_disabled(disabled);
+        }
+        state.cache_disabled = disabled;
+        state.request_defaults.cache_disabled = disabled;
         true
     }
 
