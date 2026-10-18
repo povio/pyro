@@ -1,0 +1,14 @@
+{
+  "target/release/lightningpanda": {
+    "__TEXT,__text": "7b194cfacc2c966e4abb514542ced6d7aab9694714d3023041e931457aa84503",
+    "__TEXT,__cstring": "fc0b89908774946c90c84f8f660c21fdb7b5de3d2f15d6a14a4efdb8764f7f44",
+    "__TEXT,__const": "03be70619df43038a13c33ede5ee741319d2b2d2b1769de7e82285c995eb6dab",
+    "__DATA_CONST,__const": "49fd45c9d0898788bd34b7f2652556547232446b77e6d729c107c4b8989796a5"
+  },
+  "target/release/lightningpanda-jit": {
+    "__TEXT,__text": "7b194cfacc2c966e4abb514542ced6d7aab9694714d3023041e931457aa84503",
+    "__TEXT,__cstring": "fc0b89908774946c90c84f8f660c21fdb7b5de3d2f15d6a14a4efdb8764f7f44",
+    "__TEXT,__const": "03be70619df43038a13c33ede5ee741319d2b2d2b1769de7e82285c995eb6dab",
+    "__DATA_CONST,__const": "49fd45c9d0898788bd34b7f2652556547232446b77e6d729c107c4b8989796a5"
+  }
+}

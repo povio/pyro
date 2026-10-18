@@ -74,6 +74,7 @@ pub struct PageDom {
     /// creating document; revocation, document replacement and disposal drop
     /// the entries (and their bytes).
     pub(crate) blob_urls: RefCell<FxHashMap<String, (bytes::Bytes, String)>>,
+    pub(crate) reflected_url_base: RefCell<Option<crate::html::ReflectedUrlBase>>,
     hooks: RefCell<Option<Rc<dyn PageHooks>>>,
     ready: RefCell<FxHashMap<NodeId, &'static str>>,
     pub(crate) focus_values: RefCell<FxHashMap<NodeId, String>>,
@@ -236,6 +237,7 @@ impl PageDom {
             session_storage: RefCell::new(Default::default()),
             opaque_storage: Default::default(),
             blob_urls: RefCell::new(FxHashMap::default()),
+            reflected_url_base: RefCell::new(None),
             hooks: RefCell::new(None),
             ready: RefCell::new(FxHashMap::default()),
             focus_values: RefCell::new(FxHashMap::default()),
@@ -314,6 +316,7 @@ impl PageDom {
         drop(self.url_params_helpers.take());
         self.opaque_storage.clear();
         drop(self.blob_urls.take());
+        drop(self.reflected_url_base.take());
         crate::custom::forget_page(self.id);
         let windows = self.window_keys.take();
         let mut dom = self.dom.borrow_mut();
@@ -338,6 +341,7 @@ impl PageDom {
         self.opaque_storage.clear();
         // Object URLs belong to the replaced document.
         drop(self.blob_urls.take());
+        drop(self.reflected_url_base.take());
         let viewport = self.layout.borrow().viewport().clone();
         *self.layout.borrow_mut() = lp_dom::layout::Layout::with_viewport(doc, viewport);
     }

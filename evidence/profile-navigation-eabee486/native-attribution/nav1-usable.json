@@ -1,0 +1,421 @@
+{
+  "files": {
+    "lp-js-90879-ThreadId(2).csv": {
+      "sha256": "ba342a717912a47b364895155b015916ba94213445f64755fa76334f9b02b2d6",
+      "root_count": 78223
+    },
+    "lp-runtime-90879-ThreadId(2).csv": {
+      "sha256": "9c3c11c5637968e974ae2d4a3f891cfb2d332b7d0aebf3b62135033bc9a3cfa1",
+      "root_count": 2142
+    }
+  },
+  "crates": {
+    "lp-js": {
+      "roots": 25890,
+      "cpu_ms": 521.0448880001267,
+      "wall_ms": 825.9219999994887,
+      "boundary_roots": [
+        {
+          "file": "lp-js-90879-ThreadId(2).csv",
+          "root": "26228",
+          "tag": "js.module_resolve",
+          "start_ms": 1792344220317.268,
+          "end_ms": 1792344220317.3882,
+          "cpu_ms": 0.120583
+        }
+      ],
+      "exclusive_categories": {
+        "js.call": {
+          "calls": 3059,
+          "cpu_ms": 332.80480399999976,
+          "wall_ms": 583.3979999999997
+        },
+        "native.guard": {
+          "calls": 120479,
+          "cpu_ms": 64.45104800001373,
+          "wall_ms": 75.03300000003266
+        },
+        "HTMLLinkElement": {
+          "calls": 43355,
+          "cpu_ms": 45.03866200000001,
+          "wall_ms": 57.568
+        },
+        "js.module_entry": {
+          "calls": 1,
+          "cpu_ms": 24.661455,
+          "wall_ms": 24.895
+        },
+        "js.module_script_create": {
+          "calls": 239,
+          "cpu_ms": 16.856594,
+          "wall_ms": 17.946999999999996
+        },
+        "js.eval": {
+          "calls": 40,
+          "cpu_ms": 6.920797000000001,
+          "wall_ms": 7.182000000000001
+        },
+        "js.get": {
+          "calls": 28683,
+          "cpu_ms": 5.804716000000003,
+          "wall_ms": 10.761999999999992
+        },
+        "EventTarget": {
+          "calls": 408,
+          "cpu_ms": 5.324465999999999,
+          "wall_ms": 25.111
+        },
+        "Element": {
+          "calls": 8202,
+          "cpu_ms": 3.789329000000064,
+          "wall_ms": 5.4860000000001685
+        },
+        "CSSStyleDeclaration": {
+          "calls": 9,
+          "cpu_ms": 3.422709,
+          "wall_ms": 3.724
+        },
+        "Node": {
+          "calls": 7334,
+          "cpu_ms": 2.4372099999999146,
+          "wall_ms": 3.608999999999733
+        },
+        "Document": {
+          "calls": 2421,
+          "cpu_ms": 1.9000000000000856,
+          "wall_ms": 2.2339999999999236
+        },
+        "Window": {
+          "calls": 1139,
+          "cpu_ms": 1.2086049999999988,
+          "wall_ms": 1.2579999999999836
+        },
+        "HTMLCollection": {
+          "calls": 319,
+          "cpu_ms": 1.1373619999999995,
+          "wall_ms": 1.3099999999999985
+        },
+        "realm.install_classes": {
+          "calls": 2,
+          "cpu_ms": 0.792252,
+          "wall_ms": 0.5780000000000001
+        },
+        "URL": {
+          "calls": 1737,
+          "cpu_ms": 0.634685,
+          "wall_ms": 0.96
+        },
+        "NodeList": {
+          "calls": 2908,
+          "cpu_ms": 0.6054879999999943,
+          "wall_ms": 1.042999999999996
+        },
+        "Storage": {
+          "calls": 36,
+          "cpu_ms": 0.571581,
+          "wall_ms": 0.5770000000000001
+        },
+        "js.set": {
+          "calls": 1151,
+          "cpu_ms": 0.48111399999999965,
+          "wall_ms": 0.6430000000000002
+        },
+        "js.coerce": {
+          "calls": 2382,
+          "cpu_ms": 0.4426689999999998,
+          "wall_ms": 0.808
+        },
+        "realm.create_child": {
+          "calls": 2,
+          "cpu_ms": 0.362917,
+          "wall_ms": 0.351
+        },
+        "HTMLElement": {
+          "calls": 70,
+          "cpu_ms": 0.22030199999999997,
+          "wall_ms": 0.16500000000000004
+        },
+        "html.parse_step": {
+          "calls": 3,
+          "cpu_ms": 0.21437499999999998,
+          "wall_ms": 0.215
+        },
+        "js.module_resolve": {
+          "calls": 239,
+          "cpu_ms": 0.1957349999999998,
+          "wall_ms": 0.1320000000000001
+        },
+        "Performance": {
+          "calls": 466,
+          "cpu_ms": 0.128579,
+          "wall_ms": 0.2
+        },
+        "Response": {
+          "calls": 48,
+          "cpu_ms": 0.121376,
+          "wall_ms": 0.128
+        },
+        "HTMLInputElement": {
+          "calls": 152,
+          "cpu_ms": 0.08916000000000003,
+          "wall_ms": 0.11400000000000006
+        },
+        "Headers": {
+          "calls": 26,
+          "cpu_ms": 0.086963,
+          "wall_ms": 0.085
+        },
+        "MutationObserver": {
+          "calls": 2,
+          "cpu_ms": 0.043505999999999996,
+          "wall_ms": 0.04
+        },
+        "URLSearchParams": {
+          "calls": 30,
+          "cpu_ms": 0.038,
+          "wall_ms": 0.047999999999999994
+        },
+        "MessagePort": {
+          "calls": 12,
+          "cpu_ms": 0.036003999999999994,
+          "wall_ms": 0.03900000000000001
+        },
+        "Location": {
+          "calls": 10,
+          "cpu_ms": 0.033124,
+          "wall_ms": 0.035
+        },
+        "js.construct": {
+          "calls": 2,
+          "cpu_ms": 0.031625,
+          "wall_ms": 0.031
+        },
+        "MediaQueryList": {
+          "calls": 43,
+          "cpu_ms": 0.030792,
+          "wall_ms": 0.04
+        },
+        "Attr": {
+          "calls": 58,
+          "cpu_ms": 0.029170000000000015,
+          "wall_ms": 0.03900000000000003
+        },
+        "AbortController": {
+          "calls": 42,
+          "cpu_ms": 0.01929,
+          "wall_ms": 0.031
+        },
+        "History": {
+          "calls": 5,
+          "cpu_ms": 0.015459,
+          "wall_ms": 0.018
+        },
+        "AbortSignal": {
+          "calls": 56,
+          "cpu_ms": 0.013377,
+          "wall_ms": 0.021000000000000005
+        },
+        "HTMLTableElement": {
+          "calls": 2,
+          "cpu_ms": 0.010709,
+          "wall_ms": 0.009000000000000001
+        },
+        "Event": {
+          "calls": 21,
+          "cpu_ms": 0.008377,
+          "wall_ms": 0.016
+        },
+        "NamedNodeMap": {
+          "calls": 34,
+          "cpu_ms": 0.007541999999999999,
+          "wall_ms": 0.011000000000000003
+        },
+        "Navigator": {
+          "calls": 7,
+          "cpu_ms": 0.0072499999999999995,
+          "wall_ms": 0.009000000000000001
+        },
+        "URLSearchParams Iterator": {
+          "calls": 5,
+          "cpu_ms": 0.005084999999999999,
+          "wall_ms": 0.002
+        },
+        "Text": {
+          "calls": 14,
+          "cpu_ms": 0.004376,
+          "wall_ms": 0.008
+        },
+        "DOMRect": {
+          "calls": 8,
+          "cpu_ms": 0.002333,
+          "wall_ms": 0.004
+        },
+        "HTMLImageElement": {
+          "calls": 1,
+          "cpu_ms": 0.002125,
+          "wall_ms": 0.002
+        },
+        "MessageChannel": {
+          "calls": 2,
+          "cpu_ms": 0.001333,
+          "wall_ms": 0.002
+        },
+        "DOMTokenList": {
+          "calls": 1,
+          "cpu_ms": 0.000458,
+          "wall_ms": 0.001
+        }
+      },
+      "root_kinds": {
+        "realm.create_child": {
+          "count": 2,
+          "cpu_ms": 3.941458,
+          "wall_ms": 4.062,
+          "value_median_ms": 0.0,
+          "value_max_ms": 0.0
+        },
+        "js.get": {
+          "count": 183,
+          "cpu_ms": 0.16909100000000007,
+          "wall_ms": 0.1970000000000001,
+          "value_median_ms": 0.0,
+          "value_max_ms": 0.0
+        },
+        "js.set": {
+          "count": 68,
+          "cpu_ms": 0.037204000000000015,
+          "wall_ms": 0.05200000000000003,
+          "value_median_ms": 0.0,
+          "value_max_ms": 0.0
+        },
+        "js.eval": {
+          "count": 38,
+          "cpu_ms": 8.057167000000002,
+          "wall_ms": 8.334999999999997,
+          "value_median_ms": 0.0,
+          "value_max_ms": 0.0
+        },
+        "js.call": {
+          "count": 115,
+          "cpu_ms": 70.98233599999999,
+          "wall_ms": 79.71100000000003,
+          "value_median_ms": 0.0,
+          "value_max_ms": 0.0
+        },
+        "html.parse_step": {
+          "count": 3,
+          "cpu_ms": 0.21437499999999998,
+          "wall_ms": 0.215,
+          "value_median_ms": 0.0,
+          "value_max_ms": 0.0
+        },
+        "js.module_entry": {
+          "count": 1,
+          "cpu_ms": 31.978833,
+          "wall_ms": 32.226,
+          "value_median_ms": 0.0,
+          "value_max_ms": 0.0
+        },
+        "js.module_resolve": {
+          "count": 238,
+          "cpu_ms": 384.58516300000025,
+          "wall_ms": 674.5459999999996,
+          "value_median_ms": 0.0,
+          "value_max_ms": 0.0
+        },
+        "native.guard": {
+          "count": 25242,
+          "cpu_ms": 21.07926100000141,
+          "wall_ms": 26.578000000008206,
+          "value_median_ms": 0.0,
+          "value_max_ms": 0.0
+        }
+      }
+    },
+    "lp-runtime": {
+      "roots": 619,
+      "cpu_ms": 502.03138699999965,
+      "wall_ms": 805.2120000000016,
+      "boundary_roots": [
+        {
+          "file": "lp-runtime-90879-ThreadId(2).csv",
+          "root": "104",
+          "tag": "wait.remote",
+          "start_ms": 1792344219166.2651,
+          "end_ms": 1792344219351.5432,
+          "cpu_ms": 0.004084
+        },
+        {
+          "file": "lp-runtime-90879-ThreadId(2).csv",
+          "root": "724",
+          "tag": "task.remote",
+          "start_ms": 1792344220317.2659,
+          "end_ms": 1792344220317.398,
+          "cpu_ms": 0.131417
+        }
+      ],
+      "exclusive_categories": {
+        "task.remote": {
+          "calls": 323,
+          "cpu_ms": 433.2177230000001,
+          "wall_ms": 724.09
+        },
+        "task.local": {
+          "calls": 268,
+          "cpu_ms": 54.086493999999966,
+          "wall_ms": 60.84400000000012
+        },
+        "task.timer": {
+          "calls": 8,
+          "cpu_ms": 13.134168000000003,
+          "wall_ms": 14.625
+        },
+        "task.checkpoint": {
+          "calls": 599,
+          "cpu_ms": 1.4860819999999986,
+          "wall_ms": 1.758999999999992
+        },
+        "wait.remote": {
+          "calls": 20,
+          "cpu_ms": 0.10692000000000003,
+          "wall_ms": 3.8939999999999997
+        }
+      },
+      "root_kinds": {
+        "task.remote": {
+          "count": 323,
+          "cpu_ms": 434.18451900000014,
+          "wall_ms": 725.279,
+          "value_median_ms": 9.809875,
+          "value_max_ms": 301.371917
+        },
+        "wait.remote": {
+          "count": 20,
+          "cpu_ms": 0.10692000000000003,
+          "wall_ms": 3.8939999999999997,
+          "value_median_ms": 234.9687505,
+          "value_max_ms": 498.332583
+        },
+        "task.local": {
+          "count": 268,
+          "cpu_ms": 54.56461399999997,
+          "wall_ms": 61.37399999999996,
+          "value_median_ms": 8.3031665,
+          "value_max_ms": 175.776875
+        },
+        "task.timer": {
+          "count": 8,
+          "cpu_ms": 13.175334,
+          "wall_ms": 14.665000000000001,
+          "value_median_ms": 30.003208,
+          "value_max_ms": 248.211374
+        }
+      }
+    }
+  },
+  "window_epoch_ms": [
+    1792344219348.2942,
+    1792344220317.3262
+  ],
+  "limits": "Separate crate interval trees overlap: do not add lp-js to lp-runtime. Boundary roots excluded without prorating. Native categories may include unwrapped FFI/JS; diagnostics overhead is not a baseline speed measurement."
+}

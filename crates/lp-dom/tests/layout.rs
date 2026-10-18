@@ -1579,7 +1579,10 @@ fn position_client_and_scroll_dimensions() {
     assert_eq!(p.offset_w(html), p.scroll_w(html));
 
     // scrollWidthMarqueeLoop
+    // A marquee viewport has an explicit size; an automatic parent
+    // correctly grows with its children and cannot be outgrown by cloning.
     let track = p.add("div");
+    p.style(track, "height: 100px");
     let lane = p.add_to(track, "div");
     let item = p.add_to(lane, "span");
     p.text(item, "item");
@@ -1775,7 +1778,10 @@ fn position_scroll_heights() {
     assert_eq!(p.offset_h(html).max(p.client_h(html)), p.scroll_h(html));
 
     // scrollHeightMarqueeLoop
+    // A marquee viewport has an explicit size; an automatic parent
+    // correctly grows with its children and cannot be outgrown by cloning.
     let track = p.add("div");
+    p.style(track, "height: 100px");
     let lane = p.add_to(track, "div");
     let item = p.add_to(lane, "div");
     p.text(item, "item");
@@ -1870,10 +1876,10 @@ fn position_scroll_offsets() {
     p.set_scroll_top(sb, 9999);
     assert_eq!(p.layout.scroll_top(sb), 400);
     let auto = p.id("sheetAuto");
-    assert_eq!(p.client_h(auto), 500.0);
+    assert_eq!(p.client_h(auto), 505.0); // child starts 5px below its parent
     p.set_scroll_top(auto, 9999);
     assert_eq!(p.layout.scroll_top(auto), 9999);
-    assert_eq!(p.client_h(p.id("inlineAuto")), 500.0);
+    assert_eq!(p.client_h(p.id("inlineAuto")), 505.0);
     assert_eq!(p.client_h(p.id("sheetVh")), p.layout.inner_height() as f64 / 10.0);
 
     // textWrapsAtExplicitWidth
@@ -2028,8 +2034,8 @@ fn window_scroll() {
     let nested_root = p.add("body");
     let nested_child = p.add_to(nested_root, "div");
     p.style(nested_child, "height: 300px");
-    assert_eq!(p.client_h(nested_root), 300.0);
-    assert_eq!(p.scroll_h(nested_root), 300.0);
+    assert_eq!(p.client_h(nested_root), 305.0);
+    assert_eq!(p.scroll_h(nested_root), 305.0);
     p.remove(nested_root);
 
     // nested_root_tags_extend_the_document
@@ -2330,4 +2336,87 @@ fn element_scroll_moves_rects_hit_testing_and_reveal() {
     let (c, b) = (q.id("c"), q.id("b"));
     q.layout.scroll_into_view_if_needed(&q.dom, b);
     assert_eq!(q.layout.scroll_top(c), 0);
+}
+
+#[test]
+fn automatic_parent_box_encloses_nested_in_flow_children() {
+    for pointer in ["", "style='pointer-events:none'", "class=dead"] {
+        let p = page(&format!("<style>.dead{{pointer-events:none}}</style><table><tr><td style='height:26px'><div><div><div id=wrap tabindex=0 style='position:relative;display:flex'><div style='display:flex'><div {pointer}><button id=button>CPT</button></div></div></div></div></div></td></tr></table>"));
+        let button = p.id("button");
+        let wrap = p.id("wrap");
+        let br = p.rect(button);
+        let wr = p.rect(wrap);
+        assert!(
+            wr.top() <= br.top() && wr.bottom() >= br.bottom(),
+            "automatic parent {wr:?} must enclose nested normal-flow child {br:?}"
+        );
+        let (x, y) = p.center(button);
+        let hit = p.efp(x, y).expect("hit");
+        assert!(p.contains(wrap, hit), "button center must hit its clickable subtree, not {}", p.tag(hit));
+    }
+}
+
+#[test]
+fn automatic_height_tracks_nested_geometry_without_overriding_explicit_height() {
+    let mut p=page("<div id=auto><div><div id=child style='height:40px'>x</div></div></div><div id=fixed style='height:3px'><div style='height:40px'></div></div>");
+    let a = p.id("auto");
+    let child = p.id("child");
+    let fixed = p.id("fixed");
+    assert!(p.rect(a).bottom() >= p.rect(child).bottom());
+    assert_eq!(p.rect(fixed).height, 3.0);
+    assert!(p.scroll_h(a) >= p.client_h(a));
+    p.style(child, "height:80px");
+    assert!(p.rect(a).bottom() >= p.rect(child).bottom());
+    let expanded = p.rect(a).height;
+    p.remove(child);
+    assert!(p.rect(a).height < expanded);
+}
+
+#[test]
+#[ignore = "bounded same-host geometry timing diagnostic"]
+fn automatic_height_timing_diagnostic() {
+    let mut html = String::from("<div id=outer>");
+    for _ in 0..1000 {
+        html.push_str("<div><div><button>x</button></div></div>");
+    }
+    html.push_str("</div>");
+    let mut p = page(&html);
+    let outer = p.id("outer");
+    let start = std::time::Instant::now();
+    let first = p.rect(outer);
+    let cold = start.elapsed();
+    let start = std::time::Instant::now();
+    for _ in 0..1000 {
+        std::hint::black_box(p.rect(outer));
+    }
+    let warm = start.elapsed();
+    let start = std::time::Instant::now();
+    for i in 0..10 {
+        p.set(outer, "data-version", &i.to_string());
+        std::hint::black_box(p.rect(outer));
+    }
+    eprintln!(
+        "geometry 4004nodes cold_us={} warm1000_us={} mutation10_us={} height={}",
+        cold.as_micros(),
+        warm.as_micros(),
+        start.elapsed().as_micros(),
+        first.height
+    );
+}
+
+#[test]
+fn automatic_height_invalidates_for_hidden_subtrees_and_stylesheet_changes() {
+    let mut p =
+        page("<style>.tall{height:90px}</style><div id=outer><div><span id=child class=tall>x</span></div></div>");
+    let outer = p.id("outer");
+    let child = p.id("child");
+    let tall = p.rect(outer).height;
+    p.style(child, "display:none");
+    assert!(p.rect(outer).height < tall);
+    p.style(child, "");
+    assert_eq!(p.rect(outer).height, tall);
+    p.set(child, "class", "");
+    assert!(p.rect(outer).height < tall);
+    p.set(child, "class", "tall");
+    assert_eq!(p.rect(outer).height, tall);
 }

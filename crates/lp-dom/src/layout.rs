@@ -39,6 +39,10 @@
 //! testing (`ancestor_scroll_offset`), and `scrollIntoView[IfNeeded]` reveals
 //! the element inside already-scrolled ancestors; upstream applies only the
 //! window scroll.
+//! Automatic non-root heights also enclose normal-flow child boxes at their
+//! synthetic tree-order offsets. The upstream direct-child sum alone can
+//! place nested children outside an automatic ancestor's box. Explicit sizes,
+//! positions and width approximations are unchanged; this is not CSS layout.
 //!
 //! Not ported (honest omissions):
 //! - `scroll` / `scrollend` event scheduling and throttling (Element.zig:
@@ -64,6 +68,7 @@
 use cssparser::{Parser, Token};
 use markup5ever::{local_name, ns};
 use rustc_hash::FxHashMap;
+use std::cell::RefCell;
 
 use crate::dom::Dom;
 use crate::media::Viewport;
@@ -144,6 +149,13 @@ pub struct Layout {
     window_scroll: (u32, u32),
     scroll_generation: u64,
     element_scroll: FxHashMap<NodeId, (u32, u32)>,
+    automatic_heights: RefCell<AutomaticHeights>,
+}
+
+#[derive(Default)]
+struct AutomaticHeights {
+    stamp: Option<(u64, u64, u32, u32)>,
+    values: FxHashMap<NodeId, f64>,
 }
 
 const NODE_HEIGHT: f64 = 5.0;
@@ -160,7 +172,13 @@ impl Layout {
     }
 
     pub fn with_style(style: StyleEngine) -> Self {
-        Layout { style, window_scroll: (0, 0), scroll_generation: 0, element_scroll: FxHashMap::default() }
+        Layout {
+            style,
+            window_scroll: (0, 0),
+            scroll_generation: 0,
+            element_scroll: FxHashMap::default(),
+            automatic_heights: RefCell::default(),
+        }
     }
 
     /// Changes when DOM/style/viewport/focus/hover or a scroll offset changes.
@@ -319,7 +337,66 @@ impl Layout {
         if axis == Axis::Width && (self.owned(dom, id).is_none() || self.style.width_from_containing_block(dom, id)) {
             return own.value;
         }
+        if axis == Axis::Height && self.owned(dom, id).is_some() {
+            return self.automatic_height(dom, idx);
+        }
         own.value.max(self.content_axis_idx(dom, idx, axis))
+    }
+
+    /// Enclose normal-flow children at their actual synthetic positions.
+    /// Summing only direct-child fallback sizes can leave a nested child
+    /// outside every automatic ancestor. Positions and explicit sizes remain
+    /// unchanged; this is not a CSS block/flex layout implementation.
+    fn automatic_height(&self, dom: &Dom, root: u32) -> f64 {
+        let stamp = self.style.observation_stamp(dom);
+        let mut cache = self.automatic_heights.borrow_mut();
+        if cache.stamp != Some(stamp) {
+            cache.values.clear();
+            cache.stamp = Some(stamp);
+        }
+        let id = dom.id_of(root);
+        if let Some(&height) = cache.values.get(&id) {
+            return height;
+        }
+        // One iterative subtree traversal, followed by a bottom-up pass.
+        // Count even hidden/text nodes, exactly as document_position does.
+        // Cached descendants make subsequent rectangle queries constant-time
+        // for height, without rescanning the document or recursive Rust calls.
+        let mut nodes = Vec::new();
+        let mut positions = FxHashMap::default();
+        let mut node = root;
+        let mut position = 0.0;
+        while node != NIL {
+            if dom.n(node).is_element() {
+                nodes.push(node);
+                positions.insert(node, position);
+            }
+            position += NODE_HEIGHT;
+            node = dom.following_in(node, root);
+        }
+        for node in nodes.into_iter().rev() {
+            let id = dom.id_of(node);
+            if cache.values.contains_key(&id) {
+                continue;
+            }
+            let own = self.element_axis_idx(dom, node, Axis::Height);
+            let mut height = own.value;
+            if !own.explicit && !self.is_root_idx(dom, node) {
+                height = height.max(self.content_axis_idx(dom, node, Axis::Height));
+                for child in dom.child_idx_iter(node) {
+                    let child_id = dom.id_of(child);
+                    let Some(style) = self.style.computed(dom, child_id) else { continue };
+                    if style.in_display_none || style.absolutely_positioned || style.floated {
+                        continue;
+                    }
+                    if let Some(&child_height) = cache.values.get(&child_id) {
+                        height = height.max(positions[&child] - positions[&node] + child_height);
+                    }
+                }
+            }
+            cache.values.insert(id, height);
+        }
+        cache.values[&dom.id_of(root)]
     }
 
     /// `contentAxis` (Element.zig:1881-1912): direct child elements laid end
@@ -425,7 +502,7 @@ impl Layout {
         if self.is_root_container(dom, el) {
             return self.root_scroll_size(dom, el, axis).unwrap_or(own);
         }
-        own.max(self.content_axis(dom, el, axis))
+        own.max(self.content_axis(dom, el, axis)).max(self.box_axis(dom, el, axis))
     }
 
     /// `scrollExtent` (Element.zig:1845-1858): `None` where no limit can be

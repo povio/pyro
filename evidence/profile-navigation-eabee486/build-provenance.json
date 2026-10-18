@@ -1,0 +1,21 @@
+{
+  "commit": "eabee486709f79167520a46887cd6f303b26711d",
+  "tree": "a30b943b31b44e211e06b5184023877a6afac7f0",
+  "cwd": "/private/tmp/lp-profile-main-eabee486",
+  "build_command": "CARGO_PROFILE_RELEASE_DEBUG=0 cargo build --release -p lightningpanda",
+  "build_log": "/private/tmp/lp-profile-main-eabee486-build.log",
+  "sign_command": "cp target/release/lightningpanda target/release/lightningpanda-jit; codesign --force --sign - --entitlements scripts/macos/jit.entitlements target/release/lightningpanda-jit",
+  "binary_sha256": "66e7448e07666176e9650ba714cba04ecc570c65f6e6139ad5bd759f5b49ad88",
+  "jit_entitlement": true,
+  "polling_traps": "explicit true; unchanged runtime also defaults true",
+  "shared_cache_lanes_MiB": [
+    0,
+    64
+  ],
+  "private_context_cache_MiB": 64,
+  "cache_disabled": false,
+  "browser_processes": 4,
+  "navigations_per_process": 3,
+  "dom_readiness_marker": "unavailable: null for every navigation; no inferred timestamp",
+  "suite_claim": false
+}

@@ -1,0 +1,152 @@
+[
+  {
+    "lane": "before",
+    "metadata": {
+      "browser_commit": "eabee486709f79167520a46887cd6f303b26711d",
+      "browser_sha256": "66e7448e07666176e9650ba714cba04ecc570c65f6e6139ad5bd759f5b49ad88",
+      "tos_commit": "f9fde4aa0dce7d1d7a1ffebffe3306399973cd80",
+      "run_slug": "lpgeobefore-1018-173234",
+      "template_database": "fe_e2e_w2tpl_f9fde4aa_batch16fx_template",
+      "binary": "/private/tmp/lp-profile-main-eabee486/target/release/lightningpanda-jit",
+      "worktree": "/private/tmp/lp-tos-f9f-batch16-fx",
+      "auth": "backend test-token -> localStorage; no UI login",
+      "version_gate": "direct scripts/run-fe-e2e.mjs with playwright.routed.config.ts; same documented bypass as upstream baseline",
+      "measurement": "functional coverage only; time -l is whole harness, not browser CPU/RSS",
+      "lightningpanda_shared_asset_cache_mb": "64",
+      "expected_selected_cases": 3,
+      "specs": [
+        "e2e/logistics/positions-commercial-parties.e2e.ts",
+        "e2e/logistics/positions-route.e2e.ts"
+      ],
+      "exit_code": 1,
+      "harness_wall_seconds": 80.233333125
+    },
+    "cases": [
+      {
+        "title": "updates the Route tab incoterm",
+        "status": "failed",
+        "duration_ms": 14310,
+        "location": "e2e/logistics/positions-route.e2e.ts",
+        "error_class": "timeout or assertion; retained raw report local"
+      },
+      {
+        "title": "updates the Route tab transport mode",
+        "status": "timedOut",
+        "duration_ms": 30550,
+        "location": "e2e/logistics/positions-route.e2e.ts",
+        "error_class": "timeout or assertion; retained raw report local"
+      },
+      {
+        "title": "keeps Document Party rows in place when assigning an HBL reference",
+        "status": "timedOut",
+        "duration_ms": 31229,
+        "location": "e2e/logistics/positions-commercial-parties.e2e.ts",
+        "error_class": "timeout or assertion; retained raw report local"
+      }
+    ],
+    "cleanup_run_databases_remaining": 0,
+    "ledger_templates_retained": 3,
+    "log_sha256": "7c99777d1c23a31f88bf6babfcacdc11acb6de92849c6ea860d406d8e2e761a2",
+    "original_report_sha256": "dd6a44cc30763216525e4448c3dc5912adba468deb1b84c8982142bb836bfc9b",
+    "selection": {
+      "recorded_utc": "2026-10-18T17:30:59.434216+00:00",
+      "criteria": "Previously retained W2-26 HBL and W3-12 incoterm/transport-mode geometry failures; exactmain before and isolated native height candidate after, same unchanged assertions/auth/manifest",
+      "files": [
+        "e2e/logistics/positions-commercial-parties.e2e.ts",
+        "e2e/logistics/positions-route.e2e.ts"
+      ],
+      "cases": [
+        {
+          "file": "e2e/logistics/positions-commercial-parties.e2e.ts",
+          "title": "keeps Document Party rows in place when assigning an HBL reference",
+          "sha256": "759e57b6f2bf4a15394c9386d301a66828d5e19a95703ecf44aa3f8a504d5785"
+        },
+        {
+          "file": "e2e/logistics/positions-route.e2e.ts",
+          "title": "updates the Route tab incoterm",
+          "sha256": "2fea8ecb1ce89e3b0163c70c77e6cc683a58874b010fc0bcf97eaec135b5e07c"
+        },
+        {
+          "file": "e2e/logistics/positions-route.e2e.ts",
+          "title": "updates the Route tab transport mode",
+          "sha256": "2fea8ecb1ce89e3b0163c70c77e6cc683a58874b010fc0bcf97eaec135b5e07c"
+        }
+      ]
+    }
+  },
+  {
+    "lane": "after",
+    "metadata": {
+      "browser_commit": "9d33aa2819c6624906c4be71944364e09169d96b",
+      "browser_sha256": "72812cf38ef7e3b3aa476b67987e90d9f0b5875d27474163c020d0af436e166b",
+      "tos_commit": "f9fde4aa0dce7d1d7a1ffebffe3306399973cd80",
+      "run_slug": "lpgeoafter-1018-173448",
+      "template_database": "fe_e2e_w2tpl_f9fde4aa_batch16fx_template",
+      "binary": "/private/tmp/lp-native-select-geometry/target/release/lightningpanda",
+      "worktree": "/private/tmp/lp-tos-f9f-batch16-fx",
+      "auth": "backend test-token -> localStorage; no UI login",
+      "version_gate": "direct scripts/run-fe-e2e.mjs with playwright.routed.config.ts; same documented bypass as upstream baseline",
+      "measurement": "functional coverage only; time -l is whole harness, not browser CPU/RSS",
+      "lightningpanda_shared_asset_cache_mb": "64",
+      "expected_selected_cases": 3,
+      "specs": [
+        "e2e/logistics/positions-commercial-parties.e2e.ts",
+        "e2e/logistics/positions-route.e2e.ts"
+      ],
+      "exit_code": 1,
+      "harness_wall_seconds": 40.756513292
+    },
+    "cases": [
+      {
+        "title": "updates the Route tab incoterm",
+        "status": "passed",
+        "duration_ms": 3453,
+        "location": "e2e/logistics/positions-route.e2e.ts",
+        "error_class": null
+      },
+      {
+        "title": "updates the Route tab transport mode",
+        "status": "passed",
+        "duration_ms": 2732,
+        "location": "e2e/logistics/positions-route.e2e.ts",
+        "error_class": null
+      },
+      {
+        "title": "keeps Document Party rows in place when assigning an HBL reference",
+        "status": "timedOut",
+        "duration_ms": 31205,
+        "location": "e2e/logistics/positions-commercial-parties.e2e.ts",
+        "error_class": "timeout or assertion; retained raw report local"
+      }
+    ],
+    "cleanup_run_databases_remaining": 0,
+    "ledger_templates_retained": 3,
+    "log_sha256": "5168ff1764d72516a70f463a0df0de41efbc636c6c18f62e0e068265b0165830",
+    "original_report_sha256": "600ba9c466ac7e5e31e52760ecfeb7814723f610d80532e213cd0398487a3619",
+    "selection": {
+      "recorded_utc": "2026-10-18T17:30:59.434216+00:00",
+      "criteria": "Previously retained W2-26 HBL and W3-12 incoterm/transport-mode geometry failures; exactmain before and isolated native height candidate after, same unchanged assertions/auth/manifest",
+      "files": [
+        "e2e/logistics/positions-commercial-parties.e2e.ts",
+        "e2e/logistics/positions-route.e2e.ts"
+      ],
+      "cases": [
+        {
+          "file": "e2e/logistics/positions-commercial-parties.e2e.ts",
+          "title": "keeps Document Party rows in place when assigning an HBL reference",
+          "sha256": "759e57b6f2bf4a15394c9386d301a66828d5e19a95703ecf44aa3f8a504d5785"
+        },
+        {
+          "file": "e2e/logistics/positions-route.e2e.ts",
+          "title": "updates the Route tab incoterm",
+          "sha256": "2fea8ecb1ce89e3b0163c70c77e6cc683a58874b010fc0bcf97eaec135b5e07c"
+        },
+        {
+          "file": "e2e/logistics/positions-route.e2e.ts",
+          "title": "updates the Route tab transport mode",
+          "sha256": "2fea8ecb1ce89e3b0163c70c77e6cc683a58874b010fc0bcf97eaec135b5e07c"
+        }
+      ]
+    }
+  }
+]

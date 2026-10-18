@@ -28,6 +28,11 @@ signal-based traps do not stop JIT-compiled loops, so `lp_js::configure_process`
 start of the CLI) sets `JSC_usePollingTraps=true` unless that variable is already set; script timeouts and termination
 depend on it.
 
+The release profile keeps `strip = "none"`: Cargo otherwise strips after linking when
+`CARGO_PROFILE_RELEASE_DEBUG=0`, which removes the JIT entitlement added by the linker wrapper.
+An explicit strip override requires re-signing the final binary afterward. Check this build contract with
+`python3 scripts/macos/check-jit-signing.py` (macOS; compiles a small temporary executable).
+
 ## Usage
 
 ```sh
