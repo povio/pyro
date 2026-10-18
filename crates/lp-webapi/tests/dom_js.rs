@@ -2266,10 +2266,7 @@ fn dom_parser_parses_inert_html_documents() {
         eval(r, "const p=document.importNode(d.querySelector('p'),true); document.getElementById('host').appendChild(p); document.getElementById('host').textContent"),
         "hi!"
     );
-    assert_eq!(
-        eval(r, "try{new DOMParser().parseFromString('<a/>','application/xml')}catch(e){e.name}"),
-        "NotSupportedError"
-    );
+    assert_eq!(eval(r, "new DOMParser().parseFromString('<a/>','application/xml').documentElement.nodeName"), "a");
     assert_eq!(eval(r, "try{new DOMParser().parseFromString('x','text/plain')}catch(e){e.name}"), "TypeError");
     assert_eq!(eval(r, "try{DOMParser()}catch(e){e.name}"), "TypeError");
 }
@@ -3287,4 +3284,59 @@ fn drag_event_data_transfer_identity_survives_isolated_world_and_gc() {
         e.engine.drain_finalized();
     }
     assert_eq!(eval(&e.main, "refs.map(w => w.deref() === undefined).join()"), "true,true,true");
+}
+
+#[test]
+fn dom_parser_xml_office_namespaces_and_live_qualified_queries() {
+    let e = env("<body>");
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"globalThis.xml=new DOMParser().parseFromString('<w:document xmlns:w="urn:word" xmlns:x="urn:other"><w:body><w:p w:id="1"><w:t>Hello &amp; XML</w:t></w:p><x:p/><p/></w:body></w:document>','application/xml'); [xml instanceof XMLDocument,xml.contentType,xml.URL===document.URL,xml.documentElement.nodeName,xml.getElementsByTagName('w:p').length,xml.getElementsByTagName('p').length,xml.getElementsByTagNameNS('urn:word','p').length,xml.getElementsByTagNameNS('urn:other','p').length,xml.getElementsByTagNameNS(null,'p').length,xml.getElementsByTagNameNS('*','p').length,xml.getElementsByTagNameNS('urn:word','*').length,xml.getElementsByTagName('w:p')[0].getAttributeNS('urn:word','id'),xml.getElementsByTagName('w:t')[0].textContent].join('|')"#
+        ),
+        "true|application/xml|true|w:document|1|1|1|1|1|3|4|1|Hello & XML"
+    );
+    assert_eq!(eval(&e.main, "[xml.lookupNamespaceURI('w'),xml.getElementsByTagName('w:t')[0].firstChild.lookupNamespaceURI('x'),xml.documentElement.isDefaultNamespace(null)].join()"), "urn:word,urn:other,true");
+    assert_eq!(eval(&e.main, "globalThis.paragraphs=xml.getElementsByTagNameNS('urn:word','p');xml.documentElement.appendChild(xml.createElementNS('urn:word','other:p'));paragraphs.length+':'+xml.documentElement.getElementsByTagNameNS('urn:word','p').length"), "2:2");
+    assert_eq!(
+        eval(&e.main, "xml.getElementsByTagName('w:body')[0].getElementsByTagNameNS('urn:other','*').length"),
+        "1"
+    );
+}
+
+#[test]
+fn dom_parser_xml_types_case_cdata_errors_and_inert_adoption() {
+    let e = env("<body>");
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"['text/xml','application/xml','application/xhtml+xml','image/svg+xml'].map(type=>{const d=new DOMParser().parseFromString('<R><Item/><item/></R>',type);return [d.contentType,d.getElementsByTagName('Item').length,d.getElementsByTagName('item').length].join(':')}).join('|')"#
+        ),
+        "text/xml:1:1|application/xml:1:1|application/xhtml+xml:1:1|image/svg+xml:1:1"
+    );
+    assert_eq!(eval(&e.main, "const d=new DOMParser().parseFromString('<R>a<![CDATA[<b>]]><!--c--><?work x?></R>','text/xml'); [...d.documentElement.childNodes].map(n=>n.nodeType+':'+n.nodeValue).join('|')"), "3:a|4:<b>|8:c|7:x");
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"['<r>','<r/><s/>','<r>&bad;</r>',"<!DOCTYPE r SYSTEM 'file:///unused'><r/>"].map(x=>new DOMParser().parseFromString(x,'text/xml').documentElement.localName).join()"#
+        ),
+        "parsererror,parsererror,parsererror,parsererror"
+    );
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"globalThis.inert=new DOMParser().parseFromString('<script xmlns="http://www.w3.org/1999/xhtml">window.xmlRan=1</script>','application/xhtml+xml');document.body.appendChild(document.adoptNode(inert.documentElement));typeof window.xmlRan"#
+        ),
+        "undefined"
+    );
+    let dom = e.page.dom.borrow();
+    let body = dom.body(e.page.document()).unwrap().unwrap();
+    let script = dom.last_child(body).unwrap().unwrap();
+    assert!(dom.script_info(script).unwrap().already_started);
+}
+
+#[test]
+fn dom_parser_xml_argument_reentry_and_detached_document_isolation() {
+    let e = env("<body>");
+    assert_eq!(eval(&e.main, "const old=document; const d=new DOMParser().parseFromString({toString(){document.body.textContent='converted';return '<r a=\"ok\"/>'}},{toString(){document.body.appendChild(document.createElement('p'));return 'text/xml'}});[d!==document,old===document,document.body.textContent,d.documentElement.getAttribute('a'),d.defaultView===null].join()"), "true,true,converted,ok,true");
 }

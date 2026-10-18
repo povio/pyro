@@ -157,6 +157,7 @@ pub fn child_nodes<'s>(s: &Scope<'s>, page: &PageDom, id: NodeId) -> JsResult<Ob
 pub enum CollectionKind {
     Children,
     TagName(String),
+    TagNameNs(String, String),
     ClassName(String),
     Name(String),
     Links,
@@ -184,7 +185,25 @@ fn matches_kind(dom: &Dom, root: NodeId, id: NodeId, kind: &CollectionKind) -> b
     let local = &*e.name.local;
     match kind {
         CollectionKind::TagName(t) => {
-            t == "*" || (html && local.eq_ignore_ascii_case(t)) || (!html && local == t.as_str())
+            if t == "*" {
+                return true;
+            }
+            let fold = html
+                && dom
+                    .node_document(id)
+                    .ok()
+                    .and_then(|d| dom.document_data(d).ok())
+                    .is_some_and(|d| d.kind == lp_dom::DocumentKind::Html);
+            let (prefix, wanted_local) = t.split_once(':').unwrap_or(("", t));
+            let actual_prefix = e.name.prefix.as_deref().unwrap_or("");
+            if fold {
+                actual_prefix.eq_ignore_ascii_case(prefix) && local.eq_ignore_ascii_case(wanted_local)
+            } else {
+                actual_prefix == prefix && local == wanted_local
+            }
+        }
+        CollectionKind::TagNameNs(namespace, name) => {
+            (namespace == "*" || namespace.as_str() == &*e.name.ns) && (name == "*" || name.as_str() == local)
         }
         CollectionKind::ClassName(names) => {
             let want: Vec<&str> = names.split_ascii_whitespace().collect();
