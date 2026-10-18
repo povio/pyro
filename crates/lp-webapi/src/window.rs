@@ -149,6 +149,7 @@ where
             {
                 let mut f = ev.fields.borrow_mut();
                 f.message_data = Some(data);
+                f.message_source = Some(key);
                 f.origin = origin;
             }
             crate::target::fire(&p2, key, &ev);

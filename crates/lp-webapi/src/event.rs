@@ -83,6 +83,9 @@ pub struct EventFields {
     pub new_url: String,
     pub persisted: bool,
     pub message_data: Option<Persistent>,
+    /// Same-document Window source, resolved in the observing world without
+    /// an event-to-global persistent root. Port messages have no source.
+    pub message_source: Option<TargetKey>,
     pub origin: String,
     pub(crate) data_transfer: Option<crate::data_transfer::DataTransferRef>,
 }
@@ -888,7 +891,10 @@ impl JsClass for MessageEvent {
         def.getter("data", |s, e| Ok(e.fields.borrow().message_data.as_ref().map_or(s.null(), |p| p.get(s))));
         def.getter("origin", |s, e| Ok(s.string(&e.fields.borrow().origin)));
         def.getter("lastEventId", |s, _e| Ok(s.string("")));
-        def.getter("source", |s, _e| Ok(s.null()));
+        def.getter("source", |s, e| {
+            let source = e.fields.borrow().message_source;
+            crate::target::target_value(s, &e.page, source)
+        });
         def.getter("ports", |s, _e| Ok(s.array(&[])?.value()));
     }
 }
