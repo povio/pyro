@@ -494,8 +494,11 @@ fn fetch_null_body_frontier_is_terminal_without_bytes() {
     let env = Env::new(&server.url);
     env.eval("globalThis.stage='pending';fetch('/empty').then(r=>r.text()).then(t=>{__log('js text');stage='done'})");
     env.until("stage==='done'");
+    // A null body is readable immediately at headers; it need not wait for
+    // the I/O thread's separate Finished notification. Drain owner tasks
+    // before asserting that the real transport terminal reached the hook.
+    env.finish_network_tasks();
     assert_eq!(env.frontiers().last(), Some(&(true, 0, true)));
-    assert!(env.log_index(|l| l.ends_with("t=true")).unwrap() < env.log_index(|l| l == "js text").unwrap());
 }
 
 #[test]
