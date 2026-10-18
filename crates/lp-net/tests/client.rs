@@ -13,6 +13,15 @@ use lp_net::*;
 struct Server {
     port: u16,
     log: Arc<Mutex<Vec<String>>>,
+    /// `/gated` responds only after `open_gate()`: completion under test control.
+    gate: Arc<(Mutex<bool>, std::sync::Condvar)>,
+}
+
+impl Server {
+    fn open_gate(&self) {
+        *self.gate.0.lock().unwrap() = true;
+        self.gate.1.notify_all();
+    }
 }
 
 type Parsed = (String, String, Vec<(String, String)>, Vec<u8>);
@@ -58,10 +67,13 @@ fn start_server() -> Server {
     let port = listener.local_addr().unwrap().port();
     let log = Arc::new(Mutex::new(Vec::new()));
     let log2 = log.clone();
+    let gate: Arc<(Mutex<bool>, std::sync::Condvar)> = Arc::default();
+    let gate2 = gate.clone();
     std::thread::spawn(move || {
         for stream in listener.incoming() {
             let Ok(mut stream) = stream else { continue };
             let log = log2.clone();
+            let gate = gate2.clone();
             std::thread::spawn(move || {
                 while let Some((method, path, headers, body)) = read_request(&mut stream) {
                     let hv = |k: &str| headers.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone()).unwrap_or_default();
@@ -147,6 +159,15 @@ fn start_server() -> Server {
                             format!("{method} {}", hv("x-token")).as_bytes(),
                         ),
                         (_, "/no-cors-headers") => respond(&mut stream, "200 OK", &[], b"secret"),
+                        (_, "/gated") => {
+                            let (open, cv) = &*gate;
+                            let mut open = open.lock().unwrap();
+                            while !*open {
+                                open = cv.wait(open).unwrap();
+                            }
+                            drop(open);
+                            respond(&mut stream, "200 OK", &[], b"released");
+                        }
                         (_, "/slow") => {
                             std::thread::sleep(Duration::from_secs(5));
                             respond(&mut stream, "200 OK", &[], b"late");
@@ -157,7 +178,7 @@ fn start_server() -> Server {
             });
         }
     });
-    Server { port, log }
+    Server { port, log, gate }
 }
 
 fn url(s: &Server, path: &str) -> Url {
@@ -541,11 +562,15 @@ fn loader_activity_counts_synchronously_and_each_terminal_once() {
     c.cancel(slow[2].0);
     let a = settle("L1", 0);
     assert!(a.idle_since.is_some() && a.almost_idle_since.is_some());
-    // Finished is a terminal too; a new request clears idle_since.
-    let (_, rx) = start("/plain", Some("L1"));
-    assert!(c.activity("L1").unwrap().idle_since.is_none());
+    // A new request clears idle_since; held server-side until the gate opens, so the
+    // assertion cannot race its completion. Finished is then a terminal too.
+    let (_, rx) = start("/gated", Some("L1"));
+    let a = c.activity("L1").unwrap();
+    assert_eq!((a.inflight, a.idle_since), (1, None));
+    s.open_gate();
     while !matches!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), ResponseEvent::Finished { .. }) {}
-    settle("L1", 0);
+    let a = settle("L1", 0);
+    assert!(a.idle_since.is_some(), "the finished request stamped idle again");
     // Requests without a loader are not counted.
     let (_, rx) = start("/plain", None);
     while !matches!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), ResponseEvent::Finished { .. }) {}
