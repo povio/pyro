@@ -1,0 +1,51 @@
+{
+  "completed_launches": 8,
+  "distinct_browser_pids": 8,
+  "completed_navigations": 24,
+  "assertions_per_navigation": 7,
+  "order": "ABBABAAB",
+  "group_ordinals_valid": true,
+  "sample_and_horizon_fields_valid": true,
+  "original_static_tree_unchanged_files": 1229,
+  "source_states": {
+    "A": {
+      "head": "eabee486709f79167520a46887cd6f303b26711d",
+      "status": ""
+    },
+    "B": {
+      "head": "93b1b3a7c360cd892084a7e4d538024ead798fdc",
+      "status": ""
+    },
+    "TOS": {
+      "head": "f9fde4aa0dce7d1d7a1ffebffe3306399973cd80",
+      "status": " M apps/pdfgen/src/data/common/common.models.ts\n"
+    }
+  },
+  "cleanup": {
+    "run_databases_left": 0,
+    "retained_ledger_templates": 3,
+    "runtime_reused": true,
+    "template_reused": true
+  },
+  "hashes": {
+    "observations.json": "c89f32fae9841ac46d34d8366adc86a874fb1974091bb07b80fdc8f7b5db3627",
+    "profile-nav.e2e.ts": "dac431328d13ff35ba630ded618c6540e19c6e79dc33d43e55070529f55e0f4e",
+    "collector.patch": "4ac7b3b0a9439b3ca705d968e026b6e6712c81eb6d8fd233b94722406ddaea1e",
+    "rss-sampler": "e17e429b843600737c72aa07a97c41eb537a132c648ec46659380c45500e2d5b",
+    "run.py": "8d2dbfea435b8614bc6d918d959a060fd4db267dd84f3cf7de3f8dfa84281bbb",
+    "run-owned.sh": "d57b752dddc34821f4660fdedfb80dd3afe4e5b72cd67aa9c089ce0f821195b6",
+    "cleanup.py": "340b11cc41530cf4a6eed0dc63f5d81afbe14ad4a06d43459a1229ffbdca4c14",
+    "cleanup.out": "7ae54c07e4d8f3a1464078c42c27e94291a59fbee80b838f318243d21775cc14",
+    "playwright.config.ts": "ded704d9b3f35a1a50108c6be3614e2a8fb98440c785fb09f74df2b4b020055d",
+    "selection.json": "a73427082d7e514ab0c8d5fea2d92ab86553aec7d1a75cebc6e39c8542e1a5cd",
+    "binary-provenance.json": "11958e7a8796dcbe22b0be2322f85dfa94fbdde52ea5986ae6a2d960b37a4fef",
+    "build-provenance.json": "5b04ad13d565397ac3c10460f7b8415e2a28b4c8b626c8cc6baf9c9bcd20bf82",
+    "build.log": "f6381f4adbc17f2136d98df9ad70e54542fb33a9bede710064b625984203b07a",
+    "coverage.log": "83ee1f804292f2da435cb15253f4f218e8382c5de85cfa6b47001b5bc9522eea",
+    "PLAN.md": "57af29513c85e1ddc95acc2e75c46c8d275a3040bbb5277f67fbf6035543e723",
+    "environment-exclusions.json": "e195288a7f4af80d76e338264a71252aab22f8454b867ddb1e461ab53f95a12f",
+    "static-original-tree.json": "871128394c06c87bdd90015c76676f00aa882a2783ec629754d55436ddb5c0d2",
+    "protected-binaries-after.json": "42fc8e77013c06461e0cff8c8db58f04dab949dc4c50c4f7328b28a69af407f4"
+  },
+  "fixed_result": "1 matrix test passed; no retries or replacement samples"
+}

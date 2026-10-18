@@ -1,0 +1,6 @@
+{
+  "removed": 264,
+  "bytes": 300574000,
+  "protected_unchanged": 222,
+  "df": "Filesystem   1024-blocks      Used Available Capacity  iused    ifree %iused  Mounted on\n/dev/disk3s5   239362496 207384932   3216588    99% 13968203 32165880   30%   /System/Volumes/Data\n"
+}
