@@ -12,9 +12,11 @@
 //! and the closed port drops its undelivered messages (upstream
 //! MessagePort.zig, Chromium).
 //!
-//! Lifetime: a started, entangled, open port is pinned so its listeners keep
-//! running without a JS reference (HTML keeps such ports alive); it is
-//! unpinned on close, and every pin is released with the page.
+//! Lifetime: a started, open port that is entangled or still holds
+//! undelivered messages is pinned so its listeners keep running without a JS
+//! reference (HTML keeps such ports alive). The pin is re-evaluated on
+//! enqueue, start, delivery and close (including the peer's), and every pin is
+//! released with the page. A queued but unstarted port is not pinned.
 //!
 //! Gaps (explicit): transferring anything, including MessagePorts, throws
 //! NotSupportedError (`postMessage(m, [port])` or `{transfer}`), so ports never
@@ -39,6 +41,8 @@ pub struct PortInner {
     queue: RefCell<VecDeque<Persistent>>,
     started: Cell<bool>,
     closed: Cell<bool>,
+    /// Whether the wrapper is currently pinned (see `update_pin`).
+    pinned: Cell<bool>,
 }
 
 impl PortInner {
@@ -54,6 +58,34 @@ impl PortInner {
         self.queue.borrow_mut().push_back(data);
         if self.started.get() {
             self.schedule_one();
+        }
+        self.update_pin();
+    }
+
+    /// Keeps the wrapper (and so this `PortInner` and its listeners) alive
+    /// exactly while the port can still deliver: started, open, and either
+    /// entangled or holding undelivered messages (HTML keeps such ports
+    /// alive). Re-evaluated on enqueue, start, delivery and close (including
+    /// the peer's), so the pin is dropped once it is no longer needed. A
+    /// queued but unstarted port is not pinned: its messages wait for
+    /// `start()`, so if nothing can reach the port to start it, it may go.
+    fn update_pin(&self) {
+        let desired = self.started.get()
+            && !self.closed.get()
+            && (self.peer.borrow().upgrade().is_some() || !self.queue.borrow().is_empty());
+        if desired == self.pinned.get() {
+            return;
+        }
+        let Some(realm) = self.realm.upgrade() else { return };
+        let Ok(s) = realm.scope() else { return };
+        if desired {
+            if let Ok(Some(wrapper)) = target_object(&s, self.page(), self.target.key) {
+                pin_target(&s, self.page(), self.target.key, wrapper);
+                self.pinned.set(true);
+            }
+        } else {
+            unpin_target(&s, self.page(), self.target.key);
+            self.pinned.set(false);
         }
     }
 
@@ -79,38 +111,31 @@ impl PortInner {
             f.origin = String::new();
         }
         fire(self.page(), self.target.key, &ev);
+        self.update_pin();
     }
 
-    fn start(self: &Rc<Self>, s: &Scope<'_>) -> JsResult<()> {
+    fn start(self: &Rc<Self>) {
         if self.started.get() || self.closed.get() {
-            return Ok(());
+            return;
         }
         self.started.set(true);
-        if self.peer.borrow().upgrade().is_some() {
-            if let Some(wrapper) = target_object(s, self.page(), self.target.key)? {
-                pin_target(s, self.page(), self.target.key, wrapper);
-            }
-        }
+        self.update_pin();
         for _ in 0..self.queue.borrow().len() {
             self.schedule_one();
         }
-        Ok(())
     }
 
-    fn close(&self, s: &Scope<'_>) {
+    fn close(&self) {
         if self.closed.replace(true) {
             return;
         }
         self.queue.borrow_mut().clear();
-        unpin_target(s, self.page(), self.target.key);
+        self.update_pin();
         if let Some(peer) = self.peer.take().upgrade() {
             peer.peer.replace(Weak::new());
-            // The peer can no longer receive anything; let it be collected.
-            if let Some(realm) = peer.realm.upgrade() {
-                if let Ok(ps) = realm.scope() {
-                    unpin_target(&ps, peer.page(), peer.target.key);
-                }
-            }
+            // The peer keeps its pin only while it still has undelivered
+            // messages (a sender's close does not drop queued messages).
+            peer.update_pin();
         }
     }
 }
@@ -148,11 +173,11 @@ impl JsClass for MessagePort {
             Ok(s.undefined())
         });
         def.method("start", 0, |s, d, _a| {
-            d.0.start(s)?;
+            d.0.start();
             Ok(s.undefined())
         });
         def.method("close", 0, |s, d, _a| {
-            d.0.close(s);
+            d.0.close();
             Ok(s.undefined())
         });
         def.accessor(
@@ -162,7 +187,7 @@ impl JsClass for MessagePort {
                 crate::target::set_event_handler(s, &d.0.target, "message", value)?;
                 // Setting onmessage implicitly starts the port (HTML §9.4.4).
                 if value.as_object().is_some() {
-                    d.0.start(s)?;
+                    d.0.start();
                 }
                 Ok(())
             },
@@ -186,6 +211,7 @@ fn new_port<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<(Object<'s>, Rc<P
         queue: RefCell::new(VecDeque::new()),
         started: Cell::new(false),
         closed: Cell::new(false),
+        pinned: Cell::new(false),
     });
     Ok((s.wrap::<MessagePort>(PortData(inner.clone()), Some(key))?, inner))
 }

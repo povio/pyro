@@ -2840,3 +2840,75 @@ fn message_channel_with_self_referencing_listener_is_collected_after_close() {
         "true,true:true"
     );
 }
+
+fn gc(e: &Env, tasks: &ObserverTasks) {
+    for _ in 0..3 {
+        e.engine.collect_garbage_now();
+        e.engine.drain_finalized();
+        e.page.after_task();
+    }
+    let _ = tasks;
+}
+
+#[test]
+fn message_port_keeps_queued_messages_across_gc_when_the_peer_closes() {
+    let e = env("<body>");
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    let r = &e.main;
+    let base = e.page.pinned_count();
+    // V1: the receiver is started; the sender posts and then closes before delivery.
+    eval(r, "window.got = []; window.ref1 = (() => { const ch = new MessageChannel(); ch.port1.onmessage = (ev) => got.push(ev.data); ch.port2.postMessage('v1'); ch.port2.close(); return new WeakRef(ch.port1); })(); 1");
+    gc(&e, &tasks);
+    tasks.drain();
+    assert_eq!(eval(r, "got.join()"), "v1", "queued message survives GC after the peer closed");
+    // After draining, the disentangled receiver is no longer pinned and can be collected.
+    gc(&e, &tasks);
+    assert_eq!(e.page.pinned_count(), base);
+    assert_eq!(eval(r, "ref1.deref() === undefined"), "true");
+}
+
+#[test]
+fn message_port_started_late_with_a_collected_peer_still_delivers_across_gc() {
+    let e = env("<body>");
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    let r = &e.main;
+    let base = e.page.pinned_count();
+    // V2: the sender posts before the receiver starts, then the sender is collected.
+    eval(r, "window.got = []; window.held = (() => { const ch = new MessageChannel(); ch.port2.postMessage('v2'); return ch.port1; })(); 1");
+    gc(&e, &tasks);
+    // Queued but unstarted: not pinned (it waits for start()).
+    assert_eq!(e.page.pinned_count(), base);
+    eval(r, "held.onmessage = (ev) => got.push(ev.data); window.ref2 = new WeakRef(held); held = null; 1");
+    gc(&e, &tasks);
+    tasks.drain();
+    assert_eq!(eval(r, "got.join()"), "v2", "message queued on a late-started port survives GC");
+    gc(&e, &tasks);
+    assert_eq!(e.page.pinned_count(), base, "drained, peerless port is unpinned");
+    assert_eq!(eval(r, "ref2.deref() === undefined"), "true");
+}
+
+#[test]
+fn message_port_unstarted_queued_ports_and_disposal_hold_no_roots() {
+    let e = env("<body>");
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    let r = &e.main;
+    let base = e.page.pinned_count();
+    // Nobody can start this port, so its queued message does not keep it alive.
+    eval(r, "window.refs = (() => { const ch = new MessageChannel(); ch.port2.postMessage('never'); return [new WeakRef(ch), new WeakRef(ch.port1), new WeakRef(ch.port2)]; })(); 1");
+    gc(&e, &tasks);
+    tasks.drain();
+    assert_eq!(e.page.pinned_count(), base);
+    assert_eq!(eval(r, "refs.map((w) => w.deref() === undefined).join()"), "true,true,true");
+    // A started, entangled port stays pinned (React-scheduler shape) until disposal releases it.
+    eval(r, "window.got2 = []; (() => { const ch = new MessageChannel(); ch.port1.onmessage = (ev) => got2.push(ev.data); window.sendIt = (v) => ch.port2.postMessage(v); })();");
+    gc(&e, &tasks);
+    eval(r, "sendIt('alive')");
+    tasks.drain();
+    assert_eq!(eval(r, "got2.join()"), "alive");
+    assert_eq!(e.page.pinned_count(), base + 1);
+    e.page.dispose();
+    assert_eq!(e.page.pinned_count(), 0, "disposal releases port pins");
+}
