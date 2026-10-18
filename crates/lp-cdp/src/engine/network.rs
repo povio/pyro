@@ -1,12 +1,11 @@
 //! Per-context observations routed to the page sessions that enabled Network.
 
 use std::collections::HashMap;
-use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use lp_browser::ContextId;
-use lp_net::{NetEvent, NetSubscription, RequestId, SubscriptionError, SubscriptionLimits};
+use lp_net::{NetEvent, RequestId};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -26,13 +25,13 @@ impl NetworkWake {
         self.ready.load(Ordering::Acquire)
     }
 
+    /// Fetch interception decisions must wake command processing even while
+    /// network response observations wait for their separate delivery task.
     pub(super) fn callback(&self, handle: lp_runtime::LoopHandle<lp_browser::Browser>) -> lp_net::NetWake {
         let ready = self.ready.clone();
         let posted = self.posted.clone();
         Arc::new(move || {
             ready.store(true, Ordering::Release);
-            // One outstanding loop task suffices even if multiple contexts
-            // publish while the browser is processing a command.
             if !posted.swap(true, Ordering::AcqRel) {
                 let posted = posted.clone();
                 let _ = handle.post(move |_| posted.store(false, Ordering::Release));
@@ -43,7 +42,7 @@ impl NetworkWake {
 
 pub(super) struct NetworkContext {
     pub(super) id: ContextId,
-    subscription: Option<Rc<NetSubscription>>,
+    subscription: Option<Arc<super::network_delivery::Inbox>>,
     routes: HashMap<RequestId, PageKey>,
     pub(super) fetch: Option<Arc<super::fetch::FetchQueue>>,
 }
@@ -170,11 +169,14 @@ impl EngineHost {
             });
             if wanted && context.subscription.is_none() {
                 if let Some(net) = self.thread.browser.context_net(context.id) {
-                    let subscription = Rc::new(net.subscribe_with(
-                        SubscriptionLimits::default(),
-                        Some(self.network_wake.callback(self.thread.handle())),
-                    ));
-                    self.collector.watch_network(*key, &subscription);
+                    let subscription = super::network_delivery::Inbox::new(
+                        net,
+                        self.thread.handle(),
+                        self.network_wake.ready.clone(),
+                        self.collector.network_budget.clone(),
+                        self.out.clone(),
+                    );
+                    self.collector.watch_network(*key, context.id, &subscription);
                     context.subscription = Some(subscription);
                 }
             } else if !wanted {
@@ -196,20 +198,17 @@ impl EngineHost {
             // Bound work per flush so command handling is not starved by a
             // continuous response stream. Remaining events cause another wake.
             for index in 0..256 {
-                let result = self.contexts.get(&key).and_then(|c| c.subscription.as_ref()).map(|s| s.try_recv());
-                match result {
-                    Some(Ok(event)) => self.on_network_event(key, event),
-                    Some(Err(SubscriptionError::Empty)) | None => break,
-                    Some(Err(SubscriptionError::Overflow | SubscriptionError::Closed)) => {
-                        // No selective event loss: terminate the CDP connection
-                        // if its observation stream can no longer be trusted.
-                        if let Some(context) = self.contexts.get_mut(&key) {
-                            context.subscription = None;
-                            context.routes.clear();
-                        }
-                        self.out.exceed();
-                        break;
+                if self.out.is_exceeded() {
+                    if let Some(context) = self.contexts.get_mut(&key) {
+                        context.subscription = None;
+                        context.routes.clear();
                     }
+                    break;
+                }
+                let result = self.contexts.get(&key).and_then(|c| c.subscription.as_ref()).and_then(|s| s.pop());
+                match result {
+                    Some(event) => self.on_network_event(key, event.event),
+                    None => break,
                 }
                 if index == 255 {
                     self.network_wake.ready.store(true, Ordering::Release);

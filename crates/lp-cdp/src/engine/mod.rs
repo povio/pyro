@@ -11,6 +11,7 @@ mod fetch;
 mod input;
 mod metrics;
 mod network;
+mod network_delivery;
 mod page;
 mod remote;
 mod runtime;
@@ -18,15 +19,15 @@ mod storage;
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
-use std::rc::{Rc, Weak};
-use std::sync::OnceLock;
+use std::rc::Rc;
+use std::sync::{Arc, OnceLock, Weak};
 
 use crate::network_protocol::{BodyBudget, BodyLimits};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use lp_browser::{BrowserThread, PageEvent, PageId, PageObserver};
 use lp_js::{ConsoleLevel, EngineHooks, JsException, Persistent, Realm, RealmId, Value};
-use lp_net::{NetEvent, NetSubscription, SubscriptionLimits};
+
 use serde::Deserialize;
 
 use crate::msg::{self, CdpError, CdpResult, Command, Empty};
@@ -54,9 +55,8 @@ pub(crate) enum Queued {
         exception: JsException,
         timestamp: f64,
     },
-    /// A network observation published before the item queued after it
-    /// (see [`Collector::push`]).
-    Network(ContextKey, NetEvent),
+    /// A request announcement or response delivered on the browser thread.
+    Network(ContextKey, network_delivery::Observed),
 }
 
 /// Most engine notifications queued between flushes. A page producing more
@@ -64,22 +64,21 @@ pub(crate) enum Queued {
 /// budget: the connection is closed (1008) rather than growing without bound.
 pub(crate) const MAX_QUEUED_EVENTS: usize = 100_000;
 
+struct NetworkWatch {
+    context: ContextKey,
+    id: lp_browser::ContextId,
+    inbox: Weak<network_delivery::Inbox>,
+}
+
 pub(crate) struct Collector {
     queue: RefCell<VecDeque<Queued>>,
     out: Outbox,
     /// Whether any session wants console/exception events; when none does,
     /// console arguments are not rooted at all.
     runtime_wanted: Cell<bool>,
-    /// The connection's network subscriptions, drained in front of every
-    /// queued item (the subscription itself is owned by its context).
-    network: RefCell<Vec<(ContextKey, Weak<NetSubscription>)>>,
-    /// Bytes of network observations moved into the queue, charged with
-    /// lp-net's own `NetEvent::retained_bytes`. Beyond `network_limit` (by
-    /// default that of a default `SubscriptionLimits` subscription) the
-    /// connection closes like an overflowing subscription does: events are
-    /// never dropped selectively.
-    network_bytes: Cell<usize>,
-    network_limit: Cell<usize>,
+    network: RefCell<Vec<NetworkWatch>>,
+    /// Shared reservation covers staging and queued events across contexts.
+    network_budget: Arc<network_delivery::Budget>,
 }
 
 impl Collector {
@@ -89,21 +88,23 @@ impl Collector {
             out,
             runtime_wanted: Cell::new(false),
             network: RefCell::new(Vec::new()),
-            network_bytes: Cell::new(0),
-            network_limit: Cell::new(SubscriptionLimits::default().max_bytes),
+            network_budget: Arc::new(network_delivery::Budget::default()),
         }
     }
 
-    pub(crate) fn watch_network(&self, context: ContextKey, subscription: &Rc<NetSubscription>) {
+    pub(crate) fn watch_network(
+        &self,
+        context: ContextKey,
+        id: lp_browser::ContextId,
+        inbox: &Arc<network_delivery::Inbox>,
+    ) {
         let mut network = self.network.borrow_mut();
-        network.retain(|(_, s)| s.strong_count() > 0);
-        network.push((context, Rc::downgrade(subscription)));
+        network.retain(|s| s.inbox.strong_count() > 0);
+        network.push(NetworkWatch { context, id, inbox: Arc::downgrade(inbox) });
     }
 
-    /// Queues `item` behind every network event published before it, so the
-    /// client sees engine notifications and network events in the order they
-    /// happened. Network events published later stay in their subscription
-    /// until the next item or the end of the flush.
+    /// Only owner-delivered responses may precede a page event or command
+    /// reply. Raw I/O responses stay staged while author JavaScript runs.
     fn push(&self, item: Queued) {
         self.drain_network();
         self.push_back(item);
@@ -124,33 +125,20 @@ impl Collector {
             return;
         }
         let network = self.network.borrow();
-        for (context, subscription) in network.iter() {
-            let Some(subscription) = subscription.upgrade() else { continue };
-            // Overflow and closure are terminal and sticky: the next
-            // `flush_network` sees them and tears the subscription down.
-            while let Ok(event) = subscription.try_recv() {
-                let bytes = self.network_bytes.get() + event.retained_bytes();
-                if bytes > self.network_limit.get() {
-                    self.out.exceed();
-                    return;
-                }
-                self.network_bytes.set(bytes);
-                self.push_back(Queued::Network(*context, event));
+        for watch in network.iter() {
+            let Some(inbox) = watch.inbox.upgrade() else { continue };
+            while let Some(event) = inbox.pop() {
+                self.push_back(Queued::Network(watch.context, event));
             }
         }
     }
 
     fn pop(&self) -> Option<Queued> {
-        let item = self.queue.borrow_mut().pop_front();
-        if let Some(Queued::Network(_, event)) = &item {
-            self.network_bytes.set(self.network_bytes.get().saturating_sub(event.retained_bytes()));
-        }
-        item
+        self.queue.borrow_mut().pop_front()
     }
 
     fn clear(&self) {
         self.queue.borrow_mut().clear();
-        self.network_bytes.set(0);
     }
 
     pub(crate) fn is_empty(&self) -> bool {
@@ -166,6 +154,25 @@ fn epoch_ms() -> f64 {
 impl PageObserver for Collector {
     fn on_page_event(&self, page: PageId, event: &PageEvent) {
         self.push(Queued::Page(page, event.clone()));
+    }
+
+    /// A fetch/XHR consumer is about to let script observe `frontier` of
+    /// `request`: the matching staged response events become deliverable and
+    /// are queued now, ahead of anything that script causes (Chrome reports
+    /// them before the script sees the response, not when I/O received it).
+    fn on_network_delivery(
+        &self,
+        _page: PageId,
+        context: lp_browser::ContextId,
+        loader: &lp_browser::LoaderId,
+        request: lp_net::RequestId,
+        frontier: lp_net::NetworkDelivery,
+    ) {
+        let inbox = self.network.borrow().iter().find(|w| w.id == context).and_then(|w| w.inbox.upgrade());
+        if let Some(inbox) = inbox {
+            inbox.publish_through(request, &loader.0, frontier.response, frontier.data_bytes, frontier.terminal);
+            self.drain_network();
+        }
     }
 }
 
@@ -327,12 +334,12 @@ impl EngineHost {
     /// Replaces the byte limit of network events queued between flushes
     /// (tests, embedders with other memory limits).
     pub fn set_queued_network_byte_limit(&mut self, limit: usize) {
-        self.collector.network_limit.set(limit);
+        self.collector.network_budget.set_limit(limit);
     }
 
     /// Bytes of network events queued for the next flush (diagnostics/tests).
     pub fn queued_network_bytes(&self) -> usize {
-        self.collector.network_bytes.get()
+        self.collector.network_budget.used()
     }
 
     /// True when engine notifications are waiting for [`EngineHost::flush`].
@@ -369,15 +376,14 @@ impl EngineHost {
     pub fn flush(&mut self) {
         while let Some(item) = self.collector.pop() {
             match item {
-                // Network events published before this item were queued in
-                // front of it, so they are handled first (including the old
-                // document's events before a FrameNavigate clears captures).
+                // Owner-delivered network observations stay in order with
+                // page notifications, including before document replacement.
                 Queued::Page(page, event) => {
                     if let Some(key) = self.page_key(page) {
                         self.on_page_event(key, event);
                     }
                 }
-                Queued::Network(context, event) => self.on_network_event(context, event),
+                Queued::Network(context, event) => self.on_network_event(context, event.event),
                 Queued::Frame(frame) => self.out.push(frame),
                 Queued::Console { realm, level, args, timestamp } => self.on_console(realm, level, args, timestamp),
                 Queued::Exception { realm, exception, timestamp } => self.on_exception(realm, exception, timestamp),

@@ -187,6 +187,24 @@ pub enum PageEvent {
 /// JavaScript or re-enter the browser; queueing the event is the intent.
 pub trait PageObserver {
     fn on_page_event(&self, page: PageId, event: &PageEvent);
+
+    /// Transport progress of fetch/XHR request `request` became visible to
+    /// the script of the document loaded by `loader`, before any script it
+    /// causes runs (`lp_webapi::PageHooks::network_delivery`). `frontier` is
+    /// cumulative for the request. Request ids are per browser context (each
+    /// context has its own `lp_net::NetClient`), so `context` is part of the
+    /// identity; `loader` tells an old document's requests from its
+    /// successor's. Called synchronously on the browser thread: implementations
+    /// may only record or publish, never run script or re-enter the browser.
+    fn on_network_delivery(
+        &self,
+        _page: PageId,
+        _context: ContextId,
+        _loader: &LoaderId,
+        _request: lp_net::RequestId,
+        _frontier: lp_net::NetworkDelivery,
+    ) {
+    }
 }
 
 pub(crate) type ObserverCell = Rc<RefCell<Option<Rc<dyn PageObserver>>>>;
