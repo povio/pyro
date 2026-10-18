@@ -31,7 +31,7 @@ page.goBack: Protocol error (Page.getNavigationHistory): Page.getNavigationHisto
   unsupported. lp-browser also fired no `popstate` on traversal.
 - This failure is caused by a missing protocol method; it is not a timing or
   test problem.
-- The fix is in draft PR #82 (`077a712`). That PR is not in `6e44bcd`, so this
+- The fix is in draft PR #82 (head `3f9b73d`). That PR is not in `6e44bcd`, so this
   table is unchanged by it. The TOS re-run of W3-02 on the PR head will be
   recorded separately.
 
