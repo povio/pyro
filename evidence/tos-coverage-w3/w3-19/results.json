@@ -1,0 +1,412 @@
+{
+  "tos_commit": "f9fde4aa0dce7d1d7a1ffebffe3306399973cd80",
+  "manifest_sha256": "542d479b709249d072e3b57c1324c894c4378fc5373892ae64c0687486f2ae19",
+  "scope": "Recovered historical results; not a current-main run or aggregate pass rate",
+  "w3_selected_distinct_cases": 275,
+  "w3_selected_files": 39,
+  "selection_sha256": {
+    "w3-01.selection.json": "881ce9f0dc11236c846c8bd194689aafb8eeddde0c0ab72cb3700c5157dec58f",
+    "w3-02.selection.json": "d5ee93174663075a5498229643361bd6074fc9f4de5307e776ba7cd1b95e04e1",
+    "w3-03.selection.json": "64bd3f7379be19a0bec6c0a14ec230f3074dcc2a71e27e3f17c15a0d3a442543",
+    "w3-04.selection.json": "ff49bf247f076185cf0bb0c52a537e4f43b3358b7e3c50426c27f2dfb9a71c3d",
+    "w3-05.selection.json": "c164ddca002d7f8c81c4eb099aad3e4e07e21090f6761a00123cdc73c994be80",
+    "w3-06.selection.json": "11519ab052d34b1c13abe6ae0f63afcc61bb12402e00a7f5ba535ec7f83089da",
+    "w3-07.selection.json": "cc141d130a453060e23f0084697961d11a989dea92bcb19a9c0393f8bdd8c40a",
+    "w3-08.selection.json": "73e585689f13cb1166f00afb18e87fb742eeda13de222ef64af12aac5a214aa9",
+    "w3-09.selection.json": "395277a79b07c5d96afddefc81e4f3a1963ed52424f209b550e837e77cb393d1",
+    "w3-10.selection.json": "d51bc7e6b04ff82a2bbacad4a5de478197764f02d07f76e837c26dd8430a1301",
+    "w3-11.selection.json": "6c59e93854e3fc91f450ec531597db24cccd3a960fd3e4580bc39f38a982839d",
+    "w3-12.selection.json": "66d3e9ceb7be942b61fd787fc5a91efd059ca9a986cc61f060576817c256ec08",
+    "w3-13.selection.json": "3ebc41f89254a62c898bc02f2c9c1c68a1495ea8de349101df50189bca592df2",
+    "w3-14.selection.json": "b1b10cb5d7d2c5db89d4191d9c04d451496ee1413b6bbeb6aee6d75d2df2e13c",
+    "w3-15.selection.json": "554a7b1eb81e1062034cbf752b59e682ec6db1ebcde0fb715e0bf3798210d09e",
+    "w3-16.selection.json": "a5081d8da3b07f5e9de53f45b18effa1fb4cd4b75018b6f75c04c629dfca23e1",
+    "w3-17.selection.json": "b373df9b94fa363230593228cc7b28f43c3e41b3f5f7012b7ae76619bff2ec11",
+    "w3-18.selection.json": "50605e1da2beba213527573c171fae3e8ecdcb05e0184a819d9cb992301dcac5",
+    "w3-19.selection.json": "d8a70174ac8b4bd7466c400760aca24615e4d07605beeb90765081b77f0ceb07"
+  },
+  "runs": [
+    {
+      "artifact_directory": "lp-w3-l19",
+      "run_slug": "w3l19-1018-085922",
+      "browser_commit": "81ad383cf4cb5d38adddce49a5b13b8be0636b62",
+      "browser_sha256": "8a068ee5789f841d41e42567235b27cf3bdb5fbf1e78ab72ddfe9a920a64ec1f",
+      "passed": 0,
+      "failed": 32,
+      "skipped": 0,
+      "flaky": 0,
+      "failed_cases": [
+        {
+          "file": "e2e/logistics/positions-overview.e2e.ts",
+          "titlePath": [
+            "Positions Overview details modal FE E2E",
+            "opens only the Overview tab in the position details modal"
+          ]
+        },
+        {
+          "file": "e2e/logistics/positions-overview.e2e.ts",
+          "titlePath": [
+            "Positions Overview details modal FE E2E",
+            "updates sea overview external ID"
+          ]
+        },
+        {
+          "file": "e2e/logistics/positions-overview.e2e.ts",
+          "titlePath": [
+            "Positions Overview details modal FE E2E",
+            "updates sea overview house bill of lading"
+          ]
+        },
+        {
+          "file": "e2e/logistics/positions-overview.e2e.ts",
+          "titlePath": [
+            "Positions Overview details modal FE E2E",
+            "toggles sea overview house bill requirement"
+          ]
+        },
+        {
+          "file": "e2e/logistics/positions-overview.e2e.ts",
+          "titlePath": [
+            "Positions Overview details modal FE E2E",
+            "updates sea overview master bill of lading"
+          ]
+        },
+        {
+          "file": "e2e/logistics/positions-overview.e2e.ts",
+          "titlePath": [
+            "Positions Overview details modal FE E2E",
+            "toggles sea overview master bill requirement"
+          ]
+        },
+        {
+          "file": "e2e/logistics/positions-overview.e2e.ts",
+          "titlePath": [
+            "Positions Overview details modal FE E2E",
+            "locks required sea document selections while their working documents exist"
+          ]
+        },
+        {
+          "file": "e2e/logistics/positions-overview.e2e.ts",
+          "titlePath": [
+            "Positions Overview details modal FE E2E",
+            "updates sea export buying contract"
+          ]
+        },
+        {
+          "file": "e2e/logistics/positions-overview.e2e.ts",
+          "titlePath": [
+            "Positions Overview details modal FE E2E",
+            "updates sea export selling contract"
+          ]
+        },
+        {
+          "file": "e2e/logistics/positions-overview.e2e.ts",
+          "titlePath": [
+            "Positions Overview details modal FE E2E",
+            "updates sea export routing"
+          ]
+        },
+        {
+          "file": "e2e/logistics/positions-overview.e2e.ts",
+          "titlePath": [
+            "Positions Overview details modal FE E2E",
+            "updates sea export INTTRA service type"
+          ]
+        },
+        {
+          "file": "e2e/logistics/positions-overview.e2e.ts",
+          "titlePath": [
+            "Positions Overview details modal FE E2E",
+            "autosaves Route fields with overview To-Dos present"
+          ]
+        },
+        {
+          "file": "e2e/logistics/positions-overview.e2e.ts",
+          "titlePath": [
+            "Positions Overview details modal FE E2E",
+            "shows clear actions for readonly split route points in Overview"
+          ]
+        },
+        {
+          "file": "e2e/logistics/positions-overview.e2e.ts",
+          "titlePath": [
+            "Positions Overview details modal FE E2E",
+            "keeps the Overview Route provider when Ocean Carrier Agent changes"
+          ]
+        },
+        {
+          "file": "e2e/logistics/positions-overview.e2e.ts",
+          "titlePath": [
+            "Positions Overview details modal FE E2E",
+            "updates sea import buying contract"
+          ]
+        },
+        {
+          "file": "e2e/logistics/positions-overview.e2e.ts",
+          "titlePath": [
+            "Positions Overview details modal FE E2E",
+            "updates sea import selling contract"
+          ]
+        },
+        {
+          "file": "e2e/logistics/positions-overview.e2e.ts",
+          "titlePath": [
+            "Positions Overview details modal FE E2E",
+            "updates sea import buy rate reference"
+          ]
+        },
+        {
+          "file": "e2e/logistics/positions-overview.e2e.ts",
+          "titlePath": [
+            "Positions Overview details modal FE E2E",
+            "updates sea import sell service contract"
+          ]
+        },
+        {
+          "file": "e2e/logistics/positions-overview.e2e.ts",
+          "titlePath": [
+            "Positions Overview details modal FE E2E",
+            "updates sea import routing"
+          ]
+        },
+        {
+          "file": "e2e/logistics/positions-overview.e2e.ts",
+          "titlePath": [
+            "Positions Overview details modal FE E2E",
+            "updates sea import INTTRA service type"
+          ]
+        },
+        {
+          "file": "e2e/logistics/positions-overview.e2e.ts",
+          "titlePath": [
+            "Positions Overview details modal FE E2E",
+            "renders the migrated office-notes surface without the legacy editor"
+          ]
+        },
+        {
+          "file": "e2e/logistics/positions-overview.e2e.ts",
+          "titlePath": [
+            "Positions Overview details modal FE E2E",
+            "updates team"
+          ]
+        },
+        {
+          "file": "e2e/logistics/positions-overview.e2e.ts",
+          "titlePath": [
+            "Positions Overview details modal FE E2E",
+            "updates air export house bill"
+          ]
+        },
+        {
+          "file": "e2e/logistics/positions-overview.e2e.ts",
+          "titlePath": [
+            "Positions Overview details modal FE E2E",
+            "toggles air export house bill requirement"
+          ]
+        },
+        {
+          "file": "e2e/logistics/positions-overview.e2e.ts",
+          "titlePath": [
+            "Positions Overview details modal FE E2E",
+            "updates air export master bill"
+          ]
+        },
+        {
+          "file": "e2e/logistics/positions-overview.e2e.ts",
+          "titlePath": [
+            "Positions Overview details modal FE E2E",
+            "toggles air export master bill requirement"
+          ]
+        },
+        {
+          "file": "e2e/logistics/positions-overview.e2e.ts",
+          "titlePath": [
+            "Positions Overview details modal FE E2E",
+            "toggles air export courier"
+          ]
+        },
+        {
+          "file": "e2e/logistics/positions-overview.e2e.ts",
+          "titlePath": [
+            "Positions Overview details modal FE E2E",
+            "updates air import house bill"
+          ]
+        },
+        {
+          "file": "e2e/logistics/positions-overview.e2e.ts",
+          "titlePath": [
+            "Positions Overview details modal FE E2E",
+            "updates air import master bill"
+          ]
+        },
+        {
+          "file": "e2e/logistics/positions-overview.e2e.ts",
+          "titlePath": [
+            "Positions Overview details modal FE E2E",
+            "updates air import customs reference"
+          ]
+        },
+        {
+          "file": "e2e/logistics/positions-overview.e2e.ts",
+          "titlePath": [
+            "Positions Overview details modal FE E2E",
+            "updates air import customs status"
+          ]
+        },
+        {
+          "file": "e2e/logistics/positions-overview.e2e.ts",
+          "titlePath": [
+            "Positions Overview details modal FE E2E",
+            "toggles air import courier"
+          ]
+        }
+      ],
+      "run_databases_remaining": 0,
+      "retained_template_present": false,
+      "source_sha256": {
+        "lightpanda.json": "292c80b93f49755424f1b7edfbc6cc9e7441414769e45f0f0387bb8d39d59a3b",
+        "metadata.json": "bcf935723f489f09dc7c62873cfd5f2316e44ac8df378664283424f2d2489f70",
+        "db-post-cleanup.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    {
+      "artifact_directory": "lp-w3-l19u",
+      "run_slug": "w3l19u-1018-090100",
+      "browser_commit": "2ad38773fd674d3c9cea26a263b814ee46f6ba84",
+      "browser_sha256": "7f76ccfece22e7130d39c8884321f5dea51f4bb2e195542944c3440a86dc4339",
+      "passed": 29,
+      "failed": 3,
+      "skipped": 0,
+      "flaky": 0,
+      "failed_cases": [
+        {
+          "file": "e2e/logistics/positions-overview.e2e.ts",
+          "titlePath": [
+            "Positions Overview details modal FE E2E",
+            "updates sea export INTTRA service type"
+          ]
+        },
+        {
+          "file": "e2e/logistics/positions-overview.e2e.ts",
+          "titlePath": [
+            "Positions Overview details modal FE E2E",
+            "updates sea import INTTRA service type"
+          ]
+        },
+        {
+          "file": "e2e/logistics/positions-overview.e2e.ts",
+          "titlePath": [
+            "Positions Overview details modal FE E2E",
+            "updates air import customs status"
+          ]
+        }
+      ],
+      "run_databases_remaining": 0,
+      "retained_template_present": false,
+      "source_sha256": {
+        "lightpanda.json": "359c928b4085600f84979bbf005e894cae6c2b2a3e3ce7a71748e9da08050ce8",
+        "metadata.json": "6dbc75565ef2a7853553b9fe0964e50d8cf21652fafb6a0be029238a7039164d",
+        "db-post-cleanup.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    {
+      "artifact_directory": "lp-w3-l19h",
+      "run_slug": "w3l19h-1018-093618",
+      "browser_commit": "fd520e4b78c324490c16e60e28e8855e14c737a8",
+      "browser_sha256": "61bc2b2104611ee57fb2089fa0c60c1fe20157801b0f6a287fffc6790d4fd8f8",
+      "passed": 30,
+      "failed": 2,
+      "skipped": 0,
+      "flaky": 0,
+      "failed_cases": [
+        {
+          "file": "e2e/logistics/positions-overview.e2e.ts",
+          "titlePath": [
+            "Positions Overview details modal FE E2E",
+            "updates sea export INTTRA service type"
+          ]
+        },
+        {
+          "file": "e2e/logistics/positions-overview.e2e.ts",
+          "titlePath": [
+            "Positions Overview details modal FE E2E",
+            "updates sea import INTTRA service type"
+          ]
+        }
+      ],
+      "run_databases_remaining": 0,
+      "retained_template_present": true,
+      "source_sha256": {
+        "lightpanda.json": "1d149813da897d04e333f34baf6f4c494287326d33194a4fe1fac628c67b7aa1",
+        "metadata.json": "e2f81a1e6768f3b3ac10a2ec3bd9d4fb33540e48862b5db09cb26416cd1caf48",
+        "db-post-cleanup.txt": "7772c27abcc4c934f4171f2fecde8e70b639dcbe2b13591d910ef2ff694aab1a"
+      }
+    },
+    {
+      "artifact_directory": "lp-w3-l19hr",
+      "run_slug": "w3l19hr-1018-093835",
+      "browser_commit": "fd520e4b78c324490c16e60e28e8855e14c737a8",
+      "browser_sha256": "61bc2b2104611ee57fb2089fa0c60c1fe20157801b0f6a287fffc6790d4fd8f8",
+      "passed": 30,
+      "failed": 2,
+      "skipped": 0,
+      "flaky": 0,
+      "failed_cases": [
+        {
+          "file": "e2e/logistics/positions-overview.e2e.ts",
+          "titlePath": [
+            "Positions Overview details modal FE E2E",
+            "updates sea export INTTRA service type"
+          ]
+        },
+        {
+          "file": "e2e/logistics/positions-overview.e2e.ts",
+          "titlePath": [
+            "Positions Overview details modal FE E2E",
+            "updates sea import INTTRA service type"
+          ]
+        }
+      ],
+      "run_databases_remaining": 0,
+      "retained_template_present": true,
+      "source_sha256": {
+        "lightpanda.json": "d350a0e056419aa85d39cabf6fb8f05d400003ce31e9fc0c09c50c47b75b7705",
+        "metadata.json": "d32caaf48f945b84ff19af96cc927ea8d2bc5c83041caf1b5cb3856cd694bfab",
+        "db-post-cleanup.txt": "7772c27abcc4c934f4171f2fecde8e70b639dcbe2b13591d910ef2ff694aab1a"
+      }
+    },
+    {
+      "artifact_directory": "lp-w3-l19m",
+      "run_slug": "w3l19m-1018-094717",
+      "browser_commit": "c32f29b99e6246355ef741fa537253ae099fb7cf",
+      "browser_sha256": "d10f768a01cafe39a4f8caa4101023ae610fd5b68348c52908102ffad7c9e50d",
+      "passed": 30,
+      "failed": 2,
+      "skipped": 0,
+      "flaky": 0,
+      "failed_cases": [
+        {
+          "file": "e2e/logistics/positions-overview.e2e.ts",
+          "titlePath": [
+            "Positions Overview details modal FE E2E",
+            "updates sea export INTTRA service type"
+          ]
+        },
+        {
+          "file": "e2e/logistics/positions-overview.e2e.ts",
+          "titlePath": [
+            "Positions Overview details modal FE E2E",
+            "updates sea import INTTRA service type"
+          ]
+        }
+      ],
+      "run_databases_remaining": 0,
+      "retained_template_present": true,
+      "source_sha256": {
+        "lightpanda.json": "94d9c0672f5ed4b1a09519f2e487ea2afbc013bd5af504f8bd4f9acce5de403d",
+        "metadata.json": "fcc32eaac9d63223e9a01eda55d551013c9ec4a32ee5e9964ff5befadf44609d",
+        "db-post-cleanup.txt": "7772c27abcc4c934f4171f2fecde8e70b639dcbe2b13591d910ef2ff694aab1a"
+      }
+    }
+  ]
+}
