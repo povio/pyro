@@ -1,0 +1,264 @@
+{
+  "verified_files": 27,
+  "lanes": {
+    "B2": {
+      "samples": 951,
+      "profiles": [
+        {
+          "file": "JSCSampilingProfile-4597727488.txt",
+          "samples": 406,
+          "tiers": {
+            "LLInt": 11,
+            "Baseline": 46,
+            "DFG": 55,
+            "FTL": 18,
+            "js builtin": 16,
+            "IPInt": 0,
+            "BBQ": 0,
+            "OMG": 0,
+            "Wasm": 0,
+            "Host": 141,
+            "RegExp": 0,
+            "C/C++": 0,
+            "Unknown Executable": 135
+          }
+        },
+        {
+          "file": "JSCSampilingProfile-4614504704.txt",
+          "samples": 359,
+          "tiers": {
+            "LLInt": 17,
+            "Baseline": 39,
+            "DFG": 38,
+            "FTL": 21,
+            "js builtin": 25,
+            "IPInt": 0,
+            "BBQ": 0,
+            "OMG": 0,
+            "Wasm": 0,
+            "Host": 103,
+            "RegExp": 0,
+            "C/C++": 0,
+            "Unknown Executable": 141
+          }
+        },
+        {
+          "file": "JSCSampilingProfile-4631281920.txt",
+          "samples": 186,
+          "tiers": {
+            "LLInt": 7,
+            "Baseline": 19,
+            "DFG": 22,
+            "FTL": 8,
+            "js builtin": 6,
+            "IPInt": 0,
+            "BBQ": 0,
+            "OMG": 0,
+            "Wasm": 0,
+            "Host": 58,
+            "RegExp": 1,
+            "C/C++": 0,
+            "Unknown Executable": 71
+          }
+        }
+      ],
+      "tier_counts": {
+        "LLInt": 35,
+        "Baseline": 104,
+        "DFG": 115,
+        "FTL": 47,
+        "js builtin": 47,
+        "IPInt": 0,
+        "BBQ": 0,
+        "OMG": 0,
+        "Wasm": 0,
+        "Host": 302,
+        "RegExp": 1,
+        "C/C++": 0,
+        "Unknown Executable": 347
+      },
+      "tier_percent_of_samples": {
+        "LLInt": 3.68,
+        "Baseline": 10.94,
+        "DFG": 12.09,
+        "FTL": 4.94,
+        "js builtin": 4.94,
+        "IPInt": 0.0,
+        "BBQ": 0.0,
+        "OMG": 0.0,
+        "Wasm": 0.0,
+        "Host": 31.76,
+        "RegExp": 0.11,
+        "C/C++": 0.0,
+        "Unknown Executable": 36.49
+      },
+      "published_top_function_counts": {
+        "get href#<nil>:4294967295": 97,
+        "parseModule#<nil>:4294967295": 89,
+        "stringSplitFast#<nil>:4294967295": 45,
+        "repeat#<nil>:4294967295": 16,
+        "fetch#<nil>:4294967295": 16,
+        "Function#<nil>:4294967295": 15,
+        "get length#<nil>:4294967295": 15,
+        "moduleDeclarationInstantiation#<nil>:4294967295": 12,
+        "setAttribute#<nil>:4294967295": 11,
+        "now#<nil>:4294967295": 9,
+        "arrayIteratorNextHelper#DtObzr:3": 8,
+        "copyDataProperties#<nil>:4294967295": 7,
+        "map#DzNW8M:37": 7,
+        "filter#AIec6G:3": 7,
+        "URL#<nil>:4294967295": 7,
+        "join#<nil>:4294967295": 6,
+        "#AWXv8L:7": 6,
+        "trimStart#<nil>:4294967295": 5,
+        "arrayIteratorNextHelper#DtObzr:18": 5,
+        "#AWXv8L:35": 4,
+        "write#DetlLa:12": 4
+      }
+    },
+    "C2": {
+      "samples": 1987,
+      "profiles": [
+        {
+          "file": "JSCSampilingProfile-4547395840.txt",
+          "samples": 351,
+          "tiers": {
+            "LLInt": 7,
+            "Baseline": 37,
+            "DFG": 45,
+            "FTL": 21,
+            "js builtin": 27,
+            "IPInt": 0,
+            "BBQ": 0,
+            "OMG": 0,
+            "Wasm": 0,
+            "Host": 113,
+            "RegExp": 0,
+            "C/C++": 0,
+            "Unknown Executable": 128
+          }
+        },
+        {
+          "file": "JSCSampilingProfile-4564173056.txt",
+          "samples": 211,
+          "tiers": {
+            "LLInt": 9,
+            "Baseline": 13,
+            "DFG": 23,
+            "FTL": 11,
+            "js builtin": 14,
+            "IPInt": 0,
+            "BBQ": 0,
+            "OMG": 0,
+            "Wasm": 0,
+            "Host": 82,
+            "RegExp": 0,
+            "C/C++": 0,
+            "Unknown Executable": 73
+          }
+        },
+        {
+          "file": "JSCSampilingProfile-4580950272.txt",
+          "samples": 1041,
+          "tiers": {
+            "LLInt": 14,
+            "Baseline": 83,
+            "DFG": 106,
+            "FTL": 91,
+            "js builtin": 66,
+            "IPInt": 0,
+            "BBQ": 0,
+            "OMG": 0,
+            "Wasm": 0,
+            "Host": 524,
+            "RegExp": 0,
+            "C/C++": 0,
+            "Unknown Frame": 1,
+            "Unknown Executable": 222
+          }
+        },
+        {
+          "file": "JSCSampilingProfile-4597727488.txt",
+          "samples": 384,
+          "tiers": {
+            "LLInt": 6,
+            "Baseline": 39,
+            "DFG": 39,
+            "FTL": 20,
+            "js builtin": 22,
+            "IPInt": 0,
+            "BBQ": 0,
+            "OMG": 0,
+            "Wasm": 0,
+            "Host": 123,
+            "RegExp": 0,
+            "C/C++": 0,
+            "Unknown Executable": 157
+          }
+        }
+      ],
+      "tier_counts": {
+        "LLInt": 36,
+        "Baseline": 172,
+        "DFG": 213,
+        "FTL": 143,
+        "js builtin": 129,
+        "IPInt": 0,
+        "BBQ": 0,
+        "OMG": 0,
+        "Wasm": 0,
+        "Host": 842,
+        "RegExp": 0,
+        "C/C++": 0,
+        "Unknown Executable": 580,
+        "Unknown Frame": 1
+      },
+      "tier_percent_of_samples": {
+        "LLInt": 1.81,
+        "Baseline": 8.66,
+        "DFG": 10.72,
+        "FTL": 7.2,
+        "js builtin": 6.49,
+        "IPInt": 0.0,
+        "BBQ": 0.0,
+        "OMG": 0.0,
+        "Wasm": 0.0,
+        "Host": 42.38,
+        "RegExp": 0.0,
+        "C/C++": 0.0,
+        "Unknown Executable": 29.19,
+        "Unknown Frame": 0.05
+      },
+      "published_top_function_counts": {
+        "get length#<nil>:4294967295": 221,
+        "get href#<nil>:4294967295": 158,
+        "parseModule#<nil>:4294967295": 143,
+        "stringSplitFast#<nil>:4294967295": 87,
+        "setAttribute#<nil>:4294967295": 43,
+        "arrayIteratorNextHelper#DtObzr:7": 43,
+        "now#<nil>:4294967295": 28,
+        "Function#<nil>:4294967295": 24,
+        "copyDataProperties#<nil>:4294967295": 22,
+        "moduleDeclarationInstantiation#<nil>:4294967295": 20,
+        "get shadowRoot#<nil>:4294967295": 20,
+        "getAttribute#<nil>:4294967295": 19,
+        "get tagName#<nil>:4294967295": 16,
+        "join#<nil>:4294967295": 14,
+        "set onclick#<nil>:4294967295": 12,
+        "fetch#<nil>:4294967295": 9,
+        "arrayIteratorNextHelper#DtObzr:3": 7,
+        "map#DzNW8M:3": 7,
+        "get nodeName#<nil>:4294967295": 6,
+        "map#DzNW8M:2": 6,
+        "c#BRjEMV:38": 6,
+        "repeat#<nil>:4294967295": 5,
+        "next#B6cjlp:3": 5,
+        "URL#<nil>:4294967295": 5,
+        "map#DzNW8M:7": 5,
+        "get nodeType#<nil>:4294967295": 4,
+        "DateTimeFormat#<nil>:4294967295": 3,
+        "get parentElement#<nil>:4294967295": 3
+      }
+    }
+  }
+}
