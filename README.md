@@ -19,7 +19,9 @@ cargo test
 
 On macOS every linked executable (`lightningpanda`, the test binaries) is ad hoc re-signed with
 `com.apple.security.cs.allow-jit` and nothing else; this runs through `scripts/macos/link-and-sign.sh`, which
-`.cargo/config.toml` sets as the linker. Without that entitlement the system JavaScriptCore runs interpreter-only. If a
+`.cargo/config.toml` sets as the linker. Without that entitlement the system JavaScriptCore runs interpreter-only.
+Cargo reads `.cargo/config.toml` from the current directory upwards, so run cargo from the repository: a build started
+elsewhere (`cargo build --manifest-path ...`) links unsigned, and the `lightningpanda` build script warns about it. If a
 binary is copied or re-signed outside Cargo, keep the entitlement:
 `codesign -f -s - --entitlements scripts/macos/jit.entitlements <binary>`. With the JIT active, JSC's default
 signal-based traps do not stop JIT-compiled loops, so `lp_js::configure_process` (called by `Engine::new` and at the
