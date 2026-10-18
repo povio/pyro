@@ -1,0 +1,131 @@
+{
+  "binary": "/private/tmp/lp-url-cache-evidence/lightningpanda-cache-candidate",
+  "sha256": "482b1ed0fadc4816228e5a346b2ed1991adc490c66157cc4041bb78b31b8149e",
+  "pid": 98142,
+  "counts": {
+    "size": 294,
+    "elapsedMs": 50.729208,
+    "counters": {
+      "href": {
+        "get": 43071,
+        "set": 294
+      },
+      "rel": {
+        "get": 0,
+        "set": 294
+      },
+      "as": {
+        "get": 0,
+        "set": 294
+      },
+      "crossOrigin": {
+        "get": 0,
+        "set": 294
+      }
+    },
+    "links": 294
+  },
+  "samples": [
+    {
+      "size": 294,
+      "elapsedMs": 49.032375,
+      "links": 294,
+      "ordinal": 0,
+      "warmup": true
+    },
+    {
+      "size": 294,
+      "elapsedMs": 49.67825,
+      "links": 294,
+      "ordinal": 1,
+      "warmup": false
+    },
+    {
+      "size": 294,
+      "elapsedMs": 49.565250000000006,
+      "links": 294,
+      "ordinal": 2,
+      "warmup": false
+    },
+    {
+      "size": 294,
+      "elapsedMs": 49.474625,
+      "links": 294,
+      "ordinal": 3,
+      "warmup": false
+    },
+    {
+      "size": 294,
+      "elapsedMs": 49.159583,
+      "links": 294,
+      "ordinal": 4,
+      "warmup": false
+    },
+    {
+      "size": 294,
+      "elapsedMs": 49.373625,
+      "links": 294,
+      "ordinal": 5,
+      "warmup": false
+    },
+    {
+      "size": 294,
+      "elapsedMs": 48.740667,
+      "links": 294,
+      "ordinal": 6,
+      "warmup": false
+    },
+    {
+      "size": 600,
+      "elapsedMs": 201.816166,
+      "links": 600,
+      "ordinal": 0,
+      "warmup": true
+    },
+    {
+      "size": 600,
+      "elapsedMs": 201.409875,
+      "links": 600,
+      "ordinal": 1,
+      "warmup": false
+    },
+    {
+      "size": 600,
+      "elapsedMs": 203.225209,
+      "links": 600,
+      "ordinal": 2,
+      "warmup": false
+    },
+    {
+      "size": 600,
+      "elapsedMs": 202.393417,
+      "links": 600,
+      "ordinal": 3,
+      "warmup": false
+    },
+    {
+      "size": 600,
+      "elapsedMs": 201.800667,
+      "links": 600,
+      "ordinal": 4,
+      "warmup": false
+    },
+    {
+      "size": 600,
+      "elapsedMs": 202.727875,
+      "links": 600,
+      "ordinal": 5,
+      "warmup": false
+    },
+    {
+      "size": 600,
+      "elapsedMs": 202.031333,
+      "links": 600,
+      "ordinal": 6,
+      "warmup": false
+    }
+  ],
+  "serverRequests": 15,
+  "scope": "one browser process, fresh document per scan; original getters during timing; wall time includes JS+native loop, no CPU or TOS navigation claim",
+  "polling": true
+}

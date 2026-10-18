@@ -1,0 +1,14 @@
+{
+  "template": {
+    "name": "fe_e2e_w2tpl_f9fde4aa_batch16fx_template",
+    "owner": "lp_bench",
+    "fixture": "/private/tmp/lp-tos-f9f-batch16-fx",
+    "tos_commit": "f9fde4aa0dce7d1d7a1ffebffe3306399973cd80",
+    "input_hash12": "f28ccca07b5e",
+    "created_by_run": "lpw230c100-1018-094346",
+    "created_utc": "2026-10-18T09:43:46Z"
+  },
+  "run_label": "lpurlmain",
+  "reuse_checked_utc": "2026-10-18T18:06:41.336366+00:00",
+  "policy": "same fixture/commit/build date, isolated per-run clone, runner input stamp remains authoritative"
+}

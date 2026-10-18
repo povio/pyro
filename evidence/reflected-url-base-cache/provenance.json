@@ -1,0 +1,23 @@
+{
+  "base_commit": "4e89ab401854ea67da8df1ae01ca477b101b6c91",
+  "candidate_commit": "84ab914ff17afc2f0dc3a21e126f9b50dfc36782",
+  "candidate_tree": "b89b0d460ff990e621e991096f8e9ca9d9b36f71",
+  "build_cwd": "/private/tmp/lp-reflected-url-cache",
+  "build_command": "CARGO_PROFILE_RELEASE_DEBUG=0 cargo build --release --locked -p lightningpanda",
+  "profile_strip": "none from root Cargo.toml on both revisions",
+  "host": "same W2 Apple Silicon host; macOS26.6 build25G72; SDK26.5; rustc1.99.1 (58cf8f9c3 2026-10-13)",
+  "polling_traps": true,
+  "binaries": {
+    "lightningpanda-main-4e89ab4": "d00699ce8cd50431976139bc47afe6cefe8307f9bb81e1514d7ec09823e5c11c",
+    "lightningpanda-cache-candidate": "482b1ed0fadc4816228e5a346b2ed1991adc490c66157cc4041bb78b31b8149e"
+  },
+  "script_sha256": "8fbf3ff7c9ef7346aeb1a6a8c51645e6789da8a5b7f8eb7a961bdb0a03ec2f45",
+  "vite_helper_sha256": "5c9cc0dc1e0ad2fb84ed585b91546d047e7939f5a3363d79781019241d3fe28c",
+  "scan_order": [
+    "main-initial",
+    "candidate-initial",
+    "candidate-reverse",
+    "main-reverse"
+  ],
+  "scope": "Reduced synthetic all-JS-dependency Vite loop; separate count document, original getters timed, one fresh process per scan file. Profile diagnostics each one fresh process, three hard navigations; no active observer/init marker, no fixture edits."
+}

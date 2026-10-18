@@ -1,0 +1,250 @@
+{
+  "scans": [
+    {
+      "label": "main",
+      "order": "initial",
+      "links": 294,
+      "samples": [
+        65.19316699999999,
+        64.443708,
+        64.845541,
+        63.882124999999995,
+        64.448292,
+        64.092791
+      ],
+      "medianMs": 64.446
+    },
+    {
+      "label": "main",
+      "order": "initial",
+      "links": 600,
+      "samples": [
+        264.636333,
+        264.945209,
+        264.906625,
+        265.16,
+        265.266584,
+        264.819875
+      ],
+      "medianMs": 264.925917
+    },
+    {
+      "label": "main",
+      "order": "reverse",
+      "links": 294,
+      "samples": [
+        64.83749999999999,
+        63.89483300000001,
+        64.604625,
+        64.589792,
+        64.33725,
+        64.079
+      ],
+      "medianMs": 64.463521
+    },
+    {
+      "label": "main",
+      "order": "reverse",
+      "links": 600,
+      "samples": [
+        265.05691599999994,
+        265.59304199999997,
+        265.1075,
+        266.512791,
+        267.500708,
+        266.75241700000004
+      ],
+      "medianMs": 266.0529165
+    },
+    {
+      "label": "candidate",
+      "order": "initial",
+      "links": 294,
+      "samples": [
+        49.521125,
+        48.73525,
+        49.101959,
+        48.88125,
+        49.706083,
+        48.441791
+      ],
+      "medianMs": 48.9916045
+    },
+    {
+      "label": "candidate",
+      "order": "initial",
+      "links": 600,
+      "samples": [
+        201.453042,
+        201.733292,
+        199.32058299999997,
+        200.684416,
+        200.752375,
+        201.886
+      ],
+      "medianMs": 201.1027085
+    },
+    {
+      "label": "candidate",
+      "order": "reverse",
+      "links": 294,
+      "samples": [
+        49.67825,
+        49.565250000000006,
+        49.474625,
+        49.159583,
+        49.373625,
+        48.740667
+      ],
+      "medianMs": 49.424125000000004
+    },
+    {
+      "label": "candidate",
+      "order": "reverse",
+      "links": 600,
+      "samples": [
+        201.409875,
+        203.225209,
+        202.393417,
+        201.800667,
+        202.727875,
+        202.031333
+      ],
+      "medianMs": 202.212375
+    }
+  ],
+  "profiles": [
+    {
+      "label": "main",
+      "navigationOrdinal": 1,
+      "usableMs": 625.563875,
+      "dclMs": 290.5753340000001,
+      "loadMs": 290.588125,
+      "postUsabilityHorizonMs": 1005.0457090000002,
+      "lastObservedAssetMs": 1418.8215420000001,
+      "browserCpuToUsableMs": 876.5346259999999,
+      "browserCpuToHorizonMs": 914.1840830000001,
+      "rssUsableMiB": 213.453125,
+      "requestTypes": {
+        "Document": 1,
+        "Script": 282,
+        "Stylesheet": 3,
+        "Fetch": 7
+      },
+      "cacheHitRequests": 0,
+      "cdpDecodedDataBytes": 4903041,
+      "terminalEncodedBodyBytes": 4862472,
+      "failedRequests": 0
+    },
+    {
+      "label": "main",
+      "navigationOrdinal": 2,
+      "usableMs": 359.62479200000007,
+      "dclMs": 186.611042,
+      "loadMs": 186.61541699999998,
+      "postUsabilityHorizonMs": 1001.8954170000002,
+      "lastObservedAssetMs": 1291.8442919999998,
+      "browserCpuToUsableMs": 589.500375,
+      "browserCpuToHorizonMs": 707.0617509999998,
+      "rssUsableMiB": 298.640625,
+      "requestTypes": {
+        "Document": 1,
+        "Script": 282,
+        "Stylesheet": 3,
+        "Fetch": 7
+      },
+      "cacheHitRequests": 285,
+      "cdpDecodedDataBytes": 4903041,
+      "terminalEncodedBodyBytes": 15738,
+      "failedRequests": 0
+    },
+    {
+      "label": "main",
+      "navigationOrdinal": 3,
+      "usableMs": 361.372875,
+      "dclMs": 192.2597079999996,
+      "loadMs": 192.2619169999998,
+      "postUsabilityHorizonMs": 1002.0186670000003,
+      "lastObservedAssetMs": 1216.6734580000002,
+      "browserCpuToUsableMs": 637.1935000000003,
+      "browserCpuToHorizonMs": 758.410042,
+      "rssUsableMiB": 382.21875,
+      "requestTypes": {
+        "Document": 1,
+        "Script": 282,
+        "Stylesheet": 3,
+        "Fetch": 7
+      },
+      "cacheHitRequests": 285,
+      "cdpDecodedDataBytes": 4903041,
+      "terminalEncodedBodyBytes": 15738,
+      "failedRequests": 0
+    },
+    {
+      "label": "candidate",
+      "navigationOrdinal": 1,
+      "usableMs": 582.6488749999999,
+      "dclMs": 264.72737499999994,
+      "loadMs": 264.73962499999993,
+      "postUsabilityHorizonMs": 1001.3575000000003,
+      "lastObservedAssetMs": 1265.1840829999999,
+      "browserCpuToUsableMs": 827.053792,
+      "browserCpuToHorizonMs": 855.448959,
+      "rssUsableMiB": 210.765625,
+      "requestTypes": {
+        "Document": 1,
+        "Script": 282,
+        "Stylesheet": 3,
+        "Fetch": 7
+      },
+      "cacheHitRequests": 0,
+      "cdpDecodedDataBytes": 4903041,
+      "terminalEncodedBodyBytes": 4862472,
+      "failedRequests": 0
+    },
+    {
+      "label": "candidate",
+      "navigationOrdinal": 2,
+      "usableMs": 344.655792,
+      "dclMs": 181.1382920000001,
+      "loadMs": 181.1447079999998,
+      "postUsabilityHorizonMs": 1001.4760000000001,
+      "lastObservedAssetMs": 1310.2984579999998,
+      "browserCpuToUsableMs": 587.8062490000001,
+      "browserCpuToHorizonMs": 699.802791,
+      "rssUsableMiB": 298.796875,
+      "requestTypes": {
+        "Document": 1,
+        "Script": 282,
+        "Stylesheet": 3,
+        "Fetch": 7
+      },
+      "cacheHitRequests": 285,
+      "cdpDecodedDataBytes": 4903041,
+      "terminalEncodedBodyBytes": 15738,
+      "failedRequests": 0
+    },
+    {
+      "label": "candidate",
+      "navigationOrdinal": 3,
+      "usableMs": 352.51587500000005,
+      "dclMs": 191.44716699999935,
+      "loadMs": 191.45004199999948,
+      "postUsabilityHorizonMs": 1001.9532499999996,
+      "lastObservedAssetMs": 1306.7387079999999,
+      "browserCpuToUsableMs": 617.2874999999999,
+      "browserCpuToHorizonMs": 737.3032080000003,
+      "rssUsableMiB": 385.171875,
+      "requestTypes": {
+        "Document": 1,
+        "Script": 282,
+        "Stylesheet": 3,
+        "Fetch": 7
+      },
+      "cacheHitRequests": 285,
+      "cdpDecodedDataBytes": 4903041,
+      "terminalEncodedBodyBytes": 15738,
+      "failedRequests": 0
+    }
+  ]
+}
