@@ -79,6 +79,7 @@ impl EngineHost {
                     .ok_or_else(|| CdpError::server("session is gone"))?
                     .network_enabled = true;
                 self.update_network_subscriptions();
+                self.apply_extra_headers(cmd.page);
                 Ok(Some(json!({})))
             }
             "disable" => {
@@ -86,6 +87,21 @@ impl EngineHost {
                     session.network_enabled = false;
                 }
                 self.update_network_subscriptions();
+                self.apply_extra_headers(cmd.page);
+                Ok(Some(json!({})))
+            }
+            "setExtraHTTPHeaders" => {
+                #[derive(Deserialize)]
+                struct Params {
+                    headers: serde_json::Map<String, Value>,
+                }
+                let params: Params = cmd.command.params()?;
+                let headers = parse_extra_headers(&params.headers)?;
+                self.sessions
+                    .get_mut(cmd.session_id)
+                    .ok_or_else(|| CdpError::server("session is gone"))?
+                    .extra_headers = headers;
+                self.apply_extra_headers(cmd.page);
                 Ok(Some(json!({})))
             }
             "getResponseBody" => {
@@ -115,6 +131,24 @@ impl EngineHost {
             }
             _ => Err(CdpError::unsupported(&cmd.command.method)),
         }
+    }
+
+    /// Hands the page the extra headers of its sessions that have Network
+    /// enabled (Chrome applies a session's headers only while its Network
+    /// domain is enabled; later sessions override earlier ones). Each call
+    /// replaces the page's set; an empty set clears it. Sibling pages, even
+    /// in the same browser context, are unaffected.
+    pub(super) fn apply_extra_headers(&mut self, page: PageKey) {
+        let Some(state) = self.pages.get(&page) else { return };
+        let mut headers = http::HeaderMap::new();
+        for session in state.sessions.iter().filter_map(|s| self.sessions.get(s)).filter(|s| s.network_enabled) {
+            for (name, value) in &session.extra_headers {
+                headers.insert(name.clone(), value.clone());
+            }
+        }
+        // False only for a page lp-browser no longer has, which then has no
+        // requests left to apply headers to.
+        let _ = self.thread.browser.set_extra_http_headers(state.id, headers);
     }
 
     pub(super) fn update_network_subscriptions(&mut self) {
@@ -227,4 +261,18 @@ impl EngineHost {
             }
         }
     }
+}
+
+/// `Network.Headers` to a header map, rejecting what Chrome 147 rejects with
+/// the same messages (non-string values, invalid names and values).
+fn parse_extra_headers(headers: &serde_json::Map<String, Value>) -> CdpResult<http::HeaderMap> {
+    let mut map = http::HeaderMap::new();
+    for (name, value) in headers {
+        let name = http::HeaderName::from_bytes(name.as_bytes())
+            .map_err(|_| CdpError::invalid_params("Invalid header name"))?;
+        let value = value.as_str().ok_or_else(|| CdpError::invalid_params("Invalid header value, string expected"))?;
+        let value = http::HeaderValue::from_str(value).map_err(|_| CdpError::invalid_params("Invalid header value"))?;
+        map.insert(name, value);
+    }
+    Ok(map)
 }
