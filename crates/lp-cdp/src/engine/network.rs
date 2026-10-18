@@ -1,6 +1,7 @@
 //! Per-context observations routed to the page sessions that enabled Network.
 
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -42,7 +43,7 @@ impl NetworkWake {
 
 pub(super) struct NetworkContext {
     pub(super) id: ContextId,
-    subscription: Option<NetSubscription>,
+    subscription: Option<Rc<NetSubscription>>,
     routes: HashMap<RequestId, PageKey>,
     pub(super) fetch: Option<Arc<super::fetch::FetchQueue>>,
 }
@@ -135,10 +136,12 @@ impl EngineHost {
             });
             if wanted && context.subscription.is_none() {
                 if let Some(net) = self.thread.browser.context_net(context.id) {
-                    context.subscription = Some(net.subscribe_with(
+                    let subscription = Rc::new(net.subscribe_with(
                         SubscriptionLimits::default(),
                         Some(self.network_wake.callback(self.thread.handle())),
                     ));
+                    self.collector.watch_network(*key, &subscription);
+                    context.subscription = Some(subscription);
                 }
             } else if !wanted {
                 context.subscription = None;
@@ -181,7 +184,7 @@ impl EngineHost {
         }
     }
 
-    fn on_network_event(&mut self, context: ContextKey, event: NetEvent) {
+    pub(super) fn on_network_event(&mut self, context: ContextKey, event: NetEvent) {
         if let NetEvent::LoadingFinished { id, .. } | NetEvent::LoadingFailed { id, .. } = &event {
             self.finish_fetch(context, *id);
         }

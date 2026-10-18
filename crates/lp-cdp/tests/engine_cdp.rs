@@ -1681,3 +1681,139 @@ fn navigation_history_traverses_across_documents() {
     assert_eq!((index, &after[..2], after[2].1.as_str()), (2, &before[..2], before[2].1.as_str()));
     assert_ne!(after[2].0, before[2].0, "a same-URL navigation is a new (replacing) entry");
 }
+
+/// Network and page events of one page as "method url" in emission order.
+fn page_and_network_order(messages: &[Value]) -> Vec<String> {
+    messages
+        .iter()
+        .filter_map(|m| {
+            let method = m["method"].as_str()?;
+            let p = &m["params"];
+            let url = p["request"]["url"]
+                .as_str()
+                .or(p["response"]["url"].as_str())
+                .or(p["url"].as_str())
+                .or(p["frame"]["url"].as_str())
+                .unwrap_or("");
+            (method.starts_with("Network.") || method.starts_with("Page.")).then(|| format!("{method} {url}"))
+        })
+        .collect()
+}
+
+fn index_of(order: &[String], prefix: &str, suffix: &str) -> usize {
+    order
+        .iter()
+        .position(|m| m.starts_with(prefix) && m.ends_with(suffix))
+        .unwrap_or_else(|| panic!("{prefix} …{suffix} missing in {order:#?}"))
+}
+
+/// Loads `/start` with Page and Network enabled, then evaluates `expression`
+/// (which may keep the browser thread busy) and collects what follows.
+fn events_around(expression: &str, responses: usize, settle_ms: u64) -> Vec<String> {
+    let (address, server) = serve_html(responses, "<!doctype html><p>x</p>");
+    let mut h = Harness::new();
+    h.page("Page.enable", json!({}));
+    h.page("Network.enable", json!({}));
+    let r = h.page("Page.navigate", json!({"url": format!("http://{address}/start")}));
+    assert!(r["result"].get("errorText").is_none(), "{r}");
+    h.run_for(100);
+    let mut messages = h.page_with_events(
+        "Runtime.evaluate",
+        json!({"expression": expression, "awaitPromise": true, "returnByValue": true}),
+    );
+    messages.extend(h.run_for(settle_ms));
+    server.join().unwrap();
+    page_and_network_order(&messages)
+}
+
+const BUSY_300MS: &str = "const t = Date.now(); while (Date.now() - t < 300) {}";
+
+/// B7 credit-note shape (W1 repro): a request is in flight, the page calls
+/// pushState, and the response arrives while the browser thread is still
+/// busy. Events keep occurrence order: navigatedWithinDocument, queued at
+/// pushState, precedes the response published after it.
+#[test]
+fn push_state_precedes_network_events_published_after_it() {
+    let order =
+        events_around(&format!("fetch('/data'); history.pushState(null, '', '/pushed'); {BUSY_300MS} 1"), 2, 200);
+    let pushed = index_of(&order, "Page.navigatedWithinDocument", "/pushed");
+    assert!(pushed < index_of(&order, "Network.responseReceived", "/data"), "{order:#?}");
+}
+
+/// Causal variant (W1 repro): a request issued after pushState is announced
+/// after the navigation event.
+#[test]
+fn request_issued_after_push_state_follows_it() {
+    let order =
+        events_around(&format!("history.pushState(null, '', '/pushed'); fetch('/data'); {BUSY_300MS} 1"), 2, 200);
+    let pushed = index_of(&order, "Page.navigatedWithinDocument", "/pushed");
+    assert!(pushed < index_of(&order, "Network.requestWillBeSent", "/data"), "{order:#?}");
+}
+
+/// The other direction: a response that completed before pushState is
+/// emitted before the navigation event, not held back behind it.
+#[test]
+fn network_events_published_before_push_state_precede_it() {
+    let order = events_around(
+        "fetch('/data').then(r => r.text()).then(() => { history.pushState(null, '', '/after'); return 1; })",
+        2,
+        100,
+    );
+    let pushed = index_of(&order, "Page.navigatedWithinDocument", "/after");
+    assert!(index_of(&order, "Network.responseReceived", "/data") < pushed, "{order:#?}");
+}
+
+/// Network events moved in front of queued items are charged with lp-net's
+/// `NetEvent::retained_bytes` and released when handled; beyond the limit the
+/// connection closes rather than dropping events.
+#[test]
+fn queued_network_events_are_bounded_and_released() {
+    for limit in [None, Some(1)] {
+        let (address, server) = serve_html(2, "<!doctype html><p>x</p>");
+        let mut h = Harness::new();
+        h.page("Page.enable", json!({}));
+        h.page("Network.enable", json!({}));
+        let r = h.page("Page.navigate", json!({"url": format!("http://{address}/start")}));
+        assert!(r["result"].get("errorText").is_none(), "{r}");
+        h.run_for(100);
+        if let Some(limit) = limit {
+            h.browser.host_mut().set_queued_network_byte_limit(limit);
+        }
+        // The response is published while the evaluation is busy, so it is
+        // moved into the queue in front of the pushState event.
+        let session = h.session.clone();
+        h.send(
+            Some(&session),
+            "Runtime.evaluate",
+            json!({"expression": format!("fetch('/data'); {BUSY_300MS} history.pushState(null, '', '/pushed'); 1")}),
+        );
+        // Run the engine without reading frames: an exceeded connection has
+        // no frames left to read.
+        let deadline = Instant::now() + Duration::from_millis(600);
+        while Instant::now() < deadline {
+            let host = h.browser.host_mut();
+            host.run_until_work(Some(Instant::now() + Duration::from_millis(10)), || false);
+            host.flush();
+        }
+        server.join().unwrap();
+        match limit {
+            None => {
+                assert!(!h.out.is_exceeded());
+                assert_eq!(h.browser.host_mut().queued_network_bytes(), 0, "handled events release their charge");
+            }
+            Some(_) => assert!(h.out.is_exceeded(), "a queue beyond the byte limit closes the connection"),
+        }
+    }
+}
+
+/// Navigation start: the old document's network events published before the
+/// navigation are emitted before it, and the new document's request after it
+/// (previously the old document's events were held until after the navigation
+/// cleared its captures).
+#[test]
+fn navigation_start_separates_old_and_new_document_network_events() {
+    let order = events_around(&format!("fetch('/data'); {BUSY_300MS} location.href = '/next'; 1"), 3, 300);
+    let navigating = index_of(&order, "Page.frameRequestedNavigation", "/next");
+    assert!(index_of(&order, "Network.responseReceived", "/data") < navigating, "{order:#?}");
+    assert!(navigating < index_of(&order, "Network.requestWillBeSent", "/next"), "{order:#?}");
+}
