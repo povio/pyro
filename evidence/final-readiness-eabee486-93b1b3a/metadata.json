@@ -1,0 +1,68 @@
+{
+  "comparison": {
+    "order": [
+      "A",
+      "B",
+      "B",
+      "A",
+      "B",
+      "A",
+      "A",
+      "B"
+    ],
+    "navigations_per_process": 3,
+    "total_limit": 24,
+    "test_timeout_ms": 300000,
+    "retry_limit": 0,
+    "compiler": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: aarch64-apple-darwin\nrelease: 1.99.1\nLLVM version: 23.1.1\n",
+    "sdk_version": "26.5",
+    "polling_traps": true,
+    "shared_cache_mib": 64,
+    "private_cache_mib": 64,
+    "collector_sha256": "dac431328d13ff35ba630ded618c6540e19c6e79dc33d43e55070529f55e0f4e",
+    "collector_base_sha256": "15df21569518e8f091c45a9f146f406b4369d4112b9aa553cc03ee6db2a8f564",
+    "collector_patch_sha256": "4ac7b3b0a9439b3ca705d968e026b6e6712c81eb6d8fd233b94722406ddaea1e",
+    "sampler_sha256": "e17e429b843600737c72aa07a97c41eb537a132c648ec46659380c45500e2d5b",
+    "binaries": {
+      "A": {
+        "path": "/private/tmp/lp-final-readiness-93b1b3a/lightningpanda-A",
+        "retained_source_path": "/private/tmp/lp-profile-main-eabee486/target/release/lightningpanda-jit",
+        "sha256": "66e7448e07666176e9650ba714cba04ecc570c65f6e6139ad5bd759f5b49ad88",
+        "commit": "eabee486709f79167520a46887cd6f303b26711d",
+        "tree": "a30b943b31b44e211e06b5184023877a6afac7f0",
+        "signing": "Manual ad hoc allow-jit after DEBUG0 postlink stripping; retained immutable baseline",
+        "codesign_sha256": "e8fff9e516730791f364c78146aeb0359fff13cdd2e1ddf78acc23552d103d3f",
+        "macho_build_sha256": "627dfaf6a896167adc6af861f0b56bd0070888e97ba25f83397ab1a07c7c79fb",
+        "source_tracked_clean": true
+      },
+      "B": {
+        "path": "/private/tmp/lp-final-readiness-93b1b3a/lightningpanda-B",
+        "retained_source_path": "/private/tmp/lp-final-readiness-main-93b1b3a/target/release/lightningpanda",
+        "sha256": "02009fad9f28aa349ff88bb9b994ac160729b6b8b1ac55798a73de1e0969b633",
+        "commit": "93b1b3a7c360cd892084a7e4d538024ead798fdc",
+        "tree": "1daa4a31a0e4ea69e5b29fd0448486f3f5172063",
+        "signing": "Repository linker ad hoc allow-jit with release strip=none",
+        "codesign_sha256": "3e0c1188190ce9fafb76c670b3303718fef8b8a2a42dc06d63a9a67c6600d717",
+        "macho_build_sha256": "a95b49cfab84ac270e8f7c9f9935a8f60f593502db67e460f18d6801a64b3680",
+        "source_tracked_clean": true
+      }
+    },
+    "template_ledger_sha256": "87b9f87bb7209560827b5cbffc49a5f93dd3d42a8bf9863f0771e9dc7c1947ab",
+    "baseline_recorded_build_provenance_sha256": "e3635d93753989085d88bb359fc6b6afb2acbbf3e18f7c09a85fcc9265e9491c"
+  },
+  "tos_commit": "f9fde4aa0dce7d1d7a1ffebffe3306399973cd80",
+  "run_slug": "lpfinalready-1018-202640",
+  "template_database": "fe_e2e_w2tpl_f9fde4aa_batch16fx_template",
+  "binary": "/private/tmp/lp-final-readiness-93b1b3a/lightningpanda-A",
+  "worktree": "/private/tmp/lp-tos-f9f-batch16-fx",
+  "auth": "backend test-token -> localStorage; no UI login",
+  "version_gate": "direct scripts/run-fe-e2e.mjs with playwright.routed.config.ts; same documented bypass as upstream baseline",
+  "measurement": "frozen observer-free ABBA BAAB eight-process24-navigation matrix; setup excluded; original assertions/auth, shared64/private64, explicit JIT/polling; not fullsuite or independent24samples",
+  "lightningpanda_shared_asset_cache_mb": "64",
+  "expected_selected_cases": 1,
+  "specs": [
+    "e2e/configuration/profile-settings.e2e.ts"
+  ],
+  "exit_code": 0,
+  "harness_wall_seconds": 41.596667
+}
