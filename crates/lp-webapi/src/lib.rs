@@ -66,7 +66,7 @@ pub use fetch::{FetchLimits, RequestContext};
 pub use file_reader::FileReaderLimits;
 pub use identity::UserAgentOverride;
 pub use node::{wrap_node, NodeData};
-pub use page::{IframeAttribute, NavigationRequest, PageDom, PageHooks, RemotePoster};
+pub use page::{FocusTarget, FocusTransition, IframeAttribute, NavigationRequest, PageDom, PageHooks, RemotePoster};
 pub use storage::StorageNamespace;
 pub use target::{EventTarget, EventTargetData};
 pub use window::{define_members, WindowHost};

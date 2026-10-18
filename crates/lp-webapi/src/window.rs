@@ -124,7 +124,10 @@ where
             &lp_net::Url::parse(&url).map(|u| u.origin().ascii_serialization()).unwrap_or_else(|_| "null".into()),
         ))
     });
-    def.method("focus", 0, |s, _w, _a| Ok(s.undefined()));
+    def.method("focus", 0, |s, w, _a| {
+        crate::input::focus_window(w.page());
+        Ok(s.undefined())
+    });
     def.method("blur", 0, |s, _w, _a| Ok(s.undefined()));
     def.method("print", 0, |s, _w, _a| Ok(s.undefined()));
     def.method("stop", 0, |s, _w, _a| Ok(s.undefined()));
