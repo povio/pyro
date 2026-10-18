@@ -228,6 +228,9 @@ impl EngineHost {
     fn run_now(&mut self, page: PageKey, source: &str, world: Option<&str>, id: &str) -> CdpResult<()> {
         let page_id = self.pages.get(&page).ok_or_else(|| CdpError::server("page is gone"))?.id;
         for info in self.thread.browser.frames(page_id) {
+            // An earlier script can synchronously remove a later frame from
+            // this snapshot. Skip it without failing future installation.
+            let Some(frame) = self.thread.browser.frame(page_id, &info.id) else { continue };
             let realm = match world {
                 Some(name) => Some(
                     self.thread
@@ -235,7 +238,7 @@ impl EngineHost {
                         .isolated_world_in_frame(page_id, &info.id, name)
                         .map_err(|e| CdpError::server(format!("cannot create isolated world: {e}")))?,
                 ),
-                None => self.thread.browser.frame(page_id, &info.id).and_then(|f| f.main_realm().cloned()),
+                None => frame.main_realm().cloned(),
             };
             if let Some(realm) = realm {
                 if let Ok(scope) = realm.scope() {

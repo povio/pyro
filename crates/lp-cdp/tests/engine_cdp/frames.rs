@@ -417,3 +417,29 @@ fn concurrent_child_navigation_world_installation_and_origin_are_isolated() {
     h.page("Fetch.disable", json!({}));
     server.join().unwrap();
 }
+
+#[test]
+fn run_immediately_tolerates_a_script_removing_a_later_frame() {
+    let mut h = Harness::new();
+    enable(&mut h);
+    add_srcdoc(&mut h, "removed-by-init", "child", None);
+    let result = h.page("Page.addScriptToEvaluateOnNewDocument", json!({
+        "worldName":"remove-child", "runImmediately":true,
+        "source":"const child = document.querySelector('iframe'); if (child) child.remove(); globalThis.initCompleted = true;"
+    }));
+    assert!(
+        result["result"]["identifier"].is_string(),
+        "script-induced frame removal must not fail installation: {result}"
+    );
+    assert!(h.page("Page.getFrameTree", json!({}))["result"]["frameTree"].get("childFrames").is_none());
+    // Installation still applies to a later document, not just the first
+    // world evaluated before the old child disappeared.
+    let events = h.page_with_events("Page.navigate", json!({"url":"about:blank"}));
+    let context = events
+        .iter()
+        .find(|e| e["method"] == "Runtime.executionContextCreated" && e["params"]["context"]["name"] == "remove-child")
+        .unwrap()["params"]["context"]["id"]
+        .as_i64()
+        .unwrap();
+    assert_eq!(eval_in(&mut h, context, "initCompleted"), true);
+}

@@ -66,7 +66,9 @@ opaque sandbox srcdoc, native owner/DOM identity, stale handles, sibling-safe
 navigation/removal, late lifecycle replay, HTTP document/fetch response routing,
 per-frame body cleanup, Fetch fulfillment and detach cancellation, concurrent
 child navigation, inherited/opaque origins, isolated-world init scripts, and
-explicit input/geometry rejection. The initial four feature contracts all
+explicit input/geometry rejection. A script that removes another frame during
+`runImmediately` is also covered: removed snapshots are skipped and future
+script installation still succeeds. The initial four feature contracts all
 failed on the browser-only dependency before the CDP implementation.
 
 `tests/e2e/about-blank.mjs` adds four Playwright 1.59.1 flows: parser-created frames and parent reload, sandboxed srcdoc
