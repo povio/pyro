@@ -141,6 +141,7 @@ impl Dom {
 
     /// Called after `node` was inserted (tree mutation or parser).
     pub(crate) fn resources_after_insert(&mut self, node: u32) {
+        self.iframes_after_insert(node);
         if !self.resources.enabled || !self.connected_idx(node) {
             return;
         }
@@ -153,6 +154,7 @@ impl Dom {
 
     /// Called before `node` is unlinked from a connected parent.
     pub(crate) fn resources_before_remove(&mut self, node: u32) {
+        self.iframes_before_remove(node);
         if !self.resources.enabled || !self.connected_idx(node) {
             return;
         }
@@ -176,6 +178,7 @@ impl Dom {
     }
 
     pub(crate) fn resources_after_attr(&mut self, idx: u32, local: &str) {
+        self.iframes_after_attr(idx, local);
         if !self.resources.enabled {
             return;
         }

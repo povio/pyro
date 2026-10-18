@@ -32,6 +32,7 @@ pub struct Dom {
     pub(crate) mutation: MutationState,
     pub(crate) events: crate::events::ListenerStore,
     pub(crate) resources: crate::script::ResourceQueue,
+    pub(crate) iframes: crate::iframe::IframeQueue,
 }
 
 impl Default for Dom {
@@ -63,6 +64,7 @@ impl Dom {
             mutation: MutationState::default(),
             events: Default::default(),
             resources: Default::default(),
+            iframes: Default::default(),
         }
     }
 
@@ -203,6 +205,7 @@ impl Dom {
             content_type: content_type.into(),
             charset: "UTF-8",
             url: url.into(),
+            base_url: None,
             inert_doc: NIL,
             owned: 0,
             active: false,
@@ -246,6 +249,20 @@ impl Dom {
             _ => return Err(DomError::Type("not a document")),
         }
         Ok(())
+    }
+    /// Sets an inherited, already-resolved base URL without changing URL/origin.
+    /// None restores resolution against the document's current URL.
+    pub fn set_document_base_url(&mut self, doc: NodeId, base: Option<&str>) -> DomResult<()> {
+        let i = self.check(doc)?;
+        match &mut self.n_mut(i).kind {
+            NodeKind::Document(d) => d.base_url = base.map(Into::into),
+            _ => return Err(DomError::Type("not a document")),
+        }
+        Ok(())
+    }
+    pub fn document_base_url(&self, doc: NodeId) -> DomResult<&str> {
+        let d = self.document_data(doc)?;
+        Ok(d.base_url.as_deref().unwrap_or(&d.url))
     }
     pub fn set_quirks_mode(&mut self, doc: NodeId, q: QuirksMode) -> DomResult<()> {
         let i = self.check(doc)?;

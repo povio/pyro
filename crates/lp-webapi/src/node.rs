@@ -241,7 +241,7 @@ impl JsClass for Node {
         def.getter("baseURI", |s, n| {
             let dom = n.page().dom.borrow();
             let doc = dom.node_document(n.id).js()?;
-            Ok(s.string(&dom.document_data(doc).js()?.url))
+            Ok(s.string(dom.document_base_url(doc).js()?))
         });
         def.method("hasChildNodes", 0, |s, n, _a| Ok(s.boolean(n.page().dom.borrow().child_count(n.id).js()? > 0)));
         def.method("getRootNode", 0, |s, n, a| {
@@ -1055,14 +1055,25 @@ impl JsClass for Document {
         def.getter("links", |s, n| Ok(collections::collection(s, n.page(), n.id, CollectionKind::Links)?.value()));
         def.accessor(
             "cookie",
-            |s, n| Ok(s.string(&crate::html::document_cookie(n.page(), n.id))),
-            |_s, n, v| {
+            |s, n| {
+                if s.realm().origin() == Some("null") {
+                    return Err(JsError::dom("SecurityError", "Cookies are unavailable for an opaque origin."));
+                }
+                Ok(s.string(&crate::html::document_cookie(n.page(), n.id)))
+            },
+            |s, n, v| {
+                if s.realm().origin() == Some("null") {
+                    return Err(JsError::dom("SecurityError", "Cookies are unavailable for an opaque origin."));
+                }
                 crate::html::set_document_cookie(n.page(), n.id, &dom_string(v)?);
                 Ok(())
             },
         );
         def.getter("referrer", |s, _n| Ok(s.string("")));
         def.getter("domain", |s, n| {
+            if s.realm().origin() == Some("null") {
+                return Ok(s.string(""));
+            }
             let url = n.page().dom.borrow().document_data(n.id).js()?.url.to_string();
             Ok(s.string(
                 lp_net::Url::parse(&url).ok().and_then(|u| u.host_str().map(str::to_owned)).as_deref().unwrap_or(""),
