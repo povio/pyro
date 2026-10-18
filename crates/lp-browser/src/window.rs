@@ -19,6 +19,10 @@ pub struct WindowData {
     /// JS timer handle -> loop timer.
     timers: RefCell<HashMap<u32, TimerId>>,
     next_handle: Cell<u32>,
+    frames: std::rc::Weak<crate::frames::FrameHost>,
+    frame: Option<crate::frames::FrameKey>,
+    frame_definer: RefCell<Option<Persistent>>,
+    frame_index_count: Cell<usize>,
 }
 
 impl WindowData {
@@ -35,9 +39,25 @@ impl WindowData {
             target: lp_webapi::EventTargetData::window(page, key),
             timers: RefCell::new(HashMap::new()),
             next_handle: Cell::new(1),
+            frames: std::rc::Weak::new(),
+            frame: None,
+            frame_definer: RefCell::new(None),
+            frame_index_count: Cell::new(0),
         }
     }
 
+    pub(crate) fn for_frame(
+        sched: Scheduler<Browser>,
+        nav: Rc<PageNav>,
+        page: &Rc<lp_webapi::PageDom>,
+        frames: std::rc::Weak<crate::frames::FrameHost>,
+        frame: crate::frames::FrameKey,
+    ) -> Self {
+        let mut data = Self::new(sched, nav, page);
+        data.frames = frames;
+        data.frame = Some(frame);
+        data
+    }
     pub fn url(&self) -> String {
         self.nav.url()
     }
@@ -124,8 +144,31 @@ impl JsClass for Window {
             Ok(s.wrap::<Performance>(PerformanceData::new(w.nav.clone()), Some(IdentityKey(KEY_PERFORMANCE, 0)))?
                 .value())
         });
-        def.getter("top", |s, _w| Ok(s.global().value()));
-        def.getter("parent", |s, _w| Ok(s.global().value()));
+        def.getter("top", |s, w| match (w.frames.upgrade(), w.frame) {
+            (Some(host), Some(key)) => host.relation(s, key, true),
+            _ => Ok(s.global().value()),
+        });
+        def.getter("parent", |s, w| match (w.frames.upgrade(), w.frame) {
+            (Some(host), Some(key)) => host.relation(s, key, false),
+            _ => Ok(s.global().value()),
+        });
+        def.getter("frameElement", |s, w| match (w.frames.upgrade(), w.frame) {
+            (Some(host), Some(key)) => host.frame_element(s, key),
+            _ => Ok(s.null()),
+        });
+        def.getter("length", |s, w| {
+            Ok(s.number(match (w.frames.upgrade(), w.frame) {
+                (Some(host), Some(key)) => host.child_keys(key).len() as f64,
+                _ => 0.0,
+            }))
+        });
+        def.getter("origin", |s, _| Ok(s.string(s.realm().origin().unwrap_or("null"))));
+        def.indexed(|s, w, index| match (w.frames.upgrade(), w.frame) {
+            (Some(host), Some(key)) => {
+                host.child_keys(key).get(index as usize).map(|target| host.window_value(s, key, *target)).transpose()
+            }
+            _ => Ok(None),
+        });
         def.getter("window", |s, _w| Ok(s.global().value()));
         def.getter("self", |s, _w| Ok(s.global().value()));
         def.getter("frames", |s, _w| Ok(s.global().value()));
@@ -143,6 +186,9 @@ impl JsClass for Window {
 }
 
 fn set_timer<'s>(s: &Scope<'s>, w: &WindowData, a: Args<'s>, repeat: bool) -> JsResult<Value<'s>> {
+    if w.target.page.scripting_disabled() {
+        return Ok(s.number(0.0));
+    }
     let handler = a.get(0);
     // WebIDL `long timeout = 0`: conversion errors propagate.
     let delay = a.get(1).to_number()?;
@@ -168,6 +214,9 @@ fn schedule<'s>(
     repeat: bool,
     pass_time: bool,
 ) -> JsResult<Value<'s>> {
+    if w.target.page.scripting_disabled() {
+        return Ok(s.number(0.0));
+    }
     let handle = w.next_handle.get();
     w.next_handle.set(handle.wrapping_add(1).max(1));
     // Timers must not keep a disposed realm alive: hold it weakly.
@@ -215,4 +264,41 @@ pub(crate) fn cancel_timers(realm: &Realm) {
             w.sched.clear_timer(id);
         }
     }
+}
+
+/// Capture the descriptor intrinsic before page init scripts can replace it.
+pub(crate) fn init_frame_indices(realm: &Realm) -> JsResult<()> {
+    let scope = realm.scope()?;
+    let define=scope.eval("(()=>{const define=Object.defineProperty;return(g,k,get)=>define(g,k,{get,enumerable:true,configurable:true})})()",Some("lightpanda://frame-indices"),1)?;
+    let w = scope.global_data::<Window>().ok_or(JsError::ContextDestroyed)?;
+    *w.frame_definer.borrow_mut() = Some(Persistent::new(&scope, define));
+    Ok(())
+}
+pub(crate) fn refresh_frame_indices(
+    realm: &Realm,
+    host: &Rc<crate::frames::FrameHost>,
+    key: crate::frames::FrameKey,
+) -> JsResult<()> {
+    let scope = realm.scope()?;
+    let w = scope.global_data::<Window>().ok_or(JsError::ContextDestroyed)?;
+    let Some(define) = w.frame_definer.borrow().clone() else { return Ok(()) };
+    let count = host.child_keys(key).len();
+    let old = w.frame_index_count.replace(count);
+    for i in count..old {
+        scope.global().delete(&i.to_string())?;
+    }
+    for i in 0..count {
+        let host = Rc::downgrade(host);
+        let get = scope.function("get frame", move |s, _, _| {
+            let Some(host) = host.upgrade() else { return Ok(s.undefined()) };
+            let Some(target) = host.child_keys(key).get(i).copied() else { return Ok(s.undefined()) };
+            host.window_value(s, key, target)
+        })?;
+        define
+            .get(&scope)
+            .as_object()
+            .ok_or(JsError::ContextDestroyed)?
+            .call(None, &[scope.global().value(), scope.string(&i.to_string()), get.value()])?;
+    }
+    Ok(())
 }

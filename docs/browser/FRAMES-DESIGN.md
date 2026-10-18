@@ -1,6 +1,7 @@
-# Child frames (iframe) phase 1: lp-browser design (W1, draft)
+# Child frames (iframe) phase 1: browser implementation
 
-Status: design only, agreed with W2 (lp-webapi hooks H1-H4) and W3 (lp-cdp routing). Scope and exclusions follow
+Status: browser implementation; CDP routing and unchanged application preview validation are separate W3 integration work.
+The implementation consumes W2 H1–H4 at `a05fb6fcb0742efc848b982fd6735c4880cfe494`. Scope and exclusions follow
 the parent-approved phase 1: same-process child frames for `srcdoc`, `src` (HTTP) and `about:blank` documents,
 sandbox flags, per-frame realms, lifecycle, teardown, and a restricted cross-origin `WindowProxy`.
 
@@ -45,7 +46,7 @@ Reference behaviour: the Chrome 147 probe in `target/worker-handoff/iframe-asses
   and applies at the next navigation (HTML).
 
 ## Sandbox
-- Flags are parsed from `sandbox` at navigation.
+- Flags are parsed from the owner at document commit and combined with ancestor restrictions. Changing the attribute alone does not change the active document.
 - Without `allow-same-origin` the document gets an opaque origin: realm origin `null`, `securityOrigin "://"`, and
   ephemeral storage as for other opaque documents.
 - Without `allow-scripts`:
@@ -78,9 +79,13 @@ Reference behaviour: the Chrome 147 probe in `target/worker-handoff/iframe-asses
   `FrameChildFrameDetached` follows that frame's `RealmDestroyed` events.
 - Accessors:
   - `Browser::frames(page) -> Vec<FrameInfo { id, parent: Option<FrameId>, owner: Option<NodeId>, url, loader_id,
-    name, network_idle }>`;
-  - `Browser::frame(page, &FrameId) -> Option<&Frame>`;
-  - `Browser::frame_of_owner(page, NodeId) -> Option<FrameId>`.
+    name, origin, network_idle, dom_content_loaded, loaded }>`;
+  - `Browser::frame(page, &FrameId) -> Option<Frame>` (owned snapshot with cloned Realm/PageDom handles);
+  - `Browser::frame_of_owner(page, NodeId) -> Option<FrameId>`;
+  - `Browser::isolated_world_in_frame(page, &FrameId, name) -> Result<Realm, JsError>`;
+  - `Browser::navigate_frame(page, &FrameId, NavigateOpts) -> Result<LoaderId, JsError>`.
+  These accessors never return a live frame-registry borrow across JavaScript. CDP must scope context
+  destruction, pending navigation and lifecycle replay to the affected frame, keeping siblings alive.
 
 ## Tests (lp-browser, real HTTP where it matters)
 - Sandboxed srcdoc: the child document's text is readable through the child realm; page scripts did not run; the
@@ -92,3 +97,43 @@ Reference behaviour: the Chrome 147 probe in `target/worker-handoff/iframe-asses
   then the parent `load`. Removal: realms destroyed, then detached. Nested frames tear down depth-first.
   Replacement drops stale queued navigations.
 - `src` change re-navigation; network idle per frame; init-script worlds in every frame.
+
+## Ownership and safe points
+
+`Page` retains its public main-frame view through `DocumentState`; each child has the same document loader,
+stylesheet state and navigation machinery. `FrameHost` owns child states and an owner-thread root snapshot.
+Bindings and window relationship wrappers retain the host weakly. A root snapshot can also hold isolated
+worlds created by cross-frame access; root synchronization and teardown preserve those worlds until disposal.
+No registry/DOM borrow spans realm creation, script evaluation or an observer callback.
+
+Connection creates the initial realm synchronously via `Engine::create_realm_in_current_thread`, which rejects
+an absent or dropped owning engine. Disconnection removes the frame from lookup immediately; disposal waits
+until the browser checkpoint so a child removing itself can finish the active native/JS call. Retirement is
+bounded by the removed subtree and drains depth-first. Child count is capped at 128 per page and depth at 32;
+exceeding either reports an exception and creates no additional frame.
+
+Pending document fetches have cancellation handles and loader guards. Detach/replacement drops cancellation
+ownership and forgets both the committed and uncommitted loader activity; late completions cannot resurrect
+the document. A failed initial child fetch reports
+`FrameNavigateFailed`, leaves the initial empty document usable, and releases the parent's load blocker.
+Timers, animation callbacks and parser scripts are suppressed for a script-disabled document, while explicit
+inspector evaluation and inspector init-script worlds remain available.
+
+## Bounded behavior and validation scope
+
+`child_frames.rs` covers synchronous blank creation, srcdoc, actual document identity, inherited/opaque
+origins, sandbox navigation, named and unnamed isolated worlds, init-script worlds, nested removal,
+self-removal, parent-load ordering, failed/cancelled loads, stale completions and repeated realm cleanup.
+`child_frame_network.rs` uses a local HTTP server for document/script/fetch request correlation, headers,
+inherited base resolution, frame network idle and activity cleanup. `lp-js/tests/nested_realm.rs` exercises
+safe realm creation from a native callback and rejects calls without a live owning engine.
+
+Same-origin window access deliberately returns the other realm's global, as agreed for this phase. It does
+not provide stable WindowProxy identity across document replacement. The cross-origin object provides only
+the documented allow-list; it does not expose the other document. Frame name metadata is supported, while
+named window-property lookup is not implemented. HTTP error response bodies still commit; transport failures
+do not synthesize a browser error page. There is no joint session history, cross-frame message delivery,
+cross-frame layout/input or popup support in this slice. Native HTTPS and other existing loader limitations
+remain. Inherited base URLs do not implement HTML `<base>` or cookie inheritance for blank/srcdoc documents.
+Opaque storage retains the existing isolated ephemeral-storage policy. No full browser or TOS compatibility,
+performance improvement, or resolution of the separately tracked system-JSC trap is claimed.

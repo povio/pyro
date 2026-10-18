@@ -221,12 +221,14 @@ impl PageNav {
     fn navigate(&self, url: String, history: HistoryHandling) {
         let page = self.page;
         let document = self.state.borrow().doc_seq;
+        let frame_id = self.frame_id.clone();
         self.sched.post(TaskSource::Navigation, move |b| {
-            if !b.page(page).is_some_and(|p| p.nav.state.borrow().doc_seq == document) {
+            let Some(page) = b.page(page).and_then(|p| p.frames.key(&frame_id)) else { return };
+            if !b.doc(page).is_some_and(|p| p.nav.state.borrow().doc_seq == document) {
                 return;
             }
             let opts = NavigateOpts { url, reason: NavigationReason::Script, cdp_request_id: None, referrer: None };
-            if let Err(e) = b.navigate_with_handling(page, opts, history) {
+            if let Err(e) = b.navigate_frame_with_handling(page, opts, history) {
                 b.report_navigation_error(page, &e);
             }
         });
@@ -253,8 +255,10 @@ impl PageNav {
         };
         // Traversal is queued as a task, like browsers do.
         let page = self.page;
+        let frame_id = self.frame_id.clone();
         self.sched.post(TaskSource::Navigation, move |b| {
-            let Some(nav) = b.page(page).map(|p| p.nav.clone()) else { return };
+            let Some(page) = b.page(page).and_then(|p| p.frames.key(&frame_id)) else { return };
+            let Some(nav) = b.doc(page).map(|p| p.nav.clone()) else { return };
             {
                 let mut state = nav.state.borrow_mut();
                 // Navigation can replace the document, or pushState can replace
@@ -277,7 +281,7 @@ impl PageNav {
                     cdp_request_id: None,
                     referrer: None,
                 };
-                if let Err(e) = b.navigate_with_handling(page, opts, HistoryHandling::Traverse) {
+                if let Err(e) = b.navigate_frame_with_handling(page, opts, HistoryHandling::Traverse) {
                     b.report_navigation_error(page, &e);
                 }
             }
@@ -293,8 +297,10 @@ impl PageNav {
         }
         let (page, document) = (self.page, self.state.borrow().doc_seq);
         let (old_url, new_url) = (old_url.to_string(), new_url.to_string());
+        let frame_id = self.frame_id.clone();
         self.sched.post(TaskSource::Navigation, move |b| {
-            let Some(p) = b.page(page) else { return };
+            let Some(page) = b.page(page).and_then(|p| p.frames.key(&frame_id)) else { return };
+            let Some(p) = b.doc(page) else { return };
             // Only for the document that navigated.
             if p.nav.state.borrow().doc_seq != document {
                 return;
@@ -321,35 +327,46 @@ impl Browser {
     pub(crate) fn apply_same_document_url(&mut self, page: PageId) {
         let Some(p) = self.page_mut(page) else { return };
         if let Some(url) = p.nav.take_pending_frame_url() {
+            if !matches!(p.main_frame.url.as_str(), "about:blank" | "about:srcdoc") {
+                p.main_frame.base_url = url.clone();
+            }
             p.main_frame.url = url;
         }
     }
 
-    pub(crate) fn same_document_committed(&mut self, page: PageId, url: String, kind: SameDocumentKind) {
-        let Some(p) = self.page_mut(page) else { return };
+    pub(crate) fn same_document_committed(
+        &mut self,
+        page: crate::frames::FrameKey,
+        url: String,
+        kind: SameDocumentKind,
+    ) {
+        let Some(mut p) = self.doc_mut(page) else { return };
         p.main_frame.url = url.clone();
         let frame_id = p.main_frame.id.clone();
-        self.emit(page, PageEvent::FrameNavigatedWithinDocument { frame_id, url, kind });
+        drop(p);
+        self.sync_root(page.page);
+        self.emit(page.page, PageEvent::FrameNavigatedWithinDocument { frame_id, url, kind });
     }
 
     /// Same-document traversal: `popstate` with the entry's state, then a
     /// queued `hashchange` when only the fragment changed (HTML "update
     /// document for history step application").
-    fn fire_popstate(&mut self, page: PageId, state: Option<&str>, old_url: &str, new_url: &str) {
-        let Some(p) = self.page(page) else { return };
+    fn fire_popstate(&mut self, page: crate::frames::FrameKey, state: Option<&str>, old_url: &str, new_url: &str) {
+        let Some(p) = self.doc(page) else { return };
         let Some(dom) = p.main_frame.page_dom.clone() else { return };
         let state = match (state, p.main_frame.main_realm().and_then(|r| r.scope().ok())) {
             (Some(json), Some(scope)) => scope.parse_json(json).map(|v| lp_js::Persistent::new(&scope, v)),
             _ => None,
         };
+        drop(p);
         lp_webapi::lifecycle::popstate(&dom, state);
-        if let Some(nav) = self.page(page).map(|p| p.nav.clone()) {
+        if let Some(nav) = self.doc(page).map(|p| p.nav.clone()) {
             nav.queue_hashchange(old_url, new_url);
         }
     }
 
-    fn report_navigation_error(&mut self, page: PageId, e: &JsError) {
-        if let Some(realm) = self.page(page).and_then(|p| p.main_frame.main_realm().cloned()) {
+    fn report_navigation_error(&mut self, page: crate::frames::FrameKey, e: &JsError) {
+        if let Some(realm) = self.doc(page).and_then(|p| p.main_frame.main_realm().cloned()) {
             if let Ok(scope) = realm.scope() {
                 scope.report_exception(e);
             }
@@ -359,7 +376,13 @@ impl Browser {
 
 fn parse(nav: &PageNav, input: Value<'_>) -> JsResult<Url> {
     let href = input.to_string()?;
-    let base = Url::parse(&nav.url()).ok();
+    let base_url = nav
+        .document
+        .borrow()
+        .as_ref()
+        .and_then(|(dom, doc)| dom.borrow().document_base_url(*doc).ok().map(str::to_owned))
+        .unwrap_or_else(|| nav.url());
+    let base = Url::parse(&base_url).ok();
     Url::options()
         .base_url(base.as_ref())
         .parse(&href)

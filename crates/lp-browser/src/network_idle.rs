@@ -5,7 +5,8 @@
 //! is reported once per document; a request that fails or is aborted counts
 //! as finished. A replaced or closed document reports nothing further.
 
-use crate::{Browser, LoaderId, PageEvent, PageId};
+use crate::frames::FrameKey;
+use crate::{Browser, LoaderId, PageEvent};
 use std::time::{Duration, Instant};
 
 /// How long the in-flight count must stay at a threshold.
@@ -23,18 +24,20 @@ pub struct NetworkIdle {
 
 impl Browser {
     /// Starts watching the document of `loader` after its `load` event.
-    pub(crate) fn watch_network_idle(&mut self, page: PageId, loader: LoaderId) {
+    pub(crate) fn watch_network_idle(&mut self, page: FrameKey, loader: LoaderId) {
         self.check_network_idle(page, &loader, Instant::now());
     }
 
-    fn check_network_idle(&mut self, page: PageId, loader: &LoaderId, loaded_at: Instant) {
-        let Some(p) = self.page(page) else { return };
+    fn check_network_idle(&mut self, page: FrameKey, loader: &LoaderId, loaded_at: Instant) {
+        let Some(p) = self.doc(page) else { return };
         if &p.main_frame.loader_id != loader {
             return; // replaced
         }
         let mut reached = p.main_frame.network_idle;
         let frame_id = p.main_frame.id.clone();
-        let activity = self.context_net(p.context).and_then(|net| net.activity(&loader.0));
+        drop(p);
+        let activity =
+            self.page(page.page).and_then(|p| self.context_net(p.context)).and_then(|net| net.activity(&loader.0));
         let inflight = activity.map_or(0, |a| a.inflight);
         // Quiet windows start no earlier than `load`.
         let quiet_since = |since: Option<Instant>| since.map_or(loaded_at, |s| s.max(loaded_at));
@@ -48,12 +51,12 @@ impl Browser {
             reached.almost_idle = true;
             self.set_network_idle(page, reached);
             let loader_id = loader.clone();
-            self.emit(page, PageEvent::FrameNetworkAlmostIdle { frame_id: frame_id.clone(), loader_id });
+            self.emit(page.page, PageEvent::FrameNetworkAlmostIdle { frame_id: frame_id.clone(), loader_id });
         }
         if idle_due {
             reached.idle = true;
             self.set_network_idle(page, reached);
-            self.emit(page, PageEvent::FrameNetworkIdle { frame_id, loader_id: loader.clone() });
+            self.emit(page.page, PageEvent::FrameNetworkIdle { frame_id, loader_id: loader.clone() });
             return;
         }
         let next = [(!reached.almost_idle).then_some(almost_at).flatten(), idle_at].into_iter().flatten().min();
@@ -63,15 +66,15 @@ impl Browser {
         self.scheduler().set_timer(delay, false, false, move |b| b.check_network_idle(page, &loader, loaded_at));
     }
 
-    fn set_network_idle(&mut self, page: PageId, reached: NetworkIdle) {
-        if let Some(p) = self.page_mut(page) {
+    fn set_network_idle(&mut self, page: FrameKey, reached: NetworkIdle) {
+        if let Some(mut p) = self.doc_mut(page) {
             p.main_frame.network_idle = reached;
         }
     }
 
     /// Forgets lp-net's activity entry of a document that is gone.
-    pub(crate) fn forget_network_activity(&self, page: PageId, loader: &LoaderId) {
-        if let Some(net) = self.page(page).and_then(|p| self.context_net(p.context)) {
+    pub(crate) fn forget_network_activity(&self, page: FrameKey, loader: &LoaderId) {
+        if let Some(net) = self.page(page.page).and_then(|p| self.context_net(p.context)) {
             net.forget_activity(&loader.0);
         }
     }

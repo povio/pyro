@@ -1,6 +1,7 @@
 //! Document-owned linked stylesheets. Transport completion never owns the document.
+use crate::frames::FrameKey;
 use crate::loader::ResourceNode;
-use crate::{Browser, FetchRequest, LoaderId, Page, PageId, Resource, ResourceCancellation, ResourceKind};
+use crate::{Browser, FetchRequest, LoaderId, Page, Resource, ResourceCancellation, ResourceKind};
 use lp_dom::script::{ResourceEvent, ResourceKind as DomResourceKind, ResourceReason};
 use lp_dom::NodeId;
 use lp_runtime::TaskSource;
@@ -53,11 +54,11 @@ fn remove_sheet(page: &PageDom, node: NodeId) {
 }
 
 impl Browser {
-    pub(crate) fn stylesheet_event(&mut self, page: PageId, node: NodeId) {
-        let Some(state) = self.page(page) else { return };
+    pub(crate) fn stylesheet_event(&mut self, page: FrameKey, node: NodeId) {
+        let Some(state) = self.doc(page) else { return };
         let Some(bindings) = state.main_frame.page_dom.clone() else { return };
         let loader = state.main_frame.loader_id.clone();
-        let referrer = state.main_frame.url.clone();
+        let referrer = state.main_frame.base_url.clone();
         // Events describe mutations; inspect the final state so several href/rel
         // writes in one task do not launch intermediate requests.
         let config = {
@@ -81,7 +82,8 @@ impl Browser {
                 .flatten()
         };
         let Some((url, crossorigin, integrity)) = config else {
-            self.page_mut(page).expect("page").stylesheets.remove(node);
+            drop(state);
+            self.doc_mut(page).expect("page").stylesheets.remove(node);
             remove_sheet(&bindings, node);
             self.queue_stylesheets_changed(page, loader);
             return;
@@ -94,11 +96,14 @@ impl Browser {
         {
             return;
         }
-        let sheets = &mut self.page_mut(page).expect("page").stylesheets;
+        drop(state);
+        let mut guard = self.doc_mut(page).expect("page");
+        let sheets = &mut guard.stylesheets;
         let replacing = sheets.entries.contains_key(&node);
         sheets.remove(node);
         if !replacing && sheets.entries.len() >= MAX_SHEETS {
             // Do not retain another sheet or start unbounded transport work.
+            drop(guard);
             self.stylesheet_error_task(page, loader, bindings, node);
             return;
         }
@@ -128,6 +133,7 @@ impl Browser {
                 cancel: None,
             },
         );
+        drop(guard);
         // Reserve a cascade slot now; completion order must not reorder sheets.
         bindings.set_stylesheet_text(node, "");
         let weak = Rc::downgrade(&bindings);
@@ -144,25 +150,26 @@ impl Browser {
             self.scheduler().post(TaskSource::Networking, move |b| finish(b, Err("no resource loader".into())));
             return;
         };
-        let frame = &self.page(page).expect("page").main_frame;
+        let frame = self.doc(page).expect("page").main_frame.clone();
         let request = FetchRequest {
             url,
             kind: ResourceKind::Stylesheet,
-            page,
+            page: page.page,
             referrer: Some(referrer),
             frame_id: Some(frame.id.0.clone()),
             loader_id: Some(frame.loader_id.0.clone()),
             crossorigin,
         };
         let cancel = resource_loader.fetch_cancellable(self, request, Box::new(finish));
-        if let Some(sheet) = self.page_mut(page).and_then(|p| p.stylesheets.entries.get_mut(&node)) {
+        if let Some(mut sheet) = self.doc_mut(page).and_then(|p| p.filter_map(|p| p.stylesheets.entries.get_mut(&node)))
+        {
             sheet.cancel = cancel;
         }
     }
 
     fn finish_stylesheet(
         &mut self,
-        page: PageId,
+        page: FrameKey,
         loader: &LoaderId,
         bindings: &Rc<PageDom>,
         node: NodeId,
@@ -170,7 +177,7 @@ impl Browser {
         result: Result<Resource, String>,
     ) {
         self.drain_dom_resources(page);
-        let Some(state) = self.page_mut(page).filter(|p| &p.main_frame.loader_id == loader) else { return };
+        let Some(mut state) = self.doc_mut(page).filter(|p| &p.main_frame.loader_id == loader) else { return };
         let sheets = &mut state.stylesheets;
         let Some(sheet) = sheets.entries.get_mut(&node).filter(|s| s.generation == generation && s.pending) else {
             return;
@@ -196,13 +203,14 @@ impl Browser {
         } else {
             remove_sheet(bindings, node);
         }
+        drop(state);
         // This callback is already a later owner-thread task. No DOM/state
         // borrow survives dispatch into JavaScript.
         lp_webapi::lifecycle::resource_loaded(bindings, node, ok);
         self.stylesheets_changed(page);
     }
 
-    fn stylesheet_error_task(&self, page: PageId, loader: LoaderId, bindings: Rc<PageDom>, node: NodeId) {
+    fn stylesheet_error_task(&self, page: FrameKey, loader: LoaderId, bindings: Rc<PageDom>, node: NodeId) {
         if bindings.dom.borrow_mut().add_ref(node).is_err() {
             return;
         }
@@ -210,7 +218,7 @@ impl Browser {
         let weak = Rc::downgrade(&bindings);
         self.scheduler().post(TaskSource::Networking, move |b| {
             let _pin = &hold;
-            if b.page(page).is_some_and(|p| p.main_frame.loader_id == loader) {
+            if b.doc(page).is_some_and(|p| p.main_frame.loader_id == loader) {
                 if let Some(bindings) = weak.upgrade() {
                     lp_webapi::lifecycle::resource_loaded(&bindings, hold.node, false);
                 }
@@ -218,16 +226,16 @@ impl Browser {
         });
     }
 
-    fn queue_stylesheets_changed(&self, page: PageId, loader: LoaderId) {
+    fn queue_stylesheets_changed(&self, page: FrameKey, loader: LoaderId) {
         self.scheduler().post(TaskSource::Networking, move |b| {
-            if b.page(page).is_some_and(|p| p.main_frame.loader_id == loader) {
+            if b.doc(page).is_some_and(|p| p.main_frame.loader_id == loader) {
                 b.stylesheets_changed(page);
             }
         });
     }
 
-    pub(crate) fn stylesheets_block_scripts(&self, page: PageId) -> bool {
-        let Some(p) = self.page(page) else { return false };
+    pub(crate) fn stylesheets_block_scripts(&self, page: FrameKey) -> bool {
+        let Some(p) = self.doc(page) else { return false };
         let Some(bindings) = &p.main_frame.page_dom else { return false };
         let dom = bindings.dom.borrow();
         p.stylesheets.entries.values().any(|sheet| {

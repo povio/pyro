@@ -300,6 +300,17 @@ impl Engine {
         crate::realm::create(&self.inner, options)
     }
 
+    /// Creates a realm in this thread's live engine, including from an
+    /// embedder callback whose owner already borrows the `Engine` handle.
+    /// No new engine or class registration occurs. The caller must release
+    /// native state borrows before calling: creation can run engine hooks and
+    /// allocate/collect JavaScript objects. An absent or dropped owner is an
+    /// error, even if old realm handles still keep its heap alive.
+    pub fn create_realm_in_current_thread(options: RealmOptions) -> Result<Realm, JsError> {
+        let inner = current_inner().ok_or(JsError::ContextDestroyed)?;
+        crate::realm::create(&inner, options)
+    }
+
     /// Thread-safe handle to request termination of running JavaScript.
     pub fn terminate_handle(&self) -> Result<TerminateHandle, JsError> {
         if !self.inner.caps.termination {
