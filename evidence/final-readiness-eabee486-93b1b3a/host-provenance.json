@@ -1,0 +1,12 @@
+{
+  "captured": "after completed matrix; static host/software context, not sampling",
+  "platform": "macOS-26.6-arm64-arm-64bit",
+  "sw_vers": "ProductName:\t\tmacOS\nProductVersion:\t\t26.6\nBuildVersion:\t\t25G72\n",
+  "hardware": {
+    "hw.model": "MacBookAir10,1",
+    "hw.ncpu": "8",
+    "hw.memsize": "8589934592",
+    "machdep.cpu.brand_string": "Apple M1"
+  },
+  "bun": "1.4.3"
+}
