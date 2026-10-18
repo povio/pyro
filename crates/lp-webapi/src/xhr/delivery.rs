@@ -143,6 +143,13 @@ fn pump(page_id: u64, id: RequestId) {
     if !xhr.current(generation, id) {
         return;
     }
+    if head.is_some() {
+        // Response headers imply the request body was fully transmitted.
+        xhr.upload_done();
+        if !xhr.current(generation, id) {
+            return;
+        }
+    }
     if let Some(head) = head {
         *xhr.head.borrow_mut() = Some(head);
         xhr.ready.set(2);

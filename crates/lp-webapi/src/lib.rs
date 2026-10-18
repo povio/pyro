@@ -104,6 +104,7 @@ pub fn register(engine: &lp_js::Engine) {
     engine.register::<url_search_params::ParamsIterator>();
     engine.register::<response::Response>();
     engine.register::<xhr::XMLHttpRequest>();
+    engine.register::<xhr::XMLHttpRequestUpload>();
 }
 
 /// Installs the page's bindings into a freshly created realm.
