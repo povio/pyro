@@ -13,8 +13,8 @@ pub use subscription::{NetSubscription, NetWake, SubscriptionError, Subscription
 
 pub use cache::{SharedAssetCache, SHARED_ASSET_CACHE_ENV};
 pub use client::{
-    AuthChallenge, AuthDecision, InterceptDecision, Interceptor, NetClient, NetConfig, NetEvent, NetSettings,
-    PausedRequest, RequestInfo, ResponseSink,
+    AuthChallenge, AuthDecision, InterceptDecision, Interceptor, NetActivity, NetClient, NetConfig, NetEvent,
+    NetSettings, PausedRequest, RequestInfo, ResponseSink,
 };
 pub use cookies::CookieJar;
 /// HTTP types used by Request/ResponseHead for native consumers.
