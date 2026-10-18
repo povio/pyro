@@ -15,7 +15,7 @@ use lp_js::{
     Args, ClassDef, IdentityKey, JsClass, JsError, JsResult, Object, Persistent, RealmId, Scope, Value, WeakRealm,
 };
 use lp_net::http::{header, HeaderName, HeaderValue, Method};
-use lp_net::{Credentials, Destination, NetError, Request, RequestId, ResponseEvent, ResponseHead};
+use lp_net::{Credentials, Destination, NetError, NetworkDelivery, Request, RequestId, ResponseEvent, ResponseHead};
 use rustc_hash::FxHashMap;
 use std::{
     cell::{Cell, RefCell},
@@ -96,6 +96,7 @@ struct Xhr {
     override_mime: RefCell<Option<String>>,
     text: RefCell<Option<body::Text>>,
     reported: Cell<usize>,
+    visible_chunks: Cell<usize>,
     disposed: Cell<bool>,
 }
 impl Drop for Xhr {
@@ -149,6 +150,7 @@ impl JsClass for XMLHttpRequest {
                 override_mime: RefCell::new(None),
                 text: RefCell::new(None),
                 reported: Cell::new(0),
+                visible_chunks: Cell::new(0),
                 disposed: Cell::new(false),
             });
             page.xhr_state.instances.borrow_mut().insert(instance, Rc::downgrade(&state));
@@ -414,6 +416,7 @@ impl Xhr {
         self.head.take();
         self.text.take();
         self.reported.set(0);
+        self.visible_chunks.set(0);
         s.set_hidden(self.wrapper(s)?, RESPONSE, s.undefined())
     }
     fn current(&self, generation: u64, id: RequestId) -> bool {

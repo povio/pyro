@@ -283,11 +283,71 @@ fn xhr_text_read_is_safe_when_network_failure_precedes_its_browser_task() {
     assert_eq!(env.eval("x.responseText"), "");
     server.release.send(()).unwrap();
     let task = env.tasks.recv_timeout(Duration::from_secs(5)).expect("failed delivery queued");
-    // The I/O thread has released its buffer, but JS still observes LOADING
-    // until this queued failure is dispatched. A decoder must not index the
-    // released chunks using its previous cursor.
+    // The I/O thread has recorded the overflow but keeps the delivered buffer
+    // (and its budget charge) until this queued failure is dispatched; JS still
+    // observes LOADING and only the owner-visible snapshot.
     assert_eq!(env.eval("x.responseText"), "");
     task();
     env.until("result==='error'");
     assert_eq!(env.page.xhr_usage(), (0, 0));
+    // lp-net enforces the 2-byte request max_body and reports a real transport
+    // Failed (also published as Network.loadingFailed), so the frontier is
+    // terminal. Consumer-local overflow without a transport failure is covered
+    // by the delivery unit test.
+    assert_eq!(env.frontiers().last(), Some(&(true, 2, true)), "{:?}", env.log.borrow());
+}
+
+fn assert_xhr_owner_delivery(path: &str, expected: &str) {
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    let events = env.page.net.borrow().as_ref().unwrap().subscribe();
+    env.eval(&format!("globalThis.result='pending';globalThis.x=new XMLHttpRequest();x.onload=()=>result=x.responseText;x.onerror=()=>result='error';x.open('GET','{path}');x.send()"));
+    env.until("x.readyState===3");
+    assert_eq!(env.eval("x.responseText"), "first");
+    server.release.send(()).unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        match events.try_recv() {
+            Ok(lp_net::NetEvent::LoadingFinished { .. } | lp_net::NetEvent::LoadingFailed { .. }) => break,
+            Ok(_) => (),
+            Err(lp_net::SubscriptionError::Empty) => std::thread::sleep(Duration::from_millis(1)),
+            Err(e) => panic!("unexpected observer state: {e:?}"),
+        }
+        assert!(std::time::Instant::now() < deadline, "transport did not complete");
+    }
+    assert_eq!(
+        env.eval("x.responseText"),
+        "first",
+        "IO must not expose new bytes or erase delivered text before the owner task"
+    );
+    assert_eq!(env.eval("result"), "pending");
+    env.until("result!=='pending'");
+    assert_eq!(env.eval("result"), expected);
+}
+
+#[test]
+fn xhr_bytes_wait_for_owner_delivery() {
+    assert_xhr_owner_delivery("/gated-text", "firstlater");
+}
+
+#[test]
+fn xhr_error_waits_for_owner_delivery() {
+    assert_xhr_owner_delivery("/gated-failure", "error");
+}
+
+#[test]
+fn xhr_delivery_frontier_reaches_the_hook_before_ready_state_changes() {
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    env.eval("globalThis.x=new XMLHttpRequest();x.onreadystatechange=()=>__log('rs'+x.readyState+' '+x.responseText);x.open('GET','/gated-text');x.send()");
+    env.until("x.readyState===3");
+    server.release.send(()).unwrap();
+    env.until("x.readyState===4");
+    let frontiers = env.frontiers();
+    assert!(frontiers.first().is_some_and(|f| f.0 && !f.2), "{frontiers:?}");
+    assert_eq!(frontiers.last(), Some(&(true, 10, true)));
+    let first = env.log_index(|l| l.starts_with("delivery ")).unwrap();
+    let terminal = env.log_index(|l| l.starts_with("delivery ") && l.ends_with("t=true")).unwrap();
+    assert!(first < env.log_index(|l| l.starts_with("rs2")).unwrap(), "{:?}", env.log.borrow());
+    assert!(terminal < env.log_index(|l| l == "rs4 firstlater").unwrap(), "{:?}", env.log.borrow());
 }

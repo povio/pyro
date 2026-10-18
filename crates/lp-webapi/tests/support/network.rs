@@ -38,15 +38,22 @@ impl JsClass for Window {
     }
 }
 type Task = Box<dyn FnOnce() + Send>;
+/// Shared, ordered record of delivery frontiers (from the hook) and JS markers
+/// (from `__log`), so tests can prove the hook runs before dependent JS.
+pub type Log = Rc<RefCell<Vec<String>>>;
 struct Hooks {
     tx: mpsc::Sender<Task>,
     pub posts: Arc<AtomicUsize>,
+    log: Log,
 }
 impl PageHooks for Hooks {
     fn post_task(&self, task: Box<dyn FnOnce()>) {
         task();
     }
     fn navigate(&self, _: NavigationRequest) {}
+    fn network_delivery(&self, id: lp_net::RequestId, d: lp_net::NetworkDelivery) {
+        self.log.borrow_mut().push(format!("delivery {} r={} b={} t={}", id.0, d.response, d.data_bytes, d.terminal));
+    }
     fn remote_poster(&self) -> Option<RemotePoster> {
         let tx = self.tx.clone();
         let posts = self.posts.clone();
@@ -64,8 +71,44 @@ pub struct Env {
     pub page: Rc<PageDom>,
     pub tasks: mpsc::Receiver<Task>,
     pub posts: Arc<AtomicUsize>,
+    pub log: Log,
 }
 impl Env {
+    /// Index of the first log entry satisfying `pred`.
+    pub fn log_index(&self, pred: impl Fn(&str) -> bool) -> Option<usize> {
+        self.log.borrow().iter().position(|l| pred(l))
+    }
+    /// Parsed `(response, data_bytes, terminal)` frontiers, in hook order.
+    /// Asserts they are cumulative: never regress, and nothing after a terminal.
+    pub fn frontiers(&self) -> Vec<(bool, u64, bool)> {
+        let parsed: Vec<(bool, u64, bool)> = self
+            .log
+            .borrow()
+            .iter()
+            .filter_map(|l| l.strip_prefix("delivery "))
+            .map(|l| {
+                let f: Vec<&str> = l.split(' ').collect();
+                let v = |k: &str| f.iter().find_map(|x| x.strip_prefix(k)).unwrap().to_string();
+                (v("r=") == "true", v("b=").parse().unwrap(), v("t=") == "true")
+            })
+            .collect();
+        for w in parsed.windows(2) {
+            let ((r0, b0, t0), (r1, b1, _)) = (w[0], w[1]);
+            assert!(!t0, "no frontier may follow a terminal one: {parsed:?}");
+            assert!(r1 >= r0 && b1 >= b0, "frontiers must be cumulative: {parsed:?}");
+        }
+        parsed
+    }
+    /// Runs queued browser tasks for a bounded time (no product timing involved).
+    pub fn drain_for(&self, total: Duration) {
+        let deadline = Instant::now() + total;
+        while let Some(wait) = deadline.checked_duration_since(Instant::now()) {
+            match self.tasks.recv_timeout(wait) {
+                Ok(task) => task(),
+                Err(_) => break,
+            }
+        }
+    }
     pub fn new(url: &str) -> Self {
         Self::with_engine(url, Rc::new(Engine::new().unwrap()))
     }
@@ -79,7 +122,8 @@ impl Env {
         *page.net.borrow_mut() = Some(lp_net::NetClient::new(Default::default()).unwrap());
         let (tx, tasks) = mpsc::channel();
         let posts = Arc::new(AtomicUsize::new(0));
-        page.set_hooks(Some(Rc::new(Hooks { tx, posts: posts.clone() })));
+        let log: Log = Rc::default();
+        page.set_hooks(Some(Rc::new(Hooks { tx, posts: posts.clone(), log: log.clone() })));
         let realm = engine.create_realm(RealmOptions { global_class: Some(class), ..Default::default() }).unwrap();
         let key = page.create_window_target(doc);
         realm
@@ -109,11 +153,19 @@ impl Env {
                     Ok(s.undefined())
                 })
                 .unwrap();
+            let marks = log.clone();
+            let mark = s
+                .function("__log", move |s, _, args| {
+                    marks.borrow_mut().push(args.get(0).to_string()?);
+                    Ok(s.undefined())
+                })
+                .unwrap();
+            s.global().set("__log", mark.value()).unwrap();
             s.global().set("setTimeout", set.value()).unwrap();
             s.global().set("clearTimeout", clear.value()).unwrap();
             install(&s, page.clone()).unwrap();
         }
-        Self { engine, realm, page, tasks, posts, timers }
+        Self { engine, realm, page, tasks, posts, timers, log }
     }
     pub fn eval(&self, source: &str) -> String {
         let s = self.realm.scope().unwrap();
@@ -225,6 +277,13 @@ impl Server {
                     "/cors" => ("200 OK", format!("Access-Control-Allow-Origin: {origin}\r\nAccess-Control-Expose-Headers: X-Visible\r\nAccess-Control-Expose-Headers: X-Second\r\nX-Second: second\r\nX-Visible: yes\r\nX-Hidden: no\r\nSet-Cookie: hidden=1\r\n"), b"cors".to_vec()),
                     "/empty" => ("204 No Content", String::new(), vec![]),
                     "/large" => ("200 OK", String::new(), vec![b'x'; 8192]),
+                    "/gated-failure" | "/gated-text" => {
+                        let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 10\r\n\r\nfirst");
+                        let _ = stream.flush();
+                        let _ = gate.recv_timeout(Duration::from_secs(5));
+                        if path == "/gated-text" { let _ = stream.write_all(b"later"); }
+                        continue;
+                    }
                     "/gated" => {
                         let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 6\r\n\r\n");
                         let _ = stream.flush(); let _ = gate.recv_timeout(Duration::from_secs(5));
