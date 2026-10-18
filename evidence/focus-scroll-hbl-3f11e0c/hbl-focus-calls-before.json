@@ -1,0 +1,66 @@
+{
+  "run_slug": "lphblfocus-1018-182906",
+  "source": "84ab914 production-equivalent198b2e2",
+  "binary_sha256": "482b1ed0fadc4816228e5a346b2ed1991adc490c66157cc4041bb78b31b8149e",
+  "focus_calls": [
+    {
+      "tag": "DIV",
+      "connected": true,
+      "preventScroll": false,
+      "rect": [
+        1047,
+        31955,
+        5,
+        65
+      ],
+      "scroll": [
+        0,
+        0
+      ]
+    },
+    {
+      "tag": "BUTTON",
+      "connected": true,
+      "preventScroll": false,
+      "rect": [
+        1047,
+        31975,
+        5,
+        10
+      ],
+      "scroll": [
+        0,
+        0
+      ]
+    },
+    {
+      "tag": "DIV",
+      "connected": true,
+      "preventScroll": false,
+      "rect": [
+        1456,
+        32650,
+        25,
+        50
+      ],
+      "scroll": [
+        0,
+        0
+      ]
+    }
+  ],
+  "options": [
+    "Forwarder",
+    "Also Notify",
+    "Notify",
+    "Consignee",
+    "Shipper"
+  ],
+  "cleanup": "run DBs left: 0 | retained ledger templates: ['fe_e2e_w2tpl_f9fde4aa_batch16fx_template', 'fe_e2e_w2tpl_f9fde4aa_batch7_template', 'fe_e2e_w2tpl_f9fde4aa_batch7diag_template']\n",
+  "qualification": "Observation-only HTMLElement.focus wrapper delegates unchanged call.32call cap, no scrolling intervention/delay; asserts unchanged. Captures all3calls withoutpreventScroll. Layout and missingfocus-scroll remain distinct until native candidate test.",
+  "hashes": {
+    "hbl.e2e.ts": "f451de937e1b727ea889541ca8cf969533d51a22befd4d4eef558e703b313487",
+    "geometry.json": "e172167401a66859612ff45a64b6fbc0e9cf4ba113b076a8fa967b6396593a5a",
+    "coverage.log": "89039eb40100ed8dfe101992519ba3369f6a634731fdc2c8c7aedae73650d292"
+  }
+}

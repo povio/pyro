@@ -1,0 +1,19 @@
+{
+  "source": "3f11e0cf6327789dc2d34eca9e6de1934df2298e",
+  "release_tests": 298,
+  "existing_ignored": 1,
+  "strict_clippy": "lp-dom/lp-webapi --release --locked --all-targets -Dwarnings passed",
+  "fmt": "passed",
+  "no_v8": "passed",
+  "logs": {
+    "before.log": "57149f6508723ac2f1140dabd76f3c8348108e8c9a265ffd8ecccd3da6164164",
+    "after-full.log": "b2a8fb387209e244b9ca48b1106214da7ccf0e69570673766fadbfe95258e459",
+    "after-full-final.log": "fd5b9d26be5e4215dbc52faf4a9b420abfac478669b017e3367643bb5782336b",
+    "clippy.log": "68406e0fe5ce53b58a52a4b6dda23e1bfe342ff27f9b0252311bc2b50b5f86d8",
+    "fmt.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "no-v8.log": "fe8e50e7ebbc807f82f427753b3f64f77c4b9932d513b6ef2d2852052e353bfa",
+    "browser-build.log": "f4aaaca9a027807c957a799334edd80583cdd2a58529d757494d9cb9a70fd7a2",
+    "codesign.txt": "c4ab2cfb0a8f54f18f5636bb7a4d9c9d135d4e9cd0bd5ecaa143f1324e9de766"
+  },
+  "test_instrumentation_correction": "First new test used unsupported onfocusin property assignment; corrected to addEventListener. Initial post-change144pass/1failure preserved; final298pass includes corrected listener and added owner/disposal regression. Baseline independent Chrome/rewrite control also proves missing default scroll."
+}

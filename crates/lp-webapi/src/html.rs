@@ -544,10 +544,7 @@ impl JsClass for HtmlElement {
             crate::input::element_click(n.page(), n.id);
             Ok(s.undefined())
         });
-        def.method("focus", 0, |s, n, _a| {
-            crate::input::focus_element(n.page(), n.id);
-            Ok(s.undefined())
-        });
+        def.method("focus", 0, focus_element);
         def.method("blur", 0, |s, n, _a| {
             crate::input::blur_element(n.page(), n.id);
             Ok(s.undefined())
@@ -1600,10 +1597,7 @@ impl JsClass for SvgElement {
             }
             Ok(s.null())
         });
-        def.method("focus", 0, |s, n, _a| {
-            crate::input::focus_element(n.page(), n.id);
-            Ok(s.undefined())
-        });
+        def.method("focus", 0, focus_element);
         def.method("blur", 0, |s, n, _a| {
             crate::input::blur_element(n.page(), n.id);
             Ok(s.undefined())
@@ -1825,4 +1819,20 @@ pub(crate) fn register(engine: &lp_js::Engine) {
     engine.register::<SvgGraphicsElement>();
     engine.register::<SvgSvgElement>();
     engine.register::<DomImplementation>();
+}
+
+// Option getters can call back into JS; convert before focus/DOM borrows.
+fn focus_element<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
+    let value = a.get(0);
+    let prevent_scroll = if value.is_null() || value.is_undefined() {
+        false
+    } else {
+        value
+            .as_object()
+            .ok_or_else(|| JsError::Type("Focus options must be an object".into()))?
+            .get("preventScroll")?
+            .to_bool()
+    };
+    crate::input::focus_element_with_options(n.page(), n.id, prevent_scroll);
+    Ok(s.undefined())
 }

@@ -1,0 +1,111 @@
+{
+  "binary": "chromium",
+  "version": "147.0.7727.15",
+  "samples": [
+    {
+      "mode": "default",
+      "before": {
+        "y": 4008,
+        "height": 21,
+        "scrollY": 0,
+        "active": false
+      },
+      "after": {
+        "y": 439,
+        "height": 21,
+        "scrollY": 3569,
+        "active": true
+      },
+      "events": [
+        {
+          "type": "focus",
+          "y": 439,
+          "height": 21,
+          "scrollY": 3569,
+          "active": true
+        },
+        {
+          "type": "focusin",
+          "y": 439,
+          "height": 21,
+          "scrollY": 3569,
+          "active": true
+        }
+      ],
+      "viewport": [
+        1440,
+        900
+      ]
+    },
+    {
+      "mode": "prevent",
+      "before": {
+        "y": 4008,
+        "height": 21,
+        "scrollY": 0,
+        "active": false
+      },
+      "after": {
+        "y": 4008,
+        "height": 21,
+        "scrollY": 0,
+        "active": true
+      },
+      "events": [
+        {
+          "type": "focus",
+          "y": 4008,
+          "height": 21,
+          "scrollY": 0,
+          "active": true
+        },
+        {
+          "type": "focusin",
+          "y": 4008,
+          "height": 21,
+          "scrollY": 0,
+          "active": true
+        }
+      ],
+      "viewport": [
+        1440,
+        900
+      ]
+    },
+    {
+      "mode": "allow",
+      "before": {
+        "y": 4008,
+        "height": 21,
+        "scrollY": 0,
+        "active": false
+      },
+      "after": {
+        "y": 439,
+        "height": 21,
+        "scrollY": 3569,
+        "active": true
+      },
+      "events": [
+        {
+          "type": "focus",
+          "y": 439,
+          "height": 21,
+          "scrollY": 3569,
+          "active": true
+        },
+        {
+          "type": "focusin",
+          "y": 439,
+          "height": 21,
+          "scrollY": 3569,
+          "active": true
+        }
+      ],
+      "viewport": [
+        1440,
+        900
+      ]
+    }
+  ]
+}

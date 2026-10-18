@@ -94,16 +94,27 @@ pub(crate) fn range_rect<'s>(s: &Scope<'s>, page: &Rc<PageDom>, start: NodeId) -
     rect_value(s, r)
 }
 
-fn fire_scroll(page: &Rc<PageDom>, target: Option<NodeId>) {
+pub(crate) fn fire_scroll(page: &Rc<PageDom>, target: Option<NodeId>) {
     // Scroll events are delivered as a separate task (not throttled).
     let p = page.clone();
-    page.post_task(Box::new(move || match target {
-        Some(el) => {
-            crate::input::fire_simple(&p, el, "scroll", false, false);
+    let doc = page.document();
+    page.post_task(Box::new(move || {
+        if p.is_disposed() || p.document() != doc {
+            return;
         }
-        None => {
-            let doc = p.document();
-            crate::input::fire_simple(&p, doc, "scroll", true, false);
+        match target {
+            Some(el) => {
+                let connected = {
+                    let dom = p.dom.borrow();
+                    dom.is_connected(el).unwrap_or(false) && dom.node_document(el).ok() == Some(doc)
+                };
+                if connected {
+                    crate::input::fire_simple(&p, el, "scroll", false, false);
+                }
+            }
+            None => {
+                crate::input::fire_simple(&p, doc, "scroll", true, false);
+            }
         }
     }));
 }

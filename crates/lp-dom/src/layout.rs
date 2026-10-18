@@ -1082,6 +1082,61 @@ impl Layout {
         moved
     }
 
+    /// Reveal a newly focused element before focus events. Center an axis only
+    /// when the box is not fully in its visible range; preserve visible axes.
+    /// Uses existing synthetic boxes and scroll limits, not fabricated geometry.
+    /// Auto/scroll ancestors are processed inside-out, then the viewport.
+    pub fn reveal_for_focus(&mut self, dom: &Dom, el: NodeId) -> Vec<ScrollTarget> {
+        if !self.is_visible(dom, el) {
+            return Vec::new();
+        }
+        let mut moved = Vec::new();
+        let mut parent = dom.parent_element(el).ok().flatten();
+        while let Some(node) = parent {
+            if self.is_root_container(dom, node) {
+                break;
+            }
+            let axes = self.style.overflow_axes(dom, node);
+            if axes.x || axes.y {
+                let target = self.bounding_client_rect(dom, el);
+                let container = self.bounding_client_rect(dom, node);
+                let left = axes
+                    .x
+                    .then(|| {
+                        focus_scroll_offset(
+                            target.left() - container.left(),
+                            target.width,
+                            self.client_width(dom, node),
+                            self.scroll_left(node),
+                        )
+                    })
+                    .flatten();
+                let top = axes
+                    .y
+                    .then(|| {
+                        focus_scroll_offset(
+                            target.top() - container.top(),
+                            target.height,
+                            self.client_height(dom, node),
+                            self.scroll_top(node),
+                        )
+                    })
+                    .flatten();
+                if self.element_scroll_to(dom, node, left, top) {
+                    moved.push(ScrollTarget::Container(node));
+                }
+            }
+            parent = dom.parent_element(node).ok().flatten();
+        }
+        let target = self.bounding_client_rect(dom, el);
+        let left = focus_scroll_offset(target.left(), target.width, self.inner_width() as f64, self.window_scroll.0);
+        let top = focus_scroll_offset(target.top(), target.height, self.inner_height() as f64, self.window_scroll.1);
+        if self.window_scroll_to(dom, left, top) {
+            moved.push(ScrollTarget::Viewport);
+        }
+        moved
+    }
+
     /// `scrollIntoView` (Element.zig:2161-2168): brings the element's top to
     /// the window's scroll offset (x reset to 0), after revealing it inside
     /// scrolled ancestor containers.
@@ -1158,6 +1213,17 @@ fn count_subtree_nodes(dom: &Dom, idx: u32) -> f64 {
         cur = dom.following_in(cur, idx);
     }
     count
+}
+
+// Focusing a box already visible on an axis must not perturb that scroll.
+fn focus_scroll_offset(start: f64, size: f64, viewport: f64, current: u32) -> Option<i32> {
+    if start >= 0.0 && start + size <= viewport {
+        return None;
+    }
+    if start <= 0.0 && start + size >= viewport {
+        return None;
+    }
+    Some((current as f64 + start + size / 2.0 - viewport / 2.0).round().clamp(0.0, i32::MAX as f64) as i32)
 }
 
 /// Window.zig:848-851.

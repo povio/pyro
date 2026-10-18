@@ -4241,3 +4241,111 @@ fn reflected_urls_preserve_oversized_and_canonicalized_base_semantics() {
     e.page.dom.borrow_mut().set_document_base_url(e.page.document(), None).unwrap();
     assert_eq!(eval(&e.main, "r.href"), "http://localhost:5173/asset.js");
 }
+
+#[test]
+fn focus_scroll_default_precedes_focus_events_and_prevent_scroll_is_observed() {
+    let e = env(&format!(
+        "<body>{}<button id=b>target</button><div style='height:900px'>end</div></body>",
+        "<div>filler</div>".repeat(200)
+    ));
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"
+        const b=document.getElementById('b');globalThis.seen=[];
+        b.onfocus=()=>seen.push(b.getBoundingClientRect().top>=0 && b.getBoundingClientRect().bottom<=innerHeight);
+        b.addEventListener('focusin',()=>seen.push(scrollY>0));
+        b.focus();[scrollY>0,...seen,document.activeElement===b].join(',')
+    "#
+        ),
+        "true,true,true,true"
+    );
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"
+        b.blur();scrollTo(0,0);let reads=0;b.focus({get preventScroll(){reads++;return true}});
+        [scrollY,reads,document.activeElement===b].join(',')
+    "#
+        ),
+        "0,1,true"
+    );
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"
+        b.blur();b.focus({preventScroll:false});const y=scrollY;b.focus();
+        [y>0,scrollY===y].join(',')
+    "#
+        ),
+        "true,true"
+    );
+}
+
+#[test]
+fn focus_scroll_option_conversion_and_reentrant_target_are_not_stale() {
+    let e = env(&format!(
+        "<body><button id=a>first</button>{}<button id=b>last</button><div style='height:900px'>end</div></body>",
+        "<div>filler</div>".repeat(200)
+    ));
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"
+        const a=document.getElementById('a'),b=document.getElementById('b');let calls=0;
+        try{b.focus({get preventScroll(){throw new Error('option')}})}catch(e){calls++}
+        [calls,scrollY,document.activeElement===b].join(',')
+    "#
+        ),
+        "1,0,false"
+    );
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"
+        a.focus();a.onblur=()=>b.remove();b.focus();
+        [scrollY,document.activeElement.tagName].join(',')
+    "#
+        ),
+        "0,BODY"
+    );
+}
+
+#[test]
+fn focus_scroll_owner_helpers_preserve_options_and_drop_replaced_document_tasks() {
+    struct Hooks {
+        page: std::rc::Weak<PageDom>,
+        tasks: RefCell<Vec<Box<dyn FnOnce()>>>,
+    }
+    impl PageHooks for Hooks {
+        fn navigate(&self, _: NavigationRequest) {}
+        fn post_task(&self, task: Box<dyn FnOnce()>) {
+            self.tasks.borrow_mut().push(task);
+        }
+        fn request_focus(&self, target: FocusTarget, transition: &FocusTransition) -> bool {
+            let page = self.page.upgrade().unwrap();
+            if let FocusTarget::Element(el) = target {
+                input::focus_element_with_transition(&page, el, transition);
+                false
+            } else {
+                true
+            }
+        }
+    }
+    let e = env(&format!(
+        "<body>{}<button id=b>target</button><div style='height:900px'>end</div></body>",
+        "<div>filler</div>".repeat(200)
+    ));
+    let hooks = Rc::new(Hooks { page: Rc::downgrade(&e.page), tasks: RefCell::new(Vec::new()) });
+    e.page.set_hooks(Some(hooks.clone()));
+    assert_eq!(eval(&e.main, "globalThis.scrolls=0;window.addEventListener('scroll',()=>scrolls++);const b=document.getElementById('b');b.focus({preventScroll:true});scrollY"), "0");
+    assert!(hooks.tasks.borrow().is_empty());
+    assert_eq!(eval(&e.main, "b.blur();b.focus();scrollY>0"), "true");
+    assert_eq!(hooks.tasks.borrow().len(), 1);
+    let replacement = parse_document(&e.page.dom, "http://localhost/new", "<body>new</body>");
+    e.page.set_document(replacement);
+    for task in hooks.tasks.take() {
+        task();
+    }
+    assert_eq!(eval(&e.main, "scrolls"), "0");
+}
