@@ -1,0 +1,97 @@
+{
+  "manifest_sha256": "542d479b709249d072e3b57c1324c894c4378fc5373892ae64c0687486f2ae19",
+  "manifest_read_from": "git show f9fde4aa0dce7d1d7a1ffebffe3306399973cd80:apps/fe/e2e/suites/lightpanda.json (W3 host, sha256 verified)",
+  "recorded_utc": "2026-10-18T07:10:27+00:00",
+  "ledger_sha256": "3d1de5a08cf4add614432f30ea316d97472ffe42ea73d00a7e775655aef09016",
+  "criteria": "W3-05: whole manifest-routed groups of two files from the W2 ledger uncovered_files, not in W3-01..W3-04 (quotes overview; quote route editing); chosen before any run of these files",
+  "files": [
+    "e2e/logistics/quotes-overview.e2e.ts",
+    "e2e/logistics/quotes-route.e2e.ts"
+  ],
+  "cases": [
+    {
+      "file": "e2e/logistics/quotes-overview.e2e.ts",
+      "titlePath": [
+        "Quotes Overview tab FE E2E",
+        "opens a Quote details drawer on Overview and renders the seeded Sea Overview HTML"
+      ]
+    },
+    {
+      "file": "e2e/logistics/quotes-overview.e2e.ts",
+      "titlePath": [
+        "Quotes Overview tab FE E2E",
+        "updates the Sea Quote Overview through FE autosave and renders the saved value after reload"
+      ]
+    },
+    {
+      "file": "e2e/logistics/quotes-overview.e2e.ts",
+      "titlePath": [
+        "Quotes Overview tab FE E2E",
+        "updates the Air Quote Overview through FE autosave and renders the saved value after reload"
+      ]
+    },
+    {
+      "file": "e2e/logistics/quotes-overview.e2e.ts",
+      "titlePath": [
+        "Quotes Overview tab FE E2E",
+        "updates the Road Quote Overview through FE autosave and renders the saved value after reload"
+      ]
+    },
+    {
+      "file": "e2e/logistics/quotes-overview.e2e.ts",
+      "titlePath": [
+        "Quotes Overview tab FE E2E",
+        "renders Air-specific Overview detail fields"
+      ]
+    },
+    {
+      "file": "e2e/logistics/quotes-overview.e2e.ts",
+      "titlePath": [
+        "Quotes Overview tab FE E2E",
+        "renders Road-specific Overview detail fields without opening Commercial Parties or Route"
+      ]
+    },
+    {
+      "file": "e2e/logistics/quotes-route.e2e.ts",
+      "titlePath": [
+        "Quotes Route tab FE E2E",
+        "lists default Quote route points in the Route tab"
+      ]
+    },
+    {
+      "file": "e2e/logistics/quotes-route.e2e.ts",
+      "titlePath": [
+        "Quotes Route tab FE E2E",
+        "updates the Route tab vessel inline field from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/quotes-route.e2e.ts",
+      "titlePath": [
+        "Quotes Route tab FE E2E",
+        "updates the Route tab voyage inline field from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/quotes-route.e2e.ts",
+      "titlePath": [
+        "Quotes Route tab FE E2E",
+        "syncs default quote route ports to split routes and renders split route ports readonly"
+      ]
+    },
+    {
+      "file": "e2e/logistics/quotes-route.e2e.ts",
+      "titlePath": [
+        "Quotes Route tab FE E2E",
+        "updates the Route tab reference inline field from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/quotes-route.e2e.ts",
+      "titlePath": [
+        "Quotes Route tab FE E2E",
+        "updates the Route tab secondary reference inline field from the FE"
+      ]
+    }
+  ]
+}

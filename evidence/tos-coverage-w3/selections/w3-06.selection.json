@@ -1,0 +1,97 @@
+{
+  "manifest_sha256": "542d479b709249d072e3b57c1324c894c4378fc5373892ae64c0687486f2ae19",
+  "manifest_read_from": "git show f9fde4aa0dce7d1d7a1ffebffe3306399973cd80:apps/fe/e2e/suites/lightpanda.json (W3 host, sha256 verified)",
+  "recorded_utc": "2026-10-18T07:10:27+00:00",
+  "ledger_sha256": "3d1de5a08cf4add614432f30ea316d97472ffe42ea73d00a7e775655aef09016",
+  "criteria": "W3-06: whole manifest-routed groups of two files from the W2 ledger uncovered_files, not in W3-01..W3-05 (employees overview; quote document); chosen before any run of these files",
+  "files": [
+    "e2e/configuration/employees-overview.e2e.ts",
+    "e2e/logistics/quotes-document.e2e.ts"
+  ],
+  "cases": [
+    {
+      "file": "e2e/configuration/employees-overview.e2e.ts",
+      "titlePath": [
+        "Configuration Employees Overview tab FE E2E",
+        "autosaves Employee Overview first name from the details modal"
+      ]
+    },
+    {
+      "file": "e2e/configuration/employees-overview.e2e.ts",
+      "titlePath": [
+        "Configuration Employees Overview tab FE E2E",
+        "autosaves Employee Overview phone from the details modal"
+      ]
+    },
+    {
+      "file": "e2e/configuration/employees-overview.e2e.ts",
+      "titlePath": [
+        "Configuration Employees Overview tab FE E2E",
+        "keeps Employee Overview phone cleared after autosave"
+      ]
+    },
+    {
+      "file": "e2e/configuration/employees-overview.e2e.ts",
+      "titlePath": [
+        "Configuration Employees Overview tab FE E2E",
+        "does not autosave empty required Employee Overview name fields"
+      ]
+    },
+    {
+      "file": "e2e/logistics/quotes-document.e2e.ts",
+      "titlePath": [
+        "Quotes Document tab FE E2E",
+        "updates Routes from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/quotes-document.e2e.ts",
+      "titlePath": [
+        "Quotes Document tab FE E2E",
+        "issues Quote Document from the FE"
+      ]
+    },
+    {
+      "file": "e2e/configuration/employees-overview.e2e.ts",
+      "titlePath": [
+        "Configuration Employees Overview tab FE E2E",
+        "archives a user from the Employee Overview tab and removes it from the active Configuration list"
+      ]
+    },
+    {
+      "file": "e2e/configuration/employees-overview.e2e.ts",
+      "titlePath": [
+        "Configuration Employees Overview tab FE E2E",
+        "redirects a bare Employee history URL to the Overview tab"
+      ]
+    },
+    {
+      "file": "e2e/logistics/quotes-document.e2e.ts",
+      "titlePath": [
+        "Quotes Document tab FE E2E",
+        "lists the Quote Document tab sections in rendered HTML"
+      ]
+    },
+    {
+      "file": "e2e/logistics/quotes-document.e2e.ts",
+      "titlePath": [
+        "Quotes Document tab FE E2E",
+        "updates Cargo from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/quotes-document.e2e.ts",
+      "titlePath": [
+        "Quotes Document tab FE E2E",
+        "updates Finances from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/quotes-document.e2e.ts",
+      "titlePath": [
+        "Quotes Document tab FE E2E",
+        "updates the inline document contact from the FE"
+      ]
+    }
+  ]
+}
