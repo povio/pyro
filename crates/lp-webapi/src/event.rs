@@ -6,7 +6,7 @@ use std::rc::Rc;
 use std::time::Instant;
 
 use lp_dom::events::{EventState, TargetKey};
-use lp_js::{Args, ClassDef, JsClass, JsResult, Object, Persistent, Scope};
+use lp_js::{Args, ClassDef, JsClass, JsError, JsResult, Object, Persistent, Scope};
 
 use crate::page::PageDom;
 use crate::target::{page_of, target_value};
@@ -21,6 +21,7 @@ pub enum EventInterface {
     MouseEvent,
     PointerEvent,
     WheelEvent,
+    DragEvent,
     KeyboardEvent,
     InputEvent,
     CompositionEvent,
@@ -83,6 +84,7 @@ pub struct EventFields {
     pub persisted: bool,
     pub message_data: Option<Persistent>,
     pub origin: String,
+    pub data_transfer: Option<Persistent>,
 }
 
 pub struct EventCore {
@@ -141,6 +143,7 @@ impl EventCore {
                     | EventInterface::InputEvent
                     | EventInterface::FocusEvent
                     | EventInterface::WheelEvent
+                    | EventInterface::DragEvent
                     | EventInterface::UiEvent
             ),
         );
@@ -214,6 +217,7 @@ pub fn wrap_event<'s>(s: &Scope<'s>, core: &EventData) -> JsResult<Object<'s>> {
         EventInterface::MouseEvent => s.wrap::<MouseEvent>(d, Some(key)),
         EventInterface::PointerEvent => s.wrap::<PointerEvent>(d, Some(key)),
         EventInterface::WheelEvent => s.wrap::<WheelEvent>(d, Some(key)),
+        EventInterface::DragEvent => s.wrap::<DragEvent>(d, Some(key)),
         EventInterface::KeyboardEvent => s.wrap::<KeyboardEvent>(d, Some(key)),
         EventInterface::InputEvent => s.wrap::<InputEvent>(d, Some(key)),
         EventInterface::CompositionEvent => s.wrap::<CompositionEvent>(d, Some(key)),
@@ -325,6 +329,22 @@ fn fill_mouse<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) 
     f.button = get_num(init, "button", 0.0)? as i16;
     f.buttons = get_num(init, "buttons", 0.0)? as u16;
     f.related_target = related(s, init)?;
+    Ok(())
+}
+
+fn fill_drag<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
+    fill_mouse(s, f, init)?;
+    let Some(o) = init else { return Ok(()) };
+    let v = o.get("dataTransfer")?;
+    if v.is_nullish() {
+        return Ok(());
+    }
+    if s.unwrap::<crate::data_transfer::DataTransfer>(v).is_none() {
+        return Err(JsError::Type(
+            "Failed to construct 'DragEvent': member dataTransfer is not of type DataTransfer.".into(),
+        ));
+    }
+    f.data_transfer = Some(Persistent::new(s, v));
     Ok(())
 }
 
@@ -577,9 +597,10 @@ impl JsClass for UiEvent {
             let f = e.fields.borrow();
             Ok(s.number(match e.iface {
                 EventInterface::KeyboardEvent => f.key_code as f64,
-                EventInterface::MouseEvent | EventInterface::PointerEvent | EventInterface::WheelEvent => {
-                    (f.button + 1) as f64
-                }
+                EventInterface::MouseEvent
+                | EventInterface::PointerEvent
+                | EventInterface::WheelEvent
+                | EventInterface::DragEvent => (f.button + 1) as f64,
                 _ => 0.0,
             }))
         });
@@ -683,6 +704,17 @@ impl JsClass for WheelEvent {
         def.getter("deltaY", |s, e| Ok(s.number(e.fields.borrow().delta_y)));
         def.getter("deltaZ", |s, e| Ok(s.number(e.fields.borrow().delta_z)));
         def.getter("deltaMode", |s, e| Ok(s.number(e.fields.borrow().delta_mode as f64)));
+    }
+}
+
+pub struct DragEvent;
+impl JsClass for DragEvent {
+    const NAME: &'static str = "DragEvent";
+    type Data = EventData;
+    type Parent = MouseEvent;
+    fn define(def: &mut ClassDef<Self>) {
+        def.constructor(1, |s, nt, a| construct::<DragEvent>(s, nt, a, EventInterface::DragEvent, fill_drag));
+        def.getter("dataTransfer", |s, e| Ok(e.fields.borrow().data_transfer.as_ref().map_or(s.null(), |p| p.get(s))));
     }
 }
 
@@ -853,6 +885,7 @@ pub(crate) fn register(engine: &lp_js::Engine) {
     engine.register::<MouseEvent>();
     engine.register::<PointerEvent>();
     engine.register::<WheelEvent>();
+    engine.register::<DragEvent>();
     engine.register::<KeyboardEvent>();
     engine.register::<InputEvent>();
     engine.register::<CompositionEvent>();

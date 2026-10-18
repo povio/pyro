@@ -134,6 +134,12 @@ pub struct FileListData {
     files: Vec<lp_js::Persistent>,
 }
 
+impl FileListData {
+    pub(crate) fn new(files: Vec<lp_js::Persistent>) -> Self {
+        FileListData { files }
+    }
+}
+
 pub struct FileList;
 impl JsClass for FileList {
     const NAME: &'static str = "FileList";
