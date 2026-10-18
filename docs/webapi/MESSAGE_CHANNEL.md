@@ -25,10 +25,16 @@ messaging within one realm. The behaviour follows upstream Lightpanda
 - **Closing.** `close()` disentangles both ports and drops the closed port's
   undelivered messages. Delivery tasks that are already queued check the closed
   state, and nothing is delivered after page disposal.
-- **Lifetime.** A started, entangled, open port is pinned so its listeners keep
-  running when only closures reference the channel; React's scheduler uses
-  this. It is unpinned on `close()` (both sides) and when the page is disposed.
-  An unclosed started port therefore lives until page disposal. The channel
+- **Lifetime.** A port is pinned exactly while it is started, open, and either
+  entangled or holding undelivered messages. Its listeners keep running when only
+  closures reference the channel, which React's scheduler relies on.
+  - Queued messages survive GC even after the peer closes, or when the receiver
+    starts after its peer was collected.
+  - The pin is re-evaluated on enqueue, start, delivery and close (including the
+    peer's), and every pin is released when the page is disposed.
+  - A queued but unstarted port is not pinned: if nothing can reach it to call
+    `start()`, it is collectable together with its queue.
+  - An unclosed, started, entangled port lives until page disposal. The channel
   references its ports only through traced hidden properties on its wrapper, so
   listeners or expandos that reference the channel stay collectable once the
   ports are closed.
@@ -46,3 +52,6 @@ Tests (`crates/lp-webapi/tests/dom_js.rs`):
 - `message_port_start_close_transfer_and_clone_errors`
 - `message_port_lifetime_pins_started_ports_until_close`
 - `message_channel_with_self_referencing_listener_is_collected_after_close`
+- `message_port_keeps_queued_messages_across_gc_when_the_peer_closes`
+- `message_port_started_late_with_a_collected_peer_still_delivers_across_gc`
+- `message_port_unstarted_queued_ports_and_disposal_hold_no_roots`
