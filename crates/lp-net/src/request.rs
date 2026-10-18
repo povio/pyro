@@ -82,6 +82,11 @@ pub struct RequestDefaults {
     /// session). Applied after the client's context-wide `NetSettings`
     /// extra headers, so a page value replaces a context value of the same name.
     pub extra_headers: HeaderMap,
+    /// Page-scoped HTTP cache bypass (CDP `Network.setCacheDisabled` on a page
+    /// session): no cache lookup or store for this request, plus `Pragma:
+    /// no-cache` / `Cache-Control: no-cache` like DevTools. Sibling pages in the
+    /// same context keep using the context cache.
+    pub cache_disabled: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -104,6 +109,27 @@ pub struct Request {
     pub loader_id: Option<String>,
     /// Upper bound on the decoded body; exceeded => `NetError::TooLarge`.
     pub max_body: Option<usize>,
+    /// Fetch "cache mode" for the context's HTTP cache.
+    pub cache: CacheMode,
+}
+
+/// Fetch request cache mode (WHATWG Fetch, "cache mode"), applied to the
+/// context's private HTTP cache.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CacheMode {
+    /// Use fresh entries, revalidate stale ones that have validators, store.
+    #[default]
+    Default,
+    /// Bypass the cache entirely: no lookup, no store.
+    NoStore,
+    /// No lookup, but store the response.
+    Reload,
+    /// Revalidate any matching entry (conditional request), store.
+    NoCache,
+    /// Use any matching entry, even stale, without revalidation; else network.
+    ForceCache,
+    /// Use any matching entry, even stale; else a network error.
+    OnlyIfCached,
 }
 
 impl Request {
@@ -128,6 +154,7 @@ impl Request {
             frame_id: None,
             loader_id: None,
             max_body: None,
+            cache: CacheMode::Default,
         }
     }
 }

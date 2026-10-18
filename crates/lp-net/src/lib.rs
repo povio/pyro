@@ -2,6 +2,7 @@
 //! the fetch request/response model for lightningpanda. No JS dependency.
 
 mod auth;
+mod cache;
 pub mod client;
 pub mod cookies;
 pub mod cors;
