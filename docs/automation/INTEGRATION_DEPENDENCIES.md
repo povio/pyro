@@ -77,3 +77,14 @@ include the separate DOMParser XML candidate `c2d8711`. See [phase-1 scope and
 explicit input/geometry limits](FRAMES.md). Earlier coverage/benchmark artifacts
 and their pinned binaries remain unchanged; no new TOS result is inferred from
 these protocol/local HTTP tests.
+
+## Frame focus and input integration
+
+The protocol adapter normally merges exact browser focus candidate
+`40f9b4ea786f63088f9dd217b6cece49b9762135`, including native focus hooks
+`59a940ea855a7506a714c34e1646ec15dffa5fdf`, on merged main `420d126`.
+W1/W2 source and Cargo files are unchanged by W3. The production delta is CDP
+focused-frame selection, one-shot raw-key char suppression, child DOM.focus,
+regressions, Playwright checks and these automation docs. Preparation contracts
+and Chromium references remain on the separate `fix/cdp-frame-focus` branch;
+they are not substitute implementations or TOS results. See [scope](FRAMES.md).
