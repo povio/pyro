@@ -366,12 +366,30 @@ impl ListenerInvoker for Invoker<'_> {
             return;
         }
         let Ok(s) = realm.scope() else { return };
+        // DOM "inner invoke": the listener's global (a Window) exposes the event
+        // as its current event unless the invocation target is in a shadow
+        // tree; the previous value is restored afterwards, including on throw.
+        // The callback's microtask checkpoint runs before the restore.
+        let in_shadow = {
+            let d = self.page.dom.borrow();
+            d.key_node(current)
+                .and_then(|id| d.root_node(id, false).ok())
+                .is_some_and(|root| d.is_shadow_root(root).unwrap_or(false))
+        };
+        let mut saved: Option<Persistent> = None;
+        let mut swapped = false;
         let result = (|| -> JsResult<()> {
             let Some(this) = target_object(&s, self.page, current)? else { return Ok(()) };
             let Some(arr) = listener_array(&s, this, false)? else { return Ok(()) };
             let f = arr.get_index(slot)?;
             let Some(fo) = f.as_object() else { return Ok(()) };
             let ev = wrap_event(&s, self.event)?;
+            if !in_shadow {
+                let holder = window_listener_array(&s, true)?.expect("created window holder");
+                saved = Some(Persistent::new(&s, holder.get(CURRENT_EVENT)?));
+                holder.set(CURRENT_EVENT, ev.value())?;
+                swapped = true;
+            }
             if fo.is_function() {
                 fo.call(Some(this), &[ev.value()])?;
             } else {
@@ -385,10 +403,24 @@ impl ListenerInvoker for Invoker<'_> {
             }
             Ok(())
         })();
+        if swapped {
+            if let Ok(Some(holder)) = window_listener_array(&s, false) {
+                let prev = saved.as_ref().map_or(s.undefined(), |p| p.get(&s));
+                let _ = holder.set(CURRENT_EVENT, prev);
+            }
+        }
         if let Err(e) = result {
             s.report_exception(&e);
         }
     }
+}
+
+/// Key of the realm's current event on its traced window holder.
+const CURRENT_EVENT: &str = "__lpCurrentEvent";
+
+/// `window.event`: the realm's current event, or undefined outside dispatch.
+pub(crate) fn current_event<'s>(s: &Scope<'s>) -> JsResult<Value<'s>> {
+    Ok(window_listener_array(s, false)?.map(|h| h.get(CURRENT_EVENT)).transpose()?.unwrap_or(s.undefined()))
 }
 
 /// Dispatches `event` at `target` (DOM "dispatch"). Returns false if canceled.

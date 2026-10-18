@@ -48,6 +48,8 @@ pub struct PageDom {
     pub(crate) same_objects: RefCell<FxHashMap<RealmId, (Persistent, u32)>>,
     /// Each realm's original `structuredClone` (MessagePort cloning).
     pub(crate) structured_clones: RefCell<FxHashMap<RealmId, Persistent>>,
+    /// Each realm's original `Object.defineProperty` ([Replaceable] setters).
+    pub(crate) define_properties: RefCell<FxHashMap<RealmId, Persistent>>,
     /// MessagePorts whose peer was collected; their pins are reconciled at
     /// the next `after_task` (recorded from `Drop`, which must not run JS).
     pub(crate) pending_port_reconcile: RefCell<Vec<std::rc::Weak<crate::message_channel::PortInner>>>,
@@ -140,6 +142,7 @@ impl PageDom {
             window_holders: RefCell::new(FxHashMap::default()),
             same_objects: RefCell::new(FxHashMap::default()),
             structured_clones: RefCell::new(FxHashMap::default()),
+            define_properties: RefCell::new(FxHashMap::default()),
             pending_port_reconcile: RefCell::new(Vec::new()),
             last_removals: Cell::new(u64::MAX),
             next_event: Cell::new(1),
@@ -219,6 +222,7 @@ impl PageDom {
         drop(self.window_holders.take());
         drop(self.same_objects.take());
         drop(self.structured_clones.take());
+        drop(self.define_properties.take());
         drop(self.pending_port_reconcile.take());
         drop(self.data_view_readers.take());
         drop(self.header_helpers.take());

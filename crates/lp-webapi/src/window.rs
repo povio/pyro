@@ -56,6 +56,25 @@ where
 {
     crate::handlers::define_window(def);
     def.getter("document", |s, w| Ok(crate::node::wrap_node(s, w.page(), w.page().document())?.value()));
+    // `window.event` (DOM "current event"), [Replaceable]: assignment shadows
+    // it with an own data property.
+    def.accessor(
+        "event",
+        |s, _w| crate::target::current_event(s),
+        |s, w, value| {
+            let define = w.page().define_properties.borrow().get(&s.realm_id()).map(|p| p.get(s));
+            let define = define
+                .and_then(|v| v.as_object())
+                .ok_or_else(|| lp_js::JsError::Type("window.event cannot be replaced in this realm".into()))?;
+            let desc = s.object();
+            desc.set("value", value)?;
+            for k in ["writable", "enumerable", "configurable"] {
+                desc.set(k, s.boolean(true))?;
+            }
+            define.call(None, &[s.global().value(), s.string("event"), desc.value()])?;
+            Ok(())
+        },
+    );
     def.getter("indexedDB", |s, w| crate::indexeddb::window_factory(s, w.page()));
     def.getter("localStorage", |s, w| crate::storage::window_storage(s, w.page(), false));
     def.getter("sessionStorage", |s, w| crate::storage::window_storage(s, w.page(), true));

@@ -2841,6 +2841,98 @@ fn message_channel_with_self_referencing_listener_is_collected_after_close() {
     );
 }
 
+#[test]
+fn window_event_is_the_current_event_during_listener_invocation() {
+    let e = env("<body><div id=o><button id=b>b</button></div><span id=other></span></body>");
+    let r = &e.main;
+    assert_eq!(
+        eval(
+            r,
+            "const ev = () => window.event === undefined ? 'undefined' : window.event.type;
+             const b = document.getElementById('b'), o = document.getElementById('o'), other = document.getElementById('other');
+             const log = [];
+             const outside = ['event' in window, ev()].join(':');
+             // Listener sees the dispatched event object; restored after.
+             b.addEventListener('ping', (e) => log.push('b:' + ev() + ':' + (window.event === e)));
+             // Nested dispatch from a listener: inner sees the inner event, then the outer is restored.
+             o.addEventListener('ping', () => { other.dispatchEvent(new Event('inner')); log.push('restored:' + ev()); });
+             other.addEventListener('inner', () => log.push('nested:' + ev()));
+             b.dispatchEvent(new Event('ping', {bubbles: true}));
+             log.push('after:' + ev());
+             // A throwing listener still restores.
+             other.addEventListener('boom', () => { throw new Error('x'); });
+             o.addEventListener('wrap', () => { other.dispatchEvent(new Event('boom')); log.push('afterThrowNested:' + ev()); });
+             o.dispatchEvent(new Event('wrap'));
+             log.push('afterThrow:' + ev());
+             outside + '|' + log.join('|')",
+        ),
+        "true:undefined|b:ping:true|nested:inner|restored:ping|after:undefined|afterThrowNested:wrap|afterThrow:undefined"
+    );
+}
+
+#[test]
+fn window_event_spans_the_callback_microtask_checkpoint_for_message_ports() {
+    let e = env("<body>");
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    let r = &e.main;
+    eval(
+        r,
+        "window.log = []; const ev = () => window.event === undefined ? 'undefined' : window.event.type + ':' + window.event.constructor.name;
+         const c = new MessageChannel();
+         c.port1.onmessage = (e) => { log.push('in:' + ev() + ':' + (window.event === e)); Promise.resolve().then(() => log.push('micro:' + ev())); };
+         const d = new MessageChannel(); d.port1.addEventListener('message', () => log.push('listener:' + ev())); d.port1.start();
+         c.port2.postMessage(1); d.port2.postMessage(2);",
+    );
+    tasks.drain();
+    assert_eq!(
+        eval(r, "log.join('|') + '|after:' + ev()"),
+        "in:message:MessageEvent:true|micro:message:MessageEvent|listener:message:MessageEvent|after:undefined"
+    );
+}
+
+#[test]
+fn window_event_is_replaceable_and_skips_shadow_tree_targets() {
+    let e = env("<body><div id=host></div><p id=p></p></body>");
+    let r = &e.main;
+    // Shadow-tree invocation targets do not set the current event.
+    assert_eq!(
+        eval(
+            r,
+            "const host = document.getElementById('host'); const root = host.attachShadow({mode: 'open'}); const inner = document.createElement('i'); root.appendChild(inner);
+             const seen = []; inner.addEventListener('x', () => seen.push('inner:' + String(window.event))); host.addEventListener('x', () => seen.push('host:' + (window.event && window.event.type)));
+             inner.dispatchEvent(new Event('x', {bubbles: true, composed: true}));
+             seen.join('|')",
+        ),
+        "inner:undefined|host:x"
+    );
+    // [Replaceable]: assignment creates an own data property that shadows the accessor.
+    assert_eq!(
+        eval(
+            r,
+            "const p = document.getElementById('p'); let during;
+             window.event = 'mine';
+             const d = Object.getOwnPropertyDescriptor(window, 'event');
+             p.addEventListener('y', () => { during = window.event; }); p.dispatchEvent(new Event('y'));
+             [window.event, 'value' in d, d.writable, d.enumerable, d.configurable, during].join()",
+        ),
+        "mine,true,true,true,true,mine"
+    );
+}
+
+#[test]
+fn window_event_does_not_retain_the_event_after_dispatch() {
+    let e = env("<body><b id=t></b></body>");
+    let r = &e.main;
+    eval(r, "window.ref = (() => { const ev = new Event('z'); const t = document.getElementById('t'); t.addEventListener('z', () => {}); t.dispatchEvent(ev); return new WeakRef(ev); })(); 1");
+    for _ in 0..4 {
+        e.engine.collect_garbage_now();
+        e.engine.drain_finalized();
+        e.page.after_task();
+    }
+    assert_eq!(eval(r, "[ref.deref() === undefined, window.event === undefined].join()"), "true,true");
+}
+
 fn gc(e: &Env, tasks: &ObserverTasks) {
     for _ in 0..3 {
         e.engine.collect_garbage_now();

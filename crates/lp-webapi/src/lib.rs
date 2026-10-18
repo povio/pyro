@@ -121,6 +121,9 @@ pub fn install(scope: &Scope<'_>, page: Rc<PageDom>) -> JsResult<()> {
     form_data::install(scope)?;
     fetch::install(scope)?;
     structured_clone::install(scope, &page)?;
+    if let Some(define) = scope.global().get("Object")?.as_object().map(|o| o.get("defineProperty")).transpose()? {
+        page.define_properties.borrow_mut().insert(scope.realm_id(), lp_js::Persistent::new(scope, define));
+    }
     let global = scope.global();
     global.set("CSS", window::css_namespace(scope)?)?;
     Ok(())
