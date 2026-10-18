@@ -249,6 +249,10 @@ pub struct Page {
     pub(crate) stylesheets: stylesheets::Stylesheets,
     session_storage: lp_webapi::StorageNamespace,
     user_agent_override: Option<lp_webapi::UserAgentOverride>,
+    /// Page-scoped extra request headers (CDP `Network.setExtraHTTPHeaders`).
+    extra_http_headers: lp_net::http::HeaderMap,
+    /// Native defaults for this page's loader requests: the user agent
+    /// override plus `extra_http_headers`.
     request_defaults: lp_net::RequestDefaults,
     viewport: lp_dom::media::Viewport,
     pending_resize: Option<LoaderId>,
@@ -478,6 +482,7 @@ impl Browser {
             stylesheets: Default::default(),
             session_storage: Default::default(),
             user_agent_override: None,
+            extra_http_headers: Default::default(),
             request_defaults: Default::default(),
             viewport: Default::default(),
             pending_resize: None,
@@ -511,12 +516,14 @@ impl Browser {
         value: Option<lp_webapi::UserAgentOverride>,
     ) -> Result<(), JsError> {
         let state = self.page_mut(page).ok_or_else(|| JsError::Type("no such page".into()))?;
-        let defaults = value
+        let mut defaults = value
             .as_ref()
             .map(lp_webapi::UserAgentOverride::request_defaults)
             .transpose()
             .map_err(|e| JsError::Type(format!("invalid user agent request defaults: {e}")))?
             .unwrap_or_default();
+        // The user agent override does not own the page's extra headers.
+        defaults.extra_headers = state.extra_http_headers.clone();
         if let Some(bindings) = &state.main_frame.page_dom {
             bindings
                 .set_user_agent_override(value.clone())
@@ -525,6 +532,20 @@ impl Browser {
         state.user_agent_override = value;
         state.request_defaults = defaults;
         Ok(())
+    }
+
+    /// Replaces this page's extra request headers (an empty map clears them).
+    /// They apply to the page's document, subresource, fetch and XHR requests
+    /// over context-wide settings, persist across navigation, and do not
+    /// affect sibling pages. Returns false if there is no such page.
+    pub fn set_extra_http_headers(&mut self, page: PageId, headers: lp_net::http::HeaderMap) -> bool {
+        let Some(state) = self.page_mut(page) else { return false };
+        if let Some(bindings) = &state.main_frame.page_dom {
+            bindings.set_extra_http_headers(headers.clone());
+        }
+        state.request_defaults.extra_headers = headers.clone();
+        state.extra_http_headers = headers;
+        true
     }
 
     pub fn add_init_script(&mut self, page: PageId, script: InitScript) -> bool {
