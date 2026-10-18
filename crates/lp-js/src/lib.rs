@@ -18,7 +18,7 @@ mod string;
 mod value;
 
 pub use class::{ClassDef, ClassId, JsClass, NoParent};
-pub use engine::{Capabilities, ConsoleLevel, Engine, EngineHooks, TerminateHandle};
+pub use engine::{configure_process, Capabilities, ConsoleLevel, Engine, EngineHooks, TerminateHandle};
 pub use error::{JsError, JsException, JsResult};
 pub use persistent::{Persistent, RootedVec};
 pub use realm::{

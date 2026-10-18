@@ -17,6 +17,15 @@ cargo test
 ./scripts/check-no-v8.sh
 ```
 
+On macOS every linked executable (`lightningpanda`, the test binaries) is ad hoc re-signed with
+`com.apple.security.cs.allow-jit` and nothing else; this runs through `scripts/macos/link-and-sign.sh`, which
+`.cargo/config.toml` sets as the linker. Without that entitlement the system JavaScriptCore runs interpreter-only. If a
+binary is copied or re-signed outside Cargo, keep the entitlement:
+`codesign -f -s - --entitlements scripts/macos/jit.entitlements <binary>`. With the JIT active, JSC's default
+signal-based traps do not stop JIT-compiled loops, so `lp_js::configure_process` (called by `Engine::new` and at the
+start of the CLI) sets `JSC_usePollingTraps=true` unless that variable is already set; script timeouts and termination
+depend on it.
+
 ## Usage
 
 ```sh

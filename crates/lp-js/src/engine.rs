@@ -241,6 +241,7 @@ impl Drop for Engine {
 impl Engine {
     /// Creates the engine for this thread.
     pub fn new() -> Result<Engine, JsError> {
+        configure_process();
         if current_inner().is_some() {
             return Err(JsError::Type("a JavaScript engine already exists on this thread".into()));
         }
@@ -352,6 +353,26 @@ impl Engine {
 
 /// How often running JavaScript polls the termination flag.
 const WATCHDOG_INTERVAL_SECS: f64 = 0.05;
+
+/// Sets process-wide JavaScriptCore options that must be in place before JSC
+/// initializes (it reads `JSC_*` environment variables once, at the first VM
+/// creation). `Engine::new` calls this; executables should call it at the
+/// start of `main`, before spawning threads, since it may set an environment
+/// variable. Has no effect if JSC was already initialized in this process.
+///
+/// `JSC_usePollingTraps=true` (unless the variable is already set): with the
+/// JIT enabled (the `com.apple.security.cs.allow-jit` entitlement), JSC's
+/// default signal-based traps never deliver the watchdog to JIT-compiled
+/// loops, so termination and `JSContextGroupSetExecutionTimeLimit` would not
+/// fire; polling traps check in generated code instead.
+pub fn configure_process() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        if std::env::var_os("JSC_usePollingTraps").is_none() {
+            std::env::set_var("JSC_usePollingTraps", "true");
+        }
+    });
+}
 
 pub(crate) struct TerminateState {
     requested: AtomicBool,
