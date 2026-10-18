@@ -391,6 +391,11 @@ try {
     await page.focus('#caret');
     await page.keyboard.press('Escape');
     assert.equal(await page.evaluate(() => document.querySelector('#caret').value), 'bcd');
+    // TOS W3-08 QuerySelect opener presses ArrowDown (macOS command moveDown).
+    await page.evaluate(() => document.querySelector('#caret').setSelectionRange(1, 1));
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('Shift+ArrowUp');
+    assert.deepEqual(await page.evaluate(() => { const c = document.querySelector('#caret'); return [c.selectionStart, c.selectionEnd]; }), [0, 3]);
   });
   await check('page fetch route fulfillment and abort after headers', async () => {
     await page.route('**/routed-fetch', route => route.fulfill({ status: 202, contentType: 'application/json', body: '{"routed":48}' }));
