@@ -85,10 +85,10 @@ Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 42 engi
 | `Page.enable` | yes | engine |  |
 | `Page.getFrameTree` | yes | engine |  |
 | `Page.getLayoutMetrics` | yes | pending |  |
-| `Page.getNavigationHistory` | yes | pending |  |
+| `Page.getNavigationHistory` | yes | engine | main-frame session history with stable entry ids; `title` is empty and `transitionType` is `other`; the initial about:blank entry is kept by the first navigation (Chrome replaces it) |
 | `Page.handleJavaScriptDialog` | yes | pending |  |
 | `Page.navigate` | yes | engine | about:blank, data and HTTP documents; unsupported schemes/network errors return explicit errorText |
-| `Page.navigateToHistoryEntry` | yes | pending |  |
+| `Page.navigateToHistoryEntry` | yes | engine | answers once the traversal is queued, like Chrome; same-document entries commit as `navigatedWithinDocument` with `popstate`, others re-fetch the document (no bfcache); unknown ids are invalid params |
 | `Page.printToPDF` | yes | pending |  |
 | `Page.reload` | yes | engine | same limits as Page.navigate |
 | `Page.removeScriptToEvaluateOnNewDocument` | yes | engine |  |

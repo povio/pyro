@@ -5,11 +5,15 @@
 //! that needs `&mut Browser` (cross-document navigation, events) is posted as
 //! a task, as navigation is asynchronous in browsers too.
 //!
-//! Known gaps (see docs/PARITY.md): `popstate`/`hashchange` DOM events need
-//! lp-webapi's EventTarget; history state is stored as JSON (not a full
-//! structured clone); traversal across documents re-fetches (no bfcache).
+//! Known gaps (see docs/PARITY.md): history state is stored as JSON (not a
+//! full structured clone); traversal across documents re-fetches (no bfcache);
+//! the initial about:blank entry is kept by the first navigation (browsers
+//! replace it), so `history.length` counts it.
 
-use crate::{Browser, FrameId, NavigateOpts, NavigationReason, ObserverCell, PageEvent, PageId, SameDocumentKind};
+use crate::{
+    Browser, FrameId, HistoryHandling, NavigateOpts, NavigationReason, ObserverCell, PageEvent, PageId,
+    SameDocumentKind,
+};
 use lp_dom::parse::DomRef;
 use lp_dom::NodeId;
 use lp_js::{ClassDef, JsClass, JsError, JsResult, NoParent, Scope, Value};
@@ -27,6 +31,16 @@ struct Entry {
     /// Document sequence number: entries of the same document traverse
     /// without reloading.
     doc: u64,
+    /// Unique within the page; identifies the entry to automation clients
+    /// (CDP `NavigationEntry.id`).
+    id: u64,
+}
+
+/// A session-history entry as reported to automation clients.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HistoryEntry {
+    pub id: u64,
+    pub url: String,
 }
 
 struct NavState {
@@ -34,7 +48,15 @@ struct NavState {
     entries: Vec<Entry>,
     index: usize,
     doc_seq: u64,
+    entry_seq: u64,
     scroll_restoration_manual: bool,
+}
+
+impl NavState {
+    fn next_entry_id(&mut self) -> u64 {
+        self.entry_seq += 1;
+        self.entry_seq
+    }
 }
 
 /// Per-page navigation state shared by the page and its windows.
@@ -70,6 +92,7 @@ impl PageNav {
                 entries: Vec::new(),
                 index: 0,
                 doc_seq: 0,
+                entry_seq: 0,
                 scroll_restoration_manual: false,
             }),
             document: RefCell::new(None),
@@ -85,27 +108,65 @@ impl PageNav {
         self.state.borrow().entries.len().max(1)
     }
 
+    /// The session history and the index of the current entry.
+    pub fn history_entries(&self) -> (usize, Vec<HistoryEntry>) {
+        let st = self.state.borrow();
+        let entries = st.entries.iter().map(|e| HistoryEntry { id: e.id, url: e.url.clone() }).collect();
+        (st.index, entries)
+    }
+
+    /// Queues a traversal to the entry with `id`, like `history.go()` with the
+    /// matching delta (the current entry reloads). Returns false when no entry
+    /// has that id.
+    pub fn traverse_to_entry(&self, id: u64) -> bool {
+        let delta = {
+            let st = self.state.borrow();
+            match st.entries.iter().position(|e| e.id == id) {
+                Some(i) => i as i64 - st.index as i64,
+                None => return false,
+            }
+        };
+        self.traverse(delta);
+        true
+    }
+
     /// Records a committed cross-document navigation.
-    pub(crate) fn commit_document(&self, url: &str, replace: bool, document: Option<(DomRef, NodeId)>) {
+    pub(crate) fn commit_document(&self, url: &str, history: HistoryHandling, document: Option<(DomRef, NodeId)>) {
         self.pending_frame_url.borrow_mut().take();
         let mut st = self.state.borrow_mut();
         st.doc_seq += 1;
-        let entry = Entry { url: url.to_string(), state: None, doc: st.doc_seq };
-        if st.entries.is_empty() {
-            st.entries.push(entry);
-            st.index = 0;
-        } else if replace {
-            let i = st.index;
-            st.entries[i] = entry;
-        } else if traversing(&st, url) {
-            // A history traversal committed: index was set by traverse().
-            let i = st.index;
-            st.entries[i].doc = st.doc_seq;
-        } else {
-            let i = st.index + 1;
-            st.entries.truncate(i);
-            st.entries.push(entry);
-            st.index = i;
+        let id = st.next_entry_id();
+        let entry = Entry { url: url.to_string(), state: None, doc: st.doc_seq, id };
+        // A push to the current entry's URL replaces it (HTML navigate step:
+        // "url equals the active document's URL" -> replace).
+        let same_url = st.entries.get(st.index).is_some_and(|e| e.url == url);
+        match history {
+            _ if st.entries.is_empty() => {
+                st.entries.push(entry);
+                st.index = 0;
+            }
+            HistoryHandling::Traverse | HistoryHandling::Reload => {
+                // The entry at the index (set by traverse() for traversals)
+                // keeps its id and state; a redirect updates its URL.
+                let (i, doc) = (st.index, st.doc_seq);
+                let e = &mut st.entries[i];
+                e.doc = doc;
+                e.url = url.to_string();
+            }
+            HistoryHandling::Replace => {
+                let i = st.index;
+                st.entries[i] = entry;
+            }
+            HistoryHandling::Push if same_url => {
+                let i = st.index;
+                st.entries[i] = entry;
+            }
+            HistoryHandling::Push => {
+                let i = st.index + 1;
+                st.entries.truncate(i);
+                st.entries.push(entry);
+                st.index = i;
+            }
         }
         st.url = url.to_string();
         drop(st);
@@ -129,7 +190,8 @@ impl PageNav {
         {
             let mut st = self.state.borrow_mut();
             let doc = st.entries.get(st.index).map_or(st.doc_seq, |e| e.doc);
-            let entry = Entry { url: url.to_string(), state, doc };
+            let id = st.next_entry_id();
+            let entry = Entry { url: url.to_string(), state, doc, id };
             if st.entries.is_empty() {
                 st.entries.push(entry);
             } else if kind == SameDocumentKind::Replace {
@@ -156,7 +218,7 @@ impl PageNav {
         self.pending_frame_url.borrow_mut().take()
     }
 
-    fn navigate(&self, url: String, replace: bool) {
+    fn navigate(&self, url: String, history: HistoryHandling) {
         let page = self.page;
         let document = self.state.borrow().doc_seq;
         self.sched.post(TaskSource::Navigation, move |b| {
@@ -164,7 +226,7 @@ impl PageNav {
                 return;
             }
             let opts = NavigateOpts { url, reason: NavigationReason::Script, cdp_request_id: None, referrer: None };
-            if let Err(e) = b.navigate_with_history(page, opts, replace) {
+            if let Err(e) = b.navigate_with_handling(page, opts, history) {
                 b.report_navigation_error(page, &e);
             }
         });
@@ -185,7 +247,7 @@ impl PageNav {
         let Some((index, entry, current_doc)) = target else {
             if delta == 0 {
                 let url = self.url();
-                self.navigate(url, true);
+                self.navigate(url, HistoryHandling::Reload);
             }
             return;
         };
@@ -204,9 +266,10 @@ impl PageNav {
                 state.index = index;
             }
             if entry.doc == current_doc {
+                let old_url = nav.url();
                 nav.set_url_sync(&entry.url);
-                // TODO(lp-webapi): fire popstate with the entry state (and hashchange).
                 b.same_document_committed(page, entry.url.clone(), SameDocumentKind::Push);
+                b.fire_popstate(page, entry.state.as_deref(), &old_url, &entry.url);
             } else {
                 let opts = NavigateOpts {
                     url: entry.url.clone(),
@@ -214,9 +277,30 @@ impl PageNav {
                     cdp_request_id: None,
                     referrer: None,
                 };
-                if let Err(e) = b.navigate_with_history(page, opts, true) {
+                if let Err(e) = b.navigate_with_handling(page, opts, HistoryHandling::Traverse) {
                     b.report_navigation_error(page, &e);
                 }
+            }
+        });
+    }
+
+    /// Queues `hashchange` at the window when a same-document navigation
+    /// changed only the fragment.
+    fn queue_hashchange(&self, old_url: &str, new_url: &str) {
+        let (Ok(old), Ok(new)) = (Url::parse(old_url), Url::parse(new_url)) else { return };
+        if old.fragment() == new.fragment() || !same_document_except_fragment(&old, &new) {
+            return;
+        }
+        let (page, document) = (self.page, self.state.borrow().doc_seq);
+        let (old_url, new_url) = (old_url.to_string(), new_url.to_string());
+        self.sched.post(TaskSource::Navigation, move |b| {
+            let Some(p) = b.page(page) else { return };
+            // Only for the document that navigated.
+            if p.nav.state.borrow().doc_seq != document {
+                return;
+            }
+            if let Some(dom) = p.main_frame.page_dom.clone() {
+                lp_webapi::lifecycle::hashchange(&dom, &old_url, &new_url);
             }
         });
     }
@@ -230,10 +314,6 @@ impl PageNav {
     pub fn now_ms(&self) -> f64 {
         self.time_origin.get().elapsed().as_secs_f64() * 1000.0
     }
-}
-
-fn traversing(st: &NavState, url: &str) -> bool {
-    st.entries.get(st.index).is_some_and(|e| e.url == url && e.doc != st.doc_seq)
 }
 
 impl Browser {
@@ -250,6 +330,22 @@ impl Browser {
         p.main_frame.url = url.clone();
         let frame_id = p.main_frame.id.clone();
         self.emit(page, PageEvent::FrameNavigatedWithinDocument { frame_id, url, kind });
+    }
+
+    /// Same-document traversal: `popstate` with the entry's state, then a
+    /// queued `hashchange` when only the fragment changed (HTML "update
+    /// document for history step application").
+    fn fire_popstate(&mut self, page: PageId, state: Option<&str>, old_url: &str, new_url: &str) {
+        let Some(p) = self.page(page) else { return };
+        let Some(dom) = p.main_frame.page_dom.clone() else { return };
+        let state = match (state, p.main_frame.main_realm().and_then(|r| r.scope().ok())) {
+            (Some(json), Some(scope)) => scope.parse_json(json).map(|v| lp_js::Persistent::new(&scope, v)),
+            _ => None,
+        };
+        lp_webapi::lifecycle::popstate(&dom, state);
+        if let Some(nav) = self.page(page).map(|p| p.nav.clone()) {
+            nav.queue_hashchange(old_url, new_url);
+        }
     }
 
     fn report_navigation_error(&mut self, page: PageId, e: &JsError) {
@@ -286,9 +382,9 @@ fn assign(nav: &PageNav, input: Value<'_>, replace: bool) -> JsResult<()> {
         Some(cur) if target.fragment().is_some() && same_document_except_fragment(&cur, &target) => {
             let kind = if replace { SameDocumentKind::Replace } else { SameDocumentKind::Fragment };
             nav.same_document(target.as_str(), None, kind);
-            // TODO(lp-webapi): hashchange event.
+            nav.queue_hashchange(cur.as_str(), target.as_str());
         }
-        _ => nav.navigate(target.to_string(), replace),
+        _ => nav.navigate(target.to_string(), if replace { HistoryHandling::Replace } else { HistoryHandling::Push }),
     }
     Ok(())
 }
@@ -318,7 +414,7 @@ impl JsClass for Location {
             Ok(s.undefined())
         });
         def.method("reload", 0, |s, n, _a| {
-            n.navigate(n.url(), true);
+            n.navigate(n.url(), HistoryHandling::Reload);
             Ok(s.undefined())
         });
         def.getter("origin", |s, n| {

@@ -254,6 +254,14 @@ await check('context cookies reach HTTP and stay isolated', async () => {
 const identityHeaders = [];
 const fixture = http.createServer((req, res) => {
   identityHeaders.push({ url: req.url, agent: req.headers['user-agent'], language: req.headers['accept-language'] });
+  if (req.url.startsWith('/spa')) {
+    // A minimal SPA router: renders the route from history and re-renders on popstate.
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end('<!doctype html><div id="view"></div><script>' +
+      'const render = () => { document.querySelector("#view").textContent = location.pathname + "|" + JSON.stringify(history.state); };' +
+      'addEventListener("popstate", render); globalThis.go = path => { history.pushState({ path }, "", path); render(); }; render();</script>');
+    return;
+  }
   if (req.url === '/checkpoint.css') {
     res.writeHead(200, { 'content-type': 'text/css' });
     res.end('#message { display: none }');
@@ -523,6 +531,31 @@ try {
         assert.equal(identityHeaders.find(r => r.url === '/identity-reset').agent, defaultAgent);
       } finally { await session.detach(); }
     } finally { await identities.close(); }
+  });
+  await check('goBack/goForward traverse SPA and document history (TOS email-logs Back/Forward case)', async () => {
+    const spa = await context.newPage();
+    try {
+      const view = () => spa.locator('#view').textContent();
+      await spa.goto(`${fixtureOrigin}/spa`, { timeout: 5000 });
+      await spa.evaluate(() => go('/spa/one'));
+      await spa.evaluate(() => go('/spa/two'));
+      assert.equal(await view(), '/spa/two|{"path":"/spa/two"}');
+      // Same-document entries: Playwright resolves with null (no new document).
+      assert.equal(await spa.goBack({ timeout: 5000 }), null);
+      assert.equal(spa.url(), `${fixtureOrigin}/spa/one`);
+      assert.equal(await view(), '/spa/one|{"path":"/spa/one"}');
+      assert.equal(await spa.goForward({ timeout: 5000 }), null);
+      assert.equal(await view(), '/spa/two|{"path":"/spa/two"}');
+      // Cross-document entry: the document is fetched again and the response returned.
+      await spa.goto(`${fixtureOrigin}/spa-next`, { timeout: 5000 });
+      const back = await spa.goBack({ timeout: 5000 });
+      assert.equal(back?.url(), `${fixtureOrigin}/spa/two`);
+      assert.equal(await view(), '/spa/two|{"path":"/spa/two"}');
+      assert.equal((await spa.goForward({ timeout: 5000 }))?.url(), `${fixtureOrigin}/spa-next`);
+      // Nothing further forward.
+      assert.equal(await spa.goForward({ timeout: 5000 }), null);
+      assert.equal(spa.url(), `${fixtureOrigin}/spa-next`);
+    } finally { await spa.close(); }
   });
   await check('Web Storage follows context, page and navigation boundaries', async () => {
     await page.evaluate(() => { localStorage.setItem('local-marker', 'shared'); sessionStorage.setItem('session-marker', 'page'); });

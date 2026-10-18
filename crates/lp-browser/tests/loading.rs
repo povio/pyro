@@ -356,6 +356,52 @@ fn location_assignment_navigates_cross_document_and_back_returns() {
 }
 
 #[test]
+fn cross_document_back_restores_the_entry_state() {
+    let (mut thread, rec, page) = nav_setup();
+    js(&thread, page, "history.replaceState({k: 1}, ''); location.href = '/other'");
+    let r = thread
+        .run_until(Some(Instant::now() + Duration::from_secs(5)), |_| rec.log.borrow().iter().any(|l| l == "load"));
+    assert_eq!(r, lp_runtime::RunOutcome::Done, "{:?}", rec.log.borrow());
+    rec.log.borrow_mut().clear();
+    js(&thread, page, "history.back()");
+    let r = thread
+        .run_until(Some(Instant::now() + Duration::from_secs(5)), |_| rec.log.borrow().iter().any(|l| l == "load"));
+    assert_eq!(r, lp_runtime::RunOutcome::Done, "{:?}", rec.log.borrow());
+    assert_eq!(
+        js(&thread, page, "location.href + ' ' + JSON.stringify(history.state)"),
+        "http://site.test/a/b?x=1#h {\"k\":1}"
+    );
+}
+
+/// History handling follows the navigation's intent, not URL equality: a
+/// reload keeps the entry's state, while `location.replace` and a same-URL
+/// push (converted to a replace) create a new entry with null state.
+#[test]
+fn same_url_navigations_keep_state_only_for_reload() {
+    let (mut thread, rec, page) = nav_setup();
+    let wait_load = |thread: &mut BrowserThread| {
+        let r = thread
+            .run_until(Some(Instant::now() + Duration::from_secs(5)), |_| rec.log.borrow().iter().any(|l| l == "load"));
+        assert_eq!(r, lp_runtime::RunOutcome::Done, "{:?}", rec.log.borrow());
+        rec.log.borrow_mut().clear();
+    };
+    // A fragment-free document, so same-URL navigations are cross-document.
+    js(&thread, page, "location.href = '/other'");
+    wait_load(&mut thread);
+    let state = "location.href + ' ' + history.length + ' ' + JSON.stringify(history.state)";
+    for (navigation, expected) in [
+        ("location.reload()", r#"http://site.test/other 3 {"k":1}"#),
+        ("location.replace(location.href)", "http://site.test/other 3 null"),
+        ("location.href = location.href", "http://site.test/other 3 null"),
+    ] {
+        js(&thread, page, "history.replaceState({k: 1}, '')");
+        js(&thread, page, navigation);
+        wait_load(&mut thread);
+        assert_eq!(js(&thread, page, state), expected, "{navigation}");
+    }
+}
+
+#[test]
 fn performance_now_is_monotonic_and_origin_is_wall_time() {
     let (thread, _rec, page) = nav_setup();
     assert_eq!(
