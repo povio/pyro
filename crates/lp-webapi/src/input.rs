@@ -562,8 +562,91 @@ fn default_key_action(page: &Rc<PageDom>, target: NodeId, k: &KeyInput) {
             }
         }
         "ArrowLeft" | "ArrowRight" | "Home" | "End" if editable => move_caret(page, target, &k.key, k.modifiers.shift),
+        "ArrowUp" | "ArrowDown"
+            if !(k.modifiers.alt || k.modifiers.ctrl || k.modifiers.meta)
+                && vertical_caret_control(&page.dom.borrow(), target) =>
+        {
+            move_caret_vertically(page, target, k.key == "ArrowUp", k.modifiers.shift)
+        }
         _ => {}
     }
+}
+
+/// Text controls whose caret ArrowUp/ArrowDown move. Number, date/time, range
+/// and color inputs step or pick values instead, which is not modelled.
+fn vertical_caret_control(dom: &Dom, el: NodeId) -> bool {
+    match local(dom, el).as_deref() {
+        Some("textarea") => true,
+        Some("input") => matches!(
+            dom.input_type(el),
+            Ok(InputType::Text
+                | InputType::Search
+                | InputType::Tel
+                | InputType::Url
+                | InputType::Email
+                | InputType::Password)
+        ),
+        _ => false,
+    }
+}
+
+/// ArrowUp/ArrowDown caret movement as on macOS (the behaviour Playwright's
+/// `moveUp`/`moveDown` editing commands name). A single-line input moves to its
+/// start/end. A textarea moves by logical line (soft wrapping is not modelled),
+/// keeping the UTF-16 column clamped to the target line, and moves to the
+/// start/end from the first/last line. With a selection, Up starts from its
+/// start and Down from its end; Shift extends. The preferred column is not kept
+/// across successive moves.
+fn move_caret_vertically(page: &Rc<PageDom>, el: NodeId, up: bool, extend: bool) {
+    let multiline = local(&page.dom.borrow(), el).as_deref() == Some("textarea");
+    let mut dom = page.dom.borrow_mut();
+    let Ok((s, e)) = dom.selection(el) else { return };
+    let (s, e) = (s as usize, e as usize);
+    let Ok(v) = dom.value(el) else { return };
+    let units: Vec<u16> = v.encode_utf16().collect();
+    let len = units.len();
+    let caret = if !multiline {
+        if up {
+            0
+        } else {
+            len
+        }
+    } else {
+        let newline = u16::from(b'\n');
+        let line_start = |pos: usize| units[..pos].iter().rposition(|&u| u == newline).map_or(0, |i| i + 1);
+        let line_end = |pos: usize| units[pos..].iter().position(|&u| u == newline).map_or(len, |i| pos + i);
+        let from = (if up { s } else { e }).min(len);
+        let col = from - line_start(from);
+        let target = if up {
+            let start = line_start(from);
+            if start == 0 {
+                0
+            } else {
+                let prev = line_start(start - 1);
+                prev + col.min(start - 1 - prev)
+            }
+        } else {
+            let end = line_end(from);
+            if end == len {
+                len
+            } else {
+                let next = end + 1;
+                next + col.min(line_end(next) - next)
+            }
+        };
+        // Never split a surrogate pair.
+        if target > 0 && target < len && (0xDC00..0xE000).contains(&units[target]) {
+            target - 1
+        } else {
+            target
+        }
+    };
+    let (ns, ne) = match (extend, up) {
+        (false, _) => (caret, caret),
+        (true, true) => (caret, e),
+        (true, false) => (s, caret),
+    };
+    let _ = dom.set_selection_range(el, ns as u32, ne as u32);
 }
 
 fn move_caret(page: &Rc<PageDom>, el: NodeId, key: &str, extend: bool) {
