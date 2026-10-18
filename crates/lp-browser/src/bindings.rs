@@ -1,15 +1,15 @@
 //! Connects document bindings to the browser's lifecycle and task queues.
 
-use crate::{Browser, ContextId, LoaderId, NavigateOpts, NavigationReason, ObserverCell, PageId};
+use crate::frames::FrameKey;
+use crate::{Browser, ContextId, LoaderId, NavigateOpts, NavigationReason, ObserverCell};
 use lp_js::JsError;
 use lp_runtime::{LoopHandle, Scheduler, TaskSource};
 use lp_webapi::{NavigationRequest, PageDom, PageHooks, RemotePoster};
-use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
 struct Hooks {
-    page: PageId,
+    page: FrameKey,
     /// Browser context of the page: native request ids are only unique
     /// within its `NetClient`.
     context: ContextId,
@@ -18,6 +18,7 @@ struct Hooks {
     handle: LoopHandle<Browser>,
     /// The browser's observer cell (shared, so later `set_observer` calls apply).
     observer: ObserverCell,
+    frames: std::rc::Weak<crate::frames::FrameHost>,
 }
 
 impl PageHooks for Hooks {
@@ -25,7 +26,7 @@ impl PageHooks for Hooks {
         let page = self.page;
         let loader = self.loader.clone();
         self.sched.post(TaskSource::DomManipulation, move |b| {
-            if b.page(page).is_some_and(|p| p.main_frame.loader_id == loader) {
+            if b.doc(page).is_some_and(|p| p.main_frame.loader_id == loader) {
                 task();
             }
         });
@@ -35,27 +36,29 @@ impl PageHooks for Hooks {
         let page = self.page;
         let loader = self.loader.clone();
         self.sched.post(TaskSource::Navigation, move |b| {
-            if !b.page(page).is_some_and(|p| p.main_frame.loader_id == loader) {
+            if !b.doc(page).is_some_and(|p| p.main_frame.loader_id == loader) {
                 return;
             }
             let result = if request.method != "GET"
                 || request.target.as_deref().is_some_and(|t| !matches!(t, "" | "_self" | "_top" | "_parent"))
+                || (page.child.is_some() && request.target.as_deref().is_some_and(|t| matches!(t, "_top" | "_parent")))
             {
-                Err(JsError::Unsupported("form POST and named navigation targets"))
+                Err(JsError::Unsupported("form POST and cross-frame navigation targets"))
             } else {
-                b.navigate(
+                b.navigate_frame_with_handling(
                     page,
                     NavigateOpts {
                         url: request.url,
                         reason: NavigationReason::Anchor,
                         cdp_request_id: None,
-                        referrer: b.page(page).map(|p| p.main_frame.url.clone()),
+                        referrer: b.doc(page).map(|p| p.main_frame.url.clone()),
                     },
+                    crate::HistoryHandling::Push,
                 )
                 .map(|_| ())
             };
             if let Err(e) = result {
-                if let Some(realm) = b.page(page).and_then(|p| p.main_frame.main_realm()) {
+                if let Some(realm) = b.doc(page).and_then(|p| p.main_frame.main_realm().cloned()) {
                     if let Ok(scope) = realm.scope() {
                         scope.report_exception(&e);
                     }
@@ -69,7 +72,70 @@ impl PageHooks for Hooks {
         // callback must not run under the cell borrow.
         let observer = self.observer.borrow().clone();
         if let Some(observer) = observer {
-            observer.on_network_delivery(self.page, self.context, &self.loader, id, frontier);
+            observer.on_network_delivery(self.page.page, self.context, &self.loader, id, frontier);
+        }
+    }
+
+    fn iframe_connected(&self, node: lp_dom::NodeId) {
+        if let Some(host) = self.frames.upgrade() {
+            if let Err(e) = host.connected(self.page, &self.loader, node) {
+                if let Some(realm) = host.frame(self.page).and_then(|f| f.main_realm().cloned()) {
+                    if let Ok(scope) = realm.scope() {
+                        scope.report_exception(&e);
+                    }
+                }
+            }
+        }
+    }
+    fn iframe_disconnected(&self, node: lp_dom::NodeId) {
+        if let Some(host) = self.frames.upgrade() {
+            if host.matches(self.page, &self.loader) {
+                if let Some(key) = host.owner(node) {
+                    host.detach(key);
+                }
+            }
+        }
+    }
+    fn iframe_attribute_changed(&self, node: lp_dom::NodeId, attr: lp_webapi::IframeAttribute) {
+        let Some(host) = self.frames.upgrade() else { return };
+        if !host.matches(self.page, &self.loader) {
+            return;
+        }
+        let Some(key) = host.owner(node) else { return };
+        if attr == lp_webapi::IframeAttribute::Name {
+            let name = host.dom.borrow().get_attribute(node, "name").ok().flatten().unwrap_or("").to_owned();
+            if let Some(id) = key.child {
+                if let Some(child) = host.children.borrow_mut().get_mut(&id) {
+                    child.main_frame.name = name;
+                }
+            }
+        } else if attr != lp_webapi::IframeAttribute::Sandbox {
+            if let Some(frame) = host.frame(key) {
+                host.queue_attributes(key, frame.loader_id);
+            }
+        }
+    }
+    fn frame_document_value<'s>(
+        &self,
+        scope: &lp_js::Scope<'s>,
+        node: lp_dom::NodeId,
+    ) -> lp_js::JsResult<Option<lp_js::Value<'s>>> {
+        let Some(host) = self.frames.upgrade() else { return Ok(Some(scope.null())) };
+        let Some(key) = host.owner(node) else { return Ok(Some(scope.null())) };
+        host.document_value(scope, self.page, key).map(Some)
+    }
+    fn frame_window<'s>(&self, scope: &lp_js::Scope<'s>, node: lp_dom::NodeId) -> Option<lp_js::Value<'s>> {
+        let host = self.frames.upgrade()?;
+        if !host.matches(self.page, &self.loader) {
+            return None;
+        }
+        let key = host.owner(node)?;
+        match host.window_value(scope, self.page, key) {
+            Ok(v) => Some(v),
+            Err(e) => {
+                scope.report_exception(&e);
+                None
+            }
         }
     }
 
@@ -80,7 +146,7 @@ impl PageHooks for Hooks {
         Some(Arc::new(move |task| {
             let loader = loader.clone();
             let _ = handle.post(move |b| {
-                if b.page(page).is_some_and(|p| p.main_frame.loader_id == loader) {
+                if b.doc(page).is_some_and(|p| p.main_frame.loader_id == loader) {
                     task();
                 }
             });
@@ -91,62 +157,52 @@ impl PageHooks for Hooks {
 impl Browser {
     pub(crate) fn create_document_bindings(
         &self,
-        page: PageId,
+        page: FrameKey,
         url: &str,
         loader: &LoaderId,
     ) -> Result<Rc<PageDom>, JsError> {
-        let state = self.page(page).ok_or_else(|| JsError::Type("no such page".into()))?;
-        let context = state.context;
-        let local_storage = self
-            .contexts
-            .iter()
-            .find(|c| c.id == context)
-            .ok_or_else(|| JsError::Type("no such browser context".into()))?
-            .local_storage
-            .clone();
-        let session_storage = state.session_storage.clone();
-        let dom = Rc::new(RefCell::new(lp_dom::Dom::new()));
-        let doc = if url == "about:blank" {
-            lp_dom::parse::parse_document(&dom, url, "<!doctype html><html><head></head><body></body></html>")
-        } else {
-            dom.borrow_mut().create_document(lp_dom::DocumentKind::Html, url)
+        let state = self.page(page.page).ok_or(JsError::ContextDestroyed)?;
+        let settings = crate::frames::Settings {
+            local: self
+                .contexts
+                .iter()
+                .find(|c| c.id == state.context)
+                .ok_or(JsError::ContextDestroyed)?
+                .local_storage
+                .clone(),
+            session: state.session_storage.clone(),
+            net: self.context_net(state.context).cloned(),
+            viewport: state.viewport.clone(),
+            user_agent: state.user_agent_override.clone(),
+            extra_headers: state.extra_http_headers.clone(),
+            cache_disabled: state.cache_disabled,
+            scripts: state.init_scripts.clone(),
         };
-        dom.borrow_mut().set_document_active(doc, true).map_err(|e| JsError::Type(format!("{e:?}")))?;
-        dom.borrow_mut().set_resource_tracking(true);
-        let bindings = PageDom::new(dom, doc);
-        bindings.set_storage_namespaces(local_storage, session_storage);
-        bindings.set_viewport(state.viewport.clone());
-        bindings
-            .set_user_agent_override(state.user_agent_override.clone())
-            .map_err(|e| JsError::Type(format!("invalid user agent request defaults: {e}")))?;
-        bindings.set_extra_http_headers(state.extra_http_headers.clone());
-        bindings.set_cache_disabled(state.cache_disabled);
-        bindings.set_request_context(lp_webapi::RequestContext {
-            frame_id: Some(state.main_frame.id.0.clone()),
-            loader_id: Some(loader.0.clone()),
-        });
-        bindings.create_window_target(doc);
-        bindings.set_ready_state(doc, "loading");
-        *bindings.net.borrow_mut() = self.context_net(context).cloned();
-        bindings.set_hooks(Some(Rc::new(Hooks {
-            page,
-            context,
-            loader: loader.clone(),
-            sched: self.scheduler(),
-            handle: self.loop_handle(),
-            observer: self.observer.clone(),
-        })));
-        Ok(bindings)
+        *state.frames.settings.borrow_mut() = settings;
+        if page.child.is_none() {
+            *state.frames.root.borrow_mut() = state.main_frame.clone();
+        }
+        create(&state.frames, page, url, loader)
     }
 
-    pub(crate) fn drain_dom_resources(&mut self, page: PageId) {
-        let Some(bindings) = self.page(page).and_then(|p| p.main_frame.page_dom.clone()) else { return };
-        let events = bindings.dom.borrow_mut().take_resource_events();
+    pub(crate) fn drain_dom_resources(&mut self, page: FrameKey) {
+        let Some(host) = self.page(page.page).map(|p| p.frames.clone()) else { return };
+        // Parser mutations have no native-callback boundary: flush before scripts.
+        for key in host.keys() {
+            if let Some(bindings) = host.frame(key).and_then(|f| f.page_dom) {
+                bindings.flush_iframe_events();
+            }
+        }
+        let events = host.dom.borrow_mut().take_resource_events();
         let mut stylesheet_nodes = std::collections::HashSet::new();
         for event in events {
+            let document = host.dom.borrow().owner_document(event.node).ok().flatten();
+            let target = host.keys().into_iter().find(|key| host.frame(*key).is_some_and(|f| f.document == document));
+            let Some(target) = target else { continue };
+            let Some(bindings) = host.frame(target).and_then(|f| f.page_dom) else { continue };
             if event.kind == lp_dom::script::ResourceKind::Stylesheet {
                 if stylesheet_nodes.insert(event.node) {
-                    self.stylesheet_event(page, event.node);
+                    self.stylesheet_event(target, event.node);
                 }
             } else {
                 bindings.apply_style_event(&event);
@@ -155,11 +211,58 @@ impl Browser {
     }
 }
 
+pub(crate) fn create(
+    host: &Rc<crate::frames::FrameHost>,
+    page: FrameKey,
+    url: &str,
+    loader: &LoaderId,
+) -> Result<Rc<PageDom>, JsError> {
+    let frame = host.frame(page).ok_or(JsError::ContextDestroyed)?;
+    let settings = host.settings.borrow().clone();
+    let dom = host.dom.clone();
+    let doc = if url == "about:blank" {
+        lp_dom::parse::parse_document(&dom, url, "<!doctype html><html><head></head><body></body></html>")
+    } else {
+        dom.borrow_mut().create_document(lp_dom::DocumentKind::Html, url)
+    };
+    dom.borrow_mut().set_document_active(doc, true).map_err(|e| JsError::Type(format!("{e:?}")))?;
+    dom.borrow_mut().set_resource_tracking(true);
+    dom.borrow_mut()
+        .set_document_base_url(doc, matches!(url, "about:blank" | "about:srcdoc").then_some(frame.base_url.as_str()))
+        .map_err(|e| JsError::Type(format!("{e:?}")))?;
+    let bindings = PageDom::new(dom, doc);
+    bindings.set_storage_namespaces(settings.local, settings.session);
+    bindings.set_viewport(settings.viewport);
+    bindings
+        .set_user_agent_override(settings.user_agent)
+        .map_err(|e| JsError::Type(format!("invalid request defaults: {e}")))?;
+    bindings.set_extra_http_headers(settings.extra_headers);
+    bindings.set_cache_disabled(settings.cache_disabled);
+    bindings.set_scripting_disabled(frame.sandbox.scripts_disabled);
+    bindings.set_request_context(lp_webapi::RequestContext {
+        frame_id: Some(frame.id.0),
+        loader_id: Some(loader.0.clone()),
+    });
+    bindings.create_window_target(doc);
+    bindings.set_ready_state(doc, "loading");
+    *bindings.net.borrow_mut() = settings.net;
+    bindings.set_hooks(Some(Rc::new(Hooks {
+        page,
+        context: host.context,
+        loader: loader.clone(),
+        sched: host.sched.clone(),
+        handle: host.handle.clone(),
+        observer: host.observer.clone(),
+        frames: Rc::downgrade(host),
+    })));
+    Ok(bindings)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{PageEvent, PageObserver};
-    use std::cell::Cell;
+    use crate::{PageEvent, PageId, PageObserver};
+    use std::cell::{Cell, RefCell};
 
     type Seen = (PageId, ContextId, LoaderId, lp_net::RequestId, lp_net::NetworkDelivery);
 
@@ -195,12 +298,13 @@ mod tests {
             Rc::new(SelfRemoving { cell: cell.clone(), calls: Cell::new(0), seen: RefCell::new(Vec::new()) });
         *cell.borrow_mut() = Some(observer.clone());
         let hooks = Hooks {
-            page: PageId(3),
+            page: PageId(3).into(),
             context: ContextId(7),
             loader: LoaderId("L1".into()),
             sched: event_loop.scheduler(),
             handle: event_loop.handle(),
             observer: cell.clone(),
+            frames: std::rc::Weak::new(),
         };
         let frontier = lp_net::NetworkDelivery { response: true, data_bytes: 5, terminal: false };
         hooks.network_delivery(lp_net::RequestId(1), frontier);
