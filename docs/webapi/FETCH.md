@@ -76,9 +76,26 @@ FormData request/response bodies are serialized as multipart/form-data
 Not implemented: the Request constructor, ReadableStream/body streaming,
 the "response" header guard after construction (later
 `headers.set('set-cookie')` is not filtered), `<base>` URL selection, full MIME parsing for
-response Blob types, service workers, integrity/referrer policy and HTTP caching.
-Nonempty integrity/referrer/referrerPolicy, keepalive and unsupported cache modes
-are explicitly rejected. HTTPS remains unsupported by the native transport.
+response Blob types, service workers and integrity/referrer policy.
+Nonempty integrity/referrer/referrerPolicy and keepalive are explicitly rejected.
+
+HTTP cache: each browser context has a private, in-memory, byte-bounded cache in
+lp-net (`crates/lp-net/src/cache.rs`, an RFC 9111 subset). Contexts never share
+entries, and a context's entries are freed with it.
+- `init.cache` maps to it: `default`, `no-store`, `reload`, `no-cache`,
+  `force-cache` and `only-if-cached` follow the Fetch cache-mode rules, including
+  the `Pragma`/`Cache-Control` request headers that no-store, reload and no-cache add.
+- `only-if-cached` without `mode: 'same-origin'`, and any other value, reject
+  with TypeError. A miss under `only-if-cached` is a network error.
+- A request carrying its own conditional headers bypasses the cache, so the page
+  sees its 304.
+- Stored: GET responses with explicit freshness (`max-age`/`Expires`) or with
+  validators (`ETag`/`Last-Modified`, revalidated with a 304 merge). `Vary` is
+  honoured.
+- Never stored: `no-store`, `Vary: *`, `Set-Cookie` responses, `Range`/206 and
+  redirects.
+- Not implemented: heuristic freshness, stale serving, and partitioning by
+  top-level site within one context. HTTPS remains unsupported by the native transport.
 CORS and URL handling inherit the documented native subset. Lone UTF-16
 surrogates share the existing UTF-8 string-model limitation.
 

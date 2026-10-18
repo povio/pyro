@@ -276,6 +276,7 @@ impl Server {
                     "/echo" => ("200 OK", "Content-Type: text/plain\r\n".into(), body),
                     "/cors" => ("200 OK", format!("Access-Control-Allow-Origin: {origin}\r\nAccess-Control-Expose-Headers: X-Visible\r\nAccess-Control-Expose-Headers: X-Second\r\nX-Second: second\r\nX-Visible: yes\r\nX-Hidden: no\r\nSet-Cookie: hidden=1\r\n"), b"cors".to_vec()),
                     "/empty" => ("204 No Content", String::new(), vec![]),
+                    "/cacheable" => ("200 OK", "Cache-Control: max-age=3600\r\n".into(), b"cached".to_vec()),
                     "/large" => ("200 OK", String::new(), vec![b'x'; 8192]),
                     "/gated-failure" | "/gated-text" => {
                         let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 10\r\n\r\nfirst");

@@ -311,9 +311,17 @@ fn parse_request<'s>(
     if option(s, init, "keepalive")?.to_bool() {
         return Err(JsError::Type("fetch keepalive is not implemented".into()));
     }
-    let cache = string_option(s, init, "cache", "default")?;
-    if cache != "default" && cache != "no-store" {
-        return Err(JsError::Type("fetch cache mode is not implemented".into()));
+    request.cache = match string_option(s, init, "cache", "default")?.as_str() {
+        "default" => lp_net::CacheMode::Default,
+        "no-store" => lp_net::CacheMode::NoStore,
+        "reload" => lp_net::CacheMode::Reload,
+        "no-cache" => lp_net::CacheMode::NoCache,
+        "force-cache" => lp_net::CacheMode::ForceCache,
+        "only-if-cached" => lp_net::CacheMode::OnlyIfCached,
+        _ => return Err(JsError::Type("Invalid fetch cache mode".into())),
+    };
+    if request.cache == lp_net::CacheMode::OnlyIfCached && request.mode != RequestMode::SameOrigin {
+        return Err(JsError::Type("'only-if-cached' can be set only with 'same-origin' mode".into()));
     }
     let signal = option(s, init, "signal")?;
     let signal = if signal.is_null() || signal.is_undefined() {
