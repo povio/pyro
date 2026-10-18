@@ -31,7 +31,9 @@ messaging within one realm. The behaviour follows upstream Lightpanda
   - Queued messages survive GC even after the peer closes, or when the receiver
     starts after its peer was collected.
   - The pin is re-evaluated on enqueue, start, delivery and close (including the
-    peer's), and when the peer is collected (reconciled in a separate task).
+    peer's), and when the peer is collected. The peer's `Drop` only records the
+    surviving port; `PageDom::after_task` reconciles it at the next safe point.
+    No JS runs from the drop, with or without page hooks.
     Every pin is released when the page is disposed.
   - A started, drained receiver whose sender became unreachable is released,
     not retained until page disposal.
@@ -59,3 +61,4 @@ Tests (`crates/lp-webapi/tests/dom_js.rs`):
 - `message_port_started_late_with_a_collected_peer_still_delivers_across_gc`
 - `message_port_unstarted_queued_ports_and_disposal_hold_no_roots`
 - `message_port_receiver_is_released_when_its_sender_becomes_unreachable`
+- `message_port_peer_collection_is_reconciled_at_after_task_without_hooks`

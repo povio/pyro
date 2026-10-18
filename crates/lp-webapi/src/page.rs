@@ -50,6 +50,9 @@ pub struct PageDom {
     pub(crate) structured_clones: RefCell<FxHashMap<RealmId, Persistent>>,
     /// Each realm's original `Object.defineProperty` ([Replaceable] setters).
     pub(crate) define_properties: RefCell<FxHashMap<RealmId, Persistent>>,
+    /// MessagePorts whose peer was collected; their pins are reconciled at
+    /// the next `after_task` (recorded from `Drop`, which must not run JS).
+    pub(crate) pending_port_reconcile: RefCell<Vec<std::rc::Weak<crate::message_channel::PortInner>>>,
     pub(crate) last_removals: Cell<u64>,
     next_event: Cell<u64>,
     pub net: RefCell<Option<lp_net::NetClient>>,
@@ -140,6 +143,7 @@ impl PageDom {
             same_objects: RefCell::new(FxHashMap::default()),
             structured_clones: RefCell::new(FxHashMap::default()),
             define_properties: RefCell::new(FxHashMap::default()),
+            pending_port_reconcile: RefCell::new(Vec::new()),
             last_removals: Cell::new(u64::MAX),
             next_event: Cell::new(1),
             net: RefCell::new(None),
@@ -219,6 +223,7 @@ impl PageDom {
         drop(self.same_objects.take());
         drop(self.structured_clones.take());
         drop(self.define_properties.take());
+        drop(self.pending_port_reconcile.take());
         drop(self.data_view_readers.take());
         drop(self.header_helpers.take());
         drop(self.url_params_helpers.take());
@@ -333,6 +338,7 @@ impl PageDom {
     /// listener-holding wrappers of disconnected nodes, re-pins reconnected
     /// ones, and frees unreachable DOM nodes.
     pub fn after_task(&self) {
+        crate::message_channel::reconcile_ports(self);
         crate::mutation_observer::after_task(self);
         crate::intersection_observer::after_task(self);
         crate::resize_observer::after_task(self);
