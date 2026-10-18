@@ -98,6 +98,13 @@ struct Xhr {
     reported: Cell<usize>,
     visible_chunks: Cell<usize>,
     disposed: Cell<bool>,
+    /// `xhr.upload` (XMLHttpRequestUpload): its own non-node target, owned
+    /// here so its listeners live exactly as long as this request object.
+    upload_target: EventTargetData,
+    /// XHR "upload listener flag" (captured at send) and "upload complete flag".
+    upload_listeners: Cell<bool>,
+    upload_complete: Cell<bool>,
+    upload_total: Cell<usize>,
 }
 impl Drop for Xhr {
     fn drop(&mut self) {
@@ -152,6 +159,10 @@ impl JsClass for XMLHttpRequest {
                 reported: Cell::new(0),
                 visible_chunks: Cell::new(0),
                 disposed: Cell::new(false),
+                upload_target: EventTargetData::new(&page),
+                upload_listeners: Cell::new(false),
+                upload_complete: Cell::new(true),
+                upload_total: Cell::new(0),
             });
             page.xhr_state.instances.borrow_mut().insert(instance, Rc::downgrade(&state));
             let wrapper = s.wrap_new::<Self>(XhrData { target, state }, nt, Some(identity))?;
@@ -243,7 +254,7 @@ impl JsClass for XMLHttpRequest {
         def.getter("responseText", |s, d| d.state.response_text(s));
         def.getter("response", |s, d| d.state.response(s));
         def.getter("responseXML", |_s, _d| Err(unsupported("XML response parsing is not implemented")));
-        def.getter("upload", |_s, _d| Err(unsupported("XHR upload observation is not implemented")));
+        def.getter("upload", |s, d| upload_object(s, &d.state));
         def.accessor(
             "responseType",
             |s, d| Ok(s.string(&d.state.response_type.borrow())),
@@ -329,6 +340,52 @@ impl JsClass for XMLHttpRequest {
     }
 }
 
+const UPLOAD: &str = "__lpXhrUpload";
+
+/// `xhr.upload`: one XMLHttpRequestUpload per request object. The XHR wrapper
+/// keeps it reachable through a traced hidden edge; the native target and its
+/// listeners belong to the `Xhr`.
+fn upload_object<'s>(s: &Scope<'s>, xhr: &Rc<Xhr>) -> JsResult<Value<'s>> {
+    let TargetKey::Other(instance) = xhr.upload_target.key else { unreachable!() };
+    let identity = xhr.upload_target.page.other_identity(instance);
+    let object = match s.lookup_identity(identity) {
+        Some(o) => o,
+        None => s.wrap::<XMLHttpRequestUpload>(UploadData { xhr: xhr.clone() }, Some(identity))?,
+    };
+    s.set_hidden(xhr.wrapper(s)?, UPLOAD, object.value())?;
+    Ok(object.value())
+}
+
+pub struct UploadData {
+    xhr: Rc<Xhr>,
+}
+
+pub struct XMLHttpRequestUpload;
+impl JsClass for XMLHttpRequestUpload {
+    const NAME: &'static str = "XMLHttpRequestUpload";
+    type Data = UploadData;
+    type Parent = EventTarget;
+    fn define(def: &mut ClassDef<Self>) {
+        def.upcast(|d: &UploadData| &d.xhr.upload_target);
+        macro_rules! handler {
+            ($name:literal, $ty:literal) => {
+                def.accessor(
+                    $name,
+                    |s, d| crate::target::event_handler(s, &d.xhr.upload_target, $ty),
+                    |s, d, value| crate::target::set_event_handler(s, &d.xhr.upload_target, $ty, value),
+                );
+            };
+        }
+        handler!("onloadstart", "loadstart");
+        handler!("onprogress", "progress");
+        handler!("onabort", "abort");
+        handler!("onerror", "error");
+        handler!("ontimeout", "timeout");
+        handler!("onload", "load");
+        handler!("onloadend", "loadend");
+    }
+}
+
 impl Xhr {
     fn page(&self) -> JsResult<Rc<PageDom>> {
         let page = self.page.upgrade().ok_or(JsError::ContextDestroyed)?;
@@ -401,6 +458,9 @@ impl Xhr {
         self.generation.set(self.generation.get().checked_add(1).expect("XHR generation exhausted"));
         self.stop();
         self.clear_response(s)?;
+        self.upload_listeners.set(false);
+        self.upload_complete.set(true);
+        self.upload_total.set(0);
         let mut request = Request::get(url, Destination::Xhr);
         request.method = method;
         *self.request.borrow_mut() = Some(request);
@@ -485,9 +545,19 @@ impl Xhr {
             self.stop();
             return Err(error);
         }
+        let body_len = request.body.as_ref().map_or(0, Bytes::len);
+        self.upload_total.set(body_len);
+        self.upload_complete.set(request.body.is_none());
+        self.upload_listeners.set(page.dom.borrow().has_listeners(self.upload_target.key));
         self.fire("loadstart", true, 0);
         if !self.current(generation, id) {
             return Ok(());
+        }
+        if !self.upload_complete.get() && self.upload_listeners.get() {
+            self.fire_upload("loadstart", 0, body_len);
+            if !self.current(generation, id) {
+                return Ok(());
+            }
         }
         let page_id = page.id();
         net.fetch_with_id(
@@ -496,6 +566,33 @@ impl Xhr {
             Box::new(move |event| delivery::receive(&wire, page_id, id, &poster, limits, event)),
         );
         Ok(())
+    }
+    /// XHR "process request end-of-body": the body was fully transmitted. lp-net
+    /// sends a request body in one piece, so there is a single upload progress
+    /// event (loaded == total) rather than intermediate ones.
+    fn upload_done(&self) {
+        if self.upload_complete.replace(true) || !self.upload_listeners.get() {
+            return;
+        }
+        let generation = self.generation.get();
+        let total = self.upload_total.get();
+        for ty in ["progress", "load", "loadend"] {
+            self.fire_upload(ty, total, total);
+            if self.generation.get() != generation {
+                return;
+            }
+        }
+    }
+    fn fire_upload(&self, ty: &str, loaded: usize, total: usize) {
+        let Ok(page) = self.page() else { return };
+        let event = EventCore::trusted(&page, EventInterface::ProgressEvent, ty, false, false);
+        {
+            let mut fields = event.fields.borrow_mut();
+            fields.loaded = loaded as f64;
+            fields.total = total as f64;
+            fields.length_computable = total > 0;
+        }
+        crate::target::fire(&page, self.upload_target.key, &event);
     }
     fn fire(&self, ty: &str, progress: bool, loaded: usize) {
         let Ok(page) = self.page() else { return };
@@ -555,6 +652,18 @@ impl Xhr {
         self.fire("readystatechange", false, 0);
         if self.generation.get() != generation {
             return;
+        }
+        // XHR "request error steps": the upload object hears the same error
+        // first, with 0 and 0.
+        if !self.upload_complete.replace(true) && self.upload_listeners.get() {
+            self.fire_upload(kind, 0, 0);
+            if self.generation.get() != generation {
+                return;
+            }
+            self.fire_upload("loadend", 0, 0);
+            if self.generation.get() != generation {
+                return;
+            }
         }
         self.fire(kind, true, 0);
         if self.generation.get() != generation {

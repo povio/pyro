@@ -351,3 +351,69 @@ fn xhr_delivery_frontier_reaches_the_hook_before_ready_state_changes() {
     assert!(first < env.log_index(|l| l.starts_with("rs2")).unwrap(), "{:?}", env.log.borrow());
     assert!(terminal < env.log_index(|l| l == "rs4 firstlater").unwrap(), "{:?}", env.log.borrow());
 }
+
+#[test]
+fn xhr_upload_object_identity_and_type() {
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    assert_eq!(
+        env.eval("const x=new XMLHttpRequest();[x.upload===x.upload,x.upload instanceof XMLHttpRequestUpload,x.upload instanceof EventTarget,typeof x.upload.onprogress,(()=>{try{new XMLHttpRequestUpload();return 'constructed'}catch(e){return e.name}})()].join()"),
+        "true,true,true,object,TypeError"
+    );
+}
+
+const UPLOAD_LOG: &str = "globalThis.log=[];globalThis.x=new XMLHttpRequest();\
+    const rec=(who)=>(e)=>log.push(who+':'+e.type+(e.type==='progress'||who==='u'?'('+e.loaded+'/'+e.total+','+e.lengthComputable+')':'')+(who==='u'&&e.target!==x.upload?'!target':''));\
+    for(const t of ['loadstart','progress','abort','error','timeout','load','loadend'])x.addEventListener(t,rec('x'));\
+    x.onreadystatechange=()=>log.push('rs'+x.readyState);";
+
+#[test]
+fn xhr_upload_events_fire_before_headers_for_a_request_body() {
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    env.eval(UPLOAD_LOG);
+    env.eval("x.open('POST','/echo');x.upload.onprogress=rec('u');for(const t of ['loadstart','load','loadend'])x.upload.addEventListener(t,rec('u'));x.send('abcdef')");
+    env.until("x.readyState===4");
+    assert_eq!(
+        env.eval("log.join(' ')"),
+        "rs1 x:loadstart u:loadstart(0/6,true) u:progress(6/6,true) u:load(6/6,true) u:loadend(6/6,true) rs2 rs3 x:progress(6/6,true) rs4 x:load x:loadend"
+    );
+}
+
+#[test]
+fn xhr_upload_events_are_skipped_without_body_or_early_listeners() {
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    env.eval(UPLOAD_LOG);
+    // GET has no body: the upload complete flag is set at send.
+    env.eval("x.open('GET','/json');x.upload.onloadstart=rec('u');x.upload.onload=rec('u');x.send()");
+    env.until("x.readyState===4");
+    assert!(!env.eval("log.join(' ')").contains("u:"), "{}", env.eval("log.join(' ')"));
+    // Listeners added after send() do not set the upload listener flag.
+    env.eval("log.length=0;globalThis.y=new XMLHttpRequest();y.onloadend=()=>log.push('y:loadend');y.open('POST','/echo');y.send('zz');y.upload.onload=()=>log.push('late upload listener')");
+    env.until("log.includes('y:loadend')");
+    assert_eq!(env.eval("log.join(' ')"), "y:loadend");
+}
+
+#[test]
+fn xhr_upload_hears_errors_and_aborts_before_the_request_object() {
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    // A refused connection: request error steps.
+    let closed = {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        l.local_addr().unwrap().port()
+    };
+    env.eval(UPLOAD_LOG);
+    env.eval(&format!("x.open('POST','http://127.0.0.1:{closed}/x');for(const t of ['loadstart','error','loadend'])x.upload.addEventListener(t,rec('u'));x.send('abc')"));
+    env.until("x.readyState===4");
+    let log = env.eval("log.join(' ')");
+    assert_eq!(
+        log,
+        "rs1 x:loadstart u:loadstart(0/3,true) rs4 u:error(0/0,false) u:loadend(0/0,false) x:error x:loadend"
+    );
+    // Abort while the request is held: same ordering with abort.
+    env.eval("log.length=0;globalThis.x=new XMLHttpRequest();for(const t of ['abort','loadend'])x.addEventListener(t,rec('x'));x.onreadystatechange=()=>log.push('rs'+x.readyState);x.open('POST','/gated');for(const t of ['abort','loadend'])x.upload.addEventListener(t,rec('u'));x.send('abcd');x.abort()");
+    assert_eq!(env.eval("log.join(' ')"), "rs1 rs4 u:abort(0/0,false) u:loadend(0/0,false) x:abort x:loadend");
+    server.release.send(()).unwrap();
+}
