@@ -180,13 +180,24 @@ fn playwright_page_initialization_sequence() {
         assert!(r.get("error").is_none(), "{method}: {r}");
     }
 
+    let names = |messages: &[Value]| -> Vec<String> {
+        messages
+            .iter()
+            .filter(|m| m["method"] == "Page.lifecycleEvent")
+            .map(|m| m["params"]["name"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    // The committed about:blank document is replayed up to `load`; the network
+    // quiet milestones (500 ms after load with nothing in flight) are not
+    // reached yet, so they arrive live, once each, rather than replayed early.
     let lifecycle = h.page_with_events("Page.setLifecycleEventsEnabled", json!({"enabled":true}));
-    let names: Vec<&str> = lifecycle
-        .iter()
-        .filter(|m| m["method"] == "Page.lifecycleEvent")
-        .map(|m| m["params"]["name"].as_str().unwrap())
-        .collect();
-    assert_eq!(names, ["DOMContentLoaded", "load", "networkAlmostIdle", "networkIdle"]);
+    assert_eq!(names(&lifecycle), ["DOMContentLoaded", "load"]);
+    assert_eq!(names(&h.run_for(800)), ["networkAlmostIdle", "networkIdle"]);
+    assert!(names(&h.run_for(300)).is_empty(), "each milestone is reported once");
+    // Once reached, enabling again replays all four.
+    h.page("Page.setLifecycleEventsEnabled", json!({"enabled":false}));
+    let lifecycle = h.page_with_events("Page.setLifecycleEventsEnabled", json!({"enabled":true}));
+    assert_eq!(names(&lifecycle), ["DOMContentLoaded", "load", "networkAlmostIdle", "networkIdle"]);
 }
 
 #[test]
@@ -2131,4 +2142,74 @@ fn cache_disabled_and_clear_browser_cache_follow_chrome() {
     fetch(&mut h);
     assert_eq!(requests(&seen), 4, "miss after clearing");
     server.join().unwrap();
+}
+
+/// Serves a document whose inline script fetches `/slow`, then `/slow` with
+/// its body `delay_ms` after the headers.
+fn serve_document_with_slow_fetch(delay_ms: u64) -> (std::net::SocketAddr, std::thread::JoinHandle<()>) {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = std::thread::spawn(move || {
+        for index in 0..2 {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+            let mut request = Vec::new();
+            let mut chunk = [0; 1024];
+            while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                let n = stream.read(&mut chunk).unwrap();
+                assert!(n > 0);
+                request.extend_from_slice(&chunk[..n]);
+            }
+            let (kind, body) = if index == 0 {
+                ("text/html", "<!doctype html><p>idle</p><script>fetch('/slow').then(r => r.text())</script>")
+            } else {
+                ("text/plain", "slow")
+            };
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            stream.write_all(head.as_bytes()).unwrap();
+            stream.flush().unwrap();
+            if index == 1 {
+                std::thread::sleep(Duration::from_millis(delay_ms));
+            }
+            stream.write_all(body.as_bytes()).unwrap();
+        }
+    });
+    (address, server)
+}
+
+/// networkIdle follows Chrome (W3 probe network-idle.mjs): never while a
+/// request of the document is in flight; almost-idle allows up to two. With
+/// lp-browser's detector (PR #110) a fetch started by the page keeps
+/// networkIdle back until it finishes plus the quiet window, though `load`
+/// came long before.
+#[test]
+fn network_idle_waits_for_in_flight_requests() {
+    let (address, server) = serve_document_with_slow_fetch(800);
+    let mut h = Harness::new();
+    h.page("Page.enable", json!({}));
+    h.page("Network.enable", json!({}));
+    h.page("Page.setLifecycleEventsEnabled", json!({"enabled": true}));
+    h.run_for(800); // about:blank's own milestones
+    let mut messages = h.page_with_events("Page.navigate", json!({"url": format!("http://{address}/start")}));
+    messages.extend(h.run_for(2000));
+    server.join().unwrap();
+    let order: Vec<String> = messages
+        .iter()
+        .filter_map(|m| match m["method"].as_str()? {
+            "Page.lifecycleEvent" => Some(m["params"]["name"].as_str()?.to_owned()),
+            "Network.loadingFinished" => Some("loadingFinished".to_owned()),
+            _ => None,
+        })
+        .filter(|n| n != "init" && n != "commit")
+        .collect();
+    let at = |name: &str| order.iter().position(|n| n == name).unwrap_or_else(|| panic!("{name}: {order:?}"));
+    let slow_finished = order.iter().rposition(|n| n == "loadingFinished").expect("slow fetch finished");
+    assert!(at("load") < slow_finished, "{order:?}");
+    assert!(at("networkAlmostIdle") < slow_finished, "one request in flight is almost idle: {order:?}");
+    assert!(slow_finished < at("networkIdle"), "{order:?}");
+    assert_eq!(order.iter().filter(|n| *n == "networkIdle").count(), 1, "{order:?}");
 }
