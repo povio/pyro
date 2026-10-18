@@ -2944,3 +2944,27 @@ fn message_port_receiver_is_released_when_its_sender_becomes_unreachable() {
     assert_eq!(e.page.pinned_count(), base);
     assert_eq!(eval(r, "refs2.map((w) => w.deref() === undefined).join()"), "true,true");
 }
+
+#[test]
+fn message_port_peer_collection_is_reconciled_at_after_task_without_hooks() {
+    // Default configuration: no page hooks (PageDom::post_task would run inline).
+    let e = env("<body>");
+    let r = &e.main;
+    let base = e.page.pinned_count();
+    eval(r, "window.ref = (() => { const ch = new MessageChannel(); ch.port1.onmessage = () => {}; return new WeakRef(ch.port1); })(); 1");
+    assert_eq!(e.page.pinned_count(), base + 1);
+    for _ in 0..3 {
+        e.engine.collect_garbage_now();
+        e.engine.drain_finalized();
+    }
+    // The sender's drop only recorded the receiver: nothing ran from inside the drop.
+    assert_eq!(e.page.pinned_count(), base + 1, "reconciliation is deferred, not inline in Drop");
+    e.page.after_task();
+    assert_eq!(e.page.pinned_count(), base, "reconciled at the safe point");
+    for _ in 0..3 {
+        e.engine.collect_garbage_now();
+        e.engine.drain_finalized();
+        e.page.after_task();
+    }
+    assert_eq!(eval(r, "ref.deref() === undefined"), "true");
+}

@@ -35,7 +35,7 @@ use crate::page::PageDom;
 use crate::target::{fire, page_of, pin_target, target_object, unpin_target, EventTarget, EventTargetData};
 use lp_dom::events::TargetKey;
 
-pub struct PortInner {
+pub(crate) struct PortInner {
     target: EventTargetData,
     realm: WeakRealm,
     peer: RefCell<Weak<PortInner>>,
@@ -143,17 +143,27 @@ impl PortInner {
 
 impl Drop for PortInner {
     /// When a port's native state goes away (its wrapper was collected), its
-    /// surviving peer can no longer be posted to: reconcile the peer's pin in
-    /// a separate task (never from inside the drop) so a started, drained
-    /// receiver whose sender became unreachable is released, not retained
-    /// until page disposal. Queued messages keep it pinned until delivered.
+    /// surviving peer can no longer be posted to. The drop only records the
+    /// peer (pure Rust, no JS, independent of page hooks); `PageDom::after_task`
+    /// reconciles its pin at the next safe point, so a started, drained
+    /// receiver whose sender became unreachable is released instead of being
+    /// retained until page disposal. Queued messages keep it pinned until
+    /// delivered.
     fn drop(&mut self) {
         let Some(peer) = self.peer.get_mut().upgrade() else { return };
         let page = peer.page().clone();
-        if page.is_disposed() {
-            return;
+        if !page.is_disposed() {
+            page.pending_port_reconcile.borrow_mut().push(Rc::downgrade(&peer));
         }
-        page.post_task(Box::new(move || peer.update_pin()));
+    }
+}
+
+/// Safe-point step (`PageDom::after_task`): re-evaluates the pins of ports
+/// whose peer was collected since the last checkpoint.
+pub(crate) fn reconcile_ports(page: &PageDom) {
+    let pending = std::mem::take(&mut *page.pending_port_reconcile.borrow_mut());
+    for port in pending.iter().filter_map(Weak::upgrade) {
+        port.update_pin();
     }
 }
 
