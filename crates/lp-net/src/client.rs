@@ -232,6 +232,52 @@ struct Inner {
     cookies: Arc<Mutex<CookieJar>>,
     shared: Arc<Shared>,
     thread: Mutex<Option<std::thread::JoinHandle<()>>>,
+    activity: Arc<Mutex<ActivityMap>>,
+}
+
+/// Request activity of one loader (document) on this client: requests started
+/// with that `Request::loader_id` and not yet terminal. Lets the browser detect
+/// network idleness without racing the I/O thread's event publication.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NetActivity {
+    pub inflight: usize,
+    /// When `inflight` last reached 0, if it is 0 now.
+    pub idle_since: Option<Instant>,
+    /// When `inflight` last reached at most 2, if it is at most 2 now.
+    pub almost_idle_since: Option<Instant>,
+}
+
+#[derive(Default)]
+struct ActivityMap {
+    loaders: HashMap<String, (u64, NetActivity)>,
+    generation: u64,
+}
+
+/// Decrements its loader's activity exactly once, when lp-net drops the
+/// request's sink after the terminal event (finished, failed, canceled, aborted
+/// or shutdown). A forgotten loader's late terminals do not touch a newer entry.
+struct ActivityGuard {
+    map: Arc<Mutex<ActivityMap>>,
+    loader: String,
+    generation: u64,
+}
+
+impl Drop for ActivityGuard {
+    fn drop(&mut self) {
+        let mut map = self.map.lock().unwrap();
+        if let Some((generation, a)) = map.loaders.get_mut(&self.loader) {
+            if *generation == self.generation {
+                a.inflight = a.inflight.saturating_sub(1);
+                let now = Instant::now();
+                if a.inflight == 0 && a.idle_since.is_none() {
+                    a.idle_since = Some(now);
+                }
+                if a.inflight <= 2 && a.almost_idle_since.is_none() {
+                    a.almost_idle_since = Some(now);
+                }
+            }
+        }
+    }
 }
 
 struct Shared {
@@ -296,6 +342,7 @@ impl NetClient {
                 cookies,
                 shared,
                 thread: Mutex::new(Some(thread)),
+                activity: Arc::default(),
             }),
         })
     }
@@ -360,11 +407,55 @@ impl NetClient {
     }
 
     pub fn fetch_with_id(&self, id: RequestId, req: Request, sink: ResponseSink) {
+        let sink = match req.loader_id.clone() {
+            Some(loader) => self.track(loader, sink),
+            None => sink,
+        };
         if let Err(mpsc::error::SendError(Cmd::Fetch(_, _, mut sink))) =
             self.inner.tx.send(Cmd::Fetch(id, Box::new(req), sink))
         {
             sink(ResponseEvent::Failed(NetError::Other("network thread stopped".into())));
         }
+    }
+
+    /// Counts a started request for `loader` (synchronously, on the caller's
+    /// thread) and ties the matching decrement to the sink's lifetime.
+    fn track(&self, loader: String, mut sink: ResponseSink) -> ResponseSink {
+        let generation = {
+            let mut map = self.inner.activity.lock().unwrap();
+            let next = map.generation + 1;
+            let (generation, a) = map
+                .loaders
+                .entry(loader.clone())
+                .or_insert_with(|| (next, NetActivity { inflight: 0, idle_since: None, almost_idle_since: None }));
+            let generation = *generation;
+            a.inflight += 1;
+            a.idle_since = None;
+            if a.inflight > 2 {
+                a.almost_idle_since = None;
+            }
+            if generation == next {
+                map.generation = next;
+            }
+            generation
+        };
+        let guard = ActivityGuard { map: self.inner.activity.clone(), loader, generation };
+        Box::new(move |ev| {
+            let _guard = &guard;
+            sink(ev)
+        })
+    }
+
+    /// Current activity of a loader, `None` if it never started a request on
+    /// this client (or was forgotten since).
+    pub fn activity(&self, loader_id: &str) -> Option<NetActivity> {
+        self.inner.activity.lock().unwrap().loaders.get(loader_id).map(|(_, a)| *a)
+    }
+
+    /// Drops a loader's activity entry (e.g. on navigation or page close).
+    /// Requests still in flight for it no longer count anywhere.
+    pub fn forget_activity(&self, loader_id: &str) {
+        self.inner.activity.lock().unwrap().loaders.remove(loader_id);
     }
 
     /// Aborts a request; its sink receives `Failed(Aborted)` unless it

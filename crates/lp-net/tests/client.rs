@@ -13,6 +13,15 @@ use lp_net::*;
 struct Server {
     port: u16,
     log: Arc<Mutex<Vec<String>>>,
+    /// `/gated` responds only after `open_gate()`: completion under test control.
+    gate: Arc<(Mutex<bool>, std::sync::Condvar)>,
+}
+
+impl Server {
+    fn open_gate(&self) {
+        *self.gate.0.lock().unwrap() = true;
+        self.gate.1.notify_all();
+    }
 }
 
 type Parsed = (String, String, Vec<(String, String)>, Vec<u8>);
@@ -58,10 +67,13 @@ fn start_server() -> Server {
     let port = listener.local_addr().unwrap().port();
     let log = Arc::new(Mutex::new(Vec::new()));
     let log2 = log.clone();
+    let gate: Arc<(Mutex<bool>, std::sync::Condvar)> = Arc::default();
+    let gate2 = gate.clone();
     std::thread::spawn(move || {
         for stream in listener.incoming() {
             let Ok(mut stream) = stream else { continue };
             let log = log2.clone();
+            let gate = gate2.clone();
             std::thread::spawn(move || {
                 while let Some((method, path, headers, body)) = read_request(&mut stream) {
                     let hv = |k: &str| headers.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone()).unwrap_or_default();
@@ -147,6 +159,15 @@ fn start_server() -> Server {
                             format!("{method} {}", hv("x-token")).as_bytes(),
                         ),
                         (_, "/no-cors-headers") => respond(&mut stream, "200 OK", &[], b"secret"),
+                        (_, "/gated") => {
+                            let (open, cv) = &*gate;
+                            let mut open = open.lock().unwrap();
+                            while !*open {
+                                open = cv.wait(open).unwrap();
+                            }
+                            drop(open);
+                            respond(&mut stream, "200 OK", &[], b"released");
+                        }
                         (_, "/slow") => {
                             std::thread::sleep(Duration::from_secs(5));
                             respond(&mut stream, "200 OK", &[], b"late");
@@ -157,7 +178,7 @@ fn start_server() -> Server {
             });
         }
     });
-    Server { port, log }
+    Server { port, log, gate }
 }
 
 fn url(s: &Server, path: &str) -> Url {
@@ -503,4 +524,65 @@ fn page_extra_headers_are_per_request_and_take_precedence() {
     for expected in ["x-shared: context", "x-context: context", "user-agent: explicit-agent"] {
         assert!(other.iter().any(|l| l == expected), "missing {expected:?} in {other:?}");
     }
+}
+
+#[test]
+fn loader_activity_counts_synchronously_and_each_terminal_once() {
+    let s = start_server();
+    let c = NetClient::new(NetConfig::default()).unwrap();
+    let start = |path: &str, loader: Option<&str>| {
+        let mut req = Request::get(url(&s, path), Destination::Script);
+        req.loader_id = loader.map(str::to_owned);
+        let (tx, rx) = mpsc::channel();
+        let id = c.fetch(
+            req,
+            Box::new(move |ev| {
+                let _ = tx.send(ev);
+            }),
+        );
+        (id, rx)
+    };
+    let settle = |loader: &str, want: usize| {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while c.activity(loader).map(|a| a.inflight) != Some(want) {
+            assert!(std::time::Instant::now() < deadline, "{loader}: {:?}", c.activity(loader));
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        c.activity(loader).unwrap()
+    };
+    // Counted on the caller's thread, before the I/O thread sees the request.
+    let slow: Vec<_> = (0..3).map(|_| start("/slow", Some("L1"))).collect();
+    let a = c.activity("L1").unwrap();
+    assert_eq!((a.inflight, a.idle_since, a.almost_idle_since), (3, None, None));
+    // Cancel is a terminal: exactly one decrement each, and the thresholds are stamped.
+    c.cancel(slow[0].0);
+    let a = settle("L1", 2);
+    assert!(a.almost_idle_since.is_some() && a.idle_since.is_none());
+    c.cancel(slow[1].0);
+    c.cancel(slow[2].0);
+    let a = settle("L1", 0);
+    assert!(a.idle_since.is_some() && a.almost_idle_since.is_some());
+    // A new request clears idle_since; held server-side until the gate opens, so the
+    // assertion cannot race its completion. Finished is then a terminal too.
+    let (_, rx) = start("/gated", Some("L1"));
+    let a = c.activity("L1").unwrap();
+    assert_eq!((a.inflight, a.idle_since), (1, None));
+    s.open_gate();
+    while !matches!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), ResponseEvent::Finished { .. }) {}
+    let a = settle("L1", 0);
+    assert!(a.idle_since.is_some(), "the finished request stamped idle again");
+    // Requests without a loader are not counted.
+    let (_, rx) = start("/plain", None);
+    while !matches!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), ResponseEvent::Finished { .. }) {}
+    assert!(c.activity("").is_none());
+    // Forgetting a loader detaches its in-flight requests from any later entry.
+    let (old, _rx_old) = start("/slow", Some("L2"));
+    c.forget_activity("L2");
+    assert!(c.activity("L2").is_none());
+    let (new, _rx_new) = start("/slow", Some("L2"));
+    c.cancel(old);
+    std::thread::sleep(Duration::from_millis(50));
+    assert_eq!(c.activity("L2").unwrap().inflight, 1, "the forgotten request does not decrement the new entry");
+    c.cancel(new);
+    settle("L2", 0);
 }
