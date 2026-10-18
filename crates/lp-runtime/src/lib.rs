@@ -50,7 +50,8 @@ struct Timer<S> {
 }
 
 struct Inner<S> {
-    tasks: RefCell<VecDeque<(TaskSource, Task<S>)>>,
+    /// Local tasks with the time they were queued (their readiness time).
+    tasks: RefCell<VecDeque<(Instant, TaskSource, Task<S>)>>,
     heap: RefCell<BinaryHeap<Reverse<(Instant, u64, TimerId)>>>,
     timers: RefCell<HashMap<TimerId, Timer<S>>>,
     next_timer: Cell<u32>,
@@ -120,7 +121,7 @@ impl<S> Clone for Scheduler<S> {
 
 impl<S: 'static> Scheduler<S> {
     pub fn post(&self, source: TaskSource, task: impl FnOnce(&mut S) + 'static) {
-        self.inner.tasks.borrow_mut().push_back((source, Box::new(task)));
+        self.inner.tasks.borrow_mut().push_back((Instant::now(), source, Box::new(task)));
     }
 
     /// Schedules `task` after `delay` (repeating every `delay` if `repeat`).
@@ -271,13 +272,30 @@ impl<S: LoopState + 'static> EventLoop<S> {
             Err(mpsc::TryRecvError::Disconnected) => self.remote_open = false,
             Err(mpsc::TryRecvError::Empty) => {}
         }
-        let next = self.sched.inner.tasks.borrow_mut().pop_front();
-        if let Some((_, task)) = next {
-            task(state);
-            state.after_task();
-            return true;
+        // Local tasks and due timers run in readiness order (task queue time
+        // vs timer due time), like a browser's equal-priority task sources.
+        // Never letting timers run while local tasks are queued starved them
+        // behind self-reposting work (e.g. a MessageChannel scheduler loop).
+        let task_ready = self.sched.inner.tasks.borrow().front().map(|(at, _, _)| *at);
+        if let Some(task_ready) = task_ready {
+            if self.next_due_timer().is_some_and(|due| due <= task_ready) {
+                return self.run_due_timer(state);
+            }
+            let next = self.sched.inner.tasks.borrow_mut().pop_front();
+            if let Some((_, _, task)) = next {
+                task(state);
+                state.after_task();
+                return true;
+            }
         }
         self.run_due_timer(state)
+    }
+
+    /// Deadline of the earliest live timer if it is already due.
+    fn next_due_timer(&self) -> Option<Instant> {
+        self.sched.inner.clean_heap_top();
+        let at = self.sched.inner.heap.borrow().peek().map(|r| r.0 .0)?;
+        (at <= Instant::now()).then_some(at)
     }
 
     fn run_due_timer(&mut self, state: &mut S) -> bool {
@@ -477,6 +495,98 @@ mod tests {
         assert!(lp.sched.inner.heap.borrow().len() <= 65, "heap {}", lp.sched.inner.heap.borrow().len());
         assert_eq!(s.active_timers(), 0);
         assert_eq!(lp.next_deadline(), None);
+    }
+
+    /// Posts a task that logs `name{n}` and re-posts itself until `n == last`
+    /// (the shape of a MessageChannel scheduler loop that keeps working).
+    fn chain(s: &Scheduler<St>, n: u32, last: u32) {
+        let s2 = s.clone();
+        s.post(TaskSource::DomManipulation, move |st| {
+            st.log.push(format!("task{n}"));
+            if n < last {
+                chain(&s2, n + 1, last);
+            }
+        });
+    }
+
+    #[test]
+    fn self_reposting_tasks_do_not_starve_due_timers() {
+        let mut lp = EventLoop::<St>::new();
+        let s = lp.scheduler();
+        // A due timer registered before the chain is ready before every task.
+        s.set_timer(Duration::ZERO, false, true, |st| st.log.push("timer".into()));
+        chain(&s, 1, 20);
+        let mut st = St::default();
+        lp.run_until_idle(&mut st, Some(Instant::now() + Duration::from_secs(5)));
+        assert_eq!(st.log.len(), 21);
+        assert_eq!(st.log[0], "timer", "{:?}", st.log);
+    }
+
+    #[test]
+    fn timer_registered_during_a_chain_runs_before_tasks_queued_after_it() {
+        let mut lp = EventLoop::<St>::new();
+        let s = lp.scheduler();
+        let s2 = s.clone();
+        s.post(TaskSource::DomManipulation, move |st| {
+            st.log.push("task1".into());
+            // Queued before the timer: runs first.
+            chain(&s2, 2, 2);
+            s2.set_timer(Duration::ZERO, false, true, |st| st.log.push("timer".into()));
+            // Queued after the timer became ready: runs after it.
+            chain(&s2, 3, 5);
+        });
+        let mut st = St::default();
+        lp.run_until_idle(&mut st, Some(Instant::now() + Duration::from_secs(5)));
+        assert_eq!(st.log, ["task1", "task2", "timer", "task3", "task4", "task5"]);
+    }
+
+    #[test]
+    fn future_and_cleared_timers_do_not_preempt_queued_tasks() {
+        let mut lp = EventLoop::<St>::new();
+        let s = lp.scheduler();
+        let later = s.set_timer(Duration::from_secs(60), false, true, |st| st.log.push("later".into()));
+        let cleared = s.set_timer(Duration::ZERO, false, true, |st| st.log.push("cleared".into()));
+        assert!(s.clear_timer(cleared));
+        chain(&s, 1, 3);
+        let mut st = St::default();
+        let r = lp.run_until(&mut st, Some(Instant::now() + Duration::from_secs(5)), false, |st| st.log.len() == 3);
+        assert_eq!(r, RunOutcome::Done);
+        assert_eq!(st.log, ["task1", "task2", "task3"]);
+        assert!(s.clear_timer(later));
+    }
+
+    #[test]
+    fn interval_ticks_interleave_with_a_busy_chain() {
+        let mut lp = EventLoop::<St>::new();
+        let s = lp.scheduler();
+        let s2 = s.clone();
+        let id = Rc::new(Cell::new(TimerId(0)));
+        let id2 = id.clone();
+        id.set(s.set_timer(Duration::from_millis(1), true, true, move |st| {
+            st.log.push("tick".into());
+            if st.log.iter().filter(|l| *l == "tick").count() == 3 {
+                s2.clear_timer(id2.get());
+            }
+        }));
+        // Each task busy-waits 2 ms, so interval deadlines keep coming due.
+        fn busy(s: &Scheduler<St>, n: u32) {
+            let s2 = s.clone();
+            s.post(TaskSource::DomManipulation, move |st| {
+                let start = Instant::now();
+                while start.elapsed() < Duration::from_millis(2) {}
+                st.log.push(format!("task{n}"));
+                if n < 10 {
+                    busy(&s2, n + 1);
+                }
+            });
+        }
+        busy(&s, 1);
+        let mut st = St::default();
+        lp.run_until_idle(&mut st, Some(Instant::now() + Duration::from_secs(5)));
+        let first_tick = st.log.iter().position(|l| l == "tick").unwrap();
+        let last_task = st.log.iter().rposition(|l| l.starts_with("task")).unwrap();
+        assert!(first_tick < last_task, "ticks starved behind the chain: {:?}", st.log);
+        assert_eq!(st.log.iter().filter(|l| *l == "tick").count(), 3);
     }
 
     #[test]
