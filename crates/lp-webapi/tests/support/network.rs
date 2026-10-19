@@ -294,6 +294,16 @@ impl Server {
                         let _ = stream.flush(); let _ = gate.recv_timeout(Duration::from_secs(5));
                         let _ = stream.write_all(b"abcdef"); continue;
                     }
+                    "/gated-upload-completion" => {
+                        // All response bytes are available before the terminal
+                        // chunk. The test decides whether the owner sees data
+                        // separately from completion, without timing sleeps.
+                        let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n6\r\nabcdef\r\n");
+                        let _ = stream.flush();
+                        let _ = gate.recv_timeout(Duration::from_secs(5));
+                        let _ = stream.write_all(b"0\r\n\r\n");
+                        continue;
+                    }
                     "/split-utf8" => {
                         let _=stream.write_all(b"HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 3\r\n\r\n\xe2\x82");
                         let _=stream.flush();let _=gate.recv_timeout(Duration::from_secs(5));let _=stream.write_all(b"\xac");continue;
