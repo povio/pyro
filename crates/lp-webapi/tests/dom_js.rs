@@ -4415,3 +4415,77 @@ fn scroll_into_view_delivers_each_changed_ancestor_after_the_call() {
         assert_eq!(eval(&e.main, "seen.length"), "0");
     }
 }
+
+#[test]
+fn pointer_focus_keeps_partly_clipped_button_at_the_press_point() {
+    use lp_webapi::input::{dispatch_mouse, MouseButton, MouseInput, MouseKind};
+    for align_label in [true, false] {
+        let rows = |n| "<div style='height:10px'>row</div>".repeat(n);
+        let e = env(&format!(
+            "<body>{}<div id=outer style='height:120px;width:240px;overflow:auto'>{}<button id=button style='display:block;width:160px;padding:0;border:0'>{}<span id=label style='display:block;height:10px'>Click me</span></button>{}</div>{}</body>",
+            rows(150), rows(30), "<span style='display:block;height:10px'>row</span>".repeat(8), rows(80), rows(150)
+        ));
+        eval(&e.main, "var button=document.getElementById('button'),label=document.getElementById('label'),outer=document.getElementById('outer');var clicks=0,focuses=0;button.onclick=()=>clicks++;button.onfocus=()=>focuses++;");
+        eval(&e.main, if align_label { "label.scrollIntoView()" } else { "button.scrollIntoView()" });
+        assert_eq!(eval(&e.main, "document.elementFromPoint(label.getBoundingClientRect().x+label.getBoundingClientRect().width/2,label.getBoundingClientRect().y+label.getBoundingClientRect().height/2)===label"), "true");
+        if align_label {
+            assert_eq!(eval(&e.main, "button.getBoundingClientRect().top < outer.getBoundingClientRect().top"), "true");
+        }
+        eval(&e.main, "var offsets=JSON.stringify([outer.scrollTop,outer.scrollLeft,scrollX,scrollY]);");
+        let mouse = MouseInput {
+            x: eval(&e.main, "label.getBoundingClientRect().x+label.getBoundingClientRect().width/2").parse().unwrap(),
+            y: eval(&e.main, "label.getBoundingClientRect().y+label.getBoundingClientRect().height/2").parse().unwrap(),
+            button: MouseButton::Left,
+            buttons: 1,
+            click_count: 1,
+            ..Default::default()
+        };
+        dispatch_mouse(&e.page, MouseKind::Pressed, &mouse).unwrap();
+        assert_eq!(eval(&e.main, "[document.activeElement===button,focuses,offsets===JSON.stringify([outer.scrollTop,outer.scrollLeft,scrollX,scrollY])].join(',')"), "true,1,true");
+        dispatch_mouse(&e.page, MouseKind::Released, &MouseInput { buttons: 0, ..mouse }).unwrap();
+        assert_eq!(eval(&e.main, "clicks"), "1");
+        if align_label {
+            assert_eq!(eval(&e.main, "button.blur();button.focus();offsets!==JSON.stringify([outer.scrollTop,outer.scrollLeft,scrollX,scrollY])"), "true", "programmatic focus still reveals the clipped control");
+        }
+    }
+}
+
+#[test]
+fn pointer_focus_preserves_cancellation_and_reentrant_script_reveal() {
+    use lp_webapi::input::{dispatch_mouse, MouseButton, MouseInput, MouseKind};
+    for cancel in [true, false] {
+        let e = env(&format!(
+            "<body><button id=button>press</button>{}<button id=other>other</button>{}</body>",
+            "<div style='height:20px'>row</div>".repeat(150),
+            "<div style='height:20px'>tail</div>".repeat(150),
+        ));
+        eval(&e.main, "var button=document.getElementById('button'),other=document.getElementById('other');var events=[];button.onfocus=()=>{events.push('button');other.focus()};other.onfocus=()=>events.push('other');");
+        if cancel {
+            eval(&e.main, "button.onmousedown=e=>e.preventDefault()");
+        }
+        let mouse = MouseInput {
+            x: eval(&e.main, "button.getBoundingClientRect().x+button.getBoundingClientRect().width/2")
+                .parse()
+                .unwrap(),
+            y: eval(&e.main, "button.getBoundingClientRect().y+button.getBoundingClientRect().height/2")
+                .parse()
+                .unwrap(),
+            button: MouseButton::Left,
+            buttons: 1,
+            ..Default::default()
+        };
+        dispatch_mouse(&e.page, MouseKind::Pressed, &mouse).unwrap();
+        if cancel {
+            assert_eq!(
+                eval(&e.main, "[document.activeElement===document.body,events.length,scrollY].join(',')"),
+                "true,0,0"
+            );
+        } else {
+            assert_eq!(
+                eval(&e.main, "[document.activeElement===other,events.join('/'),scrollY>0].join(',')"),
+                "true,button/other,true",
+                "author focus uses its own transition and reveal policy"
+            );
+        }
+    }
+}
