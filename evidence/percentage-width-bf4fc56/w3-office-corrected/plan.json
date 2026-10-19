@@ -1,0 +1,15 @@
+{
+  "engine": "bf4fc5605a31633940ae52acf82d90cea952bdbe",
+  "tos": "6603beaddd4aaee1e20f04bfa769b208763658a6",
+  "selection_sha256": "a165950dfba575b07d16748526e728468d00bb553a2dcd3ac35cf277ce63fcb5",
+  "office_relevant_files_identical_to_frozen": [
+    "apps/fe/e2e/master-data/business-entities/office.e2e.ts",
+    "apps/fe/e2e/master-data/business-entities/business-entity-helpers.ts",
+    "apps/fe/e2e/fixtures/auth.runtime.ts",
+    "apps/fe/e2e/suites/lightpanda.json",
+    "apps/be/scripts/e2e/seed-fe-e2e.ts"
+  ],
+  "native_only_excluded": [],
+  "status": "awaiting locked release build/signature",
+  "scope": "All four canonical common entries in the office file; other Chromium-default file cases are outside this reserved common-lane validation. The explicit nativeOnly list has no office entries."
+}

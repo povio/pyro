@@ -1,0 +1,5 @@
+{
+  "apps/be/scripts/e2e/seed-fe-e2e.ts": "8ca86241195ab74c7d5be0d964fec729908cbee116a619a2e334ec074630029f",
+  "apps/fe/e2e/master-data/business-entities/office.e2e.ts": "6e7aa57ae58d4eca2d3771ec7df260ec20db8bca65bc292bd7d842fa13ed16d8",
+  "apps/fe/e2e/suites/lightpanda.json": "542d479b709249d072e3b57c1324c894c4378fc5373892ae64c0687486f2ae19"
+}

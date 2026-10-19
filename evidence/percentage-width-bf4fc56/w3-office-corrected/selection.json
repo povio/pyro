@@ -1,0 +1,39 @@
+{
+  "files": [
+    "e2e/master-data/business-entities/office.e2e.ts"
+  ],
+  "cases": [
+    {
+      "case_id": "d0232e0039f07af5574ec3811234bb03ef507d311e1223a49acad8eceea22575",
+      "file": "e2e/master-data/business-entities/office.e2e.ts",
+      "titlePath": [
+        "Master Data Offices create FE E2E",
+        "creates an office and verifies it from the list HTML"
+      ]
+    },
+    {
+      "case_id": "5a6f79cbdce64634c8d7392826e055c189912654a13efea9c2fb68eda403165a",
+      "file": "e2e/master-data/business-entities/office.e2e.ts",
+      "titlePath": [
+        "Master Data Offices FE E2E",
+        "filters archived offices without opening the details modal"
+      ]
+    },
+    {
+      "case_id": "349f83e1fa5e83c61fc05e1c64911c0330a724564a3fd48bf13b736d967cd3d3",
+      "file": "e2e/master-data/business-entities/office.e2e.ts",
+      "titlePath": [
+        "Master Data Offices FE E2E",
+        "filters offices by debtor and creditor IDs in the rendered table"
+      ]
+    },
+    {
+      "case_id": "f9729e06b9defe7adbc4b44267fadcb8c01bc6e82eb9486e0226c10a2fa2d837",
+      "file": "e2e/master-data/business-entities/office.e2e.ts",
+      "titlePath": [
+        "Master Data Offices FE E2E",
+        "lists seeded offices as rendered table rows"
+      ]
+    }
+  ]
+}

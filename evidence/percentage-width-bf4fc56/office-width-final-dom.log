@@ -1,0 +1,157 @@
+   Compiling lp-dom v0.1.0 (/private/tmp/lp-office-widths/crates/lp-dom)
+    Finished `release` profile [optimized] target(s) in 20.77s
+     Running unittests src/lib.rs (target/release/deps/lp_dom-2dc9c24daccde202)
+
+running 14 tests
+test node::size_tests::node_header_is_compact ... ok
+test layout::tests::line_wrap ... ok
+test xpath::eval::tests::rounding ... ok
+test layout::tests::translate_x ... ok
+test media::tests::decimal_rem_breakpoint ... ok
+test xpath::eval::tests::number_conversions ... ok
+test xpath::parser::tests::descendant_fusion ... ok
+test xpath::parser::tests::paths_and_axes ... ok
+test xpath::parser::tests::precedence ... ok
+test xpath::tokenizer::tests::lexical_errors ... ok
+test xpath::parser::tests::syntax_errors ... ok
+test xpath::tokenizer::tests::numbers_literals_qnames ... ok
+test xpath::tokenizer::tests::operators_and_names ... ok
+test xpath::parser::tests::operator_chains_stay_shallow ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/inner_text.rs (target/release/deps/inner_text-306f5f84c0505b00)
+
+running 6 tests
+test inner_text_blocks_tables_and_pre ... ok
+test rendered_text_fragment_breaks ... ok
+test inner_text_ids ... ok
+test outer_text_merges_neighbours ... ok
+test inner_text_applies_text_transform ... ok
+test inner_text_getter_and_setter ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/layout.rs (target/release/deps/layout-7fddc7aed37eea63)
+
+running 43 tests
+test automatic_height_timing_diagnostic ... ignored, bounded same-host geometry timing diagnostic
+test automatic_height_tracks_nested_geometry_without_overriding_explicit_height ... ok
+test automatic_height_invalidates_for_hidden_subtrees_and_stylesheet_changes ... ok
+test bounding_rect ... ok
+test check_visibility_shadow ... ok
+test automatic_parent_box_encloses_nested_in_flow_children ... ok
+test check_visibility_inline_styles ... ok
+test check_visibility_stylesheets ... ok
+test element_from_point ... ok
+test check_visibility_memo ... ok
+test element_from_point_hit_testing ... ok
+test custom_properties ... ok
+test computed_style_defaults_and_inline ... ok
+test hidden_and_foreign_elements_have_no_box ... ok
+test element_scroll_moves_rects_hit_testing_and_reveal ... ok
+test match_media_follows_viewport_override ... ok
+test layer_at_rule_cascade ... ok
+test focus_reveals_auto_scroller_before_viewport_and_preserves_visible_axes ... ok
+test layer_order_cascade ... ok
+test check_visibility_ua_rules ... ok
+test match_media_list ... ok
+test media_query_deviations ... ok
+test important_cascade ... ok
+test media_query_zig_unit_tests ... ok
+test media_rules_follow_viewport ... ok
+test media_at_rule_cascade ... ok
+test position_client_and_scroll_dimensions ... ok
+test percentage_width_uses_definite_parent_and_tracks_mutation ... ok
+test bounding_rect_scroll ... ok
+test position_scroll_offsets ... ok
+test position_offset_parent_and_scroll_into_view ... ok
+test scroll_into_view_horizontal_nearest_preserves_visible_and_spanning_boxes ... ok
+test position_scroll_heights ... ok
+test text_transform_computed ... ok
+test variable_dimensions_invalid_values_and_cycles_use_computed_fallback ... ok
+test position_translate_and_tickers ... ok
+test wheel_latches_to_scroll_container ... ok
+test variable_dimensions_cascade_inherit_and_invalidate ... ok
+test scroll_into_view_if_needed_reveals_fresh_nested_overflow_containers ... ok
+test window_scroll ... ok
+test scroll_into_view_reveals_fresh_nested_overflow_containers ... ok
+test variable_sized_scroller_does_not_scroll_again_after_small_input_replacement ... ok
+test percentage_width_does_not_resolve_circular_or_positioned_bases ... ok
+
+test result: ok. 42 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/loader.rs (target/release/deps/loader-af64ada0facbd345)
+
+running 6 tests
+test regression_resource_queue_pins_nodes ... ok
+test regression_split_bom_beats_transport ... ok
+test regression_parser_roots_detached_open_elements ... ok
+test byte_decoding ... ok
+test regression_replace_child_record_sibling ... ok
+test parser_yields_scripts_and_reports_resources ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/select_forms.rs (target/release/deps/select_forms-30e160173b29865c)
+
+running 4 tests
+test query_selectors ... ok
+test constraint_validation ... ok
+test text_editing ... ok
+test form_state_and_pseudo_classes ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/tree.rs (target/release/deps/tree-b6ff1dbe292177fc)
+
+running 12 tests
+test documents_are_kept_by_their_nodes ... ok
+test character_data_utf16 ... ok
+test attributes_and_case ... ok
+test fragment_insertion_and_order ... ok
+test hierarchy_errors ... ok
+test event_dispatch_order ... ok
+test clone_deep_with_template ... ok
+test mutation_records ... ok
+test inner_html_and_template ... ok
+test shadow_retargeting_path ... ok
+test parse_and_serialize_roundtrip ... ok
+test garbage_collection_reclaims_detached_trees ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/xml.rs (target/release/deps/xml-dc190dadef73ef7a)
+
+running 6 tests
+test text_cdata_comments_pi_and_whitespace_survive ... ok
+test xmlns_local_element_name_is_not_a_namespace_declaration ... ok
+test qualified_names_attributes_entities_and_default_namespace_reset ... ok
+test malformed_namespaces_and_xml_are_error_documents ... ok
+test malformed_parse_allocates_only_error_document_and_gc_releases_it ... ok
+test limits_reject_before_building_partial_dom_trees ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/xpath.rs (target/release/deps/xpath-38b9fbb20b2c70b6)
+
+running 10 tests
+test playwright_ancestor_locator ... ok
+test errors ... ok
+test html_name_tests_and_namespaces ... ok
+test review_fixes ... ok
+test document_order_axes_and_positions ... ok
+test scalar_results_and_functions ... ok
+test conformance_battery ... ok
+test deep_trees_do_not_recurse ... ok
+test multi_context_steps_dedup_incrementally ... ok
+test long_operator_chains_do_not_recurse ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.43s
+
+   Doc-tests lp_dom
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
