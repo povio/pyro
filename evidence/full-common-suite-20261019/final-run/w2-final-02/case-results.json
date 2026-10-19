@@ -1,0 +1,343 @@
+[
+  {
+    "file": "e2e/configuration/roles-permissions.e2e.ts",
+    "titlePath": [
+      "Configuration Roles Permissions tab FE E2E",
+      "renders only global permissions and marks the role's enabled permissions"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/configuration/roles-permissions.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1382,
+        "startTime": "2026-10-19T04:10:59.951Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/configuration/roles-permissions.e2e.ts",
+    "titlePath": [
+      "Configuration Roles Permissions tab FE E2E",
+      "toggles a permission from the Permissions tab and reloads the tab with persisted HTML state"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/configuration/roles-permissions.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1859,
+        "startTime": "2026-10-19T04:11:02.019Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/configuration/roles-permissions.e2e.ts",
+    "titlePath": [
+      "Configuration Roles Permissions tab FE E2E",
+      "renders office and business-partner permission lists according to the role context"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/configuration/roles-permissions.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1211,
+        "startTime": "2026-10-19T04:11:03.880Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/configuration/roles.e2e.ts",
+    "titlePath": [
+      "Configuration Roles FE E2E",
+      "lists seeded roles with their rendered columns"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/configuration/roles.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 833,
+        "startTime": "2026-10-19T04:11:05.275Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/configuration/roles.e2e.ts",
+    "titlePath": [
+      "Configuration Roles FE E2E",
+      "searches roles by role name"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/configuration/roles.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1272,
+        "startTime": "2026-10-19T04:11:06.193Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/configuration/roles.e2e.ts",
+    "titlePath": [
+      "Configuration Roles FE E2E",
+      "filters roles by context and owner"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/configuration/roles.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 985,
+        "startTime": "2026-10-19T04:11:07.470Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/configuration/roles.e2e.ts",
+    "titlePath": [
+      "Configuration Roles FE E2E",
+      "creates a global role and verifies it in the FE listing"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/configuration/roles.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 859,
+        "startTime": "2026-10-19T04:11:08.458Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/configuration/tickets.e2e.ts",
+    "titlePath": [
+      "keeps ticket creation unavailable before helpdesk activation"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/configuration/tickets.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1979,
+        "startTime": "2026-10-19T04:11:09.513Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/configuration/profile-settings.e2e.ts",
+    "titlePath": [
+      "Profile and settings navigation FE E2E",
+      "renders the employee profile with its editable settings"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/configuration/profile-settings.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 472,
+        "startTime": "2026-10-19T04:11:11.706Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/configuration/profile-settings.e2e.ts",
+    "titlePath": [
+      "Profile and settings navigation FE E2E",
+      "renders the configuration settings panel"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/configuration/profile-settings.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 288,
+        "startTime": "2026-10-19T04:11:12.268Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/control-tower/shipments.e2e.ts",
+    "titlePath": [
+      "Control Tower shipment workflows",
+      "opens a booking's container from the Containers tab"
+    ],
+    "status": "unexpected",
+    "expectedStatus": "passed",
+    "project": "e2e/control-tower/shipments.e2e.ts",
+    "attempts": [
+      {
+        "status": "timedOut",
+        "retry": 0,
+        "duration_ms": 10058,
+        "startTime": "2026-10-19T04:11:12.744Z",
+        "error_count": 2
+      }
+    ]
+  },
+  {
+    "file": "e2e/control-tower/shipments.e2e.ts",
+    "titlePath": [
+      "Control Tower shipment workflows",
+      "opens a container's package with the matching booking context"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/control-tower/shipments.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 858,
+        "startTime": "2026-10-19T04:11:24.085Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/finances/direct-invoice.e2e.ts",
+    "titlePath": [
+      "Finances Actual Direct Invoice FE E2E",
+      "generates a new document version for the actual direct invoice"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/finances/direct-invoice.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 4722,
+        "startTime": "2026-10-19T04:11:25.955Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/finances/direct-invoice.e2e.ts",
+    "titlePath": [
+      "Finances Actual Direct Invoice FE E2E",
+      "sends the actual direct invoice"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/finances/direct-invoice.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 4538,
+        "startTime": "2026-10-19T04:11:31.405Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/finances/direct-invoice-credit-note.e2e.ts",
+    "titlePath": [
+      "Outgoing Direct Invoice Credit Note FE E2E",
+      "renders the Outstanding direct invoice before crediting"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/finances/direct-invoice-credit-note.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1988,
+        "startTime": "2026-10-19T04:11:36.168Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/finances/direct-invoice-credit-note.e2e.ts",
+    "titlePath": [
+      "Outgoing Direct Invoice Credit Note FE E2E",
+      "creates a draft Credit Note from the Outstanding direct invoice"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/finances/direct-invoice-credit-note.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 3776,
+        "startTime": "2026-10-19T04:11:38.404Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/finances/direct-invoice-credit-note.e2e.ts",
+    "titlePath": [
+      "Outgoing Direct Invoice Credit Note FE E2E",
+      "creates an actual Credit Note from the draft direct-invoice Credit Note"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/finances/direct-invoice-credit-note.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 3794,
+        "startTime": "2026-10-19T04:11:42.183Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/finances/direct-invoice-credit-note.e2e.ts",
+    "titlePath": [
+      "Outgoing Direct Invoice Credit Note FE E2E",
+      "renders the actual direct-invoice Credit Note"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/finances/direct-invoice-credit-note.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 4073,
+        "startTime": "2026-10-19T04:11:45.980Z",
+        "error_count": 0
+      }
+    ]
+  }
+]

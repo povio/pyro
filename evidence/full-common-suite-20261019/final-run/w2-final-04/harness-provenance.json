@@ -1,0 +1,22 @@
+{
+  "tos": "e6cf6953f456a82df30e037620afb314a99abc85",
+  "engine": "fb3b12dc65886e8271629dcf541294f2df725c47",
+  "manifest_unchanged": true,
+  "polling_traps": "true",
+  "shared_asset_cache_mib": 64,
+  "private_context_cache_mib": 64,
+  "scope": "exact-head functional run; final status only after coordinator records candidate freeze",
+  "adapter_sha256": "6d8c1cddb948dae35fcb368c908296673999c22615258b4414366c529fe85a8e",
+  "files": {
+    "run.py": "d1ee0ab3e50efaa96f05405b5d2c75ea6ea705dd4c2bc72b951912fbcf1e4abe",
+    "cleanup.py": "e0b0c5244e605c380fd723a111e8a8ba397006d006507570cb9dc81eb75e1b3e",
+    "run-selection.sh": "7832a541d722c3bb47bb040a0942d59aabb61a87b735bec8dec539006f1f0abf",
+    "selection.json": "a587a354a6e4568050078abbbdd6220bcded6b777fc3e6d2e9a01677509991f0"
+  },
+  "changes_from_retained_harness": [
+    "exact TOS HEAD guard and metadata",
+    "source-derived PostgreSQL snapshot prefix truncation at42+suffix21",
+    "skip automatic regeneration of frozen runner",
+    "retain existing local failure attachments before next invocation clears default test-results; no test or DB cleanup semantic change"
+  ]
+}

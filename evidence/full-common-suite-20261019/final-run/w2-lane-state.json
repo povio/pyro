@@ -1,0 +1,151 @@
+{
+  "engine": "fb3b12dc65886e8271629dcf541294f2df725c47",
+  "tos": "e6cf6953f456a82df30e037620afb314a99abc85",
+  "binary_sha256": "df3eb8b9a3794b76ac25a65d4854e0ae31c15ce81a5199b29b1cb743c0c03e3b",
+  "worker": "W2",
+  "start_utc": "2026-10-19T04:09:46.135233+00:00",
+  "start_monotonic": 0.032094125,
+  "end_utc": null,
+  "batches": [
+    {
+      "id": "w2-final-01",
+      "cases": 30,
+      "selection_sha256": "b1fa942b257882fbf054541d8b270e69f996a3b9e35de754d05d728d5bc82b0b",
+      "status": "completed",
+      "start_utc": "2026-10-19T04:09:46.238225+00:00",
+      "start_monotonic": 0.134741125,
+      "end_utc": "2026-10-19T04:10:57.390391+00:00",
+      "duration_seconds": 71.136357291,
+      "runner_exit": 0,
+      "cleanup_run_dbs_zero": true,
+      "stats": {
+        "startTime": "2026-10-19T04:09:49.635Z",
+        "duration": 67262.17599999999,
+        "expected": 28,
+        "skipped": 0,
+        "unexpected": 2,
+        "flaky": 0
+      },
+      "global_error_count": 0,
+      "identity_complete": true
+    },
+    {
+      "id": "w2-final-02",
+      "cases": 18,
+      "selection_sha256": "64a6a67f0000bd850ac86aa3be969441b2e8eb85da9c654e83096faaae6e3809",
+      "status": "completed",
+      "start_utc": "2026-10-19T04:10:57.487661+00:00",
+      "start_monotonic": 71.368367416,
+      "end_utc": "2026-10-19T04:11:50.560568+00:00",
+      "duration_seconds": 53.073909834000006,
+      "runner_exit": 0,
+      "cleanup_run_dbs_zero": true,
+      "stats": {
+        "startTime": "2026-10-19T04:10:59.711Z",
+        "duration": 50382.71000000001,
+        "expected": 17,
+        "skipped": 0,
+        "unexpected": 1,
+        "flaky": 0
+      },
+      "global_error_count": 0,
+      "identity_complete": true
+    },
+    {
+      "id": "w2-final-03",
+      "cases": 27,
+      "selection_sha256": "b2af5f396721b65c6d1391c56b7d129cba0e71cdcb4ca5f775c175cdedd72c77",
+      "status": "completed",
+      "start_utc": "2026-10-19T04:11:50.657811+00:00",
+      "start_monotonic": 124.539516333,
+      "end_utc": "2026-10-19T04:12:50.142591+00:00",
+      "duration_seconds": 59.48611566700001,
+      "runner_exit": 0,
+      "cleanup_run_dbs_zero": true,
+      "stats": {
+        "startTime": "2026-10-19T04:11:52.939Z",
+        "duration": 56706.814999999995,
+        "expected": 27,
+        "skipped": 0,
+        "unexpected": 0,
+        "flaky": 0
+      },
+      "global_error_count": 0,
+      "identity_complete": true
+    },
+    {
+      "id": "w2-final-04",
+      "cases": 30,
+      "selection_sha256": "a587a354a6e4568050078abbbdd6220bcded6b777fc3e6d2e9a01677509991f0",
+      "status": "completed",
+      "start_utc": "2026-10-19T04:12:50.242390+00:00",
+      "start_monotonic": 184.125400666,
+      "end_utc": "2026-10-19T04:17:07.337083+00:00",
+      "duration_seconds": 257.10039800000004,
+      "runner_exit": 0,
+      "cleanup_run_dbs_zero": true,
+      "stats": {
+        "startTime": "2026-10-19T04:12:52.603Z",
+        "duration": 254146.912,
+        "expected": 28,
+        "skipped": 0,
+        "unexpected": 2,
+        "flaky": 0
+      },
+      "global_error_count": 0,
+      "identity_complete": true
+    },
+    {
+      "id": "w2-final-05",
+      "cases": 22,
+      "selection_sha256": "dcc10d1374a29cdccedf135888c2a032747784607e067f7ece15f7cc2c64aad1",
+      "status": "completed",
+      "start_utc": "2026-10-19T04:17:07.442836+00:00",
+      "start_monotonic": 441.331517833,
+      "end_utc": "2026-10-19T04:18:26.320842+00:00",
+      "duration_seconds": 78.87974679199999,
+      "runner_exit": 0,
+      "cleanup_run_dbs_zero": true,
+      "stats": {
+        "startTime": "2026-10-19T04:17:10.268Z",
+        "duration": 75354.298,
+        "expected": 22,
+        "skipped": 0,
+        "unexpected": 0,
+        "flaky": 0
+      },
+      "global_error_count": 0,
+      "identity_complete": true
+    },
+    {
+      "id": "w2-final-06",
+      "cases": 28,
+      "selection_sha256": "bbb0a3ddc327c998d37a22708389776ac73b9aef051d7629058ad055456bb4ac",
+      "status": "completed",
+      "start_utc": "2026-10-19T04:18:26.430537+00:00",
+      "start_monotonic": 520.320961,
+      "end_utc": "2026-10-19T04:19:55.781069+00:00",
+      "duration_seconds": 89.35253524999996,
+      "runner_exit": 0,
+      "cleanup_run_dbs_zero": true,
+      "stats": {
+        "startTime": "2026-10-19T04:18:34.638Z",
+        "duration": 80627.72700000001,
+        "expected": 28,
+        "skipped": 0,
+        "unexpected": 0,
+        "flaky": 0
+      },
+      "global_error_count": 0,
+      "identity_complete": true
+    },
+    {
+      "id": "w2-final-07",
+      "cases": 22,
+      "selection_sha256": "fef06a7b221e8600c2be53ebc0b07e15ebca9f2bef658e680e61fd24ac1c4fca",
+      "status": "running",
+      "start_utc": "2026-10-19T04:19:55.882923+00:00",
+      "start_monotonic": 609.775319541
+    }
+  ]
+}

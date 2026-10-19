@@ -1,0 +1,215 @@
+{
+  "manifest_sha256": "542d479b709249d072e3b57c1324c894c4378fc5373892ae64c0687486f2ae19",
+  "manifest_read_from": "/private/tmp/lp-tos-f9f-batch16-fx (TOS f9fde4aa0d, e2e tree unchanged)",
+  "recorded_utc": "2026-10-19T04:02:50+00:00",
+  "ledger_sha256": "3d1de5a08cf4add614432f30ea316d97472ffe42ea73d00a7e775655aef09016",
+  "criteria": "Final frozen W2 whole-file common batch w2-final-06",
+  "files": [
+    "e2e/logistics/positions-docubox.e2e.ts",
+    "e2e/logistics/positions-document-template.e2e.ts",
+    "e2e/logistics/positions-employee-filters.e2e.ts",
+    "e2e/logistics/positions-exclude-from-statistics.e2e.ts",
+    "e2e/logistics/positions-filter-templates.e2e.ts",
+    "e2e/logistics/quotes-convert-to-position.e2e.ts",
+    "e2e/logistics/quotes-copy.e2e.ts"
+  ],
+  "cases": [
+    {
+      "file": "e2e/logistics/positions-filter-templates.e2e.ts",
+      "titlePath": [
+        "Positions filter templates",
+        "saved mixed criteria replace pending manual filters and remain applied"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-exclude-from-statistics.e2e.ts",
+      "titlePath": [
+        "Positions exclude from statistics FE E2E",
+        "excludes a position from statistics and removes it from the default Positions listing"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-docubox.e2e.ts",
+      "titlePath": [
+        "Position DocuBox tab actions FE E2E",
+        "drags an MSG attachment into a Position DocuBox folder"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-docubox.e2e.ts",
+      "titlePath": [
+        "Position DocuBox tab actions FE E2E",
+        "uploads an externally dropped file directly into a visible Position DocuBox folder row"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-document-template.e2e.ts",
+      "titlePath": [
+        "Positions document template FE E2E",
+        "issues the templated document from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/quotes-convert-to-position.e2e.ts",
+      "titlePath": [
+        "Quotes Convert to Position FE E2E",
+        "maps Quote Sell Service Contract to Position Selling Contract after reopening from the Positions list"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-docubox.e2e.ts",
+      "titlePath": [
+        "Position DocuBox tab actions FE E2E",
+        "previews generated XLSX files in the Position DocuBox preview pane"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-docubox.e2e.ts",
+      "titlePath": [
+        "Position DocuBox tab actions FE E2E",
+        "previews generated CSV files in the Position DocuBox preview pane"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-employee-filters.e2e.ts",
+      "titlePath": [
+        "Positions employee filters FE E2E",
+        "shows archived employees in employee filter options with an archived marker"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-filter-templates.e2e.ts",
+      "titlePath": [
+        "Positions filter templates",
+        "applies, fully edits, and renames a template"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-filter-templates.e2e.ts",
+      "titlePath": [
+        "Positions filter templates",
+        "deletes the renamed template"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-docubox.e2e.ts",
+      "titlePath": [
+        "Position DocuBox tab actions FE E2E",
+        "lists Position DocuBox folders and files in rendered HTML"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-docubox.e2e.ts",
+      "titlePath": [
+        "Position DocuBox tab actions FE E2E",
+        "renders the Position DocuBox listing"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-docubox.e2e.ts",
+      "titlePath": [
+        "Position DocuBox tab actions FE E2E",
+        "creates a folder from the Position DocuBox tab"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-docubox.e2e.ts",
+      "titlePath": [
+        "Position DocuBox tab actions FE E2E",
+        "renders created and uploaded Position DocuBox entries"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-docubox.e2e.ts",
+      "titlePath": [
+        "Position DocuBox tab actions FE E2E",
+        "previews a Position DocuBox PDF using fit-to-width iframe settings"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-docubox.e2e.ts",
+      "titlePath": [
+        "Position DocuBox tab actions FE E2E",
+        "previews generated DOCX files in the Position DocuBox preview pane"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-docubox.e2e.ts",
+      "titlePath": [
+        "Position DocuBox tab actions FE E2E",
+        "forces a rename for externally dropped files with invalid DocuBox filename characters"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-docubox.e2e.ts",
+      "titlePath": [
+        "Position DocuBox tab actions FE E2E",
+        "renders the renamed invalid Position DocuBox upload"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-document-template.e2e.ts",
+      "titlePath": [
+        "Positions document template FE E2E",
+        "updates the template document Name Suffix from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-document-template.e2e.ts",
+      "titlePath": [
+        "Positions document template FE E2E",
+        "updates the template document Title from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-document-template.e2e.ts",
+      "titlePath": [
+        "Positions document template FE E2E",
+        "updates the template document Contact from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-document-template.e2e.ts",
+      "titlePath": [
+        "Positions document template FE E2E",
+        "updates the template document Booking Number from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-document-template.e2e.ts",
+      "titlePath": [
+        "Positions document template FE E2E",
+        "updates the template document Customer Reference from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-document-template.e2e.ts",
+      "titlePath": [
+        "Positions document template FE E2E",
+        "updates the template document Master B/L from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-document-template.e2e.ts",
+      "titlePath": [
+        "Positions document template FE E2E",
+        "updates the template document House B/L from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-document-template.e2e.ts",
+      "titlePath": [
+        "Positions document template FE E2E",
+        "opens the templated document HTML preview from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/quotes-copy.e2e.ts",
+      "titlePath": [
+        "Quotes copy FE E2E",
+        "copies a Quote from the details modal and renders copied Overview values"
+      ]
+    }
+  ],
+  "native_only_excluded": 13
+}

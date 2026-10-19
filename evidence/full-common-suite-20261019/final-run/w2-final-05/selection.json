@@ -1,0 +1,173 @@
+{
+  "manifest_sha256": "542d479b709249d072e3b57c1324c894c4378fc5373892ae64c0687486f2ae19",
+  "manifest_read_from": "/private/tmp/lp-tos-f9f-batch16-fx (TOS f9fde4aa0d, e2e tree unchanged)",
+  "recorded_utc": "2026-10-19T04:02:50+00:00",
+  "ledger_sha256": "3d1de5a08cf4add614432f30ea316d97472ffe42ea73d00a7e775655aef09016",
+  "criteria": "Final frozen W2 whole-file common batch w2-final-05",
+  "files": [
+    "e2e/logistics/positions-closed-finances.e2e.ts",
+    "e2e/logistics/positions-commercial-parties.e2e.ts",
+    "e2e/logistics/positions-create-incoming-draft-credit-note.e2e.ts",
+    "e2e/logistics/positions-create-outgoing-credit-note.e2e.ts",
+    "e2e/logistics/positions-create-outgoing-draft-invoice.e2e.ts",
+    "e2e/logistics/positions-create-outgoing-invoice.e2e.ts",
+    "e2e/logistics/positions-default-filter-template.e2e.ts",
+    "e2e/logistics/positions-docubox-search.e2e.ts"
+  ],
+  "cases": [
+    {
+      "file": "e2e/logistics/positions-default-filter-template.e2e.ts",
+      "titlePath": [
+        "Positions default filter template",
+        "saves current filter values through the default template editor"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-create-incoming-draft-credit-note.e2e.ts",
+      "titlePath": [
+        "Position Create Incoming Draft Credit Note FE E2E",
+        "adds a draft Credit Note from an actual Incoming Invoice details drawer"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-create-incoming-draft-credit-note.e2e.ts",
+      "titlePath": [
+        "Position Create Incoming Draft Credit Note FE E2E",
+        "does not expose draft preview for an incoming Credit Note in the invoice details drawer"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-create-incoming-draft-credit-note.e2e.ts",
+      "titlePath": [
+        "Position Create Incoming Draft Credit Note FE E2E",
+        "deletes a draft incoming Credit Note from the invoice details drawer"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-closed-finances.e2e.ts",
+      "titlePath": [
+        "closed positions can be found for finance filtering without entering operational selectors"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-create-outgoing-invoice.e2e.ts",
+      "titlePath": [
+        "Position Create Outgoing Invoice FE E2E",
+        "keeps generated Body Remarks visible after issuing an outgoing Invoice"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-create-outgoing-invoice.e2e.ts",
+      "titlePath": [
+        "Position Create Outgoing Invoice FE E2E",
+        "creates an outgoing Invoice from a legacy draft that already has a root folder"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-create-outgoing-invoice.e2e.ts",
+      "titlePath": [
+        "Position Create Outgoing Invoice FE E2E",
+        "sends an issued outgoing Invoice from the invoice drawer"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-create-outgoing-invoice.e2e.ts",
+      "titlePath": [
+        "Outgoing Invoice document regeneration FE E2E",
+        "generates a new document version for an issued outgoing Invoice"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-default-filter-template.e2e.ts",
+      "titlePath": [
+        "Positions default filter template",
+        "restores default filter values without page-filter persistence"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-create-outgoing-credit-note.e2e.ts",
+      "titlePath": [
+        "Position Create Outgoing Credit Note FE E2E",
+        "adds an actual Credit Note inside an actual outgoing Invoice from the Position details modal"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-create-outgoing-credit-note.e2e.ts",
+      "titlePath": [
+        "Position Create Outgoing Credit Note FE E2E",
+        "generates a payment confirmation for the actual outgoing Credit Note settlement payment"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-create-outgoing-credit-note.e2e.ts",
+      "titlePath": [
+        "Position Create Outgoing Credit Note FE E2E",
+        "generates a new document version for an actual outgoing Credit Note"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-create-outgoing-credit-note.e2e.ts",
+      "titlePath": [
+        "Position Create Outgoing Credit Note FE E2E",
+        "renders an actual outgoing Credit Note from the Position invoice route"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-create-outgoing-draft-invoice.e2e.ts",
+      "titlePath": [
+        "Position Create Outgoing Draft Invoice FE E2E",
+        "opens a draft outgoing Invoice preview from the invoice details drawer"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-create-outgoing-draft-invoice.e2e.ts",
+      "titlePath": [
+        "Position Create Outgoing Draft Invoice FE E2E",
+        "deletes a draft outgoing Invoice from the invoice details drawer"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-docubox-search.e2e.ts",
+      "titlePath": [
+        "Position DocuBox search FE E2E",
+        "keeps expanded folders expanded after searching and clearing Position DocuBox files"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-commercial-parties.e2e.ts",
+      "titlePath": [
+        "Position Commercial Parties tab FE E2E",
+        "lists Position commercial parties in rendered HTML"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-commercial-parties.e2e.ts",
+      "titlePath": [
+        "Position Commercial Parties tab FE E2E",
+        "autosaves a Position commercial party reference inline from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-commercial-parties.e2e.ts",
+      "titlePath": [
+        "Position Commercial Parties tab FE E2E",
+        "adds a new Position commercial party from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-commercial-parties.e2e.ts",
+      "titlePath": [
+        "Position Commercial Parties tab FE E2E",
+        "keeps Document Party rows in place when assigning an HBL reference"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-commercial-parties.e2e.ts",
+      "titlePath": [
+        "Position Commercial Parties tab FE E2E",
+        "removes a Position commercial party from the FE"
+      ]
+    }
+  ],
+  "native_only_excluded": 4
+}

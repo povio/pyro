@@ -1,0 +1,224 @@
+{
+  "manifest_sha256": "542d479b709249d072e3b57c1324c894c4378fc5373892ae64c0687486f2ae19",
+  "manifest_read_from": "/private/tmp/lp-tos-f9f-batch16-fx (TOS f9fde4aa0d, e2e tree unchanged)",
+  "recorded_utc": "2026-10-19T04:02:49+00:00",
+  "ledger_sha256": "3d1de5a08cf4add614432f30ea316d97472ffe42ea73d00a7e775655aef09016",
+  "criteria": "Final frozen W2 whole-file common batch w2-final-04",
+  "files": [
+    "e2e/logistics/positions-cargo.e2e.ts",
+    "e2e/logistics/positions-close.e2e.ts"
+  ],
+  "cases": [
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "loads a paginated notification target and opens its POD tab"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "shows a loading transition when switching Cargo document sub-tabs"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "adds a Package from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "selects all Packages in a Transport Unit and then across the Position from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "keeps source-linked Packages in source Position order and allows bulk selection from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "toggles package auto-calculate totals from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "lists Position Cargo transport units and packages in rendered HTML"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "updates editable Transport Unit number and seals from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "updates editable Transport Unit Notes from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "updates editable Transport Unit tare, VGM, and volume from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "updates editable Transport Unit net and gross weights from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "updates editable Transport Unit volumetric and chargeable weights from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "clears Transport Unit Notes from the FE and persists the empty value"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "updates editable Package outer dimensions from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "updates editable Package volume and net weight from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "updates editable Package gross and chargeable weights from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "updates editable Package quantity and volume totals from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "updates editable Package net and gross totals from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "updates editable Package volumetric and chargeable totals from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "updates editable Package identifier and description from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "updates editable Package marks and notes from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "updates editable Package customs text fields from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "adds Air Cargo without a Transport Unit Type from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "deletes a Package from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "bulk deletes Packages across Transport Units from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "adds a Package to a master Position cargo that already has linked sub-position Packages"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "duplicates a Package from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "keeps documents read-only for packages linked from sub-positions"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-close.e2e.ts",
+      "titlePath": [
+        "Positions close FE E2E",
+        "closes an open Position from the Position overview"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-close.e2e.ts",
+      "titlePath": [
+        "Positions close FE E2E",
+        "reopens the same closed Position from the closed banner"
+      ]
+    }
+  ],
+  "native_only_excluded": 4
+}
