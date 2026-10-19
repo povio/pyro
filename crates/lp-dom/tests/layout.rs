@@ -2497,3 +2497,69 @@ fn scroll_into_view_horizontal_nearest_preserves_visible_and_spanning_boxes() {
     p.layout.scroll_into_view(&p.dom, b);
     assert_eq!(p.layout.scroll_left(c), at, "box spanning both edges must not oscillate");
 }
+
+#[test]
+fn variable_dimensions_cascade_inherit_and_invalidate() {
+    let mut p = page(
+        r#"<style>
+      .overlay { height:var(--visual-viewport-height); width:var(--missing, var(--width, 120px)); }
+      #important { height:var(--size) !important; --size:70px !important; }
+    </style><div id=parent style='--visual-viewport-height:900px;--base:80px;--alias:var(--base)'>
+      <div id=box class=overlay></div><div id=alias style='--base:20px;height:var(--alias)'></div>
+      <div id=important style='height:15px;--size:10px'></div>
+    </div>"#,
+    );
+    let (parent, b) = (p.id("parent"), p.id("box"));
+    assert_eq!(p.rect(b).height, 900.0);
+    assert_eq!(p.rect(b).width, 120.0);
+    assert_eq!(p.rect(p.id("alias")).height, 80.0, "substitute before inheritance");
+    assert_eq!(p.rect(p.id("important")).height, 70.0, "both declarations honor importance");
+    p.style(parent, "--visual-viewport-height:700px;--width:160px");
+    assert_eq!(p.rect(b).height, 700.0);
+    assert_eq!(p.rect(b).width, 160.0);
+    p.style(b, "height:var(--own);--own:25vh;width:var(--width)");
+    assert_eq!(p.rect(b).height, 270.0);
+    p.layout.set_viewport(Viewport { height: 800, ..Viewport::default() });
+    assert_eq!(p.rect(b).height, 200.0);
+    let other = p.add("div");
+    p.style(other, "--width:90px");
+    p.append(other, b);
+    assert_eq!(p.rect(b).width, 90.0, "reparenting invalidates inherited values");
+}
+
+#[test]
+fn variable_dimensions_invalid_values_and_cycles_use_computed_fallback() {
+    let p = page(
+        r#"<style>
+      #missing { height:99px; height:var(--absent); }
+      #cycle { --a:var(--b); --b:var(--a,7px); height:var(--a,42px); }
+      #fallbackcycle { --valid:10px; --a:var(--valid,var(--a)); height:var(--a,43px); }
+      #wrong { --bad:red; height:99px; height:var(--bad,40px); }
+      #initial { --v:initial; height:var(--v,44px); }
+    </style><div id=missing></div><div id=cycle></div><div id=fallbackcycle></div><div id=wrong></div><div id=initial></div>"#,
+    );
+    assert_eq!(p.rect(p.id("missing")).height, 5.0, "invalid at computed value does not revive 99px");
+    assert_eq!(p.rect(p.id("cycle")).height, 42.0);
+    assert_eq!(p.rect(p.id("fallbackcycle")).height, 43.0, "unused fallback participates in a cycle");
+    assert_eq!(p.rect(p.id("wrong")).height, 5.0, "existing invalid length does not use var fallback");
+    assert_eq!(p.rect(p.id("initial")).height, 44.0);
+}
+
+#[test]
+fn variable_sized_scroller_does_not_scroll_again_after_small_input_replacement() {
+    let mut p = page(&format!("<style>.overlay{{height:var(--viewport);overflow:auto;width:200px}}</style><div id=overlay class=overlay style='--viewport:900px'>{}<div id=slot><input id=field></div></div>", "<div style='height:20px'>row</div>".repeat(200)));
+    let (overlay, slot, old) = (p.id("overlay"), p.id("slot"), p.id("field"));
+    assert_eq!(p.rect(overlay).height, 900.0);
+    p.layout.scroll_into_view(&p.dom, old);
+    p.dom.remove_node(old).unwrap();
+    let wrapper = p.add_to(slot, "div");
+    let replacement = p.add_to(wrapper, "input");
+    let t = p.rect(replacement);
+    let c = p.rect(overlay);
+    assert!(
+        t.top() >= c.top() && t.bottom() <= c.bottom(),
+        "target={t:?} container={c:?} offset={}",
+        p.layout.scroll_top(overlay)
+    );
+    assert!(p.layout.reveal_for_focus(&p.dom, replacement).is_empty());
+}
