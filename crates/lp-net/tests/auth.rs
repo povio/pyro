@@ -232,3 +232,32 @@ fn authentication_without_opt_in_delivers_401_once() {
     assert_eq!(finish(&rx), (Some(401), b"declined".to_vec(), None));
     assert_eq!(server.requests.lock().unwrap().len(), 1);
 }
+
+#[test]
+fn cancellation_releases_auth_reply_before_terminal_callback() {
+    for shutdown in [false, true] {
+        let server = Server::new("Basic realm=test", false);
+        let (client, _, auth) = setup(NetConfig::default());
+        let pending: Arc<Mutex<Option<oneshot::Sender<AuthDecision>>>> = Arc::new(Mutex::new(None));
+        let in_callback = pending.clone();
+        let (tx, rx) = mpsc::channel();
+        let id = client.fetch(
+            Request::get(server.url.clone(), Destination::Fetch),
+            Box::new(move |event| {
+                if let ResponseEvent::Failed(error) = event {
+                    let closed = in_callback.lock().unwrap().as_ref().unwrap().is_closed();
+                    tx.send((error, closed)).unwrap();
+                }
+            }),
+        );
+        let (_, reply) = auth.recv_timeout(Duration::from_secs(5)).unwrap();
+        *pending.lock().unwrap() = Some(reply);
+        if shutdown {
+            drop(client);
+        } else {
+            client.cancel(id);
+        }
+        assert_eq!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), (NetError::Aborted, true));
+        assert!(matches!(rx.recv_timeout(Duration::from_secs(5)), Err(mpsc::RecvTimeoutError::Disconnected)));
+    }
+}
