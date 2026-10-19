@@ -1,0 +1,41 @@
+diff --git a/apps/fe/e2e/logistics/positions-commercial-parties.e2e.ts b/apps/fe/e2e/logistics/positions-commercial-parties.e2e.ts
+index 5a82823024..7c13bb0dcf 100644
+--- a/apps/fe/e2e/logistics/positions-commercial-parties.e2e.ts
++++ b/apps/fe/e2e/logistics/positions-commercial-parties.e2e.ts
+@@ -265,12 +265,35 @@ const chooseOption = async (page: Page, option: string) => {
+ };
+ 
+ const selectAddParty = async (page: Page, positionId: string, partyLabel: string) => {
++  await page.evaluate(() => {
++    const rows: unknown[] = [], ids = new WeakMap<object, number>(); let next=1, dropped=0;
++    const id=(o: object|null)=> {if (!o) return 0; if (!ids.has(o)) ids.set(o,next++);return ids.get(o)!;};
++    const box=(e: Element)=> {const r=e.getBoundingClientRect();return [r.x,r.y,r.width,r.height];};
++    const start=performance.now();
++    const record=(kind:string, event?:Event, requested?:Element)=> {
++      if(rows.length>=96){dropped++;return;}
++      const inputs=document.querySelectorAll('input[placeholder="Add Party"]');const input=inputs[inputs.length-1];
++      const ancestors:unknown[]=[];for(let e=input?.parentElement;e&&ancestors.length<32;e=e.parentElement)ancestors.push({id:id(e),tag:e.tagName,offset:[e.scrollLeft,e.scrollTop],rect:box(e)});
++      const target=requested || event?.target;
++      rows.push({kind,ms:performance.now()-start,target:id(target as object|null),tag:target instanceof Element?target.tagName:'document-or-window',targetOffset:target instanceof Element?[target.scrollLeft,target.scrollTop]:null,input:id(input||null),active:id(document.activeElement),activeTag:document.activeElement?.tagName,expanded:input?.getAttribute('aria-expanded'),options:document.querySelectorAll('[role="option"]').length,viewport:[scrollX,scrollY],rect:input?box(input):null,ancestors});
++    };
++    for(const k of ['scroll','focusin','focusout','mousedown','click'])window.addEventListener(k,e=>record(k,e),true);
++    const focus=HTMLElement.prototype.focus;HTMLElement.prototype.focus=function(...args){record('focus-before',undefined,this);const result=focus.apply(this,args);record('focus-after',undefined,this);return result;};
++    const scroll=Element.prototype.scrollIntoView;Element.prototype.scrollIntoView=function(...args){record('reveal-before',undefined,this);const result=scroll.apply(this,args);record('reveal-after',undefined,this);return result;};
++    (window as any).__lpPartyScroll={rows,record,getDropped:()=>dropped};record('before-helper');
++  });
+   await scrollIntoViewAndWaitForScroll(page.getByPlaceholder("Add Party").filter({ visible: true }).last());
++  await page.evaluate(() => (window as any).__lpPartyScroll.record("after-helper"));
+   // Action: use the visible Add Party autocomplete so the FE creates a new involved-party row.
+   await clickRenderedPlaceholder(page, "Add Party");
++  await page.evaluate(() => (window as any).__lpPartyScroll.record("after-activation"));
+   const createResponsePromise = waitForPartyCreateResponse(page, positionId);
+   const partiesResponsePromise = waitForPositionPartiesResponse(page, positionId);
+-  await chooseOption(page, partyLabel);
++  try { await chooseOption(page, partyLabel); } finally {
++    console.log("LP-PARTY-SCROLL " + JSON.stringify(await page.evaluate(() => {
++      const d=(window as any).__lpPartyScroll;d.record('after-choice');return {rows:d.rows,dropped:d.getDropped()};
++    })));
++  }
+   await createResponsePromise;
+   await partiesResponsePromise;
+ };

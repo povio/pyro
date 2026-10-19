@@ -1,0 +1,19 @@
+{
+  "scope": "instrumented diagnostic, not compatibility/timing evidence",
+  "actual_tests": 5,
+  "intended_tests": 1,
+  "selection_mismatch": "retained mkrun selects whole files, ignoring filtered title list; actual4pass1fail disclosed; no rerun",
+  "stats": {
+    "startTime": "2026-10-19T03:36:05.350Z",
+    "duration": 19936.506,
+    "expected": 4,
+    "skipped": 0,
+    "unexpected": 1,
+    "flaky": 0
+  },
+  "engine": "ccf3597146a76a7522af33616c195dfb56d926bd",
+  "tos": "e6cf6953f456a82df30e037620afb314a99abc85 plus exact retained observation patch",
+  "restored_test_sha256": "874553c589b4ae0cb4c83148050ef1583454ea539538d61d008caed4ca29cd7b",
+  "cleanup": "run DBs left: 0 | retained ledger templates: ['fe_e2e_w2tpl_6e7f7cfb_lptoscalendar6e7_template', 'fe_e2e_w2tpl_e6cf6953_lptoscalendar6e7_template', 'fe_e2e_w2tpl_f6648125_lptoscalendar6e7_template', 'fe_e2e_w2tpl_f9fde4aa_batch16fx_template', 'fe_e2e_w2tpl_f9fde4aa_batch7_template', 'fe_e2e_w2tpl_f9fde4aa_batch7diag_template']\n",
+  "report_sha256": "f4825211a61f3130a90356ea180c8af8d27f27cd33729c67e8ab10b3492915a0"
+}
