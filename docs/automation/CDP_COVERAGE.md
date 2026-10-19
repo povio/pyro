@@ -163,6 +163,13 @@ and bounding-box checks pass through real Playwright. With the native MutationOb
 the retained locator fill/click regression also passes unchanged. This focused local fixture does
 not establish general locator or TOS compatibility.
 
+Root-frame `DOM.scrollIntoViewIfNeeded` uses the native changed-target list to queue trusted
+scroll events for moved overflow ancestors inside-out, followed by the document when its
+viewport moved. Container events do not bubble; the document event does. Repeating an unchanged
+scroll emits nothing. The layout scope is vertical start reveal and horizontal nearest-edge
+reveal, not full CSS alignment or child-frame geometry. The nested-scroll protocol regression
+also checks that subsequent focus needs no further scrolling.
+
 Protocol commands invoke `Browser::checkpoint()` after releasing command borrows and before event
 flush. This starts resources inserted by synchronous Runtime calls while idle and drains native
 events from Input/DOM actions. The Playwright stylesheet check awaits a real local HTTP response

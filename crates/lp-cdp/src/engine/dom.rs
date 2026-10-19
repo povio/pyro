@@ -313,9 +313,13 @@ impl EngineHost {
                         if cmd.command.params::<P>()?.rect.is_some() {
                             return Err(CdpError::unsupported("DOM scroll rectangle override"));
                         }
-                        let moved = page.layout.borrow_mut().scroll_into_view(&page.dom.borrow(), node);
-                        if moved {
-                            lp_webapi::input::queue_simple(&page, page.document(), "scroll", true, false);
+                        let moved = page.layout.borrow_mut().scroll_into_view_targets(&page.dom.borrow(), node);
+                        for target in moved {
+                            let (node, bubbles) = match target {
+                                lp_dom::layout::ScrollTarget::Container(node) => (node, false),
+                                lp_dom::layout::ScrollTarget::Viewport => (page.document(), true),
+                            };
+                            lp_webapi::input::queue_simple(&page, node, "scroll", bubbles, false);
                         }
                         json!({})
                     }
