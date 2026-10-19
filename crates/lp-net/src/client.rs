@@ -553,11 +553,15 @@ fn io_main(mut rx: mpsc::UnboundedReceiver<Cmd>, shared: Arc<Shared>, cookies: A
                         sink2.borrow_mut().take();
                         tasks2.borrow_mut().remove(&id);
                     });
-                    tasks.borrow_mut().insert(id, Task { abort: handle.abort_handle(), sink, destination });
+                    tasks.borrow_mut().insert(id, Task { handle, sink, destination });
                 }
                 Cmd::Cancel(id) => {
-                    if let Some(t) = tasks.borrow_mut().remove(&id) {
-                        t.abort.abort();
+                    // Release the map borrow before awaiting task destruction.
+                    // A terminal callback must not observe a live auth/interception reply.
+                    let task = tasks.borrow_mut().remove(&id);
+                    if let Some(t) = task {
+                        t.handle.abort();
+                        let _ = t.handle.await;
                         io.shared.emit(NetEvent::LoadingFailed {
                             id,
                             error: NetError::Aborted,
@@ -573,8 +577,13 @@ fn io_main(mut rx: mpsc::UnboundedReceiver<Cmd>, shared: Arc<Shared>, cookies: A
         }
         // Shutdown: every in-flight request still gets its terminal event.
         let pending: Vec<(RequestId, Task)> = tasks.borrow_mut().drain().collect();
+        // Abort all tasks before yielding, so another pending request cannot
+        // complete while shutdown waits for the first task to release its state.
+        for (_, t) in &pending {
+            t.handle.abort();
+        }
         for (id, t) in pending {
-            t.abort.abort();
+            let _ = t.handle.await;
             io.shared.emit(NetEvent::LoadingFailed {
                 id,
                 error: NetError::Aborted,
@@ -590,7 +599,7 @@ fn io_main(mut rx: mpsc::UnboundedReceiver<Cmd>, shared: Arc<Shared>, cookies: A
 
 struct Task {
     destination: Destination,
-    abort: tokio::task::AbortHandle,
+    handle: tokio::task::JoinHandle<()>,
     sink: SharedSink,
 }
 
