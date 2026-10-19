@@ -563,6 +563,8 @@ struct Declared {
     overscroll_y: Option<bool>,
     width: Option<Length>,
     height: Option<Length>,
+    width_variable: Option<Rc<str>>,
+    height_variable: Option<Rc<str>>,
     pan_x_blocked: Option<bool>,
     pan_y_blocked: Option<bool>,
     text_transform: Option<TextTransform>,
@@ -648,8 +650,10 @@ impl Declared {
             self.overscroll_y = Some(overscroll_contains(value));
         } else if n("width") {
             self.width = Some(Length::parse(value));
+            self.width_variable = is_variable_length(value).then(|| Rc::from(value));
         } else if n("height") {
             self.height = Some(Length::parse(value));
+            self.height_variable = is_variable_length(value).then(|| Rc::from(value));
         } else if n("touch-action") {
             if let Some((x, y)) = parse_touch_action(value) {
                 self.pan_x_blocked = Some(!x);
@@ -847,7 +851,7 @@ enum Item {
         normal_mask: u32,
         important_mask: u32,
         /// `--*` declarations, deduplicated per block.
-        customs: Vec<(String, Rc<str>)>,
+        customs: Vec<(String, Rc<str>, bool)>,
     },
     Media {
         query: String,
@@ -984,7 +988,7 @@ fn style_item(selector_text: &str, block: &str) -> Option<Item> {
         important: Rc::new(important),
         normal_mask,
         important_mask,
-        customs: customs.into_iter().map(|(n, v, _)| (n, v)).collect(),
+        customs,
     })
 }
 
@@ -1082,6 +1086,7 @@ struct PendingRule {
 }
 
 struct PendingCustom {
+    important: bool,
     name: String,
     selector: Selector<Impl>,
     value: Rc<str>,
@@ -1132,13 +1137,14 @@ impl<'v> Builder<'v> {
                     // StyleManager.zig:485-525
                     if !customs.is_empty() {
                         let doc = self.next_doc_order(layer);
-                        for (name, value) in customs {
+                        for (name, value, important) in customs {
                             for sel in list.slice() {
                                 if bucket_key(sel).is_none() {
                                     continue;
                                 }
                                 self.customs.push(PendingCustom {
                                     name: name.clone(),
+                                    important: *important,
                                     selector: sel.clone(),
                                     value: value.clone(),
                                     layer,
@@ -1320,7 +1326,11 @@ impl<'v> Builder<'v> {
         }
         for c in self.customs {
             let spec = c.selector.specificity() as u64;
-            let priority = (rank_of(&self.layers, c.layer, false) << RANK_SHIFT) | (spec << SPEC_SHIFT) | c.doc as u64;
+            let mut priority =
+                (rank_of(&self.layers, c.layer, c.important) << RANK_SHIFT) | (spec << SPEC_SHIFT) | c.doc as u64;
+            if c.important {
+                priority |= IMPORTANT_BIT;
+            }
             rs.customs.entry(c.name).or_default().push(CustomRule {
                 selector: SelectorList::from_one(c.selector),
                 value: c.value,
@@ -1353,12 +1363,124 @@ fn is_valid_layer_component(c: &str) -> bool {
     b.iter().all(|&ch| ch.is_ascii_alphanumeric() || ch == b'-' || ch == b'_' || ch >= 0x80)
 }
 
+// Width/height retain pending var() values through the cascade, then resolve
+// the supported whole-value form before memoizing numeric computed lengths.
+fn is_variable_length(raw: &str) -> bool {
+    raw.get(..4).is_some_and(|s| s.eq_ignore_ascii_case("var("))
+}
+
+fn whole_variable(raw: &str) -> Option<(String, Option<String>)> {
+    let mut parser = Parser::new(raw);
+    parser.expect_function_matching("var").ok()?;
+    let parsed: Result<_, ParseError<()>> = parser.parse_nested_block(|p| {
+        let name = p.expect_ident_cloned()?.to_string();
+        if !name.starts_with("--") || name.len() == 2 {
+            return Err(ParseError::custom(()));
+        }
+        if p.is_exhausted() {
+            return Ok((name, None));
+        }
+        p.expect_comma()?;
+        let start = p.position();
+        while let Ok(token) = p.next_including_whitespace_and_comments().cloned() {
+            consume_block_of(p, &token);
+        }
+        Ok((name, Some(p.slice_from(start).trim().to_owned())))
+    });
+    let result = parsed.ok()?;
+    parser.expect_exhausted().ok()?;
+    Some(result)
+}
+
+// Return the defining element too: substitution occurs there, before the value
+// is inherited, so a descendant's custom-property override cannot alter it.
+fn custom_property_source(dom: &Dom, rules: &RuleSet, el: NodeId, name: &str) -> Option<(NodeId, String)> {
+    let mut cur = dom.check(el).ok();
+    while let Some(idx) = cur {
+        let id = dom.id_of(idx);
+        let mut value = None;
+        let mut priority = 0;
+        if let Some(style) = dom.n(idx).element().and_then(|e| e.attr("style")) {
+            if let Some((raw, important)) = InlineStyle::parse(style).get(name) {
+                value = Some(raw);
+                priority = if important { INLINE_IMPORTANT_PRIORITY } else { INLINE_PRIORITY };
+            }
+        }
+        for rule in rules.customs.get(name).into_iter().flatten() {
+            if rule.priority > priority && dom.matches(id, &rule.selector).unwrap_or(false) {
+                value = Some(rule.value.to_string());
+                priority = rule.priority;
+            }
+        }
+        if let Some(value) = value {
+            if !value.eq_ignore_ascii_case("inherit") && !value.eq_ignore_ascii_case("unset") {
+                return Some((id, value));
+            }
+        }
+        cur = flat_tree_parent_element(dom, idx);
+    }
+    None
+}
+
+struct DimensionVariables<'a> {
+    dom: &'a Dom,
+    rules: &'a RuleSet,
+    active: Vec<(NodeId, String)>,
+    cyclic: FxHashSet<(NodeId, String)>,
+    remaining: u16,
+}
+impl DimensionVariables<'_> {
+    fn value(&mut self, el: NodeId, raw: &str, depth: u8) -> Option<String> {
+        if depth >= 32 || raw.len() > 4096 || self.remaining == 0 {
+            return None;
+        }
+        self.remaining -= 1;
+        let raw = raw.trim();
+        if !is_variable_length(raw) {
+            return Some(raw.to_owned());
+        }
+        let (name, fallback) = whole_variable(raw)?;
+        let value = self.custom(el, &name, depth + 1);
+        // Dependencies in fallbacks participate in cycles even when the first
+        // argument exists. Evaluate both bounded branches before choosing.
+        let fallback = fallback.and_then(|raw| self.value(el, &raw, depth + 1));
+        value.or(fallback)
+    }
+
+    fn custom(&mut self, el: NodeId, name: &str, depth: u8) -> Option<String> {
+        let (source, raw) = custom_property_source(self.dom, self.rules, el, name)?;
+        if raw.eq_ignore_ascii_case("initial") {
+            return None;
+        }
+        let key = (source, name.to_owned());
+        if let Some(at) = self.active.iter().position(|k| k == &key) {
+            self.cyclic.extend(self.active[at..].iter().cloned());
+            return None;
+        }
+        self.active.push(key.clone());
+        let result = self.value(source, &raw, depth);
+        self.active.pop();
+        if self.cyclic.contains(&key) {
+            None
+        } else {
+            result
+        }
+    }
+}
+
+fn resolve_dimension_variable(dom: &Dom, rules: &RuleSet, el: NodeId, raw: &str) -> Length {
+    DimensionVariables { dom, rules, active: Vec::new(), cyclic: FxHashSet::default(), remaining: 128 }
+        .value(el, raw, 0)
+        .map(|s| Length::parse(&s))
+        .unwrap_or_default()
+}
+
 // ---------------------------------------------------------------------------
 // Computed values
 // ---------------------------------------------------------------------------
 
 /// An element's own cascaded values (upstream `Cascaded`).
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 struct Cascaded {
     display: Display,
     block_flex_or_grid: bool,
@@ -1371,6 +1493,8 @@ struct Cascaded {
     overscroll_y: bool,
     width: Length,
     height: Length,
+    width_variable: Option<Rc<str>>,
+    height_variable: Option<Rc<str>>,
     pan_x_blocked: bool,
     pan_y_blocked: bool,
     text_transform: TextTransform,
@@ -1398,8 +1522,16 @@ fn apply_declared(c: &mut Cascaded, pri: &mut [u64; NF], d: &Declared, p: u64) {
     set!(overflow_y, F_OVERFLOW_Y);
     set!(overscroll_x, F_OVERSCROLL_X);
     set!(overscroll_y, F_OVERSCROLL_Y);
-    set!(width, F_WIDTH);
-    set!(height, F_HEIGHT);
+    if let Some(v) = d.width.filter(|_| p > pri[F_WIDTH]) {
+        c.width = v;
+        c.width_variable = d.width_variable.clone();
+        pri[F_WIDTH] = p;
+    }
+    if let Some(v) = d.height.filter(|_| p > pri[F_HEIGHT]) {
+        c.height = v;
+        c.height_variable = d.height_variable.clone();
+        pri[F_HEIGHT] = p;
+    }
     set!(pan_x_blocked, F_PAN_X);
     set!(pan_y_blocked, F_PAN_Y);
     set!(text_transform, F_TEXT_TRANSFORM);
@@ -1824,6 +1956,12 @@ impl StyleEngine {
             }
         }
         check(&rules.other);
+        if let Some(raw) = &c.width_variable {
+            c.width = resolve_dimension_variable(dom, rules, id, raw);
+        }
+        if let Some(raw) = &c.height_variable {
+            c.height = resolve_dimension_variable(dom, rules, id, raw);
+        }
 
         let mut mask = 0u32;
         for (f, &p) in pri.iter().enumerate() {
@@ -1998,7 +2136,11 @@ impl StyleEngine {
             slots.apply(&d.name, &d.value, d.important);
         }
         let d = slots.props(Importance::Any);
-        let l = if width { d.width } else { d.height }?;
+        let mut l = if width { d.width } else { d.height }?;
+        if let Some(raw) = if width { &d.width_variable } else { &d.height_variable } {
+            self.ensure(dom);
+            l = resolve_dimension_variable(dom, &self.cache.borrow().rules, el, raw);
+        }
         l.resolve(&self.viewport)
     }
 
@@ -2052,31 +2194,7 @@ impl StyleEngine {
         self.owns(dom, el)?;
         self.ensure(dom);
         let rules = self.cache.borrow().rules.clone();
-        let candidates = rules.customs.get(name);
-        let mut cur = dom.check(el).ok();
-        while let Some(idx) = cur {
-            let id = dom.id_of(idx);
-            if let Some(v) = self.inline_style_value(dom, id, name) {
-                return Some(v);
-            }
-            let mut winner: Option<&Rc<str>> = None;
-            let mut priority = 0u64;
-            for r in candidates.into_iter().flatten() {
-                if r.priority <= priority {
-                    continue;
-                }
-                if !dom.matches(id, &r.selector).unwrap_or(false) {
-                    continue;
-                }
-                winner = Some(&r.value);
-                priority = r.priority;
-            }
-            if let Some(v) = winner {
-                return Some(v.to_string());
-            }
-            cur = flat_tree_parent_element(dom, idx);
-        }
-        None
+        custom_property_source(dom, &rules, el, name).map(|(_, value)| value)
     }
 
     /// computedFontSize (StyleManager.zig:2002-2089): inline `font-size`
