@@ -55,8 +55,10 @@ input) applies the same offsets so a rect's interior hits its element, and
 `scrollIntoView[IfNeeded]` first reveals clipped elements inside
 `overflow: auto/scroll` ancestors, including fresh containers with zero offsets.
 Existing explicitly scrolled ancestors retain their reveal behavior. Ancestors
-are processed inside-out using updated relative rectangles; changed containers
-receive their own scroll events before the viewport event. This remains a
+are processed inside-out using updated relative rectangles. The WebAPI binding
+queues each changed container’s scroll event before the viewport event. Native
+callers receive changed targets and must arrange their own delivery; CDP
+integration is a separate increment. This remains a
 bounded vertical/start and horizontal/nearest reveal policy, not full CSS alignment-option support. Hit
 testing still does not clip descendants to overflow containers.
 
