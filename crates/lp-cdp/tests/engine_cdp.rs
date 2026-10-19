@@ -1101,7 +1101,8 @@ fn dom_scroll_delivers_each_changed_ancestor_before_following_task() {
                 const target = document.querySelector('#target').getBoundingClientRect();
                 return ['inner', 'outer'].map(id => {
                   const node = document.querySelector('#' + id), rect = node.getBoundingClientRect();
-                  return [node.scrollTop, target.top >= rect.top && target.bottom <= rect.bottom];
+                  return [node.scrollTop, target.top >= rect.top && target.bottom <= rect.bottom &&
+                    target.left >= rect.left && target.right <= rect.right];
                 });
               };
               document.querySelector('#target')
@@ -1135,6 +1136,13 @@ fn dom_scroll_delivers_each_changed_ancestor_before_following_task() {
             repeated["result"]["result"]["value"],
             json!([]),
             "unchanged offsets must not emit scroll: {repeated}"
+        );
+        assert_eq!(h.page("DOM.focus", json!({"objectId":object}))["result"], json!({}));
+        let focused = h.page("Runtime.evaluate", json!({"expression":"new Promise(r=>setTimeout(()=>r([document.activeElement.id,scrollEvents]),0))","awaitPromise":true,"returnByValue":true}));
+        assert_eq!(
+            focused["result"]["result"]["value"],
+            json!(["target", []]),
+            "focus after reveal must not trigger a late ancestor scroll: {focused}"
         );
     }
 }
