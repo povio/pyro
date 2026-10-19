@@ -1,0 +1,27 @@
+{
+  "bundle_sha256": "b96262861afd9b29f64350582c52601cae0c9bf63636e7a8242f13f8d7e8feae",
+  "files": {
+    "probe.mjs": "82d6224f1e0bb2cdf418883eaf65135b3b25e7701e27cbbfd134c51d83de7ac5",
+    "rewrite.json": "e9b3aca89c13a9505bd5da3b551a65baf42faab7dfdd72aa305b870e269bfd54",
+    "rewrite-v4.json": "f821438c8e7cbc738735e0173d15ef30ce7c9d8891e80d967d8f49bad3f32179",
+    "chrome.json": "53d22d9f76374991cfa234bf522bf3224f77c8a3096ee00e0ae320c386a2f5ad",
+    "rewrite-v3.json": "0da77afb4597e9fd851ab737baae64042b5ea006eb98db812860fb140b1fa375",
+    "diagnostic.patch": "9ad4d23c78e81d70ede8a475ab50d80ac05b998d2418795d6c18912008fd7258",
+    "rewrite-v2.json": "6d6d802790827a457a44a86b88d82b2e2311fd58cf3e4d8d6328ba9224902c78",
+    "SANITIZED-OBSERVATIONS.json": "e8ddeca5f055522d3dd1be8a07c9871479d7bdb3f045b78177cfa69838c54708",
+    "probe-v2.mjs": "7265cb596a1f19eec3b11bd2215c754bb4392f3beabceb98bd5074c60d4b2cbd",
+    "README.md": "32dfe7dc9e34a79b9076c7d37cf6d6dd5e93ca53dd29995b9a85cd9da18af232",
+    "rewrite-scroll-delivered.json": "bf38a8f69188e6ebe76270d84ce092758e088454a61c237ed9a38413fb958ffa",
+    "chrome-v2.json": "268599ab5e132fdcd98eebe1a31c72dc8a44bddfe98390226620e529cafc854b",
+    "probe-v3.mjs": "0db906855a8d00479e1f60a1403edb5b877840b4ab43d1679d2b4030dbcfb7bc",
+    "probe-v1.mjs": "230d6e4d26d62225f03e8fe91af4cce80d2b3970aa81b5e8f3de657d2e43020f",
+    "probe-keyboard.mjs": "b59eb1497857c3e6f98dded2e2417eab355dbdcb6bcc2891463626ec2833559e",
+    "rewrite-keyboard.json": "6d345cbeb892f3cb45ee8aa511d09145842ea52da20ca495e2906e48756aa020",
+    "probe-v4.mjs": "9fb5b4ce8e4b71bc52a9173fa2b925a80a30e6a3769c9c7f7994ae4932308f77",
+    "main.jsx": "0f809066fcd37f56642d82f0e1677ef68302fb888197ac2fc2835909c97cb1d7",
+    "chrome-scroll-delivered.json": "077801b9918fea7a57752c34947731c4cbbdf396ce8c3778e3b591e05955fccc",
+    "chrome-v3.json": "fc53d19ff71adf70799388ac4c01a3a946a8bcd78ce70b2f38ee92a9fbe8efe2",
+    "chrome-v4.json": "da85270d9633c5a807a8d682f6e652d9e6cedbf89063d09aa30861355be6d6fc",
+    "chrome-keyboard.json": "2aa28c85b1d02df66b4158bd749ddad52eed8728f55e162614b9e576803fd2cb"
+  }
+}

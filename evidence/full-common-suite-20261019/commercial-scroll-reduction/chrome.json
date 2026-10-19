@@ -1,0 +1,44 @@
+{
+  "binary": "chromium",
+  "version": "147.0.7727.15",
+  "rows": [
+    {
+      "fill": 0,
+      "activation": "dom",
+      "error": "Error:evaluate: TypeError: Cannot read properties of null (reading 'getBoundingClientRect')\n    at window.record (eval at evaluate (:302:30), <anonymous>:4:89)\n    at eval (eval at evaluate (:302:30), <anonymous>:2:18)\n    at UtilityScript.evaluate (<anony",
+      "errors": [
+        "TypeError:Cannot read properties of null (reading 'getBoundingClientRect')",
+        "TypeError:Cannot read properties of null (reading 'getBoundingClientRect')"
+      ]
+    },
+    {
+      "fill": 0,
+      "activation": "native",
+      "error": "Error:evaluate: TypeError: Cannot read properties of null (reading 'getBoundingClientRect')\n    at window.record (eval at evaluate (:302:30), <anonymous>:4:89)\n    at eval (eval at evaluate (:302:30), <anonymous>:2:18)\n    at UtilityScript.evaluate (<anony",
+      "errors": [
+        "TypeError:Cannot read properties of null (reading 'getBoundingClientRect')",
+        "TypeError:Cannot read properties of null (reading 'getBoundingClientRect')"
+      ]
+    },
+    {
+      "fill": 400,
+      "activation": "dom",
+      "error": "Error:evaluate: TypeError: Cannot read properties of null (reading 'getBoundingClientRect')\n    at window.record (eval at evaluate (:302:30), <anonymous>:4:89)\n    at eval (eval at evaluate (:302:30), <anonymous>:2:18)\n    at UtilityScript.evaluate (<anony",
+      "errors": [
+        "TypeError:Cannot read properties of null (reading 'getBoundingClientRect')",
+        "TypeError:Cannot read properties of null (reading 'getBoundingClientRect')",
+        "TypeError:Cannot read properties of null (reading 'getBoundingClientRect')"
+      ]
+    },
+    {
+      "fill": 400,
+      "activation": "native",
+      "error": "Error:evaluate: TypeError: Cannot read properties of null (reading 'getBoundingClientRect')\n    at window.record (eval at evaluate (:302:30), <anonymous>:4:89)\n    at eval (eval at evaluate (:302:30), <anonymous>:2:18)\n    at UtilityScript.evaluate (<anony",
+      "errors": [
+        "TypeError:Cannot read properties of null (reading 'getBoundingClientRect')",
+        "TypeError:Cannot read properties of null (reading 'getBoundingClientRect')",
+        "TypeError:Cannot read properties of null (reading 'getBoundingClientRect')"
+      ]
+    }
+  ]
+}

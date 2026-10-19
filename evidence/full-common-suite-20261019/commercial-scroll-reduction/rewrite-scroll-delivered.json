@@ -1,0 +1,188 @@
+{
+  "binary": "/private/tmp/lp-suite-20261019/lightningpanda-5b46788",
+  "version": "124.0.6367.29",
+  "rows": [
+    {
+      "fill": 0,
+      "activation": "scroll-delivered-then-dom",
+      "errors": [],
+      "samples": [
+        {
+          "kind": "before",
+          "rect": [
+            10,
+            95,
+            5,
+            5
+          ],
+          "scrollY": 0,
+          "options": 0,
+          "expanded": "false"
+        },
+        {
+          "kind": "scroll",
+          "rect": [
+            10,
+            0,
+            5,
+            5
+          ],
+          "scrollY": 95,
+          "options": 0,
+          "expanded": "false"
+        },
+        {
+          "kind": "focusin",
+          "rect": [
+            10,
+            0,
+            5,
+            5
+          ],
+          "scrollY": 95,
+          "options": 0,
+          "expanded": "false"
+        },
+        {
+          "kind": "click",
+          "rect": [
+            10,
+            0,
+            5,
+            5
+          ],
+          "scrollY": 95,
+          "options": 0,
+          "expanded": "false"
+        },
+        {
+          "kind": "focusin",
+          "rect": [
+            10,
+            10,
+            5,
+            5
+          ],
+          "scrollY": 95,
+          "options": 0,
+          "expanded": "false"
+        },
+        {
+          "kind": "click",
+          "rect": [
+            10,
+            10,
+            5,
+            5
+          ],
+          "scrollY": 95,
+          "options": 0,
+          "expanded": "false"
+        },
+        {
+          "kind": "after",
+          "rect": [
+            11,
+            45,
+            5,
+            5
+          ],
+          "scrollY": 95,
+          "options": 2,
+          "expanded": "true"
+        }
+      ]
+    },
+    {
+      "fill": 400,
+      "activation": "scroll-delivered-then-dom",
+      "errors": [],
+      "samples": [
+        {
+          "kind": "before",
+          "rect": [
+            10,
+            4095,
+            5,
+            5
+          ],
+          "scrollY": 0,
+          "options": 0,
+          "expanded": "false"
+        },
+        {
+          "kind": "scroll",
+          "rect": [
+            10,
+            0,
+            5,
+            5
+          ],
+          "scrollY": 4095,
+          "options": 0,
+          "expanded": "false"
+        },
+        {
+          "kind": "focusin",
+          "rect": [
+            10,
+            0,
+            5,
+            5
+          ],
+          "scrollY": 4095,
+          "options": 0,
+          "expanded": "false"
+        },
+        {
+          "kind": "click",
+          "rect": [
+            10,
+            0,
+            5,
+            5
+          ],
+          "scrollY": 4095,
+          "options": 0,
+          "expanded": "false"
+        },
+        {
+          "kind": "focusin",
+          "rect": [
+            10,
+            10,
+            5,
+            5
+          ],
+          "scrollY": 4095,
+          "options": 0,
+          "expanded": "false"
+        },
+        {
+          "kind": "click",
+          "rect": [
+            10,
+            10,
+            5,
+            5
+          ],
+          "scrollY": 4095,
+          "options": 0,
+          "expanded": "false"
+        },
+        {
+          "kind": "after",
+          "rect": [
+            11,
+            45,
+            5,
+            5
+          ],
+          "scrollY": 4095,
+          "options": 2,
+          "expanded": "true"
+        }
+      ]
+    }
+  ]
+}

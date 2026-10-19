@@ -1,0 +1,272 @@
+{
+  "engine": "5b467880d75c3e14a0b0108775de25f182d39734",
+  "binary_sha256": "18fa9de7ab0c9d92247b70e813bdea0fe78efc4da42cbbbadcf18a0a3399f4ee",
+  "tos_base": "6e7f7cfb5647f92df57cf8801b23d02cab1942d0",
+  "patch_sha256": "9ad4d23c78e81d70ede8a475ab50d80ac05b998d2418795d6c18912008fd7258",
+  "qualification": "diagnostic only; bounded event listeners and DOM reads can perturb timing; all original assertions retained",
+  "rows": [
+    {
+      "kind": "before-activation",
+      "ms": 0.23516699999981935,
+      "target": "document-or-window",
+      "inputPresent": true,
+      "activeInput": false,
+      "expanded": "false",
+      "options": 0,
+      "listboxes": 0,
+      "scroll": [
+        0,
+        0
+      ],
+      "rect": [
+        32,
+        27270,
+        5,
+        5
+      ]
+    },
+    {
+      "kind": "mousedown",
+      "ms": 86.7260839999999,
+      "target": "INPUT",
+      "inputPresent": true,
+      "activeInput": false,
+      "expanded": "false",
+      "options": 0,
+      "listboxes": 0,
+      "scroll": [
+        0,
+        0
+      ],
+      "rect": [
+        32,
+        27275,
+        5,
+        5
+      ]
+    },
+    {
+      "kind": "focusout",
+      "ms": 87.16004199999998,
+      "target": "SECTION",
+      "inputPresent": true,
+      "activeInput": false,
+      "expanded": "false",
+      "options": 0,
+      "listboxes": 0,
+      "scroll": [
+        0,
+        0
+      ],
+      "rect": [
+        32,
+        27275,
+        5,
+        5
+      ]
+    },
+    {
+      "kind": "focusin",
+      "ms": 90.09137499999974,
+      "target": "INPUT",
+      "inputPresent": true,
+      "activeInput": true,
+      "expanded": "false",
+      "options": 0,
+      "listboxes": 0,
+      "scroll": [
+        0,
+        26033
+      ],
+      "rect": [
+        21,
+        447,
+        5,
+        5
+      ]
+    },
+    {
+      "kind": "click",
+      "ms": 90.8656669999998,
+      "target": "INPUT",
+      "inputPresent": true,
+      "activeInput": true,
+      "expanded": "false",
+      "options": 0,
+      "listboxes": 0,
+      "scroll": [
+        0,
+        26033
+      ],
+      "rect": [
+        21,
+        447,
+        5,
+        5
+      ]
+    },
+    {
+      "kind": "focusin",
+      "ms": 100.41874999999982,
+      "target": "INPUT",
+      "inputPresent": true,
+      "activeInput": true,
+      "expanded": "false",
+      "options": 0,
+      "listboxes": 0,
+      "scroll": [
+        0,
+        26033
+      ],
+      "rect": [
+        21,
+        447,
+        5,
+        5
+      ]
+    },
+    {
+      "kind": "click",
+      "ms": 101.18687499999989,
+      "target": "INPUT",
+      "inputPresent": true,
+      "activeInput": true,
+      "expanded": "false",
+      "options": 0,
+      "listboxes": 0,
+      "scroll": [
+        0,
+        26033
+      ],
+      "rect": [
+        21,
+        447,
+        5,
+        5
+      ]
+    },
+    {
+      "kind": "scroll",
+      "ms": 118.63754199999973,
+      "target": "DIV",
+      "inputPresent": true,
+      "activeInput": true,
+      "expanded": "true",
+      "options": 22,
+      "listboxes": 1,
+      "scroll": [
+        0,
+        26033
+      ],
+      "rect": [
+        22,
+        462,
+        5,
+        5
+      ]
+    },
+    {
+      "kind": "scroll",
+      "ms": 119.27420899999991,
+      "target": "DIV",
+      "inputPresent": true,
+      "activeInput": true,
+      "expanded": "true",
+      "options": 22,
+      "listboxes": 1,
+      "scroll": [
+        0,
+        26033
+      ],
+      "rect": [
+        22,
+        462,
+        5,
+        5
+      ]
+    },
+    {
+      "kind": "scroll",
+      "ms": 119.58399999999985,
+      "target": "document-or-window",
+      "inputPresent": true,
+      "activeInput": true,
+      "expanded": "true",
+      "options": 22,
+      "listboxes": 1,
+      "scroll": [
+        0,
+        26033
+      ],
+      "rect": [
+        22,
+        462,
+        5,
+        5
+      ]
+    },
+    {
+      "kind": "scroll",
+      "ms": 125.76666699999988,
+      "target": "DIV",
+      "inputPresent": true,
+      "activeInput": true,
+      "expanded": "true",
+      "options": 0,
+      "listboxes": 0,
+      "scroll": [
+        0,
+        26033
+      ],
+      "rect": [
+        22,
+        462,
+        5,
+        5
+      ]
+    },
+    {
+      "kind": "after-activation",
+      "ms": 126.71129199999996,
+      "target": "document-or-window",
+      "inputPresent": true,
+      "activeInput": true,
+      "expanded": "true",
+      "options": 0,
+      "listboxes": 0,
+      "scroll": [
+        0,
+        26033
+      ],
+      "rect": [
+        22,
+        462,
+        5,
+        5
+      ]
+    },
+    {
+      "kind": "after-choice",
+      "ms": 9899.64475,
+      "target": "document-or-window",
+      "inputPresent": true,
+      "activeInput": true,
+      "expanded": "true",
+      "options": 0,
+      "listboxes": 0,
+      "scroll": [
+        0,
+        26033
+      ],
+      "rect": [
+        22,
+        462,
+        5,
+        5
+      ]
+    }
+  ],
+  "outcome": "original option-count assertion failed",
+  "cleanup_run_databases": 0,
+  "source_restored": true
+}

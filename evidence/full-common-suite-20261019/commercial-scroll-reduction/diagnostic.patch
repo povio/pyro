@@ -1,0 +1,44 @@
+diff --git a/apps/fe/e2e/logistics/positions-commercial-parties.e2e.ts b/apps/fe/e2e/logistics/positions-commercial-parties.e2e.ts
+index 0bf5cf2a2c..c66b6be325 100644
+--- a/apps/fe/e2e/logistics/positions-commercial-parties.e2e.ts
++++ b/apps/fe/e2e/logistics/positions-commercial-parties.e2e.ts
+@@ -265,10 +265,38 @@ const chooseOption = async (page: Page, option: string) => {
+ 
+ const selectAddParty = async (page: Page, positionId: string, partyLabel: string) => {
+   // Action: use the visible Add Party autocomplete so the FE creates a new involved-party row.
++  await page.evaluate(() => {
++    const rows: unknown[] = [];
++    const start = performance.now();
++    const record = (kind: string, event?: Event) => {
++      if (rows.length >= 64) return;
++      const input = document.querySelector('input[placeholder="Add Party"]');
++      const r = input?.getBoundingClientRect();
++      rows.push({ kind, ms: performance.now() - start,
++        target: event?.target instanceof Element ? event.target.tagName : "document-or-window",
++        inputPresent: !!input, activeInput: document.activeElement === input,
++        expanded: input?.getAttribute("aria-expanded"), options: document.querySelectorAll('[role="option"]').length,
++        listboxes: document.querySelectorAll('[role="listbox"]').length,
++        scroll: [scrollX, scrollY], rect: r ? [r.x,r.y,r.width,r.height] : null });
++    };
++    for (const kind of ["focusin", "focusout", "scroll", "mousedown", "click"]) {
++      window.addEventListener(kind, (event) => record(kind,event), true);
++    }
++    (window as any).__lpPartyDiag = { rows, record };
++    record("before-activation");
++  });
+   await clickRenderedPlaceholder(page, "Add Party");
++  await page.evaluate(() => (window as any).__lpPartyDiag.record("after-activation"));
+   const createResponsePromise = waitForPartyCreateResponse(page, positionId);
+   const partiesResponsePromise = waitForPositionPartiesResponse(page, positionId);
+-  await chooseOption(page, partyLabel);
++  try {
++    await chooseOption(page, partyLabel);
++  } finally {
++    console.log("LP-PARTY-DIAG " + JSON.stringify(await page.evaluate(() => {
++      (window as any).__lpPartyDiag.record("after-choice");
++      return (window as any).__lpPartyDiag.rows;
++    })));
++  }
+   await createResponsePromise;
+   await partiesResponsePromise;
+ };

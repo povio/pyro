@@ -1,0 +1,2132 @@
+{
+  "scope": "pre-recorded disjoint whole-file common batches, NOT execution results",
+  "engine": "5b467880d75c3e14a0b0108775de25f182d39734",
+  "tos_final": null,
+  "total_files": 102,
+  "total_common": 467,
+  "batches": [
+    {
+      "id": "w2-final-01",
+      "files": [
+        "e2e/calendar/calendar-filters.e2e.ts",
+        "e2e/chat/entity-chat-widget.e2e.ts",
+        "e2e/chat/entity-chat.e2e.ts",
+        "e2e/chat/internal-chat.e2e.ts",
+        "e2e/chat/notification-settings.e2e.ts",
+        "e2e/configuration/employees-archived-filter.e2e.ts",
+        "e2e/configuration/employees-employments.e2e.ts",
+        "e2e/configuration/employees.e2e.ts",
+        "e2e/configuration/offices-bank-accounts.e2e.ts",
+        "e2e/configuration/offices-bookkeeping.e2e.ts",
+        "e2e/configuration/offices-documents.e2e.ts",
+        "e2e/configuration/offices-inttra-credentials.e2e.ts",
+        "e2e/configuration/offices-overview.e2e.ts",
+        "e2e/configuration/offices.e2e.ts"
+      ],
+      "common_count": 30,
+      "case_ids": [
+        [
+          "preserves calendar filters across visits and clears saved preferences when disabled"
+        ],
+        [
+          "Entity chat widget",
+          "recovers after context retries exhaust a persistent server error"
+        ],
+        [
+          "Entity chat widget",
+          "shows a nonterminal unauthorized context error and recovers on explicit retry"
+        ],
+        [
+          "expands an entity chat without joining or creating an empty sidebar entry"
+        ],
+        [
+          "Internal chat FE E2E",
+          "rejects a locked group without permission"
+        ],
+        [
+          "keeps browser registration hidden when subscription lookup fails"
+        ],
+        [
+          "opens Activity settings when Chat is unavailable"
+        ],
+        [
+          "personal delivery preferences",
+          "automatically saves changes on mobile"
+        ],
+        [
+          "personal delivery preferences",
+          "keeps unsaved choices on failed saves and retries them"
+        ],
+        [
+          "scopes message previews to the registered current browser"
+        ],
+        [
+          "Configuration Employees archived filter FE E2E",
+          "filters archived employees from the visible archived filter"
+        ],
+        [
+          "Configuration Employees Employments tab FE E2E",
+          "closes the Add Employment drawer when Cancel is selected"
+        ],
+        [
+          "Configuration Employees FE E2E",
+          "filters employees by office and global role"
+        ],
+        [
+          "Configuration Employees FE E2E",
+          "lists configuration employees with rendered table columns"
+        ],
+        [
+          "Configuration Employees FE E2E",
+          "searches employees by route-backed search state"
+        ],
+        [
+          "Configuration Employees FE E2E",
+          "sorts employees by name from the visible table header"
+        ],
+        [
+          "Configuration Offices Bank Accounts tab FE E2E",
+          "adds a bank account through the Office details modal"
+        ],
+        [
+          "Configuration Offices Bank Accounts tab FE E2E",
+          "renders a bank account in the Office details Bank Accounts tab"
+        ],
+        [
+          "Configuration Offices Bookkeeping tab FE E2E",
+          "autosaves the Bookkeeping cost center through the rendered form"
+        ],
+        [
+          "Configuration Offices Documents tab FE E2E",
+          "renders configured document language sections in the Office details modal"
+        ],
+        [
+          "Configuration Offices INTTRA Credentials tab FE E2E",
+          "autosaves an INTTRA credential edit through the rendered form"
+        ],
+        [
+          "Configuration Offices INTTRA Credentials tab FE E2E",
+          "generates Client and Carrier credentials from the details modal"
+        ],
+        [
+          "Configuration Offices INTTRA Credentials tab FE E2E",
+          "renders existing INTTRA credential values without exposing the password"
+        ],
+        [
+          "Configuration Offices INTTRA Credentials tab FE E2E",
+          "renders the empty INTTRA Credentials state"
+        ],
+        [
+          "Configuration Offices Overview tab FE E2E",
+          "autosaves the Office business transaction prefix from the details modal"
+        ],
+        [
+          "Configuration Offices Overview tab FE E2E",
+          "autosaves the Office name from the details modal"
+        ],
+        [
+          "Configuration Offices FE E2E",
+          "creates a configuration office from the FE and verifies it in the list HTML"
+        ],
+        [
+          "Configuration Offices FE E2E",
+          "lists configuration offices as rendered table rows"
+        ],
+        [
+          "Configuration Offices FE E2E",
+          "searches configuration offices from the visible search input"
+        ],
+        [
+          "Configuration Offices FE E2E",
+          "sorts configuration offices by name from the visible table header"
+        ]
+      ]
+    },
+    {
+      "id": "w2-final-02",
+      "files": [
+        "e2e/configuration/profile-settings.e2e.ts",
+        "e2e/configuration/roles-permissions.e2e.ts",
+        "e2e/configuration/roles.e2e.ts",
+        "e2e/configuration/tickets.e2e.ts",
+        "e2e/control-tower/shipments.e2e.ts",
+        "e2e/finances/direct-invoice-credit-note.e2e.ts",
+        "e2e/finances/direct-invoice.e2e.ts"
+      ],
+      "common_count": 18,
+      "case_ids": [
+        [
+          "Profile and settings navigation FE E2E",
+          "renders the configuration settings panel"
+        ],
+        [
+          "Profile and settings navigation FE E2E",
+          "renders the employee profile with its editable settings"
+        ],
+        [
+          "Configuration Roles Permissions tab FE E2E",
+          "renders office and business-partner permission lists according to the role context"
+        ],
+        [
+          "Configuration Roles Permissions tab FE E2E",
+          "renders only global permissions and marks the role's enabled permissions"
+        ],
+        [
+          "Configuration Roles Permissions tab FE E2E",
+          "toggles a permission from the Permissions tab and reloads the tab with persisted HTML state"
+        ],
+        [
+          "Configuration Roles FE E2E",
+          "creates a global role and verifies it in the FE listing"
+        ],
+        [
+          "Configuration Roles FE E2E",
+          "filters roles by context and owner"
+        ],
+        [
+          "Configuration Roles FE E2E",
+          "lists seeded roles with their rendered columns"
+        ],
+        [
+          "Configuration Roles FE E2E",
+          "searches roles by role name"
+        ],
+        [
+          "keeps ticket creation unavailable before helpdesk activation"
+        ],
+        [
+          "Control Tower shipment workflows",
+          "opens a booking's container from the Containers tab"
+        ],
+        [
+          "Control Tower shipment workflows",
+          "opens a container's package with the matching booking context"
+        ],
+        [
+          "Outgoing Direct Invoice Credit Note FE E2E",
+          "renders the actual direct-invoice Credit Note"
+        ],
+        [
+          "Outgoing Direct Invoice Credit Note FE E2E",
+          "renders the Outstanding direct invoice before crediting"
+        ],
+        [
+          "Outgoing Direct Invoice Credit Note FE E2E",
+          "creates a draft Credit Note from the Outstanding direct invoice"
+        ],
+        [
+          "Outgoing Direct Invoice Credit Note FE E2E",
+          "creates an actual Credit Note from the draft direct-invoice Credit Note"
+        ],
+        [
+          "Finances Actual Direct Invoice FE E2E",
+          "generates a new document version for the actual direct invoice"
+        ],
+        [
+          "Finances Actual Direct Invoice FE E2E",
+          "sends the actual direct invoice"
+        ]
+      ]
+    },
+    {
+      "id": "w2-final-03",
+      "files": [
+        "e2e/finances/incoming-invoices.e2e.ts",
+        "e2e/finances/invoices.e2e.ts",
+        "e2e/finances/outgoing-draft-direct-invoice.e2e.ts",
+        "e2e/finances/outgoing-invoices.e2e.ts",
+        "e2e/fixtures/database-file-isolation-a.e2e.ts",
+        "e2e/fixtures/database-file-isolation-b.e2e.ts"
+      ],
+      "common_count": 27,
+      "case_ids": [
+        [
+          "Incoming Invoices Listing FE E2E",
+          "lists registered incoming invoices without the generic direction column"
+        ],
+        [
+          "Incoming Invoices Listing FE E2E",
+          "searches incoming invoices and keeps the search term in the listing HTML and URL"
+        ],
+        [
+          "Incoming Invoices Listing FE E2E",
+          "filters incoming invoices by Status from URL params"
+        ],
+        [
+          "Incoming Invoices Listing FE E2E",
+          "filters incoming invoices by Invoice Type from URL params"
+        ],
+        [
+          "Incoming Invoices Listing FE E2E",
+          "filters incoming invoices by Receiver from URL params"
+        ],
+        [
+          "Incoming Invoices Listing FE E2E",
+          "filters incoming invoices by Reference from URL params"
+        ],
+        [
+          "Incoming Invoices Listing FE E2E",
+          "filters incoming invoices by Transport Mode from URL params"
+        ],
+        [
+          "Incoming Invoices Listing FE E2E",
+          "filters incoming invoices by Amount from URL params"
+        ],
+        [
+          "Incoming Invoices Listing FE E2E",
+          "filters incoming invoices by Invoice Number from URL params"
+        ],
+        [
+          "Incoming Invoices Listing FE E2E",
+          "filters incoming invoices by Internal Number from URL params"
+        ],
+        [
+          "Incoming Invoices Listing FE E2E",
+          "filters incoming invoices by Due Date from URL params"
+        ],
+        [
+          "Incoming Invoices Listing FE E2E",
+          "shows the incoming bulk payment drawer"
+        ],
+        [
+          "Incoming Invoices Listing FE E2E",
+          "pays selected incoming invoices through the Pay button"
+        ],
+        [
+          "Incoming Invoices Listing FE E2E",
+          "keeps Send disabled for selected incoming invoices"
+        ],
+        [
+          "Incoming Invoices Listing FE E2E",
+          "issues and sends an account statement from the incoming listing"
+        ],
+        [
+          "Incoming Invoices Listing FE E2E",
+          "covers exposed incoming invoice configure filters"
+        ],
+        [
+          "Incoming Invoices Listing FE E2E",
+          "configures incoming invoice columns without leaving the listing"
+        ],
+        [
+          "Finances Invoices FE E2E",
+          "opens searched invoice details from the listing"
+        ],
+        [
+          "Finances Invoices FE E2E",
+          "keeps invoice search after closing the details modal"
+        ],
+        [
+          "Finances Invoices FE E2E",
+          "deletes a draft Direct Invoice from outgoing invoices"
+        ],
+        [
+          "Outgoing Draft Direct Invoice FE E2E",
+          "opens a draft Direct Invoice preview"
+        ],
+        [
+          "Outgoing Draft Direct Invoice FE E2E",
+          "deletes a draft Direct Invoice"
+        ],
+        [
+          "Outgoing Draft Direct Invoice FE E2E",
+          "opens a precreated draft Direct Invoice"
+        ],
+        [
+          "Outgoing Invoices Listing FE E2E",
+          "configures outgoing invoice columns without leaving the listing"
+        ],
+        [
+          "Outgoing Invoices Listing FE E2E",
+          "covers exposed outgoing invoice configure filters"
+        ],
+        [
+          "FE E2E database file isolation A",
+          "creates duplicate-constrained API data"
+        ],
+        [
+          "FE E2E database file isolation B",
+          "creates duplicate-constrained API data"
+        ]
+      ]
+    },
+    {
+      "id": "w2-final-04",
+      "files": [
+        "e2e/logistics/positions-cargo.e2e.ts",
+        "e2e/logistics/positions-close.e2e.ts"
+      ],
+      "common_count": 30,
+      "case_ids": [
+        [
+          "Positions Cargo tab FE E2E",
+          "loads a paginated notification target and opens its POD tab"
+        ],
+        [
+          "Positions Cargo tab FE E2E",
+          "shows a loading transition when switching Cargo document sub-tabs"
+        ],
+        [
+          "Positions Cargo tab FE E2E",
+          "adds a Package from the FE"
+        ],
+        [
+          "Positions Cargo tab FE E2E",
+          "selects all Packages in a Transport Unit and then across the Position from the FE"
+        ],
+        [
+          "Positions Cargo tab FE E2E",
+          "keeps source-linked Packages in source Position order and allows bulk selection from the FE"
+        ],
+        [
+          "Positions Cargo tab FE E2E",
+          "toggles package auto-calculate totals from the FE"
+        ],
+        [
+          "Positions Cargo tab FE E2E",
+          "lists Position Cargo transport units and packages in rendered HTML"
+        ],
+        [
+          "Positions Cargo tab FE E2E",
+          "updates editable Transport Unit number and seals from the FE"
+        ],
+        [
+          "Positions Cargo tab FE E2E",
+          "updates editable Transport Unit Notes from the FE"
+        ],
+        [
+          "Positions Cargo tab FE E2E",
+          "updates editable Transport Unit tare, VGM, and volume from the FE"
+        ],
+        [
+          "Positions Cargo tab FE E2E",
+          "updates editable Transport Unit net and gross weights from the FE"
+        ],
+        [
+          "Positions Cargo tab FE E2E",
+          "updates editable Transport Unit volumetric and chargeable weights from the FE"
+        ],
+        [
+          "Positions Cargo tab FE E2E",
+          "clears Transport Unit Notes from the FE and persists the empty value"
+        ],
+        [
+          "Positions Cargo tab FE E2E",
+          "updates editable Package outer dimensions from the FE"
+        ],
+        [
+          "Positions Cargo tab FE E2E",
+          "updates editable Package volume and net weight from the FE"
+        ],
+        [
+          "Positions Cargo tab FE E2E",
+          "updates editable Package gross and chargeable weights from the FE"
+        ],
+        [
+          "Positions Cargo tab FE E2E",
+          "updates editable Package quantity and volume totals from the FE"
+        ],
+        [
+          "Positions Cargo tab FE E2E",
+          "updates editable Package net and gross totals from the FE"
+        ],
+        [
+          "Positions Cargo tab FE E2E",
+          "updates editable Package volumetric and chargeable totals from the FE"
+        ],
+        [
+          "Positions Cargo tab FE E2E",
+          "updates editable Package identifier and description from the FE"
+        ],
+        [
+          "Positions Cargo tab FE E2E",
+          "updates editable Package marks and notes from the FE"
+        ],
+        [
+          "Positions Cargo tab FE E2E",
+          "updates editable Package customs text fields from the FE"
+        ],
+        [
+          "Positions Cargo tab FE E2E",
+          "adds Air Cargo without a Transport Unit Type from the FE"
+        ],
+        [
+          "Positions Cargo tab FE E2E",
+          "deletes a Package from the FE"
+        ],
+        [
+          "Positions Cargo tab FE E2E",
+          "bulk deletes Packages across Transport Units from the FE"
+        ],
+        [
+          "Positions Cargo tab FE E2E",
+          "adds a Package to a master Position cargo that already has linked sub-position Packages"
+        ],
+        [
+          "Positions Cargo tab FE E2E",
+          "duplicates a Package from the FE"
+        ],
+        [
+          "Positions Cargo tab FE E2E",
+          "keeps documents read-only for packages linked from sub-positions"
+        ],
+        [
+          "Positions close FE E2E",
+          "closes an open Position from the Position overview"
+        ],
+        [
+          "Positions close FE E2E",
+          "reopens the same closed Position from the closed banner"
+        ]
+      ]
+    },
+    {
+      "id": "w2-final-05",
+      "files": [
+        "e2e/logistics/positions-closed-finances.e2e.ts",
+        "e2e/logistics/positions-commercial-parties.e2e.ts",
+        "e2e/logistics/positions-create-incoming-draft-credit-note.e2e.ts",
+        "e2e/logistics/positions-create-outgoing-credit-note.e2e.ts",
+        "e2e/logistics/positions-create-outgoing-draft-invoice.e2e.ts",
+        "e2e/logistics/positions-create-outgoing-invoice.e2e.ts",
+        "e2e/logistics/positions-default-filter-template.e2e.ts",
+        "e2e/logistics/positions-docubox-search.e2e.ts"
+      ],
+      "common_count": 22,
+      "case_ids": [
+        [
+          "closed positions can be found for finance filtering without entering operational selectors"
+        ],
+        [
+          "Position Commercial Parties tab FE E2E",
+          "lists Position commercial parties in rendered HTML"
+        ],
+        [
+          "Position Commercial Parties tab FE E2E",
+          "autosaves a Position commercial party reference inline from the FE"
+        ],
+        [
+          "Position Commercial Parties tab FE E2E",
+          "adds a new Position commercial party from the FE"
+        ],
+        [
+          "Position Commercial Parties tab FE E2E",
+          "keeps Document Party rows in place when assigning an HBL reference"
+        ],
+        [
+          "Position Commercial Parties tab FE E2E",
+          "removes a Position commercial party from the FE"
+        ],
+        [
+          "Position Create Incoming Draft Credit Note FE E2E",
+          "adds a draft Credit Note from an actual Incoming Invoice details drawer"
+        ],
+        [
+          "Position Create Incoming Draft Credit Note FE E2E",
+          "does not expose draft preview for an incoming Credit Note in the invoice details drawer"
+        ],
+        [
+          "Position Create Incoming Draft Credit Note FE E2E",
+          "deletes a draft incoming Credit Note from the invoice details drawer"
+        ],
+        [
+          "Position Create Outgoing Credit Note FE E2E",
+          "adds an actual Credit Note inside an actual outgoing Invoice from the Position details modal"
+        ],
+        [
+          "Position Create Outgoing Credit Note FE E2E",
+          "generates a payment confirmation for the actual outgoing Credit Note settlement payment"
+        ],
+        [
+          "Position Create Outgoing Credit Note FE E2E",
+          "generates a new document version for an actual outgoing Credit Note"
+        ],
+        [
+          "Position Create Outgoing Credit Note FE E2E",
+          "renders an actual outgoing Credit Note from the Position invoice route"
+        ],
+        [
+          "Position Create Outgoing Draft Invoice FE E2E",
+          "opens a draft outgoing Invoice preview from the invoice details drawer"
+        ],
+        [
+          "Position Create Outgoing Draft Invoice FE E2E",
+          "deletes a draft outgoing Invoice from the invoice details drawer"
+        ],
+        [
+          "Position Create Outgoing Invoice FE E2E",
+          "keeps generated Body Remarks visible after issuing an outgoing Invoice"
+        ],
+        [
+          "Position Create Outgoing Invoice FE E2E",
+          "creates an outgoing Invoice from a legacy draft that already has a root folder"
+        ],
+        [
+          "Position Create Outgoing Invoice FE E2E",
+          "sends an issued outgoing Invoice from the invoice drawer"
+        ],
+        [
+          "Outgoing Invoice document regeneration FE E2E",
+          "generates a new document version for an issued outgoing Invoice"
+        ],
+        [
+          "Positions default filter template",
+          "saves current filter values through the default template editor"
+        ],
+        [
+          "Positions default filter template",
+          "restores default filter values without page-filter persistence"
+        ],
+        [
+          "Position DocuBox search FE E2E",
+          "keeps expanded folders expanded after searching and clearing Position DocuBox files"
+        ]
+      ]
+    },
+    {
+      "id": "w2-final-06",
+      "files": [
+        "e2e/logistics/positions-docubox.e2e.ts",
+        "e2e/logistics/positions-document-template.e2e.ts",
+        "e2e/logistics/positions-employee-filters.e2e.ts",
+        "e2e/logistics/positions-exclude-from-statistics.e2e.ts",
+        "e2e/logistics/positions-filter-templates.e2e.ts",
+        "e2e/logistics/quotes-convert-to-position.e2e.ts",
+        "e2e/logistics/quotes-copy.e2e.ts"
+      ],
+      "common_count": 28,
+      "case_ids": [
+        [
+          "Position DocuBox tab actions FE E2E",
+          "drags an MSG attachment into a Position DocuBox folder"
+        ],
+        [
+          "Position DocuBox tab actions FE E2E",
+          "uploads an externally dropped file directly into a visible Position DocuBox folder row"
+        ],
+        [
+          "Position DocuBox tab actions FE E2E",
+          "previews generated XLSX files in the Position DocuBox preview pane"
+        ],
+        [
+          "Position DocuBox tab actions FE E2E",
+          "previews generated CSV files in the Position DocuBox preview pane"
+        ],
+        [
+          "Position DocuBox tab actions FE E2E",
+          "lists Position DocuBox folders and files in rendered HTML"
+        ],
+        [
+          "Position DocuBox tab actions FE E2E",
+          "renders the Position DocuBox listing"
+        ],
+        [
+          "Position DocuBox tab actions FE E2E",
+          "creates a folder from the Position DocuBox tab"
+        ],
+        [
+          "Position DocuBox tab actions FE E2E",
+          "renders created and uploaded Position DocuBox entries"
+        ],
+        [
+          "Position DocuBox tab actions FE E2E",
+          "previews a Position DocuBox PDF using fit-to-width iframe settings"
+        ],
+        [
+          "Position DocuBox tab actions FE E2E",
+          "previews generated DOCX files in the Position DocuBox preview pane"
+        ],
+        [
+          "Position DocuBox tab actions FE E2E",
+          "forces a rename for externally dropped files with invalid DocuBox filename characters"
+        ],
+        [
+          "Position DocuBox tab actions FE E2E",
+          "renders the renamed invalid Position DocuBox upload"
+        ],
+        [
+          "Positions document template FE E2E",
+          "issues the templated document from the FE"
+        ],
+        [
+          "Positions document template FE E2E",
+          "updates the template document Name Suffix from the FE"
+        ],
+        [
+          "Positions document template FE E2E",
+          "updates the template document Title from the FE"
+        ],
+        [
+          "Positions document template FE E2E",
+          "updates the template document Contact from the FE"
+        ],
+        [
+          "Positions document template FE E2E",
+          "updates the template document Booking Number from the FE"
+        ],
+        [
+          "Positions document template FE E2E",
+          "updates the template document Customer Reference from the FE"
+        ],
+        [
+          "Positions document template FE E2E",
+          "updates the template document Master B/L from the FE"
+        ],
+        [
+          "Positions document template FE E2E",
+          "updates the template document House B/L from the FE"
+        ],
+        [
+          "Positions document template FE E2E",
+          "opens the templated document HTML preview from the FE"
+        ],
+        [
+          "Positions employee filters FE E2E",
+          "shows archived employees in employee filter options with an archived marker"
+        ],
+        [
+          "Positions exclude from statistics FE E2E",
+          "excludes a position from statistics and removes it from the default Positions listing"
+        ],
+        [
+          "Positions filter templates",
+          "saved mixed criteria replace pending manual filters and remain applied"
+        ],
+        [
+          "Positions filter templates",
+          "applies, fully edits, and renames a template"
+        ],
+        [
+          "Positions filter templates",
+          "deletes the renamed template"
+        ],
+        [
+          "Quotes Convert to Position FE E2E",
+          "maps Quote Sell Service Contract to Position Selling Contract after reopening from the Positions list"
+        ],
+        [
+          "Quotes copy FE E2E",
+          "copies a Quote from the details modal and renders copied Overview values"
+        ]
+      ]
+    },
+    {
+      "id": "w2-final-07",
+      "files": [
+        "e2e/logistics/quotes-docubox.e2e.ts",
+        "e2e/logistics/quotes.e2e.ts",
+        "e2e/master-data/accounting/charge-types.e2e.ts",
+        "e2e/master-data/accounting/currencies.e2e.ts",
+        "e2e/master-data/accounting/dunning-levels.e2e.ts"
+      ],
+      "common_count": 22,
+      "case_ids": [
+        [
+          "Quotes DocuBox tab FE E2E",
+          "lists Quote DocuBox folders and files in rendered HTML"
+        ],
+        [
+          "Quotes DocuBox tab FE E2E",
+          "creates a folder from the Quote DocuBox tab"
+        ],
+        [
+          "Quotes DocuBox tab FE E2E",
+          "searches Quote DocuBox content by file name"
+        ],
+        [
+          "Quotes FE E2E",
+          "shows the default currency ISO code in footer totals"
+        ],
+        [
+          "Master Data Charge Types FE E2E",
+          "keeps BE charge type label search behavior available to FE flows"
+        ],
+        [
+          "Master Data Charge Types FE E2E",
+          "sorts charge types by identity and audit columns"
+        ],
+        [
+          "Master Data Charge Types FE E2E",
+          "surfaces duplicate match-code validation from the real BE"
+        ],
+        [
+          "Master Data Charge Types FE E2E",
+          "updates a charge type from the FE with autosave"
+        ],
+        [
+          "Master Data Currencies FE E2E",
+          "lists seeded currencies as HTML table rows"
+        ],
+        [
+          "Master Data Currencies FE E2E",
+          "shows currencies created for the test setup in the HTML table"
+        ],
+        [
+          "Master Data Currencies FE E2E",
+          "shows setup currency updates in the HTML table"
+        ],
+        [
+          "Master Data Currencies FE E2E",
+          "sorts currencies by audit columns"
+        ],
+        [
+          "Master Data Currencies FE E2E",
+          "sorts currencies by identity columns"
+        ],
+        [
+          "Master Data Dunning Levels FE E2E",
+          "archives a dunning level through FE controls"
+        ],
+        [
+          "Master Data Dunning Levels FE E2E",
+          "keeps duplicate setup isolated while rendering a second create drawer"
+        ],
+        [
+          "Master Data Dunning Levels FE E2E",
+          "lists seeded dunning levels as HTML rows"
+        ],
+        [
+          "Master Data Dunning Levels FE E2E",
+          "opens a created dunning level and shows its fee in HTML"
+        ],
+        [
+          "Master Data Dunning Levels FE E2E",
+          "opens dunning level details"
+        ],
+        [
+          "Master Data Dunning Levels FE E2E",
+          "renders the dunning level create drawer with required field HTML"
+        ],
+        [
+          "Master Data Dunning Levels FE E2E",
+          "sorts dunning levels by days overdue in the rendered table"
+        ],
+        [
+          "Master Data Dunning Levels FE E2E",
+          "sorts dunning levels by identity, amounts, related system, and audit columns"
+        ],
+        [
+          "Master Data Dunning Levels FE E2E",
+          "unarchives a dunning level through FE controls"
+        ]
+      ]
+    },
+    {
+      "id": "w2-final-08",
+      "files": [
+        "e2e/master-data/accounting/dunning-systems.e2e.ts",
+        "e2e/master-data/accounting/vat-rule-applicability.e2e.ts"
+      ],
+      "common_count": 12,
+      "case_ids": [
+        [
+          "Master Data Dunning Systems FE E2E",
+          "archives dunning systems through FE controls"
+        ],
+        [
+          "Master Data Dunning Systems FE E2E",
+          "creates a dunning system from the FE and shows the created details HTML"
+        ],
+        [
+          "Master Data Dunning Systems FE E2E",
+          "lists seeded dunning systems in the canvas table"
+        ],
+        [
+          "Master Data Dunning Systems FE E2E",
+          "opens dunning system details"
+        ],
+        [
+          "Master Data Dunning Systems FE E2E",
+          "searches dunning systems by diacritics, normalized text, spaces, and default flag rows"
+        ],
+        [
+          "Master Data Dunning Systems FE E2E",
+          "sorts dunning systems by default flag"
+        ],
+        [
+          "Master Data Dunning Systems FE E2E",
+          "sorts dunning systems by name and created date"
+        ],
+        [
+          "Master Data Dunning Systems FE E2E",
+          "surfaces duplicate default validation in rendered FE errors"
+        ],
+        [
+          "Master Data Dunning Systems FE E2E",
+          "surfaces duplicate name validation in rendered FE errors"
+        ],
+        [
+          "Master Data Dunning Systems FE E2E",
+          "unarchives dunning systems through FE controls"
+        ],
+        [
+          "Master Data Dunning Systems FE E2E",
+          "updates a dunning system from the FE with autosave and shows the new HTML value"
+        ],
+        [
+          "edits regional bookkeeping and switches independently without a generic bookkeeping field"
+        ]
+      ]
+    },
+    {
+      "id": "w2-final-09",
+      "files": [
+        "e2e/master-data/accounting/vat-rules.e2e.ts"
+      ],
+      "common_count": 27,
+      "case_ids": [
+        [
+          "Master Data VAT Rules FE E2E",
+          "unarchives a VAT rule through the FE"
+        ],
+        [
+          "Master Data VAT Rules FE E2E",
+          "archives a VAT rule through the FE and shows it only with archived filtering"
+        ],
+        [
+          "Master Data VAT Rules FE E2E",
+          "filters VAT rules by type and archived status through the rendered table"
+        ],
+        [
+          "Master Data VAT Rules FE E2E",
+          "includes applicability and regional bookkeeping switches in the VAT Rule create form"
+        ],
+        [
+          "Master Data VAT Rules FE E2E",
+          "lists seeded VAT rules"
+        ],
+        [
+          "Master Data VAT Rules FE E2E",
+          "loads and autosaves a VAT rule translation"
+        ],
+        [
+          "Master Data VAT Rules FE E2E",
+          "searches VAT rules by diacritics through the search field"
+        ],
+        [
+          "Master Data VAT Rules FE E2E",
+          "searches VAT rules by matchcode"
+        ],
+        [
+          "Master Data VAT Rules FE E2E",
+          "searches VAT rules by name"
+        ],
+        [
+          "Master Data VAT Rules FE E2E",
+          "searches VAT rules by normalized text"
+        ],
+        [
+          "Master Data VAT Rules FE E2E",
+          "searches VAT rules by spaces"
+        ],
+        [
+          "Master Data VAT Rules FE E2E",
+          "sorts VAT rules by archived asc"
+        ],
+        [
+          "Master Data VAT Rules FE E2E",
+          "sorts VAT rules by archived desc"
+        ],
+        [
+          "Master Data VAT Rules FE E2E",
+          "sorts VAT rules by createdAt asc"
+        ],
+        [
+          "Master Data VAT Rules FE E2E",
+          "sorts VAT rules by createdAt desc"
+        ],
+        [
+          "Master Data VAT Rules FE E2E",
+          "sorts VAT rules by createdBy asc"
+        ],
+        [
+          "Master Data VAT Rules FE E2E",
+          "sorts VAT rules by createdBy desc"
+        ],
+        [
+          "Master Data VAT Rules FE E2E",
+          "sorts VAT rules by matchcode asc"
+        ],
+        [
+          "Master Data VAT Rules FE E2E",
+          "sorts VAT rules by matchcode desc"
+        ],
+        [
+          "Master Data VAT Rules FE E2E",
+          "sorts VAT rules by name asc"
+        ],
+        [
+          "Master Data VAT Rules FE E2E",
+          "sorts VAT rules by name desc"
+        ],
+        [
+          "Master Data VAT Rules FE E2E",
+          "sorts VAT rules by type asc"
+        ],
+        [
+          "Master Data VAT Rules FE E2E",
+          "sorts VAT rules by type desc"
+        ],
+        [
+          "Master Data VAT Rules FE E2E",
+          "sorts VAT rules by updatedAt asc"
+        ],
+        [
+          "Master Data VAT Rules FE E2E",
+          "sorts VAT rules by updatedAt desc"
+        ],
+        [
+          "Master Data VAT Rules FE E2E",
+          "sorts VAT rules by updatedBy asc"
+        ],
+        [
+          "Master Data VAT Rules FE E2E",
+          "sorts VAT rules by updatedBy desc"
+        ]
+      ]
+    },
+    {
+      "id": "w2-final-10",
+      "files": [
+        "e2e/master-data/business-entities/airlines.e2e.ts",
+        "e2e/master-data/business-entities/business-partner-accounts.e2e.ts",
+        "e2e/master-data/business-entities/business-partner-basic.e2e.ts",
+        "e2e/master-data/business-entities/business-partner-contacts.e2e.ts",
+        "e2e/master-data/business-entities/business-partner-documents.e2e.ts",
+        "e2e/master-data/business-entities/business-partner-employee-roles.e2e.ts",
+        "e2e/master-data/business-entities/business-partner-employees.e2e.ts",
+        "e2e/master-data/business-entities/business-partner-overview.e2e.ts",
+        "e2e/master-data/business-entities/business-partner-similar-banner.e2e.ts",
+        "e2e/master-data/business-entities/cargo-agent-accounts.e2e.ts",
+        "e2e/master-data/business-entities/cargo-agent-documents.e2e.ts",
+        "e2e/master-data/business-entities/cargo-agents-basic.e2e.ts",
+        "e2e/master-data/business-entities/cargo-agents.e2e.ts"
+      ],
+      "common_count": 30,
+      "case_ids": [
+        [
+          "Master Data Airlines FE E2E",
+          "archives an airline through FE controls"
+        ],
+        [
+          "Master Data Airlines FE E2E",
+          "creates an airline from the FE and verifies the created drawer HTML"
+        ],
+        [
+          "Master Data Airlines FE E2E",
+          "lists seeded airlines as rendered table HTML"
+        ],
+        [
+          "Master Data Airlines FE E2E",
+          "opens airline details"
+        ],
+        [
+          "Master Data Airlines FE E2E",
+          "sorts airlines by identity and audit columns in the rendered table"
+        ],
+        [
+          "Master Data Airlines FE E2E",
+          "unarchives an airline through FE controls"
+        ],
+        [
+          "Master Data Airlines FE E2E",
+          "updates an airline from the FE with autosave and verifies the drawer HTML"
+        ],
+        [
+          "Master Data Business Partner Accounts tab FE E2E",
+          "adds a minimal account line from the Accounts tab"
+        ],
+        [
+          "Master Data Business Partner Accounts tab FE E2E",
+          "autosaves debtor and creditor edits and renders the factoring checkbox from the Accounts tab"
+        ],
+        [
+          "Master Data Business Partner Accounts tab FE E2E",
+          "deletes an account line from the Accounts tab table"
+        ],
+        [
+          "Master Data Business Partner Accounts tab FE E2E",
+          "renders seeded bookkeeping mappings in the Accounts tab table"
+        ],
+        [
+          "Master Data Business Partner Accounts tab FE E2E",
+          "renders the seeded Accounts tab visual"
+        ],
+        [
+          "Master Data Business Partner Basic tab FE E2E",
+          "renders seeded Basic tab form values as HTML fields and text"
+        ],
+        [
+          "Master Data Business Partner Contacts tab FE E2E",
+          "adds an empty contact row to the Contacts table"
+        ],
+        [
+          "Master Data Business Partner Contacts tab FE E2E",
+          "renders Contacts tab rows with role, name, email, and phone as HTML"
+        ],
+        [
+          "Master Data Business Partner Documents tab FE E2E",
+          "renders the empty Documents state when the business partner has no DocuBox root folder"
+        ],
+        [
+          "Master Data Business Partner Employee Roles tab FE E2E",
+          "renders an empty Employee Roles table for a partner without scoped roles"
+        ],
+        [
+          "Master Data Business Partner Employees tab FE E2E",
+          "opens the Employees tab create drawer with employee form labels"
+        ],
+        [
+          "Master Data Business Partner Overview FE E2E",
+          "locks and unlocks Overview changes through the details drawer"
+        ],
+        [
+          "Master Data Business Partner Overview FE E2E",
+          "opens the details drawer on the Overview tab and renders seeded identifiers and address fields"
+        ],
+        [
+          "Master Data Business Partner Overview FE E2E",
+          "renders a different B/L address and autosaves Overview identifier edits through the UI"
+        ],
+        [
+          "Master Data Business Partner similar banner FE E2E",
+          "hides the similar-partners banner when no similar partners exist"
+        ],
+        [
+          "Master Data Business Partner similar banner FE E2E",
+          "keeps the full similar-partners banner on the other details tabs"
+        ],
+        [
+          "Master Data Business Partner similar banner FE E2E",
+          "opens a similar partner from the banner link"
+        ],
+        [
+          "Master Data Business Partner similar banner FE E2E",
+          "shows the full similar-partners banner on Overview and the Business Partner tab"
+        ],
+        [
+          "Master Data Cargo Agent Accounts tab FE E2E",
+          "adds and deletes a minimal account line from the Cargo Agent Accounts tab"
+        ],
+        [
+          "Master Data Cargo Agent Documents tab FE E2E",
+          "renders the empty Documents state from the Cargo Agents details modal"
+        ],
+        [
+          "Master Data Cargo Agents Basic tab FE E2E",
+          "renders cargo agent Basic tab values in the details modal as HTML fields and text"
+        ],
+        [
+          "Master Data Cargo Agents FE E2E",
+          "creates a cargo agent and verifies it from the list HTML"
+        ],
+        [
+          "Master Data Cargo Agents FE E2E",
+          "lists seeded cargo agents as rendered table rows"
+        ]
+      ]
+    },
+    {
+      "id": "w2-final-11",
+      "files": [
+        "e2e/master-data/business-entities/carriers.e2e.ts",
+        "e2e/master-data/business-entities/office-accounts.e2e.ts",
+        "e2e/master-data/business-entities/office-basic.e2e.ts",
+        "e2e/master-data/business-entities/office-contacts.e2e.ts",
+        "e2e/master-data/business-entities/office-overview.e2e.ts",
+        "e2e/master-data/business-entities/office.e2e.ts",
+        "e2e/master-data/business-entities/partner-networks.e2e.ts"
+      ],
+      "common_count": 28,
+      "case_ids": [
+        [
+          "Master Data Carriers FE E2E",
+          "archives a carrier through FE controls and verifies archived HTML state"
+        ],
+        [
+          "Master Data Carriers FE E2E",
+          "creates a carrier through FE controls and verifies it from the list HTML"
+        ],
+        [
+          "Master Data Carriers FE E2E",
+          "lists seeded carriers as rendered table rows"
+        ],
+        [
+          "Master Data Carriers FE E2E",
+          "sorts carriers by supported visible columns"
+        ],
+        [
+          "Master Data Carriers FE E2E",
+          "updates carrier fields through autosave and verifies the drawer HTML"
+        ],
+        [
+          "Master Data Office Accounts tab FE E2E",
+          "adds a minimal account line from the Office Accounts tab"
+        ],
+        [
+          "Master Data Office Accounts tab FE E2E",
+          "autosaves debtor and creditor edits from the Office Accounts tab"
+        ],
+        [
+          "Master Data Office Accounts tab FE E2E",
+          "deletes an account line from the Office Accounts tab table"
+        ],
+        [
+          "Master Data Office Accounts tab FE E2E",
+          "opens the Accounts tab from the Office details modal and renders seeded account HTML"
+        ],
+        [
+          "Master Data Office Basic tab FE E2E",
+          "renders Office Basic tab values in the details modal"
+        ],
+        [
+          "Master Data Office Basic tab FE E2E",
+          "updates Office Basic EORI from the FE and verifies the details modal HTML"
+        ],
+        [
+          "Master Data Office Basic tab FE E2E",
+          "updates Office Basic VAT from the FE and verifies the details modal HTML"
+        ],
+        [
+          "Master Data Office Contacts tab FE E2E",
+          "updates a contact name from the Office details Contacts tab"
+        ],
+        [
+          "Master Data Office Contacts tab FE E2E",
+          "adds a contact row from the Office details Contacts tab"
+        ],
+        [
+          "Master Data Office Contacts tab FE E2E",
+          "deletes a contact from the Office details Contacts tab"
+        ],
+        [
+          "Master Data Office Overview FE E2E",
+          "autosaves an Office Overview field update through FE controls and verifies the drawer HTML"
+        ],
+        [
+          "Master Data Office Overview FE E2E",
+          "locks and unlocks Office Overview changes through the details modal"
+        ],
+        [
+          "Master Data Office Overview FE E2E",
+          "opens an Office details modal from the list and renders Overview tab HTML"
+        ],
+        [
+          "Master Data Offices create FE E2E",
+          "creates an office and verifies it from the list HTML"
+        ],
+        [
+          "Master Data Offices FE E2E",
+          "filters archived offices without opening the details modal"
+        ],
+        [
+          "Master Data Offices FE E2E",
+          "filters offices by debtor and creditor IDs in the rendered table"
+        ],
+        [
+          "Master Data Offices FE E2E",
+          "lists seeded offices as rendered table rows"
+        ],
+        [
+          "Master Data Partner Networks FE E2E",
+          "creates a partner network from the FE and verifies the rendered HTML"
+        ],
+        [
+          "Master Data Partner Networks FE E2E",
+          "filters partner networks by archived status through the rendered table"
+        ],
+        [
+          "Master Data Partner Networks FE E2E",
+          "lists seeded partner networks as HTML rows"
+        ],
+        [
+          "Master Data Partner Networks FE E2E",
+          "opens seeded partner network details"
+        ],
+        [
+          "Master Data Partner Networks FE E2E",
+          "sorts partner networks by name and audit columns in the rendered table"
+        ],
+        [
+          "Master Data Partner Networks FE E2E",
+          "updates a partner network from the FE with autosave and verifies rendered HTML"
+        ]
+      ]
+    },
+    {
+      "id": "w2-final-12",
+      "files": [
+        "e2e/master-data/cargo/cargo-types.e2e.ts",
+        "e2e/master-data/cargo/hs-codes.e2e.ts",
+        "e2e/master-data/cargo/package-types.e2e.ts",
+        "e2e/master-data/domain-error-visibility.e2e.ts"
+      ],
+      "common_count": 15,
+      "case_ids": [
+        [
+          "Master Data Cargo Types FE E2E",
+          "keeps BE cargo type label search behavior available to FE flows"
+        ],
+        [
+          "Master Data Cargo Types FE E2E",
+          "loads and autosaves a cargo type translation"
+        ],
+        [
+          "Master Data Cargo Types FE E2E",
+          "sorts cargo types by identity, dimension, capacity, and audit columns"
+        ],
+        [
+          "Master Data Cargo Types FE E2E",
+          "surfaces duplicate cargo type name validation from the real BE"
+        ],
+        [
+          "Master Data Cargo Types FE E2E",
+          "updates a cargo type from the FE with autosave"
+        ],
+        [
+          "Master Data HS Codes FE E2E",
+          "adds an HS code and archives it through the FE"
+        ],
+        [
+          "Master Data HS Codes FE E2E",
+          "sorts HS codes by identity and audit columns"
+        ],
+        [
+          "Master Data HS Codes FE E2E",
+          "updates an HS code from the FE with autosave"
+        ],
+        [
+          "Master Data Package Types FE E2E",
+          "archives a package type through FE controls"
+        ],
+        [
+          "Master Data Package Types FE E2E",
+          "sorts package types by visible identity, dimension, and audit columns"
+        ],
+        [
+          "Master Data Package Types FE E2E",
+          "surfaces duplicate package type name validation in rendered FE errors"
+        ],
+        [
+          "Master Data Package Types FE E2E",
+          "unarchives a package type through FE controls"
+        ],
+        [
+          "Master Data Package Types FE E2E",
+          "updates a package type from the FE with autosave"
+        ],
+        [
+          "Domain error visibility FE E2E",
+          "shows a Business Partner field error when a duplicate match code is submitted"
+        ],
+        [
+          "Domain error visibility FE E2E",
+          "shows an HS Code field error when raw NAME_EXISTS is submitted"
+        ]
+      ]
+    },
+    {
+      "id": "w2-final-13",
+      "files": [
+        "e2e/master-data/locations/airports.e2e.ts"
+      ],
+      "common_count": 19,
+      "case_ids": [
+        [
+          "Master Data Airports FE E2E",
+          "creates an airport from the FE"
+        ],
+        [
+          "Master Data Airports FE E2E",
+          "keeps BE airport label search behavior available to FE flows"
+        ],
+        [
+          "Master Data Airports FE E2E",
+          "lists seeded airports"
+        ],
+        [
+          "Master Data Airports FE E2E",
+          "renders the empty airport create form"
+        ],
+        [
+          "Master Data Airports FE E2E",
+          "searches airports by diacritics through the search field"
+        ],
+        [
+          "Master Data Airports FE E2E",
+          "searches airports by IATA code"
+        ],
+        [
+          "Master Data Airports FE E2E",
+          "searches airports by match code"
+        ],
+        [
+          "Master Data Airports FE E2E",
+          "searches airports by normalized text"
+        ],
+        [
+          "Master Data Airports FE E2E",
+          "searches airports by spaces"
+        ],
+        [
+          "Master Data Airports FE E2E",
+          "sorts airports by city"
+        ],
+        [
+          "Master Data Airports FE E2E",
+          "sorts airports by createdAt"
+        ],
+        [
+          "Master Data Airports FE E2E",
+          "sorts airports by createdBy"
+        ],
+        [
+          "Master Data Airports FE E2E",
+          "sorts airports by iataCode"
+        ],
+        [
+          "Master Data Airports FE E2E",
+          "sorts airports by matchCode"
+        ],
+        [
+          "Master Data Airports FE E2E",
+          "sorts airports by name"
+        ],
+        [
+          "Master Data Airports FE E2E",
+          "sorts airports by updatedAt"
+        ],
+        [
+          "Master Data Airports FE E2E",
+          "sorts airports by updatedBy"
+        ],
+        [
+          "Master Data Airports FE E2E",
+          "surfaces duplicate match-code validation from the real BE"
+        ],
+        [
+          "Master Data Airports FE E2E",
+          "updates an airport from the FE with autosave"
+        ]
+      ]
+    },
+    {
+      "id": "w2-final-14",
+      "files": [
+        "e2e/master-data/locations/cities.e2e.ts"
+      ],
+      "common_count": 14,
+      "case_ids": [
+        [
+          "Master Data Cities FE E2E",
+          "adds a city and archives it through FE controls at the end"
+        ],
+        [
+          "Master Data Cities FE E2E",
+          "keeps BE city label search behavior available to FE flows"
+        ],
+        [
+          "Master Data Cities FE E2E",
+          "searches cities by diacritics and normalized text"
+        ],
+        [
+          "Master Data Cities FE E2E",
+          "searches cities by spaces and Munich normalization"
+        ],
+        [
+          "Master Data Cities FE E2E",
+          "sorts cities by countryCode"
+        ],
+        [
+          "Master Data Cities FE E2E",
+          "sorts cities by createdAt"
+        ],
+        [
+          "Master Data Cities FE E2E",
+          "sorts cities by createdBy"
+        ],
+        [
+          "Master Data Cities FE E2E",
+          "sorts cities by isoCode"
+        ],
+        [
+          "Master Data Cities FE E2E",
+          "sorts cities by name"
+        ],
+        [
+          "Master Data Cities FE E2E",
+          "sorts cities by stateCode"
+        ],
+        [
+          "Master Data Cities FE E2E",
+          "sorts cities by unlocode"
+        ],
+        [
+          "Master Data Cities FE E2E",
+          "sorts cities by updatedAt"
+        ],
+        [
+          "Master Data Cities FE E2E",
+          "sorts cities by updatedBy"
+        ],
+        [
+          "Master Data Cities FE E2E",
+          "updates a city from the FE with autosave"
+        ]
+      ]
+    },
+    {
+      "id": "w2-final-15",
+      "files": [
+        "e2e/master-data/locations/container-yards.e2e.ts"
+      ],
+      "common_count": 27,
+      "case_ids": [
+        [
+          "Master Data Container Yards FE E2E",
+          "autosaves clearing container yard shortName field"
+        ],
+        [
+          "Master Data Container Yards FE E2E",
+          "autosaves clearing container yard additionalInformation field"
+        ],
+        [
+          "Master Data Container Yards FE E2E",
+          "autosaves clearing container yard secondaryStreet field"
+        ],
+        [
+          "Master Data Container Yards FE E2E",
+          "autosaves clearing container yard district field"
+        ],
+        [
+          "Master Data Container Yards FE E2E",
+          "adds a container yard and archives it at the end"
+        ],
+        [
+          "Master Data Container Yards FE E2E",
+          "autosaves container yard additionalInformation field"
+        ],
+        [
+          "Master Data Container Yards FE E2E",
+          "autosaves container yard city field"
+        ],
+        [
+          "Master Data Container Yards FE E2E",
+          "autosaves container yard district field"
+        ],
+        [
+          "Master Data Container Yards FE E2E",
+          "autosaves container yard matchCode field"
+        ],
+        [
+          "Master Data Container Yards FE E2E",
+          "autosaves container yard name field"
+        ],
+        [
+          "Master Data Container Yards FE E2E",
+          "autosaves container yard secondaryStreet field"
+        ],
+        [
+          "Master Data Container Yards FE E2E",
+          "autosaves container yard shortName field"
+        ],
+        [
+          "Master Data Container Yards FE E2E",
+          "autosaves container yard street field"
+        ],
+        [
+          "Master Data Container Yards FE E2E",
+          "autosaves container yard zip field"
+        ],
+        [
+          "Master Data Container Yards FE E2E",
+          "autosaves several container yard fields in a row"
+        ],
+        [
+          "Master Data Container Yards FE E2E",
+          "filters archived container yards through the rendered table"
+        ],
+        [
+          "Master Data Container Yards FE E2E",
+          "lists seeded container yards"
+        ],
+        [
+          "Master Data Container Yards FE E2E",
+          "searches container yards by diacritics, normalized text, and spaces"
+        ],
+        [
+          "Master Data Container Yards FE E2E",
+          "searches container yards by match code and short name"
+        ],
+        [
+          "Master Data Container Yards FE E2E",
+          "sorts container yards by address"
+        ],
+        [
+          "Master Data Container Yards FE E2E",
+          "sorts container yards by createdAt"
+        ],
+        [
+          "Master Data Container Yards FE E2E",
+          "sorts container yards by createdBy"
+        ],
+        [
+          "Master Data Container Yards FE E2E",
+          "sorts container yards by matchCode"
+        ],
+        [
+          "Master Data Container Yards FE E2E",
+          "sorts container yards by name"
+        ],
+        [
+          "Master Data Container Yards FE E2E",
+          "sorts container yards by shortName"
+        ],
+        [
+          "Master Data Container Yards FE E2E",
+          "sorts container yards by updatedAt"
+        ],
+        [
+          "Master Data Container Yards FE E2E",
+          "sorts container yards by updatedBy"
+        ]
+      ]
+    },
+    {
+      "id": "w2-final-16",
+      "files": [
+        "e2e/master-data/locations/countries.e2e.ts",
+        "e2e/master-data/locations/depots.e2e.ts",
+        "e2e/master-data/locations/ports.e2e.ts"
+      ],
+      "common_count": 26,
+      "case_ids": [
+        [
+          "Master Data Countries FE E2E",
+          "lists seeded countries in the canvas table"
+        ],
+        [
+          "Master Data Countries FE E2E",
+          "searches countries by diacritics, normalized text, spaces, ISO2, and ISO3"
+        ],
+        [
+          "Master Data Countries FE E2E",
+          "sorts countries by audit columns"
+        ],
+        [
+          "Master Data Countries FE E2E",
+          "sorts countries by identity columns"
+        ],
+        [
+          "Master Data Depots FE E2E",
+          "autosaves clearing depot shortName field"
+        ],
+        [
+          "Master Data Depots FE E2E",
+          "autosaves clearing depot additionalInformation field"
+        ],
+        [
+          "Master Data Depots FE E2E",
+          "autosaves clearing depot district field"
+        ],
+        [
+          "Master Data Depots FE E2E",
+          "autosaves depot additionalInformation field"
+        ],
+        [
+          "Master Data Depots FE E2E",
+          "autosaves depot district field"
+        ],
+        [
+          "Master Data Depots FE E2E",
+          "autosaves depot matchCode field"
+        ],
+        [
+          "Master Data Depots FE E2E",
+          "autosaves depot name field"
+        ],
+        [
+          "Master Data Depots FE E2E",
+          "autosaves depot shortName field"
+        ],
+        [
+          "Master Data Depots FE E2E",
+          "autosaves depot street field"
+        ],
+        [
+          "Master Data Depots FE E2E",
+          "autosaves depot zip field"
+        ],
+        [
+          "Master Data Depots FE E2E",
+          "autosaves several depot fields in a row"
+        ],
+        [
+          "Master Data Depots FE E2E",
+          "sorts depots by identity, address, and audit columns"
+        ],
+        [
+          "Master Data Ports FE E2E",
+          "autosaves clearing port district"
+        ],
+        [
+          "Master Data Ports FE E2E",
+          "adds a new port and renders it in the FE list"
+        ],
+        [
+          "Master Data Ports FE E2E",
+          "autosaves port city field"
+        ],
+        [
+          "Master Data Ports FE E2E",
+          "autosaves port district field"
+        ],
+        [
+          "Master Data Ports FE E2E",
+          "autosaves port matchCode field"
+        ],
+        [
+          "Master Data Ports FE E2E",
+          "autosaves port name field"
+        ],
+        [
+          "Master Data Ports FE E2E",
+          "autosaves port street field"
+        ],
+        [
+          "Master Data Ports FE E2E",
+          "autosaves port zip field"
+        ],
+        [
+          "Master Data Ports FE E2E",
+          "autosaves several port fields in a row"
+        ],
+        [
+          "Master Data Ports FE E2E",
+          "sorts ports by identity and audit columns"
+        ]
+      ]
+    },
+    {
+      "id": "w2-final-17",
+      "files": [
+        "e2e/master-data/locations/terminals.e2e.ts",
+        "e2e/master-data/locations/warehouses.e2e.ts"
+      ],
+      "common_count": 29,
+      "case_ids": [
+        [
+          "Master Data Terminals FE E2E",
+          "autosaves clearing terminal shortName field"
+        ],
+        [
+          "Master Data Terminals FE E2E",
+          "autosaves clearing terminal additionalInformation field"
+        ],
+        [
+          "Master Data Terminals FE E2E",
+          "autosaves clearing terminal secondaryStreet field"
+        ],
+        [
+          "Master Data Terminals FE E2E",
+          "autosaves clearing terminal district field"
+        ],
+        [
+          "Master Data Terminals FE E2E",
+          "adds a new terminal and archives it at the end"
+        ],
+        [
+          "Master Data Terminals FE E2E",
+          "autosaves several terminal fields in a row"
+        ],
+        [
+          "Master Data Terminals FE E2E",
+          "autosaves terminal additionalInformation field"
+        ],
+        [
+          "Master Data Terminals FE E2E",
+          "autosaves terminal district field"
+        ],
+        [
+          "Master Data Terminals FE E2E",
+          "autosaves terminal matchCode field"
+        ],
+        [
+          "Master Data Terminals FE E2E",
+          "autosaves terminal name field"
+        ],
+        [
+          "Master Data Terminals FE E2E",
+          "autosaves terminal secondaryStreet field"
+        ],
+        [
+          "Master Data Terminals FE E2E",
+          "autosaves terminal shortName field"
+        ],
+        [
+          "Master Data Terminals FE E2E",
+          "autosaves terminal street field"
+        ],
+        [
+          "Master Data Terminals FE E2E",
+          "autosaves terminal zip field"
+        ],
+        [
+          "Master Data Terminals FE E2E",
+          "sorts terminals by audit columns"
+        ],
+        [
+          "Master Data Terminals FE E2E",
+          "sorts terminals by identity columns"
+        ],
+        [
+          "Master Data Warehouses FE E2E",
+          "autosaves clearing warehouse shortName field"
+        ],
+        [
+          "Master Data Warehouses FE E2E",
+          "autosaves clearing warehouse additionalInformation field"
+        ],
+        [
+          "Master Data Warehouses FE E2E",
+          "autosaves clearing warehouse district field"
+        ],
+        [
+          "Master Data Warehouses FE E2E",
+          "autosaves warehouse additionalInformation field"
+        ],
+        [
+          "Master Data Warehouses FE E2E",
+          "autosaves warehouse district field"
+        ],
+        [
+          "Master Data Warehouses FE E2E",
+          "autosaves warehouse matchCode field"
+        ],
+        [
+          "Master Data Warehouses FE E2E",
+          "autosaves warehouse name field"
+        ],
+        [
+          "Master Data Warehouses FE E2E",
+          "autosaves warehouse shortName field"
+        ],
+        [
+          "Master Data Warehouses FE E2E",
+          "autosaves warehouse street field"
+        ],
+        [
+          "Master Data Warehouses FE E2E",
+          "autosaves warehouse zip field"
+        ],
+        [
+          "Master Data Warehouses FE E2E",
+          "creates a warehouse and archives it through FE controls at the end"
+        ],
+        [
+          "Master Data Warehouses FE E2E",
+          "sorts warehouses by audit columns"
+        ],
+        [
+          "Master Data Warehouses FE E2E",
+          "sorts warehouses by identity and address columns"
+        ]
+      ]
+    },
+    {
+      "id": "w2-final-18",
+      "files": [
+        "e2e/master-data/logistics/awb-stock.e2e.ts",
+        "e2e/master-data/logistics/checklist-items.e2e.ts",
+        "e2e/master-data/logistics/checklist-templates.e2e.ts",
+        "e2e/master-data/logistics/commercial-party-template-duplicates.e2e.ts",
+        "e2e/master-data/logistics/commercial-party-templates.e2e.ts",
+        "e2e/master-data/logistics/departments.e2e.ts"
+      ],
+      "common_count": 27,
+      "case_ids": [
+        [
+          "Master Data AWB Stock FE E2E",
+          "archives and unarchives AWB stock through FE controls"
+        ],
+        [
+          "Master Data AWB Stock FE E2E",
+          "updates AWB stock comments through autosave"
+        ],
+        [
+          "Master Data Checklist Items FE E2E",
+          "archives checklist items through FE controls"
+        ],
+        [
+          "Master Data Checklist Items FE E2E",
+          "creates a checklist item from the FE and shows the created details HTML"
+        ],
+        [
+          "Master Data Checklist Items FE E2E",
+          "lists seeded checklist items as HTML rows and opens checklist item details"
+        ],
+        [
+          "Master Data Checklist Items FE E2E",
+          "sorts checklist items by name and audit columns in the rendered table"
+        ],
+        [
+          "Master Data Checklist Items FE E2E",
+          "surfaces duplicate checklist item name validation in rendered FE errors"
+        ],
+        [
+          "Master Data Checklist Items FE E2E",
+          "unarchives checklist items through FE controls"
+        ],
+        [
+          "Master Data Checklist Items FE E2E",
+          "updates a checklist item from the FE with autosave and shows the new HTML value"
+        ],
+        [
+          "Master Data Checklist Templates FE E2E",
+          "archives checklist templates through FE controls"
+        ],
+        [
+          "Master Data Checklist Templates FE E2E",
+          "creates a checklist template from the FE and shows the created details HTML"
+        ],
+        [
+          "Master Data Checklist Templates FE E2E",
+          "lists seeded checklist templates as HTML rows and opens template details"
+        ],
+        [
+          "Master Data Checklist Templates FE E2E",
+          "sorts checklist templates by name and audit columns"
+        ],
+        [
+          "Master Data Checklist Templates FE E2E",
+          "surfaces duplicate template name validation in rendered FE errors"
+        ],
+        [
+          "Master Data Checklist Templates FE E2E",
+          "unarchives checklist templates through FE controls"
+        ],
+        [
+          "Master Data Checklist Templates FE E2E",
+          "updates a checklist template name with autosave and shows the new HTML value"
+        ],
+        [
+          "Repeated commercial party template entries",
+          "adds another role and displays duplicate and document party rows in section order"
+        ],
+        [
+          "Repeated commercial party template entries",
+          "applies missing occurrences to positions without duplicating Customer or growing on reapply"
+        ],
+        [
+          "Repeated commercial party template entries",
+          "applies missing occurrences to quotes without duplicating Customer or growing on reapply"
+        ],
+        [
+          "Repeated commercial party template entries",
+          "rejects Customer in templates"
+        ],
+        [
+          "Master Data Commercial Party Templates FE E2E",
+          "updates a commercial party template name from the FE autosave form"
+        ],
+        [
+          "Master Data Departments",
+          "shows a case-insensitive duplicate error on update without changing existing data"
+        ],
+        [
+          "Master Data Departments",
+          "autosaves sequential name edits and retains the last value after reload"
+        ],
+        [
+          "Master Data Departments",
+          "archives through confirmation and persists the new state"
+        ],
+        [
+          "Master Data Departments",
+          "unarchives through confirmation and persists the new state"
+        ],
+        [
+          "Master Data Departments",
+          "cancels archive confirmation without changing the department"
+        ],
+        [
+          "Master Data Departments",
+          "assigned employees",
+          "renders the archive rejection for a department with assigned employees"
+        ]
+      ]
+    },
+    {
+      "id": "w2-final-19",
+      "files": [
+        "e2e/master-data/logistics/docubox-templates.e2e.ts",
+        "e2e/master-data/logistics/document-templates.e2e.ts",
+        "e2e/master-data/logistics/integration-channels.e2e.ts",
+        "e2e/master-data/logistics/remark-templates.e2e.ts",
+        "e2e/master-data/logistics/route-templates.e2e.ts",
+        "e2e/master-data/logistics/shipping-events.e2e.ts",
+        "e2e/master-data/logistics/teams-persistent-filters.e2e.ts",
+        "e2e/master-data/logistics/teams.e2e.ts",
+        "e2e/master-data/navigation-history.e2e.ts"
+      ],
+      "common_count": 30,
+      "case_ids": [
+        [
+          "Master Data DocuBox Templates FE E2E",
+          "creates a DocuBox template with a root folder from the FE"
+        ],
+        [
+          "Master Data DocuBox Templates FE E2E",
+          "lists seeded DocuBox templates as HTML rows and opens the nested folder details"
+        ],
+        [
+          "Master Data DocuBox Templates FE E2E",
+          "shows archived DocuBox templates only when the archived filter is enabled"
+        ],
+        [
+          "Master Data DocuBox Templates FE E2E",
+          "sorts DocuBox templates by visible identity and audit columns"
+        ],
+        [
+          "Master Data DocuBox Templates FE E2E",
+          "surfaces duplicate template name validation in the FE"
+        ],
+        [
+          "Master Data DocuBox Templates FE E2E",
+          "updates a DocuBox template name from the FE autosave form"
+        ],
+        [
+          "Master Data Document Templates FE E2E",
+          "archives a document template from the FE and shows it in archived results"
+        ],
+        [
+          "Master Data Document Templates FE E2E",
+          "filters archived document templates through rendered table rows"
+        ],
+        [
+          "Master Data Document Templates FE E2E",
+          "lists seeded document templates as HTML rows"
+        ],
+        [
+          "Master Data Document Templates FE E2E",
+          "sorts document templates by name and audit columns in the rendered table"
+        ],
+        [
+          "Master Data Document Templates FE E2E",
+          "updates a document template name through the FE autosave form"
+        ],
+        [
+          "Master Data Integration Channels FE E2E",
+          "archives integration channels through FE controls"
+        ],
+        [
+          "Master Data Integration Channels FE E2E",
+          "filters integration channels by archived status through rendered rows"
+        ],
+        [
+          "Master Data Integration Channels FE E2E",
+          "lists seeded integration channels in the canvas table and opens integration channel details"
+        ],
+        [
+          "Master Data Integration Channels FE E2E",
+          "searches integration channels by diacritics, normalized text, and spaces"
+        ],
+        [
+          "Master Data Integration Channels FE E2E",
+          "sorts integration channels by name, last-polled, and created date in the rendered table"
+        ],
+        [
+          "Master Data Integration Channels FE E2E",
+          "sorts integration channels by updated date in the rendered table"
+        ],
+        [
+          "Master Data Integration Channels FE E2E",
+          "updates an integration channel name with autosave and shows the new HTML value"
+        ],
+        [
+          "Master Data Remark Templates FE E2E",
+          "filters remark templates by archived status through the rendered table"
+        ],
+        [
+          "Master Data Remark Templates FE E2E",
+          "lists seeded remark templates as HTML rows"
+        ],
+        [
+          "Master Data Remark Templates FE E2E",
+          "sorts remark templates by visible identity and audit columns"
+        ],
+        [
+          "Master Data Remark Templates FE E2E",
+          "updates a remark template name with autosave and shows the new HTML value"
+        ],
+        [
+          "Master Data Route Templates FE E2E",
+          "uses explicit URL filters instead of previously saved filters"
+        ],
+        [
+          "Master Data Route Templates FE E2E",
+          "restores page filters from local storage when the URL has no filters"
+        ],
+        [
+          "Master Data Route Templates FE E2E",
+          "updates a route template name from the FE autosave form"
+        ],
+        [
+          "Master Data Shipping Events FE E2E",
+          "sorts shipping events by visible sortable columns"
+        ],
+        [
+          "Master Data Teams persistent filters FE E2E",
+          "does not navigate back to the list after opening an action drawer"
+        ],
+        [
+          "Master Data Teams FE E2E",
+          "lists seeded teams as HTML rows and opens team details with members"
+        ],
+        [
+          "Master Data Teams FE E2E",
+          "sorts teams by name and audit columns in the rendered table"
+        ],
+        [
+          "Master Data navigation history FE E2E",
+          "tracks affected master data details in routing history"
+        ]
+      ]
+    },
+    {
+      "id": "w2-final-20",
+      "files": [
+        "e2e/platform/navigation.e2e.ts",
+        "e2e/projects/projects.e2e.ts",
+        "e2e/todos/todos.e2e.ts"
+      ],
+      "common_count": 6,
+      "case_ids": [
+        [
+          "Platform navigation FE E2E",
+          "redirects the platform root to the default logistics page"
+        ],
+        [
+          "Platform navigation FE E2E",
+          "switches from Finances back to filtered Positions without leaving the previous module rendered"
+        ],
+        [
+          "Platform navigation FE E2E",
+          "renders the operational calendar from its direct route"
+        ],
+        [
+          "Projects FE E2E",
+          "allows a read-only Project user to view Shipments and Analytics without create actions"
+        ],
+        [
+          "Projects FE E2E",
+          "opens a connected packing list position in a new tab"
+        ],
+        [
+          "To-Dos FE E2E",
+          "opens To-Dos from the due-date ordered URL"
+        ]
+      ]
+    }
+  ]
+}
