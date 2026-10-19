@@ -1,0 +1,121 @@
+{
+  "manifest_sha256": "542d479b709249d072e3b57c1324c894c4378fc5373892ae64c0687486f2ae19",
+  "manifest_read_from": "/private/tmp/lp-tos-f9f-batch16-fx (TOS f9fde4aa0d, e2e tree unchanged)",
+  "recorded_utc": "2026-10-19T04:02:50+00:00",
+  "ledger_sha256": "3d1de5a08cf4add614432f30ea316d97472ffe42ea73d00a7e775655aef09016",
+  "criteria": "Final frozen W2 whole-file common batch w2-final-12",
+  "files": [
+    "e2e/master-data/cargo/cargo-types.e2e.ts",
+    "e2e/master-data/cargo/hs-codes.e2e.ts",
+    "e2e/master-data/cargo/package-types.e2e.ts",
+    "e2e/master-data/domain-error-visibility.e2e.ts"
+  ],
+  "cases": [
+    {
+      "file": "e2e/master-data/cargo/cargo-types.e2e.ts",
+      "titlePath": [
+        "Master Data Cargo Types FE E2E",
+        "keeps BE cargo type label search behavior available to FE flows"
+      ]
+    },
+    {
+      "file": "e2e/master-data/cargo/cargo-types.e2e.ts",
+      "titlePath": [
+        "Master Data Cargo Types FE E2E",
+        "loads and autosaves a cargo type translation"
+      ]
+    },
+    {
+      "file": "e2e/master-data/cargo/cargo-types.e2e.ts",
+      "titlePath": [
+        "Master Data Cargo Types FE E2E",
+        "sorts cargo types by identity, dimension, capacity, and audit columns"
+      ]
+    },
+    {
+      "file": "e2e/master-data/cargo/cargo-types.e2e.ts",
+      "titlePath": [
+        "Master Data Cargo Types FE E2E",
+        "surfaces duplicate cargo type name validation from the real BE"
+      ]
+    },
+    {
+      "file": "e2e/master-data/cargo/cargo-types.e2e.ts",
+      "titlePath": [
+        "Master Data Cargo Types FE E2E",
+        "updates a cargo type from the FE with autosave"
+      ]
+    },
+    {
+      "file": "e2e/master-data/cargo/hs-codes.e2e.ts",
+      "titlePath": [
+        "Master Data HS Codes FE E2E",
+        "adds an HS code and archives it through the FE"
+      ]
+    },
+    {
+      "file": "e2e/master-data/cargo/hs-codes.e2e.ts",
+      "titlePath": [
+        "Master Data HS Codes FE E2E",
+        "sorts HS codes by identity and audit columns"
+      ]
+    },
+    {
+      "file": "e2e/master-data/cargo/hs-codes.e2e.ts",
+      "titlePath": [
+        "Master Data HS Codes FE E2E",
+        "updates an HS code from the FE with autosave"
+      ]
+    },
+    {
+      "file": "e2e/master-data/cargo/package-types.e2e.ts",
+      "titlePath": [
+        "Master Data Package Types FE E2E",
+        "archives a package type through FE controls"
+      ]
+    },
+    {
+      "file": "e2e/master-data/cargo/package-types.e2e.ts",
+      "titlePath": [
+        "Master Data Package Types FE E2E",
+        "sorts package types by visible identity, dimension, and audit columns"
+      ]
+    },
+    {
+      "file": "e2e/master-data/cargo/package-types.e2e.ts",
+      "titlePath": [
+        "Master Data Package Types FE E2E",
+        "surfaces duplicate package type name validation in rendered FE errors"
+      ]
+    },
+    {
+      "file": "e2e/master-data/cargo/package-types.e2e.ts",
+      "titlePath": [
+        "Master Data Package Types FE E2E",
+        "unarchives a package type through FE controls"
+      ]
+    },
+    {
+      "file": "e2e/master-data/cargo/package-types.e2e.ts",
+      "titlePath": [
+        "Master Data Package Types FE E2E",
+        "updates a package type from the FE with autosave"
+      ]
+    },
+    {
+      "file": "e2e/master-data/domain-error-visibility.e2e.ts",
+      "titlePath": [
+        "Domain error visibility FE E2E",
+        "shows a Business Partner field error when a duplicate match code is submitted"
+      ]
+    },
+    {
+      "file": "e2e/master-data/domain-error-visibility.e2e.ts",
+      "titlePath": [
+        "Domain error visibility FE E2E",
+        "shows an HS Code field error when raw NAME_EXISTS is submitted"
+      ]
+    }
+  ],
+  "native_only_excluded": 0
+}

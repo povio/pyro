@@ -23,7 +23,7 @@
       "sha256": "42e9b3dcafb44e7180fe038e9368f421e4bf0beb784163397b92fb91bcfc8a58"
     }
   },
-  "final_run_status": "frozen; exact signed builds preparing; case results remain not_run until execution",
+  "final_run_status": "completed:729 passed,13 failed;0 skipped/retries; all742 identities accounted; not green",
   "policy": "whole files/disjoint; no silent excludes/skips/retries; nativeOnly tracked separately; legitimate TOS fixes separately reviewed; new UTC template rebuild required",
   "freeze_utc": "2026-10-19T04:02:01.695924+00:00",
   "production_equivalent_tested_engine": "7f7bd5a91660c9100a6cff7dc1b606141a9e2f01",

@@ -1,0 +1,287 @@
+[
+  {
+    "file": "e2e/master-data/domain-error-visibility.e2e.ts",
+    "titlePath": [
+      "Domain error visibility FE E2E",
+      "shows a Business Partner field error when a duplicate match code is submitted"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/domain-error-visibility.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1274,
+        "startTime": "2026-10-19T04:22:19.468Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/domain-error-visibility.e2e.ts",
+    "titlePath": [
+      "Domain error visibility FE E2E",
+      "shows an HS Code field error when raw NAME_EXISTS is submitted"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/domain-error-visibility.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 773,
+        "startTime": "2026-10-19T04:22:21.425Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/cargo/cargo-types.e2e.ts",
+    "titlePath": [
+      "Master Data Cargo Types FE E2E",
+      "sorts cargo types by identity, dimension, capacity, and audit columns"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/cargo/cargo-types.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1511,
+        "startTime": "2026-10-19T04:22:22.383Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/cargo/cargo-types.e2e.ts",
+    "titlePath": [
+      "Master Data Cargo Types FE E2E",
+      "updates a cargo type from the FE with autosave"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/cargo/cargo-types.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 713,
+        "startTime": "2026-10-19T04:22:23.981Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/cargo/cargo-types.e2e.ts",
+    "titlePath": [
+      "Master Data Cargo Types FE E2E",
+      "loads and autosaves a cargo type translation"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/cargo/cargo-types.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 567,
+        "startTime": "2026-10-19T04:22:24.697Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/cargo/cargo-types.e2e.ts",
+    "titlePath": [
+      "Master Data Cargo Types FE E2E",
+      "surfaces duplicate cargo type name validation from the real BE"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/cargo/cargo-types.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 3,
+        "startTime": "2026-10-19T04:22:25.266Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/cargo/cargo-types.e2e.ts",
+    "titlePath": [
+      "Master Data Cargo Types FE E2E",
+      "keeps BE cargo type label search behavior available to FE flows"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/cargo/cargo-types.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 9,
+        "startTime": "2026-10-19T04:22:25.272Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/cargo/hs-codes.e2e.ts",
+    "titlePath": [
+      "Master Data HS Codes FE E2E",
+      "sorts HS codes by identity and audit columns"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/cargo/hs-codes.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1096,
+        "startTime": "2026-10-19T04:22:25.467Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/cargo/hs-codes.e2e.ts",
+    "titlePath": [
+      "Master Data HS Codes FE E2E",
+      "adds an HS code and archives it through the FE"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/cargo/hs-codes.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 741,
+        "startTime": "2026-10-19T04:22:26.649Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/cargo/hs-codes.e2e.ts",
+    "titlePath": [
+      "Master Data HS Codes FE E2E",
+      "updates an HS code from the FE with autosave"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/cargo/hs-codes.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 728,
+        "startTime": "2026-10-19T04:22:27.393Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/cargo/package-types.e2e.ts",
+    "titlePath": [
+      "Master Data Package Types FE E2E",
+      "sorts package types by visible identity, dimension, and audit columns"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/cargo/package-types.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1241,
+        "startTime": "2026-10-19T04:22:28.315Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/cargo/package-types.e2e.ts",
+    "titlePath": [
+      "Master Data Package Types FE E2E",
+      "updates a package type from the FE with autosave"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/cargo/package-types.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 665,
+        "startTime": "2026-10-19T04:22:29.638Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/cargo/package-types.e2e.ts",
+    "titlePath": [
+      "Master Data Package Types FE E2E",
+      "surfaces duplicate package type name validation in rendered FE errors"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/cargo/package-types.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 515,
+        "startTime": "2026-10-19T04:22:30.306Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/cargo/package-types.e2e.ts",
+    "titlePath": [
+      "Master Data Package Types FE E2E",
+      "archives a package type through FE controls"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/cargo/package-types.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 691,
+        "startTime": "2026-10-19T04:22:30.824Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/cargo/package-types.e2e.ts",
+    "titlePath": [
+      "Master Data Package Types FE E2E",
+      "unarchives a package type through FE controls"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/cargo/package-types.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 728,
+        "startTime": "2026-10-19T04:22:31.518Z",
+        "error_count": 0
+      }
+    ]
+  }
+]

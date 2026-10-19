@@ -1,0 +1,516 @@
+[
+  {
+    "file": "e2e/master-data/logistics/checklist-templates.e2e.ts",
+    "titlePath": [
+      "Master Data Checklist Templates FE E2E",
+      "lists seeded checklist templates as HTML rows and opens template details"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/checklist-templates.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 726,
+        "startTime": "2026-10-19T04:24:07.902Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/checklist-templates.e2e.ts",
+    "titlePath": [
+      "Master Data Checklist Templates FE E2E",
+      "sorts checklist templates by name and audit columns"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/checklist-templates.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 664,
+        "startTime": "2026-10-19T04:24:09.333Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/checklist-templates.e2e.ts",
+    "titlePath": [
+      "Master Data Checklist Templates FE E2E",
+      "creates a checklist template from the FE and shows the created details HTML"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/checklist-templates.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 662,
+        "startTime": "2026-10-19T04:24:10.000Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/checklist-templates.e2e.ts",
+    "titlePath": [
+      "Master Data Checklist Templates FE E2E",
+      "updates a checklist template name with autosave and shows the new HTML value"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/checklist-templates.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 556,
+        "startTime": "2026-10-19T04:24:10.665Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/checklist-templates.e2e.ts",
+    "titlePath": [
+      "Master Data Checklist Templates FE E2E",
+      "surfaces duplicate template name validation in rendered FE errors"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/checklist-templates.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 499,
+        "startTime": "2026-10-19T04:24:11.224Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/checklist-templates.e2e.ts",
+    "titlePath": [
+      "Master Data Checklist Templates FE E2E",
+      "archives checklist templates through FE controls"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/checklist-templates.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 674,
+        "startTime": "2026-10-19T04:24:11.725Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/checklist-templates.e2e.ts",
+    "titlePath": [
+      "Master Data Checklist Templates FE E2E",
+      "unarchives checklist templates through FE controls"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/checklist-templates.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 704,
+        "startTime": "2026-10-19T04:24:12.403Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/commercial-party-template-duplicates.e2e.ts",
+    "titlePath": [
+      "Repeated commercial party template entries",
+      "adds another role and displays duplicate and document party rows in section order"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/commercial-party-template-duplicates.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1750,
+        "startTime": "2026-10-19T04:24:13.306Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/commercial-party-template-duplicates.e2e.ts",
+    "titlePath": [
+      "Repeated commercial party template entries",
+      "applies missing occurrences to positions without duplicating Customer or growing on reapply"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/commercial-party-template-duplicates.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1916,
+        "startTime": "2026-10-19T04:24:15.097Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/commercial-party-template-duplicates.e2e.ts",
+    "titlePath": [
+      "Repeated commercial party template entries",
+      "applies missing occurrences to quotes without duplicating Customer or growing on reapply"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/commercial-party-template-duplicates.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1262,
+        "startTime": "2026-10-19T04:24:17.016Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/commercial-party-template-duplicates.e2e.ts",
+    "titlePath": [
+      "Repeated commercial party template entries",
+      "rejects Customer in templates"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/commercial-party-template-duplicates.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 13,
+        "startTime": "2026-10-19T04:24:18.281Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/checklist-items.e2e.ts",
+    "titlePath": [
+      "Master Data Checklist Items FE E2E",
+      "lists seeded checklist items as HTML rows and opens checklist item details"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/checklist-items.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 791,
+        "startTime": "2026-10-19T04:24:18.480Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/checklist-items.e2e.ts",
+    "titlePath": [
+      "Master Data Checklist Items FE E2E",
+      "sorts checklist items by name and audit columns in the rendered table"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/checklist-items.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 779,
+        "startTime": "2026-10-19T04:24:19.359Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/checklist-items.e2e.ts",
+    "titlePath": [
+      "Master Data Checklist Items FE E2E",
+      "creates a checklist item from the FE and shows the created details HTML"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/checklist-items.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 946,
+        "startTime": "2026-10-19T04:24:20.141Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/checklist-items.e2e.ts",
+    "titlePath": [
+      "Master Data Checklist Items FE E2E",
+      "updates a checklist item from the FE with autosave and shows the new HTML value"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/checklist-items.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 746,
+        "startTime": "2026-10-19T04:24:21.092Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/checklist-items.e2e.ts",
+    "titlePath": [
+      "Master Data Checklist Items FE E2E",
+      "surfaces duplicate checklist item name validation in rendered FE errors"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/checklist-items.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 729,
+        "startTime": "2026-10-19T04:24:21.841Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/checklist-items.e2e.ts",
+    "titlePath": [
+      "Master Data Checklist Items FE E2E",
+      "archives checklist items through FE controls"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/checklist-items.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 875,
+        "startTime": "2026-10-19T04:24:22.572Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/checklist-items.e2e.ts",
+    "titlePath": [
+      "Master Data Checklist Items FE E2E",
+      "unarchives checklist items through FE controls"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/checklist-items.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 742,
+        "startTime": "2026-10-19T04:24:23.450Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/commercial-party-templates.e2e.ts",
+    "titlePath": [
+      "Master Data Commercial Party Templates FE E2E",
+      "updates a commercial party template name from the FE autosave form"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/commercial-party-templates.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 793,
+        "startTime": "2026-10-19T04:24:24.392Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/departments.e2e.ts",
+    "titlePath": [
+      "Master Data Departments",
+      "shows a case-insensitive duplicate error on update without changing existing data"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/departments.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 797,
+        "startTime": "2026-10-19T04:24:25.459Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/departments.e2e.ts",
+    "titlePath": [
+      "Master Data Departments",
+      "autosaves sequential name edits and retains the last value after reload"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/departments.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1237,
+        "startTime": "2026-10-19T04:24:26.471Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/departments.e2e.ts",
+    "titlePath": [
+      "Master Data Departments",
+      "archives through confirmation and persists the new state"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/departments.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1259,
+        "startTime": "2026-10-19T04:24:27.714Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/departments.e2e.ts",
+    "titlePath": [
+      "Master Data Departments",
+      "unarchives through confirmation and persists the new state"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/departments.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 938,
+        "startTime": "2026-10-19T04:24:28.979Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/departments.e2e.ts",
+    "titlePath": [
+      "Master Data Departments",
+      "cancels archive confirmation without changing the department"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/departments.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 773,
+        "startTime": "2026-10-19T04:24:29.922Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/departments.e2e.ts",
+    "titlePath": [
+      "Master Data Departments",
+      "assigned employees",
+      "renders the archive rejection for a department with assigned employees"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/departments.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 747,
+        "startTime": "2026-10-19T04:24:30.702Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/awb-stock.e2e.ts",
+    "titlePath": [
+      "Master Data AWB Stock FE E2E",
+      "updates AWB stock comments through autosave"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/awb-stock.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 183,
+        "startTime": "2026-10-19T04:24:31.648Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/awb-stock.e2e.ts",
+    "titlePath": [
+      "Master Data AWB Stock FE E2E",
+      "archives and unarchives AWB stock through FE controls"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/awb-stock.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 216,
+        "startTime": "2026-10-19T04:24:32.483Z",
+        "error_count": 0
+      }
+    ]
+  }
+]

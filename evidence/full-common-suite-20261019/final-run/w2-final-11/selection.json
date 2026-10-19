@@ -1,0 +1,215 @@
+{
+  "manifest_sha256": "542d479b709249d072e3b57c1324c894c4378fc5373892ae64c0687486f2ae19",
+  "manifest_read_from": "/private/tmp/lp-tos-f9f-batch16-fx (TOS f9fde4aa0d, e2e tree unchanged)",
+  "recorded_utc": "2026-10-19T04:02:50+00:00",
+  "ledger_sha256": "3d1de5a08cf4add614432f30ea316d97472ffe42ea73d00a7e775655aef09016",
+  "criteria": "Final frozen W2 whole-file common batch w2-final-11",
+  "files": [
+    "e2e/master-data/business-entities/carriers.e2e.ts",
+    "e2e/master-data/business-entities/office-accounts.e2e.ts",
+    "e2e/master-data/business-entities/office-basic.e2e.ts",
+    "e2e/master-data/business-entities/office-contacts.e2e.ts",
+    "e2e/master-data/business-entities/office-overview.e2e.ts",
+    "e2e/master-data/business-entities/office.e2e.ts",
+    "e2e/master-data/business-entities/partner-networks.e2e.ts"
+  ],
+  "cases": [
+    {
+      "file": "e2e/master-data/business-entities/office-contacts.e2e.ts",
+      "titlePath": [
+        "Master Data Office Contacts tab FE E2E",
+        "updates a contact name from the Office details Contacts tab"
+      ]
+    },
+    {
+      "file": "e2e/master-data/business-entities/carriers.e2e.ts",
+      "titlePath": [
+        "Master Data Carriers FE E2E",
+        "archives a carrier through FE controls and verifies archived HTML state"
+      ]
+    },
+    {
+      "file": "e2e/master-data/business-entities/carriers.e2e.ts",
+      "titlePath": [
+        "Master Data Carriers FE E2E",
+        "creates a carrier through FE controls and verifies it from the list HTML"
+      ]
+    },
+    {
+      "file": "e2e/master-data/business-entities/carriers.e2e.ts",
+      "titlePath": [
+        "Master Data Carriers FE E2E",
+        "lists seeded carriers as rendered table rows"
+      ]
+    },
+    {
+      "file": "e2e/master-data/business-entities/carriers.e2e.ts",
+      "titlePath": [
+        "Master Data Carriers FE E2E",
+        "sorts carriers by supported visible columns"
+      ]
+    },
+    {
+      "file": "e2e/master-data/business-entities/carriers.e2e.ts",
+      "titlePath": [
+        "Master Data Carriers FE E2E",
+        "updates carrier fields through autosave and verifies the drawer HTML"
+      ]
+    },
+    {
+      "file": "e2e/master-data/business-entities/office-accounts.e2e.ts",
+      "titlePath": [
+        "Master Data Office Accounts tab FE E2E",
+        "adds a minimal account line from the Office Accounts tab"
+      ]
+    },
+    {
+      "file": "e2e/master-data/business-entities/office-accounts.e2e.ts",
+      "titlePath": [
+        "Master Data Office Accounts tab FE E2E",
+        "autosaves debtor and creditor edits from the Office Accounts tab"
+      ]
+    },
+    {
+      "file": "e2e/master-data/business-entities/office-accounts.e2e.ts",
+      "titlePath": [
+        "Master Data Office Accounts tab FE E2E",
+        "deletes an account line from the Office Accounts tab table"
+      ]
+    },
+    {
+      "file": "e2e/master-data/business-entities/office-accounts.e2e.ts",
+      "titlePath": [
+        "Master Data Office Accounts tab FE E2E",
+        "opens the Accounts tab from the Office details modal and renders seeded account HTML"
+      ]
+    },
+    {
+      "file": "e2e/master-data/business-entities/office-basic.e2e.ts",
+      "titlePath": [
+        "Master Data Office Basic tab FE E2E",
+        "renders Office Basic tab values in the details modal"
+      ]
+    },
+    {
+      "file": "e2e/master-data/business-entities/office-basic.e2e.ts",
+      "titlePath": [
+        "Master Data Office Basic tab FE E2E",
+        "updates Office Basic EORI from the FE and verifies the details modal HTML"
+      ]
+    },
+    {
+      "file": "e2e/master-data/business-entities/office-basic.e2e.ts",
+      "titlePath": [
+        "Master Data Office Basic tab FE E2E",
+        "updates Office Basic VAT from the FE and verifies the details modal HTML"
+      ]
+    },
+    {
+      "file": "e2e/master-data/business-entities/office-contacts.e2e.ts",
+      "titlePath": [
+        "Master Data Office Contacts tab FE E2E",
+        "adds a contact row from the Office details Contacts tab"
+      ]
+    },
+    {
+      "file": "e2e/master-data/business-entities/office-contacts.e2e.ts",
+      "titlePath": [
+        "Master Data Office Contacts tab FE E2E",
+        "deletes a contact from the Office details Contacts tab"
+      ]
+    },
+    {
+      "file": "e2e/master-data/business-entities/office-overview.e2e.ts",
+      "titlePath": [
+        "Master Data Office Overview FE E2E",
+        "autosaves an Office Overview field update through FE controls and verifies the drawer HTML"
+      ]
+    },
+    {
+      "file": "e2e/master-data/business-entities/office-overview.e2e.ts",
+      "titlePath": [
+        "Master Data Office Overview FE E2E",
+        "locks and unlocks Office Overview changes through the details modal"
+      ]
+    },
+    {
+      "file": "e2e/master-data/business-entities/office-overview.e2e.ts",
+      "titlePath": [
+        "Master Data Office Overview FE E2E",
+        "opens an Office details modal from the list and renders Overview tab HTML"
+      ]
+    },
+    {
+      "file": "e2e/master-data/business-entities/office.e2e.ts",
+      "titlePath": [
+        "Master Data Offices create FE E2E",
+        "creates an office and verifies it from the list HTML"
+      ]
+    },
+    {
+      "file": "e2e/master-data/business-entities/office.e2e.ts",
+      "titlePath": [
+        "Master Data Offices FE E2E",
+        "filters archived offices without opening the details modal"
+      ]
+    },
+    {
+      "file": "e2e/master-data/business-entities/office.e2e.ts",
+      "titlePath": [
+        "Master Data Offices FE E2E",
+        "filters offices by debtor and creditor IDs in the rendered table"
+      ]
+    },
+    {
+      "file": "e2e/master-data/business-entities/office.e2e.ts",
+      "titlePath": [
+        "Master Data Offices FE E2E",
+        "lists seeded offices as rendered table rows"
+      ]
+    },
+    {
+      "file": "e2e/master-data/business-entities/partner-networks.e2e.ts",
+      "titlePath": [
+        "Master Data Partner Networks FE E2E",
+        "creates a partner network from the FE and verifies the rendered HTML"
+      ]
+    },
+    {
+      "file": "e2e/master-data/business-entities/partner-networks.e2e.ts",
+      "titlePath": [
+        "Master Data Partner Networks FE E2E",
+        "filters partner networks by archived status through the rendered table"
+      ]
+    },
+    {
+      "file": "e2e/master-data/business-entities/partner-networks.e2e.ts",
+      "titlePath": [
+        "Master Data Partner Networks FE E2E",
+        "lists seeded partner networks as HTML rows"
+      ]
+    },
+    {
+      "file": "e2e/master-data/business-entities/partner-networks.e2e.ts",
+      "titlePath": [
+        "Master Data Partner Networks FE E2E",
+        "opens seeded partner network details"
+      ]
+    },
+    {
+      "file": "e2e/master-data/business-entities/partner-networks.e2e.ts",
+      "titlePath": [
+        "Master Data Partner Networks FE E2E",
+        "sorts partner networks by name and audit columns in the rendered table"
+      ]
+    },
+    {
+      "file": "e2e/master-data/business-entities/partner-networks.e2e.ts",
+      "titlePath": [
+        "Master Data Partner Networks FE E2E",
+        "updates a partner network from the FE with autosave and verifies rendered HTML"
+      ]
+    }
+  ],
+  "native_only_excluded": 0
+}

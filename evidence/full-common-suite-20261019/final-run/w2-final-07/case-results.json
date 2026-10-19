@@ -1,0 +1,420 @@
+[
+  {
+    "file": "e2e/master-data/accounting/currencies.e2e.ts",
+    "titlePath": [
+      "Master Data Currencies FE E2E",
+      "lists seeded currencies as HTML table rows"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/accounting/currencies.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 663,
+        "startTime": "2026-10-19T04:19:58.778Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/accounting/currencies.e2e.ts",
+    "titlePath": [
+      "Master Data Currencies FE E2E",
+      "sorts currencies by identity columns"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/accounting/currencies.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 594,
+        "startTime": "2026-10-19T04:20:00.138Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/accounting/currencies.e2e.ts",
+    "titlePath": [
+      "Master Data Currencies FE E2E",
+      "sorts currencies by audit columns"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/accounting/currencies.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 671,
+        "startTime": "2026-10-19T04:20:00.735Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/accounting/currencies.e2e.ts",
+    "titlePath": [
+      "Master Data Currencies FE E2E",
+      "shows currencies created for the test setup in the HTML table"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/accounting/currencies.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 486,
+        "startTime": "2026-10-19T04:20:01.409Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/accounting/currencies.e2e.ts",
+    "titlePath": [
+      "Master Data Currencies FE E2E",
+      "shows setup currency updates in the HTML table"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/accounting/currencies.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 449,
+        "startTime": "2026-10-19T04:20:01.897Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/accounting/dunning-levels.e2e.ts",
+    "titlePath": [
+      "Master Data Dunning Levels FE E2E",
+      "lists seeded dunning levels as HTML rows"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/accounting/dunning-levels.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 672,
+        "startTime": "2026-10-19T04:20:02.533Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/accounting/dunning-levels.e2e.ts",
+    "titlePath": [
+      "Master Data Dunning Levels FE E2E",
+      "opens dunning level details"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/accounting/dunning-levels.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 673,
+        "startTime": "2026-10-19T04:20:03.287Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/accounting/dunning-levels.e2e.ts",
+    "titlePath": [
+      "Master Data Dunning Levels FE E2E",
+      "sorts dunning levels by identity, amounts, related system, and audit columns"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/accounting/dunning-levels.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 912,
+        "startTime": "2026-10-19T04:20:03.963Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/accounting/dunning-levels.e2e.ts",
+    "titlePath": [
+      "Master Data Dunning Levels FE E2E",
+      "sorts dunning levels by days overdue in the rendered table"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/accounting/dunning-levels.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 542,
+        "startTime": "2026-10-19T04:20:04.878Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/accounting/dunning-levels.e2e.ts",
+    "titlePath": [
+      "Master Data Dunning Levels FE E2E",
+      "renders the dunning level create drawer with required field HTML"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/accounting/dunning-levels.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 658,
+        "startTime": "2026-10-19T04:20:05.423Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/accounting/dunning-levels.e2e.ts",
+    "titlePath": [
+      "Master Data Dunning Levels FE E2E",
+      "opens a created dunning level and shows its fee in HTML"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/accounting/dunning-levels.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 647,
+        "startTime": "2026-10-19T04:20:06.084Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/accounting/dunning-levels.e2e.ts",
+    "titlePath": [
+      "Master Data Dunning Levels FE E2E",
+      "keeps duplicate setup isolated while rendering a second create drawer"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/accounting/dunning-levels.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 606,
+        "startTime": "2026-10-19T04:20:06.733Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/accounting/dunning-levels.e2e.ts",
+    "titlePath": [
+      "Master Data Dunning Levels FE E2E",
+      "archives a dunning level through FE controls"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/accounting/dunning-levels.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 986,
+        "startTime": "2026-10-19T04:20:07.342Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/accounting/dunning-levels.e2e.ts",
+    "titlePath": [
+      "Master Data Dunning Levels FE E2E",
+      "unarchives a dunning level through FE controls"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/accounting/dunning-levels.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 900,
+        "startTime": "2026-10-19T04:20:08.330Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/accounting/charge-types.e2e.ts",
+    "titlePath": [
+      "Master Data Charge Types FE E2E",
+      "sorts charge types by identity and audit columns"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/accounting/charge-types.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1133,
+        "startTime": "2026-10-19T04:20:09.429Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/accounting/charge-types.e2e.ts",
+    "titlePath": [
+      "Master Data Charge Types FE E2E",
+      "updates a charge type from the FE with autosave"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/accounting/charge-types.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 686,
+        "startTime": "2026-10-19T04:20:10.647Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/accounting/charge-types.e2e.ts",
+    "titlePath": [
+      "Master Data Charge Types FE E2E",
+      "surfaces duplicate match-code validation from the real BE"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/accounting/charge-types.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 4,
+        "startTime": "2026-10-19T04:20:11.337Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/accounting/charge-types.e2e.ts",
+    "titlePath": [
+      "Master Data Charge Types FE E2E",
+      "keeps BE charge type label search behavior available to FE flows"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/accounting/charge-types.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 6,
+        "startTime": "2026-10-19T04:20:11.343Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/quotes.e2e.ts",
+    "titlePath": [
+      "Quotes FE E2E",
+      "shows the default currency ISO code in footer totals"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/quotes.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 764,
+        "startTime": "2026-10-19T04:20:11.532Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/quotes-docubox.e2e.ts",
+    "titlePath": [
+      "Quotes DocuBox tab FE E2E",
+      "lists Quote DocuBox folders and files in rendered HTML"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/quotes-docubox.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 655,
+        "startTime": "2026-10-19T04:20:12.562Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/quotes-docubox.e2e.ts",
+    "titlePath": [
+      "Quotes DocuBox tab FE E2E",
+      "searches Quote DocuBox content by file name"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/quotes-docubox.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 475,
+        "startTime": "2026-10-19T04:20:14.418Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/quotes-docubox.e2e.ts",
+    "titlePath": [
+      "Quotes DocuBox tab FE E2E",
+      "creates a folder from the Quote DocuBox tab"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/quotes-docubox.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 301,
+        "startTime": "2026-10-19T04:20:15.733Z",
+        "error_count": 0
+      }
+    ]
+  }
+]

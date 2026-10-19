@@ -1,0 +1,171 @@
+{
+  "manifest_sha256": "542d479b709249d072e3b57c1324c894c4378fc5373892ae64c0687486f2ae19",
+  "manifest_read_from": "/private/tmp/lp-tos-f9f-batch16-fx (TOS f9fde4aa0d, e2e tree unchanged)",
+  "recorded_utc": "2026-10-19T04:02:50+00:00",
+  "ledger_sha256": "3d1de5a08cf4add614432f30ea316d97472ffe42ea73d00a7e775655aef09016",
+  "criteria": "Final frozen W2 whole-file common batch w2-final-07",
+  "files": [
+    "e2e/logistics/quotes-docubox.e2e.ts",
+    "e2e/logistics/quotes.e2e.ts",
+    "e2e/master-data/accounting/charge-types.e2e.ts",
+    "e2e/master-data/accounting/currencies.e2e.ts",
+    "e2e/master-data/accounting/dunning-levels.e2e.ts"
+  ],
+  "cases": [
+    {
+      "file": "e2e/logistics/quotes-docubox.e2e.ts",
+      "titlePath": [
+        "Quotes DocuBox tab FE E2E",
+        "lists Quote DocuBox folders and files in rendered HTML"
+      ]
+    },
+    {
+      "file": "e2e/logistics/quotes-docubox.e2e.ts",
+      "titlePath": [
+        "Quotes DocuBox tab FE E2E",
+        "creates a folder from the Quote DocuBox tab"
+      ]
+    },
+    {
+      "file": "e2e/logistics/quotes-docubox.e2e.ts",
+      "titlePath": [
+        "Quotes DocuBox tab FE E2E",
+        "searches Quote DocuBox content by file name"
+      ]
+    },
+    {
+      "file": "e2e/logistics/quotes.e2e.ts",
+      "titlePath": [
+        "Quotes FE E2E",
+        "shows the default currency ISO code in footer totals"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/charge-types.e2e.ts",
+      "titlePath": [
+        "Master Data Charge Types FE E2E",
+        "keeps BE charge type label search behavior available to FE flows"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/charge-types.e2e.ts",
+      "titlePath": [
+        "Master Data Charge Types FE E2E",
+        "sorts charge types by identity and audit columns"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/charge-types.e2e.ts",
+      "titlePath": [
+        "Master Data Charge Types FE E2E",
+        "surfaces duplicate match-code validation from the real BE"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/charge-types.e2e.ts",
+      "titlePath": [
+        "Master Data Charge Types FE E2E",
+        "updates a charge type from the FE with autosave"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/currencies.e2e.ts",
+      "titlePath": [
+        "Master Data Currencies FE E2E",
+        "lists seeded currencies as HTML table rows"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/currencies.e2e.ts",
+      "titlePath": [
+        "Master Data Currencies FE E2E",
+        "shows currencies created for the test setup in the HTML table"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/currencies.e2e.ts",
+      "titlePath": [
+        "Master Data Currencies FE E2E",
+        "shows setup currency updates in the HTML table"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/currencies.e2e.ts",
+      "titlePath": [
+        "Master Data Currencies FE E2E",
+        "sorts currencies by audit columns"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/currencies.e2e.ts",
+      "titlePath": [
+        "Master Data Currencies FE E2E",
+        "sorts currencies by identity columns"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/dunning-levels.e2e.ts",
+      "titlePath": [
+        "Master Data Dunning Levels FE E2E",
+        "archives a dunning level through FE controls"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/dunning-levels.e2e.ts",
+      "titlePath": [
+        "Master Data Dunning Levels FE E2E",
+        "keeps duplicate setup isolated while rendering a second create drawer"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/dunning-levels.e2e.ts",
+      "titlePath": [
+        "Master Data Dunning Levels FE E2E",
+        "lists seeded dunning levels as HTML rows"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/dunning-levels.e2e.ts",
+      "titlePath": [
+        "Master Data Dunning Levels FE E2E",
+        "opens a created dunning level and shows its fee in HTML"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/dunning-levels.e2e.ts",
+      "titlePath": [
+        "Master Data Dunning Levels FE E2E",
+        "opens dunning level details"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/dunning-levels.e2e.ts",
+      "titlePath": [
+        "Master Data Dunning Levels FE E2E",
+        "renders the dunning level create drawer with required field HTML"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/dunning-levels.e2e.ts",
+      "titlePath": [
+        "Master Data Dunning Levels FE E2E",
+        "sorts dunning levels by days overdue in the rendered table"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/dunning-levels.e2e.ts",
+      "titlePath": [
+        "Master Data Dunning Levels FE E2E",
+        "sorts dunning levels by identity, amounts, related system, and audit columns"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/dunning-levels.e2e.ts",
+      "titlePath": [
+        "Master Data Dunning Levels FE E2E",
+        "unarchives a dunning level through FE controls"
+      ]
+    }
+  ],
+  "native_only_excluded": 11
+}

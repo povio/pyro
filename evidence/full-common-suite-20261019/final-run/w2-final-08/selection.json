@@ -1,0 +1,97 @@
+{
+  "manifest_sha256": "542d479b709249d072e3b57c1324c894c4378fc5373892ae64c0687486f2ae19",
+  "manifest_read_from": "/private/tmp/lp-tos-f9f-batch16-fx (TOS f9fde4aa0d, e2e tree unchanged)",
+  "recorded_utc": "2026-10-19T04:02:50+00:00",
+  "ledger_sha256": "3d1de5a08cf4add614432f30ea316d97472ffe42ea73d00a7e775655aef09016",
+  "criteria": "Final frozen W2 whole-file common batch w2-final-08",
+  "files": [
+    "e2e/master-data/accounting/dunning-systems.e2e.ts",
+    "e2e/master-data/accounting/vat-rule-applicability.e2e.ts"
+  ],
+  "cases": [
+    {
+      "file": "e2e/master-data/accounting/vat-rule-applicability.e2e.ts",
+      "titlePath": [
+        "edits regional bookkeeping and switches independently without a generic bookkeeping field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/dunning-systems.e2e.ts",
+      "titlePath": [
+        "Master Data Dunning Systems FE E2E",
+        "archives dunning systems through FE controls"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/dunning-systems.e2e.ts",
+      "titlePath": [
+        "Master Data Dunning Systems FE E2E",
+        "creates a dunning system from the FE and shows the created details HTML"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/dunning-systems.e2e.ts",
+      "titlePath": [
+        "Master Data Dunning Systems FE E2E",
+        "lists seeded dunning systems in the canvas table"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/dunning-systems.e2e.ts",
+      "titlePath": [
+        "Master Data Dunning Systems FE E2E",
+        "opens dunning system details"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/dunning-systems.e2e.ts",
+      "titlePath": [
+        "Master Data Dunning Systems FE E2E",
+        "searches dunning systems by diacritics, normalized text, spaces, and default flag rows"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/dunning-systems.e2e.ts",
+      "titlePath": [
+        "Master Data Dunning Systems FE E2E",
+        "sorts dunning systems by default flag"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/dunning-systems.e2e.ts",
+      "titlePath": [
+        "Master Data Dunning Systems FE E2E",
+        "sorts dunning systems by name and created date"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/dunning-systems.e2e.ts",
+      "titlePath": [
+        "Master Data Dunning Systems FE E2E",
+        "surfaces duplicate default validation in rendered FE errors"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/dunning-systems.e2e.ts",
+      "titlePath": [
+        "Master Data Dunning Systems FE E2E",
+        "surfaces duplicate name validation in rendered FE errors"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/dunning-systems.e2e.ts",
+      "titlePath": [
+        "Master Data Dunning Systems FE E2E",
+        "unarchives dunning systems through FE controls"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/dunning-systems.e2e.ts",
+      "titlePath": [
+        "Master Data Dunning Systems FE E2E",
+        "updates a dunning system from the FE with autosave and shows the new HTML value"
+      ]
+    }
+  ],
+  "native_only_excluded": 0
+}

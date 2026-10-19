@@ -1,0 +1,363 @@
+[
+  {
+    "file": "e2e/master-data/locations/airports.e2e.ts",
+    "titlePath": [
+      "Master Data Airports FE E2E",
+      "lists seeded airports"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/airports.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 596,
+        "startTime": "2026-10-19T04:22:34.975Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/airports.e2e.ts",
+    "titlePath": [
+      "Master Data Airports FE E2E",
+      "sorts airports by matchCode"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/airports.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 645,
+        "startTime": "2026-10-19T04:22:36.254Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/airports.e2e.ts",
+    "titlePath": [
+      "Master Data Airports FE E2E",
+      "sorts airports by name"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/airports.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 505,
+        "startTime": "2026-10-19T04:22:36.901Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/airports.e2e.ts",
+    "titlePath": [
+      "Master Data Airports FE E2E",
+      "sorts airports by iataCode"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/airports.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 499,
+        "startTime": "2026-10-19T04:22:37.410Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/airports.e2e.ts",
+    "titlePath": [
+      "Master Data Airports FE E2E",
+      "sorts airports by city"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/airports.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 510,
+        "startTime": "2026-10-19T04:22:37.911Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/airports.e2e.ts",
+    "titlePath": [
+      "Master Data Airports FE E2E",
+      "sorts airports by createdAt"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/airports.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 520,
+        "startTime": "2026-10-19T04:22:38.424Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/airports.e2e.ts",
+    "titlePath": [
+      "Master Data Airports FE E2E",
+      "sorts airports by updatedAt"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/airports.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 505,
+        "startTime": "2026-10-19T04:22:38.946Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/airports.e2e.ts",
+    "titlePath": [
+      "Master Data Airports FE E2E",
+      "sorts airports by createdBy"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/airports.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 546,
+        "startTime": "2026-10-19T04:22:39.454Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/airports.e2e.ts",
+    "titlePath": [
+      "Master Data Airports FE E2E",
+      "sorts airports by updatedBy"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/airports.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 481,
+        "startTime": "2026-10-19T04:22:40.003Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/airports.e2e.ts",
+    "titlePath": [
+      "Master Data Airports FE E2E",
+      "searches airports by diacritics through the search field"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/airports.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 857,
+        "startTime": "2026-10-19T04:22:40.487Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/airports.e2e.ts",
+    "titlePath": [
+      "Master Data Airports FE E2E",
+      "searches airports by normalized text"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/airports.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 427,
+        "startTime": "2026-10-19T04:22:41.348Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/airports.e2e.ts",
+    "titlePath": [
+      "Master Data Airports FE E2E",
+      "searches airports by spaces"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/airports.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 465,
+        "startTime": "2026-10-19T04:22:41.777Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/airports.e2e.ts",
+    "titlePath": [
+      "Master Data Airports FE E2E",
+      "searches airports by match code"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/airports.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 449,
+        "startTime": "2026-10-19T04:22:42.248Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/airports.e2e.ts",
+    "titlePath": [
+      "Master Data Airports FE E2E",
+      "searches airports by IATA code"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/airports.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 438,
+        "startTime": "2026-10-19T04:22:42.699Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/airports.e2e.ts",
+    "titlePath": [
+      "Master Data Airports FE E2E",
+      "creates an airport from the FE"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/airports.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1015,
+        "startTime": "2026-10-19T04:22:43.139Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/airports.e2e.ts",
+    "titlePath": [
+      "Master Data Airports FE E2E",
+      "renders the empty airport create form"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/airports.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 563,
+        "startTime": "2026-10-19T04:22:44.157Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/airports.e2e.ts",
+    "titlePath": [
+      "Master Data Airports FE E2E",
+      "updates an airport from the FE with autosave"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/airports.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 695,
+        "startTime": "2026-10-19T04:22:44.725Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/airports.e2e.ts",
+    "titlePath": [
+      "Master Data Airports FE E2E",
+      "surfaces duplicate match-code validation from the real BE"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/airports.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 769,
+        "startTime": "2026-10-19T04:22:45.423Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/airports.e2e.ts",
+    "titlePath": [
+      "Master Data Airports FE E2E",
+      "keeps BE airport label search behavior available to FE flows"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/airports.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 13,
+        "startTime": "2026-10-19T04:22:46.194Z",
+        "error_count": 0
+      }
+    ]
+  }
+]

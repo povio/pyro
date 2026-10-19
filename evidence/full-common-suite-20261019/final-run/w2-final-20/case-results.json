@@ -1,0 +1,116 @@
+[
+  {
+    "file": "e2e/projects/projects.e2e.ts",
+    "titlePath": [
+      "Projects FE E2E",
+      "opens a connected packing list position in a new tab"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/projects/projects.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1740,
+        "startTime": "2026-10-19T04:25:32.382Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/projects/projects.e2e.ts",
+    "titlePath": [
+      "Projects FE E2E",
+      "allows a read-only Project user to view Shipments and Analytics without create actions"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/projects/projects.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1110,
+        "startTime": "2026-10-19T04:25:34.817Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/platform/navigation.e2e.ts",
+    "titlePath": [
+      "Platform navigation FE E2E",
+      "renders the operational calendar from its direct route"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/platform/navigation.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 729,
+        "startTime": "2026-10-19T04:25:36.113Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/platform/navigation.e2e.ts",
+    "titlePath": [
+      "Platform navigation FE E2E",
+      "redirects the platform root to the default logistics page"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/platform/navigation.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 453,
+        "startTime": "2026-10-19T04:25:36.857Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/platform/navigation.e2e.ts",
+    "titlePath": [
+      "Platform navigation FE E2E",
+      "switches from Finances back to filtered Positions without leaving the previous module rendered"
+    ],
+    "status": "unexpected",
+    "expectedStatus": "passed",
+    "project": "e2e/platform/navigation.e2e.ts",
+    "attempts": [
+      {
+        "status": "failed",
+        "retry": 0,
+        "duration_ms": 11237,
+        "startTime": "2026-10-19T04:25:37.314Z",
+        "error_count": 1
+      }
+    ]
+  },
+  {
+    "file": "e2e/todos/todos.e2e.ts",
+    "titlePath": [
+      "To-Dos FE E2E",
+      "opens To-Dos from the due-date ordered URL"
+    ],
+    "status": "unexpected",
+    "expectedStatus": "passed",
+    "project": "e2e/todos/todos.e2e.ts",
+    "attempts": [
+      {
+        "status": "failed",
+        "retry": 0,
+        "duration_ms": 10675,
+        "startTime": "2026-10-19T04:25:48.763Z",
+        "error_count": 1
+      }
+    ]
+  }
+]

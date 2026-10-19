@@ -1,0 +1,208 @@
+{
+  "manifest_sha256": "542d479b709249d072e3b57c1324c894c4378fc5373892ae64c0687486f2ae19",
+  "manifest_read_from": "/private/tmp/lp-tos-f9f-batch16-fx (TOS f9fde4aa0d, e2e tree unchanged)",
+  "recorded_utc": "2026-10-19T04:02:51+00:00",
+  "ledger_sha256": "3d1de5a08cf4add614432f30ea316d97472ffe42ea73d00a7e775655aef09016",
+  "criteria": "Final frozen W2 whole-file common batch w2-final-18",
+  "files": [
+    "e2e/master-data/logistics/awb-stock.e2e.ts",
+    "e2e/master-data/logistics/checklist-items.e2e.ts",
+    "e2e/master-data/logistics/checklist-templates.e2e.ts",
+    "e2e/master-data/logistics/commercial-party-template-duplicates.e2e.ts",
+    "e2e/master-data/logistics/commercial-party-templates.e2e.ts",
+    "e2e/master-data/logistics/departments.e2e.ts"
+  ],
+  "cases": [
+    {
+      "file": "e2e/master-data/logistics/departments.e2e.ts",
+      "titlePath": [
+        "Master Data Departments",
+        "shows a case-insensitive duplicate error on update without changing existing data"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/departments.e2e.ts",
+      "titlePath": [
+        "Master Data Departments",
+        "autosaves sequential name edits and retains the last value after reload"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/departments.e2e.ts",
+      "titlePath": [
+        "Master Data Departments",
+        "archives through confirmation and persists the new state"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/departments.e2e.ts",
+      "titlePath": [
+        "Master Data Departments",
+        "unarchives through confirmation and persists the new state"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/departments.e2e.ts",
+      "titlePath": [
+        "Master Data Departments",
+        "cancels archive confirmation without changing the department"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/departments.e2e.ts",
+      "titlePath": [
+        "Master Data Departments",
+        "assigned employees",
+        "renders the archive rejection for a department with assigned employees"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/commercial-party-template-duplicates.e2e.ts",
+      "titlePath": [
+        "Repeated commercial party template entries",
+        "adds another role and displays duplicate and document party rows in section order"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/commercial-party-template-duplicates.e2e.ts",
+      "titlePath": [
+        "Repeated commercial party template entries",
+        "applies missing occurrences to positions without duplicating Customer or growing on reapply"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/awb-stock.e2e.ts",
+      "titlePath": [
+        "Master Data AWB Stock FE E2E",
+        "archives and unarchives AWB stock through FE controls"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/awb-stock.e2e.ts",
+      "titlePath": [
+        "Master Data AWB Stock FE E2E",
+        "updates AWB stock comments through autosave"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/checklist-items.e2e.ts",
+      "titlePath": [
+        "Master Data Checklist Items FE E2E",
+        "archives checklist items through FE controls"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/checklist-items.e2e.ts",
+      "titlePath": [
+        "Master Data Checklist Items FE E2E",
+        "creates a checklist item from the FE and shows the created details HTML"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/checklist-items.e2e.ts",
+      "titlePath": [
+        "Master Data Checklist Items FE E2E",
+        "lists seeded checklist items as HTML rows and opens checklist item details"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/checklist-items.e2e.ts",
+      "titlePath": [
+        "Master Data Checklist Items FE E2E",
+        "sorts checklist items by name and audit columns in the rendered table"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/checklist-items.e2e.ts",
+      "titlePath": [
+        "Master Data Checklist Items FE E2E",
+        "surfaces duplicate checklist item name validation in rendered FE errors"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/checklist-items.e2e.ts",
+      "titlePath": [
+        "Master Data Checklist Items FE E2E",
+        "unarchives checklist items through FE controls"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/checklist-items.e2e.ts",
+      "titlePath": [
+        "Master Data Checklist Items FE E2E",
+        "updates a checklist item from the FE with autosave and shows the new HTML value"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/checklist-templates.e2e.ts",
+      "titlePath": [
+        "Master Data Checklist Templates FE E2E",
+        "archives checklist templates through FE controls"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/checklist-templates.e2e.ts",
+      "titlePath": [
+        "Master Data Checklist Templates FE E2E",
+        "creates a checklist template from the FE and shows the created details HTML"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/checklist-templates.e2e.ts",
+      "titlePath": [
+        "Master Data Checklist Templates FE E2E",
+        "lists seeded checklist templates as HTML rows and opens template details"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/checklist-templates.e2e.ts",
+      "titlePath": [
+        "Master Data Checklist Templates FE E2E",
+        "sorts checklist templates by name and audit columns"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/checklist-templates.e2e.ts",
+      "titlePath": [
+        "Master Data Checklist Templates FE E2E",
+        "surfaces duplicate template name validation in rendered FE errors"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/checklist-templates.e2e.ts",
+      "titlePath": [
+        "Master Data Checklist Templates FE E2E",
+        "unarchives checklist templates through FE controls"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/checklist-templates.e2e.ts",
+      "titlePath": [
+        "Master Data Checklist Templates FE E2E",
+        "updates a checklist template name with autosave and shows the new HTML value"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/commercial-party-template-duplicates.e2e.ts",
+      "titlePath": [
+        "Repeated commercial party template entries",
+        "applies missing occurrences to quotes without duplicating Customer or growing on reapply"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/commercial-party-template-duplicates.e2e.ts",
+      "titlePath": [
+        "Repeated commercial party template entries",
+        "rejects Customer in templates"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/commercial-party-templates.e2e.ts",
+      "titlePath": [
+        "Master Data Commercial Party Templates FE E2E",
+        "updates a commercial party template name from the FE autosave form"
+      ]
+    }
+  ],
+  "native_only_excluded": 0
+}

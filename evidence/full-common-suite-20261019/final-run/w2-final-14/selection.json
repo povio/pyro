@@ -1,0 +1,111 @@
+{
+  "manifest_sha256": "542d479b709249d072e3b57c1324c894c4378fc5373892ae64c0687486f2ae19",
+  "manifest_read_from": "/private/tmp/lp-tos-f9f-batch16-fx (TOS f9fde4aa0d, e2e tree unchanged)",
+  "recorded_utc": "2026-10-19T04:02:50+00:00",
+  "ledger_sha256": "3d1de5a08cf4add614432f30ea316d97472ffe42ea73d00a7e775655aef09016",
+  "criteria": "Final frozen W2 whole-file common batch w2-final-14",
+  "files": [
+    "e2e/master-data/locations/cities.e2e.ts"
+  ],
+  "cases": [
+    {
+      "file": "e2e/master-data/locations/cities.e2e.ts",
+      "titlePath": [
+        "Master Data Cities FE E2E",
+        "adds a city and archives it through FE controls at the end"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/cities.e2e.ts",
+      "titlePath": [
+        "Master Data Cities FE E2E",
+        "keeps BE city label search behavior available to FE flows"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/cities.e2e.ts",
+      "titlePath": [
+        "Master Data Cities FE E2E",
+        "searches cities by diacritics and normalized text"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/cities.e2e.ts",
+      "titlePath": [
+        "Master Data Cities FE E2E",
+        "searches cities by spaces and Munich normalization"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/cities.e2e.ts",
+      "titlePath": [
+        "Master Data Cities FE E2E",
+        "sorts cities by countryCode"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/cities.e2e.ts",
+      "titlePath": [
+        "Master Data Cities FE E2E",
+        "sorts cities by createdAt"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/cities.e2e.ts",
+      "titlePath": [
+        "Master Data Cities FE E2E",
+        "sorts cities by createdBy"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/cities.e2e.ts",
+      "titlePath": [
+        "Master Data Cities FE E2E",
+        "sorts cities by isoCode"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/cities.e2e.ts",
+      "titlePath": [
+        "Master Data Cities FE E2E",
+        "sorts cities by name"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/cities.e2e.ts",
+      "titlePath": [
+        "Master Data Cities FE E2E",
+        "sorts cities by stateCode"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/cities.e2e.ts",
+      "titlePath": [
+        "Master Data Cities FE E2E",
+        "sorts cities by unlocode"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/cities.e2e.ts",
+      "titlePath": [
+        "Master Data Cities FE E2E",
+        "sorts cities by updatedAt"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/cities.e2e.ts",
+      "titlePath": [
+        "Master Data Cities FE E2E",
+        "sorts cities by updatedBy"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/cities.e2e.ts",
+      "titlePath": [
+        "Master Data Cities FE E2E",
+        "updates a city from the FE with autosave"
+      ]
+    }
+  ],
+  "native_only_excluded": 0
+}

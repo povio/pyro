@@ -1,0 +1,515 @@
+[
+  {
+    "file": "e2e/master-data/locations/container-yards.e2e.ts",
+    "titlePath": [
+      "Master Data Container Yards FE E2E",
+      "lists seeded container yards"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/container-yards.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 596,
+        "startTime": "2026-10-19T04:22:59.113Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/container-yards.e2e.ts",
+    "titlePath": [
+      "Master Data Container Yards FE E2E",
+      "sorts container yards by matchCode"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/container-yards.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 655,
+        "startTime": "2026-10-19T04:23:00.402Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/container-yards.e2e.ts",
+    "titlePath": [
+      "Master Data Container Yards FE E2E",
+      "sorts container yards by name"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/container-yards.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 641,
+        "startTime": "2026-10-19T04:23:01.059Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/container-yards.e2e.ts",
+    "titlePath": [
+      "Master Data Container Yards FE E2E",
+      "sorts container yards by shortName"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/container-yards.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 518,
+        "startTime": "2026-10-19T04:23:01.703Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/container-yards.e2e.ts",
+    "titlePath": [
+      "Master Data Container Yards FE E2E",
+      "sorts container yards by address"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/container-yards.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 554,
+        "startTime": "2026-10-19T04:23:02.223Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/container-yards.e2e.ts",
+    "titlePath": [
+      "Master Data Container Yards FE E2E",
+      "sorts container yards by createdAt"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/container-yards.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 511,
+        "startTime": "2026-10-19T04:23:02.780Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/container-yards.e2e.ts",
+    "titlePath": [
+      "Master Data Container Yards FE E2E",
+      "sorts container yards by updatedAt"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/container-yards.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 514,
+        "startTime": "2026-10-19T04:23:03.294Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/container-yards.e2e.ts",
+    "titlePath": [
+      "Master Data Container Yards FE E2E",
+      "sorts container yards by createdBy"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/container-yards.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 515,
+        "startTime": "2026-10-19T04:23:03.811Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/container-yards.e2e.ts",
+    "titlePath": [
+      "Master Data Container Yards FE E2E",
+      "sorts container yards by updatedBy"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/container-yards.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 509,
+        "startTime": "2026-10-19T04:23:04.329Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/container-yards.e2e.ts",
+    "titlePath": [
+      "Master Data Container Yards FE E2E",
+      "searches container yards by diacritics, normalized text, and spaces"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/container-yards.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 542,
+        "startTime": "2026-10-19T04:23:04.841Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/container-yards.e2e.ts",
+    "titlePath": [
+      "Master Data Container Yards FE E2E",
+      "searches container yards by match code and short name"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/container-yards.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 489,
+        "startTime": "2026-10-19T04:23:05.386Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/container-yards.e2e.ts",
+    "titlePath": [
+      "Master Data Container Yards FE E2E",
+      "filters archived container yards through the rendered table"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/container-yards.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 462,
+        "startTime": "2026-10-19T04:23:05.877Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/container-yards.e2e.ts",
+    "titlePath": [
+      "Master Data Container Yards FE E2E",
+      "autosaves container yard matchCode field"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/container-yards.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 958,
+        "startTime": "2026-10-19T04:23:06.342Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/container-yards.e2e.ts",
+    "titlePath": [
+      "Master Data Container Yards FE E2E",
+      "autosaves container yard name field"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/container-yards.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 591,
+        "startTime": "2026-10-19T04:23:07.302Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/container-yards.e2e.ts",
+    "titlePath": [
+      "Master Data Container Yards FE E2E",
+      "autosaves container yard shortName field"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/container-yards.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 595,
+        "startTime": "2026-10-19T04:23:07.896Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/container-yards.e2e.ts",
+    "titlePath": [
+      "Master Data Container Yards FE E2E",
+      "autosaves container yard additionalInformation field"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/container-yards.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 576,
+        "startTime": "2026-10-19T04:23:08.494Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/container-yards.e2e.ts",
+    "titlePath": [
+      "Master Data Container Yards FE E2E",
+      "autosaves container yard street field"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/container-yards.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 774,
+        "startTime": "2026-10-19T04:23:09.073Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/container-yards.e2e.ts",
+    "titlePath": [
+      "Master Data Container Yards FE E2E",
+      "autosaves container yard secondaryStreet field"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/container-yards.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 568,
+        "startTime": "2026-10-19T04:23:09.849Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/container-yards.e2e.ts",
+    "titlePath": [
+      "Master Data Container Yards FE E2E",
+      "autosaves container yard zip field"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/container-yards.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 581,
+        "startTime": "2026-10-19T04:23:10.419Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/container-yards.e2e.ts",
+    "titlePath": [
+      "Master Data Container Yards FE E2E",
+      "autosaves container yard district field"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/container-yards.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 586,
+        "startTime": "2026-10-19T04:23:11.003Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/container-yards.e2e.ts",
+    "titlePath": [
+      "Master Data Container Yards FE E2E",
+      "autosaves clearing container yard shortName field"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/container-yards.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 664,
+        "startTime": "2026-10-19T04:23:11.592Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/container-yards.e2e.ts",
+    "titlePath": [
+      "Master Data Container Yards FE E2E",
+      "autosaves clearing container yard additionalInformation field"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/container-yards.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 573,
+        "startTime": "2026-10-19T04:23:12.258Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/container-yards.e2e.ts",
+    "titlePath": [
+      "Master Data Container Yards FE E2E",
+      "autosaves clearing container yard secondaryStreet field"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/container-yards.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 629,
+        "startTime": "2026-10-19T04:23:12.834Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/container-yards.e2e.ts",
+    "titlePath": [
+      "Master Data Container Yards FE E2E",
+      "autosaves clearing container yard district field"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/container-yards.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 652,
+        "startTime": "2026-10-19T04:23:13.466Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/container-yards.e2e.ts",
+    "titlePath": [
+      "Master Data Container Yards FE E2E",
+      "autosaves container yard city field"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/container-yards.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1759,
+        "startTime": "2026-10-19T04:23:14.120Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/container-yards.e2e.ts",
+    "titlePath": [
+      "Master Data Container Yards FE E2E",
+      "autosaves several container yard fields in a row"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/container-yards.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 731,
+        "startTime": "2026-10-19T04:23:15.882Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/container-yards.e2e.ts",
+    "titlePath": [
+      "Master Data Container Yards FE E2E",
+      "adds a container yard and archives it at the end"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/container-yards.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 740,
+        "startTime": "2026-10-19T04:23:16.615Z",
+        "error_count": 0
+      }
+    ]
+  }
+]

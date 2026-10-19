@@ -1,0 +1,572 @@
+[
+  {
+    "file": "e2e/master-data/navigation-history.e2e.ts",
+    "titlePath": [
+      "Master Data navigation history FE E2E",
+      "tracks affected master data details in routing history"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/navigation-history.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1300,
+        "startTime": "2026-10-19T04:24:35.786Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/remark-templates.e2e.ts",
+    "titlePath": [
+      "Master Data Remark Templates FE E2E",
+      "lists seeded remark templates as HTML rows"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/remark-templates.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 655,
+        "startTime": "2026-10-19T04:24:37.959Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/remark-templates.e2e.ts",
+    "titlePath": [
+      "Master Data Remark Templates FE E2E",
+      "sorts remark templates by visible identity and audit columns"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/remark-templates.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 782,
+        "startTime": "2026-10-19T04:24:38.732Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/remark-templates.e2e.ts",
+    "titlePath": [
+      "Master Data Remark Templates FE E2E",
+      "filters remark templates by archived status through the rendered table"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/remark-templates.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 481,
+        "startTime": "2026-10-19T04:24:39.517Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/remark-templates.e2e.ts",
+    "titlePath": [
+      "Master Data Remark Templates FE E2E",
+      "updates a remark template name with autosave and shows the new HTML value"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/remark-templates.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 626,
+        "startTime": "2026-10-19T04:24:40.001Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/route-templates.e2e.ts",
+    "titlePath": [
+      "Master Data Route Templates FE E2E",
+      "updates a route template name from the FE autosave form"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/route-templates.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 817,
+        "startTime": "2026-10-19T04:24:40.824Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/route-templates.e2e.ts",
+    "titlePath": [
+      "Master Data Route Templates FE E2E",
+      "restores page filters from local storage when the URL has no filters"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/route-templates.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1051,
+        "startTime": "2026-10-19T04:24:41.684Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/route-templates.e2e.ts",
+    "titlePath": [
+      "Master Data Route Templates FE E2E",
+      "uses explicit URL filters instead of previously saved filters"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/route-templates.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1274,
+        "startTime": "2026-10-19T04:24:42.738Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/teams-persistent-filters.e2e.ts",
+    "titlePath": [
+      "Master Data Teams persistent filters FE E2E",
+      "does not navigate back to the list after opening an action drawer"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/teams-persistent-filters.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1438,
+        "startTime": "2026-10-19T04:24:44.200Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/integration-channels.e2e.ts",
+    "titlePath": [
+      "Master Data Integration Channels FE E2E",
+      "lists seeded integration channels in the canvas table and opens integration channel details"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/integration-channels.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 734,
+        "startTime": "2026-10-19T04:24:45.859Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/integration-channels.e2e.ts",
+    "titlePath": [
+      "Master Data Integration Channels FE E2E",
+      "sorts integration channels by name, last-polled, and created date in the rendered table"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/integration-channels.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 763,
+        "startTime": "2026-10-19T04:24:46.671Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/integration-channels.e2e.ts",
+    "titlePath": [
+      "Master Data Integration Channels FE E2E",
+      "sorts integration channels by updated date in the rendered table"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/integration-channels.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 531,
+        "startTime": "2026-10-19T04:24:47.437Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/integration-channels.e2e.ts",
+    "titlePath": [
+      "Master Data Integration Channels FE E2E",
+      "searches integration channels by diacritics, normalized text, and spaces"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/integration-channels.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 489,
+        "startTime": "2026-10-19T04:24:47.971Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/integration-channels.e2e.ts",
+    "titlePath": [
+      "Master Data Integration Channels FE E2E",
+      "filters integration channels by archived status through rendered rows"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/integration-channels.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 502,
+        "startTime": "2026-10-19T04:24:48.462Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/integration-channels.e2e.ts",
+    "titlePath": [
+      "Master Data Integration Channels FE E2E",
+      "updates an integration channel name with autosave and shows the new HTML value"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/integration-channels.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 596,
+        "startTime": "2026-10-19T04:24:48.966Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/integration-channels.e2e.ts",
+    "titlePath": [
+      "Master Data Integration Channels FE E2E",
+      "archives integration channels through FE controls"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/integration-channels.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 600,
+        "startTime": "2026-10-19T04:24:49.565Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/shipping-events.e2e.ts",
+    "titlePath": [
+      "Master Data Shipping Events FE E2E",
+      "sorts shipping events by visible sortable columns"
+    ],
+    "status": "unexpected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/shipping-events.e2e.ts",
+    "attempts": [
+      {
+        "status": "timedOut",
+        "retry": 0,
+        "duration_ms": 30004,
+        "startTime": "2026-10-19T04:24:50.351Z",
+        "error_count": 3
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/document-templates.e2e.ts",
+    "titlePath": [
+      "Master Data Document Templates FE E2E",
+      "lists seeded document templates as HTML rows"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/document-templates.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 663,
+        "startTime": "2026-10-19T04:25:20.664Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/document-templates.e2e.ts",
+    "titlePath": [
+      "Master Data Document Templates FE E2E",
+      "sorts document templates by name and audit columns in the rendered table"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/document-templates.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 790,
+        "startTime": "2026-10-19T04:25:21.417Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/document-templates.e2e.ts",
+    "titlePath": [
+      "Master Data Document Templates FE E2E",
+      "filters archived document templates through rendered table rows"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/document-templates.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 484,
+        "startTime": "2026-10-19T04:25:22.210Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/document-templates.e2e.ts",
+    "titlePath": [
+      "Master Data Document Templates FE E2E",
+      "updates a document template name through the FE autosave form"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/document-templates.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 706,
+        "startTime": "2026-10-19T04:25:22.697Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/document-templates.e2e.ts",
+    "titlePath": [
+      "Master Data Document Templates FE E2E",
+      "archives a document template from the FE and shows it in archived results"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/document-templates.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 768,
+        "startTime": "2026-10-19T04:25:23.405Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/teams.e2e.ts",
+    "titlePath": [
+      "Master Data Teams FE E2E",
+      "lists seeded teams as HTML rows and opens team details with members"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/teams.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 713,
+        "startTime": "2026-10-19T04:25:24.356Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/teams.e2e.ts",
+    "titlePath": [
+      "Master Data Teams FE E2E",
+      "sorts teams by name and audit columns in the rendered table"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/teams.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 765,
+        "startTime": "2026-10-19T04:25:25.149Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/docubox-templates.e2e.ts",
+    "titlePath": [
+      "Master Data DocuBox Templates FE E2E",
+      "lists seeded DocuBox templates as HTML rows and opens the nested folder details"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/docubox-templates.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 814,
+        "startTime": "2026-10-19T04:25:26.110Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/docubox-templates.e2e.ts",
+    "titlePath": [
+      "Master Data DocuBox Templates FE E2E",
+      "sorts DocuBox templates by visible identity and audit columns"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/docubox-templates.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 673,
+        "startTime": "2026-10-19T04:25:27.013Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/docubox-templates.e2e.ts",
+    "titlePath": [
+      "Master Data DocuBox Templates FE E2E",
+      "shows archived DocuBox templates only when the archived filter is enabled"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/docubox-templates.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 497,
+        "startTime": "2026-10-19T04:25:27.689Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/docubox-templates.e2e.ts",
+    "titlePath": [
+      "Master Data DocuBox Templates FE E2E",
+      "creates a DocuBox template with a root folder from the FE"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/docubox-templates.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 775,
+        "startTime": "2026-10-19T04:25:28.189Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/docubox-templates.e2e.ts",
+    "titlePath": [
+      "Master Data DocuBox Templates FE E2E",
+      "updates a DocuBox template name from the FE autosave form"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/docubox-templates.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 585,
+        "startTime": "2026-10-19T04:25:28.966Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/logistics/docubox-templates.e2e.ts",
+    "titlePath": [
+      "Master Data DocuBox Templates FE E2E",
+      "surfaces duplicate template name validation in the FE"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/logistics/docubox-templates.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 548,
+        "startTime": "2026-10-19T04:25:29.555Z",
+        "error_count": 0
+      }
+    ]
+  }
+]
