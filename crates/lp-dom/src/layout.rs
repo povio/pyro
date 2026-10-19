@@ -1056,28 +1056,41 @@ impl Layout {
         moved.then_some(ScrollTarget::Viewport)
     }
 
-    /// Brings `el`'s top into view inside every scrolled ancestor container
-    /// whose visible range [scrollTop, scrollTop + clientHeight) excludes it,
-    /// innermost first. Deviation from upstream (window only): needed once
-    /// element scroll offsets move client rects. Containers that were never
-    /// scrolled keep upstream behavior. Returns whether anything moved.
-    fn reveal_in_scrolled_ancestors(&mut self, dom: &Dom, el: NodeId) -> bool {
-        if self.element_scroll.is_empty() {
-            return false;
-        }
-        let y = self.document_position(dom, el);
-        let mut moved = false;
+    /// Reveal a clipped target inside overflow ancestors, innermost
+    /// first. Recompute relative geometry after each move so an inner offset is
+    /// not counted again by an outer container. Explicitly scrolled containers
+    /// retain the previous reveal behavior even without an overflow declaration.
+    fn reveal_in_scroll_ancestors(&mut self, dom: &Dom, el: NodeId) -> Vec<ScrollTarget> {
+        let mut moved = Vec::new();
         let mut cur = dom.parent_element(el).ok().flatten();
-        while let Some(a) = cur {
-            if let Some(&(_, sy)) = self.element_scroll.get(&a) {
-                let offset = y - self.document_position(dom, a);
-                let visible = self.client_height(dom, a);
-                if offset < sy as f64 || offset >= sy as f64 + visible {
-                    let top = offset.max(0.0).trunc().min(i32::MAX as f64) as i32;
-                    moved |= self.set_scroll_top(dom, a, top);
+        while let Some(node) = cur {
+            if self.is_root_container(dom, node) {
+                break;
+            }
+            let axes = self.style.overflow_axes(dom, node);
+            let explicit = self.element_scroll.contains_key(&node);
+            if axes.x || axes.y || explicit {
+                let target = self.bounding_client_rect(dom, el);
+                let container = self.bounding_client_rect(dom, node);
+                let left = (axes.x || explicit)
+                    .then(|| {
+                        nearest_scroll_offset(
+                            target.left() - container.left(),
+                            target.width,
+                            self.client_width(dom, node),
+                            self.scroll_left(node),
+                        )
+                    })
+                    .flatten();
+                let offset = target.top() - container.top();
+                let visible = self.client_height(dom, node);
+                let top = ((axes.y || explicit) && (offset < 0.0 || offset + target.height > visible))
+                    .then(|| (offset + self.scroll_top(node) as f64).max(0.0).trunc().min(i32::MAX as f64) as i32);
+                if self.element_scroll_to(dom, node, left, top) {
+                    moved.push(ScrollTarget::Container(node));
                 }
             }
-            cur = dom.parent_element(a).ok().flatten();
+            cur = dom.parent_element(node).ok().flatten();
         }
         moved
     }
@@ -1137,30 +1150,46 @@ impl Layout {
         moved
     }
 
-    /// `scrollIntoView` (Element.zig:2161-2168): brings the element's top to
-    /// the window's scroll offset (x reset to 0), after revealing it inside
-    /// scrolled ancestor containers.
+    /// `scrollIntoView` keeps the existing vertical start alignment for the
+    /// viewport, after revealing clipped overflow ancestors inside-out.
     pub fn scroll_into_view(&mut self, dom: &Dom, el: NodeId) -> bool {
-        let inner = self.reveal_in_scrolled_ancestors(dom, el);
+        !self.scroll_into_view_targets(dom, el).is_empty()
+    }
+
+    /// Changed targets in delivery order. Embedders use this to queue each
+    /// container's scroll event followed by the document's viewport event.
+    /// Vertical start reveal and horizontal nearest-edge reveal; not full CSS alignment.
+    pub fn scroll_into_view_targets(&mut self, dom: &Dom, el: NodeId) -> Vec<ScrollTarget> {
+        if !self.is_visible(dom, el) {
+            return Vec::new();
+        }
+        let mut moved = self.reveal_in_scroll_ancestors(dom, el);
         let (_, dy) = self.ancestor_scroll_offset(dom, el);
         let y = self.document_position(dom, el) - dy;
         let top = y.max(0.0).trunc().min(i32::MAX as f64) as i32;
-        self.window_scroll_to(dom, Some(0), Some(top)) || inner
+        let target = self.bounding_client_rect(dom, el);
+        let left = nearest_scroll_offset(target.left(), target.width, self.inner_width() as f64, self.window_scroll.0);
+        if self.window_scroll_to(dom, left, Some(top)) {
+            moved.push(ScrollTarget::Viewport);
+        }
+        moved
     }
 
-    /// `scrollIntoViewIfNeeded` (Element.zig:2146-2155): no-op while the top
-    /// is within [scrollY, scrollY + innerHeight) and visible inside its
-    /// scrolled ancestors.
+    /// No-op while the target fits the viewport and its overflow ancestors.
     pub fn scroll_into_view_if_needed(&mut self, dom: &Dom, el: NodeId) -> bool {
-        let inner = self.reveal_in_scrolled_ancestors(dom, el);
-        let (_, dy) = self.ancestor_scroll_offset(dom, el);
-        let y = self.document_position(dom, el) - dy;
-        let sy = self.window_scroll.1 as f64;
-        let vh = self.inner_height() as f64;
-        if y >= sy && y < sy + vh {
-            return inner;
+        if !self.is_visible(dom, el) {
+            return false;
         }
-        self.scroll_into_view(dom, el) || inner
+        let moved = self.reveal_in_scroll_ancestors(dom, el);
+        let target = self.bounding_client_rect(dom, el);
+        if target.top() >= 0.0
+            && target.bottom() <= self.inner_height() as f64
+            && nearest_scroll_offset(target.left(), target.width, self.inner_width() as f64, self.window_scroll.0)
+                .is_none()
+        {
+            return !moved.is_empty();
+        }
+        self.scroll_into_view(dom, el) || !moved.is_empty()
     }
 
     // ----- getComputedStyle --------------------------------------------------
@@ -1213,6 +1242,18 @@ fn count_subtree_nodes(dom: &Dom, idx: u32) -> f64 {
         cur = dom.following_in(cur, idx);
     }
     count
+}
+
+// Default inline alignment uses the nearer edge. A box spanning both edges
+// stays put; an oversized box outside one edge aligns its opposite edge.
+fn nearest_scroll_offset(start: f64, size: f64, viewport: f64, current: u32) -> Option<i32> {
+    let end = start + size;
+    if (start >= 0.0 && end <= viewport) || (start <= 0.0 && end >= viewport) {
+        return None;
+    }
+    let delta =
+        if (start < 0.0 && size <= viewport) || (end > viewport && size > viewport) { start } else { end - viewport };
+    Some((current as f64 + delta).round().clamp(0.0, i32::MAX as f64) as i32)
 }
 
 // Focusing a box already visible on an axis must not perturb that scroll.

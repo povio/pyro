@@ -1,0 +1,9 @@
+# Nested scroll reveal evidence
+
+Baseline source: 5b467880d75c3e14a0b0108775de25f182d39734. Immutable signed baseline browser SHA256: 18fa9de7ab0c9d92247b70e813bdea0fe78efc4da42cbbbadcf18a0a3399f4ee. Chrome control version: 147.0.7727.15. Both use the same nested-overflow HTML in probe.mjs; the script has a historical copied link-scan header and host-local runner paths, but its executed body is the nested-scroll control. The 50ms observation delay is diagnostic only, not a production/test-helper repair.
+
+The baseline moves only the viewport, leaves both clipped ancestors at zero and emits only a document event. Native regression native-before.log fails on the same fresh-container condition. After initial vertical repair, binding-after-diagnostic.log exposes a second scroll on focus (outer scrollLeft 0 to 45): horizontal clipping remained. The completed implementation adds default inline-nearest reveal and queues each changed container once before the viewport.
+
+Final source validation: 302 lp-dom/lp-webapi release tests pass, one pre-existing ignored; strict release all-target Clippy, formatting and whitespace checks pass. Commands: CARGO_PROFILE_RELEASE_DEBUG=0 cargo test --release --locked -p lp-dom -p lp-webapi; same environment cargo clippy --release --locked -p lp-dom -p lp-webapi --all-targets -- -D warnings; cargo fmt --all -- --check. New regressions cover fresh/primed ancestors, both-axis containment, nearest edges, oversized spanning boxes, repeat/focus no-op, event order and document replacement. Logs are worker execution evidence, not independent review.
+
+CDP mapping and the TOS Add Party readiness increment are separate dependencies. No full app or 742-case final-suite pass is claimed here. Existing layout limitations remain documented in docs/webapi/SCROLL-INTO-VIEW.md.

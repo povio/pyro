@@ -121,9 +121,15 @@ pub(crate) fn fire_scroll(page: &Rc<PageDom>, target: Option<NodeId>) {
 
 pub(crate) fn scroll_into_view<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
     let page = n.page();
-    let moved = page.layout.borrow_mut().scroll_into_view(&page.dom.borrow(), n.id);
-    if moved {
-        fire_scroll(page, None);
+    let moved = page.layout.borrow_mut().scroll_into_view_targets(&page.dom.borrow(), n.id);
+    for target in moved {
+        fire_scroll(
+            page,
+            match target {
+                lp_dom::layout::ScrollTarget::Container(node) => Some(node),
+                lp_dom::layout::ScrollTarget::Viewport => None,
+            },
+        );
     }
     Ok(s.undefined())
 }
