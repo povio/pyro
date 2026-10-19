@@ -1,0 +1,241 @@
+{
+  "stats": {
+    "startTime": "2026-10-19T04:47:16.822Z",
+    "duration": 26290.735,
+    "expected": 13,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  },
+  "cases": [
+    {
+      "file": "e2e/logistics/positions-route-subpositions.e2e.ts",
+      "titlePath": [
+        "Positions Route subpositions FE E2E",
+        "updates a master route point from the Route tab"
+      ],
+      "status": "expected",
+      "expectedStatus": "passed",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2449,
+          "error_count": 0
+        }
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-route-subpositions.e2e.ts",
+      "titlePath": [
+        "Positions Route subpositions FE E2E",
+        "propagates the master route point update to a linked subposition"
+      ],
+      "status": "expected",
+      "expectedStatus": "passed",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1736,
+          "error_count": 0
+        }
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-route-subpositions.e2e.ts",
+      "titlePath": [
+        "Positions Route subpositions FE E2E",
+        "syncs the master carrier without changing the child Ocean Carrier Agent"
+      ],
+      "status": "expected",
+      "expectedStatus": "passed",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 480,
+          "error_count": 0
+        }
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-route-subpositions.e2e.ts",
+      "titlePath": [
+        "Positions Route subpositions FE E2E",
+        "removes the propagated transshipment point from the linked subposition"
+      ],
+      "status": "expected",
+      "expectedStatus": "passed",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2876,
+          "error_count": 0
+        }
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-route-subpositions.e2e.ts",
+      "titlePath": [
+        "Positions Route subpositions FE E2E",
+        "renders linked subposition master route points readonly and keeps child route points editable"
+      ],
+      "status": "expected",
+      "expectedStatus": "passed",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2300,
+          "error_count": 0
+        }
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-route-subpositions.e2e.ts",
+      "titlePath": [
+        "Positions Route subpositions FE E2E",
+        "syncs default route ports to split routes and renders split route ports readonly"
+      ],
+      "status": "expected",
+      "expectedStatus": "passed",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 3168,
+          "error_count": 0
+        }
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-route-subpositions.e2e.ts",
+      "titlePath": [
+        "Positions Route subpositions FE E2E",
+        "master transshipment deletion propagation",
+        "propagates a master transshipment point deletion from the Route tab to a linked subposition"
+      ],
+      "status": "expected",
+      "expectedStatus": "passed",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2336,
+          "error_count": 0
+        }
+      ]
+    },
+    {
+      "file": "e2e/logistics/quotes-route.e2e.ts",
+      "titlePath": [
+        "Quotes Route tab FE E2E",
+        "lists default Quote route points in the Route tab"
+      ],
+      "status": "expected",
+      "expectedStatus": "passed",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1064,
+          "error_count": 0
+        }
+      ]
+    },
+    {
+      "file": "e2e/logistics/quotes-route.e2e.ts",
+      "titlePath": [
+        "Quotes Route tab FE E2E",
+        "updates the Route tab vessel inline field from the FE"
+      ],
+      "status": "expected",
+      "expectedStatus": "passed",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1277,
+          "error_count": 0
+        }
+      ]
+    },
+    {
+      "file": "e2e/logistics/quotes-route.e2e.ts",
+      "titlePath": [
+        "Quotes Route tab FE E2E",
+        "updates the Route tab voyage inline field from the FE"
+      ],
+      "status": "expected",
+      "expectedStatus": "passed",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1231,
+          "error_count": 0
+        }
+      ]
+    },
+    {
+      "file": "e2e/logistics/quotes-route.e2e.ts",
+      "titlePath": [
+        "Quotes Route tab FE E2E",
+        "syncs default quote route ports to split routes and renders split route ports readonly"
+      ],
+      "status": "expected",
+      "expectedStatus": "passed",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2111,
+          "error_count": 0
+        }
+      ]
+    },
+    {
+      "file": "e2e/logistics/quotes-route.e2e.ts",
+      "titlePath": [
+        "Quotes Route tab FE E2E",
+        "updates the Route tab reference inline field from the FE"
+      ],
+      "status": "expected",
+      "expectedStatus": "passed",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1126,
+          "error_count": 0
+        }
+      ]
+    },
+    {
+      "file": "e2e/logistics/quotes-route.e2e.ts",
+      "titlePath": [
+        "Quotes Route tab FE E2E",
+        "updates the Route tab secondary reference inline field from the FE"
+      ],
+      "status": "expected",
+      "expectedStatus": "passed",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1225,
+          "error_count": 0
+        }
+      ]
+    }
+  ],
+  "source_hashes": {
+    "e2e/logistics/positions-route-subpositions.e2e.ts": "7a09fa4269d82cb1015db67b80680f16109fab2826e3f4dc698f2b98774ce5d6",
+    "e2e/logistics/quotes-route.e2e.ts": "b23c80dc7d3fa5646c9a7026673582d317dc8f2b152e7619eaec22f580040209"
+  },
+  "sources_equal_original_f9f": true,
+  "database_set_restored": true,
+  "report_sha256": "3c54ad8666f090baed93033dbaa2a343dec7661c1a5689b545b9c29032033758"
+}

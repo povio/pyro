@@ -1,0 +1,371 @@
+{
+  "binary": "chromium",
+  "version": "147.0.7727.15",
+  "rows": [
+    {
+      "alignment": "label",
+      "before": {
+        "active": "",
+        "outer": 380,
+        "scrollY": 1508,
+        "label": [
+          8,
+          0,
+          160,
+          10
+        ],
+        "button": [
+          8,
+          -80,
+          160,
+          90
+        ],
+        "clicked": 0
+      },
+      "after": {
+        "state": {
+          "active": "button",
+          "outer": 380,
+          "scrollY": 1508,
+          "label": [
+            8,
+            0,
+            160,
+            10
+          ],
+          "button": [
+            8,
+            -80,
+            160,
+            90
+          ],
+          "clicked": 1
+        },
+        "events": [
+          {
+            "event": "pointerdown",
+            "target": "label",
+            "active": "",
+            "outer": 380,
+            "scrollY": 1508,
+            "label": [
+              8,
+              0,
+              160,
+              10
+            ],
+            "button": [
+              8,
+              -80,
+              160,
+              90
+            ],
+            "clicked": 0
+          },
+          {
+            "event": "mousedown",
+            "target": "label",
+            "active": "",
+            "outer": 380,
+            "scrollY": 1508,
+            "label": [
+              8,
+              0,
+              160,
+              10
+            ],
+            "button": [
+              8,
+              -80,
+              160,
+              90
+            ],
+            "clicked": 0
+          },
+          {
+            "event": "focusin",
+            "target": "button",
+            "active": "button",
+            "outer": 380,
+            "scrollY": 1508,
+            "label": [
+              8,
+              0,
+              160,
+              10
+            ],
+            "button": [
+              8,
+              -80,
+              160,
+              90
+            ],
+            "clicked": 0
+          },
+          {
+            "event": "pointerup",
+            "target": "label",
+            "active": "button",
+            "outer": 380,
+            "scrollY": 1508,
+            "label": [
+              8,
+              0,
+              160,
+              10
+            ],
+            "button": [
+              8,
+              -80,
+              160,
+              90
+            ],
+            "clicked": 0
+          },
+          {
+            "event": "mouseup",
+            "target": "label",
+            "active": "button",
+            "outer": 380,
+            "scrollY": 1508,
+            "label": [
+              8,
+              0,
+              160,
+              10
+            ],
+            "button": [
+              8,
+              -80,
+              160,
+              90
+            ],
+            "clicked": 0
+          },
+          {
+            "event": "click",
+            "target": "label",
+            "active": "button",
+            "outer": 380,
+            "scrollY": 1508,
+            "label": [
+              8,
+              0,
+              160,
+              10
+            ],
+            "button": [
+              8,
+              -80,
+              160,
+              90
+            ],
+            "clicked": 0
+          }
+        ]
+      }
+    },
+    {
+      "alignment": "button",
+      "before": {
+        "active": "",
+        "outer": 300,
+        "scrollY": 1508,
+        "label": [
+          8,
+          80,
+          160,
+          10
+        ],
+        "button": [
+          8,
+          0,
+          160,
+          90
+        ],
+        "clicked": 0
+      },
+      "after": {
+        "state": {
+          "active": "button",
+          "outer": 300,
+          "scrollY": 1508,
+          "label": [
+            8,
+            80,
+            160,
+            10
+          ],
+          "button": [
+            8,
+            0,
+            160,
+            90
+          ],
+          "clicked": 1
+        },
+        "events": [
+          {
+            "event": "scroll",
+            "target": "outer",
+            "active": "",
+            "outer": 300,
+            "scrollY": 1508,
+            "label": [
+              8,
+              80,
+              160,
+              10
+            ],
+            "button": [
+              8,
+              0,
+              160,
+              90
+            ],
+            "clicked": 0
+          },
+          {
+            "event": "scroll",
+            "active": "",
+            "outer": 300,
+            "scrollY": 1508,
+            "label": [
+              8,
+              80,
+              160,
+              10
+            ],
+            "button": [
+              8,
+              0,
+              160,
+              90
+            ],
+            "clicked": 0
+          },
+          {
+            "event": "pointerdown",
+            "target": "label",
+            "active": "",
+            "outer": 300,
+            "scrollY": 1508,
+            "label": [
+              8,
+              80,
+              160,
+              10
+            ],
+            "button": [
+              8,
+              0,
+              160,
+              90
+            ],
+            "clicked": 0
+          },
+          {
+            "event": "mousedown",
+            "target": "label",
+            "active": "",
+            "outer": 300,
+            "scrollY": 1508,
+            "label": [
+              8,
+              80,
+              160,
+              10
+            ],
+            "button": [
+              8,
+              0,
+              160,
+              90
+            ],
+            "clicked": 0
+          },
+          {
+            "event": "focusin",
+            "target": "button",
+            "active": "button",
+            "outer": 300,
+            "scrollY": 1508,
+            "label": [
+              8,
+              80,
+              160,
+              10
+            ],
+            "button": [
+              8,
+              0,
+              160,
+              90
+            ],
+            "clicked": 0
+          },
+          {
+            "event": "pointerup",
+            "target": "label",
+            "active": "button",
+            "outer": 300,
+            "scrollY": 1508,
+            "label": [
+              8,
+              80,
+              160,
+              10
+            ],
+            "button": [
+              8,
+              0,
+              160,
+              90
+            ],
+            "clicked": 0
+          },
+          {
+            "event": "mouseup",
+            "target": "label",
+            "active": "button",
+            "outer": 300,
+            "scrollY": 1508,
+            "label": [
+              8,
+              80,
+              160,
+              10
+            ],
+            "button": [
+              8,
+              0,
+              160,
+              90
+            ],
+            "clicked": 0
+          },
+          {
+            "event": "click",
+            "target": "label",
+            "active": "button",
+            "outer": 300,
+            "scrollY": 1508,
+            "label": [
+              8,
+              80,
+              160,
+              10
+            ],
+            "button": [
+              8,
+              0,
+              160,
+              90
+            ],
+            "clicked": 0
+          }
+        ]
+      }
+    }
+  ]
+}
