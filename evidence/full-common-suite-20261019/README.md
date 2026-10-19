@@ -6,7 +6,7 @@ See the [completed result and provenance](final-run/README.md), [all 742 case at
 
 The `not_run` statuses in [w2-final-selection-hashes.json](w2-final-selection-hashes.json) are the **pre-execution selection snapshot**, retained unchanged. Current frozen outcomes are in the completed ledger above. The planning text below is also historical, including its original pending statements and earlier engine pin.
 
-Exit-code layers: `final-run/w2-lane-state.json` records `runner_exit` from the outer `run-selection.sh` cleanup/reporting wrapper. That wrapper does not propagate the Playwright harness failure exit, so its zero is not a test pass. The actual harness `exit_code` is preserved in each `w2-final-NN/metadata.json` (for example [batch 01](w2-final-01/metadata.json)); case outcomes, not wrapper success, determine the 729/13 result. Raw fields remain unchanged.
+Exit-code layers: `final-run/w2-lane-state.json` records `runner_exit` from the outer `run-selection.sh` cleanup/reporting wrapper. That wrapper does not propagate the Playwright harness failure exit, so its zero is not a test pass. The actual harness `exit_code` is preserved in each `final-run/w2-final-NN/metadata.json` (for example [batch 01](final-run/w2-final-01/metadata.json)); case outcomes, not wrapper success, determine the 729/13 result. Raw fields remain unchanged.
 
 # Historical coordination snapshot (before freeze)
 
