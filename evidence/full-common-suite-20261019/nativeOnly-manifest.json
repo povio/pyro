@@ -1,0 +1,917 @@
+[
+  {
+    "file": "e2e/logistics/positions-house-bl-document.e2e.ts",
+    "titlePath": [
+      "Positions House Bill of Lading document FE E2E",
+      "updates House Bill of Lading precarriage fields from the FE"
+    ],
+    "reason": "The 2026-09-24 full run against develop 63530b58ea loses its Lightpanda execution context during actual toggle/select activation. Keep this workflow on native Chromium; preserve assertions and do not retry silently in another browser."
+  },
+  {
+    "file": "e2e/logistics/positions-house-bl-document.e2e.ts",
+    "titlePath": [
+      "Positions House Bill of Lading document FE E2E",
+      "updates House Bill of Lading document quantity fields from the FE"
+    ],
+    "reason": "The 2026-09-24 full run against develop 63530b58ea loses its Lightpanda execution context during actual toggle/select activation. Keep this workflow on native Chromium; preserve assertions and do not retry silently in another browser."
+  },
+  {
+    "file": "e2e/logistics/positions-house-bl-document.e2e.ts",
+    "titlePath": [
+      "Positions House Bill of Lading document FE E2E",
+      "updates House Bill of Lading discharge and delivery fields from the FE"
+    ],
+    "reason": "The merged-develop full Lightpanda qualification fails with a destroyed execution context during an actual FE action. Isolated earlier passes are not sufficient for promotion. Keep this scenario native without suppressing errors, changing assertions, or automatic fallback."
+  },
+  {
+    "file": "e2e/logistics/position-export-templates.e2e.ts",
+    "titlePath": [
+      "Position export templates FE E2E",
+      "updates an export template name and selected columns from Master Data"
+    ],
+    "reason": "The merged-develop full Lightpanda qualification fails with a destroyed execution context during an actual FE action. Isolated earlier passes are not sufficient for promotion. Keep this scenario native without suppressing errors, changing assertions, or automatic fallback."
+  },
+  {
+    "file": "e2e/logistics/quotes-route.e2e.ts",
+    "titlePath": [
+      "Quotes Route tab FE E2E",
+      "adds a Quote route point from the FE"
+    ],
+    "reason": "The merged-develop full Lightpanda qualification fails with a destroyed execution context during an actual FE action. Isolated earlier passes are not sufficient for promotion. Keep this scenario native without suppressing errors, changing assertions, or automatic fallback."
+  },
+  {
+    "file": "e2e/finances/incoming-invoices.e2e.ts",
+    "titlePath": [
+      "Incoming Invoices Listing FE E2E",
+      "hides Add Charge for paid incoming invoices credited with a Credit Note"
+    ],
+    "reason": "Passed isolated discovery but failed the expanded default lane with a destroyed execution context and an unexpected lazy-route component runtime error. Native full-suite verification passes. Retain the real list-to-details workflow on Chromium; do not ignore the browser error or promote the isolated pass."
+  },
+  {
+    "file": "e2e/master-data/locations/terminals.e2e.ts",
+    "titlePath": [
+      "Master Data Terminals FE E2E",
+      "autosaves terminal airport field"
+    ],
+    "reason": "Full-file verification exposes a responsive autocomplete trigger without its editable mobile sheet in the pinned Lightpanda build. Earlier isolated passes do not reproduce reliably; real native editing and backend persistence assertions are retained."
+  },
+  {
+    "file": "e2e/master-data/locations/terminals.e2e.ts",
+    "titlePath": [
+      "Master Data Terminals FE E2E",
+      "autosaves terminal port field"
+    ],
+    "reason": "Passed the remaining-candidate sweep but failed complete-file verification: the actual responsive autocomplete opens without an editable mobile sheet. Do not promote an isolated pass or fabricate desktop media-query values. Native editing and backend persistence assertions remain intact."
+  },
+  {
+    "file": "e2e/logistics/positions-docubox.e2e.ts",
+    "titlePath": [
+      "Position DocuBox tab actions FE E2E",
+      "keeps Position details open when dismissing a DocuBox context menu"
+    ],
+    "reason": "Requires the real DocuBox context menu. Its portal selection uses document.elementFromPoint and dialog geometry; neither a synthetic origin nor fake geometry preserves that behavior. The pinned Lightpanda build also does not emit contextmenu for the actual ContextMenu key, unlike Chromium (isolated keyboard-context-menu probe). Native right-click remains intact."
+  },
+  {
+    "file": "e2e/logistics/positions-docubox.e2e.ts",
+    "titlePath": [
+      "Position DocuBox tab actions FE E2E",
+      "renames a Position DocuBox folder"
+    ],
+    "reason": "Requires the real DocuBox context menu. Its portal selection uses document.elementFromPoint and dialog geometry; neither a synthetic origin nor fake geometry preserves that behavior. The pinned Lightpanda build also does not emit contextmenu for the actual ContextMenu key, unlike Chromium (isolated keyboard-context-menu probe). Native right-click remains intact."
+  },
+  {
+    "file": "e2e/logistics/positions-docubox.e2e.ts",
+    "titlePath": [
+      "Position DocuBox tab actions FE E2E",
+      "adds a subfolder from a selected Position DocuBox folder"
+    ],
+    "reason": "Requires the real DocuBox context menu. Its portal selection uses document.elementFromPoint and dialog geometry; neither a synthetic origin nor fake geometry preserves that behavior. The pinned Lightpanda build also does not emit contextmenu for the actual ContextMenu key, unlike Chromium (isolated keyboard-context-menu probe). Native right-click remains intact."
+  },
+  {
+    "file": "e2e/logistics/positions-docubox.e2e.ts",
+    "titlePath": [
+      "Position DocuBox tab actions FE E2E",
+      "deletes a Position DocuBox folder"
+    ],
+    "reason": "Requires the real DocuBox context menu. Its portal selection uses document.elementFromPoint and dialog geometry; neither a synthetic origin nor fake geometry preserves that behavior. The pinned Lightpanda build also does not emit contextmenu for the actual ContextMenu key, unlike Chromium (isolated keyboard-context-menu probe). Native right-click remains intact."
+  },
+  {
+    "file": "e2e/logistics/positions-docubox.e2e.ts",
+    "titlePath": [
+      "Position DocuBox tab actions FE E2E",
+      "renames a Position DocuBox file"
+    ],
+    "reason": "Requires the real DocuBox context menu. Its portal selection uses document.elementFromPoint and dialog geometry; neither a synthetic origin nor fake geometry preserves that behavior. The pinned Lightpanda build also does not emit contextmenu for the actual ContextMenu key, unlike Chromium (isolated keyboard-context-menu probe). Native right-click remains intact."
+  },
+  {
+    "file": "e2e/logistics/positions-docubox.e2e.ts",
+    "titlePath": [
+      "Position DocuBox tab actions FE E2E",
+      "moves a Position DocuBox file from one folder to another"
+    ],
+    "reason": "Requires the real DocuBox context menu. Its portal selection uses document.elementFromPoint and dialog geometry; neither a synthetic origin nor fake geometry preserves that behavior. The pinned Lightpanda build also does not emit contextmenu for the actual ContextMenu key, unlike Chromium (isolated keyboard-context-menu probe). Native right-click remains intact."
+  },
+  {
+    "file": "e2e/logistics/positions-docubox.e2e.ts",
+    "titlePath": [
+      "Position DocuBox tab actions FE E2E",
+      "archives a Position DocuBox file"
+    ],
+    "reason": "Requires the real DocuBox context menu. Its portal selection uses document.elementFromPoint and dialog geometry; neither a synthetic origin nor fake geometry preserves that behavior. The pinned Lightpanda build also does not emit contextmenu for the actual ContextMenu key, unlike Chromium (isolated keyboard-context-menu probe). Native right-click remains intact."
+  },
+  {
+    "file": "e2e/logistics/positions-docubox.e2e.ts",
+    "titlePath": [
+      "Position DocuBox tab actions FE E2E",
+      "unarchives a Position DocuBox file"
+    ],
+    "reason": "Requires the real DocuBox context menu. Its portal selection uses document.elementFromPoint and dialog geometry; neither a synthetic origin nor fake geometry preserves that behavior. The pinned Lightpanda build also does not emit contextmenu for the actual ContextMenu key, unlike Chromium (isolated keyboard-context-menu probe). Native right-click remains intact."
+  },
+  {
+    "file": "e2e/logistics/positions-docubox.e2e.ts",
+    "titlePath": [
+      "Position DocuBox tab actions FE E2E",
+      "shares a Position DocuBox file with Control Tower"
+    ],
+    "reason": "Requires the real DocuBox context menu. Its portal selection uses document.elementFromPoint and dialog geometry; neither a synthetic origin nor fake geometry preserves that behavior. The pinned Lightpanda build also does not emit contextmenu for the actual ContextMenu key, unlike Chromium (isolated keyboard-context-menu probe). Native right-click remains intact."
+  },
+  {
+    "file": "e2e/logistics/quotes-docubox.e2e.ts",
+    "titlePath": [
+      "Quotes DocuBox tab FE E2E",
+      "renames a folder from the Quote DocuBox tab"
+    ],
+    "reason": "Requires the real DocuBox context menu. Its portal selection uses document.elementFromPoint and dialog geometry; neither a synthetic origin nor fake geometry preserves that behavior. The pinned Lightpanda build also does not emit contextmenu for the actual ContextMenu key, unlike Chromium (isolated keyboard-context-menu probe). Native right-click remains intact."
+  },
+  {
+    "file": "e2e/logistics/quotes-docubox.e2e.ts",
+    "titlePath": [
+      "Quotes DocuBox tab FE E2E",
+      "moves a folder from one DocuBox folder to another"
+    ],
+    "reason": "Requires the real DocuBox context menu. Its portal selection uses document.elementFromPoint and dialog geometry; neither a synthetic origin nor fake geometry preserves that behavior. The pinned Lightpanda build also does not emit contextmenu for the actual ContextMenu key, unlike Chromium (isolated keyboard-context-menu probe). Native right-click remains intact."
+  },
+  {
+    "file": "e2e/logistics/quotes-docubox.e2e.ts",
+    "titlePath": [
+      "Quotes DocuBox tab FE E2E",
+      "adds a subfolder from the selected Quote DocuBox folder"
+    ],
+    "reason": "Requires the real DocuBox context menu. Its portal selection uses document.elementFromPoint and dialog geometry; neither a synthetic origin nor fake geometry preserves that behavior. The pinned Lightpanda build also does not emit contextmenu for the actual ContextMenu key, unlike Chromium (isolated keyboard-context-menu probe). Native right-click remains intact."
+  },
+  {
+    "file": "e2e/logistics/quotes-docubox.e2e.ts",
+    "titlePath": [
+      "Quotes DocuBox tab FE E2E",
+      "deletes a folder from the Quote DocuBox tab"
+    ],
+    "reason": "Requires the real DocuBox context menu. Its portal selection uses document.elementFromPoint and dialog geometry; neither a synthetic origin nor fake geometry preserves that behavior. The pinned Lightpanda build also does not emit contextmenu for the actual ContextMenu key, unlike Chromium (isolated keyboard-context-menu probe). Native right-click remains intact."
+  },
+  {
+    "file": "e2e/logistics/quotes-docubox.e2e.ts",
+    "titlePath": [
+      "Quotes DocuBox tab FE E2E",
+      "renames a file from the Quote DocuBox tab"
+    ],
+    "reason": "Requires the real DocuBox context menu. Its portal selection uses document.elementFromPoint and dialog geometry; neither a synthetic origin nor fake geometry preserves that behavior. The pinned Lightpanda build also does not emit contextmenu for the actual ContextMenu key, unlike Chromium (isolated keyboard-context-menu probe). Native right-click remains intact."
+  },
+  {
+    "file": "e2e/logistics/quotes-docubox.e2e.ts",
+    "titlePath": [
+      "Quotes DocuBox tab FE E2E",
+      "moves a file from one folder to another from the Quote DocuBox tab"
+    ],
+    "reason": "Requires the real DocuBox context menu. Its portal selection uses document.elementFromPoint and dialog geometry; neither a synthetic origin nor fake geometry preserves that behavior. The pinned Lightpanda build also does not emit contextmenu for the actual ContextMenu key, unlike Chromium (isolated keyboard-context-menu probe). Native right-click remains intact."
+  },
+  {
+    "file": "e2e/logistics/quotes-docubox.e2e.ts",
+    "titlePath": [
+      "Quotes DocuBox tab FE E2E",
+      "archives a file from the Quote DocuBox tab"
+    ],
+    "reason": "Requires the real DocuBox context menu. Its portal selection uses document.elementFromPoint and dialog geometry; neither a synthetic origin nor fake geometry preserves that behavior. The pinned Lightpanda build also does not emit contextmenu for the actual ContextMenu key, unlike Chromium (isolated keyboard-context-menu probe). Native right-click remains intact."
+  },
+  {
+    "file": "e2e/logistics/quotes-docubox.e2e.ts",
+    "titlePath": [
+      "Quotes DocuBox tab FE E2E",
+      "unarchives a file from the Quote DocuBox tab"
+    ],
+    "reason": "Requires the real DocuBox context menu. Its portal selection uses document.elementFromPoint and dialog geometry; neither a synthetic origin nor fake geometry preserves that behavior. The pinned Lightpanda build also does not emit contextmenu for the actual ContextMenu key, unlike Chromium (isolated keyboard-context-menu probe). Native right-click remains intact."
+  },
+  {
+    "file": "e2e/logistics/quotes-docubox.e2e.ts",
+    "titlePath": [
+      "Quotes DocuBox tab FE E2E",
+      "shares a file with Control Tower from the Quote DocuBox tab"
+    ],
+    "reason": "Requires the real DocuBox context menu. Its portal selection uses document.elementFromPoint and dialog geometry; neither a synthetic origin nor fake geometry preserves that behavior. The pinned Lightpanda build also does not emit contextmenu for the actual ContextMenu key, unlike Chromium (isolated keyboard-context-menu probe). Native right-click remains intact."
+  },
+  {
+    "file": "e2e/master-data/business-entities/business-partner-employee-roles.e2e.ts",
+    "titlePath": [
+      "Master Data Business Partner Employee Roles tab FE E2E",
+      "renders only employee roles scoped to the current Business Partner details modal"
+    ],
+    "reason": "Requires scoped role rows in the actual visible table. The previous Lightpanda pass read a hidden header copy; the corrected shared visible-table locator exposes missing rows. Keep the stronger assertion on native Chromium."
+  },
+  {
+    "file": "e2e/master-data/logistics/remark-templates.e2e.ts",
+    "titlePath": [
+      "Master Data Remark Templates FE E2E",
+      "creates a remark template from the FE and shows the created details HTML"
+    ],
+    "reason": "Requires real contenteditable editing. The pinned Lightpanda build fails fill and does not update content or emit input on keyboard typing/insertion; reproduced with both engines in the isolated contenteditable probe."
+  },
+  {
+    "file": "e2e/logistics/positions-create-outgoing-credit-note.e2e.ts",
+    "titlePath": [
+      "Position Create Outgoing Credit Note FE E2E",
+      "updates an actual outgoing Credit Note from the invoice details drawer"
+    ],
+    "reason": "Requires real contenteditable editing. The pinned Lightpanda build fails fill and does not update content or emit input on keyboard typing/insertion; reproduced with both engines in the isolated contenteditable probe."
+  },
+  {
+    "file": "e2e/logistics/positions-create-outgoing-invoice.e2e.ts",
+    "titlePath": [
+      "Position Create Outgoing Invoice FE E2E",
+      "updates issued outgoing Invoice fields and persists its Chat topic"
+    ],
+    "reason": "Requires real contenteditable editing. The pinned Lightpanda build fails fill and does not update content or emit input on keyboard typing/insertion; reproduced with both engines in the isolated contenteditable probe."
+  },
+  {
+    "file": "e2e/logistics/positions-document-template.e2e.ts",
+    "titlePath": [
+      "Positions document template FE E2E",
+      "updates the template document remark from the FE"
+    ],
+    "reason": "Requires real contenteditable editing. The pinned Lightpanda build fails fill and does not update content or emit input on keyboard typing/insertion; reproduced with both engines in the isolated contenteditable probe."
+  },
+  {
+    "file": "e2e/logistics/positions-house-bl-document.e2e.ts",
+    "titlePath": [
+      "Positions House Bill of Lading document FE E2E",
+      "updates House Bill of Lading rich text and value fields from the FE"
+    ],
+    "reason": "Requires real contenteditable editing. The pinned Lightpanda build fails fill and does not update content or emit input on keyboard typing/insertion; reproduced with both engines in the isolated contenteditable probe."
+  },
+  {
+    "file": "e2e/logistics/positions-house-bl-document.e2e.ts",
+    "titlePath": [
+      "Positions House Bill of Lading document FE E2E",
+      "persists House Bill of Lading additional text across navigation and reload"
+    ],
+    "reason": "Requires real contenteditable editing. The pinned Lightpanda build fails fill and does not update content or emit input on keyboard typing/insertion; reproduced with both engines in the isolated contenteditable probe."
+  },
+  {
+    "file": "e2e/logistics/positions-house-bl-document.e2e.ts",
+    "titlePath": [
+      "Positions House Bill of Lading document FE E2E",
+      "persists a second in-place House Bill of Lading additional text edit"
+    ],
+    "reason": "Requires real contenteditable editing. The pinned Lightpanda build fails fill and does not update content or emit input on keyboard typing/insertion; reproduced with both engines in the isolated contenteditable probe."
+  },
+  {
+    "file": "e2e/logistics/positions-incoming-invoice-credit-note.e2e.ts",
+    "titlePath": [
+      "Position Incoming Invoice Credit Note FE E2E",
+      "updates actual Incoming Credit Note Body Remarks"
+    ],
+    "reason": "Requires real contenteditable editing. The pinned Lightpanda build fails fill and does not update content or emit input on keyboard typing/insertion; reproduced with both engines in the isolated contenteditable probe."
+  },
+  {
+    "file": "e2e/logistics/quotes-document.e2e.ts",
+    "titlePath": [
+      "Quotes Document tab FE E2E",
+      "persists Body and Footer Remarks across Document navigation and reload"
+    ],
+    "reason": "Requires real contenteditable editing. The pinned Lightpanda build fails fill and does not update content or emit input on keyboard typing/insertion; reproduced with both engines in the isolated contenteditable probe."
+  },
+  {
+    "file": "e2e/logistics/quotes-document.e2e.ts",
+    "titlePath": [
+      "Quotes Document tab FE E2E",
+      "updates Body Remarks when an unrelated legacy field is invalid"
+    ],
+    "reason": "Requires real contenteditable editing. The pinned Lightpanda build fails fill and does not update content or emit input on keyboard typing/insertion; reproduced with both engines in the isolated contenteditable probe."
+  },
+  {
+    "file": "e2e/logistics/quotes-document.e2e.ts",
+    "titlePath": [
+      "Quotes Document tab FE E2E",
+      "persists a changed and intentionally cleared Body Remarks value after blur"
+    ],
+    "reason": "Requires real contenteditable editing. The pinned Lightpanda build fails fill and does not update content or emit input on keyboard typing/insertion; reproduced with both engines in the isolated contenteditable probe."
+  },
+  {
+    "file": "e2e/email-logs.e2e.ts",
+    "titlePath": [
+      "Email Logs",
+      "opens details by double-clicking any cell or using the keyboard, but not by single click"
+    ],
+    "reason": "Opens the intentionally unsafe HTML email fixture in a sandboxed iframe. The pinned Lightpanda build executes its script and permits parent navigation, unlike Chromium; keep the real sandbox behavior and fixture intact."
+  },
+  {
+    "file": "e2e/email-logs.e2e.ts",
+    "titlePath": [
+      "Email Logs",
+      "shows an explicit error when an attachment becomes unavailable and allows retry"
+    ],
+    "reason": "Opens the intentionally unsafe HTML email fixture in a sandboxed iframe. The pinned Lightpanda build executes its script and permits parent navigation, unlike Chromium; keep the real sandbox behavior and fixture intact."
+  },
+  {
+    "file": "e2e/email-logs.e2e.ts",
+    "titlePath": [
+      "Email Logs",
+      "loads additional email logs on scroll and resets when filtered"
+    ],
+    "reason": "Exercises real wheel-driven pagination and viewport scrolling; the pinned engine fails the real hover/wheel path. API pagination is separate coverage, not a replacement."
+  },
+  {
+    "file": "e2e/finances/invoice-body-remarks.e2e.ts",
+    "titlePath": [
+      "Invoice Body Remarks autosave",
+      "persists draft invoice Body Remarks through the shared update form"
+    ],
+    "reason": "Exercises real contenteditable Body Remarks editing. The pinned engine reports isContentEditable=false; fill fails and keyboard typing/insertion leave text and input events unchanged, reproduced in an isolated two-engine probe."
+  },
+  {
+    "file": "e2e/finances/invoice-body-remarks.e2e.ts",
+    "titlePath": [
+      "Invoice Body Remarks autosave",
+      "persists a second in-place Body Remarks edit"
+    ],
+    "reason": "Exercises real contenteditable Body Remarks editing. The pinned engine reports isContentEditable=false; fill fails and keyboard typing/insertion leave text and input events unchanged, reproduced in an isolated two-engine probe."
+  },
+  {
+    "file": "e2e/finances/invoice-body-remarks.e2e.ts",
+    "titlePath": [
+      "Invoice Body Remarks autosave",
+      "persists clearing draft invoice Body Remarks"
+    ],
+    "reason": "Exercises real contenteditable Body Remarks editing. The pinned engine reports isContentEditable=false; fill fails and keyboard typing/insertion leave text and input events unchanged, reproduced in an isolated two-engine probe."
+  },
+  {
+    "file": "e2e/finances/invoice-body-remarks.e2e.ts",
+    "titlePath": [
+      "Invoice Body Remarks autosave",
+      "persists issued invoice Body Remarks through the shared fix form"
+    ],
+    "reason": "Exercises real contenteditable Body Remarks editing. The pinned engine reports isContentEditable=false; fill fails and keyboard typing/insertion leave text and input events unchanged, reproduced in an isolated two-engine probe."
+  },
+  {
+    "file": "e2e/finances/invoice-body-remarks.e2e.ts",
+    "titlePath": [
+      "Invoice Body Remarks autosave",
+      "persists Body Remarks for outgoing Invoice"
+    ],
+    "reason": "Exercises real contenteditable Body Remarks editing. The pinned engine reports isContentEditable=false; fill fails and keyboard typing/insertion leave text and input events unchanged, reproduced in an isolated two-engine probe."
+  },
+  {
+    "file": "e2e/finances/invoice-body-remarks.e2e.ts",
+    "titlePath": [
+      "Invoice Body Remarks autosave",
+      "persists Body Remarks for incoming Invoice"
+    ],
+    "reason": "Exercises real contenteditable Body Remarks editing. The pinned engine reports isContentEditable=false; fill fails and keyboard typing/insertion leave text and input events unchanged, reproduced in an isolated two-engine probe."
+  },
+  {
+    "file": "e2e/finances/invoice-body-remarks.e2e.ts",
+    "titlePath": [
+      "Invoice Body Remarks autosave",
+      "persists Body Remarks for outgoing Credit Note"
+    ],
+    "reason": "Exercises real contenteditable Body Remarks editing. The pinned engine reports isContentEditable=false; fill fails and keyboard typing/insertion leave text and input events unchanged, reproduced in an isolated two-engine probe."
+  },
+  {
+    "file": "e2e/finances/invoice-body-remarks.e2e.ts",
+    "titlePath": [
+      "Invoice Body Remarks autosave",
+      "persists Body Remarks for incoming Credit Note"
+    ],
+    "reason": "Exercises real contenteditable Body Remarks editing. The pinned engine reports isContentEditable=false; fill fails and keyboard typing/insertion leave text and input events unchanged, reproduced in an isolated two-engine probe."
+  },
+  {
+    "file": "e2e/finances/invoice-body-remarks.e2e.ts",
+    "titlePath": [
+      "Invoice Body Remarks autosave",
+      "persists Body Remarks for outgoing Collective Invoice"
+    ],
+    "reason": "Exercises real contenteditable Body Remarks editing. The pinned engine reports isContentEditable=false; fill fails and keyboard typing/insertion leave text and input events unchanged, reproduced in an isolated two-engine probe."
+  },
+  {
+    "file": "e2e/finances/invoice-body-remarks.e2e.ts",
+    "titlePath": [
+      "Invoice Body Remarks autosave",
+      "persists Body Remarks for outgoing Pro Forma"
+    ],
+    "reason": "Exercises real contenteditable Body Remarks editing. The pinned engine reports isContentEditable=false; fill fails and keyboard typing/insertion leave text and input events unchanged, reproduced in an isolated two-engine probe."
+  },
+  {
+    "file": "e2e/finances/invoice-body-remarks.e2e.ts",
+    "titlePath": [
+      "Invoice Body Remarks autosave",
+      "persists Body Remarks for incoming Pro Forma"
+    ],
+    "reason": "Exercises real contenteditable Body Remarks editing. The pinned engine reports isContentEditable=false; fill fails and keyboard typing/insertion leave text and input events unchanged, reproduced in an isolated two-engine probe."
+  },
+  {
+    "file": "e2e/finances/invoice-body-remarks.e2e.ts",
+    "titlePath": [
+      "Invoice Body Remarks autosave",
+      "persists Body Remarks for outgoing Partial Credit Note"
+    ],
+    "reason": "Exercises real contenteditable Body Remarks editing. The pinned engine reports isContentEditable=false; fill fails and keyboard typing/insertion leave text and input events unchanged, reproduced in an isolated two-engine probe."
+  },
+  {
+    "file": "e2e/auth/login.e2e.ts",
+    "titlePath": [
+      "Login FE E2E",
+      "loads the original login tab after magic-link authentication in another tab"
+    ],
+    "reason": "Requires two simultaneous tabs sharing authentication and observing cross-tab session propagation."
+  },
+  {
+    "file": "e2e/auth/login.e2e.ts",
+    "titlePath": [
+      "keeps mutation UUIDs unique across authenticated contexts sharing visual defaults"
+    ],
+    "reason": "Explicitly compares two simultaneous independently authenticated browser contexts; preserve the concurrency assertion."
+  },
+  {
+    "file": "e2e/email-logs.e2e.ts",
+    "titlePath": [
+      "Email Logs",
+      "office reader lists, opens and downloads owned logs without discovering other scopes"
+    ],
+    "reason": "Opens the downloaded attachment in a second tab and verifies the original email-log page remains unchanged; requires simultaneous tab support."
+  },
+  {
+    "file": "e2e/email-logs.e2e.ts",
+    "titlePath": [
+      "Email Logs",
+      "keeps the date range and results reachable on narrow screens"
+    ],
+    "reason": "Asserts actual bounding-box fit and scrollWidth/clientWidth containment at a narrow viewport; requires native layout."
+  },
+  {
+    "file": "e2e/chat/internal-chat-ux.e2e.ts",
+    "titlePath": [
+      "Internal chat UX",
+      "renders an opaque Slack-inspired conversation on desktop and mobile"
+    ],
+    "reason": "Asserts the responsive mobile-only Conversations control after changing the viewport; requires native media-query/layout behavior."
+  },
+  {
+    "file": "e2e/chat/collaboration-badges.e2e.ts",
+    "titlePath": [
+      "shows independent badges on the main chat icon"
+    ],
+    "reason": "Includes exact computed badge background color; preserves native CSS rendering coverage."
+  },
+  {
+    "file": "e2e/logistics/positions-incoming-invoice-credit-note.e2e.ts",
+    "titlePath": [
+      "Position Incoming Invoice Credit Note FE E2E",
+      "keeps credited Invoice Body Remarks out of the linked Credit Note drawer"
+    ],
+    "reason": "Asserts opening the linked Credit Note in a real new browser page; requires native popup lifecycle support."
+  },
+  {
+    "file": "e2e/logistics/positions-invoice-sorting.e2e.ts",
+    "titlePath": [
+      "Position invoice sorting FE E2E",
+      "keeps invoice sorting isolated from the parent Positions order query"
+    ],
+    "reason": "Verifies actual CanvasRenderingContext2D.fillText drawing order using getTransform coordinates, in addition to semantic DOM order; requires native canvas rendering."
+  },
+  {
+    "file": "e2e/logistics/positions-invoice-sorting.e2e.ts",
+    "titlePath": [
+      "Position invoice sorting FE E2E",
+      "does not alternate the Positions URL between order and no order after opening a selected position's invoices"
+    ],
+    "reason": "Verifies actual canvas invoice drawing order through fillText/getTransform, not just DOM order; keep the rendering assertion in Chromium."
+  },
+  {
+    "file": "e2e/master-data/locations/depots.e2e.ts",
+    "titlePath": [
+      "Master Data Depots FE E2E",
+      "autosaves depot city field"
+    ],
+    "reason": "Pinned Lightpanda reports desktop media false at 1440px, switches QueryAutocomplete to a mobile sheet, and exposes no editable search field. Reproduced with real backend and isolated UI library; native full-file verification passes."
+  },
+  {
+    "file": "e2e/logistics/positions-cargo.e2e.ts",
+    "titlePath": [
+      "Positions Cargo tab FE E2E",
+      "keeps Package document previews bounded inside the package card"
+    ],
+    "reason": "Asserts actual preview-pane height with boundingBox; a non-rendering engine can falsely pass an upper bound."
+  },
+  {
+    "file": "e2e/logistics/positions-cargo.e2e.ts",
+    "titlePath": [
+      "Positions Cargo tab FE E2E",
+      "keeps DOCX Package document previews bounded inside the package card"
+    ],
+    "reason": "Asserts preview height and rendered scroll overflow; requires native layout."
+  },
+  {
+    "file": "e2e/logistics/a18-bug-regressions.e2e.ts",
+    "titlePath": [
+      "A18 saves the top position, includes the live suffix, and previews seven packages"
+    ],
+    "reason": "Asserts rendered SVG icon bounding-box dimensions inside the preview iframe; requires native layout."
+  },
+  {
+    "file": "e2e/logistics/positions-docubox.e2e.ts",
+    "titlePath": [
+      "Position DocuBox tab actions FE E2E",
+      "previews MSG content and downloads an attachment"
+    ],
+    "reason": "Includes an actual attachment download assertion, not just DOM preview content."
+  },
+  {
+    "file": "e2e/logistics/positions-documents.e2e.ts",
+    "titlePath": [
+      "Positions Documents tab FE E2E",
+      "issues a templated document from the FE"
+    ],
+    "reason": "downloadIssuedDocument requires native right-click interaction and a browser download event."
+  },
+  {
+    "file": "e2e/logistics/positions-air-transport-order.e2e.ts",
+    "titlePath": [
+      "Air Transport Order",
+      "issues and downloads an Air Transport Order"
+    ],
+    "reason": "downloadIssuedDocument requires native right-click interaction and a browser download event."
+  },
+  {
+    "file": "e2e/logistics/positions-house-bl-document.e2e.ts",
+    "titlePath": [
+      "Positions House Bill of Lading document FE E2E",
+      "issues House Bill of Lading document from the FE"
+    ],
+    "reason": "downloadIssuedDocument requires native right-click interaction and a browser download event."
+  },
+  {
+    "file": "e2e/finances/incoming-invoices.e2e.ts",
+    "titlePath": [
+      "Incoming Invoices Listing FE E2E",
+      "exports incoming invoices and incoming invoice charges"
+    ],
+    "reason": "Requires a real browser download event and its native side effect."
+  },
+  {
+    "file": "e2e/finances/outgoing-invoices.e2e.ts",
+    "titlePath": [
+      "Outgoing Invoices Listing FE E2E",
+      "exports outgoing invoices and outgoing invoice charges"
+    ],
+    "reason": "Requires a real browser download event and its native side effect."
+  },
+  {
+    "file": "e2e/finances/payments-export.e2e.ts",
+    "titlePath": [
+      "Finances Payments Export FE E2E",
+      "exports more than the default Payments page size"
+    ],
+    "reason": "Requires a real browser download event and its native side effect."
+  },
+  {
+    "file": "e2e/logistics/positions-air-transport-order.e2e.ts",
+    "titlePath": [
+      "Air Transport Order",
+      "downloads and deletes the Air Transport Order"
+    ],
+    "reason": "Requires a real browser download event and its native side effect."
+  },
+  {
+    "file": "e2e/logistics/positions-docubox.e2e.ts",
+    "titlePath": [
+      "Position DocuBox tab actions FE E2E",
+      "downloads a Position DocuBox file"
+    ],
+    "reason": "Requires a real browser download event and its native side effect."
+  },
+  {
+    "file": "e2e/logistics/positions-docubox.e2e.ts",
+    "titlePath": [
+      "Position DocuBox tab actions FE E2E",
+      "sends a Position DocuBox file to email"
+    ],
+    "reason": "Requires a real browser download event and its native side effect."
+  },
+  {
+    "file": "e2e/logistics/positions-house-bl-document.e2e.ts",
+    "titlePath": [
+      "Positions House Bill of Lading document FE E2E",
+      "sends House Bill of Lading preview via Email from the FE"
+    ],
+    "reason": "Requires a real browser download event and its native side effect."
+  },
+  {
+    "file": "e2e/logistics/positions-house-bl-document.e2e.ts",
+    "titlePath": [
+      "Positions House Bill of Lading document FE E2E",
+      "sends House Bill of Lading PDF via Email from the FE"
+    ],
+    "reason": "Requires a real browser download event and its native side effect."
+  },
+  {
+    "file": "e2e/logistics/positions-issue-outgoing-pro-forma.e2e.ts",
+    "titlePath": [
+      "Position Issue Outgoing Pro Forma FE E2E",
+      "sends an issued outgoing Pro Forma from the invoice drawer"
+    ],
+    "reason": "Requires a real browser download event and its native side effect."
+  },
+  {
+    "file": "e2e/logistics/positions-shipping-instructions-document.e2e.ts",
+    "titlePath": [
+      "Positions Shipping Instructions document FE E2E",
+      "sends Shipping Instructions PDF via Email from the FE"
+    ],
+    "reason": "Requires a real browser download event and its native side effect."
+  },
+  {
+    "file": "e2e/logistics/quotes-cargo.e2e.ts",
+    "titlePath": [
+      "Quotes Cargo tab FE E2E",
+      "exports Quote Cargo packages from the Quote endpoint"
+    ],
+    "reason": "Requires a real browser download event and its native side effect."
+  },
+  {
+    "file": "e2e/logistics/quotes-docubox.e2e.ts",
+    "titlePath": [
+      "Quotes DocuBox tab FE E2E",
+      "downloads a file from the Quote DocuBox tab"
+    ],
+    "reason": "Requires a real browser download event and its native side effect."
+  },
+  {
+    "file": "e2e/logistics/quotes-docubox.e2e.ts",
+    "titlePath": [
+      "Quotes DocuBox tab FE E2E",
+      "sends a file to email from the Quote DocuBox tab"
+    ],
+    "reason": "Requires a real browser download event and its native side effect."
+  },
+  {
+    "file": "e2e/logistics/quotes-document.e2e.ts",
+    "titlePath": [
+      "Quotes Document tab FE E2E",
+      "sends Quote Document via Email from the FE"
+    ],
+    "reason": "Requires a real browser download event and its native side effect."
+  },
+  {
+    "file": "e2e/logistics/positions-shipping-instructions-document.e2e.ts",
+    "titlePath": [
+      "Positions Shipping Instructions document FE E2E",
+      "opens and updates the Shipping Instructions Cargo Configure menu from the FE"
+    ],
+    "reason": "Specifically reproduces native pointer sequencing, viewport placement and outside-pointer dismissal."
+  },
+  {
+    "file": "e2e/logistics/quotes-document.e2e.ts",
+    "titlePath": [
+      "Quotes Document tab FE E2E",
+      "opens Quote Document preview from the FE"
+    ],
+    "reason": "Exercises the browser PDF download action; a success toast alone does not establish download support."
+  },
+  {
+    "file": "e2e/logistics/positions-overview-autosave.e2e.ts",
+    "titlePath": [
+      "keeps sea bill fields usable at a narrow viewport"
+    ],
+    "reason": "Requires actual field widths at a narrow viewport."
+  },
+  {
+    "file": "e2e/logistics/positions-closed-finances.e2e.ts",
+    "titlePath": [
+      "closed finances keep the first row below the header and retain open charge colours"
+    ],
+    "reason": "Also asserts measured finance row/header alignment."
+  },
+  {
+    "file": "e2e/finances/invoice-layout-regressions.e2e.ts",
+    "titlePath": [
+      "invoice DocuBox columns fit the details panel"
+    ],
+    "reason": "Requires actual table and container widths to detect clipping."
+  },
+  {
+    "file": "e2e/chat/entity-chat-scroll.e2e.ts",
+    "titlePath": [
+      "keeps a long entity conversation pinned only while the reader is at the bottom"
+    ],
+    "reason": "Requires real scroll geometry and bottom-pinning behavior."
+  },
+  {
+    "file": "e2e/logistics/positions-finances.e2e.ts",
+    "titlePath": [
+      "Position Finances FE E2E",
+      "adds a divider through the Finances tab"
+    ],
+    "reason": "Also asserts rendered finance action-column alignment."
+  },
+  {
+    "file": "e2e/logistics/positions-finances.e2e.ts",
+    "titlePath": [
+      "Position Finances FE E2E",
+      "adds and updates a text row through the Finances tab"
+    ],
+    "reason": "Also asserts rendered finance action-column alignment."
+  },
+  {
+    "file": "e2e/logistics/positions-finances.e2e.ts",
+    "titlePath": [
+      "Position Finances FE E2E",
+      "reorders charges from the Finances tab"
+    ],
+    "reason": "Requires real pointer drag-and-drop and rendered target geometry."
+  },
+  {
+    "file": "e2e/configuration/employees.e2e.ts",
+    "titlePath": [
+      "Configuration Employees FE E2E",
+      "horizontally scrolls long global and office role cells"
+    ],
+    "reason": "Requires actual horizontal overflow and scrolling geometry."
+  },
+  {
+    "file": "e2e/calendar/calendar-filters.e2e.ts",
+    "titlePath": [
+      "selects multiple employees and uses the same input height for search"
+    ],
+    "reason": "Also asserts measured input heights."
+  },
+  {
+    "file": "e2e/master-data/locations/table-viewport.e2e.ts",
+    "titlePath": [
+      "Idle table viewport",
+      "preserves native cross-row selection and restores visible DOM after scroll"
+    ],
+    "reason": "Requires native text selection, pointer dragging and viewport scrolling."
+  },
+  {
+    "file": "e2e/logistics/positions-cargo.e2e.ts",
+    "titlePath": [
+      "Positions Cargo tab FE E2E",
+      "keeps package action icons aligned in the Cargo package toolbar"
+    ],
+    "reason": "Requires measured toolbar geometry."
+  },
+  {
+    "file": "e2e/logistics/positions-cargo.e2e.ts",
+    "titlePath": [
+      "Positions Cargo tab FE E2E",
+      "keeps Package Identifier aligned when Imperial cargo units are enabled"
+    ],
+    "reason": "Requires measured field alignment."
+  },
+  {
+    "file": "e2e/logistics/positions-create-outgoing-draft-invoice.e2e.ts",
+    "titlePath": [
+      "Position Create Outgoing Draft Invoice FE E2E",
+      "truncates a long uninvoiced charge business partner name with an ellipsis"
+    ],
+    "reason": "Asserts the text actually painted by the canvas renderer."
+  },
+  {
+    "file": "e2e/logistics/positions-overview.e2e.ts",
+    "titlePath": [
+      "Positions Overview details modal FE E2E",
+      "renders the air import project field at the same width as neighboring overview fields"
+    ],
+    "reason": "Requires measured field widths."
+  },
+  {
+    "file": "e2e/logistics/positions-route.e2e.ts",
+    "titlePath": [
+      "Positions Route details modal FE E2E",
+      "keeps Position split route controls stable on hover"
+    ],
+    "reason": "Requires real hover geometry and control widths."
+  },
+  {
+    "file": "e2e/logistics/positions-route.e2e.ts",
+    "titlePath": [
+      "Positions Route details modal FE E2E",
+      "keeps Position template controls stable on hover"
+    ],
+    "reason": "Requires real hover layout stability."
+  },
+  {
+    "file": "e2e/logistics/quotes-finances.e2e.ts",
+    "titlePath": [
+      "Quote Finances FE E2E",
+      "adds a divider through the Finances tab"
+    ],
+    "reason": "Also asserts rendered finance action-column alignment."
+  },
+  {
+    "file": "e2e/logistics/quotes-finances.e2e.ts",
+    "titlePath": [
+      "Quote Finances FE E2E",
+      "adds and updates a text row through the Finances tab"
+    ],
+    "reason": "Also asserts rendered finance action-column alignment."
+  },
+  {
+    "file": "e2e/logistics/quotes-finances.e2e.ts",
+    "titlePath": [
+      "Quote Finances FE E2E",
+      "reorders charges from the FE"
+    ],
+    "reason": "Requires real pointer drag-and-drop and rendered target geometry."
+  },
+  {
+    "file": "e2e/logistics/quotes-route.e2e.ts",
+    "titlePath": [
+      "Quotes Route tab FE E2E",
+      "keeps Quote route action controls stable on hover"
+    ],
+    "reason": "Requires real control widths, horizontal anchoring and hover layout stability."
+  },
+  {
+    "file": "e2e/finances/outgoing-invoices.e2e.ts",
+    "titlePath": [
+      "Outgoing Invoices Listing FE E2E",
+      "keeps document generation available after an outgoing invoice becomes overpaid"
+    ],
+    "reason": "Also asserts real payment-panel height and viewport visibility."
+  },
+  {
+    "file": "e2e/finances/outgoing-invoices-bulk-payment.e2e.ts",
+    "titlePath": [
+      "Outgoing Invoices Bulk Payment FE E2E",
+      "keeps bulk payment actions visible while scrolling multiple business partner groups"
+    ],
+    "reason": "Requires real scrolling and sticky payment-action geometry."
+  },
+  {
+    "file": "e2e/logistics/positions-analytics.e2e.ts",
+    "titlePath": [
+      "Positions Analytics page FE E2E",
+      "Analytics graph and table views",
+      "keeps the Analytics controls aligned when switching views"
+    ],
+    "reason": "Requires real layout geometry; equal Lightpanda coordinates are not rendering evidence."
+  },
+  {
+    "file": "e2e/logistics/quotes-document.e2e.ts",
+    "titlePath": [
+      "Quotes Document tab FE E2E",
+      "keeps the Document stack width while all table sections are suppressed"
+    ],
+    "reason": "Requires real layout widths across visibility changes."
+  },
+  {
+    "file": "e2e/platform/table-column-widths.e2e.ts",
+    "titlePath": [
+      "logistics/quotes resizes independently at 0px and restores widths from the backend"
+    ],
+    "reason": "Requires real pointer resizing and measured column widths."
+  },
+  {
+    "file": "e2e/platform/table-column-widths.e2e.ts",
+    "titlePath": [
+      "logistics/quotes resizes independently at 150px and restores widths from the backend"
+    ],
+    "reason": "Requires real pointer resizing and measured column widths."
+  },
+  {
+    "file": "e2e/platform/table-column-widths.e2e.ts",
+    "titlePath": [
+      "logistics/quotes resizes independently at 550px and restores widths from the backend"
+    ],
+    "reason": "Requires real pointer resizing and measured column widths."
+  },
+  {
+    "file": "e2e/platform/table-column-widths.e2e.ts",
+    "titlePath": [
+      "finances/incoming-invoices resizes independently at 0px and restores widths from the backend"
+    ],
+    "reason": "Requires real pointer resizing and measured column widths."
+  },
+  {
+    "file": "e2e/platform/table-column-widths.e2e.ts",
+    "titlePath": [
+      "finances/incoming-invoices resizes independently at 150px and restores widths from the backend"
+    ],
+    "reason": "Requires real pointer resizing and measured column widths."
+  },
+  {
+    "file": "e2e/platform/table-column-widths.e2e.ts",
+    "titlePath": [
+      "finances/incoming-invoices resizes independently at 550px and restores widths from the backend"
+    ],
+    "reason": "Requires real pointer resizing and measured column widths."
+  }
+]

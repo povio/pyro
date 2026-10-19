@@ -1,0 +1,3843 @@
+{
+  "worker": "W2",
+  "engine_initial_pin": "5b467880d75c3e14a0b0108775de25f182d39734",
+  "tos_original_pin": "f9fde4aa0dce7d1d7a1ffebffe3306399973cd80",
+  "manifest_sha256": "542d479b709249d072e3b57c1324c894c4378fc5373892ae64c0687486f2ae19",
+  "criteria": "canonical common manifest whole-file partition agreed by W2/W3 before runs",
+  "files": [
+    "e2e/calendar/calendar-filters.e2e.ts",
+    "e2e/chat/entity-chat-widget.e2e.ts",
+    "e2e/chat/entity-chat.e2e.ts",
+    "e2e/chat/internal-chat.e2e.ts",
+    "e2e/chat/notification-settings.e2e.ts",
+    "e2e/configuration/employees-archived-filter.e2e.ts",
+    "e2e/configuration/employees-employments.e2e.ts",
+    "e2e/configuration/employees.e2e.ts",
+    "e2e/configuration/offices-bank-accounts.e2e.ts",
+    "e2e/configuration/offices-bookkeeping.e2e.ts",
+    "e2e/configuration/offices-documents.e2e.ts",
+    "e2e/configuration/offices-inttra-credentials.e2e.ts",
+    "e2e/configuration/offices-overview.e2e.ts",
+    "e2e/configuration/offices.e2e.ts",
+    "e2e/configuration/profile-settings.e2e.ts",
+    "e2e/configuration/roles-permissions.e2e.ts",
+    "e2e/configuration/roles.e2e.ts",
+    "e2e/configuration/tickets.e2e.ts",
+    "e2e/control-tower/shipments.e2e.ts",
+    "e2e/finances/direct-invoice-credit-note.e2e.ts",
+    "e2e/finances/direct-invoice.e2e.ts",
+    "e2e/finances/incoming-invoices.e2e.ts",
+    "e2e/finances/invoices.e2e.ts",
+    "e2e/finances/outgoing-draft-direct-invoice.e2e.ts",
+    "e2e/finances/outgoing-invoices.e2e.ts",
+    "e2e/fixtures/database-file-isolation-a.e2e.ts",
+    "e2e/fixtures/database-file-isolation-b.e2e.ts",
+    "e2e/logistics/positions-cargo.e2e.ts",
+    "e2e/logistics/positions-close.e2e.ts",
+    "e2e/logistics/positions-closed-finances.e2e.ts",
+    "e2e/logistics/positions-commercial-parties.e2e.ts",
+    "e2e/logistics/positions-create-incoming-draft-credit-note.e2e.ts",
+    "e2e/logistics/positions-create-outgoing-credit-note.e2e.ts",
+    "e2e/logistics/positions-create-outgoing-draft-invoice.e2e.ts",
+    "e2e/logistics/positions-create-outgoing-invoice.e2e.ts",
+    "e2e/logistics/positions-default-filter-template.e2e.ts",
+    "e2e/logistics/positions-docubox-search.e2e.ts",
+    "e2e/logistics/positions-docubox.e2e.ts",
+    "e2e/logistics/positions-document-template.e2e.ts",
+    "e2e/logistics/positions-employee-filters.e2e.ts",
+    "e2e/logistics/positions-exclude-from-statistics.e2e.ts",
+    "e2e/logistics/positions-filter-templates.e2e.ts",
+    "e2e/logistics/quotes-convert-to-position.e2e.ts",
+    "e2e/logistics/quotes-copy.e2e.ts",
+    "e2e/logistics/quotes-docubox.e2e.ts",
+    "e2e/logistics/quotes.e2e.ts",
+    "e2e/master-data/accounting/charge-types.e2e.ts",
+    "e2e/master-data/accounting/currencies.e2e.ts",
+    "e2e/master-data/accounting/dunning-levels.e2e.ts",
+    "e2e/master-data/accounting/dunning-systems.e2e.ts",
+    "e2e/master-data/accounting/vat-rule-applicability.e2e.ts",
+    "e2e/master-data/accounting/vat-rules.e2e.ts",
+    "e2e/master-data/business-entities/airlines.e2e.ts",
+    "e2e/master-data/business-entities/business-partner-accounts.e2e.ts",
+    "e2e/master-data/business-entities/business-partner-basic.e2e.ts",
+    "e2e/master-data/business-entities/business-partner-contacts.e2e.ts",
+    "e2e/master-data/business-entities/business-partner-documents.e2e.ts",
+    "e2e/master-data/business-entities/business-partner-employee-roles.e2e.ts",
+    "e2e/master-data/business-entities/business-partner-employees.e2e.ts",
+    "e2e/master-data/business-entities/business-partner-overview.e2e.ts",
+    "e2e/master-data/business-entities/business-partner-similar-banner.e2e.ts",
+    "e2e/master-data/business-entities/cargo-agent-accounts.e2e.ts",
+    "e2e/master-data/business-entities/cargo-agent-documents.e2e.ts",
+    "e2e/master-data/business-entities/cargo-agents-basic.e2e.ts",
+    "e2e/master-data/business-entities/cargo-agents.e2e.ts",
+    "e2e/master-data/business-entities/carriers.e2e.ts",
+    "e2e/master-data/business-entities/office-accounts.e2e.ts",
+    "e2e/master-data/business-entities/office-basic.e2e.ts",
+    "e2e/master-data/business-entities/office-contacts.e2e.ts",
+    "e2e/master-data/business-entities/office-overview.e2e.ts",
+    "e2e/master-data/business-entities/office.e2e.ts",
+    "e2e/master-data/business-entities/partner-networks.e2e.ts",
+    "e2e/master-data/cargo/cargo-types.e2e.ts",
+    "e2e/master-data/cargo/hs-codes.e2e.ts",
+    "e2e/master-data/cargo/package-types.e2e.ts",
+    "e2e/master-data/domain-error-visibility.e2e.ts",
+    "e2e/master-data/locations/airports.e2e.ts",
+    "e2e/master-data/locations/cities.e2e.ts",
+    "e2e/master-data/locations/container-yards.e2e.ts",
+    "e2e/master-data/locations/countries.e2e.ts",
+    "e2e/master-data/locations/depots.e2e.ts",
+    "e2e/master-data/locations/ports.e2e.ts",
+    "e2e/master-data/locations/terminals.e2e.ts",
+    "e2e/master-data/locations/warehouses.e2e.ts",
+    "e2e/master-data/logistics/awb-stock.e2e.ts",
+    "e2e/master-data/logistics/checklist-items.e2e.ts",
+    "e2e/master-data/logistics/checklist-templates.e2e.ts",
+    "e2e/master-data/logistics/commercial-party-template-duplicates.e2e.ts",
+    "e2e/master-data/logistics/commercial-party-templates.e2e.ts",
+    "e2e/master-data/logistics/departments.e2e.ts",
+    "e2e/master-data/logistics/docubox-templates.e2e.ts",
+    "e2e/master-data/logistics/document-templates.e2e.ts",
+    "e2e/master-data/logistics/integration-channels.e2e.ts",
+    "e2e/master-data/logistics/remark-templates.e2e.ts",
+    "e2e/master-data/logistics/route-templates.e2e.ts",
+    "e2e/master-data/logistics/shipping-events.e2e.ts",
+    "e2e/master-data/logistics/teams-persistent-filters.e2e.ts",
+    "e2e/master-data/logistics/teams.e2e.ts",
+    "e2e/master-data/navigation-history.e2e.ts",
+    "e2e/platform/navigation.e2e.ts",
+    "e2e/projects/projects.e2e.ts",
+    "e2e/todos/todos.e2e.ts"
+  ],
+  "cases": [
+    {
+      "file": "e2e/configuration/tickets.e2e.ts",
+      "titlePath": [
+        "keeps ticket creation unavailable before helpdesk activation"
+      ],
+      "case_id": "37cf8746c2403bcf5bebc1eb744777479b85e316524614b0be3505c8f3757345"
+    },
+    {
+      "file": "e2e/control-tower/shipments.e2e.ts",
+      "titlePath": [
+        "Control Tower shipment workflows",
+        "opens a booking's container from the Containers tab"
+      ],
+      "case_id": "6c6d907e4f0e17a67e4e47ad76409a9aa0bd51c7b49145152ec31128252a3138"
+    },
+    {
+      "file": "e2e/control-tower/shipments.e2e.ts",
+      "titlePath": [
+        "Control Tower shipment workflows",
+        "opens a container's package with the matching booking context"
+      ],
+      "case_id": "af92762d84ce921ba604773e70e8bcead820cc0343ae8fffa8f5f0f6a3cc3fed"
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "unarchives a VAT rule through the FE"
+      ],
+      "case_id": "266a22310500a33e5e94bdcac51cf3e8408d4e4726d24d25ac4973bc4787dd80"
+    },
+    {
+      "file": "e2e/master-data/logistics/departments.e2e.ts",
+      "titlePath": [
+        "Master Data Departments",
+        "shows a case-insensitive duplicate error on update without changing existing data"
+      ],
+      "case_id": "acec61724b3861b17eab846b2658c48392a76b3df28192dfe054095592f0c313"
+    },
+    {
+      "file": "e2e/master-data/logistics/departments.e2e.ts",
+      "titlePath": [
+        "Master Data Departments",
+        "autosaves sequential name edits and retains the last value after reload"
+      ],
+      "case_id": "93b8f39a21e5d2a3096555166888583a60400a98797498c523e210a8d1d425e0"
+    },
+    {
+      "file": "e2e/master-data/logistics/departments.e2e.ts",
+      "titlePath": [
+        "Master Data Departments",
+        "archives through confirmation and persists the new state"
+      ],
+      "case_id": "b99abfaf394ff86f0bcda3e363918a52f61e213dda108872f20ed9ff13a0a206"
+    },
+    {
+      "file": "e2e/master-data/logistics/departments.e2e.ts",
+      "titlePath": [
+        "Master Data Departments",
+        "unarchives through confirmation and persists the new state"
+      ],
+      "case_id": "ed07176c37cb2c2208013a09eedea6b17bed328f10afd48925d782f07bc1fd15"
+    },
+    {
+      "file": "e2e/master-data/logistics/departments.e2e.ts",
+      "titlePath": [
+        "Master Data Departments",
+        "cancels archive confirmation without changing the department"
+      ],
+      "case_id": "a85f8bc1a83acb32e1a3562d5cab4e840eecae63bf987bafcd83ced829c7dce8"
+    },
+    {
+      "file": "e2e/master-data/logistics/departments.e2e.ts",
+      "titlePath": [
+        "Master Data Departments",
+        "assigned employees",
+        "renders the archive rejection for a department with assigned employees"
+      ],
+      "case_id": "93089264ba63e79fbdf0afc46fe700347a55351ea1f60cc784fce1a6b0efdd06"
+    },
+    {
+      "file": "e2e/todos/todos.e2e.ts",
+      "titlePath": [
+        "To-Dos FE E2E",
+        "opens To-Dos from the due-date ordered URL"
+      ],
+      "case_id": "71474eb8bb5547924aa5bc25ba788f2c14a64d211496eb215cfc9d01732221ba"
+    },
+    {
+      "file": "e2e/finances/incoming-invoices.e2e.ts",
+      "titlePath": [
+        "Incoming Invoices Listing FE E2E",
+        "lists registered incoming invoices without the generic direction column"
+      ],
+      "case_id": "b17c53d581bf1af7ecb20023b8143ad5c16faa758a897c1e11bc0f9bea8c804f"
+    },
+    {
+      "file": "e2e/finances/incoming-invoices.e2e.ts",
+      "titlePath": [
+        "Incoming Invoices Listing FE E2E",
+        "searches incoming invoices and keeps the search term in the listing HTML and URL"
+      ],
+      "case_id": "4624a0ac2c9a11df1587086dfe2c57ad6a2cee0fd5c32b6863edbcbf6326aed6"
+    },
+    {
+      "file": "e2e/finances/incoming-invoices.e2e.ts",
+      "titlePath": [
+        "Incoming Invoices Listing FE E2E",
+        "filters incoming invoices by Status from URL params"
+      ],
+      "case_id": "979d20265db29841dcbe40ea6d3ced978697f64e84eb6d9e8f89a2241ebee23a"
+    },
+    {
+      "file": "e2e/finances/incoming-invoices.e2e.ts",
+      "titlePath": [
+        "Incoming Invoices Listing FE E2E",
+        "filters incoming invoices by Invoice Type from URL params"
+      ],
+      "case_id": "5502936c61aefe7e16a049dbd2ff90565abbfa0d325f894b83250a3b2dfda214"
+    },
+    {
+      "file": "e2e/finances/incoming-invoices.e2e.ts",
+      "titlePath": [
+        "Incoming Invoices Listing FE E2E",
+        "filters incoming invoices by Receiver from URL params"
+      ],
+      "case_id": "ae6f1ec39a079f3edce9eab7162b71f8efeed9488f1dbf02e8b3caac3cb8b2ff"
+    },
+    {
+      "file": "e2e/finances/incoming-invoices.e2e.ts",
+      "titlePath": [
+        "Incoming Invoices Listing FE E2E",
+        "filters incoming invoices by Reference from URL params"
+      ],
+      "case_id": "39481cace36ad7c4a69a2b326728011c4a9f238c3c4fb856fe578c69a860ba82"
+    },
+    {
+      "file": "e2e/finances/incoming-invoices.e2e.ts",
+      "titlePath": [
+        "Incoming Invoices Listing FE E2E",
+        "filters incoming invoices by Transport Mode from URL params"
+      ],
+      "case_id": "d7d56a256e7823d01b10cabde271ea6df099026dbec9c0cdcb4946f5e766b1c4"
+    },
+    {
+      "file": "e2e/finances/incoming-invoices.e2e.ts",
+      "titlePath": [
+        "Incoming Invoices Listing FE E2E",
+        "filters incoming invoices by Amount from URL params"
+      ],
+      "case_id": "d76e8a5be88ac386a96b7b8120afbd53d35fdc0e2538f1cf7a45574f47b12185"
+    },
+    {
+      "file": "e2e/finances/incoming-invoices.e2e.ts",
+      "titlePath": [
+        "Incoming Invoices Listing FE E2E",
+        "filters incoming invoices by Invoice Number from URL params"
+      ],
+      "case_id": "b828e8175cb9130455d7d6c350f00c250549a7c578be607bd4e6c5121c583f71"
+    },
+    {
+      "file": "e2e/finances/incoming-invoices.e2e.ts",
+      "titlePath": [
+        "Incoming Invoices Listing FE E2E",
+        "filters incoming invoices by Internal Number from URL params"
+      ],
+      "case_id": "160903ccf33a05170bfb79856cf8d00abba7d718702272315405f92dc05e8029"
+    },
+    {
+      "file": "e2e/finances/incoming-invoices.e2e.ts",
+      "titlePath": [
+        "Incoming Invoices Listing FE E2E",
+        "filters incoming invoices by Due Date from URL params"
+      ],
+      "case_id": "e758829ecc65a1ee0cdb6af991b8a768573a0fbd2d56a1dc1d680548685ae760"
+    },
+    {
+      "file": "e2e/finances/incoming-invoices.e2e.ts",
+      "titlePath": [
+        "Incoming Invoices Listing FE E2E",
+        "shows the incoming bulk payment drawer"
+      ],
+      "case_id": "1808343989fad1d0ad0b85d5491dc4077f8ab004d557bc3b009ff4afc6f2c85b"
+    },
+    {
+      "file": "e2e/finances/incoming-invoices.e2e.ts",
+      "titlePath": [
+        "Incoming Invoices Listing FE E2E",
+        "pays selected incoming invoices through the Pay button"
+      ],
+      "case_id": "aab7493cc190e0f8551bc7413ad619b68bd6e59c08f19a0ae792ae971b61be59"
+    },
+    {
+      "file": "e2e/finances/incoming-invoices.e2e.ts",
+      "titlePath": [
+        "Incoming Invoices Listing FE E2E",
+        "keeps Send disabled for selected incoming invoices"
+      ],
+      "case_id": "90545ca6f37e8aaf73c2380077dececf30971cab6b4f1c5be725fad44e982e30"
+    },
+    {
+      "file": "e2e/finances/incoming-invoices.e2e.ts",
+      "titlePath": [
+        "Incoming Invoices Listing FE E2E",
+        "issues and sends an account statement from the incoming listing"
+      ],
+      "case_id": "38bc1e5228898ee81a4d9fb3f1960796c614f50fee4b5cb8c8adeeb8c364ebab"
+    },
+    {
+      "file": "e2e/finances/outgoing-draft-direct-invoice.e2e.ts",
+      "titlePath": [
+        "Outgoing Draft Direct Invoice FE E2E",
+        "opens a draft Direct Invoice preview"
+      ],
+      "case_id": "d035f1b0e6bb3a6bc743de3ad4d1ed517ffffb3990c3cf112364731bf672398f"
+    },
+    {
+      "file": "e2e/finances/outgoing-draft-direct-invoice.e2e.ts",
+      "titlePath": [
+        "Outgoing Draft Direct Invoice FE E2E",
+        "deletes a draft Direct Invoice"
+      ],
+      "case_id": "8d23b3e28129abda213452af9a6546251828a1db70a982d0669914ea3997465c"
+    },
+    {
+      "file": "e2e/master-data/logistics/route-templates.e2e.ts",
+      "titlePath": [
+        "Master Data Route Templates FE E2E",
+        "uses explicit URL filters instead of previously saved filters"
+      ],
+      "case_id": "d4cb031e024aced798263b4bac8eebcda334da18e1ab739c4437b95e05b5b9ab"
+    },
+    {
+      "file": "e2e/calendar/calendar-filters.e2e.ts",
+      "titlePath": [
+        "preserves calendar filters across visits and clears saved preferences when disabled"
+      ],
+      "case_id": "583295aad4e6035b7e8dbe8e1299084aafa561b5ab723082f08c399decb53861"
+    },
+    {
+      "file": "e2e/chat/entity-chat.e2e.ts",
+      "titlePath": [
+        "expands an entity chat without joining or creating an empty sidebar entry"
+      ],
+      "case_id": "0cd59fb30220e54c6aa303e80ade5f306ded59c3030dc594f1ec85a44c6e539d"
+    },
+    {
+      "file": "e2e/finances/outgoing-invoices.e2e.ts",
+      "titlePath": [
+        "Outgoing Invoices Listing FE E2E",
+        "configures outgoing invoice columns without leaving the listing"
+      ],
+      "case_id": "664446c2c16fbe9909999c47bd8916cf0c5302a905ad00df3f149a0e3d660d87"
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "loads a paginated notification target and opens its POD tab"
+      ],
+      "case_id": "54afb7de518ce7cd69e23c2e60c930ce5aca9e3be478c369c260aa3a088abda4"
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "shows a loading transition when switching Cargo document sub-tabs"
+      ],
+      "case_id": "6c160bbb832687bef8e4e9e934986057c0f26423e8823f6fc4512aeb4626cb49"
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "adds a Package from the FE"
+      ],
+      "case_id": "c0ced72410b3ce7c46c3974b9912b9bb34c71f9fbc9469a6cd17cb9acf03f013"
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "selects all Packages in a Transport Unit and then across the Position from the FE"
+      ],
+      "case_id": "726c55075292b029bf94e6aa39eab0f5d5ce0832cf2877cd534707c06c396180"
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "keeps source-linked Packages in source Position order and allows bulk selection from the FE"
+      ],
+      "case_id": "5616d24a0087cf4619533ffd48be9f4ffe38862aeb2ed1e7ccd114e9b5da9906"
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "toggles package auto-calculate totals from the FE"
+      ],
+      "case_id": "933980ed60171ff0e467728236c2bd7c497291dca4dd20cd7015b042061b5492"
+    },
+    {
+      "file": "e2e/logistics/positions-default-filter-template.e2e.ts",
+      "titlePath": [
+        "Positions default filter template",
+        "saves current filter values through the default template editor"
+      ],
+      "case_id": "9f115b27d8571035c3aa3dc7adbd2ca6045e01f23c4fd8eb09cbb2c104b0a822"
+    },
+    {
+      "file": "e2e/logistics/positions-filter-templates.e2e.ts",
+      "titlePath": [
+        "Positions filter templates",
+        "saved mixed criteria replace pending manual filters and remain applied"
+      ],
+      "case_id": "10c5de4e4019efb2fba8235b7ae81b6e21017887a5cace1bd288d1ab926b34b6"
+    },
+    {
+      "file": "e2e/master-data/logistics/route-templates.e2e.ts",
+      "titlePath": [
+        "Master Data Route Templates FE E2E",
+        "restores page filters from local storage when the URL has no filters"
+      ],
+      "case_id": "46bef3bdc5633311e2942b6f626dcd927e9571089c23d29ccbcab7406fd43acb"
+    },
+    {
+      "file": "e2e/finances/direct-invoice-credit-note.e2e.ts",
+      "titlePath": [
+        "Outgoing Direct Invoice Credit Note FE E2E",
+        "renders the actual direct-invoice Credit Note"
+      ],
+      "case_id": "8cfb450f0b4693b200cfa9be4270c971079118e5a586c28fb9844e1e92deb3f7"
+    },
+    {
+      "file": "e2e/logistics/positions-exclude-from-statistics.e2e.ts",
+      "titlePath": [
+        "Positions exclude from statistics FE E2E",
+        "excludes a position from statistics and removes it from the default Positions listing"
+      ],
+      "case_id": "34e2362d98a6700c8995d4c1ec3c83daddbd3c34307183522e94c70e5cf601b3"
+    },
+    {
+      "file": "e2e/logistics/positions-docubox.e2e.ts",
+      "titlePath": [
+        "Position DocuBox tab actions FE E2E",
+        "drags an MSG attachment into a Position DocuBox folder"
+      ],
+      "case_id": "4a3613d339c74eef3c5d24df72d5a3599260ce62f9f1c15b08b3c7dcdd919939"
+    },
+    {
+      "file": "e2e/logistics/positions-docubox.e2e.ts",
+      "titlePath": [
+        "Position DocuBox tab actions FE E2E",
+        "uploads an externally dropped file directly into a visible Position DocuBox folder row"
+      ],
+      "case_id": "c950da2b71d35465f68f621a99be44b1099b887fac1f145b2b5c639d7b4aff37"
+    },
+    {
+      "file": "e2e/logistics/positions-document-template.e2e.ts",
+      "titlePath": [
+        "Positions document template FE E2E",
+        "issues the templated document from the FE"
+      ],
+      "case_id": "193b6b808e8231070a4a91ba6247bdf1e3535fa9f93c384a66486e8b5d3b1efd"
+    },
+    {
+      "file": "e2e/logistics/quotes-convert-to-position.e2e.ts",
+      "titlePath": [
+        "Quotes Convert to Position FE E2E",
+        "maps Quote Sell Service Contract to Position Selling Contract after reopening from the Positions list"
+      ],
+      "case_id": "0b947b30875a8774109901b5a014a4a0cad3a9edf1c4e002459bdf39024f8387"
+    },
+    {
+      "file": "e2e/finances/direct-invoice.e2e.ts",
+      "titlePath": [
+        "Finances Actual Direct Invoice FE E2E",
+        "generates a new document version for the actual direct invoice"
+      ],
+      "case_id": "4fb03897a6c53a6321f05dcd70901fa37bb465338b3ad1f937b41b1f18926578"
+    },
+    {
+      "file": "e2e/finances/direct-invoice.e2e.ts",
+      "titlePath": [
+        "Finances Actual Direct Invoice FE E2E",
+        "sends the actual direct invoice"
+      ],
+      "case_id": "ab044f7dd15aa43b65d41ad5b6de554a3607835730512c17c4491760a56d12a6"
+    },
+    {
+      "file": "e2e/finances/invoices.e2e.ts",
+      "titlePath": [
+        "Finances Invoices FE E2E",
+        "opens searched invoice details from the listing"
+      ],
+      "case_id": "d0614f00e69b145fb917db1eafedbfc99804ff7dc96815b501404391991ae334"
+    },
+    {
+      "file": "e2e/finances/invoices.e2e.ts",
+      "titlePath": [
+        "Finances Invoices FE E2E",
+        "keeps invoice search after closing the details modal"
+      ],
+      "case_id": "1f653226649a0a21f158e795cea58bde95ee79a67afed14041c867a3cc0716bf"
+    },
+    {
+      "file": "e2e/finances/invoices.e2e.ts",
+      "titlePath": [
+        "Finances Invoices FE E2E",
+        "deletes a draft Direct Invoice from outgoing invoices"
+      ],
+      "case_id": "b0422865a84e0328361183eb716eaf031e43bedd1b489100f550f1a534387ace"
+    },
+    {
+      "file": "e2e/logistics/positions-create-incoming-draft-credit-note.e2e.ts",
+      "titlePath": [
+        "Position Create Incoming Draft Credit Note FE E2E",
+        "adds a draft Credit Note from an actual Incoming Invoice details drawer"
+      ],
+      "case_id": "b65b3e9c4d49be8c626faf9853a4baee2e0a4421d51dbc7277dc8cbdcc65244d"
+    },
+    {
+      "file": "e2e/logistics/positions-create-incoming-draft-credit-note.e2e.ts",
+      "titlePath": [
+        "Position Create Incoming Draft Credit Note FE E2E",
+        "does not expose draft preview for an incoming Credit Note in the invoice details drawer"
+      ],
+      "case_id": "6e99306ff2642946b76861cb0e8d1f961c0d1c98b02c29d5b7f523cb26571a93"
+    },
+    {
+      "file": "e2e/logistics/positions-create-incoming-draft-credit-note.e2e.ts",
+      "titlePath": [
+        "Position Create Incoming Draft Credit Note FE E2E",
+        "deletes a draft incoming Credit Note from the invoice details drawer"
+      ],
+      "case_id": "02f8d3d115b7b4d4e494bfd157b211343e469cd8f16a809b898f0f5328e8cb6f"
+    },
+    {
+      "file": "e2e/configuration/employees-employments.e2e.ts",
+      "titlePath": [
+        "Configuration Employees Employments tab FE E2E",
+        "closes the Add Employment drawer when Cancel is selected"
+      ],
+      "case_id": "9dfe010f799e647285285448b93b750961d3b5648549039350fe2e948ed34beb"
+    },
+    {
+      "file": "e2e/chat/entity-chat-widget.e2e.ts",
+      "titlePath": [
+        "Entity chat widget",
+        "recovers after context retries exhaust a persistent server error"
+      ],
+      "case_id": "d19914493eaf7743b265ffbb219298df5d5d1ae61aa71d5848fac464cab7fbe6"
+    },
+    {
+      "file": "e2e/chat/entity-chat-widget.e2e.ts",
+      "titlePath": [
+        "Entity chat widget",
+        "shows a nonterminal unauthorized context error and recovers on explicit retry"
+      ],
+      "case_id": "bbc9b730eaaf2998c7573080386d77dced5f52a9e7e54f8b595f960db603eb5d"
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rule-applicability.e2e.ts",
+      "titlePath": [
+        "edits regional bookkeeping and switches independently without a generic bookkeeping field"
+      ],
+      "case_id": "2dcc38ae31c00fe28a75e36bb1afeab16ed24d5ee653e2e84a15cab8a1eb7bef"
+    },
+    {
+      "file": "e2e/master-data/business-entities/business-partner-contacts.e2e.ts",
+      "titlePath": [
+        "Master Data Business Partner Contacts tab FE E2E",
+        "adds an empty contact row to the Contacts table"
+      ],
+      "case_id": "530f62cdc61bfe69aa88fbd92b296e83e6c6b21fe9bce785aed96964ac136c02"
+    },
+    {
+      "file": "e2e/master-data/business-entities/office-contacts.e2e.ts",
+      "titlePath": [
+        "Master Data Office Contacts tab FE E2E",
+        "updates a contact name from the Office details Contacts tab"
+      ],
+      "case_id": "b86505476b9310b3ef5b583587878756feb6e004563c4df8111cb012e40d1f74"
+    },
+    {
+      "file": "e2e/master-data/logistics/commercial-party-template-duplicates.e2e.ts",
+      "titlePath": [
+        "Repeated commercial party template entries",
+        "adds another role and displays duplicate and document party rows in section order"
+      ],
+      "case_id": "adb6a8880b311073758bf534501799f0024112bcdcc621a1f46af115804915b0"
+    },
+    {
+      "file": "e2e/master-data/logistics/commercial-party-template-duplicates.e2e.ts",
+      "titlePath": [
+        "Repeated commercial party template entries",
+        "applies missing occurrences to positions without duplicating Customer or growing on reapply"
+      ],
+      "case_id": "8809356e595783a5e702cb812a36486642fcf0fcfb937e6078f83c3bf7731489"
+    },
+    {
+      "file": "e2e/logistics/positions-closed-finances.e2e.ts",
+      "titlePath": [
+        "closed positions can be found for finance filtering without entering operational selectors"
+      ],
+      "case_id": "31c2d99b957ceaf2036c8658ec40c27049dba3bf777f7b2c6dd678e761e964b7"
+    },
+    {
+      "file": "e2e/logistics/positions-create-outgoing-invoice.e2e.ts",
+      "titlePath": [
+        "Position Create Outgoing Invoice FE E2E",
+        "keeps generated Body Remarks visible after issuing an outgoing Invoice"
+      ],
+      "case_id": "dafd57bcaececd4f61867856492a02877790e07344e46dc7985fd996c9dc6df4"
+    },
+    {
+      "file": "e2e/logistics/positions-create-outgoing-invoice.e2e.ts",
+      "titlePath": [
+        "Position Create Outgoing Invoice FE E2E",
+        "creates an outgoing Invoice from a legacy draft that already has a root folder"
+      ],
+      "case_id": "7ada54d6eda3c2775bbe9fb5426cdb98a7bf0fd031c0016a61112d8eb0eecbdb"
+    },
+    {
+      "file": "e2e/logistics/positions-create-outgoing-invoice.e2e.ts",
+      "titlePath": [
+        "Position Create Outgoing Invoice FE E2E",
+        "sends an issued outgoing Invoice from the invoice drawer"
+      ],
+      "case_id": "a528dccba38777a6d8151e09a2b0d64d04ecb0dd92473a2554eed3842b9bf67f"
+    },
+    {
+      "file": "e2e/logistics/positions-create-outgoing-invoice.e2e.ts",
+      "titlePath": [
+        "Outgoing Invoice document regeneration FE E2E",
+        "generates a new document version for an issued outgoing Invoice"
+      ],
+      "case_id": "699619645eceb202d0c73847e597d6f62548755dc8ac3fc98d2725ee253189a4"
+    },
+    {
+      "file": "e2e/logistics/positions-default-filter-template.e2e.ts",
+      "titlePath": [
+        "Positions default filter template",
+        "restores default filter values without page-filter persistence"
+      ],
+      "case_id": "b1cd732b627b4e2526b6865a56c18557b6d3a82786c7073590726b488c6cd7a1"
+    },
+    {
+      "file": "e2e/logistics/positions-docubox.e2e.ts",
+      "titlePath": [
+        "Position DocuBox tab actions FE E2E",
+        "previews generated XLSX files in the Position DocuBox preview pane"
+      ],
+      "case_id": "4e697ca468449874722b64964e5ff8fad288942146016aa7ae1fbcf9461f47e2"
+    },
+    {
+      "file": "e2e/logistics/positions-docubox.e2e.ts",
+      "titlePath": [
+        "Position DocuBox tab actions FE E2E",
+        "previews generated CSV files in the Position DocuBox preview pane"
+      ],
+      "case_id": "4030b2e436b3b2ced00cda40d7802b2c971deb498d7d62db0726b4ae0b5ffd47"
+    },
+    {
+      "file": "e2e/logistics/positions-employee-filters.e2e.ts",
+      "titlePath": [
+        "Positions employee filters FE E2E",
+        "shows archived employees in employee filter options with an archived marker"
+      ],
+      "case_id": "e0217c25ad58b5f1d7f22dc50db2eefdb89d173fd649d7163a21507c2c99cfee"
+    },
+    {
+      "file": "e2e/logistics/positions-filter-templates.e2e.ts",
+      "titlePath": [
+        "Positions filter templates",
+        "applies, fully edits, and renames a template"
+      ],
+      "case_id": "404a9112ce6d34f128122c13d97e9991539764be0276f3f683abe333618fa3c5"
+    },
+    {
+      "file": "e2e/logistics/positions-filter-templates.e2e.ts",
+      "titlePath": [
+        "Positions filter templates",
+        "deletes the renamed template"
+      ],
+      "case_id": "910d609c636be464375e3eb41880507830b88b074eb4715f8bed43b56671d0a5"
+    },
+    {
+      "file": "e2e/logistics/quotes-docubox.e2e.ts",
+      "titlePath": [
+        "Quotes DocuBox tab FE E2E",
+        "lists Quote DocuBox folders and files in rendered HTML"
+      ],
+      "case_id": "846e64562cdebe906a0a52b843dcb21203257e4dbb137313bfab95a52873408c"
+    },
+    {
+      "file": "e2e/chat/internal-chat.e2e.ts",
+      "titlePath": [
+        "Internal chat FE E2E",
+        "rejects a locked group without permission"
+      ],
+      "case_id": "57435f429233a90d09996f0a909928c4acee91543048752db00cc44f87b550f2"
+    },
+    {
+      "file": "e2e/projects/projects.e2e.ts",
+      "titlePath": [
+        "Projects FE E2E",
+        "allows a read-only Project user to view Shipments and Analytics without create actions"
+      ],
+      "case_id": "8ede6a095f31351abb252dd2fd31e09054e8269ddfbcfe494695d09436372793"
+    },
+    {
+      "file": "e2e/finances/outgoing-invoices.e2e.ts",
+      "titlePath": [
+        "Outgoing Invoices Listing FE E2E",
+        "covers exposed outgoing invoice configure filters"
+      ],
+      "case_id": "6d5bb15f50ed8b9139a7645a3a3bf0897e7b90bca0ed7c1acdd71912a66b1de7"
+    },
+    {
+      "file": "e2e/logistics/positions-create-outgoing-credit-note.e2e.ts",
+      "titlePath": [
+        "Position Create Outgoing Credit Note FE E2E",
+        "adds an actual Credit Note inside an actual outgoing Invoice from the Position details modal"
+      ],
+      "case_id": "babe0f27d58b271444b55f34e5d2dd336985ac3abfebac387af601b0f33a797f"
+    },
+    {
+      "file": "e2e/logistics/positions-create-outgoing-credit-note.e2e.ts",
+      "titlePath": [
+        "Position Create Outgoing Credit Note FE E2E",
+        "generates a payment confirmation for the actual outgoing Credit Note settlement payment"
+      ],
+      "case_id": "bf661113dbc8eac69f682eb48e91d55b080653259a825c7960e88cd2070fcf23"
+    },
+    {
+      "file": "e2e/logistics/positions-create-outgoing-credit-note.e2e.ts",
+      "titlePath": [
+        "Position Create Outgoing Credit Note FE E2E",
+        "generates a new document version for an actual outgoing Credit Note"
+      ],
+      "case_id": "9e0d92f6308ba6502c9c39c8720d4b9801169f11cde18dd50f54d91fbff9b8f2"
+    },
+    {
+      "file": "e2e/logistics/positions-create-outgoing-credit-note.e2e.ts",
+      "titlePath": [
+        "Position Create Outgoing Credit Note FE E2E",
+        "renders an actual outgoing Credit Note from the Position invoice route"
+      ],
+      "case_id": "94ee68a503ac3e00d36615cdefc5b8df0e85ddd6718d3856bbfe497365bbd3ec"
+    },
+    {
+      "file": "e2e/logistics/positions-create-outgoing-draft-invoice.e2e.ts",
+      "titlePath": [
+        "Position Create Outgoing Draft Invoice FE E2E",
+        "opens a draft outgoing Invoice preview from the invoice details drawer"
+      ],
+      "case_id": "7bd4f6fa2dbff7fffcc3ecdfc166dc17eec2ac220dac19f62bc48a0de69c18b4"
+    },
+    {
+      "file": "e2e/logistics/positions-create-outgoing-draft-invoice.e2e.ts",
+      "titlePath": [
+        "Position Create Outgoing Draft Invoice FE E2E",
+        "deletes a draft outgoing Invoice from the invoice details drawer"
+      ],
+      "case_id": "759f7739372794049d28bfdf9e7c9626e9b7e1306a863f4874a073753bd8612d"
+    },
+    {
+      "file": "e2e/logistics/positions-docubox-search.e2e.ts",
+      "titlePath": [
+        "Position DocuBox search FE E2E",
+        "keeps expanded folders expanded after searching and clearing Position DocuBox files"
+      ],
+      "case_id": "df68a1e9d9065524cc74e6ae81b6807dc929f5fc3cfb8734aab6dda1821b758a"
+    },
+    {
+      "file": "e2e/platform/navigation.e2e.ts",
+      "titlePath": [
+        "Platform navigation FE E2E",
+        "redirects the platform root to the default logistics page"
+      ],
+      "case_id": "d9068b6413cf6b7ddd683a8948b89c158c7c2df1fbfee59bffda74521cb4dcfd"
+    },
+    {
+      "file": "e2e/platform/navigation.e2e.ts",
+      "titlePath": [
+        "Platform navigation FE E2E",
+        "switches from Finances back to filtered Positions without leaving the previous module rendered"
+      ],
+      "case_id": "abe327d092b29afea35692dc901abbb919740ccf43681f0a3b6e19136b274e32"
+    },
+    {
+      "file": "e2e/master-data/locations/depots.e2e.ts",
+      "titlePath": [
+        "Master Data Depots FE E2E",
+        "autosaves clearing depot shortName field"
+      ],
+      "case_id": "884dfe150c9538d566926ccd2022486719f86777d34c6a0c95c34d3bb54949ca"
+    },
+    {
+      "file": "e2e/master-data/locations/depots.e2e.ts",
+      "titlePath": [
+        "Master Data Depots FE E2E",
+        "autosaves clearing depot additionalInformation field"
+      ],
+      "case_id": "897d785946ffc53af79f49297aaa82b966d868034950f1fcd5dc8b00256656b6"
+    },
+    {
+      "file": "e2e/master-data/locations/depots.e2e.ts",
+      "titlePath": [
+        "Master Data Depots FE E2E",
+        "autosaves clearing depot district field"
+      ],
+      "case_id": "7a1a0c0089d7fdbb6a7253874946b803846b68dbca7223f7a2fb3a2348ba249c"
+    },
+    {
+      "file": "e2e/finances/direct-invoice-credit-note.e2e.ts",
+      "titlePath": [
+        "Outgoing Direct Invoice Credit Note FE E2E",
+        "renders the Outstanding direct invoice before crediting"
+      ],
+      "case_id": "f80f678f586e925b6f0a71408ac30b2e41c717604aa2d45dca13512b123b99b5"
+    },
+    {
+      "file": "e2e/finances/direct-invoice-credit-note.e2e.ts",
+      "titlePath": [
+        "Outgoing Direct Invoice Credit Note FE E2E",
+        "creates a draft Credit Note from the Outstanding direct invoice"
+      ],
+      "case_id": "bdd69a04fbf82d160d3f895d62a2c6f0a6543983787e867e9c83a3246fb59ed9"
+    },
+    {
+      "file": "e2e/finances/direct-invoice-credit-note.e2e.ts",
+      "titlePath": [
+        "Outgoing Direct Invoice Credit Note FE E2E",
+        "creates an actual Credit Note from the draft direct-invoice Credit Note"
+      ],
+      "case_id": "58aafb2efe888ddfbce7939e48647efbdb58c02d5ae83ca0bfebe21941060e00"
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "lists Position Cargo transport units and packages in rendered HTML"
+      ],
+      "case_id": "a61fe0bf8ad60386d1f77f6b7162eab8b17509513a07cf4aa327f7e4ef015d3a"
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "updates editable Transport Unit number and seals from the FE"
+      ],
+      "case_id": "57018479ba677d4fcb29bf59216f20a44b58f5fc5084ee96614c9c7acfe21551"
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "updates editable Transport Unit Notes from the FE"
+      ],
+      "case_id": "bc16b11d79498d12f8096eb7555c13c3cf51edadd5118d196eb2ec013e92bd18"
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "updates editable Transport Unit tare, VGM, and volume from the FE"
+      ],
+      "case_id": "d680673dd6bdcd1b2477188afb22ee45aa5e1d7660d080f5c2d11359c9ff80c3"
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "updates editable Transport Unit net and gross weights from the FE"
+      ],
+      "case_id": "6cf5230f7ddce3e5c447a87ec545b2662fb5da1e762c54e8f0ecc2c152d418f4"
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "updates editable Transport Unit volumetric and chargeable weights from the FE"
+      ],
+      "case_id": "b47bc568799e6e7fd557889479e4e677db4bb886be6e7154a888789c02ed6851"
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "clears Transport Unit Notes from the FE and persists the empty value"
+      ],
+      "case_id": "b6a25e42dcc05d8c43f583243aa13cd0268d153f3d59a9e3bdb8911138a5abc3"
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "updates editable Package outer dimensions from the FE"
+      ],
+      "case_id": "806eb5731b3ceca4a973b352e67e8144eb1f8cbff6b859564fb6ee8cfbacb762"
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "updates editable Package volume and net weight from the FE"
+      ],
+      "case_id": "a342fdd980c22b40391024bc1cec40bd01558f6974178d6152917132076061ee"
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "updates editable Package gross and chargeable weights from the FE"
+      ],
+      "case_id": "50413e27ff405383c55bba4b9fd8ce97eab357256681d5daf0d3259cf0e74c4b"
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "updates editable Package quantity and volume totals from the FE"
+      ],
+      "case_id": "7aaa5c6b5b51274614ae3b0dff3652e955446310813fe7a4e8d26977acbb42d1"
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "updates editable Package net and gross totals from the FE"
+      ],
+      "case_id": "e1b9ac520deee61da66b7bf73f33ef239e2bdab6a2b135030eb3176c63393774"
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "updates editable Package volumetric and chargeable totals from the FE"
+      ],
+      "case_id": "5a32bd906d7f4ea4ca1b5a65049822a3a71978ddd5f66626ff9ebdff32713fbd"
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "updates editable Package identifier and description from the FE"
+      ],
+      "case_id": "85d3a95f2638dbcf575126c63d9518980b3b3b4710955aba7582a4976252ff89"
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "updates editable Package marks and notes from the FE"
+      ],
+      "case_id": "671ba030e28118e04fcc454e66d2d71effd6c4dec70fdd082af472644d9db2a0"
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "updates editable Package customs text fields from the FE"
+      ],
+      "case_id": "bf86665f147eacfb77318d5d1bd3b07600888dac6e6a14257118192d16b2493c"
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "adds Air Cargo without a Transport Unit Type from the FE"
+      ],
+      "case_id": "c0203b391dc3f12b61bd55e4e062fb5456a35b82147992f99ae9b47873d7f80d"
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "deletes a Package from the FE"
+      ],
+      "case_id": "9b7ef143c8b2bd3ff8eecd57aa606e07ae15bfac88b4001ceb34229597731c43"
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "bulk deletes Packages across Transport Units from the FE"
+      ],
+      "case_id": "b1023fc64cd750d9576f4ae36228b155ada5654a9dd65c77a1e3c3224f711a55"
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "adds a Package to a master Position cargo that already has linked sub-position Packages"
+      ],
+      "case_id": "f3abbe4c31ee41f77503aaaa28f9eb6db76b3c71ef9822135593981499c2ec4d"
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "duplicates a Package from the FE"
+      ],
+      "case_id": "9b4ab1524f81390c600f5c3457d12ff70dc435f2ba60232da9f17cc0842dba03"
+    },
+    {
+      "file": "e2e/logistics/positions-cargo.e2e.ts",
+      "titlePath": [
+        "Positions Cargo tab FE E2E",
+        "keeps documents read-only for packages linked from sub-positions"
+      ],
+      "case_id": "76171294cc072628ef243129d5d45642b00cc136e585ba01e738b7305ab32196"
+    },
+    {
+      "file": "e2e/logistics/positions-close.e2e.ts",
+      "titlePath": [
+        "Positions close FE E2E",
+        "closes an open Position from the Position overview"
+      ],
+      "case_id": "aae24e8ca4d809857043e939b3c8f519b5eae3f43f57cf126708e3aa16dfa9c9"
+    },
+    {
+      "file": "e2e/logistics/positions-close.e2e.ts",
+      "titlePath": [
+        "Positions close FE E2E",
+        "reopens the same closed Position from the closed banner"
+      ],
+      "case_id": "c6fc831105087db2946bbb9e5b2f3eb7a058649a0bc5afa1dc26bf6b0f91fe0a"
+    },
+    {
+      "file": "e2e/logistics/positions-commercial-parties.e2e.ts",
+      "titlePath": [
+        "Position Commercial Parties tab FE E2E",
+        "lists Position commercial parties in rendered HTML"
+      ],
+      "case_id": "e94d6a95e50955578b9065cf3b6bf544b55afddc9faaac04ac7bbe66a9d2f7d2"
+    },
+    {
+      "file": "e2e/logistics/positions-commercial-parties.e2e.ts",
+      "titlePath": [
+        "Position Commercial Parties tab FE E2E",
+        "autosaves a Position commercial party reference inline from the FE"
+      ],
+      "case_id": "1e3fb7d47abff14155eee8c8407d0779c7ee5b624cc69a6c2a9f0a3ff9531aa8"
+    },
+    {
+      "file": "e2e/logistics/positions-commercial-parties.e2e.ts",
+      "titlePath": [
+        "Position Commercial Parties tab FE E2E",
+        "adds a new Position commercial party from the FE"
+      ],
+      "case_id": "71f9584f8bf32e6196535387a415b70f4885238de44807ca1df3020842054ab4"
+    },
+    {
+      "file": "e2e/logistics/positions-commercial-parties.e2e.ts",
+      "titlePath": [
+        "Position Commercial Parties tab FE E2E",
+        "keeps Document Party rows in place when assigning an HBL reference"
+      ],
+      "case_id": "91029fd309d792df1e95ac4effcabaf58d1197249bef792b0d62e6814b55ec2b"
+    },
+    {
+      "file": "e2e/logistics/positions-commercial-parties.e2e.ts",
+      "titlePath": [
+        "Position Commercial Parties tab FE E2E",
+        "removes a Position commercial party from the FE"
+      ],
+      "case_id": "3c5fb7b3f5a1c64e10b6c69cafca73a112d5661bf254561bfcb57ff6c5990ab2"
+    },
+    {
+      "file": "e2e/logistics/positions-docubox.e2e.ts",
+      "titlePath": [
+        "Position DocuBox tab actions FE E2E",
+        "lists Position DocuBox folders and files in rendered HTML"
+      ],
+      "case_id": "e80a6497ccef13da04c6bb575ef6e89123710cc9fad95a98d6325c65abf151ee"
+    },
+    {
+      "file": "e2e/logistics/positions-docubox.e2e.ts",
+      "titlePath": [
+        "Position DocuBox tab actions FE E2E",
+        "renders the Position DocuBox listing"
+      ],
+      "case_id": "21c4877c9000065acda600a9860c9dc5cffe5e8852cfbc88a4961d7b153c7385"
+    },
+    {
+      "file": "e2e/logistics/positions-docubox.e2e.ts",
+      "titlePath": [
+        "Position DocuBox tab actions FE E2E",
+        "creates a folder from the Position DocuBox tab"
+      ],
+      "case_id": "37d823d835c56e84c15661b69d847ac9fa1e093ce9ec781ac142a2a9614754df"
+    },
+    {
+      "file": "e2e/logistics/positions-docubox.e2e.ts",
+      "titlePath": [
+        "Position DocuBox tab actions FE E2E",
+        "renders created and uploaded Position DocuBox entries"
+      ],
+      "case_id": "2f529f80ffbe4e4499bcb2dd32ba0263c3494ea6d3dc645064379b74c214a515"
+    },
+    {
+      "file": "e2e/logistics/positions-docubox.e2e.ts",
+      "titlePath": [
+        "Position DocuBox tab actions FE E2E",
+        "previews a Position DocuBox PDF using fit-to-width iframe settings"
+      ],
+      "case_id": "21ca01725d6cf0292ae6cdb228d059e8853ccdc66846d7b93fa049ee7a1055d7"
+    },
+    {
+      "file": "e2e/logistics/positions-docubox.e2e.ts",
+      "titlePath": [
+        "Position DocuBox tab actions FE E2E",
+        "previews generated DOCX files in the Position DocuBox preview pane"
+      ],
+      "case_id": "3666854481b4cf52fa189005d8a057d1780b8bb9d1e6919daa4b176712e9591d"
+    },
+    {
+      "file": "e2e/logistics/positions-docubox.e2e.ts",
+      "titlePath": [
+        "Position DocuBox tab actions FE E2E",
+        "forces a rename for externally dropped files with invalid DocuBox filename characters"
+      ],
+      "case_id": "37c6f580b30fb77f6702f68dbdac97f4c4fbccaf742eddb8e1f89eebcdb11da7"
+    },
+    {
+      "file": "e2e/logistics/positions-docubox.e2e.ts",
+      "titlePath": [
+        "Position DocuBox tab actions FE E2E",
+        "renders the renamed invalid Position DocuBox upload"
+      ],
+      "case_id": "3626c14ac0cf2aaffd7e4d4681a1831ec94c8c185c20d992c1570fa2ac3c344a"
+    },
+    {
+      "file": "e2e/logistics/positions-document-template.e2e.ts",
+      "titlePath": [
+        "Positions document template FE E2E",
+        "updates the template document Name Suffix from the FE"
+      ],
+      "case_id": "7c5f21f7a011dbb80fc9448beab94241de6976c53079109901f76178517dc610"
+    },
+    {
+      "file": "e2e/logistics/positions-document-template.e2e.ts",
+      "titlePath": [
+        "Positions document template FE E2E",
+        "updates the template document Title from the FE"
+      ],
+      "case_id": "64003748247b23232800e33457189f4774f589cd8298b813223e35f812330440"
+    },
+    {
+      "file": "e2e/logistics/positions-document-template.e2e.ts",
+      "titlePath": [
+        "Positions document template FE E2E",
+        "updates the template document Contact from the FE"
+      ],
+      "case_id": "979115d2de9180947fbe8c1ab0e184683e7b51ac4b3691ec2c8881993b6f38d7"
+    },
+    {
+      "file": "e2e/logistics/positions-document-template.e2e.ts",
+      "titlePath": [
+        "Positions document template FE E2E",
+        "updates the template document Booking Number from the FE"
+      ],
+      "case_id": "9b7792cb303cd24581231aebb929fbfd176ed8e610f0a29c030d650cef78bbdb"
+    },
+    {
+      "file": "e2e/logistics/positions-document-template.e2e.ts",
+      "titlePath": [
+        "Positions document template FE E2E",
+        "updates the template document Customer Reference from the FE"
+      ],
+      "case_id": "a8c9547523744a3b2a3c021653b8d60c73e264e9a0e49fee46574fa8cec64b75"
+    },
+    {
+      "file": "e2e/logistics/positions-document-template.e2e.ts",
+      "titlePath": [
+        "Positions document template FE E2E",
+        "updates the template document Master B/L from the FE"
+      ],
+      "case_id": "fdfcf60dad211c2b7678aad2373c817922aff1a737d11223063add2910a795f9"
+    },
+    {
+      "file": "e2e/logistics/positions-document-template.e2e.ts",
+      "titlePath": [
+        "Positions document template FE E2E",
+        "updates the template document House B/L from the FE"
+      ],
+      "case_id": "fea85281ecda85bac59294e5449d03d2b985b13f2901543a402b1bc183f33e74"
+    },
+    {
+      "file": "e2e/logistics/positions-document-template.e2e.ts",
+      "titlePath": [
+        "Positions document template FE E2E",
+        "opens the templated document HTML preview from the FE"
+      ],
+      "case_id": "2ad27b19cb48d1f937804f829955ecbb9bbcbf135f450907994f59e03351cca7"
+    },
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "autosaves clearing container yard shortName field"
+      ],
+      "case_id": "b81399218969ad7f054baf3811b73305cdeec633a0088dd27bc7cd792b5c5dba"
+    },
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "autosaves clearing container yard additionalInformation field"
+      ],
+      "case_id": "9f7df384bdc13f52b9765c39a50db9b50957c6ff4b7495502c8a50744ba841b9"
+    },
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "autosaves clearing container yard secondaryStreet field"
+      ],
+      "case_id": "3f3368dd2978a55fcd0891cf22b9fb929e9846dd0e9eb46a29f033477d272f7b"
+    },
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "autosaves clearing container yard district field"
+      ],
+      "case_id": "0c3bca7f1e062b7b15538de291158d07eaf12be2b82b818293519463c90a416b"
+    },
+    {
+      "file": "e2e/master-data/locations/ports.e2e.ts",
+      "titlePath": [
+        "Master Data Ports FE E2E",
+        "autosaves clearing port district"
+      ],
+      "case_id": "13ed885d6c72739b85b65328d40f5333a495fb93fa7cc65004f4fdecb43a084f"
+    },
+    {
+      "file": "e2e/master-data/locations/terminals.e2e.ts",
+      "titlePath": [
+        "Master Data Terminals FE E2E",
+        "autosaves clearing terminal shortName field"
+      ],
+      "case_id": "f5276b528d9cfba9aaea127e7cb64f7720593bc971a19043525d38545e554ce9"
+    },
+    {
+      "file": "e2e/master-data/locations/terminals.e2e.ts",
+      "titlePath": [
+        "Master Data Terminals FE E2E",
+        "autosaves clearing terminal additionalInformation field"
+      ],
+      "case_id": "56549cb738d6276a9c4ac05960a8f7141bb8c4634a01e70b6b3bf8dec92f4898"
+    },
+    {
+      "file": "e2e/master-data/locations/terminals.e2e.ts",
+      "titlePath": [
+        "Master Data Terminals FE E2E",
+        "autosaves clearing terminal secondaryStreet field"
+      ],
+      "case_id": "065676221d4b1bdd1533585ebbc7efec69b2657830d77e7b71878559e5194d80"
+    },
+    {
+      "file": "e2e/master-data/locations/terminals.e2e.ts",
+      "titlePath": [
+        "Master Data Terminals FE E2E",
+        "autosaves clearing terminal district field"
+      ],
+      "case_id": "dcec0d278586260972cc2969b8869f885d4da6932ba856e2054c386d52982c23"
+    },
+    {
+      "file": "e2e/master-data/locations/warehouses.e2e.ts",
+      "titlePath": [
+        "Master Data Warehouses FE E2E",
+        "autosaves clearing warehouse shortName field"
+      ],
+      "case_id": "3bc0c743e19a4d2b0c4d69ae8b0a2bea8f1ee8eab677d76b40918b2d17c1ae4b"
+    },
+    {
+      "file": "e2e/master-data/locations/warehouses.e2e.ts",
+      "titlePath": [
+        "Master Data Warehouses FE E2E",
+        "autosaves clearing warehouse additionalInformation field"
+      ],
+      "case_id": "cea904f06c1e80277c9bf634f89bd613951a5d4a1037d595d156a44a5b936409"
+    },
+    {
+      "file": "e2e/master-data/locations/warehouses.e2e.ts",
+      "titlePath": [
+        "Master Data Warehouses FE E2E",
+        "autosaves clearing warehouse district field"
+      ],
+      "case_id": "97002ffdf6751816745d7bde994951727755ed6a26951a64c792f85f5fcabc3f"
+    },
+    {
+      "file": "e2e/finances/incoming-invoices.e2e.ts",
+      "titlePath": [
+        "Incoming Invoices Listing FE E2E",
+        "covers exposed incoming invoice configure filters"
+      ],
+      "case_id": "0da94e0e99bfa6e0ab4a7227bceeb7a8b525af9beb7bbbdc4f828c3f1cdc3126"
+    },
+    {
+      "file": "e2e/finances/incoming-invoices.e2e.ts",
+      "titlePath": [
+        "Incoming Invoices Listing FE E2E",
+        "configures incoming invoice columns without leaving the listing"
+      ],
+      "case_id": "7d4b164231d474a664aec08c744e0c098c0e3d341591ff82ac544430220f7389"
+    },
+    {
+      "file": "e2e/chat/notification-settings.e2e.ts",
+      "titlePath": [
+        "keeps browser registration hidden when subscription lookup fails"
+      ],
+      "case_id": "35cccbcaa2f1e66ddd33ae50266384e214a631e7a828e949b3c86b7b3c3d64d9"
+    },
+    {
+      "file": "e2e/chat/notification-settings.e2e.ts",
+      "titlePath": [
+        "opens Activity settings when Chat is unavailable"
+      ],
+      "case_id": "67984c5fbddb191a625c3b87410aedcb8919538caa1b1ddaf7f477613d8e7612"
+    },
+    {
+      "file": "e2e/chat/notification-settings.e2e.ts",
+      "titlePath": [
+        "personal delivery preferences",
+        "automatically saves changes on mobile"
+      ],
+      "case_id": "2a2c61ec7072ee3fe52e136a77e7903a33f1d151d00ceda393401da103288037"
+    },
+    {
+      "file": "e2e/chat/notification-settings.e2e.ts",
+      "titlePath": [
+        "personal delivery preferences",
+        "keeps unsaved choices on failed saves and retries them"
+      ],
+      "case_id": "8f6466c2b0941894460dab97367d097f52d207882ab4acbd221760aa451e830d"
+    },
+    {
+      "file": "e2e/chat/notification-settings.e2e.ts",
+      "titlePath": [
+        "scopes message previews to the registered current browser"
+      ],
+      "case_id": "8a10b3b139ba3d3507da1bed50df413a0d5a60675c9097829f847c9249ac11bc"
+    },
+    {
+      "file": "e2e/configuration/employees-archived-filter.e2e.ts",
+      "titlePath": [
+        "Configuration Employees archived filter FE E2E",
+        "filters archived employees from the visible archived filter"
+      ],
+      "case_id": "5d8000d09ebabd6e5f273f2549b6e51a3bcf176716553c73b62b87755cd01f78"
+    },
+    {
+      "file": "e2e/configuration/employees.e2e.ts",
+      "titlePath": [
+        "Configuration Employees FE E2E",
+        "filters employees by office and global role"
+      ],
+      "case_id": "b2ffa424f448d4e0eb750785dba44a4387a1280ce67958e25b224f73a6055f22"
+    },
+    {
+      "file": "e2e/configuration/employees.e2e.ts",
+      "titlePath": [
+        "Configuration Employees FE E2E",
+        "lists configuration employees with rendered table columns"
+      ],
+      "case_id": "4324fb09a3f78568211455c6ef59e54150aada94434b00ea06ea5196574f89f5"
+    },
+    {
+      "file": "e2e/configuration/employees.e2e.ts",
+      "titlePath": [
+        "Configuration Employees FE E2E",
+        "searches employees by route-backed search state"
+      ],
+      "case_id": "9b52782fb03a4d1c9ce29fd9bfb1206e1a8064ebd26a0cf1654df59d43279b5d"
+    },
+    {
+      "file": "e2e/configuration/employees.e2e.ts",
+      "titlePath": [
+        "Configuration Employees FE E2E",
+        "sorts employees by name from the visible table header"
+      ],
+      "case_id": "64c7633f14163b97a1f2c5dc71651e21beb4d740f6f0b9f679c0cc643ad62ec4"
+    },
+    {
+      "file": "e2e/configuration/offices-bank-accounts.e2e.ts",
+      "titlePath": [
+        "Configuration Offices Bank Accounts tab FE E2E",
+        "adds a bank account through the Office details modal"
+      ],
+      "case_id": "0513c46bff12379e68599109171d422e1cf96f4fd2fb4f4b18a8743833ecb415"
+    },
+    {
+      "file": "e2e/configuration/offices-bank-accounts.e2e.ts",
+      "titlePath": [
+        "Configuration Offices Bank Accounts tab FE E2E",
+        "renders a bank account in the Office details Bank Accounts tab"
+      ],
+      "case_id": "74404c1fc92e9107c2d8b1e7203029aa45e0ffda1f939296fa24bc795317d545"
+    },
+    {
+      "file": "e2e/configuration/offices-bookkeeping.e2e.ts",
+      "titlePath": [
+        "Configuration Offices Bookkeeping tab FE E2E",
+        "autosaves the Bookkeeping cost center through the rendered form"
+      ],
+      "case_id": "fb5620138df3a026bc1a0590a93e03d887376862452f2eb522ddd368e1a8a4ec"
+    },
+    {
+      "file": "e2e/configuration/offices-documents.e2e.ts",
+      "titlePath": [
+        "Configuration Offices Documents tab FE E2E",
+        "renders configured document language sections in the Office details modal"
+      ],
+      "case_id": "96731d07cbd5bc84df0514ee240bf22e734ae2561cb241458ec32ac148884554"
+    },
+    {
+      "file": "e2e/configuration/offices-inttra-credentials.e2e.ts",
+      "titlePath": [
+        "Configuration Offices INTTRA Credentials tab FE E2E",
+        "autosaves an INTTRA credential edit through the rendered form"
+      ],
+      "case_id": "3bdceaecdb5a2b8c5a2fe9e1deb61557555a699734fd1084309b8d24c66823d1"
+    },
+    {
+      "file": "e2e/configuration/offices-inttra-credentials.e2e.ts",
+      "titlePath": [
+        "Configuration Offices INTTRA Credentials tab FE E2E",
+        "generates Client and Carrier credentials from the details modal"
+      ],
+      "case_id": "aa4df370aef0835af99525bdb4a83695ff8bc48006333c6e96666574ad47b820"
+    },
+    {
+      "file": "e2e/configuration/offices-inttra-credentials.e2e.ts",
+      "titlePath": [
+        "Configuration Offices INTTRA Credentials tab FE E2E",
+        "renders existing INTTRA credential values without exposing the password"
+      ],
+      "case_id": "36e892d816e4e3211d0738e997d21cd53228e21d418c5c9dfee7ce69858ee142"
+    },
+    {
+      "file": "e2e/configuration/offices-inttra-credentials.e2e.ts",
+      "titlePath": [
+        "Configuration Offices INTTRA Credentials tab FE E2E",
+        "renders the empty INTTRA Credentials state"
+      ],
+      "case_id": "1a903e425a82c7e2b21898c202d231bc5021109b8408b23a8b9b17f3dab7d669"
+    },
+    {
+      "file": "e2e/configuration/offices-overview.e2e.ts",
+      "titlePath": [
+        "Configuration Offices Overview tab FE E2E",
+        "autosaves the Office business transaction prefix from the details modal"
+      ],
+      "case_id": "a411f69c1111b36fd40f0b4a1da25ee87efe74056e2c2de6dc21b0ccb9ccd39f"
+    },
+    {
+      "file": "e2e/configuration/offices-overview.e2e.ts",
+      "titlePath": [
+        "Configuration Offices Overview tab FE E2E",
+        "autosaves the Office name from the details modal"
+      ],
+      "case_id": "1ad4bd96d559e3fc6f8ced6952604fa00cf46f19c7ff2b0b0babd7471772c4dc"
+    },
+    {
+      "file": "e2e/configuration/offices.e2e.ts",
+      "titlePath": [
+        "Configuration Offices FE E2E",
+        "creates a configuration office from the FE and verifies it in the list HTML"
+      ],
+      "case_id": "a02a928693335a3a70e54fc68062800892f6419d4b4327b086262e7a19066de3"
+    },
+    {
+      "file": "e2e/configuration/offices.e2e.ts",
+      "titlePath": [
+        "Configuration Offices FE E2E",
+        "lists configuration offices as rendered table rows"
+      ],
+      "case_id": "84eef6173036cee6b8282260aca58597d0fcd10706d7e87baafc5ec2d593698b"
+    },
+    {
+      "file": "e2e/configuration/offices.e2e.ts",
+      "titlePath": [
+        "Configuration Offices FE E2E",
+        "searches configuration offices from the visible search input"
+      ],
+      "case_id": "566ec97c1601e40d17033706bb9e96fdb97fa269254c01cc3eaa2e115f94f1c3"
+    },
+    {
+      "file": "e2e/configuration/offices.e2e.ts",
+      "titlePath": [
+        "Configuration Offices FE E2E",
+        "sorts configuration offices by name from the visible table header"
+      ],
+      "case_id": "42418abbe688d00253e3223c56f35273a1c307e05580425bef05ebb2b3c2e349"
+    },
+    {
+      "file": "e2e/configuration/profile-settings.e2e.ts",
+      "titlePath": [
+        "Profile and settings navigation FE E2E",
+        "renders the configuration settings panel"
+      ],
+      "case_id": "2f9e2196806e3992431135a5c478d31e6065c0c895a537b2c91bb8b1c83159d0"
+    },
+    {
+      "file": "e2e/configuration/profile-settings.e2e.ts",
+      "titlePath": [
+        "Profile and settings navigation FE E2E",
+        "renders the employee profile with its editable settings"
+      ],
+      "case_id": "106e5cd2261d733d260274a0d254287427ef8868565f2fe0efb997bed10ac70a"
+    },
+    {
+      "file": "e2e/configuration/roles-permissions.e2e.ts",
+      "titlePath": [
+        "Configuration Roles Permissions tab FE E2E",
+        "renders office and business-partner permission lists according to the role context"
+      ],
+      "case_id": "8e98ad81eaef3bd00b7a1666409188f484aee4c9ef37082094d8a4ada8344735"
+    },
+    {
+      "file": "e2e/configuration/roles-permissions.e2e.ts",
+      "titlePath": [
+        "Configuration Roles Permissions tab FE E2E",
+        "renders only global permissions and marks the role's enabled permissions"
+      ],
+      "case_id": "795b482cd994b221e7a6bc3af658904218943975fe0fb7e5bfa106737f7bebc4"
+    },
+    {
+      "file": "e2e/configuration/roles-permissions.e2e.ts",
+      "titlePath": [
+        "Configuration Roles Permissions tab FE E2E",
+        "toggles a permission from the Permissions tab and reloads the tab with persisted HTML state"
+      ],
+      "case_id": "50edc9712d3c0157df5a18ebee5a3700be55e00c21cdce4faddd76905259abc2"
+    },
+    {
+      "file": "e2e/configuration/roles.e2e.ts",
+      "titlePath": [
+        "Configuration Roles FE E2E",
+        "creates a global role and verifies it in the FE listing"
+      ],
+      "case_id": "61235d168d4f0bfee575026472c8f2c659abc6f51fa7da5f156fe55192fa374c"
+    },
+    {
+      "file": "e2e/configuration/roles.e2e.ts",
+      "titlePath": [
+        "Configuration Roles FE E2E",
+        "filters roles by context and owner"
+      ],
+      "case_id": "5528453ec0fb831ab9654bcc59bb37d0b0efc612e4fd8a1e314146945bcb44de"
+    },
+    {
+      "file": "e2e/configuration/roles.e2e.ts",
+      "titlePath": [
+        "Configuration Roles FE E2E",
+        "lists seeded roles with their rendered columns"
+      ],
+      "case_id": "6e18858ccc2d7552f238c6207c17e387f191139f5307924ffdc29941681af968"
+    },
+    {
+      "file": "e2e/configuration/roles.e2e.ts",
+      "titlePath": [
+        "Configuration Roles FE E2E",
+        "searches roles by role name"
+      ],
+      "case_id": "a3e9430006889d28e1b3a7105605d30a0839a2ed986ed72f0b160aad49eeab49"
+    },
+    {
+      "file": "e2e/finances/outgoing-draft-direct-invoice.e2e.ts",
+      "titlePath": [
+        "Outgoing Draft Direct Invoice FE E2E",
+        "opens a precreated draft Direct Invoice"
+      ],
+      "case_id": "1d550edf902bbbf400ab678e02c7470b32d1c77052c01a50a7a2f390b7de505c"
+    },
+    {
+      "file": "e2e/fixtures/database-file-isolation-a.e2e.ts",
+      "titlePath": [
+        "FE E2E database file isolation A",
+        "creates duplicate-constrained API data"
+      ],
+      "case_id": "1ad80006a077b97a298d61f990d09c00256fd62746d3e8ca3053d6bd3082fde7"
+    },
+    {
+      "file": "e2e/fixtures/database-file-isolation-b.e2e.ts",
+      "titlePath": [
+        "FE E2E database file isolation B",
+        "creates duplicate-constrained API data"
+      ],
+      "case_id": "b2c6e6654a7d37643af64c2944b33477618d72cf85b65c3639eff63e714981dd"
+    },
+    {
+      "file": "e2e/logistics/quotes-copy.e2e.ts",
+      "titlePath": [
+        "Quotes copy FE E2E",
+        "copies a Quote from the details modal and renders copied Overview values"
+      ],
+      "case_id": "2fafc0fa149d0caafbaa68284e6834eb98be035c2c469ef451af435de2faba0c"
+    },
+    {
+      "file": "e2e/logistics/quotes-docubox.e2e.ts",
+      "titlePath": [
+        "Quotes DocuBox tab FE E2E",
+        "creates a folder from the Quote DocuBox tab"
+      ],
+      "case_id": "6060cf1f816a5b6d4c75e5b7c7c07f4677bfc2dd85b13dc1445ea76db074feaa"
+    },
+    {
+      "file": "e2e/logistics/quotes-docubox.e2e.ts",
+      "titlePath": [
+        "Quotes DocuBox tab FE E2E",
+        "searches Quote DocuBox content by file name"
+      ],
+      "case_id": "0fa121ac0a44c94c6927a21b05dc9db535847f5a1dd1c3cf99a673029f615733"
+    },
+    {
+      "file": "e2e/logistics/quotes.e2e.ts",
+      "titlePath": [
+        "Quotes FE E2E",
+        "shows the default currency ISO code in footer totals"
+      ],
+      "case_id": "edb31134a836c8c62d580409316e68a94846b8750041310c1ad1c017bebf2179"
+    },
+    {
+      "file": "e2e/master-data/accounting/charge-types.e2e.ts",
+      "titlePath": [
+        "Master Data Charge Types FE E2E",
+        "keeps BE charge type label search behavior available to FE flows"
+      ],
+      "case_id": "75fa157ff42555109910610c50391635ab74e0a53288ed606c27f498b5fd2d72"
+    },
+    {
+      "file": "e2e/master-data/accounting/charge-types.e2e.ts",
+      "titlePath": [
+        "Master Data Charge Types FE E2E",
+        "sorts charge types by identity and audit columns"
+      ],
+      "case_id": "cb75a31dbf085f761fdaa0ad4afc0de6e5a514641463bf50e01a2315ae8fe774"
+    },
+    {
+      "file": "e2e/master-data/accounting/charge-types.e2e.ts",
+      "titlePath": [
+        "Master Data Charge Types FE E2E",
+        "surfaces duplicate match-code validation from the real BE"
+      ],
+      "case_id": "523dd41c5d81046e2e66bf60cf2b1779522577bdfca748695e1093d910e022f9"
+    },
+    {
+      "file": "e2e/master-data/accounting/charge-types.e2e.ts",
+      "titlePath": [
+        "Master Data Charge Types FE E2E",
+        "updates a charge type from the FE with autosave"
+      ],
+      "case_id": "b2209d6e814b0ca607bbbc08c0d089d79260b1c377042d758431cbfe0e03bebf"
+    },
+    {
+      "file": "e2e/master-data/accounting/currencies.e2e.ts",
+      "titlePath": [
+        "Master Data Currencies FE E2E",
+        "lists seeded currencies as HTML table rows"
+      ],
+      "case_id": "edd98c1a412fb3b88f0837ec338249abf94870dbda941b406d74697d5473aafe"
+    },
+    {
+      "file": "e2e/master-data/accounting/currencies.e2e.ts",
+      "titlePath": [
+        "Master Data Currencies FE E2E",
+        "shows currencies created for the test setup in the HTML table"
+      ],
+      "case_id": "ed6aec76319859df8df83cf0121260c41541fb13ab41acc9746c5c7245ff110f"
+    },
+    {
+      "file": "e2e/master-data/accounting/currencies.e2e.ts",
+      "titlePath": [
+        "Master Data Currencies FE E2E",
+        "shows setup currency updates in the HTML table"
+      ],
+      "case_id": "b37bb4260ad65a512146fc5841c275744bc84490dd205890a7ace14a3770034c"
+    },
+    {
+      "file": "e2e/master-data/accounting/currencies.e2e.ts",
+      "titlePath": [
+        "Master Data Currencies FE E2E",
+        "sorts currencies by audit columns"
+      ],
+      "case_id": "7dae61d5b6c0dfe223ee3a49e7488fe00f73e252baf0cffa4e4eccd44ee89c42"
+    },
+    {
+      "file": "e2e/master-data/accounting/currencies.e2e.ts",
+      "titlePath": [
+        "Master Data Currencies FE E2E",
+        "sorts currencies by identity columns"
+      ],
+      "case_id": "452764e817ab899c4fcec06df3d6c6537d7cb89c8c36310add232c2c6f8993ad"
+    },
+    {
+      "file": "e2e/master-data/accounting/dunning-levels.e2e.ts",
+      "titlePath": [
+        "Master Data Dunning Levels FE E2E",
+        "archives a dunning level through FE controls"
+      ],
+      "case_id": "3e9923ef11aef418a0f31092da5681a3c4090b9424bce1a05674730c6ad08071"
+    },
+    {
+      "file": "e2e/master-data/accounting/dunning-levels.e2e.ts",
+      "titlePath": [
+        "Master Data Dunning Levels FE E2E",
+        "keeps duplicate setup isolated while rendering a second create drawer"
+      ],
+      "case_id": "578d81bbb493db96e0d3cc1beef69be48da2da70d071084d0b8ea9636883d10d"
+    },
+    {
+      "file": "e2e/master-data/accounting/dunning-levels.e2e.ts",
+      "titlePath": [
+        "Master Data Dunning Levels FE E2E",
+        "lists seeded dunning levels as HTML rows"
+      ],
+      "case_id": "701fd8aed46d441cfbae2fd602db37c699c8b7e91c03cb5f2f537b09168083aa"
+    },
+    {
+      "file": "e2e/master-data/accounting/dunning-levels.e2e.ts",
+      "titlePath": [
+        "Master Data Dunning Levels FE E2E",
+        "opens a created dunning level and shows its fee in HTML"
+      ],
+      "case_id": "92a81e8a51bf82d3a3bf3a1458ef5142e12a5739e1f5df97b60ddf07eee29922"
+    },
+    {
+      "file": "e2e/master-data/accounting/dunning-levels.e2e.ts",
+      "titlePath": [
+        "Master Data Dunning Levels FE E2E",
+        "opens dunning level details"
+      ],
+      "case_id": "c5381e83c1a42a7ff30d88397d813f970c79132980dacb0e9eaad6fa8ea694fd"
+    },
+    {
+      "file": "e2e/master-data/accounting/dunning-levels.e2e.ts",
+      "titlePath": [
+        "Master Data Dunning Levels FE E2E",
+        "renders the dunning level create drawer with required field HTML"
+      ],
+      "case_id": "41b14c5b87e8d521d54d68bb348793b845184042fda4d04880b8332926aab7eb"
+    },
+    {
+      "file": "e2e/master-data/accounting/dunning-levels.e2e.ts",
+      "titlePath": [
+        "Master Data Dunning Levels FE E2E",
+        "sorts dunning levels by days overdue in the rendered table"
+      ],
+      "case_id": "ca61d8b51624ac1fa423a15c6eb7c7616b16ecde666c788f716be589e0f555e7"
+    },
+    {
+      "file": "e2e/master-data/accounting/dunning-levels.e2e.ts",
+      "titlePath": [
+        "Master Data Dunning Levels FE E2E",
+        "sorts dunning levels by identity, amounts, related system, and audit columns"
+      ],
+      "case_id": "6603547f349d32821de38e049f20024a7bf8f8dd613c3f0d0db4784399ff5372"
+    },
+    {
+      "file": "e2e/master-data/accounting/dunning-levels.e2e.ts",
+      "titlePath": [
+        "Master Data Dunning Levels FE E2E",
+        "unarchives a dunning level through FE controls"
+      ],
+      "case_id": "064894c56c463d471b0f6df9860896360d8915c05440ffe6fb7542c2c9efebd6"
+    },
+    {
+      "file": "e2e/master-data/accounting/dunning-systems.e2e.ts",
+      "titlePath": [
+        "Master Data Dunning Systems FE E2E",
+        "archives dunning systems through FE controls"
+      ],
+      "case_id": "f505ab5c6ac86ee73beeae0f2f5148723fc06caf22e315dadb04830cdce1cf77"
+    },
+    {
+      "file": "e2e/master-data/accounting/dunning-systems.e2e.ts",
+      "titlePath": [
+        "Master Data Dunning Systems FE E2E",
+        "creates a dunning system from the FE and shows the created details HTML"
+      ],
+      "case_id": "770d97377c9a31a0eecc8b02745a5f4da1a8d2ac8a761e694fab03d3dd24ed7b"
+    },
+    {
+      "file": "e2e/master-data/accounting/dunning-systems.e2e.ts",
+      "titlePath": [
+        "Master Data Dunning Systems FE E2E",
+        "lists seeded dunning systems in the canvas table"
+      ],
+      "case_id": "d32fd61b61a37ec600899ece013c6fc41d03559674846ca59fb5f5c62cb9e4be"
+    },
+    {
+      "file": "e2e/master-data/accounting/dunning-systems.e2e.ts",
+      "titlePath": [
+        "Master Data Dunning Systems FE E2E",
+        "opens dunning system details"
+      ],
+      "case_id": "c347e7384bbda9cda280ed92a5bdee0255daa9cf79f31c011e73b7c11d37ea9b"
+    },
+    {
+      "file": "e2e/master-data/accounting/dunning-systems.e2e.ts",
+      "titlePath": [
+        "Master Data Dunning Systems FE E2E",
+        "searches dunning systems by diacritics, normalized text, spaces, and default flag rows"
+      ],
+      "case_id": "4ccf91b30499278e6e2c79f208922c5a3934ff3024df861d0218d1e57ef6a83a"
+    },
+    {
+      "file": "e2e/master-data/accounting/dunning-systems.e2e.ts",
+      "titlePath": [
+        "Master Data Dunning Systems FE E2E",
+        "sorts dunning systems by default flag"
+      ],
+      "case_id": "c83b438b8769add510113cd000f695e6bbc2dd860799a6cf158e0e6e45f2f0cb"
+    },
+    {
+      "file": "e2e/master-data/accounting/dunning-systems.e2e.ts",
+      "titlePath": [
+        "Master Data Dunning Systems FE E2E",
+        "sorts dunning systems by name and created date"
+      ],
+      "case_id": "eee940c75d1e88d6f140844f362aff559669125fb40436e8772d4222c6395986"
+    },
+    {
+      "file": "e2e/master-data/accounting/dunning-systems.e2e.ts",
+      "titlePath": [
+        "Master Data Dunning Systems FE E2E",
+        "surfaces duplicate default validation in rendered FE errors"
+      ],
+      "case_id": "cb7b885949a5a9e8c2cd174b2d79d9d478916178de75568424a87080cddce86c"
+    },
+    {
+      "file": "e2e/master-data/accounting/dunning-systems.e2e.ts",
+      "titlePath": [
+        "Master Data Dunning Systems FE E2E",
+        "surfaces duplicate name validation in rendered FE errors"
+      ],
+      "case_id": "96de8de99cd300dc0929342cf6212ca59e390f292e4f8fbc2b4b463dddcfebbc"
+    },
+    {
+      "file": "e2e/master-data/accounting/dunning-systems.e2e.ts",
+      "titlePath": [
+        "Master Data Dunning Systems FE E2E",
+        "unarchives dunning systems through FE controls"
+      ],
+      "case_id": "9eaa24e6061279a35975035e8f1ee8a99921e1a27f002264bf9e29b758f87499"
+    },
+    {
+      "file": "e2e/master-data/accounting/dunning-systems.e2e.ts",
+      "titlePath": [
+        "Master Data Dunning Systems FE E2E",
+        "updates a dunning system from the FE with autosave and shows the new HTML value"
+      ],
+      "case_id": "07ca625a79a20b8e0fff25f4bf3451eedaddd76390af880c5c579b805944ccf8"
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "archives a VAT rule through the FE and shows it only with archived filtering"
+      ],
+      "case_id": "8bf220ba4760c2b42fc62c58c3a0c59027cc6266cf30edd0fc7ba82c5079da4d"
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "filters VAT rules by type and archived status through the rendered table"
+      ],
+      "case_id": "48cee457a0b7e2cae7e75c82e758f2e902681687b165514050f3bf742e53ce8a"
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "includes applicability and regional bookkeeping switches in the VAT Rule create form"
+      ],
+      "case_id": "437e8cbe397cac0657ea74a091a712b2959987d28482f6030e6d3679dca324c0"
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "lists seeded VAT rules"
+      ],
+      "case_id": "9cc657e7d04595989936652773fca6f7048a1dbd1b6e4e820d5394508b3710db"
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "loads and autosaves a VAT rule translation"
+      ],
+      "case_id": "156981a13c3c13fcc9e5fa3bd15fa44bdce4b4d56dbdc9b79b5539fd945c9602"
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "searches VAT rules by diacritics through the search field"
+      ],
+      "case_id": "6adbb45a85743973d8d0dd80e865e96b6e462521a9c735c69fcddb933d17c85c"
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "searches VAT rules by matchcode"
+      ],
+      "case_id": "396dbd81435786fd43a5e5f1650c957f2638676159fa4f346ae75cc5f14ef490"
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "searches VAT rules by name"
+      ],
+      "case_id": "34fbf0ed71d59722b3789f8f5dc139b7f56d1489f7cc5397288738512da4b70a"
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "searches VAT rules by normalized text"
+      ],
+      "case_id": "e340b4dadbcbcf1b6a5b07305191c6cbf18678f97cb74d67eac5e65a32d2e89f"
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "searches VAT rules by spaces"
+      ],
+      "case_id": "78e31055a85295e07f7b5b15ac185ef21f07c7b621f272f2eda1b48c16e19a37"
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "sorts VAT rules by archived asc"
+      ],
+      "case_id": "1025a104ee2dd00562afb0edef4f52773b4574cb4fc7da03ae849d52987b9ad5"
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "sorts VAT rules by archived desc"
+      ],
+      "case_id": "77f68aeb881e21f567a05037b91e35e597f4ce47413eaf1b4ed9e706320187eb"
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "sorts VAT rules by createdAt asc"
+      ],
+      "case_id": "86b691dffbd5fe5818f8dbed7865d00957bdb9fa861e1e0e88ad383cbbc3de36"
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "sorts VAT rules by createdAt desc"
+      ],
+      "case_id": "cea0bbdeeaf356e88614138f12689925cc32ee959fcb910048fdde97c04edd1a"
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "sorts VAT rules by createdBy asc"
+      ],
+      "case_id": "b11f5c2004da16c919c2f6c78fa0a08923c7e224d85461481ced75546db77337"
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "sorts VAT rules by createdBy desc"
+      ],
+      "case_id": "3cd3eedc341d1d85e2035bdbc6cd4be550a927153e08e6cb7e243a7e82e53f05"
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "sorts VAT rules by matchcode asc"
+      ],
+      "case_id": "0fb2adfc5d1c374041780a0d2fc5bebda79bcbad171fda331c3f5d73e36e4cfc"
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "sorts VAT rules by matchcode desc"
+      ],
+      "case_id": "ea9ffe82a07c1d7ef7dc652ea5756528ce7b9e34c554403a48781fab732491a8"
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "sorts VAT rules by name asc"
+      ],
+      "case_id": "9e5df48cfa6de75e5604fd674d6f4064b0a20f2969fc85ea441f9152f953abfb"
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "sorts VAT rules by name desc"
+      ],
+      "case_id": "971a8824b63845b9f2d0585692bf08d4796dffd71c19a954d788a6a374a06442"
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "sorts VAT rules by type asc"
+      ],
+      "case_id": "6455b849bab041b728994326299674f916de3c42afa40b468f0d1fdb87ed5f27"
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "sorts VAT rules by type desc"
+      ],
+      "case_id": "70a8fca489c6ecc04e3bede6c72e49f3c6678300de9d998bc23273357af44179"
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "sorts VAT rules by updatedAt asc"
+      ],
+      "case_id": "b62733b45702b2c1206a78dbee3581cc21c40479cfd38f3781e5829a8676878d"
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "sorts VAT rules by updatedAt desc"
+      ],
+      "case_id": "c2457cf1939e0aa24aeb213a97ee2fa7c1e9f03aa8b2f8a79bb07c93a1d8b68c"
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "sorts VAT rules by updatedBy asc"
+      ],
+      "case_id": "c104775a2717bdfb69414f8877378bd26e66eac529e13c0cefdc9628a36c969b"
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "sorts VAT rules by updatedBy desc"
+      ],
+      "case_id": "fb522efe00d5d3e272dcad1de91d9452112def424fa6741dd99aa34bb69ffe1d"
+    },
+    {
+      "file": "e2e/master-data/business-entities/airlines.e2e.ts",
+      "titlePath": [
+        "Master Data Airlines FE E2E",
+        "archives an airline through FE controls"
+      ],
+      "case_id": "ea5fdb9a04cdbda62357f71114a1dc4c9c62cc4423f9cefb622f28ae254b4949"
+    },
+    {
+      "file": "e2e/master-data/business-entities/airlines.e2e.ts",
+      "titlePath": [
+        "Master Data Airlines FE E2E",
+        "creates an airline from the FE and verifies the created drawer HTML"
+      ],
+      "case_id": "bd476ea60336f7cd4872c8cac04ab71844b5eb43d800d0a122659b796103bebb"
+    },
+    {
+      "file": "e2e/master-data/business-entities/airlines.e2e.ts",
+      "titlePath": [
+        "Master Data Airlines FE E2E",
+        "lists seeded airlines as rendered table HTML"
+      ],
+      "case_id": "2bbc0bd48a70ac36997c8faca9722f913a35517839603bcd5ee7259dd2811e9d"
+    },
+    {
+      "file": "e2e/master-data/business-entities/airlines.e2e.ts",
+      "titlePath": [
+        "Master Data Airlines FE E2E",
+        "opens airline details"
+      ],
+      "case_id": "ea6213074ad93f398f180486ebd62180ccd40c233b4706993e98e12d91416848"
+    },
+    {
+      "file": "e2e/master-data/business-entities/airlines.e2e.ts",
+      "titlePath": [
+        "Master Data Airlines FE E2E",
+        "sorts airlines by identity and audit columns in the rendered table"
+      ],
+      "case_id": "2dc594c0f4c183486f1dd42176b86d9d6ee1a100c5021678695f5d1843d1ccff"
+    },
+    {
+      "file": "e2e/master-data/business-entities/airlines.e2e.ts",
+      "titlePath": [
+        "Master Data Airlines FE E2E",
+        "unarchives an airline through FE controls"
+      ],
+      "case_id": "c984917433bc0b78b5b55578efeeb0e102be9c7cd982a725e693a0f2559ecdb0"
+    },
+    {
+      "file": "e2e/master-data/business-entities/airlines.e2e.ts",
+      "titlePath": [
+        "Master Data Airlines FE E2E",
+        "updates an airline from the FE with autosave and verifies the drawer HTML"
+      ],
+      "case_id": "1a2e4215ec38e42edd5c4283c6c10653a125ca17dc0eb2ffdc6d0f66fef34f65"
+    },
+    {
+      "file": "e2e/master-data/business-entities/business-partner-accounts.e2e.ts",
+      "titlePath": [
+        "Master Data Business Partner Accounts tab FE E2E",
+        "adds a minimal account line from the Accounts tab"
+      ],
+      "case_id": "a990931a7977f4bf590a8bc3f233fa814cd7d6fcb0cc72f995d4926a4b78b7f7"
+    },
+    {
+      "file": "e2e/master-data/business-entities/business-partner-accounts.e2e.ts",
+      "titlePath": [
+        "Master Data Business Partner Accounts tab FE E2E",
+        "autosaves debtor and creditor edits and renders the factoring checkbox from the Accounts tab"
+      ],
+      "case_id": "9569eca27a33881d3e1775c77982b2df2189d7f8ba281d2bad7ac433781e41f3"
+    },
+    {
+      "file": "e2e/master-data/business-entities/business-partner-accounts.e2e.ts",
+      "titlePath": [
+        "Master Data Business Partner Accounts tab FE E2E",
+        "deletes an account line from the Accounts tab table"
+      ],
+      "case_id": "e1a1ec6ff9079ad59689e6853420cb83a64b5151dcde2c683fa1b8917c78015c"
+    },
+    {
+      "file": "e2e/master-data/business-entities/business-partner-accounts.e2e.ts",
+      "titlePath": [
+        "Master Data Business Partner Accounts tab FE E2E",
+        "renders seeded bookkeeping mappings in the Accounts tab table"
+      ],
+      "case_id": "6008762783395ceb119aea5d5fbeb5ef97a4f4ec54a8ca458950b6b75fe50097"
+    },
+    {
+      "file": "e2e/master-data/business-entities/business-partner-accounts.e2e.ts",
+      "titlePath": [
+        "Master Data Business Partner Accounts tab FE E2E",
+        "renders the seeded Accounts tab visual"
+      ],
+      "case_id": "847ed2b32e8d6a6185b3221ee5f77a546f68750825ebb655df22bbe3c9c5c849"
+    },
+    {
+      "file": "e2e/master-data/business-entities/business-partner-basic.e2e.ts",
+      "titlePath": [
+        "Master Data Business Partner Basic tab FE E2E",
+        "renders seeded Basic tab form values as HTML fields and text"
+      ],
+      "case_id": "fd867b5925bb0e734a82fe0e844fa056de53b2f80a7bcf6866e92d3aa95e7e17"
+    },
+    {
+      "file": "e2e/master-data/business-entities/business-partner-contacts.e2e.ts",
+      "titlePath": [
+        "Master Data Business Partner Contacts tab FE E2E",
+        "renders Contacts tab rows with role, name, email, and phone as HTML"
+      ],
+      "case_id": "54124f3ca5c343a34741a29a0252bafbefa1ee2a9be9daf42baf182d3ab60248"
+    },
+    {
+      "file": "e2e/master-data/business-entities/business-partner-documents.e2e.ts",
+      "titlePath": [
+        "Master Data Business Partner Documents tab FE E2E",
+        "renders the empty Documents state when the business partner has no DocuBox root folder"
+      ],
+      "case_id": "8ba8bc59ebdca149dd4b7c2bf38b1246c1a4bac25c509c5fea0b37c766f3f1f6"
+    },
+    {
+      "file": "e2e/master-data/business-entities/business-partner-employee-roles.e2e.ts",
+      "titlePath": [
+        "Master Data Business Partner Employee Roles tab FE E2E",
+        "renders an empty Employee Roles table for a partner without scoped roles"
+      ],
+      "case_id": "7d410dd9693f5cadd268f363cbd0953a742c06dde85807eb6425cd06d93b4ac5"
+    },
+    {
+      "file": "e2e/master-data/business-entities/business-partner-employees.e2e.ts",
+      "titlePath": [
+        "Master Data Business Partner Employees tab FE E2E",
+        "opens the Employees tab create drawer with employee form labels"
+      ],
+      "case_id": "feefafc05b10db019de8d2ab9bdf909bc41999a849ad64711f73f5acb5e7cde3"
+    },
+    {
+      "file": "e2e/master-data/business-entities/business-partner-overview.e2e.ts",
+      "titlePath": [
+        "Master Data Business Partner Overview FE E2E",
+        "locks and unlocks Overview changes through the details drawer"
+      ],
+      "case_id": "c80c424fb5bd63718ea4108e774451ba5de8d9ddfbc822368028d7cb95ba9cf2"
+    },
+    {
+      "file": "e2e/master-data/business-entities/business-partner-overview.e2e.ts",
+      "titlePath": [
+        "Master Data Business Partner Overview FE E2E",
+        "opens the details drawer on the Overview tab and renders seeded identifiers and address fields"
+      ],
+      "case_id": "01bcfd78dd598d9b56493a7b14085cc246cfcdfb2c0d0cb7256b252b0a5ae7f2"
+    },
+    {
+      "file": "e2e/master-data/business-entities/business-partner-overview.e2e.ts",
+      "titlePath": [
+        "Master Data Business Partner Overview FE E2E",
+        "renders a different B/L address and autosaves Overview identifier edits through the UI"
+      ],
+      "case_id": "6936aff074b3a4aa0297e5e1056c5768e635fa8679a188c142a2a87d9354fe34"
+    },
+    {
+      "file": "e2e/master-data/business-entities/business-partner-similar-banner.e2e.ts",
+      "titlePath": [
+        "Master Data Business Partner similar banner FE E2E",
+        "hides the similar-partners banner when no similar partners exist"
+      ],
+      "case_id": "577300a85649c497ba32a41d24a3593e021f1dedeca8ba53fca17d70fcd6ccc8"
+    },
+    {
+      "file": "e2e/master-data/business-entities/business-partner-similar-banner.e2e.ts",
+      "titlePath": [
+        "Master Data Business Partner similar banner FE E2E",
+        "keeps the full similar-partners banner on the other details tabs"
+      ],
+      "case_id": "d99b0b8719254375b1a6a0ee12cbed2af47a6103fff1f841d10e2f8d1a50e52b"
+    },
+    {
+      "file": "e2e/master-data/business-entities/business-partner-similar-banner.e2e.ts",
+      "titlePath": [
+        "Master Data Business Partner similar banner FE E2E",
+        "opens a similar partner from the banner link"
+      ],
+      "case_id": "7cf174cf3a36165a22659caeae2a0addd0bc282bcb5ef55ec01683099cc6598b"
+    },
+    {
+      "file": "e2e/master-data/business-entities/business-partner-similar-banner.e2e.ts",
+      "titlePath": [
+        "Master Data Business Partner similar banner FE E2E",
+        "shows the full similar-partners banner on Overview and the Business Partner tab"
+      ],
+      "case_id": "63ca810bdd34f6e3107fb1e88d9ce0ca4e8dc44b464eb41bb2d6071070040872"
+    },
+    {
+      "file": "e2e/master-data/business-entities/cargo-agent-accounts.e2e.ts",
+      "titlePath": [
+        "Master Data Cargo Agent Accounts tab FE E2E",
+        "adds and deletes a minimal account line from the Cargo Agent Accounts tab"
+      ],
+      "case_id": "992bcf75a1cdf5486c3083b89d660440d5fa11b705519720fe3c94ac08aef91e"
+    },
+    {
+      "file": "e2e/master-data/business-entities/cargo-agent-documents.e2e.ts",
+      "titlePath": [
+        "Master Data Cargo Agent Documents tab FE E2E",
+        "renders the empty Documents state from the Cargo Agents details modal"
+      ],
+      "case_id": "3e7a9e2d156dc3f42819439d10d04137e6d3fa91eb8cb2dda59013c3ca1230ca"
+    },
+    {
+      "file": "e2e/master-data/business-entities/cargo-agents-basic.e2e.ts",
+      "titlePath": [
+        "Master Data Cargo Agents Basic tab FE E2E",
+        "renders cargo agent Basic tab values in the details modal as HTML fields and text"
+      ],
+      "case_id": "195f062fddb0f64995277a8493841901fb3b3909599bb12ae5e610c7b1f5c247"
+    },
+    {
+      "file": "e2e/master-data/business-entities/cargo-agents.e2e.ts",
+      "titlePath": [
+        "Master Data Cargo Agents FE E2E",
+        "creates a cargo agent and verifies it from the list HTML"
+      ],
+      "case_id": "1f6889ec017918163100b1f2b2118618d268f004b89e6f31731c76a4d1731f19"
+    },
+    {
+      "file": "e2e/master-data/business-entities/cargo-agents.e2e.ts",
+      "titlePath": [
+        "Master Data Cargo Agents FE E2E",
+        "lists seeded cargo agents as rendered table rows"
+      ],
+      "case_id": "4572b5320d7a2780349e89c86b7b79d51dd6c58d70826be56055b81dda639149"
+    },
+    {
+      "file": "e2e/master-data/business-entities/carriers.e2e.ts",
+      "titlePath": [
+        "Master Data Carriers FE E2E",
+        "archives a carrier through FE controls and verifies archived HTML state"
+      ],
+      "case_id": "1221c283cf146d68d5ebadbb2fdbf3a160ea619cdb864d965a3a3f572e00f50f"
+    },
+    {
+      "file": "e2e/master-data/business-entities/carriers.e2e.ts",
+      "titlePath": [
+        "Master Data Carriers FE E2E",
+        "creates a carrier through FE controls and verifies it from the list HTML"
+      ],
+      "case_id": "65bfef43ada14e66ae8b6074e3e33b2ca8896612af0ba3c5df8fbe96660df018"
+    },
+    {
+      "file": "e2e/master-data/business-entities/carriers.e2e.ts",
+      "titlePath": [
+        "Master Data Carriers FE E2E",
+        "lists seeded carriers as rendered table rows"
+      ],
+      "case_id": "bc5c500ac3b79053e7d2aba533439244d2970b2527c28e110e51db779fe3774d"
+    },
+    {
+      "file": "e2e/master-data/business-entities/carriers.e2e.ts",
+      "titlePath": [
+        "Master Data Carriers FE E2E",
+        "sorts carriers by supported visible columns"
+      ],
+      "case_id": "9e523e2d8da7e385b0a94a4d862e632b78e3e4b5db3aedd9c79673b9a5e3efba"
+    },
+    {
+      "file": "e2e/master-data/business-entities/carriers.e2e.ts",
+      "titlePath": [
+        "Master Data Carriers FE E2E",
+        "updates carrier fields through autosave and verifies the drawer HTML"
+      ],
+      "case_id": "2f0785fb0af92571d3c8d8f54ba02d50e4eb6a88333bde9029f06d2804b93d2e"
+    },
+    {
+      "file": "e2e/master-data/business-entities/office-accounts.e2e.ts",
+      "titlePath": [
+        "Master Data Office Accounts tab FE E2E",
+        "adds a minimal account line from the Office Accounts tab"
+      ],
+      "case_id": "f3821be6683f9550a74643cdcfc26f9545f25cb5f7dec5c8e31908925088a6d7"
+    },
+    {
+      "file": "e2e/master-data/business-entities/office-accounts.e2e.ts",
+      "titlePath": [
+        "Master Data Office Accounts tab FE E2E",
+        "autosaves debtor and creditor edits from the Office Accounts tab"
+      ],
+      "case_id": "9881e404d266ebd992ec95e919c0f157bc0a9127d27ce5e83de39c649b58f08f"
+    },
+    {
+      "file": "e2e/master-data/business-entities/office-accounts.e2e.ts",
+      "titlePath": [
+        "Master Data Office Accounts tab FE E2E",
+        "deletes an account line from the Office Accounts tab table"
+      ],
+      "case_id": "e1d42277687e91d241660203ffa8a025dd972e32e8c1bc5fe7e1001c79695e21"
+    },
+    {
+      "file": "e2e/master-data/business-entities/office-accounts.e2e.ts",
+      "titlePath": [
+        "Master Data Office Accounts tab FE E2E",
+        "opens the Accounts tab from the Office details modal and renders seeded account HTML"
+      ],
+      "case_id": "e91210873c2d4d69b581c604745f5bf213c8a7ddcc08d5017b6071de975a37ed"
+    },
+    {
+      "file": "e2e/master-data/business-entities/office-basic.e2e.ts",
+      "titlePath": [
+        "Master Data Office Basic tab FE E2E",
+        "renders Office Basic tab values in the details modal"
+      ],
+      "case_id": "4562692ecda7320e54f32cdb4670f8107471314b3aeadf38a53df54133693c67"
+    },
+    {
+      "file": "e2e/master-data/business-entities/office-basic.e2e.ts",
+      "titlePath": [
+        "Master Data Office Basic tab FE E2E",
+        "updates Office Basic EORI from the FE and verifies the details modal HTML"
+      ],
+      "case_id": "bbfe8e414db9a3c7a527ed6934e2b36114c58bdbed1f402ea815d92e7f69e7a6"
+    },
+    {
+      "file": "e2e/master-data/business-entities/office-basic.e2e.ts",
+      "titlePath": [
+        "Master Data Office Basic tab FE E2E",
+        "updates Office Basic VAT from the FE and verifies the details modal HTML"
+      ],
+      "case_id": "633741849f50f86fb709419c0b012beed8a3e4d9547b4be29cb5fca80f47b01f"
+    },
+    {
+      "file": "e2e/master-data/business-entities/office-contacts.e2e.ts",
+      "titlePath": [
+        "Master Data Office Contacts tab FE E2E",
+        "adds a contact row from the Office details Contacts tab"
+      ],
+      "case_id": "d7ebd34d8efe88e5a0b587e2591cf4babc13aa0e1ab9dc4c59d9b4508a7ae770"
+    },
+    {
+      "file": "e2e/master-data/business-entities/office-contacts.e2e.ts",
+      "titlePath": [
+        "Master Data Office Contacts tab FE E2E",
+        "deletes a contact from the Office details Contacts tab"
+      ],
+      "case_id": "7096f481c21de5c7bea2c0da8469a2f1a9a4e6158215214f6efbb07a50027d34"
+    },
+    {
+      "file": "e2e/master-data/business-entities/office-overview.e2e.ts",
+      "titlePath": [
+        "Master Data Office Overview FE E2E",
+        "autosaves an Office Overview field update through FE controls and verifies the drawer HTML"
+      ],
+      "case_id": "ca71d3a2056ec65417f48687b0e67c76a4ace6ff8b22fc0c1a36a2c995af0a52"
+    },
+    {
+      "file": "e2e/master-data/business-entities/office-overview.e2e.ts",
+      "titlePath": [
+        "Master Data Office Overview FE E2E",
+        "locks and unlocks Office Overview changes through the details modal"
+      ],
+      "case_id": "d663ddb58184cee74ff38cf40695cd786981823d0db994eb03443d7d3af9d3c7"
+    },
+    {
+      "file": "e2e/master-data/business-entities/office-overview.e2e.ts",
+      "titlePath": [
+        "Master Data Office Overview FE E2E",
+        "opens an Office details modal from the list and renders Overview tab HTML"
+      ],
+      "case_id": "55422fb575b86b44265ea6352443b14200db792dcb63d8f6b9301a0cd64c9f56"
+    },
+    {
+      "file": "e2e/master-data/business-entities/office.e2e.ts",
+      "titlePath": [
+        "Master Data Offices create FE E2E",
+        "creates an office and verifies it from the list HTML"
+      ],
+      "case_id": "d0232e0039f07af5574ec3811234bb03ef507d311e1223a49acad8eceea22575"
+    },
+    {
+      "file": "e2e/master-data/business-entities/office.e2e.ts",
+      "titlePath": [
+        "Master Data Offices FE E2E",
+        "filters archived offices without opening the details modal"
+      ],
+      "case_id": "5a6f79cbdce64634c8d7392826e055c189912654a13efea9c2fb68eda403165a"
+    },
+    {
+      "file": "e2e/master-data/business-entities/office.e2e.ts",
+      "titlePath": [
+        "Master Data Offices FE E2E",
+        "filters offices by debtor and creditor IDs in the rendered table"
+      ],
+      "case_id": "349f83e1fa5e83c61fc05e1c64911c0330a724564a3fd48bf13b736d967cd3d3"
+    },
+    {
+      "file": "e2e/master-data/business-entities/office.e2e.ts",
+      "titlePath": [
+        "Master Data Offices FE E2E",
+        "lists seeded offices as rendered table rows"
+      ],
+      "case_id": "f9729e06b9defe7adbc4b44267fadcb8c01bc6e82eb9486e0226c10a2fa2d837"
+    },
+    {
+      "file": "e2e/master-data/business-entities/partner-networks.e2e.ts",
+      "titlePath": [
+        "Master Data Partner Networks FE E2E",
+        "creates a partner network from the FE and verifies the rendered HTML"
+      ],
+      "case_id": "418dd0cbef5d97ccf6d11787b35e2c3de5bfe2ddec38eb0707b7d8b3a7c5e2f2"
+    },
+    {
+      "file": "e2e/master-data/business-entities/partner-networks.e2e.ts",
+      "titlePath": [
+        "Master Data Partner Networks FE E2E",
+        "filters partner networks by archived status through the rendered table"
+      ],
+      "case_id": "8e7e74deaa4d5c8c729eb5173b9fac0c747fcc24da2effe5ebcfc0f9b3141290"
+    },
+    {
+      "file": "e2e/master-data/business-entities/partner-networks.e2e.ts",
+      "titlePath": [
+        "Master Data Partner Networks FE E2E",
+        "lists seeded partner networks as HTML rows"
+      ],
+      "case_id": "168d04dac5c32dc97165afad7c3b01b5b62cf15f32b736602a008ccb0c1105d7"
+    },
+    {
+      "file": "e2e/master-data/business-entities/partner-networks.e2e.ts",
+      "titlePath": [
+        "Master Data Partner Networks FE E2E",
+        "opens seeded partner network details"
+      ],
+      "case_id": "35473b12f6d025f9812a41330aaf838bde7e2f2c0e10de1e93ad106b79a21788"
+    },
+    {
+      "file": "e2e/master-data/business-entities/partner-networks.e2e.ts",
+      "titlePath": [
+        "Master Data Partner Networks FE E2E",
+        "sorts partner networks by name and audit columns in the rendered table"
+      ],
+      "case_id": "f096ad984b3fb391b0f972314d4b95cf83796e89af2545f17d3821c5bbabb30b"
+    },
+    {
+      "file": "e2e/master-data/business-entities/partner-networks.e2e.ts",
+      "titlePath": [
+        "Master Data Partner Networks FE E2E",
+        "updates a partner network from the FE with autosave and verifies rendered HTML"
+      ],
+      "case_id": "6389e6dc6c48a27d1b2c1f3cc53a207fbcbb0346af5444cfa9b175f5d83486c5"
+    },
+    {
+      "file": "e2e/master-data/cargo/cargo-types.e2e.ts",
+      "titlePath": [
+        "Master Data Cargo Types FE E2E",
+        "keeps BE cargo type label search behavior available to FE flows"
+      ],
+      "case_id": "a386227823f630d95c053a3db8e99819c27c863c451baaaa60e047e260afa40c"
+    },
+    {
+      "file": "e2e/master-data/cargo/cargo-types.e2e.ts",
+      "titlePath": [
+        "Master Data Cargo Types FE E2E",
+        "loads and autosaves a cargo type translation"
+      ],
+      "case_id": "1feeb58aed671384e891475b996d98537755653e44b8a41c7e38b0165d969b67"
+    },
+    {
+      "file": "e2e/master-data/cargo/cargo-types.e2e.ts",
+      "titlePath": [
+        "Master Data Cargo Types FE E2E",
+        "sorts cargo types by identity, dimension, capacity, and audit columns"
+      ],
+      "case_id": "a37cd833d51fb7281045c1e4284b10ea6209fc598d9818781c5873621e8082d9"
+    },
+    {
+      "file": "e2e/master-data/cargo/cargo-types.e2e.ts",
+      "titlePath": [
+        "Master Data Cargo Types FE E2E",
+        "surfaces duplicate cargo type name validation from the real BE"
+      ],
+      "case_id": "ff102f53b16f0115f25d0fb386fb5bfb32b59b7cbc3c2483f91cb790bc364ddf"
+    },
+    {
+      "file": "e2e/master-data/cargo/cargo-types.e2e.ts",
+      "titlePath": [
+        "Master Data Cargo Types FE E2E",
+        "updates a cargo type from the FE with autosave"
+      ],
+      "case_id": "8617eea2c4725924f1df90e1bbfe3118689e0de10f75dbf24609a983a87ca8c1"
+    },
+    {
+      "file": "e2e/master-data/cargo/hs-codes.e2e.ts",
+      "titlePath": [
+        "Master Data HS Codes FE E2E",
+        "adds an HS code and archives it through the FE"
+      ],
+      "case_id": "82f2a9509eb4058a5b40d30020bc3fa29daaa121329d4681f7c7831537ff53f8"
+    },
+    {
+      "file": "e2e/master-data/cargo/hs-codes.e2e.ts",
+      "titlePath": [
+        "Master Data HS Codes FE E2E",
+        "sorts HS codes by identity and audit columns"
+      ],
+      "case_id": "94eacf7b041f6c55a30c0ea6e516c0486194d8f5cb707cd6ab3f87d8bf1537c2"
+    },
+    {
+      "file": "e2e/master-data/cargo/hs-codes.e2e.ts",
+      "titlePath": [
+        "Master Data HS Codes FE E2E",
+        "updates an HS code from the FE with autosave"
+      ],
+      "case_id": "acf41d7d35c5c8ec22e00e63a45900df037c30881f0a2adf54578c0d4fa3eac4"
+    },
+    {
+      "file": "e2e/master-data/cargo/package-types.e2e.ts",
+      "titlePath": [
+        "Master Data Package Types FE E2E",
+        "archives a package type through FE controls"
+      ],
+      "case_id": "46de918027d3ec2776fdd9e250a9affd2d15b66a075e09d98a9e59ce6bf912a1"
+    },
+    {
+      "file": "e2e/master-data/cargo/package-types.e2e.ts",
+      "titlePath": [
+        "Master Data Package Types FE E2E",
+        "sorts package types by visible identity, dimension, and audit columns"
+      ],
+      "case_id": "24f0c2e8589b65d2e99a16c378423052743ba69b8947af95539d504ddb9506bb"
+    },
+    {
+      "file": "e2e/master-data/cargo/package-types.e2e.ts",
+      "titlePath": [
+        "Master Data Package Types FE E2E",
+        "surfaces duplicate package type name validation in rendered FE errors"
+      ],
+      "case_id": "eb6d980d87d9af2f29295beff8de7373e86377197531f4777594cc107af18be8"
+    },
+    {
+      "file": "e2e/master-data/cargo/package-types.e2e.ts",
+      "titlePath": [
+        "Master Data Package Types FE E2E",
+        "unarchives a package type through FE controls"
+      ],
+      "case_id": "8e916bec32b03b618cfed797a73f05f3b02193cdcbc43b629cb661d783c5af31"
+    },
+    {
+      "file": "e2e/master-data/cargo/package-types.e2e.ts",
+      "titlePath": [
+        "Master Data Package Types FE E2E",
+        "updates a package type from the FE with autosave"
+      ],
+      "case_id": "02c9b565bea60f4551899d5c18174dc8dea235a653d647a5f983704dbbcf2824"
+    },
+    {
+      "file": "e2e/master-data/domain-error-visibility.e2e.ts",
+      "titlePath": [
+        "Domain error visibility FE E2E",
+        "shows a Business Partner field error when a duplicate match code is submitted"
+      ],
+      "case_id": "6fac744106a3c46af1c9eecbc22dba3f9bb0d5e5c900397ea6d033444706d40b"
+    },
+    {
+      "file": "e2e/master-data/domain-error-visibility.e2e.ts",
+      "titlePath": [
+        "Domain error visibility FE E2E",
+        "shows an HS Code field error when raw NAME_EXISTS is submitted"
+      ],
+      "case_id": "2284123b056508011c8a8814b0da3207529338d62960c2f06197e13edfee6f6c"
+    },
+    {
+      "file": "e2e/master-data/locations/airports.e2e.ts",
+      "titlePath": [
+        "Master Data Airports FE E2E",
+        "creates an airport from the FE"
+      ],
+      "case_id": "272c2e8545948fc066e05e1a7a878c1e8511f4e42093a8ffb5bb4879b601973f"
+    },
+    {
+      "file": "e2e/master-data/locations/airports.e2e.ts",
+      "titlePath": [
+        "Master Data Airports FE E2E",
+        "keeps BE airport label search behavior available to FE flows"
+      ],
+      "case_id": "4b203c2599d01df75cc5c2b20719c79dde9c08ae1b869cad6d1ff03fb6065bc2"
+    },
+    {
+      "file": "e2e/master-data/locations/airports.e2e.ts",
+      "titlePath": [
+        "Master Data Airports FE E2E",
+        "lists seeded airports"
+      ],
+      "case_id": "4e874452181178b2b929364109cbde06312d94003eb09f4f2829faaa795dda7b"
+    },
+    {
+      "file": "e2e/master-data/locations/airports.e2e.ts",
+      "titlePath": [
+        "Master Data Airports FE E2E",
+        "renders the empty airport create form"
+      ],
+      "case_id": "2339c26c662884246c19f7912d6766a0da68dc5d9d16372dfa71fc10c9d9d14c"
+    },
+    {
+      "file": "e2e/master-data/locations/airports.e2e.ts",
+      "titlePath": [
+        "Master Data Airports FE E2E",
+        "searches airports by diacritics through the search field"
+      ],
+      "case_id": "b8274ddcac682718c5e6c5498a5f89ce640fb616b96d0c5252eccd7d85cbf662"
+    },
+    {
+      "file": "e2e/master-data/locations/airports.e2e.ts",
+      "titlePath": [
+        "Master Data Airports FE E2E",
+        "searches airports by IATA code"
+      ],
+      "case_id": "8175cd2d0c2395ca29aa3694bbb434d799252bd51a1dca398a3834bbb1356d21"
+    },
+    {
+      "file": "e2e/master-data/locations/airports.e2e.ts",
+      "titlePath": [
+        "Master Data Airports FE E2E",
+        "searches airports by match code"
+      ],
+      "case_id": "8d483c6a6ed1e413b6d2b0cef88e94790582cde73d779fb0b6a88a01e7d773b1"
+    },
+    {
+      "file": "e2e/master-data/locations/airports.e2e.ts",
+      "titlePath": [
+        "Master Data Airports FE E2E",
+        "searches airports by normalized text"
+      ],
+      "case_id": "86ffbb25c5e3c51008626dedcc540e15079f9a984b838036bedd3c666465aad4"
+    },
+    {
+      "file": "e2e/master-data/locations/airports.e2e.ts",
+      "titlePath": [
+        "Master Data Airports FE E2E",
+        "searches airports by spaces"
+      ],
+      "case_id": "9e3b36800c7994fff64e327f268e10a0855f698c3f257c752102c53fa1d1d59f"
+    },
+    {
+      "file": "e2e/master-data/locations/airports.e2e.ts",
+      "titlePath": [
+        "Master Data Airports FE E2E",
+        "sorts airports by city"
+      ],
+      "case_id": "815416945a84e0433d5a7e7a53b2821d134884e86e9c1f1d322d7c1db8858112"
+    },
+    {
+      "file": "e2e/master-data/locations/airports.e2e.ts",
+      "titlePath": [
+        "Master Data Airports FE E2E",
+        "sorts airports by createdAt"
+      ],
+      "case_id": "2b751e92649533619316736aa3a33549ac1c4278188393553710781bb41d2ccc"
+    },
+    {
+      "file": "e2e/master-data/locations/airports.e2e.ts",
+      "titlePath": [
+        "Master Data Airports FE E2E",
+        "sorts airports by createdBy"
+      ],
+      "case_id": "d9a67a0b4255e5db5b0aa28caa20b704ebc08a15b1e811102d852c3b1948703b"
+    },
+    {
+      "file": "e2e/master-data/locations/airports.e2e.ts",
+      "titlePath": [
+        "Master Data Airports FE E2E",
+        "sorts airports by iataCode"
+      ],
+      "case_id": "3e6e43bbec4765b5eb53d7f11df65839d2835d75442a8cfddc5aee6bda739013"
+    },
+    {
+      "file": "e2e/master-data/locations/airports.e2e.ts",
+      "titlePath": [
+        "Master Data Airports FE E2E",
+        "sorts airports by matchCode"
+      ],
+      "case_id": "a3867e5a0cf637386947755f8b4cbc8255ee6d1a0f33a9827ba7222b38d3c192"
+    },
+    {
+      "file": "e2e/master-data/locations/airports.e2e.ts",
+      "titlePath": [
+        "Master Data Airports FE E2E",
+        "sorts airports by name"
+      ],
+      "case_id": "f300e1c3c5130c83d846380b3afaa679664170c48b4f18f5762b71e8e275f448"
+    },
+    {
+      "file": "e2e/master-data/locations/airports.e2e.ts",
+      "titlePath": [
+        "Master Data Airports FE E2E",
+        "sorts airports by updatedAt"
+      ],
+      "case_id": "17cad07fe6afec2b02149f3ac9d25179e987893499502f2408cc0e8fc05806a4"
+    },
+    {
+      "file": "e2e/master-data/locations/airports.e2e.ts",
+      "titlePath": [
+        "Master Data Airports FE E2E",
+        "sorts airports by updatedBy"
+      ],
+      "case_id": "f1ac96f65371a75711c4cf5179fc0151ff23467af94715d4a6a330ed81a1a3ec"
+    },
+    {
+      "file": "e2e/master-data/locations/airports.e2e.ts",
+      "titlePath": [
+        "Master Data Airports FE E2E",
+        "surfaces duplicate match-code validation from the real BE"
+      ],
+      "case_id": "ea631d81349be2011fb8b9b807b6e50c26e683962030a521c511626e77eec61a"
+    },
+    {
+      "file": "e2e/master-data/locations/airports.e2e.ts",
+      "titlePath": [
+        "Master Data Airports FE E2E",
+        "updates an airport from the FE with autosave"
+      ],
+      "case_id": "4d3099fc6503eab8aa5e00f1a18d2b6c62423c0ed989da87b5671323cdbc42bf"
+    },
+    {
+      "file": "e2e/master-data/locations/cities.e2e.ts",
+      "titlePath": [
+        "Master Data Cities FE E2E",
+        "adds a city and archives it through FE controls at the end"
+      ],
+      "case_id": "7cac907c3e21a8b52fd27398e5956c4741314a558e7b0a78e4593bfe9ac1b053"
+    },
+    {
+      "file": "e2e/master-data/locations/cities.e2e.ts",
+      "titlePath": [
+        "Master Data Cities FE E2E",
+        "keeps BE city label search behavior available to FE flows"
+      ],
+      "case_id": "d60341cb3127455096b76a59abc8822c8b4604412bd5ee23cbce334a4d0968a1"
+    },
+    {
+      "file": "e2e/master-data/locations/cities.e2e.ts",
+      "titlePath": [
+        "Master Data Cities FE E2E",
+        "searches cities by diacritics and normalized text"
+      ],
+      "case_id": "29b3fe4ea42128953d05b8f7854b9546a7cc0df8a7ac841c09e397b9e6b768f2"
+    },
+    {
+      "file": "e2e/master-data/locations/cities.e2e.ts",
+      "titlePath": [
+        "Master Data Cities FE E2E",
+        "searches cities by spaces and Munich normalization"
+      ],
+      "case_id": "ddea5771c9ae456d6cf173ab7fe4e3ddd7f20621efc2d1f624123b599705e939"
+    },
+    {
+      "file": "e2e/master-data/locations/cities.e2e.ts",
+      "titlePath": [
+        "Master Data Cities FE E2E",
+        "sorts cities by countryCode"
+      ],
+      "case_id": "ec6672527357d354f143e595afc97e73cb38db1f100e932b4e12c2a22ad8b6f8"
+    },
+    {
+      "file": "e2e/master-data/locations/cities.e2e.ts",
+      "titlePath": [
+        "Master Data Cities FE E2E",
+        "sorts cities by createdAt"
+      ],
+      "case_id": "f2067075345d276ab35c15705602cd14ebd13776f4c9307d7727da12306864c1"
+    },
+    {
+      "file": "e2e/master-data/locations/cities.e2e.ts",
+      "titlePath": [
+        "Master Data Cities FE E2E",
+        "sorts cities by createdBy"
+      ],
+      "case_id": "131394eb947ad2d3bf35c7a4e9c7c26cd0f49c9ab56d2591263d5e5a55f6dee3"
+    },
+    {
+      "file": "e2e/master-data/locations/cities.e2e.ts",
+      "titlePath": [
+        "Master Data Cities FE E2E",
+        "sorts cities by isoCode"
+      ],
+      "case_id": "6e3fc4f007e37a947122cad1b58a899759e4c7abbaf32c88213973fe5de51cba"
+    },
+    {
+      "file": "e2e/master-data/locations/cities.e2e.ts",
+      "titlePath": [
+        "Master Data Cities FE E2E",
+        "sorts cities by name"
+      ],
+      "case_id": "76c40dea76f76e4c1d1e2a17b365bd4b264814a6ea277c0913296ee22eef2f4d"
+    },
+    {
+      "file": "e2e/master-data/locations/cities.e2e.ts",
+      "titlePath": [
+        "Master Data Cities FE E2E",
+        "sorts cities by stateCode"
+      ],
+      "case_id": "6f03793104fe91c64c86224a67dcbb49075656a7c2e7893833c5ed00eb91da93"
+    },
+    {
+      "file": "e2e/master-data/locations/cities.e2e.ts",
+      "titlePath": [
+        "Master Data Cities FE E2E",
+        "sorts cities by unlocode"
+      ],
+      "case_id": "b0860f6689bb2dabfc3338c9972519767aa40ec322222f68546ad33e9086db8a"
+    },
+    {
+      "file": "e2e/master-data/locations/cities.e2e.ts",
+      "titlePath": [
+        "Master Data Cities FE E2E",
+        "sorts cities by updatedAt"
+      ],
+      "case_id": "558e9f6fe298338b1019718404e5727e5b8970e4ce9696964271ecbce24de78c"
+    },
+    {
+      "file": "e2e/master-data/locations/cities.e2e.ts",
+      "titlePath": [
+        "Master Data Cities FE E2E",
+        "sorts cities by updatedBy"
+      ],
+      "case_id": "fe5ea8198aa44677a084678a43461463ee43d8fa5a802f490df18102d1681738"
+    },
+    {
+      "file": "e2e/master-data/locations/cities.e2e.ts",
+      "titlePath": [
+        "Master Data Cities FE E2E",
+        "updates a city from the FE with autosave"
+      ],
+      "case_id": "955b4bbc3f58da5fd90823d7c720890f447624b7ca6d22bcd94affc9b844597c"
+    },
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "adds a container yard and archives it at the end"
+      ],
+      "case_id": "f32e52f1ac94c8c89ea0407b436deb11d695a307758027c02c8cb7b447bf3ec1"
+    },
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "autosaves container yard additionalInformation field"
+      ],
+      "case_id": "6dc2c620cd2f4077d43645dde39ec1ece02d616d7c8f524ef3ae0bd7ec4d950e"
+    },
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "autosaves container yard city field"
+      ],
+      "case_id": "a31f17da00632cc7deb5145a06aa2dcfe557df8cc80dc7732a8a13426e646f93"
+    },
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "autosaves container yard district field"
+      ],
+      "case_id": "d95b117e9d0d6b10556be1c8e011a0f92a52857cdc063e535111a19f5f906111"
+    },
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "autosaves container yard matchCode field"
+      ],
+      "case_id": "bf0f4e01a7637e72674aa29120ac7dc453677d7a538b31ab768e72023828207b"
+    },
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "autosaves container yard name field"
+      ],
+      "case_id": "76fa9d16e0fbb545c831f25c04169138a2ef8a105f1e17cfc77a3b1ca2b669af"
+    },
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "autosaves container yard secondaryStreet field"
+      ],
+      "case_id": "a9234a43cc762344f38a4d676a30fb4cbee1aa6e4a57a75953bd19e69e117536"
+    },
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "autosaves container yard shortName field"
+      ],
+      "case_id": "b59c770769c887af8d943d5cdc087e43d6b6e0e0097673101f3850a236959651"
+    },
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "autosaves container yard street field"
+      ],
+      "case_id": "eb4b8311f0d9a148d69f3c5c75bc77b9b275f5d5fbd8cffb1533924c0adf1a4e"
+    },
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "autosaves container yard zip field"
+      ],
+      "case_id": "0991866e65439ac2073283dc9b339b2e2afe0c54fe34ebf428f90da530d4e1af"
+    },
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "autosaves several container yard fields in a row"
+      ],
+      "case_id": "af3a235a9512327a09d2c4974130a2c13bf2a53d700eb9846eb286849d635098"
+    },
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "filters archived container yards through the rendered table"
+      ],
+      "case_id": "5cf9fd15eba1487e80c15067743d7e46b51fba6944ca9611e4bbd7847f97304f"
+    },
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "lists seeded container yards"
+      ],
+      "case_id": "2dae033be0bb439e56e276801c1130bde6e08e7add26983b3a713a0b72738f28"
+    },
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "searches container yards by diacritics, normalized text, and spaces"
+      ],
+      "case_id": "5e114516329f7b1b71ae7f777240b2091c9f3d41be1990a010f1ce273a08e5f9"
+    },
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "searches container yards by match code and short name"
+      ],
+      "case_id": "d3cd879826e97709a7d4f36d2e9f49333b206105603ab98d427664aa9b2c4282"
+    },
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "sorts container yards by address"
+      ],
+      "case_id": "5dc0c8149f2f6b4ee8cd397155ba79e796400cc63b883be7f4fc9d2dbcfcb60d"
+    },
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "sorts container yards by createdAt"
+      ],
+      "case_id": "0aa8c5a8c651ab0a5076b4ffa14dc27b2d935efbbf19188fe122af183340bae2"
+    },
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "sorts container yards by createdBy"
+      ],
+      "case_id": "d793b21e400829f948cd5a9ca77474dcbe711eff541abe37de3fdbca95904f57"
+    },
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "sorts container yards by matchCode"
+      ],
+      "case_id": "ed43b60667b9ce224f48e1103eed19233b15636ce5d34dd7e68c72b3cbc8efb8"
+    },
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "sorts container yards by name"
+      ],
+      "case_id": "5ebbc742f2fa8fa224e5ce17aa0a74a722f11a3489c782fa1741e4714a9b15d2"
+    },
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "sorts container yards by shortName"
+      ],
+      "case_id": "b23c8d4453cc174fde923294958a1e13d2ce39beec201432633584f418d6f58d"
+    },
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "sorts container yards by updatedAt"
+      ],
+      "case_id": "51e6db4e483979a4c47577c55a97b97237d5678e087e556e9d83168b5a7f29be"
+    },
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "sorts container yards by updatedBy"
+      ],
+      "case_id": "e4562c98961030976326e764710a748ec206879c68963a266100f67d83282065"
+    },
+    {
+      "file": "e2e/master-data/locations/countries.e2e.ts",
+      "titlePath": [
+        "Master Data Countries FE E2E",
+        "lists seeded countries in the canvas table"
+      ],
+      "case_id": "032d4b493a7afdd87903f8952321fd5d38027efdff063bd2913329e22bb69abc"
+    },
+    {
+      "file": "e2e/master-data/locations/countries.e2e.ts",
+      "titlePath": [
+        "Master Data Countries FE E2E",
+        "searches countries by diacritics, normalized text, spaces, ISO2, and ISO3"
+      ],
+      "case_id": "c7fa59e96442a6d1c60d5086b4dfb364ca4fc6f2b9e692638f0955fe361ed828"
+    },
+    {
+      "file": "e2e/master-data/locations/countries.e2e.ts",
+      "titlePath": [
+        "Master Data Countries FE E2E",
+        "sorts countries by audit columns"
+      ],
+      "case_id": "55c25aaff9114da7acce82f567aefe29f7ace7a94dfe03893cf501134ae25cab"
+    },
+    {
+      "file": "e2e/master-data/locations/countries.e2e.ts",
+      "titlePath": [
+        "Master Data Countries FE E2E",
+        "sorts countries by identity columns"
+      ],
+      "case_id": "c0091909cfe77e8e4240b36e2d8aec3cb39e19ea1edfa0de2cfbbe6b7e43c49a"
+    },
+    {
+      "file": "e2e/master-data/locations/depots.e2e.ts",
+      "titlePath": [
+        "Master Data Depots FE E2E",
+        "autosaves depot additionalInformation field"
+      ],
+      "case_id": "0a617c4633c66026eb02162e230e56aea07f8cdb3b160b199e87879f94ae87c7"
+    },
+    {
+      "file": "e2e/master-data/locations/depots.e2e.ts",
+      "titlePath": [
+        "Master Data Depots FE E2E",
+        "autosaves depot district field"
+      ],
+      "case_id": "30249bd19c0a0b4deaefa26002048016770e1005383e9879b8d8c3c15808e35a"
+    },
+    {
+      "file": "e2e/master-data/locations/depots.e2e.ts",
+      "titlePath": [
+        "Master Data Depots FE E2E",
+        "autosaves depot matchCode field"
+      ],
+      "case_id": "dee149ab12986b6d450b4747fed2b82b9fea9bf53f8ee80c67f429de03a2ebc6"
+    },
+    {
+      "file": "e2e/master-data/locations/depots.e2e.ts",
+      "titlePath": [
+        "Master Data Depots FE E2E",
+        "autosaves depot name field"
+      ],
+      "case_id": "1137b143b6debe24d1ebb53a99408e0898c57efd94cdfb5aa8fdd723d98f56c7"
+    },
+    {
+      "file": "e2e/master-data/locations/depots.e2e.ts",
+      "titlePath": [
+        "Master Data Depots FE E2E",
+        "autosaves depot shortName field"
+      ],
+      "case_id": "9a355d000d24d7bef1be9de29f3b45bccabf50c27f8d779235e28cf95aacabc3"
+    },
+    {
+      "file": "e2e/master-data/locations/depots.e2e.ts",
+      "titlePath": [
+        "Master Data Depots FE E2E",
+        "autosaves depot street field"
+      ],
+      "case_id": "2da6c64f4c35e1a047b346f1a33dcbd96df74f2fa363aea8e0b2a65e13f87c23"
+    },
+    {
+      "file": "e2e/master-data/locations/depots.e2e.ts",
+      "titlePath": [
+        "Master Data Depots FE E2E",
+        "autosaves depot zip field"
+      ],
+      "case_id": "be756bba3a95452ee3fb0ad9d4526ac44ff3f4dae67b6182945b0bab1f5741e0"
+    },
+    {
+      "file": "e2e/master-data/locations/depots.e2e.ts",
+      "titlePath": [
+        "Master Data Depots FE E2E",
+        "autosaves several depot fields in a row"
+      ],
+      "case_id": "a7659e6a0699627f3c9e594fbb22fe503d2c0bc9943ab0b6f928300bf266e553"
+    },
+    {
+      "file": "e2e/master-data/locations/depots.e2e.ts",
+      "titlePath": [
+        "Master Data Depots FE E2E",
+        "sorts depots by identity, address, and audit columns"
+      ],
+      "case_id": "840bc466a55767314fc873ef3a0f88297955b80fd39cb740cffddbde7970743c"
+    },
+    {
+      "file": "e2e/master-data/locations/ports.e2e.ts",
+      "titlePath": [
+        "Master Data Ports FE E2E",
+        "adds a new port and renders it in the FE list"
+      ],
+      "case_id": "19ed73a6fdc39dbf2173aa61dbf45249119121033bcfff22b4d6e1131945f36a"
+    },
+    {
+      "file": "e2e/master-data/locations/ports.e2e.ts",
+      "titlePath": [
+        "Master Data Ports FE E2E",
+        "autosaves port city field"
+      ],
+      "case_id": "921a58c0a0fb9a4b04e456ba4b8303f41382c40db60f956a127d4e1bcec0fea1"
+    },
+    {
+      "file": "e2e/master-data/locations/ports.e2e.ts",
+      "titlePath": [
+        "Master Data Ports FE E2E",
+        "autosaves port district field"
+      ],
+      "case_id": "df46ea27faa2ba3112fe41688005888cfa1517ea65c24828ece2d1ddc1c22f43"
+    },
+    {
+      "file": "e2e/master-data/locations/ports.e2e.ts",
+      "titlePath": [
+        "Master Data Ports FE E2E",
+        "autosaves port matchCode field"
+      ],
+      "case_id": "dbdf2c43e7a5b2ed43ba4de0912e5540492702bd4ec051b2cd7880739f3d6995"
+    },
+    {
+      "file": "e2e/master-data/locations/ports.e2e.ts",
+      "titlePath": [
+        "Master Data Ports FE E2E",
+        "autosaves port name field"
+      ],
+      "case_id": "696bc477b1de033158753a31ba73f96c1d24bb81aaa4404ccf8877fe388916c0"
+    },
+    {
+      "file": "e2e/master-data/locations/ports.e2e.ts",
+      "titlePath": [
+        "Master Data Ports FE E2E",
+        "autosaves port street field"
+      ],
+      "case_id": "6ce9b14f99fbc5826d0da237d14f57ffc2ecc2d4e406ff0f71c18ff174826d16"
+    },
+    {
+      "file": "e2e/master-data/locations/ports.e2e.ts",
+      "titlePath": [
+        "Master Data Ports FE E2E",
+        "autosaves port zip field"
+      ],
+      "case_id": "7a67e801826f2f5ba3599a08d954d71c5781f07a827b445c4529f28ab4ae22a1"
+    },
+    {
+      "file": "e2e/master-data/locations/ports.e2e.ts",
+      "titlePath": [
+        "Master Data Ports FE E2E",
+        "autosaves several port fields in a row"
+      ],
+      "case_id": "02cd053ace13b93f5ee5e6615d67226efc9bcd5c6f9267e4066dad18eab174ae"
+    },
+    {
+      "file": "e2e/master-data/locations/ports.e2e.ts",
+      "titlePath": [
+        "Master Data Ports FE E2E",
+        "sorts ports by identity and audit columns"
+      ],
+      "case_id": "ae0ee884546e66aa5ef5a7d72d654836922087ef95703d2bc1e6a52f67984f46"
+    },
+    {
+      "file": "e2e/master-data/locations/terminals.e2e.ts",
+      "titlePath": [
+        "Master Data Terminals FE E2E",
+        "adds a new terminal and archives it at the end"
+      ],
+      "case_id": "45cf88e316cfa754549e003bef5a880324d32810a16bae461c231625bc8828ba"
+    },
+    {
+      "file": "e2e/master-data/locations/terminals.e2e.ts",
+      "titlePath": [
+        "Master Data Terminals FE E2E",
+        "autosaves several terminal fields in a row"
+      ],
+      "case_id": "1dc33610a1f4b325f46220f7b4e943547560b99e9dea6aeec49d63a0e95c023e"
+    },
+    {
+      "file": "e2e/master-data/locations/terminals.e2e.ts",
+      "titlePath": [
+        "Master Data Terminals FE E2E",
+        "autosaves terminal additionalInformation field"
+      ],
+      "case_id": "8796cca1524515541e1d9b98b50d357b4658e745d4c8d25dbe9261955a403bbb"
+    },
+    {
+      "file": "e2e/master-data/locations/terminals.e2e.ts",
+      "titlePath": [
+        "Master Data Terminals FE E2E",
+        "autosaves terminal district field"
+      ],
+      "case_id": "1b925dc47d570113241768a23496faa3c1b9997f9f99f220d919ef83ea138aba"
+    },
+    {
+      "file": "e2e/master-data/locations/terminals.e2e.ts",
+      "titlePath": [
+        "Master Data Terminals FE E2E",
+        "autosaves terminal matchCode field"
+      ],
+      "case_id": "448cfb7bc249833a871391982a481ec870f7aa7257d4c289a24c8c803a259371"
+    },
+    {
+      "file": "e2e/master-data/locations/terminals.e2e.ts",
+      "titlePath": [
+        "Master Data Terminals FE E2E",
+        "autosaves terminal name field"
+      ],
+      "case_id": "ce809c3b71028227f0128a5d691dba8379311c977cf7708ae8e162067d5984fc"
+    },
+    {
+      "file": "e2e/master-data/locations/terminals.e2e.ts",
+      "titlePath": [
+        "Master Data Terminals FE E2E",
+        "autosaves terminal secondaryStreet field"
+      ],
+      "case_id": "3979a6faa695c7a7ab64834e811dabeca838b56528eb60da13d47cdc04a0a43b"
+    },
+    {
+      "file": "e2e/master-data/locations/terminals.e2e.ts",
+      "titlePath": [
+        "Master Data Terminals FE E2E",
+        "autosaves terminal shortName field"
+      ],
+      "case_id": "3ce5d72ce5380ecc7ee5d322f6444f9ab1ff045be14ba7d21e89ef144ff99ea0"
+    },
+    {
+      "file": "e2e/master-data/locations/terminals.e2e.ts",
+      "titlePath": [
+        "Master Data Terminals FE E2E",
+        "autosaves terminal street field"
+      ],
+      "case_id": "72a5b27d145744ecb6ea15e547eeb7b106fe6be8f136fa6b87cc4455c27e8486"
+    },
+    {
+      "file": "e2e/master-data/locations/terminals.e2e.ts",
+      "titlePath": [
+        "Master Data Terminals FE E2E",
+        "autosaves terminal zip field"
+      ],
+      "case_id": "6c2a6de88d21bf175e3bf8c30765d8db12630670c1878ade3751a0e150183429"
+    },
+    {
+      "file": "e2e/master-data/locations/terminals.e2e.ts",
+      "titlePath": [
+        "Master Data Terminals FE E2E",
+        "sorts terminals by audit columns"
+      ],
+      "case_id": "2a4501c07d5059deef90c952747a467b726dfd0a4b568fa9efd7be135fb91e35"
+    },
+    {
+      "file": "e2e/master-data/locations/terminals.e2e.ts",
+      "titlePath": [
+        "Master Data Terminals FE E2E",
+        "sorts terminals by identity columns"
+      ],
+      "case_id": "bf1e9c36d672b626d530da7fde228c93f2add5cdadb8e6426ccad35c80d5e3b5"
+    },
+    {
+      "file": "e2e/master-data/locations/warehouses.e2e.ts",
+      "titlePath": [
+        "Master Data Warehouses FE E2E",
+        "autosaves warehouse additionalInformation field"
+      ],
+      "case_id": "0b2d43f79c3876fa5f5b9480cbcce886867aedffa77e0fcc651f7f5a71be5d98"
+    },
+    {
+      "file": "e2e/master-data/locations/warehouses.e2e.ts",
+      "titlePath": [
+        "Master Data Warehouses FE E2E",
+        "autosaves warehouse district field"
+      ],
+      "case_id": "0a54db7131e3d7e8e212a0d75a37a47b094744364fa96adf925109711dc748ed"
+    },
+    {
+      "file": "e2e/master-data/locations/warehouses.e2e.ts",
+      "titlePath": [
+        "Master Data Warehouses FE E2E",
+        "autosaves warehouse matchCode field"
+      ],
+      "case_id": "774c4c3b6d2e6c5aa322856edc3f91ff827c9e3f3e99ba9f53433a8bb4c67a1b"
+    },
+    {
+      "file": "e2e/master-data/locations/warehouses.e2e.ts",
+      "titlePath": [
+        "Master Data Warehouses FE E2E",
+        "autosaves warehouse name field"
+      ],
+      "case_id": "eeb3e42e288f61b83351581b6efe8aba3637ca20e96b37d71271da5aafcc50db"
+    },
+    {
+      "file": "e2e/master-data/locations/warehouses.e2e.ts",
+      "titlePath": [
+        "Master Data Warehouses FE E2E",
+        "autosaves warehouse shortName field"
+      ],
+      "case_id": "41cf83b121fb0408ddff6ab084e21da284267b88a8d8976afe71023aad7f5582"
+    },
+    {
+      "file": "e2e/master-data/locations/warehouses.e2e.ts",
+      "titlePath": [
+        "Master Data Warehouses FE E2E",
+        "autosaves warehouse street field"
+      ],
+      "case_id": "5b27264aa22a085e56dd2ef3c43f58c52c2813e1378cc4313e1b4a09830fb0c6"
+    },
+    {
+      "file": "e2e/master-data/locations/warehouses.e2e.ts",
+      "titlePath": [
+        "Master Data Warehouses FE E2E",
+        "autosaves warehouse zip field"
+      ],
+      "case_id": "1084c83037ea144b0499260c4f395d647f5a63eb1dd1df58d50b5b95ba40bde9"
+    },
+    {
+      "file": "e2e/master-data/locations/warehouses.e2e.ts",
+      "titlePath": [
+        "Master Data Warehouses FE E2E",
+        "creates a warehouse and archives it through FE controls at the end"
+      ],
+      "case_id": "7f68296d91076f2ac4f218283dfa491e168299ca066c4bc534d3cf92a083d3cc"
+    },
+    {
+      "file": "e2e/master-data/locations/warehouses.e2e.ts",
+      "titlePath": [
+        "Master Data Warehouses FE E2E",
+        "sorts warehouses by audit columns"
+      ],
+      "case_id": "75e43a3adfaead86720102199ac11263440e91845b231130e7871121630549db"
+    },
+    {
+      "file": "e2e/master-data/locations/warehouses.e2e.ts",
+      "titlePath": [
+        "Master Data Warehouses FE E2E",
+        "sorts warehouses by identity and address columns"
+      ],
+      "case_id": "54422d047e7287893cadba2fb714519f2d957d87beda178af6e4b63d5f753cdd"
+    },
+    {
+      "file": "e2e/master-data/logistics/awb-stock.e2e.ts",
+      "titlePath": [
+        "Master Data AWB Stock FE E2E",
+        "archives and unarchives AWB stock through FE controls"
+      ],
+      "case_id": "29af49e84e280fe0dceb2c15ab6a94e9d9e8499b9d09f6f477df143ed6211fca"
+    },
+    {
+      "file": "e2e/master-data/logistics/awb-stock.e2e.ts",
+      "titlePath": [
+        "Master Data AWB Stock FE E2E",
+        "updates AWB stock comments through autosave"
+      ],
+      "case_id": "e9163dfd247f08b06c1be2ecd8934367bb103542487ee1e6b2e4e5c656425d59"
+    },
+    {
+      "file": "e2e/master-data/logistics/checklist-items.e2e.ts",
+      "titlePath": [
+        "Master Data Checklist Items FE E2E",
+        "archives checklist items through FE controls"
+      ],
+      "case_id": "349bda6894006060272d8a75fb1bd60a7869040a335949b77134d94765635fa7"
+    },
+    {
+      "file": "e2e/master-data/logistics/checklist-items.e2e.ts",
+      "titlePath": [
+        "Master Data Checklist Items FE E2E",
+        "creates a checklist item from the FE and shows the created details HTML"
+      ],
+      "case_id": "4dd6b532b28232e294f1625128551198135e0dd4e477174c14e20e16980e1b7a"
+    },
+    {
+      "file": "e2e/master-data/logistics/checklist-items.e2e.ts",
+      "titlePath": [
+        "Master Data Checklist Items FE E2E",
+        "lists seeded checklist items as HTML rows and opens checklist item details"
+      ],
+      "case_id": "92a7d9b30b38580f5d913937bac796735dec13f3af907a4f6f1213fea537e2da"
+    },
+    {
+      "file": "e2e/master-data/logistics/checklist-items.e2e.ts",
+      "titlePath": [
+        "Master Data Checklist Items FE E2E",
+        "sorts checklist items by name and audit columns in the rendered table"
+      ],
+      "case_id": "a6319bc6b961b5024de910718e2c71b7a0ccac3442cac2afbc99144309bc75d4"
+    },
+    {
+      "file": "e2e/master-data/logistics/checklist-items.e2e.ts",
+      "titlePath": [
+        "Master Data Checklist Items FE E2E",
+        "surfaces duplicate checklist item name validation in rendered FE errors"
+      ],
+      "case_id": "1f5bbe2a5037f0ca68eabef52f9ff75956875a019a028a50714aa075e3198506"
+    },
+    {
+      "file": "e2e/master-data/logistics/checklist-items.e2e.ts",
+      "titlePath": [
+        "Master Data Checklist Items FE E2E",
+        "unarchives checklist items through FE controls"
+      ],
+      "case_id": "cfa1a27cd8faed4678badfa83267fa523ef3a8db577b6b8db9172680a618a92c"
+    },
+    {
+      "file": "e2e/master-data/logistics/checklist-items.e2e.ts",
+      "titlePath": [
+        "Master Data Checklist Items FE E2E",
+        "updates a checklist item from the FE with autosave and shows the new HTML value"
+      ],
+      "case_id": "8b09ee44d5bb151d2491ea5ec97fce36f5e7b60baa34da9b33be8dc7d7f90ca2"
+    },
+    {
+      "file": "e2e/master-data/logistics/checklist-templates.e2e.ts",
+      "titlePath": [
+        "Master Data Checklist Templates FE E2E",
+        "archives checklist templates through FE controls"
+      ],
+      "case_id": "afdb41cd8b66b2619a0a2c0d855422db7d2b41ea9bccca677c829f4904d14556"
+    },
+    {
+      "file": "e2e/master-data/logistics/checklist-templates.e2e.ts",
+      "titlePath": [
+        "Master Data Checklist Templates FE E2E",
+        "creates a checklist template from the FE and shows the created details HTML"
+      ],
+      "case_id": "02e818e7dc2df7645200697924b9e060f7e6fc1589d38d166feaa5b0e6a1a0dd"
+    },
+    {
+      "file": "e2e/master-data/logistics/checklist-templates.e2e.ts",
+      "titlePath": [
+        "Master Data Checklist Templates FE E2E",
+        "lists seeded checklist templates as HTML rows and opens template details"
+      ],
+      "case_id": "81530b0947255571b6ee21d216c1c39a11cb51f87c1b355638c516a7b518fda1"
+    },
+    {
+      "file": "e2e/master-data/logistics/checklist-templates.e2e.ts",
+      "titlePath": [
+        "Master Data Checklist Templates FE E2E",
+        "sorts checklist templates by name and audit columns"
+      ],
+      "case_id": "84aa966dce766f743bee05d7206f639c0dc196f25d266345240401fbcf7adf2b"
+    },
+    {
+      "file": "e2e/master-data/logistics/checklist-templates.e2e.ts",
+      "titlePath": [
+        "Master Data Checklist Templates FE E2E",
+        "surfaces duplicate template name validation in rendered FE errors"
+      ],
+      "case_id": "de9e259a633972030da104930de0a007a38a6ae3c7e6ecc1e0085cac62863ead"
+    },
+    {
+      "file": "e2e/master-data/logistics/checklist-templates.e2e.ts",
+      "titlePath": [
+        "Master Data Checklist Templates FE E2E",
+        "unarchives checklist templates through FE controls"
+      ],
+      "case_id": "3713abfe525dba4d7693ff17c1b60a1e7dd86ca98f78084d8fb15c3d44c74595"
+    },
+    {
+      "file": "e2e/master-data/logistics/checklist-templates.e2e.ts",
+      "titlePath": [
+        "Master Data Checklist Templates FE E2E",
+        "updates a checklist template name with autosave and shows the new HTML value"
+      ],
+      "case_id": "f6efb2ffcefcf9182a0fd83249a69fc6dc0a74886dbfce2fd1d036ce7f3314f8"
+    },
+    {
+      "file": "e2e/master-data/logistics/commercial-party-template-duplicates.e2e.ts",
+      "titlePath": [
+        "Repeated commercial party template entries",
+        "applies missing occurrences to quotes without duplicating Customer or growing on reapply"
+      ],
+      "case_id": "867ffd7216df78b68ab2e4664a497e489a1e8bef9a2f6108c637f5c5516dc5d4"
+    },
+    {
+      "file": "e2e/master-data/logistics/commercial-party-template-duplicates.e2e.ts",
+      "titlePath": [
+        "Repeated commercial party template entries",
+        "rejects Customer in templates"
+      ],
+      "case_id": "797d181d3c4e9d0b5fa4825fe382bed473fe9492d5740c48608e611a89cc5d7f"
+    },
+    {
+      "file": "e2e/master-data/logistics/commercial-party-templates.e2e.ts",
+      "titlePath": [
+        "Master Data Commercial Party Templates FE E2E",
+        "updates a commercial party template name from the FE autosave form"
+      ],
+      "case_id": "c5289dd4325964ce5f7fdd9f6f1d0e298dcb1eff86ba489b5cac92abe50f33ed"
+    },
+    {
+      "file": "e2e/master-data/logistics/docubox-templates.e2e.ts",
+      "titlePath": [
+        "Master Data DocuBox Templates FE E2E",
+        "creates a DocuBox template with a root folder from the FE"
+      ],
+      "case_id": "dac2578220cd2a009a8c801e3909599e6e01d0a35556c7fe0fbf165d4e4f715d"
+    },
+    {
+      "file": "e2e/master-data/logistics/docubox-templates.e2e.ts",
+      "titlePath": [
+        "Master Data DocuBox Templates FE E2E",
+        "lists seeded DocuBox templates as HTML rows and opens the nested folder details"
+      ],
+      "case_id": "3e564dc2773e98b9a5e5a17e25140c0006698d04341b388117f152adf3e1ed0e"
+    },
+    {
+      "file": "e2e/master-data/logistics/docubox-templates.e2e.ts",
+      "titlePath": [
+        "Master Data DocuBox Templates FE E2E",
+        "shows archived DocuBox templates only when the archived filter is enabled"
+      ],
+      "case_id": "50c934caca7677cc35565796c6ed246a09c6d658eceb276cab18d02b2ddbd4c2"
+    },
+    {
+      "file": "e2e/master-data/logistics/docubox-templates.e2e.ts",
+      "titlePath": [
+        "Master Data DocuBox Templates FE E2E",
+        "sorts DocuBox templates by visible identity and audit columns"
+      ],
+      "case_id": "3411f23d1d504be71452f7e4a471802f3bc88feee8c0114b483eddbcddd9a66d"
+    },
+    {
+      "file": "e2e/master-data/logistics/docubox-templates.e2e.ts",
+      "titlePath": [
+        "Master Data DocuBox Templates FE E2E",
+        "surfaces duplicate template name validation in the FE"
+      ],
+      "case_id": "51018345eee9677395788d1a0193297cb561f2ee68ccf65890d67d0c3a8d2bdd"
+    },
+    {
+      "file": "e2e/master-data/logistics/docubox-templates.e2e.ts",
+      "titlePath": [
+        "Master Data DocuBox Templates FE E2E",
+        "updates a DocuBox template name from the FE autosave form"
+      ],
+      "case_id": "8a702d054740953de664c13f5ea84e476a48b3b9a9b4eba4e7ad518b22c041e3"
+    },
+    {
+      "file": "e2e/master-data/logistics/document-templates.e2e.ts",
+      "titlePath": [
+        "Master Data Document Templates FE E2E",
+        "archives a document template from the FE and shows it in archived results"
+      ],
+      "case_id": "c0c3d9ef2b71ef9f8302a01e04f24ff53905fca9c74b51bf5c3bb5e279d1deb3"
+    },
+    {
+      "file": "e2e/master-data/logistics/document-templates.e2e.ts",
+      "titlePath": [
+        "Master Data Document Templates FE E2E",
+        "filters archived document templates through rendered table rows"
+      ],
+      "case_id": "9d9819ce12454cc398c040c4d3683dabf2d9b62d8357ee26a4da2cb8938a05e5"
+    },
+    {
+      "file": "e2e/master-data/logistics/document-templates.e2e.ts",
+      "titlePath": [
+        "Master Data Document Templates FE E2E",
+        "lists seeded document templates as HTML rows"
+      ],
+      "case_id": "4e27008ca74ef9afeab44a7414360820264c5bde56852815b0b8a046a21588c3"
+    },
+    {
+      "file": "e2e/master-data/logistics/document-templates.e2e.ts",
+      "titlePath": [
+        "Master Data Document Templates FE E2E",
+        "sorts document templates by name and audit columns in the rendered table"
+      ],
+      "case_id": "63f1f546457ac047098ecd6325d4202f55485a255687fdd2d196ff44d9349fbb"
+    },
+    {
+      "file": "e2e/master-data/logistics/document-templates.e2e.ts",
+      "titlePath": [
+        "Master Data Document Templates FE E2E",
+        "updates a document template name through the FE autosave form"
+      ],
+      "case_id": "f7f378f3ac8a2f71ab52b3af63460116450029c94a77d735e69249cb71bb61ec"
+    },
+    {
+      "file": "e2e/master-data/logistics/integration-channels.e2e.ts",
+      "titlePath": [
+        "Master Data Integration Channels FE E2E",
+        "archives integration channels through FE controls"
+      ],
+      "case_id": "85c567f770545653f18a2a3d940b8e85a4e0c83213b7b47ef9f349fb1155445f"
+    },
+    {
+      "file": "e2e/master-data/logistics/integration-channels.e2e.ts",
+      "titlePath": [
+        "Master Data Integration Channels FE E2E",
+        "filters integration channels by archived status through rendered rows"
+      ],
+      "case_id": "58b5e84b6a595544dc5907029455cca18a9123c2698af6d5aac77c72d418d0b1"
+    },
+    {
+      "file": "e2e/master-data/logistics/integration-channels.e2e.ts",
+      "titlePath": [
+        "Master Data Integration Channels FE E2E",
+        "lists seeded integration channels in the canvas table and opens integration channel details"
+      ],
+      "case_id": "30ea29943f0555303a1c1ccb1c7d2280ce15c6d6b8b815a8378e9db97d18a5c7"
+    },
+    {
+      "file": "e2e/master-data/logistics/integration-channels.e2e.ts",
+      "titlePath": [
+        "Master Data Integration Channels FE E2E",
+        "searches integration channels by diacritics, normalized text, and spaces"
+      ],
+      "case_id": "1f9c27937291757e2ac9f971d6772befcdca643ec537579e8525ee33971bef59"
+    },
+    {
+      "file": "e2e/master-data/logistics/integration-channels.e2e.ts",
+      "titlePath": [
+        "Master Data Integration Channels FE E2E",
+        "sorts integration channels by name, last-polled, and created date in the rendered table"
+      ],
+      "case_id": "cbeea233e3a92ff77aa30ef07f6d0fa0b4fffa716f60d48fbe29f80d7d88a42f"
+    },
+    {
+      "file": "e2e/master-data/logistics/integration-channels.e2e.ts",
+      "titlePath": [
+        "Master Data Integration Channels FE E2E",
+        "sorts integration channels by updated date in the rendered table"
+      ],
+      "case_id": "3415a2225e38b32fc591a28684d729775f188eb884f67d59cc863e53e663fca9"
+    },
+    {
+      "file": "e2e/master-data/logistics/integration-channels.e2e.ts",
+      "titlePath": [
+        "Master Data Integration Channels FE E2E",
+        "updates an integration channel name with autosave and shows the new HTML value"
+      ],
+      "case_id": "161abbea9d04566376a612290831836a0ee386727748754b38abd5a6965d99b7"
+    },
+    {
+      "file": "e2e/master-data/logistics/remark-templates.e2e.ts",
+      "titlePath": [
+        "Master Data Remark Templates FE E2E",
+        "filters remark templates by archived status through the rendered table"
+      ],
+      "case_id": "f7eeca647c7a2735a43999b6fef9e82c675f5b97eee81466fdac28202015b02a"
+    },
+    {
+      "file": "e2e/master-data/logistics/remark-templates.e2e.ts",
+      "titlePath": [
+        "Master Data Remark Templates FE E2E",
+        "lists seeded remark templates as HTML rows"
+      ],
+      "case_id": "a787f1353a3f37e982030c8ee730f8247e65b4cb393f7620dd4ddf526ecdb5a1"
+    },
+    {
+      "file": "e2e/master-data/logistics/remark-templates.e2e.ts",
+      "titlePath": [
+        "Master Data Remark Templates FE E2E",
+        "sorts remark templates by visible identity and audit columns"
+      ],
+      "case_id": "01effa3a6baac83741f4e94ddac96bca28659f24e3b66b80a4b9d3658e3c97c2"
+    },
+    {
+      "file": "e2e/master-data/logistics/remark-templates.e2e.ts",
+      "titlePath": [
+        "Master Data Remark Templates FE E2E",
+        "updates a remark template name with autosave and shows the new HTML value"
+      ],
+      "case_id": "ee08376bf6409d9a4ca77545cf0874a8ff706ed7bfeb1341008cc9bc08b18358"
+    },
+    {
+      "file": "e2e/master-data/logistics/route-templates.e2e.ts",
+      "titlePath": [
+        "Master Data Route Templates FE E2E",
+        "updates a route template name from the FE autosave form"
+      ],
+      "case_id": "6a841fbe49f699d4ca638213de952255f15db2344139d752e5f153775b023b85"
+    },
+    {
+      "file": "e2e/master-data/logistics/shipping-events.e2e.ts",
+      "titlePath": [
+        "Master Data Shipping Events FE E2E",
+        "sorts shipping events by visible sortable columns"
+      ],
+      "case_id": "7e9b98079bb4fa5eed454f31dcfd44916b9bb7c66ecb726ab2303e67d1bc5e5d"
+    },
+    {
+      "file": "e2e/master-data/logistics/teams-persistent-filters.e2e.ts",
+      "titlePath": [
+        "Master Data Teams persistent filters FE E2E",
+        "does not navigate back to the list after opening an action drawer"
+      ],
+      "case_id": "2a0ad8e51cef69255c7f1fa2b6a8648be166252f9a990642df40630a7dda0981"
+    },
+    {
+      "file": "e2e/master-data/logistics/teams.e2e.ts",
+      "titlePath": [
+        "Master Data Teams FE E2E",
+        "lists seeded teams as HTML rows and opens team details with members"
+      ],
+      "case_id": "b067e3ef1244b621eb2ccf275e042588e85b73a5784c3681dc25ebf6c2f355fb"
+    },
+    {
+      "file": "e2e/master-data/logistics/teams.e2e.ts",
+      "titlePath": [
+        "Master Data Teams FE E2E",
+        "sorts teams by name and audit columns in the rendered table"
+      ],
+      "case_id": "5b567e75911bba11b52854cce07a6bd5f028419c18c8b06f42b61310d9e49660"
+    },
+    {
+      "file": "e2e/master-data/navigation-history.e2e.ts",
+      "titlePath": [
+        "Master Data navigation history FE E2E",
+        "tracks affected master data details in routing history"
+      ],
+      "case_id": "6a68c81251f697af53ae1ffaad8e5ea8151b71aaf61be9f06e7fcbd1a7432514"
+    },
+    {
+      "file": "e2e/platform/navigation.e2e.ts",
+      "titlePath": [
+        "Platform navigation FE E2E",
+        "renders the operational calendar from its direct route"
+      ],
+      "case_id": "b0561130055a0ee49f90114a8e77aa346e31ab10ba8ba4d226e5e9056fd4450f"
+    },
+    {
+      "file": "e2e/projects/projects.e2e.ts",
+      "titlePath": [
+        "Projects FE E2E",
+        "opens a connected packing list position in a new tab"
+      ],
+      "case_id": "96b534ecb19d388718e49b75d023f1e6973ba862082505a254112b23e131cbdb"
+    }
+  ],
+  "nativeOnly_in_these_files": 43
+}
