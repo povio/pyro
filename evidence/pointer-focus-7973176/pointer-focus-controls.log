@@ -1,0 +1,10 @@
+    Blocking waiting for file lock on build directory
+    Finished `release` profile [optimized] target(s) in 1m 11s
+     Running tests/dom_js.rs (target/release/deps/dom_js-e9d665e19a2148b5)
+
+running 2 tests
+test pointer_focus_preserves_cancellation_and_reentrant_script_reveal ... ok
+test pointer_focus_keeps_partly_clipped_button_at_the_press_point ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 147 filtered out; finished in 0.03s
+

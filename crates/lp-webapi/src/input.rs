@@ -1078,7 +1078,11 @@ pub fn dispatch_mouse(page: &Rc<PageDom>, kind: MouseKind, m: &MouseInput) -> Re
                     found
                 };
                 match focus_target {
-                    Some(f) => focus_element(page, f),
+                    // The pointer already hit visible content. Revealing its
+                    // focusable ancestor can move that content between press
+                    // and release, turning the click into an ancestor click.
+                    // Explicit script focus keeps its own scroll policy.
+                    Some(f) => focus_element_with_options(page, f, true),
                     None => {
                         let focused = page.dom.borrow().focused(page.document()).ok().flatten();
                         if let Some(f) = focused {

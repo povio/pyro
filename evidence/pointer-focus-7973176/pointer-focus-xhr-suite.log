@@ -1,0 +1,30 @@
+    Blocking waiting for file lock on build directory
+    Finished `release` profile [optimized] target(s) in 1m 04s
+     Running tests/xhr_js.rs (target/release/deps/xhr_js-03c920fc6d255c25)
+
+running 22 tests
+test xhr_delivery_frontier_reaches_the_hook_before_ready_state_changes ... ok
+test xhr_bytes_wait_for_owner_delivery ... ok
+test xhr_abort_at_headers_fires_once_and_resets ... ok
+test xhr_cors_headers_and_failure_have_distinct_events ... ok
+test xhr_aggregate_budget_and_pending_cap_refund_on_reopen_and_abort ... ok
+test xhr_binary_json_and_invalid_state_contracts ... ok
+test xhr_json_lifecycle_handler_order_and_network_correlation ... ok
+test xhr_error_waits_for_owner_delivery ... ok
+test xhr_reentrant_body_conversion_and_loadstart_abort_do_not_send ... ok
+test xhr_limits_error_and_page_disposal_suppress_queued_events ... ok
+test xhr_partial_text_decoder_preserves_split_utf8_and_charset ... ok
+test xhr_posts_subview_combines_headers_and_reuses_after_completion ... ok
+test xhr_completed_buffer_and_listener_cycles_are_collectable ... ok
+test xhr_reopening_in_callback_suppresses_old_completion ... ok
+test xhr_text_read_is_safe_when_network_failure_precedes_its_browser_task ... ok
+test xhr_upload_events_fire_before_headers_for_a_request_body ... ok
+test xhr_upload_hears_errors_and_aborts_before_the_request_object ... ok
+test xhr_upload_events_are_skipped_without_body_or_early_listeners ... ok
+test xhr_upload_object_identity_and_type ... ok
+test xhr_disposal_is_scoped_and_queued_callbacks_release_the_page ... ok
+test xhr_timeout_uses_captured_timer_and_is_measured_from_send ... ok
+test xhr_timeout_update_uses_original_start_and_can_be_disabled ... ok
+
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+

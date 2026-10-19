@@ -1,0 +1,8 @@
+    Finished `release` profile [optimized] target(s) in 0.14s
+     Running tests/xhr_js.rs (target/release/deps/xhr_js-03c920fc6d255c25)
+
+running 1 test
+test xhr_upload_events_fire_before_headers_for_a_request_body ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 21 filtered out; finished in 0.01s
+
