@@ -1082,6 +1082,72 @@ fn dom_geometry_matches_native_rect_and_rejects_detached_or_foreign_objects() {
 }
 
 #[test]
+fn dom_scroll_delivers_each_changed_ancestor_before_following_task() {
+    for primed in [false, true] {
+        let mut h = Harness::new();
+        let setup = h.page(
+            "Runtime.evaluate",
+            json!({"expression":r#"
+              const rows = n => '<div style="height:20px">row</div>'.repeat(n);
+              document.body.innerHTML = rows(180) +
+                '<div id="outer" style="height:240px;width:400px;overflow:auto">' + rows(140) +
+                '<div id="inner" style="height:120px;width:300px;overflow:auto">' + rows(100) +
+                '<button id="target">Target</button>' + rows(100) + '</div>' + rows(140) + '</div>';
+              globalThis.scrollEvents = [];
+              document.addEventListener('scroll', e => {
+                scrollEvents.push([e.target === document ? 'document' : e.target.id, e.bubbles, e.isTrusted]);
+              }, true);
+              globalThis.scrollState = () => {
+                const target = document.querySelector('#target').getBoundingClientRect();
+                return ['inner', 'outer'].map(id => {
+                  const node = document.querySelector('#' + id), rect = node.getBoundingClientRect();
+                  return [node.scrollTop, target.top >= rect.top && target.bottom <= rect.bottom &&
+                    target.left >= rect.left && target.right <= rect.right];
+                });
+              };
+              document.querySelector('#target')
+            "#}),
+        );
+        let object = setup["result"]["result"]["objectId"].clone();
+        assert!(object.is_string(), "{setup}");
+        if primed {
+            eval_value(
+                &mut h,
+                "document.querySelector('#inner').scrollTop=1;document.querySelector('#outer').scrollTop=1;true",
+            );
+            let r = h.page("Runtime.evaluate", json!({"expression":"new Promise(r=>setTimeout(()=>{scrollEvents=[];r(true)},0))","awaitPromise":true,"returnByValue":true}));
+            assert_eq!(r["result"]["result"]["value"], true, "{r}");
+        }
+        let before = eval_value(&mut h, "scrollState()");
+        assert_eq!(before[0][1], false, "inner must initially clip the target: {before}");
+        assert_eq!(before[1][1], false, "outer must initially clip the target: {before}");
+        assert_eq!(h.page("DOM.scrollIntoViewIfNeeded", json!({"objectId":object}))["result"], json!({}));
+        let r = h.page("Runtime.evaluate", json!({"expression":"new Promise(r=>setTimeout(()=>r([scrollState(),scrollEvents]),0))","awaitPromise":true,"returnByValue":true}));
+        let value = &r["result"]["result"]["value"];
+        for index in 0..2 {
+            assert!(value[0][index][0].as_f64().unwrap() > 1.0, "ancestor must scroll: {r}");
+            assert_eq!(value[0][index][1], true, "target must be revealed in both ancestors: {r}");
+        }
+        assert_eq!(value[1], json!([["inner", false, true], ["outer", false, true], ["document", true, true]]));
+        eval_value(&mut h, "scrollEvents=[];true");
+        assert_eq!(h.page("DOM.scrollIntoViewIfNeeded", json!({"objectId":object}))["result"], json!({}));
+        let repeated = h.page("Runtime.evaluate", json!({"expression":"new Promise(r=>setTimeout(()=>r(scrollEvents),0))","awaitPromise":true,"returnByValue":true}));
+        assert_eq!(
+            repeated["result"]["result"]["value"],
+            json!([]),
+            "unchanged offsets must not emit scroll: {repeated}"
+        );
+        assert_eq!(h.page("DOM.focus", json!({"objectId":object}))["result"], json!({}));
+        let focused = h.page("Runtime.evaluate", json!({"expression":"new Promise(r=>setTimeout(()=>r([document.activeElement.id,scrollEvents]),0))","awaitPromise":true,"returnByValue":true}));
+        assert_eq!(
+            focused["result"]["result"]["value"],
+            json!(["target", []]),
+            "focus after reveal must not trigger a late ancestor scroll: {focused}"
+        );
+    }
+}
+
+#[test]
 fn user_agent_override_validates_atomically_and_updates_page_worlds() {
     let mut h = Harness::new();
     let probe = "[navigator.userAgent,navigator.platform,navigator.language,Array.from(navigator.languages)]";
