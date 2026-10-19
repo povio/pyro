@@ -42,7 +42,9 @@
 //! Automatic non-root heights also enclose normal-flow child boxes at their
 //! synthetic tree-order offsets. The upstream direct-child sum alone can
 //! place nested children outside an automatic ancestor's box. Explicit sizes,
-//! positions and width approximations are unchanged; this is not CSS layout.
+//! positions remain synthetic. Percentage widths resolve through percentage
+//! ancestors to a definite parent width; other width approximations remain.
+//! This is not a CSS block/flex layout implementation.
 //!
 //! Not ported (honest omissions):
 //! - `scroll` / `scrollend` event scheduling and throttling (Element.zig:
@@ -296,6 +298,11 @@ impl Layout {
             if let Some(v) = size {
                 return AxisState { value: v, explicit: true };
             }
+            if width && !root {
+                if let Some(v) = self.percentage_width(dom, idx) {
+                    return AxisState { value: v, explicit: true };
+                }
+            }
         }
         if root {
             let value = match axis {
@@ -318,6 +325,42 @@ impl Layout {
             }
         }
         AxisState { value: DEFAULT_AXIS, explicit: false }
+    }
+
+    /// Resolve a chain of percentage widths against a definite parent width.
+    /// Do not derive that basis from children: their percentage size would
+    /// make an automatic/intrinsic parent circular. Positioned containing
+    /// blocks and percentages through automatic widths remain unsupported.
+    fn percentage_width(&self, dom: &Dom, mut idx: u32) -> Option<f64> {
+        let own = self.style.computed(dom, dom.id_of(idx))?;
+        if own.width.unit != crate::style::LengthUnit::Percentage || own.absolutely_positioned {
+            return None;
+        }
+        let mut factor = own.width.value as f64 / 100.0;
+        idx = crate::style::flat_tree_parent_element(dom, idx)?;
+        loop {
+            let id = dom.id_of(idx);
+            if self.is_root_idx(dom, idx) {
+                // Preserve the existing root policy: only inline dimensions
+                // define a root box, not stylesheet dimensions.
+                let result = self.style.inline_size(dom, id, true)? * factor;
+                return result.is_finite().then_some(result);
+            }
+            let style = self.style.computed(dom, id)?;
+            if style.absolutely_positioned {
+                return None;
+            }
+            if style.width.unit != crate::style::LengthUnit::Percentage {
+                let size = self.style.declared_size(dom, id, true)?;
+                let result = size * factor;
+                return result.is_finite().then_some(result);
+            }
+            factor *= style.width.value as f64 / 100.0;
+            if !factor.is_finite() {
+                return None;
+            }
+            idx = crate::style::flat_tree_parent_element(dom, idx)?;
+        }
     }
 
     /// `boxAxis` (Element.zig:1695-1715). Callers check visibility.

@@ -165,11 +165,13 @@ impl TextTransform {
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
 pub enum LengthUnit {
-    /// Declared but needs layout (auto, %, em, ...), or undeclared.
+    /// Declared but unsupported (auto, em, ...), or undeclared.
     #[default]
     Auto,
     /// Intrinsic sizes (min-/max-/fit-content).
     Content,
+    /// Percentage; requires a definite containing size from layout.
+    Percentage,
     Px,
     Vw,
     Vh,
@@ -193,6 +195,7 @@ impl Length {
             return Length::default();
         }
         match unit {
+            Unit::Percentage => Length { value: value as f32, unit: LengthUnit::Percentage },
             Unit::Vw => Length { value: value as f32, unit: LengthUnit::Vw },
             Unit::Vh => Length { value: value as f32, unit: LengthUnit::Vh },
             u => match absolute_length_factor(u) {
@@ -206,7 +209,7 @@ impl Length {
     pub fn resolve(&self, viewport: &Viewport) -> Option<f64> {
         let v = self.value as f64;
         match self.unit {
-            LengthUnit::Auto | LengthUnit::Content => None,
+            LengthUnit::Auto | LengthUnit::Content | LengthUnit::Percentage => None,
             LengthUnit::Px => Some(v),
             LengthUnit::Vw => Some(v * viewport.width as f64 / 100.0),
             LengthUnit::Vh => Some(v * viewport.height as f64 / 100.0),
@@ -2145,10 +2148,11 @@ impl StyleEngine {
     }
 
     /// A block-level flex/grid container in normal flow with an auto width
-    /// that isn't a flex/grid item (StyleManager.zig:764-779).
+    /// that isn't a flex/grid item (StyleManager.zig:764-779). Unresolved
+    /// percentages retain the same fallback; definite ones resolve in Layout.
     pub fn width_from_containing_block(&self, dom: &Dom, el: NodeId) -> bool {
         let Some(c) = self.computed(dom, el) else { return false };
-        if !c.block_flex_or_grid || c.width.unit != LengthUnit::Auto {
+        if !c.block_flex_or_grid || !matches!(c.width.unit, LengthUnit::Auto | LengthUnit::Percentage) {
             return false;
         }
         if c.absolutely_positioned || c.floated {

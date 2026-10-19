@@ -2563,3 +2563,47 @@ fn variable_sized_scroller_does_not_scroll_again_after_small_input_replacement()
     );
     assert!(p.layout.reveal_for_focus(&p.dom, replacement).is_empty());
 }
+
+#[test]
+fn percentage_width_uses_definite_parent_and_tracks_mutation() {
+    let mut p = page("<!doctype html><style>.full{width:100%}.half{width:50%}</style><body><div id=a style='width:320px'><div id=full class=full><div id=half class=half></div></div></div><div id=b style='width:120px'></div></body>");
+    let a = p.id("a");
+    let b = p.id("b");
+    let full = p.id("full");
+    let half = p.id("half");
+    assert_eq!(p.rect(full).width, 320.0);
+    assert_eq!(p.rect(half).width, 160.0);
+    p.style(a, "width:640px");
+    assert_eq!(p.rect(full).width, 640.0);
+    assert_eq!(p.rect(half).width, 320.0);
+    p.append(b, full);
+    assert_eq!(p.rect(full).width, 120.0);
+    assert_eq!(p.rect(half).width, 60.0);
+    p.style(full, "width:var(--fraction, 25%)");
+    assert_eq!(p.rect(full).width, 30.0);
+    p.style(b, "width:120px;--fraction:75%");
+    assert_eq!(p.rect(full).width, 90.0);
+    p.style(full, "width:0%");
+    assert_eq!(p.rect(full).width, 0.0);
+    p.style(p.body(), "width:480px");
+    p.add_style("body { width: 90% !important }");
+    let root_child = p.add("div");
+    p.style(root_child, "width:50%");
+    assert_eq!(p.rect(root_child).width, 240.0, "preserve the root's inline-only width policy");
+}
+
+#[test]
+fn percentage_width_does_not_resolve_circular_or_positioned_bases() {
+    let mut p = page("<!doctype html><body><div id=auto><div id=percent style='width:100%;height:50%'></div></div><div id=fixed style='width:320px'><div id=positioned style='position:absolute;width:100%'></div></div></body>");
+    let percent = p.id("percent");
+    assert_eq!(p.rect(percent).width, 5.0, "an automatic parent is not a definite percentage basis");
+    assert_eq!(p.rect(percent).height, 5.0, "percentage height remains unsupported");
+    assert_eq!(p.rect(p.id("positioned")).width, 5.0, "positioned containing blocks remain unsupported");
+    let mut parent = p.id("fixed");
+    for _ in 0..512 {
+        let child = p.add_to(parent, "div");
+        p.style(child, "width:100%");
+        parent = child;
+    }
+    assert_eq!(p.rect(parent).width, 320.0, "percentage chains resolve without recursive layout calls");
+}
