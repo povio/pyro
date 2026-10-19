@@ -1,8 +1,8 @@
 {
   "engine_initial_pin": "5b467880d75c3e14a0b0108775de25f182d39734",
   "tos_original_pin": "f9fde4aa0dce7d1d7a1ffebffe3306399973cd80",
-  "final_engine_pin": null,
-  "final_tos_pin": null,
+  "final_engine_pin": "fb3b12dc65886e8271629dcf541294f2df725c47",
+  "final_tos_pin": "e6cf6953f456a82df30e037620afb314a99abc85",
   "manifest_sha256": "542d479b709249d072e3b57c1324c894c4378fc5373892ae64c0687486f2ae19",
   "denominator": {
     "common_cases": 742,
@@ -23,6 +23,10 @@
       "sha256": "42e9b3dcafb44e7180fe038e9368f421e4bf0beb784163397b92fb91bcfc8a58"
     }
   },
-  "final_run_status": "not started; no historical or targeted result counts as final consistent-candidate coverage",
-  "policy": "whole files/disjoint; no silent excludes/skips/retries; nativeOnly tracked separately; legitimate TOS fixes separately reviewed; new UTC template rebuild required"
+  "final_run_status": "frozen; exact signed builds preparing; case results remain not_run until execution",
+  "policy": "whole files/disjoint; no silent excludes/skips/retries; nativeOnly tracked separately; legitimate TOS fixes separately reviewed; new UTC template rebuild required",
+  "freeze_utc": "2026-10-19T04:02:01.695924+00:00",
+  "production_equivalent_tested_engine": "7f7bd5a91660c9100a6cff7dc1b606141a9e2f01",
+  "corrected_tos_disclosure": "Reviewed calendar readiness, fixture/test drift corrections and separate AddParty scroll readiness; original f9f baseline preserved. No develop merge.",
+  "timing_policy": "Record per-lane start/end and per-batch start/end; combined elapsed min lane start to max lane end; setup/retries separately. No hidden reruns."
 }
