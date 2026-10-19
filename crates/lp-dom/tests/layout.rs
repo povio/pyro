@@ -2435,3 +2435,65 @@ fn focus_reveals_auto_scroller_before_viewport_and_preserves_visible_axes() {
     assert!((target.top() - container.top() - 40.0).abs() < 1.0);
     assert!(p.layout.reveal_for_focus(&p.dom, b).is_empty());
 }
+
+fn nested_scroll_page() -> Page {
+    page(&format!(
+        "<body>{}<div id=outer style='overflow:auto;width:180px;height:80px'>{}<div id=inner style='overflow:auto;width:120px;height:60px'>{}<button id=target style='height:20px;width:20px'>target</button><div style='height:100px'>tail</div></div><div style='height:100px'>tail</div></div><div style='height:900px'>end</div></body>",
+        "<div style='height:20px'>before</div>".repeat(100),
+        "<div style='height:20px'>outer</div>".repeat(20),
+        "<div style='height:20px'>inner</div>".repeat(20),
+    ))
+}
+
+fn assert_nested_scroll_reveals_target(p: &Page) {
+    let (outer, inner, target) = (p.id("outer"), p.id("inner"), p.id("target"));
+    assert!(p.layout.scroll_top(inner) > 0, "fresh inner overflow container must scroll");
+    assert!(p.layout.scroll_top(outer) > 0, "fresh outer overflow container must scroll");
+    let t = p.rect(target);
+    for parent in [inner, outer] {
+        let r = p.rect(parent);
+        assert!(t.top() >= r.top() && t.bottom() <= r.bottom(), "target must be revealed inside every ancestor");
+        assert!(t.left() >= r.left() && t.right() <= r.right(), "target must also fit horizontally");
+    }
+    assert!(t.top() >= 0.0 && t.bottom() <= p.layout.inner_height() as f64);
+}
+
+#[test]
+fn scroll_into_view_reveals_fresh_nested_overflow_containers() {
+    let mut p = nested_scroll_page();
+    let target = p.id("target");
+    assert!(p.layout.scroll_into_view(&p.dom, target));
+    assert_nested_scroll_reveals_target(&p);
+    assert!(!p.layout.scroll_into_view(&p.dom, target), "unchanged scroll is a no-op");
+    assert!(p.layout.reveal_for_focus(&p.dom, target).is_empty(), "focus must not introduce a second scroll");
+}
+
+#[test]
+fn scroll_into_view_if_needed_reveals_fresh_nested_overflow_containers() {
+    let mut p = nested_scroll_page();
+    let target = p.id("target");
+    assert!(p.layout.scroll_into_view_if_needed(&p.dom, target));
+    assert_nested_scroll_reveals_target(&p);
+    assert!(!p.layout.scroll_into_view_if_needed(&p.dom, target), "visible target is a no-op");
+}
+
+#[test]
+fn scroll_into_view_horizontal_nearest_preserves_visible_and_spanning_boxes() {
+    let mut p = page("<div id=c style='overflow:auto;width:100px;height:100px'><button id=b style='width:20px;height:20px;transform:translateX(200px)'>target</button></div>");
+    let (c, b) = (p.id("c"), p.id("b"));
+    assert!(p.rect(b).left() > p.rect(c).right());
+    p.layout.scroll_into_view(&p.dom, b);
+    assert_eq!(p.rect(b).right(), p.rect(c).right(), "right-clipped small box uses nearest right edge");
+    let at = p.layout.scroll_left(c);
+    p.layout.scroll_into_view(&p.dom, b);
+    assert_eq!(p.layout.scroll_left(c), at, "visible horizontal position stays unchanged");
+    p.style(b, "width:20px;height:20px");
+    assert!(p.rect(b).left() < p.rect(c).left());
+    p.layout.scroll_into_view(&p.dom, b);
+    assert_eq!(p.rect(b).left(), p.rect(c).left(), "left-clipped small box uses nearest left edge");
+    p.style(b, "width:200px;height:20px;transform:translateX(-50px)");
+    assert!(p.rect(b).left() < p.rect(c).left() && p.rect(b).right() > p.rect(c).right());
+    let at = p.layout.scroll_left(c);
+    p.layout.scroll_into_view(&p.dom, b);
+    assert_eq!(p.layout.scroll_left(c), at, "box spanning both edges must not oscillate");
+}

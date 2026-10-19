@@ -1,0 +1,31 @@
+{
+  "binary": "chromium",
+  "version": "147.0.7727.15",
+  "samples": [
+    {
+      "before": {
+        "outer": 0,
+        "inner": 0,
+        "viewport": 0,
+        "targetY": 2808,
+        "outerY": 2008,
+        "innerY": 2408
+      },
+      "after": {
+        "outer": 400,
+        "inner": 400,
+        "viewport": 2008,
+        "targetY": 0,
+        "outerY": 0,
+        "innerY": 0
+      }
+    },
+    {
+      "events": [
+        "inner",
+        "outer",
+        "document"
+      ]
+    }
+  ]
+}
