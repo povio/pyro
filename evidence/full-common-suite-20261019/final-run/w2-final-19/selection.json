@@ -1,0 +1,231 @@
+{
+  "manifest_sha256": "542d479b709249d072e3b57c1324c894c4378fc5373892ae64c0687486f2ae19",
+  "manifest_read_from": "/private/tmp/lp-tos-f9f-batch16-fx (TOS f9fde4aa0d, e2e tree unchanged)",
+  "recorded_utc": "2026-10-19T04:02:51+00:00",
+  "ledger_sha256": "3d1de5a08cf4add614432f30ea316d97472ffe42ea73d00a7e775655aef09016",
+  "criteria": "Final frozen W2 whole-file common batch w2-final-19",
+  "files": [
+    "e2e/master-data/logistics/docubox-templates.e2e.ts",
+    "e2e/master-data/logistics/document-templates.e2e.ts",
+    "e2e/master-data/logistics/integration-channels.e2e.ts",
+    "e2e/master-data/logistics/remark-templates.e2e.ts",
+    "e2e/master-data/logistics/route-templates.e2e.ts",
+    "e2e/master-data/logistics/shipping-events.e2e.ts",
+    "e2e/master-data/logistics/teams-persistent-filters.e2e.ts",
+    "e2e/master-data/logistics/teams.e2e.ts",
+    "e2e/master-data/navigation-history.e2e.ts"
+  ],
+  "cases": [
+    {
+      "file": "e2e/master-data/logistics/route-templates.e2e.ts",
+      "titlePath": [
+        "Master Data Route Templates FE E2E",
+        "uses explicit URL filters instead of previously saved filters"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/route-templates.e2e.ts",
+      "titlePath": [
+        "Master Data Route Templates FE E2E",
+        "restores page filters from local storage when the URL has no filters"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/docubox-templates.e2e.ts",
+      "titlePath": [
+        "Master Data DocuBox Templates FE E2E",
+        "creates a DocuBox template with a root folder from the FE"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/docubox-templates.e2e.ts",
+      "titlePath": [
+        "Master Data DocuBox Templates FE E2E",
+        "lists seeded DocuBox templates as HTML rows and opens the nested folder details"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/docubox-templates.e2e.ts",
+      "titlePath": [
+        "Master Data DocuBox Templates FE E2E",
+        "shows archived DocuBox templates only when the archived filter is enabled"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/docubox-templates.e2e.ts",
+      "titlePath": [
+        "Master Data DocuBox Templates FE E2E",
+        "sorts DocuBox templates by visible identity and audit columns"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/docubox-templates.e2e.ts",
+      "titlePath": [
+        "Master Data DocuBox Templates FE E2E",
+        "surfaces duplicate template name validation in the FE"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/docubox-templates.e2e.ts",
+      "titlePath": [
+        "Master Data DocuBox Templates FE E2E",
+        "updates a DocuBox template name from the FE autosave form"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/document-templates.e2e.ts",
+      "titlePath": [
+        "Master Data Document Templates FE E2E",
+        "archives a document template from the FE and shows it in archived results"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/document-templates.e2e.ts",
+      "titlePath": [
+        "Master Data Document Templates FE E2E",
+        "filters archived document templates through rendered table rows"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/document-templates.e2e.ts",
+      "titlePath": [
+        "Master Data Document Templates FE E2E",
+        "lists seeded document templates as HTML rows"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/document-templates.e2e.ts",
+      "titlePath": [
+        "Master Data Document Templates FE E2E",
+        "sorts document templates by name and audit columns in the rendered table"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/document-templates.e2e.ts",
+      "titlePath": [
+        "Master Data Document Templates FE E2E",
+        "updates a document template name through the FE autosave form"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/integration-channels.e2e.ts",
+      "titlePath": [
+        "Master Data Integration Channels FE E2E",
+        "archives integration channels through FE controls"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/integration-channels.e2e.ts",
+      "titlePath": [
+        "Master Data Integration Channels FE E2E",
+        "filters integration channels by archived status through rendered rows"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/integration-channels.e2e.ts",
+      "titlePath": [
+        "Master Data Integration Channels FE E2E",
+        "lists seeded integration channels in the canvas table and opens integration channel details"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/integration-channels.e2e.ts",
+      "titlePath": [
+        "Master Data Integration Channels FE E2E",
+        "searches integration channels by diacritics, normalized text, and spaces"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/integration-channels.e2e.ts",
+      "titlePath": [
+        "Master Data Integration Channels FE E2E",
+        "sorts integration channels by name, last-polled, and created date in the rendered table"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/integration-channels.e2e.ts",
+      "titlePath": [
+        "Master Data Integration Channels FE E2E",
+        "sorts integration channels by updated date in the rendered table"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/integration-channels.e2e.ts",
+      "titlePath": [
+        "Master Data Integration Channels FE E2E",
+        "updates an integration channel name with autosave and shows the new HTML value"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/remark-templates.e2e.ts",
+      "titlePath": [
+        "Master Data Remark Templates FE E2E",
+        "filters remark templates by archived status through the rendered table"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/remark-templates.e2e.ts",
+      "titlePath": [
+        "Master Data Remark Templates FE E2E",
+        "lists seeded remark templates as HTML rows"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/remark-templates.e2e.ts",
+      "titlePath": [
+        "Master Data Remark Templates FE E2E",
+        "sorts remark templates by visible identity and audit columns"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/remark-templates.e2e.ts",
+      "titlePath": [
+        "Master Data Remark Templates FE E2E",
+        "updates a remark template name with autosave and shows the new HTML value"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/route-templates.e2e.ts",
+      "titlePath": [
+        "Master Data Route Templates FE E2E",
+        "updates a route template name from the FE autosave form"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/shipping-events.e2e.ts",
+      "titlePath": [
+        "Master Data Shipping Events FE E2E",
+        "sorts shipping events by visible sortable columns"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/teams-persistent-filters.e2e.ts",
+      "titlePath": [
+        "Master Data Teams persistent filters FE E2E",
+        "does not navigate back to the list after opening an action drawer"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/teams.e2e.ts",
+      "titlePath": [
+        "Master Data Teams FE E2E",
+        "lists seeded teams as HTML rows and opens team details with members"
+      ]
+    },
+    {
+      "file": "e2e/master-data/logistics/teams.e2e.ts",
+      "titlePath": [
+        "Master Data Teams FE E2E",
+        "sorts teams by name and audit columns in the rendered table"
+      ]
+    },
+    {
+      "file": "e2e/master-data/navigation-history.e2e.ts",
+      "titlePath": [
+        "Master Data navigation history FE E2E",
+        "tracks affected master data details in routing history"
+      ]
+    }
+  ],
+  "native_only_excluded": 1
+}

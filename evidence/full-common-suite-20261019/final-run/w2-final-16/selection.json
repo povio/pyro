@@ -1,0 +1,197 @@
+{
+  "manifest_sha256": "542d479b709249d072e3b57c1324c894c4378fc5373892ae64c0687486f2ae19",
+  "manifest_read_from": "/private/tmp/lp-tos-f9f-batch16-fx (TOS f9fde4aa0d, e2e tree unchanged)",
+  "recorded_utc": "2026-10-19T04:02:51+00:00",
+  "ledger_sha256": "3d1de5a08cf4add614432f30ea316d97472ffe42ea73d00a7e775655aef09016",
+  "criteria": "Final frozen W2 whole-file common batch w2-final-16",
+  "files": [
+    "e2e/master-data/locations/countries.e2e.ts",
+    "e2e/master-data/locations/depots.e2e.ts",
+    "e2e/master-data/locations/ports.e2e.ts"
+  ],
+  "cases": [
+    {
+      "file": "e2e/master-data/locations/depots.e2e.ts",
+      "titlePath": [
+        "Master Data Depots FE E2E",
+        "autosaves clearing depot shortName field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/depots.e2e.ts",
+      "titlePath": [
+        "Master Data Depots FE E2E",
+        "autosaves clearing depot additionalInformation field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/depots.e2e.ts",
+      "titlePath": [
+        "Master Data Depots FE E2E",
+        "autosaves clearing depot district field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/ports.e2e.ts",
+      "titlePath": [
+        "Master Data Ports FE E2E",
+        "autosaves clearing port district"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/countries.e2e.ts",
+      "titlePath": [
+        "Master Data Countries FE E2E",
+        "lists seeded countries in the canvas table"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/countries.e2e.ts",
+      "titlePath": [
+        "Master Data Countries FE E2E",
+        "searches countries by diacritics, normalized text, spaces, ISO2, and ISO3"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/countries.e2e.ts",
+      "titlePath": [
+        "Master Data Countries FE E2E",
+        "sorts countries by audit columns"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/countries.e2e.ts",
+      "titlePath": [
+        "Master Data Countries FE E2E",
+        "sorts countries by identity columns"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/depots.e2e.ts",
+      "titlePath": [
+        "Master Data Depots FE E2E",
+        "autosaves depot additionalInformation field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/depots.e2e.ts",
+      "titlePath": [
+        "Master Data Depots FE E2E",
+        "autosaves depot district field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/depots.e2e.ts",
+      "titlePath": [
+        "Master Data Depots FE E2E",
+        "autosaves depot matchCode field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/depots.e2e.ts",
+      "titlePath": [
+        "Master Data Depots FE E2E",
+        "autosaves depot name field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/depots.e2e.ts",
+      "titlePath": [
+        "Master Data Depots FE E2E",
+        "autosaves depot shortName field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/depots.e2e.ts",
+      "titlePath": [
+        "Master Data Depots FE E2E",
+        "autosaves depot street field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/depots.e2e.ts",
+      "titlePath": [
+        "Master Data Depots FE E2E",
+        "autosaves depot zip field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/depots.e2e.ts",
+      "titlePath": [
+        "Master Data Depots FE E2E",
+        "autosaves several depot fields in a row"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/depots.e2e.ts",
+      "titlePath": [
+        "Master Data Depots FE E2E",
+        "sorts depots by identity, address, and audit columns"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/ports.e2e.ts",
+      "titlePath": [
+        "Master Data Ports FE E2E",
+        "adds a new port and renders it in the FE list"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/ports.e2e.ts",
+      "titlePath": [
+        "Master Data Ports FE E2E",
+        "autosaves port city field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/ports.e2e.ts",
+      "titlePath": [
+        "Master Data Ports FE E2E",
+        "autosaves port district field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/ports.e2e.ts",
+      "titlePath": [
+        "Master Data Ports FE E2E",
+        "autosaves port matchCode field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/ports.e2e.ts",
+      "titlePath": [
+        "Master Data Ports FE E2E",
+        "autosaves port name field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/ports.e2e.ts",
+      "titlePath": [
+        "Master Data Ports FE E2E",
+        "autosaves port street field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/ports.e2e.ts",
+      "titlePath": [
+        "Master Data Ports FE E2E",
+        "autosaves port zip field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/ports.e2e.ts",
+      "titlePath": [
+        "Master Data Ports FE E2E",
+        "autosaves several port fields in a row"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/ports.e2e.ts",
+      "titlePath": [
+        "Master Data Ports FE E2E",
+        "sorts ports by identity and audit columns"
+      ]
+    }
+  ],
+  "native_only_excluded": 1
+}

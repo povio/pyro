@@ -1,0 +1,13 @@
+{
+  "base_tos": "e6cf6953f456a82df30e037620afb314a99abc85",
+  "patch_sha256": "c67d508c8937fce1519c41f4789f65d83b66b72672b624ce6dffb2aa661b6f97",
+  "test_sha256": "54ac56b2bb022a919692a2598783478a676c6cec03bc49adad02802cb2eca587",
+  "assertions": "unchanged",
+  "scope": "diagnostic observation with native focus/scroll wrappers; no pass or timing comparison claim",
+  "files": {
+    "run.py": "d8bb115754ba8951af50090a8c576b0356e86b62d9a6b344b095e0befd08c9da",
+    "run-selection.sh": "085ced855cbc4b3c24918c88765ca75ea70f15a0fc10a3fc4ea6b585fb593869",
+    "selection.json": "c0e659513b404228d2faa24f0d888f3c6a395738c28d11870395c31e59a9b350",
+    "diagnostic.patch": "c67d508c8937fce1519c41f4789f65d83b66b72672b624ce6dffb2aa661b6f97"
+  }
+}

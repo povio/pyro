@@ -1,0 +1,7 @@
+# Add Party: remaining scroll after replacement
+
+The preceding uninstrumented native ccf3597 + TOS e6cf integration remains 4/5. This diagnostic preserved all assertions but wrapped focus/scroll requests and recorded bounded identities/rectangles/offsets. It intended only Add Party; the retained runner selected the whole file, so actual execution was five cases (4/5), not one. No retry. All run-owned DBs were cleaned, and the exact test source was restored.
+
+All helper-requested events (two DIVs and document) arrive before `after-helper`. Focusing the same input19 adds no scroll. The component subsequently replaces it with input26, ten pixels lower, and focuses that new input. Ancestor16 has a five-pixel height; its scrollTop changes795→805. That queued scroll arrives while the popup has22options, followed by disappearance. Thus this is a new post-replacement scroll, not a missing helper event.
+
+The package declares modal height using `var(--visual-viewport-height)` and writes a pixel custom property. A separate generic HTML control reproduced missing dimension substitution: signed ccf reports height10 for custom900 and remains10 after custom700; Chromium147 reports900 then700. A bounded generic native dimension-resolution repair is in progress, separate from reviewed scroll event delivery. No modal-specific rectangle or test-selector workaround is proposed. Actual AddParty closure remains pending.

@@ -1,0 +1,48 @@
+{
+  "manifest_sha256": "542d479b709249d072e3b57c1324c894c4378fc5373892ae64c0687486f2ae19",
+  "manifest_read_from": "/private/tmp/lp-tos-f9f-batch16-fx (TOS f9fde4aa0d, e2e tree unchanged)",
+  "recorded_utc": "2026-10-19T03:31:21+00:00",
+  "ledger_sha256": "3d1de5a08cf4add614432f30ea316d97472ffe42ea73d00a7e775655aef09016",
+  "criteria": "Full five-case canonical commercial-parties subset with published scroll readiness and native reveal repair; integration validation before final common-suite freeze",
+  "files": [
+    "e2e/logistics/positions-commercial-parties.e2e.ts"
+  ],
+  "cases": [
+    {
+      "file": "e2e/logistics/positions-commercial-parties.e2e.ts",
+      "titlePath": [
+        "Position Commercial Parties tab FE E2E",
+        "lists Position commercial parties in rendered HTML"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-commercial-parties.e2e.ts",
+      "titlePath": [
+        "Position Commercial Parties tab FE E2E",
+        "autosaves a Position commercial party reference inline from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-commercial-parties.e2e.ts",
+      "titlePath": [
+        "Position Commercial Parties tab FE E2E",
+        "adds a new Position commercial party from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-commercial-parties.e2e.ts",
+      "titlePath": [
+        "Position Commercial Parties tab FE E2E",
+        "keeps Document Party rows in place when assigning an HBL reference"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-commercial-parties.e2e.ts",
+      "titlePath": [
+        "Position Commercial Parties tab FE E2E",
+        "removes a Position commercial party from the FE"
+      ]
+    }
+  ],
+  "native_only_excluded": 0
+}

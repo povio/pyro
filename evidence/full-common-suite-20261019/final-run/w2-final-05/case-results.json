@@ -1,0 +1,419 @@
+[
+  {
+    "file": "e2e/logistics/positions-create-outgoing-draft-invoice.e2e.ts",
+    "titlePath": [
+      "Position Create Outgoing Draft Invoice FE E2E",
+      "opens a draft outgoing Invoice preview from the invoice details drawer"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/positions-create-outgoing-draft-invoice.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 5292,
+        "startTime": "2026-10-19T04:17:10.540Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/positions-create-outgoing-draft-invoice.e2e.ts",
+    "titlePath": [
+      "Position Create Outgoing Draft Invoice FE E2E",
+      "deletes a draft outgoing Invoice from the invoice details drawer"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/positions-create-outgoing-draft-invoice.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 2363,
+        "startTime": "2026-10-19T04:17:16.849Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/positions-closed-finances.e2e.ts",
+    "titlePath": [
+      "closed positions can be found for finance filtering without entering operational selectors"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/positions-closed-finances.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 4128,
+        "startTime": "2026-10-19T04:17:19.398Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/positions-create-outgoing-credit-note.e2e.ts",
+    "titlePath": [
+      "Position Create Outgoing Credit Note FE E2E",
+      "adds an actual Credit Note inside an actual outgoing Invoice from the Position details modal"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/positions-create-outgoing-credit-note.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 2363,
+        "startTime": "2026-10-19T04:17:23.722Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/positions-create-outgoing-credit-note.e2e.ts",
+    "titlePath": [
+      "Position Create Outgoing Credit Note FE E2E",
+      "generates a payment confirmation for the actual outgoing Credit Note settlement payment"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/positions-create-outgoing-credit-note.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 5418,
+        "startTime": "2026-10-19T04:17:26.373Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/positions-create-outgoing-credit-note.e2e.ts",
+    "titlePath": [
+      "Position Create Outgoing Credit Note FE E2E",
+      "generates a new document version for an actual outgoing Credit Note"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/positions-create-outgoing-credit-note.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 5186,
+        "startTime": "2026-10-19T04:17:31.796Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/positions-create-outgoing-credit-note.e2e.ts",
+    "titlePath": [
+      "Position Create Outgoing Credit Note FE E2E",
+      "renders an actual outgoing Credit Note from the Position invoice route"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/positions-create-outgoing-credit-note.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1932,
+        "startTime": "2026-10-19T04:17:36.988Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/positions-default-filter-template.e2e.ts",
+    "titlePath": [
+      "Positions default filter template",
+      "saves current filter values through the default template editor"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/positions-default-filter-template.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 2032,
+        "startTime": "2026-10-19T04:17:39.118Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/positions-default-filter-template.e2e.ts",
+    "titlePath": [
+      "Positions default filter template",
+      "restores default filter values without page-filter persistence"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/positions-default-filter-template.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 870,
+        "startTime": "2026-10-19T04:17:41.277Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/positions-docubox-search.e2e.ts",
+    "titlePath": [
+      "Position DocuBox search FE E2E",
+      "keeps expanded folders expanded after searching and clearing Position DocuBox files"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/positions-docubox-search.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 4046,
+        "startTime": "2026-10-19T04:17:42.340Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/positions-create-incoming-draft-credit-note.e2e.ts",
+    "titlePath": [
+      "Position Create Incoming Draft Credit Note FE E2E",
+      "adds a draft Credit Note from an actual Incoming Invoice details drawer"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/positions-create-incoming-draft-credit-note.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 2973,
+        "startTime": "2026-10-19T04:17:46.653Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/positions-create-incoming-draft-credit-note.e2e.ts",
+    "titlePath": [
+      "Position Create Incoming Draft Credit Note FE E2E",
+      "does not expose draft preview for an incoming Credit Note in the invoice details drawer"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/positions-create-incoming-draft-credit-note.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 2814,
+        "startTime": "2026-10-19T04:17:49.919Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/positions-create-incoming-draft-credit-note.e2e.ts",
+    "titlePath": [
+      "Position Create Incoming Draft Credit Note FE E2E",
+      "deletes a draft incoming Credit Note from the invoice details drawer"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/positions-create-incoming-draft-credit-note.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 3541,
+        "startTime": "2026-10-19T04:17:52.737Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/positions-commercial-parties.e2e.ts",
+    "titlePath": [
+      "Position Commercial Parties tab FE E2E",
+      "lists Position commercial parties in rendered HTML"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/positions-commercial-parties.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1909,
+        "startTime": "2026-10-19T04:17:56.488Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/positions-commercial-parties.e2e.ts",
+    "titlePath": [
+      "Position Commercial Parties tab FE E2E",
+      "autosaves a Position commercial party reference inline from the FE"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/positions-commercial-parties.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1590,
+        "startTime": "2026-10-19T04:17:58.439Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/positions-commercial-parties.e2e.ts",
+    "titlePath": [
+      "Position Commercial Parties tab FE E2E",
+      "adds a new Position commercial party from the FE"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/positions-commercial-parties.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1737,
+        "startTime": "2026-10-19T04:18:00.032Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/positions-commercial-parties.e2e.ts",
+    "titlePath": [
+      "Position Commercial Parties tab FE E2E",
+      "keeps Document Party rows in place when assigning an HBL reference"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/positions-commercial-parties.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 2226,
+        "startTime": "2026-10-19T04:18:01.772Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/positions-commercial-parties.e2e.ts",
+    "titlePath": [
+      "Position Commercial Parties tab FE E2E",
+      "removes a Position commercial party from the FE"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/positions-commercial-parties.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1437,
+        "startTime": "2026-10-19T04:18:04.002Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/positions-create-outgoing-invoice.e2e.ts",
+    "titlePath": [
+      "Position Create Outgoing Invoice FE E2E",
+      "keeps generated Body Remarks visible after issuing an outgoing Invoice"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/positions-create-outgoing-invoice.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 3898,
+        "startTime": "2026-10-19T04:18:05.637Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/positions-create-outgoing-invoice.e2e.ts",
+    "titlePath": [
+      "Position Create Outgoing Invoice FE E2E",
+      "creates an outgoing Invoice from a legacy draft that already has a root folder"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/positions-create-outgoing-invoice.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 3230,
+        "startTime": "2026-10-19T04:18:11.378Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/positions-create-outgoing-invoice.e2e.ts",
+    "titlePath": [
+      "Position Create Outgoing Invoice FE E2E",
+      "sends an issued outgoing Invoice from the invoice drawer"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/positions-create-outgoing-invoice.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 5089,
+        "startTime": "2026-10-19T04:18:14.612Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/positions-create-outgoing-invoice.e2e.ts",
+    "titlePath": [
+      "Outgoing Invoice document regeneration FE E2E",
+      "generates a new document version for an issued outgoing Invoice"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/positions-create-outgoing-invoice.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 5063,
+        "startTime": "2026-10-19T04:18:19.796Z",
+        "error_count": 0
+      }
+    ]
+  }
+]

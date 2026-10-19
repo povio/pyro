@@ -1,0 +1,207 @@
+{
+  "manifest_sha256": "542d479b709249d072e3b57c1324c894c4378fc5373892ae64c0687486f2ae19",
+  "manifest_read_from": "/private/tmp/lp-tos-f9f-batch16-fx (TOS f9fde4aa0d, e2e tree unchanged)",
+  "recorded_utc": "2026-10-19T04:02:49+00:00",
+  "ledger_sha256": "3d1de5a08cf4add614432f30ea316d97472ffe42ea73d00a7e775655aef09016",
+  "criteria": "Final frozen W2 whole-file common batch w2-final-03",
+  "files": [
+    "e2e/finances/incoming-invoices.e2e.ts",
+    "e2e/finances/invoices.e2e.ts",
+    "e2e/finances/outgoing-draft-direct-invoice.e2e.ts",
+    "e2e/finances/outgoing-invoices.e2e.ts",
+    "e2e/fixtures/database-file-isolation-a.e2e.ts",
+    "e2e/fixtures/database-file-isolation-b.e2e.ts"
+  ],
+  "cases": [
+    {
+      "file": "e2e/finances/incoming-invoices.e2e.ts",
+      "titlePath": [
+        "Incoming Invoices Listing FE E2E",
+        "lists registered incoming invoices without the generic direction column"
+      ]
+    },
+    {
+      "file": "e2e/finances/incoming-invoices.e2e.ts",
+      "titlePath": [
+        "Incoming Invoices Listing FE E2E",
+        "searches incoming invoices and keeps the search term in the listing HTML and URL"
+      ]
+    },
+    {
+      "file": "e2e/finances/incoming-invoices.e2e.ts",
+      "titlePath": [
+        "Incoming Invoices Listing FE E2E",
+        "filters incoming invoices by Status from URL params"
+      ]
+    },
+    {
+      "file": "e2e/finances/incoming-invoices.e2e.ts",
+      "titlePath": [
+        "Incoming Invoices Listing FE E2E",
+        "filters incoming invoices by Invoice Type from URL params"
+      ]
+    },
+    {
+      "file": "e2e/finances/incoming-invoices.e2e.ts",
+      "titlePath": [
+        "Incoming Invoices Listing FE E2E",
+        "filters incoming invoices by Receiver from URL params"
+      ]
+    },
+    {
+      "file": "e2e/finances/incoming-invoices.e2e.ts",
+      "titlePath": [
+        "Incoming Invoices Listing FE E2E",
+        "filters incoming invoices by Reference from URL params"
+      ]
+    },
+    {
+      "file": "e2e/finances/incoming-invoices.e2e.ts",
+      "titlePath": [
+        "Incoming Invoices Listing FE E2E",
+        "filters incoming invoices by Transport Mode from URL params"
+      ]
+    },
+    {
+      "file": "e2e/finances/incoming-invoices.e2e.ts",
+      "titlePath": [
+        "Incoming Invoices Listing FE E2E",
+        "filters incoming invoices by Amount from URL params"
+      ]
+    },
+    {
+      "file": "e2e/finances/incoming-invoices.e2e.ts",
+      "titlePath": [
+        "Incoming Invoices Listing FE E2E",
+        "filters incoming invoices by Invoice Number from URL params"
+      ]
+    },
+    {
+      "file": "e2e/finances/incoming-invoices.e2e.ts",
+      "titlePath": [
+        "Incoming Invoices Listing FE E2E",
+        "filters incoming invoices by Internal Number from URL params"
+      ]
+    },
+    {
+      "file": "e2e/finances/incoming-invoices.e2e.ts",
+      "titlePath": [
+        "Incoming Invoices Listing FE E2E",
+        "filters incoming invoices by Due Date from URL params"
+      ]
+    },
+    {
+      "file": "e2e/finances/incoming-invoices.e2e.ts",
+      "titlePath": [
+        "Incoming Invoices Listing FE E2E",
+        "shows the incoming bulk payment drawer"
+      ]
+    },
+    {
+      "file": "e2e/finances/incoming-invoices.e2e.ts",
+      "titlePath": [
+        "Incoming Invoices Listing FE E2E",
+        "pays selected incoming invoices through the Pay button"
+      ]
+    },
+    {
+      "file": "e2e/finances/incoming-invoices.e2e.ts",
+      "titlePath": [
+        "Incoming Invoices Listing FE E2E",
+        "keeps Send disabled for selected incoming invoices"
+      ]
+    },
+    {
+      "file": "e2e/finances/incoming-invoices.e2e.ts",
+      "titlePath": [
+        "Incoming Invoices Listing FE E2E",
+        "issues and sends an account statement from the incoming listing"
+      ]
+    },
+    {
+      "file": "e2e/finances/outgoing-draft-direct-invoice.e2e.ts",
+      "titlePath": [
+        "Outgoing Draft Direct Invoice FE E2E",
+        "opens a draft Direct Invoice preview"
+      ]
+    },
+    {
+      "file": "e2e/finances/outgoing-draft-direct-invoice.e2e.ts",
+      "titlePath": [
+        "Outgoing Draft Direct Invoice FE E2E",
+        "deletes a draft Direct Invoice"
+      ]
+    },
+    {
+      "file": "e2e/finances/outgoing-invoices.e2e.ts",
+      "titlePath": [
+        "Outgoing Invoices Listing FE E2E",
+        "configures outgoing invoice columns without leaving the listing"
+      ]
+    },
+    {
+      "file": "e2e/finances/invoices.e2e.ts",
+      "titlePath": [
+        "Finances Invoices FE E2E",
+        "opens searched invoice details from the listing"
+      ]
+    },
+    {
+      "file": "e2e/finances/invoices.e2e.ts",
+      "titlePath": [
+        "Finances Invoices FE E2E",
+        "keeps invoice search after closing the details modal"
+      ]
+    },
+    {
+      "file": "e2e/finances/invoices.e2e.ts",
+      "titlePath": [
+        "Finances Invoices FE E2E",
+        "deletes a draft Direct Invoice from outgoing invoices"
+      ]
+    },
+    {
+      "file": "e2e/finances/outgoing-invoices.e2e.ts",
+      "titlePath": [
+        "Outgoing Invoices Listing FE E2E",
+        "covers exposed outgoing invoice configure filters"
+      ]
+    },
+    {
+      "file": "e2e/finances/incoming-invoices.e2e.ts",
+      "titlePath": [
+        "Incoming Invoices Listing FE E2E",
+        "covers exposed incoming invoice configure filters"
+      ]
+    },
+    {
+      "file": "e2e/finances/incoming-invoices.e2e.ts",
+      "titlePath": [
+        "Incoming Invoices Listing FE E2E",
+        "configures incoming invoice columns without leaving the listing"
+      ]
+    },
+    {
+      "file": "e2e/finances/outgoing-draft-direct-invoice.e2e.ts",
+      "titlePath": [
+        "Outgoing Draft Direct Invoice FE E2E",
+        "opens a precreated draft Direct Invoice"
+      ]
+    },
+    {
+      "file": "e2e/fixtures/database-file-isolation-a.e2e.ts",
+      "titlePath": [
+        "FE E2E database file isolation A",
+        "creates duplicate-constrained API data"
+      ]
+    },
+    {
+      "file": "e2e/fixtures/database-file-isolation-b.e2e.ts",
+      "titlePath": [
+        "FE E2E database file isolation B",
+        "creates duplicate-constrained API data"
+      ]
+    }
+  ],
+  "native_only_excluded": 4
+}

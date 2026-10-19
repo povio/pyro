@@ -1,0 +1,572 @@
+[
+  {
+    "file": "e2e/master-data/business-entities/business-partner-employees.e2e.ts",
+    "titlePath": [
+      "Master Data Business Partner Employees tab FE E2E",
+      "opens the Employees tab create drawer with employee form labels"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/business-entities/business-partner-employees.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1298,
+        "startTime": "2026-10-19T04:20:51.879Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/business-entities/business-partner-overview.e2e.ts",
+    "titlePath": [
+      "Master Data Business Partner Overview FE E2E",
+      "opens the details drawer on the Overview tab and renders seeded identifiers and address fields"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/business-entities/business-partner-overview.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1256,
+        "startTime": "2026-10-19T04:20:54.003Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/business-entities/business-partner-overview.e2e.ts",
+    "titlePath": [
+      "Master Data Business Partner Overview FE E2E",
+      "renders a different B/L address and autosaves Overview identifier edits through the UI"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/business-entities/business-partner-overview.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1195,
+        "startTime": "2026-10-19T04:20:55.351Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/business-entities/business-partner-overview.e2e.ts",
+    "titlePath": [
+      "Master Data Business Partner Overview FE E2E",
+      "locks and unlocks Overview changes through the details drawer"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/business-entities/business-partner-overview.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1393,
+        "startTime": "2026-10-19T04:20:56.549Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/business-entities/business-partner-similar-banner.e2e.ts",
+    "titlePath": [
+      "Master Data Business Partner similar banner FE E2E",
+      "shows the full similar-partners banner on Overview and the Business Partner tab"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/business-entities/business-partner-similar-banner.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1736,
+        "startTime": "2026-10-19T04:20:58.127Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/business-entities/business-partner-similar-banner.e2e.ts",
+    "titlePath": [
+      "Master Data Business Partner similar banner FE E2E",
+      "keeps the full similar-partners banner on the other details tabs"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/business-entities/business-partner-similar-banner.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1834,
+        "startTime": "2026-10-19T04:20:59.950Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/business-entities/business-partner-similar-banner.e2e.ts",
+    "titlePath": [
+      "Master Data Business Partner similar banner FE E2E",
+      "hides the similar-partners banner when no similar partners exist"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/business-entities/business-partner-similar-banner.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1504,
+        "startTime": "2026-10-19T04:21:01.786Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/business-entities/business-partner-similar-banner.e2e.ts",
+    "titlePath": [
+      "Master Data Business Partner similar banner FE E2E",
+      "opens a similar partner from the banner link"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/business-entities/business-partner-similar-banner.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1744,
+        "startTime": "2026-10-19T04:21:03.293Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/business-entities/business-partner-basic.e2e.ts",
+    "titlePath": [
+      "Master Data Business Partner Basic tab FE E2E",
+      "renders seeded Basic tab form values as HTML fields and text"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/business-entities/business-partner-basic.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1246,
+        "startTime": "2026-10-19T04:21:05.228Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/business-entities/cargo-agents.e2e.ts",
+    "titlePath": [
+      "Master Data Cargo Agents FE E2E",
+      "lists seeded cargo agents as rendered table rows"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/business-entities/cargo-agents.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1460,
+        "startTime": "2026-10-19T04:21:06.739Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/business-entities/cargo-agents.e2e.ts",
+    "titlePath": [
+      "Master Data Cargo Agents FE E2E",
+      "creates a cargo agent and verifies it from the list HTML"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/business-entities/cargo-agents.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1180,
+        "startTime": "2026-10-19T04:21:08.285Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/business-entities/cargo-agent-documents.e2e.ts",
+    "titlePath": [
+      "Master Data Cargo Agent Documents tab FE E2E",
+      "renders the empty Documents state from the Cargo Agents details modal"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/business-entities/cargo-agent-documents.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1123,
+        "startTime": "2026-10-19T04:21:09.651Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/business-entities/business-partner-accounts.e2e.ts",
+    "titlePath": [
+      "Master Data Business Partner Accounts tab FE E2E",
+      "renders seeded bookkeeping mappings in the Accounts tab table"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/business-entities/business-partner-accounts.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1190,
+        "startTime": "2026-10-19T04:21:11.041Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/business-entities/business-partner-accounts.e2e.ts",
+    "titlePath": [
+      "Master Data Business Partner Accounts tab FE E2E",
+      "renders the seeded Accounts tab visual"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/business-entities/business-partner-accounts.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 890,
+        "startTime": "2026-10-19T04:21:12.313Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/business-entities/business-partner-accounts.e2e.ts",
+    "titlePath": [
+      "Master Data Business Partner Accounts tab FE E2E",
+      "adds a minimal account line from the Accounts tab"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/business-entities/business-partner-accounts.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1179,
+        "startTime": "2026-10-19T04:21:13.206Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/business-entities/business-partner-accounts.e2e.ts",
+    "titlePath": [
+      "Master Data Business Partner Accounts tab FE E2E",
+      "autosaves debtor and creditor edits and renders the factoring checkbox from the Accounts tab"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/business-entities/business-partner-accounts.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1204,
+        "startTime": "2026-10-19T04:21:14.388Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/business-entities/business-partner-accounts.e2e.ts",
+    "titlePath": [
+      "Master Data Business Partner Accounts tab FE E2E",
+      "deletes an account line from the Accounts tab table"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/business-entities/business-partner-accounts.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1209,
+        "startTime": "2026-10-19T04:21:15.595Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/business-entities/airlines.e2e.ts",
+    "titlePath": [
+      "Master Data Airlines FE E2E",
+      "lists seeded airlines as rendered table HTML"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/business-entities/airlines.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 657,
+        "startTime": "2026-10-19T04:21:16.993Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/business-entities/airlines.e2e.ts",
+    "titlePath": [
+      "Master Data Airlines FE E2E",
+      "opens airline details"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/business-entities/airlines.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 643,
+        "startTime": "2026-10-19T04:21:17.737Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/business-entities/airlines.e2e.ts",
+    "titlePath": [
+      "Master Data Airlines FE E2E",
+      "sorts airlines by identity and audit columns in the rendered table"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/business-entities/airlines.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 880,
+        "startTime": "2026-10-19T04:21:18.383Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/business-entities/airlines.e2e.ts",
+    "titlePath": [
+      "Master Data Airlines FE E2E",
+      "creates an airline from the FE and verifies the created drawer HTML"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/business-entities/airlines.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1196,
+        "startTime": "2026-10-19T04:21:19.266Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/business-entities/airlines.e2e.ts",
+    "titlePath": [
+      "Master Data Airlines FE E2E",
+      "updates an airline from the FE with autosave and verifies the drawer HTML"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/business-entities/airlines.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 777,
+        "startTime": "2026-10-19T04:21:20.464Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/business-entities/airlines.e2e.ts",
+    "titlePath": [
+      "Master Data Airlines FE E2E",
+      "archives an airline through FE controls"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/business-entities/airlines.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 736,
+        "startTime": "2026-10-19T04:21:21.244Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/business-entities/airlines.e2e.ts",
+    "titlePath": [
+      "Master Data Airlines FE E2E",
+      "unarchives an airline through FE controls"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/business-entities/airlines.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 683,
+        "startTime": "2026-10-19T04:21:21.982Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/business-entities/business-partner-contacts.e2e.ts",
+    "titlePath": [
+      "Master Data Business Partner Contacts tab FE E2E",
+      "renders Contacts tab rows with role, name, email, and phone as HTML"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/business-entities/business-partner-contacts.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1783,
+        "startTime": "2026-10-19T04:21:22.865Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/business-entities/business-partner-contacts.e2e.ts",
+    "titlePath": [
+      "Master Data Business Partner Contacts tab FE E2E",
+      "adds an empty contact row to the Contacts table"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/business-entities/business-partner-contacts.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1860,
+        "startTime": "2026-10-19T04:21:24.682Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/business-entities/cargo-agents-basic.e2e.ts",
+    "titlePath": [
+      "Master Data Cargo Agents Basic tab FE E2E",
+      "renders cargo agent Basic tab values in the details modal as HTML fields and text"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/business-entities/cargo-agents-basic.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1242,
+        "startTime": "2026-10-19T04:21:26.732Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/business-entities/business-partner-documents.e2e.ts",
+    "titlePath": [
+      "Master Data Business Partner Documents tab FE E2E",
+      "renders the empty Documents state when the business partner has no DocuBox root folder"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/business-entities/business-partner-documents.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1149,
+        "startTime": "2026-10-19T04:21:28.236Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/business-entities/business-partner-employee-roles.e2e.ts",
+    "titlePath": [
+      "Master Data Business Partner Employee Roles tab FE E2E",
+      "renders an empty Employee Roles table for a partner without scoped roles"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/business-entities/business-partner-employee-roles.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1333,
+        "startTime": "2026-10-19T04:21:29.651Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/business-entities/cargo-agent-accounts.e2e.ts",
+    "titlePath": [
+      "Master Data Cargo Agent Accounts tab FE E2E",
+      "adds and deletes a minimal account line from the Cargo Agent Accounts tab"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/business-entities/cargo-agent-accounts.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1444,
+        "startTime": "2026-10-19T04:21:31.302Z",
+        "error_count": 0
+      }
+    ]
+  }
+]

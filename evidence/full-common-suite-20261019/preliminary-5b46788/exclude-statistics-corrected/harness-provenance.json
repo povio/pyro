@@ -1,0 +1,21 @@
+{
+  "tos": "f664812510da9c1bab3f045e1b2dbd4ea46aeea5",
+  "engine": "5b467880d75c3e14a0b0108775de25f182d39734",
+  "manifest_unchanged": true,
+  "polling_traps": "true",
+  "shared_asset_cache_mib": 64,
+  "private_context_cache_mib": 64,
+  "scope": "exact-head functional run; final status only after coordinator records candidate freeze",
+  "adapter_sha256": "6d8c1cddb948dae35fcb368c908296673999c22615258b4414366c529fe85a8e",
+  "files": {
+    "run.py": "73931f1f349f57532301b93685796ef1151f246535bf21417a642eabea9de58c",
+    "cleanup.py": "74378c8f64b877d959b87c1a41f47414d994727da6fbd389783ba3477f70ffa4",
+    "run-selection.sh": "93e75d06a1f72fead3b20e1b34e8a33a3abfc94548a661c07c0da5fd59772a2f",
+    "selection.json": "f9daef2fc58d775153dc5bdc10959b59c11947f85de5e9808e90c53823ff5c86"
+  },
+  "changes_from_retained_harness": [
+    "exact TOS HEAD guard and metadata",
+    "source-derived PostgreSQL snapshot prefix truncation at42+suffix21",
+    "skip automatic regeneration of frozen runner"
+  ]
+}

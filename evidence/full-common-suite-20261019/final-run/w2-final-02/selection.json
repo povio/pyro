@@ -1,0 +1,144 @@
+{
+  "manifest_sha256": "542d479b709249d072e3b57c1324c894c4378fc5373892ae64c0687486f2ae19",
+  "manifest_read_from": "/private/tmp/lp-tos-f9f-batch16-fx (TOS f9fde4aa0d, e2e tree unchanged)",
+  "recorded_utc": "2026-10-19T04:02:49+00:00",
+  "ledger_sha256": "3d1de5a08cf4add614432f30ea316d97472ffe42ea73d00a7e775655aef09016",
+  "criteria": "Final frozen W2 whole-file common batch w2-final-02",
+  "files": [
+    "e2e/configuration/profile-settings.e2e.ts",
+    "e2e/configuration/roles-permissions.e2e.ts",
+    "e2e/configuration/roles.e2e.ts",
+    "e2e/configuration/tickets.e2e.ts",
+    "e2e/control-tower/shipments.e2e.ts",
+    "e2e/finances/direct-invoice-credit-note.e2e.ts",
+    "e2e/finances/direct-invoice.e2e.ts"
+  ],
+  "cases": [
+    {
+      "file": "e2e/configuration/tickets.e2e.ts",
+      "titlePath": [
+        "keeps ticket creation unavailable before helpdesk activation"
+      ]
+    },
+    {
+      "file": "e2e/control-tower/shipments.e2e.ts",
+      "titlePath": [
+        "Control Tower shipment workflows",
+        "opens a booking's container from the Containers tab"
+      ]
+    },
+    {
+      "file": "e2e/control-tower/shipments.e2e.ts",
+      "titlePath": [
+        "Control Tower shipment workflows",
+        "opens a container's package with the matching booking context"
+      ]
+    },
+    {
+      "file": "e2e/finances/direct-invoice-credit-note.e2e.ts",
+      "titlePath": [
+        "Outgoing Direct Invoice Credit Note FE E2E",
+        "renders the actual direct-invoice Credit Note"
+      ]
+    },
+    {
+      "file": "e2e/finances/direct-invoice.e2e.ts",
+      "titlePath": [
+        "Finances Actual Direct Invoice FE E2E",
+        "generates a new document version for the actual direct invoice"
+      ]
+    },
+    {
+      "file": "e2e/finances/direct-invoice.e2e.ts",
+      "titlePath": [
+        "Finances Actual Direct Invoice FE E2E",
+        "sends the actual direct invoice"
+      ]
+    },
+    {
+      "file": "e2e/finances/direct-invoice-credit-note.e2e.ts",
+      "titlePath": [
+        "Outgoing Direct Invoice Credit Note FE E2E",
+        "renders the Outstanding direct invoice before crediting"
+      ]
+    },
+    {
+      "file": "e2e/finances/direct-invoice-credit-note.e2e.ts",
+      "titlePath": [
+        "Outgoing Direct Invoice Credit Note FE E2E",
+        "creates a draft Credit Note from the Outstanding direct invoice"
+      ]
+    },
+    {
+      "file": "e2e/finances/direct-invoice-credit-note.e2e.ts",
+      "titlePath": [
+        "Outgoing Direct Invoice Credit Note FE E2E",
+        "creates an actual Credit Note from the draft direct-invoice Credit Note"
+      ]
+    },
+    {
+      "file": "e2e/configuration/profile-settings.e2e.ts",
+      "titlePath": [
+        "Profile and settings navigation FE E2E",
+        "renders the configuration settings panel"
+      ]
+    },
+    {
+      "file": "e2e/configuration/profile-settings.e2e.ts",
+      "titlePath": [
+        "Profile and settings navigation FE E2E",
+        "renders the employee profile with its editable settings"
+      ]
+    },
+    {
+      "file": "e2e/configuration/roles-permissions.e2e.ts",
+      "titlePath": [
+        "Configuration Roles Permissions tab FE E2E",
+        "renders office and business-partner permission lists according to the role context"
+      ]
+    },
+    {
+      "file": "e2e/configuration/roles-permissions.e2e.ts",
+      "titlePath": [
+        "Configuration Roles Permissions tab FE E2E",
+        "renders only global permissions and marks the role's enabled permissions"
+      ]
+    },
+    {
+      "file": "e2e/configuration/roles-permissions.e2e.ts",
+      "titlePath": [
+        "Configuration Roles Permissions tab FE E2E",
+        "toggles a permission from the Permissions tab and reloads the tab with persisted HTML state"
+      ]
+    },
+    {
+      "file": "e2e/configuration/roles.e2e.ts",
+      "titlePath": [
+        "Configuration Roles FE E2E",
+        "creates a global role and verifies it in the FE listing"
+      ]
+    },
+    {
+      "file": "e2e/configuration/roles.e2e.ts",
+      "titlePath": [
+        "Configuration Roles FE E2E",
+        "filters roles by context and owner"
+      ]
+    },
+    {
+      "file": "e2e/configuration/roles.e2e.ts",
+      "titlePath": [
+        "Configuration Roles FE E2E",
+        "lists seeded roles with their rendered columns"
+      ]
+    },
+    {
+      "file": "e2e/configuration/roles.e2e.ts",
+      "titlePath": [
+        "Configuration Roles FE E2E",
+        "searches roles by role name"
+      ]
+    }
+  ],
+  "native_only_excluded": 0
+}

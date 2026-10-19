@@ -1,0 +1,265 @@
+{
+  "scope": "preliminary current-main/original-TOS verification, not final common-suite aggregate",
+  "metadata": {
+    "browser_commit": "5b467880d75c3e14a0b0108775de25f182d39734",
+    "browser_sha256": "18fa9de7ab0c9d92247b70e813bdea0fe78efc4da42cbbbadcf18a0a3399f4ee",
+    "tos_commit": "f9fde4aa0dce7d1d7a1ffebffe3306399973cd80",
+    "run_slug": "lpsuite19initial-1019-024944",
+    "template_database": "fe_e2e_w2tpl_f9fde4aa_batch16fx_template",
+    "binary": "/private/tmp/lp-suite-20261019/lightningpanda-5b46788",
+    "worktree": "/private/tmp/lp-tos-f9f-batch16-fx",
+    "auth": "backend test-token -> localStorage; no UI login",
+    "version_gate": "direct scripts/run-fe-e2e.mjs with playwright.routed.config.ts; same documented bypass as upstream baseline",
+    "measurement": "functional coverage only; time -l is whole harness, not browser CPU/RSS",
+    "lightningpanda_shared_asset_cache_mb": "64",
+    "expected_selected_cases": 19,
+    "specs": [
+      "e2e/logistics/positions-docubox.e2e.ts",
+      "e2e/logistics/positions-commercial-parties.e2e.ts",
+      "e2e/logistics/positions-exclude-from-statistics.e2e.ts",
+      "e2e/calendar/calendar-filters.e2e.ts"
+    ],
+    "exit_code": 1,
+    "harness_wall_seconds": 101.433830375
+  },
+  "report_sha256": "c349dc2c86b39f351759334bf739d7680ba94e84798b94747e3f945639aaf445",
+  "stats": {
+    "startTime": "2026-10-19T02:50:09.214Z",
+    "duration": 75999.685,
+    "expected": 16,
+    "skipped": 0,
+    "unexpected": 3,
+    "flaky": 0
+  },
+  "cases": [
+    {
+      "file": "e2e/calendar/calendar-filters.e2e.ts",
+      "title": "preserves calendar filters across visits and clears saved preferences when disabled",
+      "status": "unexpected",
+      "expected": "passed",
+      "attempts": [
+        {
+          "status": "timedOut",
+          "retry": 0
+        }
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-exclude-from-statistics.e2e.ts",
+      "title": "excludes a position from statistics and removes it from the default Positions listing",
+      "status": "unexpected",
+      "expected": "passed",
+      "attempts": [
+        {
+          "status": "failed",
+          "retry": 0
+        }
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-docubox.e2e.ts",
+      "title": "lists Position DocuBox folders and files in rendered HTML",
+      "status": "expected",
+      "expected": "passed",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0
+        }
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-docubox.e2e.ts",
+      "title": "renders the Position DocuBox listing",
+      "status": "expected",
+      "expected": "passed",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0
+        }
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-docubox.e2e.ts",
+      "title": "creates a folder from the Position DocuBox tab",
+      "status": "expected",
+      "expected": "passed",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0
+        }
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-docubox.e2e.ts",
+      "title": "renders created and uploaded Position DocuBox entries",
+      "status": "expected",
+      "expected": "passed",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0
+        }
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-docubox.e2e.ts",
+      "title": "previews a Position DocuBox PDF using fit-to-width iframe settings",
+      "status": "expected",
+      "expected": "passed",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0
+        }
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-docubox.e2e.ts",
+      "title": "previews generated XLSX files in the Position DocuBox preview pane",
+      "status": "expected",
+      "expected": "passed",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0
+        }
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-docubox.e2e.ts",
+      "title": "previews generated DOCX files in the Position DocuBox preview pane",
+      "status": "expected",
+      "expected": "passed",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0
+        }
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-docubox.e2e.ts",
+      "title": "previews generated CSV files in the Position DocuBox preview pane",
+      "status": "expected",
+      "expected": "passed",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0
+        }
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-docubox.e2e.ts",
+      "title": "drags an MSG attachment into a Position DocuBox folder",
+      "status": "expected",
+      "expected": "passed",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0
+        }
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-docubox.e2e.ts",
+      "title": "forces a rename for externally dropped files with invalid DocuBox filename characters",
+      "status": "expected",
+      "expected": "passed",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0
+        }
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-docubox.e2e.ts",
+      "title": "renders the renamed invalid Position DocuBox upload",
+      "status": "expected",
+      "expected": "passed",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0
+        }
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-docubox.e2e.ts",
+      "title": "uploads an externally dropped file directly into a visible Position DocuBox folder row",
+      "status": "expected",
+      "expected": "passed",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0
+        }
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-commercial-parties.e2e.ts",
+      "title": "lists Position commercial parties in rendered HTML",
+      "status": "expected",
+      "expected": "passed",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0
+        }
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-commercial-parties.e2e.ts",
+      "title": "autosaves a Position commercial party reference inline from the FE",
+      "status": "expected",
+      "expected": "passed",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0
+        }
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-commercial-parties.e2e.ts",
+      "title": "adds a new Position commercial party from the FE",
+      "status": "unexpected",
+      "expected": "passed",
+      "attempts": [
+        {
+          "status": "failed",
+          "retry": 0
+        }
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-commercial-parties.e2e.ts",
+      "title": "keeps Document Party rows in place when assigning an HBL reference",
+      "status": "expected",
+      "expected": "passed",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0
+        }
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-commercial-parties.e2e.ts",
+      "title": "removes a Position commercial party from the FE",
+      "status": "expected",
+      "expected": "passed",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0
+        }
+      ]
+    }
+  ],
+  "cleanup": "run DBs left: 0 | retained ledger templates: ['fe_e2e_w2tpl_f9fde4aa_batch16fx_template', 'fe_e2e_w2tpl_f9fde4aa_batch7_template', 'fe_e2e_w2tpl_f9fde4aa_batch7diag_template']\n"
+}

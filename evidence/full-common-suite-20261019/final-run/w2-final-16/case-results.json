@@ -1,0 +1,496 @@
+[
+  {
+    "file": "e2e/master-data/locations/countries.e2e.ts",
+    "titlePath": [
+      "Master Data Countries FE E2E",
+      "lists seeded countries in the canvas table"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/countries.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 503,
+        "startTime": "2026-10-19T04:23:20.778Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/countries.e2e.ts",
+    "titlePath": [
+      "Master Data Countries FE E2E",
+      "sorts countries by identity columns"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/countries.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 710,
+        "startTime": "2026-10-19T04:23:21.974Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/countries.e2e.ts",
+    "titlePath": [
+      "Master Data Countries FE E2E",
+      "sorts countries by audit columns"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/countries.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 682,
+        "startTime": "2026-10-19T04:23:22.687Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/countries.e2e.ts",
+    "titlePath": [
+      "Master Data Countries FE E2E",
+      "searches countries by diacritics, normalized text, spaces, ISO2, and ISO3"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/countries.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 492,
+        "startTime": "2026-10-19T04:23:23.372Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/depots.e2e.ts",
+    "titlePath": [
+      "Master Data Depots FE E2E",
+      "sorts depots by identity, address, and audit columns"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/depots.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1256,
+        "startTime": "2026-10-19T04:23:24.050Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/depots.e2e.ts",
+    "titlePath": [
+      "Master Data Depots FE E2E",
+      "autosaves depot matchCode field"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/depots.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 940,
+        "startTime": "2026-10-19T04:23:25.387Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/depots.e2e.ts",
+    "titlePath": [
+      "Master Data Depots FE E2E",
+      "autosaves depot name field"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/depots.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 574,
+        "startTime": "2026-10-19T04:23:26.329Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/depots.e2e.ts",
+    "titlePath": [
+      "Master Data Depots FE E2E",
+      "autosaves depot shortName field"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/depots.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 579,
+        "startTime": "2026-10-19T04:23:26.907Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/depots.e2e.ts",
+    "titlePath": [
+      "Master Data Depots FE E2E",
+      "autosaves depot additionalInformation field"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/depots.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 559,
+        "startTime": "2026-10-19T04:23:27.488Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/depots.e2e.ts",
+    "titlePath": [
+      "Master Data Depots FE E2E",
+      "autosaves depot street field"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/depots.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 756,
+        "startTime": "2026-10-19T04:23:28.050Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/depots.e2e.ts",
+    "titlePath": [
+      "Master Data Depots FE E2E",
+      "autosaves depot zip field"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/depots.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 563,
+        "startTime": "2026-10-19T04:23:28.808Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/depots.e2e.ts",
+    "titlePath": [
+      "Master Data Depots FE E2E",
+      "autosaves depot district field"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/depots.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 563,
+        "startTime": "2026-10-19T04:23:29.373Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/depots.e2e.ts",
+    "titlePath": [
+      "Master Data Depots FE E2E",
+      "autosaves clearing depot shortName field"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/depots.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 585,
+        "startTime": "2026-10-19T04:23:29.939Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/depots.e2e.ts",
+    "titlePath": [
+      "Master Data Depots FE E2E",
+      "autosaves clearing depot additionalInformation field"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/depots.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 641,
+        "startTime": "2026-10-19T04:23:30.527Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/depots.e2e.ts",
+    "titlePath": [
+      "Master Data Depots FE E2E",
+      "autosaves clearing depot district field"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/depots.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 548,
+        "startTime": "2026-10-19T04:23:31.170Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/depots.e2e.ts",
+    "titlePath": [
+      "Master Data Depots FE E2E",
+      "autosaves several depot fields in a row"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/depots.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 699,
+        "startTime": "2026-10-19T04:23:31.721Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/ports.e2e.ts",
+    "titlePath": [
+      "Master Data Ports FE E2E",
+      "sorts ports by identity and audit columns"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/ports.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1049,
+        "startTime": "2026-10-19T04:23:32.625Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/ports.e2e.ts",
+    "titlePath": [
+      "Master Data Ports FE E2E",
+      "autosaves port matchCode field"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/ports.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1035,
+        "startTime": "2026-10-19T04:23:33.760Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/ports.e2e.ts",
+    "titlePath": [
+      "Master Data Ports FE E2E",
+      "autosaves port name field"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/ports.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 695,
+        "startTime": "2026-10-19T04:23:34.798Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/ports.e2e.ts",
+    "titlePath": [
+      "Master Data Ports FE E2E",
+      "autosaves port street field"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/ports.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 673,
+        "startTime": "2026-10-19T04:23:35.496Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/ports.e2e.ts",
+    "titlePath": [
+      "Master Data Ports FE E2E",
+      "autosaves port zip field"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/ports.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 661,
+        "startTime": "2026-10-19T04:23:36.171Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/ports.e2e.ts",
+    "titlePath": [
+      "Master Data Ports FE E2E",
+      "autosaves port district field"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/ports.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 683,
+        "startTime": "2026-10-19T04:23:36.834Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/ports.e2e.ts",
+    "titlePath": [
+      "Master Data Ports FE E2E",
+      "autosaves clearing port district"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/ports.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 683,
+        "startTime": "2026-10-19T04:23:37.520Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/ports.e2e.ts",
+    "titlePath": [
+      "Master Data Ports FE E2E",
+      "autosaves port city field"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/ports.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1815,
+        "startTime": "2026-10-19T04:23:38.205Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/ports.e2e.ts",
+    "titlePath": [
+      "Master Data Ports FE E2E",
+      "autosaves several port fields in a row"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/ports.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 924,
+        "startTime": "2026-10-19T04:23:40.022Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/ports.e2e.ts",
+    "titlePath": [
+      "Master Data Ports FE E2E",
+      "adds a new port and renders it in the FE list"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/ports.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 489,
+        "startTime": "2026-10-19T04:23:40.950Z",
+        "error_count": 0
+      }
+    ]
+  }
+]

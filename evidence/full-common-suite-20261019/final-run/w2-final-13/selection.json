@@ -1,0 +1,146 @@
+{
+  "manifest_sha256": "542d479b709249d072e3b57c1324c894c4378fc5373892ae64c0687486f2ae19",
+  "manifest_read_from": "/private/tmp/lp-tos-f9f-batch16-fx (TOS f9fde4aa0d, e2e tree unchanged)",
+  "recorded_utc": "2026-10-19T04:02:50+00:00",
+  "ledger_sha256": "3d1de5a08cf4add614432f30ea316d97472ffe42ea73d00a7e775655aef09016",
+  "criteria": "Final frozen W2 whole-file common batch w2-final-13",
+  "files": [
+    "e2e/master-data/locations/airports.e2e.ts"
+  ],
+  "cases": [
+    {
+      "file": "e2e/master-data/locations/airports.e2e.ts",
+      "titlePath": [
+        "Master Data Airports FE E2E",
+        "creates an airport from the FE"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/airports.e2e.ts",
+      "titlePath": [
+        "Master Data Airports FE E2E",
+        "keeps BE airport label search behavior available to FE flows"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/airports.e2e.ts",
+      "titlePath": [
+        "Master Data Airports FE E2E",
+        "lists seeded airports"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/airports.e2e.ts",
+      "titlePath": [
+        "Master Data Airports FE E2E",
+        "renders the empty airport create form"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/airports.e2e.ts",
+      "titlePath": [
+        "Master Data Airports FE E2E",
+        "searches airports by diacritics through the search field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/airports.e2e.ts",
+      "titlePath": [
+        "Master Data Airports FE E2E",
+        "searches airports by IATA code"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/airports.e2e.ts",
+      "titlePath": [
+        "Master Data Airports FE E2E",
+        "searches airports by match code"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/airports.e2e.ts",
+      "titlePath": [
+        "Master Data Airports FE E2E",
+        "searches airports by normalized text"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/airports.e2e.ts",
+      "titlePath": [
+        "Master Data Airports FE E2E",
+        "searches airports by spaces"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/airports.e2e.ts",
+      "titlePath": [
+        "Master Data Airports FE E2E",
+        "sorts airports by city"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/airports.e2e.ts",
+      "titlePath": [
+        "Master Data Airports FE E2E",
+        "sorts airports by createdAt"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/airports.e2e.ts",
+      "titlePath": [
+        "Master Data Airports FE E2E",
+        "sorts airports by createdBy"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/airports.e2e.ts",
+      "titlePath": [
+        "Master Data Airports FE E2E",
+        "sorts airports by iataCode"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/airports.e2e.ts",
+      "titlePath": [
+        "Master Data Airports FE E2E",
+        "sorts airports by matchCode"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/airports.e2e.ts",
+      "titlePath": [
+        "Master Data Airports FE E2E",
+        "sorts airports by name"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/airports.e2e.ts",
+      "titlePath": [
+        "Master Data Airports FE E2E",
+        "sorts airports by updatedAt"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/airports.e2e.ts",
+      "titlePath": [
+        "Master Data Airports FE E2E",
+        "sorts airports by updatedBy"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/airports.e2e.ts",
+      "titlePath": [
+        "Master Data Airports FE E2E",
+        "surfaces duplicate match-code validation from the real BE"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/airports.e2e.ts",
+      "titlePath": [
+        "Master Data Airports FE E2E",
+        "updates an airport from the FE with autosave"
+      ]
+    }
+  ],
+  "native_only_excluded": 0
+}

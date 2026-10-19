@@ -1,0 +1,22 @@
+{
+  "engine": "fb3b12dc65886e8271629dcf541294f2df725c47",
+  "tos": "e6cf6953f456a82df30e037620afb314a99abc85",
+  "common_denominator": 742,
+  "nativeOnly_separate": 116,
+  "state": "completed",
+  "outcomes": {
+    "expected": 729,
+    "unexpected": 13
+  },
+  "started_utc": "2026-10-19T04:03:07.292020+00:00",
+  "ended_utc": "2026-10-19T04:26:00.037020+00:00",
+  "observed_utc": "2026-10-19T04:26:17.255751+00:00",
+  "elapsed_seconds": 1372.745,
+  "duration_definition": "wall-clock span from first lane start to last lane finish; while active this is elapsed to observation",
+  "w3_whole_lane_seconds": 888.1409871249999,
+  "w2_whole_lane_seconds": 973.905337375,
+  "retry_attempts": 0,
+  "w3_evidence_commit": "a09d643bded2754b017510e513f0417392ab35b2",
+  "artifact_limit": "W2 batches1/2 default error-context attachments were removed at next runner start; JSON assertions retained. Batch4 attachments copied; from batch5 outputs go outside runner-cleared directory. Batch3 passed. No rerun to replace evidence.",
+  "separate_validation_failure": "combined release workspace aborted at lp-net auth cancellation reply.is_closed assertion; retained outside TOS outcomes, isolated repair pending"
+}

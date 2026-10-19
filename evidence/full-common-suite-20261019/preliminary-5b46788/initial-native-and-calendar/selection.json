@@ -1,0 +1,148 @@
+{
+  "manifest_sha256": "542d479b709249d072e3b57c1324c894c4378fc5373892ae64c0687486f2ae19",
+  "manifest_read_from": "/private/tmp/lp-tos-f9f-batch16-fx (TOS f9fde4aa0d, e2e tree unchanged)",
+  "recorded_utc": "2026-10-19T02:47:05+00:00",
+  "ledger_sha256": "3d1de5a08cf4add614432f30ea316d97472ffe42ea73d00a7e775655aef09016",
+  "criteria": "Pre-recorded preliminary current-main check: full common subsets of docubox/commercial-parties/exclude-statistics/calendar; later final suite remains pending integrated TOS and engine pin",
+  "files": [
+    "e2e/logistics/positions-docubox.e2e.ts",
+    "e2e/logistics/positions-commercial-parties.e2e.ts",
+    "e2e/logistics/positions-exclude-from-statistics.e2e.ts",
+    "e2e/calendar/calendar-filters.e2e.ts"
+  ],
+  "cases": [
+    {
+      "file": "e2e/calendar/calendar-filters.e2e.ts",
+      "titlePath": [
+        "preserves calendar filters across visits and clears saved preferences when disabled"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-exclude-from-statistics.e2e.ts",
+      "titlePath": [
+        "Positions exclude from statistics FE E2E",
+        "excludes a position from statistics and removes it from the default Positions listing"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-docubox.e2e.ts",
+      "titlePath": [
+        "Position DocuBox tab actions FE E2E",
+        "drags an MSG attachment into a Position DocuBox folder"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-docubox.e2e.ts",
+      "titlePath": [
+        "Position DocuBox tab actions FE E2E",
+        "uploads an externally dropped file directly into a visible Position DocuBox folder row"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-docubox.e2e.ts",
+      "titlePath": [
+        "Position DocuBox tab actions FE E2E",
+        "previews generated XLSX files in the Position DocuBox preview pane"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-docubox.e2e.ts",
+      "titlePath": [
+        "Position DocuBox tab actions FE E2E",
+        "previews generated CSV files in the Position DocuBox preview pane"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-commercial-parties.e2e.ts",
+      "titlePath": [
+        "Position Commercial Parties tab FE E2E",
+        "lists Position commercial parties in rendered HTML"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-commercial-parties.e2e.ts",
+      "titlePath": [
+        "Position Commercial Parties tab FE E2E",
+        "autosaves a Position commercial party reference inline from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-commercial-parties.e2e.ts",
+      "titlePath": [
+        "Position Commercial Parties tab FE E2E",
+        "adds a new Position commercial party from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-commercial-parties.e2e.ts",
+      "titlePath": [
+        "Position Commercial Parties tab FE E2E",
+        "keeps Document Party rows in place when assigning an HBL reference"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-commercial-parties.e2e.ts",
+      "titlePath": [
+        "Position Commercial Parties tab FE E2E",
+        "removes a Position commercial party from the FE"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-docubox.e2e.ts",
+      "titlePath": [
+        "Position DocuBox tab actions FE E2E",
+        "lists Position DocuBox folders and files in rendered HTML"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-docubox.e2e.ts",
+      "titlePath": [
+        "Position DocuBox tab actions FE E2E",
+        "renders the Position DocuBox listing"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-docubox.e2e.ts",
+      "titlePath": [
+        "Position DocuBox tab actions FE E2E",
+        "creates a folder from the Position DocuBox tab"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-docubox.e2e.ts",
+      "titlePath": [
+        "Position DocuBox tab actions FE E2E",
+        "renders created and uploaded Position DocuBox entries"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-docubox.e2e.ts",
+      "titlePath": [
+        "Position DocuBox tab actions FE E2E",
+        "previews a Position DocuBox PDF using fit-to-width iframe settings"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-docubox.e2e.ts",
+      "titlePath": [
+        "Position DocuBox tab actions FE E2E",
+        "previews generated DOCX files in the Position DocuBox preview pane"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-docubox.e2e.ts",
+      "titlePath": [
+        "Position DocuBox tab actions FE E2E",
+        "forces a rename for externally dropped files with invalid DocuBox filename characters"
+      ]
+    },
+    {
+      "file": "e2e/logistics/positions-docubox.e2e.ts",
+      "titlePath": [
+        "Position DocuBox tab actions FE E2E",
+        "renders the renamed invalid Position DocuBox upload"
+      ]
+    }
+  ],
+  "native_only_excluded": 13
+}

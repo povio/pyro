@@ -1,0 +1,217 @@
+{
+  "manifest_sha256": "542d479b709249d072e3b57c1324c894c4378fc5373892ae64c0687486f2ae19",
+  "manifest_read_from": "/private/tmp/lp-tos-f9f-batch16-fx (TOS f9fde4aa0d, e2e tree unchanged)",
+  "recorded_utc": "2026-10-19T04:02:51+00:00",
+  "ledger_sha256": "3d1de5a08cf4add614432f30ea316d97472ffe42ea73d00a7e775655aef09016",
+  "criteria": "Final frozen W2 whole-file common batch w2-final-17",
+  "files": [
+    "e2e/master-data/locations/terminals.e2e.ts",
+    "e2e/master-data/locations/warehouses.e2e.ts"
+  ],
+  "cases": [
+    {
+      "file": "e2e/master-data/locations/terminals.e2e.ts",
+      "titlePath": [
+        "Master Data Terminals FE E2E",
+        "autosaves clearing terminal shortName field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/terminals.e2e.ts",
+      "titlePath": [
+        "Master Data Terminals FE E2E",
+        "autosaves clearing terminal additionalInformation field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/terminals.e2e.ts",
+      "titlePath": [
+        "Master Data Terminals FE E2E",
+        "autosaves clearing terminal secondaryStreet field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/terminals.e2e.ts",
+      "titlePath": [
+        "Master Data Terminals FE E2E",
+        "autosaves clearing terminal district field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/warehouses.e2e.ts",
+      "titlePath": [
+        "Master Data Warehouses FE E2E",
+        "autosaves clearing warehouse shortName field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/warehouses.e2e.ts",
+      "titlePath": [
+        "Master Data Warehouses FE E2E",
+        "autosaves clearing warehouse additionalInformation field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/warehouses.e2e.ts",
+      "titlePath": [
+        "Master Data Warehouses FE E2E",
+        "autosaves clearing warehouse district field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/terminals.e2e.ts",
+      "titlePath": [
+        "Master Data Terminals FE E2E",
+        "adds a new terminal and archives it at the end"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/terminals.e2e.ts",
+      "titlePath": [
+        "Master Data Terminals FE E2E",
+        "autosaves several terminal fields in a row"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/terminals.e2e.ts",
+      "titlePath": [
+        "Master Data Terminals FE E2E",
+        "autosaves terminal additionalInformation field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/terminals.e2e.ts",
+      "titlePath": [
+        "Master Data Terminals FE E2E",
+        "autosaves terminal district field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/terminals.e2e.ts",
+      "titlePath": [
+        "Master Data Terminals FE E2E",
+        "autosaves terminal matchCode field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/terminals.e2e.ts",
+      "titlePath": [
+        "Master Data Terminals FE E2E",
+        "autosaves terminal name field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/terminals.e2e.ts",
+      "titlePath": [
+        "Master Data Terminals FE E2E",
+        "autosaves terminal secondaryStreet field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/terminals.e2e.ts",
+      "titlePath": [
+        "Master Data Terminals FE E2E",
+        "autosaves terminal shortName field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/terminals.e2e.ts",
+      "titlePath": [
+        "Master Data Terminals FE E2E",
+        "autosaves terminal street field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/terminals.e2e.ts",
+      "titlePath": [
+        "Master Data Terminals FE E2E",
+        "autosaves terminal zip field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/terminals.e2e.ts",
+      "titlePath": [
+        "Master Data Terminals FE E2E",
+        "sorts terminals by audit columns"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/terminals.e2e.ts",
+      "titlePath": [
+        "Master Data Terminals FE E2E",
+        "sorts terminals by identity columns"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/warehouses.e2e.ts",
+      "titlePath": [
+        "Master Data Warehouses FE E2E",
+        "autosaves warehouse additionalInformation field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/warehouses.e2e.ts",
+      "titlePath": [
+        "Master Data Warehouses FE E2E",
+        "autosaves warehouse district field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/warehouses.e2e.ts",
+      "titlePath": [
+        "Master Data Warehouses FE E2E",
+        "autosaves warehouse matchCode field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/warehouses.e2e.ts",
+      "titlePath": [
+        "Master Data Warehouses FE E2E",
+        "autosaves warehouse name field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/warehouses.e2e.ts",
+      "titlePath": [
+        "Master Data Warehouses FE E2E",
+        "autosaves warehouse shortName field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/warehouses.e2e.ts",
+      "titlePath": [
+        "Master Data Warehouses FE E2E",
+        "autosaves warehouse street field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/warehouses.e2e.ts",
+      "titlePath": [
+        "Master Data Warehouses FE E2E",
+        "autosaves warehouse zip field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/warehouses.e2e.ts",
+      "titlePath": [
+        "Master Data Warehouses FE E2E",
+        "creates a warehouse and archives it through FE controls at the end"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/warehouses.e2e.ts",
+      "titlePath": [
+        "Master Data Warehouses FE E2E",
+        "sorts warehouses by audit columns"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/warehouses.e2e.ts",
+      "titlePath": [
+        "Master Data Warehouses FE E2E",
+        "sorts warehouses by identity and address columns"
+      ]
+    }
+  ],
+  "native_only_excluded": 2
+}

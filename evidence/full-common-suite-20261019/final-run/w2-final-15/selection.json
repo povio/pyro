@@ -1,0 +1,202 @@
+{
+  "manifest_sha256": "542d479b709249d072e3b57c1324c894c4378fc5373892ae64c0687486f2ae19",
+  "manifest_read_from": "/private/tmp/lp-tos-f9f-batch16-fx (TOS f9fde4aa0d, e2e tree unchanged)",
+  "recorded_utc": "2026-10-19T04:02:51+00:00",
+  "ledger_sha256": "3d1de5a08cf4add614432f30ea316d97472ffe42ea73d00a7e775655aef09016",
+  "criteria": "Final frozen W2 whole-file common batch w2-final-15",
+  "files": [
+    "e2e/master-data/locations/container-yards.e2e.ts"
+  ],
+  "cases": [
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "autosaves clearing container yard shortName field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "autosaves clearing container yard additionalInformation field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "autosaves clearing container yard secondaryStreet field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "autosaves clearing container yard district field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "adds a container yard and archives it at the end"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "autosaves container yard additionalInformation field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "autosaves container yard city field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "autosaves container yard district field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "autosaves container yard matchCode field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "autosaves container yard name field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "autosaves container yard secondaryStreet field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "autosaves container yard shortName field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "autosaves container yard street field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "autosaves container yard zip field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "autosaves several container yard fields in a row"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "filters archived container yards through the rendered table"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "lists seeded container yards"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "searches container yards by diacritics, normalized text, and spaces"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "searches container yards by match code and short name"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "sorts container yards by address"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "sorts container yards by createdAt"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "sorts container yards by createdBy"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "sorts container yards by matchCode"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "sorts container yards by name"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "sorts container yards by shortName"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "sorts container yards by updatedAt"
+      ]
+    },
+    {
+      "file": "e2e/master-data/locations/container-yards.e2e.ts",
+      "titlePath": [
+        "Master Data Container Yards FE E2E",
+        "sorts container yards by updatedBy"
+      ]
+    }
+  ],
+  "native_only_excluded": 0
+}

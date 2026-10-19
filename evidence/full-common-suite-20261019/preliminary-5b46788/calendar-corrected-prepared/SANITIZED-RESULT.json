@@ -1,0 +1,79 @@
+{
+  "scope": "targeted calendar readiness correction; not final common-suite aggregate",
+  "metadata": {
+    "browser_commit": "5b467880d75c3e14a0b0108775de25f182d39734",
+    "browser_sha256": "18fa9de7ab0c9d92247b70e813bdea0fe78efc4da42cbbbadcf18a0a3399f4ee",
+    "tos_commit": "6e7f7cfb5647f92df57cf8801b23d02cab1942d0",
+    "run_slug": "lpsuite19calendar-1019-025718",
+    "template_database": "fe_e2e_w2tpl_6e7f7cfb_lptoscalendar6e7_template",
+    "binary": "/private/tmp/lp-suite-20261019/lightningpanda-5b46788",
+    "worktree": "/private/tmp/lp-tos-calendar-6e7f7cf-fx",
+    "auth": "backend test-token -> localStorage; no UI login",
+    "version_gate": "direct scripts/run-fe-e2e.mjs with playwright.routed.config.ts; same documented bypass as upstream baseline",
+    "measurement": "functional coverage only; time -l is whole harness, not browser CPU/RSS",
+    "lightningpanda_shared_asset_cache_mb": "64",
+    "expected_selected_cases": 1,
+    "specs": [
+      "e2e/calendar/calendar-filters.e2e.ts"
+    ],
+    "exit_code": 0,
+    "harness_wall_seconds": 34.038570584
+  },
+  "report_sha256": "28c02590ff3c2f966a205fd3a5e8f122fc472638e142915bffd3386c1348b665",
+  "test_sha256": "9b286a760fb88073853985370c6c03a15b38eb576d7884fd6821fad62415f9c8",
+  "stats": {
+    "startTime": "2026-10-19T02:57:47.742Z",
+    "duration": 4761.847,
+    "expected": 1,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  },
+  "cases": [
+    {
+      "file": "e2e/calendar/calendar-filters.e2e.ts",
+      "title": "preserves calendar filters across visits and clears saved preferences when disabled",
+      "status": "expected",
+      "expected": "passed",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0
+        }
+      ]
+    }
+  ],
+  "setup_failure_before": {
+    "path": "/private/tmp/lp-suite-20261019/calendar-corrected",
+    "tests_executed": 0,
+    "reason": "prepared database missing; source runtime cache matched"
+  },
+  "cleanup": {
+    "run_databases_left": 0,
+    "original_guard_failure": "63-character truncated snapshot template name",
+    "source_rule": "apps/be/scripts/e2e/database-snapshot.mjs:494 prefix.slice(0,63-suffix.length)",
+    "recovery": "exact run-only name and owner, absent pre-run; source-derived prefix42+suffix21; retained templates unchanged"
+  },
+  "artifacts_unchanged_after": [
+    {
+      "path": ".tmp/fe-e2e-portless/runtime-artifacts/e2e-main",
+      "sha256": "14e23ad4e4885f768b697d68ec2e2f6abd9cbaf2bf01584ecee06fab792d002e"
+    },
+    {
+      "path": "apps/be/dist/main.js",
+      "sha256": "3e38780e0e56fc8cb9cabc121379d4eb2bd453d01fef8fb5d0907af2664c6391"
+    },
+    {
+      "path": "apps/pdfgen/build/index.html",
+      "sha256": "d3a84ba536529edbcb357d0d1a0c5ee7ad1f3c9e03021105fcffdf6489676897"
+    },
+    {
+      "path": ".tmp/fe-e2e-portless/fe-dist/index.html",
+      "sha256": "57f94b451c9fe6e5b6f7b4dd353aae601c4abaab471c2d821f3f33a25049402d"
+    },
+    {
+      "path": "apps/pdfgen/src/data/common/common.models.ts",
+      "sha256": "0ff20f0e8a74be0d71b89df0c1adad2d5797778894839895e8839fd0d3f96010"
+    }
+  ]
+}

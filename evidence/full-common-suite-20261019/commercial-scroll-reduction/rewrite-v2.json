@@ -1,0 +1,268 @@
+{
+  "binary": "/private/tmp/lp-suite-20261019/lightningpanda-5b46788",
+  "version": "124.0.6367.29",
+  "rows": [
+    {
+      "fill": 0,
+      "activation": "dom",
+      "errors": [],
+      "samples": [
+        {
+          "kind": "before",
+          "rect": [
+            10,
+            85,
+            5,
+            5
+          ],
+          "scrollY": 0,
+          "options": 0,
+          "expanded": "false"
+        },
+        {
+          "kind": "focusin",
+          "rect": [
+            10,
+            85,
+            5,
+            5
+          ],
+          "scrollY": 0,
+          "options": 0,
+          "expanded": "false"
+        },
+        {
+          "kind": "click",
+          "rect": [
+            10,
+            85,
+            5,
+            5
+          ],
+          "scrollY": 0,
+          "options": 0,
+          "expanded": "false"
+        },
+        {
+          "kind": "focusin",
+          "rect": null,
+          "scrollY": 0,
+          "options": 0
+        },
+        {
+          "kind": "click",
+          "rect": null,
+          "scrollY": 0,
+          "options": 0
+        },
+        {
+          "kind": "after",
+          "rect": null,
+          "scrollY": 0,
+          "options": 0
+        }
+      ]
+    },
+    {
+      "fill": 0,
+      "activation": "native",
+      "errors": [],
+      "samples": [
+        {
+          "kind": "before",
+          "rect": [
+            10,
+            85,
+            5,
+            5
+          ],
+          "scrollY": 0,
+          "options": 0,
+          "expanded": "false"
+        },
+        {
+          "kind": "scroll",
+          "rect": [
+            10,
+            0,
+            5,
+            5
+          ],
+          "scrollY": 85,
+          "options": 0,
+          "expanded": "false"
+        },
+        {
+          "kind": "focusin",
+          "rect": [
+            10,
+            0,
+            5,
+            5
+          ],
+          "scrollY": 85,
+          "options": 0,
+          "expanded": "false"
+        },
+        {
+          "kind": "focusin",
+          "rect": null,
+          "scrollY": 0,
+          "options": 0
+        },
+        {
+          "kind": "click",
+          "rect": null,
+          "scrollY": 0,
+          "options": 0
+        },
+        {
+          "kind": "scroll",
+          "rect": null,
+          "scrollY": 0,
+          "options": 0
+        },
+        {
+          "kind": "after",
+          "rect": null,
+          "scrollY": 0,
+          "options": 0
+        }
+      ]
+    },
+    {
+      "fill": 400,
+      "activation": "dom",
+      "errors": [],
+      "samples": [
+        {
+          "kind": "before",
+          "rect": [
+            10,
+            4085,
+            5,
+            5
+          ],
+          "scrollY": 0,
+          "options": 0,
+          "expanded": "false"
+        },
+        {
+          "kind": "focusin",
+          "rect": [
+            10,
+            447,
+            5,
+            5
+          ],
+          "scrollY": 3638,
+          "options": 0,
+          "expanded": "false"
+        },
+        {
+          "kind": "click",
+          "rect": [
+            10,
+            447,
+            5,
+            5
+          ],
+          "scrollY": 3638,
+          "options": 0,
+          "expanded": "false"
+        },
+        {
+          "kind": "focusin",
+          "rect": null,
+          "scrollY": 3638,
+          "options": 0
+        },
+        {
+          "kind": "click",
+          "rect": null,
+          "scrollY": 3638,
+          "options": 0
+        },
+        {
+          "kind": "scroll",
+          "rect": null,
+          "scrollY": 3638,
+          "options": 0
+        },
+        {
+          "kind": "after",
+          "rect": null,
+          "scrollY": 3638,
+          "options": 0
+        }
+      ]
+    },
+    {
+      "fill": 400,
+      "activation": "native",
+      "errors": [],
+      "samples": [
+        {
+          "kind": "before",
+          "rect": [
+            10,
+            4085,
+            5,
+            5
+          ],
+          "scrollY": 0,
+          "options": 0,
+          "expanded": "false"
+        },
+        {
+          "kind": "scroll",
+          "rect": [
+            10,
+            0,
+            5,
+            5
+          ],
+          "scrollY": 4085,
+          "options": 0,
+          "expanded": "false"
+        },
+        {
+          "kind": "focusin",
+          "rect": [
+            10,
+            0,
+            5,
+            5
+          ],
+          "scrollY": 4085,
+          "options": 0,
+          "expanded": "false"
+        },
+        {
+          "kind": "focusin",
+          "rect": null,
+          "scrollY": 3635,
+          "options": 0
+        },
+        {
+          "kind": "click",
+          "rect": null,
+          "scrollY": 3635,
+          "options": 0
+        },
+        {
+          "kind": "scroll",
+          "rect": null,
+          "scrollY": 3635,
+          "options": 0
+        },
+        {
+          "kind": "after",
+          "rect": null,
+          "scrollY": 3635,
+          "options": 0
+        }
+      ]
+    }
+  ]
+}

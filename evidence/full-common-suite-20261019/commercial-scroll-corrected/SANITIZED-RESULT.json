@@ -1,0 +1,33 @@
+{
+  "scope": "targeted five-case canonical commercial-parties integration; not final742 aggregate",
+  "metadata": {
+    "browser_commit": "ccf3597146a76a7522af33616c195dfb56d926bd",
+    "browser_sha256": "58e733e016c5ecf621e7ae8c9664cc1f892c872d56ba3b2441684730cdf0609d",
+    "tos_commit": "e6cf6953f456a82df30e037620afb314a99abc85",
+    "run_slug": "lpsuite19commercialscroll-1019-0356-1019-033240",
+    "template_database": "fe_e2e_w2tpl_e6cf6953_lptoscalendar6e7_template",
+    "binary": "/private/tmp/lp-suite-20261019/lightningpanda-ccf3597",
+    "worktree": "/private/tmp/lp-tos-calendar-6e7f7cf-fx",
+    "auth": "backend test-token -> localStorage; no UI login",
+    "version_gate": "direct scripts/run-fe-e2e.mjs with playwright.routed.config.ts; same documented bypass as upstream baseline",
+    "measurement": "functional coverage only; time -l is whole harness, not browser CPU/RSS",
+    "lightningpanda_shared_asset_cache_mb": "64",
+    "expected_selected_cases": 5,
+    "specs": [
+      "e2e/logistics/positions-commercial-parties.e2e.ts"
+    ],
+    "exit_code": 1,
+    "harness_wall_seconds": 47.175312209000005
+  },
+  "stats": {
+    "startTime": "2026-10-19T03:33:06.361Z",
+    "duration": 21036.164999999997,
+    "expected": 4,
+    "skipped": 0,
+    "unexpected": 1,
+    "flaky": 0
+  },
+  "failure": "AddParty option briefly exists then disappears before activation visibility check; response-closed error is secondary",
+  "cleanup": "run DBs left: 0 | retained ledger templates: ['fe_e2e_w2tpl_6e7f7cfb_lptoscalendar6e7_template', 'fe_e2e_w2tpl_e6cf6953_lptoscalendar6e7_template', 'fe_e2e_w2tpl_f6648125_lptoscalendar6e7_template', 'fe_e2e_w2tpl_f9fde4aa_batch16fx_template', 'fe_e2e_w2tpl_f9fde4aa_batch7_template', 'fe_e2e_w2tpl_f9fde4aa_batch7diag_template']\n",
+  "report_sha256": "dfda6b5e094354aef36f037111983cf899d6abaaf88471702fc7bc24a537a9a9"
+}

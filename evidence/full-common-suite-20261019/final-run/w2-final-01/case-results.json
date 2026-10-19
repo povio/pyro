@@ -1,0 +1,567 @@
+[
+  {
+    "file": "e2e/configuration/offices-inttra-credentials.e2e.ts",
+    "titlePath": [
+      "Configuration Offices INTTRA Credentials tab FE E2E",
+      "renders the empty INTTRA Credentials state"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/configuration/offices-inttra-credentials.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 2132,
+        "startTime": "2026-10-19T04:09:49.940Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/configuration/offices-inttra-credentials.e2e.ts",
+    "titlePath": [
+      "Configuration Offices INTTRA Credentials tab FE E2E",
+      "generates Client and Carrier credentials from the details modal"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/configuration/offices-inttra-credentials.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 2370,
+        "startTime": "2026-10-19T04:09:52.873Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/configuration/offices-inttra-credentials.e2e.ts",
+    "titlePath": [
+      "Configuration Offices INTTRA Credentials tab FE E2E",
+      "renders existing INTTRA credential values without exposing the password"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/configuration/offices-inttra-credentials.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1167,
+        "startTime": "2026-10-19T04:09:55.249Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/configuration/offices-inttra-credentials.e2e.ts",
+    "titlePath": [
+      "Configuration Offices INTTRA Credentials tab FE E2E",
+      "autosaves an INTTRA credential edit through the rendered form"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/configuration/offices-inttra-credentials.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1929,
+        "startTime": "2026-10-19T04:09:56.420Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/configuration/offices.e2e.ts",
+    "titlePath": [
+      "Configuration Offices FE E2E",
+      "lists configuration offices as rendered table rows"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/configuration/offices.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1050,
+        "startTime": "2026-10-19T04:09:58.542Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/configuration/offices.e2e.ts",
+    "titlePath": [
+      "Configuration Offices FE E2E",
+      "sorts configuration offices by name from the visible table header"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/configuration/offices.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 924,
+        "startTime": "2026-10-19T04:09:59.682Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/configuration/offices.e2e.ts",
+    "titlePath": [
+      "Configuration Offices FE E2E",
+      "searches configuration offices from the visible search input"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/configuration/offices.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1248,
+        "startTime": "2026-10-19T04:10:00.610Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/configuration/offices.e2e.ts",
+    "titlePath": [
+      "Configuration Offices FE E2E",
+      "creates a configuration office from the FE and verifies it in the list HTML"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/configuration/offices.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1175,
+        "startTime": "2026-10-19T04:10:01.863Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/configuration/employees-archived-filter.e2e.ts",
+    "titlePath": [
+      "Configuration Employees archived filter FE E2E",
+      "filters archived employees from the visible archived filter"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/configuration/employees-archived-filter.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 910,
+        "startTime": "2026-10-19T04:10:03.242Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/configuration/offices-bookkeeping.e2e.ts",
+    "titlePath": [
+      "Configuration Offices Bookkeeping tab FE E2E",
+      "autosaves the Bookkeeping cost center through the rendered form"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/configuration/offices-bookkeeping.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1987,
+        "startTime": "2026-10-19T04:10:04.411Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/configuration/offices-documents.e2e.ts",
+    "titlePath": [
+      "Configuration Offices Documents tab FE E2E",
+      "renders configured document language sections in the Office details modal"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/configuration/offices-documents.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1085,
+        "startTime": "2026-10-19T04:10:06.688Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/configuration/employees-employments.e2e.ts",
+    "titlePath": [
+      "Configuration Employees Employments tab FE E2E",
+      "closes the Add Employment drawer when Cancel is selected"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/configuration/employees-employments.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1715,
+        "startTime": "2026-10-19T04:10:08.041Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/configuration/offices-bank-accounts.e2e.ts",
+    "titlePath": [
+      "Configuration Offices Bank Accounts tab FE E2E",
+      "renders a bank account in the Office details Bank Accounts tab"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/configuration/offices-bank-accounts.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1256,
+        "startTime": "2026-10-19T04:10:10.077Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/configuration/offices-bank-accounts.e2e.ts",
+    "titlePath": [
+      "Configuration Offices Bank Accounts tab FE E2E",
+      "adds a bank account through the Office details modal"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/configuration/offices-bank-accounts.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1462,
+        "startTime": "2026-10-19T04:10:11.430Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/configuration/employees.e2e.ts",
+    "titlePath": [
+      "Configuration Employees FE E2E",
+      "lists configuration employees with rendered table columns"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/configuration/employees.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 925,
+        "startTime": "2026-10-19T04:10:13.083Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/configuration/employees.e2e.ts",
+    "titlePath": [
+      "Configuration Employees FE E2E",
+      "sorts employees by name from the visible table header"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/configuration/employees.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 940,
+        "startTime": "2026-10-19T04:10:14.092Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/configuration/employees.e2e.ts",
+    "titlePath": [
+      "Configuration Employees FE E2E",
+      "searches employees by route-backed search state"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/configuration/employees.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 800,
+        "startTime": "2026-10-19T04:10:15.036Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/configuration/employees.e2e.ts",
+    "titlePath": [
+      "Configuration Employees FE E2E",
+      "filters employees by office and global role"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/configuration/employees.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 865,
+        "startTime": "2026-10-19T04:10:15.839Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/configuration/offices-overview.e2e.ts",
+    "titlePath": [
+      "Configuration Offices Overview tab FE E2E",
+      "autosaves the Office name from the details modal"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/configuration/offices-overview.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1827,
+        "startTime": "2026-10-19T04:10:16.901Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/configuration/offices-overview.e2e.ts",
+    "titlePath": [
+      "Configuration Offices Overview tab FE E2E",
+      "autosaves the Office business transaction prefix from the details modal"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/configuration/offices-overview.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1625,
+        "startTime": "2026-10-19T04:10:18.810Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/calendar/calendar-filters.e2e.ts",
+    "titlePath": [
+      "preserves calendar filters across visits and clears saved preferences when disabled"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/calendar/calendar-filters.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1986,
+        "startTime": "2026-10-19T04:10:20.625Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/chat/internal-chat.e2e.ts",
+    "titlePath": [
+      "Internal chat FE E2E",
+      "rejects a locked group without permission"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/chat/internal-chat.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 889,
+        "startTime": "2026-10-19T04:10:22.800Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/chat/entity-chat-widget.e2e.ts",
+    "titlePath": [
+      "Entity chat widget",
+      "recovers after context retries exhaust a persistent server error"
+    ],
+    "status": "unexpected",
+    "expectedStatus": "passed",
+    "project": "e2e/chat/entity-chat-widget.e2e.ts",
+    "attempts": [
+      {
+        "status": "timedOut",
+        "retry": 0,
+        "duration_ms": 10106,
+        "startTime": "2026-10-19T04:10:24.048Z",
+        "error_count": 2
+      }
+    ]
+  },
+  {
+    "file": "e2e/chat/entity-chat-widget.e2e.ts",
+    "titlePath": [
+      "Entity chat widget",
+      "shows a nonterminal unauthorized context error and recovers on explicit retry"
+    ],
+    "status": "unexpected",
+    "expectedStatus": "passed",
+    "project": "e2e/chat/entity-chat-widget.e2e.ts",
+    "attempts": [
+      {
+        "status": "timedOut",
+        "retry": 0,
+        "duration_ms": 10021,
+        "startTime": "2026-10-19T04:10:34.350Z",
+        "error_count": 2
+      }
+    ]
+  },
+  {
+    "file": "e2e/chat/notification-settings.e2e.ts",
+    "titlePath": [
+      "keeps browser registration hidden when subscription lookup fails"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/chat/notification-settings.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1002,
+        "startTime": "2026-10-19T04:10:44.585Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/chat/notification-settings.e2e.ts",
+    "titlePath": [
+      "scopes message previews to the registered current browser"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/chat/notification-settings.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 2103,
+        "startTime": "2026-10-19T04:10:45.596Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/chat/notification-settings.e2e.ts",
+    "titlePath": [
+      "opens Activity settings when Chat is unavailable"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/chat/notification-settings.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 502,
+        "startTime": "2026-10-19T04:10:50.107Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/chat/notification-settings.e2e.ts",
+    "titlePath": [
+      "personal delivery preferences",
+      "keeps unsaved choices on failed saves and retries them"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/chat/notification-settings.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1199,
+        "startTime": "2026-10-19T04:10:47.702Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/chat/notification-settings.e2e.ts",
+    "titlePath": [
+      "personal delivery preferences",
+      "automatically saves changes on mobile"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/chat/notification-settings.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1199,
+        "startTime": "2026-10-19T04:10:48.904Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/chat/entity-chat.e2e.ts",
+    "titlePath": [
+      "expands an entity chat without joining or creating an empty sidebar entry"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/chat/entity-chat.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 5749,
+        "startTime": "2026-10-19T04:10:50.800Z",
+        "error_count": 0
+      }
+    ]
+  }
+]

@@ -1,0 +1,572 @@
+[
+  {
+    "file": "e2e/logistics/positions-cargo.e2e.ts",
+    "titlePath": [
+      "Positions Cargo tab FE E2E",
+      "loads a paginated notification target and opens its POD tab"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/positions-cargo.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 23261,
+        "startTime": "2026-10-19T04:12:52.838Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/positions-cargo.e2e.ts",
+    "titlePath": [
+      "Positions Cargo tab FE E2E",
+      "lists Position Cargo transport units and packages in rendered HTML"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/positions-cargo.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 2662,
+        "startTime": "2026-10-19T04:13:16.771Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/positions-cargo.e2e.ts",
+    "titlePath": [
+      "Positions Cargo tab FE E2E",
+      "shows a loading transition when switching Cargo document sub-tabs"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/positions-cargo.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 2837,
+        "startTime": "2026-10-19T04:13:19.436Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/positions-cargo.e2e.ts",
+    "titlePath": [
+      "Positions Cargo tab FE E2E",
+      "updates editable Transport Unit number and seals from the FE"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/positions-cargo.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 11924,
+        "startTime": "2026-10-19T04:13:22.276Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/positions-cargo.e2e.ts",
+    "titlePath": [
+      "Positions Cargo tab FE E2E",
+      "updates editable Transport Unit Notes from the FE"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/positions-cargo.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 7036,
+        "startTime": "2026-10-19T04:13:34.203Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/positions-cargo.e2e.ts",
+    "titlePath": [
+      "Positions Cargo tab FE E2E",
+      "updates editable Transport Unit tare, VGM, and volume from the FE"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/positions-cargo.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 6892,
+        "startTime": "2026-10-19T04:13:41.241Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/positions-cargo.e2e.ts",
+    "titlePath": [
+      "Positions Cargo tab FE E2E",
+      "updates editable Transport Unit net and gross weights from the FE"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/positions-cargo.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 3803,
+        "startTime": "2026-10-19T04:13:48.136Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/positions-cargo.e2e.ts",
+    "titlePath": [
+      "Positions Cargo tab FE E2E",
+      "updates editable Transport Unit volumetric and chargeable weights from the FE"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/positions-cargo.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 3916,
+        "startTime": "2026-10-19T04:13:51.942Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/positions-cargo.e2e.ts",
+    "titlePath": [
+      "Positions Cargo tab FE E2E",
+      "clears Transport Unit Notes from the FE and persists the empty value"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/positions-cargo.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 7107,
+        "startTime": "2026-10-19T04:13:55.861Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/positions-cargo.e2e.ts",
+    "titlePath": [
+      "Positions Cargo tab FE E2E",
+      "updates editable Package outer dimensions from the FE"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/positions-cargo.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 10352,
+        "startTime": "2026-10-19T04:14:02.970Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/positions-cargo.e2e.ts",
+    "titlePath": [
+      "Positions Cargo tab FE E2E",
+      "updates editable Package volume and net weight from the FE"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/positions-cargo.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 8038,
+        "startTime": "2026-10-19T04:14:13.325Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/positions-cargo.e2e.ts",
+    "titlePath": [
+      "Positions Cargo tab FE E2E",
+      "updates editable Package gross and chargeable weights from the FE"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/positions-cargo.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 11355,
+        "startTime": "2026-10-19T04:14:21.366Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/positions-cargo.e2e.ts",
+    "titlePath": [
+      "Positions Cargo tab FE E2E",
+      "updates editable Package quantity and volume totals from the FE"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/positions-cargo.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 8309,
+        "startTime": "2026-10-19T04:14:32.724Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/positions-cargo.e2e.ts",
+    "titlePath": [
+      "Positions Cargo tab FE E2E",
+      "updates editable Package net and gross totals from the FE"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/positions-cargo.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 8774,
+        "startTime": "2026-10-19T04:14:41.036Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/positions-cargo.e2e.ts",
+    "titlePath": [
+      "Positions Cargo tab FE E2E",
+      "updates editable Package volumetric and chargeable totals from the FE"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/positions-cargo.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 8534,
+        "startTime": "2026-10-19T04:14:49.813Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/positions-cargo.e2e.ts",
+    "titlePath": [
+      "Positions Cargo tab FE E2E",
+      "updates editable Package identifier and description from the FE"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/positions-cargo.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 9126,
+        "startTime": "2026-10-19T04:14:58.350Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/positions-cargo.e2e.ts",
+    "titlePath": [
+      "Positions Cargo tab FE E2E",
+      "updates editable Package marks and notes from the FE"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/positions-cargo.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 9163,
+        "startTime": "2026-10-19T04:15:07.480Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/positions-cargo.e2e.ts",
+    "titlePath": [
+      "Positions Cargo tab FE E2E",
+      "updates editable Package customs text fields from the FE"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/positions-cargo.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 12091,
+        "startTime": "2026-10-19T04:15:16.651Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/positions-cargo.e2e.ts",
+    "titlePath": [
+      "Positions Cargo tab FE E2E",
+      "adds Air Cargo without a Transport Unit Type from the FE"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/positions-cargo.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 2902,
+        "startTime": "2026-10-19T04:15:28.748Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/positions-cargo.e2e.ts",
+    "titlePath": [
+      "Positions Cargo tab FE E2E",
+      "adds a Package from the FE"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/positions-cargo.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 3800,
+        "startTime": "2026-10-19T04:15:31.654Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/positions-cargo.e2e.ts",
+    "titlePath": [
+      "Positions Cargo tab FE E2E",
+      "deletes a Package from the FE"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/positions-cargo.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 7466,
+        "startTime": "2026-10-19T04:15:35.461Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/positions-cargo.e2e.ts",
+    "titlePath": [
+      "Positions Cargo tab FE E2E",
+      "bulk deletes Packages across Transport Units from the FE"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/positions-cargo.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 7232,
+        "startTime": "2026-10-19T04:15:42.931Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/positions-cargo.e2e.ts",
+    "titlePath": [
+      "Positions Cargo tab FE E2E",
+      "selects all Packages in a Transport Unit and then across the Position from the FE"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/positions-cargo.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 10591,
+        "startTime": "2026-10-19T04:15:50.168Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/positions-cargo.e2e.ts",
+    "titlePath": [
+      "Positions Cargo tab FE E2E",
+      "keeps source-linked Packages in source Position order and allows bulk selection from the FE"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/positions-cargo.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 6920,
+        "startTime": "2026-10-19T04:16:00.781Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/positions-cargo.e2e.ts",
+    "titlePath": [
+      "Positions Cargo tab FE E2E",
+      "adds a Package to a master Position cargo that already has linked sub-position Packages"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/positions-cargo.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 7556,
+        "startTime": "2026-10-19T04:16:07.716Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/positions-cargo.e2e.ts",
+    "titlePath": [
+      "Positions Cargo tab FE E2E",
+      "duplicates a Package from the FE"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/positions-cargo.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 4658,
+        "startTime": "2026-10-19T04:16:15.276Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/positions-cargo.e2e.ts",
+    "titlePath": [
+      "Positions Cargo tab FE E2E",
+      "keeps documents read-only for packages linked from sub-positions"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/positions-cargo.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 7286,
+        "startTime": "2026-10-19T04:16:19.937Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/positions-cargo.e2e.ts",
+    "titlePath": [
+      "Positions Cargo tab FE E2E",
+      "toggles package auto-calculate totals from the FE"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/positions-cargo.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 13892,
+        "startTime": "2026-10-19T04:16:27.235Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/positions-close.e2e.ts",
+    "titlePath": [
+      "Positions close FE E2E",
+      "closes an open Position from the Position overview"
+    ],
+    "status": "unexpected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/positions-close.e2e.ts",
+    "attempts": [
+      {
+        "status": "failed",
+        "retry": 0,
+        "duration_ms": 11619,
+        "startTime": "2026-10-19T04:16:41.965Z",
+        "error_count": 1
+      }
+    ]
+  },
+  {
+    "file": "e2e/logistics/positions-close.e2e.ts",
+    "titlePath": [
+      "Positions close FE E2E",
+      "reopens the same closed Position from the closed banner"
+    ],
+    "status": "unexpected",
+    "expectedStatus": "passed",
+    "project": "e2e/logistics/positions-close.e2e.ts",
+    "attempts": [
+      {
+        "status": "failed",
+        "retry": 0,
+        "duration_ms": 12839,
+        "startTime": "2026-10-19T04:16:53.844Z",
+        "error_count": 1
+      }
+    ]
+  }
+]

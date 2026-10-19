@@ -1,0 +1,19 @@
+{
+  "commit": "fb3b12dc65886e8271629dcf541294f2df725c47",
+  "tree": "f02a717ecc3f0b6f18883d0c70153c57fa57d355",
+  "binary": "/private/tmp/lp-suite-20261019/lightningpanda-fb3b12d",
+  "sha256": "df3eb8b9a3794b76ac25a65d4854e0ae31c15ce81a5199b29b1cb743c0c03e3b",
+  "build_cwd": "/private/tmp/lp-style-variable-dimensions",
+  "command": "CARGO_PROFILE_RELEASE_DEBUG=0 cargo build --release --locked -p lightningpanda",
+  "build_log_sha256": "bc2244dc93d30078b74abdb1f27e4bc400affa2f6df7973013e5d2422c09a2a7",
+  "compiler": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: aarch64-apple-darwin\nrelease: 1.99.1\nLLVM version: 23.1.1\n",
+  "sdk": "26.5",
+  "allow_jit": true,
+  "polling_traps": true,
+  "shared_cache_mib": 64,
+  "private_cache_mib": 64,
+  "production_equivalent_to": "7f7bd5a91660c9100a6cff7dc1b606141a9e2f01",
+  "build_reuse_disclosure": "Exact final checkout locked build reused same-worktree compiled artifacts because all production/manifests/scripts match; binary copied immutably after exact final invocation. Previous 7f7 copy preserved.",
+  "binary_equal_to_7f7": true,
+  "verified_utc": "2026-10-19T04:08:30.795211+00:00"
+}

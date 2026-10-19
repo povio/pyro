@@ -1,0 +1,38 @@
+{
+  "source_fixture": "/private/tmp/lp-tos-f9f-batch16-fx",
+  "new_fixture": "/private/tmp/lp-tos-calendar-6e7f7cf-fx",
+  "mechanism": "APFS clone copy; source runtime input contents unchanged; prepared-runtime fail-closed guard required",
+  "copied": [
+    "node_modules",
+    "apps/be/node_modules",
+    "apps/fe/node_modules",
+    "apps/pdfgen/node_modules",
+    "apps/be/dist",
+    "apps/pdfgen/build",
+    ".tmp/fe-e2e-portless/fe-dist",
+    ".tmp/fe-e2e-portless/runtime-artifacts",
+    ".tmp/fe-e2e-portless/runtime-build-stamp.json"
+  ],
+  "verified_artifacts": [
+    {
+      "path": ".tmp/fe-e2e-portless/runtime-artifacts/e2e-main",
+      "sha256": "14e23ad4e4885f768b697d68ec2e2f6abd9cbaf2bf01584ecee06fab792d002e"
+    },
+    {
+      "path": "apps/be/dist/main.js",
+      "sha256": "3e38780e0e56fc8cb9cabc121379d4eb2bd453d01fef8fb5d0907af2664c6391"
+    },
+    {
+      "path": "apps/pdfgen/build/index.html",
+      "sha256": "d3a84ba536529edbcb357d0d1a0c5ee7ad1f3c9e03021105fcffdf6489676897"
+    },
+    {
+      "path": ".tmp/fe-e2e-portless/fe-dist/index.html",
+      "sha256": "57f94b451c9fe6e5b6f7b4dd353aae601c4abaab471c2d821f3f33a25049402d"
+    },
+    {
+      "path": "apps/pdfgen/src/data/common/common.models.ts",
+      "sha256": "0ff20f0e8a74be0d71b89df0c1adad2d5797778894839895e8839fd0d3f96010"
+    }
+  ]
+}

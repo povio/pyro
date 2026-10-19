@@ -1,0 +1,33 @@
+{
+  "scope": "targeted original assertions on corrected common-file selection, not final742 aggregate",
+  "metadata": {
+    "browser_commit": "5b467880d75c3e14a0b0108775de25f182d39734",
+    "browser_sha256": "18fa9de7ab0c9d92247b70e813bdea0fe78efc4da42cbbbadcf18a0a3399f4ee",
+    "tos_commit": "f664812510da9c1bab3f045e1b2dbd4ea46aeea5",
+    "run_slug": "lpsuite19exclude-1019-031252",
+    "template_database": "fe_e2e_w2tpl_f6648125_lptoscalendar6e7_template",
+    "binary": "/private/tmp/lp-suite-20261019/lightningpanda-5b46788",
+    "worktree": "/private/tmp/lp-tos-calendar-6e7f7cf-fx",
+    "auth": "backend test-token -> localStorage; no UI login",
+    "version_gate": "direct scripts/run-fe-e2e.mjs with playwright.routed.config.ts; same documented bypass as upstream baseline",
+    "measurement": "functional coverage only; time -l is whole harness, not browser CPU/RSS",
+    "lightningpanda_shared_asset_cache_mb": "64",
+    "expected_selected_cases": 1,
+    "specs": [
+      "e2e/logistics/positions-exclude-from-statistics.e2e.ts"
+    ],
+    "exit_code": 0,
+    "harness_wall_seconds": 30.056958834
+  },
+  "stats": {
+    "startTime": "2026-10-19T03:13:17.450Z",
+    "duration": 4592.13,
+    "expected": 1,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  },
+  "report_sha256": "48a342e43b0ce8740d1613c0486a9a25ec9105343a0006463d7b7cd3d008534e",
+  "cleanup": "run DBs left: 0 | retained ledger templates: ['fe_e2e_w2tpl_6e7f7cfb_lptoscalendar6e7_template', 'fe_e2e_w2tpl_f6648125_lptoscalendar6e7_template', 'fe_e2e_w2tpl_f9fde4aa_batch16fx_template', 'fe_e2e_w2tpl_f9fde4aa_batch7_template', 'fe_e2e_w2tpl_f9fde4aa_batch7diag_template']\n",
+  "correction": "one Settings button activation before existing switch lookup; original toggle/API/default-list-hidden assertions unchanged"
+}

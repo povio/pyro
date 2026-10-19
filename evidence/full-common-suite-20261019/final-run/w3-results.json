@@ -1,0 +1,4807 @@
+{
+  "engine": "fb3b12dc65886e8271629dcf541294f2df725c47",
+  "tos": "e6cf6953f456a82df30e037620afb314a99abc85",
+  "manifest_sha256": "542d479b709249d072e3b57c1324c894c4378fc5373892ae64c0687486f2ae19",
+  "worker": "W3",
+  "scope": "275 of742 canonical common cases; W2 owns other467;116 nativeOnly separate",
+  "selection_sha256": "42e9b3dcafb44e7180fe038e9368f421e4bf0beb784163397b92fb91bcfc8a58",
+  "binary": {
+    "head": "fb3b12dc65886e8271629dcf541294f2df725c47",
+    "binary": "/private/tmp/lp-w3-final-fb3-e6cf/lightningpanda-fb3b12dc-release",
+    "sha256": "5384b4534b12b3aa537045a3d9908c89279c0d5036db7a75a44788fda4f4603c",
+    "sdk": "MacOSX26.5.sdk",
+    "profile": "locked release",
+    "signing": "strict verification and allow-jit true",
+    "execution": "final W3 common lane"
+  },
+  "started_utc": "2026-10-19T04:03:07.292020+00:00",
+  "ended_utc": "2026-10-19T04:17:55.407675+00:00",
+  "whole_lane_wall_seconds": 888.1409871249999,
+  "clock": "whole lane monotonic duration; UTC start/end recorded separately",
+  "shared_asset_cache_mb": 64,
+  "playwright_workers": 1,
+  "batches": [
+    {
+      "index": 1,
+      "cases": 54,
+      "files": 10,
+      "selection_sha256": "f7f303aa764d87f6e2ac793a76af42146ee174b7cf6a343828c130fac536a793",
+      "run_slug": "w3final01-1019-040307",
+      "utc_date": "2026-10-19",
+      "harness_wall_seconds": 106.630710542,
+      "harness_exit": 0,
+      "report_sha256": "26537318ee1d5d0144c3596ac8d7b59c015630a9f575b4e0f18da1ff20767163",
+      "statuses": {
+        "expected": 54
+      },
+      "cleanup_new_run_databases": 0,
+      "preexisting_database_set_preserved": true,
+      "source_hashes_unchanged": true
+    },
+    {
+      "index": 2,
+      "cases": 63,
+      "files": 8,
+      "selection_sha256": "a2884acbb68d11499f572f9ae304610270cce2bd602f5e561391a3c8141ac58a",
+      "run_slug": "w3final02-1019-040456",
+      "utc_date": "2026-10-19",
+      "harness_wall_seconds": 210.29159,
+      "harness_exit": 0,
+      "report_sha256": "fd983c75611bd7e7cfabdb818a0b18ba5f7e6e92a907d4450f9b820ab201ceb5",
+      "statuses": {
+        "expected": 63
+      },
+      "cleanup_new_run_databases": 0,
+      "preexisting_database_set_preserved": true,
+      "source_hashes_unchanged": true
+    },
+    {
+      "index": 3,
+      "cases": 66,
+      "files": 7,
+      "selection_sha256": "ef8e8954244e17d4359913e24ca20b0beb23c580da63643930eff7157f0d7291",
+      "run_slug": "w3final03-1019-040827",
+      "utc_date": "2026-10-19",
+      "harness_wall_seconds": 303.599180709,
+      "harness_exit": 1,
+      "report_sha256": "037e75779155d88ef70169b9aa0276dac297aa74ce6b62f0af89b505da9fb3b6",
+      "statuses": {
+        "expected": 65,
+        "unexpected": 1
+      },
+      "cleanup_new_run_databases": 0,
+      "preexisting_database_set_preserved": true,
+      "source_hashes_unchanged": true
+    },
+    {
+      "index": 4,
+      "cases": 67,
+      "files": 10,
+      "selection_sha256": "642423d855c1e5dc9b724a820ae581b879fa81339119a20b98e419bb3343e23f",
+      "run_slug": "w3final04-1019-041332",
+      "utc_date": "2026-10-19",
+      "harness_wall_seconds": 204.466711375,
+      "harness_exit": 1,
+      "report_sha256": "08070a7d8c04c80913f825a9310074df8ae4d654a24725110967a344a6ab3ebe",
+      "statuses": {
+        "expected": 64,
+        "unexpected": 3
+      },
+      "cleanup_new_run_databases": 0,
+      "preexisting_database_set_preserved": true,
+      "source_hashes_unchanged": true
+    },
+    {
+      "index": 5,
+      "cases": 25,
+      "files": 4,
+      "selection_sha256": "5709b26b6c6d7160ca26deb567f90601e5b22295c911a81e32c2519da69c7251",
+      "run_slug": "w3final05-1019-041658",
+      "utc_date": "2026-10-19",
+      "harness_wall_seconds": 56.134689707999996,
+      "harness_exit": 0,
+      "report_sha256": "22faa2a9171871a46c76eb27c3ee1ed56145a200fdceb6829a74c0a759cd3873",
+      "statuses": {
+        "expected": 25
+      },
+      "cleanup_new_run_databases": 0,
+      "preexisting_database_set_preserved": true,
+      "source_hashes_unchanged": true
+    }
+  ],
+  "outcomes": {
+    "expected": 271,
+    "unexpected": 4
+  },
+  "cases": [
+    {
+      "case_id": "a751aec7d24875fea6deb2a3d6698f60422c0b2d95d763b64924068daa7e2f9e",
+      "file": "e2e/configuration/roles-overview.e2e.ts",
+      "titlePath": [
+        "Configuration Roles Overview tab FE E2E",
+        "updates role overview fields from the details modal"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1237
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "93c005ea0124cf280a6f20cc2071acca271babf818ebd0c5c0aa3b02a28af0e1",
+      "file": "e2e/configuration/roles-overview.e2e.ts",
+      "titlePath": [
+        "Configuration Roles Overview tab FE E2E",
+        "deletes a role from the overview tab and removes it from the rendered list"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1248
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "1c0f962252342b900f75d1eb5565379db086d22185717b89ab69d0d102451db5",
+      "file": "e2e/configuration/employees-overview.e2e.ts",
+      "titlePath": [
+        "Configuration Employees Overview tab FE E2E",
+        "redirects a bare Employee history URL to the Overview tab"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1510
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "b833e0e98f60efc6412060f524eef52dfe4222eaf6c4132d19b34a2a47c98a66",
+      "file": "e2e/configuration/employees-overview.e2e.ts",
+      "titlePath": [
+        "Configuration Employees Overview tab FE E2E",
+        "autosaves Employee Overview first name from the details modal"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2495
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "fc8d033d0acf2a7a468db5003d6889a8a78881d5ff849f4999bd9586c0aa4c56",
+      "file": "e2e/configuration/employees-overview.e2e.ts",
+      "titlePath": [
+        "Configuration Employees Overview tab FE E2E",
+        "autosaves Employee Overview phone from the details modal"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2591
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "627367c2e8010f5f6ee09ea1d7645fe43f611b2035e9fe0975b4de83373feaa5",
+      "file": "e2e/configuration/employees-overview.e2e.ts",
+      "titlePath": [
+        "Configuration Employees Overview tab FE E2E",
+        "keeps Employee Overview phone cleared after autosave"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2349
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "ca003906f51dba2f47953dd34aaef60d6b0f329b683aee594e97f32869c07833",
+      "file": "e2e/configuration/employees-overview.e2e.ts",
+      "titlePath": [
+        "Configuration Employees Overview tab FE E2E",
+        "does not autosave empty required Employee Overview name fields"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2669
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "b1042ded791a7b0526c6a14fecaf763554cb92c5da9721a8c3691946424f5613",
+      "file": "e2e/configuration/employees-overview.e2e.ts",
+      "titlePath": [
+        "Configuration Employees Overview tab FE E2E",
+        "archives a user from the Employee Overview tab and removes it from the active Configuration list"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1856
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "3d09d518425cb1d4573740045447740103d5379d44d9cf4c5176fc3a7745a5b1",
+      "file": "e2e/control-tower/navigation.e2e.ts",
+      "titlePath": [
+        "Control Tower navigation FE E2E",
+        "renders Bookings from its direct route"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 485
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "57fd41a13b1f88084069195e0243193c533f3b384f2d87ba6f6abd10f04f6ddd",
+      "file": "e2e/control-tower/navigation.e2e.ts",
+      "titlePath": [
+        "Control Tower navigation FE E2E",
+        "renders Calendar from its direct route"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1209
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "c99d28a0b61002ed08709c79c737d7683b1e46f4e1a2484751aa2342c89d04f9",
+      "file": "e2e/control-tower/navigation.e2e.ts",
+      "titlePath": [
+        "Control Tower navigation FE E2E",
+        "renders Containers from its direct route"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 376
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "e84ba88f34ec97fcc18bb01b4c425f154c8bb28691ba35147d8e50883175c370",
+      "file": "e2e/control-tower/navigation.e2e.ts",
+      "titlePath": [
+        "Control Tower navigation FE E2E",
+        "renders Packages from its direct route"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 345
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "2ce74256e14caf085140a3cc8dbd940c6e5df1a700830122e3810b28820bede0",
+      "file": "e2e/control-tower/navigation.e2e.ts",
+      "titlePath": [
+        "Control Tower navigation FE E2E",
+        "does not request unauthorized /control-tower/users content"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1123
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "b5358520bb6f8d8f404d95b99551d6ff54f10501f58f70a864ea61d1f9c360e5",
+      "file": "e2e/control-tower/calendar.e2e.ts",
+      "titlePath": [
+        "Control Tower calendar workflows",
+        "searches events and restores matches after an empty result"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1810
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "cfa66b881a813f62f4d142aac5d5f3ffcf1699e3040f08b54a1c24c5526313c3",
+      "file": "e2e/control-tower/calendar.e2e.ts",
+      "titlePath": [
+        "Control Tower calendar workflows",
+        "switches to week view and advances to the shipment events"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 575
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "f13e6911dac1be820abb4974cde868aa9baf2d0ce448f844a11a7f9dfb0220d9",
+      "file": "e2e/control-tower/calendar.e2e.ts",
+      "titlePath": [
+        "Control Tower calendar workflows",
+        "changes month and returns to today without losing search"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 538
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "573d5ee5884ec3a2aadf65cdde0a4eee7c30795ba56f3d2c0926964705e8f2ec",
+      "file": "e2e/control-tower/calendar.e2e.ts",
+      "titlePath": [
+        "Control Tower calendar workflows",
+        "opens Booking event details using the selected calendar type"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1031
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "bc065c299e92937592cce4d838de2411e435d7bf507bbbd86030b42ca5915472",
+      "file": "e2e/control-tower/calendar.e2e.ts",
+      "titlePath": [
+        "Control Tower calendar workflows",
+        "opens CustomerReference event details using the selected calendar type"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 960
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "f55e79f7f68ef138796cacf537615ffaf6bafc301057200cac81b7057a3fa265",
+      "file": "e2e/control-tower/calendar.e2e.ts",
+      "titlePath": [
+        "Control Tower calendar workflows",
+        "opens Container event details using the selected calendar type"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 926
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "7a117bfa589e7ba0a91b9f65a39c7732b161b7ed001fff5ffd17157239386a68",
+      "file": "e2e/control-tower/calendar.e2e.ts",
+      "titlePath": [
+        "Control Tower calendar workflows",
+        "opens Package event details using the selected calendar type"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 987
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "9975c9b1d4c0ed2c1510e2e02bee98aae5c230d842e68877dc454956a5b36b1c",
+      "file": "e2e/email-logs.e2e.ts",
+      "titlePath": [
+        "Email Logs",
+        "global reader can discover office and global logs"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 977
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "444f816f7065c449f5b246f9234a3ef6c3feab652309f586a13e97582b648014",
+      "file": "e2e/email-logs.e2e.ts",
+      "titlePath": [
+        "Email Logs",
+        "includes the complete viewer-local To day and excludes the next day"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 594
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "ea6f579a30a06429d5b126e6d7433cbeea79b375500aa2b359d95fdea8d19306",
+      "file": "e2e/email-logs.e2e.ts",
+      "titlePath": [
+        "Email Logs",
+        "preserves historical actor and office attribution after source records change"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 23
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "055643135760045a1f65a3453d095bd41bd93673139c0b3a5609253c9670d335",
+      "file": "e2e/email-logs.e2e.ts",
+      "titlePath": [
+        "Email Logs",
+        "returns list-safe stable pages for combined server-side filters"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 31
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "21b8a182e4123f1b26cdddd67df8be627a319ce3638799895790f58adaaa06e1",
+      "file": "e2e/email-logs.e2e.ts",
+      "titlePath": [
+        "Email Logs",
+        "preserves quickly typed text filters through URL updates"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1337
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "ae1ce7dd9e812165a05fd10294428815d0a1fadace653a0d4fc9068d1fe06234",
+      "file": "e2e/email-logs.e2e.ts",
+      "titlePath": [
+        "Email Logs",
+        "restores text drafts on Back and Forward after duplicate blur commits"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1806
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "65a4aa7c890e50b23faeb5706cd0df5257217ec81de9704561544fcdbd2e1dcf",
+      "file": "e2e/email-logs.e2e.ts",
+      "titlePath": [
+        "Email Logs",
+        "explains a reversed date range"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 458
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "69a118b65ce60c8a407094a0729711691d661e8e56c824a5922a2c1a5cadf44b",
+      "file": "e2e/email-logs.e2e.ts",
+      "titlePath": [
+        "Email Logs",
+        "old email log bookmarks redirect to Configuration and retain filters"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 462
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "31303d1e3d1f737683f08d73c9c086af4bc78add593cd5c5c6f711a83c950695",
+      "file": "e2e/email-logs.e2e.ts",
+      "titlePath": [
+        "Email Logs",
+        "malformed bookmarked filters recover without crashing the route"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 464
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "a4bd14ed4a28441af633901807520534419352a3d8b9e6bd9a612131a2b89cd4",
+      "file": "e2e/finances/navigation.e2e.ts",
+      "titlePath": [
+        "Finances navigation FE E2E",
+        "renders Dunning - Monitoring from its direct route"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 758
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "66ce61f4bb9a3d1733c1a1a10a9dcd1ed43c46e1f5edc0384d84aad549549659",
+      "file": "e2e/finances/navigation.e2e.ts",
+      "titlePath": [
+        "Finances navigation FE E2E",
+        "renders Outstanding Invoices from its direct route"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 602
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "d67662aa3d87cca87eb353f9706b6422ae608e05b18c05e3c667803d423217c9",
+      "file": "e2e/finances/navigation.e2e.ts",
+      "titlePath": [
+        "Finances navigation FE E2E",
+        "renders Payments from its direct route"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 544
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "93377e13787a10e046ebf4014f48a4d2d06de2b88c09b6842595d20036323c10",
+      "file": "e2e/finances/navigation.e2e.ts",
+      "titlePath": [
+        "Finances navigation FE E2E",
+        "renders Uninvoiced Charges from its direct route"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 504
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "2c18da0581b4b8409e27d6a1b261861f3cceaab0598885634212c06e6ea0f72c",
+      "file": "e2e/finances/navigation.e2e.ts",
+      "titlePath": [
+        "Finances navigation FE E2E",
+        "redirects unauthorized /platform/finances/bookkeeping-exports access without a forbidden API request"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 605
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "ff411a8996d3d95a19d76fcfac00303c8801dada539c90447510343db340435b",
+      "file": "e2e/finances/navigation.e2e.ts",
+      "titlePath": [
+        "Finances navigation FE E2E",
+        "redirects unauthorized /platform/finances/dunnings-history access without a forbidden API request"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 529
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "2868b614071a5c0a1d37cc6efcc67d27f9d1db316dcbf1fba884c0cfc3a7236f",
+      "file": "e2e/finances/uninvoiced-charges.e2e.ts",
+      "titlePath": [
+        "Finances Uninvoiced Charges FE E2E",
+        "lists filtered incoming charges with the independently expected total"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 846
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "ccc09355cba1b25356710245a4f35925f9abb468b0097d48da5c17eb6dfa82ec",
+      "file": "e2e/finances/uninvoiced-charges.e2e.ts",
+      "titlePath": [
+        "Finances Uninvoiced Charges FE E2E",
+        "switches direction while preserving the position filter"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 605
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "5723169330bf8af6474c4a2172682ccbb56d02b642df06a58e4d5fc47a3df644",
+      "file": "e2e/finances/uninvoiced-charges.e2e.ts",
+      "titlePath": [
+        "Finances Uninvoiced Charges FE E2E",
+        "exposes all page-specific filter and column configuration choices"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1188
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "141cccaabb9131860a5c3cffcee5dff0a65628b0603730fc4a8abbb42dc2b456",
+      "file": "e2e/finances/uninvoiced-charges.e2e.ts",
+      "titlePath": [
+        "Finances Uninvoiced Charges FE E2E",
+        "sorts identity columns through their rendered headers"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 813
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "985438edcdefbb9bd12da4bfeff6674d929121521ee3a733a170b401dfc6a7a8",
+      "file": "e2e/finances/uninvoiced-charges.e2e.ts",
+      "titlePath": [
+        "Finances Uninvoiced Charges FE E2E",
+        "sorts financial columns through their rendered headers"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 846
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "f9f7d0a6abc9f80005d19c812e172583fc3092466bec0cdfea2ca0ab503a5551",
+      "file": "e2e/finances/uninvoiced-charges.e2e.ts",
+      "titlePath": [
+        "Finances Uninvoiced Charges FE E2E",
+        "submits the filtered export with the selected receiver output"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 3344
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "51d4cf4972fe22fd809a747fb999301aa6fba8f91c46a17839b35460adac98d2",
+      "file": "e2e/logistics/position-export-templates.e2e.ts",
+      "titlePath": [
+        "Position export templates FE E2E",
+        "exports with the ordered columns from a selected template"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 953
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "8b2f835d36ecb3175067feb9e923e7c47fca43b021d4ebf310d04881644a67f6",
+      "file": "e2e/logistics/position-export-templates.e2e.ts",
+      "titlePath": [
+        "Position export templates FE E2E",
+        "loads Invoices export templates on its export page"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1238
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "1aedcdcb040ae7a7da6aacf2e2a460c3fe30fa5227230bf72e45707c41fb46da",
+      "file": "e2e/logistics/position-export-templates.e2e.ts",
+      "titlePath": [
+        "Position export templates FE E2E",
+        "loads Invoice Charges export templates on its export page"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1193
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "f6e7913219234ab98643fea45b711d97dc879237d0b6e106b335663874d971ce",
+      "file": "e2e/logistics/position-export-templates.e2e.ts",
+      "titlePath": [
+        "Position export templates FE E2E",
+        "loads Invoice Payments export templates on its export page"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 502
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "8fc61bf1068cc5fc701a749dc5df722a6feed6a6bc8c180fa5c5e03956b30f8f",
+      "file": "e2e/logistics/position-export-templates.e2e.ts",
+      "titlePath": [
+        "Position export templates FE E2E",
+        "loads Uninvoiced Charges export templates on its export page"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 566
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "00c5a191e9b86bd688c0e0d4e28e5c5f2de307b69b95187f39e3bc827fdd1752",
+      "file": "e2e/logistics/position-export-templates.e2e.ts",
+      "titlePath": [
+        "Position export templates FE E2E",
+        "loads Quotes export templates on its export page"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 668
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "1b2cc63e2446e73efa520298c6998b2e2910c98e5f6547a489c5bebd1a8770dc",
+      "file": "e2e/logistics/position-export-templates.e2e.ts",
+      "titlePath": [
+        "Position export templates FE E2E",
+        "archives and restores a shared template from Master Data"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1203
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "f3c4063c7511e8ba592c6e543573c38f36df17c868daa386b6df540234d06297",
+      "file": "e2e/logistics/position-export-templates.e2e.ts",
+      "titlePath": [
+        "Position export templates FE E2E",
+        "lists active and archived templates when the Archived filter is All"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 593
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "f427acb78f2df05ddd6bd2e0d0ad4cad1c0919cd4b2fdbd989ae2cdb3249cc6b",
+      "file": "e2e/logistics/analytics.e2e.ts",
+      "titlePath": [
+        "Positions Analytics FE E2E",
+        "redirects a positions user without analytics permission away from the analytics URL"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1012
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "2065ff6851a6f99c9659bb40e6b53a8e27e441a890be49812bbcf4e1af972002",
+      "file": "e2e/logistics/positions-air-transport-order.e2e.ts",
+      "titlePath": [
+        "Air Transport Order",
+        "renders the Air-only working document"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2067
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "9a589ebae8ddd70f524a9c29dbdba39b467d1237a80462281a750392f3af7c9a",
+      "file": "e2e/logistics/positions-air-transport-order.e2e.ts",
+      "titlePath": [
+        "Air Transport Order",
+        "persists Air Transport Order unit toggles"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1525
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "2005678f9feee6060bcb61315032e8bfff08c4acff887d8639dbfdf321151bde",
+      "file": "e2e/logistics/positions-air-transport-order.e2e.ts",
+      "titlePath": [
+        "Air Transport Order",
+        "toggles HS codes"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1592
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "7e0a1058e44f6c7d06a5dd176a83e6d5ed6258fd496e13f61fcd21ced67225d9",
+      "file": "e2e/logistics/positions-air-transport-order.e2e.ts",
+      "titlePath": [
+        "Air Transport Order",
+        "previews HS codes"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1514
+        }
+      ],
+      "batch": 1
+    },
+    {
+      "case_id": "c8687918072879e5f8d42a9358fc07db589e1ca23eb26f95eb08d536bfbcdbb6",
+      "file": "e2e/logistics/positions-analytics.e2e.ts",
+      "titlePath": [
+        "Positions Analytics page FE E2E",
+        "applies customer and carrier Analytics filters"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 749
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "9b577b271a7b8c8e0dc9cd38bbc04f05a77b0c301b7b795b8c77581f713eee7f",
+      "file": "e2e/logistics/positions-analytics.e2e.ts",
+      "titlePath": [
+        "Positions Analytics page FE E2E",
+        "applies department, employee, and sales rep Analytics filters"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 825
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "a4f7ec5c5a6cbae5b79734dbb0f5d0cc8b737b1015d9b21d54e8ca70df121988",
+      "file": "e2e/logistics/positions-analytics.e2e.ts",
+      "titlePath": [
+        "Positions Analytics page FE E2E",
+        "opens the Analytics configure columns dialog"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 94
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "ed475f590fc3a4b002792b5747355bd15f776b2ab5c6e3d011351a2d2b80c6b2",
+      "file": "e2e/logistics/positions-analytics.e2e.ts",
+      "titlePath": [
+        "Positions Analytics page FE E2E",
+        "Analytics graph and table views",
+        "renders the Analytics graph view"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 105
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "c6cc29ceda88b0288bc405f1540aef68ab3d6dc273c47567a5ccf44707943c4c",
+      "file": "e2e/logistics/positions-analytics.e2e.ts",
+      "titlePath": [
+        "Positions Analytics page FE E2E",
+        "Analytics graph and table views",
+        "renders the Analytics table view"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 89
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "70d553082a7b13f1eda278591170d2880a50d16536ad644ed9a8796d07bd5b55",
+      "file": "e2e/logistics/positions-analytics.e2e.ts",
+      "titlePath": [
+        "Positions Analytics page FE E2E",
+        "Analytics graph and table views",
+        "searches rendered Analytics table rows"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 608
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "c80aaa9bb9fed2f83a24ce0231093769f2bdf7b4ec6d3bf6abeb21f03a99a86d",
+      "file": "e2e/logistics/positions-analytics.e2e.ts",
+      "titlePath": [
+        "Positions Analytics page FE E2E",
+        "Analytics period breakdown",
+        "opens and renders an Analytics period breakdown"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 16
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "52e4a431cb8d884abfc02f3ab139af8af41f62214ae4a97787420e58db1398b2",
+      "file": "e2e/logistics/positions-analytics.e2e.ts",
+      "titlePath": [
+        "Positions Analytics page FE E2E",
+        "Analytics period breakdown",
+        "searches and filters positions in an Analytics period breakdown"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 97
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "58f39e97dd1619d33d552aaf07cf87e7ec55354ec772e0d6b3db88ddd6e7b287",
+      "file": "e2e/logistics/positions-analytics.e2e.ts",
+      "titlePath": [
+        "Positions Analytics page FE E2E",
+        "Analytics period breakdown",
+        "changes the period shown in an Analytics breakdown"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 72
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "0dadcc6e51b20c6f0bcc5366ba1ed3e686d2504a01e62ae0c111143b4624c5be",
+      "file": "e2e/logistics/positions-analytics.e2e.ts",
+      "titlePath": [
+        "Positions Analytics page FE E2E",
+        "Analytics time frames",
+        "switches Analytics to the day time frame"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 263
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "6d527b8d0f050b5551b31e89c0e7804416cde4d96f694e400286e22306c70ae4",
+      "file": "e2e/logistics/positions-analytics.e2e.ts",
+      "titlePath": [
+        "Positions Analytics page FE E2E",
+        "Analytics time frames",
+        "switches Analytics to the week time frame"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 145
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "413c3ea4edf95dda5a18aa95564fc2566524426600826f00805f7f02d781a421",
+      "file": "e2e/logistics/positions-analytics.e2e.ts",
+      "titlePath": [
+        "Positions Analytics page FE E2E",
+        "Analytics time frames",
+        "switches Analytics to the quarterly time frame"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 71
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "ba91412c640abccefa24b01a8bd749b9df0cc38b336932e6017e5ede67dc4c89",
+      "file": "e2e/logistics/positions-analytics.e2e.ts",
+      "titlePath": [
+        "Positions Analytics page FE E2E",
+        "Analytics time frames",
+        "switches Analytics to the year time frame"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 69
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "115020f4844b5845d0f2ce3af64f30f83f3b2d8e9562457ca6b0d75a2e193139",
+      "file": "e2e/logistics/positions-analytics.e2e.ts",
+      "titlePath": [
+        "Positions Analytics page FE E2E",
+        "enum, text, and date Analytics filters",
+        "applies the direction Analytics filter"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 642
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "d19b7e040bb53ea7a44801e5aa9dcc352d004831b9b3160ebd1a798a6e552939",
+      "file": "e2e/logistics/positions-analytics.e2e.ts",
+      "titlePath": [
+        "Positions Analytics page FE E2E",
+        "enum, text, and date Analytics filters",
+        "applies the transport mode Analytics filter"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 581
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "e903b002cf58cf6f7df212def8cb40ff594739c3348b8b63b4d4687d9d7555f8",
+      "file": "e2e/logistics/positions-analytics.e2e.ts",
+      "titlePath": [
+        "Positions Analytics page FE E2E",
+        "enum, text, and date Analytics filters",
+        "applies the service type Analytics filter"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 630
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "c78e6ced4e6cbf21e7c97122c181153fe6306c1786d88a900bd28427fb878d43",
+      "file": "e2e/logistics/positions-analytics.e2e.ts",
+      "titlePath": [
+        "Positions Analytics page FE E2E",
+        "enum, text, and date Analytics filters",
+        "applies the vessel carrier Analytics filter"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 593
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "34b9b00d5778568504b0d3cce24273ab9e824106857b3b36856741ceaf73b482",
+      "file": "e2e/logistics/positions-analytics.e2e.ts",
+      "titlePath": [
+        "Positions Analytics page FE E2E",
+        "enum, text, and date Analytics filters",
+        "applies the service date Analytics filter"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 558
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "8f4ed33b37fad5ae1324bb784dc8aec36e913710bc8d5934cbb1f786d332d83a",
+      "file": "e2e/logistics/positions-overview-autosave.e2e.ts",
+      "titlePath": [
+        "keeps both sea bill requirements enabled across sequential autosaves"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 4894
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "41642d4a67ac0e451a946290421f56a2964fcedc09a610028807ad9376132e00",
+      "file": "e2e/logistics/positions-house-bl-document.e2e.ts",
+      "titlePath": [
+        "Positions House Bill of Lading document FE E2E",
+        "adds a House Bill of Lading document from the Position Documents tab"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 3204
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "058381eab7f424c25a43334a1ecbbb1a1b9a6613630358de21c4540e1eedb86e",
+      "file": "e2e/logistics/positions-house-bl-document.e2e.ts",
+      "titlePath": [
+        "Positions House Bill of Lading document FE E2E",
+        "maps explicitly assigned Notify parties into a new House Bill of Lading"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2606
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "f2af2bcee4a721e8ce359c098a110610597c028da35129690d8dc456c2e751c5",
+      "file": "e2e/logistics/positions-house-bl-document.e2e.ts",
+      "titlePath": [
+        "Positions House Bill of Lading document FE E2E",
+        "updates House Bill of Lading header and reference fields from the FE"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 3198
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "68a017124433f7033ba46bb64e9fadac0d569ac7795dfcdce692af6bb16bc1c2",
+      "file": "e2e/logistics/positions-house-bl-document.e2e.ts",
+      "titlePath": [
+        "Positions House Bill of Lading document FE E2E",
+        "updates House Bill of Lading party address fields from the FE"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 3207
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "9443c94094552f9d2a60c5f002226e12269928ed18b34352137149f83b85e2a3",
+      "file": "e2e/logistics/positions-house-bl-document.e2e.ts",
+      "titlePath": [
+        "Positions House Bill of Lading document FE E2E",
+        "updates House Bill of Lading vessel and loading fields from the FE"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 6301
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "d40018895687bd940a3eab35c9906748d273ef930fce5b2284551300a9c41a05",
+      "file": "e2e/logistics/positions-house-bl-document.e2e.ts",
+      "titlePath": [
+        "Positions House Bill of Lading document FE E2E",
+        "updates House Bill of Lading originals release field from the FE"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 4278
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "d1b7e3e90673785dfb56fd749b5983ee33b583d9d594ba114c43f78ba640426d",
+      "file": "e2e/logistics/positions-house-bl-document.e2e.ts",
+      "titlePath": [
+        "Positions House Bill of Lading document FE E2E",
+        "updates House Bill of Lading formatting and issuer fields from the FE"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 3346
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "de1b1082e9eb0b1ae51bdfb0908f4c289e02af148b9b92ab7191266ae77bbeeb",
+      "file": "e2e/logistics/positions-house-bl-document.e2e.ts",
+      "titlePath": [
+        "Positions House Bill of Lading document FE E2E",
+        "opens House Bill of Lading HTML preview from the FE"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2358
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "7a1d197ad210a907eea614f0d0cfbf77e132a5dea9d6a5c994c17cd372ceef19",
+      "file": "e2e/logistics/positions-house-bl-document.e2e.ts",
+      "titlePath": [
+        "Positions House Bill of Lading document FE E2E",
+        "denies House Bill of Lading issuing without working-document permission"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 264
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "99861c691c4a7c0b470a9691c46c49c1dc173b3d448370680346a64850c76a90",
+      "file": "e2e/logistics/positions-finances.e2e.ts",
+      "titlePath": [
+        "Position Finances FE E2E",
+        "lists finance rows inside the Position details Finances tab"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1961
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "175d609d9765c419445a697eaffacd94fd41cac3410cd913d6f4970004bc920f",
+      "file": "e2e/logistics/positions-finances.e2e.ts",
+      "titlePath": [
+        "Position Finances FE E2E",
+        "updates charge note from rendered Finances controls"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2752
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "07ecf128e2c2d469cbf4ed2a23f0523a41331102643d3659e7a50ccd70850576",
+      "file": "e2e/logistics/positions-finances.e2e.ts",
+      "titlePath": [
+        "Position Finances FE E2E",
+        "prepares currencies and exchange rate from rendered Finances controls"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 9946
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "21d56ba095bc719e7f9572d2ca921113f2277130a89155875c4306189c8c4236",
+      "file": "e2e/logistics/positions-finances.e2e.ts",
+      "titlePath": [
+        "Position Finances FE E2E",
+        "updates the prepared currencies and exchange rate"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 10836
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "88843fe33db028273584b71a98a3e8ad33752c71f83db6b85bd6e5e8de784351",
+      "file": "e2e/logistics/positions-finances.e2e.ts",
+      "titlePath": [
+        "Position Finances FE E2E",
+        "adds a single charge line through the Finances tab"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2378
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "bfd1d05814de1379c88019f055dac2ff7bc182546fd085b7586dcd98548ee2ca",
+      "file": "e2e/logistics/positions-finances.e2e.ts",
+      "titlePath": [
+        "Position Finances FE E2E",
+        "adds multiple charge lines through the Finances tab"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2303
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "9cb75e73d81711a9f16a2013db27cd9cde0235b2048de84e4dd9b2186141d55a",
+      "file": "e2e/logistics/positions-finances.e2e.ts",
+      "titlePath": [
+        "Position Finances FE E2E",
+        "deletes a single charge line from the Finances tab"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 3073
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "0f1aec10a97a6a8b44d94eefa92585d142ecfe5ce8f80b92eb1b8d1ad15b5b66",
+      "file": "e2e/logistics/positions-finances.e2e.ts",
+      "titlePath": [
+        "Position Finances FE E2E",
+        "deletes multiple selected charge lines from the Finances tab"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2595
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "0849e4275a18c3c960f97bda38909d9ec08be30f0b3cecaf88a16d2f11862b07",
+      "file": "e2e/logistics/positions-finances.e2e.ts",
+      "titlePath": [
+        "Position Finances FE E2E",
+        "copies a single charge line from the Finances tab"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 3107
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "6f78d042c0d438d8321f43af6d86cd528767f6a96a3cde67e2c24f45aa1ee015",
+      "file": "e2e/logistics/positions-finances.e2e.ts",
+      "titlePath": [
+        "Position Finances FE E2E",
+        "copies multiple selected charge lines from the Finances tab"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2542
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "7c2329bf2fb7b5383c83e1bf486f5c0b0ecfcbba3cbfdb51da807a268f1107ed",
+      "file": "e2e/logistics/positions-finances.e2e.ts",
+      "titlePath": [
+        "Position Finances FE E2E",
+        "changes quantities in bulk and keeps the charge lines selected"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 3545
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "ea8a9fddb1072ec667aa830f71d312d5b4baffea124dd1e80fe3fb0d1ff41c17",
+      "file": "e2e/logistics/positions-finances.e2e.ts",
+      "titlePath": [
+        "Position Finances FE E2E",
+        "shows a clear validation error instead of submitting zero as a bulk quantity"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2854
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "6e27019744062e49cf7fd543689676feb7b87ef494414246a7be9f87c4ca8814",
+      "file": "e2e/logistics/positions-finances.e2e.ts",
+      "titlePath": [
+        "Position Finances FE E2E",
+        "opens clear-vendor confirmation for a selected charge row"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2470
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "2330f6262cc7d6b333c9cb95827d066525e1a602d257a4477ac4eff81cbaac81",
+      "file": "e2e/logistics/positions-finances.e2e.ts",
+      "titlePath": [
+        "Position Finances FE E2E",
+        "submits clear-vendor confirmation for a selected charge row"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2920
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "fce347e37439f003999c9654b34265310cfc707533b060cc4aa817d9cef6537a",
+      "file": "e2e/logistics/positions-finances.e2e.ts",
+      "titlePath": [
+        "Position Finances FE E2E",
+        "clears vendor from the submitted charge row"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2898
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "43537c662f729e634b586e9064b6262ecb5552e49f60af30f4ac4872435220ff",
+      "file": "e2e/logistics/positions-finances.e2e.ts",
+      "titlePath": [
+        "Position Finances FE E2E",
+        "opens clear-customer confirmation for a selected charge row"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 3031
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "b6fb800186393b1dff96460b4d1c92f49fd025cd258f1e82ede24309f1a6b736",
+      "file": "e2e/logistics/positions-finances.e2e.ts",
+      "titlePath": [
+        "Position Finances FE E2E",
+        "submits clear-customer confirmation for a selected charge row"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 3077
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "186c3f499e4226c49f9b033857e0a976cc83d09e2c72c5a12c218638260e231f",
+      "file": "e2e/logistics/positions-finances.e2e.ts",
+      "titlePath": [
+        "Position Finances FE E2E",
+        "clears customer from the submitted charge row"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 3390
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "3bd453f3ea7375ff1bc9a3b2dde5e0bb455be8a5cb376619478c8d617bb92287",
+      "file": "e2e/logistics/positions-finances.e2e.ts",
+      "titlePath": [
+        "Position Finances FE E2E",
+        "clears selected finance rows when navigating from a master position to a sub-position"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 3653
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "e0eca5677b2b88963de3d34fc61fd74b45781dc0451180c70cea06873c12a08b",
+      "file": "e2e/logistics/positions-finances.e2e.ts",
+      "titlePath": [
+        "Position Finances FE E2E",
+        "opens a draft invoice for selected charge and text rows"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 6990
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "081dc2135f4362dcf317b01bce8f5b43627b4bc06e7009c9c70f7dd87d3d4efa",
+      "file": "e2e/logistics/positions-finances.e2e.ts",
+      "titlePath": [
+        "Position Finances FE E2E",
+        "issues the prepared draft invoice"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 6221
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "634c84baf1a6b519d86a488957f7a596eb8a77a262826238d647440908c0f6a5",
+      "file": "e2e/logistics/positions-outgoing-invoice-payments.e2e.ts",
+      "titlePath": [
+        "Position Outgoing Invoice Payments FE E2E",
+        "opens the New Payment drawer from an issued outgoing Invoice"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2417
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "a9311b3bb68bc12dadbc3c89d1488bf813ee136e1bd9096c041437d34bb7806b",
+      "file": "e2e/logistics/positions-outgoing-invoice-payments.e2e.ts",
+      "titlePath": [
+        "Position Outgoing Invoice Payments FE E2E",
+        "renders the added outgoing Invoice payment state"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1889
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "dae5ac43a077dfa7ce398fa9b2edc1bbbcea564836a8164d83eaf6768c2756b1",
+      "file": "e2e/logistics/positions-outgoing-invoice-payments.e2e.ts",
+      "titlePath": [
+        "Position Outgoing Invoice Payments FE E2E",
+        "removes an existing outgoing Invoice payment"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2089
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "3512c966d58b55220e9acd7bb8c40614c5e5b9fdd0db4a99114fe6184f0c2263",
+      "file": "e2e/logistics/positions-outgoing-invoice-payments.e2e.ts",
+      "titlePath": [
+        "Position Outgoing Invoice Payments FE E2E",
+        "generates a payment confirmation for an added outgoing Invoice payment from the invoice details modal"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 5563
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "d661dd4c60188b614eb9e68808df348003564bd2dd5d3c94f59e14b97db2cc79",
+      "file": "e2e/logistics/positions-incoming-invoice-credit-note.e2e.ts",
+      "titlePath": [
+        "Position Incoming Invoice Credit Note FE E2E",
+        "adds an actual Credit Note inside an actual Incoming Invoice from the Position details modal"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1830
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "40332bd7585affba401195731345cef64d328786163d7d5404578fef675f7db9",
+      "file": "e2e/logistics/positions-incoming-invoice-credit-note.e2e.ts",
+      "titlePath": [
+        "Position Incoming Invoice Credit Note FE E2E",
+        "generates a payment confirmation after adding an actual Incoming Credit Note"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 3509
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "585567ba59687c68f13728e71543210f6cb865d1fb3af609521ddb6995d5d478",
+      "file": "e2e/logistics/positions-incoming-invoice-credit-note.e2e.ts",
+      "titlePath": [
+        "Position Incoming Invoice Credit Note FE E2E",
+        "generates a new document version for the actual Incoming Credit Note"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 560
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "6a6e023e0cc9a4fdc611e2fcdcea931fa24e200b66ec6d550bad31a31229b513",
+      "file": "e2e/logistics/positions-master-sub-positions.e2e.ts",
+      "titlePath": [
+        "Positions master and sub-position FE E2E",
+        "mark Master Position",
+        "marks a Position as Master Position from the FE"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 3721
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "f8739f200ba6089a5a81df5117d7d207f0ec041c46c476d993ea7439369915de",
+      "file": "e2e/logistics/positions-documents.e2e.ts",
+      "titlePath": [
+        "Positions Documents tab FE E2E",
+        "keeps linked packages selected after toggling virtual packages in a templated document"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1526
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "8a6e792fe8a3ef7efe167589d5e8a4da39f0f122e18b9685dd3e6075d7884138",
+      "file": "e2e/logistics/positions-documents.e2e.ts",
+      "titlePath": [
+        "Positions Documents tab FE E2E",
+        "opens a templated document PDF preview from the FE"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 486
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "b24063289e1fdf59f6e5ce99c004dfad6d74ad88cf8b03f415becb12cf47c608",
+      "file": "e2e/logistics/positions-documents.e2e.ts",
+      "titlePath": [
+        "Positions Documents tab FE E2E",
+        "renders HAWB and MAWB cargo dimensions in Length, Width, Height order"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 55
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "38ffc880da11036342d74987d18329f1c1d695ddaabfc3c57f812d56a242e6f9",
+      "file": "e2e/logistics/positions-documents.e2e.ts",
+      "titlePath": [
+        "Positions Documents tab FE E2E",
+        "previews multiple HAWB Other Charges rows"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 233
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "17104d0ea1c531a40cde1ad01de3c538334cf8ce1126ef4564139baca66fff4c",
+      "file": "e2e/logistics/positions-documents.e2e.ts",
+      "titlePath": [
+        "Positions Documents tab FE E2E",
+        "previews a MAWB Other Charges row"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 233
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "2443a0901042dd6cdb11324aa8f87dcf82a260a5613cdba80dc9a2583888d2c8",
+      "file": "e2e/logistics/positions-documents.e2e.ts",
+      "titlePath": [
+        "Positions Documents tab FE E2E",
+        "keeps every full HS code in HAWB and MAWB Handling Information"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 49
+        }
+      ],
+      "batch": 2
+    },
+    {
+      "case_id": "9230f447280d5dc7b6dd2909860d55e9279087f70696553f7aa097f086e6fdc1",
+      "file": "e2e/logistics/positions-route-autosave.e2e.ts",
+      "titlePath": [
+        "persists all vessel fields after idle autosave and reload"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 4351
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "efcc91a3315c87e2408eb6eb933b614dd92721e959663e059d4e4ffff28a6fcc",
+      "file": "e2e/logistics/positions-route.e2e.ts",
+      "titlePath": [
+        "Positions Route details modal FE E2E",
+        "lists route points in the Route tab"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2305
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "aa52db365039efdf9570fbf634aba5f8bf52527f3d42f4390a18101faca6db13",
+      "file": "e2e/logistics/positions-route.e2e.ts",
+      "titlePath": [
+        "Positions Route details modal FE E2E",
+        "uses pick-up reference labels for discharge port terminal route points"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1805
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "a3a2608c68af724fddc605f5c349fae40b96e25089e407ff9ec17af8fb4c3a97",
+      "file": "e2e/logistics/positions-route.e2e.ts",
+      "titlePath": [
+        "Positions Route details modal FE E2E",
+        "removes a route point from the Route tab"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2386
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "83c6176f0b9fdb4f6c5b654c629de2088d66834fb3da9b19a5b0b22422271d73",
+      "file": "e2e/logistics/positions-route.e2e.ts",
+      "titlePath": [
+        "Positions Route details modal FE E2E",
+        "Route tab inline field updates",
+        "updates the Route tab incoterm"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2555
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "5a8c193a49b8f7c8b98d3d62c3b6c4a45515912195ef234f73e895987df3e480",
+      "file": "e2e/logistics/positions-route.e2e.ts",
+      "titlePath": [
+        "Positions Route details modal FE E2E",
+        "Route tab inline field updates",
+        "updates the Route tab transport mode"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 3261
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "0b92fc363799ba9f4cb81dfb765f3aa98b7d4859e42eb2b4b05c0b414f6ccec2",
+      "file": "e2e/logistics/positions-route.e2e.ts",
+      "titlePath": [
+        "Positions Route details modal FE E2E",
+        "Route tab inline field updates",
+        "updates the Route tab primary reference"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2265
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "15ec0a20b1d14695e497064d696f198eee68dcdbaa23a98d23f62f28cec5b586",
+      "file": "e2e/logistics/positions-route.e2e.ts",
+      "titlePath": [
+        "Positions Route details modal FE E2E",
+        "Route tab inline field updates",
+        "updates the Route tab secondary reference"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1925
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "8262f9ecd99a777331edaae2eafb0446239d288654ca56f0cca7e9935961aee6",
+      "file": "e2e/logistics/positions-route.e2e.ts",
+      "titlePath": [
+        "Positions Route details modal FE E2E",
+        "Route tab inline field updates",
+        "updates the Route tab vessel"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2285
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "a984b1c7eb9d4283231762e1c4caf9fab221ec33d8559eed4ebfa1c13add35d6",
+      "file": "e2e/logistics/positions-route.e2e.ts",
+      "titlePath": [
+        "Positions Route details modal FE E2E",
+        "Route tab inline field updates",
+        "updates the Route tab vessel IMO"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2459
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "7c7af3734bb7ba690518ea06c678255adaf90b4eb1c213e19a6c22f7db57ff2f",
+      "file": "e2e/logistics/positions-route.e2e.ts",
+      "titlePath": [
+        "Positions Route details modal FE E2E",
+        "Route tab inline field updates",
+        "updates the Route tab voyage"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2371
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "66f05a6561474f2a07421d424caac197e615066b810d943de1502b4848719004",
+      "file": "e2e/logistics/positions-shipping-instructions-document.e2e.ts",
+      "titlePath": [
+        "Positions Shipping Instructions document FE E2E",
+        "adds a Shipping Instructions document from the Position Documents tab"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2900
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "7a1a1252a7774109400a18521ee9db4e93236145e3f8a0335b4d0928e521ebfc",
+      "file": "e2e/logistics/positions-shipping-instructions-document.e2e.ts",
+      "titlePath": [
+        "Positions Shipping Instructions document FE E2E",
+        "updates Shipping Instructions party address fields from the FE"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 5415
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "cd78ae5130e561ae871ccf795f8bc1e683714b5a2097e36b25f23fa2e1ca1d4b",
+      "file": "e2e/logistics/positions-shipping-instructions-document.e2e.ts",
+      "titlePath": [
+        "Positions Shipping Instructions document FE E2E",
+        "updates Shipping Instructions transport fields from the FE"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 3171
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "6bff83b33e5cef2b2ed3b577c52f879ff6c877c1191c0a0410b5a07fc29f4e41",
+      "file": "e2e/logistics/positions-shipping-instructions-document.e2e.ts",
+      "titlePath": [
+        "Positions Shipping Instructions document FE E2E",
+        "updates Shipping Instructions text and delivery fields from the FE"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 4889
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "148220c42cc3b9da888d27ee2c903addf4a04890a07a0011ffad8099c8711142",
+      "file": "e2e/logistics/positions-shipping-instructions-document.e2e.ts",
+      "titlePath": [
+        "Positions Shipping Instructions document FE E2E",
+        "updates Shipping Instructions primary charge payment fields from the FE"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 6384
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "a6bc8455e32279b4cee4edd095c588091d6ad333fd247ad7b95fbb1e4f0ccdf4",
+      "file": "e2e/logistics/positions-shipping-instructions-document.e2e.ts",
+      "titlePath": [
+        "Positions Shipping Instructions document FE E2E",
+        "updates Shipping Instructions port charge payment fields from the FE"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 6499
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "2a0709bfb2997e7c342b2828bae7ed9b677d2f12d200bebff5e96f10fc78303c",
+      "file": "e2e/logistics/positions-shipping-instructions-document.e2e.ts",
+      "titlePath": [
+        "Positions Shipping Instructions document FE E2E",
+        "updates Shipping Instructions additional reference fields from the FE"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2771
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "118e254cb9950ecb58f7340a434f7dbe8f7e35e0398a85e8b1a52a994fbd0634",
+      "file": "e2e/logistics/positions-shipping-instructions-document.e2e.ts",
+      "titlePath": [
+        "Positions Shipping Instructions document FE E2E",
+        "opens Shipping Instructions preview from the FE"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 5394
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "2c5e99b33d887c82ea70ff448a22f07a50e072e1df0a8c10e4122029fcc0a57a",
+      "file": "e2e/logistics/positions-shipping-instructions-document.e2e.ts",
+      "titlePath": [
+        "Positions Shipping Instructions document FE E2E",
+        "shows user-friendly validation messages when message creation is invalid"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 3151
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "87efe9e7ae03d548b18fb1bd1bdf72f5c3baee9929ebaf9548bebd57b0611b72",
+      "file": "e2e/logistics/positions-shipping-instructions-document.e2e.ts",
+      "titlePath": [
+        "Positions Shipping Instructions document FE E2E",
+        "issues Shipping Instructions document from the FE"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 5937
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "a7dc487f209d8ef362df0710ae215ee3fa83cec030423891a678d3a48a5301d0",
+      "file": "e2e/logistics/positions-route-subpositions.e2e.ts",
+      "titlePath": [
+        "Positions Route subpositions FE E2E",
+        "updates a master route point from the Route tab"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2364
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "356fb3dc1f9d06417ceb99dd86d896da3ca1a343a8e4f2fc2b1eef1b20b5082d",
+      "file": "e2e/logistics/positions-route-subpositions.e2e.ts",
+      "titlePath": [
+        "Positions Route subpositions FE E2E",
+        "propagates the master route point update to a linked subposition"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2707
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "0430e2cba7fbf38bb7c71bfb3fa14d3c57d42fcbf8961bc61ecc475eded7e274",
+      "file": "e2e/logistics/positions-route-subpositions.e2e.ts",
+      "titlePath": [
+        "Positions Route subpositions FE E2E",
+        "syncs the master carrier without changing the child Ocean Carrier Agent"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 534
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "6e0492363ecdf19a1d3d82f64742dd360f1a589d9a9ae189f937310803a19233",
+      "file": "e2e/logistics/positions-route-subpositions.e2e.ts",
+      "titlePath": [
+        "Positions Route subpositions FE E2E",
+        "removes the propagated transshipment point from the linked subposition"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 3249
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "e1e952aace237ba84c2c04e4555db79fc1d24b175398008d7c4de8101e4827a4",
+      "file": "e2e/logistics/positions-route-subpositions.e2e.ts",
+      "titlePath": [
+        "Positions Route subpositions FE E2E",
+        "renders linked subposition master route points readonly and keeps child route points editable"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2656
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "8f696ff70238b8ee51c6bcd01748dd65e43070c831c6d50ce4854ff179321ccd",
+      "file": "e2e/logistics/positions-route-subpositions.e2e.ts",
+      "titlePath": [
+        "Positions Route subpositions FE E2E",
+        "syncs default route ports to split routes and renders split route ports readonly"
+      ],
+      "status": "unexpected",
+      "attempts": [
+        {
+          "status": "failed",
+          "retry": 0,
+          "duration_ms": 12928
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "424bb188016b2e3b0ecb2b0e7e616cd9627a9e290986a99eb7baf40ce426994a",
+      "file": "e2e/logistics/positions-route-subpositions.e2e.ts",
+      "titlePath": [
+        "Positions Route subpositions FE E2E",
+        "master transshipment deletion propagation",
+        "propagates a master transshipment point deletion from the Route tab to a linked subposition"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 3046
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "1f66c560976088f6ad8b3842a1099da048806cfbea0a86a349843bf1de06c569",
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "opens only the Overview tab in the position details modal"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1891
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "a524e161e5545d1366a974b69d01ae3c890a892e699a1580ed82a5060bbefcc0",
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "updates sea overview external ID"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2255
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "1f413948481b2c34e88f2c29d283ea1d089ae4f6e74b02f5ef9f554a8c7de764",
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "updates sea overview house bill of lading"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1896
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "cc31ccc35e058f9775cd80654d6482ca19ed9d00356193b8e10f4bbf02339649",
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "toggles sea overview house bill requirement"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2325
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "7c683a77d098a3f21331c3e8b5cde49c0df218c4c66153b9a0e53d490415172b",
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "updates sea overview master bill of lading"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2333
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "0706b928dfea2ed7e5e9ebe72a028e26102f70497c3684f9f429e84c68b6b123",
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "toggles sea overview master bill requirement"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2651
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "647d543db43bd31b27f285301363327aa8492e7ed58f791ded8ecd550f3dcdee",
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "locks required sea document selections while their working documents exist"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1854
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "5ce98f4e9d30904c409e401aa7d94ab19739217ac05a07b45e49345338a43fa1",
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "updates sea export buying contract"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2609
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "b7a56cc50c32b60e7a64298edf6da1450b0661d14375bd0f91637b0cdf0cc633",
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "updates sea export selling contract"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2240
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "fe40cbcaa51ebe7367313ba6eee3da8074c3bc4a3bda2a0b37eddf1a7b0a4717",
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "updates sea export routing"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 3271
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "ee069745308f70f5a7b9e246247c6be861536c34c438627140b2df8031f98dfb",
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "updates sea export INTTRA service type"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 3575
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "af7eac2bb6a778928eb2c97cd4dcfd1716d28411f2079943dbf92841de6a3eaf",
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "autosaves Route fields with overview To-Dos present"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2984
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "eb029112712d003680f5fc26fbd2f5ac94ab0371bf3eb6107f91187e3492616d",
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "shows clear actions for readonly split route points in Overview"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 5375
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "59ade22731416117ca9172ce501ef32be5c331ca834b843b6557c2cf777df233",
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "keeps the Overview Route provider when Ocean Carrier Agent changes"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 4659
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "41386190fcb12715f592874e780660e75e06ca5e28543dcc5ca00697b945f9f6",
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "updates sea import buying contract"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2916
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "8d627958886bcedb7e777742f69b081a4093b699e851023f69115c40dacab88d",
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "updates sea import selling contract"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 4255
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "f2a8c031be7bc53685db6567d5f46d596fdf429f7f909d8b2514930135d79c2a",
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "updates sea import buy rate reference"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2797
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "1e915ccca779e28243f3170b783f26a973821c1dd1e87642c485391def02f9c9",
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "updates sea import sell service contract"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 6541
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "fb638c93564f1e71a2413bdbeb146a757e1f974f3ccfaaacd635dce4270e4e00",
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "updates sea import routing"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 4895
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "1bd36d4878c24fc52c8d35bcfa488b348b027cdff3b7ebf0852f71572e1982f4",
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "updates sea import INTTRA service type"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 5494
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "8c115f137fab0ae14142e6afaea16d285e52249e5df02afde168df0c1527e18f",
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "renders the migrated office-notes surface without the legacy editor"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2268
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "c787d5e3a0d65aade631009f0d0eb0959218a3ec28b60bf4e683d5d54ee03475",
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "updates team"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 8078
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "633f1f7188be66eb9bf03a52db5ef97d336aa89e6590cbc13025d537c7b73caa",
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "updates air export house bill"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 4312
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "dc8b912846fc6b0431f01280efaa0b5f003bebd8036c95ac440ebfe6e455e50c",
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "toggles air export house bill requirement"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 5654
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "d392b88d4afea89a0cbabc550334859427f03740d0d62fe1d59c7ea7856a01de",
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "updates air export master bill"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 3323
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "e35e7e6ab32c18a56cc769b83340ede7cdb453683ecb66511d951e1a00cf06de",
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "toggles air export master bill requirement"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 9836
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "e44118ed03129bc5197b9f3f5077b89a88bea62798907245b5d5d4b2a3023e6f",
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "toggles air export courier"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 4917
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "293d7dd5494d71c0a14b0f8cfc0fe68a1ecb7eba3ad229bd69e2a0c943cbdcf6",
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "updates air import house bill"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 6851
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "2680b759cc10d9be4053f13ae16bb426babec703f03c1199f85d7b82799aaca7",
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "updates air import master bill"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 4464
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "70661df7a1be61dacaf26a785e14b4e3f58f96667b80a64e9223843df6f16edf",
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "updates air import customs reference"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 3709
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "62f689c8575e1cb2a7247b323d534be958a1c236b85536240cd15c8e1d135671",
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "updates air import customs status"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 14754
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "98c0e4f62e86e00a2d8c73456ba9a2b3b226be23fe533242baabb2a548fd6cbb",
+      "file": "e2e/logistics/positions-overview.e2e.ts",
+      "titlePath": [
+        "Positions Overview details modal FE E2E",
+        "toggles air import courier"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 8095
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "e79121c942ffe5e27de156f3ab91e12274a683f6aab9fb88b933cd89d269e804",
+      "file": "e2e/logistics/positions-route-tracking.e2e.ts",
+      "titlePath": [
+        "Positions Route tracking FE E2E",
+        "exposes MarineTraffic tracking only on editable split route Port of Loading rows"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 3914
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "8ba43449a59facdf4f822901174eccd5715099d7c71a22da55f36e33e7cd733b",
+      "file": "e2e/logistics/positions-route-tracking.e2e.ts",
+      "titlePath": [
+        "Positions Route tracking FE E2E",
+        "colors the tracking and sync actions when both are active"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2440
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "2b538031cf0572084bae15cd810f271f8c5ce211bfc76dd76652033db29eecc2",
+      "file": "e2e/logistics/positions-route-tracking.e2e.ts",
+      "titlePath": [
+        "Positions Route tracking FE E2E",
+        "does not expose MarineTraffic tracking on readonly split subposition Port of Loading rows"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2006
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "8a16a7c57dc1e3ae40864a5eea9e377f19884112ab12aba3139cf6269a65ae47",
+      "file": "e2e/logistics/positions-route-tracking.e2e.ts",
+      "titlePath": [
+        "Positions Route tracking FE E2E",
+        "auto-selects MarineTraffic and skips provider choice when it is the only available tracking provider"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 4765
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "29a043f8f590df22e3d3e027ee3dc6fffd9141c39bffaa1439f60cd5dbccf0fb",
+      "file": "e2e/logistics/positions-route-tracking.e2e.ts",
+      "titlePath": [
+        "Positions Route tracking FE E2E",
+        "auto-selects ShipsGo and skips provider choice when it is the only available tracking provider"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 4914
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "fc81a1602e5b950fd018ce1dcf5ca2b4faf7731719aefe37d12c605beee730e8",
+      "file": "e2e/logistics/positions-register-incoming-pro-forma.e2e.ts",
+      "titlePath": [
+        "Position Register Incoming Pro Forma FE E2E",
+        "generates a PDF for a registered incoming Pro Forma from the invoice details drawer"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 5257
+        }
+      ],
+      "batch": 3
+    },
+    {
+      "case_id": "08289d339ab9358f1d49674eb571c3eecd9e013e0e3088f6383bfad5d8d3c8e6",
+      "file": "e2e/logistics/quotes-overview.e2e.ts",
+      "titlePath": [
+        "Quotes Overview tab FE E2E",
+        "opens a Quote details drawer on Overview and renders the seeded Sea Overview HTML"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1789
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "bba409b840adec2365c4639a6359357381b2c65f6bf80753f1b49ccd38da5afa",
+      "file": "e2e/logistics/quotes-overview.e2e.ts",
+      "titlePath": [
+        "Quotes Overview tab FE E2E",
+        "renders Road-specific Overview detail fields without opening Commercial Parties or Route"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1361
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "9bd4f99d0d14bf81a27d9780d2be780529219819845e80796864405415fefb58",
+      "file": "e2e/logistics/quotes-overview.e2e.ts",
+      "titlePath": [
+        "Quotes Overview tab FE E2E",
+        "renders Air-specific Overview detail fields"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1375
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "109220a30b4a631d2df4bd9052f76eca08eeb23a75d1967aebb7fe6c584e4fde",
+      "file": "e2e/logistics/quotes-overview.e2e.ts",
+      "titlePath": [
+        "Quotes Overview tab FE E2E",
+        "updates the Sea Quote Overview through FE autosave and renders the saved value after reload"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2578
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "5b2fd99f7e0eb13773732da1f3e2d4532b27a3a9d2107f38d4d2ae98b31c074c",
+      "file": "e2e/logistics/quotes-overview.e2e.ts",
+      "titlePath": [
+        "Quotes Overview tab FE E2E",
+        "updates the Air Quote Overview through FE autosave and renders the saved value after reload"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2561
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "386b3460ee5b1ff4d1c232f71e1a68cecf94bf1fa7718f6700793bb9c2faa313",
+      "file": "e2e/logistics/quotes-overview.e2e.ts",
+      "titlePath": [
+        "Quotes Overview tab FE E2E",
+        "updates the Road Quote Overview through FE autosave and renders the saved value after reload"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2603
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "e13d97c5d71e4fcffed59a257ce0b6babc2b441d18fdd61481e4ab8c0f78c517",
+      "file": "e2e/logistics/quotes-commercial-parties.e2e.ts",
+      "titlePath": [
+        "Quote Commercial Parties tab FE E2E",
+        "lists the seeded Quote commercial parties in rendered HTML"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1004
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "443df784c6611e5d6965ff53b3464a594aedeed503341e9792f1ed8847e74da8",
+      "file": "e2e/logistics/quotes-commercial-parties.e2e.ts",
+      "titlePath": [
+        "Quote Commercial Parties tab FE E2E",
+        "autosaves a Quote commercial party reference inline from the FE"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 897
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "85af2967540eb82a22530791df804b237f1ba3915e571c76129e50fac7f39dbe",
+      "file": "e2e/logistics/quotes-commercial-parties.e2e.ts",
+      "titlePath": [
+        "Quote Commercial Parties tab FE E2E",
+        "adds a new Quote commercial party from the FE"
+      ],
+      "status": "unexpected",
+      "attempts": [
+        {
+          "status": "failed",
+          "retry": 0,
+          "duration_ms": 10601
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "842a46c85cd46e2b686a77c48c415c1d45a524b14316ecbe79a4a879ee4aed00",
+      "file": "e2e/logistics/quotes-commercial-parties.e2e.ts",
+      "titlePath": [
+        "Quote Commercial Parties tab FE E2E",
+        "applies a commercial party template from the Quote details modal"
+      ],
+      "status": "unexpected",
+      "attempts": [
+        {
+          "status": "failed",
+          "retry": 0,
+          "duration_ms": 11292
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "4dd80a5ee111a4123f3b7ec8cbc4989d1139ca5e791b9b10cb17beba2b8d7033",
+      "file": "e2e/logistics/quotes-commercial-parties.e2e.ts",
+      "titlePath": [
+        "Quote Commercial Parties tab FE E2E",
+        "removes a Quote commercial party from the FE"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1203
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "ea43ca278a062c4ba93519247f5626942a1c0bc180c70f46cd4885aef317a609",
+      "file": "e2e/logistics/vat-presets-finances.e2e.ts",
+      "titlePath": [
+        "PC-6 isolated VAT finance fields",
+        "Incoming: issued VAT remains visible without false warnings or automatic field"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1668
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "c6e3f2104853d880ebbb7b70e4339cbe63a5d263e590841745b63474bad66723",
+      "file": "e2e/logistics/vat-presets-finances.e2e.ts",
+      "titlePath": [
+        "PC-6 isolated VAT finance fields",
+        "Outgoing: issued VAT remains visible without false warnings or automatic field"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1662
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "9b5d9de4c7ec4843a209491a3196633a8a479742661a3390243599214dcee107",
+      "file": "e2e/logistics/vat-presets-finances.e2e.ts",
+      "titlePath": [
+        "PC-6 isolated VAT finance fields",
+        "Quote: zero candidates uses compact accessible error without normal or yellow indicator"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 996
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "0f6c61f9249968b8706075528009d5a0068b48ee702bd777c19736ac03aea621",
+      "file": "e2e/logistics/positions-todos.e2e.ts",
+      "titlePath": [
+        "Position To-Dos tab FE E2E",
+        "lists position To-Dos in the details modal To-Dos tab"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1815
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "a4b4eb841ced6b17154a5f5747c3c2e7d152fcdf509e9b30dcf4bac02f1b21ea",
+      "file": "e2e/logistics/positions-todos.e2e.ts",
+      "titlePath": [
+        "Position To-Dos tab FE E2E",
+        "shows an empty state when the details modal To-Dos tab has no To-Dos"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1100
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "7ed2e4763dd6ea33196175f5184e0c2e22f620f887a9970e8a5485a3115f46ff",
+      "file": "e2e/logistics/positions-todos.e2e.ts",
+      "titlePath": [
+        "Position To-Dos tab FE E2E",
+        "renders a static To-Do due date in the To-Dos tab"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1182
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "33a8d25990a0cc040fcb4acfeacbc61f85ee1751128a607ab38be366f27e76b9",
+      "file": "e2e/logistics/positions-todos.e2e.ts",
+      "titlePath": [
+        "Position To-Dos tab FE E2E",
+        "updates To-Do notes from the To-Dos tab"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1381
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "0627e9f1a53c7120747849f3719b82fb210018659237b1f05fdcbf55f2f865fb",
+      "file": "e2e/logistics/positions-todos.e2e.ts",
+      "titlePath": [
+        "Position To-Dos tab FE E2E",
+        "clears To-Do assignees from the To-Dos tab"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1586
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "773f29d68639b742c2b87220b624675f8ecaf1f98926c511f1efd3d833e9ba14",
+      "file": "e2e/logistics/positions-todos.e2e.ts",
+      "titlePath": [
+        "Position To-Dos tab FE E2E",
+        "adds a new To-Do from the To-Dos tab autocomplete"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1699
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "60d538257935a1d3b40e0051266f0faf62c37b70e8c7691f89d294dc04983bb4",
+      "file": "e2e/logistics/positions-todos.e2e.ts",
+      "titlePath": [
+        "Position To-Dos tab FE E2E",
+        "marks a To-Do as done from the To-Dos tab"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1355
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "21e6661763dc1fe43ab7fa019b0855dd3fb8eb5b4fb542c31dd21f123fbb76a8",
+      "file": "e2e/logistics/positions-todos.e2e.ts",
+      "titlePath": [
+        "Position To-Dos tab FE E2E",
+        "removes a To-Do from the To-Dos tab"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1663
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "2faabe0cbebb30a94662ed1cf01db59928b4522237b63faa58006f1d9b17bf67",
+      "file": "e2e/logistics/positions-todos.e2e.ts",
+      "titlePath": [
+        "Position To-Dos tab FE E2E",
+        "adds the seeded To-Dos template from the To-Dos tab"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2005
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "d64e04170373f4d0196ddca4419f6af90145239c554668b77bc5897748cf2342",
+      "file": "e2e/logistics/quotes-route.e2e.ts",
+      "titlePath": [
+        "Quotes Route tab FE E2E",
+        "lists default Quote route points in the Route tab"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1052
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "9aa892f162bb6f0ba71c640b355cfe659a36eb42a084c736940aa010c9201ef7",
+      "file": "e2e/logistics/quotes-route.e2e.ts",
+      "titlePath": [
+        "Quotes Route tab FE E2E",
+        "updates the Route tab vessel inline field from the FE"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1290
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "a1509e9d6151837f0ea6f61905793bfcc0fc6e003e8f5ff399b21fcc8c725901",
+      "file": "e2e/logistics/quotes-route.e2e.ts",
+      "titlePath": [
+        "Quotes Route tab FE E2E",
+        "updates the Route tab voyage inline field from the FE"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1241
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "daee6424923bdcfea7d83e0ac804b9e5749bab38d3b25c05d6c2a0f5f54757a9",
+      "file": "e2e/logistics/quotes-route.e2e.ts",
+      "titlePath": [
+        "Quotes Route tab FE E2E",
+        "syncs default quote route ports to split routes and renders split route ports readonly"
+      ],
+      "status": "unexpected",
+      "attempts": [
+        {
+          "status": "failed",
+          "retry": 0,
+          "duration_ms": 11468
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "a48d8cf32da7c6c125412e5ecb210611cc4b437c3e600b9e42da5ede5552a7bd",
+      "file": "e2e/logistics/quotes-route.e2e.ts",
+      "titlePath": [
+        "Quotes Route tab FE E2E",
+        "updates the Route tab reference inline field from the FE"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1407
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "f067af4e1612acb2602a0ebd97cd23acd0b4eaab0da82b93a8ba8d4a4f0a73be",
+      "file": "e2e/logistics/quotes-route.e2e.ts",
+      "titlePath": [
+        "Quotes Route tab FE E2E",
+        "updates the Route tab secondary reference inline field from the FE"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1170
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "7544e7f935ca925139c161e032fbc84c196f4c9d72ceab77d2994da3a4f7e279",
+      "file": "e2e/logistics/quotes-cargo.e2e.ts",
+      "titlePath": [
+        "Quotes Cargo tab FE E2E",
+        "lists Quote Cargo transport units and packages in rendered HTML"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1562
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "940108a589327502d51cdbae1a10cf8822488f692314a045ba8a8f340f3e3cd3",
+      "file": "e2e/logistics/quotes-cargo.e2e.ts",
+      "titlePath": [
+        "Quotes Cargo tab FE E2E",
+        "updates editable Transport Unit identity fields from the FE"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 7525
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "1efada73ef71b9a921fdd95907263ca634b29b273281adb2b238f32f859a0136",
+      "file": "e2e/logistics/quotes-cargo.e2e.ts",
+      "titlePath": [
+        "Quotes Cargo tab FE E2E",
+        "updates editable Transport Unit totals from the FE"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2200
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "31e4c6b89e6fa8e00a51aa7e5bb0bd65f813594364aaeb0a61fc47ff6cbd5b25",
+      "file": "e2e/logistics/quotes-cargo.e2e.ts",
+      "titlePath": [
+        "Quotes Cargo tab FE E2E",
+        "updates editable Package dimensions from the FE"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 5524
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "2510762c2ac32116cc90ed44a027bd6c440ac8df5eeb4ab980785a084fca82d2",
+      "file": "e2e/logistics/quotes-cargo.e2e.ts",
+      "titlePath": [
+        "Quotes Cargo tab FE E2E",
+        "updates editable Package text fields from the FE"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 8158
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "df57be66b9636b4a959b1756f0e399c10c7531ab46884977e2f76ada90a749f9",
+      "file": "e2e/logistics/quotes-cargo.e2e.ts",
+      "titlePath": [
+        "Quotes Cargo tab FE E2E",
+        "deletes a Transport Unit from the FE"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1822
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "95749a8fbad68e2fe1f24c92827cee782e1e07ca947133f670bde6be7979434b",
+      "file": "e2e/logistics/quotes-cargo.e2e.ts",
+      "titlePath": [
+        "Quotes Cargo tab FE E2E",
+        "adds and deletes a Package from the FE"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2132
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "20328bf7b90428c6bcd3550252ea5471102f1023881a21be511e546981f1e47f",
+      "file": "e2e/logistics/quotes-cargo.e2e.ts",
+      "titlePath": [
+        "Quotes Cargo tab FE E2E",
+        "duplicates a Package from the FE"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1483
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "41a438064327c9f790719516308cc60f1d1323be32c995329348d1d34a4ec239",
+      "file": "e2e/logistics/quotes-cargo.e2e.ts",
+      "titlePath": [
+        "Quotes Cargo tab FE E2E",
+        "queues rapid autosaves for the same transport unit instead of sending concurrent PATCH requests"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 5155
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "0bffee980136975b5436ffdb42cb9026082195439dd51575c948aa68cc5cdec6",
+      "file": "e2e/logistics/quotes-cargo.e2e.ts",
+      "titlePath": [
+        "Quotes Cargo tab FE E2E",
+        "queues rapid autosaves for the same package instead of sending concurrent PATCH requests"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 5165
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "8f9daf4d3216959383ac7ae55e08dc76d12515165f7bf4ed76937058d6ed8085",
+      "file": "e2e/logistics/quotes-cargo.e2e.ts",
+      "titlePath": [
+        "Quotes Cargo tab FE E2E",
+        "toggles package auto-calculate totals from the FE"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1987
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "1d13157ad452db25e3cddc289b974747eb01f7c6f3459a4103147b7ee48ae963",
+      "file": "e2e/logistics/quotes-finances.e2e.ts",
+      "titlePath": [
+        "Quote Finances FE E2E",
+        "lists quote finance rows"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1272
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "2cd1934b623eea8e9d6c14e142833cde86ceea48cb89d179afa39ff921e5135e",
+      "file": "e2e/logistics/quotes-finances.e2e.ts",
+      "titlePath": [
+        "Quote Finances FE E2E",
+        "updates currencies and exchange rates from rendered Finances controls"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 10479
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "2fe43b7cd5d14dc25aaa79a103a817fef12cb9d032c09ffb59eeb4c98f815c01",
+      "file": "e2e/logistics/quotes-finances.e2e.ts",
+      "titlePath": [
+        "Quote Finances FE E2E",
+        "adds multiple lines through the Finances tab"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1650
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "21316f5b61534ae612d5acfedcd23a11768b25b620ec3e8c2ecb484e0b569b1f",
+      "file": "e2e/logistics/quotes-finances.e2e.ts",
+      "titlePath": [
+        "Quote Finances FE E2E",
+        "copies multiple selected charge lines from the FE"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 3007
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "02bf9b4734c026fcdf7b99179e75be6cd42cfe69823692e7ddd0eb3584744bb9",
+      "file": "e2e/logistics/quotes-finances.e2e.ts",
+      "titlePath": [
+        "Quote Finances FE E2E",
+        "deletes multiple selected charge lines from the FE"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2155
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "dac3edb19455d6213e7e50237f8be8ad9ad4a39d20d8c10520f8db6d049c654f",
+      "file": "e2e/logistics/quotes-finances.e2e.ts",
+      "titlePath": [
+        "Quote Finances FE E2E",
+        "clears vendor from a selected charge row through bulk FE actions"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1943
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "e5d0ec139c48b606c6e3a104180ce0b799a794c8976c267181da2081e652f67e",
+      "file": "e2e/logistics/quotes-finances.e2e.ts",
+      "titlePath": [
+        "Quote Finances FE E2E",
+        "clears customer from a selected charge row through bulk FE actions"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1941
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "3d135706ea5f7e21381884fa6f450ff429781aaaade72e88e5f863915cd1a0ac",
+      "file": "e2e/logistics/quotes-document.e2e.ts",
+      "titlePath": [
+        "Quotes Document tab FE E2E",
+        "lists the Quote Document tab sections in rendered HTML"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1764
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "979d76c9403a17a22d5d8a5881de44d19382a494b78638069fbc4b526ec39d29",
+      "file": "e2e/logistics/quotes-document.e2e.ts",
+      "titlePath": [
+        "Quotes Document tab FE E2E",
+        "updates the inline document contact from the FE"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1504
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "35249f2f97e2a0bcf38b810bf322eb5e1adef0af60d17db24132f5f69bb8291d",
+      "file": "e2e/logistics/quotes-document.e2e.ts",
+      "titlePath": [
+        "Quotes Document tab FE E2E",
+        "updates Routes from the FE"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1970
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "0537ae9274867d4cda4808f3d1008e1d24da47d8cf81597cf352a2b88d9da3c7",
+      "file": "e2e/logistics/quotes-document.e2e.ts",
+      "titlePath": [
+        "Quotes Document tab FE E2E",
+        "updates Cargo from the FE"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1982
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "d573e66953ed586dfac934bb9ee3f039d96ef6ac381af5c5e85ad6c0dac5293a",
+      "file": "e2e/logistics/quotes-document.e2e.ts",
+      "titlePath": [
+        "Quotes Document tab FE E2E",
+        "updates Finances from the FE"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 2075
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "c27ed116c58bc82d61723e4e8922bc4bc3d12cbde0ee6c5ab642f3e8afb9c6a9",
+      "file": "e2e/logistics/quotes-document.e2e.ts",
+      "titlePath": [
+        "Quotes Document tab FE E2E",
+        "issues Quote Document from the FE"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 4936
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "f5a5ca56c83e0b089c9910589c4923ed566daf74b100fe2eb7529c9dc2bdd904",
+      "file": "e2e/logistics/positions.e2e.ts",
+      "titlePath": [
+        "Positions FE E2E",
+        "shows the default currency ISO code in footer totals"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 786
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "6d6dd3cdd95561675dfe2e71e56fdd90d7ae576e634cfdfc05d7afae571c878a",
+      "file": "e2e/logistics/positions.e2e.ts",
+      "titlePath": [
+        "Positions FE E2E",
+        "shows Shipping Events after Change History in the position detail tabs"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1349
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "d02fbbe3ae7d0bb6ef8c840e8ec7340e16fda2aff4a4163ec5003388f895e10a",
+      "file": "e2e/logistics/positions.e2e.ts",
+      "titlePath": [
+        "Positions FE E2E",
+        "sorts positions by number descending"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 663
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "21eab9b55b95fea0cdc85f9b99cfe240ac92d9d60fc6e273205896f0e2a16948",
+      "file": "e2e/logistics/positions.e2e.ts",
+      "titlePath": [
+        "Positions FE E2E",
+        "sorts positions by number ascending"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 685
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "cb758f2ef8fd221209b514305960753f68485dc2e5ab22351207c54763aaa2a7",
+      "file": "e2e/logistics/positions.e2e.ts",
+      "titlePath": [
+        "Positions FE E2E",
+        "sorts positions by teu descending"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 774
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "78f295eefa7159aad736a3b113a0637f3dce3bbf1a7010c3caed474152966f34",
+      "file": "e2e/logistics/positions.e2e.ts",
+      "titlePath": [
+        "Positions FE E2E",
+        "sorts positions by teu ascending"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 700
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "a6e568252de289079ddf482f91e497cbb396c891c7d27a7d93baac178eb61a4e",
+      "file": "e2e/logistics/positions.e2e.ts",
+      "titlePath": [
+        "Positions FE E2E",
+        "sorts positions by externalSystemId descending"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 680
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "6f342806e1a20012c664f297edb10858bdd9a1ea88db3413ead6ddcf82470c66",
+      "file": "e2e/logistics/positions.e2e.ts",
+      "titlePath": [
+        "Positions FE E2E",
+        "sorts positions by externalSystemId ascending"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 709
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "f96ae9f522342690301cd08e6aa968b01aef158340ef84b4fa068f3f81b1c504",
+      "file": "e2e/logistics/positions.e2e.ts",
+      "titlePath": [
+        "Positions FE E2E",
+        "emits the order request for customer descending"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 823
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "a1fe02eb3f654a7277d6579c52e2de580ff759761271864e9e1ef6ab38f0b746",
+      "file": "e2e/logistics/positions.e2e.ts",
+      "titlePath": [
+        "Positions FE E2E",
+        "emits the order request for customer ascending"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 807
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "2470f6cd4cbb5bdde6bd23dfcf4512151125cbe8f2abac2e228a7b361e5e40fa",
+      "file": "e2e/logistics/positions.e2e.ts",
+      "titlePath": [
+        "Positions FE E2E",
+        "emits the order request for customerReference descending"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 820
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "399d287b1df4c828dc6a63c35b20b97e8e49e0817b34eda81d0fe3095eb4513d",
+      "file": "e2e/logistics/positions.e2e.ts",
+      "titlePath": [
+        "Positions FE E2E",
+        "emits the order request for customerReference ascending"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 981
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "dbb3ba69719167e1d36e0861fd1f5caaa89d419d8a35579981f13454a67d96b8",
+      "file": "e2e/logistics/positions.e2e.ts",
+      "titlePath": [
+        "Positions FE E2E",
+        "configure filters dialog",
+        "opens configure filters from the positions top filters without leaving the list"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 860
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "e5656492073d183bbd6256ed457d84ae9cae3015d9daa0bfbca973791a793071",
+      "file": "e2e/logistics/positions/sea-courier-agent.e2e.ts",
+      "titlePath": [
+        "Sea Courier Agent",
+        "accepts Courier Agent in Sea templates and rejects Trucker"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 19
+        }
+      ],
+      "batch": 4
+    },
+    {
+      "case_id": "6fb1952a4808b94514f8f051cad1d9349c0e726b397d4230d534626860aba61c",
+      "file": "e2e/platform/overview-table-config.e2e.ts",
+      "titlePath": [
+        "POSITION_PARTIES does not expose column configuration or resizing in its detail drawer"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1775
+        }
+      ],
+      "batch": 5
+    },
+    {
+      "case_id": "0701dca3f8cd9c3d4df63ae48b14d6afc08b4a27f64a96677336c10cc4e3628a",
+      "file": "e2e/platform/overview-table-config.e2e.ts",
+      "titlePath": [
+        "POSITION_TODOS does not expose column configuration or resizing in its detail drawer"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1508
+        }
+      ],
+      "batch": 5
+    },
+    {
+      "case_id": "70dca68919bcf0d97ca08b46959c70fc1d0c6bff5a72dbc5c99c8ad27febccb5",
+      "file": "e2e/platform/overview-table-config.e2e.ts",
+      "titlePath": [
+        "WORKING_DOCUMENTS does not expose column configuration or resizing in its detail drawer"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1634
+        }
+      ],
+      "batch": 5
+    },
+    {
+      "case_id": "b02bfb4bb3cca9850bbffbaa630284acbf3dfb995dfdccdfb3ec0e7300804f37",
+      "file": "e2e/platform/overview-table-config.e2e.ts",
+      "titlePath": [
+        "DOCUBOX does not expose column configuration or resizing in its detail drawer"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 957
+        }
+      ],
+      "batch": 5
+    },
+    {
+      "case_id": "ba361d8850322d38e10db75e7ea1597b5093703fe00e6f9f71578d4635f7c504",
+      "file": "e2e/platform/overview-table-config.e2e.ts",
+      "titlePath": [
+        "DOCUBOX_FILES does not expose column configuration or resizing in its detail drawer"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1665
+        }
+      ],
+      "batch": 5
+    },
+    {
+      "case_id": "d0ed9eb6900f9171742ecd05e527daaf3fb8498607587a9fc413edf62266fd2f",
+      "file": "e2e/platform/overview-table-config.e2e.ts",
+      "titlePath": [
+        "QUOTE_PARTIES does not expose column configuration or resizing in its detail drawer"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 850
+        }
+      ],
+      "batch": 5
+    },
+    {
+      "case_id": "d0dae76c5449d3d1fc4edbd9d95cb0ac83630f59b69d5ef4794d7878025be64f",
+      "file": "e2e/platform/overview-table-config.e2e.ts",
+      "titlePath": [
+        "POSITION_ROUTE does not expose column configuration or resizing in its detail drawer"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1558
+        }
+      ],
+      "batch": 5
+    },
+    {
+      "case_id": "68ccb49b0bcc57b69c0442b2ba004ebf07a8e481de01bfd0ad20af00f1b7c431",
+      "file": "e2e/platform/overview-table-config.e2e.ts",
+      "titlePath": [
+        "QUOTE_ROUTE does not expose column configuration or resizing in its detail drawer"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 837
+        }
+      ],
+      "batch": 5
+    },
+    {
+      "case_id": "e276e338aa7d54dcbec65111fec96a75b682ca43695c1b1caf021248635fa1a8",
+      "file": "e2e/platform/overview-table-config.e2e.ts",
+      "titlePath": [
+        "INVOICE_CHARGES does not expose column configuration or resizing in its detail drawer"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1493
+        }
+      ],
+      "batch": 5
+    },
+    {
+      "case_id": "42ea0ddca92246666bb48d12f9d1d2aa6fe7d91db739717242c7aa997f507042",
+      "file": "e2e/platform/overview-table-config.e2e.ts",
+      "titlePath": [
+        "INVOICE_VAT does not expose column configuration or resizing in its detail drawer"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1245
+        }
+      ],
+      "batch": 5
+    },
+    {
+      "case_id": "47bab458148446e90ba1d880c6293fa2cf1b32398cebd3022fd650d7a6aec95c",
+      "file": "e2e/master-data/office/roles-overview.e2e.ts",
+      "titlePath": [
+        "Master Data Office Roles Overview FE E2E",
+        "does not render an Office selector in existing office role details"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 691
+        }
+      ],
+      "batch": 5
+    },
+    {
+      "case_id": "c3996751e3b7f780dedd8013ad47ff3394d91d9eb42a623c1511b42ccc854c8f",
+      "file": "e2e/master-data/office/roles-overview.e2e.ts",
+      "titlePath": [
+        "Master Data Office Roles Overview FE E2E",
+        "duplicates an office role from the details drawer"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 622
+        }
+      ],
+      "batch": 5
+    },
+    {
+      "case_id": "da97b7d98f21f91a64c37a8741666c91ad956b20c1ce2e3083e85f84c928aeaa",
+      "file": "e2e/master-data/office/roles-overview.e2e.ts",
+      "titlePath": [
+        "Master Data Office Roles Overview FE E2E",
+        "opens shared office role details from the office roles route"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 484
+        }
+      ],
+      "batch": 5
+    },
+    {
+      "case_id": "c87680f1b1dc720623f9a1555bac4c309766aeaadd85dab1a8310a36f3303ad9",
+      "file": "e2e/master-data/uncovered-navigation.e2e.ts",
+      "titlePath": [
+        "Previously uncovered Master Data navigation FE E2E",
+        "renders Integration Messages from its direct route"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 661
+        }
+      ],
+      "batch": 5
+    },
+    {
+      "case_id": "6c759b5999c0ca2c0e098f08f7515db690563a7c38475e6ce22f8cff35c3e097",
+      "file": "e2e/master-data/uncovered-navigation.e2e.ts",
+      "titlePath": [
+        "Previously uncovered Master Data navigation FE E2E",
+        "renders Office Information office settings"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 562
+        }
+      ],
+      "batch": 5
+    },
+    {
+      "case_id": "182de2cc52b7c2975d5b58de5f56e9a509b4fdd48e762c7e13bffd27d18e1e8d",
+      "file": "e2e/master-data/uncovered-navigation.e2e.ts",
+      "titlePath": [
+        "Previously uncovered Master Data navigation FE E2E",
+        "renders General Bookkeeping Settings office settings"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 545
+        }
+      ],
+      "batch": 5
+    },
+    {
+      "case_id": "ea06cb51c164c319b25ee7b57e73746886403200833aee58c36fd769b4a7db91",
+      "file": "e2e/master-data/uncovered-navigation.e2e.ts",
+      "titlePath": [
+        "Previously uncovered Master Data navigation FE E2E",
+        "renders Carrier Credentials office settings"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 472
+        }
+      ],
+      "batch": 5
+    },
+    {
+      "case_id": "40b69f15248300eb680676a05caa20ad578213887926a93e3d3df1cfdd8acee1",
+      "file": "e2e/master-data/uncovered-navigation.e2e.ts",
+      "titlePath": [
+        "Previously uncovered Master Data navigation FE E2E",
+        "renders INTTRA Credentials office settings"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 543
+        }
+      ],
+      "batch": 5
+    },
+    {
+      "case_id": "43df79456cd75fb64ca1e8bd3b961840d120f1dab71670c79eb66aabf3f32159",
+      "file": "e2e/master-data/uncovered-navigation.e2e.ts",
+      "titlePath": [
+        "Previously uncovered Master Data navigation FE E2E",
+        "renders Add Bank Account office settings"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 546
+        }
+      ],
+      "batch": 5
+    },
+    {
+      "case_id": "5599711c958333d410d377dfb4776ea5055cae6f3159fc2bc7a40478367926a8",
+      "file": "e2e/master-data/business-entities/business-partner.e2e.ts",
+      "titlePath": [
+        "Master Data Business Partners FE E2E",
+        "lists seeded business partners as rendered table rows"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1516
+        }
+      ],
+      "batch": 5
+    },
+    {
+      "case_id": "24d56c0a06218c55f72b9f840f761fc8e8fd6f7b8906f9511f9e31e69f378dfe",
+      "file": "e2e/master-data/business-entities/business-partner.e2e.ts",
+      "titlePath": [
+        "Master Data Business Partners FE E2E",
+        "sorts business partners by remarks from the visible table header"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1689
+        }
+      ],
+      "batch": 5
+    },
+    {
+      "case_id": "0ff58b184bc4ed4f73348aa31c4924886848d10e28ef3f4449f434fd8598e9f7",
+      "file": "e2e/master-data/business-entities/business-partner.e2e.ts",
+      "titlePath": [
+        "Master Data Business Partners FE E2E",
+        "sorts business partners by short name and address with missing values last"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1811
+        }
+      ],
+      "batch": 5
+    },
+    {
+      "case_id": "8484d80438713d33770e6fd6e11a02e391ba8762bd315576b92fc0c82eeb0865",
+      "file": "e2e/master-data/business-entities/business-partner.e2e.ts",
+      "titlePath": [
+        "Master Data Business Partners FE E2E",
+        "filters business partners by debtor and creditor IDs in the rendered table"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1512
+        }
+      ],
+      "batch": 5
+    },
+    {
+      "case_id": "8fe461b70bd4190088b4d90b18fe6d10b85ea4fb4c1ccbe3ec25dda6028227c5",
+      "file": "e2e/master-data/business-entities/business-partner.e2e.ts",
+      "titlePath": [
+        "Master Data Business Partners FE E2E",
+        "filters archived business partners without opening the details modal"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1410
+        }
+      ],
+      "batch": 5
+    },
+    {
+      "case_id": "a24479e127131aecb722b91d78792d1cc2b70ef5ace3969bcd1c7c9eab13725a",
+      "file": "e2e/master-data/business-entities/business-partner.e2e.ts",
+      "titlePath": [
+        "Master Data Business Partners FE E2E",
+        "creates a business partner and verifies it from the list HTML"
+      ],
+      "status": "expected",
+      "attempts": [
+        {
+          "status": "passed",
+          "retry": 0,
+          "duration_ms": 1430
+        }
+      ],
+      "batch": 5
+    }
+  ],
+  "measurement_scope": "functional evidence; harness duration is not browser-only performance"
+}

@@ -1,0 +1,31 @@
+{
+  "binary": "/private/tmp/lp-suite-20261019/lightningpanda-ccf3597",
+  "version": "124.0.6367.29",
+  "samples": [
+    {
+      "before": {
+        "outer": 0,
+        "inner": 0,
+        "viewport": 0,
+        "targetY": 1435,
+        "outerY": 1025,
+        "innerY": 1230
+      },
+      "after": {
+        "outer": 205,
+        "inner": 205,
+        "viewport": 1025,
+        "targetY": 0,
+        "outerY": 0,
+        "innerY": 0
+      }
+    },
+    {
+      "events": [
+        "inner",
+        "outer",
+        "document"
+      ]
+    }
+  ]
+}

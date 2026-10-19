@@ -1,0 +1,57 @@
+{
+  "manifest_sha256": "542d479b709249d072e3b57c1324c894c4378fc5373892ae64c0687486f2ae19",
+  "manifest_read_from": "/private/tmp/lp-tos-f9f-batch16-fx (TOS f9fde4aa0d, e2e tree unchanged)",
+  "recorded_utc": "2026-10-19T04:02:51+00:00",
+  "ledger_sha256": "3d1de5a08cf4add614432f30ea316d97472ffe42ea73d00a7e775655aef09016",
+  "criteria": "Final frozen W2 whole-file common batch w2-final-20",
+  "files": [
+    "e2e/platform/navigation.e2e.ts",
+    "e2e/projects/projects.e2e.ts",
+    "e2e/todos/todos.e2e.ts"
+  ],
+  "cases": [
+    {
+      "file": "e2e/todos/todos.e2e.ts",
+      "titlePath": [
+        "To-Dos FE E2E",
+        "opens To-Dos from the due-date ordered URL"
+      ]
+    },
+    {
+      "file": "e2e/projects/projects.e2e.ts",
+      "titlePath": [
+        "Projects FE E2E",
+        "allows a read-only Project user to view Shipments and Analytics without create actions"
+      ]
+    },
+    {
+      "file": "e2e/platform/navigation.e2e.ts",
+      "titlePath": [
+        "Platform navigation FE E2E",
+        "redirects the platform root to the default logistics page"
+      ]
+    },
+    {
+      "file": "e2e/platform/navigation.e2e.ts",
+      "titlePath": [
+        "Platform navigation FE E2E",
+        "switches from Finances back to filtered Positions without leaving the previous module rendered"
+      ]
+    },
+    {
+      "file": "e2e/platform/navigation.e2e.ts",
+      "titlePath": [
+        "Platform navigation FE E2E",
+        "renders the operational calendar from its direct route"
+      ]
+    },
+    {
+      "file": "e2e/projects/projects.e2e.ts",
+      "titlePath": [
+        "Projects FE E2E",
+        "opens a connected packing list position in a new tab"
+      ]
+    }
+  ],
+  "native_only_excluded": 0
+}

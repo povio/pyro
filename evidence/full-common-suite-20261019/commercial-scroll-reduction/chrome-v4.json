@@ -1,0 +1,492 @@
+{
+  "binary": "chromium",
+  "version": "147.0.7727.15",
+  "rows": [
+    {
+      "fill": 0,
+      "activation": "dom",
+      "errors": [],
+      "samples": [
+        {
+          "kind": "before",
+          "rect": [
+            8,
+            26,
+            153,
+            21
+          ],
+          "scrollY": 0,
+          "options": 0,
+          "expanded": "false"
+        },
+        {
+          "kind": "focusin",
+          "rect": [
+            8,
+            26,
+            153,
+            21
+          ],
+          "scrollY": 0,
+          "options": 0,
+          "expanded": "false"
+        },
+        {
+          "kind": "click",
+          "rect": [
+            8,
+            26,
+            153,
+            21
+          ],
+          "scrollY": 0,
+          "options": 0,
+          "expanded": "false"
+        },
+        {
+          "kind": "focusin",
+          "rect": [
+            8,
+            26,
+            153,
+            21
+          ],
+          "scrollY": 0,
+          "options": 0,
+          "expanded": "false"
+        },
+        {
+          "kind": "click",
+          "rect": [
+            8,
+            26,
+            153,
+            21
+          ],
+          "scrollY": 0,
+          "options": 0,
+          "expanded": "false"
+        },
+        {
+          "kind": "after",
+          "rect": [
+            8,
+            26,
+            153,
+            21
+          ],
+          "scrollY": 0,
+          "options": 2,
+          "expanded": "true"
+        }
+      ]
+    },
+    {
+      "fill": 0,
+      "activation": "dom-pre-scroll",
+      "errors": [],
+      "samples": [
+        {
+          "kind": "before",
+          "rect": [
+            8,
+            26,
+            153,
+            21
+          ],
+          "scrollY": 0,
+          "options": 0,
+          "expanded": "false"
+        },
+        {
+          "kind": "focusin",
+          "rect": [
+            8,
+            26,
+            153,
+            21
+          ],
+          "scrollY": 0,
+          "options": 0,
+          "expanded": "false"
+        },
+        {
+          "kind": "click",
+          "rect": [
+            8,
+            26,
+            153,
+            21
+          ],
+          "scrollY": 0,
+          "options": 0,
+          "expanded": "false"
+        },
+        {
+          "kind": "focusin",
+          "rect": [
+            8,
+            26,
+            153,
+            21
+          ],
+          "scrollY": 0,
+          "options": 0,
+          "expanded": "false"
+        },
+        {
+          "kind": "click",
+          "rect": [
+            8,
+            26,
+            153,
+            21
+          ],
+          "scrollY": 0,
+          "options": 0,
+          "expanded": "false"
+        },
+        {
+          "kind": "after",
+          "rect": [
+            8,
+            26,
+            153,
+            21
+          ],
+          "scrollY": 0,
+          "options": 2,
+          "expanded": "true"
+        }
+      ]
+    },
+    {
+      "fill": 0,
+      "activation": "native",
+      "errors": [],
+      "samples": [
+        {
+          "kind": "before",
+          "rect": [
+            8,
+            26,
+            153,
+            21
+          ],
+          "scrollY": 0,
+          "options": 0,
+          "expanded": "false"
+        },
+        {
+          "kind": "focusin",
+          "rect": [
+            8,
+            26,
+            153,
+            21
+          ],
+          "scrollY": 0,
+          "options": 0,
+          "expanded": "false"
+        },
+        {
+          "kind": "focusin",
+          "rect": [
+            8,
+            26,
+            153,
+            21
+          ],
+          "scrollY": 0,
+          "options": 0,
+          "expanded": "false"
+        },
+        {
+          "kind": "click",
+          "rect": [
+            8,
+            26,
+            153,
+            21
+          ],
+          "scrollY": 0,
+          "options": 0,
+          "expanded": "false"
+        },
+        {
+          "kind": "after",
+          "rect": [
+            8,
+            26,
+            153,
+            21
+          ],
+          "scrollY": 0,
+          "options": 2,
+          "expanded": "true"
+        }
+      ]
+    },
+    {
+      "fill": 400,
+      "activation": "dom",
+      "errors": [],
+      "samples": [
+        {
+          "kind": "before",
+          "rect": [
+            8,
+            8026,
+            153,
+            21
+          ],
+          "scrollY": 0,
+          "options": 0,
+          "expanded": "false"
+        },
+        {
+          "kind": "focusin",
+          "rect": [
+            8,
+            439,
+            153,
+            21
+          ],
+          "scrollY": 7587,
+          "options": 0,
+          "expanded": "false"
+        },
+        {
+          "kind": "click",
+          "rect": [
+            8,
+            439,
+            153,
+            21
+          ],
+          "scrollY": 7587,
+          "options": 0,
+          "expanded": "false"
+        },
+        {
+          "kind": "focusin",
+          "rect": [
+            8,
+            439,
+            153,
+            21
+          ],
+          "scrollY": 7587,
+          "options": 0,
+          "expanded": "false"
+        },
+        {
+          "kind": "click",
+          "rect": [
+            8,
+            439,
+            153,
+            21
+          ],
+          "scrollY": 7587,
+          "options": 0,
+          "expanded": "false"
+        },
+        {
+          "kind": "scroll",
+          "rect": [
+            8,
+            439,
+            153,
+            21
+          ],
+          "scrollY": 7587,
+          "options": 2,
+          "expanded": "true"
+        },
+        {
+          "kind": "after",
+          "rect": [
+            8,
+            439,
+            153,
+            21
+          ],
+          "scrollY": 7587,
+          "options": 0,
+          "expanded": "true"
+        }
+      ]
+    },
+    {
+      "fill": 400,
+      "activation": "dom-pre-scroll",
+      "errors": [],
+      "samples": [
+        {
+          "kind": "before",
+          "rect": [
+            8,
+            8026,
+            153,
+            21
+          ],
+          "scrollY": 0,
+          "options": 0,
+          "expanded": "false"
+        },
+        {
+          "kind": "focusin",
+          "rect": [
+            8,
+            439,
+            153,
+            21
+          ],
+          "scrollY": 7587,
+          "options": 0,
+          "expanded": "false"
+        },
+        {
+          "kind": "click",
+          "rect": [
+            8,
+            439,
+            153,
+            21
+          ],
+          "scrollY": 7587,
+          "options": 0,
+          "expanded": "false"
+        },
+        {
+          "kind": "focusin",
+          "rect": [
+            8,
+            439,
+            153,
+            21
+          ],
+          "scrollY": 7587,
+          "options": 0,
+          "expanded": "false"
+        },
+        {
+          "kind": "click",
+          "rect": [
+            8,
+            439,
+            153,
+            21
+          ],
+          "scrollY": 7587,
+          "options": 0,
+          "expanded": "false"
+        },
+        {
+          "kind": "scroll",
+          "rect": [
+            8,
+            439,
+            153,
+            21
+          ],
+          "scrollY": 7587,
+          "options": 2,
+          "expanded": "true"
+        },
+        {
+          "kind": "after",
+          "rect": [
+            8,
+            439,
+            153,
+            21
+          ],
+          "scrollY": 7587,
+          "options": 0,
+          "expanded": "true"
+        }
+      ]
+    },
+    {
+      "fill": 400,
+      "activation": "native",
+      "errors": [],
+      "samples": [
+        {
+          "kind": "before",
+          "rect": [
+            8,
+            8026,
+            153,
+            21
+          ],
+          "scrollY": 0,
+          "options": 0,
+          "expanded": "false"
+        },
+        {
+          "kind": "focusin",
+          "rect": [
+            8,
+            439,
+            153,
+            21
+          ],
+          "scrollY": 7587,
+          "options": 0,
+          "expanded": "false"
+        },
+        {
+          "kind": "focusin",
+          "rect": [
+            8,
+            439,
+            153,
+            21
+          ],
+          "scrollY": 7587,
+          "options": 0,
+          "expanded": "false"
+        },
+        {
+          "kind": "click",
+          "rect": [
+            8,
+            439,
+            153,
+            21
+          ],
+          "scrollY": 7587,
+          "options": 0,
+          "expanded": "false"
+        },
+        {
+          "kind": "scroll",
+          "rect": [
+            8,
+            439,
+            153,
+            21
+          ],
+          "scrollY": 7587,
+          "options": 2,
+          "expanded": "true"
+        },
+        {
+          "kind": "after",
+          "rect": [
+            8,
+            439,
+            153,
+            21
+          ],
+          "scrollY": 7587,
+          "options": 0,
+          "expanded": "true"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "engine": "5b467880d75c3e14a0b0108775de25f182d39734",
+  "cwd": "/private/tmp/lp-suite-current-5b46788",
+  "command": "CARGO_PROFILE_RELEASE_DEBUG=0 cargo build --release --locked -p lightningpanda",
+  "compiler": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: aarch64-apple-darwin\nrelease: 1.99.1\nLLVM version: 23.1.1\n",
+  "sdk": "26.5",
+  "override_presence": {
+    "RUSTFLAGS": false,
+    "RUSTC_LINKER": false,
+    "CARGO_TARGET_DIR": false,
+    "CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER": false,
+    "CARGO_PROFILE_RELEASE_STRIP": false
+  },
+  "binary": "/private/tmp/lp-suite-20261019/lightningpanda-5b46788",
+  "sha256": "18fa9de7ab0c9d92247b70e813bdea0fe78efc4da42cbbbadcf18a0a3399f4ee",
+  "allow_jit": true,
+  "build_exit": 0,
+  "tree": "523e7483687603be094b43148d6abd90fad070b0"
+}

@@ -1,0 +1,553 @@
+[
+  {
+    "file": "e2e/master-data/locations/warehouses.e2e.ts",
+    "titlePath": [
+      "Master Data Warehouses FE E2E",
+      "sorts warehouses by identity and address columns"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/warehouses.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1015,
+        "startTime": "2026-10-19T04:23:44.334Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/warehouses.e2e.ts",
+    "titlePath": [
+      "Master Data Warehouses FE E2E",
+      "sorts warehouses by audit columns"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/warehouses.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 734,
+        "startTime": "2026-10-19T04:23:46.039Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/warehouses.e2e.ts",
+    "titlePath": [
+      "Master Data Warehouses FE E2E",
+      "autosaves warehouse matchCode field"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/warehouses.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 940,
+        "startTime": "2026-10-19T04:23:46.776Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/warehouses.e2e.ts",
+    "titlePath": [
+      "Master Data Warehouses FE E2E",
+      "autosaves warehouse name field"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/warehouses.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 588,
+        "startTime": "2026-10-19T04:23:47.719Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/warehouses.e2e.ts",
+    "titlePath": [
+      "Master Data Warehouses FE E2E",
+      "autosaves warehouse shortName field"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/warehouses.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 585,
+        "startTime": "2026-10-19T04:23:48.309Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/warehouses.e2e.ts",
+    "titlePath": [
+      "Master Data Warehouses FE E2E",
+      "autosaves warehouse additionalInformation field"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/warehouses.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 563,
+        "startTime": "2026-10-19T04:23:48.897Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/warehouses.e2e.ts",
+    "titlePath": [
+      "Master Data Warehouses FE E2E",
+      "autosaves warehouse street field"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/warehouses.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 582,
+        "startTime": "2026-10-19T04:23:49.463Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/warehouses.e2e.ts",
+    "titlePath": [
+      "Master Data Warehouses FE E2E",
+      "autosaves warehouse zip field"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/warehouses.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 564,
+        "startTime": "2026-10-19T04:23:50.047Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/warehouses.e2e.ts",
+    "titlePath": [
+      "Master Data Warehouses FE E2E",
+      "autosaves warehouse district field"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/warehouses.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 567,
+        "startTime": "2026-10-19T04:23:50.614Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/warehouses.e2e.ts",
+    "titlePath": [
+      "Master Data Warehouses FE E2E",
+      "autosaves clearing warehouse shortName field"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/warehouses.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 600,
+        "startTime": "2026-10-19T04:23:51.184Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/warehouses.e2e.ts",
+    "titlePath": [
+      "Master Data Warehouses FE E2E",
+      "autosaves clearing warehouse additionalInformation field"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/warehouses.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 647,
+        "startTime": "2026-10-19T04:23:51.787Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/warehouses.e2e.ts",
+    "titlePath": [
+      "Master Data Warehouses FE E2E",
+      "autosaves clearing warehouse district field"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/warehouses.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 558,
+        "startTime": "2026-10-19T04:23:52.436Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/warehouses.e2e.ts",
+    "titlePath": [
+      "Master Data Warehouses FE E2E",
+      "creates a warehouse and archives it through FE controls at the end"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/warehouses.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 745,
+        "startTime": "2026-10-19T04:23:52.996Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/terminals.e2e.ts",
+    "titlePath": [
+      "Master Data Terminals FE E2E",
+      "sorts terminals by identity columns"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/terminals.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 932,
+        "startTime": "2026-10-19T04:23:53.934Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/terminals.e2e.ts",
+    "titlePath": [
+      "Master Data Terminals FE E2E",
+      "sorts terminals by audit columns"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/terminals.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 658,
+        "startTime": "2026-10-19T04:23:54.950Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/terminals.e2e.ts",
+    "titlePath": [
+      "Master Data Terminals FE E2E",
+      "autosaves terminal matchCode field"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/terminals.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 1000,
+        "startTime": "2026-10-19T04:23:55.611Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/terminals.e2e.ts",
+    "titlePath": [
+      "Master Data Terminals FE E2E",
+      "autosaves terminal shortName field"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/terminals.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 625,
+        "startTime": "2026-10-19T04:23:56.614Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/terminals.e2e.ts",
+    "titlePath": [
+      "Master Data Terminals FE E2E",
+      "autosaves terminal name field"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/terminals.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 624,
+        "startTime": "2026-10-19T04:23:57.242Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/terminals.e2e.ts",
+    "titlePath": [
+      "Master Data Terminals FE E2E",
+      "autosaves terminal additionalInformation field"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/terminals.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 590,
+        "startTime": "2026-10-19T04:23:57.868Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/terminals.e2e.ts",
+    "titlePath": [
+      "Master Data Terminals FE E2E",
+      "autosaves terminal street field"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/terminals.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 613,
+        "startTime": "2026-10-19T04:23:58.462Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/terminals.e2e.ts",
+    "titlePath": [
+      "Master Data Terminals FE E2E",
+      "autosaves terminal secondaryStreet field"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/terminals.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 585,
+        "startTime": "2026-10-19T04:23:59.077Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/terminals.e2e.ts",
+    "titlePath": [
+      "Master Data Terminals FE E2E",
+      "autosaves terminal zip field"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/terminals.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 603,
+        "startTime": "2026-10-19T04:23:59.664Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/terminals.e2e.ts",
+    "titlePath": [
+      "Master Data Terminals FE E2E",
+      "autosaves terminal district field"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/terminals.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 603,
+        "startTime": "2026-10-19T04:24:00.270Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/terminals.e2e.ts",
+    "titlePath": [
+      "Master Data Terminals FE E2E",
+      "autosaves clearing terminal shortName field"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/terminals.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 662,
+        "startTime": "2026-10-19T04:24:00.876Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/terminals.e2e.ts",
+    "titlePath": [
+      "Master Data Terminals FE E2E",
+      "autosaves clearing terminal additionalInformation field"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/terminals.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 612,
+        "startTime": "2026-10-19T04:24:01.541Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/terminals.e2e.ts",
+    "titlePath": [
+      "Master Data Terminals FE E2E",
+      "autosaves clearing terminal secondaryStreet field"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/terminals.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 590,
+        "startTime": "2026-10-19T04:24:02.156Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/terminals.e2e.ts",
+    "titlePath": [
+      "Master Data Terminals FE E2E",
+      "autosaves clearing terminal district field"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/terminals.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 798,
+        "startTime": "2026-10-19T04:24:02.749Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/terminals.e2e.ts",
+    "titlePath": [
+      "Master Data Terminals FE E2E",
+      "autosaves several terminal fields in a row"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/terminals.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 740,
+        "startTime": "2026-10-19T04:24:03.550Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/terminals.e2e.ts",
+    "titlePath": [
+      "Master Data Terminals FE E2E",
+      "adds a new terminal and archives it at the end"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/terminals.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 742,
+        "startTime": "2026-10-19T04:24:04.292Z",
+        "error_count": 0
+      }
+    ]
+  }
+]

@@ -1,0 +1,202 @@
+{
+  "manifest_sha256": "542d479b709249d072e3b57c1324c894c4378fc5373892ae64c0687486f2ae19",
+  "manifest_read_from": "/private/tmp/lp-tos-f9f-batch16-fx (TOS f9fde4aa0d, e2e tree unchanged)",
+  "recorded_utc": "2026-10-19T04:02:50+00:00",
+  "ledger_sha256": "3d1de5a08cf4add614432f30ea316d97472ffe42ea73d00a7e775655aef09016",
+  "criteria": "Final frozen W2 whole-file common batch w2-final-09",
+  "files": [
+    "e2e/master-data/accounting/vat-rules.e2e.ts"
+  ],
+  "cases": [
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "unarchives a VAT rule through the FE"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "archives a VAT rule through the FE and shows it only with archived filtering"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "filters VAT rules by type and archived status through the rendered table"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "includes applicability and regional bookkeeping switches in the VAT Rule create form"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "lists seeded VAT rules"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "loads and autosaves a VAT rule translation"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "searches VAT rules by diacritics through the search field"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "searches VAT rules by matchcode"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "searches VAT rules by name"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "searches VAT rules by normalized text"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "searches VAT rules by spaces"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "sorts VAT rules by archived asc"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "sorts VAT rules by archived desc"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "sorts VAT rules by createdAt asc"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "sorts VAT rules by createdAt desc"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "sorts VAT rules by createdBy asc"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "sorts VAT rules by createdBy desc"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "sorts VAT rules by matchcode asc"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "sorts VAT rules by matchcode desc"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "sorts VAT rules by name asc"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "sorts VAT rules by name desc"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "sorts VAT rules by type asc"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "sorts VAT rules by type desc"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "sorts VAT rules by updatedAt asc"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "sorts VAT rules by updatedAt desc"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "sorts VAT rules by updatedBy asc"
+      ]
+    },
+    {
+      "file": "e2e/master-data/accounting/vat-rules.e2e.ts",
+      "titlePath": [
+        "Master Data VAT Rules FE E2E",
+        "sorts VAT rules by updatedBy desc"
+      ]
+    }
+  ],
+  "native_only_excluded": 0
+}

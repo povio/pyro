@@ -1,0 +1,268 @@
+[
+  {
+    "file": "e2e/master-data/locations/cities.e2e.ts",
+    "titlePath": [
+      "Master Data Cities FE E2E",
+      "sorts cities by name"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/cities.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 786,
+        "startTime": "2026-10-19T04:22:48.569Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/cities.e2e.ts",
+    "titlePath": [
+      "Master Data Cities FE E2E",
+      "sorts cities by isoCode"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/cities.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 523,
+        "startTime": "2026-10-19T04:22:50.045Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/cities.e2e.ts",
+    "titlePath": [
+      "Master Data Cities FE E2E",
+      "sorts cities by countryCode"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/cities.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 528,
+        "startTime": "2026-10-19T04:22:50.571Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/cities.e2e.ts",
+    "titlePath": [
+      "Master Data Cities FE E2E",
+      "sorts cities by stateCode"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/cities.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 518,
+        "startTime": "2026-10-19T04:22:51.102Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/cities.e2e.ts",
+    "titlePath": [
+      "Master Data Cities FE E2E",
+      "sorts cities by unlocode"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/cities.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 533,
+        "startTime": "2026-10-19T04:22:51.622Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/cities.e2e.ts",
+    "titlePath": [
+      "Master Data Cities FE E2E",
+      "sorts cities by createdAt"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/cities.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 510,
+        "startTime": "2026-10-19T04:22:52.158Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/cities.e2e.ts",
+    "titlePath": [
+      "Master Data Cities FE E2E",
+      "sorts cities by updatedAt"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/cities.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 514,
+        "startTime": "2026-10-19T04:22:52.671Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/cities.e2e.ts",
+    "titlePath": [
+      "Master Data Cities FE E2E",
+      "sorts cities by createdBy"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/cities.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 515,
+        "startTime": "2026-10-19T04:22:53.187Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/cities.e2e.ts",
+    "titlePath": [
+      "Master Data Cities FE E2E",
+      "sorts cities by updatedBy"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/cities.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 563,
+        "startTime": "2026-10-19T04:22:53.705Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/cities.e2e.ts",
+    "titlePath": [
+      "Master Data Cities FE E2E",
+      "searches cities by diacritics and normalized text"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/cities.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 451,
+        "startTime": "2026-10-19T04:22:54.271Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/cities.e2e.ts",
+    "titlePath": [
+      "Master Data Cities FE E2E",
+      "searches cities by spaces and Munich normalization"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/cities.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 517,
+        "startTime": "2026-10-19T04:22:54.724Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/cities.e2e.ts",
+    "titlePath": [
+      "Master Data Cities FE E2E",
+      "updates a city from the FE with autosave"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/cities.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 775,
+        "startTime": "2026-10-19T04:22:55.244Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/cities.e2e.ts",
+    "titlePath": [
+      "Master Data Cities FE E2E",
+      "keeps BE city label search behavior available to FE flows"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/cities.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 9,
+        "startTime": "2026-10-19T04:22:56.021Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/locations/cities.e2e.ts",
+    "titlePath": [
+      "Master Data Cities FE E2E",
+      "adds a city and archives it through FE controls at the end"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/locations/cities.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 791,
+        "startTime": "2026-10-19T04:22:56.032Z",
+        "error_count": 0
+      }
+    ]
+  }
+]

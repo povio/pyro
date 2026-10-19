@@ -1,0 +1,229 @@
+[
+  {
+    "file": "e2e/master-data/accounting/dunning-systems.e2e.ts",
+    "titlePath": [
+      "Master Data Dunning Systems FE E2E",
+      "lists seeded dunning systems in the canvas table"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/accounting/dunning-systems.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 639,
+        "startTime": "2026-10-19T04:20:19.730Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/accounting/dunning-systems.e2e.ts",
+    "titlePath": [
+      "Master Data Dunning Systems FE E2E",
+      "opens dunning system details"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/accounting/dunning-systems.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 480,
+        "startTime": "2026-10-19T04:20:21.054Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/accounting/dunning-systems.e2e.ts",
+    "titlePath": [
+      "Master Data Dunning Systems FE E2E",
+      "sorts dunning systems by name and created date"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/accounting/dunning-systems.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 574,
+        "startTime": "2026-10-19T04:20:21.537Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/accounting/dunning-systems.e2e.ts",
+    "titlePath": [
+      "Master Data Dunning Systems FE E2E",
+      "sorts dunning systems by default flag"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/accounting/dunning-systems.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 505,
+        "startTime": "2026-10-19T04:20:22.115Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/accounting/dunning-systems.e2e.ts",
+    "titlePath": [
+      "Master Data Dunning Systems FE E2E",
+      "searches dunning systems by diacritics, normalized text, spaces, and default flag rows"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/accounting/dunning-systems.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 515,
+        "startTime": "2026-10-19T04:20:22.623Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/accounting/dunning-systems.e2e.ts",
+    "titlePath": [
+      "Master Data Dunning Systems FE E2E",
+      "creates a dunning system from the FE and shows the created details HTML"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/accounting/dunning-systems.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 572,
+        "startTime": "2026-10-19T04:20:23.141Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/accounting/dunning-systems.e2e.ts",
+    "titlePath": [
+      "Master Data Dunning Systems FE E2E",
+      "updates a dunning system from the FE with autosave and shows the new HTML value"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/accounting/dunning-systems.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 554,
+        "startTime": "2026-10-19T04:20:23.718Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/accounting/dunning-systems.e2e.ts",
+    "titlePath": [
+      "Master Data Dunning Systems FE E2E",
+      "surfaces duplicate name validation in rendered FE errors"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/accounting/dunning-systems.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 573,
+        "startTime": "2026-10-19T04:20:24.274Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/accounting/dunning-systems.e2e.ts",
+    "titlePath": [
+      "Master Data Dunning Systems FE E2E",
+      "surfaces duplicate default validation in rendered FE errors"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/accounting/dunning-systems.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 518,
+        "startTime": "2026-10-19T04:20:24.850Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/accounting/dunning-systems.e2e.ts",
+    "titlePath": [
+      "Master Data Dunning Systems FE E2E",
+      "archives dunning systems through FE controls"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/accounting/dunning-systems.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 556,
+        "startTime": "2026-10-19T04:20:25.370Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/accounting/dunning-systems.e2e.ts",
+    "titlePath": [
+      "Master Data Dunning Systems FE E2E",
+      "unarchives dunning systems through FE controls"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/accounting/dunning-systems.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 624,
+        "startTime": "2026-10-19T04:20:25.929Z",
+        "error_count": 0
+      }
+    ]
+  },
+  {
+    "file": "e2e/master-data/accounting/vat-rule-applicability.e2e.ts",
+    "titlePath": [
+      "edits regional bookkeeping and switches independently without a generic bookkeeping field"
+    ],
+    "status": "expected",
+    "expectedStatus": "passed",
+    "project": "e2e/master-data/accounting/vat-rule-applicability.e2e.ts",
+    "attempts": [
+      {
+        "status": "passed",
+        "retry": 0,
+        "duration_ms": 3770,
+        "startTime": "2026-10-19T04:20:26.757Z",
+        "error_count": 0
+      }
+    ]
+  }
+]
