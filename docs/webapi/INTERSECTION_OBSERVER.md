@@ -52,10 +52,13 @@ overflow root changes observed geometry without a DOM mutation. Upstream's faux
 layout subtracts only the window scroll (Element.zig:1734-1741); this is a
 documented lightningpanda deviation. Hit testing (`elementFromPoint`, CDP mouse
 input) applies the same offsets so a rect's interior hits its element, and
-`scrollIntoView[IfNeeded]` first reveals the element inside ancestors that have
-element scroll state (aligned to the container top). Containers that were
-never scrolled keep upstream behavior, and hit testing still does not clip
-descendants to overflow containers.
+`scrollIntoView[IfNeeded]` first reveals clipped elements inside
+`overflow: auto/scroll` ancestors, including fresh containers with zero offsets.
+Existing explicitly scrolled ancestors retain their reveal behavior. Ancestors
+are processed inside-out using updated relative rectangles; changed containers
+receive their own scroll events before the viewport event. This remains a
+bounded vertical/start and horizontal/nearest reveal policy, not full CSS alignment-option support. Hit
+testing still does not clip descendants to overflow containers.
 
 ## Limits and validation
 

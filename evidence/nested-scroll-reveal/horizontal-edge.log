@@ -1,0 +1,9 @@
+   Compiling lp-dom v0.1.0 (/private/tmp/lp-scroll-ancestors-fix/crates/lp-dom)
+    Finished `release` profile [optimized] target(s) in 5.33s
+     Running tests/layout.rs (target/release/deps/layout-7fddc7aed37eea63)
+
+running 1 test
+test scroll_into_view_horizontal_nearest_preserves_visible_and_spanning_boxes ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 37 filtered out; finished in 0.00s
+

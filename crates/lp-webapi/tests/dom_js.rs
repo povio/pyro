@@ -4349,3 +4349,69 @@ fn focus_scroll_owner_helpers_preserve_options_and_drop_replaced_document_tasks(
     }
     assert_eq!(eval(&e.main, "scrolls"), "0");
 }
+
+#[test]
+fn scroll_into_view_delivers_each_changed_ancestor_after_the_call() {
+    struct Hooks(RefCell<Vec<Box<dyn FnOnce()>>>);
+    impl PageHooks for Hooks {
+        fn navigate(&self, _: NavigationRequest) {}
+        fn post_task(&self, task: Box<dyn FnOnce()>) {
+            self.0.borrow_mut().push(task);
+        }
+    }
+    for primed in [false, true] {
+        let e = env(&format!(
+            "<body>{}<div id=outer style='overflow:auto;width:180px;height:80px'>{}<div id=inner style='overflow:auto;width:120px;height:60px'>{}<button id=target style='height:20px;width:20px'>target</button><div style='height:100px'>tail</div></div><div style='height:100px'>tail</div></div><div style='height:900px'>end</div></body>",
+            "<div style='height:20px'>before</div>".repeat(100),
+            "<div style='height:20px'>outer</div>".repeat(20),
+            "<div style='height:20px'>inner</div>".repeat(20),
+        ));
+        if primed {
+            let dom = e.page.dom.borrow();
+            for id in ["inner", "outer"] {
+                let node = dom.get_element_by_id(e.page.document(), id).unwrap().unwrap();
+                assert!(e.page.layout.borrow_mut().set_scroll_top(&dom, node, 1));
+            }
+        }
+        let hooks = Rc::new(Hooks(RefCell::new(Vec::new())));
+        e.page.set_hooks(Some(hooks.clone()));
+        assert_eq!(
+            eval(
+                &e.main,
+                r#"
+            globalThis.seen=[];
+            const inner=document.getElementById('inner'),outer=document.getElementById('outer'),target=document.getElementById('target');
+            for(const [name,node] of [['inner',inner],['outer',outer],['document',document]]) {
+                node.addEventListener('scroll',event=>{if(event.target===node)seen.push(name)});
+            }
+            target.scrollIntoView();
+            [inner.scrollTop>0,outer.scrollTop>0,scrollY>0,seen.length===0].join(',')
+        "#
+            ),
+            "true,true,true,true"
+        );
+        assert_eq!(hooks.0.borrow().len(), 3);
+        for task in hooks.0.take() {
+            task();
+        }
+        assert_eq!(eval(&e.main, "seen.join(',')"), "inner,outer,document");
+        let focus_scroll = eval(&e.main, "const snapshot=()=>[inner.scrollTop,outer.scrollTop,inner.scrollLeft,outer.scrollLeft,scrollX,scrollY];const before=snapshot();target.scrollIntoView();target.focus();JSON.stringify([before,snapshot()])");
+        assert_eq!(eval(&e.main, "seen.length"), "3");
+        assert!(hooks.0.borrow().is_empty(), "unchanged scroll and visible focus queue no events: {focus_scroll}");
+
+        // Each container event has the same document-generation guard as the
+        // viewport event; replacing the document cancels the entire old batch.
+        assert_eq!(eval(&e.main, "inner.scrollTop=1;outer.scrollTop=1;scrollTo(0,0);'reset'"), "reset");
+        for task in hooks.0.take() {
+            task();
+        }
+        assert_eq!(eval(&e.main, "seen.length=0;target.scrollIntoView();seen.length"), "0");
+        assert_eq!(hooks.0.borrow().len(), 3);
+        let replacement = parse_document(&e.page.dom, "http://localhost/replaced", "<body>replacement</body>");
+        e.page.set_document(replacement);
+        for task in hooks.0.take() {
+            task();
+        }
+        assert_eq!(eval(&e.main, "seen.length"), "0");
+    }
+}

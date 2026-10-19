@@ -1,0 +1,68 @@
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.27
+   Compiling siphasher v1.0.4
+   Compiling fastrand v2.5.0
+   Compiling libc v0.2.191
+   Compiling smallvec v1.16.3
+   Compiling phf_shared v0.14.0
+   Compiling scopeguard v1.2.0
+   Compiling cfg-if v1.0.5
+   Compiling parking_lot_core v0.9.12
+   Compiling new_debug_unreachable v1.0.6
+   Compiling lock_api v0.4.14
+   Compiling rustversion v1.0.23
+   Compiling phf_generator v0.14.0
+   Compiling precomputed-hash v0.1.1
+   Compiling phf_codegen v0.14.0
+   Compiling log v0.4.34
+   Compiling dtoa v1.0.11
+   Compiling tendril v0.5.1
+   Compiling dtoa-short v0.3.5
+   Compiling itoa v1.0.18
+   Compiling stable_deref_trait v1.2.1
+   Compiling memchr v2.8.3
+   Compiling servo_arc v0.5.0
+   Compiling simdutf8 v0.1.5
+   Compiling bitflags v2.13.2
+   Compiling rustc-hash v2.1.3
+   Compiling multiversion_no_op v1.0.0
+   Compiling quick-xml v0.42.0
+   Compiling encoding_rs v0.8.42
+   Compiling parking_lot v0.12.5
+   Compiling syn v2.0.119
+   Compiling string_cache_codegen v0.11.2
+   Compiling syn v3.0.9
+   Compiling string_cache v0.11.0
+   Compiling web_atoms v0.3.0
+   Compiling cssparser-macros v0.7.1
+   Compiling phf_macros v0.14.0
+   Compiling derive_more-impl v2.1.1
+   Compiling phf v0.14.0
+   Compiling derive_more v2.1.1
+   Compiling cssparser v0.38.0
+   Compiling markup5ever v0.40.0
+   Compiling html5ever v0.40.1
+   Compiling selectors v0.41.0
+   Compiling lp-dom v0.1.0 (/private/tmp/lp-scroll-ancestors-fix/crates/lp-dom)
+    Finished `release` profile [optimized] target(s) in 17.78s
+     Running tests/layout.rs (target/release/deps/layout-7fddc7aed37eea63)
+
+running 1 test
+test scroll_into_view_reveals_fresh_nested_overflow_containers ... FAILED
+
+failures:
+
+---- scroll_into_view_reveals_fresh_nested_overflow_containers stdout ----
+
+thread 'scroll_into_view_reveals_fresh_nested_overflow_containers' (6426659) panicked at crates/lp-dom/tests/layout.rs:2450:5:
+fresh inner overflow container must scroll
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    scroll_into_view_reveals_fresh_nested_overflow_containers
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 36 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p lp-dom --test layout`

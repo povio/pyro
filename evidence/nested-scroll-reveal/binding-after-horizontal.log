@@ -1,0 +1,10 @@
+   Compiling lp-dom v0.1.0 (/private/tmp/lp-scroll-ancestors-fix/crates/lp-dom)
+   Compiling lp-webapi v0.1.0 (/private/tmp/lp-scroll-ancestors-fix/crates/lp-webapi)
+    Finished `release` profile [optimized] target(s) in 1m 39s
+     Running tests/dom_js.rs (target/release/deps/dom_js-e9d665e19a2148b5)
+
+running 1 test
+test scroll_into_view_delivers_each_changed_ancestor_after_the_call ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 146 filtered out; finished in 0.03s
+

@@ -1,0 +1,45 @@
+   Compiling lp-dom v0.1.0 (/private/tmp/lp-scroll-ancestors-fix/crates/lp-dom)
+    Finished `release` profile [optimized] target(s) in 11.72s
+     Running tests/layout.rs (target/release/deps/layout-7fddc7aed37eea63)
+
+running 37 tests
+test automatic_height_timing_diagnostic ... ignored, bounded same-host geometry timing diagnostic
+test automatic_height_tracks_nested_geometry_without_overriding_explicit_height ... ok
+test bounding_rect ... ok
+test automatic_height_invalidates_for_hidden_subtrees_and_stylesheet_changes ... ok
+test check_visibility_inline_styles ... ok
+test check_visibility_shadow ... ok
+test automatic_parent_box_encloses_nested_in_flow_children ... ok
+test computed_style_defaults_and_inline ... ok
+test check_visibility_stylesheets ... ok
+test custom_properties ... ok
+test element_from_point ... ok
+test element_from_point_hit_testing ... ok
+test hidden_and_foreign_elements_have_no_box ... ok
+test check_visibility_ua_rules ... ok
+test element_scroll_moves_rects_hit_testing_and_reveal ... ok
+test bounding_rect_scroll ... ok
+test check_visibility_memo ... ok
+test match_media_follows_viewport_override ... ok
+test match_media_list ... ok
+test media_query_deviations ... ok
+test important_cascade ... ok
+test media_query_zig_unit_tests ... ok
+test focus_reveals_auto_scroller_before_viewport_and_preserves_visible_axes ... ok
+test layer_at_rule_cascade ... ok
+test media_rules_follow_viewport ... ok
+test layer_order_cascade ... ok
+test position_client_and_scroll_dimensions ... ok
+test media_at_rule_cascade ... ok
+test position_offset_parent_and_scroll_into_view ... ok
+test wheel_latches_to_scroll_container ... ok
+test position_scroll_offsets ... ok
+test window_scroll ... ok
+test text_transform_computed ... ok
+test position_scroll_heights ... ok
+test position_translate_and_tickers ... ok
+test scroll_into_view_if_needed_reveals_fresh_nested_overflow_containers ... ok
+test scroll_into_view_reveals_fresh_nested_overflow_containers ... ok
+
+test result: ok. 36 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
