@@ -1,0 +1,161 @@
+{
+  "basis": "parent explicit allocation after frozen729/13; original execution owners unchanged",
+  "cases": [
+    {
+      "case_id": "6c6d907e4f0e17a67e4e47ad76409a9aa0bd51c7b49145152ec31128252a3138",
+      "owner": "W2",
+      "file": "e2e/control-tower/shipments.e2e.ts",
+      "titlePath": [
+        "Control Tower shipment workflows",
+        "opens a booking's container from the Containers tab"
+      ],
+      "batch": "w2-final-02",
+      "attempt_status": "timedOut",
+      "repair_owner": "W3"
+    },
+    {
+      "case_id": "71474eb8bb5547924aa5bc25ba788f2c14a64d211496eb215cfc9d01732221ba",
+      "owner": "W2",
+      "file": "e2e/todos/todos.e2e.ts",
+      "titlePath": [
+        "To-Dos FE E2E",
+        "opens To-Dos from the due-date ordered URL"
+      ],
+      "batch": "w2-final-20",
+      "attempt_status": "failed",
+      "repair_owner": "W3"
+    },
+    {
+      "case_id": "d19914493eaf7743b265ffbb219298df5d5d1ae61aa71d5848fac464cab7fbe6",
+      "owner": "W2",
+      "file": "e2e/chat/entity-chat-widget.e2e.ts",
+      "titlePath": [
+        "Entity chat widget",
+        "recovers after context retries exhaust a persistent server error"
+      ],
+      "batch": "w2-final-01",
+      "attempt_status": "timedOut",
+      "repair_owner": "W1"
+    },
+    {
+      "case_id": "bbc9b730eaaf2998c7573080386d77dced5f52a9e7e54f8b595f960db603eb5d",
+      "owner": "W2",
+      "file": "e2e/chat/entity-chat-widget.e2e.ts",
+      "titlePath": [
+        "Entity chat widget",
+        "shows a nonterminal unauthorized context error and recovers on explicit retry"
+      ],
+      "batch": "w2-final-01",
+      "attempt_status": "timedOut",
+      "repair_owner": "W1"
+    },
+    {
+      "case_id": "8f696ff70238b8ee51c6bcd01748dd65e43070c831c6d50ce4854ff179321ccd",
+      "owner": "W3",
+      "file": "e2e/logistics/positions-route-subpositions.e2e.ts",
+      "titlePath": [
+        "Positions Route subpositions FE E2E",
+        "syncs default route ports to split routes and renders split route ports readonly"
+      ],
+      "batch": "w3-final-03",
+      "attempt_status": "failed",
+      "repair_owner": "W2"
+    },
+    {
+      "case_id": "abe327d092b29afea35692dc901abbb919740ccf43681f0a3b6e19136b274e32",
+      "owner": "W2",
+      "file": "e2e/platform/navigation.e2e.ts",
+      "titlePath": [
+        "Platform navigation FE E2E",
+        "switches from Finances back to filtered Positions without leaving the previous module rendered"
+      ],
+      "batch": "w2-final-20",
+      "attempt_status": "failed",
+      "repair_owner": "W3"
+    },
+    {
+      "case_id": "aae24e8ca4d809857043e939b3c8f519b5eae3f43f57cf126708e3aa16dfa9c9",
+      "owner": "W2",
+      "file": "e2e/logistics/positions-close.e2e.ts",
+      "titlePath": [
+        "Positions close FE E2E",
+        "closes an open Position from the Position overview"
+      ],
+      "batch": "w2-final-04",
+      "attempt_status": "failed",
+      "repair_owner": "W1"
+    },
+    {
+      "case_id": "c6fc831105087db2946bbb9e5b2f3eb7a058649a0bc5afa1dc26bf6b0f91fe0a",
+      "owner": "W2",
+      "file": "e2e/logistics/positions-close.e2e.ts",
+      "titlePath": [
+        "Positions close FE E2E",
+        "reopens the same closed Position from the closed banner"
+      ],
+      "batch": "w2-final-04",
+      "attempt_status": "failed",
+      "repair_owner": "W1"
+    },
+    {
+      "case_id": "85af2967540eb82a22530791df804b237f1ba3915e571c76129e50fac7f39dbe",
+      "owner": "W3",
+      "file": "e2e/logistics/quotes-commercial-parties.e2e.ts",
+      "titlePath": [
+        "Quote Commercial Parties tab FE E2E",
+        "adds a new Quote commercial party from the FE"
+      ],
+      "batch": "w3-final-04",
+      "attempt_status": "failed",
+      "repair_owner": "W2"
+    },
+    {
+      "case_id": "842a46c85cd46e2b686a77c48c415c1d45a524b14316ecbe79a4a879ee4aed00",
+      "owner": "W3",
+      "file": "e2e/logistics/quotes-commercial-parties.e2e.ts",
+      "titlePath": [
+        "Quote Commercial Parties tab FE E2E",
+        "applies a commercial party template from the Quote details modal"
+      ],
+      "batch": "w3-final-04",
+      "attempt_status": "failed",
+      "repair_owner": "W2"
+    },
+    {
+      "case_id": "f9729e06b9defe7adbc4b44267fadcb8c01bc6e82eb9486e0226c10a2fa2d837",
+      "owner": "W2",
+      "file": "e2e/master-data/business-entities/office.e2e.ts",
+      "titlePath": [
+        "Master Data Offices FE E2E",
+        "lists seeded offices as rendered table rows"
+      ],
+      "batch": "w2-final-11",
+      "attempt_status": "failed",
+      "repair_owner": "W3"
+    },
+    {
+      "case_id": "7e9b98079bb4fa5eed454f31dcfd44916b9bb7c66ecb726ab2303e67d1bc5e5d",
+      "owner": "W2",
+      "file": "e2e/master-data/logistics/shipping-events.e2e.ts",
+      "titlePath": [
+        "Master Data Shipping Events FE E2E",
+        "sorts shipping events by visible sortable columns"
+      ],
+      "batch": "w2-final-19",
+      "attempt_status": "timedOut",
+      "repair_owner": "W3"
+    },
+    {
+      "case_id": "daee6424923bdcfea7d83e0ac804b9e5749bab38d3b25c05d6c2a0f5f54757a9",
+      "owner": "W3",
+      "file": "e2e/logistics/quotes-route.e2e.ts",
+      "titlePath": [
+        "Quotes Route tab FE E2E",
+        "syncs default quote route ports to split routes and renders split route ports readonly"
+      ],
+      "batch": "w3-final-04",
+      "attempt_status": "failed",
+      "repair_owner": "W2"
+    }
+  ]
+}
