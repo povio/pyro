@@ -1,0 +1,19 @@
+{
+  "manifest_sha256": "542d479b709249d072e3b57c1324c894c4378fc5373892ae64c0687486f2ae19",
+  "manifest_read_from": "/private/tmp/lp-tos-f9f-batch16-fx (TOS f9fde4aa0d, e2e tree unchanged)",
+  "recorded_utc": "2026-10-19T02:52:48+00:00",
+  "ledger_sha256": "3d1de5a08cf4add614432f30ea316d97472ffe42ea73d00a7e775655aef09016",
+  "criteria": "Targeted calendar route-readiness correction; identical canonical case and assertions; corrected TOS6e7f7cf with source-identical app runtime",
+  "files": [
+    "e2e/calendar/calendar-filters.e2e.ts"
+  ],
+  "cases": [
+    {
+      "file": "e2e/calendar/calendar-filters.e2e.ts",
+      "titlePath": [
+        "preserves calendar filters across visits and clears saved preferences when disabled"
+      ]
+    }
+  ],
+  "native_only_excluded": 1
+}
