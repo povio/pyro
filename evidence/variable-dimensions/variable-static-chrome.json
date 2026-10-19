@@ -1,0 +1,20 @@
+{
+  "binary": "chromium",
+  "version": "147.0.7727.15",
+  "samples": [
+    {
+      "before": {
+        "height": 900,
+        "width": 120,
+        "declared": "900px",
+        "custom": "900px"
+      },
+      "after": {
+        "height": 700,
+        "width": 120,
+        "declared": "700px",
+        "custom": "700px"
+      }
+    }
+  ]
+}
