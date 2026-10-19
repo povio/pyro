@@ -1,0 +1,14 @@
+{
+  "head": "bf4fc5605a31633940ae52acf82d90cea952bdbe",
+  "parent": "a182fc14862f47a60268dcf63a9399e88ea2afd1",
+  "binary": "/private/tmp/lp-w3-office-final-verification/lightningpanda-bf4fc560-release",
+  "sha256": "7e593218ebf1af89c7f3d4e4adffffdcfb2cfa0e2309d450158026934ef1a8ab",
+  "sdk": "/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk",
+  "profile": "locked release",
+  "build_jobs": 2,
+  "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+  "macos": "26.7.1",
+  "arch": "arm64",
+  "signing": "repository linker; strict verification and allow-jit true",
+  "source_clean": true
+}

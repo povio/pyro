@@ -1,0 +1,23 @@
+{
+  "binary": "chromium",
+  "version": "147.0.7727.15",
+  "rows": [
+    {
+      "available": 320,
+      "gap": 6,
+      "widths": [
+        103.390625,
+        43.125,
+        25.6875,
+        25.6875
+      ],
+      "visibleCount": 2,
+      "measurementWidth": 215.890625,
+      "computed": {
+        "container": "320px",
+        "measurement": "215.891px",
+        "firstBadge": "91.3906px"
+      }
+    }
+  ]
+}

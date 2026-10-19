@@ -1,0 +1,16 @@
+Executable=/private/tmp/lp-suite-20261019/lightningpanda-bf4fc56
+Identifier=lightningpanda-55e013dcba871a13-555549442dfcf07c727037cf89ced61929e38c75
+Format=Mach-O thin (arm64)
+CodeDirectory v=20400 size=30689 flags=0x2(adhoc) hashes=947+7 location=embedded
+Hash type=sha256 size=32
+CandidateCDHash sha256=ab9fca28e031e4461f6fee1594fbc0f78e168de6
+CandidateCDHashFull sha256=ab9fca28e031e4461f6fee1594fbc0f78e168de6a414dc35015a412a9a219dad
+Hash choices=sha256
+CMSDigest=ab9fca28e031e4461f6fee1594fbc0f78e168de6a414dc35015a412a9a219dad
+CMSDigestType=2
+CDHash=ab9fca28e031e4461f6fee1594fbc0f78e168de6
+Signature=adhoc
+Info.plist=not bound
+TeamIdentifier=not set
+Sealed Resources=none
+Internal requirements count=0 size=12

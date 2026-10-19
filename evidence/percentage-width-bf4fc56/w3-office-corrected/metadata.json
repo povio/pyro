@@ -1,0 +1,23 @@
+{
+  "browser_commit": "bf4fc5605a31633940ae52acf82d90cea952bdbe",
+  "browser_sha256": "7e593218ebf1af89c7f3d4e4adffffdcfb2cfa0e2309d450158026934ef1a8ab",
+  "tos_commit": "6603beaddd4aaee1e20f04bfa769b208763658a6",
+  "tos_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "run_slug": "w3officefix-1019-050424",
+  "template_database": "fe_e2e_w3officefix_1019_050424_template",
+  "binary": "/private/tmp/lp-w3-office-final-verification/lightningpanda-bf4fc560-release",
+  "worktree": "/private/tmp/lp-w3-tos-common-quote",
+  "auth": "backend test-token -> localStorage; no UI login",
+  "postgres": "W3 host: Docker (Colima) postgres:17.11 container lp-w3-pg17 on 127.0.0.1:5432; PG client tools run inside it",
+  "version_gate": "direct scripts/run-fe-e2e.mjs with playwright.routed.config.ts; same documented bypass as upstream baseline",
+  "shared_asset_cache_mb": "64",
+  "lane": "lightpanda",
+  "manifest_sha256": "542d479b709249d072e3b57c1324c894c4378fc5373892ae64c0687486f2ae19",
+  "measurement": "functional coverage only; time -l is whole harness, not browser CPU/RSS",
+  "expected_selected_cases": 4,
+  "specs": [
+    "e2e/master-data/business-entities/office.e2e.ts"
+  ],
+  "exit_code": 0,
+  "harness_wall_seconds": 45.029269625
+}

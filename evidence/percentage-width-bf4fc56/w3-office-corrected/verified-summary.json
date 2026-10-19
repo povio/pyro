@@ -1,0 +1,18 @@
+{
+  "cases": 4,
+  "statuses": {
+    "expected": 4
+  },
+  "stats": {
+    "startTime": "2026-10-19T05:05:01.220Z",
+    "duration": 8030.851,
+    "expected": 4,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  },
+  "report_sha256": "31ef4050ce7f6d30d4278d74a7866119b0baa44b8f6aa379b2e5ca530dcf6fee",
+  "source_hashes_unchanged": true,
+  "database_set_restored": true,
+  "failures": []
+}
