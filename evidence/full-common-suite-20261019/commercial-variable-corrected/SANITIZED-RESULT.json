@@ -1,0 +1,35 @@
+{
+  "scope": "five-case canonical commercial-parties integration; not final742 aggregate",
+  "metadata": {
+    "browser_commit": "7f7bd5a91660c9100a6cff7dc1b606141a9e2f01",
+    "browser_sha256": "df3eb8b9a3794b76ac25a65d4854e0ae31c15ce81a5199b29b1cb743c0c03e3b",
+    "tos_commit": "e6cf6953f456a82df30e037620afb314a99abc85",
+    "run_slug": "lpsuite19variable-1019-035447",
+    "template_database": "fe_e2e_w2tpl_e6cf6953_lptoscalendar6e7_template",
+    "binary": "/private/tmp/lp-suite-20261019/lightningpanda-7f7bd5a",
+    "worktree": "/private/tmp/lp-tos-calendar-6e7f7cf-fx",
+    "auth": "backend test-token -> localStorage; no UI login",
+    "version_gate": "direct scripts/run-fe-e2e.mjs with playwright.routed.config.ts; same documented bypass as upstream baseline",
+    "measurement": "functional coverage only; time -l is whole harness, not browser CPU/RSS",
+    "lightningpanda_shared_asset_cache_mb": "64",
+    "expected_selected_cases": 5,
+    "specs": [
+      "e2e/logistics/positions-commercial-parties.e2e.ts"
+    ],
+    "exit_code": 0,
+    "harness_wall_seconds": 13.168231041
+  },
+  "stats": {
+    "startTime": "2026-10-19T03:54:50.635Z",
+    "duration": 10202.238,
+    "expected": 5,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  },
+  "report_sha256": "d8bdadc7ba2243e4245612e60bd49dfff6fd9cdb82565b59830174fd39f8b783",
+  "cleanup": "run DBs left: 0 | retained ledger templates: ['fe_e2e_w2tpl_6e7f7cfb_lptoscalendar6e7_template', 'fe_e2e_w2tpl_e6cf6953_lptoscalendar6e7_template', 'fe_e2e_w2tpl_f6648125_lptoscalendar6e7_template', 'fe_e2e_w2tpl_f9fde4aa_batch16fx_template', 'fe_e2e_w2tpl_f9fde4aa_batch7_template', 'fe_e2e_w2tpl_f9fde4aa_batch7diag_template']\n",
+  "fixture_reuse": "sameUTCdate e6cf template reused after exactledger/source checks; fresh run clone",
+  "test_sha256": "874553c589b4ae0cb4c83148050ef1583454ea539538d61d008caed4ca29cd7b",
+  "assertions": "unchanged from exact e6cf readiness candidate; no diagnostic patch"
+}
