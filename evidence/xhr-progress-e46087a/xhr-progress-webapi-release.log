@@ -1,0 +1,254 @@
+   Compiling lp-webapi v0.1.0 (/private/tmp/lp-xhr-progress-contract/crates/lp-webapi)
+    Finished `release` profile [optimized] target(s) in 1m 27s
+     Running unittests src/lib.rs (target/release/deps/lp_webapi-861023f6b56d7d09)
+
+running 7 tests
+test collections::tests::dataset_names ... ok
+test css::tests::declarations ... ok
+test xhr::delivery::tests::first_data_wakes_and_later_progress_coalesces_with_bounded_buffers ... ok
+test crypto::tests::uuid_shape ... ok
+test encoding::tests::base64_roundtrip ... ok
+test fetch::tests::body_delivery_bounds_chunks_and_coalesces_wakes ... ok
+test indexeddb::tests::catalog_snapshots_are_origin_and_context_scoped ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/dom_js.rs (target/release/deps/dom_js-e9d665e19a2148b5)
+
+running 149 tests
+test abort_does_not_remove_a_reused_listener_registration ... ok
+test data_transfer_store_items_and_files ... ok
+test arrow_up_and_down_move_the_caret_in_text_controls ... ok
+test abort_any_preserves_cross_realm_reason_identity ... ok
+test data_transfer_holds_no_roots_and_get_as_string_is_queued ... ok
+test dataview_brand_check_ignores_script_properties ... ok
+test data_transfer_items_back_reference_is_collectable ... ok
+test dom_parser_parses_inert_html_documents ... ok
+test document_tree_and_identity ... ok
+test abandoned_abort_any_graph_releases_native_hooks ... ok
+test dom_parser_xml_office_namespaces_and_live_qualified_queries ... ok
+test dom_parser_xml_argument_reentry_and_detached_document_isolation ... ok
+test dom_parser_xml_types_case_cdata_errors_and_inert_adoption ... ok
+test drag_event_carries_its_data_transfer ... ok
+test element_click_is_a_virtual_pointer_click ... ok
+test events_listeners_and_activation ... ok
+test file_reader_abort_and_reentrant_read_suppress_stale_tasks ... ok
+test drag_event_data_transfer_back_reference_is_collectable ... ok
+test file_reader_array_buffer_task_order_and_reuse ... ok
+test explicit_opaque_realm_blocks_http_document_cookies_and_storage ... ok
+test file_reader_conversions_empty_bom_and_encoding ... ok
+test file_reader_abort_releases_traced_blob_and_isolated_world_works ... ok
+test file_reader_document_disposal_skips_callbacks ... ok
+test file_reader_blob_and_result_cycles_are_traced ... ok
+test file_reader_disposal_releases_pending_blob_and_skips_callbacks ... ok
+test file_reader_progress_abort_conversion_reentry_and_missing_queue ... ok
+test focus_owner_helpers_share_tokens_without_recursive_hooks_and_cleanup_selection ... ok
+test focus_scroll_default_precedes_focus_events_and_prevent_scroll_is_observed ... ok
+test focus_scroll_option_conversion_and_reentrant_target_are_not_stale ... ok
+test focus_scroll_owner_helpers_preserve_options_and_drop_replaced_document_tasks ... ok
+test focus_transition_change_reentry_and_disposal_stop_remaining_events ... ok
+test focus_transition_reentrant_blur_and_focus_do_not_overwrite_new_intent ... ok
+test focus_transition_revalidates_detachment_and_document_replacement ... ok
+test file_reader_limits_errors_and_abort_queue_are_bounded ... ok
+test headers_capture_intrinsics_before_page_scripts ... ok
+test form_data_from_form_and_submitter ... ok
+test headers_live_iteration_reentry_and_iterator_close ... ok
+test global_event_handler_attributes ... ok
+test headers_records_sequences_validation_and_cookie_order ... ok
+test drag_event_data_transfer_identity_survives_isolated_world_and_gc ... ok
+test iframe_hooks_connect_before_append_returns_and_report_attributes ... ok
+test iframe_hooks_defer_while_dom_is_borrowed_and_replace_document_queue ... ok
+test iframe_hooks_disconnect_nested_owners_before_ancestors_and_drop_disposed_queue ... ok
+test iframe_hooks_cover_subtree_fragment_inner_html_and_stale_native_events ... ok
+test iframe_hooks_ignore_inert_documents_and_survive_adoption_and_shadow_removal ... ok
+test iframe_hooks_parser_flush_and_document_routing ... ok
+test inherited_base_resolves_resources_without_changing_document_url ... ok
+test iframe_document_value_preserves_child_binding_state_and_null_denies_fallback ... ok
+test indexeddb_opaque_origin_rejects_and_nonempty_operations_are_explicit ... ok
+test gc_reclaims_detached_wrapped_nodes_but_keeps_listened_connected_ones ... ok
+test intersection_observer_clips_ancestors_and_tracks_scroll_styles ... ok
+test intersection_observer_element_scroll_changes_geometry_without_dom_mutation ... ok
+test intersection_observer_initial_task_and_geometry ... ok
+test indexeddb_empty_restore_preserves_context_and_origin_isolation ... ok
+test intersection_observer_explicit_root_margin_zero_area_and_edge_contact ... ok
+test intersection_observer_disposal_and_shared_worlds ... ok
+test intersection_observer_options_conversion_and_explicit_limits ... ok
+test intersection_observer_active_gc_callback_reentry_and_exception_isolation ... ok
+test intersection_observer_records_survive_disconnect_and_detached_gc ... ok
+test intersection_observer_without_task_service_retains_records_without_inline_callback ... ok
+test keyboard_and_focus_through_native_input ... ok
+test keydown_default_action_retargets_within_document_and_stops_after_owner_switch ... ok
+test isolated_world_shares_dom_with_distinct_wrappers ... ok
+test message_channel_delivers_cloned_messages_fifo_as_tasks ... ok
+test message_channel_with_self_referencing_listener_is_collected_after_close ... ok
+test message_port_lifetime_pins_started_ports_until_close ... ok
+test message_port_keeps_queued_messages_across_gc_when_the_peer_closes ... ok
+test message_port_start_close_transfer_and_clone_errors ... ok
+test message_port_peer_collection_is_reconciled_at_after_task_without_hooks ... ok
+test message_port_started_late_with_a_collected_peer_still_delivers_across_gc ... ok
+test mutation_delivery_batches_reentrant_changes_and_disconnects ... ok
+test message_port_unstarted_queued_ports_and_disposal_hold_no_roots ... ok
+test mutation_delivery_reports_callback_exception_and_continues ... ok
+test mutation_detached_subtree_transients_end_at_delivery ... ok
+test message_port_receiver_is_released_when_its_sender_becomes_unreachable ... ok
+test mutation_disconnect_clears_queued_records_and_reobserve_replaces_options ... ok
+test mutation_microtask_order_includes_nested_native_callbacks ... ok
+test mutation_native_safe_point_and_cancelled_delivery_realm ... ok
+test mutation_main_and_isolated_callbacks_use_their_own_realm ... ok
+test mutation_observers_remain_attached_without_user_reference ... ok
+test mutation_options_validate_convert_reentrantly_and_filter ... ok
+test mutation_records_are_typed_static_and_keep_removed_nodes ... ok
+test mutation_detached_cycles_collect_and_page_disposal_releases_roots ... ok
+test mutation_realm_disposal_suppresses_only_its_observers ... ok
+test navigation_releases_pinned_listener_wrappers_of_old_document ... ok
+test range_text_respects_nested_container_boundaries ... ok
+test reentrant_string_conversion_does_not_double_borrow ... ok
+test opaque_origin_storage_is_per_document_and_discarded_on_replacement ... ok
+test page_disposal_releases_hooks_registry_and_listener_roots ... ok
+test pointer_focus_preserves_cancellation_and_reentrant_script_reveal ... ok
+test object_urls_register_revoke_and_download_links_do_not_navigate ... ok
+test reflected_urls_preserve_oversized_and_canonicalized_base_semantics ... ok
+test reflected_urls_follow_attributes_bases_adoption_and_document_replacement ... ok
+test regression_abort_releases_listener_slot ... ok
+test pointer_focus_keeps_partly_clipped_button_at_the_press_point ... ok
+test regression_range_select_element_text ... ok
+test regression_reentrant_reflected_setter ... ok
+test regression_event_target_survives_gc ... ok
+test regression_typed_array_subview ... ok
+test regression_reentrant_string_coercion ... ok
+test regression_listener_slot_growth ... ok
+test removable_abort_hooks_release_payloads_and_preserve_reason ... ok
+test resize_observer_initial_changes_hidden_and_disconnect ... ok
+test screen_orientation_reports_override_or_follows_screen ... ok
+test scripting_disabled_blocks_handlers_and_javascript_navigation_but_not_eval ... ok
+test resize_observer_realm_disposal_releases_observers ... ok
+test same_object_retention_ignores_page_patched_builtins ... ok
+test retired_focus_document_cannot_cancel_live_shared_transition ... ok
+test space_activates_focused_controls_on_keyup ... ok
+test storage_quota_failure_is_atomic_and_replacement_reuses_budget ... ok
+test storage_methods_properties_and_reentrant_coercion ... ok
+test structured_clone_accessors_descriptors_and_failure_identity ... ok
+test scroll_into_view_delivers_each_changed_ancestor_after_the_call ... ok
+test storage_is_shared_across_worlds_and_inherited_blank_origin ... ok
+test structured_clone_collections_buffers_and_reentrant_snapshot ... ok
+test structured_clone_captures_intrinsics_and_releases_temporary_graphs ... ok
+test storage_partitions_origins_contexts_and_page_sessions ... ok
+test structured_clone_rejects_unsupported_values_without_proxy_traps_or_detachment ... ok
+test structured_clone_cross_world_values_use_destination_intrinsics ... ok
+test style_layout_and_media ... ok
+test structured_clone_tos_form_snapshot_preserves_graph_and_values ... ok
+test url_live_search_params_keep_identity_and_update_both_directions ... ok
+test structured_clone_resizable_buffers_and_explicit_limits ... ok
+test url_constructor_resolves_vite_preload_paths_and_components ... ok
+test url_component_setters_and_parse_failures_preserve_state ... ok
+test url_opaque_idn_ipv6_subclass_and_json_serialization ... ok
+test css_rule_values_survive_reentrant_gc ... ok
+test url_search_params_mutation_is_reentrant_and_preserves_duplicate_order ... ok
+test url_search_params_iterators_and_foreach_are_live_and_sorted_by_utf16 ... ok
+test url_search_params_parses_duplicates_encoding_and_empty_names ... ok
+test web_crypto_random_and_digest ... ok
+test url_search_params_constructor_iterables_records_and_usv_strings ... ok
+test url_params_traced_cycles_collect_but_retained_params_keep_url_alive ... ok
+test window_event_is_replaceable_and_skips_shadow_tree_targets ... ok
+test url_search_params_identity_survives_cross_world_getters_and_gc ... ok
+test window_event_spans_the_callback_microtask_checkpoint_for_message_ports ... ok
+test window_event_does_not_retain_the_event_after_dispatch ... ok
+test window_event_is_the_current_event_during_listener_invocation ... ok
+test url_search_params_same_vm_worlds_and_gc_retained_iterator ... ok
+test xpath_axes_predicates_functions ... ok
+test window_message_source_allows_task_schedulers_in_each_world ... ok
+test window_same_object_attributes_keep_expandos_across_gc ... ok
+test window_message_source_does_not_root_a_released_event_cycle ... ok
+test xpath_errors_resolvers_and_invalidation ... ok
+test xpath_playwright_ancestor_locator ... ok
+test xpath_iterators_survive_form_state_and_focus ... ok
+test xpath_review_fixes ... ok
+test xpath_evaluator_and_expression ... ok
+test xpath_result_types ... ok
+
+test result: ok. 149 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.21s
+
+     Running tests/fetch_js.rs (target/release/deps/fetch_js-5fa9c5f2624b410f)
+
+running 27 tests
+test fetch_abort_before_queued_null_headers_rejects_with_original_reason ... ok
+test fetch_delivers_headers_before_body_and_abort_preserves_reason ... ok
+test fetch_abort_before_headers_and_after_completed_body ... ok
+test fetch_body_waits_for_owner_delivery ... ok
+test fetch_binary_json_errors_and_body_budget_release ... ok
+test fetch_cors_opaque_guards_and_null_body ... ok
+test fetch_cache_modes_use_the_context_http_cache ... ok
+test fetch_completed_unread_body_released_after_gc ... ok
+test fetch_delivery_frontier_reaches_the_hook_before_dependent_js ... ok
+test fetch_error_waits_for_owner_delivery ... ok
+test fetch_disposal_stops_later_frontiers ... ok
+test fetch_head_abort_before_headers_rejects_without_panicking ... ok
+test fetch_json_headers_clone_consumption_and_correlation ... ok
+test fetch_disposal_cancels_jobs_and_queued_tasks_are_harmless ... ok
+test fetch_null_body_remains_readable_after_abort ... ok
+test fetch_null_body_frontier_is_terminal_without_bytes ... ok
+test fetch_limits_reject_overflow_and_refund_retained_bytes ... ok
+test fetch_disposal_before_queued_headers_preserves_shared_context_network ... ok
+test fetch_pending_limit_and_conversion_failures_do_not_start_requests ... ok
+test fetch_post_bytes_headers_redirects_and_http_errors ... ok
+test inherited_document_base_is_used_by_fetch_and_xhr_without_replacing_url ... ok
+test form_data_entries_iteration_and_multipart_bodies ... ok
+test response_constructor_statics_and_body_semantics ... ok
+test page_cache_disabled_bypasses_only_that_page ... ok
+test response_borrowed_methods_work_across_realms_without_self_roots ... ok
+test page_extra_http_headers_are_page_scoped_replaced_and_cleared ... ok
+test fetch_local_abort_reports_no_transport_terminal ... ok
+
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.49s
+
+     Running tests/identity_js.rs (target/release/deps/identity_js-48cdac6a073bc62b)
+
+running 2 tests
+test browser_identity_defaults_do_not_turn_simple_cross_origin_requests_into_preflights ... ok
+test identity_is_page_scoped_validated_atomically_and_snapshotted_per_request ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/url_params_js.rs (target/release/deps/url_params_js-bf2b10398aee22a7)
+
+running 2 tests
+test url_objects_and_live_params_work_with_fetch_request_conversion ... ok
+test params_fetch_and_xhr_use_native_serialization_and_snapshot_at_send ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/xhr_js.rs (target/release/deps/xhr_js-03c920fc6d255c25)
+
+running 23 tests
+test xhr_delivery_frontier_reaches_the_hook_before_ready_state_changes ... ok
+test xhr_abort_at_headers_fires_once_and_resets ... ok
+test xhr_cors_headers_and_failure_have_distinct_events ... ok
+test xhr_bytes_wait_for_owner_delivery ... ok
+test xhr_aggregate_budget_and_pending_cap_refund_on_reopen_and_abort ... ok
+test xhr_binary_json_and_invalid_state_contracts ... ok
+test xhr_completed_buffer_and_listener_cycles_are_collectable ... ok
+test xhr_json_lifecycle_handler_order_and_network_correlation ... ok
+test xhr_partial_text_decoder_preserves_split_utf8_and_charset ... ok
+test xhr_posts_subview_combines_headers_and_reuses_after_completion ... ok
+test xhr_limits_error_and_page_disposal_suppress_queued_events ... ok
+test xhr_reentrant_body_conversion_and_loadstart_abort_do_not_send ... ok
+test xhr_error_waits_for_owner_delivery ... ok
+test xhr_reopening_in_callback_suppresses_old_completion ... ok
+test xhr_text_read_is_safe_when_network_failure_precedes_its_browser_task ... ok
+test xhr_upload_events_are_skipped_without_body_or_early_listeners ... ok
+test xhr_upload_hears_errors_and_aborts_before_the_request_object ... ok
+test xhr_upload_object_identity_and_type ... ok
+test xhr_upload_events_fire_before_headers_for_a_request_body ... ok
+test xhr_disposal_is_scoped_and_queued_callbacks_release_the_page ... ok
+test xhr_progress_count_tracks_owner_delivery_not_new_byte_counts ... ok
+test xhr_timeout_update_uses_original_start_and_can_be_disabled ... ok
+test xhr_timeout_uses_captured_timer_and_is_measured_from_send ... ok
+
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
+
+   Doc-tests lp_webapi
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

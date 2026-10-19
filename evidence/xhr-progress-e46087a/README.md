@@ -1,0 +1,9 @@
+# Controlled XHR progress delivery schedules
+
+The original pointer-repair WebAPI run failed one progress-count assertion (208 passed,1 failed); it remains in evidence/pointer-focus-7973176/pointer-focus-webapi-release.log. Subsequent isolated passes were not treated as resolution.
+
+Exact test-only source e46087a1477d4581de9da745b6cadd4c886b534a adds an actual HTTP chunked fixture with its terminal chunk held by a channel. The regression deterministically exercises data/completion coalesced (one progress event) and data delivered before completion (two equal-byte progress events), asserting full sequences, LOADING, upload ordering and body. The original upload-order assertion string is unchanged; its setup now deliberately holds owner tasks until transport activity completes. There is no request retry or product delay, and production sources/manifests are unchanged.
+
+The first controlled test passed both schedules. Then one complete locked release lp-webapi invocation passed210 tests:7 library,149 DOM bindings,27 fetch,2 identity,2 request-default,23 XHR. Strict release all-targets lp-webapi clippy and workspace fmt passed. This is bounded causal validation of a test scheduling assumption, not retry-until-green. No TOS run was performed for this test-only change, and no whole-workspace or final742 green claim follows.
+
+Command: CARGO_PROFILE_RELEASE_DEBUG=0 cargo test --release --locked -p lp-webapi; then cargo clippy with the same profile and --all-targets -- -D warnings; cargo fmt --all -- --check. The focused first invocation preceded final formatting; the complete validation is on exact e46087a. Build host rustc1.99.1, SDK26.5. No production change was made to suppress final progress events; docs/webapi/XHR-PROGRESS-TESTS.md links the XHR standard algorithm and states limits.

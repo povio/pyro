@@ -367,17 +367,57 @@ const UPLOAD_LOG: &str = "globalThis.log=[];globalThis.x=new XMLHttpRequest();\
     for(const t of ['loadstart','progress','abort','error','timeout','load','loadend'])x.addEventListener(t,rec('x'));\
     x.onreadystatechange=()=>log.push('rs'+x.readyState);";
 
+fn wait_for_upload_test_transport(env: &Env) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        if env.page.net.borrow().as_ref().unwrap().activity("upload-progress-test").is_some_and(|a| a.inflight == 0) {
+            return;
+        }
+        assert!(std::time::Instant::now() < deadline, "transport did not finish");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
 #[test]
 fn xhr_upload_events_fire_before_headers_for_a_request_body() {
     let server = Server::new();
     let env = Env::new(&server.url);
+    env.page.set_request_context(RequestContext { loader_id: Some("upload-progress-test".into()), frame_id: None });
     env.eval(UPLOAD_LOG);
     env.eval("x.open('POST','/echo');x.upload.onprogress=rec('u');for(const t of ['loadstart','load','loadend'])x.upload.addEventListener(t,rec('u'));x.send('abcdef')");
+    // This assertion describes coalesced delivery. Hold the owner queue until
+    // the transport's sink has completed; a separate regression covers a data
+    // pump followed by completion with the same final byte count.
+    wait_for_upload_test_transport(&env);
     env.until("x.readyState===4");
     assert_eq!(
         env.eval("log.join(' ')"),
         "rs1 x:loadstart u:loadstart(0/6,true) u:progress(6/6,true) u:load(6/6,true) u:loadend(6/6,true) rs2 rs3 x:progress(6/6,true) rs4 x:load x:loadend"
     );
+}
+
+#[test]
+fn xhr_progress_count_tracks_owner_delivery_not_new_byte_counts() {
+    for split_delivery in [false, true] {
+        let server = Server::new();
+        let env = Env::new(&server.url);
+        env.page.set_request_context(RequestContext { loader_id: Some("upload-progress-test".into()), frame_id: None });
+        env.eval(UPLOAD_LOG);
+        env.eval("x.open('POST','/gated-upload-completion');x.upload.onprogress=rec('u');for(const t of ['loadstart','load','loadend'])x.upload.addEventListener(t,rec('u'));x.send('abcdef')");
+        if split_delivery {
+            env.until("log.includes('x:progress(6/0,false)')");
+            assert_eq!(env.eval("x.readyState"), "3", "terminal chunk is still gated");
+        }
+        server.release.send(()).unwrap();
+        if !split_delivery {
+            wait_for_upload_test_transport(&env);
+        }
+        env.until("x.readyState===4");
+        let final_progress = if split_delivery { " x:progress(6/0,false)" } else { "" };
+        let expected = format!("rs1 x:loadstart u:loadstart(0/6,true) u:progress(6/6,true) u:load(6/6,true) u:loadend(6/6,true) rs2 rs3 x:progress(6/0,false){final_progress} rs4 x:load x:loadend");
+        assert_eq!(env.eval("log.join(' ')"), expected);
+        assert_eq!(env.eval("x.responseText"), "abcdef");
+    }
 }
 
 #[test]
