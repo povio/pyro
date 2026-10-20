@@ -2833,3 +2833,28 @@ fn flow_style_reports_inherited_text_align() {
     assert_eq!((get("c"), get("s"), get("r")), (TextAlign::Center, TextAlign::Center, TextAlign::End));
     assert_eq!((get("th"), get("td")), (TextAlign::Center, TextAlign::Start));
 }
+
+#[test]
+fn inert_content_is_not_hit_testable() {
+    // react-aria's popover underlay is `<div inert>` covering the viewport;
+    // Blink's UsedPointerEvents is `none` for inert content while
+    // getComputedStyle still reports the cascaded value.
+    let p = page(
+        r#"<!DOCTYPE html>
+<body>
+  <div id="wrap" inert>
+    <div id="inner">Inner</div>
+  </div>
+  <div id="plain">Plain</div>
+</body>"#,
+    );
+    let inner = p.id("inner");
+    assert_eq!(p.cs(inner, "pointer-events"), "auto");
+    let (x, y) = p.center(inner);
+    let hit = p.efp(x, y);
+    assert!(hit != Some(inner) && hit != Some(p.id("wrap")), "{hit:?}");
+    assert!(!p.efps(x, y).iter().any(|&n| n == inner || n == p.id("wrap")));
+    let plain = p.id("plain");
+    let (x, y) = p.center(plain);
+    assert_eq!(p.efp(x, y), Some(plain));
+}

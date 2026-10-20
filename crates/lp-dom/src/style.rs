@@ -1705,6 +1705,8 @@ pub struct ComputedStyle {
     pub visibility_hidden: bool,
     /// Inherited `pointer-events: none`.
     pub pointer_events_none: bool,
+    /// This element or a flat-tree ancestor has the `inert` attribute.
+    pub inert: bool,
     /// This element or a flat-tree ancestor has display:none.
     pub in_display_none: bool,
     /// This element or a flat-tree ancestor has opacity:0.
@@ -1744,6 +1746,7 @@ impl ComputedStyle {
             author_display: mask & (1 << 31) != 0,
             visibility_hidden: own.visibility_hidden.unwrap_or(parent.visibility_hidden),
             pointer_events_none: own.pointer_events_none.unwrap_or(parent.pointer_events_none),
+            inert: parent.inert,
             in_display_none: own.display == Display::None || parent.in_display_none,
             in_opacity_zero: own.opacity_zero || parent.in_opacity_zero,
             overflow_x_scrolls: own.overflow_x == Overflow::Scroll,
@@ -2048,6 +2051,7 @@ impl StyleEngine {
         }
         for (e, own, mask) in path.into_iter().rev() {
             above = ComputedStyle::resolve(&own, mask, &above);
+            above.inert |= dom.n(e).element().is_some_and(|x| x.is_html() && x.attr("inert").is_some());
             memo.insert(dom.id_of(e), above);
         }
         above
@@ -2234,8 +2238,9 @@ impl StyleEngine {
     }
 
     /// Blink's VisibleToHitTestRequest, ignoring display:none (StyleManager.zig:687-692).
+    /// Inert content is not hit-testable (Blink's UsedPointerEvents).
     pub fn is_hit_testable(&self, dom: &Dom, el: NodeId) -> bool {
-        self.computed(dom, el).is_none_or(|c| !c.visibility_hidden && !c.pointer_events_none)
+        self.computed(dom, el).is_none_or(|c| !c.visibility_hidden && !c.pointer_events_none && !c.inert)
     }
 
     /// Computed text-transform: the nearest own value up `parentElement`
