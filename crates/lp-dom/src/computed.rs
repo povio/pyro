@@ -134,6 +134,9 @@ pub fn is_length_property(name: &str) -> bool {
     )
 }
 
+const BORDER_STYLES: &[&str] =
+    &["none", "hidden", "dotted", "dashed", "solid", "double", "groove", "ridge", "inset", "outset"];
+
 /// Splits a value at top-level whitespace, keeping functions and blocks whole.
 fn top_level_parts(value: &str) -> Vec<String> {
     let mut parts = Vec::new();
@@ -220,6 +223,36 @@ pub fn expand(name: &str, value: &str) -> Vec<(String, String)> {
         }
         "margin" | "padding" => sides(&format!("{name}-"), "", value),
         "inset" => sides("", "", value),
+        "border" | "border-top" | "border-right" | "border-bottom" | "border-left" => {
+            let sides = match name.strip_prefix("border-") {
+                Some(side) => vec![side],
+                None => vec!["top", "right", "bottom", "left"],
+            };
+            let (mut width, mut style, mut color) = ("medium".to_owned(), "none".to_owned(), "currentcolor".to_owned());
+            for part in top_level_parts(value) {
+                let lower = part.to_ascii_lowercase();
+                if BORDER_STYLES.contains(&lower.as_str()) {
+                    style = part;
+                } else if matches!(lower.as_str(), "thin" | "medium" | "thick")
+                    || lower.starts_with("calc(")
+                    || lower.chars().next().is_some_and(|c| c.is_ascii_digit() || c == '.')
+                {
+                    width = part;
+                } else {
+                    color = part;
+                }
+            }
+            sides
+                .iter()
+                .flat_map(|side| {
+                    [
+                        (format!("border-{side}-width"), width.clone()),
+                        (format!("border-{side}-style"), style.clone()),
+                        (format!("border-{side}-color"), color.clone()),
+                    ]
+                })
+                .collect()
+        }
         "border-color" | "border-width" | "border-style" => {
             let suffix = &name["border".len()..];
             sides("border-", suffix, value)
@@ -996,5 +1029,9 @@ mod tests {
         assert_eq!(expand("margin", "1px 2px")[3], ("margin-left".into(), "2px".into()));
         assert_eq!(expand("background", "#fff"), vec![("background-color".into(), "#fff".into())]);
         assert!(expand("background", "url(x.png) no-repeat").is_empty());
+        let border = expand("border", "1px solid red");
+        assert_eq!(border.len(), 12);
+        assert!(border.contains(&("border-left-style".into(), "solid".into())));
+        assert_eq!(expand("border-bottom", "2px dashed")[2], ("border-bottom-color".into(), "currentcolor".into()));
     }
 }

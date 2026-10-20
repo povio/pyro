@@ -2721,3 +2721,52 @@ fn computed_lengths_use_cascaded_font_sizes() {
     // vh resolves against the 1920x1080 default viewport.
     assert_eq!(p.cs(inner, "height"), "108px");
 }
+
+#[test]
+fn flow_style_reports_used_values_from_the_cascade() {
+    use lp_dom::flow::{Dim, FlowStyleSource, InnerDisplay, Len, OuterDisplay, Position};
+    let mut p = page(concat!(
+        "<!DOCTYPE html><body><div id=pop><ul id=list><li id=item>a</li></ul><span id=s>t</span>",
+        "<svg id=svg><path id=path></path></svg></div><p id=para>p</p><p id=gone hidden>h</p></body>"
+    ));
+    p.add_style(concat!(
+        "html{font-size:14px}",
+        "#pop{position:absolute;top:120px;left:12.5rem;width:calc(100% - 8px);padding:4px 8px;",
+        "border:1px solid red;box-sizing:border-box;overflow-y:auto;max-height:300px}",
+        "#list{display:flex;margin:0 auto;padding-left:0}",
+        "#item{line-height:1.5;white-space:nowrap;font-size:1.5em}",
+    ));
+    let style = p.layout.style();
+    let get = |id: &str| style.flow_style(&p.dom, p.id(id));
+
+    let pop = get("pop").unwrap();
+    assert_eq!((pop.outer, pop.inner, pop.position), (OuterDisplay::Block, InnerDisplay::Flow, Position::Absolute));
+    assert_eq!(pop.inset[0], Dim::px(120.0));
+    assert_eq!(pop.inset[3], Dim::px(175.0));
+    assert_eq!(pop.width, Dim::Len(Len { px: -8.0, percent: 100.0 }));
+    assert_eq!(pop.padding, [Len::px(4.0), Len::px(8.0), Len::px(4.0), Len::px(8.0)]);
+    assert_eq!(pop.border, [1.0; 4]);
+    assert!(pop.border_box && pop.clips_y && !pop.clips_x);
+    assert_eq!(pop.max_height, Dim::px(300.0));
+    assert_eq!(pop.font_size, 14.0);
+
+    let list = get("list").unwrap();
+    assert_eq!((list.outer, list.inner), (OuterDisplay::Block, InnerDisplay::Flex));
+    assert_eq!(list.margin[1], Dim::Auto);
+    // Author padding-left overrides the UA 40px; UA vertical margins are replaced by the author's 0.
+    assert_eq!(list.padding[3], Len::ZERO);
+    assert_eq!(list.margin[0], Dim::px(0.0));
+
+    let item = get("item").unwrap();
+    assert_eq!(item.font_size, 21.0);
+    assert_eq!(item.line_height, Some(31.5));
+    assert!(item.nowrap);
+
+    assert_eq!(get("s").unwrap().outer, OuterDisplay::Inline);
+    let svg = get("svg").unwrap();
+    assert!(svg.replaced);
+    assert_eq!(get("path").unwrap().outer, OuterDisplay::Contents);
+    // UA margins when no author value applies: p gets 1em at its 14px root-inherited size.
+    assert_eq!(get("para").unwrap().margin[0], Dim::px(14.0));
+    assert!(get("gone").is_none());
+}

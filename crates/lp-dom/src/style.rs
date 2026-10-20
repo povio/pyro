@@ -2281,6 +2281,17 @@ impl StyleEngine {
             return None;
         }
         let id = dom.id_of(idx);
+        if name == "font-size" {
+            // Inherited and resolved against ancestors; None when no author value applies anywhere up the tree.
+            let mut cur = Some(idx);
+            while let Some(i) = cur {
+                if declared_value(dom, rules, dom.id_of(i), name).is_some() {
+                    return Some(format!("{}px", computed::fmt_num(self.font_size_at_cascade(dom, rules, idx, depth))));
+                }
+                cur = flat_tree_parent_element(dom, i);
+            }
+            return None;
+        }
         let inherited = computed::is_inherited(name);
         let from_parent =
             || flat_tree_parent_element(dom, idx).and_then(|p| self.computed_value_at(dom, rules, p, name, depth + 1));
@@ -2306,9 +2317,6 @@ impl StyleEngine {
                 Some(color.unwrap_or_else(|| "rgb(0, 0, 0)".into()))
             };
             return Some(computed::serialize_color(value, &mut current).unwrap_or_else(|| value.to_owned()));
-        }
-        if name == "font-size" {
-            return Some(format!("{}px", computed::fmt_num(self.font_size_at_cascade(dom, rules, idx, depth))));
         }
         if computed::is_length_property(name) {
             let cx = self.length_context(dom, rules, idx, depth);
