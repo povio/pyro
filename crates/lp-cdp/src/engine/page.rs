@@ -209,6 +209,7 @@ impl EngineHost {
                 }
                 Ok(Some(json!({})))
             }
+            "getLayoutMetrics" => self.layout_metrics(cmd),
             // Accepted because there is nothing to change: the engine enforces
             // no CSP, opens no file chooser and has a single foreground page.
             "setBypassCSP" | "setInterceptFileChooserDialog" | "bringToFront" => Ok(Some(json!({}))),

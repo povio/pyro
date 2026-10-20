@@ -1,7 +1,8 @@
 //! Device metrics over the browser's persistent page viewport. Screen
 //! orientation overrides are stored on the viewport and reported by
 //! `screen.orientation` (as upstream and Chrome). Mobile layout and visual
-//! viewport transforms remain explicit gaps.
+//! viewport transforms remain explicit gaps. `Page.getLayoutMetrics` reports
+//! the same viewport, window scroll offset and document scroll size.
 use std::collections::BTreeMap;
 
 use lp_dom::media::{self, ScreenOrientation, Viewport};
@@ -117,5 +118,43 @@ impl EngineHost {
             other => remote::js_to_cdp(other),
         })?;
         Ok(Some(json!({})))
+    }
+
+    /// `Page.getLayoutMetrics` for the main frame, in CSS px. There is no
+    /// pinch zoom, so the visual viewport is the layout viewport. Headless
+    /// Chromium reports the same values in the deprecated device-pixel
+    /// fields (checked at device scale factors 1 and 2) and so does this.
+    pub(super) fn layout_metrics(&mut self, cmd: &PageCommand<'_, '_>) -> CdpResult<Option<Value>> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct P {}
+        cmd.command.params::<P>()?;
+        let id = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?.id;
+        let page = self.thread.browser.page(id).ok_or_else(|| CdpError::server("page is gone"))?;
+        let (width, height) = (page.viewport().width, page.viewport().height);
+        let (scroll_x, scroll_y, content_width, content_height) = match &page.main_frame.page_dom {
+            Some(bindings) => {
+                let dom = bindings.dom.borrow();
+                let layout = bindings.layout.borrow();
+                let (w, h) = layout.document_scroll_size(&dom);
+                (layout.scroll_x(), layout.scroll_y(), w, h)
+            }
+            None => (0, 0, width as f64, height as f64),
+        };
+        let layout_viewport =
+            json!({"pageX": scroll_x, "pageY": scroll_y, "clientWidth": width, "clientHeight": height});
+        let visual_viewport = json!({
+            "offsetX": 0, "offsetY": 0, "pageX": scroll_x, "pageY": scroll_y,
+            "clientWidth": width, "clientHeight": height, "scale": 1, "zoom": 1,
+        });
+        let content_size = json!({"x": 0, "y": 0, "width": content_width, "height": content_height});
+        Ok(Some(json!({
+            "layoutViewport": layout_viewport,
+            "visualViewport": visual_viewport,
+            "contentSize": content_size,
+            "cssLayoutViewport": layout_viewport,
+            "cssVisualViewport": visual_viewport,
+            "cssContentSize": content_size,
+        })))
     }
 }

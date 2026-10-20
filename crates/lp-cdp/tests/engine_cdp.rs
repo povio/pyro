@@ -1624,6 +1624,47 @@ fn input_accepts_mac_key_derived_editing_commands() {
     );
 }
 
+#[test]
+fn layout_metrics_report_viewport_scroll_and_document_size() {
+    let mut h = Harness::new();
+    let metrics = json!({"width":800,"height":600,"deviceScaleFactor":2,"mobile":false});
+    assert_eq!(h.page("Emulation.setDeviceMetricsOverride", metrics)["result"], json!({}));
+    h.page("Page.enable", json!({}));
+    let load = |h: &mut Harness, url: &str| {
+        let events = h.page_with_events("Page.navigate", json!({ "url": url }));
+        if !events.iter().any(|e| e["method"] == "Page.loadEventFired") {
+            until_event(h, "Page.loadEventFired");
+        }
+    };
+    // Expected values are what headless Chromium (Playwright 1.59.1's build)
+    // reports for the same page, viewport and scroll offsets at DPR 2.
+    let expected = |x: u32, y: u32, w: u32, h: u32| {
+        let layout = json!({"pageX":x,"pageY":y,"clientWidth":800,"clientHeight":600});
+        let visual = json!({"offsetX":0,"offsetY":0,"pageX":x,"pageY":y,"clientWidth":800,"clientHeight":600,"scale":1,"zoom":1});
+        let content = json!({"x":0,"y":0,"width":w,"height":h});
+        json!({"layoutViewport":layout,"visualViewport":visual,"contentSize":content,
+               "cssLayoutViewport":layout,"cssVisualViewport":visual,"cssContentSize":content})
+    };
+    // Sizes are f64 (`1500.0`); compare them as JSON numbers.
+    let metrics = |h: &mut Harness| -> Value {
+        let r = h.page("Page.getLayoutMetrics", json!({}));
+        serde_json::from_str(&r["result"].to_string().replace(".0,", ",").replace(".0}", "}")).unwrap()
+    };
+    load(&mut h, "data:text/html,<!doctype html><body style=margin:0><div style=width:1500px;height:2500px></div>");
+    assert_eq!(
+        eval_value(&mut h, "[document.documentElement.scrollWidth, document.documentElement.scrollHeight]"),
+        json!([1500, 2500])
+    );
+    assert_eq!(metrics(&mut h), expected(0, 0, 1500, 2500));
+    assert_eq!(eval_value(&mut h, "scrollTo(100, 300); [scrollX, scrollY]"), json!([100, 300]));
+    assert_eq!(metrics(&mut h), expected(100, 300, 1500, 2500));
+    // Content smaller than the viewport reports the viewport size.
+    load(&mut h, "data:text/html,<!doctype html><body>short");
+    assert_eq!(metrics(&mut h), expected(0, 0, 800, 600));
+    let r = h.page("Page.getLayoutMetrics", json!({"bogus":1}));
+    assert_eq!(r["error"]["code"], -32602, "{r}");
+}
+
 fn eval_value(h: &mut Harness, expression: &str) -> Value {
     let r = h.page("Runtime.evaluate", json!({"expression": expression, "returnByValue": true}));
     assert!(r["result"].get("exceptionDetails").is_none(), "{r}");

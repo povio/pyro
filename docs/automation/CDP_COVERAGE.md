@@ -19,7 +19,7 @@ Capture uses a shared process payload budget (default 64 MiB, 8 MiB/body), at mo
 
 The browser integration smoke also exercises DOM access before init scripts, shared DOM across isolated worlds, page fetch with exact Network frame/loader correlation, route fulfillment/abort after headers, and Web Storage context/page/navigation isolation. These checks use local HTTP and JavaScript evaluation; The full DOM protocol and actual TOS workflows remain unvalidated. A separate Input check covers keyboard typing/text insertion and mouse checkbox activation; editing commands, wheel default scrolling, pen/touch and drag remain unsupported. Mouse coordinates follow the native synthetic layout, not full CSS positioning; the smoke derives its click point from the reported rectangle and verifies the exact hit target.
 
-Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 48 engine, 9 accepted/recorded only, 2 conditional, 42 pending (counts from the table below).
+Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 49 engine, 9 accepted/recorded only, 2 conditional, 41 pending (counts from the table below).
 
 | Method | Upstream 2ad38773f | Rewrite | Notes |
 | --- | --- | --- | --- |
@@ -84,7 +84,7 @@ Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 48 engi
 | `Page.close` | yes | pending |  |
 | `Page.enable` | yes | engine |  |
 | `Page.getFrameTree` | yes | engine | nested native frames with per-document loader and actual security origin |
-| `Page.getLayoutMetrics` | yes | pending |  |
+| `Page.getLayoutMetrics` | yes | engine | main frame, CSS px: emulated viewport, window scroll offset and document scroll size (at least the viewport); no pinch zoom, so the visual viewport equals the layout viewport with `scale`/`zoom` 1; the deprecated fields repeat the CSS values, as headless Chromium on macOS reports at DPR 1 and 2. `page.screenshot` still fails at `Page.captureScreenshot` (no rasterizer) |
 | `Page.getNavigationHistory` | yes | engine | main-frame session history with stable entry ids; `title` is empty and `transitionType` is `other`; the initial about:blank entry is kept by the first navigation (Chrome replaces it) |
 | `Page.handleJavaScriptDialog` | yes | pending |  |
 | `Page.navigate` | yes | engine | about:blank, data and HTTP documents; frameId supports native children; explicit failures, no joint child history |
