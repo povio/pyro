@@ -82,6 +82,27 @@ impl PageHooks for Hooks {
         });
     }
 
+    fn document_reopened(&self) {
+        let page = self.page;
+        let loader = self.loader.clone();
+        self.sched.post(TaskSource::DomManipulation, move |b| {
+            if b.doc(page).is_some_and(|p| p.main_frame.loader_id == loader) {
+                b.document_reopened(page);
+            }
+        });
+    }
+
+    fn document_closed(&self) -> bool {
+        let page = self.page;
+        let loader = self.loader.clone();
+        self.sched.post(TaskSource::DomManipulation, move |b| {
+            if b.doc(page).is_some_and(|p| p.main_frame.loader_id == loader) {
+                b.finish_written_document(page);
+            }
+        });
+        true
+    }
+
     fn network_delivery(&self, id: lp_net::RequestId, frontier: lp_net::NetworkDelivery) {
         // Clone the observer out of the cell first, as `emit_to` does: the
         // callback must not run under the cell borrow.

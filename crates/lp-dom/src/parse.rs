@@ -312,6 +312,8 @@ pub struct DocumentParser {
     decoded: String,
     /// Bytes held back until 1024 bytes (or EOF) are available for prescan.
     sniff: Vec<u8>,
+    /// Outer input set aside by `begin_nested` (innermost last).
+    saved: Vec<BufferQueue>,
 }
 
 /// Charset prescan of the first bytes for `<meta charset>` /
@@ -373,6 +375,7 @@ impl DocumentParser {
             decoder: None,
             decoded: String::new(),
             sniff: Vec::new(),
+            saved: Vec::new(),
         })
     }
 
@@ -456,6 +459,37 @@ impl DocumentParser {
             self.input.push_back(StrTendril::from_slice(chunk));
         }
         self.resume()
+    }
+
+    /// `document.write` from a script this parser yielded for: the markup is
+    /// parsed at the insertion point, ahead of the remaining input, which is
+    /// set aside until `end_nested`. Resume on `Script` as usual; once
+    /// `resume` returns `NeedInput`, call `end_nested`.
+    pub fn begin_nested(&mut self, chunk: &str) -> ParseStep {
+        if self.ended {
+            return ParseStep::NeedInput;
+        }
+        let nested = BufferQueue::default();
+        if !chunk.is_empty() {
+            nested.push_back(StrTendril::from_slice(chunk));
+        }
+        self.input.swap_with(&nested);
+        self.saved.push(nested);
+        self.resume()
+    }
+
+    /// Restores the input set aside by the matching `begin_nested`; nested
+    /// input the tokenizer did not consume stays in front of it.
+    pub fn end_nested(&mut self) {
+        let Some(outer) = self.saved.pop() else { return };
+        let mut rest = Vec::new();
+        while let Some(chunk) = self.input.pop_front() {
+            rest.push(chunk);
+        }
+        self.input.swap_with(&outer);
+        for chunk in rest.into_iter().rev() {
+            self.input.push_front(chunk);
+        }
     }
 
     /// Continues after a script ran.

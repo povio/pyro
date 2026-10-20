@@ -780,6 +780,43 @@ impl Browser {
         self.fire_dom_content_loaded(page);
     }
 
+    /// `document.open()` on the loaded document: it is loading again, so
+    /// DOMContentLoaded/load (and their CDP lifecycle events) can fire anew.
+    pub(crate) fn document_reopened(&mut self, page: FrameKey) {
+        let Some(mut state) = self.doc_mut(page) else { return };
+        state.main_frame.dom_content_loaded = false;
+        state.main_frame.loaded = false;
+        if let Some(load) = &mut state.load {
+            load.dcl_fired = false;
+            load.load_fired = false;
+        }
+        drop(state);
+        self.sync_root(page.page);
+    }
+
+    /// `document.close()` ended the script-created parser: "the end" steps
+    /// after readyState became interactive.
+    pub(crate) fn finish_written_document(&mut self, page: FrameKey) {
+        let Some(mut state) = self.doc_mut(page) else { return };
+        if state.main_frame.dom_content_loaded {
+            return;
+        }
+        if let Some(load) = &mut state.load {
+            load.dcl_fired = true;
+        }
+        state.main_frame.dom_content_loaded = true;
+        let frame_id = state.main_frame.id.clone();
+        let loader_id = state.main_frame.loader_id.clone();
+        let bindings = state.main_frame.page_dom.clone();
+        drop(state);
+        self.sync_root(page.page);
+        if let Some(dom) = bindings {
+            lp_webapi::lifecycle::dom_content_loaded(&dom, dom.document());
+        }
+        self.emit(page.page, PageEvent::FrameDomContentLoaded { frame_id, loader_id, timestamp: self.timestamp() });
+        self.maybe_fire_load(page);
+    }
+
     fn fire_dom_content_loaded(&mut self, page: FrameKey) {
         let Some(mut load) = self.load_mut(page) else { return };
         if load.dcl_fired {

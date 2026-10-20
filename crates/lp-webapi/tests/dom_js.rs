@@ -3349,6 +3349,65 @@ fn wheel_and_touch_listeners_on_window_document_html_body_default_to_passive() {
 }
 
 #[test]
+fn document_open_write_close_replaces_a_loaded_document() {
+    let e = env("<body><p id=o>orig</p></body>");
+    let r = &e.main;
+    eval(
+        r,
+        "window.keep = 'kept'; window.oldClicks = 0; window.addEventListener('click', () => oldClicks++); \
+         document.addEventListener('custom', () => window.oldDoc = true); window.onload = () => window.oldLoad = true; 1",
+    );
+    // Playwright's page.setContent, verbatim.
+    assert_eq!(
+        eval(
+            r,
+            r#"
+        const returned = document.open() === document;
+        document.write('<!doctype html><html><head><title>t</title></head><body><p id=a>a</p>' +
+            '<script>window.log = [document.readyState, document.currentScript.tagName, typeof keep, !!document.getElementById("a"), !!document.getElementById("o")];' +
+            'document.addEventListener("DOMContentLoaded", () => log.push("DCL:" + document.readyState));' +
+            'window.addEventListener("load", () => log.push("load:" + document.readyState));' +
+            'document.write("<p id=w>w<scr" + "ipt>log.push(\x27nested\x27)</scr" + "ipt></p>"); log.push(!!document.getElementById("w"));<\/script>');
+        document.write('<p id=after>after</p>');
+        document.writeln('<script type=module>log.push("module")<\/script>'.replace('module', 'text/x-data'));
+        document.close();
+        [returned, log.join(), document.title, [...document.body.children].map(x => x.id || x.tagName).join(), document.readyState].join('|')
+    "#
+        ),
+        "true|loading,SCRIPT,string,true,false,nested,true,DCL:interactive,load:complete|t|a,SCRIPT,w,after,SCRIPT|complete"
+    );
+    // Old listeners and handlers were erased; handlers can be set again.
+    assert_eq!(
+        eval(
+            r,
+            "document.dispatchEvent(new Event('custom')); document.body.click(); \
+             let n = 0; const before = window.onload; window.onload = null; document.body.onclick = () => n++; document.body.click(); \
+             [String(window.oldDoc), oldClicks, before, n, String(window.oldLoad)].join()"
+        ),
+        "undefined,0,,1,undefined"
+    );
+    // Implicit open on a loaded document; external scripts are reported.
+    assert_eq!(
+        eval(r, "document.write('<p id=x>x</p>'); const t = [document.readyState, document.body.children.length]; document.close(); [t, document.readyState].join()"),
+        "loading,1,complete"
+    );
+    assert_eq!(
+        eval(
+            r,
+            r#"try { document.write('<script src=/a.js><\/script>'); 'no throw' } catch (e) { document.close(); e.name }"#
+        ),
+        "NotSupportedError"
+    );
+    assert_eq!(
+        eval(
+            r,
+            "const x = document.implementation.createDocument(null, 'r'); try { x.open(); 'no' } catch (e) { e.name }"
+        ),
+        "InvalidStateError"
+    );
+}
+
+#[test]
 fn drag_event_carries_its_data_transfer() {
     let e = env("<body><div id=d></div></body>");
     let r = &e.main;

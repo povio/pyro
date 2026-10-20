@@ -1232,6 +1232,44 @@ fn input_intercepted_link_drag_carries_chromium_link_data() {
 }
 
 #[test]
+fn set_content_document_write_reports_fresh_lifecycle_after_console_tag() {
+    let mut h = Harness::new();
+    h.page("Runtime.enable", json!({}));
+    h.page("Page.enable", json!({}));
+    h.page_with_events("Page.setLifecycleEventsEnabled", json!({"enabled":true}));
+    h.run_for(50);
+    let frame = h.frame_id.clone();
+    let utility = h.page("Page.createIsolatedWorld", json!({"frameId":frame,"worldName":"__pw_utility"}))["result"]
+        ["executionContextId"]
+        .clone();
+    // Playwright 1.59 frames.setContent, evaluated in the utility world.
+    let source = r#"(({ html, tag }) => { document.open(); console.debug(tag); document.write(html); document.close(); })({ html: '<!doctype html><title>mail</title><a href="/next">Open conversation</a><script>window.ran = document.readyState<\/script>', tag: '--tag--' })"#;
+    let mut events =
+        h.page_with_events("Runtime.evaluate", json!({"expression":source,"contextId":utility,"awaitPromise":true}));
+    events.extend(h.run_for(100));
+    let at = |pred: &dyn Fn(&Value) -> bool| events.iter().position(pred);
+    let tag = at(&|e| e["method"] == "Runtime.consoleAPICalled" && e["params"]["args"][0]["value"] == "--tag--")
+        .unwrap_or_else(|| panic!("console tag: {events:#?}"));
+    let frame = h.frame_id.clone();
+    let lifecycle = |name: &str| {
+        events.iter().position(|e| {
+            e["method"] == "Page.lifecycleEvent" && e["params"]["name"] == name && e["params"]["frameId"] == frame
+        })
+    };
+    let dcl = lifecycle("DOMContentLoaded").unwrap_or_else(|| panic!("DOMContentLoaded: {events:#?}"));
+    let load = lifecycle("load").unwrap_or_else(|| panic!("load: {events:#?}"));
+    assert!(tag < dcl && dcl < load, "{events:#?}");
+    assert!(at(&|e| e["method"] == "Page.loadEventFired").is_some_and(|i| i > tag), "{events:#?}");
+    assert_eq!(
+        eval_value(
+            &mut h,
+            "[window.ran, document.title, document.readyState, document.querySelector('a').href.endsWith('/next')]"
+        ),
+        json!(["loading", "mail", "complete", true])
+    );
+}
+
+#[test]
 fn dom_backend_nodes_adopt_across_worlds_and_expire_on_navigation() {
     let mut h = Harness::new();
     assert_eq!(h.page("DOM.enable", json!({}))["result"], json!({}));

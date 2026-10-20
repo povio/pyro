@@ -378,7 +378,7 @@ impl JsClass for DataTransferItem {
 }
 
 /// A natively created DataTransfer for a drag session. Its wrapper lives in
-/// the page's earliest live realm (the main world) and is rooted while this
+/// the page's main-world realm and is rooted while this
 /// value exists; listeners in other worlds observe that same object, as with
 /// a script-created DataTransfer carried by a DragEvent.
 pub(crate) struct NativeTransfer {
@@ -395,12 +395,7 @@ impl NativeTransfer {
         effect_allowed: &str,
         mode: Mode,
     ) -> Option<NativeTransfer> {
-        let realm = {
-            let realms = page.realms.borrow();
-            let mut live: Vec<_> = realms.iter().filter_map(|(id, r)| Some((id.0, r.upgrade()?))).collect();
-            live.retain(|(_, r)| !r.is_disposed());
-            live.into_iter().min_by_key(|(id, _)| *id)?.1
-        };
+        let realm = page.main_world_realm()?;
         let s = realm.scope().ok()?;
         let store = Store::default();
         *store.drop_effect.borrow_mut() = "none".into();

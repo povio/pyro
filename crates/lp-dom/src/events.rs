@@ -50,6 +50,13 @@ pub struct ListenerStore {
 }
 
 impl ListenerStore {
+    /// Drops the target's listeners, keeping a document's window link.
+    fn erase(&mut self, key: TargetKey) {
+        if let Some(list) = self.map.remove(&key) {
+            self.released.extend(list.into_iter().map(|l| (key, l.callback)));
+        }
+    }
+
     pub(crate) fn forget(&mut self, key: TargetKey) {
         if let Some(list) = self.map.remove(&key) {
             self.released.extend(list.into_iter().map(|l| (key, l.callback)));
@@ -261,6 +268,12 @@ impl Dom {
 
     pub fn has_listeners(&self, target: TargetKey) -> bool {
         self.events.map.get(&target).is_some_and(|l| !l.is_empty())
+    }
+
+    /// HTML "erase all event listeners and handlers" for one target
+    /// (`document.open()`); a document keeps its window for event paths.
+    pub fn erase_listeners(&mut self, target: TargetKey) {
+        self.events.erase(target);
     }
 
     /// Drops every listener of a non-node target (e.g. XHR finalized).

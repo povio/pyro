@@ -1176,10 +1176,8 @@ impl JsClass for Document {
         });
         def.method("execCommand", 0, |s, _n, _a| Ok(s.boolean(false)));
         def.method("queryCommandSupported", 0, |s, _n, _a| Ok(s.boolean(false)));
-        def.method("open", 0, |s, _n, _a| {
-            Err::<Value, _>(JsError::Unsupported("document.open")).or_else(|_| Ok(s.undefined()))
-        });
-        def.method("close", 0, |s, _n, _a| Ok(s.undefined()));
+        def.method("open", 0, crate::html::document_open);
+        def.method("close", 0, |s, n, _a| crate::html::document_close(s, n));
         def.method("write", 0, |s, n, a| crate::html::document_write(s, n, a, false));
         def.method("writeln", 0, |s, n, a| crate::html::document_write(s, n, a, true));
         def.getter("fonts", |s, _n| s.eval("({ready: Promise.resolve(), check(){return true}, load(){return Promise.resolve([])}, addEventListener(){}, removeEventListener(){}, status: 'loaded', forEach(){}, size: 0})", None, 1));

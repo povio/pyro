@@ -491,7 +491,23 @@ fn handler_set(s: &Scope<'_>, object: Object<'_>, key: &str, value: Value<'_>) -
 pub(crate) fn event_handler<'s>(s: &Scope<'s>, target: &EventTargetData, ty: &str) -> JsResult<Value<'s>> {
     let object =
         target_object(s, &target.page, target.key)?.ok_or_else(|| JsError::Type("Illegal invocation".into()))?;
+    if handler_slot(s, target, object, ty)?.is_none() {
+        return Ok(s.null());
+    }
     Ok(handler_get(s, object, &format!("__lpHandler_{ty}"))?.unwrap_or(s.null()))
+}
+
+/// The handler's listener slot while its native listener is still
+/// registered; `document.open()` erases handlers natively.
+fn handler_slot(s: &Scope<'_>, target: &EventTargetData, object: Object<'_>, ty: &str) -> JsResult<Option<u32>> {
+    let slot = handler_get(s, object, &format!("__lpHandlerSlot_{ty}"))?
+        .filter(|v| !v.is_undefined())
+        .map(|v| v.to_number())
+        .transpose()?
+        .map(|v| v as u32);
+    Ok(slot.filter(|&slot| {
+        target.page.dom.borrow().listener_registration(target.key, ty, handle_for(s.realm_id(), slot), false).is_some()
+    }))
 }
 pub(crate) fn set_event_handler(
     s: &Scope<'_>,
@@ -504,11 +520,7 @@ pub(crate) fn set_event_handler(
     let value_key = format!("__lpHandler_{ty}");
     let slot_key = format!("__lpHandlerSlot_{ty}");
     let value = if value.as_object().is_some_and(|o| o.is_function()) { value } else { s.null() };
-    let slot = handler_get(s, object, &slot_key)?
-        .filter(|v| !v.is_undefined())
-        .map(|v| v.to_number())
-        .transpose()?
-        .map(|v| v as u32);
+    let slot = handler_slot(s, target, object, ty)?;
     handler_set(s, object, &value_key, value)?;
     if let Some(slot) = slot {
         if value.is_null() {

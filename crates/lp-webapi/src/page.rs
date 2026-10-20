@@ -89,6 +89,13 @@ pub struct PageDom {
     pub(crate) drag_candidate: Cell<Option<(NodeId, f64, f64)>>,
     /// The native drag-and-drop session in progress, if any.
     pub(crate) drag: RefCell<Option<crate::input::DragSession>>,
+    /// `document.open()`'s script-created parser (`crate::html` document
+    /// open/write/close), a close() deferred from a script it runs, and that
+    /// script nesting level.
+    pub(crate) script_parser: RefCell<Option<lp_dom::parse::DocumentParser>>,
+    pub(crate) script_parser_active: Cell<bool>,
+    pub(crate) script_parser_close: Cell<bool>,
+    pub(crate) script_nesting: Cell<u32>,
     /// Control activated by a Space keydown, clicked on the matching keyup.
     pub(crate) space_target: Cell<Option<NodeId>>,
     dialog_returns: RefCell<FxHashMap<NodeId, String>>,
@@ -188,6 +195,15 @@ pub trait PageHooks {
     /// Called after the delivery snapshot and before any resulting JS, with
     /// binding locks/borrows released. Default embedders need no observer.
     fn network_delivery(&self, _id: lp_net::RequestId, _frontier: lp_net::NetworkDelivery) {}
+    /// `document.open()` replaced the loaded document's content: the frame is
+    /// loading again, so DOMContentLoaded/load can be reported anew.
+    fn document_reopened(&self) {}
+    /// `document.close()` finished the script-created parser (readyState is
+    /// already "interactive"): fire DOMContentLoaded, then load once nothing
+    /// blocks it. Returns false when the embedder does not handle it.
+    fn document_closed(&self) -> bool {
+        false
+    }
     /// Called without DOM/hook borrows before the inserting native call returns.
     fn iframe_connected(&self, _iframe: NodeId) {}
     /// Removed iframe owners, descendants before ancestors.
@@ -263,6 +279,10 @@ impl PageDom {
             press_target: Cell::new(None),
             drag_candidate: Cell::new(None),
             drag: RefCell::new(None),
+            script_parser: RefCell::new(None),
+            script_parser_active: Cell::new(false),
+            script_parser_close: Cell::new(false),
+            script_nesting: Cell::new(0),
             space_target: Cell::new(None),
             dialog_returns: RefCell::new(FxHashMap::default()),
             sheet_rules: RefCell::new(FxHashMap::default()),
@@ -567,6 +587,15 @@ impl PageDom {
     pub(crate) fn hooks(&self) -> Option<Rc<dyn PageHooks>> {
         self.hooks.borrow().clone()
     }
+    /// The page's main-world realm: the earliest live realm without a world
+    /// name (isolated worlds are named).
+    pub(crate) fn main_world_realm(&self) -> Option<lp_js::Realm> {
+        let realms = self.realms.borrow();
+        let mut live: Vec<_> = realms.iter().filter_map(|(id, r)| Some((id.0, r.upgrade()?))).collect();
+        live.retain(|(_, r)| !r.is_disposed() && r.name().is_empty());
+        live.into_iter().min_by_key(|(id, _)| *id).map(|(_, r)| r)
+    }
+
     pub(crate) fn post_task(&self, task: Box<dyn FnOnce()>) {
         match self.hooks() {
             Some(h) => h.post_task(task),
