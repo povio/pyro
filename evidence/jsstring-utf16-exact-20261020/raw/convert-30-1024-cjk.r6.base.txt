@@ -1,0 +1,32 @@
+mode=convert cycles=30 kib=1024 text=cjk source_bytes=1048666 utf16_units=463834 start footprint=5.6 rss=10.7 MiB
+    1  footprint      7.3 MiB  rss     12.5 MiB
+    2  footprint      7.4 MiB  rss     12.5 MiB
+    3  footprint      7.4 MiB  rss     12.5 MiB
+    4  footprint      7.4 MiB  rss     12.5 MiB
+    5  footprint      7.4 MiB  rss     12.5 MiB
+    6  footprint      7.4 MiB  rss     12.5 MiB
+    7  footprint      7.4 MiB  rss     12.5 MiB
+    8  footprint      7.4 MiB  rss     12.5 MiB
+    9  footprint      7.4 MiB  rss     12.5 MiB
+   10  footprint      7.4 MiB  rss     12.5 MiB
+   11  footprint      7.4 MiB  rss     12.5 MiB
+   12  footprint      7.4 MiB  rss     12.5 MiB
+   13  footprint      7.4 MiB  rss     12.5 MiB
+   14  footprint      7.4 MiB  rss     12.5 MiB
+   15  footprint      7.4 MiB  rss     12.5 MiB
+   16  footprint      7.4 MiB  rss     12.5 MiB
+   17  footprint      7.4 MiB  rss     12.5 MiB
+   18  footprint      7.4 MiB  rss     12.5 MiB
+   19  footprint      7.4 MiB  rss     12.5 MiB
+   20  footprint      7.4 MiB  rss     12.5 MiB
+   21  footprint      7.4 MiB  rss     12.5 MiB
+   22  footprint      7.4 MiB  rss     12.5 MiB
+   23  footprint      7.4 MiB  rss     12.5 MiB
+   24  footprint      7.4 MiB  rss     12.5 MiB
+   25  footprint      7.4 MiB  rss     12.5 MiB
+   26  footprint      7.4 MiB  rss     12.5 MiB
+   27  footprint      7.4 MiB  rss     12.5 MiB
+   28  footprint      7.4 MiB  rss     12.5 MiB
+   29  footprint      7.4 MiB  rss     12.5 MiB
+   30  footprint      7.4 MiB  rss     12.5 MiB
+end footprint +1.8 MiB  rss +1.8 MiB  cpu 0.019 s  wall 0.019 s

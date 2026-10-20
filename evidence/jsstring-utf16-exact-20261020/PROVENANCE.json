@@ -1,0 +1,38 @@
+{
+ "workload": "synthetic JsString::new / classic-script realm cycles (crates/lp-js/examples/large_string_cycles.rs); not a browser, CDP or TOS benchmark; ES modules bypass JsString::new",
+ "host": {
+  "hostname": "PovioServers-Mac-mini.local",
+  "os": "26.7.1 (25G241)",
+  "arch": "arm64",
+  "hardware": "not sampled (sysctl denied by sandbox); bench/results/upstream-2ad38773f/PROVENANCE.md records this user/OS build as Apple M1 (8 cores), 8 GB"
+ },
+ "toolchain": {
+  "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+  "cargo": "cargo 1.99.1 (5f94df478 2026-08-27)",
+  "linker": "ld-1267 via scripts/macos/link-and-sign.sh (ad hoc re-sign with com.apple.security.cs.allow-jit; verified on all three binaries)",
+  "SDKROOT": "/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk (pinned: ld-1267 cannot read MacOSX27.0.sdk .tbd stubs, which xcrun selects by default)",
+  "profile": "release (lto=thin, codegen-units=1, debuginfo)",
+  "command": "cargo build --release --offline -p lp-js --example large_string_cycles"
+ },
+ "variants": {
+  "base": {
+   "string_rs_source": "2b4d66b5b24bf18fcd9b9326af1ece825b21a591 (encode_utf16().collect())",
+   "string_rs_sha256": "ae9d4e1e20db5177f2c639dffc2e4fd3b1bdda2f26cf32bd63a8cb6c9e299551",
+   "binary_sha256": "eadd3bbe8d9ce19d69b4ce50b8d5a4402ada6b79fa7922e4b76adf731e87a1cc"
+  },
+  "len": {
+   "string_rs_source": "a32656e18b5dd311b8f272f03af2f9077b8d708e (Vec::with_capacity(s.len()))",
+   "string_rs_sha256": "749c58aeddb3df9f1a37b981b87bef8da25133d1cc0c2765aa9c72d4b2bab5a1",
+   "binary_sha256": "53a150a658e5025533d436858b91efc2374738e3dff002f918dcbfd26895718a"
+  },
+  "exact": {
+   "string_rs_source": "this commit (exact UTF-16 length, chunked count)",
+   "string_rs_sha256": "d77c1a15c4570b1367181bc7f3d81490c71ca272cd822a4cfa3d221f57a2e34f",
+   "binary_sha256": "ff95d2babbf7f836a88fc75d8ebe407c27c2f6ac058180a23bd83ac751ebd6d2"
+  }
+ },
+ "example_sha256": "db29d6edb014d4f172a9b808c5de91a6a8ff624edf24b1d2c73c3ddfefff7b46",
+ "only_difference": "the three binaries are built from the same tree and example; only crates/lp-js/src/string.rs differs",
+ "ordering": "run.sh: per configuration, 6 rounds using all 6 permutations of (base,len,exact) once each; ORDER.tsv records configuration, round, position, variant and UTC start",
+ "metrics": "footprint/rss = increase of proc_pid_rusage ri_phys_footprint/ri_resident_size over the cycle loop (after engine and source creation), MiB; cpu = getrusage(RUSAGE_SELF) user+system seconds over the loop; wall = monotonic seconds over the loop. Single process per run, no other workload intentionally started. CPU utilization not sampled."
+}

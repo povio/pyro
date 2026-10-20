@@ -1,0 +1,32 @@
+mode=realm cycles=30 kib=4096 text=ascii source_bytes=4194316 utf16_units=4194316 start footprint=9.9 rss=15.0 MiB
+    1  footprint    120.0 MiB  rss    125.1 MiB
+    2  footprint    151.8 MiB  rss    156.9 MiB
+    3  footprint    181.9 MiB  rss    187.9 MiB
+    4  footprint    190.8 MiB  rss    196.8 MiB
+    5  footprint    191.7 MiB  rss    197.6 MiB
+    6  footprint    191.7 MiB  rss    197.6 MiB
+    7  footprint    191.7 MiB  rss    197.6 MiB
+    8  footprint    191.7 MiB  rss    197.7 MiB
+    9  footprint    192.1 MiB  rss    198.1 MiB
+   10  footprint    192.2 MiB  rss    198.1 MiB
+   11  footprint    192.8 MiB  rss    198.7 MiB
+   12  footprint    192.9 MiB  rss    198.9 MiB
+   13  footprint    192.9 MiB  rss    198.9 MiB
+   14  footprint    193.0 MiB  rss    199.1 MiB
+   15  footprint    193.1 MiB  rss    199.2 MiB
+   16  footprint    193.1 MiB  rss    199.2 MiB
+   17  footprint    193.1 MiB  rss    199.2 MiB
+   18  footprint    193.1 MiB  rss    199.2 MiB
+   19  footprint    193.1 MiB  rss    199.2 MiB
+   20  footprint    193.2 MiB  rss    199.3 MiB
+   21  footprint    193.2 MiB  rss    199.3 MiB
+   22  footprint    193.2 MiB  rss    199.3 MiB
+   23  footprint    193.2 MiB  rss    199.3 MiB
+   24  footprint    193.2 MiB  rss    199.3 MiB
+   25  footprint    193.2 MiB  rss    199.3 MiB
+   26  footprint    193.2 MiB  rss    199.3 MiB
+   27  footprint    193.2 MiB  rss    199.3 MiB
+   28  footprint    193.3 MiB  rss    199.3 MiB
+   29  footprint    193.3 MiB  rss    199.3 MiB
+   30  footprint    193.3 MiB  rss    199.4 MiB
+end footprint +183.4 MiB  rss +184.4 MiB  cpu 0.676 s  wall 0.593 s

@@ -90,14 +90,34 @@ impl Drop for JsString {
     }
 }
 
-/// UTF-16 code units of `s` in one allocation. A string never has more UTF-16
-/// units than UTF-8 bytes, so `s.len()` always suffices and the buffer is never
-/// regrown; `collect()` regrows it for large strings (see
+/// UTF-16 code units of `s` in one allocation of exactly the needed size;
+/// `collect()` regrows the buffer for large strings (see
 /// `tests/string_allocation.rs`).
 pub(crate) fn utf16_units(s: &str) -> Vec<u16> {
-    let mut units = Vec::with_capacity(s.len());
+    let len = utf16_len(s);
+    let mut units = Vec::with_capacity(len);
     units.extend(s.encode_utf16());
+    debug_assert_eq!(units.len(), len);
     units
+}
+
+/// Number of UTF-16 code units in `s`: one per scalar value (every byte that
+/// is not a UTF-8 continuation byte `10xxxxxx`), plus one more for each 4-byte
+/// scalar (lead byte `11110xxx`), which needs a surrogate pair.
+pub(crate) fn utf16_len(s: &str) -> usize {
+    let bytes = s.as_bytes();
+    if bytes.is_ascii() {
+        return bytes.len();
+    }
+    // A byte adds at most 2, so a 127-byte chunk's count fits in a `u8`; the
+    // narrow accumulator lets the compiler vectorize the scan.
+    bytes
+        .chunks(127)
+        .map(|chunk| {
+            let n = chunk.iter().fold(0u8, |n, &b| n + u8::from(b & 0xC0 != 0x80) + u8::from(b >= 0xF0));
+            usize::from(n)
+        })
+        .sum()
 }
 
 /// # Safety
@@ -153,19 +173,24 @@ mod tests {
     }
 
     #[test]
-    fn utf16_units_match_encode_utf16_in_one_allocation() {
-        // 1-, 2-, 3- and 4-byte UTF-8 (the last needs a surrogate pair), NUL.
+    fn utf16_units_match_encode_utf16_without_growth() {
+        // 1-, 2-, 3- and 4-byte UTF-8 (the last needs a surrogate pair), NUL,
+        // and the extremes of each encoding length.
         let mixed = "a\0ž€🐸".repeat(300);
-        for s in ["", "a", "ž", "€", "🐸", "a\0b", mixed.as_str()] {
+        let edges = "\u{7f}\u{80}\u{7ff}\u{800}\u{ffff}\u{10000}\u{10ffff}";
+        let cjk = "漢字テキスト".repeat(1000);
+        for s in ["", "a", "ž", "€", "🐸", "a\0b", edges, mixed.as_str(), cjk.as_str()] {
+            let expected: Vec<u16> = s.encode_utf16().collect();
+            assert_eq!(utf16_len(s), expected.len(), "{s:?}");
             let units = utf16_units(s);
-            assert_eq!(units, s.encode_utf16().collect::<Vec<u16>>(), "{s:?}");
-            assert_eq!(units.capacity(), s.len(), "allocated once at the UTF-8 length bound: {s:?}");
+            assert_eq!(units, expected, "{s:?}");
+            assert!(units.capacity() >= units.len(), "{s:?}");
         }
     }
 
     #[test]
     fn large_multibyte_strings_roundtrip() {
-        for unit in ["x", "žabe 🐸 ", "€\0"] {
+        for unit in ["x", "žabe 🐸 ", "€\0", "漢字テキスト"] {
             let s = unit.repeat((5 << 20) / unit.len());
             let j = JsString::new(&s);
             assert_eq!(j.len_utf16(), s.encode_utf16().count());

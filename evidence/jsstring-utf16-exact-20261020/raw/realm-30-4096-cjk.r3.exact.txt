@@ -1,0 +1,32 @@
+mode=realm cycles=30 kib=4096 text=cjk source_bytes=4194540 utf16_units=1861356 start footprint=10.0 rss=15.1 MiB
+    1  footprint     40.3 MiB  rss     45.4 MiB
+    2  footprint     49.5 MiB  rss     54.7 MiB
+    3  footprint     58.3 MiB  rss     63.5 MiB
+    4  footprint     62.5 MiB  rss     67.7 MiB
+    5  footprint     62.6 MiB  rss     67.8 MiB
+    6  footprint     62.9 MiB  rss     68.0 MiB
+    7  footprint     63.1 MiB  rss     68.2 MiB
+    8  footprint     63.4 MiB  rss     68.5 MiB
+    9  footprint     63.6 MiB  rss     68.8 MiB
+   10  footprint     63.8 MiB  rss     68.9 MiB
+   11  footprint     64.2 MiB  rss     69.3 MiB
+   12  footprint     64.3 MiB  rss     69.4 MiB
+   13  footprint     64.6 MiB  rss     69.7 MiB
+   14  footprint     64.8 MiB  rss     69.9 MiB
+   15  footprint     65.0 MiB  rss     70.1 MiB
+   16  footprint     65.3 MiB  rss     70.5 MiB
+   17  footprint     65.5 MiB  rss     70.6 MiB
+   18  footprint     65.8 MiB  rss     70.9 MiB
+   19  footprint     65.8 MiB  rss     71.0 MiB
+   20  footprint     66.1 MiB  rss     71.2 MiB
+   21  footprint     66.1 MiB  rss     71.3 MiB
+   22  footprint     63.2 MiB  rss     71.4 MiB
+   23  footprint     63.3 MiB  rss     71.5 MiB
+   24  footprint     63.5 MiB  rss     71.7 MiB
+   25  footprint     63.5 MiB  rss     71.8 MiB
+   26  footprint     63.6 MiB  rss     71.8 MiB
+   27  footprint     63.7 MiB  rss     71.9 MiB
+   28  footprint     63.7 MiB  rss     71.9 MiB
+   29  footprint     63.7 MiB  rss     71.9 MiB
+   30  footprint     63.7 MiB  rss     71.9 MiB
+end footprint +53.7 MiB  rss +56.8 MiB  cpu 0.231 s  wall 0.210 s
