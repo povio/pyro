@@ -2846,7 +2846,9 @@ fn flow_inputs_keep_full_precision() {
     let style = p.layout.style().flow_style(&p.dom, b).unwrap();
     assert!((style.line_height.unwrap() - 20.0).abs() < 1e-9, "{:?}", style.line_height);
     assert!((style.padding[0].px - 6.0).abs() < 1e-9);
+}
 
+#[test]
 fn inert_content_is_not_hit_testable() {
     // react-aria's popover underlay is `<div inert>` covering the viewport;
     // Blink's UsedPointerEvents is `none` for inert content while
@@ -2869,4 +2871,17 @@ fn inert_content_is_not_hit_testable() {
     let plain = p.id("plain");
     let (x, y) = p.center(plain);
     assert_eq!(p.efp(x, y), Some(plain));
+}
+
+#[test]
+fn flow_line_height_snaps_to_layout_units() {
+    use lp_dom::flow::FlowStyleSource;
+    let mut p = page("<!DOCTYPE html><body><button id=a>Today</button><span id=b>c</span><span id=c>d</span></body>");
+    p.add_style("#a{font-size:.8125rem;line-height:1.8462}#b{font-size:12px;line-height:1.3333}#c{line-height:20.3px}");
+    let lh = |p: &Page, id: &str| p.layout.style().flow_style(&p.dom, p.id(id)).unwrap().line_height.unwrap();
+    // Chromium lays out TOS's text-small Today button as 24px + padding, not
+    // 13 x 1.8462 = 24.0006px; numbers truncate to 1/64 px, fixed lengths round.
+    assert_eq!(lh(&p, "a"), 24.0);
+    assert_eq!(lh(&p, "b"), 15.984375);
+    assert_eq!(lh(&p, "c"), 20.296875);
 }

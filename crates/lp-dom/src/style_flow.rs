@@ -115,14 +115,23 @@ impl FlowStyleSource for StyleEngine {
         let clips = |name: &str| {
             matches!(value(name).as_deref().map(str::trim), Some("hidden" | "scroll" | "auto" | "clip" | "overlay"))
         };
+        // Blink's ComputedLineHeightAsFixed: numbers and percentages scale the
+        // font size into a truncated LayoutUnit (1/64 px), fixed lengths round,
+        // so `1.8462` at 13px lays out as 24px.
         let line_height = value("line-height").and_then(|v| {
             let v = v.trim();
             if v.eq_ignore_ascii_case("normal") {
                 None
             } else if let Some(n) = computed::resolve_number(v) {
-                Some(n * font_size)
+                Some(layout_unit_trunc(n * font_size))
             } else {
-                computed::resolve_len(v, &cx).map(|(px, pct)| px + pct * font_size / 100.0)
+                computed::resolve_len(v, &cx).map(|(px, pct)| {
+                    if pct != 0.0 {
+                        layout_unit_trunc(px + pct * font_size / 100.0)
+                    } else {
+                        (px * 64.0).round() / 64.0
+                    }
+                })
             }
         });
         let nowrap = matches!(value("white-space").as_deref().map(str::trim), Some("nowrap" | "pre"));
@@ -333,4 +342,10 @@ fn ua_box(tag: &str, font_size: f64) -> UaBox {
         _ => [Len::ZERO; 4],
     };
     UaBox { margin, padding }
+}
+
+/// A float converted to Blink's LayoutUnit (1/64 px) by truncation, ignoring
+/// f64 noise just below a unit boundary.
+fn layout_unit_trunc(px: f64) -> f64 {
+    (px * 64.0 + 1e-6).trunc() / 64.0
 }
