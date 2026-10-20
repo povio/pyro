@@ -653,6 +653,10 @@ struct Ctx<'a> {
     /// `cb_height` of the box whose contents are being laid out (for its own
     /// percentage min/max heights).
     own_cb_height: Option<f64>,
+    /// Baselines (y) of the first and last non-empty line boxes laid out by
+    /// this context, for atomic inline baselines.
+    first_baseline: Option<f64>,
+    last_baseline: Option<f64>,
     /// Absolutely positioned descendants waiting for their containing block:
     /// one list per open positioned ancestor (bottom = initial containing
     /// block). Each entry: element, style, static position, fixed context.
@@ -669,6 +673,8 @@ struct Memo {
     min_content: RefCell<FxHashMap<NodeId, f64>>,
     /// Content height by (element, content width bits).
     heights: RefCell<FxHashMap<(NodeId, u64), f64>>,
+    /// Atomic inline baseline by (element, content width bits, height bits).
+    baselines: RefCell<FxHashMap<(NodeId, u64, u64), Option<f64>>>,
 }
 
 struct Pending {
@@ -744,6 +750,8 @@ impl<'a> Ctx<'a> {
             memo,
             cb_height: None,
             own_cb_height: None,
+            first_baseline: None,
+            last_baseline: None,
         }
     }
 
@@ -1544,7 +1552,8 @@ impl<'a> Ctx<'a> {
                         );
                     }
                     // Text-bearing controls sit on their text baseline; other
-                    // atomic boxes on their bottom margin edge.
+                    // atomic boxes on their CSS baseline (atomic_baseline) or
+                    // their bottom margin edge.
                     let ascent = match control_kind(self.dom, el) {
                         Some(Control::Text | Control::Button(_) | Control::File) => {
                             e.margin[TOP] + e.border[TOP] + e.padding[TOP] + text_extents(&style).0
@@ -1553,7 +1562,14 @@ impl<'a> Ctx<'a> {
                         Some(Control::Select { rows: None }) => {
                             e.margin[TOP] + e.border[TOP] + e.padding[TOP] + font_metrics(style.font_size).0 + 1.0
                         }
-                        _ => outer_h,
+                        Some(_) => outer_h,
+                        None => {
+                            let content_h = outer_h - e.margin[TOP] - e.margin[BOTTOM] - e.vertical();
+                            match self.atomic_baseline(el, &style, content_w, content_h.max(0.0)) {
+                                Some(b) => e.margin[TOP] + e.border[TOP] + e.padding[TOP] + b,
+                                None => outer_h,
+                            }
+                        }
                     };
                     let at = line.x;
                     line.push(at, outer_w, outer_h, ascent, owners, Some((el, *style)));
@@ -1638,6 +1654,8 @@ impl<'a> Ctx<'a> {
             return 0.0;
         }
         let baseline = line_y + line.ascent;
+        self.first_baseline.get_or_insert(baseline);
+        self.last_baseline = Some(baseline);
         // text-align: trailing collapsible spaces (ownerless zero-width
         // spacers) do not count; a line too long to fit is start-aligned.
         let extent = line
@@ -1701,6 +1719,58 @@ impl<'a> Ctx<'a> {
         let h = probe.contents(el, style, 0.0, 0.0, content_w, None, false, (0.0, 0.0));
         self.memo.heights.borrow_mut().insert(key, h);
         h
+    }
+
+    /// Baseline of an atomic inline box, from its content-box top (None: its
+    /// bottom margin edge). CSS 2.1 10.8.1 / Flexbox 8.5 / Grid 10.6:
+    /// inline-block: its last line box's baseline, unless it has none or
+    /// clips its overflow; inline-flex / inline-grid: the first item's first
+    /// baseline, else one synthesized from that item's bottom border edge.
+    fn atomic_baseline(&self, el: NodeId, style: &FlowStyle, content_w: f64, content_h: f64) -> Option<f64> {
+        if style.replaced || style.inner == InnerDisplay::Table {
+            return None;
+        }
+        let flowroot = !matches!(style.inner, InnerDisplay::Flex | InnerDisplay::Grid);
+        if flowroot && (style.clips_x || style.clips_y) {
+            return None;
+        }
+        let key = (el, content_w.to_bits(), content_h.to_bits());
+        if let Some(&b) = self.memo.baselines.borrow().get(&key) {
+            return b;
+        }
+        let mut probe = Ctx::new(self.dom, self.src, self.vw, self.vh, self.memo);
+        probe.pending.push(Vec::new());
+        probe.contents(el, style, 0.0, 0.0, content_w, Some(content_h), false, (0.0, 0.0));
+        let baseline = if flowroot {
+            probe.last_baseline
+        } else {
+            // The startmost in-flow item.
+            let first = self.flatten_children(el).into_iter().find(|(c, s)| match s {
+                None => self.dom.char_data(*c).is_ok_and(|t| !is_blank(t)),
+                Some(s) => !matches!(s.position, Position::Absolute | Position::Fixed),
+            });
+            match first {
+                // Anonymous text item: its first line.
+                Some((_, None)) => probe.first_baseline,
+                // An element item: its own first baseline, from a probe of its
+                // contents at its laid-out size, else its bottom border edge.
+                Some((c, Some(cs))) => probe.out.boxes.get(&c).copied().map(|b| {
+                    let e = self.edges(&cs, content_w);
+                    let mut item = Ctx::new(self.dom, self.src, self.vw, self.vh, self.memo);
+                    item.pending.push(Vec::new());
+                    let cw = (b.rect.width - e.horizontal()).max(0.0);
+                    let ch = (b.rect.height - e.vertical()).max(0.0);
+                    item.contents(c, &cs, 0.0, 0.0, cw, Some(ch), false, (0.0, 0.0));
+                    match item.first_baseline {
+                        Some(fb) => b.rect.y + e.border[TOP] + e.padding[TOP] + fb,
+                        None => b.rect.y + b.rect.height,
+                    }
+                }),
+                None => None,
+            }
+        };
+        self.memo.baselines.borrow_mut().insert(key, baseline);
+        baseline
     }
 
     /// Lays out an atomic inline (inline-block / replaced) at (x, y), its

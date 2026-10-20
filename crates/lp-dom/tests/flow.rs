@@ -1483,3 +1483,30 @@ fn flow_parity_block_in_inline() {
         [800.0, 600.0],
     );
 }
+
+#[test]
+fn flow_parity_atomic_inline_baselines() {
+    // TOS payments search field: an inline-flex icon box (only an svg) in a
+    // 24px line at 15px sits on a baseline synthesized from its first item's
+    // bottom edge, so the line is 27.6px (flow had 31: bottom on baseline).
+    // inline-flex with text uses the text baseline; inline-block its last
+    // line, or its bottom edge when empty or clipping. Chromium 1.59.1,
+    // system UI font; Chromium snaps to 1/64px, so heights within 0.05px.
+    let html = "<!doctype html><body style=\"margin:0;font-family:-apple-system,BlinkMacSystemFont,sans-serif;font-size:15px;line-height:24px\"><div id=a><span id=ai style=\"display:inline-flex;width:24px;height:24px;align-items:center;justify-content:center\"><span id=ag style=\"display:block;width:19.2px;height:19.2px\"></span></span></div><div id=b><span id=bi style=\"display:inline-flex;height:40px;align-items:center;padding:0 4px\">Go</span></div><div id=c><span id=ci style=\"display:inline-block;width:40px\">one two three</span></div><div id=d><span id=di style=\"display:inline-block;width:30px;height:20px\"></span></div><div id=e><span id=ei style=\"display:inline-block;width:80px;overflow:hidden\">clip</span></div><div id=f><span id=fi style=\"display:inline-flex;align-items:center;gap:4px\"><span style=\"display:block;width:16px;height:16px\"></span>Label</span></div></body>";
+    let p = page(html, Geometry::Flow);
+    let src = InlineFlex { style: p.layout.style() };
+    let result = flow::layout(&p.dom, p.doc, &src, 800.0, 600.0);
+    let mut diffs = Vec::new();
+    for (id, h) in [("a", 27.59), ("b", 40.0), ("c", 72.0), ("d", 26.0), ("e", 30.0), ("f", 26.0)] {
+        let r = result.get(p.id(id)).unwrap().rect;
+        if (r.height - h).abs() > 0.05 {
+            diffs.push(format!("#{id}: height {} vs Chromium {h}", r.height));
+        }
+    }
+    // The icon box itself starts at the line top.
+    let ai = result.get(p.id("ai")).unwrap().rect;
+    if ai.y.abs() > 0.05 {
+        diffs.push(format!("#ai: y {} vs Chromium 0", ai.y));
+    }
+    assert!(diffs.is_empty(), "baselines:\n{}", diffs.join("\n"));
+}
