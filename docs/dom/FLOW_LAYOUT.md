@@ -83,8 +83,23 @@ containing block (em/rem/vw/vh resolved by the style engine).
   scroll. Out-of-flow boxes do not advance siblings.
 - Stage 2 (flex): row/column, wrap, gaps, grow/shrink/basis (one pass), justify-content, align-items/align-self with stretch; text directly in a flex container is an anonymous item.
 - Stage 3 (tables): rows in display order (header, body, footer groups), colspan, fixed and auto column widths with border-spacing / border-collapse and extra-width distribution, tables without a width shrinking to their columns, row heights from the tallest cell, cells stretched to the row with content vertically centred. No rowspan, captions or column elements yet.
-- Not yet (laid out as block containers): grid inner layout,
-  tables, floats, sticky, margin collapsing through parents, writing modes,
+- Form controls (`input` except hidden/image, `textarea`, `select`) are atomic
+  replaced boxes with Chromium's intrinsic size when width/height are auto:
+  a text input is `size` (20) x 0.525em + 0.4375em wide and one line tall;
+  textarea `cols` x 0.525em + 16px by `rows` lines; select the widest option
+  + 24px by the normal line height + 2px; checkbox/radio 13x13; range 129x16.
+  Text-bearing controls sit on their text baseline in a line. Measured in
+  Chromium at 16px with a Tailwind-like preflight and a sans font (glyph
+  advances differ per font, so widths are approximate).
+- Percentage heights (and min/max heights) resolve against the containing
+  block's definite height: the viewport for the root, declared heights,
+  flexed/stretched flex items, and absolutely positioned boxes with both
+  insets; otherwise they behave as auto.
+- One pass memoizes used styles, max-content widths and measured heights
+  (element, width), so nested flex/table measurement is linear rather than
+  exponential in nesting depth, and records descendants by order instead of
+  scanning every box.
+- Not yet (laid out as block containers): grid inner layout, floats, sticky, margin collapsing through parents, writing modes,
   transforms other than inline translateX.
 
 ## Consumers switched in Stage 1 (Flow mode only)

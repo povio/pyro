@@ -791,3 +791,96 @@ fn table_parity_spanmiddle() {
         ],
     );
 }
+
+// ----- form controls and percentage heights -----------------------------------
+// Chromium 1.59.1 at 800x600 with a Tailwind-like preflight and a sans font.
+
+const PREFLIGHT: &str = "<style>*,::before,::after{box-sizing:border-box;border:0 solid;margin:0;padding:0}input,button,textarea,select{font:inherit;color:inherit}html{font-size:16px;line-height:24px;font-family:ui-sans-serif,system-ui,sans-serif}</style>";
+
+#[test]
+fn flow_parity_form_controls() {
+    let html = format!(
+        "<!doctype html>{PREFLIGHT}<body><div id=bar style=\"display:flex;align-items:center;gap:8px;height:40px;padding:0 12px\"><input id=filter style=\"width:100%\"></div><div id=col style=\"display:flex;flex-direction:column;width:300px\"><input id=stretched><textarea id=ta rows=3></textarea></div><div id=line><input id=inl size=10><input id=cb type=checkbox></div><input id=blk style=\"display:block\"><select id=sel style=\"width:120px\"><option>x</option></select><button id=empty></button></body>"
+    );
+    check(
+        "form-controls",
+        &html,
+        0,
+        &[
+            ("bar", [0.0, 0.0, 800.0, 40.0, 800.0, 40.0, 800.0, 40.0]),
+            ("filter", [12.0, 8.0, 776.0, 24.0, 776.0, 24.0, 776.0, 24.0]),
+            ("col", [0.0, 40.0, 300.0, 96.0, 300.0, 96.0, 300.0, 96.0]),
+            ("stretched", [0.0, 40.0, 300.0, 24.0, 300.0, 24.0, 300.0, 24.0]),
+            ("ta", [0.0, 64.0, 300.0, 72.0, 300.0, 72.0, 300.0, 72.0]),
+            ("line", [0.0, 136.0, 800.0, 24.0, 800.0, 24.0, 800.0, 24.0]),
+            ("inl", [0.0, 136.0, 91.0, 24.0, 91.0, 24.0, 91.0, 24.0]),
+            ("blk", [0.0, 160.0, 175.0, 24.0, 175.0, 24.0, 175.0, 24.0]),
+            ("sel", [0.0, 186.0, 120.0, 20.0, 120.0, 20.0, 120.0, 20.0]),
+        ],
+        [800.0, 600.0],
+    );
+    let p = page(&html, Geometry::Flow);
+    let cb = p.metrics("cb");
+    assert_eq!((cb[0], cb[2], cb[3]), (91.0, 13.0, 13.0), "checkbox: {cb:?}");
+    // An empty button has no box size (Chromium 0x0): Playwright treats it as hidden.
+    let empty = p.metrics("empty");
+    assert_eq!((empty[2], empty[3]), (0.0, 0.0), "empty button: {empty:?}");
+}
+
+#[test]
+fn flow_parity_percent_heights_in_flex_shell() {
+    let html = "<!doctype html><style>html,body{height:100%;margin:0}</style><body><div id=shell style=\"display:flex;flex-direction:column;height:100%\"><header id=hd style=\"height:50px\"></header><main id=main style=\"flex:1;min-height:0;display:flex\"><aside id=side style=\"width:200px;overflow:auto\"><div id=list style=\"height:2000px\"></div></aside><section id=sec style=\"flex:1;display:flex;flex-direction:column\"><div id=full style=\"height:100%\"><div id=half style=\"height:50%\"></div></div></section></main></div></body>";
+    check(
+        "percent-shell",
+        html,
+        0,
+        &[
+            ("shell", [0.0, 0.0, 800.0, 600.0, 800.0, 600.0, 800.0, 600.0]),
+            ("hd", [0.0, 0.0, 800.0, 50.0, 800.0, 50.0, 800.0, 50.0]),
+            ("main", [0.0, 50.0, 800.0, 550.0, 800.0, 550.0, 800.0, 550.0]),
+            ("side", [0.0, 50.0, 200.0, 550.0, 200.0, 550.0, 200.0, 2000.0]),
+            ("list", [0.0, 50.0, 200.0, 2000.0, 200.0, 2000.0, 200.0, 2000.0]),
+            ("sec", [200.0, 50.0, 600.0, 550.0, 600.0, 550.0, 600.0, 550.0]),
+            ("full", [200.0, 50.0, 600.0, 550.0, 600.0, 550.0, 600.0, 550.0]),
+            ("half", [200.0, 50.0, 600.0, 275.0, 600.0, 275.0, 600.0, 275.0]),
+        ],
+        [800.0, 600.0],
+    );
+}
+
+#[test]
+fn flow_parity_percent_heights_in_blocks() {
+    let html = "<!doctype html><body style=\"margin:0\"><div id=wrap style=\"height:300px\"><div id=p100 style=\"height:100%\"><div id=p50 style=\"height:50%;max-height:120px\"></div><div id=pmin style=\"min-height:20%\"></div></div></div><div id=auto><div id=pauto style=\"height:50%\"></div></div></body>";
+    check(
+        "percent-blocks",
+        html,
+        0,
+        &[
+            ("wrap", [0.0, 0.0, 800.0, 300.0, 800.0, 300.0, 800.0, 300.0]),
+            ("p100", [0.0, 0.0, 800.0, 300.0, 800.0, 300.0, 800.0, 300.0]),
+            ("p50", [0.0, 0.0, 800.0, 120.0, 800.0, 120.0, 800.0, 120.0]),
+            ("pmin", [0.0, 120.0, 800.0, 60.0, 800.0, 60.0, 800.0, 60.0]),
+            ("auto", [0.0, 300.0, 800.0, 0.0, 800.0, 0.0, 800.0, 0.0]),
+            ("pauto", [0.0, 300.0, 800.0, 0.0, 800.0, 0.0, 800.0, 0.0]),
+        ],
+        [800.0, 600.0],
+    );
+}
+
+#[test]
+fn flow_parity_fixed_modal_with_input() {
+    let html = format!(
+        "<!doctype html>{PREFLIGHT}<body><div id=ov style=\"position:fixed;inset:0;display:flex;align-items:center;justify-content:center\"><div id=dlg style=\"width:400px;max-height:100%;overflow:auto;padding:16px\"><input id=din style=\"width:100%\"></div></div></body>"
+    );
+    check(
+        "modal",
+        &html,
+        0,
+        &[
+            ("ov", [0.0, 0.0, 800.0, 600.0, 800.0, 600.0, 800.0, 600.0]),
+            ("dlg", [200.0, 272.0, 400.0, 56.0, 400.0, 56.0, 400.0, 56.0]),
+            ("din", [216.0, 288.0, 368.0, 24.0, 368.0, 24.0, 368.0, 24.0]),
+        ],
+        [800.0, 600.0],
+    );
+}

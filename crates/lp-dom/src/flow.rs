@@ -12,6 +12,8 @@
 //! baseline alignment. Text uses the engine's fixed-advance measure, so text
 //! widths are approximate; boxes with explicit sizes match Chromium.
 
+use std::cell::RefCell;
+
 use rustc_hash::FxHashMap;
 
 use crate::layout::{text_width, Rect};
@@ -285,7 +287,9 @@ impl FlowResult {
 
 /// Lays out the document rooted at `doc` for a `vw`×`vh` viewport.
 pub fn layout(dom: &Dom, doc: NodeId, src: &dyn FlowStyleSource, vw: f64, vh: f64) -> FlowResult {
-    let mut cx = Ctx { dom, src, vw, vh, out: FlowResult::default(), order: 0, pending: Vec::new() };
+    let memo = Memo::default();
+    let mut cx = Ctx::new(dom, src, vw, vh, &memo);
+    cx.cb_height = Some(vh);
     let icb = Rect { x: 0.0, y: 0.0, width: vw, height: vh };
     cx.pending.push(Vec::new());
     let mut cursor = 0.0;
@@ -293,7 +297,7 @@ pub fn layout(dom: &Dom, doc: NodeId, src: &dyn FlowStyleSource, vw: f64, vh: f6
         let kids: Vec<NodeId> = children.collect();
         for c in kids {
             if dom.node_type(c).ok() == Some(NodeType::Element) {
-                if let Some(style) = src.flow_style(dom, c) {
+                if let Some(style) = cx.style_of(c) {
                     let h = cx.block_child(c, &style, 0.0, cursor, vw, false, (0.0, 0.0));
                     cursor += h;
                 }
@@ -319,10 +323,29 @@ struct Ctx<'a> {
     vh: f64,
     out: FlowResult,
     order: u32,
+    /// Element recorded under each order (index = order - 1), so the boxes
+    /// laid out since an order was assigned (its descendants) are a slice.
+    by_order: Vec<Option<NodeId>>,
+    /// Shared by the pass and its measuring probes.
+    memo: &'a Memo,
+    /// Definite content-box height of the containing block, against which
+    /// in-flow percentage heights resolve (None: they behave as auto).
+    cb_height: Option<f64>,
     /// Absolutely positioned descendants waiting for their containing block:
     /// one list per open positioned ancestor (bottom = initial containing
     /// block). Each entry: element, style, static position, fixed context.
     pending: Vec<Vec<Pending>>,
+}
+
+/// Per-pass caches. Nested flex/table measurement would otherwise lay the
+/// same subtree out again at every ancestor level (exponential in depth),
+/// and ask the style source for the same element many times.
+#[derive(Default)]
+struct Memo {
+    styles: RefCell<FxHashMap<NodeId, Option<FlowStyle>>>,
+    max_content: RefCell<FxHashMap<NodeId, f64>>,
+    /// Content height by (element, content width bits).
+    heights: RefCell<FxHashMap<(NodeId, u64), f64>>,
 }
 
 struct Pending {
@@ -372,6 +395,85 @@ enum InlineItem {
 }
 
 impl<'a> Ctx<'a> {
+    fn new(dom: &'a Dom, src: &'a dyn FlowStyleSource, vw: f64, vh: f64, memo: &'a Memo) -> Self {
+        Ctx { dom, src, vw, vh, out: FlowResult::default(), order: 0, pending: Vec::new(), by_order: Vec::new(), memo, cb_height: None }
+    }
+
+    fn style_of(&self, el: NodeId) -> Option<FlowStyle> {
+        if let Some(s) = self.memo.styles.borrow().get(&el) {
+            return s.clone();
+        }
+        let mut s = self.src.flow_style(self.dom, el);
+        // Form controls are atomic boxes sized by their own intrinsic size;
+        // their DOM children (textarea text, options) are not laid out.
+        if let Some(st) = s.as_mut() {
+            if control_kind(self.dom, el).is_some() {
+                st.replaced = true;
+            }
+        }
+        self.memo.styles.borrow_mut().insert(el, s.clone());
+        s
+    }
+
+    /// Intrinsic content-box size of a replaced element without a declared
+    /// size: form controls by Chromium's defaults (measured in headless
+    /// Chromium at 13.33px UA and 16px preflight fonts), otherwise none.
+    fn intrinsic(&self, el: NodeId, style: &FlowStyle) -> Option<(f64, f64)> {
+        let fs = style.font_size;
+        let normal = {
+            let (a, d) = font_metrics(fs);
+            a + d
+        };
+        let line = style.line_height.unwrap_or(normal);
+        let attr_num = |name: &str| {
+            self.dom.get_attribute(el, name).ok().flatten().and_then(|v| v.trim().parse::<f64>().ok()).filter(|v| *v > 0.0)
+        };
+        // Average glyph advance of the control font.
+        let avg = 0.525 * fs;
+        Some(match control_kind(self.dom, el)? {
+            Control::Text => (attr_num("size").unwrap_or(20.0) * avg + 0.4375 * fs, line),
+            Control::Check => (13.0, 13.0),
+            Control::Range => (129.0, 16.0),
+            Control::Color => (44.0, 23.0),
+            Control::File => (19.0 * fs, line),
+            Control::Button(label) => (collapsed_width(&label, fs), line),
+            Control::TextArea => (attr_num("cols").unwrap_or(20.0) * avg + 16.0, attr_num("rows").unwrap_or(2.0) * line),
+            Control::Select { rows } => {
+                let widest = self
+                    .dom
+                    .descendants(el)
+                    .into_iter()
+                    .flatten()
+                    .filter(|&n| self.dom.tag_name(n).is_ok_and(|t| t.eq_ignore_ascii_case("option")))
+                    .map(|n| collapsed_width(&self.dom.text_content(n).ok().flatten().unwrap_or_default(), fs))
+                    .fold(0.0, f64::max);
+                match rows {
+                    None => (widest + 24.0, normal + 2.0),
+                    Some(r) => (widest + 16.0, r * (normal + 2.0)),
+                }
+            }
+        })
+    }
+
+    fn insert_box(&mut self, el: NodeId, b: FlowBox) {
+        let i = b.order as usize - 1;
+        if self.by_order.len() <= i {
+            self.by_order.resize(i + 1, None);
+        }
+        self.by_order[i] = Some(el);
+        self.out.boxes.insert(el, b);
+    }
+
+    /// Calls `f` on every box recorded with an order above `order`.
+    fn boxes_after(&mut self, order: u32, mut f: impl FnMut(&mut FlowBox)) {
+        for i in order as usize..self.by_order.len() {
+            let Some(el) = self.by_order[i] else { continue };
+            if let Some(b) = self.out.boxes.get_mut(&el).filter(|b| b.order as usize == i + 1) {
+                f(b);
+            }
+        }
+    }
+
     fn edges(&self, style: &FlowStyle, cb_width: f64) -> Edges {
         let m = |d: Dim| d.resolve(Some(cb_width)).unwrap_or(0.0);
         Edges {
@@ -434,6 +536,12 @@ impl<'a> Ctx<'a> {
             // Tables shrink to their columns.
             auto_width = self.table_max_content(el, style).min(auto_width);
         }
+        if style.replaced {
+            // Replaced boxes keep their intrinsic width instead of filling.
+            if let Some((w, _)) = self.intrinsic(el, style) {
+                auto_width = w;
+            }
+        }
         let mut content_w = declared.map_or(auto_width, |w| Self::declared_content(style, w, e.horizontal()));
         let min_w = style.min_width.resolve(Some(cb_width)).map(|w| Self::declared_content(style, w, e.horizontal()));
         let max_w = style.max_width.resolve(Some(cb_width)).map(|w| Self::declared_content(style, w, e.horizontal()));
@@ -459,10 +567,10 @@ impl<'a> Ctx<'a> {
             self.pending.push(Vec::new());
         }
         let declared_h =
-            style.height.resolve(None).map(|h| if style.border_box { (h - e.vertical()).max(0.0) } else { h });
+            style.height.resolve(self.cb_height).map(|h| if style.border_box { (h - e.vertical()).max(0.0) } else { h });
         let content_h = self.contents(el, style, content_x, content_y, content_w, declared_h, fixed, shift);
-        let min_h = style.min_height.resolve(None).map(|h| if style.border_box { h - e.vertical() } else { h });
-        let max_h = style.max_height.resolve(None).map(|h| if style.border_box { h - e.vertical() } else { h });
+        let min_h = style.min_height.resolve(self.cb_height).map(|h| if style.border_box { h - e.vertical() } else { h });
+        let max_h = style.max_height.resolve(self.cb_height).map(|h| if style.border_box { h - e.vertical() } else { h });
         let height = Self::clamp(declared_h.unwrap_or(content_h), min_h, max_h);
         let rect =
             Rect { x: bx + shift.0, y: by + shift.1, width: content_w + e.horizontal(), height: height + e.vertical() };
@@ -518,7 +626,7 @@ impl<'a> Ctx<'a> {
         let inner_y = rect.y + e.border[TOP];
         let mut sw = client_width;
         let mut sh = client_height.max(flow_h + e.padding[TOP] + e.padding[BOTTOM]);
-        for b in self.out.boxes.values_mut().filter(|b| b.order > order) {
+        self.boxes_after(order, |b| {
             let clipped_inside = b.clipped_by > order;
             if !clipped_inside && (fixed || !b.fixed) {
                 sw = sw.max(b.rect.x + b.rect.width - inner_x);
@@ -531,8 +639,8 @@ impl<'a> Ctx<'a> {
             if positioned {
                 b.positioned = true;
             }
-        }
-        self.out.boxes.insert(
+        });
+        self.insert_box(
             el,
             FlowBox {
                 rect,
@@ -549,7 +657,7 @@ impl<'a> Ctx<'a> {
     }
 
     /// Lays out the children of a block container in its content box and
-    /// returns the content height.
+    /// returns the content height. `height`: the definite content height.
     #[allow(clippy::too_many_arguments)]
     fn contents(
         &mut self,
@@ -562,8 +670,26 @@ impl<'a> Ctx<'a> {
         fixed: bool,
         shift: (f64, f64),
     ) -> f64 {
+        let outer = std::mem::replace(&mut self.cb_height, height);
+        let h = self.contents_in(el, style, x, y, width, height, fixed, shift);
+        self.cb_height = outer;
+        h
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn contents_in(
+        &mut self,
+        el: NodeId,
+        style: &FlowStyle,
+        x: f64,
+        y: f64,
+        width: f64,
+        height: Option<f64>,
+        fixed: bool,
+        shift: (f64, f64),
+    ) -> f64 {
         if style.replaced {
-            return 0.0;
+            return self.intrinsic(el, style).map_or(0.0, |(_, h)| h);
         }
         if style.inner == InnerDisplay::Flex {
             return self.flex(el, style, x, y, width, height, fixed, shift);
@@ -642,7 +768,7 @@ impl<'a> Ctx<'a> {
                     }
                 }
                 Ok(NodeType::Element) => {
-                    if let Some(s) = self.src.flow_style(self.dom, c) {
+                    if let Some(s) = self.style_of(c) {
                         if s.outer == OuterDisplay::Contents {
                             out.extend(self.flatten_children(c));
                         } else {
@@ -743,9 +869,7 @@ impl<'a> Ctx<'a> {
             };
             let delta = by - provisional_y;
             if delta != 0.0 {
-                for b in self.out.boxes.values_mut().filter(|b| b.order > first_new) {
-                    b.rect.y += delta;
-                }
+                self.boxes_after(first_new, |b| b.rect.y += delta);
             }
             let rect = Rect { x: bx, y: by, width: border_w, height: border_h };
             self.record(p.el, rect, &e, fixed, true, s.clips_x || s.clips_y, order, content_w, height, content_h);
@@ -768,8 +892,17 @@ impl<'a> Ctx<'a> {
     /// Max-content width of an element's contents (no wrapping).
     fn max_content(&self, el: NodeId, style: &FlowStyle) -> f64 {
         if style.replaced {
-            return style.width.resolve(None).unwrap_or(0.0);
+            return style.width.resolve(None).or_else(|| self.intrinsic(el, style).map(|(w, _)| w)).unwrap_or(0.0);
         }
+        if let Some(&w) = self.memo.max_content.borrow().get(&el) {
+            return w;
+        }
+        let w = self.max_content_uncached(el, style);
+        self.memo.max_content.borrow_mut().insert(el, w);
+        w
+    }
+
+    fn max_content_uncached(&self, el: NodeId, style: &FlowStyle) -> f64 {
         if style.inner == InnerDisplay::Table {
             return self.table_max_content(el, style);
         }
@@ -853,8 +986,20 @@ impl<'a> Ctx<'a> {
                     if line.x > 0.0 && line.x + outer_w > width && !parent.nowrap {
                         line_y += self.flush_line(&mut line, x, line_y, width, fixed, shift, &mut frags, &mut order_of);
                     }
+                    // Text-bearing controls sit on their text baseline; other
+                    // atomic boxes on their bottom margin edge.
+                    let ascent = match control_kind(self.dom, el) {
+                        Some(Control::Text | Control::Button(_) | Control::File) => {
+                            e.margin[TOP] + e.border[TOP] + e.padding[TOP] + text_extents(&style).0
+                        }
+                        // A select ignores line-height: normal ascent plus its 1px inset.
+                        Some(Control::Select { rows: None }) => {
+                            e.margin[TOP] + e.border[TOP] + e.padding[TOP] + font_metrics(style.font_size).0 + 1.0
+                        }
+                        _ => outer_h,
+                    };
                     let at = line.x;
-                    line.push(at, outer_w, outer_h, outer_h, owners, Some((el, *style)));
+                    line.push(at, outer_w, outer_h, ascent, owners, Some((el, *style)));
                     line.extents(strut);
                 }
                 InlineItem::Empty { owners, height, ascent } => {
@@ -869,8 +1014,8 @@ impl<'a> Ctx<'a> {
         for el in order_of {
             if let Some(r) = frags.get(&el).copied() {
                 let order = self.next_order();
-                let positioned = self.src.flow_style(self.dom, el).is_some_and(|s| s.position != Position::Static);
-                self.out.boxes.insert(
+                let positioned = self.style_of(el).is_some_and(|s| s.position != Position::Static);
+                self.insert_box(
                     el,
                     FlowBox {
                         rect: r,
@@ -932,7 +1077,7 @@ impl<'a> Ctx<'a> {
 
     fn atomic_height(&self, el: NodeId, style: &FlowStyle, content_w: f64, cb_width: f64) -> f64 {
         let e = self.edges(style, cb_width);
-        let content_h = match style.height.resolve(None) {
+        let content_h = match style.height.resolve(self.cb_height) {
             Some(h) => {
                 if style.border_box {
                     (h - e.vertical()).max(0.0)
@@ -940,7 +1085,7 @@ impl<'a> Ctx<'a> {
                     h
                 }
             }
-            None if style.replaced => 0.0,
+            None if style.replaced => self.intrinsic(el, style).map_or(0.0, |(_, h)| h),
             None => self.measure_height(el, style, content_w),
         };
         content_h + e.vertical()
@@ -948,16 +1093,15 @@ impl<'a> Ctx<'a> {
 
     /// Content height of `el` laid out at `content_w`, without recording.
     fn measure_height(&self, el: NodeId, style: &FlowStyle, content_w: f64) -> f64 {
-        let mut probe = Ctx {
-            dom: self.dom,
-            src: self.src,
-            vw: self.vw,
-            vh: self.vh,
-            out: FlowResult::default(),
-            order: 0,
-            pending: vec![Vec::new()],
-        };
-        probe.contents(el, style, 0.0, 0.0, content_w, None, false, (0.0, 0.0))
+        let key = (el, content_w.to_bits());
+        if let Some(&h) = self.memo.heights.borrow().get(&key) {
+            return h;
+        }
+        let mut probe = Ctx::new(self.dom, self.src, self.vw, self.vh, self.memo);
+        probe.pending.push(Vec::new());
+        let h = probe.contents(el, style, 0.0, 0.0, content_w, None, false, (0.0, 0.0));
+        self.memo.heights.borrow_mut().insert(key, h);
+        h
     }
 
     /// Lays out an atomic inline (inline-block / replaced) at (x, y), its
@@ -1016,7 +1160,7 @@ impl<'a> Ctx<'a> {
                 }
             }
             Ok(NodeType::Element) => {
-                let Some(style) = self.src.flow_style(self.dom, n) else { return };
+                let Some(style) = self.style_of(n) else { return };
                 if self.dom.element(n).is_ok_and(|e| e.is_html() && *e.local_name() == *"br") {
                     items.push(InlineItem::Break);
                     return;
@@ -1043,6 +1187,55 @@ impl<'a> Ctx<'a> {
 
 /// Default-font metrics (Chromium's default Times on macOS, measured at
 /// 10–32px): ascent ≈ round(0.9em), descent = round(0.25em).
+/// Form controls with an intrinsic size.
+enum Control {
+    Text,
+    Check,
+    Range,
+    Color,
+    File,
+    Button(String),
+    TextArea,
+    /// `rows`: a list box (`multiple` or `size` > 1) showing that many rows.
+    Select {
+        rows: Option<f64>,
+    },
+}
+
+fn control_kind(dom: &Dom, el: NodeId) -> Option<Control> {
+    let tag = dom.tag_name(el).ok()?;
+    let attr = |name: &str| dom.get_attribute(el, name).ok().flatten();
+    if tag.eq_ignore_ascii_case("input") {
+        let ty = attr("type").unwrap_or("text").trim().to_ascii_lowercase();
+        return Some(match ty.as_str() {
+            "hidden" => return None,
+            "checkbox" | "radio" => Control::Check,
+            "range" => Control::Range,
+            "color" => Control::Color,
+            "file" => Control::File,
+            "image" => return None,
+            "button" | "submit" | "reset" => Control::Button(attr("value").map(str::to_owned).unwrap_or_else(|| {
+                match ty.as_str() {
+                    "submit" => "Submit",
+                    "reset" => "Reset",
+                    _ => "",
+                }
+                .to_owned()
+            })),
+            _ => Control::Text,
+        });
+    }
+    if tag.eq_ignore_ascii_case("textarea") {
+        return Some(Control::TextArea);
+    }
+    if tag.eq_ignore_ascii_case("select") {
+        let size = attr("size").and_then(|v| v.trim().parse::<f64>().ok()).filter(|v| *v > 1.0);
+        let rows = size.or_else(|| attr("multiple").map(|_| 4.0));
+        return Some(Control::Select { rows });
+    }
+    None
+}
+
 fn font_metrics(font_size: f64) -> (f64, f64) {
     ((0.9 * font_size + 0.5).floor(), (0.25 * font_size + 0.5).floor())
 }
@@ -1288,7 +1481,7 @@ impl<'a> Ctx<'a> {
             for it in &mut items[line.clone()] {
                 let align = it.style.align_self.unwrap_or(style.align_items);
                 let declared_cross =
-                    if row { it.style.height.resolve(None) } else { it.style.width.resolve(Some(width)) };
+                    if row { it.style.height.resolve(height) } else { it.style.width.resolve(Some(width)) };
                 if align == Align::Stretch && declared_cross.is_none() {
                     it.cross = (line_cross[li] - margins_cross(it, row)).max(0.0);
                     it.stretched = true;
@@ -1398,7 +1591,7 @@ impl<'a> Ctx<'a> {
         let s = &it.style;
         let e = self.edges(s, width);
         if row {
-            if let Some(h) = s.height.resolve(None) {
+            if let Some(h) = s.height.resolve(self.cb_height) {
                 return if s.border_box { h.max(e.vertical()) } else { h + e.vertical() };
             }
             let content_w = (it.main - e.horizontal()).max(0.0);
@@ -1700,9 +1893,7 @@ impl<'a> Ctx<'a> {
                 let dy = ((row_h - vertical - content_h) / 2.0).max(0.0);
                 if dy > 0.0 {
                     let cell_order = before + 1;
-                    for b in self.out.boxes.values_mut().filter(|b| b.order > cell_order) {
-                        b.rect.y += dy;
-                    }
+                    self.boxes_after(cell_order, |b| b.rect.y += dy);
                 }
             }
             let rect = Rect {
@@ -1712,7 +1903,7 @@ impl<'a> Ctx<'a> {
                 height: row_h,
             };
             if let Some(r) = row.el {
-                self.out.boxes.insert(r, simple_box(rect, fixed, row_order));
+                self.insert_box(r, simple_box(rect, fixed, row_order));
             }
             if let Some(g) = row.group {
                 match groups.iter_mut().find(|(n, _)| *n == g) {
@@ -1727,7 +1918,7 @@ impl<'a> Ctx<'a> {
         }
         for (g, rect) in groups {
             let order = self.next_order();
-            self.out.boxes.insert(g, simple_box(rect, fixed, order));
+            self.insert_box(g, simple_box(rect, fixed, order));
         }
         cursor - y
     }
