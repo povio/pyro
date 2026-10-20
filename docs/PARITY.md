@@ -3,6 +3,12 @@
 Upstream is about 266k lines of Zig. This rewrite is at an early milestone. Each status below reflects code that exists
 and is tested in this repository, not plans.
 
+### How to read this matrix
+
+This is a feature-by-feature comparison with the upstream Lightpanda browser, not a statement that the Rust rewrite is missing the whole area or cannot run TOS flows. **Partial** means the implementation covers a subset and the Notes column names known upstream differences. A feature may be implemented and useful for TOS while its broader web-platform/API surface remains partial.
+
+The “Required for the TOS E2E milestone” list names capabilities the TOS suite needs; it is not proof that the complete suite has passed. Source presence, focused unit/integration tests, and a full TOS E2E run are separate evidence levels. Record qualification results with the tested Lightningpanda commit, TOS branch, routing counts, and pass/fail totals.
+
 Status values:
 - **Done**: implemented and tested here.
 - **Partial**: subset implemented; the gaps are listed.
