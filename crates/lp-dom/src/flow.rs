@@ -165,6 +165,24 @@ pub enum TrackBreadth {
     Auto,
     MinContent,
     MaxContent,
+    /// `min(a, b)` / `max(a, b)` of two lengths that only resolve against
+    /// the grid's size (`min(100%, 20rem)`).
+    Min(Len, Len),
+    Max(Len, Len),
+}
+
+impl TrackBreadth {
+    /// The breadth as a length against `available`; percentages need a
+    /// definite available size. None for intrinsic and flexible breadths.
+    pub fn length(self, available: Option<f64>) -> Option<f64> {
+        let one = |l: Len| (l.percent == 0.0 || available.is_some()).then(|| l.resolve(available.unwrap_or(0.0)));
+        match self {
+            TrackBreadth::Len(l) => one(l),
+            TrackBreadth::Min(a, b) => Some(one(a)?.min(one(b)?)),
+            TrackBreadth::Max(a, b) => Some(one(a)?.max(one(b)?)),
+            _ => None,
+        }
+    }
 }
 
 /// A grid track sizing function `minmax(min, max)`; a single size `s` is
@@ -271,6 +289,20 @@ fn parse_breadth(v: &str, len: &dyn Fn(&str) -> Option<Len>) -> Option<TrackBrea
         "min-content" => TrackBreadth::MinContent,
         "max-content" => TrackBreadth::MaxContent,
         l if l.ends_with("fr") => TrackBreadth::Fr(l.trim_end_matches("fr").trim().parse().ok()?),
+        l if (l.starts_with("min(") || l.starts_with("max(")) && l.ends_with(')') => match len(v) {
+            // The style engine folds comparable arguments itself.
+            Some(l) => TrackBreadth::Len(l),
+            None => {
+                let args = grid_args(&v[4..v.len() - 1]);
+                let [a, b] = args.as_slice() else { return None };
+                let (a, b) = (len(a)?, len(b)?);
+                if l.starts_with("min(") {
+                    TrackBreadth::Min(a, b)
+                } else {
+                    TrackBreadth::Max(a, b)
+                }
+            }
+        },
         _ => TrackBreadth::Len(len(v)?),
     })
 }
@@ -1372,6 +1404,12 @@ impl<'a> Ctx<'a> {
         let mut line_y = y;
         for item in items {
             match item {
+                InlineItem::Break if line.items.is_empty() => {
+                    // A forced break on an empty line still makes a line box
+                    // of the strut's height (`<p><br></p>`, consecutive brs).
+                    line_y += strut.0 + strut.1;
+                    line = Line::default();
+                }
                 InlineItem::Break => {
                     line.extents(strut);
                     line_y += self.flush_line(
@@ -2665,10 +2703,7 @@ impl Axis {
 /// Returns the tracks and, for auto-fit, the index range of the repetitions.
 fn expand_tracks(list: &TrackList, available: Option<f64>, gap: f64) -> (Vec<Track>, Option<std::ops::Range<usize>>) {
     let Some(rep) = &list.auto_repeat else { return (list.tracks.clone(), None) };
-    let fixed = |b: TrackBreadth| match b {
-        TrackBreadth::Len(l) => Some(l.resolve(available.unwrap_or(0.0))),
-        _ => None,
-    };
+    let fixed = |b: TrackBreadth| b.length(available);
     let size = |t: &Track| fixed(t.max).or_else(|| fixed(t.min));
     let rep_sizes: Option<Vec<f64>> = rep.tracks.iter().map(size).collect();
     let mut count = 1usize;
@@ -2833,11 +2868,7 @@ fn size_tracks(
     stretch_auto: bool,
 ) -> Vec<f64> {
     let n = tracks.len();
-    let basis = available.unwrap_or(0.0);
-    let resolve = |b: TrackBreadth| match b {
-        TrackBreadth::Len(l) if l.percent == 0.0 || available.is_some() => Some(l.resolve(basis)),
-        _ => None,
-    };
+    let resolve = |b: TrackBreadth| b.length(available);
     let is_flex = |t: &Track| matches!(t.max, TrackBreadth::Fr(_));
     let mut base = vec![0.0; n];
     let mut limit = vec![f64::INFINITY; n];

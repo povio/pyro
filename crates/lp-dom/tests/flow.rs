@@ -1280,3 +1280,57 @@ fn flex_parity_compressible_percentage_inputs() {
         [800.0, 600.0],
     );
 }
+
+#[test]
+fn grid_parity_min_function_track() {
+    // TOS terms form: repeat(auto-fit, minmax(min(100%, 20rem), 1fr)); the
+    // min() mixes a percentage and a length, resolved against the grid.
+    flex_check(
+        "grid-min-track",
+        "<!doctype html><body style=\"margin:0\"><div id=g style=\"display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,200px),1fr));gap:2px;width:700px\"><div id=a style=\"height:10px\"></div><div id=b style=\"height:10px\"></div><div id=c style=\"height:10px\"></div><div id=d style=\"height:10px\"></div></div><div id=n style=\"display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,200px),1fr));width:150px\"><div id=n1 style=\"height:10px\"></div><div id=n2 style=\"height:10px\"></div></div></body>",
+        &[
+            ("g", [0.0, 0.0, 700.0, 22.0, 700.0, 22.0, 700.0, 22.0]),
+            ("a", [0.0, 0.0, 232.0, 10.0, 232.0, 10.0, 232.0, 10.0]),
+            ("b", [234.0, 0.0, 232.0, 10.0, 232.0, 10.0, 232.0, 10.0]),
+            ("c", [468.0, 0.0, 232.0, 10.0, 232.0, 10.0, 232.0, 10.0]),
+            ("d", [0.0, 12.0, 232.0, 10.0, 232.0, 10.0, 232.0, 10.0]),
+            ("n", [0.0, 22.0, 150.0, 20.0, 150.0, 20.0, 150.0, 20.0]),
+            ("n1", [0.0, 22.0, 150.0, 10.0, 150.0, 10.0, 150.0, 10.0]),
+            ("n2", [0.0, 32.0, 150.0, 10.0, 150.0, 10.0, 150.0, 10.0]),
+        ],
+    );
+}
+
+#[test]
+fn flow_parity_br_line_boxes() {
+    // ProseMirror's empty paragraph `<p><br></p>` is one line tall; two brs
+    // make two lines; a br after content does not add a line.
+    let html = "<!doctype html><body style=\"margin:0;line-height:20px\"><p id=p1 style=\"margin:0\"><br></p><p id=p2 style=\"margin:0\"><br><br></p><p id=p3 style=\"margin:0\"><span style=\"display:inline-block;width:10px;height:10px\"></span><br></p></body>";
+    check(
+        "br-lines",
+        html,
+        0,
+        &[
+            ("p1", [0.0, 0.0, 800.0, 20.0, 800.0, 20.0, 800.0, 20.0]),
+            ("p2", [0.0, 20.0, 800.0, 40.0, 800.0, 40.0, 800.0, 40.0]),
+            ("p3", [0.0, 60.0, 800.0, 20.0, 800.0, 20.0, 800.0, 20.0]),
+        ],
+        [800.0, 600.0],
+    );
+}
+
+#[test]
+fn track_min_max_functions_parse_and_resolve() {
+    let len = |v: &str| match v.trim() {
+        "100%" => Some(Len::percent(100.0)),
+        "200px" => Some(Len::px(200.0)),
+        _ => None,
+    };
+    let t = flow::parse_track("minmax(min(100%,200px),1fr)", &len).unwrap();
+    assert_eq!(t.min, flow::TrackBreadth::Min(Len::percent(100.0), Len::px(200.0)));
+    assert_eq!(t.min.length(Some(150.0)), Some(150.0));
+    assert_eq!(t.min.length(Some(700.0)), Some(200.0));
+    assert_eq!(t.min.length(None), None, "percentages need a definite size");
+    let t = flow::parse_track("max(100%, 200px)", &len).unwrap();
+    assert_eq!(t.max.length(Some(150.0)), Some(200.0));
+}
