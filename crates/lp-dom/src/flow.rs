@@ -450,6 +450,9 @@ pub struct FlowStyle {
     /// px; None = `normal`.
     pub line_height: Option<f64>,
     pub nowrap: bool,
+    /// Used `font-weight` (100..900; 400 normal, 700 bold). Text is measured
+    /// with the system UI font's advances at this weight.
+    pub font_weight: u16,
     /// Inherited `text-align` (aligns this element's own line boxes).
     pub text_align: TextAlign,
     /// `<img>`/`<iframe>`-like replaced element: atomic, sized by its own
@@ -515,6 +518,7 @@ impl Default for FlowStyle {
             font_size: 16.0,
             line_height: None,
             nowrap: false,
+            font_weight: 400,
             text_align: TextAlign::Start,
             replaced: false,
             zoom: 1.0,
@@ -764,7 +768,7 @@ impl<'a> Ctx<'a> {
             Control::Range => (129.0, 16.0),
             Control::Color => (44.0, 23.0),
             Control::File => (19.0 * fs, line),
-            Control::Button(label) => (collapsed_width(&label, fs), line),
+            Control::Button(label) => (collapsed_width(&label, fs, style.font_weight), line),
             Control::TextArea => {
                 (attr_num("cols").unwrap_or(20.0) * avg + 16.0, attr_num("rows").unwrap_or(2.0) * line)
             }
@@ -775,7 +779,13 @@ impl<'a> Ctx<'a> {
                     .into_iter()
                     .flatten()
                     .filter(|&n| self.dom.tag_name(n).is_ok_and(|t| t.eq_ignore_ascii_case("option")))
-                    .map(|n| collapsed_width(&self.dom.text_content(n).ok().flatten().unwrap_or_default(), fs))
+                    .map(|n| {
+                        collapsed_width(
+                            &self.dom.text_content(n).ok().flatten().unwrap_or_default(),
+                            fs,
+                            style.font_weight,
+                        )
+                    })
                     .fold(0.0, f64::max);
                 match rows {
                     None => (widest + 24.0, normal + 2.0),
@@ -1289,9 +1299,11 @@ impl<'a> Ctx<'a> {
                         continue;
                     }
                     let w = if min && !style.nowrap {
-                        text.split_ascii_whitespace().map(|t| text_width(t, style.font_size)).fold(0.0, f64::max)
+                        text.split_ascii_whitespace()
+                            .map(|t| text_width(t, style.font_size, style.font_weight))
+                            .fold(0.0, f64::max)
                     } else {
-                        collapsed_width(text, style.font_size)
+                        collapsed_width(text, style.font_size, style.font_weight)
                     };
                     if flex_row {
                         // Adjacent text forms one anonymous item.
@@ -1426,7 +1438,7 @@ impl<'a> Ctx<'a> {
                 }
                 InlineItem::Word { width: w, height: h, space_before, owners, ascent } => {
                     let gap = if line.x > 0.0 { space_before } else { 0.0 };
-                    if line.x > 0.0 && line.x + gap + w > width && !parent.nowrap {
+                    if line.x > 0.0 && line.x + gap + w > width + FIT_EPSILON && !parent.nowrap {
                         line_y += self.flush_line(
                             &mut line,
                             x,
@@ -1453,7 +1465,7 @@ impl<'a> Ctx<'a> {
                     };
                     let outer_w = content_w + e.horizontal() + e.margin[LEFT] + e.margin[RIGHT];
                     let outer_h = self.atomic_height(el, &style, content_w, width) + e.margin[TOP] + e.margin[BOTTOM];
-                    if line.x > 0.0 && line.x + outer_w > width && !parent.nowrap {
+                    if line.x > 0.0 && line.x + outer_w > width + FIT_EPSILON && !parent.nowrap {
                         line_y += self.flush_line(
                             &mut line,
                             x,
@@ -1628,7 +1640,7 @@ impl<'a> Ctx<'a> {
                 let fs = parent.font_size;
                 let (ascent, descent) = text_extents(parent);
                 let lh = ascent + descent;
-                let space = text_width(" ", fs);
+                let space = text_width(" ", fs, parent.font_weight);
                 // Collapsible whitespace becomes one space before the next word
                 // (also across element boundaries via a zero-width word).
                 let mut pending_space = false;
@@ -1640,7 +1652,7 @@ impl<'a> Ctx<'a> {
                         continue;
                     }
                     items.push(InlineItem::Word {
-                        width: text_width(part, fs),
+                        width: text_width(part, fs, parent.font_weight),
                         height: lh,
                         space_before: if pending_space { space } else { 0.0 },
                         owners: owners.to_vec(),
@@ -1794,15 +1806,22 @@ impl Line {
     }
 }
 
+/// Content that fits its line within this much does not wrap: a box sized
+/// to its max-content width must hold that content on one line despite
+/// floating-point summation order.
+const FIT_EPSILON: f64 = 1e-6;
+
 /// Width of a run of text: the engine's fixed-advance measure, with a
 /// no-break space as wide as a space (it does not collapse, but has the
 /// same advance).
-fn text_width(text: &str, font_size: f64) -> f64 {
-    if text.contains('\u{a0}') {
-        glyph_width(&text.replace('\u{a0}', " "), font_size)
-    } else {
-        glyph_width(text, font_size)
-    }
+fn text_width(text: &str, font_size: f64, weight: u16) -> f64 {
+    text.chars()
+        .map(|c| match crate::flow_font::advance(c, font_size, weight) {
+            Some(em) => em * font_size,
+            // Outside the measured table (non-ASCII): the engine's measure.
+            None => glyph_width(c.encode_utf8(&mut [0; 4]), font_size),
+        })
+        .sum()
 }
 
 /// Only collapsible white space (space, tab, line feeds) is blank; a
@@ -1811,13 +1830,13 @@ fn is_blank(text: &str) -> bool {
     text.chars().all(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | '\x0c'))
 }
 
-fn collapsed_width(text: &str, font_size: f64) -> f64 {
+fn collapsed_width(text: &str, font_size: f64, weight: u16) -> f64 {
     let words: Vec<&str> = text.split_ascii_whitespace().collect();
     if words.is_empty() {
         return 0.0;
     }
-    let space = text_width(" ", font_size);
-    words.iter().map(|w| text_width(w, font_size)).sum::<f64>() + space * (words.len() - 1) as f64
+    let space = text_width(" ", font_size, weight);
+    words.iter().map(|w| text_width(w, font_size, weight)).sum::<f64>() + space * (words.len() - 1) as f64
 }
 
 fn union(frags: &mut FxHashMap<NodeId, Rect>, order: &mut Vec<NodeId>, el: NodeId, r: Rect) {
@@ -1887,6 +1906,7 @@ impl<'a> Ctx<'a> {
                     FlowStyle { font_size: style.font_size, line_height: style.line_height, ..FlowStyle::default() };
                 st.nowrap = style.nowrap;
                 st.text_align = style.text_align;
+                st.font_weight = style.font_weight;
                 items.push(FlexItem {
                     el: None,
                     text: std::mem::take(run),
@@ -1964,7 +1984,7 @@ impl<'a> Ctx<'a> {
         for (i, it) in items.iter().enumerate() {
             let outer = it.main + margins_main(it, row);
             let add = if i > start { main_gap } else { 0.0 };
-            if style.flex_wrap && i > start && used + add + outer > available {
+            if style.flex_wrap && i > start && used + add + outer > available + FIT_EPSILON {
                 lines.push(start..i);
                 start = i;
                 used = outer;
@@ -2104,7 +2124,7 @@ impl<'a> Ctx<'a> {
                         None => it
                             .text
                             .iter()
-                            .map(|&t| collapsed_width(self.dom.char_data(t).unwrap_or(""), s.font_size))
+                            .map(|&t| collapsed_width(self.dom.char_data(t).unwrap_or(""), s.font_size, s.font_weight))
                             .sum(),
                     };
                     content + edges
@@ -2137,7 +2157,7 @@ impl<'a> Ctx<'a> {
                         .text
                         .iter()
                         .flat_map(|&t| self.dom.char_data(t).unwrap_or("").split_ascii_whitespace())
-                        .map(|w| text_width(w, s.font_size))
+                        .map(|w| text_width(w, s.font_size, s.font_weight))
                         .fold(0.0, f64::max),
                     (None, false) => text_extents(s).0 + text_extents(s).1,
                 };
@@ -2207,7 +2227,7 @@ impl<'a> Ctx<'a> {
                         None => it
                             .text
                             .iter()
-                            .map(|&t| collapsed_width(self.dom.char_data(t).unwrap_or(""), s.font_size))
+                            .map(|&t| collapsed_width(self.dom.char_data(t).unwrap_or(""), s.font_size, s.font_weight))
                             .sum(),
                     };
                     (content + e.horizontal()).min((width - e.margin[LEFT] - e.margin[RIGHT]).max(0.0))
@@ -3058,6 +3078,7 @@ impl<'a> Ctx<'a> {
                     line_height: style.line_height,
                     nowrap: style.nowrap,
                     text_align: style.text_align,
+                    font_weight: style.font_weight,
                     ..FlowStyle::default()
                 };
                 items.push(GridItem {
@@ -3106,9 +3127,12 @@ impl<'a> Ctx<'a> {
             (Some(el), None) => (self.min_content(*el, s), self.max_content(*el, s)),
             (None, None) => {
                 let words = it.text.iter().flat_map(|&t| self.dom.char_data(t).unwrap_or("").split_ascii_whitespace());
-                let min = words.map(|w| text_width(w, s.font_size)).fold(0.0, f64::max);
-                let max =
-                    it.text.iter().map(|&t| collapsed_width(self.dom.char_data(t).unwrap_or(""), s.font_size)).sum();
+                let min = words.map(|w| text_width(w, s.font_size, s.font_weight)).fold(0.0, f64::max);
+                let max = it
+                    .text
+                    .iter()
+                    .map(|&t| collapsed_width(self.dom.char_data(t).unwrap_or(""), s.font_size, s.font_weight))
+                    .sum();
                 (min, max)
             }
         };

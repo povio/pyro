@@ -381,6 +381,9 @@ impl FlowStyleSource for InlineFlex<'_> {
             s.justify_items = v;
         }
         s.justify_self = decl("justify-self").and_then(|v| align(&v));
+        if let Some(w) = decl("font-weight").and_then(|v| v.parse::<u16>().ok()) {
+            s.font_weight = w;
+        }
         if let Some(v) = decl("text-align") {
             s.text_align = match v.as_str() {
                 "center" => TextAlign::Center,
@@ -1216,7 +1219,8 @@ fn flow_nbsp_is_content_not_collapsible_space() {
     let nb = p.metrics("nb");
     assert!(nb[2] > 0.0 && nb[3] > 0.0, "nbsp span has a box: {nb:?}");
     let space = p.metrics("nb")[2];
-    assert!((space - 16.0 * 0.33).abs() < 0.01, "as wide as a space: {space}");
+    // Chromium (system UI font, 16px): a no-break space is 4.19px wide.
+    assert!((space - 4.1872).abs() < 0.01, "as wide as a space: {space}");
     let ws = p.metrics("ws");
     assert_eq!(ws[2], 0.0, "collapsible white space has no width: {ws:?}");
     // Text directly in a flex container that is only a no-break space is an item.
@@ -1333,4 +1337,31 @@ fn track_min_max_functions_parse_and_resolve() {
     assert_eq!(t.min.length(None), None, "percentages need a definite size");
     let t = flow::parse_track("max(100%, 200px)", &len).unwrap();
     assert_eq!(t.max.length(Some(150.0)), Some(200.0));
+}
+
+#[test]
+fn flow_parity_system_font_text_widths() {
+    // Text is measured with the system UI font's advances (SF Pro on
+    // macOS Chromium) by size and weight. Chromium 1.59.1 widths; the
+    // per-glyph sum ignores kerning, so widths match within 1.5px while line
+    // breaking and heights match exactly.
+    let html = "<!doctype html><body style=\"margin:0;font-family:-apple-system,BlinkMacSystemFont,sans-serif;font-size:14px;line-height:20px\"><span id=a style=\"display:inline-block\">Payment confirmations</span><br><span id=b style=\"display:inline-block;font-weight:600\">Add Working Document</span><br><span id=c style=\"display:inline-block;font-size:12px\">Integration Only</span><br><div id=w style=\"width:120px\">Persist filters and more words here</div><div id=f style=\"display:flex;gap:8px\"><span id=f1>Persist filters</span><span id=f2 style=\"font-weight:600\">Save</span></div></body>";
+    let p = page(html, Geometry::Flow);
+    let src = InlineFlex { style: p.layout.style() };
+    let result = flow::layout(&p.dom, p.doc, &src, 800.0, 600.0);
+    let rect = |id: &str| result.get(p.id(id)).unwrap().rect;
+    let mut diffs = Vec::new();
+    for (id, w) in [("a", 148.38), ("b", 159.61), ("c", 90.45), ("f1", 84.28), ("f2", 32.41)] {
+        let r = rect(id);
+        if (r.width - w).abs() > 1.5 {
+            diffs.push(format!("#{id}: width {} vs Chromium {w}", r.width));
+        }
+    }
+    // Old fixed-advance model: "Payment confirmations" was 172.6px.
+    assert!(diffs.is_empty(), "text widths:\n{}", diffs.join("\n"));
+    assert_eq!(rect("w").height, 40.0, "two lines at 120px, as in Chromium");
+    assert!((rect("f2").x - 92.28).abs() < 1.5, "flex item after measured text: {}", rect("f2").x);
+    // A flex item sized to its max-content width keeps its text on one line
+    // (no wrap from floating-point summation order).
+    assert_eq!(rect("f1").height, 20.0, "max-content sized text stays on one line");
 }
