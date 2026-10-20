@@ -312,9 +312,13 @@ impl EngineHost {
                 {
                     return Err(CdpError::unsupported("Input pen, custom pressure or timestamp"));
                 }
+                // A point over an iframe goes to its document, in its own
+                // viewport coordinates (recursively); only the innermost
+                // document receives the mouse events.
+                let (page, x, y) = self.descend_into_frames(native_id, page, p.x, p.y);
                 let mouse = MouseInput {
-                    x: p.x,
-                    y: p.y,
+                    x,
+                    y,
                     button,
                     buttons: p.buttons,
                     click_count: p.click_count,
@@ -322,11 +326,6 @@ impl EngineHost {
                     delta_x: p.delta_x,
                     delta_y: p.delta_y,
                 };
-                if lp_webapi::layout_api::hit_test(&page, p.x, p.y)
-                    .is_some_and(|node| self.thread.browser.frame_of_owner(native_id, node).is_some())
-                {
-                    return Err(CdpError::unsupported("Input mouse targeting a child frame"));
-                }
                 let intercept = self.pages.get(&cmd.page).is_some_and(|state| state.intercept_drags);
                 let dragged = input::dispatch_mouse_intercepting_drags(&page, kind, &mouse, intercept)
                     .map_err(CdpError::server)?;
@@ -374,5 +373,28 @@ impl EngineHost {
             _ => return Err(CdpError::unsupported(&cmd.command.method)),
         }
         Ok(Some(json!({})))
+    }
+}
+
+impl EngineHost {
+    /// The innermost frame document under (x, y) and the point in its
+    /// viewport coordinates.
+    fn descend_into_frames(
+        &self,
+        page_id: lp_browser::PageId,
+        mut page: Rc<lp_webapi::PageDom>,
+        mut x: f64,
+        mut y: f64,
+    ) -> (Rc<lp_webapi::PageDom>, f64, f64) {
+        for _ in 0..32 {
+            let Some(node) = lp_webapi::layout_api::hit_test(&page, x, y) else { break };
+            let Some(frame_id) = self.thread.browser.frame_of_owner(page_id, node) else { break };
+            let Some(child) = self.thread.browser.frame(page_id, &frame_id).and_then(|f| f.page_dom) else { break };
+            let Some(r) = page.layout.borrow().client_rect(&page.dom.borrow(), node) else { break };
+            x -= r.x;
+            y -= r.y;
+            page = child;
+        }
+        (page, x, y)
     }
 }

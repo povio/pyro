@@ -267,9 +267,10 @@ impl EngineHost {
                 json!({"object":remote::register(described,&handles,context_id(realm.id()),p.object_group.as_deref())?})
             }
             _ => {
-                if action != "focus" && self.frame_for_document(cmd.page, &page).ok_or_else(stale)?.parent.is_some() {
-                    return Err(CdpError::unsupported("DOM geometry/scroll in a child frame"));
-                }
+                let frame = self.frame_for_document(cmd.page, &page).ok_or_else(stale)?;
+                // Child frames report main-frame viewport coordinates, as Chrome
+                // does for same-process iframes.
+                let (ox, oy) = if action == "focus" { (0.0, 0.0) } else { self.frame_offset(cmd.page, &frame)? };
                 let rect = {
                     let dom = page.dom.borrow();
                     if dom.root_node(node, true).map_err(dom_error)? != page.document() {
@@ -283,16 +284,8 @@ impl EngineHost {
                         .client_rect(&dom, node)
                         .ok_or_else(|| CdpError::server("Node does not have a layout object"))?
                 };
-                let quad = [
-                    rect.x,
-                    rect.y,
-                    rect.x + rect.width,
-                    rect.y,
-                    rect.x + rect.width,
-                    rect.y + rect.height,
-                    rect.x,
-                    rect.y + rect.height,
-                ];
+                let (rx, ry) = (rect.x + ox, rect.y + oy);
+                let quad = [rx, ry, rx + rect.width, ry, rx + rect.width, ry + rect.height, rx, ry + rect.height];
                 match action {
                     "getBoxModel" => {
                         json!({"model":{"content":quad,"padding":quad,"border":quad,"margin":quad,"width":rect.width.round() as i64,"height":rect.height.round() as i64}})
@@ -313,13 +306,16 @@ impl EngineHost {
                         if cmd.command.params::<P>()?.rect.is_some() {
                             return Err(CdpError::unsupported("DOM scroll rectangle override"));
                         }
-                        let moved = page.layout.borrow_mut().scroll_into_view_targets(&page.dom.borrow(), node);
-                        for target in moved {
-                            let (node, bubbles) = match target {
-                                lp_dom::layout::ScrollTarget::Container(node) => (node, false),
-                                lp_dom::layout::ScrollTarget::Viewport => (page.document(), true),
-                            };
-                            lp_webapi::input::queue_simple(&page, node, "scroll", bubbles, false);
+                        reveal(&page, node);
+                        // Then each owning iframe inside its parent document.
+                        let page_id = self.pages.get(&cmd.page).ok_or_else(stale)?.id;
+                        let mut cur = frame;
+                        while let (Some(parent_id), Some(owner)) = (cur.parent.clone(), cur.owner) {
+                            let Some(parent) = self.thread.browser.frame(page_id, &parent_id) else { break };
+                            if let Some(parent_dom) = parent.page_dom.as_ref() {
+                                reveal(parent_dom, owner);
+                            }
+                            cur = parent;
                         }
                         json!({})
                     }
@@ -331,7 +327,40 @@ impl EngineHost {
     }
 }
 
+/// scrollIntoView for `node` in its document, queueing the scroll events.
+fn reveal(page: &Rc<PageDom>, node: NodeId) {
+    let moved = page.layout.borrow_mut().scroll_into_view_targets(&page.dom.borrow(), node);
+    for target in moved {
+        let (node, bubbles) = match target {
+            lp_dom::layout::ScrollTarget::Container(node) => (node, false),
+            lp_dom::layout::ScrollTarget::Viewport => (page.document(), true),
+        };
+        lp_webapi::input::queue_simple(page, node, "scroll", bubbles, false);
+    }
+}
+
 impl EngineHost {
+    /// The viewport origin of `frame`'s document in main-frame viewport
+    /// coordinates: the sum of its owning iframes' client rects.
+    pub(super) fn frame_offset(&self, page: PageKey, frame: &lp_browser::Frame) -> CdpResult<(f64, f64)> {
+        let page_id = self.pages.get(&page).ok_or_else(stale)?.id;
+        let (mut x, mut y) = (0.0, 0.0);
+        let mut cur = frame.clone();
+        while let (Some(parent_id), Some(owner)) = (cur.parent.clone(), cur.owner) {
+            let parent = self.thread.browser.frame(page_id, &parent_id).ok_or_else(stale)?;
+            let dom = parent.page_dom.clone().ok_or_else(stale)?;
+            let r = dom
+                .layout
+                .borrow()
+                .client_rect(&dom.dom.borrow(), owner)
+                .ok_or_else(|| CdpError::server("Frame owner does not have a layout object"))?;
+            x += r.x;
+            y += r.y;
+            cur = parent;
+        }
+        Ok((x, y))
+    }
+
     /// Page.fileChooserOpened to the sessions intercepting file choosers, with
     /// the input's backend node id (resolved by Playwright via DOM.resolveNode).
     pub(super) fn file_chooser_opened(
