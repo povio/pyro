@@ -29,6 +29,31 @@ fn dump_flow_snapshot() {
     let t = std::time::Instant::now();
     let _ = layout.flow(&dom);
     eprintln!("flow pass: {:?}", t.elapsed());
+    if std::env::var("FLOW_PROFILE").is_ok() {
+        use lp_dom::flow::FlowStyleSource;
+        let els: Vec<_> = dom.descendants(doc).unwrap().filter(|&n| dom.node_type(n).ok() == Some(NodeType::Element)).collect();
+        let t = std::time::Instant::now();
+        for &e in &els {
+            let _ = layout.style().flow_style(&dom, e);
+        }
+        eprintln!("flow_style x{} (warm cascade cache): {:?}", els.len(), t.elapsed());
+        // A DOM mutation invalidates caches: measure a pass after one.
+        let probe = els[els.len() / 2];
+        let mut dom = dom;
+        dom.set_attribute(probe, "data-flow-probe", "1").unwrap();
+        let t = std::time::Instant::now();
+        for &e in &els {
+            let _ = layout.style().flow_style(&dom, e);
+        }
+        eprintln!("flow_style x{} after a mutation: {:?}", els.len(), t.elapsed());
+        let t = std::time::Instant::now();
+        let r = layout.flow(&dom);
+        eprintln!("flow pass after a mutation: {:?} ({} boxes)", t.elapsed(), r.boxes.len());
+        let t = std::time::Instant::now();
+        let _ = layout.flow(&dom);
+        eprintln!("flow pass, no change (cached): {:?}", t.elapsed());
+        return;
+    }
     let body = dom
         .descendants(doc)
         .unwrap()
