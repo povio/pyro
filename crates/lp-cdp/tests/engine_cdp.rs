@@ -1337,6 +1337,53 @@ fn input_mouse_move_to_empty_viewport_space_leaves_hovered_element_as_chromium()
 }
 
 #[test]
+fn input_boundary_events_carry_related_targets_and_follow_a_replaced_hovered_element() {
+    // @povio/ui swaps a static input for the interactive one a frame after
+    // mouseenter; react-aria's hover state then needs Chrome's boundary
+    // events for the element now under the stationary pointer. A removed
+    // hovered element gets no out/leave; over/enter name it as relatedTarget
+    // and no move events fire. Expectations follow Blink's
+    // BoundaryEventDispatcher::SendBoundaryEvents; they were not recorded
+    // from Chromium.
+    let mut h = Harness::new();
+    eval_value(
+        &mut h,
+        r#"
+      document.body.innerHTML='<div id="other" style="width:200px;height:40px">O</div><div id="cell" style="margin-top:100px"><div id="static" style="width:200px;height:40px">S</div></div>';
+      globalThis.log=[];
+      for (const t of ['pointerover','pointerout','pointerenter','pointerleave','mouseover','mouseout','mouseenter','mouseleave','mousemove'])
+        document.addEventListener(t, e => log.push(t + '@' + (e.target.id || e.target.nodeName) + '<' + (e.relatedTarget?.id || e.relatedTarget?.nodeName || '-')), true);
+      const c = (id) => { const r = document.getElementById(id).getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; };
+      globalThis.points = [c('static'), c('other')];
+      1
+    "#,
+    );
+    let points = eval_value(&mut h, "points");
+    let mut moved = |p: &Value| {
+        let r = h.page(
+            "Input.dispatchMouseEvent",
+            json!({"type":"mouseMoved","x":p[0],"y":p[1],"button":"none","buttons":0}),
+        );
+        assert_eq!(r["result"], json!({}), "{r}");
+        eval_value(&mut h, "log.splice(0).join(' ')")
+    };
+    moved(&points[1]);
+    assert_eq!(
+        moved(&points[0]),
+        json!("pointerout@other<static pointerleave@other<static pointerover@static<other pointerenter@cell<other pointerenter@static<other mouseout@other<static mouseleave@other<static mouseover@static<other mouseenter@cell<other mouseenter@static<other mousemove@static<-")
+    );
+    eval_value(
+        &mut h,
+        "const live = document.createElement('div'); live.id = 'live'; live.setAttribute('style', 'width:200px;height:40px'); document.getElementById('cell').replaceChildren(live); 1",
+    );
+    assert_eq!(
+        eval_value(&mut h, "log.splice(0).join(' ')"),
+        json!("pointerover@live<static pointerenter@#document<static pointerenter@HTML<static pointerenter@BODY<static pointerenter@cell<static pointerenter@live<static mouseover@live<static mouseenter@#document<static mouseenter@HTML<static mouseenter@BODY<static mouseenter@cell<static mouseenter@live<static")
+    );
+    assert_eq!(eval_value(&mut h, "document.getElementById('live').matches(':hover')"), json!(true));
+}
+
+#[test]
 fn hyperlink_downloads_follow_set_download_behavior_like_chromium() {
     // Playwright 1.59 sets allowAndName per context and waits for
     // Browser.downloadWillBegin / downloadProgress on the browser session, then

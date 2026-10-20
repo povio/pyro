@@ -1198,6 +1198,55 @@ fn boundary_chains(page: &PageDom, prev: Option<NodeId>, next: NodeId) -> (Vec<N
     (left, entered)
 }
 
+/// Chrome's boundary events from `prev` to `target`: out, leave (inner to
+/// outer), over, enter (outer to inner), for pointer then mouse events. Out
+/// and leave carry `target` as `relatedTarget`, over and enter carry `prev`.
+/// A `prev` that is no longer connected gets no out or leave events
+/// (BoundaryEventDispatcher::SendBoundaryEvents).
+fn dispatch_boundary_events(page: &Rc<PageDom>, prev: Option<NodeId>, target: NodeId, tkey: TargetKey, m: &MouseInput) {
+    let prev_connected = prev.is_some_and(|p| page.dom.borrow().is_connected(p).unwrap_or(false));
+    let (left, entered) = boundary_chains(page, prev, target);
+    let prev_key = prev.and_then(|p| key_of(page, p));
+    let related = |ev: EventData, key: Option<TargetKey>| {
+        ev.fields.borrow_mut().related_target = key;
+        ev
+    };
+    for (iface, prefix) in [(EventInterface::PointerEvent, "pointer"), (EventInterface::MouseEvent, "mouse")] {
+        if let Some(p) = prev_key.filter(|_| prev_connected) {
+            fire(page, p, &related(mouse_event(page, iface, &format!("{prefix}out"), m, true), Some(tkey)));
+        }
+        for &n in &left {
+            if let Some(k) = key_of(page, n) {
+                fire(page, k, &related(mouse_event(page, iface, &format!("{prefix}leave"), m, false), Some(tkey)));
+            }
+        }
+        fire(page, tkey, &related(mouse_event(page, iface, &format!("{prefix}over"), m, true), prev_key));
+        for &n in entered.iter().rev() {
+            if let Some(k) = key_of(page, n) {
+                fire(page, k, &related(mouse_event(page, iface, &format!("{prefix}enter"), m, false), prev_key));
+            }
+        }
+    }
+    let doc = page.document();
+    let _ = page.dom.borrow_mut().set_hovered(doc, Some(target));
+    page.set_hovered(Some(target));
+}
+
+/// After a task removed the hovered element, the element now under the
+/// stationary pointer gets boundary events, as Chrome's hover update after
+/// layout does (no move events). Layout-only changes under the pointer are
+/// not tracked.
+pub(crate) fn update_hover_after_task(page: &Rc<PageDom>) {
+    let Some(prev) = page.hovered_raw() else { return };
+    if page.dom.borrow().is_connected(prev).unwrap_or(false) {
+        return;
+    }
+    let Some(m) = page.pointer.borrow().clone() else { return };
+    let Some(target) = pointer_target(page, m.x, m.y, true) else { return };
+    let Some(tkey) = key_of(page, target) else { return };
+    dispatch_boundary_events(page, Some(prev), target, tkey, &m);
+}
+
 /// CDP `Input.dispatchMouseEvent`. Returns an error when hit testing is not
 /// possible (no element at the point).
 pub fn dispatch_mouse(page: &Rc<PageDom>, kind: MouseKind, m: &MouseInput) -> Result<(), String> {
@@ -1221,32 +1270,10 @@ pub fn dispatch_mouse_intercepting_drags(
     let Some(tkey) = key_of(page, target) else { return Err("stale target".into()) };
     match kind {
         MouseKind::Moved => {
+            *page.pointer.borrow_mut() = Some(m.clone());
             let prev = page.hovered();
             if prev != Some(target) {
-                // Chrome's boundary events: out, leave (inner to outer), over,
-                // enter (outer to inner), for pointer then mouse events.
-                let (left, entered) = boundary_chains(page, prev, target);
-                for (iface, prefix) in
-                    [(EventInterface::PointerEvent, "pointer"), (EventInterface::MouseEvent, "mouse")]
-                {
-                    if let Some(p) = prev.and_then(|p| key_of(page, p)) {
-                        fire(page, p, &mouse_event(page, iface, &format!("{prefix}out"), m, true));
-                    }
-                    for &n in &left {
-                        if let Some(k) = key_of(page, n) {
-                            fire(page, k, &mouse_event(page, iface, &format!("{prefix}leave"), m, false));
-                        }
-                    }
-                    fire(page, tkey, &mouse_event(page, iface, &format!("{prefix}over"), m, true));
-                    for &n in entered.iter().rev() {
-                        if let Some(k) = key_of(page, n) {
-                            fire(page, k, &mouse_event(page, iface, &format!("{prefix}enter"), m, false));
-                        }
-                    }
-                }
-                let doc = page.document();
-                let _ = page.dom.borrow_mut().set_hovered(doc, Some(target));
-                page.set_hovered(Some(target));
+                dispatch_boundary_events(page, prev, target, tkey, m);
             }
             fire(page, tkey, &mouse_event(page, EventInterface::PointerEvent, "pointermove", m, true));
             fire(page, tkey, &mouse_event(page, EventInterface::MouseEvent, "mousemove", m, true));

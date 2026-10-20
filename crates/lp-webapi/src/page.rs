@@ -83,6 +83,9 @@ pub struct PageDom {
     clicking: RefCell<Vec<NodeId>>,
     submitting: RefCell<Vec<NodeId>>,
     hovered: Cell<Option<NodeId>>,
+    /// The last mouse input's position and state, for boundary events when
+    /// content under a stationary pointer changes.
+    pub(crate) pointer: RefCell<Option<crate::input::MouseInput>>,
     press_target: Cell<Option<NodeId>>,
     /// Native drag source under a left press that has not moved past the
     /// drag threshold yet, with the press position.
@@ -299,6 +302,7 @@ impl PageDom {
             clicking: RefCell::new(Vec::new()),
             submitting: RefCell::new(Vec::new()),
             hovered: Cell::new(None),
+            pointer: RefCell::new(None),
             press_target: Cell::new(None),
             drag_candidate: Cell::new(None),
             drag: RefCell::new(None),
@@ -572,12 +576,13 @@ impl PageDom {
     /// Safe point (after each task): applies deferred releases, unpins
     /// listener-holding wrappers of disconnected nodes, re-pins reconnected
     /// ones, and frees unreachable DOM nodes.
-    pub fn after_task(&self) {
+    pub fn after_task(self: &Rc<Self>) {
         self.flush_iframe_events();
         crate::message_channel::reconcile_ports(self);
         crate::mutation_observer::after_task(self);
         crate::intersection_observer::after_task(self);
         crate::resize_observer::after_task(self);
+        crate::input::update_hover_after_task(self);
         self.url_params_helpers.borrow_mut().retain(|realm, _| {
             self.realms.borrow().get(realm).and_then(|r| r.upgrade()).is_some_and(|r| !r.is_disposed())
         });
@@ -713,6 +718,10 @@ impl PageDom {
     }
     pub(crate) fn hovered(&self) -> Option<NodeId> {
         self.hovered.get().filter(|&h| self.dom.borrow().is_alive(h))
+    }
+    /// The hovered element even when it is no longer connected.
+    pub(crate) fn hovered_raw(&self) -> Option<NodeId> {
+        self.hovered.get()
     }
     pub(crate) fn set_hovered(&self, el: Option<NodeId>) {
         self.hovered.set(el);
