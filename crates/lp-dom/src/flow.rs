@@ -92,6 +92,39 @@ pub enum Position {
     Sticky,
 }
 
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum FlexDirection {
+    #[default]
+    Row,
+    RowReverse,
+    Column,
+    ColumnReverse,
+}
+
+/// `align-items` / `align-self` values the flex layout acts on.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum Align {
+    #[default]
+    Stretch,
+    Start,
+    End,
+    Center,
+    /// Laid out as Start in Stage 2.
+    Baseline,
+}
+
+/// `justify-content` values the flex layout acts on.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum Justify {
+    #[default]
+    Start,
+    End,
+    Center,
+    SpaceBetween,
+    SpaceAround,
+    SpaceEvenly,
+}
+
 /// top, right, bottom, left.
 pub type Sides<T> = [T; 4];
 pub const TOP: usize = 0;
@@ -128,6 +161,19 @@ pub struct FlowStyle {
     /// Non-standard CSS `zoom` (1 = none). Carried for Stage 1; not yet
     /// applied to used sizes.
     pub zoom: f64,
+    // Flex container (Stage 2).
+    pub flex_direction: FlexDirection,
+    pub flex_wrap: bool,
+    pub row_gap: Len,
+    pub column_gap: Len,
+    pub align_items: Align,
+    pub justify_content: Justify,
+    // Flex item.
+    pub flex_grow: f64,
+    pub flex_shrink: f64,
+    pub flex_basis: Dim,
+    /// None = `auto` (the container's align-items).
+    pub align_self: Option<Align>,
 }
 
 impl Default for FlowStyle {
@@ -154,6 +200,16 @@ impl Default for FlowStyle {
             nowrap: false,
             replaced: false,
             zoom: 1.0,
+            flex_direction: FlexDirection::Row,
+            flex_wrap: false,
+            row_gap: Len::ZERO,
+            column_gap: Len::ZERO,
+            align_items: Align::Stretch,
+            justify_content: Justify::Start,
+            flex_grow: 0.0,
+            flex_shrink: 1.0,
+            flex_basis: Dim::Auto,
+            align_self: None,
         }
     }
 }
@@ -373,9 +429,9 @@ impl<'a> Ctx<'a> {
         if positioned {
             self.pending.push(Vec::new());
         }
-        let content_h = self.contents(el, style, content_x, content_y, content_w, fixed, shift);
         let declared_h =
             style.height.resolve(None).map(|h| if style.border_box { (h - e.vertical()).max(0.0) } else { h });
+        let content_h = self.contents(el, style, content_x, content_y, content_w, declared_h, fixed, shift);
         let min_h = style.min_height.resolve(None).map(|h| if style.border_box { h - e.vertical() } else { h });
         let max_h = style.max_height.resolve(None).map(|h| if style.border_box { h - e.vertical() } else { h });
         let height = Self::clamp(declared_h.unwrap_or(content_h), min_h, max_h);
@@ -473,11 +529,15 @@ impl<'a> Ctx<'a> {
         x: f64,
         y: f64,
         width: f64,
+        height: Option<f64>,
         fixed: bool,
         shift: (f64, f64),
     ) -> f64 {
         if style.replaced {
             return 0.0;
+        }
+        if style.inner == InnerDisplay::Flex {
+            return self.flex(el, style, x, y, width, height, fixed, shift);
         }
         let kids = self.flatten_children(el);
         let mut cursor = y;
@@ -624,7 +684,13 @@ impl<'a> Ctx<'a> {
             let content_x = bx + e.border[LEFT] + e.padding[LEFT];
             let content_y = provisional_y + e.border[TOP] + e.padding[TOP];
             let first_new = self.order;
-            let content_h = self.contents(p.el, s, content_x, content_y, content_w, fixed, (0.0, 0.0));
+            let definite_h = declared_h.or_else(|| match (top, bottom) {
+                (Some(t), Some(b)) => {
+                    Some((cb.height - t - b - e.margin[TOP] - e.margin[BOTTOM] - e.vertical()).max(0.0))
+                }
+                _ => None,
+            });
+            let content_h = self.contents(p.el, s, content_x, content_y, content_w, definite_h, fixed, (0.0, 0.0));
             let min_h = s.min_height.resolve(Some(cb.height));
             let max_h = s.max_height.resolve(Some(cb.height));
             let mut height = Self::clamp(declared_h.unwrap_or(content_h), min_h, max_h);
@@ -856,7 +922,7 @@ impl<'a> Ctx<'a> {
             order: 0,
             pending: vec![Vec::new()],
         };
-        probe.contents(el, style, 0.0, 0.0, content_w, false, (0.0, 0.0))
+        probe.contents(el, style, 0.0, 0.0, content_w, None, false, (0.0, 0.0))
     }
 
     /// Lays out an atomic inline (inline-block / replaced) at (x, y), its
@@ -1023,6 +1089,363 @@ fn union(frags: &mut FxHashMap<NodeId, Rect>, order: &mut Vec<NodeId>, el: NodeI
             frags.insert(el, r);
             order.push(el);
         }
+    }
+}
+
+// ----- flex layout (Stage 2) -------------------------------------------------------
+
+/// One flex item: an element, or a run of text (anonymous item).
+struct FlexItem {
+    el: Option<NodeId>,
+    text: Vec<NodeId>,
+    style: FlowStyle,
+    margin: Sides<f64>,
+    /// Border-box main size (hypothetical, then flexed).
+    main: f64,
+    min_main: f64,
+    max_main: f64,
+    /// Border-box cross size.
+    cross: f64,
+    stretched: bool,
+}
+
+impl<'a> Ctx<'a> {
+    /// Lays out a flex container's content box at (x, y), `width` wide and
+    /// `height` tall when definite; returns the content height.
+    #[allow(clippy::too_many_arguments)]
+    fn flex(
+        &mut self,
+        el: NodeId,
+        style: &FlowStyle,
+        x: f64,
+        y: f64,
+        width: f64,
+        height: Option<f64>,
+        fixed: bool,
+        shift: (f64, f64),
+    ) -> f64 {
+        let row = matches!(style.flex_direction, FlexDirection::Row | FlexDirection::RowReverse);
+        let reverse = matches!(style.flex_direction, FlexDirection::RowReverse | FlexDirection::ColumnReverse);
+        let main_gap = if row { style.column_gap.resolve(width) } else { style.row_gap.resolve(height.unwrap_or(0.0)) };
+        let cross_gap =
+            if row { style.row_gap.resolve(height.unwrap_or(0.0)) } else { style.column_gap.resolve(width) };
+        let container_main = if row { Some(width) } else { height };
+        let container_cross = if row { height } else { Some(width) };
+        // Items in order; absolutely positioned children wait for their box.
+        let mut items: Vec<FlexItem> = Vec::new();
+        let mut text_run: Vec<NodeId> = Vec::new();
+        let flush_text = |cx: &Ctx<'a>, run: &mut Vec<NodeId>, items: &mut Vec<FlexItem>| {
+            let has_text = run.iter().any(|&t| cx.dom.char_data(t).is_ok_and(|d| !d.trim().is_empty()));
+            if has_text {
+                let mut st =
+                    FlowStyle { font_size: style.font_size, line_height: style.line_height, ..FlowStyle::default() };
+                st.nowrap = style.nowrap;
+                items.push(FlexItem {
+                    el: None,
+                    text: std::mem::take(run),
+                    style: st,
+                    margin: [0.0; 4],
+                    main: 0.0,
+                    min_main: 0.0,
+                    max_main: f64::INFINITY,
+                    cross: 0.0,
+                    stretched: false,
+                });
+            } else {
+                run.clear();
+            }
+        };
+        for (child, child_style) in self.flatten_children(el) {
+            match child_style {
+                None => text_run.push(child),
+                Some(s) if matches!(s.position, Position::Absolute | Position::Fixed) => {
+                    self.defer_absolute(child, s, x - shift.0, y);
+                }
+                Some(s) => {
+                    flush_text(self, &mut text_run, &mut items);
+                    let e = self.edges(&s, width);
+                    items.push(FlexItem {
+                        el: Some(child),
+                        text: Vec::new(),
+                        margin: e.margin,
+                        style: s,
+                        main: 0.0,
+                        min_main: 0.0,
+                        max_main: f64::INFINITY,
+                        cross: 0.0,
+                        stretched: false,
+                    });
+                }
+            }
+        }
+        flush_text(self, &mut text_run, &mut items);
+        if reverse {
+            items.reverse();
+        }
+        // Hypothetical main sizes (border boxes).
+        for it in &mut items {
+            let (main, min, max) = self.flex_base(it, row, width, container_main);
+            it.main = main;
+            it.min_main = min;
+            it.max_main = max;
+        }
+        // Lines.
+        let available = container_main.unwrap_or(f64::INFINITY);
+        let mut lines: Vec<std::ops::Range<usize>> = Vec::new();
+        let mut start = 0;
+        let mut used = 0.0;
+        for (i, it) in items.iter().enumerate() {
+            let outer = it.main + margins_main(it, row);
+            let add = if i > start { main_gap } else { 0.0 };
+            if style.flex_wrap && i > start && used + add + outer > available {
+                lines.push(start..i);
+                start = i;
+                used = outer;
+            } else {
+                used += add + outer;
+            }
+        }
+        if start < items.len() || items.is_empty() {
+            lines.push(start..items.len());
+        }
+        // Flex each line (one pass) when the main size is definite.
+        if let Some(cm) = container_main {
+            for line in &lines {
+                let n = line.len() as f64;
+                let used: f64 = items[line.clone()].iter().map(|it| it.main + margins_main(it, row)).sum::<f64>()
+                    + main_gap * (n - 1.0).max(0.0);
+                let free = cm - used;
+                if free > 0.0 {
+                    let grow: f64 = items[line.clone()].iter().map(|it| it.style.flex_grow).sum();
+                    if grow > 0.0 {
+                        for it in &mut items[line.clone()] {
+                            it.main = (it.main + free * it.style.flex_grow / grow).clamp(it.min_main, it.max_main);
+                        }
+                    }
+                } else if free < 0.0 {
+                    let weight: f64 = items[line.clone()].iter().map(|it| it.style.flex_shrink * it.main).sum();
+                    if weight > 0.0 {
+                        for it in &mut items[line.clone()] {
+                            let share = -free * it.style.flex_shrink * it.main / weight;
+                            it.main = (it.main - share).clamp(it.min_main, it.max_main);
+                        }
+                    }
+                }
+            }
+        }
+        // Cross sizes from content (for each item at its main size).
+        for it in &mut items {
+            it.cross = self.flex_cross_content(it, row, width);
+        }
+        // Line cross sizes.
+        let single = lines.len() == 1;
+        let mut line_cross: Vec<f64> = lines
+            .iter()
+            .map(|l| items[l.clone()].iter().map(|it| it.cross + margins_cross(it, row)).fold(0.0, f64::max))
+            .collect();
+        if single {
+            if let Some(cc) = container_cross {
+                line_cross[0] = cc;
+            }
+        }
+        // Stretch.
+        for (li, line) in lines.iter().enumerate() {
+            for it in &mut items[line.clone()] {
+                let align = it.style.align_self.unwrap_or(style.align_items);
+                let declared_cross =
+                    if row { it.style.height.resolve(None) } else { it.style.width.resolve(Some(width)) };
+                if align == Align::Stretch && declared_cross.is_none() {
+                    it.cross = (line_cross[li] - margins_cross(it, row)).max(0.0);
+                    it.stretched = true;
+                }
+            }
+        }
+        // Place.
+        let mut cross_pos = 0.0;
+        let mut max_main_end: f64 = 0.0;
+        for (li, line) in lines.iter().enumerate() {
+            let n = line.len();
+            let used: f64 = items[line.clone()].iter().map(|it| it.main + margins_main(it, row)).sum::<f64>()
+                + main_gap * (n as f64 - 1.0).max(0.0);
+            let free = container_main.map_or(0.0, |cm| (cm - used).max(0.0));
+            let (mut pos, between) = match style.justify_content {
+                Justify::Start => (0.0, 0.0),
+                Justify::End => (free, 0.0),
+                Justify::Center => (free / 2.0, 0.0),
+                Justify::SpaceBetween if n > 1 => (0.0, free / (n as f64 - 1.0)),
+                Justify::SpaceBetween => (0.0, 0.0),
+                Justify::SpaceAround => (free / n as f64 / 2.0, free / n as f64),
+                Justify::SpaceEvenly => (free / (n as f64 + 1.0), free / (n as f64 + 1.0)),
+            };
+            for i in line.clone() {
+                let it = &items[i];
+                let align = it.style.align_self.unwrap_or(style.align_items);
+                let outer_cross = it.cross + margins_cross(it, row);
+                let cross_off = match align {
+                    Align::End => line_cross[li] - outer_cross,
+                    Align::Center => (line_cross[li] - outer_cross) / 2.0,
+                    _ => 0.0,
+                };
+                let (mx, my) =
+                    if row { (x + pos, y + cross_pos + cross_off) } else { (x + cross_pos + cross_off, y + pos) };
+                let (w, h) = if row { (it.main, it.cross) } else { (it.cross, it.main) };
+                self.place_flex_item(i, &items, mx, my, w, h, width, fixed, shift);
+                pos += it.main + margins_main(it, row) + main_gap + between;
+            }
+            max_main_end = max_main_end.max(pos - main_gap - between);
+            cross_pos += line_cross[li] + cross_gap;
+        }
+        let cross_extent = (cross_pos - cross_gap).max(0.0);
+        if row {
+            cross_extent
+        } else {
+            height.unwrap_or(max_main_end)
+        }
+    }
+
+    /// (hypothetical border-box main size, min, max).
+    fn flex_base(&self, it: &FlexItem, row: bool, width: f64, container_main: Option<f64>) -> (f64, f64, f64) {
+        let s = &it.style;
+        let e = self.edges(s, width);
+        let edges = if row { e.horizontal() } else { e.vertical() };
+        let to_border = |v: f64| if s.border_box { v.max(edges) } else { v + edges };
+        let declared = if row { s.width.resolve(Some(width)) } else { s.height.resolve(container_main) };
+        let basis = match s.flex_basis {
+            Dim::Len(l) if l.percent == 0.0 || container_main.is_some() => {
+                Some(l.resolve(container_main.unwrap_or(0.0)))
+            }
+            _ => None,
+        };
+        let main = match (basis, declared) {
+            (Some(b), _) => to_border(b),
+            (None, Some(d)) => to_border(d),
+            (None, None) => {
+                if row {
+                    let content = match &it.el {
+                        Some(el) => self.max_content(*el, s),
+                        None => it
+                            .text
+                            .iter()
+                            .map(|&t| collapsed_width(self.dom.char_data(t).unwrap_or(""), s.font_size))
+                            .sum(),
+                    };
+                    content + edges
+                } else {
+                    let cross_w = self.flex_cross_width(it, width);
+                    let content = match &it.el {
+                        Some(el) => self.measure_height(*el, s, cross_w),
+                        None => text_extents(s).0 + text_extents(s).1,
+                    };
+                    content + edges
+                }
+            }
+        };
+        let (min, max) = if row {
+            (s.min_width.resolve(Some(width)), s.max_width.resolve(Some(width)))
+        } else {
+            (s.min_height.resolve(container_main), s.max_height.resolve(container_main))
+        };
+        (main, min.map_or(0.0, to_border), max.map_or(f64::INFINITY, to_border))
+    }
+
+    /// Content-box width of an item in a column container before stretching.
+    fn flex_cross_width(&self, it: &FlexItem, width: f64) -> f64 {
+        let s = &it.style;
+        let e = self.edges(s, width);
+        match s.width.resolve(Some(width)) {
+            Some(w) => Self::declared_content(s, w, e.horizontal()),
+            None => (width - e.margin[LEFT] - e.margin[RIGHT] - e.horizontal()).max(0.0),
+        }
+    }
+
+    /// The item's content-based border-box cross size at its main size.
+    fn flex_cross_content(&self, it: &FlexItem, row: bool, width: f64) -> f64 {
+        let s = &it.style;
+        let e = self.edges(s, width);
+        if row {
+            if let Some(h) = s.height.resolve(None) {
+                return if s.border_box { h.max(e.vertical()) } else { h + e.vertical() };
+            }
+            let content_w = (it.main - e.horizontal()).max(0.0);
+            let h = match &it.el {
+                Some(el) => self.measure_height(*el, s, content_w),
+                None => text_extents(s).0 + text_extents(s).1,
+            };
+            h + e.vertical()
+        } else {
+            match s.width.resolve(Some(width)) {
+                Some(w) => {
+                    if s.border_box {
+                        w.max(e.horizontal())
+                    } else {
+                        w + e.horizontal()
+                    }
+                }
+                None => {
+                    let content = match &it.el {
+                        Some(el) => self.max_content(*el, s),
+                        None => it
+                            .text
+                            .iter()
+                            .map(|&t| collapsed_width(self.dom.char_data(t).unwrap_or(""), s.font_size))
+                            .sum(),
+                    };
+                    (content + e.horizontal()).min((width - e.margin[LEFT] - e.margin[RIGHT]).max(0.0))
+                }
+            }
+        }
+    }
+
+    /// Lays out item `i` with its border box at (x, y) + margins, sized w×h.
+    #[allow(clippy::too_many_arguments)]
+    fn place_flex_item(
+        &mut self,
+        i: usize,
+        items: &[FlexItem],
+        x: f64,
+        y: f64,
+        w: f64,
+        h: f64,
+        cb_width: f64,
+        fixed: bool,
+        shift: (f64, f64),
+    ) {
+        let it = &items[i];
+        let Some(el) = it.el else {
+            // Anonymous text item: an inline run in its box.
+            let parent = it.style.clone();
+            self.inline_run(&it.text, &parent, x, y, w.max(1.0), fixed, shift);
+            return;
+        };
+        let e = self.edges(&it.style, cb_width);
+        let mut s = it.style.clone();
+        s.border_box = true;
+        s.width = Dim::px(w);
+        s.height = Dim::px(h);
+        s.min_width = Dim::Auto;
+        s.max_width = Dim::Auto;
+        s.min_height = Dim::Auto;
+        s.max_height = Dim::Auto;
+        s.margin =
+            [Dim::px(e.margin[TOP]), Dim::px(e.margin[RIGHT]), Dim::px(e.margin[BOTTOM]), Dim::px(e.margin[LEFT])];
+        // A flex item's position is (x, y); block_child adds the margins.
+        self.block_child(el, &s, x, y, w + e.margin[LEFT] + e.margin[RIGHT], fixed, shift);
+    }
+}
+
+fn margins_main(it: &FlexItem, row: bool) -> f64 {
+    if row {
+        it.margin[LEFT] + it.margin[RIGHT]
+    } else {
+        it.margin[TOP] + it.margin[BOTTOM]
+    }
+}
+
+fn margins_cross(it: &FlexItem, row: bool) -> f64 {
+    if row {
+        it.margin[TOP] + it.margin[BOTTOM]
+    } else {
+        it.margin[LEFT] + it.margin[RIGHT]
     }
 }
 

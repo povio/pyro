@@ -81,7 +81,8 @@ containing block (em/rem/vw/vh resolved by the style engine).
   initial containing block), auto width shrink-to-fit, auto insets keep the
   static position; `fixed` uses the viewport and does not move with window
   scroll. Out-of-flow boxes do not advance siblings.
-- Not in Stage 1 (laid out as block containers): flex/grid inner layout,
+- Stage 2 (flex): row/column, wrap, gaps, grow/shrink/basis (one pass), justify-content, align-items/align-self with stretch; text directly in a flex container is an anonymous item.
+- Not yet (laid out as block containers): grid inner layout,
   tables, floats, sticky, margin collapsing through parents, writing modes,
   transforms other than inline translateX.
 
