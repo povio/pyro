@@ -17,6 +17,8 @@ use crate::node::NodeId;
 use crate::style::{StyleEngine, DEFAULT_FONT_SIZE};
 
 impl FlowStyleSource for StyleEngine {
+    // flow.rs owns FlowStyle and adds fields (zoom, flex) over time; `..Default` keeps this file compiling.
+    #[allow(clippy::needless_update)]
     fn flow_style(&self, dom: &Dom, el: NodeId) -> Option<FlowStyle> {
         let element = dom.element(el).ok()?;
         if self.has_display_none(dom, el) {
@@ -123,6 +125,7 @@ impl FlowStyleSource for StyleEngine {
             line_height,
             nowrap,
             replaced: matches!(tag.as_str(), "img" | "iframe" | "video" | "canvas" | "embed" | "object" | "svg"),
+            ..FlowStyle::default()
         })
     }
 }
