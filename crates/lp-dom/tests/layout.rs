@@ -2805,3 +2805,20 @@ fn flow_style_reports_table_parts_and_spacing() {
     assert!(get("c").border_collapse);
     assert_eq!(get("c").padding, [Len::px(3.0); 4]);
 }
+
+#[test]
+fn computed_style_maps_logical_properties() {
+    let mut p = page("<!DOCTYPE html><body><button id=b class='px-3 py-1 border-x'>x</button></body>");
+    p.add_style(concat!(
+        ":root{--spacing-3:.75rem;--spacing-1:.25rem}",
+        ".px-3{padding-inline:var(--spacing-3)}.py-1{padding-block:var(--spacing-1)}",
+        ".border-x{border-inline-style:solid;border-inline-width:1px}",
+    ));
+    let b = p.id("b");
+    assert_eq!(p.cs(b, "padding-left"), "12px");
+    assert_eq!(p.cs(b, "padding-right"), "12px");
+    assert_eq!(p.cs(b, "padding-top"), "4px");
+    assert_eq!(p.cs(b, "border-left-width"), "1px");
+    assert_eq!(p.cs(b, "border-right-style"), "solid");
+    assert_eq!(p.cs(b, "border-top-width"), "0px");
+}

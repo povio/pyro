@@ -201,10 +201,58 @@ fn is_number(s: &str) -> bool {
     s.parse::<f64>().is_ok()
 }
 
+/// Logical properties for a left-to-right, horizontal-tb writing mode (as
+/// TOS renders): `padding-inline: a b` sets left/right, `*-block` top/bottom,
+/// `-start`/`-end` one side, `inline-size`/`block-size` width/height. The
+/// result is physical names, still possibly shorthands (`border-left`).
+fn logical_to_physical(name: &str, value: &str) -> Option<Vec<(String, String)>> {
+    let size = match name {
+        "inline-size" => Some("width"),
+        "min-inline-size" => Some("min-width"),
+        "max-inline-size" => Some("max-width"),
+        "block-size" => Some("height"),
+        "min-block-size" => Some("min-height"),
+        "max-block-size" => Some("max-height"),
+        _ => None,
+    };
+    if let Some(physical) = size {
+        return Some(vec![(physical.to_owned(), value.to_owned())]);
+    }
+    let (prop, rest) = ["padding", "margin", "inset", "border"]
+        .iter()
+        .find_map(|p| name.strip_prefix(p).and_then(|r| r.strip_prefix('-')).map(|r| (*p, r)))?;
+    let (axis, rest) = match rest.strip_prefix("inline") {
+        Some(r) => (["left", "right"], r),
+        None => (["top", "bottom"], rest.strip_prefix("block")?),
+    };
+    let (sides, suffix): (&[&str], &str) = if let Some(r) = rest.strip_prefix("-start") {
+        (&axis[..1], r)
+    } else if let Some(r) = rest.strip_prefix("-end") {
+        (&axis[1..], r)
+    } else {
+        (&axis[..], rest)
+    };
+    if !matches!(suffix, "" | "-width" | "-style" | "-color") || (prop != "border" && !suffix.is_empty()) {
+        return None;
+    }
+    let physical = |side: &str| if prop == "inset" { side.to_owned() } else { format!("{prop}-{side}{suffix}") };
+    // `padding-inline: a b` gives start a, end b. Border shorthands keep their whole value per side.
+    let parts = top_level_parts(value);
+    let pair = sides.len() == 2 && !(prop == "border" && suffix.is_empty());
+    Some(match (pair, parts.as_slice()) {
+        (true, [a, b]) => vec![(physical(sides[0]), a.clone()), (physical(sides[1]), b.clone())],
+        (true, [_]) | (false, _) => sides.iter().map(|side| (physical(side), value.to_owned())).collect(),
+        (true, _) => return None,
+    })
+}
+
 /// The longhands a declaration sets. Unknown shorthands are kept as written
 /// under their own name; `var()` in a multi-part shorthand cannot be split
 /// before substitution and is assigned to each longhand whole.
 pub fn expand(name: &str, value: &str) -> Vec<(String, String)> {
+    if let Some(physical) = logical_to_physical(name, value) {
+        return physical.into_iter().flat_map(|(n, v)| expand(&n, &v)).collect();
+    }
     let one = |n: &str| vec![(n.to_owned(), value.to_owned())];
     match name {
         "overflow" | "overscroll-behavior" => {
@@ -1068,6 +1116,25 @@ mod tests {
         assert_eq!(expand("margin", "1px 2px")[3], ("margin-left".into(), "2px".into()));
         assert_eq!(expand("background", "#fff"), vec![("background-color".into(), "#fff".into())]);
         assert!(expand("background", "url(x.png) no-repeat").is_empty());
+        assert_eq!(
+            expand("padding-inline", "var(--spacing-3)"),
+            vec![
+                ("padding-left".into(), "var(--spacing-3)".into()),
+                ("padding-right".into(), "var(--spacing-3)".into())
+            ]
+        );
+        assert_eq!(
+            expand("margin-block", "1px 2px"),
+            vec![("margin-top".into(), "1px".into()), ("margin-bottom".into(), "2px".into())]
+        );
+        assert_eq!(expand("padding-inline-end", "4px"), vec![("padding-right".into(), "4px".into())]);
+        assert_eq!(expand("inset-inline", "0"), vec![("left".into(), "0".into()), ("right".into(), "0".into())]);
+        assert_eq!(expand("inset-block-start", "2px"), vec![("top".into(), "2px".into())]);
+        assert_eq!(expand("border-inline-start-width", "3px"), vec![("border-left-width".into(), "3px".into())]);
+        assert_eq!(expand("border-block", "1px solid red").len(), 6);
+        assert_eq!(expand("max-inline-size", "10rem"), vec![("max-width".into(), "10rem".into())]);
+        assert_eq!(expand("block-size", "5px"), vec![("height".into(), "5px".into())]);
+        assert!(expand("padding-inline-foo", "1px") == vec![("padding-inline-foo".into(), "1px".into())]);
         let border = expand("border", "1px solid red");
         assert_eq!(border.len(), 12);
         assert!(border.contains(&("border-left-style".into(), "solid".into())));

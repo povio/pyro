@@ -396,7 +396,18 @@ enum InlineItem {
 
 impl<'a> Ctx<'a> {
     fn new(dom: &'a Dom, src: &'a dyn FlowStyleSource, vw: f64, vh: f64, memo: &'a Memo) -> Self {
-        Ctx { dom, src, vw, vh, out: FlowResult::default(), order: 0, pending: Vec::new(), by_order: Vec::new(), memo, cb_height: None }
+        Ctx {
+            dom,
+            src,
+            vw,
+            vh,
+            out: FlowResult::default(),
+            order: 0,
+            pending: Vec::new(),
+            by_order: Vec::new(),
+            memo,
+            cb_height: None,
+        }
     }
 
     fn style_of(&self, el: NodeId) -> Option<FlowStyle> {
@@ -426,7 +437,12 @@ impl<'a> Ctx<'a> {
         };
         let line = style.line_height.unwrap_or(normal);
         let attr_num = |name: &str| {
-            self.dom.get_attribute(el, name).ok().flatten().and_then(|v| v.trim().parse::<f64>().ok()).filter(|v| *v > 0.0)
+            self.dom
+                .get_attribute(el, name)
+                .ok()
+                .flatten()
+                .and_then(|v| v.trim().parse::<f64>().ok())
+                .filter(|v| *v > 0.0)
         };
         // Average glyph advance of the control font.
         let avg = 0.525 * fs;
@@ -437,7 +453,9 @@ impl<'a> Ctx<'a> {
             Control::Color => (44.0, 23.0),
             Control::File => (19.0 * fs, line),
             Control::Button(label) => (collapsed_width(&label, fs), line),
-            Control::TextArea => (attr_num("cols").unwrap_or(20.0) * avg + 16.0, attr_num("rows").unwrap_or(2.0) * line),
+            Control::TextArea => {
+                (attr_num("cols").unwrap_or(20.0) * avg + 16.0, attr_num("rows").unwrap_or(2.0) * line)
+            }
             Control::Select { rows } => {
                 let widest = self
                     .dom
@@ -567,10 +585,15 @@ impl<'a> Ctx<'a> {
             self.pending.push(Vec::new());
         }
         let declared_h =
-            style.height.resolve(self.cb_height).map(|h| if style.border_box { (h - e.vertical()).max(0.0) } else { h });
+            style
+                .height
+                .resolve(self.cb_height)
+                .map(|h| if style.border_box { (h - e.vertical()).max(0.0) } else { h });
         let content_h = self.contents(el, style, content_x, content_y, content_w, declared_h, fixed, shift);
-        let min_h = style.min_height.resolve(self.cb_height).map(|h| if style.border_box { h - e.vertical() } else { h });
-        let max_h = style.max_height.resolve(self.cb_height).map(|h| if style.border_box { h - e.vertical() } else { h });
+        let min_h =
+            style.min_height.resolve(self.cb_height).map(|h| if style.border_box { h - e.vertical() } else { h });
+        let max_h =
+            style.max_height.resolve(self.cb_height).map(|h| if style.border_box { h - e.vertical() } else { h });
         let height = Self::clamp(declared_h.unwrap_or(content_h), min_h, max_h);
         let rect =
             Rect { x: bx + shift.0, y: by + shift.1, width: content_w + e.horizontal(), height: height + e.vertical() };
