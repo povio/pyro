@@ -265,7 +265,7 @@ fn default_geometry_is_unchanged_by_the_flow_switch() {
 
 // ----- Stage 2: flex -----------------------------------------------------------
 
-use lp_dom::flow::{self, Align, Dim, FlexDirection, FlowStyle, FlowStyleSource, Justify, Len, TablePart};
+use lp_dom::flow::{self, Align, Dim, FlexDirection, FlowStyle, FlowStyleSource, Justify, Len, TablePart, TextAlign};
 
 /// The cascade's flow inputs plus the inline flex declarations, until the
 /// style engine fills the flex fields (style_flow.rs).
@@ -381,6 +381,13 @@ impl FlowStyleSource for InlineFlex<'_> {
             s.justify_items = v;
         }
         s.justify_self = decl("justify-self").and_then(|v| align(&v));
+        if let Some(v) = decl("text-align") {
+            s.text_align = match v.as_str() {
+                "center" => TextAlign::Center,
+                "right" | "end" => TextAlign::End,
+                _ => TextAlign::Start,
+            };
+        }
         if tag == "table" {
             let spacing = decl("border-spacing").and_then(|v| flex_len(&v)).map_or(2.0, |l| l.px);
             s.border_spacing = (spacing, spacing);
@@ -1097,4 +1104,49 @@ fn flex_parity_auto_margins() {
         ],
         [800.0, 600.0],
     );
+}
+
+// ----- text-align -------------------------------------------------------------
+
+#[test]
+fn flow_parity_text_align() {
+    // Chromium 1.59.1, 800x600. Atomic boxes with explicit sizes; the inline
+    // span's own height is font-metric dependent, so it is checked on x/width.
+    let html = "<!doctype html><body style=\"margin:0\"><div id=c style=\"width:400px;text-align:center\"><span id=c1 style=\"display:inline-block;width:50px;height:20px\"></span><span id=c2 style=\"display:inline-block;width:30px;height:20px\"></span></div><div id=r style=\"width:400px;text-align:right\"><span id=r1 style=\"display:inline-block;width:50px;height:20px\"></span> </div><div id=w style=\"width:400px;text-align:center\"><span id=w1 style=\"display:inline-block;width:250px;height:10px\"></span><span id=w2 style=\"display:inline-block;width:250px;height:10px\"></span></div><div id=o style=\"width:400px;text-align:center\"><span id=o1 style=\"display:inline-block;width:500px;height:10px\"></span></div><div id=e style=\"width:588px;padding:0 32px;text-align:center\"><button id=btn style=\"display:inline-flex;width:127px;height:28px;padding:0;border:0\"></button></div><div id=s style=\"width:300px;text-align:end\"><span id=sp><span id=s1 style=\"display:inline-block;width:40px;height:10px\"></span></span></div></body>";
+    let p = page(html, Geometry::Flow);
+    let src = InlineFlex { style: p.layout.style() };
+    let result = flow::layout(&p.dom, p.doc, &src, 800.0, 600.0);
+    let mut diffs = Vec::new();
+    for (id, want) in [
+        ("c", [0.0, 0.0, 400.0, 24.0]),
+        ("c1", [160.0, 0.0, 50.0, 20.0]),
+        ("c2", [210.0, 0.0, 30.0, 20.0]),
+        ("r", [0.0, 24.0, 400.0, 24.0]),
+        ("r1", [350.0, 24.0, 50.0, 20.0]),
+        ("w", [0.0, 48.0, 400.0, 36.0]),
+        ("w1", [75.0, 52.0, 250.0, 10.0]),
+        ("w2", [75.0, 70.0, 250.0, 10.0]),
+        ("o", [0.0, 84.0, 400.0, 18.0]),
+        ("o1", [0.0, 88.0, 500.0, 10.0]),
+        ("e", [0.0, 102.0, 652.0, 32.0]),
+        ("btn", [262.5, 102.0, 127.0, 28.0]),
+        ("s", [0.0, 134.0, 300.0, 18.0]),
+        ("s1", [260.0, 138.0, 40.0, 10.0]),
+    ] {
+        let r = result.get(p.id(id)).unwrap().rect;
+        let got = [r.x, r.y, r.width, r.height];
+        if got.iter().zip(&want).any(|(g, w)| (g - w).abs() > 0.01) {
+            diffs.push(format!("#{id}: got {got:?}, Chromium {want:?}"));
+        }
+    }
+    let sp = result.get(p.id("sp")).unwrap().rect;
+    if (sp.x - 260.0).abs() > 0.01 || (sp.width - 40.0).abs() > 0.01 {
+        diffs.push(format!("#sp: got x={} w={}, Chromium x=260 w=40", sp.x, sp.width));
+    }
+    assert!(diffs.is_empty(), "text-align:\n{}", diffs.join("\n"));
+}
+
+#[test]
+fn text_align_defaults_to_start() {
+    assert_eq!(FlowStyle::default().text_align, TextAlign::Start);
 }

@@ -127,6 +127,20 @@ pub enum Justify {
     SpaceEvenly,
 }
 
+/// Used `text-align` of a block container's line boxes, for left-to-right
+/// text: `left`, `start`, `justify` (approximated) and `match-parent`
+/// resolving to left are [`TextAlign::Start`]; `right` / `end` are
+/// [`TextAlign::End`]; `center` (and `-webkit-center`) is
+/// [`TextAlign::Center`]. Inherited, so the style source reports the
+/// element's computed value.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum TextAlign {
+    #[default]
+    Start,
+    Center,
+    End,
+}
+
 /// Table-internal display types (`display: table-row` etc.).
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub enum TablePart {
@@ -404,6 +418,8 @@ pub struct FlowStyle {
     /// px; None = `normal`.
     pub line_height: Option<f64>,
     pub nowrap: bool,
+    /// Inherited `text-align` (aligns this element's own line boxes).
+    pub text_align: TextAlign,
     /// `<img>`/`<iframe>`-like replaced element: atomic, sized by its own
     /// width/height only.
     pub replaced: bool,
@@ -467,6 +483,7 @@ impl Default for FlowStyle {
             font_size: 16.0,
             line_height: None,
             nowrap: false,
+            text_align: TextAlign::Start,
             replaced: false,
             zoom: 1.0,
             flex_direction: FlexDirection::Row,
@@ -1348,12 +1365,32 @@ impl<'a> Ctx<'a> {
             match item {
                 InlineItem::Break => {
                     line.extents(strut);
-                    line_y += self.flush_line(&mut line, x, line_y, width, fixed, shift, &mut frags, &mut order_of);
+                    line_y += self.flush_line(
+                        &mut line,
+                        x,
+                        line_y,
+                        width,
+                        fixed,
+                        shift,
+                        &mut frags,
+                        &mut order_of,
+                        parent.text_align,
+                    );
                 }
                 InlineItem::Word { width: w, height: h, space_before, owners, ascent } => {
                     let gap = if line.x > 0.0 { space_before } else { 0.0 };
                     if line.x > 0.0 && line.x + gap + w > width && !parent.nowrap {
-                        line_y += self.flush_line(&mut line, x, line_y, width, fixed, shift, &mut frags, &mut order_of);
+                        line_y += self.flush_line(
+                            &mut line,
+                            x,
+                            line_y,
+                            width,
+                            fixed,
+                            shift,
+                            &mut frags,
+                            &mut order_of,
+                            parent.text_align,
+                        );
                         line.push(0.0, w, h, ascent, owners, None);
                     } else {
                         let at = line.x + gap;
@@ -1370,7 +1407,17 @@ impl<'a> Ctx<'a> {
                     let outer_w = content_w + e.horizontal() + e.margin[LEFT] + e.margin[RIGHT];
                     let outer_h = self.atomic_height(el, &style, content_w, width) + e.margin[TOP] + e.margin[BOTTOM];
                     if line.x > 0.0 && line.x + outer_w > width && !parent.nowrap {
-                        line_y += self.flush_line(&mut line, x, line_y, width, fixed, shift, &mut frags, &mut order_of);
+                        line_y += self.flush_line(
+                            &mut line,
+                            x,
+                            line_y,
+                            width,
+                            fixed,
+                            shift,
+                            &mut frags,
+                            &mut order_of,
+                            parent.text_align,
+                        );
                     }
                     // Text-bearing controls sit on their text baseline; other
                     // atomic boxes on their bottom margin edge.
@@ -1395,7 +1442,8 @@ impl<'a> Ctx<'a> {
                 }
             }
         }
-        line_y += self.flush_line(&mut line, x, line_y, width, fixed, shift, &mut frags, &mut order_of);
+        line_y +=
+            self.flush_line(&mut line, x, line_y, width, fixed, shift, &mut frags, &mut order_of, parent.text_align);
         // Inline element boxes: union of their fragments.
         for el in order_of {
             if let Some(r) = frags.get(&el).copied() {
@@ -1433,6 +1481,7 @@ impl<'a> Ctx<'a> {
         shift: (f64, f64),
         frags: &mut FxHashMap<NodeId, Rect>,
         order_of: &mut Vec<NodeId>,
+        align: TextAlign,
     ) -> f64 {
         // A line holding only collapsible whitespace (zero-width spacers
         // with no owner) has no line box.
@@ -1442,8 +1491,22 @@ impl<'a> Ctx<'a> {
             return 0.0;
         }
         let baseline = line_y + line.ascent;
+        // text-align: trailing collapsible spaces (ownerless zero-width
+        // spacers) do not count; a line too long to fit is start-aligned.
+        let extent = line
+            .items
+            .iter()
+            .filter(|it| it.atomic.is_some() || !it.owners.is_empty() || it.width > 0.0)
+            .map(|it| it.x + it.width)
+            .fold(0.0, f64::max);
+        let free = (width - extent).max(0.0);
+        let offset = match align {
+            TextAlign::Start => 0.0,
+            TextAlign::Center => free / 2.0,
+            TextAlign::End => free,
+        };
         for it in line.items.drain(..) {
-            let left = x + it.x;
+            let left = x + offset + it.x;
             let top = baseline - it.ascent;
             if let Some((el, style)) = it.atomic {
                 self.atomic(el, &style, left, top, width, fixed, shift);
@@ -1759,6 +1822,7 @@ impl<'a> Ctx<'a> {
                 let mut st =
                     FlowStyle { font_size: style.font_size, line_height: style.line_height, ..FlowStyle::default() };
                 st.nowrap = style.nowrap;
+                st.text_align = style.text_align;
                 items.push(FlexItem {
                     el: None,
                     text: std::mem::take(run),
@@ -2916,6 +2980,7 @@ impl<'a> Ctx<'a> {
                     font_size: style.font_size,
                     line_height: style.line_height,
                     nowrap: style.nowrap,
+                    text_align: style.text_align,
                     ..FlowStyle::default()
                 };
                 items.push(GridItem {

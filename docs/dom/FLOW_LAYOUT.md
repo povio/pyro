@@ -118,6 +118,11 @@ containing block (em/rem/vw/vh resolved by the style engine).
   clamped by min/max height (fr rows then fill), justify/align-items and
   -self, justify-content distribution. Not yet: grid-template-areas, named
   lines, dense packing, subgrid, baseline alignment.
+- `text-align` (FlowStyle::text_align, inherited, LTR): each line box of a
+  block container is offset by its free space (center: half, end/right:
+  all); trailing collapsible spaces do not count and an overflowing line is
+  start-aligned. Anonymous text items in flex/grid containers inherit it.
+  `justify` is laid out as start.
 - Lines with only collapsible whitespace have no height. Replaced elements
   without a CSS size use their width/height attributes (lucide icons), else
   300x150 (svg, canvas, video, iframe). Table row groups paint below their
