@@ -29,13 +29,13 @@ impl FlowStyleSource for StyleEngine {
         }
         let tag = element.name.local.to_ascii_lowercase().to_string();
         let svg = element.name.ns == ns!(svg);
-        let value = |name: &str| self.computed_value(dom, el, name);
+        let value = |name: &str| self.used_value(dom, el, name);
         let font_size = px_of(value("font-size").as_deref()).unwrap_or(DEFAULT_FONT_SIZE);
         let root_font_size = dom
             .document_element(self.document())
             .ok()
             .flatten()
-            .and_then(|root| px_of(self.computed_value(dom, root, "font-size").as_deref()))
+            .and_then(|root| px_of(self.used_value(dom, root, "font-size").as_deref()))
             .unwrap_or(DEFAULT_FONT_SIZE);
         let viewport = self.viewport();
         let cx = LengthContext {

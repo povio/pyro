@@ -518,12 +518,32 @@ fn calc_product(p: &mut Parser<'_>, cx: &LengthContext) -> Option<CalcValue> {
     }
 }
 
+/// The f64 value of a numeric token's source text (`1.25`, `-.5rem`, `50%`).
+/// cssparser stores numbers as f32, which drifts sub-pixel values (e.g.
+/// 14px x 1.25/0.875 = 20.0000005); Chromium computes these in double.
+fn source_number(text: &str, fallback: f32) -> f64 {
+    let text = text.trim_start();
+    let end = text
+        .char_indices()
+        .find(|&(i, c)| {
+            !(c.is_ascii_digit()
+                || c == '.'
+                || ((c == '+' || c == '-') && (i == 0 || text[..i].ends_with(['e', 'E'])))
+                || ((c == 'e' || c == 'E')
+                    && text[i + 1..].starts_with(|n: char| n.is_ascii_digit() || n == '+' || n == '-')))
+        })
+        .map_or(text.len(), |(i, _)| i);
+    text[..end].parse().unwrap_or(fallback as f64)
+}
+
 fn calc_factor(p: &mut Parser<'_>, cx: &LengthContext) -> Option<CalcValue> {
+    let start = p.position();
     let token = p.next().ok()?.clone();
+    let exact = |fallback: f32| source_number(p.slice_from(start), fallback);
     match token {
-        Token::Number { value, .. } => Some(CalcValue::Number(value as f64)),
-        Token::Percentage { unit_value, .. } => Some(CalcValue::Linear(0.0, unit_value as f64 * 100.0)),
-        Token::Dimension { value, ref unit, .. } => Some(CalcValue::Linear(absolute_px(value as f64, unit, cx)?, 0.0)),
+        Token::Number { value, .. } => Some(CalcValue::Number(exact(value))),
+        Token::Percentage { unit_value, .. } => Some(CalcValue::Linear(0.0, exact(unit_value * 100.0))),
+        Token::Dimension { value, ref unit, .. } => Some(CalcValue::Linear(absolute_px(exact(value), unit, cx)?, 0.0)),
         Token::ParenthesisBlock => p.parse_nested_block(|p| nested(p, cx)).ok(),
         Token::Function(ref name) if name.eq_ignore_ascii_case("calc") => p.parse_nested_block(|p| nested(p, cx)).ok(),
         Token::Function(ref name) if matches!(name.to_ascii_lowercase().as_str(), "min" | "max" | "clamp") => {
@@ -1098,6 +1118,9 @@ mod tests {
         assert_eq!(resolve_len("calc(min(10px, 20px) * 2)", &cx), Some((20.0, 0.0)));
         assert_eq!(resolve_len("min(100%, 40px)", &cx), None);
         assert_eq!(resolve_number("max(1, 2)"), Some(2.0));
+        assert_eq!(resolve_number("calc(1.25 / .875)").map(|n| n * 14.0), Some(20.0));
+        assert_eq!(resolve_len("-1.5e1px", &cx), Some((-15.0, 0.0)));
+        assert_eq!(resolve_len("12.5%", &cx), Some((0.0, 12.5)));
     }
 
     #[test]

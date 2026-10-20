@@ -2835,6 +2835,18 @@ fn flow_style_reports_inherited_text_align() {
 }
 
 #[test]
+fn flow_inputs_keep_full_precision() {
+    use lp_dom::flow::FlowStyleSource;
+    let mut p = page("<!DOCTYPE html><body><button id=b class='text-sm'>Today</button></body>");
+    p.add_style(".text-sm{font-size:.875rem;line-height:calc(1.25 / .875);padding-block:calc(.25rem * 1.5)}");
+    let b = p.id("b");
+    // getComputedStyle keeps Chromium's six-digit serialization...
+    assert_eq!(p.cs(b, "line-height"), "1.42857");
+    // ...but layout sees the exact value: 14px x 1.25/0.875 = 20px.
+    let style = p.layout.style().flow_style(&p.dom, b).unwrap();
+    assert!((style.line_height.unwrap() - 20.0).abs() < 1e-9, "{:?}", style.line_height);
+    assert!((style.padding[0].px - 6.0).abs() < 1e-9);
+
 fn inert_content_is_not_hit_testable() {
     // react-aria's popover underlay is `<div inert>` covering the viewport;
     // Blink's UsedPointerEvents is `none` for inert content while

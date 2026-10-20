@@ -2365,13 +2365,35 @@ impl StyleEngine {
     /// Chromium-style serialization (`computed.rs`). `None` when nothing
     /// applies, so the caller reports the initial value.
     pub fn computed_value(&self, dom: &Dom, el: NodeId, name: &str) -> Option<String> {
+        self.value_with(dom, el, name, false)
+    }
+
+    /// Like [`Self::computed_value`], but numbers and px lengths keep full
+    /// precision (Rust's shortest round-trip form) instead of Chromium's
+    /// six-digit serialization. Layout inputs use this: rounded
+    /// `getComputedStyle` text (e.g. a line-height of 1.42857 x 14px) adds up
+    /// to visible sub-pixel drift.
+    pub fn used_value(&self, dom: &Dom, el: NodeId, name: &str) -> Option<String> {
+        self.value_with(dom, el, name, true)
+    }
+
+    fn value_with(&self, dom: &Dom, el: NodeId, name: &str, precise: bool) -> Option<String> {
         let idx = self.owns(dom, el)?;
         self.ensure(dom);
         let rules = self.cache.borrow().rules.clone();
-        self.computed_value_at(dom, &rules, idx, name, 0)
+        self.computed_value_at(dom, &rules, idx, name, 0, precise)
     }
 
-    fn computed_value_at(&self, dom: &Dom, rules: &RuleSet, idx: u32, name: &str, depth: u8) -> Option<String> {
+    fn computed_value_at(
+        &self,
+        dom: &Dom,
+        rules: &RuleSet,
+        idx: u32,
+        name: &str,
+        depth: u8,
+        precise: bool,
+    ) -> Option<String> {
+        let num = |x: f64| if precise { format!("{x}") } else { computed::fmt_num(x) };
         if depth >= MAX_COMPUTED_DEPTH {
             return None;
         }
@@ -2381,15 +2403,17 @@ impl StyleEngine {
             let mut cur = Some(idx);
             while let Some(i) = cur {
                 if self.declared_value(dom, rules, dom.id_of(i), name).is_some() {
-                    return Some(format!("{}px", computed::fmt_num(self.font_size_at_cascade(dom, rules, idx, depth))));
+                    return Some(format!("{}px", num(self.font_size_at_cascade(dom, rules, idx, depth))));
                 }
                 cur = flat_tree_parent_element(dom, i);
             }
             return None;
         }
         let inherited = computed::is_inherited(name);
-        let from_parent =
-            || flat_tree_parent_element(dom, idx).and_then(|p| self.computed_value_at(dom, rules, p, name, depth + 1));
+        let from_parent = || {
+            flat_tree_parent_element(dom, idx)
+                .and_then(|p| self.computed_value_at(dom, rules, p, name, depth + 1, precise))
+        };
         let unset = || if inherited { from_parent() } else { None };
         let Some(raw) = self.declared_value(dom, rules, id, name) else { return unset() };
         match raw.trim().to_ascii_lowercase().as_str() {
@@ -2407,7 +2431,7 @@ impl StyleEngine {
                 let color = if name == "color" {
                     from_parent()
                 } else {
-                    self.computed_value_at(dom, rules, idx, "color", depth + 1)
+                    self.computed_value_at(dom, rules, idx, "color", depth + 1, precise)
                 };
                 Some(color.unwrap_or_else(|| "rgb(0, 0, 0)".into()))
             };
@@ -2417,10 +2441,10 @@ impl StyleEngine {
             let cx = self.length_context(dom, rules, idx, depth);
             // Percentages stay as declared: their basis is a used value the faux layout lacks.
             if let Some((px, 0.0)) = computed::resolve_len(value, &cx).filter(|_| !value.contains('%')) {
-                return Some(format!("{}px", computed::fmt_num(px)));
+                return Some(format!("{}px", num(px)));
             }
         }
-        Some(computed::resolve_number(value).map_or_else(|| value.to_owned(), computed::fmt_num))
+        Some(computed::resolve_number(value).map_or_else(|| value.to_owned(), num))
     }
 
     /// The element's own winning declaration of a longhand: inline (shorthands
