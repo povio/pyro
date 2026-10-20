@@ -1402,6 +1402,41 @@ fn hyperlink_downloads_follow_set_download_behavior_like_chromium() {
 }
 
 #[test]
+fn error_remote_objects_carry_chrome_style_name_and_message() {
+    // console.error(err) text is built from the argument's description. Chrome
+    // describes errors as `name: message` plus `    at` frames; JSC's stack
+    // alone has only frames, which hid TOS app errors behind bare stacks.
+    let mut h = Harness::new();
+    h.page("Runtime.enable", json!({}));
+    h.run_for(20);
+    let mut events = h.page_with_events(
+        "Runtime.evaluate",
+        json!({"expression": r#"
+          function load() { throw new TypeError("bad id"); }
+          try { load(); } catch (e) { console.error(e); }
+          const renamed = new Error("custom message"); renamed.name = "AxiosError"; console.error("Query failed:", renamed);
+          console.error(new DOMException("aborted", "AbortError"));
+          const anon = new Error("only message"); anon.name = ""; console.error(anon);
+          1"#}),
+    );
+    events.extend(h.run_for(50));
+    let args: Vec<Value> = events
+        .iter()
+        .filter(|e| e["method"] == "Runtime.consoleAPICalled")
+        .flat_map(|e| e["params"]["args"].as_array().unwrap().clone())
+        .filter(|a| a["subtype"] == "error")
+        .collect();
+    let first_line = |a: &Value| a["description"].as_str().unwrap().lines().next().unwrap().to_owned();
+    assert_eq!(
+        args.iter().map(first_line).collect::<Vec<_>>(),
+        ["TypeError: bad id", "AxiosError: custom message", "AbortError: aborted", "only message"]
+    );
+    let typed = args[0]["description"].as_str().unwrap();
+    assert!(typed.lines().nth(1).is_some_and(|l| l.starts_with("    at load")), "{typed}");
+    assert_eq!(args[0]["className"], "TypeError");
+}
+
+#[test]
 fn dom_backend_nodes_adopt_across_worlds_and_expire_on_navigation() {
     let mut h = Harness::new();
     assert_eq!(h.page("DOM.enable", json!({}))["result"], json!({}));
