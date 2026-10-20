@@ -49,6 +49,17 @@ pub enum Dim {
     #[default]
     Auto,
     Len(Len),
+    /// `min-content` / `max-content` / `fit-content` (widths; behaves as
+    /// `auto` wherever intrinsic sizing does not apply).
+    Content(ContentSize),
+}
+
+/// Intrinsic size keywords.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ContentSize {
+    Min,
+    Max,
+    Fit,
 }
 
 impl Dim {
@@ -57,7 +68,7 @@ impl Dim {
     }
     pub fn resolve(self, basis: Option<f64>) -> Option<f64> {
         match self {
-            Dim::Auto => None,
+            Dim::Auto | Dim::Content(_) => None,
             Dim::Len(l) if l.percent != 0.0 => basis.map(|b| l.resolve(b)),
             Dim::Len(l) => Some(l.px),
         }
@@ -894,6 +905,10 @@ impl<'a> Ctx<'a> {
             // Tables shrink to their columns.
             auto_width = self.table_max_content(el, style).min(auto_width);
         }
+        if let Dim::Content(_) = style.width {
+            // width: min-/max-/fit-content on a block box.
+            auto_width = self.intrinsic_width(el, style, auto_width);
+        }
         if style.replaced {
             // Replaced boxes keep their intrinsic width instead of filling.
             if let Some((w, _)) = self.intrinsic(el, style) {
@@ -1187,7 +1202,7 @@ impl<'a> Ctx<'a> {
             let mut content_w = match (declared_w, left, right) {
                 (Some(w), _, _) => w,
                 (None, Some(_), Some(_)) => available,
-                _ => self.shrink_to_fit(p.el, s, available),
+                _ => self.intrinsic_width(p.el, s, available),
             };
             let min_w = s.min_width.resolve(Some(cb.width)).map(|w| Self::declared_content(s, w, e.horizontal()));
             let max_w = s.max_width.resolve(Some(cb.width)).map(|w| Self::declared_content(s, w, e.horizontal()));
@@ -1249,6 +1264,16 @@ impl<'a> Ctx<'a> {
                 height: rect.height - e.border[TOP] - e.border[BOTTOM],
             };
             self.place_absolute(nested, padding_box, fixed);
+        }
+    }
+
+    /// Content width of a box whose width is not a length: the intrinsic
+    /// keyword it names, else shrink-to-fit in `available`.
+    fn intrinsic_width(&self, el: NodeId, style: &FlowStyle, available: f64) -> f64 {
+        match style.width {
+            Dim::Content(ContentSize::Min) => self.min_content(el, style),
+            Dim::Content(ContentSize::Max) => self.max_content(el, style),
+            _ => self.shrink_to_fit(el, style, available),
         }
     }
 
@@ -1461,7 +1486,7 @@ impl<'a> Ctx<'a> {
                     let e = self.edges(&style, width);
                     let content_w = match style.width.resolve(Some(width)) {
                         Some(w) => Self::declared_content(&style, w, e.horizontal()),
-                        None => self.shrink_to_fit(el, &style, (width - e.horizontal()).max(0.0)),
+                        None => self.intrinsic_width(el, &style, (width - e.horizontal()).max(0.0)),
                     };
                     let outer_w = content_w + e.horizontal() + e.margin[LEFT] + e.margin[RIGHT];
                     let outer_h = self.atomic_height(el, &style, content_w, width) + e.margin[TOP] + e.margin[BOTTOM];
@@ -1622,7 +1647,7 @@ impl<'a> Ctx<'a> {
         let e = self.edges(style, cb_width);
         let content_w = match style.width.resolve(Some(cb_width)) {
             Some(w) => Self::declared_content(style, w, e.horizontal()),
-            None => self.shrink_to_fit(el, style, (cb_width - e.horizontal()).max(0.0)),
+            None => self.intrinsic_width(el, style, (cb_width - e.horizontal()).max(0.0)),
         };
         let mut s = style.clone();
         s.width = Dim::px(if style.border_box { content_w + e.horizontal() } else { content_w });
@@ -2023,8 +2048,15 @@ impl<'a> Ctx<'a> {
         for (li, line) in lines.iter().enumerate() {
             for it in &mut items[line.clone()] {
                 let align = it.style.align_self.unwrap_or(style.align_items);
-                let declared_cross =
-                    if row { it.style.height.resolve(height) } else { it.style.width.resolve(Some(width)) };
+                // Only an `auto` cross size stretches (an intrinsic keyword
+                // width such as fit-content does not).
+                let declared_cross = if row {
+                    it.style.height.resolve(height)
+                } else if let Dim::Content(_) = it.style.width {
+                    Some(0.0)
+                } else {
+                    it.style.width.resolve(Some(width))
+                };
                 // Auto cross-axis margins take precedence over stretching.
                 if align == Align::Stretch && declared_cross.is_none() && auto_margins(it, row, false) == (false, false)
                 {
@@ -2222,6 +2254,12 @@ impl<'a> Ctx<'a> {
                     }
                 }
                 None => {
+                    let available = (width - e.margin[LEFT] - e.margin[RIGHT]).max(0.0);
+                    if let (Dim::Content(_), Some(el)) = (s.width, &it.el) {
+                        // width: min-/max-/fit-content in a column container.
+                        let avail_content = (available - e.horizontal()).max(0.0);
+                        return self.intrinsic_width(*el, s, avail_content) + e.horizontal();
+                    }
                     let content = match &it.el {
                         Some(el) => self.max_content(*el, s),
                         None => it
@@ -2230,7 +2268,7 @@ impl<'a> Ctx<'a> {
                             .map(|&t| collapsed_width(self.dom.char_data(t).unwrap_or(""), s.font_size, s.font_weight))
                             .sum(),
                     };
-                    (content + e.horizontal()).min((width - e.margin[LEFT] - e.margin[RIGHT]).max(0.0))
+                    (content + e.horizontal()).min(available)
                 }
             }
         }

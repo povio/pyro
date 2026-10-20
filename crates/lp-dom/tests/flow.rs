@@ -265,7 +265,9 @@ fn default_geometry_is_unchanged_by_the_flow_switch() {
 
 // ----- Stage 2: flex -----------------------------------------------------------
 
-use lp_dom::flow::{self, Align, Dim, FlexDirection, FlowStyle, FlowStyleSource, Justify, Len, TablePart, TextAlign};
+use lp_dom::flow::{
+    self, Align, ContentSize, Dim, FlexDirection, FlowStyle, FlowStyleSource, Justify, Len, TablePart, TextAlign,
+};
 
 /// The cascade's flow inputs plus the inline flex declarations, until the
 /// style engine fills the flex fields (style_flow.rs).
@@ -381,6 +383,12 @@ impl FlowStyleSource for InlineFlex<'_> {
             s.justify_items = v;
         }
         s.justify_self = decl("justify-self").and_then(|v| align(&v));
+        match decl("width").as_deref() {
+            Some("fit-content") => s.width = Dim::Content(ContentSize::Fit),
+            Some("max-content") => s.width = Dim::Content(ContentSize::Max),
+            Some("min-content") => s.width = Dim::Content(ContentSize::Min),
+            _ => {}
+        }
         if let Some(w) = decl("font-weight").and_then(|v| v.parse::<u16>().ok()) {
             s.font_weight = w;
         }
@@ -1364,4 +1372,28 @@ fn flow_parity_system_font_text_widths() {
     // A flex item sized to its max-content width keeps its text on one line
     // (no wrap from floating-point summation order).
     assert_eq!(rect("f1").height, 20.0, "max-content sized text stays on one line");
+}
+
+#[test]
+fn flow_parity_intrinsic_width_keywords() {
+    // TOS `w-fit min-w-full` table wrapper: fit-content, clamped by
+    // min-width:100%, takes the table's max-content width. Chromium 1.59.1;
+    // x/width only (line heights depend on font metrics).
+    let html = "<!doctype html><body style=\"margin:0\"><div id=fit style=\"width:fit-content\"><span style=\"display:inline-block;width:120px;height:10px\"></span><span style=\"display:inline-block;width:80px;height:10px\"></span></div><div id=fitmin style=\"width:fit-content;min-width:100%\"><div style=\"width:1200px;height:10px\"></div></div><div id=max style=\"width:max-content\"><span style=\"display:inline-block;width:500px;height:10px\"></span><span style=\"display:inline-block;width:500px;height:10px\"></span></div><div id=min style=\"width:min-content\"><span style=\"display:inline-block;width:60px;height:10px\"></span><span style=\"display:inline-block;width:90px;height:10px\"></span></div><div style=\"position:relative;height:40px\"><div id=abs style=\"position:absolute;width:max-content;left:700px\"><span style=\"display:inline-block;width:150px;height:10px\"></span><span style=\"display:inline-block;width:150px;height:10px\"></span></div></div></body>";
+    let p = page(html, Geometry::Flow);
+    let src = InlineFlex { style: p.layout.style() };
+    let result = flow::layout(&p.dom, p.doc, &src, 800.0, 600.0);
+    let mut diffs = Vec::new();
+    for (id, x, w) in
+        [("fit", 0.0, 200.0), ("fitmin", 0.0, 1200.0), ("max", 0.0, 1000.0), ("min", 0.0, 90.0), ("abs", 700.0, 300.0)]
+    {
+        let r = result.get(p.id(id)).unwrap().rect;
+        if (r.x - x).abs() > 0.01 || (r.width - w).abs() > 0.01 {
+            diffs.push(format!("#{id}: got x={} w={}, Chromium x={x} w={w}", r.x, r.width));
+        }
+    }
+    assert!(diffs.is_empty(), "intrinsic widths:\n{}", diffs.join("\n"));
+    // min-content wraps its two boxes onto two lines; max-content keeps one.
+    let h = |id: &str| result.get(p.id(id)).unwrap().rect.height;
+    assert!(h("min") > h("fit") && h("max") == h("fit"), "min {} fit {} max {}", h("min"), h("fit"), h("max"));
 }
