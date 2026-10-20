@@ -154,3 +154,23 @@ fn media_change_releases_parser_wait_without_waiting_for_stylesheet_response() {
         "test waited for response instead of media change"
     );
 }
+
+#[test]
+fn visual_viewport_matches_the_layout_viewport() {
+    // react-aria bounds popover max-height by visualViewport.offsetTop +
+    // height; without the object every TOS popover got max-height: 0.
+    // Chromium without pinch zoom: the layout viewport size, offsets 0,
+    // page offsets = scroll position, scale 1, one object per window.
+    let mut t = BrowserThread::new().unwrap();
+    let page = t.browser.create_page().unwrap();
+    t.browser.set_viewport(page, Viewport::new(1440, 900)).unwrap();
+    settle(&mut t);
+    assert_eq!(
+        eval(
+            &t,
+            page,
+            "const v = visualViewport; [v.width, v.height, v.offsetLeft, v.offsetTop, v.pageLeft, v.pageTop, v.scale, v === visualViewport, v instanceof VisualViewport, typeof v.addEventListener].join('|')"
+        ),
+        "1440|900|0|0|0|0|1|true|true|function"
+    );
+}

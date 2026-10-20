@@ -86,6 +86,10 @@ where
         let key = lp_js::IdentityKey(w.page().id() | (1 << 57), 1);
         same_object(s, w.page(), key, || s.wrap::<Screen>(w.page().clone(), Some(key)))
     });
+    def.getter("visualViewport", |s, w| {
+        let key = lp_js::IdentityKey(w.page().id() | (1 << 57), 3);
+        same_object(s, w.page(), key, || s.wrap::<VisualViewport>(w.page().clone(), Some(key)))
+    });
     def.method("getComputedStyle", 1, |s, w, a| {
         let el = crate::node::node_arg(s, a.get(0), "Window.getComputedStyle")?;
         Ok(crate::layout_api::get_computed_style(s, w.page(), el)?.value())
@@ -308,6 +312,33 @@ impl JsClass for Screen {
     }
 }
 
+/// `window.visualViewport`: there is no pinch zoom, so the visual viewport is
+/// the layout viewport (headless Chromium hides scrollbars). react-aria
+/// bounds popover max-height by `offsetTop + height`; without this object
+/// every popover got `max-height: 0`. Resize/scroll events are not
+/// dispatched; listeners are accepted, as on MediaQueryList.
+pub struct VisualViewport;
+impl JsClass for VisualViewport {
+    const NAME: &'static str = "VisualViewport";
+    type Data = Rc<PageDom>;
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        def.getter("width", |s, p| Ok(s.number(p.layout.borrow().inner_width() as f64)));
+        def.getter("height", |s, p| Ok(s.number(p.layout.borrow().inner_height() as f64)));
+        def.getter("offsetLeft", |s, _p| Ok(s.number(0.0)));
+        def.getter("offsetTop", |s, _p| Ok(s.number(0.0)));
+        def.getter("pageLeft", |s, p| Ok(s.number(p.layout.borrow().scroll_x() as f64)));
+        def.getter("pageTop", |s, p| Ok(s.number(p.layout.borrow().scroll_y() as f64)));
+        def.getter("scale", |s, _p| Ok(s.number(1.0)));
+        def.method("addEventListener", 2, |s, _p, _a| Ok(s.undefined()));
+        def.method("removeEventListener", 2, |s, _p, _a| Ok(s.undefined()));
+        def.method("dispatchEvent", 1, |s, _p, _a| Ok(s.boolean(true)));
+        for name in ["onresize", "onscroll", "onscrollend"] {
+            def.accessor(name, |s, _p| Ok(s.null()), |_s, _p, _v| Ok(()));
+        }
+    }
+}
+
 fn screen(p: &PageDom) -> (u32, u32) {
     let v = p.viewport();
     (v.screen_width.unwrap_or(v.width), v.screen_height.unwrap_or(v.height))
@@ -340,6 +371,7 @@ pub fn css_namespace<'s>(s: &Scope<'s>) -> JsResult<Value<'s>> {
 pub(crate) fn register(engine: &lp_js::Engine) {
     engine.register::<Navigator>();
     engine.register::<Screen>();
+    engine.register::<VisualViewport>();
 }
 
 /// `window.open(url, target, features)`. A new browsing context opens as a
