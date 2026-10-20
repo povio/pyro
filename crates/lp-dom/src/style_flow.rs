@@ -125,6 +125,15 @@ impl FlowStyleSource for StyleEngine {
             line_height,
             nowrap,
             replaced: matches!(tag.as_str(), "img" | "iframe" | "video" | "canvas" | "embed" | "object" | "svg"),
+            // Non-standard `zoom`: a number or percentage; `normal`/unknown values are 1.
+            zoom: value("zoom")
+                .and_then(|v| {
+                    let v = v.trim();
+                    v.strip_suffix('%')
+                        .map_or_else(|| computed::resolve_number(v), |p| p.parse::<f64>().ok().map(|p| p / 100.0))
+                })
+                .filter(|z| *z > 0.0)
+                .unwrap_or(1.0),
             ..FlowStyle::default()
         })
     }

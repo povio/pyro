@@ -2735,6 +2735,7 @@ fn flow_style_reports_used_values_from_the_cascade() {
         "border:1px solid red;box-sizing:border-box;overflow-y:auto;max-height:300px}",
         "#list{display:flex;margin:0 auto;padding-left:0}",
         "#item{line-height:1.5;white-space:nowrap;font-size:1.5em}",
+        "#s{zoom:125%}#para{zoom:0.5}",
     ));
     let style = p.layout.style();
     let get = |id: &str| style.flow_style(&p.dom, p.id(id));
@@ -2763,6 +2764,7 @@ fn flow_style_reports_used_values_from_the_cascade() {
     assert!(item.nowrap);
 
     assert_eq!(get("s").unwrap().outer, OuterDisplay::Inline);
+    assert_eq!((get("s").unwrap().zoom, get("para").unwrap().zoom, pop.zoom), (1.25, 0.5, 1.0));
     let svg = get("svg").unwrap();
     assert!(svg.replaced);
     assert_eq!(get("path").unwrap().outer, OuterDisplay::Contents);
