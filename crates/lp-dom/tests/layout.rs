@@ -2885,3 +2885,24 @@ fn flow_line_height_snaps_to_layout_units() {
     assert_eq!(lh(&p, "b"), 15.984375);
     assert_eq!(lh(&p, "c"), 20.296875);
 }
+
+#[test]
+fn flow_style_reports_used_font_weight() {
+    use lp_dom::flow::FlowStyleSource;
+    let mut p = page(
+        "<!DOCTYPE html><body><div id=semi><span id=inh>a</span><span id=bolder>b</span></div><b id=b>c</b><strong id=s>d</strong><h1 id=h>e</h1><table><tr><th id=th>f</th></tr></table><span id=n>g</span></body>",
+    );
+    p.add_style("#semi{font-weight:600}#bolder{font-weight:bolder}");
+    let w = |p: &Page, id: &str| p.layout.style().flow_style(&p.dom, p.id(id)).unwrap().font_weight;
+    assert_eq!(p.cs(p.id("bolder"), "font-weight"), "900");
+    assert_eq!(p.cs(p.id("th"), "font-weight"), "700");
+    // Chromium: inherited 600; bolder than 600 is 900; UA bold elements are 700,
+    // and getComputedStyle reports the resolved number.
+    assert_eq!(w(&p, "inh"), 600);
+    assert_eq!(w(&p, "bolder"), 900);
+    assert_eq!(w(&p, "b"), 700);
+    assert_eq!(w(&p, "s"), 700);
+    assert_eq!(w(&p, "h"), 700);
+    assert_eq!(w(&p, "th"), 700);
+    assert_eq!(w(&p, "n"), 400);
+}

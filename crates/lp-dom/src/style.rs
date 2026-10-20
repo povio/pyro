@@ -2384,6 +2384,46 @@ impl StyleEngine {
         self.computed_value_at(dom, &rules, idx, name, 0, precise)
     }
 
+    /// Computed font-weight as a number (Blink's FontSelectionValue): keywords
+    /// resolve, `bolder`/`lighter` against the parent (css-fonts-4 relative
+    /// weights), and the UA sheet's `b, strong, optgroup { bolder }` and
+    /// `th, h1-h6 { bold }` apply without an author value.
+    fn font_weight_at(&self, dom: &Dom, rules: &RuleSet, idx: u32, depth: u8) -> f64 {
+        if depth >= MAX_COMPUTED_DEPTH {
+            return 400.0;
+        }
+        let parent =
+            || flat_tree_parent_element(dom, idx).map_or(400.0, |p| self.font_weight_at(dom, rules, p, depth + 1));
+        let id = dom.id_of(idx);
+        let declared = self.declared_value(dom, rules, id, "font-weight").and_then(|raw| {
+            let mut lookup = |var: &str| custom_property_source(dom, rules, id, var).map(|(_, value)| value);
+            computed::substitute_vars(&raw, &mut lookup, 0)
+        });
+        let ua = || match dom.n(idx).element().filter(|e| e.is_html()).map(|e| &*e.name.local) {
+            Some("b" | "strong" | "optgroup") => Some("bolder"),
+            Some("th" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6") => Some("bold"),
+            _ => None,
+        };
+        let value = declared.map(|v| v.trim().to_ascii_lowercase()).or_else(|| ua().map(str::to_owned));
+        match value.as_deref() {
+            None | Some("inherit" | "unset" | "revert" | "revert-layer") => parent(),
+            Some("initial" | "normal") => 400.0,
+            Some("bold") => 700.0,
+            Some("bolder") => match parent() {
+                p if p < 350.0 => 400.0,
+                p if p < 550.0 => 700.0,
+                p => p.max(900.0),
+            },
+            Some("lighter") => match parent() {
+                p if p < 100.0 => p,
+                p if p < 550.0 => 100.0,
+                p if p < 750.0 => 400.0,
+                _ => 700.0,
+            },
+            Some(v) => computed::resolve_number(v).filter(|n| (1.0..=1000.0).contains(n)).unwrap_or_else(parent),
+        }
+    }
+
     fn computed_value_at(
         &self,
         dom: &Dom,
@@ -2408,6 +2448,9 @@ impl StyleEngine {
                 cur = flat_tree_parent_element(dom, i);
             }
             return None;
+        }
+        if name == "font-weight" {
+            return Some(num(self.font_weight_at(dom, rules, idx, depth)));
         }
         let inherited = computed::is_inherited(name);
         let from_parent = || {
