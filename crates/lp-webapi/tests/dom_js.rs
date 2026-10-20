@@ -2282,6 +2282,30 @@ fn resize_observer_initial_changes_hidden_and_disconnect() {
 }
 
 #[test]
+fn resize_observer_reports_the_flow_content_box() {
+    // @povio/ui sizes select popovers from a ResizeObserver contentRect; the
+    // faux axis (5 px for an auto-width block) clipped every option. Under
+    // the flow layout the entry is the content box, as in Chromium.
+    let e = env(
+        "<body style='margin:0'><div style='width:300px'><div id=a style='padding:4px 6px;border:2px solid'>x</div></div></body>",
+    );
+    e.page.layout.borrow_mut().set_geometry(lp_dom::layout::Geometry::Flow);
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    eval(
+        &e.main,
+        "window.seen=[]; new ResizeObserver(l => { for (const en of l) seen.push(en.contentRect.width + 'x' + en.contentRect.height) }).observe(document.getElementById('a'))",
+    );
+    e.page.after_task();
+    tasks.drain();
+    // 300 - 2 * (6 padding + 2 border) wide; one line tall.
+    let seen = eval(&e.main, "seen.join()");
+    assert!(seen.starts_with("284x"), "{seen}");
+    assert_eq!(eval(&e.main, "document.getElementById('a').clientWidth"), "296");
+    e.page.dispose();
+}
+
+#[test]
 fn resize_observer_realm_disposal_releases_observers() {
     let e = env("<body><div id=t style='width:10px;height:10px'></div></body>");
     let tasks = Rc::new(ObserverTasks::default());

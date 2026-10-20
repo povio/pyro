@@ -17,7 +17,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
-use lp_dom::layout::{Axis, Rect};
+use lp_dom::layout::{Axis, Geometry, Rect};
 use lp_dom::NodeId;
 use lp_js::{
     ClassDef, IdentityKey, JsClass, JsError, JsResult, NoParent, Persistent, RealmId, Scope, Value, WeakRealm,
@@ -110,11 +110,26 @@ impl Observer {
 }
 
 /// Upstream `deliverEntries` size: faux axis when connected and visible.
+/// Under the flow layout, the content box like Chromium's contentRect: the
+/// padding box (clientWidth/Height) less padding. @povio/ui sizes its select
+/// popovers from this, so the faux axis (5 px) clipped every option.
 fn measure(page: &PageDom, id: NodeId) -> (f64, f64) {
     let dom = page.dom.borrow();
     let layout = page.layout.borrow();
     if !dom.is_connected(id).unwrap_or(false) || !layout.is_visible(&dom, id) {
         return (0.0, 0.0);
+    }
+    if layout.geometry() == Geometry::Flow {
+        let pad = |side: &str| {
+            layout
+                .style()
+                .used_value(&dom, id, &format!("padding-{side}"))
+                .and_then(|v| v.trim().strip_suffix("px").and_then(|n| n.parse::<f64>().ok()))
+                .unwrap_or(0.0)
+        };
+        let width = (layout.client_width(&dom, id) - pad("left") - pad("right")).max(0.0);
+        let height = (layout.client_height(&dom, id) - pad("top") - pad("bottom")).max(0.0);
+        return (width, height);
     }
     (layout.element_axis(&dom, id, Axis::Width).value, layout.element_axis(&dom, id, Axis::Height).value)
 }
