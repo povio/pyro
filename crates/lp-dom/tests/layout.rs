@@ -2780,3 +2780,28 @@ fn flow_style_reports_used_values_from_the_cascade() {
     assert_eq!(get("para").unwrap().margin[0], Dim::px(14.0));
     assert!(get("gone").is_none());
 }
+
+#[test]
+fn flow_style_reports_table_parts_and_spacing() {
+    use lp_dom::flow::{FlowStyleSource, InnerDisplay, Len, TablePart};
+    let mut p = page(concat!(
+        "<!DOCTYPE html><body><table id=t><thead id=h><tr><th id=th>a</th></tr></thead>",
+        "<tbody id=b><tr id=r><td id=td>b</td></tr></tbody></table>",
+        "<table id=fixed><tr><td id=c>c</td></tr></table></body>"
+    ));
+    p.add_style("#fixed{border-collapse:collapse;table-layout:fixed;border-spacing:4px 6px} #c{padding:3px}");
+    let style = p.layout.style();
+    let get = |id: &str| style.flow_style(&p.dom, p.id(id)).unwrap();
+    assert_eq!((get("t").inner, get("t").border_spacing), (InnerDisplay::Table, (2.0, 2.0)));
+    assert_eq!(get("h").table_part, TablePart::HeaderGroup);
+    assert_eq!(get("b").table_part, TablePart::BodyGroup);
+    assert_eq!(get("r").table_part, TablePart::Row);
+    assert_eq!((get("th").table_part, get("td").table_part), (TablePart::Cell, TablePart::Cell));
+    assert_eq!(get("td").padding, [Len::px(1.0); 4]);
+    let fixed = get("fixed");
+    assert!(fixed.border_collapse && fixed.table_layout_fixed);
+    assert_eq!(fixed.border_spacing, (4.0, 6.0));
+    // border-collapse inherits to the cell; author padding replaces the UA 1px.
+    assert!(get("c").border_collapse);
+    assert_eq!(get("c").padding, [Len::px(3.0); 4]);
+}

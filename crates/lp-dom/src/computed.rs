@@ -44,6 +44,10 @@ pub fn is_inherited(name: &str) -> bool {
             | "word-break"
             | "word-spacing"
             | "-webkit-text-fill-color"
+            | "border-spacing"
+            | "border-collapse"
+            | "caption-side"
+            | "empty-cells"
     )
 }
 

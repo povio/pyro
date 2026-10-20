@@ -14,6 +14,7 @@ use crate::computed::{self, LengthContext};
 use crate::dom::Dom;
 use crate::flow::{
     Align, Dim, FlexDirection, FlowStyle, FlowStyleSource, InnerDisplay, Justify, Len, OuterDisplay, Position,
+    TablePart,
 };
 use crate::node::NodeId;
 use crate::style::{StyleEngine, DEFAULT_FONT_SIZE};
@@ -53,8 +54,19 @@ impl FlowStyleSource for StyleEngine {
         if svg && tag.as_str() != "svg" {
             return Some(FlowStyle { outer: OuterDisplay::Contents, font_size, ..FlowStyle::default() });
         }
-        let display = value("display").unwrap_or_else(|| ua_display(&tag).to_owned());
-        let (outer, inner) = match display.trim().to_ascii_lowercase().as_str() {
+        let display = value("display").unwrap_or_else(|| ua_display(&tag).to_owned()).trim().to_ascii_lowercase();
+        let table_part = match display.as_str() {
+            "table-header-group" => TablePart::HeaderGroup,
+            "table-row-group" => TablePart::BodyGroup,
+            "table-footer-group" => TablePart::FooterGroup,
+            "table-row" => TablePart::Row,
+            "table-cell" => TablePart::Cell,
+            "table-caption" => TablePart::Caption,
+            "table-column" => TablePart::Column,
+            "table-column-group" => TablePart::ColumnGroup,
+            _ => TablePart::None,
+        };
+        let (outer, inner) = match display.as_str() {
             "inline" => (OuterDisplay::Inline, InnerDisplay::Flow),
             "inline-block" => (OuterDisplay::Inline, InnerDisplay::FlowRoot),
             "flex" => (OuterDisplay::Block, InnerDisplay::Flex),
@@ -169,6 +181,23 @@ impl FlowStyleSource for StyleEngine {
                 Some(v) => computed::resolve_len(&v, &cx).map_or(Dim::Auto, |l| Dim::Len(to_len(l))),
                 None => Dim::Auto,
             },
+            table_part,
+            // border-spacing/collapse inherit, so cells and rows see their table's values; UA table spacing is 2px.
+            border_spacing: value("border-spacing")
+                .and_then(|v| {
+                    let parts: Vec<f64> = v
+                        .split_ascii_whitespace()
+                        .map(|p| computed::resolve_len(p, &cx).map(|(px, _)| px))
+                        .collect::<Option<_>>()?;
+                    match parts.as_slice() {
+                        [both] => Some((*both, *both)),
+                        [h, v] => Some((*h, *v)),
+                        _ => None,
+                    }
+                })
+                .unwrap_or(if inner == InnerDisplay::Table { (2.0, 2.0) } else { (0.0, 0.0) }),
+            border_collapse: keyword("border-collapse") == "collapse",
+            table_layout_fixed: keyword("table-layout") == "fixed",
             ..FlowStyle::default()
         })
     }
@@ -204,7 +233,14 @@ fn ua_display(tag: &str) -> &'static str {
         | "legend" | "center" | "search" | "hgroup" | "optgroup" | "option" => "block",
         "li" => "list-item",
         "table" => "table",
-        "thead" | "tbody" | "tfoot" | "tr" | "td" | "th" | "caption" | "colgroup" | "col" => "block",
+        "thead" => "table-header-group",
+        "tbody" => "table-row-group",
+        "tfoot" => "table-footer-group",
+        "tr" => "table-row",
+        "td" | "th" => "table-cell",
+        "caption" => "table-caption",
+        "colgroup" => "table-column-group",
+        "col" => "table-column",
         "button" | "input" | "select" | "textarea" | "meter" | "progress" => "inline-block",
         _ => "inline",
     }
@@ -244,6 +280,7 @@ fn ua_box(tag: &str, font_size: f64) -> UaBox {
             Len::px(0.625 * font_size),
             Len::px(0.75 * font_size),
         ],
+        "td" | "th" => [Len::px(1.0); 4],
         _ => [Len::ZERO; 4],
     };
     UaBox { margin, padding }
