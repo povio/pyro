@@ -1270,6 +1270,52 @@ fn set_content_document_write_reports_fresh_lifecycle_after_console_tag() {
 }
 
 #[test]
+fn input_mouse_move_to_empty_viewport_space_leaves_hovered_element_as_chromium() {
+    // TOS TS-100 dismisses a hover tooltip with page.mouse.move(0, 0). Chrome
+    // hit-tests empty viewport space as the root element; the synthetic
+    // layout has no element there. Expected sequences recorded from headless
+    // Chromium (Playwright 1.59.1) for the same page.
+    let mut h = Harness::new();
+    eval_value(
+        &mut h,
+        r#"
+      document.body.innerHTML='<header><button id="trigger" style="width:120px;height:30px">MSKU</button></header>';
+      globalThis.log=[];
+      for (const t of ['pointerover','pointerout','pointerenter','pointerleave','mouseover','mouseout','mouseenter','mouseleave','mousemove'])
+        document.addEventListener(t, e => log.push(t + '@' + (e.target.id || e.target.nodeName) + (e.bubbles ? '' : ' nb') + (e.cancelable ? ' c' : '')), true);
+      const r = document.getElementById('trigger').getBoundingClientRect(); globalThis.point = [r.x + r.width / 2, r.y + r.height / 2];
+      1
+    "#,
+    );
+    let point = eval_value(&mut h, "point");
+    assert_eq!(eval_value(&mut h, "document.elementFromPoint(0, 0) === null"), json!(true));
+    let mut moved = |x: &Value, y: &Value| {
+        let r =
+            h.page("Input.dispatchMouseEvent", json!({"type":"mouseMoved","x":x,"y":y,"button":"none","buttons":0}));
+        assert_eq!(r["result"], json!({}), "{r}");
+        eval_value(&mut h, "log.splice(0).join(' ')")
+    };
+    assert_eq!(
+        moved(&json!(0), &json!(0)),
+        json!("pointerover@HTML c pointerenter@#document nb pointerenter@HTML nb mouseover@HTML c mouseenter@#document nb mouseenter@HTML nb mousemove@HTML c")
+    );
+    assert_eq!(
+        moved(&point[0], &point[1]),
+        json!("pointerout@HTML c pointerover@trigger c pointerenter@BODY nb pointerenter@HEADER nb pointerenter@trigger nb mouseout@HTML c mouseover@trigger c mouseenter@BODY nb mouseenter@HEADER nb mouseenter@trigger nb mousemove@trigger c")
+    );
+    assert_eq!(
+        moved(&json!(0), &json!(0)),
+        json!("pointerout@trigger c pointerleave@trigger nb pointerleave@HEADER nb pointerleave@BODY nb pointerover@HTML c mouseout@trigger c mouseleave@trigger nb mouseleave@HEADER nb mouseleave@BODY nb mouseover@HTML c mousemove@HTML c")
+    );
+    // Outside the viewport and presses on empty space keep the explicit error.
+    let r =
+        h.page("Input.dispatchMouseEvent", json!({"type":"mouseMoved","x":-5,"y":2000,"button":"none","buttons":0}));
+    assert!(r["error"]["message"].as_str().is_some_and(|m| m.contains("no element at point")), "{r}");
+    let r = h.page("Input.dispatchMouseEvent", json!({"type":"mousePressed","x":0,"y":0,"button":"left","buttons":1}));
+    assert!(r["error"]["message"].as_str().is_some_and(|m| m.contains("no element at point")), "{r}");
+}
+
+#[test]
 fn dom_backend_nodes_adopt_across_worlds_and_expire_on_navigation() {
     let mut h = Harness::new();
     assert_eq!(h.page("DOM.enable", json!({}))["result"], json!({}));

@@ -1053,6 +1053,38 @@ fn pointer_target(page: &PageDom, x: f64, y: f64, root_fallback: bool) -> Option
     None
 }
 
+/// Inclusive ancestors of `node` up to and including its document, innermost
+/// first; empty when it is no longer in the page's document.
+fn hover_chain(page: &PageDom, node: NodeId) -> Vec<NodeId> {
+    let dom = page.dom.borrow();
+    let mut chain = Vec::new();
+    let mut cur = Some(node);
+    while let Some(c) = cur {
+        chain.push(c);
+        cur = dom.parent(c).ok().flatten();
+    }
+    if chain.last() != Some(&page.document()) {
+        chain.clear();
+    }
+    chain
+}
+
+/// Nodes that receive leave (innermost first) and enter (innermost first)
+/// when the hovered node changes from `prev` to `next`: each chain up to,
+/// excluding, their common ancestor.
+fn boundary_chains(page: &PageDom, prev: Option<NodeId>, next: NodeId) -> (Vec<NodeId>, Vec<NodeId>) {
+    let mut left = prev.map(|p| hover_chain(page, p)).unwrap_or_default();
+    let mut entered = hover_chain(page, next);
+    while let (Some(a), Some(b)) = (left.last(), entered.last()) {
+        if a != b {
+            break;
+        }
+        left.pop();
+        entered.pop();
+    }
+    (left, entered)
+}
+
 /// CDP `Input.dispatchMouseEvent`. Returns an error when hit testing is not
 /// possible (no element at the point).
 pub fn dispatch_mouse(page: &Rc<PageDom>, kind: MouseKind, m: &MouseInput) -> Result<(), String> {
@@ -1071,19 +1103,34 @@ pub fn dispatch_mouse_intercepting_drags(
     m: &MouseInput,
     intercept_drags: bool,
 ) -> Result<Option<DragData>, String> {
-    let target =
-        pointer_target(page, m.x, m.y, kind == MouseKind::Wheel).ok_or_else(|| "no element at point".to_owned())?;
+    let target = pointer_target(page, m.x, m.y, matches!(kind, MouseKind::Wheel | MouseKind::Moved))
+        .ok_or_else(|| "no element at point".to_owned())?;
     let Some(tkey) = key_of(page, target) else { return Err("stale target".into()) };
     match kind {
         MouseKind::Moved => {
             let prev = page.hovered();
             if prev != Some(target) {
-                if let Some(p) = prev.and_then(|p| key_of(page, p)) {
-                    fire(page, p, &mouse_event(page, EventInterface::PointerEvent, "pointerout", m, true));
-                    fire(page, p, &mouse_event(page, EventInterface::MouseEvent, "mouseout", m, true));
+                // Chrome's boundary events: out, leave (inner to outer), over,
+                // enter (outer to inner), for pointer then mouse events.
+                let (left, entered) = boundary_chains(page, prev, target);
+                for (iface, prefix) in
+                    [(EventInterface::PointerEvent, "pointer"), (EventInterface::MouseEvent, "mouse")]
+                {
+                    if let Some(p) = prev.and_then(|p| key_of(page, p)) {
+                        fire(page, p, &mouse_event(page, iface, &format!("{prefix}out"), m, true));
+                    }
+                    for &n in &left {
+                        if let Some(k) = key_of(page, n) {
+                            fire(page, k, &mouse_event(page, iface, &format!("{prefix}leave"), m, false));
+                        }
+                    }
+                    fire(page, tkey, &mouse_event(page, iface, &format!("{prefix}over"), m, true));
+                    for &n in entered.iter().rev() {
+                        if let Some(k) = key_of(page, n) {
+                            fire(page, k, &mouse_event(page, iface, &format!("{prefix}enter"), m, false));
+                        }
+                    }
                 }
-                fire(page, tkey, &mouse_event(page, EventInterface::PointerEvent, "pointerover", m, true));
-                fire(page, tkey, &mouse_event(page, EventInterface::MouseEvent, "mouseover", m, true));
                 let doc = page.document();
                 let _ = page.dom.borrow_mut().set_hovered(doc, Some(target));
                 page.set_hovered(Some(target));
