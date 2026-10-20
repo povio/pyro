@@ -600,6 +600,7 @@ name = "lp-js"
 version = "0.1.0"
 dependencies = [
  "lp-jsc-sys",
+ "serde_json",
 ]
 
 [[package]]

@@ -60,6 +60,16 @@ pub struct ModuleRequest {
     done: bool,
 }
 
+// JavaScriptCore's module SPI creates an empty import.meta object. Initialize
+// the canonical module key before evaluating source so user code sees its URL.
+fn module_source_with_url(source: &str, url: &str) -> String {
+    let url = serde_json::to_string(url)
+        .expect("a URL string is serializable")
+        .replace('\u{2028}', "\\u2028")
+        .replace('\u{2029}', "\\u2029");
+    format!("import.meta.url = {url};\n{source}")
+}
+
 impl ModuleRequest {
     pub fn url(&self) -> &str {
         &self.url
@@ -69,6 +79,7 @@ impl ModuleRequest {
     pub fn resolve(mut self, scope: &Scope<'_>, source: &str) -> JsResult<()> {
         self.done = true;
         let mut err: sys::JSStringRef = ptr::null();
+        let source = module_source_with_url(source, &self.key);
         let script = unsafe {
             sys::modules::lp_jsc_module_script_create(
                 scope.realm.global_ctx()?,
@@ -459,11 +470,12 @@ impl<'s> Scope<'s> {
         }
         self.realm.inline_modules.borrow_mut().insert(url.to_string(), source.to_string());
         let mut err: sys::JSStringRef = ptr::null();
+        let source_with_url = module_source_with_url(source, url);
         let v = unsafe {
             sys::modules::lp_jsc_module_evaluate(
                 self.realm.global_ctx()?,
-                source.as_ptr().cast(),
-                source.len(),
+                source_with_url.as_ptr().cast(),
+                source_with_url.len(),
                 url.as_ptr().cast(),
                 url.len(),
                 &mut err,
@@ -1425,7 +1437,13 @@ pub(crate) fn remap_module_url(key: &str, origin: Option<&str>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::remap_module_url;
+    use super::{module_source_with_url, remap_module_url};
+
+    #[test]
+    fn module_source_url_is_encoded_as_a_javascript_string() {
+        let source = module_source_with_url("export {}", "https://site.test/a\"b\u{2028}.js");
+        assert_eq!(source, "import.meta.url = \"https://site.test/a\\\"b\\u2028.js\";\nexport {}");
+    }
 
     #[test]
     fn module_url_remapping_only_touches_root_relative_file_urls() {
