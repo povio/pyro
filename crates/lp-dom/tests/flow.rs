@@ -512,3 +512,166 @@ fn flex_parity_shell() {
         ],
     );
 }
+
+// Flex through the real cascade (style_flow.rs fills the flex fields) and the
+// Layout flow geometry, against the same Chromium measurements.
+
+#[test]
+fn flex_cascade_parity_row() {
+    check(
+        "row (cascade)",
+        "<!doctype html><body style=\"margin:0\"><div id=f style=\"display:flex;width:600px\"><div id=a style=\"width:100px;height:30px\"></div><div id=b style=\"width:150px;height:50px\"></div><div id=c style=\"width:50px;height:20px\"></div></div><div id=after style=\"height:10px\"></div></body>",
+        0,
+        &[
+            ("f", [0.0, 0.0, 600.0, 50.0, 600.0, 50.0, 600.0, 50.0]),
+            ("a", [0.0, 0.0, 100.0, 30.0, 100.0, 30.0, 100.0, 30.0]),
+            ("b", [100.0, 0.0, 150.0, 50.0, 150.0, 50.0, 150.0, 50.0]),
+            ("c", [250.0, 0.0, 50.0, 20.0, 50.0, 20.0, 50.0, 20.0]),
+            ("after", [0.0, 50.0, 800.0, 10.0, 800.0, 10.0, 800.0, 10.0]),
+        ],
+        [800.0, 600.0],
+    );
+}
+
+#[test]
+fn flex_cascade_parity_gap() {
+    check(
+        "gap (cascade)",
+        "<!doctype html><body style=\"margin:0\"><div id=f style=\"display:flex;gap:12px;width:600px;padding:8px\"><div id=a style=\"width:100px;height:30px\"></div><div id=b style=\"width:100px;height:30px\"></div></div></body>",
+        0,
+        &[
+            ("f", [0.0, 0.0, 616.0, 46.0, 616.0, 46.0, 616.0, 46.0]),
+            ("a", [8.0, 8.0, 100.0, 30.0, 100.0, 30.0, 100.0, 30.0]),
+            ("b", [120.0, 8.0, 100.0, 30.0, 100.0, 30.0, 100.0, 30.0]),
+        ],
+        [800.0, 600.0],
+    );
+}
+
+#[test]
+fn flex_cascade_parity_grow() {
+    check(
+        "grow (cascade)",
+        "<!doctype html><body style=\"margin:0\"><div id=f style=\"display:flex;width:600px;height:40px\"><div id=a style=\"width:100px\"></div><div id=b style=\"flex:1\"></div><div id=c style=\"flex-grow:2;width:50px\"></div></div></body>",
+        0,
+        &[
+            ("f", [0.0, 0.0, 600.0, 40.0, 600.0, 40.0, 600.0, 40.0]),
+            ("a", [0.0, 0.0, 100.0, 40.0, 100.0, 40.0, 100.0, 40.0]),
+            ("b", [100.0, 0.0, 150.0, 40.0, 150.0, 40.0, 150.0, 40.0]),
+            ("c", [250.0, 0.0, 350.0, 40.0, 350.0, 40.0, 350.0, 40.0]),
+        ],
+        [800.0, 600.0],
+    );
+}
+
+#[test]
+fn flex_cascade_parity_shrink() {
+    check(
+        "shrink (cascade)",
+        "<!doctype html><body style=\"margin:0\"><div id=f style=\"display:flex;width:300px;height:20px\"><div id=a style=\"width:200px\"></div><div id=b style=\"width:200px;flex-shrink:3\"></div></div></body>",
+        0,
+        &[
+            ("f", [0.0, 0.0, 300.0, 20.0, 300.0, 20.0, 300.0, 20.0]),
+            ("a", [0.0, 0.0, 175.0, 20.0, 175.0, 20.0, 175.0, 20.0]),
+            ("b", [175.0, 0.0, 125.0, 20.0, 125.0, 20.0, 125.0, 20.0]),
+        ],
+        [800.0, 600.0],
+    );
+}
+
+#[test]
+fn flex_cascade_parity_column() {
+    check(
+        "column (cascade)",
+        "<!doctype html><body style=\"margin:0\"><div id=f style=\"display:flex;flex-direction:column;width:300px;height:400px;gap:10px\"><div id=a style=\"height:30px\"></div><div id=b style=\"flex:1;min-height:0\"></div><div id=c style=\"height:40px;width:100px\"></div></div></body>",
+        0,
+        &[
+            ("f", [0.0, 0.0, 300.0, 400.0, 300.0, 400.0, 300.0, 400.0]),
+            ("a", [0.0, 0.0, 300.0, 30.0, 300.0, 30.0, 300.0, 30.0]),
+            ("b", [0.0, 40.0, 300.0, 310.0, 300.0, 310.0, 300.0, 310.0]),
+            ("c", [0.0, 360.0, 100.0, 40.0, 100.0, 40.0, 100.0, 40.0]),
+        ],
+        [800.0, 600.0],
+    );
+}
+
+#[test]
+fn flex_cascade_parity_align() {
+    check(
+        "align (cascade)",
+        "<!doctype html><body style=\"margin:0\"><div id=f style=\"display:flex;align-items:center;justify-content:space-between;width:500px;height:100px\"><div id=a style=\"width:100px;height:20px\"></div><div id=b style=\"width:100px;height:60px\"></div><div id=c style=\"width:100px;height:40px;align-self:flex-end\"></div></div></body>",
+        0,
+        &[
+            ("f", [0.0, 0.0, 500.0, 100.0, 500.0, 100.0, 500.0, 100.0]),
+            ("a", [0.0, 40.0, 100.0, 20.0, 100.0, 20.0, 100.0, 20.0]),
+            ("b", [200.0, 20.0, 100.0, 60.0, 100.0, 60.0, 100.0, 60.0]),
+            ("c", [400.0, 60.0, 100.0, 40.0, 100.0, 40.0, 100.0, 40.0]),
+        ],
+        [800.0, 600.0],
+    );
+}
+
+#[test]
+fn flex_cascade_parity_justify() {
+    check(
+        "justify (cascade)",
+        "<!doctype html><body style=\"margin:0\"><div id=f1 style=\"display:flex;justify-content:center;width:500px;height:20px\"><div id=a style=\"width:100px\"></div></div><div id=f2 style=\"display:flex;justify-content:flex-end;width:500px;height:20px\"><div id=b style=\"width:100px\"></div></div></body>",
+        0,
+        &[
+            ("f1", [0.0, 0.0, 500.0, 20.0, 500.0, 20.0, 500.0, 20.0]),
+            ("a", [200.0, 0.0, 100.0, 20.0, 100.0, 20.0, 100.0, 20.0]),
+            ("f2", [0.0, 20.0, 500.0, 20.0, 500.0, 20.0, 500.0, 20.0]),
+            ("b", [400.0, 20.0, 100.0, 20.0, 100.0, 20.0, 100.0, 20.0]),
+        ],
+        [800.0, 600.0],
+    );
+}
+
+#[test]
+fn flex_cascade_parity_stretch() {
+    check(
+        "stretch (cascade)",
+        "<!doctype html><body style=\"margin:0\"><div id=f style=\"display:flex;width:400px\"><div id=a style=\"width:100px;height:50px\"></div><div id=b style=\"width:100px\"></div></div></body>",
+        0,
+        &[
+            ("f", [0.0, 0.0, 400.0, 50.0, 400.0, 50.0, 400.0, 50.0]),
+            ("a", [0.0, 0.0, 100.0, 50.0, 100.0, 50.0, 100.0, 50.0]),
+            ("b", [100.0, 0.0, 100.0, 50.0, 100.0, 50.0, 100.0, 50.0]),
+        ],
+        [800.0, 600.0],
+    );
+}
+
+#[test]
+fn flex_cascade_parity_wrap() {
+    check(
+        "wrap (cascade)",
+        "<!doctype html><body style=\"margin:0\"><div id=f style=\"display:flex;flex-wrap:wrap;width:250px;gap:10px\"><div id=a style=\"width:100px;height:20px\"></div><div id=b style=\"width:100px;height:30px\"></div><div id=c style=\"width:100px;height:20px\"></div></div></body>",
+        0,
+        &[
+            ("f", [0.0, 0.0, 250.0, 60.0, 250.0, 60.0, 250.0, 60.0]),
+            ("a", [0.0, 0.0, 100.0, 20.0, 100.0, 20.0, 100.0, 20.0]),
+            ("b", [110.0, 0.0, 100.0, 30.0, 100.0, 30.0, 100.0, 30.0]),
+            ("c", [0.0, 40.0, 100.0, 20.0, 100.0, 20.0, 100.0, 20.0]),
+        ],
+        [800.0, 600.0],
+    );
+}
+
+#[test]
+fn flex_cascade_parity_shell() {
+    check(
+        "shell (cascade)",
+        "<!doctype html><body style=\"margin:0\"><div id=app style=\"display:flex;flex-direction:column;height:600px\"><header id=h style=\"height:50px\"></header><main id=m style=\"display:flex;flex:1;min-height:0\"><nav id=n style=\"width:200px\"></nav><section id=s style=\"flex:1;overflow:auto\"><div id=content style=\"height:2000px\"></div></section></main></div></body>",
+        0,
+        &[
+            ("app", [0.0, 0.0, 800.0, 600.0, 800.0, 600.0, 800.0, 600.0]),
+            ("h", [0.0, 0.0, 800.0, 50.0, 800.0, 50.0, 800.0, 50.0]),
+            ("m", [0.0, 50.0, 800.0, 550.0, 800.0, 550.0, 800.0, 550.0]),
+            ("n", [0.0, 50.0, 200.0, 550.0, 200.0, 550.0, 200.0, 550.0]),
+            ("s", [200.0, 50.0, 600.0, 550.0, 600.0, 550.0, 600.0, 2000.0]),
+            ("content", [200.0, 50.0, 600.0, 2000.0, 600.0, 2000.0, 600.0, 2000.0]),
+        ],
+        [800.0, 600.0],
+    );
+}
