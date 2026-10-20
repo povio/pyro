@@ -1316,6 +1316,92 @@ fn input_mouse_move_to_empty_viewport_space_leaves_hovered_element_as_chromium()
 }
 
 #[test]
+fn hyperlink_downloads_follow_set_download_behavior_like_chromium() {
+    // Playwright 1.59 sets allowAndName per context and waits for
+    // Browser.downloadWillBegin / downloadProgress on the browser session, then
+    // reads downloadPath/guid. Event shapes recorded from headless Chromium.
+    static HTML: &str = "<!doctype html><title>dl</title>";
+    let (addr, server) = serve_html(2, HTML);
+    let mut h = Harness::new();
+    let targets = h.call(None, "Target.getTargets", json!({}));
+    let frame = h.frame_id.clone();
+    let ctx = targets["result"]["targetInfos"].as_array().unwrap().iter().find(|t| t["targetId"] == frame).unwrap()
+        ["browserContextId"]
+        .clone();
+    let dir = std::env::temp_dir().join(format!("lp-downloads-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let r = h.call(
+        None,
+        "Browser.setDownloadBehavior",
+        json!({"behavior":"allowAndName","browserContextId":ctx,"downloadPath":dir,"eventsEnabled":true}),
+    );
+    assert_eq!(r["result"], json!({}), "{r}");
+    h.page("Page.enable", json!({}));
+    let events = h.page_with_events("Page.navigate", json!({"url": format!("http://{addr}/page")}));
+    if !events.iter().any(|e| e["method"] == "Page.loadEventFired") {
+        until_event(&mut h, "Page.loadEventFired");
+    }
+    let download = |h: &mut Harness, script: &str| -> Vec<Value> {
+        eval_value(h, script);
+        let mut events = h.run_for(150);
+        events.retain(|e| e["method"].as_str().is_some_and(|m| m.starts_with("Browser.download")));
+        events
+    };
+    let check = |events: &[Value], name: &str, url_prefix: &str, body: &[u8]| {
+        assert_eq!(events.len(), 3, "{events:#?}");
+        let begin = &events[0]["params"];
+        assert_eq!(events[0]["method"], "Browser.downloadWillBegin");
+        assert!(events.iter().all(|e| e.get("sessionId").is_none()), "browser-session events: {events:#?}");
+        assert_eq!(begin["frameId"], frame);
+        assert_eq!(begin["suggestedFilename"], name);
+        assert!(begin["url"].as_str().unwrap().starts_with(url_prefix), "{begin}");
+        let guid = begin["guid"].as_str().unwrap();
+        assert_eq!(guid.len(), 36);
+        let total = body.len();
+        assert_eq!(events[1]["params"], json!({"guid":guid,"totalBytes":total,"receivedBytes":0,"state":"inProgress"}));
+        let path = dir.join(guid);
+        assert_eq!(
+            events[2]["params"],
+            json!({"guid":guid,"totalBytes":total,"receivedBytes":total,"state":"completed","filePath":path.to_string_lossy()})
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), body);
+    };
+    // blob: link revoked right after click() (TOS file.utils downloadFileFromUrl).
+    let events = download(
+        &mut h,
+        r#"const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['hello,world\n'], {type: 'text/csv'}));
+           a.download = 'export-1.csv'; document.body.appendChild(a); a.click(); URL.revokeObjectURL(a.href); a.remove(); 1"#,
+    );
+    let origin = format!("blob:http://{addr}/");
+    check(&events, "export-1.csv", &origin, b"hello,world\n");
+    // Dispatched (untrusted) click, as TOS downloadFile does; no navigation.
+    let events = download(
+        &mut h,
+        r#"const b = document.createElement('a'); b.href = 'data:text/plain;base64,aGk='; b.download = '';
+           b.dispatchEvent(new MouseEvent('click')); 1"#,
+    );
+    check(&events, "download", "data:text/plain", b"hi");
+    // Same-origin HTTP link: fetched, named from the URL.
+    let events = download(
+        &mut h,
+        "const c = document.createElement('a'); c.href = '/reports/q3.txt'; c.download = ''; c.click(); 1",
+    );
+    check(&events, "q3.txt", &format!("http://{addr}/reports/q3.txt"), HTML.as_bytes());
+    assert_eq!(eval_value(&mut h, "location.pathname + '|' + document.title"), json!("/page|dl"));
+    server.join().unwrap();
+    // Deny delivers nothing.
+    h.call(None, "Browser.setDownloadBehavior", json!({"behavior":"deny","browserContextId":ctx}));
+    let events = download(
+        &mut h,
+        "const d = document.createElement('a'); d.href = URL.createObjectURL(new Blob(['x'])); d.download = 'x.txt'; d.click(); 1",
+    );
+    assert!(events.is_empty(), "{events:#?}");
+    let r = h.call(None, "Browser.setDownloadBehavior", json!({"behavior":"allow","browserContextId":ctx}));
+    assert_eq!(r["error"]["code"], -32602, "{r}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn dom_backend_nodes_adopt_across_worlds_and_expire_on_navigation() {
     let mut h = Harness::new();
     assert_eq!(h.page("DOM.enable", json!({}))["result"], json!({}));

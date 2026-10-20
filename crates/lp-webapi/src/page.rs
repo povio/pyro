@@ -118,6 +118,18 @@ pub struct NavigationRequest {
     pub content_type: Option<String>,
 }
 
+/// HTML "download the hyperlink" for a `download` link.
+#[derive(Clone, Debug)]
+pub struct DownloadRequest {
+    pub url: String,
+    /// The `download` attribute value (may be empty).
+    pub filename: String,
+    /// `blob:`/`data:` bytes and MIME type, captured at activation: the page
+    /// may revoke a blob URL right after `click()`. None for HTTP(S) URLs,
+    /// which the embedder fetches.
+    pub data: Option<(bytes::Bytes, String)>,
+}
+
 /// Posts a `Send` closure to run on the browser thread as a separate task.
 pub type RemotePoster = std::sync::Arc<dyn Fn(Box<dyn FnOnce() + Send>) + Send + Sync>;
 
@@ -195,6 +207,8 @@ pub trait PageHooks {
     /// Called after the delivery snapshot and before any resulting JS, with
     /// binding locks/borrows released. Default embedders need no observer.
     fn network_delivery(&self, _id: lp_net::RequestId, _frontier: lp_net::NetworkDelivery) {}
+    /// A hyperlink download. The default embedder performs none.
+    fn download(&self, _request: DownloadRequest) {}
     /// `document.open()` replaced the loaded document's content: the frame is
     /// loading again, so DOMContentLoaded/load can be reported anew.
     fn document_reopened(&self) {}
@@ -600,6 +614,11 @@ impl PageDom {
         match self.hooks() {
             Some(h) => h.post_task(task),
             None => task(),
+        }
+    }
+    pub(crate) fn download(&self, request: DownloadRequest) {
+        if let Some(h) = self.hooks() {
+            h.download(request);
         }
     }
     pub(crate) fn navigate(&self, req: NavigationRequest) {

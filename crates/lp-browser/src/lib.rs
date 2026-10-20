@@ -183,6 +183,13 @@ pub enum PageEvent {
         message: String,
         default_prompt: Option<String>,
     },
+    /// A hyperlink download finished fetching (or failed).
+    Download {
+        frame_id: FrameId,
+        url: String,
+        suggested_filename: String,
+        body: Result<bytes::Bytes, String>,
+    },
 }
 
 /// Receives page events in emission order on the browser thread.

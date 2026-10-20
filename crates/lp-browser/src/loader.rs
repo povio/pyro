@@ -38,6 +38,8 @@ pub enum ResourceKind {
     Stylesheet,
     Iframe,
     Image,
+    /// A hyperlink download (`<a download>`).
+    Download,
 }
 
 #[derive(Debug, Clone)]
@@ -172,6 +174,7 @@ impl ResourceLoader for NetLoader {
             ResourceKind::Stylesheet => lp_net::Destination::Style,
             ResourceKind::Iframe => lp_net::Destination::Iframe,
             ResourceKind::Image => lp_net::Destination::Image,
+            ResourceKind::Download => lp_net::Destination::Other,
         };
         let mut req = lp_net::Request::get(url, destination);
         if let Some(page) = browser.page(request.page) {
@@ -780,6 +783,49 @@ impl Browser {
         self.fire_dom_content_loaded(page);
     }
 
+    /// HTML "download the hyperlink": blob:/data: bytes arrive with the
+    /// request; same-origin HTTP(S) URLs are fetched. The result is reported
+    /// as `PageEvent::Download` for the embedder (CDP download behavior).
+    pub(crate) fn start_download(&mut self, page: FrameKey, request: lp_webapi::DownloadRequest) {
+        let Some(frame_id) = self.doc(page).map(|p| p.main_frame.id.clone()) else { return };
+        let suggested = suggested_filename(&request.filename, &request.url);
+        let lp_webapi::DownloadRequest { url, data, .. } = request;
+        match data {
+            Some((bytes, _mime)) => {
+                self.emit(
+                    page.page,
+                    PageEvent::Download { frame_id, url, suggested_filename: suggested, body: Ok(bytes) },
+                );
+            }
+            None => {
+                let Some(loader) = self.loader_for(page) else { return };
+                let referrer = self.doc(page).map(|p| p.main_frame.url.clone());
+                let loader_id = self.doc(page).map(|p| p.main_frame.loader_id.0.clone());
+                let req = FetchRequest {
+                    url: url.clone(),
+                    kind: ResourceKind::Download,
+                    page: page.page,
+                    referrer,
+                    frame_id: Some(frame_id.0.clone()),
+                    loader_id,
+                    crossorigin: None,
+                };
+                loader.fetch(
+                    self,
+                    req,
+                    Box::new(move |b, res| {
+                        let body = match res {
+                            Ok(r) if (200..300).contains(&r.status) => Ok(bytes::Bytes::from(r.body)),
+                            Ok(r) => Err(format!("HTTP {} for {}", r.status, r.url)),
+                            Err(e) => Err(e),
+                        };
+                        b.emit(page.page, PageEvent::Download { frame_id, url, suggested_filename: suggested, body });
+                    }),
+                );
+            }
+        }
+    }
+
     /// `document.open()` on the loaded document: it is loading again, so
     /// DOMContentLoaded/load (and their CDP lifecycle events) can fire anew.
     pub(crate) fn document_reopened(&mut self, page: FrameKey) {
@@ -986,4 +1032,28 @@ impl Browser {
 
 pub(crate) fn install_module_fetcher(sched: lp_runtime::Scheduler<Browser>, page: FrameKey, realm: &Realm) {
     realm.set_module_fetcher(Some(Rc::new(PageModuleFetcher { page, sched })));
+}
+
+/// The download's file name: the `download` attribute without path
+/// separators, else the URL's last path segment, else "download".
+fn suggested_filename(attribute: &str, url: &str) -> String {
+    let clean = |name: &str| -> String {
+        let name: String = name.chars().map(|c| if matches!(c, '/' | '\\' | '\0') { '_' } else { c }).collect();
+        let name = name.trim().trim_matches('.').to_owned();
+        name
+    };
+    let from_attribute = clean(attribute);
+    if !from_attribute.is_empty() {
+        return from_attribute;
+    }
+    if !url.starts_with("blob:") && !url.starts_with("data:") {
+        if let Some(segment) = url::Url::parse(url).ok().and_then(|u| u.path_segments()?.next_back().map(str::to_owned))
+        {
+            let segment = clean(&segment);
+            if !segment.is_empty() {
+                return segment;
+            }
+        }
+    }
+    "download".into()
 }

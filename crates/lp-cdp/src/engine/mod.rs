@@ -240,12 +240,25 @@ pub(crate) struct PageState {
     dom_nodes: dom::BackendNodes,
 }
 
+/// `Browser.setDownloadBehavior` settings.
+#[derive(Clone, Debug)]
+pub(crate) struct DownloadBehavior {
+    /// "allow" (file named as suggested) or "allowAndName" (named by guid);
+    /// "deny" and "default" store nothing.
+    pub(crate) behavior: String,
+    pub(crate) download_path: Option<String>,
+    pub(crate) events_enabled: bool,
+}
+
 /// The engine side of one CDP connection, living on its browser thread.
 pub struct EngineHost {
     pub thread: BrowserThread,
     pub(crate) out: Outbox,
     collector: Rc<Collector>,
     contexts: HashMap<ContextKey, network::NetworkContext>,
+    /// Browser.setDownloadBehavior per browser context (None: no
+    /// `browserContextId`, the default context).
+    pub(crate) download_behavior: HashMap<Option<ContextKey>, DownloadBehavior>,
     body_budget: BodyBudget,
     network_wake: network::NetworkWake,
     pub(crate) pages: HashMap<PageKey, PageState>,
@@ -279,6 +292,7 @@ impl EngineHost {
             out,
             collector,
             contexts: HashMap::new(),
+            download_behavior: HashMap::new(),
             body_budget,
             network_wake: network::NetworkWake::default(),
             pages: HashMap::new(),
@@ -716,21 +730,30 @@ impl Host for EngineHost {
             }
             "Browser.setDownloadBehavior" => {
                 #[derive(Deserialize)]
+                #[serde(rename_all = "camelCase")]
                 struct P {
                     behavior: String,
+                    download_path: Option<String>,
+                    #[serde(default)]
+                    events_enabled: bool,
                 }
                 let result = command.params::<P>().and_then(|p| match p.behavior.as_str() {
-                    // Download delivery is not implemented, so denying
-                    // and the default are exactly what happens.
-                    "deny" | "default" => Ok(()),
-                    // Playwright asks for allowAndName on every new context.
-                    // Download delivery is not implemented; the setting is
-                    // accepted and the missing support is tracked in
-                    // docs/automation/CDP_COVERAGE.md.
-                    "allow" | "allowAndName" => Ok(()),
+                    "deny" | "default" | "allow" | "allowAndName" => {
+                        if matches!(p.behavior.as_str(), "allow" | "allowAndName") && p.download_path.is_none() {
+                            return Err(CdpError::invalid_params("downloadPath is required for allow behaviors"));
+                        }
+                        self.download_behavior.insert(
+                            context,
+                            DownloadBehavior {
+                                behavior: p.behavior,
+                                download_path: p.download_path,
+                                events_enabled: p.events_enabled,
+                            },
+                        );
+                        Ok(())
+                    }
                     _ => Err(CdpError::invalid_params("Unrecognized download behavior")),
                 });
-                let _ = context;
                 match result {
                     Ok(()) => out.send(msg::result_frame(command.id, &Empty {}, command.session_id())),
                     Err(e) => out.send(msg::error_frame(Some(command.id), &e, command.session_id())),

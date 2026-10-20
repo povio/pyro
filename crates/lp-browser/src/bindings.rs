@@ -82,6 +82,16 @@ impl PageHooks for Hooks {
         });
     }
 
+    fn download(&self, request: lp_webapi::DownloadRequest) {
+        let page = self.page;
+        let loader = self.loader.clone();
+        self.sched.post(TaskSource::Navigation, move |b| {
+            if b.doc(page).is_some_and(|p| p.main_frame.loader_id == loader) {
+                b.start_download(page, request);
+            }
+        });
+    }
+
     fn document_reopened(&self) {
         let page = self.page;
         let loader = self.loader.clone();

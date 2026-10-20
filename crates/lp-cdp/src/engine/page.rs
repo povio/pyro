@@ -547,6 +547,9 @@ impl EngineHost {
                     self.event("Page.frameDetached", &json!({ "frameId": frame_id.0, "reason": "remove" }), s);
                 }
             }
+            PageEvent::Download { frame_id, url, suggested_filename, body } => {
+                self.deliver_download(page, &frame_id.0, &url, &suggested_filename, body);
+            }
             PageEvent::JavascriptDialogOpening { kind, message, default_prompt, .. } => {
                 let (_, _, url) = self.main_frame(page).unwrap_or_default();
                 for s in &all {
@@ -563,4 +566,84 @@ impl EngineHost {
             PageEvent::FrameDestroyed { .. } => {}
         }
     }
+}
+
+impl EngineHost {
+    /// Delivers a page download as Chrome does under an allow behavior:
+    /// Browser.downloadWillBegin, the file written to downloadPath (named by
+    /// guid for allowAndName, else as suggested), then Browser.downloadProgress
+    /// inProgress and completed (with filePath), or canceled on failure. Events
+    /// go to the browser session and only when eventsEnabled. Deny and default
+    /// behaviors deliver nothing.
+    fn deliver_download(
+        &mut self,
+        page: PageKey,
+        frame_id: &str,
+        url: &str,
+        suggested_filename: &str,
+        body: Result<bytes::Bytes, String>,
+    ) {
+        let context = self.pages.get(&page).map(|p| p.context);
+        let Some(behavior) =
+            self.download_behavior.get(&context).or_else(|| self.download_behavior.get(&None)).cloned()
+        else {
+            return;
+        };
+        let Some(dir) =
+            behavior.download_path.filter(|_| matches!(behavior.behavior.as_str(), "allow" | "allowAndName"))
+        else {
+            return;
+        };
+        let guid = new_guid();
+        let name = if behavior.behavior == "allowAndName" { guid.clone() } else { suggested_filename.to_owned() };
+        let path = std::path::Path::new(&dir).join(name);
+        let emit = |host: &Self, method: &str, params: serde_json::Value| {
+            if behavior.events_enabled {
+                host.out.push(crate::msg::event_frame(method, &params, None));
+            }
+        };
+        emit(
+            self,
+            "Browser.downloadWillBegin",
+            json!({"frameId": frame_id, "guid": guid, "url": url, "suggestedFilename": suggested_filename}),
+        );
+        let written = body.and_then(|bytes| {
+            std::fs::create_dir_all(&dir)
+                .and_then(|_| std::fs::write(&path, &bytes))
+                .map(|_| bytes.len())
+                .map_err(|e| e.to_string())
+        });
+        match written {
+            Ok(total) => {
+                emit(
+                    self,
+                    "Browser.downloadProgress",
+                    json!({"guid": guid, "totalBytes": total, "receivedBytes": 0, "state": "inProgress"}),
+                );
+                emit(
+                    self,
+                    "Browser.downloadProgress",
+                    json!({"guid": guid, "totalBytes": total, "receivedBytes": total, "state": "completed", "filePath": path.to_string_lossy()}),
+                );
+            }
+            Err(_) => emit(
+                self,
+                "Browser.downloadProgress",
+                json!({"guid": guid, "totalBytes": 0, "receivedBytes": 0, "state": "canceled"}),
+            ),
+        }
+    }
+}
+
+/// A random version-4 UUID, as Chrome uses for download guids.
+fn new_guid() -> String {
+    let mut b = [0u8; 16];
+    if getrandom::fill(&mut b).is_err() {
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+        b = nanos.to_le_bytes();
+    }
+    b[6] = (b[6] & 0x0f) | 0x40;
+    b[8] = (b[8] & 0x3f) | 0x80;
+    let h: String = b.iter().map(|x| format!("{x:02x}")).collect();
+    format!("{}-{}-{}-{}-{}", &h[0..8], &h[8..12], &h[12..16], &h[16..20], &h[20..32])
 }

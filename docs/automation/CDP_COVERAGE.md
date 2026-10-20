@@ -19,7 +19,7 @@ Capture uses a shared process payload budget (default 64 MiB, 8 MiB/body), at mo
 
 The browser integration smoke also exercises DOM access before init scripts, shared DOM across isolated worlds, page fetch with exact Network frame/loader correlation, route fulfillment/abort after headers, and Web Storage context/page/navigation isolation. These checks use local HTTP and JavaScript evaluation; The full DOM protocol and actual TOS workflows remain unvalidated. A separate Input check covers keyboard typing/text insertion and mouse checkbox activation; editing commands and pen/touch remain unsupported; native drag-and-drop works under Playwright's drag interception; wheel default scrolling follows the synthetic layout. Mouse coordinates follow the native synthetic layout, not full CSS positioning; the smoke derives its click point from the reported rectangle and verifies the exact hit target.
 
-Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 51 engine, 9 accepted/recorded only, 2 conditional, 39 pending (counts from the table below).
+Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 52 engine, 8 accepted/recorded only, 2 conditional, 39 pending (counts from the table below).
 
 | Method | Upstream 2ad38773f | Rewrite | Notes |
 | --- | --- | --- | --- |
@@ -30,7 +30,7 @@ Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 51 engi
 | `Browser.grantPermissions` | yes | pending |  |
 | `Browser.resetPermissions` | yes | pending |  |
 | `Browser.setDockTile` | **no** | pending |  |
-| `Browser.setDownloadBehavior` | yes | accepted, recorded only | accepted; the loader does not implement download delivery yet |
+| `Browser.setDownloadBehavior` | yes | engine | per browser context; under allow/allowAndName, `<a download>` links to blob:, data: or same-origin URLs (blob bytes captured at click, so an immediate revokeObjectURL is fine; HTTP fetched) are written to downloadPath (guid-named for allowAndName) with Chrome's Browser.downloadWillBegin and downloadProgress inProgress/completed (filePath) events on the browser session when eventsEnabled; failures report canceled; deny/default deliver nothing. Name: the download attribute, else the URL's last segment, else "download". Content-Disposition responses from navigations are not turned into downloads |
 | `Browser.setWindowBounds` | yes | accepted, recorded only | stores the bounds, which getWindowForTarget reports back; no page API (outerWidth, screen) observes them yet (upstream: no-op) |
 | `CSS.disable` | **no** | pending |  |
 | `CSS.enable` | yes | pending |  |

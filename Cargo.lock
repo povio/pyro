@@ -555,6 +555,7 @@ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 name = "lp-browser"
 version = "0.0.1"
 dependencies = [
+ "bytes",
  "lp-dom",
  "lp-js",
  "lp-net",
@@ -568,6 +569,7 @@ name = "lp-cdp"
 version = "0.0.1"
 dependencies = [
  "bytes",
+ "getrandom",
  "http",
  "lp-browser",
  "lp-dom",
