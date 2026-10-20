@@ -388,7 +388,96 @@ fn eval_feature(text: &[u8], viewport: &Viewport) -> bool {
         let value = trim_ws_and_comments(&trimmed[colon + 1..]);
         return eval_name_value(name, value, viewport);
     }
+    if let Some(result) = eval_range(trimmed, viewport) {
+        return result;
+    }
     eval_boolean(trimmed, viewport)
+}
+
+#[derive(Copy, Clone)]
+enum RangeOp {
+    Lt,
+    Le,
+    Gt,
+    Ge,
+    Eq,
+}
+
+impl RangeOp {
+    fn holds(self, a: f64, b: f64) -> bool {
+        match self {
+            RangeOp::Lt => a < b,
+            RangeOp::Le => a <= b,
+            RangeOp::Gt => a > b,
+            RangeOp::Ge => a >= b,
+            RangeOp::Eq => a == b,
+        }
+    }
+}
+
+/// Media Queries 4 range syntax for `width`/`height`: `(width >= 48rem)`,
+/// `(48rem <= width)` and `(40rem <= width < 64rem)`. `None` when the text has
+/// no comparison operator; a malformed range is `Some(false)`.
+fn eval_range(text: &[u8], viewport: &Viewport) -> Option<bool> {
+    let mut parts = Vec::new();
+    let mut ops = Vec::new();
+    let (mut i, mut start) = (0, 0);
+    while i < text.len() {
+        let op = match text[i] {
+            b'<' | b'>' => {
+                let inclusive = text.get(i + 1) == Some(&b'=');
+                let op = match (text[i], inclusive) {
+                    (b'<', false) => RangeOp::Lt,
+                    (b'<', true) => RangeOp::Le,
+                    (b'>', false) => RangeOp::Gt,
+                    _ => RangeOp::Ge,
+                };
+                Some((op, if inclusive { 2 } else { 1 }))
+            }
+            b'=' => Some((RangeOp::Eq, 1)),
+            _ => None,
+        };
+        match op {
+            Some((op, len)) => {
+                parts.push(trim_ws_and_comments(&text[start..i]));
+                ops.push(op);
+                i += len;
+                start = i;
+            }
+            None => i += 1,
+        }
+    }
+    if ops.is_empty() {
+        return None;
+    }
+    parts.push(trim_ws_and_comments(&text[start..]));
+    let feature = |part: &[u8]| -> Option<f64> {
+        match strip_device(&lower(part)?) {
+            "width" => Some(viewport.width as f64),
+            "height" => Some(viewport.height as f64),
+            _ => None,
+        }
+    };
+    let length = |part: &[u8]| parse_length_px(&String::from_utf8_lossy(part));
+    let compare = |left: &[u8], op: RangeOp, right: &[u8]| -> Option<bool> {
+        match (feature(left), feature(right)) {
+            (Some(f), None) => Some(op.holds(f, length(right)?)),
+            (None, Some(f)) => Some(op.holds(length(left)?, f)),
+            _ => None,
+        }
+    };
+    let result = match (parts.as_slice(), ops.as_slice()) {
+        ([a, b], [op]) => compare(a, *op, b),
+        // `a < name < b` needs both operators in the same direction.
+        ([a, name, b], [first @ (RangeOp::Lt | RangeOp::Le), second @ (RangeOp::Lt | RangeOp::Le)])
+        | ([a, name, b], [first @ (RangeOp::Gt | RangeOp::Ge), second @ (RangeOp::Gt | RangeOp::Ge)])
+            if feature(name).is_some() =>
+        {
+            Some(compare(a, *first, name)? && compare(name, *second, b)?)
+        }
+        _ => None,
+    };
+    Some(result.unwrap_or(false))
 }
 
 /// Upstream caps feature names at 17 bytes (MediaQuery.zig:277); the
@@ -552,6 +641,24 @@ fn parse_length_px(value: &str) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn range_syntax() {
+        let v = Viewport::new(1440, 900);
+        assert!(matches("(width >= 48rem)", &v));
+        assert!(!matches("(width < 48rem)", &v));
+        assert!(matches("(48rem <= width)", &v));
+        assert!(matches("(width > 1439px)", &v));
+        assert!(!matches("(width > 1440px)", &v));
+        assert!(matches("(width = 1440px)", &v));
+        assert!(matches("(40rem <= width < 96rem)", &v));
+        assert!(!matches("(40rem <= width < 80rem)", &v));
+        assert!(matches("(height <= 900px)", &v));
+        assert!(matches("not all and (width < 40rem)", &v));
+        assert!(!matches("(40rem < width > 80rem)", &v));
+        assert!(!matches("(width >= nonsense)", &v));
+        assert!(!matches("(colour >= 1px)", &v));
+    }
 
     #[test]
     fn decimal_rem_breakpoint() {
