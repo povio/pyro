@@ -33,6 +33,6 @@
  },
  "example_sha256": "db29d6edb014d4f172a9b808c5de91a6a8ff624edf24b1d2c73c3ddfefff7b46",
  "only_difference": "the three binaries are built from the same tree and example; only crates/lp-js/src/string.rs differs",
- "ordering": "run.sh: per configuration, 6 rounds using all 6 permutations of (base,len,exact) once each; ORDER.tsv records configuration, round, position, variant and UTC start",
+ "ordering": "run.sh: per configuration, 6 rounds using all 6 permutations of (base,len,exact) once each; ORDER.tsv records configuration, round, position, variant and completion time (UTC, 1-second resolution, recorded after each run exits)",
  "metrics": "footprint/rss = increase of proc_pid_rusage ri_phys_footprint/ri_resident_size over the cycle loop (after engine and source creation), MiB; cpu = getrusage(RUSAGE_SELF) user+system seconds over the loop; wall = monotonic seconds over the loop. Single process per run, no other workload intentionally started. CPU utilization not sampled."
 }

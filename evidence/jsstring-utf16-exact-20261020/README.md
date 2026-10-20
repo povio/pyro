@@ -15,7 +15,7 @@ All three variants are built from the same tree and example. Only `crates/lp-js/
 
 ## Method
 
-- **Order:** `run.sh` runs 9 configurations. Each configuration has 6 rounds, and each round uses a different one of the 6 permutations of (base, len, exact). Every variant therefore runs first, second and third equally often. `ORDER.tsv` records the actual order and UTC start of each run.
+- **Order:** `run.sh` runs 9 configurations. Each configuration has 6 rounds, and each round uses a different one of the 6 permutations of (base, len, exact). Every variant therefore runs first, second and third equally often. `ORDER.tsv` records the actual order and each run's completion time (UTC, 1-second resolution, taken after the run exits).
 - **Raw output:** every per-cycle line is in `raw/`. `summarize.py` produces `SUMMARY.json`.
 - **Cycles:** each run does 30 cycles.
   - `convert` converts the same source and drops the result.
@@ -48,8 +48,14 @@ RSS tracks footprint to within about 1 MiB; see `SUMMARY.json`. Wall time tracks
 ## Reading
 
 - **Memory.** Exact sizing keeps the full footprint reduction wherever `base` retained memory, for both ASCII and 3-byte-heavy text. `base` retention depends on size and is not monotonic: 12 MiB CJK and the 1 MiB controls show none.
-- **CPU.** The counting pass costs a little on non-ASCII text: about 1 ms per 12 MiB CJK conversion, and +0.003 s over 30 × 4 MiB. ASCII costs nothing extra.
-- **Transient memory.** `exact` never over-allocates. `len` over-allocated 2.25× for this CJK source.
+- **Against the replaced `a32656e` head (`len`):**
+  - **CPU.** The counting pass makes CJK conversion about 13% slower:
+    - 4 MiB CJK: 0.078 → 0.088 s over 30 conversions, about +0.33 ms per conversion.
+    - 12 MiB CJK: 0.237 → 0.267 s, about +1 ms per conversion.
+    - Realm 4 MiB CJK: 0.220 → 0.230 s.
+    - ASCII is unchanged within noise (fast path).
+  - **Footprint.** No measured improvement over `len` in these results: 7.2 vs 7.2 MiB (convert 4 MiB CJK) and 56.0 vs 54.5 MiB medians with overlapping ranges (realm 4 MiB CJK).
+  - **Benefit.** Exact sizing avoids `len`'s over-allocated transient capacity: up to 3× for 3-byte UTF-8 and 2.25× for this CJK source. It does not reduce measured retention further.
 - **Mechanism.** The macOS allocator mechanism behind `base`'s retention is not established. In an earlier probe, `malloc_zone_pressure_relief` released 0 MiB of it.
 
 Reproduce:
