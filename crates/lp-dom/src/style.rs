@@ -860,7 +860,7 @@ enum Item {
         customs: Vec<(String, Rc<str>, bool)>,
         /// Every other declaration as longhands, for getComputedStyle values
         /// the layout does not track (see `computed.rs`).
-        generics: Vec<(String, Rc<str>, bool)>,
+        generics: Rc<[(String, Rc<str>, bool)]>,
     },
     Media {
         query: String,
@@ -1012,7 +1012,7 @@ fn style_item(selector_text: &str, block: &str) -> Option<Item> {
         normal_mask,
         important_mask,
         customs,
-        generics,
+        generics: generics.into(),
     })
 }
 
@@ -1041,7 +1041,28 @@ struct RuleSet {
     by_tag: FxHashMap<String, Vec<u32>>,
     other: Vec<u32>,
     customs: FxHashMap<String, Vec<CustomRule>>,
-    generics: FxHashMap<String, Vec<CustomRule>>,
+    /// Every author declaration of each selector, bucketed like `rules`, for
+    /// the generic computed values (`StyleEngine::declared_map`).
+    generic_rules: Vec<GenericRule>,
+    generic_by_id: FxHashMap<String, Vec<u32>>,
+    generic_by_class: FxHashMap<String, Vec<u32>>,
+    generic_by_tag: FxHashMap<String, Vec<u32>>,
+    generic_other: Vec<u32>,
+}
+
+struct GenericRule {
+    selector: Selectors,
+    decls: Rc<[(String, Rc<str>, bool)]>,
+    normal: u64,
+    important: u64,
+}
+
+struct PendingGeneric {
+    selector: Selector<Impl>,
+    decls: Rc<[(String, Rc<str>, bool)]>,
+    layer: u16,
+    doc: u32,
+    bucket: BucketKey,
 }
 
 enum BucketKey {
@@ -1130,7 +1151,7 @@ struct Builder<'v> {
     rule_layers: Vec<u16>,
     pending: Vec<PendingRule>,
     customs: Vec<PendingCustom>,
-    generics: Vec<PendingCustom>,
+    generics: Vec<PendingGeneric>,
 }
 
 impl<'v> Builder<'v> {
@@ -1164,21 +1185,31 @@ impl<'v> Builder<'v> {
                     // StyleManager.zig:485-525; generic declarations share the block's order.
                     if !customs.is_empty() || !generics.is_empty() {
                         let doc = self.next_doc_order(layer);
-                        for (target, declarations) in [(&mut self.customs, customs), (&mut self.generics, generics)] {
-                            for (name, value, important) in declarations {
-                                for sel in list.slice() {
-                                    if bucket_key(sel).is_none() {
-                                        continue;
-                                    }
-                                    target.push(PendingCustom {
-                                        name: name.clone(),
-                                        important: *important,
-                                        selector: sel.clone(),
-                                        value: value.clone(),
-                                        layer,
-                                        doc,
-                                    });
+                        for (name, value, important) in customs {
+                            for sel in list.slice() {
+                                if bucket_key(sel).is_none() {
+                                    continue;
                                 }
+                                self.customs.push(PendingCustom {
+                                    name: name.clone(),
+                                    important: *important,
+                                    selector: sel.clone(),
+                                    value: value.clone(),
+                                    layer,
+                                    doc,
+                                });
+                            }
+                        }
+                        if !generics.is_empty() {
+                            for sel in list.slice() {
+                                let Some(bucket) = bucket_key(sel) else { continue };
+                                self.generics.push(PendingGeneric {
+                                    selector: sel.clone(),
+                                    decls: generics.clone(),
+                                    layer,
+                                    doc,
+                                    bucket,
+                                });
                             }
                         }
                     }
@@ -1366,8 +1397,23 @@ impl<'v> Builder<'v> {
         for (name, rule) in self.customs.into_iter().map(to_rule) {
             rs.customs.entry(name).or_default().push(rule);
         }
-        for (name, rule) in self.generics.into_iter().map(to_rule) {
-            rs.generics.entry(name).or_default().push(rule);
+        for g in self.generics {
+            let spec = (g.selector.specificity() as u64) << SPEC_SHIFT;
+            let normal = (rank_of(layers, g.layer, false) << RANK_SHIFT) | spec | g.doc as u64;
+            let important = (rank_of(layers, g.layer, true) << RANK_SHIFT) | spec | g.doc as u64 | IMPORTANT_BIT;
+            let idx = rs.generic_rules.len() as u32;
+            rs.generic_rules.push(GenericRule {
+                selector: SelectorList::from_one(g.selector),
+                decls: g.decls,
+                normal,
+                important,
+            });
+            match g.bucket {
+                BucketKey::Id(k) => rs.generic_by_id.entry(k).or_default().push(idx),
+                BucketKey::Class(k) => rs.generic_by_class.entry(k).or_default().push(idx),
+                BucketKey::Tag(k) => rs.generic_by_tag.entry(k).or_default().push(idx),
+                BucketKey::Other => rs.generic_other.push(idx),
+            }
         }
         rs
     }
@@ -1452,40 +1498,6 @@ fn custom_property_source(dom: &Dom, rules: &RuleSet, el: NodeId, name: &str) ->
         cur = flat_tree_parent_element(dom, idx);
     }
     None
-}
-
-/// The element's own winning declaration of a longhand: inline (shorthands
-/// expanded) against the generic rules, highest packed priority first.
-fn declared_value(dom: &Dom, rules: &RuleSet, el: NodeId, name: &str) -> Option<String> {
-    let mut value = None;
-    let mut priority = 0;
-    if let Some(style) = dom.element(el).ok().and_then(|e| e.attr("style")) {
-        for d in parse_declarations(style) {
-            if is_custom_property(&d.name) {
-                continue;
-            }
-            let p = if d.important { INLINE_IMPORTANT_PRIORITY } else { INLINE_PRIORITY };
-            for (longhand, v) in computed::expand(&d.name, &d.value) {
-                if longhand == name && p >= priority {
-                    value = Some(v);
-                    priority = p;
-                }
-            }
-        }
-    }
-    for rule in rules.generics.get(name).into_iter().flatten() {
-        if rule.priority > priority && dom.matches(el, &rule.selector).unwrap_or(false) {
-            value = Some(rule.value.to_string());
-            priority = rule.priority;
-        }
-    }
-    // SVG presentation attributes sit below every author rule (SVG 2 §6.6).
-    if value.is_none() && computed::is_presentation_attribute(name) {
-        if let Some(e) = dom.element(el).ok().filter(|e| e.name.ns == ns!(svg)) {
-            value = e.attr(name).map(str::to_owned);
-        }
-    }
-    value
 }
 
 struct DimensionVariables<'a> {
@@ -1718,6 +1730,8 @@ struct Cache {
     parsed: Vec<Option<ParsedSheet>>,
     rules: Rc<RuleSet>,
     memo: FxHashMap<NodeId, ComputedStyle>,
+    /// Winning generic declarations per element (`declared_map`), dropped with `memo`.
+    declared: FxHashMap<NodeId, Rc<FxHashMap<String, String>>>,
     extent: Option<(f64, f64)>,
 }
 
@@ -1904,6 +1918,7 @@ impl StyleEngine {
             }
         }
         cache.memo.clear();
+        cache.declared.clear();
         cache.extent = None;
         cache.stamp = Some(stamp);
     }
@@ -2285,7 +2300,7 @@ impl StyleEngine {
             // Inherited and resolved against ancestors; None when no author value applies anywhere up the tree.
             let mut cur = Some(idx);
             while let Some(i) = cur {
-                if declared_value(dom, rules, dom.id_of(i), name).is_some() {
+                if self.declared_value(dom, rules, dom.id_of(i), name).is_some() {
                     return Some(format!("{}px", computed::fmt_num(self.font_size_at_cascade(dom, rules, idx, depth))));
                 }
                 cur = flat_tree_parent_element(dom, i);
@@ -2296,7 +2311,7 @@ impl StyleEngine {
         let from_parent =
             || flat_tree_parent_element(dom, idx).and_then(|p| self.computed_value_at(dom, rules, p, name, depth + 1));
         let unset = || if inherited { from_parent() } else { None };
-        let Some(raw) = declared_value(dom, rules, id, name) else { return unset() };
+        let Some(raw) = self.declared_value(dom, rules, id, name) else { return unset() };
         match raw.trim().to_ascii_lowercase().as_str() {
             "inherit" => return from_parent(),
             "unset" | "revert" | "revert-layer" => return unset(),
@@ -2326,6 +2341,81 @@ impl StyleEngine {
             }
         }
         Some(computed::resolve_number(value).map_or_else(|| value.to_owned(), computed::fmt_num))
+    }
+
+    /// The element's own winning declaration of a longhand: inline (shorthands
+    /// expanded) against the author rules, then SVG presentation attributes.
+    fn declared_value(&self, dom: &Dom, rules: &RuleSet, el: NodeId, name: &str) -> Option<String> {
+        if let Some(value) = self.declared_map(dom, rules, el).get(name) {
+            return Some(value.clone());
+        }
+        // SVG presentation attributes sit below every author rule (SVG 2 §6.6).
+        if computed::is_presentation_attribute(name) {
+            let e = dom.element(el).ok().filter(|e| e.name.ns == ns!(svg))?;
+            return e.attr(name).map(str::to_owned);
+        }
+        None
+    }
+
+    /// All winning author declarations of `el`, computed in one pass over the
+    /// bucketed candidate rules and cached until the DOM or sheets change.
+    fn declared_map(&self, dom: &Dom, rules: &RuleSet, el: NodeId) -> Rc<FxHashMap<String, String>> {
+        if let Some(map) = self.cache.borrow().declared.get(&el) {
+            return map.clone();
+        }
+        let mut winners: FxHashMap<String, (String, u64)> = FxHashMap::default();
+        let mut offer = |name: &str, value: &str, priority: u64| match winners.get_mut(name) {
+            Some(slot) if slot.1 > priority => {}
+            Some(slot) => *slot = (value.to_owned(), priority),
+            None => {
+                winners.insert(name.to_owned(), (value.to_owned(), priority));
+            }
+        };
+        let Ok(e) = dom.element(el) else { return Rc::default() };
+        if let Some(style) = e.attr("style") {
+            for d in parse_declarations(style) {
+                if is_custom_property(&d.name) {
+                    continue;
+                }
+                let p = if d.important { INLINE_IMPORTANT_PRIORITY } else { INLINE_PRIORITY };
+                for (longhand, v) in computed::expand(&d.name, &d.value) {
+                    offer(&longhand, &v, p);
+                }
+            }
+        }
+        let mut check = |list: &[u32]| {
+            for &ri in list {
+                let r = &rules.generic_rules[ri as usize];
+                if !dom.matches(el, &r.selector).unwrap_or(false) {
+                    continue;
+                }
+                for (name, value, important) in r.decls.iter() {
+                    offer(name, value, if *important { r.important } else { r.normal });
+                }
+            }
+        };
+        if let Some(i) = e.attr("id") {
+            if let Some(list) = rules.generic_by_id.get(i) {
+                check(list);
+            }
+        }
+        if let Some(class) = e.attr("class") {
+            for token in class.split(is_ascii_ws_char).filter(|s| !s.is_empty()) {
+                if let Some(list) = rules.generic_by_class.get(token) {
+                    check(list);
+                }
+            }
+        }
+        if !rules.generic_by_tag.is_empty() {
+            let local = e.name.local.to_ascii_lowercase();
+            if let Some(list) = rules.generic_by_tag.get(local.as_str()) {
+                check(list);
+            }
+        }
+        check(&rules.generic_other);
+        let map: Rc<FxHashMap<String, String>> = Rc::new(winners.into_iter().map(|(k, (v, _))| (k, v)).collect());
+        self.cache.borrow_mut().declared.insert(el, map.clone());
+        map
     }
 
     /// Units for lengths declared on `idx`: its font-size (em), the root's (rem), the viewport (vw/vh).
@@ -2361,7 +2451,7 @@ impl StyleEngine {
 
     fn font_size_from_parent(&self, dom: &Dom, rules: &RuleSet, idx: u32, parent: f64, root: f64) -> f64 {
         let id = dom.id_of(idx);
-        let Some(raw) = declared_value(dom, rules, id, "font-size") else { return parent };
+        let Some(raw) = self.declared_value(dom, rules, id, "font-size") else { return parent };
         let mut lookup = |var: &str| custom_property_source(dom, rules, id, var).map(|(_, value)| value);
         let Some(value) = computed::substitute_vars(&raw, &mut lookup, 0) else { return parent };
         let keyword = match value.trim().to_ascii_lowercase().as_str() {
