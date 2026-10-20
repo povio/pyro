@@ -4803,3 +4803,21 @@ fn pointer_focus_preserves_cancellation_and_reentrant_script_reveal() {
         }
     }
 }
+
+#[test]
+fn style_assignment_forwards_to_css_text() {
+    // [PutForwards=cssText]: Chromium 1.59.1 gives
+    // ["width: 10px; color: red;", true, "10px", "\"\"", "fill: red;"].
+    let e = env("<!doctype html><body><div id=d style='color: blue'></div><svg id=s></svg></body>");
+    let r = &e.main;
+    let got = eval(
+        r,
+        "(() => { 'use strict'; const d = document.getElementById('d'); const before = d.style; \
+         d.style = 'width: 10px; color: red'; \
+         const r1 = d.getAttribute('style'); const same = d.style === before; const w = d.style.width; \
+         d.style = null; const r2 = JSON.stringify(d.getAttribute('style')); \
+         const s = document.getElementById('s'); s.style = 'fill: red'; const r3 = s.getAttribute('style'); \
+         return JSON.stringify([r1, same, w, r2, r3]); })()",
+    );
+    assert_eq!(got, r#"["width: 10px; color: red;",true,"10px","\"\"","fill: red;"]"#);
+}

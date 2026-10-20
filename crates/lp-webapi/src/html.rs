@@ -533,7 +533,11 @@ impl JsClass for HtmlElement {
             Ok(s.boolean(false))
         });
         def.getter("dataset", |s, n| Ok(collections::dataset(s, n.page(), n.id)?.value()));
-        def.getter("style", |s, n| Ok(crate::css::inline_style(s, n.page(), n.id)?.value()));
+        def.accessor(
+            "style",
+            |s, n| Ok(crate::css::inline_style(s, n.page(), n.id)?.value()),
+            |_s, n, v| crate::css::set_inline_style(n.page(), n.id, v),
+        );
         def.accessor("innerText", crate::layout_api::inner_text, crate::layout_api::set_inner_text);
         def.accessor("outerText", crate::layout_api::inner_text, crate::layout_api::set_inner_text);
         def.getter("offsetParent", crate::layout_api::offset_parent);
@@ -1591,7 +1595,11 @@ impl JsClass for SvgElement {
     fn define(def: &mut ClassDef<Self>) {
         crate::handlers::define_global(def);
         def.getter("dataset", |s, n| Ok(collections::dataset(s, n.page(), n.id)?.value()));
-        def.getter("style", |s, n| Ok(crate::css::inline_style(s, n.page(), n.id)?.value()));
+        def.accessor(
+            "style",
+            |s, n| Ok(crate::css::inline_style(s, n.page(), n.id)?.value()),
+            |_s, n, v| crate::css::set_inline_style(n.page(), n.id, v),
+        );
         def.getter("ownerSVGElement", |s, n| {
             let dom = n.page().dom.borrow();
             let mut p = dom.parent_element(n.id).js()?;
