@@ -79,6 +79,7 @@ impl Harness {
         let mut sink = self.out.clone();
         self.browser.handle_text(&message.to_string(), &mut sink);
         self.browser.host_mut().flush();
+        self.browser.adopt_popups(&mut sink);
         id
     }
 
@@ -108,6 +109,26 @@ impl Harness {
             let host = self.browser.host_mut();
             host.run_until_work(Some(Instant::now() + Duration::from_millis(20)), || false);
             host.flush();
+            let mut sink = self.out.clone();
+            self.browser.adopt_popups(&mut sink);
+        }
+    }
+
+    /// Runs the engine until a message matching `pred` arrives.
+    fn until_event(&mut self, pred: impl Fn(&Value) -> bool) -> Value {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut seen = Vec::new();
+        loop {
+            seen.extend(self.drain());
+            if let Some(found) = seen.iter().find(|m| pred(m)) {
+                return found.clone();
+            }
+            assert!(Instant::now() < deadline, "event not seen; saw {seen:#?}");
+            let host = self.browser.host_mut();
+            host.run_until_work(Some(Instant::now() + Duration::from_millis(20)), || false);
+            host.flush();
+            let mut sink = self.out.clone();
+            self.browser.adopt_popups(&mut sink);
         }
     }
 
@@ -2940,3 +2961,54 @@ fn network_idle_waits_for_in_flight_requests() {
 
 #[path = "engine_cdp/frames.rs"]
 mod frames;
+
+#[test]
+fn links_and_window_open_targeting_blank_open_paused_popups() {
+    let mut h = Harness::new();
+    let opener = h.frame_id.clone();
+    h.page("Page.enable", json!({}));
+    let page = "data:text/html,<a id=a href=\"data:text/html,<title>popped</title>\" target=_blank>a</a>";
+    let seen = h.page_with_events("Page.navigate", json!({ "url": page }));
+    if !seen.iter().any(|m| m["method"] == "Page.loadEventFired") {
+        h.until_event(|m| m["method"] == "Page.loadEventFired");
+    }
+    h.page("Runtime.evaluate", json!({"expression":"document.getElementById('a').click()"}));
+
+    // Chrome: a paused popup target in the opener's context, announced with its opener.
+    let attached =
+        h.until_event(|m| m["method"] == "Target.attachedToTarget" && m["params"]["targetInfo"]["targetId"] != opener);
+    let info = &attached["params"]["targetInfo"];
+    assert_eq!(info["openerId"], json!(opener));
+    assert_eq!(info["canAccessOpener"], json!(false), "target=_blank links are noopener");
+    assert_eq!(attached["params"]["waitingForDebugger"], json!(true));
+    let popup = attached["params"]["sessionId"].as_str().unwrap().to_owned();
+
+    // Uncommitted initial document until the client resumes the popup.
+    let tree = h.call(Some(&popup), "Page.getFrameTree", json!({}));
+    assert_eq!(tree["result"]["frameTree"]["frame"]["url"], json!(":"));
+    h.call(Some(&popup), "Page.enable", json!({}));
+    // Resuming starts the held navigation; its events may share the response's batch.
+    let id = h.send(Some(&popup), "Runtime.runIfWaitingForDebugger", json!({}));
+    let mut seen = h.until_response(id);
+    let is_navigated = |m: &Value| m["method"] == "Page.frameNavigated" && m["sessionId"] == json!(popup);
+    let navigated = match seen.iter().position(is_navigated) {
+        Some(i) => seen.swap_remove(i),
+        None => h.until_event(is_navigated),
+    };
+    assert_eq!(navigated["params"]["frame"]["url"], json!("data:text/html,<title>popped</title>"));
+
+    // window.open with noopener opens a popup and returns null; opener access is refused explicitly.
+    let r = h.page(
+        "Runtime.evaluate",
+        json!({"expression":"String(window.open('data:text/html,second', '_blank', 'noopener'))","returnByValue":true}),
+    );
+    assert_eq!(r["result"]["result"]["value"], json!("null"));
+    let second = h.until_event(|m| {
+        m["method"] == "Target.attachedToTarget"
+            && m["params"]["targetInfo"]["targetId"] != opener
+            && m["params"]["sessionId"] != json!(popup)
+    });
+    assert_eq!(second["params"]["targetInfo"]["openerId"], json!(opener));
+    let r = h.page("Runtime.evaluate", json!({"expression":"window.open('data:text/html,x')"}));
+    assert!(r["result"]["exceptionDetails"].is_object(), "scriptable popups are unsupported: {r}");
+}

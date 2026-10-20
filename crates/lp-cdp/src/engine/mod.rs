@@ -233,6 +233,8 @@ pub(crate) struct PageState {
     pub(crate) window_bounds: Option<serde_json::Value>,
     pub(crate) emulated_media: Option<serde_json::Value>,
     pub(crate) next_script_id: u64,
+    /// Paused popup before its first navigation (`Page.getFrameTree` url ":").
+    pub(crate) initial_popup: bool,
     /// A raw keydown which changes documents suppresses one following char.
     /// Keyboard input is page-scoped, including across attached sessions.
     pub(crate) suppress_next_char: bool,
@@ -271,6 +273,8 @@ pub struct EngineHost {
     pub(crate) handle_budget: HandleBudget,
     next_backend_node: u64,
     pub(crate) pending: runtime::PendingReplies,
+    /// Popups requested by pages, taken by the protocol layer after `flush`.
+    pub(crate) popup_requests: Vec<crate::target::PopupRequest>,
 }
 
 impl EngineHost {
@@ -304,6 +308,7 @@ impl EngineHost {
             handle_budget: HandleBudget::new(HandleBudget::DEFAULT_LIMIT),
             next_backend_node: 1,
             pending: runtime::PendingReplies::default(),
+            popup_requests: Vec::new(),
         })
     }
 
@@ -603,6 +608,16 @@ impl Host for EngineHost {
         }
     }
 
+    fn set_initial_popup(&mut self, page: PageKey, initial: bool) {
+        if let Some(state) = self.pages.get_mut(&page) {
+            state.initial_popup = initial;
+        }
+    }
+
+    fn take_popup_requests(&mut self) -> Vec<crate::target::PopupRequest> {
+        std::mem::take(&mut self.popup_requests)
+    }
+
     fn create_page(&mut self, context: ContextKey) -> CdpResult<(PageKey, String)> {
         let context_id = self
             .contexts
@@ -626,6 +641,7 @@ impl Host for EngineHost {
                 window_bounds: None,
                 emulated_media: None,
                 next_script_id: 1,
+                initial_popup: false,
                 suppress_next_char: false,
                 intercept_drags: false,
                 network: network::NetworkPage::new(self.body_budget.clone()),

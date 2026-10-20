@@ -280,6 +280,7 @@ fn run_browser_thread(outbox: Outbox, state: Arc<CloseState>, ready: oneshot::Se
         let has_mail = || INBOX.with(|q| !q.borrow().is_empty());
         let outcome = browser.host_mut().run_until_work(None, has_mail);
         browser.host_mut().flush();
+        browser.adopt_popups(&mut sink);
         if closing() || (matches!(outcome, RunOutcome::Idle | RunOutcome::Stopped) && !has_mail()) {
             break; // queued commands of a closed connection are not run
         }
@@ -289,6 +290,7 @@ fn run_browser_thread(outbox: Outbox, state: Arc<CloseState>, ready: oneshot::Se
                     permits.add_permits(1);
                     browser.handle_text(&text, &mut sink);
                     browser.host_mut().flush();
+                    browser.adopt_popups(&mut sink);
                     if closing() {
                         break;
                     }

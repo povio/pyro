@@ -54,8 +54,23 @@ impl PageHooks for Hooks {
             if !b.doc(page).is_some_and(|p| p.main_frame.loader_id == loader) {
                 return;
             }
+            let new_context = request
+                .target
+                .as_deref()
+                .is_some_and(|t| !matches!(t.to_ascii_lowercase().as_str(), "" | "_self" | "_top" | "_parent"));
+            // `_blank` (and, until named browsing contexts exist, any other
+            // name) opens a popup page; the embedder creates and navigates it.
+            if new_context && request.method == "GET" && page.child.is_none() {
+                if let Some(frame_id) = b.doc(page).map(|p| p.main_frame.id.clone()) {
+                    b.emit(
+                        page.page,
+                        crate::PageEvent::PopupRequested { frame_id, url: request.url, opener: request.opener },
+                    );
+                }
+                return;
+            }
             let result = if request.method != "GET"
-                || request.target.as_deref().is_some_and(|t| !matches!(t, "" | "_self" | "_top" | "_parent"))
+                || new_context
                 || (page.child.is_some() && request.target.as_deref().is_some_and(|t| matches!(t, "_top" | "_parent")))
             {
                 Err(JsError::Unsupported("form POST and cross-frame navigation targets"))

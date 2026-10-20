@@ -89,7 +89,12 @@ impl EngineHost {
                 let frames = self.thread.browser.frames(page.id);
                 let root =
                     frames.iter().find(|f| f.parent.is_none()).ok_or_else(|| CdpError::server("page is gone"))?;
-                Ok(Some(json!({"frameTree": frame_tree(root, &frames)})))
+                let mut tree = frame_tree(root, &frames);
+                if page.initial_popup {
+                    // Chrome's uncommitted initial popup document (see Host::set_initial_popup).
+                    tree["frame"]["url"] = json!(":");
+                }
+                Ok(Some(json!({"frameTree": tree})))
             }
             "setLifecycleEventsEnabled" => {
                 #[derive(Deserialize)]
@@ -571,6 +576,9 @@ impl EngineHost {
                 for s in &all {
                     self.event("Page.frameDetached", &json!({ "frameId": frame_id.0, "reason": "remove" }), s);
                 }
+            }
+            PageEvent::PopupRequested { url, opener, .. } => {
+                self.popup_requests.push(crate::target::PopupRequest { opener: page, url, opener_access: opener });
             }
             PageEvent::FileChooserOpened { frame_id, input, multiple } => {
                 self.file_chooser_opened(page, &frame_id, input, multiple);

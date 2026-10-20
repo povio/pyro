@@ -189,6 +189,14 @@ pub enum PageEvent {
         input: lp_dom::NodeId,
         multiple: bool,
     },
+    /// A link or `window.open` targets a new browsing context: the embedder
+    /// opens `url` in a new page of the same browser context (no engine page
+    /// exists yet). `opener` is whether the popup keeps its opener.
+    PopupRequested {
+        frame_id: FrameId,
+        url: String,
+        opener: bool,
+    },
     /// A hyperlink download finished fetching (or failed).
     Download {
         frame_id: FrameId,

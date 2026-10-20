@@ -95,6 +95,7 @@ where
         Ok(crate::layout_api::match_media(s, w.page(), q)?.value())
     });
     def.method("getSelection", 0, |s, w, _a| crate::range::get_selection(s, w.page()));
+    def.method("open", 0, |s, w, a| window_open(s, w.page(), &a));
     def.getter("innerWidth", |s, w| Ok(s.number(w.page().layout.borrow().inner_width() as f64)));
     def.getter("innerHeight", |s, w| Ok(s.number(w.page().layout.borrow().inner_height() as f64)));
     def.getter("outerWidth", |s, w| Ok(s.number(w.page().layout.borrow().inner_width() as f64)));
@@ -339,4 +340,43 @@ pub fn css_namespace<'s>(s: &Scope<'s>) -> JsResult<Value<'s>> {
 pub(crate) fn register(engine: &lp_js::Engine) {
     engine.register::<Navigator>();
     engine.register::<Screen>();
+}
+
+/// `window.open(url, target, features)`. A new browsing context opens as a
+/// popup page in the same browser context (the CDP layer announces it with
+/// its opener). With `noopener`/`noreferrer` it returns null, as browsers do.
+/// A popup the page could script (opener access) needs a cross-page
+/// WindowProxy, which this engine does not have: that case throws instead of
+/// returning a stand-in window. `_self`/`_top`/`_parent` navigate this page.
+fn window_open<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: &lp_js::Args<'s>) -> JsResult<Value<'s>> {
+    let url = crate::util::opt_dom_string(a.get(0))?.unwrap_or_default();
+    let target = crate::util::opt_dom_string(a.get(1))?.filter(|t| !t.is_empty()).unwrap_or_else(|| "_blank".into());
+    let features = crate::util::opt_dom_string(a.get(2))?.unwrap_or_default().to_ascii_lowercase();
+    let no_opener = features
+        .split(|c: char| c == ',' || c.is_ascii_whitespace())
+        .filter_map(|f| f.split('=').next())
+        .any(|f| f == "noopener" || f == "noreferrer");
+    let url = if url.is_empty() {
+        "about:blank".to_owned()
+    } else {
+        let dom = page.dom.borrow();
+        crate::html::resolve_url(&dom, page.document(), &url)
+    };
+    let same_context = matches!(target.to_ascii_lowercase().as_str(), "_self" | "_top" | "_parent");
+    if !same_context && !no_opener {
+        return Err(JsError::Unsupported("window.open with opener access (a scriptable popup window)"));
+    }
+    page.navigate(crate::page::NavigationRequest {
+        url,
+        target: Some(target),
+        method: "GET".into(),
+        body: None,
+        content_type: None,
+        opener: false,
+    });
+    if same_context {
+        Ok(s.global().value())
+    } else {
+        Ok(s.null())
+    }
 }

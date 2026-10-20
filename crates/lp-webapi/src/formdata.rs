@@ -200,6 +200,7 @@ pub(crate) fn form_submission(
             method: "GET".into(),
             body: None,
             content_type: None,
+            opener: false,
         });
     }
     let (ct, body) = match enctype.as_deref() {
@@ -223,5 +224,6 @@ pub(crate) fn form_submission(
         method: "POST".into(),
         body: Some(body),
         content_type: Some(ct),
+        opener: false,
     })
 }

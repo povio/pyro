@@ -119,6 +119,9 @@ pub struct NavigationRequest {
     pub method: String,
     pub body: Option<Vec<u8>>,
     pub content_type: Option<String>,
+    /// A new browsing context (popup) keeps its opener (`window.opener`):
+    /// `window.open` without `noopener`, or a link with `rel=opener`.
+    pub opener: bool,
 }
 
 /// HTML "download the hyperlink" for a `download` link.

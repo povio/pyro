@@ -523,7 +523,7 @@ fn keyboard_click(page: &Rc<PageDom>, el: NodeId) {
 }
 
 fn follow_hyperlink(page: &Rc<PageDom>, el: NodeId) {
-    let (url, target) = {
+    let (url, target, opener) = {
         let dom = page.dom.borrow();
         let Some(href) = dom.get_attribute(el, "href").ok().flatten() else { return };
         let url = crate::html::resolve_url(&dom, el, href);
@@ -556,9 +556,20 @@ fn follow_hyperlink(page: &Rc<PageDom>, el: NodeId) {
                 return;
             }
         }
-        (url, dom.get_attribute(el, "target").ok().flatten().map(str::to_owned))
+        // HTML: a link that targets a new browsing context is noopener unless rel=opener.
+        let rel = dom.get_attribute(el, "rel").ok().flatten().unwrap_or_default().to_ascii_lowercase();
+        let rel: Vec<&str> = rel.split_ascii_whitespace().collect();
+        let opener = rel.contains(&"opener") && !rel.contains(&"noopener") && !rel.contains(&"noreferrer");
+        (url, dom.get_attribute(el, "target").ok().flatten().map(str::to_owned), opener)
     };
-    page.navigate(crate::page::NavigationRequest { url, target, method: "GET".into(), body: None, content_type: None });
+    page.navigate(crate::page::NavigationRequest {
+        url,
+        target,
+        method: "GET".into(),
+        body: None,
+        content_type: None,
+        opener,
+    });
 }
 
 // ----- forms ------------------------------------------------------------------

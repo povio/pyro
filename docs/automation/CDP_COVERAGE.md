@@ -108,7 +108,7 @@ Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 53 engi
 | `Runtime.evaluate` | yes | engine |  |
 | `Runtime.getProperties` | yes | engine |  |
 | `Runtime.releaseObject` | yes | engine |  |
-| `Runtime.runIfWaitingForDebugger` | yes | engine |  |
+| `Runtime.runIfWaitingForDebugger` | yes | engine | starts a paused popup's navigation; other targets never start paused |
 | `Security.setIgnoreCertificateErrors` | yes | pending |  |
 | `Storage.clearCookies` | yes | engine | per-context native cookie jar; omitted context uses a distinct default context |
 | `Storage.getCookies` | yes | engine | per-context native cookie jar; omitted context uses a distinct default context |
@@ -117,7 +117,7 @@ Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 53 engi
 | `Target.attachToTarget` | yes | engine |  |
 | `Target.closeTarget` | yes | engine |  |
 | `Target.createBrowserContext` | yes | engine | `proxyServer` is refused |
-| `Target.createTarget` | yes | engine |  |
+| `Target.createTarget` | yes | engine | engine-opened popups (`target=_blank`/named links, `window.open` with `noopener`) become targets in the opener's context with `openerId`, paused (`waitingForDebugger`) under auto-attach; `window.open` with opener access throws (no cross-page WindowProxy); named targets always open a new page |
 | `Target.detachFromTarget` | yes | engine |  |
 | `Target.disposeBrowserContext` | yes | engine |  |
 | `Target.getTargetInfo` | yes | engine |  |
