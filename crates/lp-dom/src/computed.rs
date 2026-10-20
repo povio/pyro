@@ -345,12 +345,23 @@ pub fn fmt_num(x: f64) -> String {
 #[derive(Copy, Clone, Debug, PartialEq)]
 enum CalcValue {
     Number(f64),
-    Px(f64),
+    /// `px + percent%` (percent of the property's percentage basis).
+    Linear(f64, f64),
 }
 
-struct LengthContext {
-    font_size: f64,
-    root_font_size: f64,
+/// What relative units resolve against.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct LengthContext {
+    pub font_size: f64,
+    pub root_font_size: f64,
+    pub viewport_width: f64,
+    pub viewport_height: f64,
+}
+
+impl LengthContext {
+    pub fn fonts(font_size: f64, root_font_size: f64) -> Self {
+        LengthContext { font_size, root_font_size, viewport_width: 0.0, viewport_height: 0.0 }
+    }
 }
 
 fn calc_sum(p: &mut Parser<'_>, cx: &LengthContext) -> Option<CalcValue> {
@@ -372,7 +383,7 @@ fn calc_sum(p: &mut Parser<'_>, cx: &LengthContext) -> Option<CalcValue> {
 fn add(a: CalcValue, b: CalcValue, sign: f64) -> Option<CalcValue> {
     match (a, b) {
         (CalcValue::Number(x), CalcValue::Number(y)) => Some(CalcValue::Number(x + sign * y)),
-        (CalcValue::Px(x), CalcValue::Px(y)) => Some(CalcValue::Px(x + sign * y)),
+        (CalcValue::Linear(x, xp), CalcValue::Linear(y, yp)) => Some(CalcValue::Linear(x + sign * y, xp + sign * yp)),
         // `0 + 1px` is invalid in CSS; zero lengths are written with units by Tailwind.
         _ => None,
     }
@@ -387,9 +398,8 @@ fn calc_product(p: &mut Parser<'_>, cx: &LengthContext) -> Option<CalcValue> {
                 let rhs = calc_factor(p, cx)?;
                 acc = match (acc, rhs) {
                     (CalcValue::Number(x), CalcValue::Number(y)) => CalcValue::Number(x * y),
-                    (CalcValue::Px(x), CalcValue::Number(y)) | (CalcValue::Number(y), CalcValue::Px(x)) => {
-                        CalcValue::Px(x * y)
-                    }
+                    (CalcValue::Linear(x, xp), CalcValue::Number(y))
+                    | (CalcValue::Number(y), CalcValue::Linear(x, xp)) => CalcValue::Linear(x * y, xp * y),
                     _ => return None,
                 };
             }
@@ -400,7 +410,7 @@ fn calc_product(p: &mut Parser<'_>, cx: &LengthContext) -> Option<CalcValue> {
                 }
                 acc = match acc {
                     CalcValue::Number(x) => CalcValue::Number(x / y),
-                    CalcValue::Px(x) => CalcValue::Px(x / y),
+                    CalcValue::Linear(x, xp) => CalcValue::Linear(x / y, xp / y),
                 };
             }
             _ => {
@@ -415,7 +425,8 @@ fn calc_factor(p: &mut Parser<'_>, cx: &LengthContext) -> Option<CalcValue> {
     let token = p.next().ok()?.clone();
     match token {
         Token::Number { value, .. } => Some(CalcValue::Number(value as f64)),
-        Token::Dimension { value, ref unit, .. } => Some(CalcValue::Px(absolute_px(value as f64, unit, cx)?)),
+        Token::Percentage { unit_value, .. } => Some(CalcValue::Linear(0.0, unit_value as f64 * 100.0)),
+        Token::Dimension { value, ref unit, .. } => Some(CalcValue::Linear(absolute_px(value as f64, unit, cx)?, 0.0)),
         Token::ParenthesisBlock => p.parse_nested_block(|p| nested(p, cx)).ok(),
         Token::Function(ref name) if name.eq_ignore_ascii_case("calc") => p.parse_nested_block(|p| nested(p, cx)).ok(),
         _ => None,
@@ -440,19 +451,50 @@ fn absolute_px(value: f64, unit: &str, cx: &LengthContext) -> Option<f64> {
         "cm" => value * 96.0 / 2.54,
         "mm" => value * 96.0 / 25.4,
         "q" => value * 96.0 / 101.6,
+        "vw" | "dvw" | "svw" | "lvw" if cx.viewport_width > 0.0 => value * cx.viewport_width / 100.0,
+        "vh" | "dvh" | "svh" | "lvh" if cx.viewport_height > 0.0 => value * cx.viewport_height / 100.0,
         _ => return None,
     })
+}
+
+/// A single length, percentage or `calc()` of them as `(px, percent)`.
+/// `None` for keywords, lists and unsupported units.
+pub fn resolve_len(value: &str, cx: &LengthContext) -> Option<(f64, f64)> {
+    let mut p = Parser::new(value.trim());
+    let token = p.next().ok()?.clone();
+    let result = match token {
+        Token::Dimension { value, ref unit, .. } => CalcValue::Linear(absolute_px(value as f64, unit, cx)?, 0.0),
+        Token::Percentage { unit_value, .. } => CalcValue::Linear(0.0, unit_value as f64 * 100.0),
+        Token::Number { value, .. } if value == 0.0 => CalcValue::Linear(0.0, 0.0),
+        Token::Function(ref name) if name.eq_ignore_ascii_case("calc") => {
+            p.parse_nested_block(|p| nested(p, cx)).ok()?
+        }
+        _ => return None,
+    };
+    p.expect_exhausted().ok()?;
+    match result {
+        CalcValue::Linear(px, pct) => Some((px, pct)),
+        CalcValue::Number(_) => None,
+    }
 }
 
 /// A single length or `calc()` of absolute lengths, as `Npx`. `None` keeps
 /// the declared value (percentages, keywords, viewport units, lists).
 pub fn resolve_length(value: &str, font_size: f64, root_font_size: f64) -> Option<String> {
-    let cx = LengthContext { font_size, root_font_size };
+    if value.contains('%') {
+        return None;
+    }
+    let (px, _) = resolve_len(value, &LengthContext::fonts(font_size, root_font_size))?;
+    Some(format!("{}px", fmt_num(px)))
+}
+
+/// A unitless number or `calc()` of numbers, else `None`.
+pub fn resolve_number(value: &str) -> Option<f64> {
+    let cx = LengthContext::fonts(16.0, 16.0);
     let mut p = Parser::new(value.trim());
     let token = p.next().ok()?.clone();
     let result = match token {
-        Token::Dimension { value, ref unit, .. } => CalcValue::Px(absolute_px(value as f64, unit, &cx)?),
-        Token::Number { value, .. } if value == 0.0 => CalcValue::Px(0.0),
+        Token::Number { value, .. } => CalcValue::Number(value as f64),
         Token::Function(ref name) if name.eq_ignore_ascii_case("calc") => {
             p.parse_nested_block(|p| nested(p, &cx)).ok()?
         }
@@ -460,22 +502,8 @@ pub fn resolve_length(value: &str, font_size: f64, root_font_size: f64) -> Optio
     };
     p.expect_exhausted().ok()?;
     match result {
-        CalcValue::Px(px) => Some(format!("{}px", fmt_num(px))),
-        CalcValue::Number(_) => None,
-    }
-}
-
-/// A unitless `calc()` result (e.g. `flex-grow: calc(1 + 1)`), else `None`.
-pub fn resolve_number(value: &str) -> Option<String> {
-    let cx = LengthContext { font_size: 16.0, root_font_size: 16.0 };
-    let mut p = Parser::new(value.trim());
-    let Token::Function(name) = p.next().ok()?.clone() else { return None };
-    if !name.eq_ignore_ascii_case("calc") {
-        return None;
-    }
-    match p.parse_nested_block(|p| nested(p, &cx)).ok()? {
-        CalcValue::Number(n) => Some(fmt_num(n)),
-        CalcValue::Px(_) => None,
+        CalcValue::Number(n) => Some(n),
+        CalcValue::Linear(..) => None,
     }
 }
 
@@ -931,7 +959,13 @@ mod tests {
         assert_eq!(resolve_length("0", 16.0, 16.0).as_deref(), Some("0px"));
         assert_eq!(resolve_length("calc((1px + 2px) * 2)", 16.0, 16.0).as_deref(), Some("6px"));
         assert_eq!(resolve_length("13.333333px", 16.0, 16.0).as_deref(), Some("13.3333px"));
-        assert_eq!(resolve_number("calc(1 + 1)").as_deref(), Some("2"));
+        assert_eq!(resolve_number("calc(1 + 1)"), Some(2.0));
+        let cx =
+            LengthContext { font_size: 10.0, root_font_size: 14.0, viewport_width: 1440.0, viewport_height: 900.0 };
+        assert_eq!(resolve_len("calc(100% - 8px)", &cx), Some((-8.0, 100.0)));
+        assert_eq!(resolve_len("50vw", &cx), Some((720.0, 0.0)));
+        assert_eq!(resolve_len("2rem", &cx), Some((28.0, 0.0)));
+        assert_eq!(resolve_len("auto", &cx), None);
     }
 
     #[test]

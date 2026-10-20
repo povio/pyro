@@ -2307,13 +2307,82 @@ impl StyleEngine {
             };
             return Some(computed::serialize_color(value, &mut current).unwrap_or_else(|| value.to_owned()));
         }
+        if name == "font-size" {
+            return Some(format!("{}px", computed::fmt_num(self.font_size_at_cascade(dom, rules, idx, depth))));
+        }
         if computed::is_length_property(name) {
-            let font_size = self.computed_font_size(dom, Some(id));
-            if let Some(px) = computed::resolve_length(value, font_size, DEFAULT_FONT_SIZE) {
-                return Some(px);
+            let cx = self.length_context(dom, rules, idx, depth);
+            // Percentages stay as declared: their basis is a used value the faux layout lacks.
+            if let Some((px, 0.0)) = computed::resolve_len(value, &cx).filter(|_| !value.contains('%')) {
+                return Some(format!("{}px", computed::fmt_num(px)));
             }
         }
-        Some(computed::resolve_number(value).unwrap_or_else(|| value.to_owned()))
+        Some(computed::resolve_number(value).map_or_else(|| value.to_owned(), computed::fmt_num))
+    }
+
+    /// Units for lengths declared on `idx`: its font-size (em), the root's (rem), the viewport (vw/vh).
+    fn length_context(&self, dom: &Dom, rules: &RuleSet, idx: u32, depth: u8) -> computed::LengthContext {
+        computed::LengthContext {
+            font_size: self.font_size_at_cascade(dom, rules, idx, depth),
+            root_font_size: self.root_font_size(dom, rules),
+            viewport_width: self.viewport.width as f64,
+            viewport_height: self.viewport.height as f64,
+        }
+    }
+
+    fn root_font_size(&self, dom: &Dom, rules: &RuleSet) -> f64 {
+        let root = dom.document_element(self.doc).ok().flatten().and_then(|r| dom.check(r).ok());
+        root.map_or(DEFAULT_FONT_SIZE, |r| {
+            self.font_size_from_parent(dom, rules, r, DEFAULT_FONT_SIZE, DEFAULT_FONT_SIZE)
+        })
+    }
+
+    /// The computed font-size of `idx` from the cascade: inherited; keywords,
+    /// `em`/`%` against the parent's size, `rem` against the root's.
+    fn font_size_at_cascade(&self, dom: &Dom, rules: &RuleSet, idx: u32, depth: u8) -> f64 {
+        if depth >= MAX_COMPUTED_DEPTH {
+            return DEFAULT_FONT_SIZE;
+        }
+        let Some(parent) = flat_tree_parent_element(dom, idx) else {
+            return self.font_size_from_parent(dom, rules, idx, DEFAULT_FONT_SIZE, DEFAULT_FONT_SIZE);
+        };
+        let parent_size = self.font_size_at_cascade(dom, rules, parent, depth + 1);
+        let root = self.root_font_size(dom, rules);
+        self.font_size_from_parent(dom, rules, idx, parent_size, root)
+    }
+
+    fn font_size_from_parent(&self, dom: &Dom, rules: &RuleSet, idx: u32, parent: f64, root: f64) -> f64 {
+        let id = dom.id_of(idx);
+        let Some(raw) = declared_value(dom, rules, id, "font-size") else { return parent };
+        let mut lookup = |var: &str| custom_property_source(dom, rules, id, var).map(|(_, value)| value);
+        let Some(value) = computed::substitute_vars(&raw, &mut lookup, 0) else { return parent };
+        let keyword = match value.trim().to_ascii_lowercase().as_str() {
+            "inherit" | "unset" | "revert" | "revert-layer" => return parent,
+            "initial" | "medium" => Some(16.0),
+            "xx-small" => Some(9.0),
+            "x-small" => Some(10.0),
+            "small" => Some(13.0),
+            "large" => Some(18.0),
+            "x-large" => Some(24.0),
+            "xx-large" => Some(32.0),
+            "xxx-large" => Some(48.0),
+            "smaller" => Some(parent / 1.2),
+            "larger" => Some(parent * 1.2),
+            _ => None,
+        };
+        if let Some(px) = keyword {
+            return px;
+        }
+        let cx = computed::LengthContext {
+            font_size: parent,
+            root_font_size: root,
+            viewport_width: self.viewport.width as f64,
+            viewport_height: self.viewport.height as f64,
+        };
+        match computed::resolve_len(&value, &cx) {
+            Some((px, pct)) => px + pct * parent / 100.0,
+            None => parent,
+        }
     }
 
     /// computedFontSize (StyleManager.zig:2002-2089): inline `font-size`

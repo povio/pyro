@@ -1259,7 +1259,11 @@ impl Layout {
                 return self.style.custom_property_value(dom, el, &name).unwrap_or_default();
             }
             if name == "font-size" {
-                return format!("{}px", self.style.computed_font_size(dom, Some(el)));
+                // The cascade (stylesheets, em/%/rem, keywords) when any author value applies; else the inline/attribute walk.
+                return self
+                    .style
+                    .computed_value(dom, el, "font-size")
+                    .unwrap_or_else(|| format!("{}px", self.style.computed_font_size(dom, Some(el))));
             }
             let declared = self.style.computed_value(dom, el, &name);
             if name == "width" || name == "height" {

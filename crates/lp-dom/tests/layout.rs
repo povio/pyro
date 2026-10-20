@@ -299,10 +299,12 @@ fn media_query_zig_unit_tests() {
     for q in ["(min-width: 5cm)", "(min-width: 50mm)", "(min-width: 10pt)", "(min-width: 1in)", "(min-width: 50vw)"] {
         assert!(!mq(q), "{q}");
     }
-    // range syntax is unsupported
-    for q in ["(width >= 600px)", "(width <= 600px)", "(width < 100px)", "(600px <= width <= 1200px)"] {
+    // range syntax (Media Queries 4) at the 1920px default width; upstream rejected it
+    assert!(mq("(width >= 600px)"));
+    for q in ["(width <= 600px)", "(width < 100px)", "(600px <= width <= 1200px)"] {
         assert!(!mq(q), "{q}");
     }
+    assert!(mq("(600px <= width <= 1920px)"));
     // whitespace-tight and -loose features
     assert!(mq("(min-width:600px)"));
     assert!(mq("( min-width : 600px )"));
@@ -2705,4 +2707,17 @@ fn computed_style_reads_svg_presentation_attributes() {
     assert_eq!(p.cs(rect, "fill"), "rgb(0, 0, 255)");
     assert_eq!(p.cs(plain, "stroke"), "none");
     assert_eq!(p.cs(plain, "fill"), "rgb(0, 0, 0)");
+}
+
+#[test]
+fn computed_lengths_use_cascaded_font_sizes() {
+    let mut p = page("<!DOCTYPE html><body><div id=outer><span id=inner>x</span></div></body>");
+    p.add_style("html{font-size:14px} #outer{font-size:1.5em;padding-left:1em;margin-left:2rem} #inner{font-size:50%;width:calc(100% - 8px);height:10vh}");
+    let (outer, inner) = (p.id("outer"), p.id("inner"));
+    assert_eq!(p.cs(outer, "font-size"), "21px");
+    assert_eq!(p.cs(outer, "padding-left"), "21px");
+    assert_eq!(p.cs(outer, "margin-left"), "28px");
+    assert_eq!(p.cs(inner, "font-size"), "10.5px");
+    // vh resolves against the 1920x1080 default viewport.
+    assert_eq!(p.cs(inner, "height"), "108px");
 }
