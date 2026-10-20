@@ -709,6 +709,19 @@ enum InlineItem {
         style: Box<FlowStyle>,
         owners: Vec<NodeId>,
     },
+    /// A block-level box inside inline content (block-in-inline): it ends the
+    /// current line and takes its own margin-box height, without a strut.
+    Block {
+        el: NodeId,
+        style: Box<FlowStyle>,
+        owners: Vec<NodeId>,
+    },
+    /// An absolutely/fixed positioned box inside inline content: placed
+    /// later against its containing block, from the current line position.
+    OutOfFlow {
+        el: NodeId,
+        style: Box<FlowStyle>,
+    },
     /// An inline element that starts or ends (for empty inline boxes).
     Empty {
         owners: Vec<NodeId>,
@@ -1551,6 +1564,29 @@ impl<'a> Ctx<'a> {
                     line.push(at, 0.0, height, ascent, owners, None);
                     line.extents(strut);
                 }
+                InlineItem::Block { el, style, owners } => {
+                    line_y += self.flush_line(
+                        &mut line,
+                        x,
+                        line_y,
+                        width,
+                        fixed,
+                        shift,
+                        &mut frags,
+                        &mut order_of,
+                        parent.text_align,
+                    );
+                    line_y += self.block_child(el, &style, x, line_y, width, fixed, shift);
+                    if let Some(r) = self.out.boxes.get(&el).map(|b| b.rect) {
+                        for o in &owners {
+                            union(&mut frags, &mut order_of, *o, r);
+                        }
+                    }
+                }
+                InlineItem::OutOfFlow { el, style } => {
+                    // Static position: where the next inline content would go.
+                    self.defer_absolute(el, *style, x - shift.0 + line.x, line_y);
+                }
             }
         }
         line_y +=
@@ -1726,6 +1762,14 @@ impl<'a> Ctx<'a> {
                 let Some(style) = self.style_of(n) else { return };
                 if self.dom.element(n).is_ok_and(|e| e.is_html() && *e.local_name() == *"br") {
                     items.push(InlineItem::Break);
+                    return;
+                }
+                if matches!(style.position, Position::Absolute | Position::Fixed) {
+                    items.push(InlineItem::OutOfFlow { el: n, style: Box::new(style) });
+                    return;
+                }
+                if style.outer == OuterDisplay::Block {
+                    items.push(InlineItem::Block { el: n, style: Box::new(style), owners: owners.to_vec() });
                     return;
                 }
                 let mut with = owners.to_vec();

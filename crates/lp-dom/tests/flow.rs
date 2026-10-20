@@ -1461,3 +1461,25 @@ fn flow_parity_registered_custom_properties() {
         [800.0, 600.0],
     );
 }
+
+#[test]
+fn flow_parity_block_in_inline() {
+    // A block-level box inside an inline element ends the line and takes
+    // its own height (no strut): TOS's `<label>` around a `display:flex`
+    // textarea was 7px too tall. Chromium 1.59.1; the inline span's own
+    // box height is font-dependent, so it is not compared.
+    let html = "<!doctype html><body style=\"margin:0\"><div id=w style=\"line-height:24px\"><label id=l><div id=b style=\"height:100px\"></div></label></div><div id=w2 style=\"line-height:24px\"><span id=s>text<div id=b2 style=\"height:50px\"></div>more</span></div></body>";
+    check(
+        "block-in-inline",
+        html,
+        0,
+        &[
+            ("w", [0.0, 0.0, 800.0, 100.0, 800.0, 100.0, 800.0, 100.0]),
+            ("l", [0.0, 0.0, 800.0, 100.0, 0.0, 0.0, 0.0, 0.0]),
+            ("b", [0.0, 0.0, 800.0, 100.0, 800.0, 100.0, 800.0, 100.0]),
+            ("w2", [0.0, 100.0, 800.0, 98.0, 800.0, 98.0, 800.0, 98.0]),
+            ("b2", [0.0, 124.0, 800.0, 50.0, 800.0, 50.0, 800.0, 50.0]),
+        ],
+        [800.0, 600.0],
+    );
+}
