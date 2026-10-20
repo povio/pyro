@@ -1537,14 +1537,18 @@ fn whole_variable(raw: &str) -> Option<(String, Option<String>)> {
     Some(result)
 }
 
-// Return the defining element too: substitution occurs there, before the value
-// is inherited, so a descendant's custom-property override cannot alter it.
 /// Memo of ancestor-derived values for one layout pass, during which the
-/// DOM and style sheets cannot change (the pass holds `&Dom`).
+/// DOM and style sheets cannot change (the pass holds `&Dom`). Keys include
+/// the document's address: a thread may lay out several documents (frames),
+/// whose node indices overlap.
 #[derive(Default)]
 struct PassMemo {
-    custom: FxHashMap<(u32, String), Option<(NodeId, String)>>,
-    font_size: FxHashMap<u32, f64>,
+    custom: FxHashMap<(usize, u32, String), Option<(NodeId, String)>>,
+    font_size: FxHashMap<(usize, u32), f64>,
+}
+
+fn dom_key(dom: &Dom) -> usize {
+    dom as *const Dom as usize
 }
 
 thread_local! {
@@ -1754,6 +1758,8 @@ fn compound_key(compound: &[&Component<Impl>]) -> AnchorKey {
     AnchorKey::Any
 }
 
+// Return the defining element too: substitution occurs there, before the value
+// is inherited, so a descendant's custom-property override cannot alter it.
 fn custom_property_source(dom: &Dom, rules: &RuleSet, el: NodeId, name: &str) -> Option<(NodeId, String)> {
     // A registered property that does not inherit takes the element's own
     // value or its initial value (Tailwind registers its --tw-* variables
@@ -1780,8 +1786,8 @@ fn custom_property_inherited(dom: &Dom, rules: &RuleSet, el: NodeId, name: &str)
     let mut cur = dom.check(el).ok();
     let mut found = None;
     while let Some(idx) = cur {
-        if let Some(hit) =
-            PASS_MEMO.with(|m| m.borrow().as_ref().and_then(|m| m.custom.get(&(idx, name.to_owned())).cloned()))
+        if let Some(hit) = PASS_MEMO
+            .with(|m| m.borrow().as_ref().and_then(|m| m.custom.get(&(dom_key(dom), idx, name.to_owned())).cloned()))
         {
             found = hit;
             break;
@@ -1796,7 +1802,7 @@ fn custom_property_inherited(dom: &Dom, rules: &RuleSet, el: NodeId, name: &str)
     PASS_MEMO.with(|m| {
         if let Some(m) = m.borrow_mut().as_mut() {
             for idx in visited {
-                m.custom.insert((idx, name.to_owned()), found.clone());
+                m.custom.insert((dom_key(dom), idx, name.to_owned()), found.clone());
             }
         }
     });
@@ -2918,13 +2924,15 @@ impl StyleEngine {
         if depth >= MAX_COMPUTED_DEPTH {
             return DEFAULT_FONT_SIZE;
         }
-        if let Some(v) = PASS_MEMO.with(|m| m.borrow().as_ref().and_then(|m| m.font_size.get(&idx).copied())) {
+        if let Some(v) =
+            PASS_MEMO.with(|m| m.borrow().as_ref().and_then(|m| m.font_size.get(&(dom_key(dom), idx)).copied()))
+        {
             return v;
         }
         let v = self.font_size_at_cascade_uncached(dom, rules, idx, depth);
         PASS_MEMO.with(|m| {
             if let Some(m) = m.borrow_mut().as_mut() {
-                m.font_size.insert(idx, v);
+                m.font_size.insert((dom_key(dom), idx), v);
             }
         });
         v
