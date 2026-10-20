@@ -46,7 +46,15 @@ impl FlowStyleSource for StyleEngine {
         };
         let len = |name: &str| value(name).and_then(|v| computed::resolve_len(&v, &cx)).map(to_len);
         let dim = |name: &str| match value(name) {
-            Some(v) => computed::resolve_len(&v, &cx).map_or(Dim::Auto, |l| Dim::Len(to_len(l))),
+            // Intrinsic size keywords (flow honours them for widths).
+            Some(v) => match v.trim().to_ascii_lowercase().as_str() {
+                "min-content" => Dim::Content(crate::flow::ContentSize::Min),
+                "max-content" => Dim::Content(crate::flow::ContentSize::Max),
+                "fit-content" | "-webkit-fit-content" | "-moz-fit-content" => {
+                    Dim::Content(crate::flow::ContentSize::Fit)
+                }
+                _ => computed::resolve_len(&v, &cx).map_or(Dim::Auto, |l| Dim::Len(to_len(l))),
+            },
             None => Dim::Auto,
         };
 
