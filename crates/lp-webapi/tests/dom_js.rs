@@ -3237,6 +3237,86 @@ fn data_transfer_store_items_and_files() {
 }
 
 #[test]
+fn input_files_setter_accepts_data_transfer_files() {
+    let e = env("<body><form id=fm><input type=file id=f name=up multiple><input id=t name=t value=v></form></body>");
+    let r = &e.main;
+    // Playwright's in-memory setInputFiles (injected script, 1.59) verbatim.
+    assert_eq!(
+        eval(
+            r,
+            r#"
+        window.seen = [];
+        const input = document.getElementById('f');
+        input.addEventListener('input', ev => seen.push(ev.type + ':' + ev.bubbles + ':' + ev.composed + ':' + input.files.length));
+        input.addEventListener('change', ev => seen.push(ev.type + ':' + ev.bubbles + ':' + input.files.length));
+        const payloads = [
+            { name: 'a.txt', mimeType: 'text/plain', buffer: btoa('hi'), lastModifiedMs: 1234 },
+            { name: 'b.bin', mimeType: 'application/octet-stream', buffer: btoa(String.fromCharCode(0, 255, 7)) },
+        ];
+        const files = payloads.map((file) => {
+            const bytes = Uint8Array.from(atob(file.buffer), (c) => c.charCodeAt(0));
+            return new File([bytes], file.name, { type: file.mimeType, lastModified: file.lastModifiedMs });
+        });
+        const dt = new DataTransfer();
+        for (const file of files)
+            dt.items.add(file);
+        input.files = dt.files;
+        input.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+        const fl = input.files;
+        [fl instanceof FileList, fl.length, fl[0] instanceof File, fl[0].name, fl[0].type, fl[0].size, fl[0].lastModified,
+         fl.item(1).name, fl[1].type, fl[1].size, fl[1].lastModified > 0, input.value, seen.join(',')].join('|')
+    "#
+        ),
+        "true|2|true|a.txt|text/plain|2|1234|b.bin|application/octet-stream|3|true|C:\\fakepath\\a.txt|input:true:true:2,change:true:2"
+    );
+    // The bytes survive into the selection and into form submission data.
+    eval(r, "window.texts = []; input.files[0].text().then(t => texts.push(t)); input.files[1].arrayBuffer().then(b => texts.push([...new Uint8Array(b)].join('.'))); 1");
+    assert_eq!(eval(r, "texts.join('|')"), "hi|0.255.7");
+    assert_eq!(
+        eval(r, "[...new FormData(document.getElementById('fm'))].map(([k, v]) => k + '=' + (v instanceof File ? v.name + ':' + v.size + ':' + v.type : v)).join('&')"),
+        "up=a.txt:2:text/plain&up=b.bin:3:application/octet-stream&t=v"
+    );
+    // Assigning a replacement selection, and an empty one, replaces it.
+    assert_eq!(
+        eval(r, "const d2 = new DataTransfer(); d2.items.add(new File(['xyz'], 'c.csv', { type: 'text/csv' })); input.files = d2.files; [input.files.length, input.files[0].name, input.value].join('|')"),
+        "1|c.csv|C:\\fakepath\\c.csv"
+    );
+    assert_eq!(
+        eval(r, "input.files = new DataTransfer().files; [input.files.length, JSON.stringify(input.value)].join('|')"),
+        "0|\"\""
+    );
+    // `value = ''` is the usual reset; it clears both the name and the files.
+    assert_eq!(
+        eval(r, "input.files = dt.files; const before = input.files.length; input.value = ''; [before, input.files.length, JSON.stringify(input.value)].join('|')"),
+        "2|0|\"\""
+    );
+    // Null is ignored; non-FileList values throw (WebIDL `FileList?`).
+    assert_eq!(
+        eval(
+            r,
+            r#"
+        input.files = dt.files;
+        const out = [];
+        input.files = null; out.push(input.files.length);
+        input.files = undefined; out.push(input.files.length);
+        for (const bad of [{}, [new File(['x'], 'x')], 'a.txt', new File(['x'], 'x')]) {
+            try { input.files = bad; out.push('no throw'); } catch (err) { out.push(err instanceof TypeError); }
+        }
+        out.push(input.files.length, Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'files').set !== undefined);
+        out.join('|')
+    "#
+        ),
+        "2|2|true|true|true|true|2|true"
+    );
+    // A non-file input keeps `files === null` and ignores the assignment.
+    assert_eq!(
+        eval(r, "const t = document.getElementById('t'); t.files = dt.files; [t.files, t.value].join('|')"),
+        "|v"
+    );
+}
+
+#[test]
 fn drag_event_carries_its_data_transfer() {
     let e = env("<body><div id=d></div></body>");
     let r = &e.main;

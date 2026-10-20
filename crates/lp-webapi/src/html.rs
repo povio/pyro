@@ -856,7 +856,13 @@ simple_class!(HtmlInputElement, "HTMLInputElement", HtmlElement, |def| {
         |s, n| Ok(s.string(&n.page().dom.borrow().value(n.id).js()?)),
         |_s, n, v| {
             let arg0 = null_to_empty(v)?;
-            n.page().dom.borrow_mut().set_value(n.id, &arg0).js()
+            let page = n.page();
+            page.dom.borrow_mut().set_value(n.id, &arg0).js()?;
+            // `value = ''` on a file input empties its selected files too.
+            if page.dom.borrow().input_type(n.id).js()? == InputType::File {
+                page.files.borrow_mut().remove(&n.id);
+            }
+            Ok(())
         },
     );
     def.accessor(
@@ -898,7 +904,7 @@ simple_class!(HtmlInputElement, "HTMLInputElement", HtmlElement, |def| {
             n.page().dom.borrow_mut().set_value(n.id, &text).js()
         },
     );
-    def.getter("files", crate::file::input_files);
+    def.accessor("files", crate::file::input_files, crate::file::set_input_files);
     def.getter("list", |s, n| {
         let dom = n.page().dom.borrow();
         let id = dom.get_attribute(n.id, "list").js()?.map(str::to_owned);
