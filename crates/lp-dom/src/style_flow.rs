@@ -14,7 +14,7 @@ use crate::computed::{self, LengthContext};
 use crate::dom::Dom;
 use crate::flow::{
     Align, Dim, FlexDirection, FlowStyle, FlowStyleSource, InnerDisplay, Justify, Len, OuterDisplay, Position,
-    TablePart,
+    TablePart, TextAlign,
 };
 use crate::node::NodeId;
 use crate::style::{StyleEngine, DEFAULT_FONT_SIZE};
@@ -224,6 +224,14 @@ impl FlowStyleSource for StyleEngine {
                 value("grid-row-start").as_deref(),
                 value("grid-row-end").as_deref(),
             ),
+            // text-align inherits; LTR maps start/left/justify to Start.
+            text_align: match value("text-align").map(|v| v.trim().to_ascii_lowercase()).as_deref() {
+                Some("center" | "-webkit-center") => TextAlign::Center,
+                Some("right" | "end" | "-webkit-right") => TextAlign::End,
+                Some(_) => TextAlign::Start,
+                None if matches!(tag.as_str(), "th" | "center") => TextAlign::Center,
+                None => TextAlign::Start,
+            },
             ..FlowStyle::default()
         })
     }

@@ -2822,3 +2822,14 @@ fn computed_style_maps_logical_properties() {
     assert_eq!(p.cs(b, "border-right-style"), "solid");
     assert_eq!(p.cs(b, "border-top-width"), "0px");
 }
+
+#[test]
+fn flow_style_reports_inherited_text_align() {
+    use lp_dom::flow::{FlowStyleSource, TextAlign};
+    let mut p = page("<!DOCTYPE html><body><div id=c class=text-center><span id=s>x</span></div><p id=r style='text-align:end'>r</p><table><tr><th id=th>h</th><td id=td>d</td></tr></table></body>");
+    p.add_style(".text-center{text-align:center}");
+    let style = p.layout.style();
+    let get = |id: &str| style.flow_style(&p.dom, p.id(id)).unwrap().text_align;
+    assert_eq!((get("c"), get("s"), get("r")), (TextAlign::Center, TextAlign::Center, TextAlign::End));
+    assert_eq!((get("th"), get("td")), (TextAlign::Center, TextAlign::Start));
+}
