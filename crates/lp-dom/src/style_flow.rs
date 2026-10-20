@@ -198,6 +198,32 @@ impl FlowStyleSource for StyleEngine {
                 .unwrap_or(if inner == InnerDisplay::Table { (2.0, 2.0) } else { (0.0, 0.0) }),
             border_collapse: keyword("border-collapse") == "collapse",
             table_layout_fixed: keyword("table-layout") == "fixed",
+            // Grid container and item inputs (flow Stage 4).
+            grid_template_columns: value("grid-template-columns")
+                .map(|v| crate::flow::parse_track_list(&v, &|t| computed::resolve_len(t, &cx).map(to_len)))
+                .unwrap_or_default(),
+            grid_template_rows: value("grid-template-rows")
+                .map(|v| crate::flow::parse_track_list(&v, &|t| computed::resolve_len(t, &cx).map(to_len)))
+                .unwrap_or_default(),
+            grid_auto_columns: value("grid-auto-columns")
+                .and_then(|v| crate::flow::parse_track(&v, &|t| computed::resolve_len(t, &cx).map(to_len)))
+                .unwrap_or_default(),
+            grid_auto_rows: value("grid-auto-rows")
+                .and_then(|v| crate::flow::parse_track(&v, &|t| computed::resolve_len(t, &cx).map(to_len)))
+                .unwrap_or_default(),
+            grid_auto_flow_column: keyword("grid-auto-flow").starts_with("column"),
+            justify_items: align(&keyword("justify-items")).unwrap_or(Align::Stretch),
+            justify_self: align(&keyword("justify-self")),
+            grid_column: crate::flow::parse_grid_placement(
+                value("grid-column").as_deref(),
+                value("grid-column-start").as_deref(),
+                value("grid-column-end").as_deref(),
+            ),
+            grid_row: crate::flow::parse_grid_placement(
+                value("grid-row").as_deref(),
+                value("grid-row-start").as_deref(),
+                value("grid-row-end").as_deref(),
+            ),
             ..FlowStyle::default()
         })
     }

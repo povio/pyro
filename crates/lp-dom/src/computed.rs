@@ -274,6 +274,18 @@ pub fn expand(name: &str, value: &str) -> Vec<(String, String)> {
             vec![("row-gap".into(), r), ("column-gap".into(), c)]
         }
         "margin" | "padding" => sides(&format!("{name}-"), "", value),
+        // place-*: `<align> [<justify>]`, the second defaulting to the first.
+        "place-items" | "place-content" | "place-self" => {
+            let suffix = &name["place-".len()..];
+            let parts = top_level_parts(value);
+            let (align, justify) = match parts.as_slice() {
+                [a] => (a.clone(), a.clone()),
+                [a, b] => (a.clone(), b.clone()),
+                // `place-content: first baseline center` etc. are not split.
+                _ => return one(name),
+            };
+            vec![(format!("align-{suffix}"), align), (format!("justify-{suffix}"), justify)]
+        }
         "inset" => sides("", "", value),
         "border" | "border-top" | "border-right" | "border-bottom" | "border-left" => {
             let sides = match name.strip_prefix("border-") {
@@ -1135,6 +1147,11 @@ mod tests {
         assert_eq!(expand("max-inline-size", "10rem"), vec![("max-width".into(), "10rem".into())]);
         assert_eq!(expand("block-size", "5px"), vec![("height".into(), "5px".into())]);
         assert!(expand("padding-inline-foo", "1px") == vec![("padding-inline-foo".into(), "1px".into())]);
+        assert_eq!(
+            expand("place-items", "center start"),
+            vec![("align-items".into(), "center".into()), ("justify-items".into(), "start".into())]
+        );
+        assert_eq!(expand("place-self", "end")[1], ("justify-self".into(), "end".into()));
         let border = expand("border", "1px solid red");
         assert_eq!(border.len(), 12);
         assert!(border.contains(&("border-left-style".into(), "solid".into())));
