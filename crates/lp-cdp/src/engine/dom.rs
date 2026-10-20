@@ -300,13 +300,24 @@ impl EngineHost {
                     }
                     "scrollIntoViewIfNeeded" => {
                         #[derive(Deserialize)]
+                        struct Area {
+                            x: f64,
+                            y: f64,
+                            width: f64,
+                            height: f64,
+                        }
+                        #[derive(Deserialize)]
                         struct P {
-                            rect: Option<Value>,
+                            rect: Option<Area>,
                         }
-                        if cmd.command.params::<P>()?.rect.is_some() {
-                            return Err(CdpError::unsupported("DOM scroll rectangle override"));
-                        }
+                        let rect = cmd.command.params::<P>()?.rect;
                         reveal(&page, node);
+                        // `rect` (relative to the node's border box; Playwright sends it
+                        // for positional clicks): after revealing the node, scroll the
+                        // window by the least amount that brings the area into view.
+                        if let Some(area) = rect {
+                            reveal_area(&page, node, area.x, area.y, area.width, area.height);
+                        }
                         // Then each owning iframe inside its parent document.
                         let page_id = self.pages.get(&cmd.page).ok_or_else(stale)?.id;
                         let mut cur = frame;
@@ -336,6 +347,33 @@ fn reveal(page: &Rc<PageDom>, node: NodeId) {
             lp_dom::layout::ScrollTarget::Viewport => (page.document(), true),
         };
         lp_webapi::input::queue_simple(page, node, "scroll", bubbles, false);
+    }
+}
+
+/// Scrolls the window so the node-relative area is visible, as little as
+/// possible (nearest edge), queueing a scroll event when it moved.
+fn reveal_area(page: &Rc<PageDom>, node: NodeId, x: f64, y: f64, width: f64, height: f64) {
+    let dom = page.dom.borrow();
+    let mut layout = page.layout.borrow_mut();
+    let origin = layout.bounding_client_rect(&dom, node);
+    let (left, top) = (origin.left() + x, origin.top() + y);
+    let nearest = |start: f64, size: f64, viewport: f64, scroll: u32| -> Option<i32> {
+        let end = start + size.max(0.0);
+        let delta = if start < 0.0 {
+            start
+        } else if end > viewport {
+            (end - viewport).min(start)
+        } else {
+            return None;
+        };
+        Some((scroll as f64 + delta).max(0.0).trunc().min(i32::MAX as f64) as i32)
+    };
+    let dx = nearest(left, width, layout.inner_width() as f64, layout.scroll_x());
+    let dy = nearest(top, height, layout.inner_height() as f64, layout.scroll_y());
+    if (dx.is_some() || dy.is_some()) && layout.window_scroll_to(&dom, dx, dy) {
+        drop(layout);
+        drop(dom);
+        lp_webapi::input::queue_simple(page, page.document(), "scroll", true, false);
     }
 }
 

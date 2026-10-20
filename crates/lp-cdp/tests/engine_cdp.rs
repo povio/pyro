@@ -3059,3 +3059,24 @@ fn links_and_window_open_targeting_blank_open_paused_popups() {
     let r = h.page("Runtime.evaluate", json!({"expression":"window.open('data:text/html,x')"}));
     assert!(r["result"]["exceptionDetails"].is_object(), "scriptable popups are unsupported: {r}");
 }
+
+#[test]
+fn scroll_into_view_if_needed_reveals_a_node_relative_rect() {
+    let mut h = Harness::new();
+    let setup = h.page(
+        "Runtime.evaluate",
+        json!({"expression": "document.body.innerHTML = '<div id=t style=\"height:3000px;width:100px\">t</div>'; document.querySelector('#t')"}),
+    );
+    let object = setup["result"]["result"]["objectId"].clone();
+    // Playwright sends `rect` for positional clicks; the area near the node's bottom must end up in view.
+    let r = h.page(
+        "DOM.scrollIntoViewIfNeeded",
+        json!({"objectId": object, "rect": {"x": 10, "y": 2900, "width": 1, "height": 1}}),
+    );
+    assert_eq!(r["result"], json!({}), "{r}");
+    let visible = eval_value(
+        &mut h,
+        "(() => { const top = document.querySelector('#t').getBoundingClientRect().top + 2900; return top >= 0 && top + 1 <= innerHeight; })()",
+    );
+    assert_eq!(visible, json!(true));
+}

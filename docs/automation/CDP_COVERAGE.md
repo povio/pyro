@@ -40,7 +40,7 @@ Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 53 engi
 | `DOM.disable` | **no** | engine | stops documentUpdated notifications |
 | `DOM.enable` | yes | engine | documentUpdated notifications; frontend mirror/mutation tracking unsupported |
 | `DOM.getFrameOwner` | yes | engine | native child owner backend ID in the same page session; missing/main frame rejected |
-| `DOM.scrollIntoViewIfNeeded` | yes | engine | in a child frame, also reveals each owning iframe in its parent; connected visible elements over native synthetic layout; rectangle override unsupported |
+| `DOM.scrollIntoViewIfNeeded` | yes | engine | in a child frame, also reveals each owning iframe in its parent; connected visible elements over native synthetic layout; `rect` (node-relative area, sent by Playwright for positional clicks) scrolls the window to the nearest edge after revealing the node |
 | `DOM.setFileInputFiles` | yes | pending |  |
 | `Debugger.disable` | yes | pending |  |
 | `Debugger.enable` | yes | pending |  |
