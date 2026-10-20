@@ -972,7 +972,7 @@ impl<'a> Ctx<'a> {
                 width: rect.width - e.border[LEFT] - e.border[RIGHT],
                 height: rect.height - e.border[TOP] - e.border[BOTTOM],
             };
-            self.place_absolute(pending, padding_box, fixed);
+            self.place_absolute_into(el, pending, padding_box, fixed, style.clips_x || style.clips_y);
         }
         e.margin[TOP] + rect.height + e.margin[BOTTOM]
     }
@@ -1175,6 +1175,30 @@ impl<'a> Ctx<'a> {
         }
     }
 
+    /// Places the absolutely positioned descendants of positioned box `el`
+    /// (recorded already) against its padding box, then extends its scroll
+    /// size over them and, if it clips, marks them clipped by it.
+    fn place_absolute_into(&mut self, el: NodeId, pending: Vec<Pending>, padding_box: Rect, fixed: bool, clips: bool) {
+        let before = self.order;
+        self.place_absolute(pending, padding_box, fixed);
+        let Some(own) = self.out.boxes.get(&el).copied() else { return };
+        let (mut sw, mut sh) = (own.scroll_width, own.scroll_height);
+        self.boxes_after(before, |b| {
+            let clipped_inside = b.clipped_by > before;
+            if !clipped_inside && (own.fixed || !b.fixed) {
+                sw = sw.max(b.rect.x + b.rect.width - padding_box.x);
+                sh = sh.max(b.rect.y + b.rect.height - padding_box.y);
+            }
+            if clips && b.clipped_by == 0 && (own.fixed || !b.fixed) {
+                b.clipped_by = own.order;
+            }
+        });
+        if let Some(b) = self.out.boxes.get_mut(&el) {
+            b.scroll_width = sw;
+            b.scroll_height = sh;
+        }
+    }
+
     /// Places absolutely positioned boxes against `cb` (a padding box; the
     /// viewport for fixed ones).
     fn place_absolute(&mut self, pending: Vec<Pending>, cb: Rect, fixed_cb: bool) {
@@ -1232,9 +1256,11 @@ impl<'a> Ctx<'a> {
                 _ => None,
             });
             let content_h = self.contents(p.el, s, content_x, content_y, content_w, definite_h, fixed, (0.0, 0.0));
-            let min_h = s.min_height.resolve(Some(cb.height));
-            let max_h = s.max_height.resolve(Some(cb.height));
-            let mut height = Self::clamp(declared_h.unwrap_or(content_h), min_h, max_h);
+            // min/max-height are border-box sizes under box-sizing: border-box.
+            let to_content_h = |h: f64| if s.border_box { (h - e.vertical()).max(0.0) } else { h };
+            let min_h = s.min_height.resolve(Some(cb.height)).map(to_content_h);
+            let max_h = s.max_height.resolve(Some(cb.height)).map(to_content_h);
+            let mut height = declared_h.unwrap_or(content_h);
             if declared_h.is_none() && top.is_some() && bottom.is_some() {
                 height = (cb.height
                     - top.unwrap_or(0.0)
@@ -1244,6 +1270,7 @@ impl<'a> Ctx<'a> {
                     - e.vertical())
                 .max(0.0);
             }
+            let height = Self::clamp(height, min_h, max_h);
             let border_h = height + e.vertical();
             let by = match (top, bottom) {
                 (Some(_), _) => provisional_y,
@@ -1263,7 +1290,7 @@ impl<'a> Ctx<'a> {
                 width: rect.width - e.border[LEFT] - e.border[RIGHT],
                 height: rect.height - e.border[TOP] - e.border[BOTTOM],
             };
-            self.place_absolute(nested, padding_box, fixed);
+            self.place_absolute_into(p.el, nested, padding_box, fixed, s.clips_x || s.clips_y);
         }
     }
 

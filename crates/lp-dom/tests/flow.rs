@@ -1399,6 +1399,27 @@ fn flow_parity_intrinsic_width_keywords() {
 }
 
 #[test]
+fn flow_parity_abs_border_box_min_height_and_scroll_extent() {
+    // An abs box with inset:0 under border-box keeps its min-height as a
+    // border-box size (TOS textarea mirror was 124 vs 120px), and a
+    // positioned parent's scrollHeight covers its abs descendants.
+    // Chromium 1.59.1.
+    let html = "<!doctype html><style>*{box-sizing:border-box}</style><body style=\"margin:0\"><div id=rel style=\"position:relative;height:120px\"><div id=abs style=\"position:absolute;inset:0;height:100%;min-height:120px;padding:2px\"></div></div><div id=rel2 style=\"position:relative;height:50px\"><div id=abs2 style=\"position:absolute;top:0;bottom:0;min-height:80px;padding:10px;border:2px solid\"></div></div></body>";
+    check(
+        "abs-min-height",
+        html,
+        0,
+        &[
+            ("rel", [0.0, 0.0, 800.0, 120.0, 800.0, 120.0, 800.0, 120.0]),
+            ("abs", [0.0, 0.0, 800.0, 120.0, 800.0, 120.0, 800.0, 120.0]),
+            ("rel2", [0.0, 120.0, 800.0, 50.0, 800.0, 50.0, 800.0, 80.0]),
+            ("abs2", [0.0, 120.0, 24.0, 80.0, 20.0, 76.0, 20.0, 76.0]),
+        ],
+        [800.0, 600.0],
+    );
+}
+
+#[test]
 fn flow_parity_lh_unit() {
     // TOS BL-instructions textarea: `!min-h-[5lh]` (5 x 24px line height)
     // beats min-h-[8.625rem]; the `lh` unit did not resolve, so the section
