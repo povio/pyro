@@ -188,6 +188,23 @@ fn parse_options(v: Value<'_>) -> JsResult<(AddOptions, Option<Object<'_>>)> {
     }
 }
 
+/// DOM "default passive value": touchstart, touchmove, wheel and mousewheel
+/// listeners on the window, a document, its document element or its body are
+/// passive unless `passive` is given, so their `preventDefault()` cannot
+/// block scrolling (as in Chrome).
+fn default_passive(page: &PageDom, key: TargetKey, ty: &str) -> bool {
+    if !matches!(ty, "touchstart" | "touchmove" | "wheel" | "mousewheel") {
+        return false;
+    }
+    if page.window_target() == Some(key) {
+        return true;
+    }
+    let dom = page.dom.borrow();
+    let Some(node) = dom.key_node(key) else { return false };
+    let Ok(doc) = dom.node_document(node) else { return false };
+    node == doc || dom.document_element(doc).ok().flatten() == Some(node) || dom.body(doc).ok().flatten() == Some(node)
+}
+
 fn handle_for(realm: RealmId, slot: u32) -> ListenerHandle {
     ListenerHandle((u64::from(realm.0) << 32) | u64::from(slot))
 }
@@ -197,7 +214,10 @@ fn add_listener<'s>(s: &Scope<'s>, t: &EventTargetData, a: Args<'s>) -> JsResult
     let ty = dom_string(a.get(0))?;
     let cb = a.get(1);
     let Some(cb_obj) = cb.as_object() else { return Ok(()) };
-    let (opts, signal) = parse_options(a.get(2))?;
+    let (mut opts, signal) = parse_options(a.get(2))?;
+    if opts.passive.is_none() {
+        opts.passive = Some(default_passive(&t.page, t.key, &ty));
+    }
     if let Some(sig) = signal {
         if let Some(sd) = s.unwrap::<crate::abort::AbortSignal>(sig.value()) {
             if sd.aborted() {

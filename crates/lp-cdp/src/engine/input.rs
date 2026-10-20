@@ -219,7 +219,7 @@ impl EngineHost {
                     "mousePressed" => MouseKind::Pressed,
                     "mouseReleased" => MouseKind::Released,
                     "mouseMoved" => MouseKind::Moved,
-                    "mouseWheel" => return Err(CdpError::unsupported("Input mouse wheel default scrolling")),
+                    "mouseWheel" => MouseKind::Wheel,
                     _ => return Err(CdpError::invalid_params("Invalid mouse event type")),
                 };
                 let button = match p.button.as_deref().unwrap_or("none") {

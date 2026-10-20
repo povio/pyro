@@ -1039,7 +1039,18 @@ fn mouse_event(page: &Rc<PageDom>, iface: EventInterface, ty: &str, m: &MouseInp
 /// CDP `Input.dispatchMouseEvent`. Returns an error when hit testing is not
 /// possible (no element at the point).
 pub fn dispatch_mouse(page: &Rc<PageDom>, kind: MouseKind, m: &MouseInput) -> Result<(), String> {
-    let target = crate::layout_api::hit_test(page, m.x, m.y).ok_or_else(|| "no element at point".to_owned())?;
+    let mut hit = crate::layout_api::hit_test(page, m.x, m.y);
+    if hit.is_none() && kind == MouseKind::Wheel {
+        // Chrome hit-tests empty viewport space as the root element, so a wheel
+        // there scrolls the viewport. The synthetic layout leaves such gaps
+        // (e.g. at Playwright's initial mouse position, 0,0).
+        let vp = page.viewport();
+        if (0.0..vp.width as f64).contains(&m.x) && (0.0..vp.height as f64).contains(&m.y) {
+            let doc = page.document();
+            hit = page.dom.borrow().document_element(doc).ok().flatten();
+        }
+    }
+    let target = hit.ok_or_else(|| "no element at point".to_owned())?;
     let Some(tkey) = key_of(page, target) else { return Err("stale target".into()) };
     match kind {
         MouseKind::Moved => {
@@ -1121,7 +1132,24 @@ pub fn dispatch_mouse(page: &Rc<PageDom>, kind: MouseKind, m: &MouseInput) -> Re
             }
         }
         MouseKind::Wheel => {
-            fire(page, tkey, &mouse_event(page, EventInterface::WheelEvent, "wheel", m, true));
+            // Default action of an uncanceled wheel (frame/user_input.zig:
+            // 571-615): each axis scrolls the nearest container that can still
+            // move, else the viewport, then `scroll` fires as a task.
+            let doc = page.document();
+            if !fire(page, tkey, &mouse_event(page, EventInterface::WheelEvent, "wheel", m, true))
+                || page.is_disposed()
+                || page.document() != doc
+            {
+                return Ok(());
+            }
+            let moved = page.layout.borrow_mut().wheel_scroll(&page.dom.borrow(), target, m.delta_x, m.delta_y);
+            for scrolled in moved {
+                let node = match scrolled {
+                    lp_dom::layout::ScrollTarget::Viewport => None,
+                    lp_dom::layout::ScrollTarget::Container(node) => Some(node),
+                };
+                crate::layout_api::fire_scroll(page, node);
+            }
         }
     }
     Ok(())

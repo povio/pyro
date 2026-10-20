@@ -988,6 +988,72 @@ fn input_mouse_hit_tests_and_runs_trusted_checkbox_activation() {
 }
 
 #[test]
+fn input_mouse_wheel_scrolls_container_then_viewport_unless_canceled() {
+    let mut h = Harness::new();
+    eval_value(
+        &mut h,
+        r#"
+      document.body.innerHTML='<div id="box" style="height:100px;overflow:auto"><div id="inner" style="height:500px"></div></div><div style="height:10000px"></div>';
+      globalThis.box=document.getElementById('box'); globalThis.inner=document.getElementById('inner');
+      globalThis.wheels=[]; globalThis.scrolls=[];
+      box.addEventListener('wheel', e => wheels.push([e.isTrusted, e.cancelable, e.deltaX, e.deltaY, e.target.id]));
+      box.addEventListener('scroll', () => scrolls.push('box'));
+      document.addEventListener('scroll', () => scrolls.push('document'));
+      // Default-passive: this cannot stop scrolling (as in Chrome).
+      document.addEventListener('wheel', e => e.preventDefault());
+      const r = inner.getBoundingClientRect(); globalThis.point = [r.x + r.width / 2, r.y + 5]; 1
+    "#,
+    );
+    let point = eval_value(&mut h, "point");
+    let (x, y) = (point[0].as_f64().unwrap(), point[1].as_f64().unwrap());
+    // Playwright 1.59 crInput.wheel sends exactly these fields.
+    let wheel = |h: &mut Harness, dy: f64| {
+        let r = h.page(
+            "Input.dispatchMouseEvent",
+            json!({"type":"mouseWheel","x":x,"y":y,"modifiers":0,"deltaX":0,"deltaY":dy}),
+        );
+        assert_eq!(r["result"], json!({}), "{r}");
+    };
+    wheel(&mut h, 300.0);
+    h.run_for(20);
+    assert_eq!(eval_value(&mut h, "[box.scrollTop, scrollY, scrolls.join()]"), json!([300, 0, "box"]));
+    wheel(&mut h, 300.0);
+    wheel(&mut h, 50.0);
+    h.run_for(20);
+    // The box stops at its extent; the next delta goes to the viewport.
+    assert_eq!(eval_value(&mut h, "[box.scrollTop, scrollY, scrolls.join()]"), json!([400, 50, "box,box,document"]));
+    assert_eq!(
+        eval_value(&mut h, "wheels"),
+        json!([[true, true, 0, 300, "inner"], [true, true, 0, 300, "inner"], [true, true, 0, 50, "inner"]])
+    );
+    // A non-passive listener that cancels the wheel prevents scrolling.
+    eval_value(&mut h, "box.addEventListener('wheel', e => e.preventDefault(), {passive:false}); 1");
+    wheel(&mut h, -100.0);
+    h.run_for(20);
+    assert_eq!(eval_value(&mut h, "[box.scrollTop, scrollY, wheels.length]"), json!([400, 50, 4]));
+}
+
+#[test]
+fn input_mouse_wheel_over_empty_viewport_space_scrolls_the_viewport() {
+    let mut h = Harness::new();
+    eval_value(&mut h, "document.body.innerHTML='<div style=\"height:10000px\"></div>'; 1");
+    // Playwright's initial mouse position; the synthetic layout has no
+    // element there, where Chrome would hit the root element.
+    assert_eq!(eval_value(&mut h, "document.elementFromPoint(0, 0) === null"), json!(true));
+    let r = h.page("Input.dispatchMouseEvent", json!({"type":"mouseWheel","x":0,"y":0,"deltaX":0,"deltaY":70}));
+    assert_eq!(r["result"], json!({}), "{r}");
+    assert_eq!(eval_value(&mut h, "scrollY"), json!(70));
+    let r = h.page("Input.dispatchMouseEvent", json!({"type":"mouseWheel","x":-1,"y":0,"deltaX":0,"deltaY":70}));
+    assert!(r["error"]["message"].as_str().is_some_and(|m| m.contains("no element at point")), "{r}");
+    eval_value(&mut h, "scrollTo(0, 0); 1");
+    let r = h.page("Input.dispatchMouseEvent", json!({"type":"mousePressed","x":0,"y":0,"button":"left","buttons":1}));
+    assert!(
+        r["error"]["message"].as_str().is_some_and(|m| m.contains("no element at point")),
+        "clicks keep the error: {r}"
+    );
+}
+
+#[test]
 fn dom_backend_nodes_adopt_across_worlds_and_expire_on_navigation() {
     let mut h = Harness::new();
     assert_eq!(h.page("DOM.enable", json!({}))["result"], json!({}));

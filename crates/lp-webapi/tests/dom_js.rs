@@ -3317,6 +3317,38 @@ fn input_files_setter_accepts_data_transfer_files() {
 }
 
 #[test]
+fn wheel_and_touch_listeners_on_window_document_html_body_default_to_passive() {
+    let e = env("<body><div id=d></div></body>");
+    let r = &e.main;
+    assert_eq!(
+        eval(
+            r,
+            r#"
+        const out = [];
+        const cancel = (target, type, opts) => {
+            const seen = [];
+            const fn = ev => { ev.preventDefault(); seen.push(ev.defaultPrevented); };
+            target.addEventListener(type, fn, opts);
+            const ev = type === 'wheel' ? new WheelEvent(type, { cancelable: true, bubbles: true }) : new Event(type, { cancelable: true, bubbles: true });
+            const notCanceled = d.dispatchEvent(ev);
+            target.removeEventListener(type, fn, opts);
+            return seen.join() + ':' + notCanceled;
+        };
+        const d = document.getElementById('d');
+        for (const t of [window, document, document.documentElement, document.body])
+            out.push(cancel(t, 'wheel'));
+        out.push(cancel(document, 'touchstart'), cancel(window, 'touchmove'), cancel(document.body, 'mousewheel'));
+        // Explicit passive:false, other targets and other event types still cancel.
+        out.push(cancel(document, 'wheel', { passive: false }), cancel(d, 'wheel'), cancel(document, 'click'));
+        out.push(cancel(document, 'wheel', true));
+        out.join('|')
+    "#
+        ),
+        "false:true|false:true|false:true|false:true|false:true|false:true|false:true|true:false|true:false|true:false|false:true"
+    );
+}
+
+#[test]
 fn drag_event_carries_its_data_transfer() {
     let e = env("<body><div id=d></div></body>");
     let r = &e.main;
