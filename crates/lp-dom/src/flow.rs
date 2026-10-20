@@ -125,6 +125,21 @@ pub enum Justify {
     SpaceEvenly,
 }
 
+/// Table-internal display types (`display: table-row` etc.).
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum TablePart {
+    #[default]
+    None,
+    HeaderGroup,
+    BodyGroup,
+    FooterGroup,
+    Row,
+    Cell,
+    Caption,
+    Column,
+    ColumnGroup,
+}
+
 /// top, right, bottom, left.
 pub type Sides<T> = [T; 4];
 pub const TOP: usize = 0;
@@ -174,6 +189,12 @@ pub struct FlowStyle {
     pub flex_basis: Dim,
     /// None = `auto` (the container's align-items).
     pub align_self: Option<Align>,
+    // Tables (Stage 3).
+    pub table_part: TablePart,
+    /// `border-spacing` (horizontal, vertical) in px; ignored when collapsed.
+    pub border_spacing: (f64, f64),
+    pub border_collapse: bool,
+    pub table_layout_fixed: bool,
 }
 
 impl Default for FlowStyle {
@@ -210,6 +231,10 @@ impl Default for FlowStyle {
             flex_shrink: 1.0,
             flex_basis: Dim::Auto,
             align_self: None,
+            table_part: TablePart::None,
+            border_spacing: (0.0, 0.0),
+            border_collapse: false,
+            table_layout_fixed: false,
         }
     }
 }
@@ -404,7 +429,11 @@ impl<'a> Ctx<'a> {
     ) -> f64 {
         let e = self.edges(style, cb_width);
         let declared = style.width.resolve(Some(cb_width));
-        let auto_width = (cb_width - e.margin[LEFT] - e.margin[RIGHT] - e.horizontal()).max(0.0);
+        let mut auto_width = (cb_width - e.margin[LEFT] - e.margin[RIGHT] - e.horizontal()).max(0.0);
+        if style.inner == InnerDisplay::Table && declared.is_none() {
+            // Tables shrink to their columns.
+            auto_width = self.table_max_content(el, style).min(auto_width);
+        }
         let mut content_w = declared.map_or(auto_width, |w| Self::declared_content(style, w, e.horizontal()));
         let min_w = style.min_width.resolve(Some(cb_width)).map(|w| Self::declared_content(style, w, e.horizontal()));
         let max_w = style.max_width.resolve(Some(cb_width)).map(|w| Self::declared_content(style, w, e.horizontal()));
@@ -538,6 +567,9 @@ impl<'a> Ctx<'a> {
         }
         if style.inner == InnerDisplay::Flex {
             return self.flex(el, style, x, y, width, height, fixed, shift);
+        }
+        if style.inner == InnerDisplay::Table {
+            return self.table(el, style, x, y, width, fixed, shift);
         }
         let kids = self.flatten_children(el);
         let mut cursor = y;
@@ -737,6 +769,9 @@ impl<'a> Ctx<'a> {
     fn max_content(&self, el: NodeId, style: &FlowStyle) -> f64 {
         if style.replaced {
             return style.width.resolve(None).unwrap_or(0.0);
+        }
+        if style.inner == InnerDisplay::Table {
+            return self.table_max_content(el, style);
         }
         let mut best: f64 = 0.0;
         let mut line: f64 = 0.0;
@@ -1446,6 +1481,269 @@ fn margins_cross(it: &FlexItem, row: bool) -> f64 {
         it.margin[TOP] + it.margin[BOTTOM]
     } else {
         it.margin[LEFT] + it.margin[RIGHT]
+    }
+}
+
+// ----- table layout (Stage 3) -------------------------------------------------------
+
+struct TableCell {
+    el: NodeId,
+    style: FlowStyle,
+    col: usize,
+    span: usize,
+}
+
+struct TableRow {
+    el: Option<NodeId>,
+    style: Option<FlowStyle>,
+    group: Option<NodeId>,
+    cells: Vec<TableCell>,
+}
+
+impl<'a> Ctx<'a> {
+    /// Rows in display order (header groups, then bodies/bare rows, then
+    /// footers), each with its cells' column positions.
+    fn table_rows(&self, table: NodeId) -> (Vec<TableRow>, usize) {
+        let mut head = Vec::new();
+        let mut body = Vec::new();
+        let mut foot = Vec::new();
+        for (child, style) in self.flatten_children(table) {
+            let Some(style) = style else { continue };
+            match style.table_part {
+                TablePart::HeaderGroup | TablePart::BodyGroup | TablePart::FooterGroup => {
+                    let rows: Vec<TableRow> = self
+                        .flatten_children(child)
+                        .into_iter()
+                        .filter_map(|(r, rs)| {
+                            let rs = rs?;
+                            (rs.table_part == TablePart::Row).then(|| self.table_row(r, rs, Some(child)))
+                        })
+                        .collect();
+                    match style.table_part {
+                        TablePart::HeaderGroup => head.extend(rows),
+                        TablePart::FooterGroup => foot.extend(rows),
+                        _ => body.extend(rows),
+                    }
+                }
+                TablePart::Row => body.push(self.table_row(child, style, None)),
+                _ => {}
+            }
+        }
+        let rows: Vec<TableRow> = head.into_iter().chain(body).chain(foot).collect();
+        let cols = rows.iter().map(|r| r.cells.iter().map(|c| c.col + c.span).max().unwrap_or(0)).max().unwrap_or(0);
+        (rows, cols)
+    }
+
+    fn table_row(&self, row: NodeId, style: FlowStyle, group: Option<NodeId>) -> TableRow {
+        let mut col = 0;
+        let mut cells = Vec::new();
+        for (c, cs) in self.flatten_children(row) {
+            let Some(cs) = cs else { continue };
+            if cs.table_part != TablePart::Cell {
+                continue;
+            }
+            let span = self
+                .dom
+                .get_attribute(c, "colspan")
+                .ok()
+                .flatten()
+                .and_then(|v| v.trim().parse::<usize>().ok())
+                .filter(|&n| n >= 1)
+                .unwrap_or(1)
+                .min(1000);
+            cells.push(TableCell { el: c, style: cs, col, span });
+            col += span;
+        }
+        TableRow { el: Some(row), style: Some(style), group, cells }
+    }
+
+    fn spacing(style: &FlowStyle) -> (f64, f64) {
+        if style.border_collapse {
+            (0.0, 0.0)
+        } else {
+            style.border_spacing
+        }
+    }
+
+    /// A cell's border-box width from its declared width, or its
+    /// max-content width when `content` is set.
+    fn cell_width(&self, cell: &TableCell, basis: f64, content: bool) -> Option<f64> {
+        let e = self.edges(&cell.style, basis);
+        match cell.style.width.resolve(Some(basis)) {
+            Some(w) => Some(if cell.style.border_box { w.max(e.horizontal()) } else { w + e.horizontal() }),
+            None if content => Some(self.max_content(cell.el, &cell.style) + e.horizontal()),
+            None => None,
+        }
+    }
+
+    /// Column border-box widths for a table whose content box is `width`
+    /// (None: shrink to the columns).
+    fn table_columns(&self, table: &FlowStyle, rows: &[TableRow], cols: usize, width: Option<f64>) -> Vec<f64> {
+        let (sx, _) = Self::spacing(table);
+        let spacing = sx * (cols as f64 + 1.0);
+        let basis = width.unwrap_or(0.0) - spacing;
+        let mut declared: Vec<Option<f64>> = vec![None; cols];
+        let mut widths = vec![0.0; cols];
+        if table.table_layout_fixed && width.is_some() {
+            if let Some(first) = rows.first() {
+                for c in first.cells.iter().filter(|c| c.span == 1) {
+                    declared[c.col] = self.cell_width(c, basis, false);
+                }
+            }
+            for (i, d) in declared.iter().enumerate() {
+                widths[i] = d.unwrap_or(0.0);
+            }
+        } else {
+            for row in rows {
+                for c in row.cells.iter().filter(|c| c.span == 1) {
+                    if let Some(d) = self.cell_width(c, basis, false) {
+                        declared[c.col] = Some(declared[c.col].map_or(d, |p: f64| p.max(d)));
+                    }
+                    let w = self.cell_width(c, basis, true).unwrap_or(0.0);
+                    widths[c.col] = f64::max(widths[c.col], w);
+                }
+            }
+            for (i, d) in declared.iter().enumerate() {
+                if let Some(d) = d {
+                    widths[i] = widths[i].max(*d);
+                }
+            }
+        }
+        if let Some(w) = width {
+            let used: f64 = widths.iter().sum::<f64>() + spacing;
+            let free = w - used;
+            if free > 0.0 {
+                let auto: Vec<usize> = (0..cols).filter(|&i| declared[i].is_none()).collect();
+                if table.table_layout_fixed && !auto.is_empty() {
+                    for &i in &auto {
+                        widths[i] += free / auto.len() as f64;
+                    }
+                } else {
+                    let targets: Vec<usize> = if auto.is_empty() { (0..cols).collect() } else { auto };
+                    let total: f64 = targets.iter().map(|&i| widths[i]).sum();
+                    for &i in &targets {
+                        let share = if total > 0.0 { widths[i] / total } else { 1.0 / targets.len() as f64 };
+                        widths[i] += free * share;
+                    }
+                }
+            }
+        }
+        widths
+    }
+
+    /// Max-content width of a table's content box.
+    fn table_max_content(&self, table: NodeId, style: &FlowStyle) -> f64 {
+        let (rows, cols) = self.table_rows(table);
+        let (sx, _) = Self::spacing(style);
+        self.table_columns(style, &rows, cols, None).iter().sum::<f64>() + sx * (cols as f64 + 1.0)
+    }
+
+    /// Lays out a table's rows and cells in its content box; returns the
+    /// content height.
+    #[allow(clippy::too_many_arguments)]
+    fn table(
+        &mut self,
+        el: NodeId,
+        style: &FlowStyle,
+        x: f64,
+        y: f64,
+        width: f64,
+        fixed: bool,
+        shift: (f64, f64),
+    ) -> f64 {
+        let (rows, cols) = self.table_rows(el);
+        if cols == 0 {
+            return 0.0;
+        }
+        let (sx, sy) = Self::spacing(style);
+        let widths = self.table_columns(style, &rows, cols, Some(width));
+        let mut starts = Vec::with_capacity(cols + 1);
+        let mut cx = x + sx;
+        for w in &widths {
+            starts.push(cx);
+            cx += w + sx;
+        }
+        starts.push(cx);
+        let mut cursor = y + sy;
+        let mut groups: Vec<(NodeId, Rect)> = Vec::new();
+        for row in &rows {
+            // Row height: the tallest cell (and the row's own height).
+            let mut row_h = row.style.as_ref().and_then(|s| s.height.resolve(None)).unwrap_or(0.0);
+            let mut cell_heights = Vec::new();
+            for c in &row.cells {
+                let w = starts[c.col + c.span] - sx - starts[c.col];
+                let e = self.edges(&c.style, width);
+                let content_w = (w - e.horizontal()).max(0.0);
+                let content_h = self.measure_height(c.el, &c.style, content_w);
+                let declared =
+                    c.style
+                        .height
+                        .resolve(None)
+                        .map(|h| if c.style.border_box { (h - e.vertical()).max(0.0) } else { h });
+                let h = declared.unwrap_or(0.0).max(content_h) + e.vertical();
+                cell_heights.push((content_h, e.vertical()));
+                row_h = row_h.max(h);
+            }
+            let row_order = self.next_order();
+            for (c, (content_h, vertical)) in row.cells.iter().zip(cell_heights) {
+                let w = starts[c.col + c.span] - sx - starts[c.col];
+                let mut s = c.style.clone();
+                s.border_box = true;
+                s.width = Dim::px(w);
+                s.height = Dim::px(row_h);
+                s.margin = [Dim::px(0.0); 4];
+                s.min_height = Dim::Auto;
+                s.max_height = Dim::Auto;
+                let before = self.order;
+                self.block_child(c.el, &s, starts[c.col], cursor, w, fixed, shift);
+                // Cell content is vertically centred (rows default to middle).
+                let dy = ((row_h - vertical - content_h) / 2.0).max(0.0);
+                if dy > 0.0 {
+                    let cell_order = before + 1;
+                    for b in self.out.boxes.values_mut().filter(|b| b.order > cell_order) {
+                        b.rect.y += dy;
+                    }
+                }
+            }
+            let rect = Rect {
+                x: starts[0] + shift.0,
+                y: cursor + shift.1,
+                width: starts[cols] - sx - starts[0],
+                height: row_h,
+            };
+            if let Some(r) = row.el {
+                self.out.boxes.insert(r, simple_box(rect, fixed, row_order));
+            }
+            if let Some(g) = row.group {
+                match groups.iter_mut().find(|(n, _)| *n == g) {
+                    Some((_, u)) => {
+                        let bottom = (u.y + u.height).max(rect.y + rect.height);
+                        u.height = bottom - u.y;
+                    }
+                    None => groups.push((g, rect)),
+                }
+            }
+            cursor += row_h + sy;
+        }
+        for (g, rect) in groups {
+            let order = self.next_order();
+            self.out.boxes.insert(g, simple_box(rect, fixed, order));
+        }
+        cursor - y
+    }
+}
+
+fn simple_box(rect: Rect, fixed: bool, order: u32) -> FlowBox {
+    FlowBox {
+        rect,
+        fixed,
+        client_width: rect.width,
+        client_height: rect.height,
+        scroll_width: rect.width,
+        scroll_height: rect.height,
+        positioned: false,
+        order,
+        clipped_by: 0,
     }
 }
 

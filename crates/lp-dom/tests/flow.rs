@@ -265,7 +265,7 @@ fn default_geometry_is_unchanged_by_the_flow_switch() {
 
 // ----- Stage 2: flex -----------------------------------------------------------
 
-use lp_dom::flow::{self, Align, Dim, FlexDirection, FlowStyle, FlowStyleSource, Justify, Len};
+use lp_dom::flow::{self, Align, Dim, FlexDirection, FlowStyle, FlowStyleSource, Justify, Len, TablePart};
 
 /// The cascade's flow inputs plus the inline flex declarations, until the
 /// style engine fills the flex fields (style_flow.rs).
@@ -342,6 +342,26 @@ impl FlowStyleSource for InlineFlex<'_> {
         }
         if let Some(n) = decl("flex-shrink").and_then(|v| v.parse().ok()) {
             s.flex_shrink = n;
+        }
+        // Tables: display parts from the tag (UA), border-spacing (UA 2px),
+        // border-collapse and table-layout from inline declarations.
+        let tag = dom.element(el).map(|e| e.local_name().to_string()).unwrap_or_default();
+        if decl("display").is_none() {
+            s.table_part = match tag.as_str() {
+                "thead" => TablePart::HeaderGroup,
+                "tbody" => TablePart::BodyGroup,
+                "tfoot" => TablePart::FooterGroup,
+                "tr" => TablePart::Row,
+                "td" | "th" => TablePart::Cell,
+                "caption" => TablePart::Caption,
+                _ => TablePart::None,
+            };
+        }
+        if tag == "table" {
+            let spacing = decl("border-spacing").and_then(|v| flex_len(&v)).map_or(2.0, |l| l.px);
+            s.border_spacing = (spacing, spacing);
+            s.border_collapse = decl("border-collapse").as_deref() == Some("collapse");
+            s.table_layout_fixed = decl("table-layout").as_deref() == Some("fixed");
         }
         Some(s)
     }
@@ -673,5 +693,101 @@ fn flex_cascade_parity_shell() {
             ("content", [200.0, 50.0, 600.0, 2000.0, 600.0, 2000.0, 600.0, 2000.0]),
         ],
         [800.0, 600.0],
+    );
+}
+
+// ----- Stage 3: tables -----------------------------------------------------------
+
+#[test]
+fn table_parity_fixedcols() {
+    flex_check(
+        "fixedcols",
+        "<!doctype html><body style=\"margin:0\"><table id=t style=\"border-collapse:collapse;table-layout:fixed;width:600px\"><thead><tr id=hr><th id=h1 style=\"width:100px;height:30px;padding:0\"></th><th id=h2 style=\"width:200px;padding:0\"></th><th id=h3 style=\"padding:0\"></th></tr></thead><tbody><tr id=r1><td id=c1 style=\"height:40px;padding:0\"></td><td id=c2 style=\"padding:0\"></td><td id=c3 style=\"padding:0\"></td></tr><tr id=r2><td id=d1 style=\"height:25px;padding:0\"></td><td id=d2 style=\"padding:0\"></td><td id=d3 style=\"padding:0\"></td></tr></tbody></table></body>",
+        &[
+            ("t", [0.0, 0.0, 600.0, 95.0, 600.0, 95.0, 600.0, 95.0]),
+            ("hr", [0.0, 0.0, 600.0, 30.0, 600.0, 30.0, 600.0, 30.0]),
+            ("h1", [0.0, 0.0, 100.0, 30.0, 100.0, 30.0, 100.0, 30.0]),
+            ("h2", [100.0, 0.0, 200.0, 30.0, 200.0, 30.0, 200.0, 30.0]),
+            ("h3", [300.0, 0.0, 300.0, 30.0, 300.0, 30.0, 300.0, 30.0]),
+            ("r1", [0.0, 30.0, 600.0, 40.0, 600.0, 40.0, 600.0, 40.0]),
+            ("c1", [0.0, 30.0, 100.0, 40.0, 100.0, 40.0, 100.0, 40.0]),
+            ("c2", [100.0, 30.0, 200.0, 40.0, 200.0, 40.0, 200.0, 40.0]),
+            ("c3", [300.0, 30.0, 300.0, 40.0, 300.0, 40.0, 300.0, 40.0]),
+            ("r2", [0.0, 70.0, 600.0, 25.0, 600.0, 25.0, 600.0, 25.0]),
+            ("d1", [0.0, 70.0, 100.0, 25.0, 100.0, 25.0, 100.0, 25.0]),
+            ("d2", [100.0, 70.0, 200.0, 25.0, 200.0, 25.0, 200.0, 25.0]),
+            ("d3", [300.0, 70.0, 300.0, 25.0, 300.0, 25.0, 300.0, 25.0]),
+        ],
+    );
+}
+
+#[test]
+fn table_parity_autocols() {
+    flex_check(
+        "autocols",
+        "<!doctype html><body style=\"margin:0\"><table id=t style=\"border-collapse:collapse\"><tr><td id=a style=\"width:120px;height:20px;padding:0\"></td><td id=b style=\"width:80px;padding:0\"></td></tr><tr><td id=c style=\"height:30px;padding:0\"></td><td id=d style=\"padding:0\"></td></tr></table></body>",
+        &[
+            ("t", [0.0, 0.0, 200.0, 50.0, 200.0, 50.0, 200.0, 50.0]),
+            ("a", [0.0, 0.0, 120.0, 20.0, 120.0, 20.0, 120.0, 20.0]),
+            ("b", [120.0, 0.0, 80.0, 20.0, 80.0, 20.0, 80.0, 20.0]),
+            ("c", [0.0, 20.0, 120.0, 30.0, 120.0, 30.0, 120.0, 30.0]),
+            ("d", [120.0, 20.0, 80.0, 30.0, 80.0, 30.0, 80.0, 30.0]),
+        ],
+    );
+}
+
+#[test]
+fn table_parity_spacing() {
+    flex_check(
+        "spacing",
+        "<!doctype html><body style=\"margin:0\"><table id=t style=\"border-spacing:4px;width:300px;table-layout:fixed\"><tr><td id=a style=\"height:20px;padding:3px\"></td><td id=b style=\"padding:3px\"></td></tr></table></body>",
+        &[
+            ("t", [0.0, 0.0, 300.0, 34.0, 300.0, 34.0, 300.0, 34.0]),
+            ("a", [4.0, 4.0, 144.0, 26.0, 144.0, 26.0, 144.0, 26.0]),
+            ("b", [152.0, 4.0, 144.0, 26.0, 144.0, 26.0, 144.0, 26.0]),
+        ],
+    );
+}
+
+#[test]
+fn table_parity_percent() {
+    flex_check(
+        "percent",
+        "<!doctype html><body style=\"margin:0\"><div style=\"width:500px\"><table id=t style=\"width:100%;border-collapse:collapse;table-layout:fixed\"><tr><td id=a style=\"width:20%;height:10px;padding:0\"></td><td id=b style=\"padding:0\"></td></tr></table></div></body>",
+        &[
+            ("t", [0.0, 0.0, 500.0, 10.0, 500.0, 10.0, 500.0, 10.0]),
+            ("a", [0.0, 0.0, 100.0, 10.0, 100.0, 10.0, 100.0, 10.0]),
+            ("b", [100.0, 0.0, 400.0, 10.0, 400.0, 10.0, 400.0, 10.0]),
+        ],
+    );
+}
+
+#[test]
+fn table_parity_scroller() {
+    flex_check(
+        "scroller",
+        "<!doctype html><body style=\"margin:0\"><div id=sc style=\"width:400px;overflow:auto\"><table id=t style=\"border-collapse:collapse;table-layout:fixed;width:1200px\"><tr><td id=a style=\"width:300px;height:20px;padding:0\"></td><td id=b style=\"width:900px;padding:0\"></td></tr></table></div></body>",
+        &[
+            ("sc", [0.0, 0.0, 400.0, 20.0, 400.0, 20.0, 1200.0, 20.0]),
+            ("t", [0.0, 0.0, 1200.0, 20.0, 1200.0, 20.0, 1200.0, 20.0]),
+            ("a", [0.0, 0.0, 300.0, 20.0, 300.0, 20.0, 300.0, 20.0]),
+            ("b", [300.0, 0.0, 900.0, 20.0, 900.0, 20.0, 900.0, 20.0]),
+        ],
+    );
+}
+
+#[test]
+fn table_parity_spanmiddle() {
+    flex_check(
+        "spanmiddle",
+        "<!doctype html><body style=\"margin:0\"><table id=t style=\"border-collapse:collapse\"><tr><th id=h colspan=2 style=\"height:20px;padding:0\"></th></tr><tr><td id=a style=\"width:100px;padding:0\"><div id=ad style=\"height:20px\"></div></td><td id=b style=\"width:150px;padding:0\"><div id=bd style=\"height:60px\"></div></td></tr></table></body>",
+        &[
+            ("t", [0.0, 0.0, 250.0, 80.0, 250.0, 80.0, 250.0, 80.0]),
+            ("h", [0.0, 0.0, 250.0, 20.0, 250.0, 20.0, 250.0, 20.0]),
+            ("a", [0.0, 20.0, 100.0, 60.0, 100.0, 60.0, 100.0, 60.0]),
+            ("ad", [0.0, 40.0, 100.0, 20.0, 100.0, 20.0, 100.0, 20.0]),
+            ("b", [100.0, 20.0, 150.0, 60.0, 150.0, 60.0, 150.0, 60.0]),
+            ("bd", [100.0, 20.0, 150.0, 60.0, 150.0, 60.0, 150.0, 60.0]),
+        ],
     );
 }

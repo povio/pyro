@@ -82,6 +82,7 @@ containing block (em/rem/vw/vh resolved by the style engine).
   static position; `fixed` uses the viewport and does not move with window
   scroll. Out-of-flow boxes do not advance siblings.
 - Stage 2 (flex): row/column, wrap, gaps, grow/shrink/basis (one pass), justify-content, align-items/align-self with stretch; text directly in a flex container is an anonymous item.
+- Stage 3 (tables): rows in display order (header, body, footer groups), colspan, fixed and auto column widths with border-spacing / border-collapse and extra-width distribution, tables without a width shrinking to their columns, row heights from the tallest cell, cells stretched to the row with content vertically centred. No rowspan, captions or column elements yet.
 - Not yet (laid out as block containers): grid inner layout,
   tables, floats, sticky, margin collapsing through parents, writing modes,
   transforms other than inline translateX.
