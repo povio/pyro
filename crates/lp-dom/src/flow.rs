@@ -1792,8 +1792,6 @@ impl<'a> Ctx<'a> {
     }
 }
 
-/// Default-font metrics (Chromium's default Times on macOS, measured at
-/// 10–32px): ascent ≈ round(0.9em), descent = round(0.25em).
 /// Form controls with an intrinsic size.
 enum Control {
     Text,
@@ -1843,8 +1841,10 @@ fn control_kind(dom: &Dom, el: NodeId) -> Option<Control> {
     None
 }
 
+/// (ascent, descent) of the system UI font (flow_font.rs), the face flow
+/// measures text with; the `normal` line height is their sum.
 fn font_metrics(font_size: f64) -> (f64, f64) {
-    ((0.9 * font_size + 0.5).floor(), (0.25 * font_size + 0.5).floor())
+    crate::flow_font::vertical_metrics(font_size)
 }
 
 /// A text run's (ascent, descent) above/below the baseline, including

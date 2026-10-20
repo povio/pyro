@@ -221,17 +221,17 @@ fn flow_parity_absolute() {
 
 #[test]
 fn flow_parity_inlineblock() {
-    let html = "<!doctype html><body style=\"margin:0\"><div id=row style=\"width:250px\"><span id=s1 style=\"display:inline-block;width:100px;height:20px\"></span><span id=s2 style=\"display:inline-block;width:100px;height:30px\"></span><span id=s3 style=\"display:inline-block;width:100px;height:20px\"></span></div><div id=after style=\"height:10px\"></div></body>";
+    let html = "<!doctype html><body style=\"margin:0;font-family:-apple-system,BlinkMacSystemFont,sans-serif\"><div id=row style=\"width:250px\"><span id=s1 style=\"display:inline-block;width:100px;height:20px\"></span><span id=s2 style=\"display:inline-block;width:100px;height:30px\"></span><span id=s3 style=\"display:inline-block;width:100px;height:20px\"></span></div><div id=after style=\"height:10px\"></div></body>";
     check(
         "inlineblock",
         html,
         0,
         &[
-            ("row", [0.0, 0.0, 250.0, 58.0, 250.0, 58.0, 250.0, 58.0]),
+            ("row", [0.0, 0.0, 250.0, 56.0, 250.0, 56.0, 250.0, 56.0]),
             ("s1", [0.0, 10.0, 100.0, 20.0, 100.0, 20.0, 100.0, 20.0]),
             ("s2", [100.0, 0.0, 100.0, 30.0, 100.0, 30.0, 100.0, 30.0]),
-            ("s3", [0.0, 34.0, 100.0, 20.0, 100.0, 20.0, 100.0, 20.0]),
-            ("after", [0.0, 58.0, 800.0, 10.0, 800.0, 10.0, 800.0, 10.0]),
+            ("s3", [0.0, 33.0, 100.0, 20.0, 100.0, 20.0, 100.0, 20.0]),
+            ("after", [0.0, 56.0, 800.0, 10.0, 800.0, 10.0, 800.0, 10.0]),
         ],
         [800.0, 600.0],
     );
@@ -1121,28 +1121,28 @@ fn flex_parity_auto_margins() {
 
 #[test]
 fn flow_parity_text_align() {
-    // Chromium 1.59.1, 800x600. Atomic boxes with explicit sizes; the inline
+    // Chromium 1.59.1, 800x600, system UI font. Atomic boxes with explicit sizes; the inline
     // span's own height is font-metric dependent, so it is checked on x/width.
-    let html = "<!doctype html><body style=\"margin:0\"><div id=c style=\"width:400px;text-align:center\"><span id=c1 style=\"display:inline-block;width:50px;height:20px\"></span><span id=c2 style=\"display:inline-block;width:30px;height:20px\"></span></div><div id=r style=\"width:400px;text-align:right\"><span id=r1 style=\"display:inline-block;width:50px;height:20px\"></span> </div><div id=w style=\"width:400px;text-align:center\"><span id=w1 style=\"display:inline-block;width:250px;height:10px\"></span><span id=w2 style=\"display:inline-block;width:250px;height:10px\"></span></div><div id=o style=\"width:400px;text-align:center\"><span id=o1 style=\"display:inline-block;width:500px;height:10px\"></span></div><div id=e style=\"width:588px;padding:0 32px;text-align:center\"><button id=btn style=\"display:inline-flex;width:127px;height:28px;padding:0;border:0\"></button></div><div id=s style=\"width:300px;text-align:end\"><span id=sp><span id=s1 style=\"display:inline-block;width:40px;height:10px\"></span></span></div></body>";
+    let html = "<!doctype html><body style=\"margin:0;font-family:-apple-system,BlinkMacSystemFont,sans-serif\"><div id=c style=\"width:400px;text-align:center\"><span id=c1 style=\"display:inline-block;width:50px;height:20px\"></span><span id=c2 style=\"display:inline-block;width:30px;height:20px\"></span></div><div id=r style=\"width:400px;text-align:right\"><span id=r1 style=\"display:inline-block;width:50px;height:20px\"></span> </div><div id=w style=\"width:400px;text-align:center\"><span id=w1 style=\"display:inline-block;width:250px;height:10px\"></span><span id=w2 style=\"display:inline-block;width:250px;height:10px\"></span></div><div id=o style=\"width:400px;text-align:center\"><span id=o1 style=\"display:inline-block;width:500px;height:10px\"></span></div><div id=e style=\"width:588px;padding:0 32px;text-align:center\"><button id=btn style=\"display:inline-flex;width:127px;height:28px;padding:0;border:0\"></button></div><div id=s style=\"width:300px;text-align:end\"><span id=sp><span id=s1 style=\"display:inline-block;width:40px;height:10px\"></span></span></div></body>";
     let p = page(html, Geometry::Flow);
     let src = InlineFlex { style: p.layout.style() };
     let result = flow::layout(&p.dom, p.doc, &src, 800.0, 600.0);
     let mut diffs = Vec::new();
     for (id, want) in [
-        ("c", [0.0, 0.0, 400.0, 24.0]),
+        ("c", [0.0, 0.0, 400.0, 23.0]),
         ("c1", [160.0, 0.0, 50.0, 20.0]),
         ("c2", [210.0, 0.0, 30.0, 20.0]),
-        ("r", [0.0, 24.0, 400.0, 24.0]),
-        ("r1", [350.0, 24.0, 50.0, 20.0]),
-        ("w", [0.0, 48.0, 400.0, 36.0]),
-        ("w1", [75.0, 52.0, 250.0, 10.0]),
-        ("w2", [75.0, 70.0, 250.0, 10.0]),
-        ("o", [0.0, 84.0, 400.0, 18.0]),
-        ("o1", [0.0, 88.0, 500.0, 10.0]),
-        ("e", [0.0, 102.0, 652.0, 32.0]),
-        ("btn", [262.5, 102.0, 127.0, 28.0]),
-        ("s", [0.0, 134.0, 300.0, 18.0]),
-        ("s1", [260.0, 138.0, 40.0, 10.0]),
+        ("r", [0.0, 23.0, 400.0, 23.0]),
+        ("r1", [350.0, 23.0, 50.0, 20.0]),
+        ("w", [0.0, 46.0, 400.0, 36.0]),
+        ("w1", [75.0, 51.0, 250.0, 10.0]),
+        ("w2", [75.0, 69.0, 250.0, 10.0]),
+        ("o", [0.0, 82.0, 400.0, 18.0]),
+        ("o1", [0.0, 87.0, 500.0, 10.0]),
+        ("e", [0.0, 100.0, 652.0, 31.0]),
+        ("btn", [262.5, 100.0, 127.0, 28.0]),
+        ("s", [0.0, 131.0, 300.0, 18.0]),
+        ("s1", [260.0, 136.0, 40.0, 10.0]),
     ] {
         let r = result.get(p.id(id)).unwrap().rect;
         let got = [r.x, r.y, r.width, r.height];

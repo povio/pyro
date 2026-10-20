@@ -387,3 +387,50 @@ mod tests {
         assert_eq!(advance('é', 14.0, 400), None);
     }
 }
+
+/// (font size, ascent, descent) of the system UI font as Chromium lays it
+/// out (integer px; the `normal` line height is their sum), measured in
+/// headless Chromium 1.59.1 from a text line's baseline position.
+const VERTICAL: [(f64, f64, f64); 11] = [
+    (10.0, 10.0, 2.0),
+    (11.0, 11.0, 2.0),
+    (12.0, 12.0, 3.0),
+    (13.0, 13.0, 3.0),
+    (14.0, 14.0, 3.0),
+    (15.0, 15.0, 3.0),
+    (16.0, 15.0, 3.0),
+    (18.0, 17.0, 4.0),
+    (20.0, 19.0, 4.0),
+    (24.0, 23.0, 5.0),
+    (32.0, 31.0, 7.0),
+];
+
+/// (ascent, descent) in px at `font_size`: linear between measured sizes,
+/// proportional outside them, rounded like Chromium's integer metrics.
+pub(crate) fn vertical_metrics(font_size: f64) -> (f64, f64) {
+    let (first, last) = (VERTICAL[0], VERTICAL[VERTICAL.len() - 1]);
+    let (a, d) = if font_size <= first.0 {
+        (first.1 * font_size / first.0, first.2 * font_size / first.0)
+    } else if font_size >= last.0 {
+        (last.1 * font_size / last.0, last.2 * font_size / last.0)
+    } else {
+        let i = VERTICAL.windows(2).position(|w| font_size < w[1].0).unwrap_or(0);
+        let (lo, hi) = (VERTICAL[i], VERTICAL[i + 1]);
+        let t = (font_size - lo.0) / (hi.0 - lo.0);
+        (lo.1 + (hi.1 - lo.1) * t, lo.2 + (hi.2 - lo.2) * t)
+    };
+    (a.round(), d.round())
+}
+
+#[cfg(test)]
+mod vertical_tests {
+    use super::vertical_metrics;
+
+    #[test]
+    fn matches_measured_sizes() {
+        assert_eq!(vertical_metrics(15.0), (15.0, 3.0));
+        assert_eq!(vertical_metrics(16.0), (15.0, 3.0));
+        assert_eq!(vertical_metrics(24.0), (23.0, 5.0));
+        assert_eq!(vertical_metrics(13.0), (13.0, 3.0));
+    }
+}
