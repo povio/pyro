@@ -22,6 +22,7 @@ pub mod css;
 pub mod custom;
 pub mod data_transfer;
 pub mod dom_parser;
+pub mod editing;
 pub mod encoding;
 pub mod event;
 pub mod fetch;

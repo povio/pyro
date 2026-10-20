@@ -1535,6 +1535,29 @@ fn content_disposition_attachment_navigation_becomes_download() {
 }
 
 #[test]
+fn input_home_end_with_mac_scroll_commands_scroll_the_document() {
+    // Playwright sends Home/End with scrollTo{Beginning,End}OfDocument on
+    // macOS. Outside editable content Chrome scrolls the document.
+    let mut h = Harness::new();
+    eval_value(&mut h, "document.body.innerHTML = '<div style=\"height:5000px\"></div>'; globalThis.scrolls = 0; document.addEventListener('scroll', () => scrolls++); 1");
+    for (key, command) in [("End", "scrollToEndOfDocument"), ("Home", "scrollToBeginningOfDocument")] {
+        let r = h.page(
+            "Input.dispatchKeyEvent",
+            json!({"type":"rawKeyDown","key":key,"code":key,"windowsVirtualKeyCode":if key == "End" { 35 } else { 36 },"commands":[command]}),
+        );
+        assert_eq!(r["result"], json!({}), "{key}: {r}");
+        h.run_for(20);
+        let y = eval_value(&mut h, "scrollY").as_f64().unwrap();
+        if key == "End" {
+            assert!(y > 0.0, "End scrolls to the bottom");
+        } else {
+            assert_eq!(y, 0.0, "Home scrolls to the top");
+        }
+    }
+    assert_eq!(eval_value(&mut h, "scrolls"), json!(2));
+}
+
+#[test]
 fn dom_backend_nodes_adopt_across_worlds_and_expire_on_navigation() {
     let mut h = Harness::new();
     assert_eq!(h.page("DOM.enable", json!({}))["result"], json!({}));
@@ -2123,7 +2146,6 @@ fn input_accepts_mac_key_derived_editing_commands() {
     // clipboard, undo and word movement too), and commands that are not the
     // key's own encoding, are refused without delivering events.
     for (key, code, modifiers, commands) in [
-        ("Home", "Home", 0, json!(["scrollToBeginningOfDocument"])),
         ("ArrowLeft", "ArrowLeft", 1, json!(["moveWordLeft"])),
         ("z", "KeyZ", 4, json!(["undo"])),
         ("ArrowRight", "ArrowRight", 0, json!(["moveLeft"])),

@@ -87,6 +87,9 @@ pub struct PageDom {
     /// Native drag source under a left press that has not moved past the
     /// drag threshold yet, with the press position.
     pub(crate) drag_candidate: Cell<Option<(NodeId, f64, f64)>>,
+    /// The document selection (`crate::editing`), shared by every world.
+    pub(crate) selection: RefCell<Option<crate::editing::DocSelection>>,
+    pub(crate) selectionchange_pending: Cell<bool>,
     /// The native drag-and-drop session in progress, if any.
     pub(crate) drag: RefCell<Option<crate::input::DragSession>>,
     /// `document.open()`'s script-created parser (`crate::html` document
@@ -293,6 +296,8 @@ impl PageDom {
             press_target: Cell::new(None),
             drag_candidate: Cell::new(None),
             drag: RefCell::new(None),
+            selection: RefCell::new(None),
+            selectionchange_pending: Cell::new(false),
             script_parser: RefCell::new(None),
             script_parser_active: Cell::new(false),
             script_parser_close: Cell::new(false),

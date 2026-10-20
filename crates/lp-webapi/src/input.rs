@@ -138,6 +138,7 @@ pub fn focus_element_with_transition(page: &Rc<PageDom>, el: NodeId, token: &Foc
     if is_text_control(&page.dom.borrow(), el) {
         page.editing_target.set(Some(el));
     }
+    crate::editing::caret_on_focus(page, el);
     page.remember_focus_value(el);
     let scrolled = if token.prevents_scroll() {
         Vec::new()
@@ -704,6 +705,14 @@ fn press_char(page: &Rc<PageDom>, target: NodeId, k: &KeyInput) {
     if k.modifiers.ctrl || k.modifiers.meta {
         return;
     }
+    if let Some(host) = editing_host_of(page, target) {
+        if k.text == "\r" || k.text == "\n" {
+            crate::editing::insert_paragraph(page, host);
+        } else {
+            crate::editing::insert_text(page, host, &k.text);
+        }
+        return;
+    }
     if k.text == "\r" || k.text == "\n" {
         enter_key(page, target);
     } else {
@@ -711,8 +720,31 @@ fn press_char(page: &Rc<PageDom>, target: NodeId, k: &KeyInput) {
     }
 }
 
+/// The contenteditable host the focused element edits, if any.
+fn editing_host_of(page: &PageDom, target: NodeId) -> Option<NodeId> {
+    crate::editing::editing_host(&page.dom.borrow(), target)
+}
+
+/// Default actions for keys in a contenteditable host.
+fn editing_key_action(page: &Rc<PageDom>, host: NodeId, k: &KeyInput) {
+    use crate::editing;
+    match k.key.as_str() {
+        "Backspace" => editing::delete(page, host, true),
+        "Delete" => editing::delete(page, host, false),
+        "Enter" => editing::insert_paragraph(page, host),
+        "Tab" => focus_next(page, host, k.modifiers.shift),
+        "a" | "A" if k.modifiers.ctrl || k.modifiers.meta => editing::select_all(page, host),
+        "ArrowLeft" | "ArrowRight" | "Home" | "End" => editing::move_caret(page, host, &k.key, k.modifiers.shift),
+        _ => {}
+    }
+}
+
 /// Default actions for non-text keys on the focused element.
 fn default_key_action(page: &Rc<PageDom>, target: NodeId, k: &KeyInput) {
+    if let Some(host) = editing_host_of(page, target) {
+        editing_key_action(page, host, k);
+        return;
+    }
     let editable = is_text_control(&page.dom.borrow(), target);
     match k.key.as_str() {
         "Backspace" if editable => delete(page, target, "deleteContentBackward", true),
@@ -726,6 +758,15 @@ fn default_key_action(page: &Rc<PageDom>, target: NodeId, k: &KeyInput) {
             }
         }
         "ArrowLeft" | "ArrowRight" | "Home" | "End" if editable => move_caret(page, target, &k.key, k.modifiers.shift),
+        // Outside editable content Home/End scroll the document (Chrome's
+        // scrollToBeginningOfDocument / scrollToEndOfDocument).
+        "Home" | "End" if !(k.modifiers.alt || k.modifiers.ctrl || k.modifiers.meta || k.modifiers.shift) => {
+            let top = if k.key == "Home" { 0 } else { i32::MAX };
+            let moved = page.layout.borrow_mut().window_scroll_to(&page.dom.borrow(), None, Some(top));
+            if moved {
+                crate::layout_api::fire_scroll(page, None);
+            }
+        }
         "ArrowUp" | "ArrowDown"
             if !(k.modifiers.alt || k.modifiers.ctrl || k.modifiers.meta)
                 && vertical_caret_control(&page.dom.borrow(), target) =>
@@ -925,6 +966,16 @@ pub fn insert_text(page: &Rc<PageDom>, text: &str) {
         return;
     }
     let target = page.dom.borrow().focused(page.document()).ok().flatten();
+    if let Some(host) = target.and_then(|t| editing_host_of(page, t)) {
+        if text.is_empty() {
+            if crate::editing::selection_range(page).is_some_and(|(s, e)| s != e) {
+                crate::editing::delete(page, host, true);
+            }
+        } else {
+            crate::editing::insert_text(page, host, text);
+        }
+        return;
+    }
     let Some(target) = target.or_else(|| remembered_editing_target(page)) else { return };
     if text.is_empty() {
         let has_selection = page.dom.borrow().selection(target).map(|(s, e)| s != e).unwrap_or(false);
@@ -1160,6 +1211,7 @@ pub fn dispatch_mouse_intercepting_drags(
             let pd = fire(page, tkey, &mouse_event(page, EventInterface::PointerEvent, "pointerdown", m, true));
             let md = !pd || fire(page, tkey, &mouse_event(page, EventInterface::MouseEvent, "mousedown", m, true));
             page.set_press_target(Some(target));
+            let place_caret = m.button == MouseButton::Left && pd && md;
             // A canceled mousedown prevents dragging, as in Chrome.
             let source =
                 (m.button == MouseButton::Left && pd && md).then(|| drag_source(&page.dom.borrow(), target)).flatten();
@@ -1192,6 +1244,9 @@ pub fn dispatch_mouse_intercepting_drags(
                         }
                     }
                 }
+            }
+            if place_caret {
+                crate::editing::caret_on_press(page, target);
             }
         }
         MouseKind::Released => {

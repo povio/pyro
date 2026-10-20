@@ -3407,6 +3407,149 @@ fn document_open_write_close_replaces_a_loaded_document() {
     );
 }
 
+/// Contenteditable editing against sequences recorded in headless Chromium
+/// (Playwright 1.59.1) for `<div id=ed contenteditable><p>hello</p></div>`.
+fn ce_env() -> Env {
+    let e = env("<body><input id=other><div id=ed contenteditable=true><p>hello</p></div></body>");
+    eval(
+        &e.main,
+        r#"
+        window.log = [];
+        const ed = document.getElementById('ed');
+        for (const t of ['keydown', 'beforeinput', 'input'])
+            document.addEventListener(t, ev => log.push(t + (ev.inputType ? ':' + ev.inputType + ':' + (ev.data ?? '') : '') + (t === 'keydown' ? ':' + ev.key : '')), true);
+        window.sel = () => { const s = getSelection(); const n = x => x ? (x.nodeType === 3 ? '#text"' + x.data + '"' : x.nodeName) : null;
+            return [s.rangeCount, n(s.anchorNode), s.anchorOffset, n(s.focusNode), s.focusOffset, document.activeElement.id].join(','); };
+        window.state = () => [ed.innerHTML, sel(), log.splice(0).join(' ')].join(' | ');
+        1"#,
+    );
+    e
+}
+
+fn key(page: &Rc<PageDom>, key: &str, text: &str, modifiers: input::Modifiers) {
+    let k = input::KeyInput { key: key.into(), code: key.into(), text: text.into(), modifiers, ..Default::default() };
+    input::dispatch_key(page, if text.is_empty() { input::KeyKind::RawKeyDown } else { input::KeyKind::KeyDown }, &k);
+    input::dispatch_key(page, input::KeyKind::KeyUp, &k);
+}
+
+fn click_p(e: &Env) {
+    let r = eval(&e.main, "const b = document.querySelector('#ed p').getBoundingClientRect(); [b.x + b.width / 2, b.y + b.height / 2].join()");
+    let (x, y) = r.split_once(',').unwrap();
+    let m = input::MouseInput {
+        x: x.parse().unwrap(),
+        y: y.parse().unwrap(),
+        button: input::MouseButton::Left,
+        buttons: 1,
+        click_count: 1,
+        ..Default::default()
+    };
+    input::dispatch_mouse(&e.page, input::MouseKind::Pressed, &m).unwrap();
+    input::dispatch_mouse(&e.page, input::MouseKind::Released, &input::MouseInput { buttons: 0, ..m }).unwrap();
+}
+
+#[test]
+fn contenteditable_typing_deleting_and_caret_keys_match_chromium() {
+    let none = input::Modifiers::default();
+    // click + type
+    let e = ce_env();
+    click_p(&e);
+    key(&e.page, "X", "X", none);
+    assert_eq!(
+        eval(&e.main, "state()"),
+        r#"<p>helloX</p> | 1,#text"helloX",6,#text"helloX",6,ed | keydown:X beforeinput:insertText:X input:insertText:X"#
+    );
+    // click + ArrowLeft ×2 + type
+    drop(e);
+    let e = ce_env();
+    click_p(&e);
+    key(&e.page, "ArrowLeft", "", none);
+    key(&e.page, "ArrowLeft", "", none);
+    key(&e.page, "Y", "Y", none);
+    assert_eq!(
+        eval(&e.main, "[ed.innerHTML, sel()].join(' | ')"),
+        r#"<p>helYlo</p> | 1,#text"helYlo",4,#text"helYlo",4,ed"#
+    );
+    // click + Backspace
+    drop(e);
+    let e = ce_env();
+    click_p(&e);
+    key(&e.page, "Backspace", "", none);
+    assert_eq!(
+        eval(&e.main, "state()"),
+        r#"<p>hell</p> | 1,#text"hell",4,#text"hell",4,ed | keydown:Backspace beforeinput:deleteContentBackward: input:deleteContentBackward:"#
+    );
+    // select all + Backspace leaves Chrome's placeholder
+    drop(e);
+    let e = ce_env();
+    click_p(&e);
+    key(&e.page, "a", "", input::Modifiers { meta: true, ..none });
+    key(&e.page, "Backspace", "", none);
+    assert_eq!(eval(&e.main, "[ed.innerHTML, sel()].join(' | ')"), "<p><br></p> | 1,P,0,P,0,ed");
+    // focus puts the caret at the start; End moves it to the end
+    drop(e);
+    let e = ce_env();
+    eval(&e.main, "ed.focus(); 1");
+    assert_eq!(eval(&e.main, "sel()"), r#"1,#text"hello",0,#text"hello",0,ed"#);
+    key(&e.page, "End", "", none);
+    key(&e.page, "!", "!", none);
+    assert_eq!(eval(&e.main, "ed.innerHTML"), "<p>hello!</p>");
+    // JS collapse + type
+    drop(e);
+    let e = ce_env();
+    eval(&e.main, "ed.focus(); getSelection().collapse(document.querySelector('#ed p').firstChild, 2); 1");
+    key(&e.page, "Z", "Z", none);
+    assert_eq!(
+        eval(&e.main, "[ed.innerHTML, sel()].join(' | ')"),
+        r#"<p>heZllo</p> | 1,#text"heZllo",3,#text"heZllo",3,ed"#
+    );
+    // Enter splits the paragraph
+    drop(e);
+    let e = ce_env();
+    click_p(&e);
+    key(&e.page, "Enter", "\r", none);
+    key(&e.page, "W", "W", none);
+    assert_eq!(
+        eval(&e.main, "state()"),
+        r#"<p>hello</p><p>W</p> | 1,#text"W",1,#text"W",1,ed | keydown:Enter beforeinput:insertParagraph: input:insertParagraph: keydown:W beforeinput:insertText:W input:insertText:W"#
+    );
+    // A canceled beforeinput leaves the DOM alone (ProseMirror handles keys itself).
+    drop(e);
+    let e = ce_env();
+    eval(&e.main, "ed.addEventListener('beforeinput', ev => ev.preventDefault()); 1");
+    click_p(&e);
+    key(&e.page, "Q", "Q", none);
+    assert_eq!(eval(&e.main, "ed.innerHTML"), "<p>hello</p>");
+}
+
+#[test]
+fn contenteditable_fill_uses_the_document_selection_from_another_world() {
+    // Playwright's fill(): focus + selectNodeContents/addRange in its utility
+    // world, then Input.insertText.
+    let e = ce_env();
+    let class = e.engine.register::<TestWindow>();
+    let utility = new_realm(&e.engine, class, &e.page, "__playwright_utility_world__");
+    eval(
+        &utility,
+        "const el = document.getElementById('ed'); el.focus(); const r = document.createRange(); r.selectNodeContents(el); \
+         const s = getSelection(); s.removeAllRanges(); s.addRange(r); 1",
+    );
+    assert_eq!(eval(&e.main, "getSelection().rangeCount + ':' + getSelection().toString()"), "1:hello");
+    input::insert_text(&e.page, "filled");
+    assert_eq!(
+        eval(&e.main, "state()"),
+        r#"<p>filled</p> | 1,#text"filled",6,#text"filled",6,ed | beforeinput:insertText:filled input:insertText:filled"#
+    );
+    // fill('') then deletes the selection, leaving the placeholder.
+    eval(&utility, "const r2 = document.createRange(); r2.selectNodeContents(el); getSelection().removeAllRanges(); getSelection().addRange(r2); 1");
+    input::insert_text(&e.page, "");
+    assert_eq!(eval(&e.main, "[ed.innerHTML, sel()].join(' | ')"), "<p><br></p> | 1,P,0,P,0,ed");
+    // Selection offsets are validated.
+    assert_eq!(
+        eval(&e.main, "try { getSelection().collapse(ed, 9); 'no' } catch (err) { err.name }"),
+        "IndexSizeError"
+    );
+}
+
 #[test]
 fn drag_event_carries_its_data_transfer() {
     let e = env("<body><div id=d></div></body>");

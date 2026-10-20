@@ -147,6 +147,13 @@ const NATIVE_KEY_COMMANDS: &[(&str, &[&str], &str)] = &[
     ("Meta+KeyA", &["a", "A"], "selectAll"),
     // Escape's command edits nothing (Blink has no editor command for it), so
     // like the engine's default action (none) it only delivers the key events.
+    // Playwright's macOS Home/End commands scroll the document; the engine's
+    // key default action moves the caret in editable content, as Chrome's
+    // does for contenteditable hosts and text controls.
+    ("Home", &["Home"], "scrollToBeginningOfDocument"),
+    ("End", &["End"], "scrollToEndOfDocument"),
+    ("Shift+Home", &["Home"], "moveToBeginningOfDocumentAndModifySelection"),
+    ("Shift+End", &["End"], "moveToEndOfDocumentAndModifySelection"),
     ("Escape", &["Escape"], "cancelOperation"),
     ("Shift+Escape", &["Escape"], "cancelOperation"),
 ];
