@@ -142,6 +142,238 @@ pub enum TablePart {
     ColumnGroup,
 }
 
+/// One end of a grid track's sizing function.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum TrackBreadth {
+    Len(Len),
+    /// `<n>fr` (only meaningful as a max breadth).
+    Fr(f64),
+    Auto,
+    MinContent,
+    MaxContent,
+}
+
+/// A grid track sizing function `minmax(min, max)`; a single size `s` is
+/// `minmax(s, s)` except `<n>fr`, which is `minmax(auto, <n>fr)`.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct Track {
+    pub min: TrackBreadth,
+    pub max: TrackBreadth,
+}
+
+impl Track {
+    pub const AUTO: Track = Track { min: TrackBreadth::Auto, max: TrackBreadth::Auto };
+}
+
+impl Default for Track {
+    fn default() -> Self {
+        Track::AUTO
+    }
+}
+
+/// `repeat(auto-fill | auto-fit, <tracks>)` inside a track list.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AutoRepeat {
+    /// Index in [`TrackList::tracks`] where the repetitions go.
+    pub at: usize,
+    /// `auto-fit`: repeated tracks without items collapse.
+    pub fit: bool,
+    pub tracks: Vec<Track>,
+}
+
+/// `grid-template-columns` / `grid-template-rows` (`none` = empty).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TrackList {
+    pub tracks: Vec<Track>,
+    pub auto_repeat: Option<AutoRepeat>,
+}
+
+/// `grid-column` / `grid-row` of an item: 1-based lines (negative from the
+/// end of the explicit grid), `None` = auto; `span` applies when an end is
+/// auto.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct GridPlacement {
+    pub start: Option<i32>,
+    pub end: Option<i32>,
+    pub span: u32,
+}
+
+impl Default for GridPlacement {
+    fn default() -> Self {
+        GridPlacement { start: None, end: None, span: 1 }
+    }
+}
+
+/// Splits a value at top-level whitespace (not inside parentheses or brackets).
+fn grid_tokens(v: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut depth = 0i32;
+    let mut cur = String::new();
+    for c in v.chars() {
+        match c {
+            '(' | '[' => depth += 1,
+            ')' | ']' => depth -= 1,
+            _ => {}
+        }
+        if c.is_whitespace() && depth == 0 {
+            if !cur.is_empty() {
+                out.push(std::mem::take(&mut cur));
+            }
+        } else {
+            cur.push(c);
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+/// Splits `a, b` at the top-level comma.
+fn grid_args(v: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut depth = 0i32;
+    let mut cur = String::new();
+    for c in v.chars() {
+        match c {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            ',' if depth == 0 => {
+                out.push(std::mem::take(&mut cur).trim().to_owned());
+                continue;
+            }
+            _ => {}
+        }
+        cur.push(c);
+    }
+    out.push(cur.trim().to_owned());
+    out
+}
+
+fn parse_breadth(v: &str, len: &dyn Fn(&str) -> Option<Len>) -> Option<TrackBreadth> {
+    let v = v.trim();
+    Some(match v.to_ascii_lowercase().as_str() {
+        "auto" => TrackBreadth::Auto,
+        "min-content" => TrackBreadth::MinContent,
+        "max-content" => TrackBreadth::MaxContent,
+        l if l.ends_with("fr") => TrackBreadth::Fr(l.trim_end_matches("fr").trim().parse().ok()?),
+        _ => TrackBreadth::Len(len(v)?),
+    })
+}
+
+/// Parses one track sizing function (`200px`, `1fr`, `minmax(0, 1fr)`,
+/// `fit-content(10rem)`, `auto`...). `len` resolves a length or percentage.
+pub fn parse_track(v: &str, len: &dyn Fn(&str) -> Option<Len>) -> Option<Track> {
+    let v = v.trim();
+    let lower = v.to_ascii_lowercase();
+    let inner = |prefix: &str| lower.starts_with(prefix).then(|| v[prefix.len()..v.len().saturating_sub(1)].to_owned());
+    if let Some(args) = inner("minmax(") {
+        let a = grid_args(&args);
+        if a.len() != 2 {
+            return None;
+        }
+        let min = match parse_breadth(&a[0], len)? {
+            TrackBreadth::Fr(_) => TrackBreadth::Auto,
+            b => b,
+        };
+        return Some(Track { min, max: parse_breadth(&a[1], len)? });
+    }
+    if let Some(arg) = inner("fit-content(") {
+        // Approximation: grows with content up to the limit.
+        return Some(Track { min: TrackBreadth::Auto, max: parse_breadth(&arg, len)? });
+    }
+    let b = parse_breadth(v, len)?;
+    Some(match b {
+        TrackBreadth::Fr(_) => Track { min: TrackBreadth::Auto, max: b },
+        _ => Track { min: b, max: b },
+    })
+}
+
+/// Parses `grid-template-columns` / `-rows` (`none`, line names ignored,
+/// `repeat(<n> | auto-fill | auto-fit, ...)`). Unparseable lists are `none`.
+pub fn parse_track_list(v: &str, len: &dyn Fn(&str) -> Option<Len>) -> TrackList {
+    let mut list = TrackList::default();
+    let v = v.trim();
+    if v.eq_ignore_ascii_case("none") || v.is_empty() {
+        return list;
+    }
+    for tok in grid_tokens(v) {
+        if tok.starts_with('[') {
+            continue;
+        }
+        if tok.to_ascii_lowercase().starts_with("repeat(") {
+            let args = grid_args(&tok["repeat(".len()..tok.len().saturating_sub(1)]);
+            if args.len() != 2 {
+                return TrackList::default();
+            }
+            let mut tracks = Vec::new();
+            for t in grid_tokens(&args[1]) {
+                if t.starts_with('[') {
+                    continue;
+                }
+                match parse_track(&t, len) {
+                    Some(t) => tracks.push(t),
+                    None => return TrackList::default(),
+                }
+            }
+            match args[0].to_ascii_lowercase().as_str() {
+                "auto-fill" | "auto-fit" => {
+                    let fit = args[0].eq_ignore_ascii_case("auto-fit");
+                    list.auto_repeat = Some(AutoRepeat { at: list.tracks.len(), fit, tracks });
+                }
+                n => {
+                    let Ok(n) = n.parse::<usize>() else { return TrackList::default() };
+                    for _ in 0..n.min(1000) {
+                        list.tracks.extend_from_slice(&tracks);
+                    }
+                }
+            }
+            continue;
+        }
+        match parse_track(&tok, len) {
+            Some(t) => list.tracks.push(t),
+            None => return TrackList::default(),
+        }
+    }
+    list
+}
+
+/// Parses `grid-column` / `grid-row` from the shorthand (`span 2 / span 2`,
+/// `1 / -1`, `2`) or the `-start` / `-end` longhands (which win).
+pub fn parse_grid_placement(shorthand: Option<&str>, start: Option<&str>, end: Option<&str>) -> GridPlacement {
+    let (mut s, mut e) = (None::<String>, None::<String>);
+    if let Some(v) = shorthand {
+        let mut parts = v.splitn(2, '/');
+        s = parts.next().map(|p| p.trim().to_owned());
+        e = parts.next().map(|p| p.trim().to_owned());
+    }
+    if let Some(v) = start {
+        s = Some(v.trim().to_owned());
+    }
+    if let Some(v) = end {
+        e = Some(v.trim().to_owned());
+    }
+    let mut p = GridPlacement::default();
+    // Each side is a line number or `span <n>`; a span on the start side
+    // wins over one on the end side.
+    let side = |v: Option<&str>| -> (Option<i32>, Option<u32>) {
+        let Some(v) = v else { return (None, None) };
+        let v = v.trim().to_ascii_lowercase();
+        if let Some(n) = v.strip_prefix("span") {
+            return (None, Some(n.trim().parse::<u32>().ok().filter(|n| *n > 0).unwrap_or(1)));
+        }
+        (v.parse::<i32>().ok().filter(|n| *n != 0), None)
+    };
+    let (start_line, start_span) = side(s.as_deref());
+    let (end_line, end_span) = side(e.as_deref());
+    p.start = start_line;
+    p.end = end_line;
+    if let Some(n) = start_span.or(end_span) {
+        p.span = n;
+    }
+    p
+}
+
 /// top, right, bottom, left.
 pub type Sides<T> = [T; 4];
 pub const TOP: usize = 0;
@@ -197,6 +429,20 @@ pub struct FlowStyle {
     pub border_spacing: (f64, f64),
     pub border_collapse: bool,
     pub table_layout_fixed: bool,
+    // Grid container (Stage 4). Gaps reuse `row_gap` / `column_gap`.
+    pub grid_template_columns: TrackList,
+    pub grid_template_rows: TrackList,
+    pub grid_auto_columns: Track,
+    pub grid_auto_rows: Track,
+    /// `grid-auto-flow: column` (else row; `dense` is not supported).
+    pub grid_auto_flow_column: bool,
+    /// `justify-items` (grid); `align-items` is shared with flex.
+    pub justify_items: Align,
+    // Grid item.
+    pub grid_column: GridPlacement,
+    pub grid_row: GridPlacement,
+    /// None = `auto` (the container's justify-items).
+    pub justify_self: Option<Align>,
 }
 
 impl Default for FlowStyle {
@@ -237,6 +483,15 @@ impl Default for FlowStyle {
             border_spacing: (0.0, 0.0),
             border_collapse: false,
             table_layout_fixed: false,
+            grid_template_columns: TrackList::default(),
+            grid_template_rows: TrackList::default(),
+            grid_auto_columns: Track::AUTO,
+            grid_auto_rows: Track::AUTO,
+            grid_auto_flow_column: false,
+            justify_items: Align::Stretch,
+            grid_column: GridPlacement::default(),
+            grid_row: GridPlacement::default(),
+            justify_self: None,
         }
     }
 }
@@ -331,6 +586,9 @@ struct Ctx<'a> {
     /// Definite content-box height of the containing block, against which
     /// in-flow percentage heights resolve (None: they behave as auto).
     cb_height: Option<f64>,
+    /// `cb_height` of the box whose contents are being laid out (for its own
+    /// percentage min/max heights).
+    own_cb_height: Option<f64>,
     /// Absolutely positioned descendants waiting for their containing block:
     /// one list per open positioned ancestor (bottom = initial containing
     /// block). Each entry: element, style, static position, fixed context.
@@ -344,6 +602,7 @@ struct Ctx<'a> {
 struct Memo {
     styles: RefCell<FxHashMap<NodeId, Option<FlowStyle>>>,
     max_content: RefCell<FxHashMap<NodeId, f64>>,
+    min_content: RefCell<FxHashMap<NodeId, f64>>,
     /// Content height by (element, content width bits).
     heights: RefCell<FxHashMap<(NodeId, u64), f64>>,
 }
@@ -407,6 +666,7 @@ impl<'a> Ctx<'a> {
             by_order: Vec::new(),
             memo,
             cb_height: None,
+            own_cb_height: None,
         }
     }
 
@@ -446,7 +706,10 @@ impl<'a> Ctx<'a> {
         };
         // Average glyph advance of the control font.
         let avg = 0.525 * fs;
-        Some(match control_kind(self.dom, el)? {
+        let Some(kind) = control_kind(self.dom, el) else {
+            return self.replaced_intrinsic(el);
+        };
+        Some(match kind {
             Control::Text => (attr_num("size").unwrap_or(20.0) * avg + 0.4375 * fs, line),
             Control::Check => (13.0, 13.0),
             Control::Range => (129.0, 16.0),
@@ -471,6 +734,24 @@ impl<'a> Ctx<'a> {
                 }
             }
         })
+    }
+
+    /// Size of a non-control replaced element from its `width`/`height`
+    /// attributes (lucide icons: `<svg width="15" height="15">`), else the
+    /// CSS default object size (300x150) for svg/canvas/video/iframe/embed/
+    /// object; images without attributes have no known natural size.
+    fn replaced_intrinsic(&self, el: NodeId) -> Option<(f64, f64)> {
+        let tag = self.dom.tag_name(el).ok()?.to_ascii_lowercase();
+        let default = match tag.as_str() {
+            "svg" | "canvas" | "video" | "iframe" | "embed" | "object" => (300.0, 150.0),
+            "img" => (0.0, 0.0),
+            _ => return None,
+        };
+        let attr = |name: &str, fallback: f64| match self.dom.get_attribute(el, name).ok().flatten() {
+            None => fallback,
+            Some(v) => v.trim().trim_end_matches("px").parse::<f64>().ok().filter(|v| *v >= 0.0).unwrap_or(0.0),
+        };
+        Some((attr("width", default.0), attr("height", default.1)))
     }
 
     fn insert_box(&mut self, el: NodeId, b: FlowBox) {
@@ -694,8 +975,10 @@ impl<'a> Ctx<'a> {
         shift: (f64, f64),
     ) -> f64 {
         let outer = std::mem::replace(&mut self.cb_height, height);
+        let outer_own = std::mem::replace(&mut self.own_cb_height, outer);
         let h = self.contents_in(el, style, x, y, width, height, fixed, shift);
         self.cb_height = outer;
+        self.own_cb_height = outer_own;
         h
     }
 
@@ -719,6 +1002,9 @@ impl<'a> Ctx<'a> {
         }
         if style.inner == InnerDisplay::Table {
             return self.table(el, style, x, y, width, fixed, shift);
+        }
+        if style.inner == InnerDisplay::Grid {
+            return self.grid(el, style, x, y, width, height, fixed, shift);
         }
         let kids = self.flatten_children(el);
         let mut cursor = y;
@@ -920,41 +1206,118 @@ impl<'a> Ctx<'a> {
         if let Some(&w) = self.memo.max_content.borrow().get(&el) {
             return w;
         }
-        let w = self.max_content_uncached(el, style);
+        let w = self.content_width(el, style, false);
         self.memo.max_content.borrow_mut().insert(el, w);
         w
     }
 
-    fn max_content_uncached(&self, el: NodeId, style: &FlowStyle) -> f64 {
+    /// Min-content width (`min`: the narrowest without overflow: longest
+    /// word, widest atomic box) or max-content width (no wrapping) of an
+    /// element's contents. Flex rows add their items and gaps.
+    fn content_width(&self, el: NodeId, style: &FlowStyle, min: bool) -> f64 {
         if style.inner == InnerDisplay::Table {
             return self.table_max_content(el, style);
         }
+        if style.inner == InnerDisplay::Grid {
+            return self.grid_content_width(el, style, min);
+        }
+        let flex = style.inner == InnerDisplay::Flex;
+        let flex_row = flex && matches!(style.flex_direction, FlexDirection::Row | FlexDirection::RowReverse);
         let mut best: f64 = 0.0;
         let mut line: f64 = 0.0;
+        let mut sum: f64 = 0.0;
+        let mut items = 0usize;
+        let mut text_item = false;
         for (child, s) in self.flatten_children(el) {
-            match s {
+            let w = match s {
                 None => {
                     let text = self.dom.char_data(child).unwrap_or("");
-                    line += collapsed_width(text, style.font_size);
+                    if text.trim().is_empty() && flex {
+                        continue;
+                    }
+                    let w = if min && !style.nowrap {
+                        text.split_ascii_whitespace().map(|t| text_width(t, style.font_size)).fold(0.0, f64::max)
+                    } else {
+                        collapsed_width(text, style.font_size)
+                    };
+                    if flex_row {
+                        // Adjacent text forms one anonymous item.
+                        if !text_item {
+                            items += 1;
+                        }
+                        text_item = true;
+                        if min && !style.flex_wrap {
+                            sum += w;
+                        } else if min {
+                            best = best.max(w);
+                        } else {
+                            sum += w;
+                        }
+                        continue;
+                    }
+                    if min || flex {
+                        best = best.max(w);
+                    } else {
+                        line += w;
+                    }
+                    continue;
                 }
-                Some(s) if matches!(s.position, Position::Absolute | Position::Fixed) => {}
+                Some(s) if matches!(s.position, Position::Absolute | Position::Fixed) => continue,
                 Some(s) => {
                     let e = self.edges(&s, 0.0);
+                    let to_content = |v: f64| Self::declared_content(&s, v, e.horizontal());
                     let inner = match s.width.resolve(None) {
-                        Some(w) => Self::declared_content(&s, w, e.horizontal()),
+                        Some(w) => to_content(w),
+                        None if min => self.min_content(child, &s),
                         None => self.max_content(child, &s),
                     };
-                    let w = inner + e.horizontal() + e.margin[LEFT] + e.margin[RIGHT];
-                    if s.outer == OuterDisplay::Inline {
-                        line += w;
-                    } else {
-                        best = best.max(line).max(w);
-                        line = 0.0;
-                    }
+                    let inner = Self::clamp(
+                        inner,
+                        s.min_width.resolve(None).map(to_content),
+                        s.max_width.resolve(None).map(to_content),
+                    );
+                    (inner + e.horizontal() + e.margin[LEFT] + e.margin[RIGHT], s.outer)
                 }
+            };
+            text_item = false;
+            let (w, outer) = w;
+            if flex_row {
+                items += 1;
+                if min && style.flex_wrap {
+                    best = best.max(w);
+                } else {
+                    sum += w;
+                }
+            } else if outer == OuterDisplay::Inline && !flex {
+                if min {
+                    best = best.max(w);
+                } else {
+                    line += w;
+                }
+            } else {
+                best = best.max(line).max(w);
+                line = 0.0;
+            }
+        }
+        if flex_row && items > 0 {
+            let gap = style.column_gap.resolve(0.0) * (items - 1) as f64;
+            if !(min && style.flex_wrap) {
+                return sum + gap;
             }
         }
         best.max(line)
+    }
+
+    fn min_content(&self, el: NodeId, style: &FlowStyle) -> f64 {
+        if style.replaced {
+            return self.max_content(el, style);
+        }
+        if let Some(&w) = self.memo.min_content.borrow().get(&el) {
+            return w;
+        }
+        let w = self.content_width(el, style, true);
+        self.memo.min_content.borrow_mut().insert(el, w);
+        w
     }
 
     /// Lays out a run of inline-level children as line boxes in
@@ -1071,7 +1434,10 @@ impl<'a> Ctx<'a> {
         frags: &mut FxHashMap<NodeId, Rect>,
         order_of: &mut Vec<NodeId>,
     ) -> f64 {
-        if line.items.is_empty() {
+        // A line holding only collapsible whitespace (zero-width spacers
+        // with no owner) has no line box.
+        let blank = line.items.iter().all(|it| it.atomic.is_none() && it.owners.is_empty() && it.width == 0.0);
+        if blank {
             *line = Line::default();
             return 0.0;
         }
@@ -1351,6 +1717,8 @@ struct FlexItem {
     text: Vec<NodeId>,
     style: FlowStyle,
     margin: Sides<f64>,
+    /// Border-box flex base size.
+    base: f64,
     /// Border-box main size (hypothetical, then flexed).
     main: f64,
     min_main: f64,
@@ -1396,6 +1764,7 @@ impl<'a> Ctx<'a> {
                     text: std::mem::take(run),
                     style: st,
                     margin: [0.0; 4],
+                    base: 0.0,
                     main: 0.0,
                     min_main: 0.0,
                     max_main: f64::INFINITY,
@@ -1420,6 +1789,7 @@ impl<'a> Ctx<'a> {
                         text: Vec::new(),
                         margin: e.margin,
                         style: s,
+                        base: 0.0,
                         main: 0.0,
                         min_main: 0.0,
                         max_main: f64::INFINITY,
@@ -1436,9 +1806,27 @@ impl<'a> Ctx<'a> {
         // Hypothetical main sizes (border boxes).
         for it in &mut items {
             let (main, min, max) = self.flex_base(it, row, width, container_main);
-            it.main = main;
+            // Hypothetical main size: the base size clamped by min/max.
+            it.base = main;
+            it.main = main.min(max).max(min);
             it.min_main = min;
             it.max_main = max;
+        }
+        // An auto-height column container's main size is its content clamped
+        // by its own min/max height; items flex within that.
+        let own = self.edges(style, width);
+        let to_content_h = |v: f64| if style.border_box { (v - own.vertical()).max(0.0) } else { v };
+        let own_min_h = style.min_height.resolve(self.own_cb_height).map(to_content_h);
+        let own_max_h = style.max_height.resolve(self.own_cb_height).map(to_content_h);
+        let mut container_main = container_main;
+        if !row && container_main.is_none() && (own_min_h.is_some() || own_max_h.is_some()) {
+            let n = items.len() as f64;
+            let content: f64 =
+                items.iter().map(|it| it.main + margins_main(it, row)).sum::<f64>() + main_gap * (n - 1.0).max(0.0);
+            let clamped = Self::clamp(content, own_min_h, own_max_h);
+            if clamped != content {
+                container_main = Some(clamped);
+            }
         }
         // Lines.
         let available = container_main.unwrap_or(f64::INFINITY);
@@ -1459,29 +1847,10 @@ impl<'a> Ctx<'a> {
         if start < items.len() || items.is_empty() {
             lines.push(start..items.len());
         }
-        // Flex each line (one pass) when the main size is definite.
+        // Resolve flexible lengths per line when the main size is definite.
         if let Some(cm) = container_main {
             for line in &lines {
-                let n = line.len() as f64;
-                let used: f64 = items[line.clone()].iter().map(|it| it.main + margins_main(it, row)).sum::<f64>()
-                    + main_gap * (n - 1.0).max(0.0);
-                let free = cm - used;
-                if free > 0.0 {
-                    let grow: f64 = items[line.clone()].iter().map(|it| it.style.flex_grow).sum();
-                    if grow > 0.0 {
-                        for it in &mut items[line.clone()] {
-                            it.main = (it.main + free * it.style.flex_grow / grow).clamp(it.min_main, it.max_main);
-                        }
-                    }
-                } else if free < 0.0 {
-                    let weight: f64 = items[line.clone()].iter().map(|it| it.style.flex_shrink * it.main).sum();
-                    if weight > 0.0 {
-                        for it in &mut items[line.clone()] {
-                            let share = -free * it.style.flex_shrink * it.main / weight;
-                            it.main = (it.main - share).clamp(it.min_main, it.max_main);
-                        }
-                    }
-                }
+                resolve_flexible_lengths(&mut items[line.clone()], cm, main_gap, row);
             }
         }
         // Cross sizes from content (for each item at its main size).
@@ -1495,8 +1864,11 @@ impl<'a> Ctx<'a> {
             .map(|l| items[l.clone()].iter().map(|it| it.cross + margins_cross(it, row)).fold(0.0, f64::max))
             .collect();
         if single {
-            if let Some(cc) = container_cross {
-                line_cross[0] = cc;
+            match container_cross {
+                Some(cc) => line_cross[0] = cc,
+                // An auto-height row container is at least its min-height.
+                None if row => line_cross[0] = Self::clamp(line_cross[0], own_min_h, own_max_h),
+                None => {}
             }
         }
         // Stretch.
@@ -1596,7 +1968,30 @@ impl<'a> Ctx<'a> {
         } else {
             (s.min_height.resolve(container_main), s.max_height.resolve(container_main))
         };
-        (main, min.map_or(0.0, to_border), max.map_or(f64::INFINITY, to_border))
+        let max = max.map_or(f64::INFINITY, to_border);
+        let min = match min {
+            Some(m) => to_border(m),
+            // `min-*: auto`: an item that does not clip its overflow cannot
+            // shrink below its content (min-content width / content height),
+            // capped by its specified size.
+            None if (row && !s.clips_x) || (!row && !s.clips_y) => {
+                let content = match (&it.el, row) {
+                    (Some(el), true) => self.min_content(*el, s),
+                    (Some(el), false) => self.measure_height(*el, s, self.flex_cross_width(it, width)),
+                    (None, true) => it
+                        .text
+                        .iter()
+                        .flat_map(|&t| self.dom.char_data(t).unwrap_or("").split_ascii_whitespace())
+                        .map(|w| text_width(w, s.font_size))
+                        .fold(0.0, f64::max),
+                    (None, false) => text_extents(s).0 + text_extents(s).1,
+                };
+                let content = content + edges;
+                declared.map_or(content, |d| content.min(to_border(d))).min(max)
+            }
+            None => 0.0,
+        };
+        (main, min, max)
     }
 
     /// Content-box width of an item in a column container before stretching.
@@ -1681,6 +2076,72 @@ impl<'a> Ctx<'a> {
             [Dim::px(e.margin[TOP]), Dim::px(e.margin[RIGHT]), Dim::px(e.margin[BOTTOM]), Dim::px(e.margin[LEFT])];
         // A flex item's position is (x, y); block_child adds the margins.
         self.block_child(el, &s, x, y, w + e.margin[LEFT] + e.margin[RIGHT], fixed, shift);
+    }
+}
+
+/// CSS Flexbox 9.7: grow or shrink unfrozen items from their base sizes,
+/// freezing min/max violators until the line's free space is distributed.
+fn resolve_flexible_lengths(items: &mut [FlexItem], container_main: f64, gap: f64, row: bool) {
+    let n = items.len();
+    if n == 0 {
+        return;
+    }
+    let gaps = gap * (n - 1) as f64;
+    let margins: f64 = items.iter().map(|it| margins_main(it, row)).sum();
+    let hypothetical: f64 = items.iter().map(|it| it.main).sum();
+    let grow = hypothetical + margins + gaps < container_main;
+    let mut target: Vec<f64> = items.iter().map(|it| it.main).collect();
+    let mut frozen: Vec<bool> = items
+        .iter()
+        .map(|it| {
+            let factor = if grow { it.style.flex_grow } else { it.style.flex_shrink };
+            factor == 0.0 || (grow && it.base > it.main) || (!grow && it.base < it.main)
+        })
+        .collect();
+    for _ in 0..=n {
+        if frozen.iter().all(|f| *f) {
+            break;
+        }
+        let used: f64 = items.iter().zip(&frozen).zip(&target).map(|((it, f), t)| if *f { *t } else { it.base }).sum();
+        let free = container_main - gaps - margins - used;
+        if grow {
+            let sum: f64 = items.iter().zip(&frozen).filter(|(_, f)| !**f).map(|(it, _)| it.style.flex_grow).sum();
+            // Factors summing below 1 take only that fraction of the space.
+            let free = if sum < 1.0 { free * sum } else { free };
+            for (i, it) in items.iter().enumerate() {
+                if !frozen[i] && sum > 0.0 {
+                    target[i] = it.base + free * it.style.flex_grow / sum;
+                }
+            }
+        } else {
+            let sum: f64 =
+                items.iter().zip(&frozen).filter(|(_, f)| !**f).map(|(it, _)| it.style.flex_shrink * it.base).sum();
+            for (i, it) in items.iter().enumerate() {
+                if !frozen[i] {
+                    target[i] = if sum > 0.0 { it.base + free * it.style.flex_shrink * it.base / sum } else { it.base };
+                }
+            }
+        }
+        let mut total = 0.0;
+        let mut violation = vec![0.0; n];
+        for (i, it) in items.iter().enumerate() {
+            if !frozen[i] {
+                let clamped = target[i].min(it.max_main).max(it.min_main).max(0.0);
+                violation[i] = clamped - target[i];
+                total += violation[i];
+                target[i] = clamped;
+            }
+        }
+        for i in 0..n {
+            if !frozen[i]
+                && (total == 0.0 || (total > 0.0 && violation[i] > 0.0) || (total < 0.0 && violation[i] < 0.0))
+            {
+                frozen[i] = true;
+            }
+        }
+    }
+    for (it, t) in items.iter_mut().zip(target) {
+        it.main = t;
     }
 }
 
@@ -1882,6 +2343,7 @@ impl<'a> Ctx<'a> {
         starts.push(cx);
         let mut cursor = y + sy;
         let mut groups: Vec<(NodeId, Rect)> = Vec::new();
+        let mut group_orders: Vec<(NodeId, u32)> = Vec::new();
         for row in &rows {
             // Row height: the tallest cell (and the row's own height).
             let mut row_h = row.style.as_ref().and_then(|s| s.height.resolve(None)).unwrap_or(0.0);
@@ -1899,6 +2361,13 @@ impl<'a> Ctx<'a> {
                 let h = declared.unwrap_or(0.0).max(content_h) + e.vertical();
                 cell_heights.push((content_h, e.vertical()));
                 row_h = row_h.max(h);
+            }
+            // A row group precedes its rows (and cells) in paint order.
+            if let Some(g) = row.group {
+                if !group_orders.iter().any(|(n, _)| *n == g) {
+                    let order = self.next_order();
+                    group_orders.push((g, order));
+                }
             }
             let row_order = self.next_order();
             for (c, (content_h, vertical)) in row.cells.iter().zip(cell_heights) {
@@ -1940,7 +2409,7 @@ impl<'a> Ctx<'a> {
             cursor += row_h + sy;
         }
         for (g, rect) in groups {
-            let order = self.next_order();
+            let order = group_orders.iter().find(|(n, _)| *n == g).map_or_else(|| self.next_order(), |(_, o)| *o);
             self.insert_box(g, simple_box(rect, fixed, order));
         }
         cursor - y
@@ -1992,5 +2461,735 @@ impl FlowResult {
             }
         }
         best.map(|k| k.2)
+    }
+}
+
+// ----- grid layout (Stage 4) ------------------------------------------------
+
+struct GridItem {
+    /// None: an anonymous item for a run of text.
+    el: Option<NodeId>,
+    text: Vec<NodeId>,
+    style: FlowStyle,
+    col: usize,
+    col_span: usize,
+    row: usize,
+    row_span: usize,
+}
+
+/// A sized axis: track sizes, which tracks collapsed (auto-fit), the gap.
+struct Axis {
+    sizes: Vec<f64>,
+    collapsed: Vec<bool>,
+    gap: f64,
+}
+
+impl Axis {
+    /// Start offset of each track and the end of the last one.
+    fn starts(&self) -> Vec<f64> {
+        let mut out = Vec::with_capacity(self.sizes.len() + 1);
+        let mut pos = 0.0;
+        let mut first = true;
+        for (i, s) in self.sizes.iter().enumerate() {
+            if !self.collapsed[i] {
+                if !first {
+                    pos += self.gap;
+                }
+                first = false;
+            }
+            out.push(pos);
+            pos += s;
+        }
+        out.push(pos);
+        out
+    }
+
+    fn total(&self) -> f64 {
+        *self.starts().last().unwrap_or(&0.0)
+    }
+
+    /// Size of the area spanning `span` tracks from `start` (gaps included).
+    fn area(&self, starts: &[f64], start: usize, span: usize) -> f64 {
+        let last = start + span.max(1) - 1;
+        (starts[last] + self.sizes[last] - starts[start]).max(0.0)
+    }
+}
+
+/// Expands a track list for `available` space (auto-repeat count).
+/// Returns the tracks and, for auto-fit, the index range of the repetitions.
+fn expand_tracks(list: &TrackList, available: Option<f64>, gap: f64) -> (Vec<Track>, Option<std::ops::Range<usize>>) {
+    let Some(rep) = &list.auto_repeat else { return (list.tracks.clone(), None) };
+    let fixed = |b: TrackBreadth| match b {
+        TrackBreadth::Len(l) => Some(l.resolve(available.unwrap_or(0.0))),
+        _ => None,
+    };
+    let size = |t: &Track| fixed(t.max).or_else(|| fixed(t.min));
+    let rep_sizes: Option<Vec<f64>> = rep.tracks.iter().map(size).collect();
+    let mut count = 1usize;
+    if let (Some(avail), Some(rep_sizes)) = (available, rep_sizes) {
+        let others: f64 = list.tracks.iter().map(|t| size(t).unwrap_or(0.0)).sum();
+        let rep_sum: f64 = rep_sizes.iter().sum();
+        let n = list.tracks.len() + rep.tracks.len();
+        if rep_sum + gap > 0.0 {
+            let total = |k: usize| others + k as f64 * rep_sum + (n + (k - 1) * rep.tracks.len() - 1) as f64 * gap;
+            while count < 1000 && total(count + 1) <= avail {
+                count += 1;
+            }
+        }
+    }
+    let mut out = list.tracks[..rep.at].to_vec();
+    let from = out.len();
+    for _ in 0..count {
+        out.extend_from_slice(&rep.tracks);
+    }
+    let to = out.len();
+    out.extend_from_slice(&list.tracks[rep.at..]);
+    (out, rep.fit.then_some(from..to))
+}
+
+/// Resolves a placement against `lines` explicit lines: (start index or
+/// auto, span).
+fn resolve_lines(p: GridPlacement, lines: usize) -> (Option<usize>, usize) {
+    let lines = lines as i32;
+    let index = |n: i32| if n > 0 { n - 1 } else { (lines + n).max(0) };
+    let span = p.span.max(1) as usize;
+    match (p.start, p.end) {
+        (Some(s), Some(e)) => {
+            let (a, b) = (index(s), index(e));
+            let (a, b) = if b < a { (b, a) } else { (a, b) };
+            (Some(a as usize), ((b - a).max(1)) as usize)
+        }
+        (Some(s), None) => (Some(index(s) as usize), span),
+        (None, Some(e)) => (Some((index(e) - span as i32).max(0) as usize), span),
+        (None, None) => (None, span),
+    }
+}
+
+/// A resolved placement on one axis: (start index or auto, span).
+type Lines = (Option<usize>, usize);
+
+/// Places items on the grid (auto-placement, sparse). Returns the column
+/// and row counts including implicit tracks.
+fn place_grid_items(
+    items: &mut [GridItem],
+    explicit_cols: usize,
+    explicit_rows: usize,
+    column_flow: bool,
+) -> (usize, usize) {
+    // Work in (major, minor) = (rows, cols) for row flow, swapped for column flow.
+    let resolved: Vec<(Lines, Lines)> = items
+        .iter()
+        .map(|it| {
+            let c = resolve_lines(it.style.grid_column, explicit_cols + 1);
+            let r = resolve_lines(it.style.grid_row, explicit_rows + 1);
+            if column_flow {
+                (c, r)
+            } else {
+                (r, c)
+            }
+        })
+        .collect();
+    let explicit_minor = if column_flow { explicit_rows } else { explicit_cols };
+    let mut minor_count = explicit_minor.max(1);
+    for ((_, _), (start, span)) in &resolved {
+        minor_count = minor_count.max(start.unwrap_or(0) + span);
+    }
+    let mut occupied: Vec<Vec<bool>> = Vec::new();
+    let fits = |occ: &Vec<Vec<bool>>, major: usize, minor: usize, major_span: usize, minor_span: usize| {
+        (major..major + major_span).all(|r| (minor..minor + minor_span).all(|c| !occ.get(r).is_some_and(|row| row[c])))
+    };
+    let mark = |occ: &mut Vec<Vec<bool>>, major: usize, minor: usize, major_span: usize, minor_span: usize| {
+        while occ.len() < major + major_span {
+            occ.push(vec![false; minor_count]);
+        }
+        for row in occ.iter_mut().skip(major).take(major_span) {
+            for cell in row.iter_mut().skip(minor).take(minor_span) {
+                *cell = true;
+            }
+        }
+    };
+    let mut placed: Vec<Option<(usize, usize, usize, usize)>> = vec![None; items.len()];
+    // 1. Items locked to a major position.
+    for (i, ((major, major_span), (minor, minor_span))) in resolved.iter().enumerate() {
+        let Some(major) = *major else { continue };
+        let minor = match *minor {
+            Some(m) => m,
+            None => (0..=minor_count.saturating_sub(*minor_span))
+                .find(|&c| fits(&occupied, major, c, *major_span, *minor_span))
+                .unwrap_or(0),
+        };
+        mark(&mut occupied, major, minor, *major_span, *minor_span);
+        placed[i] = Some((major, *major_span, minor, *minor_span));
+    }
+    // 2. The rest, in order, with a sparse cursor.
+    let (mut cur_major, mut cur_minor) = (0usize, 0usize);
+    for (i, ((major, major_span), (minor, minor_span))) in resolved.iter().enumerate() {
+        if major.is_some() {
+            continue;
+        }
+        let minor_span = (*minor_span).min(minor_count);
+        match *minor {
+            Some(m) => {
+                if m < cur_minor {
+                    cur_major += 1;
+                }
+                cur_minor = m;
+                while !fits(&occupied, cur_major, m, *major_span, minor_span) {
+                    cur_major += 1;
+                }
+            }
+            None => loop {
+                if cur_minor + minor_span > minor_count {
+                    cur_major += 1;
+                    cur_minor = 0;
+                    continue;
+                }
+                if fits(&occupied, cur_major, cur_minor, *major_span, minor_span) {
+                    break;
+                }
+                cur_minor += 1;
+            },
+        }
+        mark(&mut occupied, cur_major, cur_minor, *major_span, minor_span);
+        placed[i] = Some((cur_major, *major_span, cur_minor, minor_span));
+        cur_minor += minor_span;
+    }
+    let explicit_major = if column_flow { explicit_cols } else { explicit_rows };
+    let major_count = occupied.len().max(explicit_major);
+    for (it, p) in items.iter_mut().zip(placed) {
+        let (major, major_span, minor, minor_span) = p.unwrap_or((0, 1, 0, 1));
+        if column_flow {
+            (it.col, it.col_span, it.row, it.row_span) = (major, major_span, minor, minor_span);
+        } else {
+            (it.row, it.row_span, it.col, it.col_span) = (major, major_span, minor, minor_span);
+        }
+    }
+    if column_flow {
+        (major_count, minor_count)
+    } else {
+        (minor_count, major_count)
+    }
+}
+
+/// CSS Grid 12.3-12.8 (simplified): sizes tracks from fixed breadths and the
+/// items' (min, max) contributions, then maximizes, expands `fr` tracks and
+/// stretches `auto` tracks. `contrib(i)` = the item's (min, max) outer size
+/// in this axis; `span(i)` = (start, span) of item i.
+#[allow(clippy::too_many_arguments)]
+fn size_tracks(
+    tracks: &[Track],
+    collapsed: &[bool],
+    available: Option<f64>,
+    gap: f64,
+    n_items: usize,
+    span: &dyn Fn(usize) -> (usize, usize),
+    contrib: &mut dyn FnMut(usize) -> (f64, f64),
+    stretch_auto: bool,
+) -> Vec<f64> {
+    let n = tracks.len();
+    let basis = available.unwrap_or(0.0);
+    let resolve = |b: TrackBreadth| match b {
+        TrackBreadth::Len(l) if l.percent == 0.0 || available.is_some() => Some(l.resolve(basis)),
+        _ => None,
+    };
+    let is_flex = |t: &Track| matches!(t.max, TrackBreadth::Fr(_));
+    let mut base = vec![0.0; n];
+    let mut limit = vec![f64::INFINITY; n];
+    for (i, t) in tracks.iter().enumerate() {
+        if collapsed[i] {
+            limit[i] = 0.0;
+            continue;
+        }
+        if let Some(v) = resolve(t.min) {
+            base[i] = v;
+        }
+        limit[i] = match t.max {
+            TrackBreadth::Fr(_) => base[i],
+            b => resolve(b).unwrap_or(f64::INFINITY),
+        };
+    }
+    // Intrinsic contributions: single-span items first, then spanning ones.
+    let mut intrinsic_max = vec![None::<f64>; n];
+    let mut order: Vec<usize> = (0..n_items).collect();
+    order.sort_by_key(|&i| span(i).1);
+    for i in order {
+        let (start, len) = span(i);
+        if start + len > n || len == 0 {
+            continue;
+        }
+        let range = start..start + len;
+        if range.clone().any(|k| collapsed[k]) {
+            continue;
+        }
+        let crosses_flex = range.clone().any(|k| is_flex(&tracks[k]));
+        let intrinsic_min = |k: usize| {
+            matches!(tracks[k].min, TrackBreadth::Auto | TrackBreadth::MinContent | TrackBreadth::MaxContent)
+        };
+        let intrinsic_max_k = |k: usize| {
+            matches!(tracks[k].max, TrackBreadth::Auto | TrackBreadth::MinContent | TrackBreadth::MaxContent)
+        };
+        if !range.clone().any(|k| intrinsic_min(k) || intrinsic_max_k(k)) {
+            continue;
+        }
+        let (min_c, max_c) = contrib(i);
+        if len == 1 {
+            let k = start;
+            match tracks[k].min {
+                TrackBreadth::Auto | TrackBreadth::MinContent => base[k] = base[k].max(min_c),
+                TrackBreadth::MaxContent => base[k] = base[k].max(max_c),
+                _ => {}
+            }
+            let m = match tracks[k].max {
+                TrackBreadth::MinContent => Some(min_c),
+                TrackBreadth::Auto | TrackBreadth::MaxContent => Some(max_c),
+                _ => None,
+            };
+            if let Some(m) = m {
+                intrinsic_max[k] = Some(intrinsic_max[k].map_or(m, |v: f64| v.max(m)));
+            }
+            continue;
+        }
+        if crosses_flex {
+            // Spanning items crossing a flexible track are handled by fr sizing.
+            continue;
+        }
+        let gaps = gap * (len - 1) as f64;
+        let targets: Vec<usize> = range.clone().filter(|&k| intrinsic_min(k)).collect();
+        let have: f64 = range.clone().map(|k| base[k]).sum::<f64>() + gaps;
+        if min_c > have && !targets.is_empty() {
+            let add = (min_c - have) / targets.len() as f64;
+            for &k in &targets {
+                base[k] += add;
+            }
+        }
+        let targets: Vec<usize> = range.clone().filter(|&k| intrinsic_max_k(k)).collect();
+        let have: f64 = range.clone().map(|k| intrinsic_max[k].unwrap_or(base[k])).sum::<f64>() + gaps;
+        if max_c > have && !targets.is_empty() {
+            let add = (max_c - have) / targets.len() as f64;
+            for &k in &targets {
+                intrinsic_max[k] = Some(intrinsic_max[k].unwrap_or(base[k]) + add);
+            }
+        }
+    }
+    for k in 0..n {
+        if limit[k].is_infinite() {
+            limit[k] = intrinsic_max[k].unwrap_or(base[k]);
+        }
+        limit[k] = limit[k].max(base[k]);
+    }
+    let open = collapsed.iter().filter(|c| !**c).count();
+    let gaps = gap * open.saturating_sub(1) as f64;
+    // Maximize: grow base sizes towards their limits.
+    let free = |base: &[f64]| available.map(|a| a - gaps - base.iter().sum::<f64>());
+    match free(&base) {
+        Some(mut f) if f > 0.0 => {
+            for _ in 0..n {
+                let growable: Vec<usize> = (0..n).filter(|&k| base[k] < limit[k] && !is_flex(&tracks[k])).collect();
+                if growable.is_empty() || f <= 1e-9 {
+                    break;
+                }
+                let share = f / growable.len() as f64;
+                for k in growable {
+                    let add = share.min(limit[k] - base[k]);
+                    base[k] += add;
+                    f -= add;
+                }
+            }
+        }
+        None => {
+            // Indefinite space: tracks take their limits (max-content).
+            for k in 0..n {
+                if !is_flex(&tracks[k]) {
+                    base[k] = limit[k];
+                }
+            }
+        }
+        _ => {}
+    }
+    // Expand flexible tracks.
+    let fr = |k: usize| match tracks[k].max {
+        TrackBreadth::Fr(f) => f,
+        _ => 0.0,
+    };
+    let flex: Vec<usize> = (0..n).filter(|&k| is_flex(&tracks[k]) && !collapsed[k]).collect();
+    if !flex.is_empty() {
+        let unit = match available {
+            Some(a) => {
+                let mut inflexible = vec![false; n];
+                let mut unit = 0.0;
+                for _ in 0..=flex.len() {
+                    let fixed: f64 = (0..n).filter(|&k| !is_flex(&tracks[k]) || inflexible[k]).map(|k| base[k]).sum();
+                    let sum: f64 = flex.iter().filter(|&&k| !inflexible[k]).map(|&k| fr(k)).sum::<f64>();
+                    let leftover = (a - gaps - fixed).max(0.0);
+                    unit = leftover / sum.max(1.0);
+                    let mut changed = false;
+                    for &k in &flex {
+                        if !inflexible[k] && base[k] > unit * fr(k) {
+                            inflexible[k] = true;
+                            changed = true;
+                        }
+                    }
+                    if !changed {
+                        break;
+                    }
+                }
+                unit
+            }
+            None => flex
+                .iter()
+                .map(|&k| {
+                    let f = fr(k);
+                    let content = limit[k].max(intrinsic_max[k].unwrap_or(0.0));
+                    if f > 1.0 {
+                        content / f
+                    } else {
+                        content
+                    }
+                })
+                .fold(0.0, f64::max),
+        };
+        for &k in &flex {
+            base[k] = base[k].max(unit * fr(k));
+        }
+    } else if stretch_auto {
+        // Stretch auto tracks into the remaining space.
+        if let Some(f) = free(&base).filter(|f| *f > 0.0) {
+            let autos: Vec<usize> =
+                (0..n).filter(|&k| !collapsed[k] && matches!(tracks[k].max, TrackBreadth::Auto)).collect();
+            if !autos.is_empty() {
+                let share = f / autos.len() as f64;
+                for k in autos {
+                    base[k] += share;
+                }
+            }
+        }
+    }
+    base
+}
+
+impl<'a> Ctx<'a> {
+    /// Grid items of `el` (with anonymous items for text runs); absolutely
+    /// positioned children are returned separately.
+    fn grid_children(&self, el: NodeId, style: &FlowStyle) -> (Vec<GridItem>, Vec<(NodeId, FlowStyle)>) {
+        let mut items = Vec::new();
+        let mut absolute = Vec::new();
+        let mut text: Vec<NodeId> = Vec::new();
+        let flush = |text: &mut Vec<NodeId>, items: &mut Vec<GridItem>| {
+            if text.iter().any(|&t| self.dom.char_data(t).is_ok_and(|d| !d.trim().is_empty())) {
+                let st = FlowStyle {
+                    font_size: style.font_size,
+                    line_height: style.line_height,
+                    nowrap: style.nowrap,
+                    ..FlowStyle::default()
+                };
+                items.push(GridItem {
+                    el: None,
+                    text: std::mem::take(text),
+                    style: st,
+                    col: 0,
+                    col_span: 1,
+                    row: 0,
+                    row_span: 1,
+                });
+            } else {
+                text.clear();
+            }
+        };
+        for (child, s) in self.flatten_children(el) {
+            match s {
+                None => text.push(child),
+                Some(s) if matches!(s.position, Position::Absolute | Position::Fixed) => absolute.push((child, s)),
+                Some(s) => {
+                    flush(&mut text, &mut items);
+                    items.push(GridItem {
+                        el: Some(child),
+                        text: Vec::new(),
+                        style: s,
+                        col: 0,
+                        col_span: 1,
+                        row: 0,
+                        row_span: 1,
+                    });
+                }
+            }
+        }
+        flush(&mut text, &mut items);
+        (items, absolute)
+    }
+
+    /// An item's (min-content, max-content) outer width.
+    fn grid_item_widths(&self, it: &GridItem, cb_width: f64) -> (f64, f64) {
+        let s = &it.style;
+        let e = self.edges(s, cb_width);
+        let outer = e.horizontal() + e.margin[LEFT] + e.margin[RIGHT];
+        let to_content = |v: f64| Self::declared_content(s, v, e.horizontal());
+        let (min, max) = match (&it.el, s.width.resolve(Some(cb_width))) {
+            (_, Some(w)) => (to_content(w), to_content(w)),
+            (Some(el), None) => (self.min_content(*el, s), self.max_content(*el, s)),
+            (None, None) => {
+                let words = it.text.iter().flat_map(|&t| self.dom.char_data(t).unwrap_or("").split_ascii_whitespace());
+                let min = words.map(|w| text_width(w, s.font_size)).fold(0.0, f64::max);
+                let max =
+                    it.text.iter().map(|&t| collapsed_width(self.dom.char_data(t).unwrap_or(""), s.font_size)).sum();
+                (min, max)
+            }
+        };
+        let clamp = |v: f64| {
+            Self::clamp(
+                v,
+                s.min_width.resolve(Some(cb_width)).map(to_content),
+                s.max_width.resolve(Some(cb_width)).map(to_content),
+            )
+        };
+        (clamp(min) + outer, clamp(max) + outer)
+    }
+
+    /// An item's used border-box width in an area `area_w` wide.
+    fn grid_item_width(&self, it: &GridItem, area_w: f64, justify: Align) -> f64 {
+        let s = &it.style;
+        let e = self.edges(s, area_w);
+        let to_content = |v: f64| Self::declared_content(s, v, e.horizontal());
+        let available = (area_w - e.margin[LEFT] - e.margin[RIGHT]).max(0.0);
+        let content = match s.width.resolve(Some(area_w)) {
+            Some(w) => to_content(w),
+            None if justify == Align::Stretch && !s.replaced => (available - e.horizontal()).max(0.0),
+            None => {
+                let (_, max) = self.grid_item_widths(it, area_w);
+                (max - e.horizontal() - e.margin[LEFT] - e.margin[RIGHT]).min((available - e.horizontal()).max(0.0))
+            }
+        };
+        let content = Self::clamp(
+            content,
+            s.min_width.resolve(Some(area_w)).map(to_content),
+            s.max_width.resolve(Some(area_w)).map(to_content),
+        );
+        content + e.horizontal()
+    }
+
+    /// An item's content-based outer height at border-box width `w`.
+    fn grid_item_height(&self, it: &GridItem, w: f64, cb_width: f64, area_h: Option<f64>) -> f64 {
+        let s = &it.style;
+        let e = self.edges(s, cb_width);
+        let to_content = |v: f64| if s.border_box { (v - e.vertical()).max(0.0) } else { v };
+        let content_w = (w - e.horizontal()).max(0.0);
+        let content = match (s.height.resolve(area_h), &it.el) {
+            (Some(h), _) => to_content(h),
+            (None, Some(el)) => self.measure_height(*el, s, content_w),
+            (None, None) => {
+                let mut probe = Ctx::new(self.dom, self.src, self.vw, self.vh, self.memo);
+                probe.pending.push(Vec::new());
+                probe.inline_run(&it.text, s, 0.0, 0.0, content_w.max(1.0), false, (0.0, 0.0))
+            }
+        };
+        let content = Self::clamp(
+            content,
+            s.min_height.resolve(area_h).map(to_content),
+            s.max_height.resolve(area_h).map(to_content),
+        );
+        content + e.vertical() + e.margin[TOP] + e.margin[BOTTOM]
+    }
+
+    /// Lays out a grid container's content box at (x, y), `width` wide and
+    /// `height` tall when definite; returns the content height.
+    #[allow(clippy::too_many_arguments)]
+    fn grid(
+        &mut self,
+        el: NodeId,
+        style: &FlowStyle,
+        x: f64,
+        y: f64,
+        width: f64,
+        height: Option<f64>,
+        fixed: bool,
+        shift: (f64, f64),
+    ) -> f64 {
+        let (mut items, absolute) = self.grid_children(el, style);
+        for (child, s) in absolute {
+            self.defer_absolute(child, s, x - shift.0, y);
+        }
+        let col_gap = style.column_gap.resolve(width);
+        let row_gap = style.row_gap.resolve(height.unwrap_or(0.0));
+        let (cols, col_fit) = expand_tracks(&style.grid_template_columns, Some(width), col_gap);
+        let (rows, row_fit) = expand_tracks(&style.grid_template_rows, height, row_gap);
+        let (ncols, nrows) = place_grid_items(&mut items, cols.len(), rows.len(), style.grid_auto_flow_column);
+        let col_tracks: Vec<Track> =
+            (0..ncols).map(|i| cols.get(i).copied().unwrap_or(style.grid_auto_columns)).collect();
+        let row_tracks: Vec<Track> = (0..nrows).map(|i| rows.get(i).copied().unwrap_or(style.grid_auto_rows)).collect();
+        let collapse = |n: usize, fit: &Option<std::ops::Range<usize>>, used: &dyn Fn(usize) -> bool| {
+            (0..n).map(|k| fit.as_ref().is_some_and(|r| r.contains(&k)) && !used(k)).collect::<Vec<bool>>()
+        };
+        let col_collapsed =
+            collapse(ncols, &col_fit, &|k| items.iter().any(|it| (it.col..it.col + it.col_span).contains(&k)));
+        let row_collapsed =
+            collapse(nrows, &row_fit, &|k| items.iter().any(|it| (it.row..it.row + it.row_span).contains(&k)));
+        // Columns.
+        let mut widths_cache: Vec<Option<(f64, f64)>> = vec![None; items.len()];
+        let col_sizes = size_tracks(
+            &col_tracks,
+            &col_collapsed,
+            Some(width),
+            col_gap,
+            items.len(),
+            &|i| (items[i].col, items[i].col_span),
+            &mut |i| *widths_cache[i].get_or_insert_with(|| self.grid_item_widths(&items[i], width)),
+            style.justify_content == Justify::Start,
+        );
+        let col_axis = Axis { sizes: col_sizes, collapsed: col_collapsed, gap: col_gap };
+        let col_starts = col_axis.starts();
+        // Item widths, then rows from their heights.
+        let used_w: Vec<f64> = items
+            .iter()
+            .map(|it| {
+                let area = col_axis.area(&col_starts, it.col, it.col_span);
+                self.grid_item_width(it, area, it.style.justify_self.unwrap_or(style.justify_items))
+            })
+            .collect();
+        let own = self.edges(style, width);
+        let to_content_h = |v: f64| if style.border_box { (v - own.vertical()).max(0.0) } else { v };
+        let own_min_h = style.min_height.resolve(self.own_cb_height).map(to_content_h);
+        let own_max_h = style.max_height.resolve(self.own_cb_height).map(to_content_h);
+        let mut heights_cache: Vec<Option<f64>> = vec![None; items.len()];
+        let size_rows = |available: Option<f64>, heights_cache: &mut Vec<Option<f64>>| {
+            size_tracks(
+                &row_tracks,
+                &row_collapsed,
+                available,
+                row_gap,
+                items.len(),
+                &|i| (items[i].row, items[i].row_span),
+                &mut |i| {
+                    let h = *heights_cache[i]
+                        .get_or_insert_with(|| self.grid_item_height(&items[i], used_w[i], width, None));
+                    (h, h)
+                },
+                true,
+            )
+        };
+        let mut row_sizes = size_rows(height, &mut heights_cache);
+        if height.is_none() {
+            // Auto height: the rows' size clamped by min/max height; redo
+            // with that as the available space when clamped.
+            let axis = Axis { sizes: row_sizes.clone(), collapsed: row_collapsed.clone(), gap: row_gap };
+            let total = axis.total();
+            let clamped = Self::clamp(total, own_min_h, own_max_h);
+            if (clamped - total).abs() > 1e-9 {
+                row_sizes = size_rows(Some(clamped), &mut heights_cache);
+            }
+        }
+        let row_axis = Axis { sizes: row_sizes, collapsed: row_collapsed, gap: row_gap };
+        let row_starts = row_axis.starts();
+        // Distribute leftover column space (justify-content).
+        let free_x = (width - col_axis.total()).max(0.0);
+        let (offset_x, between_x) = distribute(style.justify_content, free_x, ncols);
+        // Place items.
+        for (i, it) in items.iter().enumerate() {
+            let area_x = x + offset_x + col_starts[it.col] + between_x * it.col as f64;
+            let area_w = col_axis.area(&col_starts, it.col, it.col_span) + between_x * (it.col_span - 1) as f64;
+            let area_y = y + row_starts[it.row];
+            let area_h = row_axis.area(&row_starts, it.row, it.row_span);
+            let e = self.edges(&it.style, area_w);
+            let w = used_w[i];
+            let justify = it.style.justify_self.unwrap_or(style.justify_items);
+            let align = it.style.align_self.unwrap_or(style.align_items);
+            let auto_h = it.style.height.resolve(Some(area_h)).is_none();
+            let h = if align == Align::Stretch && auto_h && !it.style.replaced {
+                (area_h - e.margin[TOP] - e.margin[BOTTOM]).max(0.0)
+            } else {
+                self.grid_item_height(it, w, area_w, Some(area_h)) - e.margin[TOP] - e.margin[BOTTOM]
+            };
+            let outer_w = w + e.margin[LEFT] + e.margin[RIGHT];
+            let outer_h = h + e.margin[TOP] + e.margin[BOTTOM];
+            let dx = match justify {
+                Align::End => area_w - outer_w,
+                Align::Center => (area_w - outer_w) / 2.0,
+                _ => 0.0,
+            };
+            let dy = match align {
+                Align::End => area_h - outer_h,
+                Align::Center => (area_h - outer_h) / 2.0,
+                _ => 0.0,
+            };
+            match it.el {
+                Some(child) => self.place_sized(child, &it.style, area_x + dx, area_y + dy, w, h, area_w, fixed, shift),
+                None => {
+                    let run = it.text.clone();
+                    self.inline_run(&run, &it.style, area_x + dx, area_y + dy, w.max(1.0), fixed, shift);
+                }
+            }
+        }
+        height.unwrap_or_else(|| row_axis.total())
+    }
+
+    /// Min-content (`min`) or max-content width of a grid container's
+    /// contents: the sum of its columns sized from the items' contributions.
+    fn grid_content_width(&self, el: NodeId, style: &FlowStyle, min: bool) -> f64 {
+        let (mut items, _) = self.grid_children(el, style);
+        let gap = style.column_gap.resolve(0.0);
+        let (cols, _) = expand_tracks(&style.grid_template_columns, None, gap);
+        let (rows, _) = expand_tracks(&style.grid_template_rows, None, 0.0);
+        let (ncols, _) = place_grid_items(&mut items, cols.len(), rows.len(), style.grid_auto_flow_column);
+        let tracks: Vec<Track> = (0..ncols).map(|i| cols.get(i).copied().unwrap_or(style.grid_auto_columns)).collect();
+        let collapsed = vec![false; ncols];
+        let sizes = size_tracks(
+            &tracks,
+            &collapsed,
+            None,
+            gap,
+            items.len(),
+            &|i| (items[i].col, items[i].col_span),
+            &mut |i| {
+                let (a, b) = self.grid_item_widths(&items[i], 0.0);
+                if min {
+                    (a, a)
+                } else {
+                    (a, b)
+                }
+            },
+            false,
+        );
+        Axis { sizes, collapsed, gap }.total()
+    }
+
+    /// Lays out `el` with its border box at (x, y) + margins, sized w x h.
+    #[allow(clippy::too_many_arguments)]
+    fn place_sized(
+        &mut self,
+        el: NodeId,
+        style: &FlowStyle,
+        x: f64,
+        y: f64,
+        w: f64,
+        h: f64,
+        cb_width: f64,
+        fixed: bool,
+        shift: (f64, f64),
+    ) {
+        let e = self.edges(style, cb_width);
+        let mut s = style.clone();
+        s.border_box = true;
+        s.width = Dim::px(w);
+        s.height = Dim::px(h);
+        s.min_width = Dim::Auto;
+        s.max_width = Dim::Auto;
+        s.min_height = Dim::Auto;
+        s.max_height = Dim::Auto;
+        s.margin =
+            [Dim::px(e.margin[TOP]), Dim::px(e.margin[RIGHT]), Dim::px(e.margin[BOTTOM]), Dim::px(e.margin[LEFT])];
+        self.block_child(el, &s, x, y, w + e.margin[LEFT] + e.margin[RIGHT], fixed, shift);
+    }
+}
+
+/// (offset before the first track, extra space between tracks) for
+/// `justify-content` over `n` tracks.
+fn distribute(justify: Justify, free: f64, n: usize) -> (f64, f64) {
+    let n = n.max(1) as f64;
+    match justify {
+        Justify::Start => (0.0, 0.0),
+        Justify::End => (free, 0.0),
+        Justify::Center => (free / 2.0, 0.0),
+        Justify::SpaceBetween if n > 1.0 => (0.0, free / (n - 1.0)),
+        Justify::SpaceBetween => (0.0, 0.0),
+        Justify::SpaceAround => (free / n / 2.0, free / n),
+        Justify::SpaceEvenly => (free / (n + 1.0), free / (n + 1.0)),
     }
 }

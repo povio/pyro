@@ -1,6 +1,6 @@
 # Flow layout (staged)
 
-Status: Stage 1 in progress, opt-in only. The default geometry is still the
+Status: Stages 1-4 (block/inline, flex, tables, grid), opt-in only. The default geometry is still the
 upstream "faux layout" (`crates/lp-dom/src/layout.rs`).
 
 ## Why
@@ -99,7 +99,30 @@ containing block (em/rem/vw/vh resolved by the style engine).
   (element, width), so nested flex/table measurement is linear rather than
   exponential in nesting depth, and records descendants by order instead of
   scanning every box.
-- Not yet (laid out as block containers): grid inner layout, floats, sticky, margin collapsing through parents, writing modes,
+- Flex (refined): hypothetical sizes are clamped by min/max; flexible
+  lengths are resolved with the spec's freeze loop from the flex base sizes;
+  `min-width/height: auto` items that do not clip overflow keep at least
+  their min-content width / content height; an auto-height column container
+  flexes within its own min/max height and a row container's line is at
+  least its min-height. Max-content of a flex row is the sum of its items and
+  gaps (min-content: longest word / widest atomic box).
+- Stage 4 (grid): explicit tracks (px, %, fr, auto, min/max-content,
+  minmax(), fit-content() approximated, repeat(n) and auto-fill/auto-fit with
+  collapsed empty auto-fit tracks), line-based and span placement, sparse
+  row/column auto-placement, implicit tracks from grid-auto-rows/-columns,
+  gaps, track sizing (fixed, intrinsic from item contributions, maximize,
+  fr expansion with inflexible tracks, auto-track stretch), auto-height grids
+  clamped by min/max height (fr rows then fill), justify/align-items and
+  -self, justify-content distribution. Not yet: grid-template-areas, named
+  lines, dense packing, subgrid, baseline alignment.
+- Lines with only collapsible whitespace have no height. Replaced elements
+  without a CSS size use their width/height attributes (lucide icons), else
+  300x150 (svg, canvas, video, iframe). Table row groups paint below their
+  rows and cells (hit testing a sticky th inside a relative thead).
+- Diagnostics: `tests/flow_snapshot.rs` (ignored) prints every body
+  element's flow box for a static page snapshot, to diff against Chromium's
+  getBoundingClientRect.
+- Not yet (laid out as block containers): floats, sticky, margin collapsing through parents, writing modes,
   transforms other than inline translateX.
 
 ## Consumers switched in Stage 1 (Flow mode only)

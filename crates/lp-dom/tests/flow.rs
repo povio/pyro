@@ -357,6 +357,30 @@ impl FlowStyleSource for InlineFlex<'_> {
                 _ => TablePart::None,
             };
         }
+        // Grid (Stage 4) from inline declarations.
+        let len = |v: &str| flex_len(v);
+        if let Some(v) = decl("grid-template-columns") {
+            s.grid_template_columns = flow::parse_track_list(&v, &len);
+        }
+        if let Some(v) = decl("grid-template-rows") {
+            s.grid_template_rows = flow::parse_track_list(&v, &len);
+        }
+        if let Some(t) = decl("grid-auto-rows").and_then(|v| flow::parse_track(&v, &len)) {
+            s.grid_auto_rows = t;
+        }
+        let (gc, gr) = (decl("grid-column"), decl("grid-row"));
+        s.grid_column = flow::parse_grid_placement(gc.as_deref(), None, None);
+        s.grid_row = flow::parse_grid_placement(gr.as_deref(), None, None);
+        if let Some(g) = decl("column-gap").and_then(|v| flex_len(&v)) {
+            s.column_gap = g;
+        }
+        if let Some(g) = decl("row-gap").and_then(|v| flex_len(&v)) {
+            s.row_gap = g;
+        }
+        if let Some(v) = decl("justify-items").and_then(|v| align(&v)) {
+            s.justify_items = v;
+        }
+        s.justify_self = decl("justify-self").and_then(|v| align(&v));
         if tag == "table" {
             let spacing = decl("border-spacing").and_then(|v| flex_len(&v)).map_or(2.0, |l| l.px);
             s.border_spacing = (spacing, spacing);
@@ -883,4 +907,168 @@ fn flow_parity_fixed_modal_with_input() {
         ],
         [800.0, 600.0],
     );
+}
+
+// ----- grid (Stage 4) -------------------------------------------------------
+// Chromium 1.59.1, 800x600; inline grid declarations via InlineFlex.
+
+#[test]
+fn grid_parity_basic() {
+    flex_check(
+        "grid-basic",
+        "<!doctype html><body style=\"margin:0\"><div id=g style=\"display:grid;grid-template-columns:100px 1fr 2fr;gap:10px;width:600px\"><div id=a style=\"height:30px\"></div><div id=b style=\"height:50px\"></div><div id=c style=\"height:20px\"></div><div id=d style=\"grid-column:span 2;height:10px\"></div><div id=e style=\"height:15px\"></div></div><div id=after style=\"height:5px\"></div></body>",
+        &[
+            ("g", [0.0, 0.0, 600.0, 75.0, 600.0, 75.0, 600.0, 75.0]),
+            ("a", [0.0, 0.0, 100.0, 30.0, 100.0, 30.0, 100.0, 30.0]),
+            ("b", [110.0, 0.0, 160.0, 50.0, 160.0, 50.0, 160.0, 50.0]),
+            ("c", [280.0, 0.0, 320.0, 20.0, 320.0, 20.0, 320.0, 20.0]),
+            ("d", [0.0, 60.0, 270.0, 10.0, 270.0, 10.0, 270.0, 10.0]),
+            ("e", [280.0, 60.0, 320.0, 15.0, 320.0, 15.0, 320.0, 15.0]),
+            ("after", [0.0, 75.0, 800.0, 5.0, 800.0, 5.0, 800.0, 5.0]),
+        ],
+    );
+}
+
+#[test]
+fn grid_parity_tailwind_columns() {
+    // Fractional widths: Chromium snaps client sizes to integers.
+    let close = |name: &str, html: &str, expected: &[(&str, [f64; 4])]| {
+        let p = page(html, Geometry::Flow);
+        let src = InlineFlex { style: p.layout.style() };
+        let result = flow::layout(&p.dom, p.doc, &src, 800.0, 600.0);
+        for (id, want) in expected {
+            let r = result.get(p.id(id)).unwrap().rect;
+            let got = [r.x, r.y, r.width, r.height];
+            assert!(
+                got.iter().zip(want).all(|(g, w)| (g - w).abs() < 0.01),
+                "{name} #{id}: got {got:?}, Chromium {want:?}"
+            );
+        }
+    };
+    close(
+        "grid-tailwind",
+        "<!doctype html><body style=\"margin:0\"><div id=g style=\"display:grid;grid-template-columns:repeat(3,minmax(0,1fr));column-gap:16px;row-gap:8px;width:700px;padding:12px\"><div id=a style=\"height:30px\"></div><div id=b style=\"grid-column:span 2 / span 2;height:40px\"></div><div id=c style=\"grid-column:1 / -1;height:20px\"></div><div id=d style=\"height:25px\"></div></div><div id=p style=\"display:grid;grid-template-columns:48.65% 51.35%;width:500px\"><div id=p1 style=\"height:10px\"></div><div id=p2 style=\"height:12px\"></div></div></body>",
+        &[
+            ("g", [0.0, 0.0, 724.0, 125.0]),
+            ("a", [12.0, 12.0, 222.67, 30.0]),
+            ("b", [250.67, 12.0, 461.33, 40.0]),
+            ("c", [12.0, 60.0, 700.0, 20.0]),
+            ("d", [12.0, 88.0, 222.67, 25.0]),
+            ("p", [0.0, 125.0, 500.0, 12.0]),
+            ("p1", [0.0, 125.0, 243.25, 10.0]),
+            ("p2", [243.25, 125.0, 256.75, 12.0]),
+        ],
+    );
+}
+
+#[test]
+fn grid_parity_calendar_fr_rows_with_min_height() {
+    let cells = |n: usize| "<div></div>".repeat(n);
+    let html = format!(
+        "<!doctype html><body style=\"margin:0\"><div id=g style=\"display:grid;gap:1px;grid-template-columns:84px repeat(7,minmax(0px,1fr));grid-template-rows:auto 1fr 1fr 1fr;min-height:300px\"><div id=h0 style=\"height:20px\"></div><div id=h1 style=\"height:20px\"></div>{}<div id=w1></div><div id=c11 style=\"height:24px\"></div>{}<div id=c17></div><div id=w2></div><div id=c21></div>{}<div id=w3></div><div id=c31 style=\"height:120px\"></div></div></body>",
+        cells(6),
+        cells(5),
+        cells(6)
+    );
+    let p = page(&html, Geometry::Flow);
+    let src = InlineFlex { style: p.layout.style() };
+    let result = flow::layout(&p.dom, p.doc, &src, 800.0, 600.0);
+    let col = (800.0 - 84.0 - 7.0) / 7.0;
+    for (id, want) in [
+        ("g", [0.0, 0.0, 800.0, 383.0]),
+        ("h0", [0.0, 0.0, 84.0, 20.0]),
+        ("h1", [85.0, 0.0, col, 20.0]),
+        ("w1", [0.0, 21.0, 84.0, 120.0]),
+        ("c11", [85.0, 21.0, col, 24.0]),
+        ("c17", [85.0 + 6.0 * (col + 1.0), 21.0, col, 120.0]),
+        ("w2", [0.0, 142.0, 84.0, 120.0]),
+        ("c21", [85.0, 142.0, col, 120.0]),
+        ("w3", [0.0, 263.0, 84.0, 120.0]),
+        ("c31", [85.0, 263.0, col, 120.0]),
+    ] {
+        let r = result.get(p.id(id)).unwrap().rect;
+        let got = [r.x, r.y, r.width, r.height];
+        assert!(
+            got.iter().zip(want).all(|(g, w)| (g - w).abs() < 0.01),
+            "calendar #{id}: got {got:?}, Chromium {want:?}"
+        );
+    }
+}
+
+#[test]
+fn grid_parity_auto_fill_and_fit() {
+    flex_check(
+        "grid-autofill",
+        "<!doctype html><body style=\"margin:0\"><div id=g style=\"display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px;width:500px\"><div id=a style=\"height:10px\"></div><div id=b style=\"height:10px\"></div><div id=c style=\"height:10px\"></div><div id=d style=\"height:10px\"></div><div id=e style=\"height:10px\"></div></div><div id=f style=\"display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));width:500px\"><div id=f1 style=\"height:10px\"></div><div id=f2 style=\"height:10px\"></div></div></body>",
+        &[
+            ("g", [0.0, 0.0, 500.0, 30.0, 500.0, 30.0, 500.0, 30.0]),
+            ("a", [0.0, 0.0, 160.0, 10.0, 160.0, 10.0, 160.0, 10.0]),
+            ("b", [170.0, 0.0, 160.0, 10.0, 160.0, 10.0, 160.0, 10.0]),
+            ("c", [340.0, 0.0, 160.0, 10.0, 160.0, 10.0, 160.0, 10.0]),
+            ("d", [0.0, 20.0, 160.0, 10.0, 160.0, 10.0, 160.0, 10.0]),
+            ("e", [170.0, 20.0, 160.0, 10.0, 160.0, 10.0, 160.0, 10.0]),
+            ("f", [0.0, 30.0, 500.0, 10.0, 500.0, 10.0, 500.0, 10.0]),
+            ("f1", [0.0, 30.0, 250.0, 10.0, 250.0, 10.0, 250.0, 10.0]),
+            ("f2", [250.0, 30.0, 250.0, 10.0, 250.0, 10.0, 250.0, 10.0]),
+        ],
+    );
+}
+
+#[test]
+fn grid_parity_alignment() {
+    flex_check(
+        "grid-align",
+        "<!doctype html><body style=\"margin:0\"><div id=g style=\"display:grid;grid-template-columns:200px 200px;grid-auto-rows:80px;justify-items:center;align-items:end;width:400px\"><div id=a style=\"width:50px;height:20px\"></div><div id=b style=\"width:60px;height:30px;justify-self:end;align-self:start\"></div><div id=c style=\"height:10px;justify-self:stretch;align-self:stretch\"></div><div id=d style=\"width:40px;height:40px;align-self:center;justify-self:start\"></div></div></body>",
+        &[
+            ("g", [0.0, 0.0, 400.0, 160.0, 400.0, 160.0, 400.0, 160.0]),
+            ("a", [75.0, 60.0, 50.0, 20.0, 50.0, 20.0, 50.0, 20.0]),
+            ("b", [340.0, 0.0, 60.0, 30.0, 60.0, 30.0, 60.0, 30.0]),
+            ("c", [0.0, 80.0, 200.0, 10.0, 200.0, 10.0, 200.0, 10.0]),
+            ("d", [200.0, 100.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0]),
+        ],
+    );
+}
+
+#[test]
+fn grid_parity_explicit_lines() {
+    flex_check(
+        "grid-lines",
+        "<!doctype html><body style=\"margin:0\"><div id=g style=\"display:grid;grid-template-columns:100px 100px 100px;grid-template-rows:40px;width:300px\"><div id=a style=\"grid-column:2 / 4;grid-row:2\"></div><div id=b style=\"height:15px\"></div><div id=c style=\"grid-column:1;grid-row:1 / 3\"></div><div id=d style=\"height:25px\"></div></div></body>",
+        &[
+            ("g", [0.0, 0.0, 300.0, 40.0, 300.0, 40.0, 300.0, 40.0]),
+            ("a", [100.0, 40.0, 200.0, 0.0, 200.0, 0.0, 200.0, 0.0]),
+            ("b", [100.0, 0.0, 100.0, 15.0, 100.0, 15.0, 100.0, 15.0]),
+            ("c", [0.0, 0.0, 100.0, 40.0, 100.0, 40.0, 100.0, 40.0]),
+            ("d", [200.0, 0.0, 100.0, 25.0, 100.0, 25.0, 100.0, 25.0]),
+        ],
+    );
+}
+
+#[test]
+fn grid_parity_auto_columns() {
+    flex_check(
+        "grid-autocol",
+        "<!doctype html><body style=\"margin:0\"><div id=g style=\"display:grid;grid-template-columns:auto 1fr;gap:12px;width:600px\"><div id=a style=\"width:120px;height:20px\"></div><div id=b style=\"height:20px\"></div><div id=c style=\"width:80px;height:30px\"></div><div id=d></div></div><div id=s style=\"display:grid;grid-template-columns:auto auto;width:600px\"><div id=s1 style=\"width:100px;height:10px\"></div><div id=s2 style=\"width:50px;height:10px\"></div></div></body>",
+        &[
+            ("g", [0.0, 0.0, 600.0, 62.0, 600.0, 62.0, 600.0, 62.0]),
+            ("a", [0.0, 0.0, 120.0, 20.0, 120.0, 20.0, 120.0, 20.0]),
+            ("b", [132.0, 0.0, 468.0, 20.0, 468.0, 20.0, 468.0, 20.0]),
+            ("c", [0.0, 32.0, 80.0, 30.0, 80.0, 30.0, 80.0, 30.0]),
+            ("d", [132.0, 32.0, 468.0, 30.0, 468.0, 30.0, 468.0, 30.0]),
+            ("s", [0.0, 62.0, 600.0, 10.0, 600.0, 10.0, 600.0, 10.0]),
+            ("s1", [0.0, 62.0, 100.0, 10.0, 100.0, 10.0, 100.0, 10.0]),
+            ("s2", [325.0, 62.0, 50.0, 10.0, 50.0, 10.0, 50.0, 10.0]),
+        ],
+    );
+}
+
+#[test]
+fn flow_hit_test_prefers_sticky_header_cell_over_its_row_group() {
+    // TOS contact-role: a sticky <th> inside a `position: relative` thead in
+    // a positioned scroller. Chromium: elementFromPoint at the th is the th.
+    let p = page("<!doctype html><body><div id=scroller style=\"position:relative;overflow:auto;height:200px\"><table style=\"border-collapse:separate;border-spacing:0;width:400px\"><thead id=head style=\"position:relative;z-index:10\"><tr><th id=name style=\"position:sticky;top:0;width:200px;height:30px;padding:0\">Name</th><th id=other style=\"position:sticky;top:0;height:30px;padding:0\">Other</th></tr></thead><tbody><tr><td id=cell style=\"height:40px\">x</td><td>y</td></tr></tbody></table></div></body>", Geometry::Flow);
+    let r = p.layout.bounding_client_rect(&p.dom, p.id("name"));
+    assert_eq!((r.x, r.y, r.width, r.height), (8.0, 8.0, 200.0, 30.0), "Chromium rect of #name");
+    let hit = p.layout.element_from_point(&p.dom, r.x + 5.0, r.y + 5.0);
+    assert_eq!(hit, Some(p.id("name")), "Chromium hits #name");
 }
