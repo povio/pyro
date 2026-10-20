@@ -20,8 +20,7 @@ impl JsString {
             // SAFETY: buf is NUL-terminated (zeroed tail) and valid UTF-8.
             return JsString(unsafe { sys::JSStringCreateWithUTF8CString(buf.as_ptr().cast()) });
         }
-        let utf16: Vec<u16> = s.encode_utf16().collect();
-        Self::from_utf16(&utf16)
+        Self::from_utf16(&utf16_units(s))
     }
 
     pub fn from_utf16(chars: &[u16]) -> JsString {
@@ -91,6 +90,16 @@ impl Drop for JsString {
     }
 }
 
+/// UTF-16 code units of `s` in one allocation. A string never has more UTF-16
+/// units than UTF-8 bytes, so `s.len()` always suffices and the buffer is never
+/// regrown; `collect()` regrows it for large strings (see
+/// `tests/string_allocation.rs`).
+pub(crate) fn utf16_units(s: &str) -> Vec<u16> {
+    let mut units = Vec::with_capacity(s.len());
+    units.extend(s.encode_utf16());
+    units
+}
+
 /// # Safety
 /// `s` must be live for the returned lifetime.
 pub(crate) unsafe fn utf16_of<'a>(s: sys::JSStringRef) -> &'a [u16] {
@@ -141,5 +150,27 @@ mod tests {
             assert!(j.eq_str(s));
         }
         assert!(!JsString::new("ab").eq_str("abc"));
+    }
+
+    #[test]
+    fn utf16_units_match_encode_utf16_in_one_allocation() {
+        // 1-, 2-, 3- and 4-byte UTF-8 (the last needs a surrogate pair), NUL.
+        let mixed = "a\0ž€🐸".repeat(300);
+        for s in ["", "a", "ž", "€", "🐸", "a\0b", mixed.as_str()] {
+            let units = utf16_units(s);
+            assert_eq!(units, s.encode_utf16().collect::<Vec<u16>>(), "{s:?}");
+            assert_eq!(units.capacity(), s.len(), "allocated once at the UTF-8 length bound: {s:?}");
+        }
+    }
+
+    #[test]
+    fn large_multibyte_strings_roundtrip() {
+        for unit in ["x", "žabe 🐸 ", "€\0"] {
+            let s = unit.repeat((5 << 20) / unit.len());
+            let j = JsString::new(&s);
+            assert_eq!(j.len_utf16(), s.encode_utf16().count());
+            assert!(j.eq_str(&s));
+            assert_eq!(j.to_string(), s);
+        }
     }
 }
