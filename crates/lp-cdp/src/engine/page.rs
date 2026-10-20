@@ -26,6 +26,9 @@ fn reason_name(reason: NavigationReason) -> Option<&'static str> {
 pub(crate) struct FrameEvents {
     parent: Option<FrameId>,
     navigating: bool,
+    /// A frameRequestedNavigation was announced for the pending navigation;
+    /// an aborted navigation then reports frameClearedScheduledNavigation.
+    requested: bool,
     pending_realms: Vec<(RealmId, Option<String>, String)>,
 }
 
@@ -326,6 +329,7 @@ impl EngineHost {
                 if let Some(state) = self.pages.get_mut(&page) {
                     let frame = state.frames.entry(frame_id.clone()).or_default();
                     frame.navigating = true;
+                    frame.requested = reason_name(reason).is_some();
                     frame.pending_realms.clear();
                     if root.as_ref() == Some(&frame_id) {
                         state.network.bodies.clear();
@@ -459,9 +463,11 @@ impl EngineHost {
                 }
             }
             PageEvent::FrameNavigateFailed { frame_id, loader_id, error, cdp_request_id, .. } => {
+                let mut requested = false;
                 if let Some(state) = self.pages.get_mut(&page) {
                     let frame = state.frames.entry(frame_id.clone()).or_default();
                     frame.navigating = false;
+                    requested = std::mem::take(&mut frame.requested);
                     frame.pending_realms.clear();
                 }
                 if let Some(id) = cdp_request_id {
@@ -473,6 +479,11 @@ impl EngineHost {
                     );
                 }
                 for s in &all {
+                    // Chrome clears a requested (anchor/script) navigation it
+                    // aborted, e.g. when the response became a download.
+                    if requested {
+                        self.event("Page.frameClearedScheduledNavigation", &json!({ "frameId": frame_id.0 }), s);
+                    }
                     self.event("Page.frameStoppedLoading", &json!({ "frameId": frame_id.0 }), s);
                 }
             }
@@ -520,7 +531,12 @@ impl EngineHost {
                 if let Some(state) = self.pages.get_mut(&page) {
                     state.frames.insert(
                         frame_id.clone(),
-                        FrameEvents { parent: Some(parent.clone()), navigating: true, pending_realms: Vec::new() },
+                        FrameEvents {
+                            parent: Some(parent.clone()),
+                            navigating: true,
+                            requested: false,
+                            pending_realms: Vec::new(),
+                        },
                     );
                 }
                 for s in &all {

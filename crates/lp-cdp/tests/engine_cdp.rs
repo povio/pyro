@@ -1436,6 +1436,104 @@ fn error_remote_objects_carry_chrome_style_name_and_message() {
     assert_eq!(args[0]["className"], "TypeError");
 }
 
+/// Serves `responses` requests: `/page` as HTML (links to `/file`), anything
+/// else with the given extra headers and body.
+fn serve_attachment(
+    responses: usize,
+    headers: &'static str,
+    body: &'static [u8],
+) -> (std::net::SocketAddr, std::thread::JoinHandle<()>) {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = std::thread::spawn(move || {
+        for _ in 0..responses {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+            let mut request = Vec::new();
+            let mut chunk = [0; 1024];
+            while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                let n = stream.read(&mut chunk).unwrap();
+                assert!(n > 0);
+                request.extend_from_slice(&chunk[..n]);
+            }
+            let page = request.starts_with(b"GET /page ");
+            let (head, body): (String, &[u8]) = if page {
+                let html: &[u8] = b"<!doctype html><title>stay</title><a id=f href=\"/file/report.bin\">f</a>";
+                (format!("Content-Type: text/html\r\nContent-Length: {}\r\n", html.len()), html)
+            } else {
+                (format!("{headers}Content-Length: {}\r\n", body.len()), body)
+            };
+            stream.write_all(format!("HTTP/1.1 200 OK\r\n{head}Connection: close\r\n\r\n").as_bytes()).unwrap();
+            stream.write_all(body).unwrap();
+        }
+    });
+    (address, server)
+}
+
+#[test]
+fn content_disposition_attachment_navigation_becomes_download() {
+    // Recorded from headless Chromium: the navigation starts, is aborted
+    // without frameNavigated (Page.navigate gets net::ERR_ABORTED), the page
+    // stays, and the response is delivered as a download named by
+    // filename* over filename.
+    let (addr, server) = serve_attachment(
+        3,
+        "Content-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=\"report 2026.xlsx\"; filename*=UTF-8''r%C3%A9port.xlsx\r\n",
+        b"\x01\x02\x03",
+    );
+    let mut h = Harness::new();
+    let targets = h.call(None, "Target.getTargets", json!({}));
+    let frame = h.frame_id.clone();
+    let ctx = targets["result"]["targetInfos"].as_array().unwrap().iter().find(|t| t["targetId"] == frame).unwrap()
+        ["browserContextId"]
+        .clone();
+    let dir = std::env::temp_dir().join(format!("lp-cd-downloads-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    h.call(
+        None,
+        "Browser.setDownloadBehavior",
+        json!({"behavior":"allowAndName","browserContextId":ctx,"downloadPath":dir,"eventsEnabled":true}),
+    );
+    h.page("Page.enable", json!({}));
+    h.page("Network.enable", json!({}));
+    let events = h.page_with_events("Page.navigate", json!({"url": format!("http://{addr}/page")}));
+    if !events.iter().any(|e| e["method"] == "Page.loadEventFired") {
+        until_event(&mut h, "Page.loadEventFired");
+    }
+    // A link click (anchor navigation).
+    eval_value(&mut h, "document.getElementById('f').click(); 1");
+    let mut events = h.run_for(300);
+    let downloads: Vec<&Value> =
+        events.iter().filter(|e| e["method"].as_str().is_some_and(|m| m.starts_with("Browser.download"))).collect();
+    assert_eq!(downloads.len(), 3, "{events:#?}");
+    assert_eq!(downloads[0]["params"]["suggestedFilename"], "réport.xlsx");
+    assert_eq!(downloads[0]["params"]["url"], format!("http://{addr}/file/report.bin"));
+    let path = downloads[2]["params"]["filePath"].as_str().unwrap().to_owned();
+    assert_eq!(std::fs::read(&path).unwrap(), b"\x01\x02\x03");
+    assert!(!events.iter().any(|e| e["method"] == "Page.frameNavigated"), "{events:#?}");
+    // Playwright resolves the pending navigation from these: the document
+    // request fails as aborted (no dataReceived), and the requested
+    // navigation is cleared before loading stops.
+    let at = |m: &str| events.iter().position(|e| e["method"] == m);
+    let failed = events.iter().find(|e| e["method"] == "Network.loadingFailed").expect("loadingFailed");
+    assert_eq!(failed["params"]["errorText"], "net::ERR_ABORTED");
+    assert_eq!(failed["params"]["canceled"], true);
+    assert_eq!(failed["params"]["type"], "Document");
+    assert!(!events.iter().any(|e| e["method"] == "Network.dataReceived" || e["method"] == "Network.loadingFinished"));
+    let cleared = at("Page.frameClearedScheduledNavigation").expect("cleared");
+    assert!(cleared < at("Page.frameStoppedLoading").unwrap(), "{events:#?}");
+    assert_eq!(eval_value(&mut h, "document.title + '|' + location.pathname"), json!("stay|/page"));
+    // Page.navigate to an attachment URL answers net::ERR_ABORTED.
+    events = h.page_with_events("Page.navigate", json!({"url": format!("http://{addr}/file/direct.bin")}));
+    events.extend(h.run_for(300));
+    let response = events.iter().find(|e| e.get("id").is_some() && e["result"].get("frameId").is_some()).unwrap();
+    assert_eq!(response["result"]["errorText"], "net::ERR_ABORTED", "{response}");
+    assert!(events.iter().any(|e| e["method"] == "Browser.downloadWillBegin"), "{events:#?}");
+    server.join().unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn dom_backend_nodes_adopt_across_worlds_and_expire_on_navigation() {
     let mut h = Harness::new();

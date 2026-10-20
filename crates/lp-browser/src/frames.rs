@@ -728,6 +728,7 @@ impl Browser {
                     mime: "text/html".into(),
                     charset: None,
                     body: html.into_bytes(),
+                    content_disposition: None,
                 },
                 HistoryHandling::Replace,
             )

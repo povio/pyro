@@ -556,11 +556,13 @@ name = "lp-browser"
 version = "0.0.1"
 dependencies = [
  "bytes",
+ "http",
  "lp-dom",
  "lp-js",
  "lp-net",
  "lp-runtime",
  "lp-webapi",
+ "percent-encoding",
  "url",
 ]
 

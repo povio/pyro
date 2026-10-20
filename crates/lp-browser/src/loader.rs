@@ -63,6 +63,8 @@ pub struct Resource {
     pub mime: String,
     pub charset: Option<String>,
     pub body: Vec<u8>,
+    /// The `Content-Disposition` response header, if any.
+    pub content_disposition: Option<String>,
 }
 
 impl Resource {
@@ -219,6 +221,11 @@ impl ResourceLoader for NetLoader {
                             status: h.status.as_u16(),
                             mime: h.mime,
                             charset: h.charset,
+                            content_disposition: h
+                                .headers
+                                .get(http::header::CONTENT_DISPOSITION)
+                                .and_then(|v| v.to_str().ok())
+                                .map(str::to_owned),
                             body: std::mem::take(&mut body),
                         }),
                         None => Err("net::ERR_EMPTY_RESPONSE".to_string()),
@@ -262,7 +269,9 @@ impl ResourceLoader for StaticLoader {
         let id = browser.register_completion(done);
         browser.scheduler().set_timer(delay, false, true, move |b| {
             let result = match entry.clone() {
-                Some((mime, body, _)) => Ok(Resource { url: url.clone(), status: 200, mime, charset: None, body }),
+                Some((mime, body, _)) => {
+                    Ok(Resource { url: url.clone(), status: 200, mime, charset: None, body, content_disposition: None })
+                }
                 None => Err(format!("net::ERR_FILE_NOT_FOUND {url}")),
             };
             b.complete_fetch(id, result);
@@ -432,6 +441,35 @@ impl Browser {
                     }
                 }
                 match res {
+                    Ok(resource)
+                        if (200..300).contains(&resource.status)
+                            && resource.content_disposition.as_deref().is_some_and(is_attachment) =>
+                    {
+                        // A Content-Disposition: attachment response turns the
+                        // navigation into a download: nothing commits (Chrome
+                        // reports net::ERR_ABORTED to Page.navigate).
+                        b.navigation_failed(page, &opts, loader_id, "net::ERR_ABORTED".into());
+                        if let Some(frame_id) = b.doc(page).map(|p| p.main_frame.id.clone()) {
+                            let suggested = suggested_filename(
+                                resource
+                                    .content_disposition
+                                    .as_deref()
+                                    .and_then(disposition_filename)
+                                    .as_deref()
+                                    .unwrap_or(""),
+                                &resource.url,
+                            );
+                            b.emit(
+                                page.page,
+                                PageEvent::Download {
+                                    frame_id,
+                                    url: resource.url,
+                                    suggested_filename: suggested,
+                                    body: Ok(bytes::Bytes::from(resource.body)),
+                                },
+                            );
+                        }
+                    }
                     Ok(resource) if (200..300).contains(&resource.status) || resource.status == 0 => {
                         let mut opts = opts;
                         opts.url = resource.url.clone();
@@ -789,6 +827,7 @@ impl Browser {
     pub(crate) fn start_download(&mut self, page: FrameKey, request: lp_webapi::DownloadRequest) {
         let Some(frame_id) = self.doc(page).map(|p| p.main_frame.id.clone()) else { return };
         let suggested = suggested_filename(&request.filename, &request.url);
+        let attribute = request.filename.clone();
         let lp_webapi::DownloadRequest { url, data, .. } = request;
         match data {
             Some((bytes, _mime)) => {
@@ -814,8 +853,18 @@ impl Browser {
                     self,
                     req,
                     Box::new(move |b, res| {
+                        // A Content-Disposition filename takes precedence over
+                        // the download attribute.
+                        let mut suggested = suggested;
                         let body = match res {
-                            Ok(r) if (200..300).contains(&r.status) => Ok(bytes::Bytes::from(r.body)),
+                            Ok(r) if (200..300).contains(&r.status) => {
+                                if let Some(name) = r.content_disposition.as_deref().and_then(disposition_filename) {
+                                    suggested = suggested_filename(&name, &r.url);
+                                } else if attribute.is_empty() {
+                                    suggested = suggested_filename("", &r.url);
+                                }
+                                Ok(bytes::Bytes::from(r.body))
+                            }
                             Ok(r) => Err(format!("HTTP {} for {}", r.status, r.url)),
                             Err(e) => Err(e),
                         };
@@ -1056,4 +1105,95 @@ fn suggested_filename(attribute: &str, url: &str) -> String {
         }
     }
     "download".into()
+}
+
+/// Whether a Content-Disposition value has the `attachment` type.
+fn is_attachment(value: &str) -> bool {
+    value.split(';').next().is_some_and(|t| t.trim().eq_ignore_ascii_case("attachment"))
+}
+
+/// The file name of a Content-Disposition value (RFC 6266): `filename*`
+/// (RFC 8187 `charset'lang'pct-encoded`, UTF-8 or ISO-8859-1) wins over
+/// `filename` (token or quoted-string).
+fn disposition_filename(value: &str) -> Option<String> {
+    let mut plain = None;
+    let mut extended = None;
+    let mut rest = value.split_once(';').map(|(_, r)| r)?;
+    while !rest.trim().is_empty() {
+        let (name, after) = rest.split_once('=')?;
+        let name = name.trim().to_ascii_lowercase();
+        let after = after.trim_start();
+        let (val, next) = if let Some(quoted) = after.strip_prefix('"') {
+            let mut out = String::new();
+            let mut chars = quoted.char_indices();
+            let mut end = quoted.len();
+            while let Some((i, c)) = chars.next() {
+                match c {
+                    '\\' => {
+                        if let Some((_, n)) = chars.next() {
+                            out.push(n);
+                        }
+                    }
+                    '"' => {
+                        end = i + 1;
+                        break;
+                    }
+                    c => out.push(c),
+                }
+            }
+            let next = quoted[end..].split_once(';').map_or("", |(_, r)| r);
+            (out, next)
+        } else {
+            let (v, next) = after.split_once(';').unwrap_or((after, ""));
+            (v.trim().to_owned(), next)
+        };
+        match name.as_str() {
+            "filename*" => {
+                let mut parts = val.splitn(3, '\'');
+                if let (Some(charset), Some(_lang), Some(encoded)) = (parts.next(), parts.next(), parts.next()) {
+                    let bytes: Vec<u8> = percent_encoding::percent_decode_str(encoded).collect();
+                    extended = if charset.eq_ignore_ascii_case("utf-8") {
+                        String::from_utf8(bytes).ok()
+                    } else if charset.eq_ignore_ascii_case("iso-8859-1") {
+                        Some(bytes.iter().map(|&b| b as char).collect())
+                    } else {
+                        None
+                    };
+                }
+            }
+            "filename" => plain = Some(val),
+            _ => {}
+        }
+        rest = next;
+    }
+    extended.or(plain).filter(|n| !n.is_empty())
+}
+
+#[cfg(test)]
+mod disposition_tests {
+    use super::{disposition_filename, is_attachment, suggested_filename};
+
+    #[test]
+    fn content_disposition_names() {
+        assert!(is_attachment("attachment"));
+        assert!(is_attachment(" Attachment ; filename=a.txt"));
+        assert!(!is_attachment("inline; filename=a.txt"));
+        assert_eq!(disposition_filename("attachment"), None);
+        assert_eq!(disposition_filename("attachment; filename=plain.csv").as_deref(), Some("plain.csv"));
+        assert_eq!(
+            disposition_filename(r#"attachment; filename="a \"q\" b;c.txt"; size=3"#).as_deref(),
+            Some(r#"a "q" b;c.txt"#)
+        );
+        // filename* wins regardless of order.
+        assert_eq!(
+            disposition_filename("attachment; filename*=UTF-8''r%C3%A9port.xlsx; filename=\"report.xlsx\"").as_deref(),
+            Some("réport.xlsx")
+        );
+        assert_eq!(disposition_filename("attachment; filename*=iso-8859-1'en'%E9t%E9.txt").as_deref(), Some("été.txt"));
+        // Unknown charset: fall back to filename.
+        assert_eq!(disposition_filename("attachment; filename*=x-weird''a; filename=b").as_deref(), Some("b"));
+        assert_eq!(suggested_filename("../../etc/passwd", "http://h/x"), "_.._etc_passwd");
+        assert_eq!(suggested_filename("", "http://h/dir/file.pdf?x=1"), "file.pdf");
+        assert_eq!(suggested_filename("", "blob:http://h/uuid"), "download");
+    }
 }
