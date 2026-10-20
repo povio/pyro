@@ -1240,8 +1240,9 @@ impl Layout {
     /// `getComputedStyle(el).getPropertyValue(name)`
     /// (CSSStyleDeclaration.zig:76-151): display / visibility /
     /// pointer-events / text-transform from the cascade, custom properties,
-    /// font-size in px, the inline value (unless an `!important` rule beats
-    /// it), width/height from the faux layout, else the initial value.
+    /// font-size in px, other properties from the generic cascade
+    /// (`StyleEngine::computed_value`), width/height from a declared absolute
+    /// length or the faux layout, else the initial value.
     pub fn computed_style_value(&self, dom: &Dom, el: NodeId, name: &str) -> String {
         let custom = name.starts_with("--");
         let name = if custom { name.to_owned() } else { name.to_ascii_lowercase() };
@@ -1260,15 +1261,26 @@ impl Layout {
             if name == "font-size" {
                 return format!("{}px", self.style.computed_font_size(dom, Some(el)));
             }
-            if let Some(v) = self.style.inline_style_value(dom, el, &name) {
-                return v;
-            }
+            let declared = self.style.computed_value(dom, el, &name);
             if name == "width" || name == "height" {
                 if !self.is_visible(dom, el) {
                     return "auto".into();
                 }
+                // A declared absolute length is the used size the renderless layout cannot derive.
+                if let Some(px) = declared.filter(|v| v.ends_with("px")) {
+                    return px;
+                }
+                if let Some(v) = self.style.inline_style_value(dom, el, &name) {
+                    return v;
+                }
                 let axis = if name == "width" { Axis::Width } else { Axis::Height };
                 return format!("{}px", self.box_axis(dom, el, axis));
+            }
+            if let Some(v) = declared {
+                return v;
+            }
+            if let Some(v) = self.style.inline_style_value(dom, el, &name) {
+                return v;
             }
         }
         default_property_value(dom, el, &name).to_owned()

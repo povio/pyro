@@ -44,6 +44,7 @@ use markup5ever::{local_name, ns};
 use rustc_hash::{FxHashMap, FxHashSet};
 use selectors::parser::{Component, Selector, SelectorList};
 
+use crate::computed;
 use crate::dom::Dom;
 use crate::media::{self, Viewport};
 use crate::node::{NodeId, NodeKind, NIL};
@@ -71,6 +72,8 @@ const INLINE_PRIORITY: u64 = IMPORTANT_BIT - 1;
 const INLINE_IMPORTANT_PRIORITY: u64 = u64::MAX;
 /// StyleManager.zig:1994.
 const MAX_FONT_ANCESTOR_DEPTH: u8 = 32;
+/// Bound on inheritance/`currentcolor` recursion for generic computed values.
+const MAX_COMPUTED_DEPTH: u8 = 64;
 
 // ---------------------------------------------------------------------------
 // Values
@@ -855,6 +858,9 @@ enum Item {
         important_mask: u32,
         /// `--*` declarations, deduplicated per block.
         customs: Vec<(String, Rc<str>, bool)>,
+        /// Every other declaration as longhands, for getComputedStyle values
+        /// the layout does not track (see `computed.rs`).
+        generics: Vec<(String, Rc<str>, bool)>,
     },
     Media {
         query: String,
@@ -964,7 +970,21 @@ fn style_item(selector_text: &str, block: &str) -> Option<Item> {
     let decls = parse_declarations(block);
     let mut slots = Slots::default();
     let mut customs: Vec<(String, Rc<str>, bool)> = Vec::new();
+    let mut generics: Vec<(String, Rc<str>, bool)> = Vec::new();
     for d in &decls {
+        if !is_custom_property(&d.name) {
+            for (name, value) in crate::computed::expand(&d.name, &d.value) {
+                if let Some(g) = generics.iter_mut().find(|g| g.0 == name) {
+                    if g.2 && !d.important {
+                        continue;
+                    }
+                    g.1 = Rc::from(value.as_str());
+                    g.2 = d.important;
+                } else {
+                    generics.push((name, Rc::from(value.as_str()), d.important));
+                }
+            }
+        }
         if is_custom_property(&d.name) {
             if let Some(c) = customs.iter_mut().find(|c| c.0 == d.name) {
                 if c.2 && !d.important {
@@ -982,7 +1002,7 @@ fn style_item(selector_text: &str, block: &str) -> Option<Item> {
     let normal = slots.props(Importance::Normal);
     let important = slots.props(Importance::Important);
     let (normal_mask, important_mask) = (normal.mask(), important.mask());
-    if normal_mask == 0 && important_mask == 0 && customs.is_empty() {
+    if normal_mask == 0 && important_mask == 0 && customs.is_empty() && generics.is_empty() {
         return None;
     }
     Some(Item::Style {
@@ -992,6 +1012,7 @@ fn style_item(selector_text: &str, block: &str) -> Option<Item> {
         normal_mask,
         important_mask,
         customs,
+        generics,
     })
 }
 
@@ -1020,6 +1041,7 @@ struct RuleSet {
     by_tag: FxHashMap<String, Vec<u32>>,
     other: Vec<u32>,
     customs: FxHashMap<String, Vec<CustomRule>>,
+    generics: FxHashMap<String, Vec<CustomRule>>,
 }
 
 enum BucketKey {
@@ -1108,6 +1130,7 @@ struct Builder<'v> {
     rule_layers: Vec<u16>,
     pending: Vec<PendingRule>,
     customs: Vec<PendingCustom>,
+    generics: Vec<PendingCustom>,
 }
 
 impl<'v> Builder<'v> {
@@ -1121,6 +1144,7 @@ impl<'v> Builder<'v> {
             rule_layers: Vec::new(),
             pending: Vec::new(),
             customs: Vec::new(),
+            generics: Vec::new(),
         }
     }
 
@@ -1135,24 +1159,26 @@ impl<'v> Builder<'v> {
     fn walk(&mut self, items: &[Item], depth: u8, layer: u16) {
         for item in items {
             match item {
-                Item::Style { selectors, normal, important, normal_mask, important_mask, customs } => {
+                Item::Style { selectors, normal, important, normal_mask, important_mask, customs, generics } => {
                     let Some(list) = selectors else { continue };
-                    // StyleManager.zig:485-525
-                    if !customs.is_empty() {
+                    // StyleManager.zig:485-525; generic declarations share the block's order.
+                    if !customs.is_empty() || !generics.is_empty() {
                         let doc = self.next_doc_order(layer);
-                        for (name, value, important) in customs {
-                            for sel in list.slice() {
-                                if bucket_key(sel).is_none() {
-                                    continue;
+                        for (target, declarations) in [(&mut self.customs, customs), (&mut self.generics, generics)] {
+                            for (name, value, important) in declarations {
+                                for sel in list.slice() {
+                                    if bucket_key(sel).is_none() {
+                                        continue;
+                                    }
+                                    target.push(PendingCustom {
+                                        name: name.clone(),
+                                        important: *important,
+                                        selector: sel.clone(),
+                                        value: value.clone(),
+                                        layer,
+                                        doc,
+                                    });
                                 }
-                                self.customs.push(PendingCustom {
-                                    name: name.clone(),
-                                    important: *important,
-                                    selector: sel.clone(),
-                                    value: value.clone(),
-                                    layer,
-                                    doc,
-                                });
                             }
                         }
                     }
@@ -1327,18 +1353,21 @@ impl<'v> Builder<'v> {
                 BucketKey::Other => rs.other.push(idx),
             }
         }
-        for c in self.customs {
+        let layers = &self.layers;
+        let to_rule = |c: PendingCustom| {
             let spec = c.selector.specificity() as u64;
             let mut priority =
-                (rank_of(&self.layers, c.layer, c.important) << RANK_SHIFT) | (spec << SPEC_SHIFT) | c.doc as u64;
+                (rank_of(layers, c.layer, c.important) << RANK_SHIFT) | (spec << SPEC_SHIFT) | c.doc as u64;
             if c.important {
                 priority |= IMPORTANT_BIT;
             }
-            rs.customs.entry(c.name).or_default().push(CustomRule {
-                selector: SelectorList::from_one(c.selector),
-                value: c.value,
-                priority,
-            });
+            (c.name, CustomRule { selector: SelectorList::from_one(c.selector), value: c.value, priority })
+        };
+        for (name, rule) in self.customs.into_iter().map(to_rule) {
+            rs.customs.entry(name).or_default().push(rule);
+        }
+        for (name, rule) in self.generics.into_iter().map(to_rule) {
+            rs.generics.entry(name).or_default().push(rule);
         }
         rs
     }
@@ -1423,6 +1452,34 @@ fn custom_property_source(dom: &Dom, rules: &RuleSet, el: NodeId, name: &str) ->
         cur = flat_tree_parent_element(dom, idx);
     }
     None
+}
+
+/// The element's own winning declaration of a longhand: inline (shorthands
+/// expanded) against the generic rules, highest packed priority first.
+fn declared_value(dom: &Dom, rules: &RuleSet, el: NodeId, name: &str) -> Option<String> {
+    let mut value = None;
+    let mut priority = 0;
+    if let Some(style) = dom.element(el).ok().and_then(|e| e.attr("style")) {
+        for d in parse_declarations(style) {
+            if is_custom_property(&d.name) {
+                continue;
+            }
+            let p = if d.important { INLINE_IMPORTANT_PRIORITY } else { INLINE_PRIORITY };
+            for (longhand, v) in computed::expand(&d.name, &d.value) {
+                if longhand == name && p >= priority {
+                    value = Some(v);
+                    priority = p;
+                }
+            }
+        }
+    }
+    for rule in rules.generics.get(name).into_iter().flatten() {
+        if rule.priority > priority && dom.matches(el, &rule.selector).unwrap_or(false) {
+            value = Some(rule.value.to_string());
+            priority = rule.priority;
+        }
+    }
+    value
 }
 
 struct DimensionVariables<'a> {
@@ -2199,6 +2256,58 @@ impl StyleEngine {
         self.ensure(dom);
         let rules = self.cache.borrow().rules.clone();
         custom_property_source(dom, &rules, el, name).map(|(_, value)| value)
+    }
+
+    /// The computed value of a property the layout does not track: the
+    /// element's winning declaration (inline or rule), `inherit`/`unset`
+    /// and inheritance for inherited properties, `var()` substitution, then
+    /// Chromium-style serialization (`computed.rs`). `None` when nothing
+    /// applies, so the caller reports the initial value.
+    pub fn computed_value(&self, dom: &Dom, el: NodeId, name: &str) -> Option<String> {
+        let idx = self.owns(dom, el)?;
+        self.ensure(dom);
+        let rules = self.cache.borrow().rules.clone();
+        self.computed_value_at(dom, &rules, idx, name, 0)
+    }
+
+    fn computed_value_at(&self, dom: &Dom, rules: &RuleSet, idx: u32, name: &str, depth: u8) -> Option<String> {
+        if depth >= MAX_COMPUTED_DEPTH {
+            return None;
+        }
+        let id = dom.id_of(idx);
+        let inherited = computed::is_inherited(name);
+        let from_parent =
+            || flat_tree_parent_element(dom, idx).and_then(|p| self.computed_value_at(dom, rules, p, name, depth + 1));
+        let unset = || if inherited { from_parent() } else { None };
+        let Some(raw) = declared_value(dom, rules, id, name) else { return unset() };
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "inherit" => return from_parent(),
+            "unset" | "revert" | "revert-layer" => return unset(),
+            "initial" => return None,
+            _ => {}
+        }
+        let mut lookup = |var: &str| custom_property_source(dom, rules, id, var).map(|(_, value)| value);
+        // Invalid at computed-value time behaves as `unset`.
+        let Some(value) = computed::substitute_vars(&raw, &mut lookup, 0) else { return unset() };
+        let value = value.trim();
+        if computed::is_color_property(name) {
+            let mut current = || {
+                let color = if name == "color" {
+                    from_parent()
+                } else {
+                    self.computed_value_at(dom, rules, idx, "color", depth + 1)
+                };
+                Some(color.unwrap_or_else(|| "rgb(0, 0, 0)".into()))
+            };
+            return Some(computed::serialize_color(value, &mut current).unwrap_or_else(|| value.to_owned()));
+        }
+        if computed::is_length_property(name) {
+            let font_size = self.computed_font_size(dom, Some(id));
+            if let Some(px) = computed::resolve_length(value, font_size, DEFAULT_FONT_SIZE) {
+                return Some(px);
+            }
+        }
+        Some(computed::resolve_number(value).unwrap_or_else(|| value.to_owned()))
     }
 
     /// computedFontSize (StyleManager.zig:2002-2089): inline `font-size`

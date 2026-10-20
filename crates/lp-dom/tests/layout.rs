@@ -2174,7 +2174,8 @@ fn computed_style_defaults_and_inline() {
     assert_eq!(p.cs(div, "text-transform"), "lowercase");
     let imp = p.add("div");
     p.style(imp, "color: red !important; color: blue");
-    assert_eq!(p.cs(imp, "color"), "red");
+    // Colors serialize as Chromium computes them (upstream returned the declared "red").
+    assert_eq!(p.cs(imp, "color"), "rgb(255, 0, 0)");
 
     // hidden boxes compute width/height to auto (CSSStyleDeclaration.zig:203-212)
     let gone = p.add("div");
@@ -2606,4 +2607,88 @@ fn percentage_width_does_not_resolve_circular_or_positioned_bases() {
         parent = child;
     }
     assert_eq!(p.rect(parent).width, 320.0, "percentage chains resolve without recursive layout calls");
+}
+
+// ---------------------------------------------------------------------------
+// Generic computed values from author stylesheets (computed.rs)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn computed_style_resolves_author_stylesheet_values() {
+    let mut p = page("<!DOCTYPE html><body></body>");
+    p.add_style(concat!(
+        ":root{--spacing:.25rem;--brand:#7c3aed}",
+        ".badge{background-color:var(--brand);color:white}",
+        ".bg-\\[\\#7c3aed\\]{background-color:#7c3aed}",
+        "@layer utilities{.gap-2{gap:calc(var(--spacing) * 2)}.flex-1{flex:1}.scroll{overflow:hidden auto}}",
+        ".parent{color:rgb(1 2 3);font-family:Inter, Arial, sans-serif}",
+        ".cur{border-color:currentColor}",
+        ".mix{background-color:color-mix(in oklab, oklch(0.5 0 0) 50%, transparent)}",
+        ".size{width:calc(var(--spacing) * 3.5);margin-left:1.5rem}",
+        ".imp{color:red!important}.low{color:blue}",
+        ".missing{background-color:var(--nope)}",
+        ".unset{color:unset}",
+    ));
+    let badge = p.add("span");
+    p.set(badge, "class", "badge");
+    assert_eq!(p.cs(badge, "background-color"), "rgb(124, 58, 237)");
+    assert_eq!(p.cs(badge, "color"), "rgb(255, 255, 255)");
+
+    let escaped = p.add("span");
+    p.set(escaped, "class", "bg-[#7c3aed]");
+    assert_eq!(p.cs(escaped, "background-color"), "rgb(124, 58, 237)");
+
+    let flex = p.add("div");
+    p.set(flex, "class", "gap-2 flex-1 scroll");
+    assert_eq!(p.cs(flex, "column-gap"), "8px");
+    assert_eq!(p.cs(flex, "row-gap"), "8px");
+    assert_eq!(p.cs(flex, "flex-grow"), "1");
+    assert_eq!(p.cs(flex, "flex-basis"), "0%");
+    assert_eq!(p.cs(flex, "overflow-x"), "hidden");
+    assert_eq!(p.cs(flex, "overflow-y"), "auto");
+
+    // Inherited properties come from the nearest declaring ancestor; others do not inherit.
+    let parent = p.add("div");
+    p.set(parent, "class", "parent");
+    let child = p.add_to(parent, "span");
+    assert_eq!(p.cs(child, "color"), "rgb(1, 2, 3)");
+    assert_eq!(p.cs(child, "font-family"), "Inter, Arial, sans-serif");
+    assert_eq!(p.cs(child, "background-color"), "rgba(0, 0, 0, 0)");
+    let cur = p.add_to(parent, "span");
+    p.set(cur, "class", "cur");
+    assert_eq!(p.cs(cur, "border-top-color"), "rgb(1, 2, 3)");
+    let unset = p.add_to(parent, "span");
+    p.set(unset, "class", "unset");
+    assert_eq!(p.cs(unset, "color"), "rgb(1, 2, 3)");
+
+    let mix = p.add("div");
+    p.set(mix, "class", "mix");
+    assert_eq!(p.cs(mix, "background-color"), "oklab(0.5 0 0 / 0.5)");
+
+    let sized = p.add("div");
+    p.set(sized, "class", "size");
+    assert_eq!(p.cs(sized, "width"), "14px");
+    assert_eq!(p.cs(sized, "margin-left"), "24px");
+
+    // !important rules beat normal inline declarations; inline beats normal rules.
+    let imp = p.add("div");
+    p.set(imp, "class", "imp low");
+    p.style(imp, "color: green");
+    assert_eq!(p.cs(imp, "color"), "rgb(255, 0, 0)");
+    let low = p.add("div");
+    p.set(low, "class", "low");
+    p.style(low, "color: green");
+    assert_eq!(p.cs(low, "color"), "rgb(0, 128, 0)");
+
+    // Invalid at computed-value time falls back to the initial value.
+    let missing = p.add("div");
+    p.set(missing, "class", "missing");
+    assert_eq!(p.cs(missing, "background-color"), "rgba(0, 0, 0, 0)");
+
+    // Inline shorthands expand too; untouched properties keep their initial values.
+    let inline = p.add("div");
+    p.style(inline, "flex: none; padding: 1px 2px");
+    assert_eq!(p.cs(inline, "flex-grow"), "0");
+    assert_eq!(p.cs(inline, "padding-left"), "2px");
+    assert_eq!(p.cs(inline, "max-width"), "none");
 }

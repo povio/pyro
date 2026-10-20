@@ -2,6 +2,7 @@
 //! of lightpanda-io/browser (AGPL-3.0-only). Pure Rust, no JS engine
 //! dependency; JS bindings live in `lp-webapi`.
 
+pub mod computed;
 pub mod dom;
 pub mod error;
 pub mod events;
