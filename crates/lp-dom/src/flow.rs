@@ -16,7 +16,7 @@ use std::cell::RefCell;
 
 use rustc_hash::FxHashMap;
 
-use crate::layout::{text_width, Rect};
+use crate::layout::{text_width as glyph_width, Rect};
 use crate::node::{NodeId, NodeType};
 use crate::Dom;
 
@@ -1210,9 +1210,13 @@ impl<'a> Ctx<'a> {
         }
     }
 
-    /// Shrink-to-fit content width: min(max-content, available).
+    /// CSS 2.1 10.3.5: min(max(min-content, available), max-content).
     fn shrink_to_fit(&self, el: NodeId, style: &FlowStyle, available: f64) -> f64 {
-        self.max_content(el, style).min(available)
+        let max = self.max_content(el, style);
+        if max <= available {
+            return max;
+        }
+        max.min(available.max(self.min_content(el, style)))
     }
 
     /// Max-content width of an element's contents (no wrapping).
@@ -1249,7 +1253,7 @@ impl<'a> Ctx<'a> {
             let w = match s {
                 None => {
                     let text = self.dom.char_data(child).unwrap_or("");
-                    if text.trim().is_empty() && flex {
+                    if is_blank(text) && flex {
                         continue;
                     }
                     let w = if min && !style.nowrap {
@@ -1283,8 +1287,13 @@ impl<'a> Ctx<'a> {
                 Some(s) => {
                     let e = self.edges(&s, 0.0);
                     let to_content = |v: f64| Self::declared_content(&s, v, e.horizontal());
+                    let percent = |d: Dim| matches!(d, Dim::Len(l) if l.percent != 0.0);
                     let inner = match s.width.resolve(None) {
                         Some(w) => to_content(w),
+                        // Compressible replaced elements (form controls, images)
+                        // with a percentage width or max-width contribute no
+                        // min-content width (CSS Sizing 3, 5.2.2).
+                        None if min && s.replaced && (percent(s.width) || percent(s.max_width)) => 0.0,
                         None if min => self.min_content(child, &s),
                         None => self.max_content(child, &s),
                     };
@@ -1747,6 +1756,23 @@ impl Line {
     }
 }
 
+/// Width of a run of text: the engine's fixed-advance measure, with a
+/// no-break space as wide as a space (it does not collapse, but has the
+/// same advance).
+fn text_width(text: &str, font_size: f64) -> f64 {
+    if text.contains('\u{a0}') {
+        glyph_width(&text.replace('\u{a0}', " "), font_size)
+    } else {
+        glyph_width(text, font_size)
+    }
+}
+
+/// Only collapsible white space (space, tab, line feeds) is blank; a
+/// no-break space is content.
+fn is_blank(text: &str) -> bool {
+    text.chars().all(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | '\x0c'))
+}
+
 fn collapsed_width(text: &str, font_size: f64) -> f64 {
     let words: Vec<&str> = text.split_ascii_whitespace().collect();
     if words.is_empty() {
@@ -1817,7 +1843,7 @@ impl<'a> Ctx<'a> {
         let mut items: Vec<FlexItem> = Vec::new();
         let mut text_run: Vec<NodeId> = Vec::new();
         let flush_text = |cx: &Ctx<'a>, run: &mut Vec<NodeId>, items: &mut Vec<FlexItem>| {
-            let has_text = run.iter().any(|&t| cx.dom.char_data(t).is_ok_and(|d| !d.trim().is_empty()));
+            let has_text = run.iter().any(|&t| cx.dom.char_data(t).is_ok_and(|d| !is_blank(d)));
             if has_text {
                 let mut st =
                     FlowStyle { font_size: style.font_size, line_height: style.line_height, ..FlowStyle::default() };
@@ -2995,7 +3021,7 @@ impl<'a> Ctx<'a> {
         let mut absolute = Vec::new();
         let mut text: Vec<NodeId> = Vec::new();
         let flush = |text: &mut Vec<NodeId>, items: &mut Vec<GridItem>| {
-            if text.iter().any(|&t| self.dom.char_data(t).is_ok_and(|d| !d.trim().is_empty())) {
+            if text.iter().any(|&t| self.dom.char_data(t).is_ok_and(|d| !is_blank(d))) {
                 let st = FlowStyle {
                     font_size: style.font_size,
                     line_height: style.line_height,

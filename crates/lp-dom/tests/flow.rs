@@ -1205,3 +1205,78 @@ fn flex_parity_cross_size_min_max() {
         [800.0, 600.0],
     );
 }
+
+#[test]
+fn flow_nbsp_is_content_not_collapsible_space() {
+    // TOS tooltips render `<span class="whitespace-nowrap">&nbsp;</span>` in a
+    // flex column: Chromium gives it a space-wide box (4px at 13px Arial),
+    // while ASCII white space alone produces no item.
+    let html = "<!doctype html><body style=\"margin:0\"><div id=col style=\"display:flex;flex-direction:column;align-items:flex-start;font-size:16px\"><span id=nb style=\"white-space:nowrap\">&nbsp;</span><span id=ws>   </span></div><div id=f style=\"display:flex;font-size:16px\">&nbsp;</div></body>";
+    let p = page(html, Geometry::Flow);
+    let nb = p.metrics("nb");
+    assert!(nb[2] > 0.0 && nb[3] > 0.0, "nbsp span has a box: {nb:?}");
+    let space = p.metrics("nb")[2];
+    assert!((space - 16.0 * 0.33).abs() < 0.01, "as wide as a space: {space}");
+    let ws = p.metrics("ws");
+    assert_eq!(ws[2], 0.0, "collapsible white space has no width: {ws:?}");
+    // Text directly in a flex container that is only a no-break space is an item.
+    let f = p.metrics("f");
+    assert!(f[3] > 0.0, "nbsp flex item gives the container height: {f:?}");
+}
+
+#[test]
+fn flow_parity_shrink_to_fit_min_content_floor() {
+    // An absolutely positioned box in a 0-wide containing block keeps its
+    // min-content width (TOS tooltips); with 50px available and 70px of
+    // content it takes 50 and wraps. Chromium 1.59.1; x/width only (line
+    // heights depend on font metrics).
+    let html = "<!doctype html><body style=\"margin:0\"><div id=cb style=\"position:relative;width:0;height:20px;margin-left:100px\"><div id=tip style=\"position:absolute;top:0;left:0\"><span id=a style=\"display:inline-block;width:30px;height:10px\"></span> <span id=b style=\"display:inline-block;width:40px;height:10px\"></span></div></div><div id=cb2 style=\"position:relative;width:50px;height:20px\"><div id=tip2 style=\"position:absolute;top:0;left:0\"><span id=c style=\"display:inline-block;width:30px;height:10px\"></span><span id=d style=\"display:inline-block;width:40px;height:10px\"></span></div></div></body>";
+    let p = page(html, Geometry::Flow);
+    let mut diffs = Vec::new();
+    for (id, x, w) in [
+        ("tip", 100.0, 40.0),
+        ("a", 100.0, 30.0),
+        ("b", 100.0, 40.0),
+        ("tip2", 0.0, 50.0),
+        ("c", 0.0, 30.0),
+        ("d", 0.0, 40.0),
+    ] {
+        let m = p.metrics(id);
+        if (m[0] - x).abs() > 0.01 || (m[2] - w).abs() > 0.01 {
+            diffs.push(format!("#{id}: got x={} w={}, Chromium x={x} w={w}", m[0], m[2]));
+        }
+    }
+    // b and d wrap below a and c.
+    assert!(p.metrics("b")[1] > p.metrics("a")[1] && p.metrics("d")[1] > p.metrics("c")[1], "wrapped");
+    assert!(diffs.is_empty(), "shrink-to-fit:\n{}", diffs.join("\n"));
+}
+
+#[test]
+fn flex_parity_compressible_percentage_inputs() {
+    // TOS cargo form: `w-full` inputs in flex:1 items shrink with the row
+    // (no min-content contribution); inputs with auto width keep their
+    // intrinsic minimum and overflow. Chromium 1.59.1.
+    let html = format!(
+        "<!doctype html>{PREFLIGHT}<body><div id=row style=\"display:flex;gap:16px;width:659px\"><div id=a style=\"flex:1\"><input id=ia style=\"width:100%\"></div><div id=b style=\"flex:1\"><input style=\"width:100%\"></div><div id=c style=\"flex:1\"><input style=\"width:100%\"></div><div id=d style=\"flex:1\"><input style=\"width:100%\"></div><div id=e style=\"flex:1\"><input id=ie style=\"width:100%\"></div></div><div id=fixed style=\"display:flex;width:300px\"><div id=f1 style=\"flex:1\"><input id=if1></div><div id=f2 style=\"flex:1\"><input></div></div></body>"
+    );
+    check(
+        "compressible",
+        &html,
+        0,
+        &[
+            ("row", [0.0, 0.0, 659.0, 24.0, 659.0, 24.0, 659.0, 24.0]),
+            ("a", [0.0, 0.0, 119.0, 24.0, 119.0, 24.0, 119.0, 24.0]),
+            ("ia", [0.0, 0.0, 119.0, 24.0, 119.0, 24.0, 119.0, 24.0]),
+            ("b", [135.0, 0.0, 119.0, 24.0, 119.0, 24.0, 119.0, 24.0]),
+            ("c", [270.0, 0.0, 119.0, 24.0, 119.0, 24.0, 119.0, 24.0]),
+            ("d", [405.0, 0.0, 119.0, 24.0, 119.0, 24.0, 119.0, 24.0]),
+            ("e", [540.0, 0.0, 119.0, 24.0, 119.0, 24.0, 119.0, 24.0]),
+            ("ie", [540.0, 0.0, 119.0, 24.0, 119.0, 24.0, 119.0, 24.0]),
+            ("fixed", [0.0, 24.0, 300.0, 24.0, 300.0, 24.0, 350.0, 24.0]),
+            ("f1", [0.0, 24.0, 175.0, 24.0, 175.0, 24.0, 175.0, 24.0]),
+            ("if1", [0.0, 24.0, 175.0, 24.0, 175.0, 24.0, 175.0, 24.0]),
+            ("f2", [175.0, 24.0, 175.0, 24.0, 175.0, 24.0, 175.0, 24.0]),
+        ],
+        [800.0, 600.0],
+    );
+}
