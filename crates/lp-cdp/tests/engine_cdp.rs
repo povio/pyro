@@ -1053,6 +1053,184 @@ fn input_mouse_wheel_over_empty_viewport_space_scrolls_the_viewport() {
     );
 }
 
+/// Pages for the drag tests: centers of #src, #dst and #plain, and a capture
+/// log of drag/pointer events in Chromium's probe format.
+fn drag_page(h: &mut Harness) -> (Value, Value, Value) {
+    eval_value(
+        h,
+        r#"
+      document.body.innerHTML='<div id="src" draggable="true" style="width:100px;height:40px">src</div><a id="lnk" href="/doc?id=7" style="display:block;width:80px;height:20px">link <b>x</b></a><div id="dst" style="width:200px;height:80px">dst</div><div id="plain" style="width:100px;height:40px">plain</div>';
+      globalThis.log=[];
+      const short = e => e.type + '@' + (e.target.id||e.target.nodeName) + (e.dataTransfer ? '[' + [e.dataTransfer.dropEffect, e.dataTransfer.effectAllowed, e.dataTransfer.types.join('+'), e.dataTransfer.getData('text/plain')].join(',') + ']' : '') + ' b' + e.buttons + (e.cancelable ? ' c' : '') + (e.isTrusted ? '' : ' untrusted');
+      for (const t of ['dragstart','drag','dragenter','dragover','dragleave','drop','dragend','pointercancel','mouseup','click'])
+        document.addEventListener(t, e => log.push(short(e)), true);
+      globalThis.moves = 0; document.addEventListener('mousemove', () => moves++);
+      const src = document.getElementById('src'), dst = document.getElementById('dst');
+      src.addEventListener('dragstart', e => { e.dataTransfer.setData('text/plain', 'payload'); e.dataTransfer.setData('application/x-custom', 'c'); if (globalThis.EA) e.dataTransfer.effectAllowed = EA; });
+      dst.addEventListener('dragover', e => { e.dataTransfer.setData('text/plain', 'ignored'); if (!globalThis.NO_ACCEPT) e.preventDefault(); });
+      dst.addEventListener('drop', e => { globalThis.dropped = e.dataTransfer; e.preventDefault(); });
+      globalThis.center = id => { const r = document.getElementById(id).getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; };
+      1
+    "#,
+    );
+    (eval_value(h, "center('src')"), eval_value(h, "center('dst')"), eval_value(h, "center('plain')"))
+}
+
+fn mouse(h: &mut Harness, kind: &str, at: &Value, dy: f64, buttons: u16) -> Vec<Value> {
+    let button = if kind == "mouseMoved" && buttons == 0 { "none" } else { "left" };
+    h.page_with_events(
+        "Input.dispatchMouseEvent",
+        json!({"type":kind,"x":at[0],"y":at[1].as_f64().unwrap() + dy,"button":button,"buttons":buttons,"clickCount":1}),
+    )
+}
+
+fn drag(h: &mut Harness, kind: &str, at: &Value, data: &Value) -> Value {
+    h.page("Input.dispatchDragEvent", json!({"type":kind,"x":at[0],"y":at[1],"data":data,"modifiers":0}))
+}
+
+#[test]
+fn input_set_intercept_drags_keeps_pointer_drags_on_mouse_events() {
+    // Playwright 1.59 wraps every left-button mouse.move in
+    // setInterceptDrags(true/false); pointer-driven drags (column resizing,
+    // dnd-kit's MouseSensor) must still see plain mouse events.
+    let mut h = Harness::new();
+    let (_, _, plain) = drag_page(&mut h);
+    mouse(&mut h, "mousePressed", &plain, 0.0, 1);
+    assert_eq!(h.page("Input.setInterceptDrags", json!({"enabled":true}))["result"], json!({}));
+    for dy in [6.0, 12.0, 18.0] {
+        let events = mouse(&mut h, "mouseMoved", &plain, dy, 1);
+        assert!(!events.iter().any(|e| e["method"] == "Input.dragIntercepted"), "{events:?}");
+    }
+    assert_eq!(h.page("Input.setInterceptDrags", json!({"enabled":false}))["result"], json!({}));
+    mouse(&mut h, "mouseReleased", &plain, 18.0, 0);
+    assert_eq!(eval_value(&mut h, "[moves, log.join('|')]"), json!([3, "mouseup@plain b0 c|click@plain b0 c"]));
+    assert_eq!(h.page("Input.setInterceptDrags", json!({}))["error"]["code"], -32602);
+}
+
+#[test]
+fn input_intercepted_native_drag_matches_chromium_event_sequence() {
+    let mut h = Harness::new();
+    let (src, dst, _) = drag_page(&mut h);
+    // Without interception there is no OS drag loop: no dragstart.
+    mouse(&mut h, "mousePressed", &src, 0.0, 1);
+    mouse(&mut h, "mouseMoved", &src, 10.0, 1);
+    mouse(&mut h, "mouseReleased", &src, 10.0, 0);
+    assert_eq!(eval_value(&mut h, "log.splice(0).join('|')"), json!("mouseup@src b0 c|click@src b0 c"));
+
+    // A move below the 3px threshold does not start a drag; past it,
+    // dragstart fires and Input.dragIntercepted reports the data.
+    mouse(&mut h, "mousePressed", &src, 0.0, 1);
+    h.page("Input.setInterceptDrags", json!({"enabled":true}));
+    let events = mouse(&mut h, "mouseMoved", &src, 2.0, 1);
+    assert!(!events.iter().any(|e| e["method"] == "Input.dragIntercepted"), "{events:?}");
+    let events = mouse(&mut h, "mouseMoved", &src, 3.0, 1);
+    h.page("Input.setInterceptDrags", json!({"enabled":false}));
+    let intercepted = events.iter().find(|e| e["method"] == "Input.dragIntercepted").expect("dragIntercepted");
+    let data = intercepted["params"]["data"].clone();
+    assert_eq!(
+        data,
+        json!({"items":[{"mimeType":"text/plain","data":"payload"},{"mimeType":"application/x-custom","data":"c"}],"dragOperationsMask":-1})
+    );
+    assert_eq!(drag(&mut h, "dragEnter", &dst, &data)["result"], json!({}));
+    assert_eq!(drag(&mut h, "drop", &dst, &data)["result"], json!({}));
+    // Mouse release after the drop: no click (the pointer stream was canceled).
+    let types = "text/plain+application/x-custom";
+    assert_eq!(
+        eval_value(&mut h, "log.splice(0)"),
+        json!([
+            "dragstart@src[none,uninitialized,,] b1 c",
+            "pointercancel@src b0",
+            format!("drag@src[none,uninitialized,{types},] b0 c"),
+            format!("dragenter@dst[none,all,{types},] b0 c"),
+            format!("dragover@dst[none,all,{types},] b0 c"),
+            format!("drop@dst[copy,all,{types},payload] b0 c"),
+            format!("dragend@src[copy,uninitialized,{types},] b0"),
+        ])
+    );
+    // The protected-mode setData in dragover was ignored; the drop store is
+    // disabled once its event is over.
+    assert_eq!(eval_value(&mut h, "[dropped.types.length, dropped.getData('text/plain')]"), json!([0, ""]));
+
+    // Not accepted (dragover not canceled): drag + dragleave, dragend none.
+    eval_value(&mut h, "globalThis.NO_ACCEPT = true; globalThis.EA = 'move'; 1");
+    mouse(&mut h, "mousePressed", &src, 0.0, 1);
+    h.page("Input.setInterceptDrags", json!({"enabled":true}));
+    let events = mouse(&mut h, "mouseMoved", &src, 5.0, 1);
+    h.page("Input.setInterceptDrags", json!({"enabled":false}));
+    let data = events.iter().find(|e| e["method"] == "Input.dragIntercepted").unwrap()["params"]["data"].clone();
+    assert_eq!(data["dragOperationsMask"], 16);
+    drag(&mut h, "dragEnter", &dst, &data);
+    drag(&mut h, "drop", &dst, &data);
+    assert_eq!(
+        eval_value(&mut h, "log.splice(0).slice(2)"),
+        json!([
+            format!("drag@src[none,move,{types},] b0 c"),
+            format!("dragenter@dst[none,move,{types},] b0 c"),
+            format!("dragover@dst[none,move,{types},] b0 c"),
+            format!("drag@src[none,move,{types},] b0 c"),
+            format!("dragleave@dst[none,move,{types},] b0"),
+            format!("dragend@src[none,move,{types},] b0"),
+        ])
+    );
+
+    // dragCancel (Escape) ends with dragend only; a canceled dragstart starts
+    // no drag and the release still clicks.
+    eval_value(&mut h, "globalThis.NO_ACCEPT = false; globalThis.EA = undefined; 1");
+    mouse(&mut h, "mousePressed", &src, 0.0, 1);
+    h.page("Input.setInterceptDrags", json!({"enabled":true}));
+    let events = mouse(&mut h, "mouseMoved", &src, 5.0, 1);
+    h.page("Input.setInterceptDrags", json!({"enabled":false}));
+    let data = events.iter().find(|e| e["method"] == "Input.dragIntercepted").unwrap()["params"]["data"].clone();
+    drag(&mut h, "dragEnter", &dst, &data);
+    assert_eq!(drag(&mut h, "dragCancel", &dst, &json!({"items":[],"dragOperationsMask":65535}))["result"], json!({}));
+    assert_eq!(
+        eval_value(&mut h, "log.splice(0).slice(-2)"),
+        json!([
+            format!("dragenter@dst[none,all,{types},] b0 c"),
+            format!("dragend@src[none,uninitialized,{types},] b0")
+        ])
+    );
+    eval_value(&mut h, "document.getElementById('src').addEventListener('dragstart', e => e.preventDefault()); 1");
+    mouse(&mut h, "mousePressed", &src, 0.0, 1);
+    h.page("Input.setInterceptDrags", json!({"enabled":true}));
+    let events = mouse(&mut h, "mouseMoved", &src, 5.0, 1);
+    h.page("Input.setInterceptDrags", json!({"enabled":false}));
+    assert!(!events.iter().any(|e| e["method"] == "Input.dragIntercepted"), "{events:?}");
+    mouse(&mut h, "mouseReleased", &src, 5.0, 0);
+    assert_eq!(
+        eval_value(&mut h, "log.splice(0)"),
+        json!(["dragstart@src[none,uninitialized,,] b1 c", "mouseup@src b0 c", "click@src b0 c"])
+    );
+    assert_eq!(drag(&mut h, "drop", &dst, &data)["error"]["message"], "no drag in progress");
+    let files = json!({"items":[],"files":["/etc/hosts"],"dragOperationsMask":1});
+    assert_eq!(drag(&mut h, "dragEnter", &dst, &files)["error"]["code"], -32000);
+}
+
+#[test]
+fn input_intercepted_link_drag_carries_chromium_link_data() {
+    let mut h = Harness::new();
+    drag_page(&mut h);
+    let link = eval_value(&mut h, "center('lnk')");
+    mouse(&mut h, "mousePressed", &link, 0.0, 1);
+    h.page("Input.setInterceptDrags", json!({"enabled":true}));
+    let events = mouse(&mut h, "mouseMoved", &link, 4.0, 1);
+    h.page("Input.setInterceptDrags", json!({"enabled":false}));
+    let data =
+        events.iter().find(|e| e["method"] == "Input.dragIntercepted").expect("link drag")["params"]["data"].clone();
+    let url = eval_value(&mut h, "document.getElementById('lnk').href");
+    let html = eval_value(&mut h, "document.getElementById('lnk').outerHTML");
+    let title = eval_value(&mut h, "document.getElementById('lnk').innerText");
+    assert_eq!(
+        data,
+        json!({"items":[
+            {"mimeType":"text/uri-list","data":url,"title":title},
+            {"mimeType":"text/plain","data":url},
+            {"mimeType":"text/html","data":html,"baseURL":url},
+        ],"dragOperationsMask":-1})
+    );
+    drag(&mut h, "dragCancel", &link, &data);
+}
+
 #[test]
 fn dom_backend_nodes_adopt_across_worlds_and_expire_on_navigation() {
     let mut h = Harness::new();

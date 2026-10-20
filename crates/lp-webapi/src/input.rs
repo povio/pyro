@@ -1036,21 +1036,43 @@ fn mouse_event(page: &Rc<PageDom>, iface: EventInterface, ty: &str, m: &MouseInp
     ev
 }
 
+/// The hit-test target at a viewport point. With `root_fallback`, empty
+/// viewport space targets the root element, as Chrome hit-tests it; the
+/// synthetic layout leaves such gaps (e.g. at Playwright's initial mouse
+/// position, 0,0).
+fn pointer_target(page: &PageDom, x: f64, y: f64, root_fallback: bool) -> Option<NodeId> {
+    let hit = crate::layout_api::hit_test(page, x, y);
+    if hit.is_some() || !root_fallback {
+        return hit;
+    }
+    let vp = page.viewport();
+    if (0.0..vp.width as f64).contains(&x) && (0.0..vp.height as f64).contains(&y) {
+        let doc = page.document();
+        return page.dom.borrow().document_element(doc).ok().flatten();
+    }
+    None
+}
+
 /// CDP `Input.dispatchMouseEvent`. Returns an error when hit testing is not
 /// possible (no element at the point).
 pub fn dispatch_mouse(page: &Rc<PageDom>, kind: MouseKind, m: &MouseInput) -> Result<(), String> {
-    let mut hit = crate::layout_api::hit_test(page, m.x, m.y);
-    if hit.is_none() && kind == MouseKind::Wheel {
-        // Chrome hit-tests empty viewport space as the root element, so a wheel
-        // there scrolls the viewport. The synthetic layout leaves such gaps
-        // (e.g. at Playwright's initial mouse position, 0,0).
-        let vp = page.viewport();
-        if (0.0..vp.width as f64).contains(&m.x) && (0.0..vp.height as f64).contains(&m.y) {
-            let doc = page.document();
-            hit = page.dom.borrow().document_element(doc).ok().flatten();
-        }
-    }
-    let target = hit.ok_or_else(|| "no element at point".to_owned())?;
+    dispatch_mouse_intercepting_drags(page, kind, m, false).map(|_| ())
+}
+
+/// `dispatch_mouse` under CDP `Input.setInterceptDrags`. With
+/// `intercept_drags`, a left-button move past the drag threshold from a
+/// draggable source starts a native drag: `dragstart` fires on the source
+/// and, unless canceled, the drag data is returned for
+/// `Input.dragIntercepted`; `dispatch_drag` then drives the drag. Without
+/// interception no native drag starts (there is no OS drag loop).
+pub fn dispatch_mouse_intercepting_drags(
+    page: &Rc<PageDom>,
+    kind: MouseKind,
+    m: &MouseInput,
+    intercept_drags: bool,
+) -> Result<Option<DragData>, String> {
+    let target =
+        pointer_target(page, m.x, m.y, kind == MouseKind::Wheel).ok_or_else(|| "no element at point".to_owned())?;
     let Some(tkey) = key_of(page, target) else { return Err("stale target".into()) };
     match kind {
         MouseKind::Moved => {
@@ -1068,11 +1090,18 @@ pub fn dispatch_mouse(page: &Rc<PageDom>, kind: MouseKind, m: &MouseInput) -> Re
             }
             fire(page, tkey, &mouse_event(page, EventInterface::PointerEvent, "pointermove", m, true));
             fire(page, tkey, &mouse_event(page, EventInterface::MouseEvent, "mousemove", m, true));
+            if intercept_drags {
+                return Ok(start_drag(page, target, m));
+            }
         }
         MouseKind::Pressed => {
             let pd = fire(page, tkey, &mouse_event(page, EventInterface::PointerEvent, "pointerdown", m, true));
             let md = !pd || fire(page, tkey, &mouse_event(page, EventInterface::MouseEvent, "mousedown", m, true));
             page.set_press_target(Some(target));
+            // A canceled mousedown prevents dragging, as in Chrome.
+            let source =
+                (m.button == MouseButton::Left && pd && md).then(|| drag_source(&page.dom.borrow(), target)).flatten();
+            page.drag_candidate.set(source.map(|s| (s, m.x, m.y)));
             // Default action of mousedown: focus the nearest focusable ancestor.
             if pd && md {
                 let focus_target = {
@@ -1104,6 +1133,7 @@ pub fn dispatch_mouse(page: &Rc<PageDom>, kind: MouseKind, m: &MouseInput) -> Re
             }
         }
         MouseKind::Released => {
+            page.drag_candidate.set(None);
             let pu = fire(page, tkey, &mouse_event(page, EventInterface::PointerEvent, "pointerup", m, true));
             if pu {
                 fire(page, tkey, &mouse_event(page, EventInterface::MouseEvent, "mouseup", m, true));
@@ -1140,7 +1170,7 @@ pub fn dispatch_mouse(page: &Rc<PageDom>, kind: MouseKind, m: &MouseInput) -> Re
                 || page.is_disposed()
                 || page.document() != doc
             {
-                return Ok(());
+                return Ok(None);
             }
             let moved = page.layout.borrow_mut().wheel_scroll(&page.dom.borrow(), target, m.delta_x, m.delta_y);
             for scrolled in moved {
@@ -1152,7 +1182,362 @@ pub fn dispatch_mouse(page: &Rc<PageDom>, kind: MouseKind, m: &MouseInput) -> Re
             }
         }
     }
+    Ok(None)
+}
+
+// ----- native drag and drop ------------------------------------------------------
+//
+// Modelled on Blink (EventHandler::UpdateDragAndDrop / PerformDragAndDrop /
+// CancelDragAndDrop) and checked against headless Chromium driven by
+// Playwright 1.59.1: event order, targets, cancelability, DataTransfer modes,
+// effectAllowed/dropEffect and the intercepted drag data.
+
+/// Chrome's macOS drag threshold (Blink kDragThresholdX/Y), CSS px.
+const DRAG_THRESHOLD: f64 = 3.0;
+const OP_COPY: i64 = 1;
+const OP_LINK: i64 = 2;
+const OP_MOVE: i64 = 16;
+const OP_ALL: i64 = OP_COPY | OP_LINK | OP_MOVE;
+
+/// One string item of CDP `Input.DragData`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DragItem {
+    pub mime_type: String,
+    pub data: String,
+    pub title: Option<String>,
+    pub base_url: Option<String>,
+}
+
+/// CDP `Input.DragData` (string items only; file drags are not supported).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DragData {
+    pub items: Vec<DragItem>,
+    /// Copy = 1, Link = 2, Move = 16; -1 when every operation is allowed.
+    pub drag_operations_mask: i64,
+}
+
+/// CDP `Input.dispatchDragEvent` types.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum DragKind {
+    Enter,
+    Over,
+    Drop,
+    Cancel,
+}
+
+pub(crate) struct DragSession {
+    /// The page's drag source and its DataTransfer; None for a drag entering
+    /// from outside the page.
+    source: Option<(NodeId, Rc<NativeTransfer>)>,
+    /// Current drop target (Blink drag_target_).
+    target: Option<NodeId>,
+    /// Blink should_only_fire_drag_over_event_: a new target got dragenter, so
+    /// the next update fires only dragover.
+    only_dragover: bool,
+    /// The operation the current target accepted by canceling the last
+    /// dragenter/dragover.
+    operation: Option<&'static str>,
+}
+
+use crate::data_transfer::{Mode, NativeTransfer};
+
+/// Nearest ancestor-or-self that is draggable: `draggable=true`, or a link
+/// with an href unless it says `draggable=false`. Images are not dragged:
+/// Chrome drags only decoded images and the engine decodes none.
+fn drag_source(dom: &Dom, target: NodeId) -> Option<NodeId> {
+    let mut cur = Some(target);
+    while let Some(c) = cur {
+        if let Ok(e) = dom.element(c) {
+            let draggable = e.attr("draggable");
+            if draggable.is_some_and(|d| d.eq_ignore_ascii_case("true")) {
+                return Some(c);
+            }
+            if e.is_html()
+                && *e.local_name() == *"a"
+                && e.attr("href").is_some()
+                && !draggable.is_some_and(|d| d.eq_ignore_ascii_case("false"))
+            {
+                return Some(c);
+            }
+        }
+        cur = dom.parent(c).ok().flatten();
+    }
+    None
+}
+
+fn mask_of(effect_allowed: &str) -> i64 {
+    match effect_allowed {
+        "none" => 0,
+        "copy" => OP_COPY,
+        "link" => OP_LINK,
+        "move" => OP_MOVE,
+        "copyLink" => OP_COPY | OP_LINK,
+        "copyMove" => OP_COPY | OP_MOVE,
+        "linkMove" => OP_LINK | OP_MOVE,
+        _ => -1,
+    }
+}
+
+fn allowed_ops(mask: i64) -> i64 {
+    if mask < 0 {
+        OP_ALL
+    } else {
+        mask & OP_ALL
+    }
+}
+
+fn effect_allowed_of(mask: i64) -> &'static str {
+    match allowed_ops(mask) {
+        0 => "none",
+        OP_COPY => "copy",
+        OP_LINK => "link",
+        OP_MOVE => "move",
+        3 => "copyLink",
+        17 => "copyMove",
+        18 => "linkMove",
+        _ => "all",
+    }
+}
+
+/// The operation a target accepting the drag gets: its dropEffect when the
+/// source allows it, else Chrome's default (copy, then move, then link).
+fn accepted_operation(drop_effect: &str, mask: i64) -> Option<&'static str> {
+    let ops = allowed_ops(mask);
+    let named = [("copy", OP_COPY), ("link", OP_LINK), ("move", OP_MOVE)];
+    if let Some(&(name, bit)) = named.iter().find(|(name, _)| *name == drop_effect) {
+        return (ops & bit != 0).then_some(name);
+    }
+    [("copy", OP_COPY), ("move", OP_MOVE), ("link", OP_LINK)]
+        .into_iter()
+        .find(|(_, bit)| ops & bit != 0)
+        .map(|(n, _)| n)
+}
+
+fn drag_event(page: &Rc<PageDom>, ty: &str, m: &MouseInput, cancelable: bool, transfer: &NativeTransfer) -> EventData {
+    let ev = mouse_event(page, EventInterface::DragEvent, ty, m, cancelable);
+    ev.fields.borrow_mut().data_transfer = Some(transfer.reference.clone());
+    ev
+}
+
+/// Fires `ty` on `target` with `transfer` in `mode`, disabling the store
+/// afterwards. Returns false if the event was canceled.
+fn fire_drag(
+    page: &Rc<PageDom>,
+    target: NodeId,
+    ty: &str,
+    m: &MouseInput,
+    cancelable: bool,
+    transfer: &NativeTransfer,
+    mode: Mode,
+) -> bool {
+    let Some(key) = key_of(page, target) else { return true };
+    transfer.set_mode(mode);
+    let not_canceled = fire(page, key, &drag_event(page, ty, m, cancelable, transfer));
+    transfer.set_mode(Mode::Disabled);
+    not_canceled
+}
+
+/// Link drag data, as Chrome fills it before dragstart.
+fn link_items(page: &PageDom, link: NodeId) -> Vec<DragItem> {
+    let dom = page.dom.borrow();
+    let Ok(e) = dom.element(link) else { return Vec::new() };
+    if !(e.is_html() && *e.local_name() == *"a") {
+        return Vec::new();
+    }
+    let Some(href) = e.attr("href") else { return Vec::new() };
+    let url = crate::html::resolve_url(&dom, link, href);
+    let title = dom.inner_text(page.layout.borrow().style(), link).unwrap_or_default();
+    let html = dom.outer_html(link).unwrap_or_default();
+    vec![
+        DragItem { mime_type: "text/uri-list".into(), data: url.clone(), title: Some(title), base_url: None },
+        DragItem { mime_type: "text/plain".into(), data: url.clone(), title: None, base_url: None },
+        DragItem { mime_type: "text/html".into(), data: html, title: None, base_url: Some(url) },
+    ]
+}
+
+fn start_drag(page: &Rc<PageDom>, pointer_target: NodeId, m: &MouseInput) -> Option<DragData> {
+    if m.buttons & 1 == 0 || page.drag.borrow().is_some() {
+        return None;
+    }
+    let (source, x0, y0) = page.drag_candidate.get()?;
+    if (m.x - x0).abs() < DRAG_THRESHOLD && (m.y - y0).abs() < DRAG_THRESHOLD {
+        return None;
+    }
+    page.drag_candidate.set(None);
+    if !page.dom.borrow().is_connected(source).unwrap_or(false) {
+        return None;
+    }
+    let defaults = link_items(page, source);
+    let strings: Vec<_> = defaults.iter().map(|i| (i.mime_type.clone(), i.data.clone())).collect();
+    let transfer = Rc::new(NativeTransfer::new(page, &strings, "uninitialized", Mode::ReadWrite)?);
+    let doc = page.document();
+    if !fire_drag(page, source, "dragstart", m, true, &transfer, Mode::ReadWrite)
+        || page.is_disposed()
+        || page.document() != doc
+    {
+        return None;
+    }
+    // The pointer stream ends: pointercancel, and no click on release.
+    if let Some(key) = key_of(page, pointer_target) {
+        let released = MouseInput { buttons: 0, ..m.clone() };
+        fire(page, key, &mouse_event(page, EventInterface::PointerEvent, "pointercancel", &released, false));
+    }
+    page.take_press_target();
+    let items = transfer
+        .strings()
+        .into_iter()
+        .map(|(mime_type, data)| {
+            // Prefilled link entries keep Chrome's title/baseURL metadata.
+            let default = defaults.iter().find(|d| d.mime_type == mime_type && d.data == data);
+            DragItem {
+                title: default.and_then(|d| d.title.clone()),
+                base_url: default.and_then(|d| d.base_url.clone()),
+                mime_type,
+                data,
+            }
+        })
+        .collect();
+    let data = DragData { items, drag_operations_mask: mask_of(&transfer.effect_allowed()) };
+    *page.drag.borrow_mut() =
+        Some(DragSession { source: Some((source, transfer)), target: None, only_dragover: false, operation: None });
+    Some(data)
+}
+
+/// Target-side entries in Chrome's order: text, URL and HTML first, then
+/// other formats as given.
+fn target_strings(data: &DragData) -> Vec<(String, String)> {
+    let rank = |t: &str| match t {
+        "text/plain" => 0,
+        "text/uri-list" => 1,
+        "text/html" => 2,
+        _ => 3,
+    };
+    let mut items: Vec<_> = data.items.iter().map(|i| (i.mime_type.to_ascii_lowercase(), i.data.clone())).collect();
+    items.sort_by_key(|(t, _)| rank(t));
+    items
+}
+
+fn fire_source_drag(page: &Rc<PageDom>, source: &Option<(NodeId, Rc<NativeTransfer>)>, m: &MouseInput) {
+    if let Some((node, transfer)) = source {
+        fire_drag(page, *node, "drag", m, true, transfer, Mode::Protected);
+    }
+}
+
+/// Blink UpdateDragAndDrop: drag on the source, then dragenter on a new
+/// target and dragleave on the old one, or dragover on the same target.
+fn update_drag(page: &Rc<PageDom>, m: &MouseInput, data: &DragData) -> Result<(), String> {
+    let target = pointer_target(page, m.x, m.y, true);
+    let (source, current, mut only_dragover) = {
+        let drag = page.drag.borrow();
+        let s = drag.as_ref().ok_or("no drag in progress")?;
+        (s.source.clone(), s.target, s.only_dragover)
+    };
+    let transfer =
+        NativeTransfer::new(page, &target_strings(data), effect_allowed_of(data.drag_operations_mask), Mode::Protected)
+            .ok_or("no script context for the drag")?;
+    let mut accepted = false;
+    if target != current {
+        if let Some(t) = target {
+            fire_source_drag(page, &source, m);
+            accepted = !fire_drag(page, t, "dragenter", m, true, &transfer, Mode::Protected);
+        }
+        if let Some(c) = current {
+            fire_drag(page, c, "dragleave", m, false, &transfer, Mode::Protected);
+        }
+        if target.is_some() {
+            only_dragover = true;
+        }
+    } else if let Some(t) = target {
+        if !only_dragover {
+            fire_source_drag(page, &source, m);
+        }
+        accepted = !fire_drag(page, t, "dragover", m, true, &transfer, Mode::Protected);
+        only_dragover = false;
+    }
+    let operation =
+        if accepted { accepted_operation(&transfer.drop_effect(), data.drag_operations_mask) } else { None };
+    if let Some(s) = page.drag.borrow_mut().as_mut() {
+        s.target = target;
+        s.only_dragover = only_dragover;
+        s.operation = operation;
+    }
     Ok(())
+}
+
+fn end_drag(page: &Rc<PageDom>, source: &Option<(NodeId, Rc<NativeTransfer>)>, m: &MouseInput, effect: &str) {
+    if let Some((node, transfer)) = source {
+        transfer.set_drop_effect(effect);
+        fire_drag(page, *node, "dragend", m, false, transfer, Mode::Protected);
+    }
+}
+
+/// CDP `Input.dispatchDragEvent` for the page's drag session. dragEnter and
+/// dragOver update the drop target; drop fires `drop` when the target
+/// accepted the drag (else drag/dragleave), then `dragend` on the source;
+/// dragCancel fires only `dragend`. A dragEnter without a session starts a
+/// drag entering from outside the page.
+pub fn dispatch_drag(
+    page: &Rc<PageDom>,
+    kind: DragKind,
+    x: f64,
+    y: f64,
+    data: &DragData,
+    modifiers: Modifiers,
+) -> Result<(), String> {
+    let m = MouseInput { x, y, modifiers, ..MouseInput::default() };
+    if page.drag.borrow().is_none() {
+        match kind {
+            DragKind::Cancel => return Ok(()),
+            DragKind::Drop => return Err("no drag in progress".into()),
+            DragKind::Enter | DragKind::Over => {}
+        }
+        *page.drag.borrow_mut() =
+            Some(DragSession { source: None, target: None, only_dragover: false, operation: None });
+    }
+    match kind {
+        DragKind::Enter | DragKind::Over => update_drag(page, &m, data),
+        DragKind::Drop => {
+            if page.drag.borrow().as_ref().is_some_and(|s| s.only_dragover) {
+                update_drag(page, &m, data)?;
+            }
+            let Some(session) = page.drag.borrow_mut().take() else { return Ok(()) };
+            match (session.operation, session.target) {
+                (Some(operation), Some(target)) => {
+                    let transfer = NativeTransfer::new(
+                        page,
+                        &target_strings(data),
+                        effect_allowed_of(data.drag_operations_mask),
+                        Mode::ReadOnly,
+                    )
+                    .ok_or("no script context for the drag")?;
+                    transfer.set_drop_effect(operation);
+                    fire_drag(page, target, "drop", &m, true, &transfer, Mode::ReadOnly);
+                    end_drag(page, &session.source, &m, operation);
+                }
+                (_, target) => {
+                    fire_source_drag(page, &session.source, &m);
+                    if let Some(t) = target {
+                        if let Some(transfer) = NativeTransfer::new(
+                            page,
+                            &target_strings(data),
+                            effect_allowed_of(data.drag_operations_mask),
+                            Mode::Protected,
+                        ) {
+                            fire_drag(page, t, "dragleave", &m, false, &transfer, Mode::Protected);
+                        }
+                    }
+                    end_drag(page, &session.source, &m, "none");
+                }
+            }
+            Ok(())
+        }
+        DragKind::Cancel => {
+            if let Some(session) = page.drag.borrow_mut().take() {
+                end_drag(page, &session.source, &m, "none");
+            }
+            Ok(())
+        }
+    }
 }
 
 fn common_ancestor(dom: &Dom, a: NodeId, b: NodeId) -> Option<NodeId> {

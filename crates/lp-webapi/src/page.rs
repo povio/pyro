@@ -84,6 +84,11 @@ pub struct PageDom {
     submitting: RefCell<Vec<NodeId>>,
     hovered: Cell<Option<NodeId>>,
     press_target: Cell<Option<NodeId>>,
+    /// Native drag source under a left press that has not moved past the
+    /// drag threshold yet, with the press position.
+    pub(crate) drag_candidate: Cell<Option<(NodeId, f64, f64)>>,
+    /// The native drag-and-drop session in progress, if any.
+    pub(crate) drag: RefCell<Option<crate::input::DragSession>>,
     /// Control activated by a Space keydown, clicked on the matching keyup.
     pub(crate) space_target: Cell<Option<NodeId>>,
     dialog_returns: RefCell<FxHashMap<NodeId, String>>,
@@ -256,6 +261,8 @@ impl PageDom {
             submitting: RefCell::new(Vec::new()),
             hovered: Cell::new(None),
             press_target: Cell::new(None),
+            drag_candidate: Cell::new(None),
+            drag: RefCell::new(None),
             space_target: Cell::new(None),
             dialog_returns: RefCell::new(FxHashMap::default()),
             sheet_rules: RefCell::new(FxHashMap::default()),

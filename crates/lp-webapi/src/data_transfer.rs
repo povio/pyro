@@ -1,8 +1,10 @@
 //! DataTransfer, DataTransferItemList and DataTransferItem (HTML "drag data
 //! store"), carried by `DragEvent.dataTransfer`.
 //!
-//! There is no native drag-and-drop: every store is script-constructed
-//! (`new DataTransfer()`) and so always in read/write mode. Entries are plain
+//! Script-constructed stores (`new DataTransfer()`) are always in read/write
+//! mode. Native drag-and-drop (`crate::input` drag sessions) creates stores
+//! through `NativeTransfer` and moves them between the spec's read/write,
+//! read-only, protected and disabled modes around each event. Entries are plain
 //! native data (strings and file bytes), so a store holds no JS roots; each
 //! `files`/`getAsFile()` read wraps a fresh `File`. `items` is the same object
 //! for the lifetime of its DataTransfer; item objects are created per access.
@@ -29,15 +31,41 @@ struct Entry {
     kind: Kind,
 }
 
+/// HTML "drag data store mode". `Disabled` is a store no longer associated
+/// with the event that exposed it.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Mode {
+    #[default]
+    ReadWrite,
+    ReadOnly,
+    Protected,
+    Disabled,
+}
+
 #[derive(Default)]
 struct Store {
     entries: RefCell<Vec<Entry>>,
     next_id: Cell<u64>,
     drop_effect: RefCell<String>,
     effect_allowed: RefCell<String>,
+    mode: Cell<Mode>,
 }
 
 impl Store {
+    fn writable(&self) -> bool {
+        self.mode.get() == Mode::ReadWrite
+    }
+
+    /// getData and string/file contents are readable in read/write and read-only mode.
+    fn readable(&self) -> bool {
+        matches!(self.mode.get(), Mode::ReadWrite | Mode::ReadOnly)
+    }
+
+    /// Types and the item list are visible unless the store is disabled.
+    fn listed(&self) -> bool {
+        self.mode.get() != Mode::Disabled
+    }
+
     fn push(&self, ty: String, kind: Kind) -> u64 {
         let id = self.next_id.get() + 1;
         self.next_id.set(id);
@@ -114,10 +142,20 @@ impl JsClass for DataTransfer {
             |s, d| Ok(s.string(&d.store.effect_allowed.borrow())),
             |_s, d, v| {
                 let v = dom_string(v)?;
-                if matches!(
-                    v.as_str(),
-                    "none" | "copy" | "copyLink" | "copyMove" | "link" | "linkMove" | "move" | "all" | "uninitialized"
-                ) {
+                if d.store.writable()
+                    && matches!(
+                        v.as_str(),
+                        "none"
+                            | "copy"
+                            | "copyLink"
+                            | "copyMove"
+                            | "link"
+                            | "linkMove"
+                            | "move"
+                            | "all"
+                            | "uninitialized"
+                    )
+                {
                     *d.store.effect_allowed.borrow_mut() = v;
                 }
                 Ok(())
@@ -137,9 +175,13 @@ impl JsClass for DataTransfer {
         });
         def.getter("types", |s, d| {
             let entries = d.store.entries.borrow();
-            let mut types: Vec<Value<'_>> =
-                entries.iter().filter(|e| matches!(e.kind, Kind::Text { .. })).map(|e| s.string(&e.ty)).collect();
-            if entries.iter().any(|e| matches!(e.kind, Kind::File { .. })) {
+            let listed = d.store.listed();
+            let mut types: Vec<Value<'_>> = entries
+                .iter()
+                .filter(|e| listed && matches!(e.kind, Kind::Text { .. }))
+                .map(|e| s.string(&e.ty))
+                .collect();
+            if listed && entries.iter().any(|e| matches!(e.kind, Kind::File { .. })) {
                 types.push(s.string("Files"));
             }
             drop(entries);
@@ -153,7 +195,7 @@ impl JsClass for DataTransfer {
         def.getter("files", |s, d| {
             let entries = d.store.entries.borrow();
             let mut files = Vec::new();
-            for e in entries.iter() {
+            for e in entries.iter().filter(|_| d.store.readable()) {
                 if let Some(f) = d.store.file(s, e)? {
                     files.push(Persistent::new(s, f.value()));
                 }
@@ -162,6 +204,9 @@ impl JsClass for DataTransfer {
         });
         def.method("getData", 1, |s, d, a| {
             let format = normalize_format(&arg_string(&a, 0, "DataTransfer.getData")?);
+            if !d.store.readable() {
+                return Ok(s.string(""));
+            }
             let entries = d.store.entries.borrow();
             let data = entries.iter().find_map(|e| match &e.kind {
                 Kind::Text { data } if e.ty == format => Some(data.clone()),
@@ -179,12 +224,18 @@ impl JsClass for DataTransfer {
             a.require(2, "DataTransfer.setData")?;
             let format = normalize_format(&dom_string(a.get(0))?);
             let data = dom_string(a.get(1))?;
+            if !d.store.writable() {
+                return Ok(s.undefined());
+            }
             d.store.entries.borrow_mut().retain(|e| !(matches!(e.kind, Kind::Text { .. }) && e.ty == format));
             d.store.push(format, Kind::Text { data });
             Ok(s.undefined())
         });
         def.method("clearData", 0, |s, d, a| {
             let format = if a.get(0).is_undefined() { None } else { Some(normalize_format(&dom_string(a.get(0))?)) };
+            if !d.store.writable() {
+                return Ok(s.undefined());
+            }
             d.store
                 .entries
                 .borrow_mut()
@@ -212,13 +263,18 @@ impl JsClass for DataTransferItemList {
     type Data = ItemListData;
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
-        def.getter("length", |s, l| Ok(s.number(l.store.entries.borrow().len() as f64)));
+        def.getter("length", |s, l| {
+            Ok(s.number(if l.store.listed() { l.store.entries.borrow().len() as f64 } else { 0.0 }))
+        });
         def.indexed(|s, l, i| {
-            let id = l.store.entries.borrow().get(i as usize).map(|e| e.id);
+            let id = l.store.entries.borrow().get(i as usize).filter(|_| l.store.listed()).map(|e| e.id);
             id.map(|id| item_value(s, &l.store, id)).transpose()
         });
         def.method("add", 1, |s, l, a| {
             a.require(1, "DataTransferItemList.add")?;
+            if !l.store.writable() {
+                return Ok(s.null());
+            }
             if let Some(f) = s.unwrap::<File>(a.get(0)) {
                 let (name, last_modified) = f.file.clone().unwrap_or_default();
                 let id = l.store.push(f.mime.clone(), Kind::File { bytes: f.bytes.clone(), name, last_modified });
@@ -240,6 +296,9 @@ impl JsClass for DataTransferItemList {
         });
         def.method("remove", 1, |s, l, a| {
             let i = to_u32(a.get(0))? as usize;
+            if !l.store.writable() {
+                return Err(JsError::dom("InvalidStateError", "The DataTransferItemList is not in read/write mode."));
+            }
             let mut entries = l.store.entries.borrow_mut();
             if i < entries.len() {
                 entries.remove(i);
@@ -247,7 +306,9 @@ impl JsClass for DataTransferItemList {
             Ok(s.undefined())
         });
         def.method("clear", 0, |s, l, _a| {
-            l.store.entries.borrow_mut().clear();
+            if l.store.writable() {
+                l.store.entries.borrow_mut().clear();
+            }
             Ok(s.undefined())
         });
         def.indexed_iterable();
@@ -263,6 +324,9 @@ pub struct ItemData {
 
 impl ItemData {
     fn with<R>(&self, f: impl FnOnce(&Entry) -> R) -> Option<R> {
+        if !self.store.listed() {
+            return None;
+        }
         self.store.entries.borrow().iter().find(|e| e.id == self.id).map(f)
     }
 }
@@ -280,7 +344,7 @@ impl JsClass for DataTransferItem {
         def.getter("type", |s, it| Ok(s.string(&it.with(|e| e.ty.clone()).unwrap_or_default())));
         def.method("getAsFile", 0, |s, it, _a| {
             let entries = it.store.entries.borrow();
-            let file = match entries.iter().find(|e| e.id == it.id) {
+            let file = match entries.iter().find(|e| e.id == it.id).filter(|_| it.store.readable()) {
                 Some(e) => it.store.file(s, e)?,
                 None => None,
             };
@@ -292,7 +356,9 @@ impl JsClass for DataTransferItem {
                 Kind::Text { data } => Some(data.clone()),
                 Kind::File { .. } => None,
             });
-            let (Some(Some(data)), true) = (data, callback.is_function()) else { return Ok(s.undefined()) };
+            let (Some(Some(data)), true) = (data, callback.is_function() && it.store.readable()) else {
+                return Ok(s.undefined());
+            };
             // "Queue a task to invoke callback with the data"; the callback is
             // rooted only until that task runs or the page goes away.
             let page = page_of(s)?;
@@ -308,6 +374,81 @@ impl JsClass for DataTransferItem {
             }));
             Ok(s.undefined())
         });
+    }
+}
+
+/// A natively created DataTransfer for a drag session. Its wrapper lives in
+/// the page's earliest live realm (the main world) and is rooted while this
+/// value exists; listeners in other worlds observe that same object, as with
+/// a script-created DataTransfer carried by a DragEvent.
+pub(crate) struct NativeTransfer {
+    store: Rc<Store>,
+    pub(crate) reference: DataTransferRef,
+    _root: Persistent,
+}
+
+impl NativeTransfer {
+    /// `items` are (format, data) string entries in order.
+    pub(crate) fn new(
+        page: &crate::page::PageDom,
+        items: &[(String, String)],
+        effect_allowed: &str,
+        mode: Mode,
+    ) -> Option<NativeTransfer> {
+        let realm = {
+            let realms = page.realms.borrow();
+            let mut live: Vec<_> = realms.iter().filter_map(|(id, r)| Some((id.0, r.upgrade()?))).collect();
+            live.retain(|(_, r)| !r.is_disposed());
+            live.into_iter().min_by_key(|(id, _)| *id)?.1
+        };
+        let s = realm.scope().ok()?;
+        let store = Store::default();
+        *store.drop_effect.borrow_mut() = "none".into();
+        *store.effect_allowed.borrow_mut() = effect_allowed.into();
+        for (format, data) in items {
+            store.push(format.clone(), Kind::Text { data: data.clone() });
+        }
+        store.mode.set(mode);
+        let store = Rc::new(store);
+        let identity = page.event_identity(page.next_event_id());
+        let reference = DataTransferRef { realm: s.realm().downgrade(), identity };
+        let wrapper = s
+            .wrap::<DataTransfer>(
+                DataTransferData { store: store.clone(), reference: reference.clone() },
+                Some(identity),
+            )
+            .ok()?;
+        let root = Persistent::new(&s, wrapper.value());
+        Some(NativeTransfer { store, reference, _root: root })
+    }
+
+    pub(crate) fn set_mode(&self, mode: Mode) {
+        self.store.mode.set(mode);
+    }
+
+    /// The (format, data) string entries in order.
+    pub(crate) fn strings(&self) -> Vec<(String, String)> {
+        self.store
+            .entries
+            .borrow()
+            .iter()
+            .filter_map(|e| match &e.kind {
+                Kind::Text { data } => Some((e.ty.clone(), data.clone())),
+                Kind::File { .. } => None,
+            })
+            .collect()
+    }
+
+    pub(crate) fn effect_allowed(&self) -> String {
+        self.store.effect_allowed.borrow().clone()
+    }
+
+    pub(crate) fn drop_effect(&self) -> String {
+        self.store.drop_effect.borrow().clone()
+    }
+
+    pub(crate) fn set_drop_effect(&self, effect: &str) {
+        *self.store.drop_effect.borrow_mut() = effect.into();
     }
 }
 

@@ -233,6 +233,9 @@ pub(crate) struct PageState {
     /// A raw keydown which changes documents suppresses one following char.
     /// Keyboard input is page-scoped, including across attached sessions.
     pub(crate) suppress_next_char: bool,
+    /// Input.setInterceptDrags: native drags started by mouse input are
+    /// reported through Input.dragIntercepted.
+    pub(crate) intercept_drags: bool,
     network: network::NetworkPage,
     dom_nodes: dom::BackendNodes,
 }
@@ -607,6 +610,7 @@ impl Host for EngineHost {
                 emulated_media: None,
                 next_script_id: 1,
                 suppress_next_char: false,
+                intercept_drags: false,
                 network: network::NetworkPage::new(self.body_budget.clone()),
                 dom_nodes: dom::BackendNodes::default(),
             },
