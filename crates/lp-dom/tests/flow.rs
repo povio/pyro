@@ -1437,3 +1437,27 @@ fn flow_parity_lh_unit() {
         [800.0, 600.0],
     );
 }
+
+#[test]
+fn flow_parity_registered_custom_properties() {
+    // @property registrations: a non-inherited property takes its initial
+    // value on children (Tailwind's --tw-leading/--tw-font-weight/...),
+    // unless set on the element; unregistered and inherits:true ones
+    // inherit; a registration without `inherits` is invalid and ignored.
+    // Chromium 1.59.1.
+    let html = "<!doctype html><style>@property --x{syntax:\"*\";inherits:false;initial-value:10px}@property --z{syntax:\"*\";inherits:true;initial-value:5px}@property --bad{syntax:\"*\"}.p{--x:40px;--y:30px;--z:20px;--bad:15px}</style><body style=\"margin:0\"><div class=p><div id=x style=\"height:var(--x)\"></div><div id=y style=\"height:var(--y)\"></div><div id=z style=\"height:var(--z)\"></div><div id=own style=\"--x:7px;height:var(--x)\"></div><div id=bad style=\"height:var(--bad)\"></div></div><div id=init style=\"height:var(--z)\"></div></body>";
+    check(
+        "registered-properties",
+        html,
+        0,
+        &[
+            ("x", [0.0, 0.0, 800.0, 10.0, 800.0, 10.0, 800.0, 10.0]),
+            ("y", [0.0, 10.0, 800.0, 30.0, 800.0, 30.0, 800.0, 30.0]),
+            ("z", [0.0, 40.0, 800.0, 20.0, 800.0, 20.0, 800.0, 20.0]),
+            ("own", [0.0, 60.0, 800.0, 7.0, 800.0, 7.0, 800.0, 7.0]),
+            ("bad", [0.0, 67.0, 800.0, 15.0, 800.0, 15.0, 800.0, 15.0]),
+            ("init", [0.0, 82.0, 800.0, 5.0, 800.0, 5.0, 800.0, 5.0]),
+        ],
+        [800.0, 600.0],
+    );
+}

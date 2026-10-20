@@ -873,6 +873,12 @@ enum Item {
     LayerStatement {
         names: String,
     },
+    /// `@property --name { inherits: ...; initial-value: ... }`.
+    Property {
+        name: String,
+        inherits: bool,
+        initial: Option<Rc<str>>,
+    },
 }
 
 fn parse_stylesheet(text: &str) -> Vec<Item> {
@@ -937,6 +943,34 @@ fn parse_at_rule(p: &mut Parser<'_>, src: &str, name: &str, depth: u8, out: &mut
     let prelude = src.get(prelude_start..prelude_end).unwrap_or("").to_owned();
     let is_media = name.eq_ignore_ascii_case("media");
     let is_layer = name.eq_ignore_ascii_case("layer");
+    if name.eq_ignore_ascii_case("property") && has_block {
+        // Registered custom property (CSS Properties and Values API).
+        let body: Result<(usize, usize), ParseError<()>> = p.parse_nested_block(|n| {
+            let s = n.position().byte_index();
+            while n.next_including_whitespace_and_comments().is_ok() {}
+            Ok((s, n.position().byte_index()))
+        });
+        let name = prelude.trim_matches(CSS_WS_ASCII);
+        if let (Ok((s, e)), true) = (body, is_custom_property(name)) {
+            let decls = parse_declarations(src.get(s..e).unwrap_or(""));
+            let get = |n: &str| {
+                decls.iter().rev().find(|d| d.name.eq_ignore_ascii_case(n)).map(|d| d.value.trim().to_owned())
+            };
+            // `inherits` is required; an invalid rule registers nothing.
+            if let Some(inherits) = get("inherits").and_then(|v| match v.to_ascii_lowercase().as_str() {
+                "true" => Some(true),
+                "false" => Some(false),
+                _ => None,
+            }) {
+                out.push(Item::Property {
+                    name: name.to_owned(),
+                    inherits,
+                    initial: get("initial-value").map(|v| Rc::from(v.as_str())),
+                });
+            }
+        }
+        return;
+    }
     if depth >= MAX_AT_RULE_NESTING || !(is_media || is_layer) {
         if has_block {
             consume_block_of(p, &Token::CurlyBracketBlock);
@@ -1041,6 +1075,9 @@ struct RuleSet {
     by_tag: FxHashMap<String, Vec<u32>>,
     other: Vec<u32>,
     customs: FxHashMap<String, Vec<CustomRule>>,
+    /// `@property` registrations: (inherits, initial value). The last valid
+    /// registration of a name wins.
+    properties: FxHashMap<String, (bool, Option<Rc<str>>)>,
     /// Every author declaration of each selector, bucketed like `rules`, for
     /// the generic computed values (`StyleEngine::declared_map`).
     generic_rules: Vec<GenericRule>,
@@ -1152,6 +1189,7 @@ struct Builder<'v> {
     pending: Vec<PendingRule>,
     customs: Vec<PendingCustom>,
     generics: Vec<PendingGeneric>,
+    properties: FxHashMap<String, (bool, Option<Rc<str>>)>,
 }
 
 impl<'v> Builder<'v> {
@@ -1166,6 +1204,7 @@ impl<'v> Builder<'v> {
             pending: Vec::new(),
             customs: Vec::new(),
             generics: Vec::new(),
+            properties: FxHashMap::default(),
         }
     }
 
@@ -1264,6 +1303,9 @@ impl<'v> Builder<'v> {
                         self.register_layer_path(layer, name)
                     };
                     self.walk(items, depth + 1, id);
+                }
+                Item::Property { name, inherits, initial } => {
+                    self.properties.insert(name.clone(), (*inherits, initial.clone()));
                 }
                 // StyleManager.zig:194-215 (statement form)
                 Item::LayerStatement { names } => {
@@ -1394,6 +1436,7 @@ impl<'v> Builder<'v> {
             }
             (c.name, CustomRule { selector: SelectorList::from_one(c.selector), value: c.value, priority })
         };
+        rs.properties = std::mem::take(&mut self.properties);
         for (name, rule) in self.customs.into_iter().map(to_rule) {
             rs.customs.entry(name).or_default().push(rule);
         }
@@ -1494,6 +1537,21 @@ pub fn with_pass_memo<R>(f: impl FnOnce() -> R) -> R {
 }
 
 fn custom_property_source(dom: &Dom, rules: &RuleSet, el: NodeId, name: &str) -> Option<(NodeId, String)> {
+    // A registered property that does not inherit takes the element's own
+    // value or its initial value (Tailwind registers its --tw-* variables
+    // with `inherits: false`).
+    if let Some((inherits, initial)) = rules.properties.get(name) {
+        let found = if *inherits {
+            custom_property_inherited(dom, rules, el, name)
+        } else {
+            dom.check(el).ok().and_then(|idx| own_custom_property(dom, rules, idx, name))
+        };
+        return found.or_else(|| initial.as_ref().map(|v| (el, v.to_string())));
+    }
+    custom_property_inherited(dom, rules, el, name)
+}
+
+fn custom_property_inherited(dom: &Dom, rules: &RuleSet, el: NodeId, name: &str) -> Option<(NodeId, String)> {
     let active = PASS_MEMO.with(|m| m.borrow().is_some());
     if !active {
         return custom_property_source_walk(dom, rules, el, name);
