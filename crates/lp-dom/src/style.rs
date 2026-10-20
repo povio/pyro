@@ -1479,6 +1479,12 @@ fn declared_value(dom: &Dom, rules: &RuleSet, el: NodeId, name: &str) -> Option<
             priority = rule.priority;
         }
     }
+    // SVG presentation attributes sit below every author rule (SVG 2 §6.6).
+    if value.is_none() && computed::is_presentation_attribute(name) {
+        if let Some(e) = dom.element(el).ok().filter(|e| e.name.ns == ns!(svg)) {
+            value = e.attr(name).map(str::to_owned);
+        }
+    }
     value
 }
 

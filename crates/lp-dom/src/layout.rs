@@ -1559,6 +1559,8 @@ fn default_property_value(dom: &Dom, el: NodeId, name: &str) -> &'static str {
         "visibility" => "visible",
         "pointer-events" => "auto",
         "background-color" => "rgba(0, 0, 0, 0)",
+        "fill" => "rgb(0, 0, 0)",
+        "stroke" => "none",
         _ => "",
     }
 }

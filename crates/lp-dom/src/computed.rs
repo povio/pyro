@@ -47,6 +47,29 @@ pub fn is_inherited(name: &str) -> bool {
     )
 }
 
+/// SVG presentation attributes mapped to the property of the same name.
+pub fn is_presentation_attribute(name: &str) -> bool {
+    matches!(
+        name,
+        "fill"
+            | "fill-opacity"
+            | "stroke"
+            | "stroke-width"
+            | "stroke-opacity"
+            | "stroke-linecap"
+            | "stroke-linejoin"
+            | "stroke-dasharray"
+            | "opacity"
+            | "color"
+            | "visibility"
+            | "display"
+            | "font-family"
+            | "font-size"
+            | "font-weight"
+            | "text-anchor"
+    )
+}
+
 /// Properties whose computed value is a color.
 pub fn is_color_property(name: &str) -> bool {
     matches!(

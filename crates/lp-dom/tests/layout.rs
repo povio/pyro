@@ -2692,3 +2692,17 @@ fn computed_style_resolves_author_stylesheet_values() {
     assert_eq!(p.cs(inline, "padding-left"), "2px");
     assert_eq!(p.cs(inline, "max-width"), "none");
 }
+
+#[test]
+fn computed_style_reads_svg_presentation_attributes() {
+    let mut p = page("<!DOCTYPE html><body><div id=host style='color: rgb(9, 8, 7)'><svg id=icon stroke='currentColor' fill='none'><path id=path d='M0 0'></path></svg></div><svg id=plain><rect id=rect></rect></svg></body>");
+    p.add_style("#rect{fill:#00f}");
+    let (icon, path, rect, plain) = (p.id("icon"), p.id("path"), p.id("rect"), p.id("plain"));
+    assert_eq!(p.cs(icon, "stroke"), "rgb(9, 8, 7)");
+    assert_eq!(p.cs(path, "stroke"), "rgb(9, 8, 7)");
+    assert_eq!(p.cs(path, "fill"), "none");
+    // Author rules beat presentation attributes; initial values apply otherwise.
+    assert_eq!(p.cs(rect, "fill"), "rgb(0, 0, 255)");
+    assert_eq!(p.cs(plain, "stroke"), "none");
+    assert_eq!(p.cs(plain, "fill"), "rgb(0, 0, 0)");
+}
