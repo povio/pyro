@@ -1944,7 +1944,8 @@ impl<'a> Ctx<'a> {
                 // Auto cross-axis margins take precedence over stretching.
                 if align == Align::Stretch && declared_cross.is_none() && auto_margins(it, row, false) == (false, false)
                 {
-                    it.cross = (line_cross[li] - margins_cross(it, row)).max(0.0);
+                    let stretched = (line_cross[li] - margins_cross(it, row)).max(0.0);
+                    it.cross = self.clamp_cross(it, row, width, stretched);
                     it.stretched = true;
                 }
             }
@@ -2094,8 +2095,27 @@ impl<'a> Ctx<'a> {
         }
     }
 
-    /// The item's content-based border-box cross size at its main size.
+    /// The item's content-based border-box cross size at its main size,
+    /// clamped by its min/max cross size.
     fn flex_cross_content(&self, it: &FlexItem, row: bool, width: f64) -> f64 {
+        self.clamp_cross(it, row, width, self.flex_cross_unclamped(it, row, width))
+    }
+
+    /// Clamps a border-box cross size by the item's min/max height (row) or
+    /// width (column). Percentages resolve against the containing block's
+    /// definite size, if any.
+    fn clamp_cross(&self, it: &FlexItem, row: bool, width: f64, cross: f64) -> f64 {
+        let s = &it.style;
+        let e = self.edges(s, width);
+        let (edges, basis) = if row { (e.vertical(), self.cb_height) } else { (e.horizontal(), Some(width)) };
+        let to_border = |v: f64| if s.border_box { v.max(edges) } else { v + edges };
+        let (min, max) = if row { (s.min_height, s.max_height) } else { (s.min_width, s.max_width) };
+        let max = max.resolve(basis).map(to_border);
+        let min = min.resolve(basis).map(to_border);
+        Self::clamp(cross, min, max)
+    }
+
+    fn flex_cross_unclamped(&self, it: &FlexItem, row: bool, width: f64) -> f64 {
         let s = &it.style;
         let e = self.edges(s, width);
         if row {

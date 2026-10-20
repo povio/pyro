@@ -1177,3 +1177,31 @@ fn flow_pass_memo_tracks_mutations_between_passes() {
     // getComputedStyle-side lookups (outside a pass) are unaffected.
     assert_eq!(p.layout.style().computed_value(&p.dom, p.id("box"), "width").as_deref(), Some("50px"));
 }
+
+#[test]
+fn flex_parity_cross_size_min_max() {
+    // TOS positions header: a `max-h-[40vh] overflow-y-auto` flex item in a
+    // row container must be clamped (it pushed the page 364px down).
+    // Stretched items respect min/max height; column items min/max width.
+    let html = "<!doctype html><body style=\"margin:0\"><div id=row style=\"display:flex;align-items:flex-start;gap:8px;width:600px\"><div id=panel style=\"flex:1;display:flex;flex-direction:column;max-height:100px;overflow-y:auto\"><div id=tall style=\"height:300px;flex-shrink:0\"></div></div><div id=side style=\"width:50px;height:40px\"></div></div><div id=after style=\"height:10px\"></div><div id=st style=\"display:flex;height:200px;width:400px\"><div id=s1 style=\"width:50px;max-height:120px\"></div><div id=s2 style=\"width:50px;min-height:250px\"></div><div id=s3 style=\"width:50px\"></div></div><div id=col style=\"display:flex;flex-direction:column;width:400px\"><div id=c1 style=\"max-width:150px;height:10px\"></div><div id=c2 style=\"min-width:450px;height:10px\"></div></div></body>";
+    check(
+        "cross-min-max",
+        html,
+        0,
+        &[
+            ("row", [0.0, 0.0, 600.0, 100.0, 600.0, 100.0, 600.0, 100.0]),
+            ("panel", [0.0, 0.0, 542.0, 100.0, 542.0, 100.0, 542.0, 300.0]),
+            ("tall", [0.0, 0.0, 542.0, 300.0, 542.0, 300.0, 542.0, 300.0]),
+            ("side", [550.0, 0.0, 50.0, 40.0, 50.0, 40.0, 50.0, 40.0]),
+            ("after", [0.0, 100.0, 800.0, 10.0, 800.0, 10.0, 800.0, 10.0]),
+            ("st", [0.0, 110.0, 400.0, 200.0, 400.0, 200.0, 400.0, 250.0]),
+            ("s1", [0.0, 110.0, 50.0, 120.0, 50.0, 120.0, 50.0, 120.0]),
+            ("s2", [50.0, 110.0, 50.0, 250.0, 50.0, 250.0, 50.0, 250.0]),
+            ("s3", [100.0, 110.0, 50.0, 200.0, 50.0, 200.0, 50.0, 200.0]),
+            ("col", [0.0, 310.0, 400.0, 20.0, 400.0, 20.0, 450.0, 20.0]),
+            ("c1", [0.0, 310.0, 150.0, 10.0, 150.0, 10.0, 150.0, 10.0]),
+            ("c2", [0.0, 320.0, 450.0, 10.0, 450.0, 10.0, 450.0, 10.0]),
+        ],
+        [800.0, 600.0],
+    );
+}
