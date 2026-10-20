@@ -139,6 +139,13 @@ impl FlowStyleSource for StyleEngine {
             font_size,
             line_height,
             nowrap,
+            // Used font-weight for the flow text measure.
+            font_weight: match keyword("font-weight").as_str() {
+                "bold" | "bolder" => 700,
+                "lighter" => 300,
+                "" | "normal" => 400,
+                v => v.parse::<f64>().map_or(400, |n| n.clamp(1.0, 1000.0) as u16),
+            },
             replaced: matches!(tag.as_str(), "img" | "iframe" | "video" | "canvas" | "embed" | "object" | "svg"),
             // Non-standard `zoom`: a number or percentage; `normal`/unknown values are 1.
             zoom: value("zoom")
