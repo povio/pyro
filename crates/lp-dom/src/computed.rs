@@ -404,8 +404,8 @@ fn calc_sum(p: &mut Parser<'_>, cx: &LengthContext) -> Option<CalcValue> {
         match p.next() {
             Ok(Token::Delim('+')) => acc = add(acc, calc_product(p, cx)?, 1.0)?,
             Ok(Token::Delim('-')) => acc = add(acc, calc_product(p, cx)?, -1.0)?,
-            Ok(_) => return None,
-            Err(_) => {
+            // Anything else (a comma between min()/max() arguments, or junk) is the caller's to check.
+            _ => {
                 p.reset(&state);
                 return Some(acc);
             }
@@ -462,8 +462,52 @@ fn calc_factor(p: &mut Parser<'_>, cx: &LengthContext) -> Option<CalcValue> {
         Token::Dimension { value, ref unit, .. } => Some(CalcValue::Linear(absolute_px(value as f64, unit, cx)?, 0.0)),
         Token::ParenthesisBlock => p.parse_nested_block(|p| nested(p, cx)).ok(),
         Token::Function(ref name) if name.eq_ignore_ascii_case("calc") => p.parse_nested_block(|p| nested(p, cx)).ok(),
+        Token::Function(ref name) if matches!(name.to_ascii_lowercase().as_str(), "min" | "max" | "clamp") => {
+            let kind = name.to_ascii_lowercase();
+            let args = p.parse_nested_block(|p| comma_args(p, cx)).ok()?;
+            compare_args(&kind, &args)
+        }
         _ => None,
     }
+}
+
+fn comma_args(p: &mut Parser<'_>, cx: &LengthContext) -> Result<Vec<CalcValue>, ParseError<()>> {
+    let mut args = Vec::new();
+    loop {
+        args.push(calc_sum(p, cx).ok_or_else(|| ParseError::custom(()))?);
+        match p.next() {
+            Ok(Token::Comma) => continue,
+            Err(_) => return Ok(args),
+            Ok(_) => return Err(ParseError::custom(())),
+        }
+    }
+}
+
+/// min()/max()/clamp() when every argument is comparable without a
+/// percentage basis: all numbers, or lengths with the same percent part.
+fn compare_args(kind: &str, args: &[CalcValue]) -> Option<CalcValue> {
+    let keys: Vec<(f64, Option<f64>)> = args
+        .iter()
+        .map(|a| match *a {
+            CalcValue::Number(n) => (n, None),
+            CalcValue::Linear(px, pct) => (px, Some(pct)),
+        })
+        .collect();
+    let percent = keys.first()?.1;
+    if keys.iter().any(|k| k.1 != percent) {
+        return None;
+    }
+    let values: Vec<f64> = keys.iter().map(|k| k.0).collect();
+    let value = match (kind, values.as_slice()) {
+        ("min", _) => values.iter().copied().fold(f64::INFINITY, f64::min),
+        ("max", _) => values.iter().copied().fold(f64::NEG_INFINITY, f64::max),
+        ("clamp", [lo, v, hi]) => v.min(*hi).max(*lo),
+        _ => return None,
+    };
+    Some(match percent {
+        None => CalcValue::Number(value),
+        Some(pct) => CalcValue::Linear(value, pct),
+    })
 }
 
 fn nested(p: &mut Parser<'_>, cx: &LengthContext) -> Result<CalcValue, ParseError<()>> {
@@ -494,19 +538,11 @@ fn absolute_px(value: f64, unit: &str, cx: &LengthContext) -> Option<f64> {
 /// `None` for keywords, lists and unsupported units.
 pub fn resolve_len(value: &str, cx: &LengthContext) -> Option<(f64, f64)> {
     let mut p = Parser::new(value.trim());
-    let token = p.next().ok()?.clone();
-    let result = match token {
-        Token::Dimension { value, ref unit, .. } => CalcValue::Linear(absolute_px(value as f64, unit, cx)?, 0.0),
-        Token::Percentage { unit_value, .. } => CalcValue::Linear(0.0, unit_value as f64 * 100.0),
-        Token::Number { value, .. } if value == 0.0 => CalcValue::Linear(0.0, 0.0),
-        Token::Function(ref name) if name.eq_ignore_ascii_case("calc") => {
-            p.parse_nested_block(|p| nested(p, cx)).ok()?
-        }
-        _ => return None,
-    };
+    let result = calc_factor(&mut p, cx)?;
     p.expect_exhausted().ok()?;
     match result {
         CalcValue::Linear(px, pct) => Some((px, pct)),
+        CalcValue::Number(n) if n == 0.0 => Some((0.0, 0.0)),
         CalcValue::Number(_) => None,
     }
 }
@@ -523,16 +559,8 @@ pub fn resolve_length(value: &str, font_size: f64, root_font_size: f64) -> Optio
 
 /// A unitless number or `calc()` of numbers, else `None`.
 pub fn resolve_number(value: &str) -> Option<f64> {
-    let cx = LengthContext::fonts(16.0, 16.0);
     let mut p = Parser::new(value.trim());
-    let token = p.next().ok()?.clone();
-    let result = match token {
-        Token::Number { value, .. } => CalcValue::Number(value as f64),
-        Token::Function(ref name) if name.eq_ignore_ascii_case("calc") => {
-            p.parse_nested_block(|p| nested(p, &cx)).ok()?
-        }
-        _ => return None,
-    };
+    let result = calc_factor(&mut p, &LengthContext::fonts(16.0, 16.0))?;
     p.expect_exhausted().ok()?;
     match result {
         CalcValue::Number(n) => Some(n),
@@ -999,6 +1027,12 @@ mod tests {
         assert_eq!(resolve_len("50vw", &cx), Some((720.0, 0.0)));
         assert_eq!(resolve_len("2rem", &cx), Some((28.0, 0.0)));
         assert_eq!(resolve_len("auto", &cx), None);
+        assert_eq!(resolve_len("min(1180px, calc(100vw - 40px))", &cx), Some((1180.0, 0.0)));
+        assert_eq!(resolve_len("max(1rem, 10px)", &cx), Some((14.0, 0.0)));
+        assert_eq!(resolve_len("clamp(10px, 50vw, 600px)", &cx), Some((600.0, 0.0)));
+        assert_eq!(resolve_len("calc(min(10px, 20px) * 2)", &cx), Some((20.0, 0.0)));
+        assert_eq!(resolve_len("min(100%, 40px)", &cx), None);
+        assert_eq!(resolve_number("max(1, 2)"), Some(2.0));
     }
 
     #[test]
