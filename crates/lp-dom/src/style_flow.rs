@@ -12,7 +12,9 @@ use markup5ever::ns;
 
 use crate::computed::{self, LengthContext};
 use crate::dom::Dom;
-use crate::flow::{Dim, FlowStyle, FlowStyleSource, InnerDisplay, Len, OuterDisplay, Position};
+use crate::flow::{
+    Align, Dim, FlexDirection, FlowStyle, FlowStyleSource, InnerDisplay, Justify, Len, OuterDisplay, Position,
+};
 use crate::node::NodeId;
 use crate::style::{StyleEngine, DEFAULT_FONT_SIZE};
 
@@ -104,6 +106,7 @@ impl FlowStyleSource for StyleEngine {
             }
         });
         let nowrap = matches!(value("white-space").as_deref().map(str::trim), Some("nowrap" | "pre"));
+        let keyword = |name: &str| value(name).map(|v| v.trim().to_ascii_lowercase()).unwrap_or_default();
         Some(FlowStyle {
             outer,
             inner,
@@ -134,9 +137,53 @@ impl FlowStyleSource for StyleEngine {
                 })
                 .filter(|z| *z > 0.0)
                 .unwrap_or(1.0),
+            flex_direction: match keyword("flex-direction").as_str() {
+                "row-reverse" => FlexDirection::RowReverse,
+                "column" => FlexDirection::Column,
+                "column-reverse" => FlexDirection::ColumnReverse,
+                _ => FlexDirection::Row,
+            },
+            flex_wrap: matches!(keyword("flex-wrap").as_str(), "wrap" | "wrap-reverse"),
+            row_gap: len("row-gap").unwrap_or(Len::ZERO),
+            column_gap: len("column-gap").unwrap_or(Len::ZERO),
+            align_items: align(&keyword("align-items")).unwrap_or(Align::Stretch),
+            align_self: align(&keyword("align-self")),
+            justify_content: match keyword("justify-content").as_str() {
+                "flex-end" | "end" | "right" => Justify::End,
+                "center" => Justify::Center,
+                "space-between" => Justify::SpaceBetween,
+                "space-around" => Justify::SpaceAround,
+                "space-evenly" => Justify::SpaceEvenly,
+                _ => Justify::Start,
+            },
+            flex_grow: value("flex-grow")
+                .and_then(|v| computed::resolve_number(&v))
+                .filter(|n| *n >= 0.0)
+                .unwrap_or(0.0),
+            flex_shrink: value("flex-shrink")
+                .and_then(|v| computed::resolve_number(&v))
+                .filter(|n| *n >= 0.0)
+                .unwrap_or(1.0),
+            flex_basis: match value("flex-basis") {
+                Some(v) if matches!(v.trim(), "auto" | "content") => Dim::Auto,
+                Some(v) => computed::resolve_len(&v, &cx).map_or(Dim::Auto, |l| Dim::Len(to_len(l))),
+                None => Dim::Auto,
+            },
             ..FlowStyle::default()
         })
     }
+}
+
+/// `align-items` / `align-self`; `None` for `auto` and unset (inherit the container's).
+fn align(value: &str) -> Option<Align> {
+    Some(match value {
+        "stretch" | "normal" => Align::Stretch,
+        "flex-start" | "start" | "self-start" => Align::Start,
+        "flex-end" | "end" | "self-end" => Align::End,
+        "center" => Align::Center,
+        "baseline" | "first baseline" | "last baseline" => Align::Baseline,
+        _ => return None,
+    })
 }
 
 fn to_len((px, percent): (f64, f64)) -> Len {

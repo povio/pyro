@@ -2733,7 +2733,8 @@ fn flow_style_reports_used_values_from_the_cascade() {
         "html{font-size:14px}",
         "#pop{position:absolute;top:120px;left:12.5rem;width:calc(100% - 8px);padding:4px 8px;",
         "border:1px solid red;box-sizing:border-box;overflow-y:auto;max-height:300px}",
-        "#list{display:flex;margin:0 auto;padding-left:0}",
+        "#list{display:flex;margin:0 auto;padding-left:0;flex-direction:column;flex-wrap:wrap;gap:calc(var(--g, 2px) * 2) 3px;align-items:center;justify-content:space-between}",
+        "#item{flex:1;align-self:flex-end}",
         "#item{line-height:1.5;white-space:nowrap;font-size:1.5em}",
         "#s{zoom:125%}#para{zoom:0.5}",
     ));
@@ -2758,7 +2759,14 @@ fn flow_style_reports_used_values_from_the_cascade() {
     assert_eq!(list.padding[3], Len::ZERO);
     assert_eq!(list.margin[0], Dim::px(0.0));
 
+    use lp_dom::flow::{Align, FlexDirection, Justify};
+    assert_eq!((list.flex_direction, list.flex_wrap), (FlexDirection::Column, true));
+    assert_eq!((list.row_gap, list.column_gap), (Len::px(4.0), Len::px(3.0)));
+    assert_eq!((list.align_items, list.justify_content, list.align_self), (Align::Center, Justify::SpaceBetween, None));
+    assert_eq!((list.flex_grow, list.flex_shrink, list.flex_basis), (0.0, 1.0, Dim::Auto));
     let item = get("item").unwrap();
+    assert_eq!((item.flex_grow, item.flex_shrink, item.flex_basis), (1.0, 1.0, Dim::Len(Len::ZERO)));
+    assert_eq!(item.align_self, Some(Align::End));
     assert_eq!(item.font_size, 21.0);
     assert_eq!(item.line_height, Some(31.5));
     assert!(item.nowrap);
