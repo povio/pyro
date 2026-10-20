@@ -1397,3 +1397,22 @@ fn flow_parity_intrinsic_width_keywords() {
     let h = |id: &str| result.get(p.id(id)).unwrap().rect.height;
     assert!(h("min") > h("fit") && h("max") == h("fit"), "min {} fit {} max {}", h("min"), h("fit"), h("max"));
 }
+
+#[test]
+fn flow_parity_lh_unit() {
+    // TOS BL-instructions textarea: `!min-h-[5lh]` (5 x 24px line height)
+    // beats min-h-[8.625rem]; the `lh` unit did not resolve, so the section
+    // was 68px short. Chromium 1.59.1.
+    let html = "<!doctype html><style>*{box-sizing:border-box}</style><body style=\"margin:0\"><div id=a style=\"line-height:24px;min-height:5lh\"></div><div id=b style=\"line-height:20px;height:2lh;padding:4px\"></div><div id=c style=\"line-height:24px;min-height:138px;min-height:5lh !important\"></div></body>";
+    check(
+        "lh-unit",
+        html,
+        0,
+        &[
+            ("a", [0.0, 0.0, 800.0, 120.0, 800.0, 120.0, 800.0, 120.0]),
+            ("b", [0.0, 120.0, 800.0, 40.0, 800.0, 40.0, 800.0, 40.0]),
+            ("c", [0.0, 160.0, 800.0, 120.0, 800.0, 120.0, 800.0, 120.0]),
+        ],
+        [800.0, 600.0],
+    );
+}

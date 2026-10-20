@@ -43,7 +43,26 @@ impl FlowStyleSource for StyleEngine {
             root_font_size,
             viewport_width: viewport.width as f64,
             viewport_height: viewport.height as f64,
+            line_height: None,
         };
+        let line_height = value("line-height").and_then(|v| {
+            let v = v.trim();
+            if v.eq_ignore_ascii_case("normal") {
+                None
+            } else if let Some(n) = computed::resolve_number(v) {
+                Some(layout_unit_trunc(n * font_size))
+            } else {
+                computed::resolve_len(v, &cx).map(|(px, pct)| {
+                    if pct != 0.0 {
+                        layout_unit_trunc(px + pct * font_size / 100.0)
+                    } else {
+                        (px * 64.0).round() / 64.0
+                    }
+                })
+            }
+        });
+        // `lh` resolves against the used line height (`normal` ~ 1.2em).
+        let cx = LengthContext { line_height: Some(line_height.unwrap_or(1.2 * font_size)), ..cx };
         let len = |name: &str| value(name).and_then(|v| computed::resolve_len(&v, &cx)).map(to_len);
         let dim = |name: &str| match value(name) {
             // Intrinsic size keywords (flow honours them for widths).
@@ -118,22 +137,6 @@ impl FlowStyleSource for StyleEngine {
         // Blink's ComputedLineHeightAsFixed: numbers and percentages scale the
         // font size into a truncated LayoutUnit (1/64 px), fixed lengths round,
         // so `1.8462` at 13px lays out as 24px.
-        let line_height = value("line-height").and_then(|v| {
-            let v = v.trim();
-            if v.eq_ignore_ascii_case("normal") {
-                None
-            } else if let Some(n) = computed::resolve_number(v) {
-                Some(layout_unit_trunc(n * font_size))
-            } else {
-                computed::resolve_len(v, &cx).map(|(px, pct)| {
-                    if pct != 0.0 {
-                        layout_unit_trunc(px + pct * font_size / 100.0)
-                    } else {
-                        (px * 64.0).round() / 64.0
-                    }
-                })
-            }
-        });
         let nowrap = matches!(value("white-space").as_deref().map(str::trim), Some("nowrap" | "pre"));
         let keyword = |name: &str| value(name).map(|v| v.trim().to_ascii_lowercase()).unwrap_or_default();
         Some(FlowStyle {

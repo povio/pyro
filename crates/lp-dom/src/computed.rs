@@ -453,11 +453,14 @@ pub struct LengthContext {
     pub root_font_size: f64,
     pub viewport_width: f64,
     pub viewport_height: f64,
+    /// The element's used line height in px, for the `lh` unit (None: `lh`
+    /// does not resolve).
+    pub line_height: Option<f64>,
 }
 
 impl LengthContext {
     pub fn fonts(font_size: f64, root_font_size: f64) -> Self {
-        LengthContext { font_size, root_font_size, viewport_width: 0.0, viewport_height: 0.0 }
+        LengthContext { font_size, root_font_size, viewport_width: 0.0, viewport_height: 0.0, line_height: None }
     }
 }
 
@@ -614,6 +617,7 @@ fn absolute_px(value: f64, unit: &str, cx: &LengthContext) -> Option<f64> {
         "q" => value * 96.0 / 101.6,
         "vw" | "dvw" | "svw" | "lvw" if cx.viewport_width > 0.0 => value * cx.viewport_width / 100.0,
         "vh" | "dvh" | "svh" | "lvh" if cx.viewport_height > 0.0 => value * cx.viewport_height / 100.0,
+        "lh" if cx.line_height.is_some() => value * cx.line_height.unwrap_or_default(),
         _ => return None,
     })
 }
@@ -1106,8 +1110,13 @@ mod tests {
         assert_eq!(resolve_length("calc((1px + 2px) * 2)", 16.0, 16.0).as_deref(), Some("6px"));
         assert_eq!(resolve_length("13.333333px", 16.0, 16.0).as_deref(), Some("13.3333px"));
         assert_eq!(resolve_number("calc(1 + 1)"), Some(2.0));
-        let cx =
-            LengthContext { font_size: 10.0, root_font_size: 14.0, viewport_width: 1440.0, viewport_height: 900.0 };
+        let cx = LengthContext {
+            font_size: 10.0,
+            root_font_size: 14.0,
+            viewport_width: 1440.0,
+            viewport_height: 900.0,
+            line_height: None,
+        };
         assert_eq!(resolve_len("calc(100% - 8px)", &cx), Some((-8.0, 100.0)));
         assert_eq!(resolve_len("50vw", &cx), Some((720.0, 0.0)));
         assert_eq!(resolve_len("2rem", &cx), Some((28.0, 0.0)));
