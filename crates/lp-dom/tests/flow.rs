@@ -1150,3 +1150,30 @@ fn flow_parity_text_align() {
 fn text_align_defaults_to_start() {
     assert_eq!(FlowStyle::default().text_align, TextAlign::Start);
 }
+
+#[test]
+fn flow_pass_memo_tracks_mutations_between_passes() {
+    // Custom properties and em font sizes come from ancestors; the layout
+    // pass memoizes them, so a later pass must see DOM/style changes.
+    let html = "<!doctype html><style>.big{font-size:20px} .wide{--w:300px}</style><body style=\"margin:0\"><div id=outer style=\"--w:100px\"><div id=mid><div id=box style=\"width:var(--w);height:2em\"></div></div></div></body>";
+    let mut p = page(html, Geometry::Flow);
+    let r = p.layout.bounding_client_rect(&p.dom, p.id("box"));
+    assert_eq!((r.width, r.height), (100.0, 32.0), "first pass");
+    // Override the variable on a nearer ancestor and change the inherited font size.
+    let mid = p.id("mid");
+    p.dom.set_attribute(mid, "class", "wide big").unwrap();
+    let r = p.layout.bounding_client_rect(&p.dom, p.id("box"));
+    assert_eq!((r.width, r.height), (300.0, 40.0), "after class change");
+    // Inline style on the outer element no longer applies below the override.
+    let outer = p.id("outer");
+    p.dom.set_attribute(outer, "style", "--w:50px").unwrap();
+    p.dom.set_attribute(mid, "class", "").unwrap();
+    let r = p.layout.bounding_client_rect(&p.dom, p.id("box"));
+    assert_eq!((r.width, r.height), (50.0, 32.0), "after style and class change");
+    // Same answer as a fresh layout of the mutated document.
+    let fresh = lp_dom::flow::layout(&p.dom, p.doc, p.layout.style(), 800.0, 600.0);
+    let b = fresh.get(p.id("box")).unwrap().rect;
+    assert_eq!((b.width, b.height), (50.0, 32.0), "fresh layout");
+    // getComputedStyle-side lookups (outside a pass) are unaffected.
+    assert_eq!(p.layout.style().computed_value(&p.dom, p.id("box"), "width").as_deref(), Some("50px"));
+}

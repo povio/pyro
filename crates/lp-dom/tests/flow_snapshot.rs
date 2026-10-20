@@ -31,12 +31,20 @@ fn dump_flow_snapshot() {
     eprintln!("flow pass: {:?}", t.elapsed());
     if std::env::var("FLOW_PROFILE").is_ok() {
         use lp_dom::flow::FlowStyleSource;
-        let els: Vec<_> = dom.descendants(doc).unwrap().filter(|&n| dom.node_type(n).ok() == Some(NodeType::Element)).collect();
+        let els: Vec<_> =
+            dom.descendants(doc).unwrap().filter(|&n| dom.node_type(n).ok() == Some(NodeType::Element)).collect();
         let t = std::time::Instant::now();
         for &e in &els {
             let _ = layout.style().flow_style(&dom, e);
         }
         eprintln!("flow_style x{} (warm cascade cache): {:?}", els.len(), t.elapsed());
+        if let Ok(n) = std::env::var("FLOW_PROFILE_LOOP") {
+            for _ in 0..n.parse::<usize>().unwrap_or(1) {
+                for &e in &els {
+                    let _ = layout.style().flow_style(&dom, e);
+                }
+            }
+        }
         // A DOM mutation invalidates caches: measure a pass after one.
         let probe = els[els.len() / 2];
         let mut dom = dom;
@@ -52,6 +60,15 @@ fn dump_flow_snapshot() {
         let t = std::time::Instant::now();
         let _ = layout.flow(&dom);
         eprintln!("flow pass, no change (cached): {:?}", t.elapsed());
+        // The pass-scoped memo must not change any box: compare with a pass
+        // computed directly (no memo).
+        let memo = layout.flow(&dom);
+        let (vw, vh) = (vw as f64, vh as f64);
+        let plain = lp_dom::flow::layout(&dom, doc, layout.style(), vw, vh);
+        let same =
+            plain.boxes.len() == memo.boxes.len() && plain.boxes.iter().all(|(k, b)| memo.boxes.get(k) == Some(b));
+        eprintln!("memo vs plain identical: {same} ({} boxes)", plain.boxes.len());
+        assert!(same, "pass memo changed geometry");
         return;
     }
     let body = dom

@@ -242,7 +242,9 @@ impl Layout {
                 return c.result.clone();
             }
         }
-        let result = Rc::new(crate::flow::layout(dom, self.document(), &self.style, v.width as f64, v.height as f64));
+        let result = Rc::new(crate::style::with_pass_memo(|| {
+            crate::flow::layout(dom, self.document(), &self.style, v.width as f64, v.height as f64)
+        }));
         *self.flow_cache.borrow_mut() = Some(FlowCache { stamp, viewport, result: result.clone() });
         result
     }

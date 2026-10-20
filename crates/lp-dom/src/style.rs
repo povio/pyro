@@ -1472,7 +1472,82 @@ fn whole_variable(raw: &str) -> Option<(String, Option<String>)> {
 
 // Return the defining element too: substitution occurs there, before the value
 // is inherited, so a descendant's custom-property override cannot alter it.
+/// Memo of ancestor-derived values for one layout pass, during which the
+/// DOM and style sheets cannot change (the pass holds `&Dom`).
+#[derive(Default)]
+struct PassMemo {
+    custom: FxHashMap<(u32, String), Option<(NodeId, String)>>,
+    font_size: FxHashMap<u32, f64>,
+}
+
+thread_local! {
+    static PASS_MEMO: RefCell<Option<PassMemo>> = const { RefCell::new(None) };
+}
+
+/// Runs `f` with ancestor-derived style values memoized; used by layout
+/// passes, which read the cascade for every element against a fixed DOM.
+pub fn with_pass_memo<R>(f: impl FnOnce() -> R) -> R {
+    let outer = PASS_MEMO.with(|m| m.borrow_mut().replace(PassMemo::default()));
+    let r = f();
+    PASS_MEMO.with(|m| *m.borrow_mut() = outer);
+    r
+}
+
 fn custom_property_source(dom: &Dom, rules: &RuleSet, el: NodeId, name: &str) -> Option<(NodeId, String)> {
+    let active = PASS_MEMO.with(|m| m.borrow().is_some());
+    if !active {
+        return custom_property_source_walk(dom, rules, el, name);
+    }
+    // Walk up until a memoized ancestor or a declaring element, then record
+    // the answer for every element passed (they inherit it).
+    let mut visited = Vec::new();
+    let mut cur = dom.check(el).ok();
+    let mut found = None;
+    while let Some(idx) = cur {
+        if let Some(hit) =
+            PASS_MEMO.with(|m| m.borrow().as_ref().and_then(|m| m.custom.get(&(idx, name.to_owned())).cloned()))
+        {
+            found = hit;
+            break;
+        }
+        visited.push(idx);
+        if let Some(v) = own_custom_property(dom, rules, idx, name) {
+            found = Some(v);
+            break;
+        }
+        cur = flat_tree_parent_element(dom, idx);
+    }
+    PASS_MEMO.with(|m| {
+        if let Some(m) = m.borrow_mut().as_mut() {
+            for idx in visited {
+                m.custom.insert((idx, name.to_owned()), found.clone());
+            }
+        }
+    });
+    found
+}
+
+/// The custom property declared on the element itself (not inherited).
+fn own_custom_property(dom: &Dom, rules: &RuleSet, idx: u32, name: &str) -> Option<(NodeId, String)> {
+    let id = dom.id_of(idx);
+    let mut value = None;
+    let mut priority = 0;
+    if let Some(style) = dom.n(idx).element().and_then(|e| e.attr("style")) {
+        if let Some((raw, important)) = InlineStyle::parse(style).get(name) {
+            value = Some(raw);
+            priority = if important { INLINE_IMPORTANT_PRIORITY } else { INLINE_PRIORITY };
+        }
+    }
+    for rule in rules.customs.get(name).into_iter().flatten() {
+        if rule.priority > priority && dom.matches(id, &rule.selector).unwrap_or(false) {
+            value = Some(rule.value.to_string());
+            priority = rule.priority;
+        }
+    }
+    value.filter(|v| !v.eq_ignore_ascii_case("inherit") && !v.eq_ignore_ascii_case("unset")).map(|v| (id, v))
+}
+
+fn custom_property_source_walk(dom: &Dom, rules: &RuleSet, el: NodeId, name: &str) -> Option<(NodeId, String)> {
     let mut cur = dom.check(el).ok();
     while let Some(idx) = cur {
         let id = dom.id_of(idx);
@@ -2441,6 +2516,19 @@ impl StyleEngine {
         if depth >= MAX_COMPUTED_DEPTH {
             return DEFAULT_FONT_SIZE;
         }
+        if let Some(v) = PASS_MEMO.with(|m| m.borrow().as_ref().and_then(|m| m.font_size.get(&idx).copied())) {
+            return v;
+        }
+        let v = self.font_size_at_cascade_uncached(dom, rules, idx, depth);
+        PASS_MEMO.with(|m| {
+            if let Some(m) = m.borrow_mut().as_mut() {
+                m.font_size.insert(idx, v);
+            }
+        });
+        v
+    }
+
+    fn font_size_at_cascade_uncached(&self, dom: &Dom, rules: &RuleSet, idx: u32, depth: u8) -> f64 {
         let Some(parent) = flat_tree_parent_element(dom, idx) else {
             return self.font_size_from_parent(dom, rules, idx, DEFAULT_FONT_SIZE, DEFAULT_FONT_SIZE);
         };
