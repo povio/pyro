@@ -269,13 +269,34 @@ fn is_text_control(dom: &Dom, el: NodeId) -> bool {
 
 #[derive(Debug)]
 enum Activation {
-    Checkbox { el: NodeId, old: bool },
-    Radio { el: NodeId, previously_checked: Vec<NodeId>, was_checked: bool },
-    Submit { el: NodeId },
-    Reset { el: NodeId },
-    Link { el: NodeId },
-    Label { el: NodeId },
-    Summary { el: NodeId },
+    Checkbox {
+        el: NodeId,
+        old: bool,
+    },
+    Radio {
+        el: NodeId,
+        previously_checked: Vec<NodeId>,
+        was_checked: bool,
+    },
+    Submit {
+        el: NodeId,
+    },
+    Reset {
+        el: NodeId,
+    },
+    Link {
+        el: NodeId,
+    },
+    Label {
+        el: NodeId,
+    },
+    Summary {
+        el: NodeId,
+    },
+    /// `<input type=file>`: shows the file picker.
+    FilePicker {
+        el: NodeId,
+    },
 }
 
 fn local(dom: &Dom, id: NodeId) -> Option<String> {
@@ -293,6 +314,7 @@ fn activation_for(dom: &Dom, el: NodeId) -> Option<Activation> {
             InputType::Radio => Some(Activation::Radio { el, previously_checked: Vec::new(), was_checked: false }),
             InputType::Submit | InputType::Image => Some(Activation::Submit { el }),
             InputType::Reset => Some(Activation::Reset { el }),
+            InputType::File => Some(Activation::FilePicker { el }),
             _ => None,
         },
         "button" => match dom.get_attribute(el, "type").ok().flatten().map(|t| t.to_ascii_lowercase()).as_deref() {
@@ -401,7 +423,8 @@ pub fn dispatch_with_activation(page: &Rc<PageDom>, target: NodeId, ev: &EventDa
                 // the label) are not re-targeted.
                 let inside_control = page.dom.borrow().contains(c, target).unwrap_or(false);
                 if !inside_control && c != target {
-                    element_click(page, c);
+                    let trusted = ev.state.borrow().is_trusted;
+                    click_with_trust(page, c, trusted);
                     focus_element(page, c);
                 }
             }
@@ -411,6 +434,12 @@ pub fn dispatch_with_activation(page: &Rc<PageDom>, target: NodeId, ev: &EventDa
             if let Some(d) = details {
                 let _ = page.dom.borrow_mut().toggle_attribute(d, "open", None);
                 queue_simple(page, d, "toggle", false, false);
+            }
+        }
+        Activation::FilePicker { el } => {
+            if let Some(h) = page.hooks() {
+                let multiple = page.dom.borrow().has_attribute(el, "multiple").unwrap_or(false);
+                h.file_chooser(el, multiple);
             }
         }
     }
@@ -441,6 +470,12 @@ fn radio_group_checked(dom: &Dom, el: NodeId) -> Vec<NodeId> {
 /// `pointerType` is empty; libraries such as React Aria rely on `detail == 0`
 /// to recognise a virtual click.
 pub fn element_click(page: &Rc<PageDom>, el: NodeId) {
+    click_with_trust(page, el, false);
+}
+
+/// A click whose `isTrusted` follows the event that caused it (a label
+/// forwarding a user's click to its control, as Chrome does).
+fn click_with_trust(page: &Rc<PageDom>, el: NodeId, trusted: bool) {
     if page.dom.borrow().is_disabled(el).unwrap_or(false) {
         return;
     }
@@ -449,6 +484,7 @@ pub fn element_click(page: &Rc<PageDom>, el: NodeId) {
     }
     let ev = EventCore::new(page, EventInterface::PointerEvent, "click", true, true, true);
     ev.fields.borrow_mut().pointer_id = -1;
+    ev.state.borrow_mut().is_trusted = trusted;
     dispatch_with_activation(page, el, &ev);
     page.end_click(el);
 }

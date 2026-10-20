@@ -214,6 +214,9 @@ pub(crate) struct Session {
     pub(crate) extra_headers: http::HeaderMap,
     /// `Network.setCacheDisabled` of this session (page-scoped in Chrome).
     pub(crate) cache_disabled: bool,
+    /// Page.setInterceptFileChooserDialog: file inputs report
+    /// Page.fileChooserOpened to this session.
+    pub(crate) intercept_file_chooser: bool,
     fetch: fetch::FetchSession,
     pub(crate) handles: Rc<RefCell<HandleTable<Persistent>>>,
 }
@@ -683,6 +686,7 @@ impl Host for EngineHost {
                 network_enabled: false,
                 extra_headers: http::HeaderMap::new(),
                 cache_disabled: false,
+                intercept_file_chooser: false,
                 fetch: fetch::FetchSession::default(),
                 handles: Rc::new(RefCell::new(HandleTable::new(self.handle_budget.clone()))),
             },

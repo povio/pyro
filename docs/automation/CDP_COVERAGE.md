@@ -19,7 +19,7 @@ Capture uses a shared process payload budget (default 64 MiB, 8 MiB/body), at mo
 
 The browser integration smoke also exercises DOM access before init scripts, shared DOM across isolated worlds, page fetch with exact Network frame/loader correlation, route fulfillment/abort after headers, and Web Storage context/page/navigation isolation. These checks use local HTTP and JavaScript evaluation; The full DOM protocol and actual TOS workflows remain unvalidated. A separate Input check covers keyboard typing/text insertion and mouse checkbox activation; editing commands and pen/touch remain unsupported; native drag-and-drop works under Playwright's drag interception; wheel default scrolling follows the synthetic layout. Mouse coordinates follow the native synthetic layout, not full CSS positioning; the smoke derives its click point from the reported rectangle and verifies the exact hit target.
 
-Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 52 engine, 8 accepted/recorded only, 2 conditional, 39 pending (counts from the table below).
+Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 53 engine, 7 accepted/recorded only, 2 conditional, 39 pending (counts from the table below).
 
 | Method | Upstream 2ad38773f | Rewrite | Notes |
 | --- | --- | --- | --- |
@@ -94,7 +94,7 @@ Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 52 engi
 | `Page.removeScriptToEvaluateOnNewDocument` | yes | engine |  |
 | `Page.setBypassCSP` | yes | accepted, recorded only | no CSP enforcement exists |
 | `Page.setFontFamilies` | **no** | pending |  |
-| `Page.setInterceptFileChooserDialog` | yes | accepted, recorded only | no file chooser exists |
+| `Page.setInterceptFileChooserDialog` | yes | engine | per session; activating an `<input type=file>` (click, label, script `click()`) emits `Page.fileChooserOpened` {frameId, mode selectSingle/selectMultiple, backendNodeId} to intercepting sessions; no native picker exists |
 | `Page.setLifecycleEventsEnabled` | yes | engine | per-frame lifecycle events and replay of reached milestones |
 | `Page.startScreencast` | **no** | pending |  |
 | `Profiler.disable` | **no** | pending |  |

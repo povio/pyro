@@ -212,6 +212,9 @@ pub trait PageHooks {
     fn network_delivery(&self, _id: lp_net::RequestId, _frontier: lp_net::NetworkDelivery) {}
     /// A hyperlink download. The default embedder performs none.
     fn download(&self, _request: DownloadRequest) {}
+    /// An `<input type=file>` was activated: the embedder may report a file
+    /// chooser (CDP Page.fileChooserOpened). There is no native picker.
+    fn file_chooser(&self, _input: NodeId, _multiple: bool) {}
     /// `document.open()` replaced the loaded document's content: the frame is
     /// loading again, so DOMContentLoaded/load can be reported anew.
     fn document_reopened(&self) {}

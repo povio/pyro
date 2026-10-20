@@ -331,6 +331,35 @@ impl EngineHost {
     }
 }
 
+impl EngineHost {
+    /// Page.fileChooserOpened to the sessions intercepting file choosers, with
+    /// the input's backend node id (resolved by Playwright via DOM.resolveNode).
+    pub(super) fn file_chooser_opened(
+        &mut self,
+        page: PageKey,
+        frame_id: &lp_browser::FrameId,
+        input: NodeId,
+        multiple: bool,
+    ) {
+        let sessions = self.sessions_of(page, |s| s.intercept_file_chooser);
+        if sessions.is_empty() {
+            return;
+        }
+        let Some(state) = self.pages.get(&page) else { return };
+        let Some(document) = self.thread.browser.frame(state.id, frame_id).and_then(|f| f.page_dom) else { return };
+        let Some(state) = self.pages.get_mut(&page) else { return };
+        let Ok(backend) = state.dom_nodes.identify(&document, input, &mut self.next_backend_node) else { return };
+        let mode = if multiple { "selectMultiple" } else { "selectSingle" };
+        for s in &sessions {
+            self.event(
+                "Page.fileChooserOpened",
+                &serde_json::json!({ "frameId": frame_id.0, "mode": mode, "backendNodeId": backend }),
+                s,
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

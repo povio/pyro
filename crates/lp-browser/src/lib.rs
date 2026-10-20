@@ -183,6 +183,12 @@ pub enum PageEvent {
         message: String,
         default_prompt: Option<String>,
     },
+    /// An `<input type=file>` was activated (no native picker opens).
+    FileChooserOpened {
+        frame_id: FrameId,
+        input: lp_dom::NodeId,
+        multiple: bool,
+    },
     /// A hyperlink download finished fetching (or failed).
     Download {
         frame_id: FrameId,

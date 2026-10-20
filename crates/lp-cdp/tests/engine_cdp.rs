@@ -1558,6 +1558,54 @@ fn input_home_end_with_mac_scroll_commands_scroll_the_document() {
 }
 
 #[test]
+fn file_inputs_report_file_chooser_opened_when_intercepted() {
+    // Playwright's waitForEvent('filechooser') enables interception, then
+    // expects Page.fileChooserOpened (shapes recorded from headless Chromium).
+    let mut h = Harness::new();
+    eval_value(
+        &mut h,
+        r#"document.body.innerHTML = '<input type="file" id="f" style="width:100px;height:30px"><input type="file" id="m" multiple style="width:100px;height:30px"><label for="f" id="lab" style="display:block;width:100px;height:30px">Up</label>';
+           globalThis.clicks = []; document.getElementById('f').addEventListener('click', e => clicks.push(e.isTrusted));
+           globalThis.center = id => { const r = document.getElementById(id).getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; }; 1"#,
+    );
+    let click = |h: &mut Harness, id: &str| -> Vec<Value> {
+        let at = eval_value(h, &format!("center('{id}')"));
+        let mut events = Vec::new();
+        for (kind, buttons) in [("mousePressed", 1), ("mouseReleased", 0)] {
+            events.extend(h.page_with_events(
+                "Input.dispatchMouseEvent",
+                json!({"type":kind,"x":at[0],"y":at[1],"button":"left","buttons":buttons,"clickCount":1}),
+            ));
+        }
+        events.extend(h.run_for(30));
+        events.into_iter().filter(|e| e["method"] == "Page.fileChooserOpened").collect()
+    };
+    assert!(click(&mut h, "f").is_empty(), "no interception, no event");
+    assert_eq!(h.page("Page.setInterceptFileChooserDialog", json!({"enabled":true}))["result"], json!({}));
+    let frame = h.frame_id.clone();
+    let opened = click(&mut h, "f");
+    assert_eq!(opened.len(), 1, "{opened:?}");
+    assert_eq!(opened[0]["params"]["frameId"], frame);
+    assert_eq!(opened[0]["params"]["mode"], "selectSingle");
+    let backend = opened[0]["params"]["backendNodeId"].clone();
+    let resolved = h.page("DOM.resolveNode", json!({"backendNodeId": backend}));
+    let object = resolved["result"]["object"]["objectId"].clone();
+    let id = h.page(
+        "Runtime.callFunctionOn",
+        json!({"objectId": object, "functionDeclaration": "function() { return this.id; }", "returnByValue": true}),
+    );
+    assert_eq!(id["result"]["result"]["value"], "f");
+    let opened = click(&mut h, "m");
+    assert_eq!(opened[0]["params"]["mode"], "selectMultiple");
+    // A label forwards the user's (trusted) click and opens its control's chooser.
+    let opened = click(&mut h, "lab");
+    assert_eq!(opened.len(), 1, "{opened:?}");
+    assert_eq!(eval_value(&mut h, "clicks"), json!([true, true, true]));
+    h.page("Page.setInterceptFileChooserDialog", json!({"enabled":false}));
+    assert!(click(&mut h, "f").is_empty());
+}
+
+#[test]
 fn dom_backend_nodes_adopt_across_worlds_and_expire_on_navigation() {
     let mut h = Harness::new();
     assert_eq!(h.page("DOM.enable", json!({}))["result"], json!({}));

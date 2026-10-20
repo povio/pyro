@@ -82,6 +82,19 @@ impl PageHooks for Hooks {
         });
     }
 
+    fn file_chooser(&self, input: lp_dom::NodeId, multiple: bool) {
+        let page = self.page;
+        let loader = self.loader.clone();
+        self.sched.post(TaskSource::UserInteraction, move |b| {
+            let Some(frame_id) =
+                b.doc(page).filter(|p| p.main_frame.loader_id == loader).map(|p| p.main_frame.id.clone())
+            else {
+                return;
+            };
+            b.emit(page.page, crate::PageEvent::FileChooserOpened { frame_id, input, multiple });
+        });
+    }
+
     fn download(&self, request: lp_webapi::DownloadRequest) {
         let page = self.page;
         let loader = self.loader.clone();

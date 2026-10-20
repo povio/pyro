@@ -215,7 +215,16 @@ impl EngineHost {
             "getLayoutMetrics" => self.layout_metrics(cmd),
             // Accepted because there is nothing to change: the engine enforces
             // no CSP, opens no file chooser and has a single foreground page.
-            "setBypassCSP" | "setInterceptFileChooserDialog" | "bringToFront" => Ok(Some(json!({}))),
+            "setInterceptFileChooserDialog" => {
+                #[derive(Deserialize)]
+                struct P {
+                    enabled: bool,
+                }
+                let enabled = cmd.command.params::<P>()?.enabled;
+                self.session_mut(cmd.session_id)?.intercept_file_chooser = enabled;
+                Ok(Some(json!({})))
+            }
+            "setBypassCSP" | "bringToFront" => Ok(Some(json!({}))),
             _ => Err(CdpError::unsupported(&cmd.command.method)),
         }
     }
@@ -562,6 +571,9 @@ impl EngineHost {
                 for s in &all {
                     self.event("Page.frameDetached", &json!({ "frameId": frame_id.0, "reason": "remove" }), s);
                 }
+            }
+            PageEvent::FileChooserOpened { frame_id, input, multiple } => {
+                self.file_chooser_opened(page, &frame_id, input, multiple);
             }
             PageEvent::Download { frame_id, url, suggested_filename, body } => {
                 self.deliver_download(page, &frame_id.0, &url, &suggested_filename, body);
