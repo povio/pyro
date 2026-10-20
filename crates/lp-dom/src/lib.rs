@@ -6,6 +6,7 @@ pub mod computed;
 pub mod dom;
 pub mod error;
 pub mod events;
+pub mod flow;
 pub mod forms;
 pub mod iframe;
 pub mod inner_text;
@@ -18,6 +19,7 @@ pub mod script;
 pub mod select;
 pub mod serialize;
 pub mod style;
+pub mod style_flow;
 pub mod xml;
 pub mod xpath;
 
