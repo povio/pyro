@@ -1072,3 +1072,29 @@ fn flow_hit_test_prefers_sticky_header_cell_over_its_row_group() {
     let hit = p.layout.element_from_point(&p.dom, r.x + 5.0, r.y + 5.0);
     assert_eq!(hit, Some(p.id("name")), "Chromium hits #name");
 }
+
+#[test]
+fn flex_parity_auto_margins() {
+    // Auto margins absorb free space before justify-content and override
+    // align-self (no stretch) in the cross axis. Chromium 1.59.1.
+    let html = "<!doctype html><body style=\"margin:0\"><div id=row style=\"display:flex;width:600px;height:50px;justify-content:center\"><div id=a style=\"width:100px;height:20px\"></div><div id=b style=\"width:80px;height:20px;margin-left:auto\"></div><div id=c style=\"width:60px;height:20px;margin:auto 10px auto auto\"></div></div><div id=col style=\"display:flex;flex-direction:column;height:200px;width:300px\"><div id=h style=\"height:30px\"></div><div id=f style=\"height:40px;margin-top:auto;margin-left:auto;width:100px\"></div></div><div id=cen style=\"display:flex;width:400px;height:100px;align-items:stretch\"><div id=m style=\"width:50px;margin:auto\"><div style=\"height:24px\"></div></div><div id=s style=\"width:50px\"></div><div id=t style=\"width:50px;margin-top:auto\"><div style=\"height:10px\"></div></div></div></body>";
+    check(
+        "auto-margins",
+        html,
+        0,
+        &[
+            ("row", [0.0, 0.0, 600.0, 50.0, 600.0, 50.0, 600.0, 50.0]),
+            ("a", [0.0, 0.0, 100.0, 20.0, 100.0, 20.0, 100.0, 20.0]),
+            ("b", [275.0, 0.0, 80.0, 20.0, 80.0, 20.0, 80.0, 20.0]),
+            ("c", [530.0, 15.0, 60.0, 20.0, 60.0, 20.0, 60.0, 20.0]),
+            ("col", [0.0, 50.0, 300.0, 200.0, 300.0, 200.0, 300.0, 200.0]),
+            ("h", [0.0, 50.0, 300.0, 30.0, 300.0, 30.0, 300.0, 30.0]),
+            ("f", [200.0, 210.0, 100.0, 40.0, 100.0, 40.0, 100.0, 40.0]),
+            ("cen", [0.0, 250.0, 400.0, 100.0, 400.0, 100.0, 400.0, 100.0]),
+            ("m", [125.0, 288.0, 50.0, 24.0, 50.0, 24.0, 50.0, 24.0]),
+            ("s", [300.0, 250.0, 50.0, 100.0, 50.0, 100.0, 50.0, 100.0]),
+            ("t", [350.0, 340.0, 50.0, 10.0, 50.0, 10.0, 50.0, 10.0]),
+        ],
+        [800.0, 600.0],
+    );
+}

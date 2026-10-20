@@ -1877,7 +1877,9 @@ impl<'a> Ctx<'a> {
                 let align = it.style.align_self.unwrap_or(style.align_items);
                 let declared_cross =
                     if row { it.style.height.resolve(height) } else { it.style.width.resolve(Some(width)) };
-                if align == Align::Stretch && declared_cross.is_none() {
+                // Auto cross-axis margins take precedence over stretching.
+                if align == Align::Stretch && declared_cross.is_none() && auto_margins(it, row, false) == (false, false)
+                {
                     it.cross = (line_cross[li] - margins_cross(it, row)).max(0.0);
                     it.stretched = true;
                 }
@@ -1891,7 +1893,18 @@ impl<'a> Ctx<'a> {
             let used: f64 = items[line.clone()].iter().map(|it| it.main + margins_main(it, row)).sum::<f64>()
                 + main_gap * (n as f64 - 1.0).max(0.0);
             let free = container_main.map_or(0.0, |cm| (cm - used).max(0.0));
-            let (mut pos, between) = match style.justify_content {
+            // Auto main-axis margins absorb the free space before
+            // justify-content (CSS Flexbox 8.1).
+            let autos: usize = items[line.clone()]
+                .iter()
+                .map(|it| {
+                    let (a, b) = auto_margins(it, row, true);
+                    a as usize + b as usize
+                })
+                .sum();
+            let per_auto = if autos > 0 { free / autos as f64 } else { 0.0 };
+            let justify = if autos > 0 { Justify::Start } else { style.justify_content };
+            let (mut pos, between) = match justify {
                 Justify::Start => (0.0, 0.0),
                 Justify::End => (free, 0.0),
                 Justify::Center => (free / 2.0, 0.0),
@@ -1904,16 +1917,29 @@ impl<'a> Ctx<'a> {
                 let it = &items[i];
                 let align = it.style.align_self.unwrap_or(style.align_items);
                 let outer_cross = it.cross + margins_cross(it, row);
-                let cross_off = match align {
-                    Align::End => line_cross[li] - outer_cross,
-                    Align::Center => (line_cross[li] - outer_cross) / 2.0,
-                    _ => 0.0,
+                let spare = line_cross[li] - outer_cross;
+                let cross_off = match auto_margins(it, row, false) {
+                    (true, true) => (spare / 2.0).max(0.0),
+                    (true, false) => spare.max(0.0),
+                    (false, true) => 0.0,
+                    (false, false) => match align {
+                        Align::End => spare,
+                        Align::Center => spare / 2.0,
+                        _ => 0.0,
+                    },
                 };
+                let (auto_before, auto_after) = auto_margins(it, row, true);
+                if auto_before {
+                    pos += per_auto;
+                }
                 let (mx, my) =
                     if row { (x + pos, y + cross_pos + cross_off) } else { (x + cross_pos + cross_off, y + pos) };
                 let (w, h) = if row { (it.main, it.cross) } else { (it.cross, it.main) };
                 self.place_flex_item(i, &items, mx, my, w, h, width, fixed, shift);
                 pos += it.main + margins_main(it, row) + main_gap + between;
+                if auto_after {
+                    pos += per_auto;
+                }
             }
             max_main_end = max_main_end.max(pos - main_gap - between);
             cross_pos += line_cross[li] + cross_gap;
@@ -2143,6 +2169,16 @@ fn resolve_flexible_lengths(items: &mut [FlexItem], container_main: f64, gap: f6
     for (it, t) in items.iter_mut().zip(target) {
         it.main = t;
     }
+}
+
+/// Whether the item's (start, end) margins on the main (`main`) or cross
+/// axis are `auto`. Text items have none.
+fn auto_margins(it: &FlexItem, row: bool, main: bool) -> (bool, bool) {
+    if it.el.is_none() {
+        return (false, false);
+    }
+    let (a, b) = if row == main { (LEFT, RIGHT) } else { (TOP, BOTTOM) };
+    (it.style.margin[a] == Dim::Auto, it.style.margin[b] == Dim::Auto)
 }
 
 fn margins_main(it: &FlexItem, row: bool) -> f64 {

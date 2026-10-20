@@ -106,6 +106,9 @@ containing block (em/rem/vw/vh resolved by the style engine).
   flexes within its own min/max height and a row container's line is at
   least its min-height. Max-content of a flex row is the sum of its items and
   gaps (min-content: longest word / widest atomic box).
+  Auto margins on flex items absorb positive free space before
+  justify-content, and auto cross-axis margins override align-self (no
+  stretch).
 - Stage 4 (grid): explicit tracks (px, %, fr, auto, min/max-content,
   minmax(), fit-content() approximated, repeat(n) and auto-fill/auto-fit with
   collapsed empty auto-fit tracks), line-based and span placement, sparse
