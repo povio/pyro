@@ -301,7 +301,7 @@ impl PageDom {
             dialog_returns: RefCell::new(FxHashMap::default()),
             sheet_rules: RefCell::new(FxHashMap::default()),
             files: RefCell::new(FxHashMap::default()),
-            layout: RefCell::new(lp_dom::layout::Layout::new(document)),
+            layout: RefCell::new(new_layout(lp_dom::layout::Layout::new(document))),
         })
     }
 
@@ -393,7 +393,7 @@ impl PageDom {
         drop(self.blob_urls.take());
         drop(self.reflected_url_base.take());
         let viewport = self.layout.borrow().viewport().clone();
-        *self.layout.borrow_mut() = lp_dom::layout::Layout::with_viewport(doc, viewport);
+        *self.layout.borrow_mut() = new_layout(lp_dom::layout::Layout::with_viewport(doc, viewport));
     }
 
     /// Browser-owned sandbox policy. Explicit inspector/Realm evaluation is
@@ -746,4 +746,11 @@ impl PageDom {
     pub fn with_dom<R>(&self, f: impl FnOnce(&mut Dom) -> R) -> R {
         f(&mut self.dom.borrow_mut())
     }
+}
+
+/// A document layout with the process's geometry selection
+/// (`LIGHTNINGPANDA_GEOMETRY=flow` opts into the flow layout).
+fn new_layout(mut layout: lp_dom::layout::Layout) -> lp_dom::layout::Layout {
+    layout.set_geometry(lp_dom::layout::Geometry::from_env());
+    layout
 }

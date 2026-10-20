@@ -71,8 +71,10 @@ use cssparser::{Parser, Token};
 use markup5ever::{local_name, ns};
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
+use std::rc::Rc;
 
 use crate::dom::Dom;
+use crate::flow::{FlowBox, FlowResult};
 use crate::media::Viewport;
 use crate::node::{DocumentKind, NodeId, NodeKind, NIL};
 use crate::style::{CheckVisibilityOptions, ScrollAxes, StyleEngine};
@@ -152,6 +154,36 @@ pub struct Layout {
     scroll_generation: u64,
     element_scroll: FxHashMap<NodeId, (u32, u32)>,
     automatic_heights: RefCell<AutomaticHeights>,
+    geometry: Geometry,
+    flow_cache: RefCell<Option<FlowCache>>,
+}
+
+/// Which geometry the layout getters report (docs/dom/FLOW_LAYOUT.md). The
+/// flow layout is opt-in until its parity with Chromium is reviewed.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum Geometry {
+    /// Upstream's renderless "faux layout".
+    #[default]
+    Approximate,
+    /// `crate::flow` block/inline layout with positioning (Stage 1).
+    Flow,
+}
+
+impl Geometry {
+    /// The process-wide opt-in: `LIGHTNINGPANDA_GEOMETRY=flow` selects the flow
+    /// layout for new documents; anything else keeps the approximate one.
+    pub fn from_env() -> Geometry {
+        match std::env::var("LIGHTNINGPANDA_GEOMETRY") {
+            Ok(v) if v.eq_ignore_ascii_case("flow") => Geometry::Flow,
+            _ => Geometry::Approximate,
+        }
+    }
+}
+
+struct FlowCache {
+    stamp: (u64, u64, u32, u32),
+    viewport: (u32, u32),
+    result: Rc<FlowResult>,
 }
 
 #[derive(Default)]
@@ -180,7 +212,43 @@ impl Layout {
             scroll_generation: 0,
             element_scroll: FxHashMap::default(),
             automatic_heights: RefCell::default(),
+            geometry: Geometry::default(),
+            flow_cache: RefCell::new(None),
         }
+    }
+
+    /// Selects the geometry the getters report.
+    pub fn set_geometry(&mut self, geometry: Geometry) {
+        self.geometry = geometry;
+        self.flow_cache.borrow_mut().take();
+    }
+
+    pub fn geometry(&self) -> Geometry {
+        self.geometry
+    }
+
+    fn flow_mode(&self) -> bool {
+        self.geometry == Geometry::Flow
+    }
+
+    /// The flow layout of the document, recomputed when the DOM, styles,
+    /// focus/hover or viewport change.
+    pub fn flow(&self, dom: &Dom) -> Rc<FlowResult> {
+        let stamp = self.style.observation_stamp(dom);
+        let v = self.viewport();
+        let viewport = (v.width, v.height);
+        if let Some(c) = self.flow_cache.borrow().as_ref() {
+            if c.stamp == stamp && c.viewport == viewport {
+                return c.result.clone();
+            }
+        }
+        let result = Rc::new(crate::flow::layout(dom, self.document(), &self.style, v.width as f64, v.height as f64));
+        *self.flow_cache.borrow_mut() = Some(FlowCache { stamp, viewport, result: result.clone() });
+        result
+    }
+
+    fn flow_box(&self, dom: &Dom, el: NodeId) -> Option<FlowBox> {
+        self.flow(dom).get(el).copied()
     }
 
     /// Changes when DOM/style/viewport/focus/hover or a scroll offset changes.
@@ -500,7 +568,16 @@ impl Layout {
         if !self.is_visible(dom, el) {
             return 0.0;
         }
-        self.viewport_axis(dom, el, axis).unwrap_or_else(|| self.box_axis(dom, el, axis))
+        if let Some(v) = self.viewport_axis(dom, el, axis) {
+            return v;
+        }
+        if self.flow_mode() {
+            return self.flow_box(dom, el).map_or(0.0, |b| match axis {
+                Axis::Width => b.client_width,
+                Axis::Height => b.client_height,
+            });
+        }
+        self.box_axis(dom, el, axis)
     }
 
     /// Element.zig:1677-1692: the root scroller (html in standards mode, body
@@ -541,6 +618,15 @@ impl Layout {
         if !self.is_visible(dom, el) {
             return 0.0;
         }
+        if self.flow_mode() {
+            if let Some(size) = self.root_scroll_size(dom, el, axis) {
+                return size;
+            }
+            return self.flow_box(dom, el).map_or(0.0, |b| match axis {
+                Axis::Width => b.scroll_width.max(b.client_width),
+                Axis::Height => b.scroll_height.max(b.client_height),
+            });
+        }
         let own = self.element_axis(dom, el, axis).value;
         if self.is_root_container(dom, el) {
             return self.root_scroll_size(dom, el, axis).unwrap_or(own);
@@ -551,6 +637,15 @@ impl Layout {
     /// `scrollExtent` (Element.zig:1845-1858): `None` where no limit can be
     /// proven, which leaves the offset unbounded.
     fn scroll_extent(&self, dom: &Dom, el: NodeId, axis: Axis) -> Option<f64> {
+        if self.flow_mode() && !self.is_root_container(dom, el) {
+            // Only scroll containers scroll; others stay at 0 (as in Chrome).
+            let clips = self.style.overflow_clip_axes(dom, el);
+            if !(if axis == Axis::Width { clips.x } else { clips.y }) {
+                return Some(0.0);
+            }
+            let client = self.client_axis(dom, el, axis);
+            return Some((self.scroll_axis_size(dom, el, axis) - client).max(0.0));
+        }
         if self.is_root_container(dom, el) || !self.element_axis(dom, el, axis).explicit {
             return None;
         }
@@ -567,6 +662,9 @@ impl Layout {
         if !self.is_visible(dom, el) {
             return 0.0;
         }
+        if self.flow_mode() {
+            return self.flow_box(dom, el).map_or(0.0, |b| b.rect.width);
+        }
         self.box_axis(dom, el, Axis::Width)
     }
 
@@ -574,13 +672,33 @@ impl Layout {
         if !self.is_visible(dom, el) {
             return 0.0;
         }
+        if self.flow_mode() {
+            return self.flow_box(dom, el).map_or(0.0, |b| b.rect.height);
+        }
         self.box_axis(dom, el, Axis::Height)
+    }
+
+    /// Flow mode `offsetTop`/`offsetLeft`: border-box offset from the offset
+    /// parent's border box (document coordinates for the body/none).
+    fn flow_offset(&self, dom: &Dom, el: NodeId) -> (f64, f64) {
+        let Some(b) = self.flow_box(dom, el) else { return (0.0, 0.0) };
+        let parent = self
+            .offset_parent(dom, el)
+            .filter(|&p| !self.is_root_container(dom, p))
+            .and_then(|p| self.flow_box(dom, p));
+        match parent {
+            Some(p) => (b.rect.x - p.rect.x, b.rect.y - p.rect.y),
+            None => (b.rect.x, b.rect.y),
+        }
     }
 
     /// `offsetTop` (Element.zig:1929-1934).
     pub fn offset_top(&self, dom: &Dom, el: NodeId) -> f64 {
         if !self.is_visible(dom, el) {
             return 0.0;
+        }
+        if self.flow_mode() {
+            return self.flow_offset(dom, el).1;
         }
         self.document_position(dom, el)
     }
@@ -589,6 +707,9 @@ impl Layout {
     pub fn offset_left(&self, dom: &Dom, el: NodeId) -> f64 {
         if !self.is_visible(dom, el) {
             return 0.0;
+        }
+        if self.flow_mode() {
+            return self.flow_offset(dom, el).0;
         }
         self.horizontal_position(dom, el)
     }
@@ -757,6 +878,12 @@ impl Layout {
 
     fn bounding_client_rect_for_visible(&self, dom: &Dom, el: NodeId) -> Rect {
         let (dx, dy) = self.ancestor_scroll_offset(dom, el);
+        if self.flow_mode() {
+            let Some(b) = self.flow_box(dom, el) else { return Rect::default() };
+            let (sx, sy) =
+                if b.fixed { (0.0, 0.0) } else { (self.window_scroll.0 as f64, self.window_scroll.1 as f64) };
+            return Rect { x: b.rect.x - sx - dx, y: b.rect.y - sy - dy, width: b.rect.width, height: b.rect.height };
+        }
         Rect {
             x: self.horizontal_position(dom, el) - self.window_scroll.0 as f64 - dx,
             y: self.document_position(dom, el) - self.window_scroll.1 as f64 - dy,
@@ -771,6 +898,10 @@ impl Layout {
     /// height for every synthetic position, the bottom of every element with
     /// an inline height, and body's stacked children; body's widest child.
     pub fn document_extent(&self, dom: &Dom) -> (f64, f64) {
+        if self.flow_mode() {
+            let f = self.flow(dom);
+            return (f.document_width, f.document_height);
+        }
         if let Some(e) = self.style.cached_extent(dom) {
             return e;
         }
@@ -829,6 +960,54 @@ impl Layout {
 
     // ----- hit testing -------------------------------------------------------
 
+    /// Flow mode hit test in viewport coordinates: the topmost hit-testable
+    /// box (positioned above in-flow, later above earlier) whose rect and
+    /// every overflow-clipping ancestor's rect contain the point.
+    fn flow_element_from_point(&self, dom: &Dom, x: f64, y: f64, ignore_x: bool) -> Option<NodeId> {
+        let flow = self.flow(dom);
+        let inside = |r: &Rect| (ignore_x || (x >= r.x && x <= r.x + r.width)) && y >= r.y && y <= r.y + r.height;
+        let mut best: Option<(bool, u32, NodeId)> = None;
+        for (&el, b) in &flow.boxes {
+            if b.rect.width <= 0.0 && b.rect.height <= 0.0 {
+                continue;
+            }
+            if best.is_some_and(|k| (k.0, k.1) > (b.positioned, b.order)) {
+                continue;
+            }
+            let r = self.bounding_client_rect_for_visible(dom, el);
+            if !inside(&r) || !self.is_visible(dom, el) || !self.style.is_hit_testable(dom, el) {
+                continue;
+            }
+            // Clipped by an overflow ancestor (fixed boxes escape non-fixed clips).
+            let mut clipped = false;
+            let mut cur = dom.parent_element(el).ok().flatten();
+            while let Some(a) = cur {
+                if self.is_root_container(dom, a) {
+                    break;
+                }
+                let clips = self.style.overflow_clip_axes(dom, a);
+                if clips.x || clips.y {
+                    if let Some(ab) = flow.get(a) {
+                        if !(b.fixed && !ab.fixed) {
+                            let ar = self.bounding_client_rect_for_visible(dom, a);
+                            let out_x = clips.x && !ignore_x && (x < ar.x || x > ar.x + ar.width);
+                            let out_y = clips.y && (y < ar.y || y > ar.y + ar.height);
+                            if out_x || out_y {
+                                clipped = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+                cur = dom.parent_element(a).ok().flatten();
+            }
+            if !clipped {
+                best = Some((b.positioned, b.order, el));
+            }
+        }
+        best.map(|k| k.2)
+    }
+
     /// `document.elementFromPoint(x, y)` (Document.zig:953-1032), viewport
     /// coordinates.
     pub fn element_from_point(&self, dom: &Dom, x: f64, y: f64) -> Option<NodeId> {
@@ -842,6 +1021,9 @@ impl Layout {
     }
 
     fn element_from_point_impl(&self, dom: &Dom, viewport_x: f64, viewport_y: f64, ignore_x: bool) -> Option<NodeId> {
+        if self.flow_mode() {
+            return self.flow_element_from_point(dom, viewport_x, viewport_y, ignore_x);
+        }
         // DFS in document order; topmost = last visited element whose rect
         // contains (x, y). Tops increase monotonically in document order, so
         // the walk stops once the running position passes y. Hidden subtrees
@@ -1208,7 +1390,16 @@ impl Layout {
         }
         let mut moved = self.reveal_in_scroll_ancestors(dom, el);
         let (_, dy) = self.ancestor_scroll_offset(dom, el);
-        let y = self.document_position(dom, el) - dy;
+        let y = if self.flow_mode() {
+            match self.flow_box(dom, el) {
+                // Fixed boxes do not move with the window.
+                Some(b) if b.fixed => return moved,
+                Some(b) => b.rect.y - dy,
+                None => return moved,
+            }
+        } else {
+            self.document_position(dom, el) - dy
+        };
         let top = y.max(0.0).trunc().min(i32::MAX as f64) as i32;
         let target = self.bounding_client_rect(dom, el);
         let left = nearest_scroll_offset(target.left(), target.width, self.inner_width() as f64, self.window_scroll.0);
@@ -1439,7 +1630,7 @@ impl LineWrap {
 }
 
 /// text_measure.zig:40-45.
-fn text_width(text: &str, font_size: f64) -> f64 {
+pub(crate) fn text_width(text: &str, font_size: f64) -> f64 {
     text.chars().map(|c| advance(c, font_size)).sum()
 }
 

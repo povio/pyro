@@ -1,0 +1,264 @@
+//! Flow layout Stage 1 parity with headless Chromium (Playwright 1.59.1,
+//! 800x600 viewport). Expected values were measured in Chromium on the same
+//! markup (getBoundingClientRect, clientWidth/Height, scrollWidth/Height);
+//! boxes use explicit sizes so approximate glyph widths do not matter.
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use lp_dom::layout::{Geometry, Layout};
+use lp_dom::media::Viewport;
+use lp_dom::parse::{parse_document, DomRef};
+use lp_dom::{Dom, NodeId};
+
+fn filler() -> String {
+    "<div class=row><span>cell</span><span>more</span></div>".repeat(300)
+}
+
+fn options() -> String {
+    (0..12).map(|i| format!("<div role=option id=o{i} style=\"width:260px;height:32px\"></div>")).collect()
+}
+
+struct Page {
+    dom: Dom,
+    doc: NodeId,
+    layout: Layout,
+}
+
+fn page(html: &str, geometry: Geometry) -> Page {
+    let html = html.replace("FILLER", &filler()).replace("OPTIONS", &options());
+    let dom_ref: DomRef = Rc::new(RefCell::new(Dom::new()));
+    let doc = parse_document(&dom_ref, "http://test/", &html);
+    let dom = Rc::try_unwrap(dom_ref).ok().expect("sole owner").into_inner();
+    let mut layout = Layout::with_viewport(doc, Viewport::new(800, 600));
+    layout.style_mut().discover_style_elements(&dom);
+    layout.set_geometry(geometry);
+    Page { dom, doc, layout }
+}
+
+impl Page {
+    fn id(&self, id: &str) -> NodeId {
+        self.dom.get_element_by_id(self.doc, id).unwrap().unwrap_or_else(|| panic!("#{id}"))
+    }
+    /// [x, y, width, height, clientWidth, clientHeight, scrollWidth, scrollHeight]
+    fn metrics(&self, id: &str) -> [f64; 8] {
+        let el = self.id(id);
+        let r = self.layout.bounding_client_rect(&self.dom, el);
+        let l = &self.layout;
+        [
+            r.x,
+            r.y,
+            r.width,
+            r.height,
+            l.client_width(&self.dom, el),
+            l.client_height(&self.dom, el),
+            l.scroll_width(&self.dom, el),
+            l.scroll_height(&self.dom, el),
+        ]
+    }
+}
+
+fn check(name: &str, html: &str, scroll_y: i32, expected: &[(&str, [f64; 8])], doc: [f64; 2]) {
+    let mut p = page(html, Geometry::Flow);
+    if scroll_y != 0 {
+        p.layout.window_scroll_to(&p.dom, Some(0), Some(scroll_y));
+    }
+    let mut diffs = Vec::new();
+    for (id, want) in expected {
+        let got = p.metrics(id);
+        if got.iter().zip(want).any(|(g, w)| (g - w).abs() > 0.01) {
+            diffs.push(format!("#{id}: got {got:?}, Chromium {want:?}"));
+        }
+    }
+    let (w, h) = p.layout.document_scroll_size(&p.dom);
+    if (w - doc[0]).abs() > 0.01 || (h - doc[1]).abs() > 0.01 {
+        diffs.push(format!("document: got [{w}, {h}], Chromium {doc:?}"));
+    }
+    assert!(diffs.is_empty(), "{name}:\n{}", diffs.join("\n"));
+}
+
+#[test]
+fn flow_parity_stack() {
+    let html = "<!doctype html><body><div id=a style=\"height:30px\"></div><div id=b style=\"height:40px;margin-top:10px\"></div><div id=c style=\"width:200px;height:20px;margin:5px auto\"></div><div id=d style=\"width:50%;height:10px\"></div></body>";
+    check(
+        "stack",
+        html,
+        0,
+        &[
+            ("a", [8.0, 8.0, 784.0, 30.0, 784.0, 30.0, 784.0, 30.0]),
+            ("b", [8.0, 48.0, 784.0, 40.0, 784.0, 40.0, 784.0, 40.0]),
+            ("c", [300.0, 93.0, 200.0, 20.0, 200.0, 20.0, 200.0, 20.0]),
+            ("d", [8.0, 118.0, 392.0, 10.0, 392.0, 10.0, 392.0, 10.0]),
+        ],
+        [800.0, 600.0],
+    );
+}
+
+#[test]
+fn flow_parity_collapse() {
+    let html = "<!doctype html><body style=\"margin:0\"><div id=a style=\"height:10px;margin-bottom:20px\"></div><div id=b style=\"height:10px;margin-top:30px\"></div><div id=c style=\"height:10px;margin-top:5px\"></div></body>";
+    check(
+        "collapse",
+        html,
+        0,
+        &[
+            ("a", [0.0, 0.0, 800.0, 10.0, 800.0, 10.0, 800.0, 10.0]),
+            ("b", [0.0, 40.0, 800.0, 10.0, 800.0, 10.0, 800.0, 10.0]),
+            ("c", [0.0, 55.0, 800.0, 10.0, 800.0, 10.0, 800.0, 10.0]),
+        ],
+        [800.0, 600.0],
+    );
+}
+
+#[test]
+fn flow_parity_boxmodel() {
+    let html = "<!doctype html><body style=\"margin:0\"><div id=p style=\"width:100px;height:50px;padding:10px;border:2px solid black\"></div><div id=q style=\"width:100px;height:50px;padding:10px;border:2px solid black;box-sizing:border-box\"></div><div id=r style=\"padding:5px 7px;margin:3px 11px\"><div id=r1 style=\"height:20px\"></div><div id=r2 style=\"height:25px\"></div></div></body>";
+    check(
+        "boxmodel",
+        html,
+        0,
+        &[
+            ("p", [0.0, 0.0, 124.0, 74.0, 120.0, 70.0, 120.0, 70.0]),
+            ("q", [0.0, 74.0, 100.0, 50.0, 96.0, 46.0, 96.0, 46.0]),
+            ("r", [11.0, 127.0, 778.0, 55.0, 778.0, 55.0, 778.0, 55.0]),
+            ("r1", [18.0, 132.0, 764.0, 20.0, 764.0, 20.0, 764.0, 20.0]),
+            ("r2", [18.0, 152.0, 764.0, 25.0, 764.0, 25.0, 764.0, 25.0]),
+        ],
+        [800.0, 600.0],
+    );
+}
+
+#[test]
+fn flow_parity_nested() {
+    let html = "<!doctype html><body style=\"margin:0\"><div id=outer style=\"width:300px;padding:10px\"><div id=mid style=\"padding:4px;border-width:1px;border-style:solid\"><div id=inner style=\"height:40px;width:100px;margin-left:15px\"></div></div></div></body>";
+    check(
+        "nested",
+        html,
+        0,
+        &[
+            ("outer", [0.0, 0.0, 320.0, 70.0, 320.0, 70.0, 320.0, 70.0]),
+            ("mid", [10.0, 10.0, 300.0, 50.0, 298.0, 48.0, 298.0, 48.0]),
+            ("inner", [30.0, 15.0, 100.0, 40.0, 100.0, 40.0, 100.0, 40.0]),
+        ],
+        [800.0, 600.0],
+    );
+}
+
+#[test]
+fn flow_parity_popover() {
+    let html = "<!doctype html><body><main>FILLER</main><div id=pop style=\"position:absolute;top:120px;left:200px;width:280px\"><div id=list role=listbox style=\"max-height:300px;overflow:auto\">OPTIONS</div></div></body>";
+    check(
+        "popover",
+        html,
+        0,
+        &[
+            ("pop", [200.0, 120.0, 280.0, 300.0, 280.0, 300.0, 280.0, 300.0]),
+            ("list", [200.0, 120.0, 280.0, 300.0, 280.0, 300.0, 280.0, 384.0]),
+            ("o0", [200.0, 120.0, 260.0, 32.0, 260.0, 32.0, 260.0, 32.0]),
+            ("o1", [200.0, 152.0, 260.0, 32.0, 260.0, 32.0, 260.0, 32.0]),
+            ("o2", [200.0, 184.0, 260.0, 32.0, 260.0, 32.0, 260.0, 32.0]),
+            ("o3", [200.0, 216.0, 260.0, 32.0, 260.0, 32.0, 260.0, 32.0]),
+            ("o4", [200.0, 248.0, 260.0, 32.0, 260.0, 32.0, 260.0, 32.0]),
+            ("o5", [200.0, 280.0, 260.0, 32.0, 260.0, 32.0, 260.0, 32.0]),
+            ("o6", [200.0, 312.0, 260.0, 32.0, 260.0, 32.0, 260.0, 32.0]),
+            ("o7", [200.0, 344.0, 260.0, 32.0, 260.0, 32.0, 260.0, 32.0]),
+            ("o8", [200.0, 376.0, 260.0, 32.0, 260.0, 32.0, 260.0, 32.0]),
+            ("o9", [200.0, 408.0, 260.0, 32.0, 260.0, 32.0, 260.0, 32.0]),
+            ("o10", [200.0, 440.0, 260.0, 32.0, 260.0, 32.0, 260.0, 32.0]),
+            ("o11", [200.0, 472.0, 260.0, 32.0, 260.0, 32.0, 260.0, 32.0]),
+        ],
+        [800.0, 5416.0],
+    );
+}
+
+#[test]
+fn flow_parity_fixed() {
+    let html = "<!doctype html><body style=\"margin:0\"><div style=\"height:3000px\"></div><div id=f style=\"position:fixed;top:10px;right:20px;width:100px;height:50px\"></div><div id=g style=\"position:fixed;bottom:0;left:0;right:0;height:40px\"></div></body>";
+    check(
+        "fixed",
+        html,
+        500,
+        &[
+            ("f", [680.0, 10.0, 100.0, 50.0, 100.0, 50.0, 100.0, 50.0]),
+            ("g", [0.0, 560.0, 800.0, 40.0, 800.0, 40.0, 800.0, 40.0]),
+        ],
+        [800.0, 3000.0],
+    );
+}
+
+#[test]
+fn flow_parity_relative() {
+    let html = "<!doctype html><body style=\"margin:0\"><div id=a style=\"height:20px\"></div><div id=b style=\"position:relative;top:7px;left:13px;height:20px\"><div id=b1 style=\"height:5px\"></div></div><div id=c style=\"height:20px\"></div></body>";
+    check(
+        "relative",
+        html,
+        0,
+        &[
+            ("a", [0.0, 0.0, 800.0, 20.0, 800.0, 20.0, 800.0, 20.0]),
+            ("b", [13.0, 27.0, 800.0, 20.0, 800.0, 20.0, 800.0, 20.0]),
+            ("b1", [13.0, 27.0, 800.0, 5.0, 800.0, 5.0, 800.0, 5.0]),
+            ("c", [0.0, 40.0, 800.0, 20.0, 800.0, 20.0, 800.0, 20.0]),
+        ],
+        [813.0, 600.0],
+    );
+}
+
+#[test]
+fn flow_parity_absolute() {
+    let html = "<!doctype html><body style=\"margin:0\"><div id=cb style=\"position:relative;margin:20px;width:400px;height:200px;border:5px solid\"><div id=tr style=\"position:absolute;top:10px;right:10px;width:50px;height:30px\"></div><div id=br style=\"position:absolute;bottom:0;left:0;right:0;height:20px\"></div><div id=st style=\"position:absolute;width:30px;height:30px\"></div></div></body>";
+    check(
+        "absolute",
+        html,
+        0,
+        &[
+            ("cb", [20.0, 20.0, 410.0, 210.0, 400.0, 200.0, 400.0, 200.0]),
+            ("tr", [365.0, 35.0, 50.0, 30.0, 50.0, 30.0, 50.0, 30.0]),
+            ("br", [25.0, 205.0, 400.0, 20.0, 400.0, 20.0, 400.0, 20.0]),
+            ("st", [25.0, 25.0, 30.0, 30.0, 30.0, 30.0, 30.0, 30.0]),
+        ],
+        [800.0, 600.0],
+    );
+}
+
+#[test]
+fn flow_parity_inlineblock() {
+    let html = "<!doctype html><body style=\"margin:0\"><div id=row style=\"width:250px\"><span id=s1 style=\"display:inline-block;width:100px;height:20px\"></span><span id=s2 style=\"display:inline-block;width:100px;height:30px\"></span><span id=s3 style=\"display:inline-block;width:100px;height:20px\"></span></div><div id=after style=\"height:10px\"></div></body>";
+    check(
+        "inlineblock",
+        html,
+        0,
+        &[
+            ("row", [0.0, 0.0, 250.0, 58.0, 250.0, 58.0, 250.0, 58.0]),
+            ("s1", [0.0, 10.0, 100.0, 20.0, 100.0, 20.0, 100.0, 20.0]),
+            ("s2", [100.0, 0.0, 100.0, 30.0, 100.0, 30.0, 100.0, 30.0]),
+            ("s3", [0.0, 34.0, 100.0, 20.0, 100.0, 20.0, 100.0, 20.0]),
+            ("after", [0.0, 58.0, 800.0, 10.0, 800.0, 10.0, 800.0, 10.0]),
+        ],
+        [800.0, 600.0],
+    );
+}
+
+#[test]
+fn flow_hit_test_picks_the_option_under_the_point() {
+    let p = page("<!doctype html><body><main>FILLER</main><div id=pop style=\"position:absolute;top:120px;left:200px;width:280px\"><div id=list role=listbox style=\"max-height:300px;overflow:auto\">OPTIONS</div></div></body>", Geometry::Flow);
+    let r = p.layout.bounding_client_rect(&p.dom, p.id("o3"));
+    let hit = p.layout.element_from_point(&p.dom, r.x + 10.0, r.y + 10.0);
+    assert_eq!(hit, Some(p.id("o3")), "Chromium hits #o3");
+}
+
+#[test]
+fn default_geometry_is_unchanged_by_the_flow_switch() {
+    // The approximate layout stays the default, and switching to flow and back
+    // reports exactly the approximate geometry again.
+    let html = "<!doctype html><body><main>FILLER</main><div id=pop style=\"position:absolute;top:120px;left:200px;width:280px\"><div id=list role=listbox style=\"max-height:300px;overflow:auto\">OPTIONS</div></div></body>";
+    let fresh = page(html, Geometry::Approximate);
+    assert_eq!(fresh.layout.geometry(), Geometry::Approximate);
+    let mut toggled = page(html, Geometry::Flow);
+    let _ = toggled.metrics("o11");
+    toggled.layout.set_geometry(Geometry::Approximate);
+    for id in ["pop", "list", "o0", "o1", "o11"] {
+        assert_eq!(fresh.metrics(id), toggled.metrics(id), "#{id}");
+    }
+    assert_eq!(fresh.layout.document_scroll_size(&fresh.dom), toggled.layout.document_scroll_size(&toggled.dom));
+    // Approximate geometry is the upstream formula, not Chromium's.
+    assert_ne!(fresh.metrics("o1")[0], 200.0);
+}
