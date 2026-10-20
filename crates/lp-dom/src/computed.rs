@@ -542,7 +542,7 @@ pub fn resolve_len(value: &str, cx: &LengthContext) -> Option<(f64, f64)> {
     p.expect_exhausted().ok()?;
     match result {
         CalcValue::Linear(px, pct) => Some((px, pct)),
-        CalcValue::Number(n) if n == 0.0 => Some((0.0, 0.0)),
+        CalcValue::Number(0.0) => Some((0.0, 0.0)),
         CalcValue::Number(_) => None,
     }
 }
@@ -579,14 +579,15 @@ enum Color {
     /// Already-normalized Oklab/Oklch components and alpha.
     Oklab(f64, f64, f64, f64),
     Oklch(f64, f64, f64, f64),
-    CurrentColor,
+    /// `currentcolor`.
+    Current,
 }
 
 /// The computed color for `value`; `current` supplies `currentcolor`.
 pub fn serialize_color(value: &str, current: &mut dyn FnMut() -> Option<String>) -> Option<String> {
     let color = parse_color(value.trim())?;
     Some(match color {
-        Color::CurrentColor => return current(),
+        Color::Current => return current(),
         Color::Rgb(r, g, b, a) => serialize_rgb(r, g, b, a),
         Color::Oklab(l, a, b, alpha) => {
             format!("oklab({} {} {}{})", fmt_num(l), fmt_num(a), fmt_num(b), alpha_suffix(alpha))
@@ -626,7 +627,7 @@ fn serialize_alpha(a: f64) -> String {
 fn parse_color(value: &str) -> Option<Color> {
     let lower = value.to_ascii_lowercase();
     if lower == "currentcolor" {
-        return Some(Color::CurrentColor);
+        return Some(Color::Current);
     }
     if lower == "transparent" {
         return Some(Color::Rgb(0.0, 0.0, 0.0, 0.0));
