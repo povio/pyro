@@ -647,7 +647,7 @@ pub fn layout(dom: &Dom, doc: NodeId, src: &dyn FlowStyleSource, vw: f64, vh: f6
     }
     cx.out.document_width = w.ceil();
     cx.out.document_height = h.ceil();
-    cx.out
+    std::mem::take(&mut cx.out)
 }
 
 struct Ctx<'a> {
@@ -676,6 +676,21 @@ struct Ctx<'a> {
     /// one list per open positioned ancestor (bottom = initial containing
     /// block). Each entry: element, style, static position, fixed context.
     pending: Vec<Vec<Pending>>,
+    /// A measuring probe: its buffers go back to the memo when dropped.
+    probe: bool,
+}
+
+impl Drop for Ctx<'_> {
+    fn drop(&mut self) {
+        if self.probe {
+            let buffers = ProbeBuffers {
+                out: std::mem::take(&mut self.out),
+                by_order: std::mem::take(&mut self.by_order),
+                pending: std::mem::take(&mut self.pending),
+            };
+            self.memo.probe_buffers.borrow_mut().push(buffers);
+        }
+    }
 }
 
 /// Per-pass caches. Nested flex/table measurement would otherwise lay the
@@ -684,6 +699,10 @@ struct Ctx<'a> {
 /// A pass's shared view of an element's flow style (looked up many times per
 /// pass; cloning the struct on every lookup dominated layout time).
 type StyleRef = std::rc::Rc<FlowStyle>;
+
+/// The inline elements (and text node) owning an inline item, outermost
+/// first; shared by all items of the same node.
+type Owners = std::rc::Rc<[NodeId]>;
 
 #[derive(Default)]
 struct Memo {
@@ -694,6 +713,16 @@ struct Memo {
     heights: RefCell<FxHashMap<(NodeId, u64), f64>>,
     /// Atomic inline baseline by (element, content width bits, height bits).
     baselines: RefCell<FxHashMap<(NodeId, u64, u64), Option<f64>>>,
+    /// Buffers of finished measuring probes, reused (cleared, capacity kept)
+    /// by the next probe: probes lay whole subtrees out and are discarded.
+    probe_buffers: RefCell<Vec<ProbeBuffers>>,
+}
+
+#[derive(Default)]
+struct ProbeBuffers {
+    out: FlowResult,
+    by_order: Vec<Option<NodeId>>,
+    pending: Vec<Vec<Pending>>,
 }
 
 struct Pending {
@@ -725,7 +754,7 @@ enum InlineItem {
         width: f64,
         height: f64,
         space_before: f64,
-        owners: Vec<NodeId>,
+        owners: Owners,
         ascent: f64,
         /// The font's (ascent, descent) without leading: the content area
         /// that text and inline element boxes report.
@@ -735,14 +764,14 @@ enum InlineItem {
     Atomic {
         el: NodeId,
         style: StyleRef,
-        owners: Vec<NodeId>,
+        owners: Owners,
     },
     /// A block-level box inside inline content (block-in-inline): it ends the
     /// current line and takes its own margin-box height, without a strut.
     Block {
         el: NodeId,
         style: StyleRef,
-        owners: Vec<NodeId>,
+        owners: Owners,
     },
     /// An absolutely/fixed positioned box inside inline content: placed
     /// later against its containing block, from the current line position.
@@ -752,7 +781,7 @@ enum InlineItem {
     },
     /// An inline element that starts or ends (for empty inline boxes).
     Empty {
-        owners: Vec<NodeId>,
+        owners: Owners,
         height: f64,
         ascent: f64,
     },
@@ -774,7 +803,28 @@ impl<'a> Ctx<'a> {
             own_cb_height: None,
             first_baseline: None,
             last_baseline: None,
+            probe: false,
         }
+    }
+
+    /// A context for measuring a subtree (its boxes are discarded), on
+    /// reused buffers.
+    fn probe(&self) -> Ctx<'a> {
+        let mut cx = Ctx::new(self.dom, self.src, self.vw, self.vh, self.memo);
+        cx.probe = true;
+        if let Some(mut b) = self.memo.probe_buffers.borrow_mut().pop() {
+            b.out.boxes.clear();
+            b.out.texts.clear();
+            b.out.text_orders.clear();
+            b.out.document_width = 0.0;
+            b.out.document_height = 0.0;
+            b.by_order.clear();
+            b.pending.clear();
+            cx.out = b.out;
+            cx.by_order = b.by_order;
+            cx.pending = b.pending;
+        }
+        cx
     }
 
     fn style_of(&self, el: NodeId) -> Option<StyleRef> {
@@ -1562,7 +1612,7 @@ impl<'a> Ctx<'a> {
     ) -> f64 {
         let mut items = Vec::new();
         for &n in run {
-            self.collect_inline(n, parent, &[], &mut items);
+            self.collect_inline(n, parent, &Owners::from([]), &mut items);
         }
         let strut = text_extents(parent);
         let mut frags: FxHashMap<NodeId, Rect> = FxHashMap::default();
@@ -1679,7 +1729,7 @@ impl<'a> Ctx<'a> {
                     );
                     line_y += self.block_child(el, &style, x, line_y, width, fixed, shift);
                     if let Some(r) = self.out.boxes.get(&el).map(|b| b.rect) {
-                        for o in &owners {
+                        for o in owners.iter() {
                             union(&mut frags, &mut order_of, *o, r);
                         }
                     }
@@ -1766,7 +1816,7 @@ impl<'a> Ctx<'a> {
             if let Some((el, style)) = it.atomic {
                 self.atomic(el, &style, left, top, width, fixed, shift);
                 if let Some(r) = self.out.boxes.get(&el).map(|b| b.rect) {
-                    for o in &it.owners {
+                    for o in it.owners.iter() {
                         union(frags, order_of, *o, r);
                     }
                 }
@@ -1780,7 +1830,7 @@ impl<'a> Ctx<'a> {
                 }
                 None => Rect { x: left + shift.0, y: top + shift.1, width: it.width, height: it.height },
             };
-            for o in &it.owners {
+            for o in it.owners.iter() {
                 union(frags, order_of, *o, r);
             }
         }
@@ -1814,7 +1864,7 @@ impl<'a> Ctx<'a> {
         if let Some(&h) = self.memo.heights.borrow().get(&key) {
             return h;
         }
-        let mut probe = Ctx::new(self.dom, self.src, self.vw, self.vh, self.memo);
+        let mut probe = self.probe();
         probe.pending.push(Vec::new());
         let h = probe.contents(el, style, 0.0, 0.0, content_w, None, false, (0.0, 0.0));
         self.memo.heights.borrow_mut().insert(key, h);
@@ -1838,7 +1888,7 @@ impl<'a> Ctx<'a> {
         if let Some(&b) = self.memo.baselines.borrow().get(&key) {
             return b;
         }
-        let mut probe = Ctx::new(self.dom, self.src, self.vw, self.vh, self.memo);
+        let mut probe = self.probe();
         probe.pending.push(Vec::new());
         probe.contents(el, style, 0.0, 0.0, content_w, Some(content_h), false, (0.0, 0.0));
         let baseline = if flowroot {
@@ -1856,7 +1906,7 @@ impl<'a> Ctx<'a> {
                 // contents at its laid-out size, else its bottom border edge.
                 Some((c, Some(cs))) => probe.out.boxes.get(&c).copied().map(|b| {
                     let e = self.edges(&cs, content_w);
-                    let mut item = Ctx::new(self.dom, self.src, self.vw, self.vh, self.memo);
+                    let mut item = self.probe();
                     item.pending.push(Vec::new());
                     let cw = (b.rect.width - e.horizontal()).max(0.0);
                     let ch = (b.rect.height - e.vertical()).max(0.0);
@@ -1891,10 +1941,14 @@ impl<'a> Ctx<'a> {
 
     /// Flattens an inline-level node into items. `owners`: enclosing inline
     /// elements whose boxes include this content.
-    fn collect_inline(&mut self, n: NodeId, parent: &FlowStyle, owners: &[NodeId], items: &mut Vec<InlineItem>) {
+    fn collect_inline(&mut self, n: NodeId, parent: &FlowStyle, owners: &Owners, items: &mut Vec<InlineItem>) {
         match self.dom.node_type(n) {
             Ok(NodeType::Text) => {
-                let text = self.dom.char_data(n).unwrap_or("").to_owned();
+                let dom = self.dom;
+                let text = dom.char_data(n).unwrap_or("");
+                // The text node owns its words too: its box (FlowResult::texts)
+                // is the union of their fragments, for Range geometry.
+                let word_owners: Owners = owners.iter().copied().chain([n]).collect();
                 let fs = parent.font_size;
                 let (ascent, descent) = text_extents(parent);
                 let lh = ascent + descent;
@@ -1909,15 +1963,11 @@ impl<'a> Ctx<'a> {
                     if part.is_empty() {
                         continue;
                     }
-                    // The text node owns its words too: its box (FlowResult::texts)
-                    // is the union of their fragments, for Range geometry.
-                    let mut word_owners = owners.to_vec();
-                    word_owners.push(n);
                     items.push(InlineItem::Word {
                         width: text_width(part, fs, parent.font_weight),
                         height: lh,
                         space_before: if pending_space { space } else { 0.0 },
-                        owners: word_owners,
+                        owners: word_owners.clone(),
                         ascent,
                         content: font_metrics(fs),
                     });
@@ -1928,7 +1978,7 @@ impl<'a> Ctx<'a> {
                         width: 0.0,
                         height: 0.0,
                         space_before: space,
-                        owners: Vec::new(),
+                        owners: Owners::from([]),
                         ascent: 0.0,
                         content: (0.0, 0.0),
                     });
@@ -1945,15 +1995,14 @@ impl<'a> Ctx<'a> {
                     return;
                 }
                 if style.outer == OuterDisplay::Block {
-                    items.push(InlineItem::Block { el: n, style, owners: owners.to_vec() });
+                    items.push(InlineItem::Block { el: n, style, owners: owners.clone() });
                     return;
                 }
-                let mut with = owners.to_vec();
-                with.push(n);
                 if style.replaced || style.inner != InnerDisplay::Flow {
-                    items.push(InlineItem::Atomic { el: n, style, owners: owners.to_vec() });
+                    items.push(InlineItem::Atomic { el: n, style, owners: owners.clone() });
                     return;
                 }
+                let with: Owners = owners.iter().copied().chain([n]).collect();
                 let before = items.len();
                 for (c, _) in self.flatten_children(n) {
                     self.collect_inline(c, &style, &with, items);
@@ -2053,7 +2102,7 @@ struct LineItem {
     width: f64,
     height: f64,
     ascent: f64,
-    owners: Vec<NodeId>,
+    owners: Owners,
     atomic: Option<(NodeId, StyleRef)>,
     /// Text: the font's (ascent, descent) for its reported box.
     content: Option<(f64, f64)>,
@@ -2066,7 +2115,7 @@ impl Line {
         width: f64,
         height: f64,
         ascent: f64,
-        owners: Vec<NodeId>,
+        owners: Owners,
         atomic: Option<(NodeId, StyleRef)>,
     ) {
         self.ascent = self.ascent.max(ascent);
@@ -3474,7 +3523,7 @@ impl<'a> Ctx<'a> {
             (Some(h), _) => to_content(h),
             (None, Some(el)) => self.measure_height(*el, s, content_w),
             (None, None) => {
-                let mut probe = Ctx::new(self.dom, self.src, self.vw, self.vh, self.memo);
+                let mut probe = self.probe();
                 probe.pending.push(Vec::new());
                 probe.inline_run(&it.text, s, 0.0, 0.0, content_w.max(1.0), false, (0.0, 0.0))
             }
