@@ -1594,7 +1594,7 @@ impl<'a> Ctx<'a> {
     /// element's contents. Flex rows add their items and gaps.
     fn content_width(&self, el: NodeId, style: &FlowStyle, min: bool) -> f64 {
         if style.inner == InnerDisplay::Table {
-            return self.table_max_content(el, style);
+            return if min { self.table_min_content(el, style) } else { self.table_max_content(el, style) };
         }
         if style.inner == InnerDisplay::Grid {
             return self.grid_content_width(el, style, min);
@@ -3072,6 +3072,26 @@ impl<'a> Ctx<'a> {
         let (rows, cols) = self.table_rows(table);
         let (sx, _) = Self::spacing(style);
         self.table_columns(style, &rows, cols, None).iter().sum::<f64>() + sx * (cols as f64 + 1.0)
+    }
+
+    /// Min-content width of a table's content box: each column at least its
+    /// cells' declared widths and min-content widths (spanning cells aside,
+    /// as for the max-content columns). A fit-content box around a table
+    /// shrinks to this when its container is narrower (TOS finance tables:
+    /// columns sized by their headers, wider text cells wrapping).
+    fn table_min_content(&self, table: NodeId, style: &FlowStyle) -> f64 {
+        let (rows, cols) = self.table_rows(table);
+        let (sx, _) = Self::spacing(style);
+        let mut widths = vec![0.0f64; cols];
+        for row in &rows {
+            for c in row.cells.iter().filter(|c| c.span == 1) {
+                let e = self.edges(&c.style, 0.0);
+                let content = self.min_content(c.el, &c.style) + e.horizontal();
+                let declared = self.cell_width(c, 0.0, false).unwrap_or(0.0);
+                widths[c.col] = widths[c.col].max(content).max(declared);
+            }
+        }
+        widths.iter().sum::<f64>() + sx * (cols as f64 + 1.0)
     }
 
     /// Lays out a table's rows and cells in its content box; returns the

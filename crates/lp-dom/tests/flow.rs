@@ -3150,3 +3150,34 @@ fn sticky_boxes_inside_fixed_containers_follow_their_scroller_like_chromium() {
     );
     assert_eq!(p.layout.bounding_client_rect(&p.dom, p.id("t")).y, 50.0);
 }
+
+#[test]
+fn fit_content_around_a_table_shrinks_to_its_min_content_like_chromium() {
+    // TOS position finances: `w-fit min-w-full` column-flex wrappers around
+    // tables whose columns are sized by their headers. A table's min-content
+    // width was its max-content width, so the wrappers grew to every text
+    // cell's unwrapped width (2176px vs Chromium's 1822px), pushing the
+    // Profit column out of view (TS-88) and misaligning the totals tables.
+    // Chromium (800x600): the 600px column container's fit-content item is
+    // the table's min-content, 6 columns of 150px, with or without the
+    // table's min-width and in fixed layout.
+    let cols: String =
+        (0..6).map(|i| format!("<th style=\"width:150px;min-width:150px;padding:0\">h{i}</th>")).collect();
+    let cells: String = (0..6)
+        .map(|i| {
+            format!("<td style=\"padding:0\">some longer cell text that would make max content much wider {i}</td>")
+        })
+        .collect();
+    for extra in ["min-width:900px", "", "table-layout:fixed;min-width:900px"] {
+        let html = format!(
+            "<!doctype html><body style=\"margin:0\"><div style=\"display:flex;flex-direction:column;width:600px;height:400px\">\
+             <div id=item style=\"display:flex;flex-direction:column;width:fit-content;min-width:100%;flex:1 1 0%;min-height:0\">\
+             <div id=sc style=\"display:flex;flex-direction:column;width:fit-content;min-width:100%;flex:1 1 0%;min-height:0;overflow:auto\">\
+             <table id=tb style=\"width:100%;border-collapse:separate;border-spacing:0;{extra}\"><thead><tr>{cols}</tr></thead>\
+             <tbody><tr>{cells}</tr></tbody></table></div></div></div></body>"
+        );
+        let p = page(&html, Geometry::Flow);
+        let w = |id: &str| p.layout.bounding_client_rect(&p.dom, p.id(id)).width;
+        assert_eq!([w("item"), w("sc"), w("tb")], [900.0, 900.0, 900.0], "table style {extra:?}");
+    }
+}
