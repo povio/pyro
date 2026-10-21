@@ -2938,3 +2938,49 @@ fn scroll_into_view_if_needed_centers_only_when_needed_like_chromium() {
         assert_eq!(moved.is_empty(), before == after, "{name}: targets report exactly the moved scrollers");
     }
 }
+
+#[test]
+fn css_zoom_scales_used_lengths_like_chromium() {
+    // TOS AWB editor (positions-awb-customs "zooms the document"): the
+    // article is `width: 96rem` with `zoom: calc(var(--document-editor-scale)
+    // * 1.5)`, the scale `calc(210mm / 96rem)` (a length over a length). Flow
+    // ignored zoom (and that division), so the article stayed 1536px at
+    // every zoom step. Effective zoom multiplies absolute lengths, rem, font
+    // sizes and line heights of the element and its descendants;
+    // percentages stay relative.
+    let mut p = page(
+        "<!doctype html><body style='margin:0'>\
+         <article id=doc style='width:96rem;--scale:calc(210mm / 96rem);zoom:calc(var(--scale) * 1.5)'>\
+           <div id=inner style='width:100px;height:20px'></div><div id=half style='width:50%;height:1px'></div>\
+           <p id=em style='margin:0;font-size:10px;width:3em;height:1rem'>x</p>\
+         </article>\
+         <div id=outer style='zoom:2;width:100px'><div id=nested style='zoom:1.5;width:10px;height:10px'></div>\
+           <div id=text style='font-size:10px;line-height:12px'>zoomed</div></div>\
+         <div id=pct style='zoom:50%;width:200px;height:10px'></div>\
+         <div id=vw style='zoom:2;width:10vw;height:1px'></div>\
+         </body>",
+        Geometry::Flow,
+    );
+    let z = 210.0 * 96.0 / 25.4 / 1536.0 * 1.5;
+    let near = |a: f64, b: f64, what: &str| assert!((a - b).abs() < 0.05, "{what}: {a} vs {b}");
+    let doc = p.metrics("doc");
+    near(doc[2], 1536.0 * z, "article width");
+    near(p.metrics("inner")[2], 100.0 * z, "px width inside");
+    near(p.metrics("inner")[3], 20.0 * z, "px height inside");
+    near(p.metrics("half")[2], doc[2] / 2.0, "percentage of the zoomed parent");
+    near(p.metrics("em")[2], 30.0 * z, "em (zoomed font size)");
+    near(p.metrics("em")[3], 16.0 * z, "rem");
+    near(p.metrics("outer")[2], 200.0, "zoom 2");
+    near(p.metrics("nested")[2], 30.0, "nested zoom multiplies (2 x 1.5)");
+    near(p.metrics("pct")[2], 100.0, "percentage zoom");
+    near(p.metrics("text")[3], 24.0, "line height x zoom");
+    near(p.metrics("vw")[2], 160.0, "viewport units zoom too (800px viewport)");
+    // Zoom changes (the editor's zoom buttons) relayout.
+    let doc_el = p.id("doc");
+    p.dom
+        .set_attribute(doc_el, "style", "width:96rem;--scale:calc(210mm / 96rem);zoom:calc(var(--scale) * 1.4)")
+        .unwrap();
+    let z2 = 210.0 * 96.0 / 25.4 / 1536.0 * 1.4;
+    near(p.metrics("doc")[2], 1536.0 * z2, "article width after zoom out");
+    assert!(p.metrics("doc")[2] < doc[2]);
+}

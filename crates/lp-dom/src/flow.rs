@@ -475,8 +475,8 @@ pub struct FlowStyle {
     /// Natural size (px) of a loaded image (`<img>`), from its resource;
     /// None when unknown. Gives replaced sizing its intrinsic size and ratio.
     pub intrinsic: Option<(f64, f64)>,
-    /// Non-standard CSS `zoom` (1 = none). Carried for Stage 1; not yet
-    /// applied to used sizes.
+    /// Effective CSS `zoom` (the element's times its ancestors'; 1 = none),
+    /// already applied to the absolute lengths above.
     pub zoom: f64,
     // Flex container (Stage 2).
     pub flex_direction: FlexDirection,

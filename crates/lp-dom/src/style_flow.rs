@@ -60,7 +60,6 @@ impl StyleEngine {
         let tag = element.name.local.to_ascii_lowercase().to_string();
         let svg = element.name.ns == ns!(svg);
         let value = |name: &str| self.used_value(dom, el, name);
-        let font_size = px_of(value("font-size").as_deref()).unwrap_or(DEFAULT_FONT_SIZE);
         let root_font_size = dom
             .document_element(self.document())
             .ok()
@@ -68,13 +67,38 @@ impl StyleEngine {
             .and_then(|root| px_of(self.used_value(dom, root, "font-size").as_deref()))
             .unwrap_or(DEFAULT_FONT_SIZE);
         let viewport = self.viewport();
-        let cx = LengthContext {
-            font_size,
+        // CSS `zoom` (css-viewport, Chromium's standardized zoom): the used
+        // value of every absolute length is multiplied by the effective zoom,
+        // the product of the element's and its ancestors' zoom. Lengths
+        // resolve through `cx` (zoom applied); the font size scales once and
+        // `em` follows it.
+        let unzoomed = LengthContext {
+            font_size: DEFAULT_FONT_SIZE,
             root_font_size,
             viewport_width: viewport.width as f64,
             viewport_height: viewport.height as f64,
             line_height: None,
+            zoom: 1.0,
         };
+        let own_zoom = value("zoom")
+            .and_then(|v| {
+                let v = v.trim();
+                v.strip_suffix('%').map_or_else(
+                    || computed::resolve_number_in(v, &unzoomed),
+                    |p| p.parse::<f64>().ok().map(|p| p / 100.0),
+                )
+            })
+            .filter(|z| z.is_finite() && *z > 0.0)
+            .unwrap_or(1.0);
+        let parent_zoom = dom
+            .parent_element(el)
+            .ok()
+            .flatten()
+            .and_then(|p| <Self as FlowStyleSource>::flow_style(self, dom, p))
+            .map_or(1.0, |p| p.zoom);
+        let zoom = parent_zoom * own_zoom;
+        let font_size = px_of(value("font-size").as_deref()).unwrap_or(DEFAULT_FONT_SIZE) * zoom;
+        let cx = LengthContext { font_size, zoom, ..unzoomed };
         let line_height = value("line-height").and_then(|v| {
             let v = v.trim();
             if v.eq_ignore_ascii_case("normal") {
@@ -109,7 +133,7 @@ impl StyleEngine {
 
         // SVG internals have no CSS boxes; the outer <svg> is an atomic inline box.
         if svg && tag.as_str() != "svg" {
-            return Some(FlowStyle { outer: OuterDisplay::Contents, font_size, ..FlowStyle::default() });
+            return Some(FlowStyle { outer: OuterDisplay::Contents, font_size, zoom, ..FlowStyle::default() });
         }
         let display = value("display").unwrap_or_else(|| ua_display(&tag).to_owned()).trim().to_ascii_lowercase();
         let table_part = match display.as_str() {
@@ -145,7 +169,7 @@ impl StyleEngine {
             Some("sticky") => Position::Sticky,
             _ => Position::Static,
         };
-        let ua = ua_box(&tag, font_size);
+        let ua = ua_box(&tag, font_size, zoom);
         let side =
             |prefix: &str, i: usize| ["top", "right", "bottom", "left"].map(|s| format!("{prefix}-{s}"))[i].clone();
         let margin = [0, 1, 2, 3].map(|i| match value(&side("margin", i)) {
@@ -158,7 +182,7 @@ impl StyleEngine {
             let s = ["top", "right", "bottom", "left"][i];
             match value(&format!("border-{s}-style")).as_deref().map(str::trim) {
                 None | Some("none" | "hidden") => 0.0,
-                Some(_) => px_of(value(&format!("border-{s}-width")).as_deref()).unwrap_or(3.0),
+                Some(_) => px_of(value(&format!("border-{s}-width")).as_deref()).unwrap_or(3.0) * zoom,
             }
         });
         // Computed overflow per axis, after `visible` → `auto` coercion.
@@ -207,16 +231,8 @@ impl StyleEngine {
             },
             replaced: matches!(tag.as_str(), "img" | "iframe" | "video" | "canvas" | "embed" | "object" | "svg"),
             // A loaded <img>'s natural size (lp_dom::image via the embedder).
-            intrinsic: if tag == "img" { dom.natural_size(el) } else { None },
-            // Non-standard `zoom`: a number or percentage; `normal`/unknown values are 1.
-            zoom: value("zoom")
-                .and_then(|v| {
-                    let v = v.trim();
-                    v.strip_suffix('%')
-                        .map_or_else(|| computed::resolve_number(v), |p| p.parse::<f64>().ok().map(|p| p / 100.0))
-                })
-                .filter(|z| *z > 0.0)
-                .unwrap_or(1.0),
+            intrinsic: if tag == "img" { dom.natural_size(el).map(|(w, h)| (w * zoom, h * zoom)) } else { None },
+            zoom,
             flex_direction: match keyword("flex-direction").as_str() {
                 "row-reverse" => FlexDirection::RowReverse,
                 "column" => FlexDirection::Column,
@@ -355,35 +371,37 @@ struct UaBox {
 }
 
 /// UA margins/paddings (HTML rendering section), used when no author value applies.
-fn ua_box(tag: &str, font_size: f64) -> UaBox {
+/// `font_size` is the zoomed font size; absolute defaults scale by `zoom`.
+fn ua_box(tag: &str, font_size: f64, zoom: f64) -> UaBox {
     let em = |n: f64| Dim::px(n * font_size);
+    let px = |n: f64| Dim::px(n * zoom);
     let zero = Dim::px(0.0);
     let vertical = |v: Dim| [v, zero, v, zero];
     let margin = match tag {
-        "body" => [Dim::px(8.0); 4],
+        "body" => [px(8.0); 4],
         "p" | "dl" | "pre" => vertical(em(1.0)),
         "ul" | "ol" | "menu" => vertical(em(1.0)),
-        "blockquote" | "figure" => [em(1.0), Dim::px(40.0), em(1.0), Dim::px(40.0)],
+        "blockquote" | "figure" => [em(1.0), px(40.0), em(1.0), px(40.0)],
         "h1" => vertical(em(0.67)),
         "h2" => vertical(em(0.83)),
         "h3" => vertical(em(1.0)),
         "h4" => vertical(em(1.33)),
         "h5" => vertical(em(1.67)),
         "h6" => vertical(em(2.33)),
-        "dd" => [zero, zero, zero, Dim::px(40.0)],
+        "dd" => [zero, zero, zero, px(40.0)],
         "hr" => [em(0.5), Dim::Auto, em(0.5), Dim::Auto],
-        "fieldset" => [zero, Dim::px(2.0), zero, Dim::px(2.0)],
+        "fieldset" => [zero, px(2.0), zero, px(2.0)],
         _ => [zero; 4],
     };
     let padding = match tag {
-        "ul" | "ol" | "menu" => [Len::ZERO, Len::ZERO, Len::ZERO, Len::px(40.0)],
+        "ul" | "ol" | "menu" => [Len::ZERO, Len::ZERO, Len::ZERO, Len::px(40.0 * zoom)],
         "fieldset" => [
             Len::px(0.35 * font_size),
             Len::px(0.75 * font_size),
             Len::px(0.625 * font_size),
             Len::px(0.75 * font_size),
         ],
-        "td" | "th" => [Len::px(1.0); 4],
+        "td" | "th" => [Len::px(zoom); 4],
         _ => [Len::ZERO; 4],
     };
     UaBox { margin, padding }

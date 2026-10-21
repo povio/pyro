@@ -459,11 +459,23 @@ pub struct LengthContext {
     /// The element's used line height in px, for the `lh` unit (None: `lh`
     /// does not resolve).
     pub line_height: Option<f64>,
+    /// Effective CSS `zoom` (the element's and its ancestors', multiplied):
+    /// absolute lengths, `rem` and viewport units scale by it (as in
+    /// Chromium); `em` and `lh` follow the (already zoomed) font size and
+    /// line height.
+    pub zoom: f64,
 }
 
 impl LengthContext {
     pub fn fonts(font_size: f64, root_font_size: f64) -> Self {
-        LengthContext { font_size, root_font_size, viewport_width: 0.0, viewport_height: 0.0, line_height: None }
+        LengthContext {
+            font_size,
+            root_font_size,
+            viewport_width: 0.0,
+            viewport_height: 0.0,
+            line_height: None,
+            zoom: 1.0,
+        }
     }
 }
 
@@ -507,13 +519,15 @@ fn calc_product(p: &mut Parser<'_>, cx: &LengthContext) -> Option<CalcValue> {
                 };
             }
             Ok(Token::Delim('/')) => {
-                let CalcValue::Number(y) = calc_factor(p, cx)? else { return None };
-                if y == 0.0 {
-                    return None;
-                }
-                acc = match acc {
-                    CalcValue::Number(x) => CalcValue::Number(x / y),
-                    CalcValue::Linear(x, xp) => CalcValue::Linear(x / y, xp / y),
+                acc = match (acc, calc_factor(p, cx)?) {
+                    (_, CalcValue::Number(y) | CalcValue::Linear(y, 0.0)) if y == 0.0 => return None,
+                    (CalcValue::Number(x), CalcValue::Number(y)) => CalcValue::Number(x / y),
+                    (CalcValue::Linear(x, xp), CalcValue::Number(y)) => CalcValue::Linear(x / y, xp / y),
+                    // A length divided by a length is a number (CSS Values 4
+                    // typed arithmetic): `calc(210mm / 96rem)`. Percentages
+                    // have no basis here.
+                    (CalcValue::Linear(x, 0.0), CalcValue::Linear(y, 0.0)) => CalcValue::Number(x / y),
+                    _ => return None,
                 };
             }
             _ => {
@@ -608,18 +622,19 @@ fn nested(p: &mut Parser<'_>, cx: &LengthContext) -> Result<CalcValue, ParseErro
 
 fn absolute_px(value: f64, unit: &str, cx: &LengthContext) -> Option<f64> {
     let unit = unit.to_ascii_lowercase();
+    let z = cx.zoom;
     Some(match unit.as_str() {
-        "px" => value,
-        "rem" => value * cx.root_font_size,
+        "px" => value * z,
+        "rem" => value * cx.root_font_size * z,
         "em" => value * cx.font_size,
-        "pt" => value * 96.0 / 72.0,
-        "pc" => value * 16.0,
-        "in" => value * 96.0,
-        "cm" => value * 96.0 / 2.54,
-        "mm" => value * 96.0 / 25.4,
-        "q" => value * 96.0 / 101.6,
-        "vw" | "dvw" | "svw" | "lvw" if cx.viewport_width > 0.0 => value * cx.viewport_width / 100.0,
-        "vh" | "dvh" | "svh" | "lvh" if cx.viewport_height > 0.0 => value * cx.viewport_height / 100.0,
+        "pt" => value * 96.0 / 72.0 * z,
+        "pc" => value * 16.0 * z,
+        "in" => value * 96.0 * z,
+        "cm" => value * 96.0 / 2.54 * z,
+        "mm" => value * 96.0 / 25.4 * z,
+        "q" => value * 96.0 / 101.6 * z,
+        "vw" | "dvw" | "svw" | "lvw" if cx.viewport_width > 0.0 => value * cx.viewport_width / 100.0 * z,
+        "vh" | "dvh" | "svh" | "lvh" if cx.viewport_height > 0.0 => value * cx.viewport_height / 100.0 * z,
         "lh" if cx.line_height.is_some() => value * cx.line_height.unwrap_or_default(),
         _ => return None,
     })
@@ -646,6 +661,18 @@ pub fn resolve_length(value: &str, font_size: f64, root_font_size: f64) -> Optio
     }
     let (px, _) = resolve_len(value, &LengthContext::fonts(font_size, root_font_size))?;
     Some(format!("{}px", fmt_num(px)))
+}
+
+/// A unitless number or `calc()` of numbers (lengths divided by lengths
+/// included, resolved in `cx`), else `None`.
+pub fn resolve_number_in(value: &str, cx: &LengthContext) -> Option<f64> {
+    let mut p = Parser::new(value.trim());
+    let result = calc_factor(&mut p, cx)?;
+    p.expect_exhausted().ok()?;
+    match result {
+        CalcValue::Number(n) => Some(n),
+        CalcValue::Linear(..) => None,
+    }
 }
 
 /// A unitless number or `calc()` of numbers, else `None`.
@@ -1113,12 +1140,21 @@ mod tests {
         assert_eq!(resolve_length("calc((1px + 2px) * 2)", 16.0, 16.0).as_deref(), Some("6px"));
         assert_eq!(resolve_length("13.333333px", 16.0, 16.0).as_deref(), Some("13.3333px"));
         assert_eq!(resolve_number("calc(1 + 1)"), Some(2.0));
+        // Typed arithmetic: a length divided by a length is a number.
+        assert_eq!(resolve_number("calc(10px / 4px)"), Some(2.5));
+        assert_eq!(resolve_number("calc(calc(96px / 48px) * 1.5)"), Some(3.0));
+        assert_eq!(resolve_number("calc(1px / 0px)"), None);
+        assert_eq!(resolve_number("calc(10% / 5px)"), None);
+        assert_eq!(resolve_len("calc(10px / 2px)", &LengthContext::fonts(16.0, 16.0)), None, "a number, not a length");
+        let mm_rem = resolve_number_in("calc(210mm / 96rem)", &LengthContext::fonts(16.0, 16.0)).unwrap();
+        assert!((mm_rem - 210.0 * 96.0 / 25.4 / 1536.0).abs() < 1e-9);
         let cx = LengthContext {
             font_size: 10.0,
             root_font_size: 14.0,
             viewport_width: 1440.0,
             viewport_height: 900.0,
             line_height: None,
+            zoom: 1.0,
         };
         assert_eq!(resolve_len("calc(100% - 8px)", &cx), Some((-8.0, 100.0)));
         assert_eq!(resolve_len("50vw", &cx), Some((720.0, 0.0)));

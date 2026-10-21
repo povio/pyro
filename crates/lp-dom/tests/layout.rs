@@ -2778,8 +2778,11 @@ fn flow_style_reports_used_values_from_the_cascade() {
     let svg = get("svg").unwrap();
     assert!(svg.replaced);
     assert_eq!(get("path").unwrap().outer, OuterDisplay::Contents);
-    // UA margins when no author value applies: p gets 1em at its 14px root-inherited size.
-    assert_eq!(get("para").unwrap().margin[0], Dim::px(14.0));
+    // UA margins when no author value applies: p gets 1em at its 14px
+    // root-inherited size, zoomed by its `zoom: 0.5` (used values carry the
+    // effective zoom, as Chromium's standardized zoom lays it out): 7px.
+    assert_eq!(get("para").unwrap().margin[0], Dim::px(7.0));
+    assert_eq!(get("para").unwrap().font_size, 7.0);
     assert!(get("gone").is_none());
 }
 

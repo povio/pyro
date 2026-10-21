@@ -4193,6 +4193,7 @@ impl StyleEngine {
             viewport_width: self.viewport.width as f64,
             viewport_height: self.viewport.height as f64,
             line_height: None,
+            zoom: 1.0,
         }
     }
 
@@ -4260,6 +4261,7 @@ impl StyleEngine {
             viewport_width: self.viewport.width as f64,
             viewport_height: self.viewport.height as f64,
             line_height: None,
+            zoom: 1.0,
         };
         match computed::resolve_len(&value, &cx) {
             Some((px, pct)) => px + pct * parent / 100.0,
