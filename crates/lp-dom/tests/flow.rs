@@ -2893,3 +2893,48 @@ fn inline_custom_properties_resolve_through_var() {
     assert_eq!(w("own"), 14.0);
     assert_eq!(w("escaped"), 15.0, "an escape can spell the name");
 }
+
+#[test]
+fn scroll_into_view_if_needed_centers_only_when_needed_like_chromium() {
+    // CDP DOM.scrollIntoViewIfNeeded, measured in Chromium (800x600, body
+    // margin 0): a fully visible box, or one covering the scrollport, does not
+    // scroll; a hidden box is centered; a partly visible one comes in by its
+    // nearest edge. Each overflow ancestor first, then the window. Playwright
+    // sends it before every click, and react-aria closes its popovers on any
+    // scroll of the trigger's ancestors, so a visible node must not move.
+    // (name, inside the 200px scroller at y=100, offset, height, pre-scroll, [window, scroller])
+    type Case = (&'static str, bool, u32, u32, i32, [u32; 2]);
+    let cases: [Case; 11] = [
+        ("visible", false, 100, 50, 0, [0, 0]),
+        ("hidden-below", false, 1000, 50, 0, [725, 0]),
+        ("partial-bottom", false, 580, 50, 0, [30, 0]),
+        ("hidden-above", false, 300, 50, 1000, [25, 0]),
+        ("partial-top", false, 480, 50, 500, [480, 0]),
+        ("tall-hidden", false, 1000, 900, 0, [1150, 0]),
+        ("covers", false, 0, 3000, 100, [100, 0]),
+        ("box-visible", true, 50, 40, 0, [0, 0]),
+        ("box-hidden-below", true, 500, 40, 0, [0, 420]),
+        ("box-partial", true, 180, 40, 0, [0, 20]),
+        ("box-hidden-above", true, 400, 40, 1000, [0, 320]),
+    ];
+    for (name, boxed, offset, height, pre, [window, scroller]) in cases {
+        let target = format!("<div id=t style=\"height:{height}px;width:100px\"></div>");
+        let html = if boxed {
+            format!("<!doctype html><body style=\"margin:0\"><div style=\"height:100px\"></div><div id=s style=\"height:200px;overflow:auto\"><div style=\"height:{offset}px\"></div>{target}<div style=\"height:2000px\"></div></div><div style=\"height:3000px\"></div></body>")
+        } else {
+            format!("<!doctype html><body style=\"margin:0\"><div id=s></div><div style=\"height:{offset}px\"></div>{target}<div style=\"height:5000px\"></div></body>")
+        };
+        let mut p = page(&html, Geometry::Flow);
+        let (s, t) = (p.id("s"), p.id("t"));
+        if boxed {
+            p.layout.element_scroll_to(&p.dom, s, None, Some(pre));
+        } else {
+            p.layout.window_scroll_to(&p.dom, None, Some(pre));
+        }
+        let before = (p.layout.scroll_y(), p.layout.scroll_top(s));
+        let moved = p.layout.scroll_into_view_if_needed_targets(&p.dom, t);
+        let after = (p.layout.scroll_y(), p.layout.scroll_top(s));
+        assert_eq!([after.0, after.1], [window, scroller], "{name}");
+        assert_eq!(moved.is_empty(), before == after, "{name}: targets report exactly the moved scrollers");
+    }
+}

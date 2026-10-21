@@ -1531,6 +1531,72 @@ impl Layout {
         self.scroll_into_view(dom, el) || !moved.is_empty()
     }
 
+    /// CDP `DOM.scrollIntoViewIfNeeded` (Blink's center-if-needed alignment),
+    /// changed targets in delivery order: per axis, each overflow ancestor
+    /// inside-out and then the viewport leave a box that is fully visible (or
+    /// covers the scrollport) alone, center a box that is entirely hidden and
+    /// bring a partly visible one in by its nearest edge. The approximate
+    /// geometry's client rects cannot tell whether a box is in view, so it
+    /// keeps the `scrollIntoView` start reveal.
+    pub fn scroll_into_view_if_needed_targets(&mut self, dom: &Dom, el: NodeId) -> Vec<ScrollTarget> {
+        if !self.flow_mode() {
+            return self.scroll_into_view_targets(dom, el);
+        }
+        if !self.is_visible(dom, el) {
+            return Vec::new();
+        }
+        let mut moved = Vec::new();
+        let mut cur = dom.parent_element(el).ok().flatten();
+        while let Some(node) = cur {
+            if self.is_root_container(dom, node) {
+                break;
+            }
+            let axes = self.style.overflow_axes(dom, node);
+            let explicit = self.element_scroll.contains_key(&node);
+            if axes.x || axes.y || explicit {
+                let target = self.bounding_client_rect(dom, el);
+                let container = self.bounding_client_rect(dom, node);
+                let left = (axes.x || explicit)
+                    .then(|| {
+                        center_if_needed_offset(
+                            target.left() - container.left(),
+                            target.width,
+                            self.client_width(dom, node),
+                            self.scroll_left(node),
+                        )
+                    })
+                    .flatten();
+                let top = (axes.y || explicit)
+                    .then(|| {
+                        center_if_needed_offset(
+                            target.top() - container.top(),
+                            target.height,
+                            self.client_height(dom, node),
+                            self.scroll_top(node),
+                        )
+                    })
+                    .flatten();
+                if self.element_scroll_to(dom, node, left, top) {
+                    moved.push(ScrollTarget::Container(node));
+                }
+            }
+            cur = dom.parent_element(node).ok().flatten();
+        }
+        // Fixed boxes do not move with the window.
+        if self.flow_mode() && self.flow_box(dom, el).is_some_and(|b| b.fixed) {
+            return moved;
+        }
+        let target = self.bounding_client_rect(dom, el);
+        let left =
+            center_if_needed_offset(target.left(), target.width, self.inner_width() as f64, self.window_scroll.0);
+        let top =
+            center_if_needed_offset(target.top(), target.height, self.inner_height() as f64, self.window_scroll.1);
+        if self.window_scroll_to(dom, left, top) {
+            moved.push(ScrollTarget::Viewport);
+        }
+        moved
+    }
+
     // ----- getComputedStyle --------------------------------------------------
 
     /// `getComputedStyle(el).getPropertyValue(name)`
@@ -1610,6 +1676,17 @@ fn nearest_scroll_offset(start: f64, size: f64, viewport: f64, current: u32) -> 
     let delta =
         if (start < 0.0 && size <= viewport) || (end > viewport && size > viewport) { start } else { end - viewport };
     Some((current as f64 + delta).round().clamp(0.0, i32::MAX as f64) as i32)
+}
+
+// Blink's center-if-needed on one axis: a fully visible box, or one covering
+// the scrollport, stays; a hidden box is centered; a partly visible one is
+// brought in by its nearest edge.
+fn center_if_needed_offset(start: f64, size: f64, viewport: f64, current: u32) -> Option<i32> {
+    let end = start + size;
+    if end <= 0.0 || start >= viewport {
+        return Some((current as f64 + start + size / 2.0 - viewport / 2.0).round().clamp(0.0, i32::MAX as f64) as i32);
+    }
+    nearest_scroll_offset(start, size, viewport, current)
 }
 
 // Focusing a box already visible on an axis must not perturb that scroll.

@@ -3149,6 +3149,31 @@ fn scroll_into_view_if_needed_reveals_a_node_relative_rect() {
 }
 
 #[test]
+fn scroll_into_view_if_needed_leaves_a_visible_node_alone() {
+    // Chromium's DOM.scrollIntoViewIfNeeded does not scroll a node that is
+    // already in view. Playwright sends it before every click; start-aligning
+    // the window instead fired a scroll that react-aria's close-on-scroll
+    // treats as moving the trigger, so a combobox popover on any page taller
+    // than the viewport never rendered.
+    let mut h = Harness::new();
+    // Flow geometry (TOS runs it): approximate client rects cannot tell what is in view.
+    let page = h.browser.host().thread.browser.pages[0].main_frame.page_dom.as_ref().unwrap().clone();
+    page.layout.borrow_mut().set_geometry(lp_dom::layout::Geometry::Flow);
+    let setup = h.page(
+        "Runtime.evaluate",
+        json!({"expression": "document.body.innerHTML = '<div style=\"height:150px\"></div><button id=b>b</button><div style=\"height:3000px\"></div>'; \
+            globalThis.scrolls = []; addEventListener('scroll', e => scrolls.push(e.target === document ? 'document' : e.target.id), true); \
+            document.querySelector('#b')"}),
+    );
+    let object = setup["result"]["result"]["objectId"].clone();
+    assert_eq!(eval_value(&mut h, "(() => { const r = document.querySelector('#b').getBoundingClientRect(); return r.top > 0 && r.bottom < innerHeight; })()"), json!(true));
+    let r = h.page("DOM.scrollIntoViewIfNeeded", json!({ "objectId": object }));
+    assert_eq!(r["result"], json!({}), "{r}");
+    h.run_for(60);
+    assert_eq!(eval_value(&mut h, "[scrollY, scrolls.join()]"), json!([0, ""]));
+}
+
+#[test]
 fn scroll_events_from_scroll_into_view_wait_for_the_next_frame() {
     // Chromium fires the scroll event of DOM.scrollIntoViewIfNeeded (and of
     // scripted scrolls) in a later rendering update, after the commands that
