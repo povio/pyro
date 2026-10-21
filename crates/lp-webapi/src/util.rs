@@ -70,3 +70,14 @@ pub fn to_u32(v: Value<'_>) -> JsResult<u32> {
 pub fn to_i32(v: Value<'_>) -> JsResult<i32> {
     Ok(to_u32(v)? as i32)
 }
+
+/// ToNumber -> a scroll offset in CSS px. CSSOM View takes an unrestricted
+/// double; Chromium (device scale 1) rounds to the nearest pixel, half up,
+/// treats non-finite values as 0 and clamps huge ones (no WebIDL wrapping).
+pub fn to_scroll_offset(v: Value<'_>) -> JsResult<i32> {
+    let n = v.to_number()?;
+    if !n.is_finite() {
+        return Ok(0);
+    }
+    Ok((n + 0.5).floor().clamp(i32::MIN as f64, i32::MAX as f64) as i32)
+}

@@ -170,9 +170,12 @@ fn scroll_args(a: &Args<'_>) -> JsResult<(Option<i32>, Option<i32>)> {
     if let Some(o) = a.get(0).as_object() {
         let l = o.get("left")?;
         let t = o.get("top")?;
-        Ok(((!l.is_undefined()).then(|| to_i32(l)).transpose()?, (!t.is_undefined()).then(|| to_i32(t)).transpose()?))
+        Ok((
+            (!l.is_undefined()).then(|| to_scroll_offset(l)).transpose()?,
+            (!t.is_undefined()).then(|| to_scroll_offset(t)).transpose()?,
+        ))
     } else if a.len() >= 2 {
-        Ok((Some(to_i32(a.get(0))?), Some(to_i32(a.get(1))?)))
+        Ok((Some(to_scroll_offset(a.get(0))?), Some(to_scroll_offset(a.get(1))?)))
     } else {
         Ok((None, None))
     }
@@ -202,7 +205,7 @@ pub(crate) fn scroll_get<'s>(s: &Scope<'s>, n: &NodeData, top: bool) -> JsResult
 }
 
 pub(crate) fn scroll_set(_s: &Scope<'_>, n: &NodeData, v: Value<'_>, top: bool) -> JsResult<()> {
-    let value = to_i32(v)?;
+    let value = to_scroll_offset(v)?;
     let page = n.page();
     let moved = {
         let dom = page.dom.borrow();

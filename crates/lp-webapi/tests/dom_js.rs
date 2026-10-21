@@ -4932,3 +4932,40 @@ fn range_over_text_reports_the_text_box_in_flow_geometry() {
     );
     assert_eq!(got, "8,5,17,true,8,17,0,0");
 }
+
+#[test]
+fn scroll_offsets_round_like_chromium_so_synced_panes_settle() {
+    // TOS useScrollSync mirrors two panes by ratio from their scroll events
+    // (target.scrollTop = ratio * range). Chromium rounds the written offset
+    // to the nearest pixel, so main 1237 -> sidebar 686 -> main 1237 settles
+    // after 2 events. Truncation (ToInt32) moved each pane 1-2px per round
+    // and ping-ponged ~1200 scroll tasks down to 0. Values measured in
+    // Chromium (Playwright 1.59.1).
+    let e = env("<!doctype html><body style=\"margin:0\"><div id=m style=\"height:500px;overflow:auto\"><div style=\"height:5003px\"></div></div><div id=s style=\"height:500px;overflow:auto\"><div style=\"height:2997px\"></div></div><div style=\"height:9000px\"></div></body>");
+    e.page.layout.borrow_mut().set_geometry(lp_dom::layout::Geometry::Flow);
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    let got = eval(
+        &e.main,
+        "(() => { const m = document.getElementById('m'); const out = [];
+           for (const v of [10.5, 10.49, 1e10, -3, 4294967396, NaN]) { m.scrollTop = 0; m.scrollTop = v; out.push(m.scrollTop); }
+           m.scrollTo({ top: 20.5 }); out.push(m.scrollTop);
+           m.scrollTo(0, 30.4); out.push(m.scrollTop);
+           m.scrollBy(0, 0.5); out.push(m.scrollTop);
+           window.scrollTo(0, 40.5); out.push(scrollY);
+           m.scrollTop = 0; return out.join(); })()",
+    );
+    assert_eq!(got, "11,10,4503,0,4503,0,21,30,31,41");
+    tasks.drain();
+    eval(
+        &e.main,
+        "globalThis.log = [];
+         const m = document.getElementById('m'), s = document.getElementById('s');
+         const sync = (src, t) => { t.scrollTop = src.scrollTop / (src.scrollHeight - src.clientHeight) * (t.scrollHeight - t.clientHeight); log.push(src.id + src.scrollTop + '>' + t.scrollTop); };
+         m.addEventListener('scroll', () => sync(m, s));
+         s.addEventListener('scroll', () => sync(s, m));
+         m.scrollTop = 1237; 1",
+    );
+    tasks.drain();
+    assert_eq!(eval(&e.main, "log.join(' ')"), "m1237>686 s686>1237");
+}
