@@ -100,6 +100,58 @@ fn dump_flow_snapshot() {
             }
             eprintln!("{n} x (20 class updates + style flush): {:?} per iteration", t.elapsed() / n as u32);
         }
+        if std::env::var("FLOW_PROFILE_BOUNDARIES").is_ok() {
+            // Analysis for subtree relayout: for each element, the subtree under
+            // its nearest size-contained ancestor (static: px width and height,
+            // overflow clipped both ways; dynamic: overflow clipped both ways,
+            // its size checked after relayout) as a share of all elements.
+            use lp_dom::flow::{Dim, FlowStyleSource};
+            let total = els.len() as f64;
+            let index: std::collections::HashMap<_, _> = els.iter().enumerate().map(|(i, &e)| (e, i)).collect();
+            let mut size = vec![1usize; els.len()];
+            for (i, &e) in els.iter().enumerate().rev() {
+                if let Ok(Some(parent)) = dom.parent_element(e) {
+                    if let Some(&pi) = index.get(&parent) {
+                        size[pi] += size[i];
+                    }
+                }
+            }
+            let px = |d: &Dim| matches!(d, Dim::Len(l) if l.percent == 0.0);
+            let mut stat = Vec::new();
+            let mut dynamic = Vec::new();
+            for &e in &els {
+                let (mut s_found, mut d_found) = (None, None);
+                let mut cur = dom.parent_element(e).ok().flatten();
+                while let Some(a) = cur {
+                    if let Some(st) = layout.style().flow_style(&dom, a) {
+                        let clips = st.clips_x && st.clips_y;
+                        if d_found.is_none() && clips {
+                            d_found = Some(a);
+                        }
+                        if s_found.is_none() && clips && px(&st.width) && px(&st.height) {
+                            s_found = Some(a);
+                        }
+                    }
+                    if s_found.is_some() && d_found.is_some() {
+                        break;
+                    }
+                    cur = dom.parent_element(a).ok().flatten();
+                }
+                let share =
+                    |f: Option<lp_dom::NodeId>| f.and_then(|a| index.get(&a)).map_or(1.0, |&i| size[i] as f64 / total);
+                stat.push(share(s_found));
+                dynamic.push(share(d_found));
+            }
+            for (name, mut v) in [("static", stat), ("dynamic", dynamic)] {
+                v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                let q = |p: f64| v[((v.len() - 1) as f64 * p) as usize];
+                let mean = v.iter().sum::<f64>() / v.len() as f64;
+                eprintln!(
+                    "boundaries {name}: relayout share of {} elements: p10 {:.3} median {:.3} p90 {:.3} mean {:.3} (1.0 = whole document)",
+                    v.len(), q(0.1), q(0.5), q(0.9), mean
+                );
+            }
+        }
         if let Ok(n) = std::env::var("FLOW_PROFILE_PORTAL") {
             // Portal churn on body (React overlays): append, lay out, remove.
             let n = n.parse::<usize>().unwrap_or(1);
