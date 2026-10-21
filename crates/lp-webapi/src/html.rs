@@ -801,7 +801,11 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
         Ok(s.undefined())
     });
     def.method("select", 0, |s, n, _a| {
-        if has_selection(n) {
+        // select() also applies to number inputs, though the selection API
+        // does not: Chromium selects their whole value, so the next edit
+        // (Playwright fill: select(), then Input.insertText) replaces it.
+        let number = n.page().dom.borrow().input_type(n.id).is_ok_and(|t| t == InputType::Number);
+        if has_selection(n) || number {
             let mut dom = n.page().dom.borrow_mut();
             let len = lp_dom::dom::utf16_len(&dom.value(n.id).js()?);
             dom.set_selection_range(n.id, 0, len).js()?;

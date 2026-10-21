@@ -3237,3 +3237,52 @@ fn input_hover_after_scroll_carries_the_previous_element_like_chromium() {
         json!("pointerout@span<hs pointerleave@span<hs pointerover@hs<span pointerenter@field<span pointerenter@hs<span mouseout@span<hs mouseleave@span<hs mouseover@hs<span mouseenter@field<span mouseenter@hs<span")
     );
 }
+
+#[test]
+fn select_then_insert_text_replaces_a_number_inputs_value_like_chromium() {
+    // Playwright's fill() on input[type=number] is select(), focus(), then
+    // Input.insertText. select() did nothing for number inputs (they have no
+    // selection API), so the text was appended: TOS Projects split read
+    // "10.75" for fill("0.75") over "1" and the Create Position button
+    // stayed disabled. Chromium replaces the value (its queued `select`
+    // event timing varies, so it is not asserted); the selection API still
+    // reports null and throws.
+    let mut h = Harness::new();
+    eval_value(
+        &mut h,
+        "document.body.innerHTML = '<input id=n type=number max=2 step=any value=1><input id=n2 type=number value=1.26>'; \
+         globalThis.ev = []; for (const id of ['n', 'n2']) for (const type of ['select', 'beforeinput', 'input']) \
+           document.getElementById(id).addEventListener(type, e => ev.push(id + ':' + type + '=' + e.target.value)); 1",
+    );
+    let fill = |h: &mut Harness, id: &str, text: &str| {
+        eval_value(
+            h,
+            &format!("(() => {{ const e = document.getElementById('{id}'); e.select(); e.focus(); return 1; }})()"),
+        );
+        assert_eq!(h.page("Input.insertText", json!({ "text": text }))["result"], json!({}));
+    };
+    fill(&mut h, "n", "0.75");
+    fill(&mut h, "n2", "1.25");
+    assert_eq!(
+        eval_value(
+            &mut h,
+            "(() => { const n = document.getElementById('n'), n2 = document.getElementById('n2'); \
+             return [n.value, n2.value, n.validity.valid, n.selectionStart, ev.filter(e => !e.includes(':select')).join(' ')]; })()"
+        ),
+        json!([
+            "0.75",
+            "1.25",
+            true,
+            null,
+            "n:beforeinput=1 n:input=0.75 n2:beforeinput=1.26 n2:input=1.25"
+        ])
+    );
+    // The selection API stays unavailable on number inputs.
+    assert_eq!(
+        eval_value(
+            &mut h,
+            "(() => { try { document.getElementById('n').setSelectionRange(0, 1); return 'ok'; } catch (e) { return e.name; } })()"
+        ),
+        json!("InvalidStateError")
+    );
+}
