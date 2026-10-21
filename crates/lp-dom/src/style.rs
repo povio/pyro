@@ -1084,6 +1084,10 @@ struct RuleSet {
     /// The other `:has()` anchors: changes below a matching ancestor (within
     /// `depth` levels) may restyle it, its subtree and later siblings.
     has_anchors: Vec<HasAnchor>,
+    /// Keys of compounds testing `:valid`/`:invalid`. A form, fieldset or
+    /// select is valid only if its controls are, so changes below one that
+    /// matches a key may restyle it, its subtree and later siblings.
+    validity_keys: Vec<AnchorKey>,
     /// Every author declaration of each selector, bucketed like `rules`, for
     /// the generic computed values (`StyleEngine::declared_map`).
     generic_rules: Vec<GenericRule>,
@@ -1198,6 +1202,7 @@ struct Builder<'v> {
     properties: FxHashMap<String, (bool, Option<Rc<str>>)>,
     has_relative: bool,
     has_anchors: Vec<HasAnchor>,
+    validity_keys: Vec<AnchorKey>,
 }
 
 impl<'v> Builder<'v> {
@@ -1215,6 +1220,7 @@ impl<'v> Builder<'v> {
             properties: FxHashMap::default(),
             has_relative: false,
             has_anchors: Vec::new(),
+            validity_keys: Vec::new(),
         }
     }
 
@@ -1237,6 +1243,16 @@ impl<'v> Builder<'v> {
                             for a in anchors {
                                 if !self.has_anchors.contains(&a) {
                                     self.has_anchors.push(a);
+                                }
+                            }
+                        } else {
+                            self.has_relative = true;
+                        }
+                        let mut keys = Vec::new();
+                        if collect_validity_keys(sel, &mut keys) {
+                            for k in keys {
+                                if !self.validity_keys.contains(&k) {
+                                    self.validity_keys.push(k);
                                 }
                             }
                         } else {
@@ -1461,6 +1477,7 @@ impl<'v> Builder<'v> {
         rs.properties = std::mem::take(&mut self.properties);
         rs.has_relative = self.has_relative;
         rs.has_anchors = std::mem::take(&mut self.has_anchors);
+        rs.validity_keys = std::mem::take(&mut self.validity_keys);
         for (name, rule) in self.customs.into_iter().map(to_rule) {
             rs.customs.entry(name).or_default().push(rule);
         }
@@ -1570,8 +1587,14 @@ pub fn with_pass_memo<R>(f: impl FnOnce() -> R) -> R {
 /// combinators, inheritance) and its later siblings with their subtrees
 /// (sibling combinators); a child-list or text change affects the parent
 /// the same way (:empty, :nth-child, new or removed nodes).
-fn invalidation_roots(dom: &Dom, changes: &[crate::dom::Change], anchors: &[HasAnchor]) -> Option<Vec<u32>> {
+fn invalidation_roots(
+    dom: &Dom,
+    changes: &[crate::dom::Change],
+    anchors: &[HasAnchor],
+    validity: &[AnchorKey],
+) -> Option<Vec<u32>> {
     use crate::dom::Change;
+    use crate::node::NodeKind;
     let mut roots: Vec<u32> = Vec::new();
     let mut seen = FxHashSet::default();
     // Nodes whose following siblings are already roots too: a walk can stop
@@ -1587,33 +1610,90 @@ fn invalidation_roots(dom: &Dom, changes: &[crate::dom::Change], anchors: &[HasA
             cur = dom.n(cur).next;
         }
     };
-    for c in changes {
-        // :has() anchors among the ancestors of the changed nodes.
-        if !anchors.is_empty() {
-            let first = match *c {
-                Change::Attr(i) | Change::State(i) => dom.n(i).parent,
-                Change::Children(p) | Change::Removed(p, _) => p,
-                Change::Text(t) => dom.n(t).parent,
-                Change::Unknown => NIL,
-            };
-            let mut level = 1u32;
-            let mut cur = first;
-            while cur != NIL {
-                if let crate::node::NodeKind::Element(e) = &dom.n(cur).kind {
-                    if anchors.iter().any(|a| a.depth.is_none_or(|d| level <= d) && a.key.matches(e)) {
-                        push_with_siblings(&mut roots, &mut seen, cur);
-                    }
-                } else {
-                    break;
-                }
-                cur = dom.n(cur).parent;
-                level += 1;
+    let is_radio = |i: u32| {
+        matches!(&dom.n(i).kind, NodeKind::Element(e) if e.is_html() && e.name.local == local_name!("input"))
+            && dom.input_type_idx(i) == crate::forms::InputType::Radio
+    };
+    // Ancestors (from `first` up) that a change below may restyle: `:has()`
+    // anchors within their depth, and forms, fieldsets and selects tested
+    // with `:valid`/`:invalid` (their validity is their controls').
+    let walk_up = |first: u32| -> Vec<u32> {
+        let mut out = Vec::new();
+        if anchors.is_empty() && validity.is_empty() {
+            return out;
+        }
+        let mut level = 1u32;
+        let mut cur = first;
+        while cur != NIL {
+            let NodeKind::Element(e) = &dom.n(cur).kind else { break };
+            let anchor = anchors.iter().any(|a| a.depth.is_none_or(|d| level <= d) && a.key.matches(e));
+            let validated = !validity.is_empty()
+                && e.is_html()
+                && matches!(&*e.name.local, "form" | "fieldset" | "select")
+                && validity.iter().any(|k| k.matches(e));
+            if anchor || validated {
+                out.push(cur);
             }
+            cur = dom.n(cur).parent;
+            level += 1;
+        }
+        out
+    };
+    for c in changes {
+        let first = match *c {
+            Change::Attr(i) | Change::State(i) => dom.n(i).parent,
+            Change::Children(p) | Change::Removed(p, _) => p,
+            Change::Text(t) => dom.n(t).parent,
+            Change::Unknown => NIL,
+        };
+        for a in walk_up(first) {
+            push_with_siblings(&mut roots, &mut seen, a);
         }
         let start = match *c {
-            Change::Attr(i) | Change::State(i) => i,
-            Change::Children(p) => p,
+            Change::Attr(i) | Change::State(i) => {
+                // A radio's validity depends on its whole group, which a
+                // `name`/`form`/`type` change regroups.
+                if !validity.is_empty() && is_radio(i) {
+                    if matches!(c, Change::Attr(_)) {
+                        return None;
+                    }
+                    for m in dom.radio_group(i) {
+                        push_with_siblings(&mut roots, &mut seen, m);
+                        for a in walk_up(dom.n(m).parent) {
+                            push_with_siblings(&mut roots, &mut seen, a);
+                        }
+                    }
+                }
+                i
+            }
+            Change::Children(p) => {
+                // Inserted radios join (and may complete) a group elsewhere.
+                if !validity.is_empty() {
+                    let radios: Vec<u32> = dom
+                        .descendants(dom.id_of(p))
+                        .into_iter()
+                        .flatten()
+                        .map(|n| n.idx)
+                        .filter(|&n| is_radio(n))
+                        .collect();
+                    for r in radios {
+                        for m in dom.radio_group(r) {
+                            push_with_siblings(&mut roots, &mut seen, m);
+                            for a in walk_up(dom.n(m).parent) {
+                                push_with_siblings(&mut roots, &mut seen, a);
+                            }
+                        }
+                    }
+                }
+                p
+            }
             Change::Removed(p, n) => {
+                // Removed radios leave a group the detached subtree no longer
+                // reaches.
+                if !validity.is_empty() && dom.descendants(dom.id_of(n)).into_iter().flatten().any(|d| is_radio(d.idx))
+                {
+                    return None;
+                }
                 // The removed subtree itself (styles of detached elements are
                 // still computed), then the parent side as for an insertion.
                 if seen.insert(n) {
@@ -1630,13 +1710,70 @@ fn invalidation_roots(dom: &Dom, changes: &[crate::dom::Change], anchors: &[HasA
             }
             Change::Unknown => return None,
         };
-        if !matches!(dom.n(start).kind, crate::node::NodeKind::Element(_)) {
+        if !matches!(dom.n(start).kind, NodeKind::Element(_)) {
             // The document or a fragment: everything below may change.
             return None;
         }
         push_with_siblings(&mut roots, &mut seen, start);
     }
     Some(roots)
+}
+
+/// Keys of the compounds of `sel` that test `:valid`/`:invalid` (also via
+/// `:is()`/`:where()`/`:not()`). False when one sits inside `:has()`: a
+/// form's validity changes with controls below it, beyond what the anchor
+/// depth bounds, so every change invalidates everything.
+fn collect_validity_keys(sel: &Selector<Impl>, out: &mut Vec<AnchorKey>) -> bool {
+    fn mentions(sel: &Selector<Impl>) -> bool {
+        sel.iter_raw_match_order().any(|c| match c {
+            Component::NonTSPseudoClass(PseudoClass::Valid | PseudoClass::Invalid) => true,
+            Component::Is(list) | Component::Where(list) | Component::Negation(list) => {
+                list.slice().iter().any(mentions)
+            }
+            Component::Has(list) => list.iter().any(|rel| mentions(&rel.selector)),
+            _ => false,
+        })
+    }
+    let mut it = sel.iter();
+    loop {
+        let compound: Vec<&Component<Impl>> = (&mut it).collect();
+        let mut tests = false;
+        for c in &compound {
+            match c {
+                Component::NonTSPseudoClass(PseudoClass::Valid | PseudoClass::Invalid) => tests = true,
+                Component::Has(list) => {
+                    if list.iter().any(|rel| mentions(&rel.selector)) {
+                        return false;
+                    }
+                }
+                Component::Is(list) | Component::Where(list) | Component::Negation(list) => {
+                    for inner in list.slice() {
+                        // The inner subject compound constrains this element
+                        // (keyed by the outer compound; the recursion also
+                        // records the inner key, which may be broader).
+                        if inner.iter().any(|c| {
+                            matches!(c, Component::NonTSPseudoClass(PseudoClass::Valid | PseudoClass::Invalid))
+                        }) {
+                            tests = true;
+                        }
+                        if !collect_validity_keys(inner, out) {
+                            return false;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        if tests {
+            let key = compound_key(&compound);
+            if !out.contains(&key) {
+                out.push(key);
+            }
+        }
+        if it.next_sequence().is_none() {
+            return true;
+        }
+    }
 }
 
 /// What a `:has()` anchor compound requires (a necessary condition).
@@ -2316,7 +2453,7 @@ impl StyleEngine {
             None => None,
         };
         let roots = changes.and_then(|c| {
-            let roots = invalidation_roots(dom, &c, &cache.rules.has_anchors);
+            let roots = invalidation_roots(dom, &c, &cache.rules.has_anchors, &cache.rules.validity_keys);
             if roots.is_none() {
                 note_full(Full::Unknown);
             }
@@ -3119,7 +3256,35 @@ pub(crate) fn flat_tree_parent_element(dom: &Dom, idx: u32) -> Option<u32> {
 
 #[cfg(test)]
 mod has_anchor_tests {
-    use super::{collect_has_anchors, AnchorKey, HasAnchor};
+    use super::{collect_has_anchors, collect_validity_keys, AnchorKey, HasAnchor};
+
+    fn validity(text: &str) -> Option<Vec<AnchorKey>> {
+        let list = crate::select::parse_selectors(text).expect("selector");
+        let mut out = Vec::new();
+        for sel in list.slice() {
+            if !collect_validity_keys(sel, &mut out) {
+                return None;
+            }
+        }
+        Some(out)
+    }
+
+    #[test]
+    fn collects_validity_keys() {
+        // TOS (Tailwind invalid:*): the subject compound's class.
+        assert_eq!(
+            validity(
+                r".invalid\:border:where([data-rac])[data-invalid],.invalid\:border:where(:not([data-rac])):invalid"
+            ),
+            Some(vec![AnchorKey::Class("invalid:border".into())])
+        );
+        // group-invalid via [data-invalid] tests no validity.
+        assert_eq!(validity(r".x:is(:where(.group):where([data-rac])[data-invalid] *)"), Some(vec![]));
+        assert_eq!(validity("form:invalid .btn"), Some(vec![AnchorKey::Tag("form".into())]));
+        assert_eq!(validity(":is(:valid)"), Some(vec![AnchorKey::Any]));
+        // Inside :has(): unbounded, so full invalidation.
+        assert_eq!(validity(".card:has(input:invalid)"), None);
+    }
 
     fn anchors(text: &str) -> Option<Vec<HasAnchor>> {
         let list = crate::select::parse_selectors(text).expect("selector");

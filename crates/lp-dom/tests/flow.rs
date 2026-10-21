@@ -1735,3 +1735,97 @@ fn loaded_image_natural_size_reaches_flow_through_the_dom() {
     p.dom.set_natural_size(img, None);
     assert_eq!(&p.metrics("i")[2..4], &[240.0, 0.0]);
 }
+
+/// Asserts the DOM journaled every change since `since` precisely (no
+/// `Unknown`), so the style cache can invalidate selectively.
+fn assert_journaled(p: &Page, since: u64, what: &str) {
+    let changes: Vec<_> = p.dom.changes_since(since).expect("journal covers").collect();
+    assert!(!changes.is_empty(), "{what}: nothing journaled");
+    assert!(
+        !changes.iter().any(|c| matches!(c, lp_dom::dom::Change::Unknown)),
+        "{what}: journaled Unknown ({changes:?})"
+    );
+}
+
+#[test]
+fn form_state_writes_invalidate_selectively_without_stale_geometry() {
+    // Form value/checked/selected writes and image natural sizes are
+    // journaled precisely (they used to add an Unknown change, so every
+    // React-controlled input write invalidated every style). Validity is not
+    // local: a form, fieldset or select tested with :valid/:invalid follows
+    // its controls, and a required radio group spans containers. Each step
+    // compares every box with a fresh layout.
+    let css = "<style>\
+        .v:invalid{height:30px} .v{height:10px;display:block}\
+        .fs:invalid{width:300px} .fs{width:100px;height:10px;display:block;border:0;padding:0;margin:0}\
+        .sel:invalid{width:222px} .sel{width:22px;height:10px;display:block}\
+        .r:invalid + .rl{width:250px} .rl{display:block;width:25px;height:10px}\
+        .t:placeholder-shown + .tl{width:180px} .tl{display:block;width:18px;height:10px}\
+        input,textarea{display:block;height:10px;width:50px}\
+        img{display:block;width:40px}\
+        </style>";
+    let html = format!(
+        "<!doctype html>{css}<body style=\"margin:0\">\
+         <form id=f class=v><div><div><input id=req required></div></div></form>\
+         <fieldset id=fs class=fs><div><input id=req2 required></div></fieldset>\
+         <select id=sel class=sel required><option value=\"\">none</option><option id=o2 value=x>x</option></select>\
+         <form><div><input type=radio class=r name=g id=r1 required><span id=rl1 class=rl></span></div>\
+         <div><input type=radio class=r name=g id=r2><span id=rl2 class=rl></span></div></form>\
+         <textarea id=t class=t placeholder=p></textarea><span id=tl class=tl></span>\
+         <img id=img></body>"
+    );
+    let mut p = page(&html, Geometry::Flow);
+    assert_matches_fresh(&p, "initial");
+    let w = |p: &Page, id: &str| p.layout.flow(&p.dom).get(p.id(id)).unwrap().rect;
+    assert_eq!(w(&p, "f").height, 30.0);
+
+    let v = p.dom.version();
+    let req = p.id("req");
+    p.dom.set_value(req, "x").unwrap();
+    assert_journaled(&p, v, "set_value");
+    assert_matches_fresh(&p, "value makes the form valid");
+    assert_eq!(w(&p, "f").height, 10.0);
+
+    let v = p.dom.version();
+    let req2 = p.id("req2");
+    p.dom.insert_text(req2, "y").unwrap();
+    assert_journaled(&p, v, "insert_text");
+    assert_matches_fresh(&p, "typing makes the fieldset valid");
+    assert_eq!(w(&p, "fs").width, 100.0);
+
+    let v = p.dom.version();
+    let o2 = p.id("o2");
+    p.dom.set_option_selected(o2, true).unwrap();
+    assert_journaled(&p, v, "set_option_selected");
+    assert_matches_fresh(&p, "option makes the select valid");
+    assert_eq!(w(&p, "sel").width, 22.0);
+    let sel = p.id("sel");
+    p.dom.set_selected_index(sel, 0).unwrap();
+    assert_matches_fresh(&p, "selectedIndex makes it invalid again");
+    assert_eq!(w(&p, "sel").width, 222.0);
+
+    // Checking r2 completes the required group: r1, in another container,
+    // stops being :invalid.
+    assert_eq!(w(&p, "rl1").width, 250.0);
+    let v = p.dom.version();
+    let r2 = p.id("r2");
+    p.dom.set_checked(r2, true).unwrap();
+    assert_journaled(&p, v, "set_checked");
+    assert_matches_fresh(&p, "radio group validity");
+    assert_eq!(w(&p, "rl1").width, 25.0);
+    p.dom.set_checked(r2, false).unwrap();
+    assert_matches_fresh(&p, "radio group invalid again");
+    assert_eq!(w(&p, "rl1").width, 250.0);
+
+    let t = p.id("t");
+    p.dom.insert_text(t, "z").unwrap();
+    assert_matches_fresh(&p, "typing hides the placeholder");
+    assert_eq!(w(&p, "tl").width, 18.0);
+
+    let v = p.dom.version();
+    let img = p.id("img");
+    p.dom.set_natural_size(img, Some((4.0, 1.0)));
+    assert_journaled(&p, v, "set_natural_size");
+    assert_matches_fresh(&p, "image natural size");
+    assert_eq!(w(&p, "img").height, 10.0);
+}

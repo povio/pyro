@@ -157,14 +157,17 @@ impl Dom {
         self.natural_sizes.get(&el).copied()
     }
     /// Records or clears an image element's natural size. A change bumps
-    /// the version so layout and style caches recompute.
+    /// the version so layout and style caches recompute; it is journaled
+    /// like an attribute change of the image (only its own box depends on it).
     pub fn set_natural_size(&mut self, el: NodeId, size: Option<(f64, f64)>) {
+        let Ok(i) = self.check(el) else { return };
         let changed = match size {
             Some(s) => self.natural_sizes.insert(el, s) != Some(s),
             None => self.natural_sizes.remove(&el).is_some(),
         };
         if changed {
             self.bump();
+            self.note(Change::Attr(i));
         }
     }
     pub fn version(&self) -> u64 {
