@@ -1095,6 +1095,16 @@ struct RuleSet {
     /// Hashes (`dom::attr_name_hash`, as written and lowercased) of every
     /// attribute name a selector tests.
     attr_names: FxHashSet<u64>,
+    /// Keys of every compound left of a sibling combinator.
+    structural_sibling_keys: Vec<ChildKey>,
+    /// Keys of compounds testing structural pseudo-classes (`:nth-*`,
+    /// `:first-child`...), `:empty`, `:focus`/`:focus-visible`,
+    /// `:focus-within` and `:hover`.
+    nth_keys: Vec<ChildKey>,
+    empty_keys: Vec<AnchorKey>,
+    focus_keys: Vec<AnchorKey>,
+    within_keys: Vec<AnchorKey>,
+    hover_keys: Vec<AnchorKey>,
     /// Every author declaration of each selector, bucketed like `rules`, for
     /// the generic computed values (`StyleEngine::declared_map`).
     generic_rules: Vec<GenericRule>,
@@ -1212,6 +1222,12 @@ struct Builder<'v> {
     validity_keys: Vec<AnchorKey>,
     sibling_keys: Vec<AnchorKey>,
     attr_names: FxHashSet<u64>,
+    structural_sibling_keys: Vec<ChildKey>,
+    nth_keys: Vec<ChildKey>,
+    empty_keys: Vec<AnchorKey>,
+    focus_keys: Vec<AnchorKey>,
+    within_keys: Vec<AnchorKey>,
+    hover_keys: Vec<AnchorKey>,
 }
 
 impl<'v> Builder<'v> {
@@ -1232,6 +1248,12 @@ impl<'v> Builder<'v> {
             validity_keys: Vec::new(),
             sibling_keys: Vec::new(),
             attr_names: FxHashSet::default(),
+            structural_sibling_keys: Vec::new(),
+            nth_keys: Vec::new(),
+            empty_keys: Vec::new(),
+            focus_keys: Vec::new(),
+            within_keys: Vec::new(),
+            hover_keys: Vec::new(),
         }
     }
 
@@ -1269,8 +1291,18 @@ impl<'v> Builder<'v> {
                         } else {
                             self.has_relative = true;
                         }
-                        collect_sibling_keys(sel, &mut self.sibling_keys);
+                        collect_sibling_keys(sel, &mut self.sibling_keys, &mut self.structural_sibling_keys);
                         collect_attr_names(sel, &mut self.attr_names);
+                        let pseudo = |c: &Component<Impl>, wanted: &[PseudoClass]| matches!(c, Component::NonTSPseudoClass(pc) if wanted.contains(pc));
+                        collect_nth_keys(sel, &mut self.nth_keys, false);
+                        collect_keys(sel, &|c| matches!(c, Component::Empty), &mut self.empty_keys);
+                        collect_keys(
+                            sel,
+                            &|c| pseudo(c, &[PseudoClass::Focus, PseudoClass::FocusVisible]),
+                            &mut self.focus_keys,
+                        );
+                        collect_keys(sel, &|c| pseudo(c, &[PseudoClass::FocusWithin]), &mut self.within_keys);
+                        collect_keys(sel, &|c| pseudo(c, &[PseudoClass::Hover]), &mut self.hover_keys);
                     }
                     // StyleManager.zig:485-525; generic declarations share the block's order.
                     if !customs.is_empty() || !generics.is_empty() {
@@ -1493,6 +1525,12 @@ impl<'v> Builder<'v> {
         rs.validity_keys = std::mem::take(&mut self.validity_keys);
         rs.sibling_keys = std::mem::take(&mut self.sibling_keys);
         rs.attr_names = std::mem::take(&mut self.attr_names);
+        rs.structural_sibling_keys = std::mem::take(&mut self.structural_sibling_keys);
+        rs.nth_keys = std::mem::take(&mut self.nth_keys);
+        rs.empty_keys = std::mem::take(&mut self.empty_keys);
+        rs.focus_keys = std::mem::take(&mut self.focus_keys);
+        rs.within_keys = std::mem::take(&mut self.within_keys);
+        rs.hover_keys = std::mem::take(&mut self.hover_keys);
         for (name, rule) in self.customs.into_iter().map(to_rule) {
             rs.customs.entry(name).or_default().push(rule);
         }
@@ -1628,50 +1666,58 @@ enum NotSelective {
     Unknown(&'static std::panic::Location<'static>),
 }
 
+/// The focused and hovered elements before and after the changes (NIL:
+/// none; equal when they did not move).
+#[derive(Clone, Copy)]
+struct PseudoMove {
+    old_focus: u32,
+    new_focus: u32,
+    old_hover: u32,
+    new_hover: u32,
+}
+
 /// The elements whose subtrees `changes` may restyle, or why every element
 /// must be restyled.
 ///
 /// A change can restyle the changed element and its subtree (inheritance,
 /// descendant and child combinators). It can restyle later siblings and
-/// their subtrees only through a sibling combinator whose left compound the
-/// element matched before or after the change (`sibling_keys`). It can
-/// restyle ancestors through `:has()` (`has_anchors`) and, for forms,
-/// fieldsets and selects, through `:valid`/`:invalid` (`validity_keys`).
-/// Structural pseudo-classes of the children are covered by the parent's
-/// subtree. Sibling-relative `:has()` and shadow trees never get here.
-fn invalidation_roots(dom: &Dom, changes: &[crate::dom::Change], rules: &RuleSet) -> Result<Vec<u32>, NotSelective> {
+/// their subtrees only through a sibling combinator: for state changes when
+/// the element matches a state-dependent left compound before or after the
+/// change (`sibling_keys`), for insertions and removals through any
+/// (`structural_sibling_keys`: the adjacency changes). It can restyle the
+/// parent's other children through structural pseudo-classes (`nth_keys`),
+/// the parent itself through `:empty` (`empty_keys`), and ancestors through
+/// `:has()` (`has_anchors`), `:valid`/`:invalid` of forms, fieldsets and
+/// selects (`validity_keys`), and `:focus-within`/`:hover` when the focused
+/// or hovered element moves with the subtree. A moved focus or hover
+/// restyles the elements whose `:focus`, `:focus-within` or `:hover` match
+/// changed: the old and new elements and the ancestors only one of them
+/// has. Sibling-relative `:has()` and shadow trees never get here.
+fn invalidation_roots(
+    dom: &Dom,
+    changes: &[crate::dom::Change],
+    rules: &RuleSet,
+    pseudo: PseudoMove,
+) -> Result<Vec<u32>, NotSelective> {
     use crate::dom::Change;
     use crate::node::NodeKind;
     // Journal entries can name nodes that `collect_garbage` has freed since
     // (removed subtrees). A freed node needs no restyle (its cache entries
-    // are keyed by its old NodeId and never served again). A removal whose
-    // subtree was freed still affects its parent's side, like an insertion.
-    let live: Vec<Change> = changes
-        .iter()
-        .filter_map(|c| match *c {
-            Change::Attr(i, ..) | Change::Children(i) | Change::Text(i) | Change::State(i) => {
-                dom.slot_live(i).then_some(*c)
-            }
-            Change::Removed(p, n) if dom.slot_live(p) && dom.slot_live(n) => Some(*c),
-            Change::Removed(p, _) if dom.slot_live(p) => Some(Change::Children(p)),
-            Change::Removed(..) => None,
-            Change::Unknown(_) => Some(*c),
-        })
-        .collect();
-    let changes = &live[..];
+    // are keyed by its old NodeId and never served again); a slot reused by
+    // a new node only over-invalidates.
+    let live = |i: u32| i != NIL && dom.slot_live(i);
     let (anchors, validity) = (&rules.has_anchors[..], &rules.validity_keys[..]);
-    let mut roots: Vec<u32> = Vec::new();
-    let mut seen = FxHashSet::default();
-    // Nodes whose following siblings are already roots too: a walk can stop
-    // there. (A node can be a root without its tail, and may have been
-    // reinserted elsewhere by a later change in the same batch.)
-    let mut tails = FxHashSet::default();
+    let element = |x: u32| match &dom.n(x).kind {
+        NodeKind::Element(e) => Some(&**e),
+        _ => None,
+    };
+    let any_key = |keys: &[AnchorKey], x: u32| element(x).is_some_and(|e| keys.iter().any(|k| k.matches(e)));
     // Whether a state change of element `x` (`attr`: the hash of a changed
     // attribute's name) can change its match of a sibling-combinator left
     // compound. Keys are necessary conditions: one that does not match now
     // matched before too unless the change touched the attribute it reads.
     let siblings_affected = |x: u32, attr: Option<u64>| -> bool {
-        let NodeKind::Element(e) = &dom.n(x).kind else { return true };
+        let Some(e) = element(x) else { return true };
         rules.sibling_keys.iter().any(|k| {
             k.matches(e)
                 || match (k, attr) {
@@ -1684,37 +1730,25 @@ fn invalidation_roots(dom: &Dom, changes: &[crate::dom::Change], rules: &RuleSet
                 }
         })
     };
-    let mut push = |roots: &mut Vec<u32>, seen: &mut FxHashSet<u32>, x: u32, attr: Option<u64>| {
-        if !siblings_affected(x, attr) {
-            if seen.insert(x) {
-                roots.push(x);
-            }
-            return;
-        }
-        let mut cur = x;
-        while cur != NIL && tails.insert(cur) {
-            if seen.insert(cur) {
-                roots.push(cur);
-            }
-            cur = dom.n(cur).next;
-        }
-    };
     let is_radio = |i: u32| {
-        matches!(&dom.n(i).kind, NodeKind::Element(e) if e.is_html() && e.name.local == local_name!("input"))
+        element(i).is_some_and(|e| e.is_html() && e.name.local == local_name!("input"))
             && dom.input_type_idx(i) == crate::forms::InputType::Radio
     };
-    // Ancestors (from `first` up) that a change below may restyle: `:has()`
-    // anchors within their depth, and forms, fieldsets and selects tested
-    // with `:valid`/`:invalid` (their validity is their controls').
-    let walk_up = |first: u32| -> Vec<u32> {
+    let radios_below = |x: u32| -> Vec<u32> {
+        dom.descendants(dom.id_of(x)).into_iter().flatten().map(|n| n.idx).filter(|&n| is_radio(n)).collect()
+    };
+    // Ancestors from `first` up (`first` at `level`) that a change of an
+    // element below may restyle: `:has()` anchors within their depth, and
+    // forms, fieldsets and selects tested with `:valid`/`:invalid`.
+    let walk_up = |first: u32, level: u32| -> Vec<u32> {
         let mut out = Vec::new();
         if anchors.is_empty() && validity.is_empty() {
             return out;
         }
-        let mut level = 1u32;
+        let mut level = level;
         let mut cur = first;
         while cur != NIL {
-            let NodeKind::Element(e) = &dom.n(cur).kind else { break };
+            let Some(e) = element(cur) else { break };
             let anchor = anchors.iter().any(|a| a.depth.is_none_or(|d| level <= d) && a.key.matches(e));
             let validated = !validity.is_empty()
                 && e.is_html()
@@ -1730,97 +1764,217 @@ fn invalidation_roots(dom: &Dom, changes: &[crate::dom::Change], rules: &RuleSet
     };
     // A radio's validity depends on its whole group: the members and what
     // their validity restyles above them.
-    let group_roots = |radio: u32| -> Vec<u32> {
+    let radio_roots = |radios: Vec<u32>| -> Vec<u32> {
         let mut out = Vec::new();
-        for m in dom.radio_group(radio) {
+        for m in radios {
             out.push(m);
-            out.extend(walk_up(dom.n(m).parent));
+            out.extend(walk_up(dom.n(m).parent, 1));
         }
         out
     };
-    for c in changes {
-        let first = match *c {
-            // An unreferenced data-*/aria-* attribute restyles nothing.
-            Change::Attr(_, h, true) if !rules.attr_names.contains(&h) => continue,
-            Change::Attr(i, ..) | Change::State(i) => dom.n(i).parent,
-            Change::Children(p) | Change::Removed(p, _) => p,
-            Change::Text(t) => dom.n(t).parent,
-            Change::Unknown(at) => return Err(NotSelective::Unknown(at)),
-        };
-        for a in walk_up(first) {
-            push(&mut roots, &mut seen, a, None);
+    let inclusive_ancestors = |x: u32| -> Vec<u32> {
+        let mut out = Vec::new();
+        let mut cur = x;
+        while cur != NIL {
+            out.push(cur);
+            cur = dom.n(cur).parent;
         }
-        let (start, attr) = match *c {
-            Change::Attr(i, h, _) => {
-                // A `name`/`form`/`type` change regroups radios.
-                if !validity.is_empty() && is_radio(i) {
-                    return Err(NotSelective::Unknown(std::panic::Location::caller()));
+        out
+    };
+    // The focused and hovered elements, before and after: moving a subtree
+    // that holds one changes :focus-within/:hover of the ancestors it left
+    // and joined.
+    let mut targets: Vec<u32> = [pseudo.old_focus, pseudo.new_focus, pseudo.old_hover, pseudo.new_hover]
+        .into_iter()
+        .filter(|&t| live(t))
+        .collect();
+    targets.dedup();
+    let holds_target = |n: u32| targets.iter().any(|&t| inclusive_ancestors(t).contains(&n));
+    let pseudo_ancestors = |p: u32| -> Vec<u32> {
+        inclusive_ancestors(p)
+            .into_iter()
+            .filter(|&a| any_key(&rules.within_keys, a) || any_key(&rules.hover_keys, a))
+            .collect()
+    };
+    // The parent side of an insertion or removal: its own :empty, the
+    // :has()/validity ancestors (from the parent itself, whose children
+    // changed), and its children's structural pseudo-classes.
+    let parent_side = |p: u32| -> Vec<u32> {
+        let mut out = walk_up(p, 0);
+        if any_key(&rules.empty_keys, p) {
+            out.push(p);
+        }
+        if !rules.nth_keys.is_empty() {
+            let mut child = dom.n(p).first_child;
+            while child != NIL {
+                if element(child).is_some_and(|e| rules.nth_keys.iter().any(|k| k.matches(e, element(p)))) {
+                    out.push(child);
                 }
-                (i, Some(h))
+                child = dom.n(child).next;
+            }
+        }
+        out
+    };
+    // Whether inserting or removing next to `x` (the node itself, or its
+    // previous sibling now) can change which later siblings a sibling
+    // combinator joins.
+    let adjacency = |x: u32, p: u32| {
+        x != NIL
+            && (!live(x)
+                || element(x).is_some_and(|e| rules.structural_sibling_keys.iter().any(|k| k.matches(e, element(p)))))
+    };
+
+    // (root, with later siblings)
+    let mut found: Vec<(u32, bool)> = Vec::new();
+    let state = |x: u32| (x, siblings_affected(x, None));
+    for c in changes {
+        match *c {
+            Change::Pseudo => {}
+            Change::Unknown(at) => return Err(NotSelective::Unknown(at)),
+            Change::Attr(i, h, plain) => {
+                // An unreferenced data-*/aria-* attribute restyles nothing.
+                if !live(i) || (plain && !rules.attr_names.contains(&h)) {
+                    continue;
+                }
+                found.extend(walk_up(dom.n(i).parent, 1).into_iter().map(state));
+                // `type`, `name`, `form`, `checked` and `required` regroup or
+                // revalidate radio groups (also when `type` leaves radio).
+                let input = element(i).is_some_and(|e| e.is_html() && e.name.local == local_name!("input"));
+                if !validity.is_empty() && input && (is_radio(i) || h == local_name!("type").get_hash()) {
+                    found.extend(radio_roots(radios_below(dom.root_idx(i))).into_iter().map(state));
+                }
+                found.push((i, siblings_affected(i, Some(h))));
             }
             Change::State(i) => {
+                if !live(i) {
+                    continue;
+                }
+                found.extend(walk_up(dom.n(i).parent, 1).into_iter().map(state));
                 if !validity.is_empty() && is_radio(i) {
-                    for x in group_roots(i) {
-                        push(&mut roots, &mut seen, x, None);
-                    }
+                    found.extend(radio_roots(dom.radio_group(i)).into_iter().map(state));
                 }
-                (i, None)
+                found.push(state(i));
             }
-            Change::Children(p) => {
-                // Inserted radios join (and may complete) a group elsewhere.
+            Change::Inserted(p, n) => {
+                if !live(p) {
+                    continue;
+                }
+                found.extend(parent_side(p).into_iter().map(state));
+                // Moved on since: its later entries cover where it went.
+                if !live(n) || dom.n(n).parent != p {
+                    continue;
+                }
                 if !validity.is_empty() {
-                    let radios: Vec<u32> = dom
-                        .descendants(dom.id_of(p))
-                        .into_iter()
-                        .flatten()
-                        .map(|n| n.idx)
-                        .filter(|&n| is_radio(n))
-                        .collect();
-                    for x in radios.into_iter().flat_map(group_roots) {
-                        push(&mut roots, &mut seen, x, None);
+                    // Inserted radios join (and may complete) a group.
+                    for r in radios_below(n) {
+                        found.extend(radio_roots(dom.radio_group(r)).into_iter().map(state));
                     }
                 }
-                (p, None)
+                if holds_target(n) {
+                    found.extend(pseudo_ancestors(p).into_iter().map(state));
+                }
+                let siblings = adjacency(n, p) || adjacency(dom.n(n).prev, p) || siblings_affected(n, None);
+                found.push((n, siblings));
             }
-            Change::Removed(p, n) => {
-                // Removed radios leave a group the detached subtree no longer
-                // reaches.
-                if !validity.is_empty() && dom.descendants(dom.id_of(n)).into_iter().flatten().any(|d| is_radio(d.idx))
-                {
-                    return Err(NotSelective::Unknown(std::panic::Location::caller()));
+            Change::Removed(p, n, next) => {
+                if !live(p) {
+                    continue;
                 }
-                // The removed subtree itself (styles of detached elements are
-                // still computed), then the parent side as for an insertion.
-                if seen.insert(n) {
-                    roots.push(n);
+                found.extend(parent_side(p).into_iter().map(state));
+                let mut siblings = live(next) && (adjacency(n, p) || adjacency(dom.n(next).prev, p));
+                if live(n) {
+                    // Removed radios leave a group the detached subtree no
+                    // longer reaches: every radio left in the tree.
+                    if !validity.is_empty() && !radios_below(n).is_empty() {
+                        found.extend(radio_roots(radios_below(dom.root_idx(p))).into_iter().map(state));
+                    }
+                    if holds_target(n) {
+                        found.extend(pseudo_ancestors(p).into_iter().map(state));
+                    }
+                    siblings |= siblings_affected(n, None);
+                    // The removed subtree itself (styles of detached elements
+                    // are still computed).
+                    found.push((n, false));
+                } else if !validity.is_empty() {
+                    // Freed: whether it held radios is unknown.
+                    found.extend(radio_roots(radios_below(dom.root_idx(p))).into_iter().map(state));
                 }
-                (p, None)
+                if siblings && live(next) && dom.n(next).parent == p {
+                    found.push((next, true));
+                }
             }
             Change::Text(t) => {
+                if !live(t) {
+                    continue;
+                }
                 let p = dom.n(t).parent;
                 if p == NIL {
                     continue;
                 }
-                (p, None)
-            }
-            Change::Unknown(at) => return Err(NotSelective::Unknown(at)),
-        };
-        match &dom.n(start).kind {
-            NodeKind::Element(_) => push(&mut roots, &mut seen, start, attr),
-            // A document or a DocumentFragment (shadow roots take the full
-            // path) has no style of its own: only its subtree can be affected
-            // (for the styled document that is everything; the parser's
-            // scratch documents and fragments are not styled).
-            NodeKind::Document(_) | NodeKind::Fragment(crate::node::FragmentData { shadow: None, .. }) => {
-                let mut child = dom.n(start).first_child;
-                while child != NIL {
-                    if seen.insert(child) {
-                        roots.push(child);
-                    }
-                    child = dom.n(child).next;
+                found.extend(walk_up(p, 0).into_iter().map(state));
+                if element(p).is_some() {
+                    found.push(state(p));
                 }
             }
-            _ => return Err(NotSelective::Unknown(std::panic::Location::caller())),
+        }
+    }
+    // Focus and hover that moved.
+    let changed_chain = |old: u32, new: u32| -> Vec<u32> {
+        if old == new {
+            return Vec::new();
+        }
+        let a = if live(old) { inclusive_ancestors(old) } else { Vec::new() };
+        let b = if live(new) { inclusive_ancestors(new) } else { Vec::new() };
+        a.iter().filter(|x| !b.contains(x)).chain(b.iter().filter(|x| !a.contains(x))).copied().collect()
+    };
+    let mut pseudo_changed: Vec<u32> = Vec::new();
+    if pseudo.old_focus != pseudo.new_focus {
+        for x in [pseudo.old_focus, pseudo.new_focus] {
+            if live(x) {
+                pseudo_changed.push(x);
+                if any_key(&rules.focus_keys, x) {
+                    found.push(state(x));
+                }
+            }
+        }
+        for x in changed_chain(pseudo.old_focus, pseudo.new_focus) {
+            pseudo_changed.push(x);
+            if any_key(&rules.within_keys, x) {
+                found.push(state(x));
+            }
+        }
+    }
+    for x in changed_chain(pseudo.old_hover, pseudo.new_hover) {
+        pseudo_changed.push(x);
+        if any_key(&rules.hover_keys, x) {
+            found.push(state(x));
+        }
+    }
+    // :has() anchors whose argument sees those states.
+    pseudo_changed.sort_unstable();
+    pseudo_changed.dedup();
+    for x in pseudo_changed {
+        found.extend(walk_up(dom.n(x).parent, 1).into_iter().map(state));
+    }
+
+    let mut roots: Vec<u32> = Vec::new();
+    let mut seen = FxHashSet::default();
+    // Nodes whose later siblings are already roots too: a walk can stop
+    // there.
+    let mut tails = FxHashSet::default();
+    for (x, with_siblings) in found {
+        if !with_siblings {
+            if seen.insert(x) {
+                roots.push(x);
+            }
+            continue;
+        }
+        let mut cur = x;
+        while cur != NIL && tails.insert(cur) {
+            if seen.insert(cur) {
+                roots.push(cur);
+            }
+            cur = dom.n(cur).next;
         }
     }
     // A root inside another root's subtree adds nothing.
@@ -1836,6 +1990,116 @@ fn invalidation_roots(dom: &Dom, changes: &[crate::dom::Change], rules: &RuleSet
         true
     });
     Ok(roots)
+}
+
+/// Keys of the compounds of `sel` containing a component `hit` accepts,
+/// also through `:is()`/`:where()`/`:not()` (an inner subject compound
+/// constrains the same element: the outer key). `:has()` arguments are
+/// skipped: they restyle the anchor, which the anchor walk covers.
+fn collect_keys(sel: &Selector<Impl>, hit: &dyn Fn(&Component<Impl>) -> bool, out: &mut Vec<AnchorKey>) {
+    fn subject_hits(sel: &Selector<Impl>, hit: &dyn Fn(&Component<Impl>) -> bool) -> bool {
+        sel.iter().any(|c| match c {
+            Component::Is(list) | Component::Where(list) | Component::Negation(list) => {
+                hit(c) || list.slice().iter().any(|inner| subject_hits(inner, hit))
+            }
+            _ => hit(c),
+        })
+    }
+    fn walk(
+        sel: &Selector<Impl>,
+        hit: &dyn Fn(&Component<Impl>) -> bool,
+        out: &mut Vec<AnchorKey>,
+        skip_subject: bool,
+    ) {
+        let mut it = sel.iter();
+        let mut subject = true;
+        loop {
+            let compound: Vec<&Component<Impl>> = (&mut it).collect();
+            let mut tests = false;
+            for c in &compound {
+                if hit(c) {
+                    tests = true;
+                }
+                if let Component::Is(list) | Component::Where(list) | Component::Negation(list) = c {
+                    for inner in list.slice() {
+                        tests |= subject_hits(inner, hit);
+                        walk(inner, hit, out, true);
+                    }
+                }
+            }
+            if tests && !(skip_subject && subject) {
+                let key = compound_key(&compound);
+                if !out.contains(&key) {
+                    out.push(key);
+                }
+            }
+            subject = false;
+            if it.next_sequence().is_none() {
+                return;
+            }
+        }
+    }
+    walk(sel, hit, out, false)
+}
+
+/// The key of the compound after `it`'s current one when they are joined by
+/// a child combinator (the parent's compound).
+fn parent_key(it: &selectors::parser::SelectorIter<'_, Impl>) -> Option<AnchorKey> {
+    let mut peek = it.clone();
+    if !matches!(peek.next_sequence(), Some(selectors::parser::Combinator::Child)) {
+        return None;
+    }
+    let parent: Vec<&Component<Impl>> = (&mut peek).collect();
+    Some(compound_key(&parent)).filter(|k| *k != AnchorKey::Any)
+}
+
+/// Keys (with the parent's, through `>`) of compounds testing structural
+/// pseudo-classes, also through `:is()`/`:where()`/`:not()`. A compound that
+/// is only an `:is()`/`:where()` stands for its inner selectors' subjects
+/// (TOS `:where(.space-y-4>:not(:last-child))`); other inner subjects are
+/// the outer element, keyed by the outer compound.
+fn collect_nth_keys(sel: &Selector<Impl>, out: &mut Vec<ChildKey>, skip_subject: bool) {
+    fn hit(c: &Component<Impl>) -> bool {
+        match c {
+            Component::Nth(_) | Component::NthOf(_) => true,
+            Component::Is(list) | Component::Where(list) | Component::Negation(list) => {
+                list.slice().iter().any(|inner| inner.iter().any(hit))
+            }
+            _ => false,
+        }
+    }
+    let mut it = sel.iter();
+    let mut subject = true;
+    loop {
+        let compound: Vec<&Component<Impl>> = (&mut it).collect();
+        let wrapper = match compound.as_slice() {
+            [Component::Is(list) | Component::Where(list)] => Some(list),
+            _ => None,
+        };
+        if let Some(list) = wrapper {
+            for inner in list.slice() {
+                collect_nth_keys(inner, out, skip_subject && subject);
+            }
+        } else {
+            if compound.iter().any(|c| hit(c)) && !(skip_subject && subject) {
+                let entry = ChildKey { key: compound_key(&compound), parent: parent_key(&it) };
+                if !out.contains(&entry) {
+                    out.push(entry);
+                }
+            }
+            for c in &compound {
+                if let Component::Is(list) | Component::Where(list) | Component::Negation(list) = c {
+                    for inner in list.slice() {
+                        collect_nth_keys(inner, out, true);
+                    }
+                }
+            }
+        }
+        subject = false;
+        if it.next_sequence().is_none() {
+            return;
+        }
+    }
 }
 
 /// Every attribute name `sel` tests, at any nesting (hashes of the name as
@@ -1880,8 +2144,10 @@ fn collect_attr_names(sel: &Selector<Impl>, out: &mut FxHashSet<u64>) {
 /// Keys of the state-dependent compounds left of a sibling combinator
 /// (`+`/`~`), also inside `:is()`/`:where()`/`:not()`; `:nth-child(of S)`
 /// makes every element's state matter to its siblings (key Any). A compound
-/// of type selectors only cannot change its match with attributes or state.
-fn collect_sibling_keys(sel: &Selector<Impl>, out: &mut Vec<AnchorKey>) {
+/// of type selectors only cannot change its match with attributes or state,
+/// but insertions and removals change adjacency for every left compound
+/// (`structural`).
+fn collect_sibling_keys(sel: &Selector<Impl>, out: &mut Vec<AnchorKey>, structural: &mut Vec<ChildKey>) {
     use selectors::parser::Combinator;
     let mut it = sel.iter();
     let mut left_of_sibling = false;
@@ -1898,17 +2164,21 @@ fn collect_sibling_keys(sel: &Selector<Impl>, out: &mut Vec<AnchorKey>) {
                     | Component::Namespace(..)
             )
         });
-        if left_of_sibling && state_dependent {
+        if left_of_sibling {
             let key = compound_key(&compound);
-            if !out.contains(&key) {
-                out.push(key);
+            if state_dependent && !out.contains(&key) {
+                out.push(key.clone());
+            }
+            let entry = ChildKey { key, parent: parent_key(&it) };
+            if !structural.contains(&entry) {
+                structural.push(entry);
             }
         }
         for c in &compound {
             match c {
                 Component::Is(list) | Component::Where(list) | Component::Negation(list) => {
                     for inner in list.slice() {
-                        collect_sibling_keys(inner, out);
+                        collect_sibling_keys(inner, out, structural);
                     }
                 }
                 Component::NthOf(_) if !out.contains(&AnchorKey::Any) => out.push(AnchorKey::Any),
@@ -1997,6 +2267,22 @@ impl AnchorKey {
             AnchorKey::Attr(a) => e.attrs.iter().any(|x| (*x.name.local).eq_ignore_ascii_case(a)),
             AnchorKey::Any => true,
         }
+    }
+}
+
+/// A compound key, and the key of the parent compound when the compound is
+/// a child (`>`) of one: both necessary conditions.
+#[derive(Clone, Debug, PartialEq)]
+struct ChildKey {
+    key: AnchorKey,
+    parent: Option<AnchorKey>,
+}
+
+impl ChildKey {
+    /// Whether element `e`, a child of `parent` (None: not an element), can
+    /// match the compound.
+    fn matches(&self, e: &crate::node::ElementData, parent: Option<&crate::node::ElementData>) -> bool {
+        self.key.matches(e) && self.parent.as_ref().is_none_or(|k| parent.is_some_and(|p| k.matches(p)))
     }
 }
 
@@ -2436,6 +2722,9 @@ struct Cache {
     /// Flow layout inputs per element (`FlowStyleSource`), dropped with `memo`.
     flow: FxHashMap<NodeId, Option<crate::flow::FlowStyle>>,
     extent: Option<(f64, f64)>,
+    /// The focused and hovered elements of `stamp` (indices there), to tell
+    /// a freed one from a live one.
+    pseudo_ids: (Option<NodeId>, Option<NodeId>),
 }
 
 /// The style engine of one document (upstream: one StyleManager per frame).
@@ -2631,10 +2920,15 @@ impl StyleEngine {
                 note_full(Full::Rules);
                 None
             }
+            Some(old) if old.generation != stamp.generation => {
+                note_full(Full::Stamp);
+                None
+            }
+            // A previously focused/hovered element freed (or its slot reused)
+            // since: where it was is unknown.
             Some(old)
-                if old.generation != stamp.generation
-                    || old.focused != stamp.focused
-                    || old.hovered != stamp.hovered =>
+                if (old.focused != stamp.focused && !cache.pseudo_ids.0.is_none_or(|id| dom.check(id).is_ok()))
+                    || (old.hovered != stamp.hovered && !cache.pseudo_ids.1.is_none_or(|id| dom.check(id).is_ok())) =>
             {
                 note_full(Full::Stamp);
                 None
@@ -2656,7 +2950,13 @@ impl StyleEngine {
             }
             None => None,
         };
-        let roots = changes.and_then(|c| match invalidation_roots(dom, &c, &cache.rules) {
+        let pseudo = cache.stamp.map(|old| PseudoMove {
+            old_focus: old.focused,
+            new_focus: stamp.focused,
+            old_hover: old.hovered,
+            new_hover: stamp.hovered,
+        });
+        let roots = changes.and_then(|c| match invalidation_roots(dom, &c, &cache.rules, pseudo?) {
             Ok(roots) => Some(roots),
             Err(why) => {
                 note_full(Full::Unknown);
@@ -2701,6 +3001,10 @@ impl StyleEngine {
         }
         cache.extent = None;
         cache.stamp = Some(stamp);
+        cache.pseudo_ids = (
+            (stamp.focused != NIL).then(|| dom.id_of(stamp.focused)),
+            (stamp.hovered != NIL).then(|| dom.id_of(stamp.hovered)),
+        );
     }
 
     pub(crate) fn cached_flow_style(&self, dom: &Dom, el: NodeId) -> Option<Option<crate::flow::FlowStyle>> {
@@ -3512,15 +3816,71 @@ pub(crate) fn flat_tree_parent_element(dom: &Dom, idx: u32) -> Option<u32> {
 
 #[cfg(test)]
 mod has_anchor_tests {
-    use super::{collect_has_anchors, collect_sibling_keys, collect_validity_keys, AnchorKey, HasAnchor};
+    use super::{collect_has_anchors, collect_sibling_keys, collect_validity_keys, AnchorKey, ChildKey, HasAnchor};
+    use crate::select::{Impl, PseudoClass};
+    use selectors::parser::Component;
 
     fn siblings(text: &str) -> Vec<AnchorKey> {
         let list = crate::select::parse_selectors(text).expect("selector");
-        let mut out = Vec::new();
+        let (mut out, mut structural) = (Vec::new(), Vec::new());
         for sel in list.slice() {
-            collect_sibling_keys(sel, &mut out);
+            collect_sibling_keys(sel, &mut out, &mut structural);
         }
         out
+    }
+
+    fn structural(text: &str) -> Vec<ChildKey> {
+        let list = crate::select::parse_selectors(text).expect("selector");
+        let (mut out, mut structural) = (Vec::new(), Vec::new());
+        for sel in list.slice() {
+            collect_sibling_keys(sel, &mut out, &mut structural);
+        }
+        structural
+    }
+
+    #[test]
+    fn collects_structural_sibling_and_pseudo_keys() {
+        // Insertions change adjacency for type-only compounds too.
+        let ck = |key: AnchorKey, parent: Option<AnchorKey>| ChildKey { key, parent };
+        assert_eq!(
+            structural(".x>*+*, li+li"),
+            vec![ck(AnchorKey::Any, Some(AnchorKey::Class("x".into()))), ck(AnchorKey::Tag("li".into()), None)]
+        );
+        let keys = |text: &str, hit: &dyn Fn(&Component<Impl>) -> bool| {
+            let list = crate::select::parse_selectors(text).expect("selector");
+            let mut out = Vec::new();
+            for sel in list.slice() {
+                super::collect_keys(sel, hit, &mut out);
+            }
+            out
+        };
+        let hover = |c: &Component<Impl>| matches!(c, Component::NonTSPseudoClass(PseudoClass::Hover));
+        // Tailwind group-hover: the group ancestor; hover: the element.
+        assert_eq!(keys(r".x:is(:where(.group):hover *)", &hover), vec![AnchorKey::Class("group".into())]);
+        assert_eq!(keys(r".hover\:bg:hover", &hover), vec![AnchorKey::Class("hover:bg".into())]);
+        // :not(:hover) keys the outer compound, not Any.
+        assert_eq!(keys(".y:not(:hover)", &hover), vec![AnchorKey::Class("y".into())]);
+        // Inside :has(): the anchor walk's business.
+        assert_eq!(keys(".g:has(:hover)", &hover), vec![]);
+        let nth = |text: &str| {
+            let list = crate::select::parse_selectors(text).expect("selector");
+            let mut out = Vec::new();
+            for sel in list.slice() {
+                super::collect_nth_keys(sel, &mut out, false);
+            }
+            out
+        };
+        // TOS space-y/divide: any child, of a .space-y-4 parent.
+        assert_eq!(
+            nth(r":where(.space-y-4>:not(:last-child))"),
+            vec![ck(AnchorKey::Any, Some(AnchorKey::Class("space-y-4".into())))]
+        );
+        assert_eq!(
+            nth(".x>div:last-child>*"),
+            vec![ck(AnchorKey::Tag("div".into()), Some(AnchorKey::Class("x".into())))]
+        );
+        assert_eq!(nth(r".even\:bg:nth-child(2n)"), vec![ck(AnchorKey::Class("even:bg".into()), None)]);
+        assert_eq!(nth(".a .b"), vec![]);
     }
 
     #[test]

@@ -663,8 +663,9 @@ impl Dom {
             dd.focused = new;
         }
         // :focus / :focus-within participate in style matching (the style
-        // cache sees the change through its focus stamp).
+        // cache compares the focused elements).
         self.bump();
+        self.note(crate::dom::Change::Pseudo);
         Ok(self.opt_id(prev))
     }
     pub fn set_hovered(&mut self, doc: NodeId, el: Option<NodeId>) -> DomResult<()> {
@@ -680,6 +681,7 @@ impl Dom {
             dd.hovered = new;
         }
         self.bump();
+        self.note(crate::dom::Change::Pseudo);
         Ok(())
     }
 

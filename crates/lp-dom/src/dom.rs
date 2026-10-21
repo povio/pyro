@@ -25,15 +25,19 @@ pub enum Change {
     /// `data-*`/`aria-*` attribute (no namespace), which only selectors that
     /// name it can observe (style and layout never read them).
     Attr(u32, u64, bool),
-    /// Children were inserted into the node.
-    Children(u32),
-    /// `.1` was removed from parent `.0` (the removed subtree keeps cached
-    /// state, and may be queried detached or reinserted).
-    Removed(u32, u32),
+    /// Node `.1` was inserted into `.0` (one entry per inserted node).
+    Inserted(u32, u32),
+    /// `.1` was removed from parent `.0`, before sibling `.2` (NIL: it was
+    /// the last child). The removed subtree keeps cached state, and may be
+    /// queried detached or reinserted.
+    Removed(u32, u32, u32),
     /// The character data of the node changed.
     Text(u32),
     /// Form-control state of the element changed (:checked, :valid...).
     State(u32),
+    /// The focused or hovered element changed. Consumers compare the focused
+    /// and hovered elements themselves (this entry restyles nothing).
+    Pseudo,
     /// Anything else (e.g. a shadow root attached), with where it was made
     /// (diagnostics: `LIGHTNINGPANDA_FLOW_STATS`).
     Unknown(&'static std::panic::Location<'static>),
@@ -228,6 +232,13 @@ impl Dom {
         }
     }
 
+    /// Adds another change to the latest `version` bump (after `note`).
+    fn note_more(&mut self, change: Change) {
+        if self.journal.last().is_some_and(|(v, _)| *v == self.version) {
+            self.push_change(change);
+        }
+    }
+
     /// The changes made after `version`, in order, or None when the journal
     /// no longer covers it (overflow): the caller must invalidate fully.
     pub fn changes_since(&self, version: u64) -> Option<impl Iterator<Item = Change> + '_> {
@@ -282,14 +293,15 @@ impl Dom {
     pub(crate) fn link_raw(&mut self, node: u32, parent: u32, before: u32) {
         self.link(node, parent, before);
         self.bump_tree();
-        self.note(Change::Children(parent));
+        self.note(Change::Inserted(parent, node));
     }
     pub(crate) fn unlink_raw(&mut self, node: u32) {
         let parent = self.n(node).parent;
+        let next = self.n(node).next;
         self.unlink(node);
         self.bump_tree();
         if parent != NIL {
-            self.note(Change::Removed(parent, node));
+            self.note(Change::Removed(parent, node, next));
         }
     }
     pub(crate) fn set_owner_raw(&mut self, node: u32, doc: u32) {
@@ -1105,7 +1117,10 @@ impl Dom {
             }
         }
         self.bump_tree();
-        self.note(Change::Children(parent));
+        self.note(Change::Inserted(parent, nodes[0]));
+        for &k in &nodes[1..] {
+            self.note_more(Change::Inserted(parent, k));
+        }
         if !suppress {
             self.queue_child_list(parent, &nodes, &[], prev, child);
         }
@@ -1164,7 +1179,7 @@ impl Dom {
         self.add_transient_observers(parent, node);
         self.unlink(node);
         self.bump_tree();
-        self.note(Change::Removed(parent, node));
+        self.note(Change::Removed(parent, node, next));
         if !suppress {
             self.queue_child_list(parent, &[], &[node], prev, next);
         }

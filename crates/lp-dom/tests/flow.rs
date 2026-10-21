@@ -1991,3 +1991,233 @@ fn incremental_style_survives_garbage_collected_removed_nodes() {
     assert_eq!(p.metrics("a"), fresh_layout.metrics("a"));
     assert_eq!(p.metrics("b"), fresh_layout.metrics("b"));
 }
+
+#[test]
+fn focus_and_hover_moves_invalidate_selectively_without_stale_geometry() {
+    // A moved focus or hover restyles the elements whose :focus,
+    // :focus-within or :hover match changed (the old and new elements, and
+    // the ancestors only one of them has), their subtrees and, through
+    // sibling combinators, later siblings; :has() anchors above them; and
+    // the ancestors a focused/hovered element leaves or joins when its
+    // subtree moves.
+    // (Rules whose subject compound tests :focus/:hover never apply in this
+    // engine; Tailwind's group-*/peer-* put them in other compounds.)
+    let css = "<style>\
+        .f{display:block;width:11px;height:10px} .f:focus > b{display:block;width:110px;height:10px}\
+        .w:focus-within .k{width:120px} .k{width:12px;height:10px}\
+        .peer:focus ~ .s{width:130px} .s{width:13px;height:10px}\
+        .g:has(:focus) .h{width:140px} .h{width:14px;height:10px}\
+        .p > i{display:block;height:20px} .p:focus > i{height:30px}\
+        .grp:hover .x{width:150px} .x{width:15px;height:10px}\
+        .hv > b{display:block;width:16px;height:10px} .hv:hover > b{width:160px}\
+        </style>";
+    let html = format!(
+        "<!doctype html>{css}<body style=\"margin:0\">\
+         <div class=w id=w1><div><div id=a class=f tabindex=0><b id=ab></b></div></div><div id=k1 class=k></div></div>\
+         <div class=w id=w2><div id=slot></div><div id=k2 class=k></div></div>\
+         <div><input id=pe class=\"peer f\"><div id=s class=s></div></div>\
+         <div class=g><div><input id=gi class=f></div><div id=h class=h></div></div>\
+         <div id=pp class=p tabindex=0><i id=pi></i><input id=pc></div>\
+         <div class=grp id=grp><div id=x class=x></div><div id=hv class=hv><b id=hb></b></div></div>\
+         <div id=away></div>\
+         </body>"
+    );
+    let mut p = page(&html, Geometry::Flow);
+    assert_matches_fresh(&p, "initial");
+    let w = |p: &Page, id: &str| p.layout.flow(&p.dom).get(p.id(id)).unwrap().rect;
+    let doc = p.doc;
+    let focus = |p: &mut Page, id: Option<&str>| {
+        let el = id.map(|i| p.id(i));
+        p.dom.set_focused(doc, el).unwrap();
+    };
+
+    focus(&mut p, Some("a"));
+    assert_matches_fresh(&p, "focus a");
+    assert_eq!((w(&p, "ab").width, w(&p, "k1").width, w(&p, "k2").width), (110.0, 120.0, 12.0));
+    focus(&mut p, Some("pe"));
+    assert_matches_fresh(&p, "focus moves to the peer");
+    assert_eq!((w(&p, "ab").width, w(&p, "k1").width, w(&p, "s").width), (0.0, 12.0, 130.0));
+    focus(&mut p, Some("gi"));
+    assert_matches_fresh(&p, "focus into a :has(:focus) group");
+    assert_eq!((w(&p, "s").width, w(&p, "h").width), (13.0, 140.0));
+    // From a parent to its child: the parent loses :focus only.
+    focus(&mut p, Some("pp"));
+    assert_matches_fresh(&p, "focus the parent");
+    assert_eq!(w(&p, "pi").height, 30.0);
+    focus(&mut p, Some("pc"));
+    assert_matches_fresh(&p, "focus its child");
+    assert_eq!(w(&p, "pi").height, 20.0);
+
+    // The focused element's subtree moves between :focus-within groups.
+    focus(&mut p, Some("a"));
+    assert_matches_fresh(&p, "focus a again");
+    let a = p.id("a");
+    let holder = p.dom.parent(a).unwrap().unwrap();
+    let w1 = p.id("w1");
+    let slot = p.id("slot");
+    p.dom.remove_child(w1, holder).unwrap();
+    p.dom.append_child(slot, holder).unwrap();
+    assert_matches_fresh(&p, "focused subtree moved to w2");
+    assert_eq!((w(&p, "k1").width, w(&p, "k2").width), (12.0, 120.0));
+    focus(&mut p, None);
+    assert_matches_fresh(&p, "focus cleared");
+    assert_eq!(w(&p, "k2").width, 12.0);
+
+    // Hover.
+    let hv = p.id("hv");
+    p.dom.set_hovered(doc, Some(hv)).unwrap();
+    assert_matches_fresh(&p, "hover hv");
+    assert_eq!((w(&p, "x").width, w(&p, "hb").width), (150.0, 160.0));
+    let away = p.id("away");
+    p.dom.set_hovered(doc, Some(away)).unwrap();
+    assert_matches_fresh(&p, "hover leaves the group");
+    assert_eq!((w(&p, "x").width, w(&p, "hb").width), (15.0, 16.0));
+    p.dom.set_hovered(doc, Some(hv)).unwrap();
+    p.dom.set_hovered(doc, None).unwrap();
+    assert_matches_fresh(&p, "hover cleared");
+}
+
+#[test]
+fn radio_group_changes_invalidate_selectively_without_stale_geometry() {
+    // Regrouping (type/name) and removing radios restyle every radio in the
+    // tree and what their validity restyles, instead of everything. (No
+    // form-level validity rule here: it would root the whole form.)
+    let css = "<style>\
+        .r:invalid + .l{width:170px} .l{display:block;width:17px;height:10px}\
+        </style>";
+    let html = format!(
+        "<!doctype html>{css}<body style=\"margin:0\">\
+         <form id=f>\
+         <div><input type=radio class=r name=g id=r1 required><span id=l1 class=l></span></div>\
+         <div><input type=radio class=r name=g id=r2 checked><span id=l2 class=l></span></div>\
+         <div><input type=radio class=r name=h id=r3 required><span id=l3 class=l></span></div>\
+         </form><div id=out></div><div>FILLER</div></body>"
+    );
+    let mut p = page(&html, Geometry::Flow);
+    assert_matches_fresh(&p, "initial");
+    let w = |p: &Page, id: &str| p.layout.flow(&p.dom).get(p.id(id)).unwrap().rect;
+    assert_eq!((w(&p, "l1").width, w(&p, "l3").width), (17.0, 170.0));
+    // r2 leaves group g by type: g has no checked radio any more.
+    let r2 = p.id("r2");
+    p.dom.set_attribute(r2, "type", "text").unwrap();
+    assert_matches_fresh(&p, "checked radio stops being a radio");
+    assert_eq!(w(&p, "l1").width, 170.0);
+    p.dom.set_attribute(r2, "type", "radio").unwrap();
+    assert_matches_fresh(&p, "and is a radio again");
+    assert_eq!(w(&p, "l1").width, 17.0);
+    // r2 moves to group h by name: h becomes valid, g invalid.
+    p.dom.set_attribute(r2, "name", "h").unwrap();
+    assert_matches_fresh(&p, "checked radio renamed to the other group");
+    assert_eq!((w(&p, "l1").width, w(&p, "l3").width), (170.0, 17.0));
+    p.dom.set_attribute(r2, "name", "g").unwrap();
+    assert_matches_fresh(&p, "renamed back");
+    // Removing the checked radio leaves g without one.
+    let holder = p.dom.parent(r2).unwrap().unwrap();
+    let f = p.id("f");
+    p.dom.remove_child(f, holder).unwrap();
+    assert_matches_fresh(&p, "checked radio removed");
+    assert_eq!(w(&p, "l1").width, 170.0);
+    let out = p.id("out");
+    p.dom.append_child(out, holder).unwrap();
+    assert_matches_fresh(&p, "inserted outside the form: another group");
+    assert_eq!(w(&p, "l1").width, 170.0);
+}
+
+#[test]
+fn insertions_and_removals_invalidate_selectively_without_stale_geometry() {
+    // An insertion or removal restyles the inserted/removed subtree, later
+    // siblings through any sibling combinator (adjacency changes even for
+    // type-only compounds), the parent's other children through structural
+    // pseudo-classes, the parent through :empty, and :has() ancestors; not
+    // the parent's whole subtree (a portal appended to body).
+    let css = "<style>\
+        .list > *{width:18px;height:10px;display:block} .list > * + *{width:180px}\
+        .list > :nth-child(2){height:20px} .list > :last-child{height:15px}\
+        .e:empty{height:7px} .e{width:30px}\
+        .q:has(> .y) .z{width:190px} .z{width:19px;height:10px}\
+        .portal{width:200px;height:10px}\
+        .adj > u{display:block;width:21px;height:10px} .adj > u + u{width:210px}\
+        </style>";
+    let html = format!(
+        "<!doctype html>{css}<body style=\"margin:0\">\
+         <div class=list id=list><i id=i1></i><i id=i2></i><i id=i3></i></div>\
+         <div class=e id=e></div>\
+         <div class=q id=q><div id=z class=z></div></div>\
+         <div class=adj id=adj><u id=u1></u><u id=u2></u></div>\
+         <div id=big>FILLER</div>\
+         </body>"
+    );
+    let mut p = page(&html, Geometry::Flow);
+    assert_matches_fresh(&p, "initial");
+    let w = |p: &Page, id: &str| p.layout.flow(&p.dom).get(p.id(id)).unwrap().rect;
+    let el = |p: &mut Page, class: &str| {
+        let e = p.dom.create_element(p.doc, "i").unwrap();
+        p.dom.set_attribute(e, "class", class).unwrap();
+        e
+    };
+    // At the front: every later child's adjacency and index moves.
+    let list = p.id("list");
+    let i1 = p.id("i1");
+    let front = el(&mut p, "");
+    p.dom.insert_before(list, front, Some(i1)).unwrap();
+    assert_matches_fresh(&p, "insert at the front");
+    assert_eq!((w(&p, "i1").width, w(&p, "i1").height), (180.0, 20.0));
+    // At the end: the old last child stops being :last-child.
+    let end = el(&mut p, "");
+    p.dom.append_child(list, end).unwrap();
+    assert_matches_fresh(&p, "append at the end");
+    assert_eq!(w(&p, "i3").height, 10.0);
+    // Removal in the middle.
+    let i2 = p.id("i2");
+    p.dom.remove_child(list, i2).unwrap();
+    assert_matches_fresh(&p, "remove from the middle");
+    p.dom.remove_child(list, front).unwrap();
+    assert_matches_fresh(&p, "remove the first");
+    assert_eq!((w(&p, "i1").width, w(&p, "i3").height), (18.0, 20.0));
+    // :empty parent.
+    let e = p.id("e");
+    let child = el(&mut p, "");
+    p.dom.append_child(e, child).unwrap();
+    assert_matches_fresh(&p, "parent stops being :empty");
+    p.dom.remove_child(e, child).unwrap();
+    assert_matches_fresh(&p, "parent :empty again");
+    assert_eq!(w(&p, "e").height, 7.0);
+    // :has(> .y) anchor.
+    let q = p.id("q");
+    let y = el(&mut p, "y");
+    p.dom.append_child(q, y).unwrap();
+    assert_matches_fresh(&p, ":has(> .y) gains a match");
+    assert_eq!(w(&p, "z").width, 190.0);
+    p.dom.remove_child(q, y).unwrap();
+    assert_matches_fresh(&p, ":has(> .y) loses it");
+    assert_eq!(w(&p, "z").width, 19.0);
+    // Adjacency only (no structural pseudo-classes on .adj): a non-matching
+    // node between two u breaks `u + u`; removing it joins them again.
+    let adj = p.id("adj");
+    let u2 = p.id("u2");
+    assert_eq!(w(&p, "u2").width, 210.0);
+    let gap = p.dom.create_element(p.doc, "s").unwrap();
+    p.dom.insert_before(adj, gap, Some(u2)).unwrap();
+    assert_matches_fresh(&p, "a non-u between two u");
+    assert_eq!(w(&p, "u2").width, 21.0);
+    p.dom.remove_child(adj, gap).unwrap();
+    assert_matches_fresh(&p, "the gap removed");
+    assert_eq!(w(&p, "u2").width, 210.0);
+    let u0 = p.dom.create_element(p.doc, "u").unwrap();
+    let u1 = p.id("u1");
+    p.dom.insert_before(adj, u0, Some(u1)).unwrap();
+    assert_matches_fresh(&p, "a u at the front");
+    assert_eq!(w(&p, "u1").width, 210.0);
+
+    // Portals appended to and removed from body.
+    let body = p.dom.parent(q).unwrap().unwrap();
+    let portal = p.dom.create_element(p.doc, "div").unwrap();
+    p.dom.set_attribute(portal, "class", "portal").unwrap();
+    let inner = el(&mut p, "y");
+    p.dom.append_child(portal, inner).unwrap();
+    p.dom.append_child(body, portal).unwrap();
+    assert_matches_fresh(&p, "portal appended to body");
+    assert_eq!(p.layout.flow(&p.dom).get(portal).unwrap().rect.width, 200.0);
+    p.dom.remove_child(body, portal).unwrap();
+    assert_matches_fresh(&p, "portal removed");
+}
