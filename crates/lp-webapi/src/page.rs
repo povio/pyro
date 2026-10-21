@@ -71,6 +71,9 @@ pub struct PageDom {
     /// targets"). Keyed by document: a task dropped by a navigation must not
     /// block the next document's events.
     pub(crate) pending_scrolls: RefCell<FxHashSet<(NodeId, Option<NodeId>)>>,
+    /// The DOM version scroll offsets were last re-clamped at, and whether a
+    /// re-clamp is queued for the next frame (`layout_api::clamp_scrolls`).
+    pub(crate) scroll_clamp: Cell<(Option<u64>, bool)>,
     pub(crate) mutations: crate::mutation_observer::BindingState,
     pub(crate) identity: RefCell<crate::identity::IdentityState>,
     pub(crate) fetch_state: crate::fetch::FetchState,
@@ -307,6 +310,7 @@ impl PageDom {
             intersections: Default::default(),
             resizes: Default::default(),
             pending_scrolls: Default::default(),
+            scroll_clamp: Default::default(),
             fetch_state: Default::default(),
             xhr_state: Default::default(),
             file_readers: Default::default(),
@@ -614,6 +618,7 @@ impl PageDom {
         crate::mutation_observer::after_task(self);
         crate::intersection_observer::after_task(self);
         crate::resize_observer::after_task(self);
+        crate::layout_api::schedule_scroll_clamp(self);
         crate::input::update_hover_after_task(self);
         self.url_params_helpers.borrow_mut().retain(|realm, _| {
             self.realms.borrow().get(realm).and_then(|r| r.upgrade()).is_some_and(|r| !r.is_disposed())

@@ -1439,6 +1439,55 @@ impl Layout {
         true
     }
 
+    /// Whether any element or the window is scrolled away from the origin.
+    pub fn has_scroll_offsets(&self) -> bool {
+        self.window_scroll != (0, 0) || self.element_scroll.values().any(|&o| o != (0, 0))
+    }
+
+    /// Re-clamps scroll offsets to the current scrollable extents and
+    /// returns the targets that moved (in element order, the viewport last).
+    /// Chromium clamps a scroll position when layout shrinks the scrollable
+    /// overflow below it and fires `scroll` (react-aria's virtualizer reads
+    /// its window from that event when measured rows shrink the content).
+    /// Flow geometry only; hidden or detached elements keep their offsets.
+    pub fn clamp_scroll_offsets(&mut self, dom: &Dom) -> Vec<ScrollTarget> {
+        let mut moved = Vec::new();
+        if !self.flow_mode() || !self.has_scroll_offsets() {
+            return moved;
+        }
+        let mut scrolled: Vec<(NodeId, (u32, u32))> =
+            self.element_scroll.iter().filter(|(_, &o)| o != (0, 0)).map(|(&k, &v)| (k, v)).collect();
+        scrolled.sort_by_key(|(k, _)| (k.idx, k.gen));
+        for (el, (x, y)) in scrolled {
+            if !dom.is_connected(el).unwrap_or(false) || !self.is_visible(dom, el) {
+                continue;
+            }
+            let limit = |layout: &Self, axis: Axis, v: u32| {
+                if v == 0 {
+                    return 0;
+                }
+                layout.scroll_extent(dom, el, axis).map_or(v, |e| v.min(e.floor().max(0.0) as u32))
+            };
+            let (nx, ny) = (limit(self, Axis::Width, x), limit(self, Axis::Height, y));
+            if (nx, ny) != (x, y) {
+                self.element_scroll.insert(el, (nx, ny));
+                self.scroll_generation = self.scroll_generation.wrapping_add(1);
+                moved.push(ScrollTarget::Container(el));
+            }
+        }
+        if self.window_scroll != (0, 0) {
+            let (w, h) = self.document_scroll_size(dom);
+            let max = (scroll_limit(w, self.inner_width()), scroll_limit(h, self.inner_height()));
+            let clamped = (self.window_scroll.0.min(max.0), self.window_scroll.1.min(max.1));
+            if clamped != self.window_scroll {
+                self.window_scroll = clamped;
+                self.scroll_generation = self.scroll_generation.wrapping_add(1);
+                moved.push(ScrollTarget::Viewport);
+            }
+        }
+        moved
+    }
+
     /// `clampScroll` (Element.zig:2261-2270).
     fn clamp_scroll(&self, dom: &Dom, el: NodeId, axis: Axis, target: i64) -> u32 {
         let mut clamped = target;

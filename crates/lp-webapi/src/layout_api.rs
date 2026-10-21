@@ -137,22 +137,77 @@ pub fn fire_scroll(page: &Rc<PageDom>, target: Option<NodeId>) {
         std::time::Duration::from_millis(16),
         Box::new(move || {
             p.pending_scrolls.borrow_mut().remove(&(doc, target));
-            if p.is_disposed() || p.document() != doc {
-                return;
+            dispatch_scroll(&p, doc, target);
+        }),
+    );
+}
+
+fn dispatch_scroll(p: &Rc<PageDom>, doc: NodeId, target: Option<NodeId>) {
+    if p.is_disposed() || p.document() != doc {
+        return;
+    }
+    match target {
+        Some(el) => {
+            let connected = {
+                let dom = p.dom.borrow();
+                dom.is_connected(el).unwrap_or(false) && dom.node_document(el).ok() == Some(doc)
+            };
+            if connected {
+                crate::input::fire_simple(p, el, "scroll", false, false);
             }
-            match target {
-                Some(el) => {
-                    let connected = {
-                        let dom = p.dom.borrow();
-                        dom.is_connected(el).unwrap_or(false) && dom.node_document(el).ok() == Some(doc)
-                    };
-                    if connected {
-                        crate::input::fire_simple(&p, el, "scroll", false, false);
-                    }
-                }
-                None => {
-                    crate::input::fire_simple(&p, doc, "scroll", true, false);
-                }
+        }
+        None => {
+            crate::input::fire_simple(p, doc, "scroll", true, false);
+        }
+    }
+}
+
+/// Re-clamps scroll offsets that the current layout no longer reaches and
+/// fires their `scroll` events: `now` (a rendering update) dispatches them
+/// at once, otherwise (a script read) at the next frame like other scrolls.
+pub(crate) fn clamp_scrolls(page: &Rc<PageDom>, now: bool) {
+    if !page.layout.borrow().has_scroll_offsets() {
+        return;
+    }
+    let moved = {
+        let dom = page.dom.borrow();
+        let moved = page.layout.borrow_mut().clamp_scroll_offsets(&dom);
+        page.scroll_clamp.set((Some(dom.version()), page.scroll_clamp.get().1));
+        moved
+    };
+    let doc = page.document();
+    for target in moved {
+        let node = match target {
+            lp_dom::layout::ScrollTarget::Container(node) => Some(node),
+            lp_dom::layout::ScrollTarget::Viewport => None,
+        };
+        if !now {
+            fire_scroll(page, node);
+        } else if !page.pending_scrolls.borrow().contains(&(doc, node)) {
+            dispatch_scroll(page, doc, node);
+        }
+    }
+}
+
+/// After a task that changed the DOM while something is scrolled: re-clamp
+/// at the next frame (16 ms, the scroll event cadence), when Chromium's
+/// rendering update would lay out without any script read.
+pub(crate) fn schedule_scroll_clamp(page: &Rc<PageDom>) {
+    let (checked, queued) = page.scroll_clamp.get();
+    if queued || page.is_disposed() || !page.layout.borrow().has_scroll_offsets() {
+        return;
+    }
+    if checked == Some(page.dom.borrow().version()) {
+        return;
+    }
+    page.scroll_clamp.set((checked, true));
+    let p = page.clone();
+    page.post_delayed_task(
+        std::time::Duration::from_millis(16),
+        Box::new(move || {
+            p.scroll_clamp.set((p.scroll_clamp.get().0, false));
+            if !p.is_disposed() {
+                clamp_scrolls(&p, true);
             }
         }),
     );
@@ -213,6 +268,8 @@ pub(crate) fn scroll_to<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>, by: bool) 
 }
 
 pub(crate) fn scroll_get<'s>(s: &Scope<'s>, n: &NodeData, top: bool) -> JsResult<Value<'s>> {
+    // Reading a scroll offset sees the current layout (clamped to it).
+    clamp_scrolls(n.page(), false);
     let layout = n.page().layout.borrow();
     Ok(s.number(if top { layout.scroll_top(n.id) } else { layout.scroll_left(n.id) } as f64))
 }

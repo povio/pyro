@@ -5023,3 +5023,40 @@ fn single_axis_overflow_makes_a_scroll_container_like_chromium() {
     }
     e.page.dispose();
 }
+
+#[test]
+fn content_shrink_clamps_scroll_offsets_and_fires_scroll_like_chromium() {
+    // Chromium clamps a scroll position when layout shrinks the scrollable
+    // overflow below it and fires `scroll`; the engine kept the stale offset
+    // silently. react-aria's virtualizer takes its window from that event
+    // when measured rows come out shorter than estimated (TOS QRef: a stale
+    // window and an extra measuring round). Chromium: 900, then 400 at the
+    // read with an event, then 200 at the next frame without a read.
+    let e = env("<body style='margin:0'><div id=s style='height:100px;overflow:auto'><div id=c style='height:1000px'></div></div></body>");
+    e.page.layout.borrow_mut().set_geometry(lp_dom::layout::Geometry::Flow);
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    eval(
+        &e.main,
+        "globalThis.s = document.getElementById('s'); globalThis.c = document.getElementById('c'); globalThis.ev = []; \
+         s.addEventListener('scroll', () => ev.push(s.scrollTop)); s.scrollTop = 900; 1",
+    );
+    tasks.drain();
+    assert_eq!(eval(&e.main, "ev.join()"), "900");
+    // Shrunk, then read: clamped at once; its event comes at the next frame.
+    assert_eq!(eval(&e.main, "ev = []; c.style.height = '500px'; s.scrollTop"), "400");
+    assert_eq!(eval(&e.main, "ev.join()"), "", "the event is not synchronous");
+    tasks.drain();
+    assert_eq!(eval(&e.main, "ev.join()"), "400");
+    // Shrunk without a read: the next frame clamps and fires.
+    eval(&e.main, "ev = []; c.style.height = '300px'; 1");
+    e.page.after_task();
+    tasks.drain();
+    assert_eq!(eval(&e.main, "[ev.join(), s.scrollTop].join('|')"), "200|200");
+    // Nothing changed since: no further clamp or event.
+    eval(&e.main, "ev = []; 1");
+    e.page.after_task();
+    tasks.drain();
+    assert_eq!(eval(&e.main, "ev.join()"), "");
+    e.page.dispose();
+}
