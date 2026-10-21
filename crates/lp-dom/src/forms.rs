@@ -655,10 +655,15 @@ impl Dom {
             None => NIL,
         };
         let prev = self.focused_idx(d);
+        if prev == new {
+            // Refocusing the focused element changes nothing styles see.
+            return Ok(self.opt_id(prev));
+        }
         if let NodeKind::Document(dd) = &mut self.n_mut(d).kind {
             dd.focused = new;
         }
-        // :focus / :focus-within participate in style matching.
+        // :focus / :focus-within participate in style matching (the style
+        // cache sees the change through its focus stamp).
         self.bump();
         Ok(self.opt_id(prev))
     }
@@ -668,6 +673,9 @@ impl Dom {
             Some(e) => self.check(e)?,
             None => NIL,
         };
+        if self.hovered_idx(d) == new {
+            return Ok(());
+        }
         if let NodeKind::Document(dd) = &mut self.n_mut(d).kind {
             dd.hovered = new;
         }

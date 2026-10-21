@@ -1855,6 +1855,9 @@ pub(crate) mod flow_stats {
         full: [u64; Full::COUNT],
         misses: u64,
         miss_time: Duration,
+        unknown: std::collections::BTreeMap<String, u64>,
+        /// The largest invalidation roots: (descendants dropped, root).
+        roots: Vec<(usize, String)>,
     }
 
     /// Why the style cache was cleared entirely.
@@ -1894,6 +1897,29 @@ pub(crate) mod flow_stats {
                 s.dropped += dropped as u64;
             });
         }
+    }
+
+    /// Where an unjournaled change came from (`file:line`, or `document`).
+    pub(crate) fn note_unknown(label: impl FnOnce() -> String) {
+        if enabled() {
+            STATS.with(|s| *s.borrow_mut().unknown.entry(label()).or_default() += 1);
+        }
+    }
+
+    /// One selective invalidation root and the descendants it dropped; the
+    /// three largest per window are printed.
+    pub(crate) fn note_root(size: usize, label: impl FnOnce() -> String) {
+        if !enabled() {
+            return;
+        }
+        STATS.with(|s| {
+            let roots = &mut s.borrow_mut().roots;
+            if roots.len() < 3 || roots.last().is_some_and(|(n, _)| size > *n) {
+                roots.push((size, label()));
+                roots.sort_by_key(|r| std::cmp::Reverse(r.0));
+                roots.truncate(3);
+            }
+        });
     }
 
     pub(crate) fn note_style_miss(took: Duration) {
@@ -1968,6 +1994,11 @@ pub(crate) mod flow_stats {
                     s.misses,
                     s.miss_time.as_millis()
                 );
+                let unknown: Vec<String> = s.unknown.iter().map(|(at, n)| format!("{at}:{n}")).collect();
+                let roots: Vec<String> = s.roots.iter().map(|(n, r)| format!("{r}:{n}")).collect();
+                eprintln!("flow-stats last25 unknown=[{}] largest_roots=[{}]", unknown.join(" "), roots.join(" "));
+                s.unknown.clear();
+                s.roots.clear();
                 s.window = Duration::ZERO;
                 s.selective = 0;
                 s.dropped = 0;

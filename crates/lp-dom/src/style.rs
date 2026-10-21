@@ -1088,6 +1088,13 @@ struct RuleSet {
     /// select is valid only if its controls are, so changes below one that
     /// matches a key may restyle it, its subtree and later siblings.
     validity_keys: Vec<AnchorKey>,
+    /// Keys of state-dependent compounds left of a sibling combinator: an
+    /// element matching one (before or after a change) may restyle its later
+    /// siblings.
+    sibling_keys: Vec<AnchorKey>,
+    /// Hashes (`dom::attr_name_hash`, as written and lowercased) of every
+    /// attribute name a selector tests.
+    attr_names: FxHashSet<u64>,
     /// Every author declaration of each selector, bucketed like `rules`, for
     /// the generic computed values (`StyleEngine::declared_map`).
     generic_rules: Vec<GenericRule>,
@@ -1203,6 +1210,8 @@ struct Builder<'v> {
     has_relative: bool,
     has_anchors: Vec<HasAnchor>,
     validity_keys: Vec<AnchorKey>,
+    sibling_keys: Vec<AnchorKey>,
+    attr_names: FxHashSet<u64>,
 }
 
 impl<'v> Builder<'v> {
@@ -1221,6 +1230,8 @@ impl<'v> Builder<'v> {
             has_relative: false,
             has_anchors: Vec::new(),
             validity_keys: Vec::new(),
+            sibling_keys: Vec::new(),
+            attr_names: FxHashSet::default(),
         }
     }
 
@@ -1258,6 +1269,8 @@ impl<'v> Builder<'v> {
                         } else {
                             self.has_relative = true;
                         }
+                        collect_sibling_keys(sel, &mut self.sibling_keys);
+                        collect_attr_names(sel, &mut self.attr_names);
                     }
                     // StyleManager.zig:485-525; generic declarations share the block's order.
                     if !customs.is_empty() || !generics.is_empty() {
@@ -1478,6 +1491,8 @@ impl<'v> Builder<'v> {
         rs.has_relative = self.has_relative;
         rs.has_anchors = std::mem::take(&mut self.has_anchors);
         rs.validity_keys = std::mem::take(&mut self.validity_keys);
+        rs.sibling_keys = std::mem::take(&mut self.sibling_keys);
+        rs.attr_names = std::mem::take(&mut self.attr_names);
         for (name, rule) in self.customs.into_iter().map(to_rule) {
             rs.customs.entry(name).or_default().push(rule);
         }
@@ -1587,22 +1602,79 @@ pub fn with_pass_memo<R>(f: impl FnOnce() -> R) -> R {
 /// combinators, inheritance) and its later siblings with their subtrees
 /// (sibling combinators); a child-list or text change affects the parent
 /// the same way (:empty, :nth-child, new or removed nodes).
-fn invalidation_roots(
-    dom: &Dom,
-    changes: &[crate::dom::Change],
-    anchors: &[HasAnchor],
-    validity: &[AnchorKey],
-) -> Option<Vec<u32>> {
+/// `tag#id.class` of an invalidation root (diagnostics).
+fn describe_root(dom: &Dom, root: u32) -> String {
+    match &dom.n(root).kind {
+        crate::node::NodeKind::Element(e) => {
+            let mut s = e.name.local.to_string();
+            if let Some(id) = e.attr("id") {
+                s.push('#');
+                s.push_str(id);
+            }
+            if let Some(class) = e.attr("class").and_then(|c| c.split_ascii_whitespace().next()) {
+                s.push('.');
+                s.push_str(class);
+            }
+            s.chars().take(60).collect()
+        }
+        _ => "#node".to_owned(),
+    }
+}
+
+/// Why selective invalidation gave up (diagnostics).
+enum NotSelective {
+    /// An unjournaled change (or one selection cannot bound), made at this
+    /// location.
+    Unknown(&'static std::panic::Location<'static>),
+}
+
+/// The elements whose subtrees `changes` may restyle, or why every element
+/// must be restyled.
+///
+/// A change can restyle the changed element and its subtree (inheritance,
+/// descendant and child combinators). It can restyle later siblings and
+/// their subtrees only through a sibling combinator whose left compound the
+/// element matched before or after the change (`sibling_keys`). It can
+/// restyle ancestors through `:has()` (`has_anchors`) and, for forms,
+/// fieldsets and selects, through `:valid`/`:invalid` (`validity_keys`).
+/// Structural pseudo-classes of the children are covered by the parent's
+/// subtree. Sibling-relative `:has()` and shadow trees never get here.
+fn invalidation_roots(dom: &Dom, changes: &[crate::dom::Change], rules: &RuleSet) -> Result<Vec<u32>, NotSelective> {
     use crate::dom::Change;
     use crate::node::NodeKind;
+    let (anchors, validity) = (&rules.has_anchors[..], &rules.validity_keys[..]);
     let mut roots: Vec<u32> = Vec::new();
     let mut seen = FxHashSet::default();
     // Nodes whose following siblings are already roots too: a walk can stop
-    // there. (A removed node is a root without its tail, and may have been
+    // there. (A node can be a root without its tail, and may have been
     // reinserted elsewhere by a later change in the same batch.)
     let mut tails = FxHashSet::default();
-    let mut push_with_siblings = |roots: &mut Vec<u32>, seen: &mut FxHashSet<u32>, start: u32| {
-        let mut cur = start;
+    // Whether a state change of element `x` (`attr`: the hash of a changed
+    // attribute's name) can change its match of a sibling-combinator left
+    // compound. Keys are necessary conditions: one that does not match now
+    // matched before too unless the change touched the attribute it reads.
+    let siblings_affected = |x: u32, attr: Option<u64>| -> bool {
+        let NodeKind::Element(e) = &dom.n(x).kind else { return true };
+        rules.sibling_keys.iter().any(|k| {
+            k.matches(e)
+                || match (k, attr) {
+                    (AnchorKey::Class(_), Some(h)) => h == local_name!("class").get_hash(),
+                    (AnchorKey::Attr(name), Some(h)) => {
+                        h == crate::dom::attr_name_hash(name)
+                            || h == crate::dom::attr_name_hash(&name.to_ascii_lowercase())
+                    }
+                    _ => false,
+                }
+        })
+    };
+    let mut push = |roots: &mut Vec<u32>, seen: &mut FxHashSet<u32>, x: u32, attr: Option<u64>| {
+        if !siblings_affected(x, attr) {
+            if seen.insert(x) {
+                roots.push(x);
+            }
+            return;
+        }
+        let mut cur = x;
         while cur != NIL && tails.insert(cur) {
             if seen.insert(cur) {
                 roots.push(cur);
@@ -1639,32 +1711,43 @@ fn invalidation_roots(
         }
         out
     };
+    // A radio's validity depends on its whole group: the members and what
+    // their validity restyles above them.
+    let group_roots = |radio: u32| -> Vec<u32> {
+        let mut out = Vec::new();
+        for m in dom.radio_group(radio) {
+            out.push(m);
+            out.extend(walk_up(dom.n(m).parent));
+        }
+        out
+    };
     for c in changes {
         let first = match *c {
-            Change::Attr(i) | Change::State(i) => dom.n(i).parent,
+            // An unreferenced data-*/aria-* attribute restyles nothing.
+            Change::Attr(_, h, true) if !rules.attr_names.contains(&h) => continue,
+            Change::Attr(i, ..) | Change::State(i) => dom.n(i).parent,
             Change::Children(p) | Change::Removed(p, _) => p,
             Change::Text(t) => dom.n(t).parent,
-            Change::Unknown => NIL,
+            Change::Unknown(at) => return Err(NotSelective::Unknown(at)),
         };
         for a in walk_up(first) {
-            push_with_siblings(&mut roots, &mut seen, a);
+            push(&mut roots, &mut seen, a, None);
         }
-        let start = match *c {
-            Change::Attr(i) | Change::State(i) => {
-                // A radio's validity depends on its whole group, which a
-                // `name`/`form`/`type` change regroups.
+        let (start, attr) = match *c {
+            Change::Attr(i, h, _) => {
+                // A `name`/`form`/`type` change regroups radios.
                 if !validity.is_empty() && is_radio(i) {
-                    if matches!(c, Change::Attr(_)) {
-                        return None;
-                    }
-                    for m in dom.radio_group(i) {
-                        push_with_siblings(&mut roots, &mut seen, m);
-                        for a in walk_up(dom.n(m).parent) {
-                            push_with_siblings(&mut roots, &mut seen, a);
-                        }
+                    return Err(NotSelective::Unknown(std::panic::Location::caller()));
+                }
+                (i, Some(h))
+            }
+            Change::State(i) => {
+                if !validity.is_empty() && is_radio(i) {
+                    for x in group_roots(i) {
+                        push(&mut roots, &mut seen, x, None);
                     }
                 }
-                i
+                (i, None)
             }
             Change::Children(p) => {
                 // Inserted radios join (and may complete) a group elsewhere.
@@ -1676,47 +1759,151 @@ fn invalidation_roots(
                         .map(|n| n.idx)
                         .filter(|&n| is_radio(n))
                         .collect();
-                    for r in radios {
-                        for m in dom.radio_group(r) {
-                            push_with_siblings(&mut roots, &mut seen, m);
-                            for a in walk_up(dom.n(m).parent) {
-                                push_with_siblings(&mut roots, &mut seen, a);
-                            }
-                        }
+                    for x in radios.into_iter().flat_map(group_roots) {
+                        push(&mut roots, &mut seen, x, None);
                     }
                 }
-                p
+                (p, None)
             }
             Change::Removed(p, n) => {
                 // Removed radios leave a group the detached subtree no longer
                 // reaches.
                 if !validity.is_empty() && dom.descendants(dom.id_of(n)).into_iter().flatten().any(|d| is_radio(d.idx))
                 {
-                    return None;
+                    return Err(NotSelective::Unknown(std::panic::Location::caller()));
                 }
                 // The removed subtree itself (styles of detached elements are
                 // still computed), then the parent side as for an insertion.
                 if seen.insert(n) {
                     roots.push(n);
                 }
-                p
+                (p, None)
             }
             Change::Text(t) => {
                 let p = dom.n(t).parent;
                 if p == NIL {
                     continue;
                 }
-                p
+                (p, None)
             }
-            Change::Unknown => return None,
+            Change::Unknown(at) => return Err(NotSelective::Unknown(at)),
         };
-        if !matches!(dom.n(start).kind, NodeKind::Element(_)) {
-            // The document or a fragment: everything below may change.
-            return None;
+        match &dom.n(start).kind {
+            NodeKind::Element(_) => push(&mut roots, &mut seen, start, attr),
+            // A document or a DocumentFragment (shadow roots take the full
+            // path) has no style of its own: only its subtree can be affected
+            // (for the styled document that is everything; the parser's
+            // scratch documents and fragments are not styled).
+            NodeKind::Document(_) | NodeKind::Fragment(crate::node::FragmentData { shadow: None, .. }) => {
+                let mut child = dom.n(start).first_child;
+                while child != NIL {
+                    if seen.insert(child) {
+                        roots.push(child);
+                    }
+                    child = dom.n(child).next;
+                }
+            }
+            _ => return Err(NotSelective::Unknown(std::panic::Location::caller())),
         }
-        push_with_siblings(&mut roots, &mut seen, start);
     }
-    Some(roots)
+    // A root inside another root's subtree adds nothing.
+    let set: FxHashSet<u32> = roots.iter().copied().collect();
+    roots.retain(|&r| {
+        let mut cur = dom.n(r).parent;
+        while cur != NIL {
+            if set.contains(&cur) {
+                return false;
+            }
+            cur = dom.n(cur).parent;
+        }
+        true
+    });
+    Ok(roots)
+}
+
+/// Every attribute name `sel` tests, at any nesting (hashes of the name as
+/// written and lowercased).
+fn collect_attr_names(sel: &Selector<Impl>, out: &mut FxHashSet<u64>) {
+    fn add(out: &mut FxHashSet<u64>, name: &str) {
+        out.insert(crate::dom::attr_name_hash(name));
+        out.insert(crate::dom::attr_name_hash(&name.to_ascii_lowercase()));
+    }
+    for c in sel.iter_raw_match_order() {
+        match c {
+            Component::AttributeInNoNamespaceExists { local_name, local_name_lower } => {
+                add(out, &local_name.0);
+                add(out, &local_name_lower.0);
+            }
+            Component::AttributeInNoNamespace { local_name, .. } => add(out, &local_name.0),
+            Component::AttributeOther(a) => {
+                add(out, &a.local_name.0);
+                add(out, &a.local_name_lower.0);
+            }
+            Component::Is(list) | Component::Where(list) | Component::Negation(list) => {
+                for inner in list.slice() {
+                    collect_attr_names(inner, out);
+                }
+            }
+            Component::Has(list) => {
+                for rel in list.iter() {
+                    collect_attr_names(&rel.selector, out);
+                }
+            }
+            Component::NthOf(data) => {
+                for inner in data.selectors() {
+                    collect_attr_names(inner, out);
+                }
+            }
+            Component::Slotted(inner) | Component::Host(Some(inner)) => collect_attr_names(inner, out),
+            _ => {}
+        }
+    }
+}
+
+/// Keys of the state-dependent compounds left of a sibling combinator
+/// (`+`/`~`), also inside `:is()`/`:where()`/`:not()`; `:nth-child(of S)`
+/// makes every element's state matter to its siblings (key Any). A compound
+/// of type selectors only cannot change its match with attributes or state.
+fn collect_sibling_keys(sel: &Selector<Impl>, out: &mut Vec<AnchorKey>) {
+    use selectors::parser::Combinator;
+    let mut it = sel.iter();
+    let mut left_of_sibling = false;
+    loop {
+        let compound: Vec<&Component<Impl>> = (&mut it).collect();
+        let state_dependent = compound.iter().any(|c| {
+            !matches!(
+                c,
+                Component::LocalName(_)
+                    | Component::ExplicitUniversalType
+                    | Component::ExplicitAnyNamespace
+                    | Component::ExplicitNoNamespace
+                    | Component::DefaultNamespace(_)
+                    | Component::Namespace(..)
+            )
+        });
+        if left_of_sibling && state_dependent {
+            let key = compound_key(&compound);
+            if !out.contains(&key) {
+                out.push(key);
+            }
+        }
+        for c in &compound {
+            match c {
+                Component::Is(list) | Component::Where(list) | Component::Negation(list) => {
+                    for inner in list.slice() {
+                        collect_sibling_keys(inner, out);
+                    }
+                }
+                Component::NthOf(_) if !out.contains(&AnchorKey::Any) => out.push(AnchorKey::Any),
+                _ => {}
+            }
+        }
+        match it.next_sequence() {
+            Some(Combinator::NextSibling | Combinator::LaterSibling) => left_of_sibling = true,
+            Some(_) => left_of_sibling = false,
+            None => return,
+        }
+    }
 }
 
 /// Keys of the compounds of `sel` that test `:valid`/`:invalid` (also via
@@ -2452,19 +2639,27 @@ impl StyleEngine {
             }
             None => None,
         };
-        let roots = changes.and_then(|c| {
-            let roots = invalidation_roots(dom, &c, &cache.rules.has_anchors, &cache.rules.validity_keys);
-            if roots.is_none() {
+        let roots = changes.and_then(|c| match invalidation_roots(dom, &c, &cache.rules) {
+            Ok(roots) => Some(roots),
+            Err(why) => {
                 note_full(Full::Unknown);
+                crate::layout::flow_stats::note_unknown(|| match why {
+                    NotSelective::Unknown(at) => {
+                        let file = at.file().rsplit('/').next().unwrap_or(at.file());
+                        format!("{file}:{}", at.line())
+                    }
+                });
+                None
             }
-            roots
         });
         match roots {
             Some(roots) => {
                 let mut stale = Vec::new();
                 for root in roots {
                     if let Ok(it) = dom.descendants(dom.id_of(root)) {
+                        let before = stale.len();
                         stale.extend(it);
+                        crate::layout::flow_stats::note_root(stale.len() - before, || describe_root(dom, root));
                     }
                 }
                 if stale.len() * 2 > cache.memo.len().max(cache.declared.len()).max(cache.flow.len()) {
@@ -3256,7 +3451,32 @@ pub(crate) fn flat_tree_parent_element(dom: &Dom, idx: u32) -> Option<u32> {
 
 #[cfg(test)]
 mod has_anchor_tests {
-    use super::{collect_has_anchors, collect_validity_keys, AnchorKey, HasAnchor};
+    use super::{collect_has_anchors, collect_sibling_keys, collect_validity_keys, AnchorKey, HasAnchor};
+
+    fn siblings(text: &str) -> Vec<AnchorKey> {
+        let list = crate::select::parse_selectors(text).expect("selector");
+        let mut out = Vec::new();
+        for sel in list.slice() {
+            collect_sibling_keys(sel, &mut out);
+        }
+        out
+    }
+
+    #[test]
+    fn collects_sibling_keys() {
+        // TOS [&>*+*], [&>div+div]: type-only left compounds.
+        assert_eq!(siblings(r".\[\&\>\*\+\*\]\:border-l>*+*, .x>div+div, .d li+li"), vec![]);
+        assert_eq!(
+            siblings("[data-pinned-position=start]+[data-pinned-position=center]"),
+            vec![AnchorKey::Attr("data-pinned-position".into())]
+        );
+        assert_eq!(siblings(".peer:checked ~ .x"), vec![AnchorKey::Class("peer".into())]);
+        assert_eq!(siblings("input:checked + label"), vec![AnchorKey::Tag("input".into())]);
+        assert_eq!(siblings(".y:is(.a + *)"), vec![AnchorKey::Class("a".into())]);
+        assert_eq!(siblings("li:nth-child(2 of .x)"), vec![AnchorKey::Any]);
+        // Descendant/child only: none.
+        assert_eq!(siblings(".a .b > .c"), vec![]);
+    }
 
     fn validity(text: &str) -> Option<Vec<AnchorKey>> {
         let list = crate::select::parse_selectors(text).expect("selector");

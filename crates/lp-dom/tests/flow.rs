@@ -1742,7 +1742,7 @@ fn assert_journaled(p: &Page, since: u64, what: &str) {
     let changes: Vec<_> = p.dom.changes_since(since).expect("journal covers").collect();
     assert!(!changes.is_empty(), "{what}: nothing journaled");
     assert!(
-        !changes.iter().any(|c| matches!(c, lp_dom::dom::Change::Unknown)),
+        !changes.iter().any(|c| matches!(c, lp_dom::dom::Change::Unknown(_))),
         "{what}: journaled Unknown ({changes:?})"
     );
 }
@@ -1828,4 +1828,139 @@ fn form_state_writes_invalidate_selectively_without_stale_geometry() {
     assert_journaled(&p, v, "set_natural_size");
     assert_matches_fresh(&p, "image natural size");
     assert_eq!(w(&p, "img").height, 10.0);
+}
+
+#[test]
+fn sibling_and_fragment_invalidation_stays_exact() {
+    // Later siblings are restyled only when the changed element can match a
+    // state-dependent compound left of `+`/`~` (before or after the change);
+    // type-only compounds (`div + div`, TOS `[&>*+*]`) cannot change with
+    // attributes. DocumentFragments and the parser's scratch documents (all
+    // innerHTML writes) are invalidated by their own subtree only. Each step
+    // compares every box with a fresh layout.
+    let css = "<style>\
+        .peer.on ~ .t{width:210px} .t{width:21px;height:10px}\
+        [data-p=start] + [data-p=center]{width:220px} .c{width:22px;height:10px}\
+        .g > div + div{width:230px} .g > div{width:23px;height:10px}\
+        .ins .k{width:250px} .k{width:25px;height:10px}\
+        </style>";
+    let html = format!(
+        "<!doctype html>{css}<body style=\"margin:0\">\
+         <div><span id=pe class=\"peer on\"></span><i id=other></i><div id=t class=t></div></div>\
+         <div><div id=ps data-p=start></div><div id=pc class=c data-p=center></div></div>\
+         <div class=g><div id=g1></div><div id=g2></div></div>\
+         <div id=host class=ins></div><div id=html></div>\
+         </body>"
+    );
+    let mut p = page(&html, Geometry::Flow);
+    assert_matches_fresh(&p, "initial");
+    let w = |p: &Page, id: &str| p.layout.flow(&p.dom).get(p.id(id)).unwrap().rect;
+    assert_eq!(w(&p, "t").width, 210.0);
+
+    // An unrelated attribute on a non-matching sibling: nothing to restyle.
+    let other = p.id("other");
+    p.dom.set_attribute(other, "data-z", "1").unwrap();
+    assert_matches_fresh(&p, "unrelated attribute");
+    // The peer loses its class: it matched only before the change.
+    let pe = p.id("pe");
+    p.dom.set_attribute(pe, "class", "").unwrap();
+    assert_matches_fresh(&p, "class removed from the ~ left compound");
+    assert_eq!(w(&p, "t").width, 21.0);
+    p.dom.set_attribute(pe, "class", "peer on").unwrap();
+    assert_matches_fresh(&p, "class added back");
+    assert_eq!(w(&p, "t").width, 210.0);
+
+    // The keyed attribute removed: matched only before.
+    let ps = p.id("ps");
+    assert_eq!(w(&p, "pc").width, 220.0);
+    p.dom.remove_attribute(ps, "data-p").unwrap();
+    assert_matches_fresh(&p, "keyed attribute removed");
+    assert_eq!(w(&p, "pc").width, 22.0);
+    p.dom.set_attribute(ps, "data-p", "start").unwrap();
+    assert_matches_fresh(&p, "keyed attribute restored");
+    assert_eq!(w(&p, "pc").width, 220.0);
+
+    // Type-only sibling compounds: attributes cannot change them.
+    let g1 = p.id("g1");
+    p.dom.set_attribute(g1, "class", "anything").unwrap();
+    assert_matches_fresh(&p, "attribute under div + div");
+    assert_eq!(w(&p, "g2").width, 230.0);
+
+    // A fragment built off-document, then inserted.
+    let v = p.dom.version();
+    let frag = p.dom.create_fragment(p.doc).unwrap();
+    let k = p.dom.create_element(p.doc, "div").unwrap();
+    p.dom.set_attribute(k, "class", "k").unwrap();
+    p.dom.append_child(frag, k).unwrap();
+    let host = p.id("host");
+    p.dom.append_child(host, frag).unwrap();
+    assert_journaled(&p, v, "fragment insert");
+    assert_matches_fresh(&p, "fragment inserted");
+    assert_eq!(p.layout.flow(&p.dom).get(k).unwrap().rect.width, 250.0);
+
+    // innerHTML parses through a scratch document and merges text.
+    let v = p.dom.version();
+    let target = p.id("html");
+    lp_dom::parse::set_inner_html(&mut p.dom, target, "a<b></b>b&amp;c<div class=k>x</div>").unwrap();
+    assert_journaled(&p, v, "innerHTML");
+    assert_matches_fresh(&p, "innerHTML");
+
+    // Refocusing the focused element changes nothing.
+    let doc = p.doc;
+    p.dom.set_focused(doc, Some(g1)).unwrap();
+    let v = p.dom.version();
+    p.dom.set_focused(doc, Some(g1)).unwrap();
+    assert_eq!(p.dom.version(), v, "refocus is a no-op");
+
+    // :nth-child(of S): any element's class can move a later sibling's
+    // index (its own page, since it makes every change reach siblings).
+    let mut p = page(
+        "<!doctype html><style>li{height:10px;width:10px} li:nth-child(2 of .x){width:240px}</style>\
+         <body style=\"margin:0\"><ul><li id=x1 class=x></li><li id=n2></li><li id=x3></li></ul></body>",
+        Geometry::Flow,
+    );
+    assert_eq!(w(&p, "x3").width, 10.0);
+    let n2 = p.id("n2");
+    p.dom.set_attribute(n2, "class", "x").unwrap();
+    assert_matches_fresh(&p, "nth-child of S");
+    assert_eq!(w(&p, "n2").width, 240.0);
+    // An earlier sibling leaves S: n2 becomes the first of S.
+    let x1 = p.id("x1");
+    p.dom.set_attribute(x1, "class", "").unwrap();
+    assert_matches_fresh(&p, "nth-child of S, earlier sibling leaves S");
+    assert_eq!(w(&p, "n2").width, 10.0);
+}
+
+#[test]
+fn data_and_aria_attributes_restyle_only_through_selectors_naming_them() {
+    // Style and layout never read data-*/aria-* attributes: only selectors
+    // can observe them, so a change of one no selector names restyles
+    // nothing, and one a selector names (any nesting, any case) still does.
+    let css = "<style>\
+        [data-state=open] .k{width:260px} .k{width:26px;height:10px}\
+        .w:has([aria-Expanded=true]) .m{width:270px} .m{width:27px;height:10px}\
+        </style>";
+    let html = format!(
+        "<!doctype html>{css}<body style=\"margin:0\">\
+         <div id=a><div id=k class=k></div></div>\
+         <div class=w><div><button id=b></button></div><div id=m class=m></div></div>\
+         </body>"
+    );
+    let mut p = page(&html, Geometry::Flow);
+    assert_matches_fresh(&p, "initial");
+    let w = |p: &Page, id: &str| p.layout.flow(&p.dom).get(p.id(id)).unwrap().rect;
+    let (a, b) = (p.id("a"), p.id("b"));
+    p.dom.set_attribute(a, "data-unrelated", "1").unwrap();
+    p.dom.set_attribute(b, "aria-label", "x").unwrap();
+    assert_matches_fresh(&p, "unreferenced data-/aria- attributes");
+    p.dom.set_attribute(a, "data-state", "open").unwrap();
+    assert_matches_fresh(&p, "referenced data- attribute");
+    assert_eq!(w(&p, "k").width, 260.0);
+    p.dom.set_attribute(b, "aria-expanded", "true").unwrap();
+    assert_matches_fresh(&p, "aria- attribute named inside :has()");
+    assert_eq!(w(&p, "m").width, 270.0);
+    p.dom.remove_attribute(a, "data-state").unwrap();
+    p.dom.set_attribute(b, "aria-expanded", "false").unwrap();
+    assert_matches_fresh(&p, "both reverted");
+    assert_eq!((w(&p, "k").width, w(&p, "m").width), (26.0, 27.0));
 }
