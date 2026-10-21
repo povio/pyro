@@ -3036,3 +3036,76 @@ fn sticky_boxes_stay_in_their_scrollport_like_chromium() {
     p.layout.window_scroll_to(&p.dom, None, Some(400));
     near(rect(&p, "vp").y, 10.0, "viewport sticky sticks below the top inset");
 }
+
+#[test]
+fn validity_has_anchors_invalidate_selectively_without_stale_geometry() {
+    // Tailwind's has-invalid: utility as Lightning CSS serves it to TOS. A
+    // `:has()` testing descendant validity made every DOM change restyle the
+    // whole document (QRef: every row measurement a full restyle). Its
+    // anchors now follow the descendants' value, attribute, option and
+    // radio-group changes; each step compares every box with a fresh layout
+    // (heights measured in Chromium on the same markup and steps).
+    let css = "<style>\
+        .card{display:block;height:10px}\
+        .card:has(:is(:where([data-rac])[data-invalid], :where(:not([data-rac])):invalid)){height:40px}\
+        input,select{display:block;height:10px;width:50px}\
+        </style>";
+    let html = format!(
+        "<!doctype html>{css}<body style=\"margin:0\">\
+         <div class=card id=c1><div><input id=req required></div></div>\
+         <div class=card id=c2><div><input id=dis></div></div>\
+         <div class=card id=c3><select id=sel required><option value=\"\">none</option></select></div>\
+         <div class=card id=c4><input type=radio name=g id=r1 required></div>\
+         <div class=card id=c5><input type=radio name=g id=r2 required></div></body>"
+    );
+    let mut p = page(&html, Geometry::Flow);
+    assert_matches_fresh(&p, "initial");
+    let h = |p: &Page, id: &str| p.layout.flow(&p.dom).get(p.id(id)).unwrap().rect.height;
+    assert_eq!([h(&p, "c1"), h(&p, "c2"), h(&p, "c3"), h(&p, "c4"), h(&p, "c5")], [40.0, 10.0, 40.0, 40.0, 40.0]);
+
+    let v = p.dom.version();
+    let req = p.id("req");
+    p.dom.set_value(req, "x").unwrap();
+    assert_journaled(&p, v, "value");
+    assert_matches_fresh(&p, "a value satisfies required");
+    assert_eq!(h(&p, "c1"), 10.0);
+
+    let v = p.dom.version();
+    let dis = p.id("dis");
+    p.dom.set_attribute(dis, "required", "").unwrap();
+    assert_journaled(&p, v, "required");
+    assert_matches_fresh(&p, "required makes the empty input invalid");
+    assert_eq!(h(&p, "c2"), 40.0);
+
+    let v = p.dom.version();
+    p.dom.set_attribute(dis, "disabled", "").unwrap();
+    assert_journaled(&p, v, "disabled");
+    assert_matches_fresh(&p, "disabled bars it from validation");
+    assert_eq!(h(&p, "c2"), 10.0);
+
+    let v = p.dom.version();
+    let sel = p.id("sel");
+    let opt = p.dom.create_element(p.doc, "option").unwrap();
+    p.dom.set_attribute(opt, "value", "x").unwrap();
+    p.dom.append_child(sel, opt).unwrap();
+    p.dom.set_option_selected(opt, true).unwrap();
+    assert_journaled(&p, v, "option");
+    assert_matches_fresh(&p, "an inserted, selected option satisfies the select");
+    assert_eq!(h(&p, "c3"), 10.0);
+
+    // Checking r2 satisfies the group, so r1 in another card turns valid.
+    let v = p.dom.version();
+    let r2 = p.id("r2");
+    p.dom.set_checked(r2, true).unwrap();
+    assert_journaled(&p, v, "radio");
+    assert_matches_fresh(&p, "a checked radio satisfies its group");
+    assert_eq!([h(&p, "c4"), h(&p, "c5")], [10.0, 10.0]);
+
+    // Renaming r2 out of the group leaves r1 alone and unchecked again: only
+    // r2 changed, so r1's card is reached through the group (radio roots).
+    let v = p.dom.version();
+    p.dom.set_attribute(r2, "name", "h").unwrap();
+    assert_journaled(&p, v, "regroup");
+    assert_matches_fresh(&p, "a radio leaving the group");
+    assert_eq!([h(&p, "c4"), h(&p, "c5")], [40.0, 10.0]);
+}

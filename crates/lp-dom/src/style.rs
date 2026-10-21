@@ -1136,6 +1136,9 @@ struct RuleSet {
     /// select is valid only if its controls are, so changes below one that
     /// matches a key may restyle it, its subtree and later siblings.
     validity_keys: Vec<AnchorKey>,
+    /// A `:has()` argument tests `:valid`/`:invalid` (Tailwind `has-invalid:`):
+    /// its anchors follow descendant validity, which for radios spans groups.
+    has_validity: bool,
     /// Keys of state-dependent compounds left of a sibling combinator: an
     /// element matching one (before or after a change) may restyle its later
     /// siblings.
@@ -1352,6 +1355,7 @@ struct Builder<'v> {
     has_anchors: Vec<HasAnchor>,
     revalidate: Vec<(Selectors, BucketKey)>,
     validity_keys: Vec<AnchorKey>,
+    has_validity: bool,
     sibling_keys: Vec<AnchorKey>,
     attr_names: FxHashSet<u64>,
     structural_sibling_keys: Vec<ChildKey>,
@@ -1379,6 +1383,7 @@ impl<'v> Builder<'v> {
             has_anchors: Vec::new(),
             revalidate: Vec::new(),
             validity_keys: Vec::new(),
+            has_validity: false,
             sibling_keys: Vec::new(),
             attr_names: FxHashSet::default(),
             structural_sibling_keys: Vec::new(),
@@ -1420,6 +1425,7 @@ impl<'v> Builder<'v> {
                             self.has_relative = true;
                         }
                         let mut keys = Vec::new();
+                        self.has_validity |= has_validity_argument(sel);
                         if collect_validity_keys(sel, &mut keys) {
                             for k in keys {
                                 if !self.validity_keys.contains(&k) {
@@ -1662,6 +1668,7 @@ impl<'v> Builder<'v> {
         rs.has_anchors = std::mem::take(&mut self.has_anchors);
         rs.revalidate = std::mem::take(&mut self.revalidate);
         rs.validity_keys = std::mem::take(&mut self.validity_keys);
+        rs.has_validity = self.has_validity;
         rs.sibling_keys = std::mem::take(&mut self.sibling_keys);
         rs.attr_names = std::mem::take(&mut self.attr_names);
         rs.structural_sibling_keys = std::mem::take(&mut self.structural_sibling_keys);
@@ -1999,6 +2006,9 @@ fn invalidation_roots(
     // a new node only over-invalidates.
     let live = |i: u32| i != NIL && dom.slot_live(i);
     let (anchors, validity) = (&rules.has_anchors[..], &rules.validity_keys[..]);
+    // A radio's validity depends on its group: keyed validity compounds and
+    // validity-testing `:has()` anchors above any member may restyle.
+    let radio_validity = !validity.is_empty() || rules.has_validity;
     let element = |x: u32| match &dom.n(x).kind {
         NodeKind::Element(e) => Some(&**e),
         _ => None,
@@ -2197,7 +2207,7 @@ fn invalidation_roots(
                 // `type`, `name`, `form`, `checked` and `required` regroup or
                 // revalidate radio groups (also when `type` leaves radio).
                 let input = element(i).is_some_and(|e| e.is_html() && e.name.local == local_name!("input"));
-                if !validity.is_empty() && input && (is_radio(i) || h == local_name!("type").get_hash()) {
+                if radio_validity && input && (is_radio(i) || h == local_name!("type").get_hash()) {
                     found.extend(radio_roots(radios_below(dom.root_idx(i))).into_iter().map(state));
                 }
                 found.push((i, siblings_affected(i, Some(h))));
@@ -2207,7 +2217,7 @@ fn invalidation_roots(
                     continue;
                 }
                 found.extend(walk_up(dom.n(i).parent, 1).into_iter().map(state));
-                if !validity.is_empty() && is_radio(i) {
+                if radio_validity && is_radio(i) {
                     found.extend(radio_roots(dom.radio_group(i)).into_iter().map(state));
                 }
                 found.push(state(i));
@@ -2223,7 +2233,7 @@ fn invalidation_roots(
                 if !live(n) || dom.n(n).parent != p {
                     continue;
                 }
-                if !validity.is_empty() {
+                if radio_validity {
                     // Inserted radios join (and may complete) a group.
                     for r in radios_below(n) {
                         found.extend(radio_roots(dom.radio_group(r)).into_iter().map(state));
@@ -2246,7 +2256,7 @@ fn invalidation_roots(
                 if live(n) {
                     // Removed radios leave a group the detached subtree no
                     // longer reaches: every radio left in the tree.
-                    if !validity.is_empty() && !radios_below(n).is_empty() {
+                    if radio_validity && !radios_below(n).is_empty() {
                         found.extend(radio_roots(radios_below(dom.root_idx(p))).into_iter().map(state));
                     }
                     if holds_target(n) {
@@ -2256,7 +2266,7 @@ fn invalidation_roots(
                     // The removed subtree itself (styles of detached elements
                     // are still computed).
                     found.push((n, false));
-                } else if !validity.is_empty() {
+                } else if radio_validity {
                     // Freed: whether it held radios is unknown.
                     found.extend(radio_roots(radios_below(dom.root_idx(p))).into_iter().map(state));
                 }
@@ -2558,17 +2568,31 @@ fn collect_sibling_keys(sel: &Selector<Impl>, out: &mut Vec<AnchorKey>, structur
 /// `:is()`/`:where()`/`:not()`). False when one sits inside `:has()`: a
 /// form's validity changes with controls below it, beyond what the anchor
 /// depth bounds, so every change invalidates everything.
+/// Whether a selector tests `:valid`/`:invalid` anywhere (also nested).
+fn mentions_validity(sel: &Selector<Impl>) -> bool {
+    sel.iter_raw_match_order().any(|c| match c {
+        Component::NonTSPseudoClass(PseudoClass::Valid | PseudoClass::Invalid) => true,
+        Component::Is(list) | Component::Where(list) | Component::Negation(list) => {
+            list.slice().iter().any(mentions_validity)
+        }
+        Component::Has(list) => list.iter().any(|rel| mentions_validity(&rel.selector)),
+        _ => false,
+    })
+}
+
+/// Whether a `:has()` argument of the selector (also inside `:is()`,
+/// `:where()`, `:not()`) tests `:valid`/`:invalid`.
+fn has_validity_argument(sel: &Selector<Impl>) -> bool {
+    sel.iter_raw_match_order().any(|c| match c {
+        Component::Has(list) => list.iter().any(|rel| mentions_validity(&rel.selector)),
+        Component::Is(list) | Component::Where(list) | Component::Negation(list) => {
+            list.slice().iter().any(has_validity_argument)
+        }
+        _ => false,
+    })
+}
+
 fn collect_validity_keys(sel: &Selector<Impl>, out: &mut Vec<AnchorKey>) -> bool {
-    fn mentions(sel: &Selector<Impl>) -> bool {
-        sel.iter_raw_match_order().any(|c| match c {
-            Component::NonTSPseudoClass(PseudoClass::Valid | PseudoClass::Invalid) => true,
-            Component::Is(list) | Component::Where(list) | Component::Negation(list) => {
-                list.slice().iter().any(mentions)
-            }
-            Component::Has(list) => list.iter().any(|rel| mentions(&rel.selector)),
-            _ => false,
-        })
-    }
     let mut it = sel.iter();
     loop {
         let compound: Vec<&Component<Impl>> = (&mut it).collect();
@@ -2576,11 +2600,11 @@ fn collect_validity_keys(sel: &Selector<Impl>, out: &mut Vec<AnchorKey>) -> bool
         for c in &compound {
             match c {
                 Component::NonTSPseudoClass(PseudoClass::Valid | PseudoClass::Invalid) => tests = true,
-                Component::Has(list) => {
-                    if list.iter().any(|rel| mentions(&rel.selector)) {
-                        return false;
-                    }
-                }
+                // A `:has()` argument's validity follows its descendants'
+                // state, attribute, child and radio-group changes, which
+                // walk up to the `:has()` anchors (`collect_has_anchors`;
+                // radio groups through `has_validity`).
+                Component::Has(_) => {}
                 Component::Is(list) | Component::Where(list) | Component::Negation(list) => {
                     for inner in list.slice() {
                         // The inner subject compound constrains this element
@@ -4486,8 +4510,15 @@ mod has_anchor_tests {
         assert_eq!(validity(r".x:is(:where(.group):where([data-rac])[data-invalid] *)"), Some(vec![]));
         assert_eq!(validity("form:invalid .btn"), Some(vec![AnchorKey::Tag("form".into())]));
         assert_eq!(validity(":is(:valid)"), Some(vec![AnchorKey::Any]));
-        // Inside :has(): unbounded, so full invalidation.
-        assert_eq!(validity(".card:has(input:invalid)"), None);
+        // Inside :has(): the anchor walk's business (Tailwind has-invalid:,
+        // as Lightning CSS serves it to TOS).
+        assert_eq!(validity(".card:has(input:invalid)"), Some(vec![]));
+        assert_eq!(
+            validity(
+                r".has-invalid\:border:has(:is(:where([data-rac])[data-invalid], :where(:not([data-rac])):invalid))"
+            ),
+            Some(vec![])
+        );
     }
 
     fn anchors(text: &str) -> Option<Vec<HasAnchor>> {
@@ -4507,6 +4538,13 @@ mod has_anchor_tests {
 
     #[test]
     fn classifies_tailwind_has_selectors() {
+        // has-invalid: (Lightning CSS output): keyed by the utility class.
+        assert_eq!(
+            anchors(
+                r".has-invalid\:border:has(:is(:where([data-rac])[data-invalid], :where(:not([data-rac])):invalid))"
+            ),
+            one(AnchorKey::Class("has-invalid:border".into()), None)
+        );
         // group-has-*: descendants of the group anchor, any depth.
         assert_eq!(
             anchors(r".x:is(:where(.group\/input-content):has(:is(input:disabled)) *)"),
@@ -4543,5 +4581,46 @@ mod has_anchor_tests {
         assert_eq!(anchors(".a:has(+ .b)"), None, "sibling-relative");
         assert_eq!(anchors(".a:has(~ .b)"), None, "sibling-relative");
         assert_eq!(anchors(".plain .selector"), Some(vec![]));
+    }
+}
+
+#[cfg(test)]
+mod validity_has_invalidation_tests {
+    use crate::layout::{Geometry, Layout};
+    use crate::media::Viewport;
+    use crate::parse::{parse_document, DomRef};
+    use crate::Dom;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    #[test]
+    fn has_invalid_rules_keep_invalidation_selective() {
+        // TOS serves Tailwind's has-invalid: utilities flattened by Lightning
+        // CSS; they used to make every DOM change restyle every element.
+        let rows: String = (0..40).map(|i| format!("<div class=row><span>{i}</span></div>")).collect();
+        let html = format!(
+            "<!doctype html><style>.has-invalid\\:border:has(:is(:where([data-rac])[data-invalid], \
+             :where(:not([data-rac])):invalid)){{outline:1px solid}}</style><body>\
+             <div class=\"has-invalid:border\" id=card><input id=i required></div>{rows}<div id=other style=\"height:1px\"></div></body>"
+        );
+        let dom_ref: DomRef = Rc::new(RefCell::new(Dom::new()));
+        let doc = parse_document(&dom_ref, "http://test/", &html);
+        let mut dom = Rc::try_unwrap(dom_ref).ok().expect("sole owner").into_inner();
+        let mut layout = Layout::with_viewport(doc, Viewport::new(800, 600));
+        layout.style_mut().discover_style_elements(&dom);
+        layout.set_geometry(Geometry::Flow);
+        layout.flow(&dom);
+        layout.style().take_restyled(&dom);
+        let id = |dom: &Dom, s: &str| dom.get_element_by_id(doc, s).unwrap().unwrap();
+        // An unrelated style write restyles that element alone.
+        let other = id(&dom, "other");
+        dom.set_attribute(other, "style", "height:2px").unwrap();
+        assert_eq!(layout.style().take_restyled(&dom), Some(vec![other]));
+        // The control's value reaches its has-invalid anchor, not the rows.
+        let (card, input) = (id(&dom, "card"), id(&dom, "i"));
+        dom.set_value(input, "x").unwrap();
+        let restyled = layout.style().take_restyled(&dom).expect("selective");
+        assert!(restyled.contains(&card) && restyled.contains(&input), "{restyled:?}");
+        assert!(restyled.len() <= 3, "{restyled:?}");
     }
 }
