@@ -281,6 +281,18 @@ pub struct ElemRef<'a> {
     idx: u32,
 }
 
+/// Per-element class tokens as interned atoms sorted by their precomputed
+/// hash, valid for one (DOM uid, version).
+#[derive(Default)]
+struct ClassSets {
+    key: (u64, u64),
+    sets: FxHashMap<u32, Box<[LocalName]>>,
+}
+
+thread_local! {
+    static CLASS_SETS: std::cell::RefCell<ClassSets> = std::cell::RefCell::new(ClassSets::default());
+}
+
 impl fmt::Debug for ElemRef<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "ElemRef({})", self.idx)
@@ -390,9 +402,34 @@ impl selectors::Element for ElemRef<'_> {
         self.data().id().is_some_and(|v| cs.eq(v.as_bytes(), id.0.as_bytes()))
     }
     fn has_class(&self, name: &CssLocalName, cs: CaseSensitivity) -> bool {
-        self.data()
-            .attr("class")
-            .is_some_and(|v| v.split_ascii_whitespace().any(|c| cs.eq(c.as_bytes(), name.0.as_bytes())))
+        if cs != CaseSensitivity::CaseSensitive {
+            return self
+                .data()
+                .attr("class")
+                .is_some_and(|v| v.split_ascii_whitespace().any(|c| cs.eq(c.as_bytes(), name.0.as_bytes())));
+        }
+        // Tailwind class attributes run to dozens of tokens and selector
+        // matching tests them repeatedly (rightmost class, then ancestors for
+        // descendant combinators): keep each element's token hashes for the
+        // current DOM version.
+        let wanted = name.0.precomputed_hash();
+        CLASS_SETS.with(|cache| {
+            let mut cache = cache.borrow_mut();
+            let key = (self.dom.uid(), self.dom.version());
+            if cache.key != key {
+                cache.key = key;
+                cache.sets.clear();
+            }
+            let set = cache.sets.entry(self.idx).or_insert_with(|| {
+                let mut atoms: Vec<LocalName> =
+                    self.data().attr("class").unwrap_or("").split_ascii_whitespace().map(LocalName::from).collect();
+                atoms.sort_unstable_by_key(|a| a.precomputed_hash());
+                atoms.into_boxed_slice()
+            });
+            // Interned atoms: equal strings are the same atom.
+            let start = set.partition_point(|a| a.precomputed_hash() < wanted);
+            set[start..].iter().take_while(|a| a.precomputed_hash() == wanted).any(|a| *a == name.0)
+        })
     }
     fn has_custom_state(&self, _name: &CssLocalName) -> bool {
         false

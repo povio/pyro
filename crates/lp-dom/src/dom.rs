@@ -17,6 +17,8 @@ struct Slot {
 }
 
 pub struct Dom {
+    /// Process-unique id (caches keyed by DOM identity and `version`).
+    uid: u64,
     slots: Vec<Slot>,
     free: Vec<u32>,
     /// Bumped on every tree, attribute or character-data mutation. Live
@@ -53,7 +55,9 @@ pub mod position {
 
 impl Dom {
     pub fn new() -> Self {
+        static NEXT_UID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         Dom {
+            uid: NEXT_UID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             slots: Vec::new(),
             free: Vec::new(),
             version: 0,
@@ -110,6 +114,11 @@ impl Dom {
     }
     pub fn version(&self) -> u64 {
         self.version
+    }
+    /// Process-unique identity of this DOM (with `version`, a cache key
+    /// that changes on every mutation).
+    pub fn uid(&self) -> u64 {
+        self.uid
     }
     pub(crate) fn bump(&mut self) {
         self.version = self.version.wrapping_add(1);

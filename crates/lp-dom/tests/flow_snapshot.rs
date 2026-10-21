@@ -57,6 +57,16 @@ fn dump_flow_snapshot() {
         let t = std::time::Instant::now();
         let r = layout.flow(&dom);
         eprintln!("flow pass after a mutation: {:?} ({} boxes)", t.elapsed(), r.boxes.len());
+        if let Ok(n) = std::env::var("FLOW_PROFILE_MUTATIONS") {
+            // Repeated mutate + relayout, for sampling.
+            let n = n.parse::<usize>().unwrap_or(1);
+            let t = std::time::Instant::now();
+            for i in 0..n {
+                dom.set_attribute(probe, "data-flow-probe", &i.to_string()).unwrap();
+                let _ = layout.flow(&dom);
+            }
+            eprintln!("{n} mutate+pass: {:?} per pass", t.elapsed() / n as u32);
+        }
         let t = std::time::Instant::now();
         let _ = layout.flow(&dom);
         eprintln!("flow pass, no change (cached): {:?}", t.elapsed());

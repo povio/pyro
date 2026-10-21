@@ -161,3 +161,29 @@ fn constraint_validation() {
     dom.set_value(r, "x").unwrap();
     assert!(dom.validity(r).unwrap().valid());
 }
+
+#[test]
+fn class_matching_tracks_mutations_and_documents() {
+    // Class tokens are cached per element for one (DOM, version): a class
+    // change, and a second document with the same node indices, must not
+    // reuse stale tokens.
+    let (r, d) = doc("<div id=a class='x  big y'><span id=s class='x'></span></div>");
+    let mut dom = r.borrow_mut();
+    let a = dom.get_element_by_id(d, "a").unwrap().unwrap();
+    let m = |dom: &Dom, el: NodeId, s: &str| dom.matches(el, &parse_selectors(s).unwrap()).unwrap();
+    assert!(m(&dom, a, ".big") && m(&dom, a, ".x.y") && !m(&dom, a, ".bi") && !m(&dom, a, ".bigger"));
+    let s = dom.get_element_by_id(d, "s").unwrap().unwrap();
+    assert!(m(&dom, s, ".big .x") && m(&dom, s, ".y > .x"));
+    dom.set_attribute(a, "class", "z").unwrap();
+    assert!(!m(&dom, a, ".big") && m(&dom, a, ".z") && !m(&dom, s, ".big .x") && m(&dom, s, ".z .x"));
+    dom.remove_attribute(a, "class").unwrap();
+    assert!(!m(&dom, a, ".z"));
+    drop(dom);
+    // Another document whose nodes reuse the same indices.
+    let (r2, d2) = doc("<div id=a class='q'><span id=s class='x'></span></div>");
+    let dom2 = r2.borrow();
+    let a2 = dom2.get_element_by_id(d2, "a").unwrap().unwrap();
+    assert!(m(&dom2, a2, ".q") && !m(&dom2, a2, ".z"));
+    let dom = r.borrow();
+    assert!(m(&dom, s, ".x") && !m(&dom, a, ".q"));
+}
