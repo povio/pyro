@@ -2769,3 +2769,100 @@ fn style_sharing_serves_each_elements_own_cascade() {
     }
     check(&p, "rows appended");
 }
+
+#[test]
+fn cross_pass_measurements_never_serve_stale_geometry() {
+    // Layout keeps subtree measurements (content heights, intrinsic widths,
+    // baselines) across passes and drops those of changed elements and
+    // their ancestors. Measured layouts (wrapping flex rows, grid auto rows,
+    // shrink-to-fit abspos, inline-blocks, auto tables, images, selects)
+    // must match a fresh layout after each kind of change, deep inside.
+    let css = "<style>\
+        .row{display:flex;flex-wrap:wrap;gap:4px;width:300px} .row>div{padding:2px}\
+        .grid{display:grid;grid-template-columns:1fr 1fr;width:300px}\
+        .pos{position:relative;height:200px} .abs{position:absolute;top:0;left:0}\
+        .ib{display:inline-block} .big{font-size:30px} table{border-collapse:collapse}\
+        .wide .w{width:250px}\
+        </style>";
+    let html = format!(
+        "<!doctype html>{css}<body style=\"margin:0\">\
+         <div class=row id=row><div><span id=t1>alpha beta</span></div><div><div><b id=t2>gamma</b></div></div><div id=cnt></div></div>\
+         <div class=grid id=grid><div><p id=t3>one</p></div><div id=gcell><span class=w id=w1>two</span></div></div>\
+         <div class=pos><div class=abs id=abs><div><span id=t4>shrink to fit</span></div></div></div>\
+         <p id=par>text <span class=ib id=ib><span id=t5>inline block</span></span> after</p>\
+         <table><tr><td id=td1><span id=t6>cell</span></td><td>x</td></tr></table>\
+         <div class=row><div><img id=img></div><div><select id=sel><option id=opt>short</option></select></div></div>\
+         </body>"
+    );
+    let mut p = page(&html, Geometry::Flow);
+    let check = |p: &Page, step: &str| {
+        let cached = p.layout.flow(&p.dom);
+        let mut fresh = Layout::with_viewport(p.doc, p.layout.viewport().clone());
+        fresh.style_mut().discover_style_elements(&p.dom);
+        fresh.set_geometry(Geometry::Flow);
+        let f = fresh.flow(&p.dom);
+        let stale: Vec<_> = f
+            .boxes
+            .iter()
+            .filter(|(k, b)| cached.boxes.get(k).map(|c| c.rect) != Some(b.rect))
+            .map(|(k, _)| *k)
+            .collect();
+        assert!(stale.is_empty() && cached.boxes.len() == f.boxes.len(), "{step}: stale geometry for {stale:?}");
+    };
+    check(&p, "initial");
+    let text = |p: &Page, id: &str| p.dom.children(p.id(id)).unwrap().next().unwrap();
+    // Text deep inside measured boxes.
+    for (id, new) in [
+        ("t1", "alpha beta gamma delta epsilon zeta"),
+        ("t2", "a much longer gamma"),
+        ("t4", "x"),
+        ("t6", "a wider cell text"),
+    ] {
+        let t = text(&p, id);
+        let len = p.dom.char_data(t).unwrap().len() as u32;
+        p.dom.replace_data(t, 0, len, new).unwrap();
+        check(&p, &format!("text {id}"));
+    }
+    // Inherited style from an ancestor (descendants restyle, not journaled).
+    let par = p.id("par");
+    p.dom.set_attribute(par, "class", "big").unwrap();
+    check(&p, "ancestor font-size");
+    let grid = p.id("grid");
+    p.dom.set_attribute(grid, "class", "grid wide").unwrap();
+    check(&p, "ancestor class restyles a descendant");
+    // Inline style on a deep element, insertion and removal.
+    let t3 = p.id("t3");
+    p.dom.set_attribute(t3, "style", "height:80px").unwrap();
+    check(&p, "inline style");
+    let cnt = p.id("cnt");
+    for i in 0..3 {
+        let d = p.dom.create_element(p.doc, "div").unwrap();
+        let t = p.dom.create_text(p.doc, &format!("inserted {i} with words")).unwrap();
+        p.dom.append_child(d, t).unwrap();
+        p.dom.append_child(cnt, d).unwrap();
+    }
+    check(&p, "insertion");
+    let first = p.dom.children(cnt).unwrap().next().unwrap();
+    p.dom.remove_child(cnt, first).unwrap();
+    check(&p, "removal");
+    // Image natural size and select option text.
+    let img = p.id("img");
+    p.dom.set_natural_size(img, Some((120.0, 40.0)));
+    check(&p, "image natural size");
+    let opt = text(&p, "opt");
+    p.dom.replace_data(opt, 0, 5, "a much longer option label").unwrap();
+    check(&p, "option text");
+    let sel = p.id("sel");
+    p.dom.set_value(sel, "a much longer option label").unwrap();
+    check(&p, "form value");
+    // Stylesheet and viewport.
+    let style = p.dom.create_element(p.doc, "style").unwrap();
+    let rule = p.dom.create_text(p.doc, ".ib{padding:10px}").unwrap();
+    p.dom.append_child(style, rule).unwrap();
+    let body = p.dom.body(p.doc).unwrap().unwrap();
+    p.dom.append_child(body, style).unwrap();
+    p.layout.style_mut().discover_style_elements(&p.dom);
+    check(&p, "stylesheet added");
+    p.layout.set_viewport(Viewport::new(500, 400));
+    check(&p, "viewport");
+}

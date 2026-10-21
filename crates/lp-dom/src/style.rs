@@ -3048,6 +3048,9 @@ struct Cache {
     flow: FxHashMap<NodeId, FlowEntry>,
     /// Stamps `flow` entries (a recomputed element gets a new one).
     flow_seq: u64,
+    /// Elements whose cached styles were dropped since layout last asked
+    /// (`take_restyled`); None: all of them.
+    restyled: Option<Vec<NodeId>>,
     extent: Option<(f64, f64)>,
     /// The focused and hovered elements of `stamp` (indices there), to tell
     /// a freed one from a live one.
@@ -3320,8 +3323,12 @@ impl StyleEngine {
                     cache.memo.clear();
                     cache.declared.clear();
                     cache.flow.clear();
+                    cache.restyled = None;
                 } else {
                     crate::layout::flow_stats::note_selective(stale.len());
+                    if let Some(restyled) = cache.restyled.as_mut() {
+                        restyled.extend_from_slice(&stale);
+                    }
                     for n in stale {
                         cache.memo.remove(&n);
                         cache.declared.remove(&n);
@@ -3333,6 +3340,7 @@ impl StyleEngine {
                 cache.memo.clear();
                 cache.declared.clear();
                 cache.flow.clear();
+                cache.restyled = None;
             }
         }
         cache.extent = None;
@@ -3341,6 +3349,14 @@ impl StyleEngine {
             (stamp.focused != NIL).then(|| dom.id_of(stamp.focused)),
             (stamp.hovered != NIL).then(|| dom.id_of(stamp.hovered)),
         );
+    }
+
+    /// The elements whose styles were dropped since the last call (None:
+    /// all), after bringing the cache up to date with `dom`. Layout drops
+    /// their subtree measurements.
+    pub(crate) fn take_restyled(&self, dom: &Dom) -> Option<Vec<NodeId>> {
+        self.ensure(dom);
+        self.cache.borrow_mut().restyled.replace(Vec::new())
     }
 
     pub(crate) fn cached_flow_style(&self, dom: &Dom, el: NodeId) -> Option<Option<crate::flow::FlowStyle>> {

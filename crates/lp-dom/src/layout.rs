@@ -156,6 +156,16 @@ pub struct Layout {
     automatic_heights: RefCell<AutomaticHeights>,
     geometry: Geometry,
     flow_cache: RefCell<Option<FlowCache>>,
+    measures: RefCell<Measures>,
+}
+
+/// Subtree measurements kept across flow passes, with what they are valid
+/// for: the DOM version and viewport of the last pass.
+#[derive(Default)]
+struct Measures {
+    cache: crate::flow::MeasureCache,
+    version: Option<u64>,
+    viewport: (u32, u32),
 }
 
 /// Which geometry the layout getters report (docs/dom/FLOW_LAYOUT.md). The
@@ -214,6 +224,7 @@ impl Layout {
             automatic_heights: RefCell::default(),
             geometry: Geometry::default(),
             flow_cache: RefCell::new(None),
+            measures: RefCell::default(),
         }
     }
 
@@ -243,14 +254,87 @@ impl Layout {
             None => None,
         };
         let started = flow_stats::enabled().then(std::time::Instant::now);
+        let mut measures = self.measures.borrow_mut();
+        self.invalidate_measures(dom, &mut measures, viewport);
         let result = Rc::new(crate::style::with_pass_memo(|| {
-            crate::flow::layout(dom, self.document(), &self.style, v.width as f64, v.height as f64)
+            crate::flow::layout_cached(
+                dom,
+                self.document(),
+                &self.style,
+                v.width as f64,
+                v.height as f64,
+                &mut measures.cache,
+            )
         }));
+        measures.version = Some(dom.version());
+        measures.viewport = viewport;
+        // Entries of removed elements are never served again; bound them.
+        if measures.cache.len() > 8 * result.boxes.len().max(64) {
+            measures.cache.clear();
+        }
+        drop(measures);
         if let Some(t) = started {
             flow_stats::record(previous, (stamp, viewport), t.elapsed());
         }
         *self.flow_cache.borrow_mut() = Some(FlowCache { stamp, viewport, result: result.clone() });
         result
+    }
+
+    /// Drops the measurements a pass cannot reuse: those of every element
+    /// restyled or changed since the last pass (DOM journal: attributes,
+    /// form state, image natural sizes, children, text) and of their
+    /// ancestors, whose measurements include them; all of them after a full
+    /// restyle, a gap in the journal, an unknown change, a viewport change
+    /// or with shadow roots (flat-tree ancestors).
+    fn invalidate_measures(&self, dom: &Dom, m: &mut Measures, viewport: (u32, u32)) {
+        use crate::dom::Change;
+        let restyled = self.style.take_restyled(dom);
+        let changes = match (m.version, restyled.as_ref()) {
+            (Some(v), Some(_)) if m.viewport == viewport && dom.shadow_root_count() == 0 => {
+                dom.changes_since(v).map(|c| c.collect::<Vec<_>>())
+            }
+            _ => None,
+        };
+        let (Some(restyled), Some(changes)) = (restyled, changes) else {
+            m.cache.clear();
+            return;
+        };
+        let mut dirty = rustc_hash::FxHashSet::default();
+        let mut mark = |idx: u32| {
+            let mut cur = idx;
+            while cur != crate::node::NIL && dom.slot_live(cur) {
+                if !dirty.insert(dom.id_of(cur)) {
+                    break;
+                }
+                cur = dom.n(cur).parent;
+            }
+        };
+        for n in restyled {
+            if let Ok(idx) = dom.check(n) {
+                mark(idx);
+            }
+        }
+        for c in changes {
+            match c {
+                Change::Attr(i, ..) | Change::State(i) => mark(i),
+                Change::Inserted(p, n) => {
+                    mark(p);
+                    mark(n);
+                }
+                Change::Removed(p, ..) => mark(p),
+                Change::Text(t) => {
+                    if dom.slot_live(t) {
+                        mark(dom.n(t).parent);
+                    }
+                }
+                Change::Pseudo => {}
+                Change::Unknown(_) => {
+                    m.cache.clear();
+                    return;
+                }
+            }
+        }
+        m.cache.invalidate(&dirty);
     }
 
     fn flow_box(&self, dom: &Dom, el: NodeId) -> Option<FlowBox> {

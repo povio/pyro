@@ -623,10 +623,79 @@ impl FlowResult {
 
 // ----- layout ---------------------------------------------------------------
 
+/// Measurements of element subtrees kept across layout passes: intrinsic
+/// widths, content heights at a width, atomic baselines. Each is a function
+/// of the element's subtree (DOM, styles), the width (key) and the viewport
+/// only (measuring probes start from a fresh context), so the owner drops
+/// the entries of every changed element and its ancestors before a pass
+/// (`invalidate`), or all of them (`clear`).
+#[derive(Default)]
+pub struct MeasureCache {
+    max_content: FxHashMap<NodeId, f64>,
+    min_content: FxHashMap<NodeId, f64>,
+    heights: FxHashMap<(NodeId, u64), f64>,
+    baselines: FxHashMap<(NodeId, u64, u64), Option<f64>>,
+}
+
+impl MeasureCache {
+    pub fn clear(&mut self) {
+        self.max_content.clear();
+        self.min_content.clear();
+        self.heights.clear();
+        self.baselines.clear();
+    }
+
+    pub fn invalidate(&mut self, dirty: &rustc_hash::FxHashSet<NodeId>) {
+        if dirty.is_empty() {
+            return;
+        }
+        self.max_content.retain(|k, _| !dirty.contains(k));
+        self.min_content.retain(|k, _| !dirty.contains(k));
+        self.heights.retain(|k, _| !dirty.contains(&k.0));
+        self.baselines.retain(|k, _| !dirty.contains(&k.0));
+    }
+
+    pub fn len(&self) -> usize {
+        self.max_content.len() + self.min_content.len() + self.heights.len() + self.baselines.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
 /// Lays out the document rooted at `doc` for a `vw`×`vh` viewport.
 pub fn layout(dom: &Dom, doc: NodeId, src: &dyn FlowStyleSource, vw: f64, vh: f64) -> FlowResult {
-    let memo = Memo::default();
-    let mut cx = Ctx::new(dom, src, vw, vh, &memo);
+    layout_cached(dom, doc, src, vw, vh, &mut MeasureCache::default())
+}
+
+/// `layout`, reusing and refilling subtree measurements from `cache`
+/// (valid for this DOM, styles and viewport: see `MeasureCache`).
+pub fn layout_cached(
+    dom: &Dom,
+    doc: NodeId,
+    src: &dyn FlowStyleSource,
+    vw: f64,
+    vh: f64,
+    cache: &mut MeasureCache,
+) -> FlowResult {
+    let memo = Memo {
+        max_content: RefCell::new(std::mem::take(&mut cache.max_content)),
+        min_content: RefCell::new(std::mem::take(&mut cache.min_content)),
+        heights: RefCell::new(std::mem::take(&mut cache.heights)),
+        baselines: RefCell::new(std::mem::take(&mut cache.baselines)),
+        ..Memo::default()
+    };
+    let out = layout_with_memo(dom, doc, src, vw, vh, &memo);
+    cache.max_content = memo.max_content.into_inner();
+    cache.min_content = memo.min_content.into_inner();
+    cache.heights = memo.heights.into_inner();
+    cache.baselines = memo.baselines.into_inner();
+    out
+}
+
+fn layout_with_memo(dom: &Dom, doc: NodeId, src: &dyn FlowStyleSource, vw: f64, vh: f64, memo: &Memo) -> FlowResult {
+    let mut cx = Ctx::new(dom, src, vw, vh, memo);
     cx.cb_height = Some(vh);
     let icb = Rect { x: 0.0, y: 0.0, width: vw, height: vh };
     cx.pending.push(Vec::new());
