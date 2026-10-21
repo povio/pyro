@@ -2984,3 +2984,55 @@ fn css_zoom_scales_used_lengths_like_chromium() {
     near(p.metrics("doc")[2], 1536.0 * z2, "article width after zoom out");
     assert!(p.metrics("doc")[2] < doc[2]);
 }
+
+#[test]
+fn sticky_boxes_stay_in_their_scrollport_like_chromium() {
+    // TOS finance tables (TP-4230 master charges header, TS-88 pinned Profit /
+    // rightSticky columns, sticky totals footer): `position: sticky` was laid
+    // out as relative, so scrolling a panel moved its sticky header, footer
+    // and pinned columns away. Sticky boxes now lay out in place and their
+    // offset follows the nearest scroll container (or the viewport), bounded
+    // by the containing block (the table for table parts). Chromium
+    // (Playwright 1.59.1), same markup, before / after scrolling:
+    // th 0 / 0, tfoot cell 180 / 180 (pulled to the panel bottom), pinned
+    // left 0 / 0 and right 200 / 200, section heading 220 / 210 (stops at its
+    // section's bottom), viewport-sticky 370 -> 10 after window scroll 400;
+    // hit testing finds th at the panel top and the tfoot cell at the bottom.
+    let rows: String = (0..30).map(|i| format!("<tr><td>r{i}</td></tr>")).collect();
+    let html = format!(
+        "<!doctype html><style>*{{box-sizing:border-box;margin:0}}body{{margin:0}}table{{border-collapse:separate;border-spacing:0}}td,th{{padding:0;height:20px}}\
+         #v{{overflow:auto;height:200px;width:300px}}#v th{{position:sticky;top:0}}#v tfoot{{position:sticky;bottom:0}}\
+         #h{{overflow-x:auto;width:300px}}#h table{{width:800px}}#h .l{{position:sticky;left:0}}#h .r{{position:sticky;right:0}}#h td{{width:100px}}\
+         #s{{overflow:auto;height:150px;width:200px}}#s section{{height:100px}}#s h3{{position:sticky;top:0;height:20px;font-size:12px}}\
+         #vp{{position:sticky;top:10px;height:20px;width:50px}}</style><body>\
+         <div id=v><table><thead><tr><th id=th>H</th></tr></thead><tbody>{rows}</tbody><tfoot><tr><td id=tf>F</td></tr></tfoot></table></div>\
+         <div id=h><table><tr><td class=l id=l>L</td><td>a</td><td>b</td><td>c</td><td>d</td><td>e</td><td>f</td><td class=r id=r>R</td></tr></table></div>\
+         <div id=s><section id=sec1><h3 id=h1>One</h3></section><section><h3>Two</h3></section><section><h3>Three</h3></section></div>\
+         <div id=vp>vp</div><div style=\"height:2000px\"></div></body>"
+    );
+    let mut p = page(&html, Geometry::Flow);
+    p.layout.set_viewport(Viewport::new(800, 600));
+    let rect = |p: &Page, id: &str| p.layout.bounding_client_rect(&p.dom, p.id(id));
+    let near = |a: f64, b: f64, what: &str| assert!((a - b).abs() < 0.5, "{what}: {a} vs {b}");
+    near(rect(&p, "th").y, 0.0, "header at rest");
+    near(rect(&p, "tf").y, 180.0, "footer pulled to the panel bottom at rest");
+    near(rect(&p, "l").x, 0.0, "left pinned at rest");
+    near(rect(&p, "r").x, 200.0, "right pinned pulled to the panel's right edge");
+    near(rect(&p, "h1").y, 220.0, "section heading at rest");
+    near(rect(&p, "vp").y, 370.0, "viewport sticky not yet stuck");
+    let (v, h, s) = (p.id("v"), p.id("h"), p.id("s"));
+    p.layout.set_scroll_top(&p.dom, v, 150);
+    p.layout.set_scroll_left(&p.dom, h, 200);
+    p.layout.set_scroll_top(&p.dom, s, 90);
+    near(rect(&p, "th").y, 0.0, "header stays at the panel top");
+    near(rect(&p, "tf").y, 180.0, "footer stays at the panel bottom");
+    near(rect(&p, "l").x, 0.0, "left pinned stays at the panel's left edge");
+    near(rect(&p, "r").x, 200.0, "right pinned stays at the panel's right edge");
+    near(rect(&p, "sec1").y, 130.0, "the section scrolls");
+    near(rect(&p, "h1").y, 210.0, "the heading stops at its section's bottom");
+    let at = |p: &Page, x: f64, y: f64| p.layout.element_from_point(&p.dom, x, y);
+    assert_eq!(at(&p, 5.0, 5.0), Some(p.id("th")), "hit testing follows the sticky header");
+    assert_eq!(at(&p, 5.0, 190.0), Some(p.id("tf")), "and the sticky footer");
+    p.layout.window_scroll_to(&p.dom, None, Some(400));
+    near(rect(&p, "vp").y, 10.0, "viewport sticky sticks below the top inset");
+}

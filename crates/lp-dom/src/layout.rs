@@ -940,8 +940,9 @@ impl Layout {
         let flow = self.flow(dom);
         let &(r, fixed) = flow.texts.get(&text)?;
         let (dx, dy) = self.ancestor_scroll_offset(dom, text);
+        let (kx, ky) = self.sticky_shift(dom, &flow, text);
         let (sx, sy) = if fixed { (0.0, 0.0) } else { (self.window_scroll.0 as f64, self.window_scroll.1 as f64) };
-        Some(Rect { x: r.x - sx - dx, y: r.y - sy - dy, width: r.width, height: r.height })
+        Some(Rect { x: r.x - sx - dx + kx, y: r.y - sy - dy + ky, width: r.width, height: r.height })
     }
 
     /// The bounding rect, or `None` when the element isn't rendered.
@@ -984,10 +985,17 @@ impl Layout {
     fn bounding_client_rect_for_visible(&self, dom: &Dom, el: NodeId) -> Rect {
         let (dx, dy) = self.ancestor_scroll_offset(dom, el);
         if self.flow_mode() {
-            let Some(b) = self.flow_box(dom, el) else { return Rect::default() };
+            let flow = self.flow(dom);
+            let Some(b) = flow.get(el).copied() else { return Rect::default() };
+            let (kx, ky) = self.sticky_shift(dom, &flow, el);
             let (sx, sy) =
                 if b.fixed { (0.0, 0.0) } else { (self.window_scroll.0 as f64, self.window_scroll.1 as f64) };
-            return Rect { x: b.rect.x - sx - dx, y: b.rect.y - sy - dy, width: b.rect.width, height: b.rect.height };
+            return Rect {
+                x: b.rect.x - sx - dx + kx,
+                y: b.rect.y - sy - dy + ky,
+                width: b.rect.width,
+                height: b.rect.height,
+            };
         }
         Rect {
             x: self.horizontal_position(dom, el) - self.window_scroll.0 as f64 - dx,
@@ -995,6 +1003,139 @@ impl Layout {
             width: self.box_axis(dom, el, Axis::Width),
             height: self.box_axis(dom, el, Axis::Height),
         }
+    }
+
+    /// The scroll-dependent offset of `node`'s sticky ancestors (and itself):
+    /// each sticky box moves with its descendants.
+    fn sticky_shift(&self, dom: &Dom, flow: &FlowResult, node: NodeId) -> (f64, f64) {
+        if flow.sticky.is_empty() {
+            return (0.0, 0.0);
+        }
+        let (mut x, mut y) = (0.0, 0.0);
+        let mut cur = Some(node);
+        while let Some(n) = cur {
+            if flow.sticky.contains(&n) {
+                let (dx, dy) = self.sticky_offset(dom, flow, n);
+                x += dx;
+                y += dy;
+            }
+            cur = dom.parent_element(n).ok().flatten();
+        }
+        (x, y)
+    }
+
+    /// CSS Positioned Layout 3 sticky positioning for one box laid out in
+    /// place: the offset that keeps its border box within its nearest scroll
+    /// container's scrollport (the viewport when none) inset by its
+    /// `top`/`bottom`/`left`/`right`, without leaving its containing block
+    /// (the table for table parts). `top` wins over `bottom`, `left` over
+    /// `right`. Boxes inside `position: fixed` stay put.
+    fn sticky_offset(&self, dom: &Dom, flow: &FlowResult, el: NodeId) -> (f64, f64) {
+        use crate::flow::{FlowStyleSource, InnerDisplay, TablePart, BOTTOM, LEFT, RIGHT, TOP};
+        let Some(b) = flow.get(el) else { return (0.0, 0.0) };
+        let Some(style) = self.style.flow_style(dom, el) else { return (0.0, 0.0) };
+        if b.fixed {
+            return (0.0, 0.0);
+        }
+        // Scrollport in document coordinates of the scrolled content.
+        let mut port = None;
+        let mut a = dom.parent_element(el).ok().flatten();
+        while let Some(p) = a {
+            if self.is_root_container(dom, p) {
+                break;
+            }
+            let axes = self.style.overflow_clip_axes(dom, p);
+            if axes.x || axes.y {
+                if let (Some(pb), Some(ps)) = (flow.get(p), self.style.flow_style(dom, p)) {
+                    port = Some(Rect {
+                        x: pb.rect.x + ps.border[LEFT] + self.scroll_left(p) as f64,
+                        y: pb.rect.y + ps.border[TOP] + self.scroll_top(p) as f64,
+                        width: pb.client_width,
+                        height: pb.client_height,
+                    });
+                }
+                break;
+            }
+            a = dom.parent_element(p).ok().flatten();
+        }
+        let port = port.unwrap_or(Rect {
+            x: self.window_scroll.0 as f64,
+            y: self.window_scroll.1 as f64,
+            width: self.inner_width() as f64,
+            height: self.inner_height() as f64,
+        });
+        // Containing block: the table for table parts, else the parent.
+        let mut cb = dom.parent_element(el).ok().flatten();
+        if style.table_part != TablePart::None {
+            while let Some(c) = cb {
+                if self.style.flow_style(dom, c).is_some_and(|s| s.inner == InnerDisplay::Table) {
+                    break;
+                }
+                cb = dom.parent_element(c).ok().flatten();
+            }
+        }
+        let limit = cb.and_then(|c| {
+            let cbox = flow.get(c)?;
+            let cs = self.style.flow_style(dom, c)?;
+            let w = cbox.rect.width;
+            let pad = |i: usize| cs.padding[i].resolve(w);
+            Some(Rect {
+                x: cbox.rect.x + cs.border[LEFT] + pad(LEFT),
+                y: cbox.rect.y + cs.border[TOP] + pad(TOP),
+                width: (cbox.rect.width - cs.border[LEFT] - cs.border[RIGHT] - pad(LEFT) - pad(RIGHT)).max(0.0),
+                height: (cbox.rect.height - cs.border[TOP] - cs.border[BOTTOM] - pad(TOP) - pad(BOTTOM)).max(0.0),
+            })
+        });
+        let r = b.rect;
+        // One axis: start inset pulls forward, end inset pulls back, both
+        // bounded by the containing block (`lo`..`hi` along the axis).
+        let axis = |start: Option<f64>,
+                    end: Option<f64>,
+                    pos: f64,
+                    size: f64,
+                    port0: f64,
+                    port_size: f64,
+                    lo: f64,
+                    hi: f64| {
+            if let Some(s) = start {
+                let need = port0 + s - pos;
+                if need > 0.0 {
+                    return need.min(hi - (pos + size)).max(0.0);
+                }
+            }
+            if let Some(e) = end {
+                let need = port0 + port_size - e - (pos + size);
+                if need < 0.0 {
+                    return need.max(lo - pos).min(0.0);
+                }
+            }
+            0.0
+        };
+        let (lo_x, hi_x, lo_y, hi_y) = match limit {
+            Some(l) => (l.x, l.x + l.width, l.y, l.y + l.height),
+            None => (f64::NEG_INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY),
+        };
+        let dy = axis(
+            style.inset[TOP].resolve(Some(port.height)),
+            style.inset[BOTTOM].resolve(Some(port.height)),
+            r.y,
+            r.height,
+            port.y,
+            port.height,
+            lo_y,
+            hi_y,
+        );
+        let dx = axis(
+            style.inset[LEFT].resolve(Some(port.width)),
+            style.inset[RIGHT].resolve(Some(port.width)),
+            r.x,
+            r.width,
+            port.x,
+            port.width,
+            lo_x,
+            hi_x,
+        );
+        (dx, dy)
     }
 
     // ----- document ----------------------------------------------------------

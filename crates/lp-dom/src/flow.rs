@@ -613,6 +613,10 @@ pub struct FlowResult {
     /// Document scroll size (at least the viewport).
     pub document_width: f64,
     pub document_height: f64,
+    /// Boxes of `position: sticky` elements, laid out as if static; their
+    /// scroll-dependent offset is applied when geometry is read
+    /// (`Layout::sticky_shift`).
+    pub sticky: rustc_hash::FxHashSet<NodeId>,
 }
 
 impl FlowResult {
@@ -910,6 +914,7 @@ impl<'a> Ctx<'a> {
         if let Some(mut b) = self.memo.probe_buffers.borrow_mut().pop() {
             b.out.boxes.clear();
             b.out.texts.clear();
+            b.out.sticky.clear();
             b.out.text_orders.clear();
             b.out.document_width = 0.0;
             b.out.document_height = 0.0;
@@ -1057,6 +1062,15 @@ impl<'a> Ctx<'a> {
     }
 
     fn insert_box(&mut self, el: NodeId, b: FlowBox) {
+        let sticky = self
+            .memo
+            .styles
+            .borrow()
+            .get(&el)
+            .is_some_and(|s| s.as_ref().is_some_and(|s| s.position == Position::Sticky));
+        if sticky {
+            self.out.sticky.insert(el);
+        }
         let i = b.order as usize - 1;
         if self.by_order.len() <= i {
             self.by_order.resize(i + 1, None);
@@ -1110,8 +1124,9 @@ impl<'a> Ctx<'a> {
     }
 
     fn relative_offset(&self, style: &FlowStyle, cb_width: f64, cb_height: Option<f64>) -> (f64, f64) {
-        // Stage 1 treats sticky as relative (no scroll-dependent stickiness).
-        if !matches!(style.position, Position::Relative | Position::Sticky) {
+        // Sticky boxes lay out in place; their offset depends on scrolling
+        // and is applied when geometry is read (`FlowResult::sticky`).
+        if style.position != Position::Relative {
             return (0.0, 0.0);
         }
         let dx = match (style.inset[LEFT].resolve(Some(cb_width)), style.inset[RIGHT].resolve(Some(cb_width))) {
