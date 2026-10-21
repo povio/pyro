@@ -1642,6 +1642,23 @@ enum NotSelective {
 fn invalidation_roots(dom: &Dom, changes: &[crate::dom::Change], rules: &RuleSet) -> Result<Vec<u32>, NotSelective> {
     use crate::dom::Change;
     use crate::node::NodeKind;
+    // Journal entries can name nodes that `collect_garbage` has freed since
+    // (removed subtrees). A freed node needs no restyle (its cache entries
+    // are keyed by its old NodeId and never served again). A removal whose
+    // subtree was freed still affects its parent's side, like an insertion.
+    let live: Vec<Change> = changes
+        .iter()
+        .filter_map(|c| match *c {
+            Change::Attr(i, ..) | Change::Children(i) | Change::Text(i) | Change::State(i) => {
+                dom.slot_live(i).then_some(*c)
+            }
+            Change::Removed(p, n) if dom.slot_live(p) && dom.slot_live(n) => Some(*c),
+            Change::Removed(p, _) if dom.slot_live(p) => Some(Change::Children(p)),
+            Change::Removed(..) => None,
+            Change::Unknown(_) => Some(*c),
+        })
+        .collect();
+    let changes = &live[..];
     let (anchors, validity) = (&rules.has_anchors[..], &rules.validity_keys[..]);
     let mut roots: Vec<u32> = Vec::new();
     let mut seen = FxHashSet::default();

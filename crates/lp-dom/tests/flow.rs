@@ -1964,3 +1964,30 @@ fn data_and_aria_attributes_restyle_only_through_selectors_naming_them() {
     assert_matches_fresh(&p, "both reverted");
     assert_eq!((w(&p, "k").width, w(&p, "m").width), (26.0, 27.0));
 }
+
+#[test]
+fn incremental_style_survives_garbage_collected_removed_nodes() {
+    // TOS cargo/documents (flow, 0d434cf): a removed subtree freed by
+    // collect_garbage before the next style pass made invalidation_roots
+    // dereference a dead slot ("live slot" panic). Its freed slot can also be
+    // reused by a new node before the pass.
+    let mut p = page(
+        "<body style='margin:0'><div id=a class=x><span id=s>one</span></div><div id=b>two</div></body>",
+        Geometry::Flow,
+    );
+    p.dom.add_ref(p.doc).unwrap();
+    let _ = p.metrics("a");
+    let a = p.id("a");
+    let s = p.id("s");
+    p.dom.remove_child(a, s).unwrap();
+    p.dom.collect_garbage();
+    // Reuse the freed slot with a new node, then lay out again.
+    let doc = p.doc;
+    let fresh = p.dom.create_element(doc, "i").unwrap();
+    let b = p.id("b");
+    p.dom.append_child(b, fresh).unwrap();
+    let fresh_layout =
+        page("<body style='margin:0'><div id=a class=x></div><div id=b>two<i></i></div></body>", Geometry::Flow);
+    assert_eq!(p.metrics("a"), fresh_layout.metrics("a"));
+    assert_eq!(p.metrics("b"), fresh_layout.metrics("b"));
+}
