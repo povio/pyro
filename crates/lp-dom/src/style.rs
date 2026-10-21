@@ -1956,6 +1956,11 @@ fn invalidation_roots(
 
     // (root, with later siblings)
     let mut found: Vec<(u32, bool)> = Vec::new();
+    // Parents whose side was taken: it depends only on the current tree,
+    // so a parent of many changes in a batch (a list or row React fills
+    // child by child) is examined once instead of per change, each time
+    // over all of its children.
+    let mut sided: FxHashSet<u32> = FxHashSet::default();
     let state = |x: u32| (x, siblings_affected(x, None));
     for c in changes {
         match *c {
@@ -1989,7 +1994,9 @@ fn invalidation_roots(
                 if !live(p) {
                     continue;
                 }
-                found.extend(parent_side(p).into_iter().map(state));
+                if sided.insert(p) {
+                    found.extend(parent_side(p).into_iter().map(state));
+                }
                 // Moved on since: its later entries cover where it went.
                 if !live(n) || dom.n(n).parent != p {
                     continue;
@@ -2010,7 +2017,9 @@ fn invalidation_roots(
                 if !live(p) {
                     continue;
                 }
-                found.extend(parent_side(p).into_iter().map(state));
+                if sided.insert(p) {
+                    found.extend(parent_side(p).into_iter().map(state));
+                }
                 let mut siblings = live(next) && (adjacency(n, p) || adjacency(dom.n(next).prev, p));
                 if live(n) {
                     // Removed radios leave a group the detached subtree no
