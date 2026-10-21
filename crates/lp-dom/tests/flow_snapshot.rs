@@ -29,6 +29,18 @@ fn dump_flow_snapshot() {
     let t = std::time::Instant::now();
     let _ = layout.flow(&dom);
     eprintln!("flow pass: {:?}", t.elapsed());
+    if let Ok(n) = std::env::var("FLOW_PROFILE_COLD_LOOP") {
+        // Repeated cold passes (fresh Layout each time), for a sampler.
+        let n = n.parse::<u32>().unwrap_or(1);
+        let t = std::time::Instant::now();
+        for _ in 0..n {
+            let mut cold = Layout::with_viewport(doc, Viewport::new(vw, vh));
+            cold.style_mut().discover_style_elements(&dom);
+            cold.set_geometry(Geometry::Flow);
+            let _ = cold.flow(&dom);
+        }
+        eprintln!("{n} cold passes: {:?} per pass", t.elapsed() / n);
+    }
     if std::env::var("FLOW_PROFILE").is_ok() {
         use lp_dom::flow::FlowStyleSource;
         let els: Vec<_> =

@@ -1607,6 +1607,9 @@ fn whole_variable(raw: &str) -> Option<(String, Option<String>)> {
     Some(result)
 }
 
+/// Computed values of one property by (document, element, precise).
+type InheritedByElement = FxHashMap<(usize, u32, bool), Option<String>>;
+
 /// Memo of ancestor-derived values for one layout pass, during which the
 /// DOM and style sheets cannot change (the pass holds `&Dom`). Keys include
 /// the document's address: a thread may lay out several documents (frames),
@@ -1615,6 +1618,11 @@ fn whole_variable(raw: &str) -> Option<(String, Option<String>)> {
 struct PassMemo {
     custom: FxHashMap<(usize, u32, String), Option<(NodeId, String)>>,
     font_size: FxHashMap<(usize, u32), f64>,
+    font_weight: FxHashMap<(usize, u32), f64>,
+    /// Computed values of inherited properties by property, then (document,
+    /// element, precise): an element without its own value takes its
+    /// parent's, so each ancestor resolves once per pass.
+    inherited: FxHashMap<String, InheritedByElement>,
 }
 
 fn dom_key(dom: &Dom) -> usize {
@@ -3522,6 +3530,21 @@ impl StyleEngine {
         if depth >= MAX_COMPUTED_DEPTH {
             return 400.0;
         }
+        if let Some(v) =
+            PASS_MEMO.with(|m| m.borrow().as_ref().and_then(|m| m.font_weight.get(&(dom_key(dom), idx)).copied()))
+        {
+            return v;
+        }
+        let v = self.font_weight_at_uncached(dom, rules, idx, depth);
+        PASS_MEMO.with(|m| {
+            if let Some(m) = m.borrow_mut().as_mut() {
+                m.font_weight.insert((dom_key(dom), idx), v);
+            }
+        });
+        v
+    }
+
+    fn font_weight_at_uncached(&self, dom: &Dom, rules: &RuleSet, idx: u32, depth: u8) -> f64 {
         let parent =
             || flat_tree_parent_element(dom, idx).map_or(400.0, |p| self.font_weight_at(dom, rules, p, depth + 1));
         let id = dom.id_of(idx);
@@ -3585,7 +3608,7 @@ impl StyleEngine {
         let inherited = computed::is_inherited(name);
         let from_parent = || {
             flat_tree_parent_element(dom, idx)
-                .and_then(|p| self.computed_value_at(dom, rules, p, name, depth + 1, precise))
+                .and_then(|p| self.computed_value_memo(dom, rules, p, name, depth + 1, precise))
         };
         let unset = || if inherited { from_parent() } else { None };
         let Some(raw) = self.declared_value(dom, rules, id, name) else { return unset() };
@@ -3618,6 +3641,41 @@ impl StyleEngine {
             }
         }
         Some(computed::resolve_number(value).map_or_else(|| value.to_owned(), num))
+    }
+
+    /// `computed_value_at` memoized for the layout pass (inherited lookups:
+    /// every descendant without its own value asks its parent).
+    fn computed_value_memo(
+        &self,
+        dom: &Dom,
+        rules: &RuleSet,
+        idx: u32,
+        name: &str,
+        depth: u8,
+        precise: bool,
+    ) -> Option<String> {
+        let key = (dom_key(dom), idx, precise);
+        let hit = PASS_MEMO
+            .with(|m| m.borrow().as_ref().map(|m| m.inherited.get(name).and_then(|by_el| by_el.get(&key).cloned())));
+        match hit {
+            None => return self.computed_value_at(dom, rules, idx, name, depth, precise),
+            Some(Some(v)) => return v,
+            Some(None) => {}
+        }
+        let v = self.computed_value_at(dom, rules, idx, name, depth, precise);
+        PASS_MEMO.with(|m| {
+            if let Some(m) = m.borrow_mut().as_mut() {
+                match m.inherited.get_mut(name) {
+                    Some(by_el) => {
+                        by_el.insert(key, v.clone());
+                    }
+                    None => {
+                        m.inherited.insert(name.to_owned(), FxHashMap::from_iter([(key, v.clone())]));
+                    }
+                }
+            }
+        });
+        v
     }
 
     /// The element's own winning declaration of a longhand: inline (shorthands

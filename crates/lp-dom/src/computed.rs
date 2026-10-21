@@ -363,8 +363,11 @@ pub fn substitute_vars(value: &str, lookup: &mut dyn FnMut(&str) -> Option<Strin
     if depth > 32 {
         return None;
     }
-    let lower = value.to_ascii_lowercase();
-    let Some(start) = lower.find("var(") else { return Some(value.to_owned()) };
+    // ASCII case-insensitive `var(` (byte offsets are char boundaries: the
+    // match is ASCII).
+    let Some(start) = value.as_bytes().windows(4).position(|w| w.eq_ignore_ascii_case(b"var(")) else {
+        return Some(value.to_owned());
+    };
     let open = start + 4;
     let mut level = 1u32;
     let mut end = None;
