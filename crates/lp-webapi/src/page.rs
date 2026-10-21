@@ -346,10 +346,13 @@ impl PageDom {
     /// Set before installing realms. Share local storage per browser context
     /// and session storage per top-level page across document replacements.
     pub fn set_storage_namespaces(
-        &self,
+        self: &Rc<Self>,
         local: crate::storage::StorageNamespace,
         session: crate::storage::StorageNamespace,
     ) {
+        // Attached pages receive other pages' `storage` events.
+        local.attach(self);
+        session.attach(self);
         *self.local_storage.borrow_mut() = local;
         *self.session_storage.borrow_mut() = session;
     }

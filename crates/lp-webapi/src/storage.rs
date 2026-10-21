@@ -1,6 +1,8 @@
 //! In-memory Web Storage. Embedders share a local namespace per browser
 //! context and a session namespace per top-level page across navigations.
-//! No disk persistence or cross-document `storage` events yet.
+//! No disk persistence. A change queues a `storage` event (StorageEvent) on
+//! every other page attached to the same namespace whose document has the
+//! same origin (`broadcast`); the changing document gets none.
 //!
 //! Opaque origins (e.g. a CDP-created `about:blank` without an inherited
 //! origin, `data:` documents): upstream Lightpanda hands every origin key a
@@ -15,7 +17,7 @@
 //! opaque-origin restrictions (e.g. IndexedDB) are unchanged.
 
 use std::cell::RefCell;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use lp_js::{ClassDef, IdentityKey, JsClass, JsError, JsResult, NoParent, Scope, Value};
@@ -79,6 +81,9 @@ struct Namespace {
     indexed_db: crate::indexeddb::Namespace,
     origins: RefCell<FxHashMap<String, Rc<RefCell<Area>>>>,
     quota: usize,
+    /// Pages attached to this namespace (`PageDom::set_storage_namespaces`):
+    /// the candidates for `storage` events.
+    pages: RefCell<Vec<Weak<PageDom>>>,
 }
 
 /// Storage partition owned by a browser context (local) or top-level page
@@ -99,7 +104,21 @@ impl StorageNamespace {
             indexed_db: Default::default(),
             origins: RefCell::new(FxHashMap::default()),
             quota: bytes,
+            pages: RefCell::new(Vec::new()),
         }))
+    }
+
+    /// Registers a page that uses this namespace (for `storage` events).
+    pub(crate) fn attach(&self, page: &Rc<PageDom>) {
+        let mut pages = self.0.pages.borrow_mut();
+        pages.retain(|p| p.strong_count() > 0);
+        if !pages.iter().any(|p| p.as_ptr() == Rc::as_ptr(page)) {
+            pages.push(Rc::downgrade(page));
+        }
+    }
+
+    fn same(&self, other: &StorageNamespace) -> bool {
+        Rc::ptr_eq(&self.0, &other.0)
     }
 
     pub(crate) fn indexed_db(&self) -> crate::indexeddb::Namespace {
@@ -122,7 +141,83 @@ impl StorageNamespace {
     }
 }
 
-pub struct StorageData(Rc<RefCell<Area>>);
+/// A `Storage` object: its area, and for a tuple origin what a change must
+/// notify (the page holding it, local or session, the origin).
+pub struct StorageData(Rc<RefCell<Area>>, Option<Source>);
+
+struct Source {
+    page: Weak<PageDom>,
+    session: bool,
+    origin: String,
+}
+
+impl StorageData {
+    /// Queues `storage` events for a change: `key` None for clear().
+    fn changed(&self, key: Option<&str>, old: Option<String>, new: Option<String>) {
+        if let Some(source) = &self.1 {
+            broadcast(source, key.map(str::to_owned), old, new);
+        }
+    }
+}
+
+/// HTML "broadcast": every other page sharing the namespace whose document
+/// has `origin` gets a trusted `storage` event on its window, in a task.
+fn broadcast(source: &Source, key: Option<String>, old: Option<String>, new: Option<String>) {
+    let Some(page) = source.page.upgrade() else { return };
+    let namespace =
+        if source.session { page.session_storage.borrow().clone() } else { page.local_storage.borrow().clone() };
+    let url = page.dom.borrow().document_data(page.document()).map(|d| d.url.to_string()).unwrap_or_default();
+    let targets: Vec<Rc<PageDom>> = namespace.0.pages.borrow().iter().filter_map(Weak::upgrade).collect();
+    for target in targets {
+        if Rc::ptr_eq(&target, &page) || target.is_disposed() {
+            continue;
+        }
+        let ns = if source.session {
+            target.session_storage.borrow().clone()
+        } else {
+            target.local_storage.borrow().clone()
+        };
+        if !ns.same(&namespace) || document_origin(&target).as_deref() != Some(source.origin.as_str()) {
+            continue;
+        }
+        let (key, old, new, url, session) = (key.clone(), old.clone(), new.clone(), url.clone(), source.session);
+        let weak = Rc::downgrade(&target);
+        target.post_task(Box::new(move || {
+            let Some(target) = weak.upgrade() else { return };
+            if target.is_disposed() {
+                return;
+            }
+            let Some(window) = target.window_target() else { return };
+            let event = crate::event::EventCore::trusted(
+                &target,
+                crate::event::EventInterface::StorageEvent,
+                "storage",
+                false,
+                false,
+            );
+            {
+                let mut f = event.fields.borrow_mut();
+                f.storage_key = key;
+                f.storage_old = old;
+                f.storage_new = new;
+                f.storage_url = url;
+                f.storage_area = Some(crate::event::StorageAreaRef::Window { session });
+            }
+            crate::target::fire(&target, window, &event);
+        }));
+    }
+}
+
+/// The tuple origin of a page's current document, if any.
+fn document_origin(page: &PageDom) -> Option<String> {
+    let url = page.dom.borrow().document_data(page.document()).ok().map(|d| d.url.to_string())?;
+    url::Url::parse(&url)
+        .ok()
+        .map(|url| url.origin())
+        .filter(|origin| matches!(origin, url::Origin::Tuple(..)))
+        .map(|origin| origin.ascii_serialization())
+}
+
 pub struct Storage;
 
 impl JsClass for Storage {
@@ -146,31 +241,58 @@ impl JsClass for Storage {
             // Coerce before borrowing; user toString may access the same storage.
             let key = dom_string(args.get(0))?;
             let value = dom_string(args.get(1))?;
-            data.0.borrow_mut().set(key, value)?;
+            set_item(data, key, value)?;
             Ok(s.undefined())
         });
         def.method("removeItem", 1, |s, data, args| {
             let key = arg_string(&args, 0, "Storage.removeItem")?;
-            data.0.borrow_mut().remove(&key);
+            remove_item(data, &key);
             Ok(s.undefined())
         });
         def.method("clear", 0, |s, data, _args| {
-            let mut area = data.0.borrow_mut();
-            area.entries.clear();
-            area.bytes = 0;
+            let had = {
+                let mut area = data.0.borrow_mut();
+                let had = !area.entries.is_empty();
+                area.entries.clear();
+                area.bytes = 0;
+                had
+            };
+            if had {
+                data.changed(None, None, None);
+            }
             Ok(s.undefined())
         });
         def.named(false, |s, data, name| Ok(data.0.borrow().get(name).map(|v| s.string(v))));
         def.named_setter(|_s, data, name, value| {
             let value = dom_string(value)?;
-            data.0.borrow_mut().set(name.to_owned(), value)?;
+            set_item(data, name.to_owned(), value)?;
             Ok(true)
         });
         def.named_deleter(|_s, data, name| {
-            data.0.borrow_mut().remove(name);
+            remove_item(data, name);
             Ok(true)
         });
         def.property_names(|_s, data| Ok(data.0.borrow().entries.iter().map(|(k, _)| k.clone()).collect()));
+    }
+}
+
+/// `setItem`: no event when the value is unchanged.
+fn set_item(data: &StorageData, key: String, value: String) -> JsResult<()> {
+    let old = data.0.borrow().get(&key).map(str::to_owned);
+    if old.as_deref() == Some(value.as_str()) {
+        return Ok(());
+    }
+    data.0.borrow_mut().set(key.clone(), value.clone())?;
+    data.changed(Some(&key), old, Some(value));
+    Ok(())
+}
+
+/// `removeItem`: no event when the key is absent.
+fn remove_item(data: &StorageData, key: &str) {
+    let old = data.0.borrow().get(key).map(str::to_owned);
+    if old.is_some() {
+        data.0.borrow_mut().remove(key);
+        data.changed(Some(key), old, None);
     }
 }
 
@@ -232,18 +354,20 @@ impl OpaqueStorage {
     }
 }
 
-pub(crate) fn window_storage<'s>(s: &Scope<'s>, page: &PageDom, session: bool) -> JsResult<Value<'s>> {
-    let area = match tuple_origin(s, page) {
+pub(crate) fn window_storage<'s>(s: &Scope<'s>, page: &Rc<PageDom>, session: bool) -> JsResult<Value<'s>> {
+    let (area, source) = match tuple_origin(s, page) {
         Some(origin) => {
             let namespace = if session { &page.session_storage } else { &page.local_storage };
-            namespace.borrow().area(origin)
+            let area = namespace.borrow().area(origin.clone());
+            (area, Some(Source { page: Rc::downgrade(page), session, origin }))
         }
         None if page.is_disposed() => return Err(JsError::ContextDestroyed),
-        None => page.opaque_storage.area(page, session),
+        // Opaque-origin areas belong to one document: no other document sees them.
+        None => (page.opaque_storage.area(page, session), None),
     };
     let key = IdentityKey(page.id() | (1 << 56), area.borrow().id);
     if let Some(object) = s.lookup_identity(key) {
         return Ok(object.value());
     }
-    Ok(s.wrap::<Storage>(StorageData(area), Some(key))?.value())
+    Ok(s.wrap::<Storage>(StorageData(area, source), Some(key))?.value())
 }
