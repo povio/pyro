@@ -1708,7 +1708,7 @@ fn incremental_style_invalidation_never_serves_stale_geometry() {
     assert_matches_fresh(&p, "checked state");
     assert_eq!(p.layout.flow(&p.dom).get(id(&p, "lab")).unwrap().rect.width, 250.0);
     // Journal overflow falls back to full invalidation.
-    for i in 0..9000 {
+    for i in 0..lp_dom::dom::JOURNAL_CAPACITY + 100 {
         p.dom.set_attribute(par, "data-n", &i.to_string()).unwrap();
     }
     p.dom.set_attribute(par, "class", "").unwrap();
@@ -2540,4 +2540,75 @@ fn flow_max_content_keeps_whitespace_between_inline_pieces() {
     assert_eq!(counter[1] + counter[3], title[1] + title[3], "counter at the title block's bottom");
     let label = p.metrics("label");
     assert!(counter[1] > label[1] + label[3], "counter {counter:?} below label {label:?}");
+}
+
+#[test]
+fn journal_overflow_keeps_recent_changes_covered() {
+    // The DOM journal used to be cleared outright when full, so the next
+    // style flush after every 8192 changes (mid React commit, whatever the
+    // consumer had read) restyled the whole document: TOS Positions rows
+    // rebuilt off-document journal ~4.5k changes, and the commit pass cost a
+    // cold cascade. On overflow it now drops only the older half.
+    let mut p = page("<!doctype html><body><div id=a></div></body>", Geometry::Flow);
+    let a = p.id("a");
+    let cap = lp_dom::dom::JOURNAL_CAPACITY;
+    let old = p.dom.version();
+    for i in 0..cap - 100 {
+        p.dom.set_attribute(a, "data-n", &i.to_string()).unwrap();
+    }
+    let recent = p.dom.version();
+    for i in 0..300 {
+        p.dom.set_attribute(a, "data-m", &i.to_string()).unwrap();
+    }
+    let since: Vec<_> = p.dom.changes_since(recent).expect("recent version still covered").collect();
+    assert_eq!(since.len(), 300, "exactly the changes after it");
+    assert!(p.dom.changes_since(old).is_none(), "versions before the kept half are not covered");
+}
+
+#[test]
+fn large_react_like_batches_invalidate_without_stale_geometry() {
+    // A list filled child by child between two flushes (TOS Positions rows
+    // rebuilt off-document, then inserted): more changes than the old
+    // journal capacity, many per parent (examined once per batch), with
+    // :nth-child, :empty, :has() and sibling rules depending on the result.
+    let css = "<style>\
+        li{display:block;height:4px;width:10px} li:nth-child(3){width:33px} li:last-child{width:44px}\
+        ul:empty{height:7px} ul{width:200px}\
+        .box:has(> ul > li.hot){width:300px} .box{width:100px}\
+        li.hot + li{width:55px}\
+        </style>";
+    let html = format!(
+        "<!doctype html>{css}<body style=\"margin:0\"><div id=box class=box><ul id=ul></ul></div><ul id=empty></ul></body>"
+    );
+    let mut p = page(&html, Geometry::Flow);
+    assert_matches_fresh(&p, "initial");
+    let (ul, empty) = (p.id("ul"), p.id("empty"));
+    for round in 0..2 {
+        // Rows built detached: element, attributes, nested children, text.
+        for i in 0..1200 {
+            let li = p.dom.create_element(p.doc, "li").unwrap();
+            for k in 0..4 {
+                p.dom.set_attribute(li, &format!("data-k{k}"), &i.to_string()).unwrap();
+            }
+            p.dom.set_attribute(li, "class", if i == 600 + round { "hot" } else { "row" }).unwrap();
+            let span = p.dom.create_element(p.doc, "span").unwrap();
+            let t = p.dom.create_text(p.doc, "x").unwrap();
+            p.dom.append_child(span, t).unwrap();
+            p.dom.append_child(li, span).unwrap();
+            p.dom.append_child(ul, li).unwrap();
+        }
+        // The same parent also loses and regains children in the batch.
+        let first = p.dom.children(ul).unwrap().next().unwrap();
+        p.dom.remove_child(ul, first).unwrap();
+        p.dom.insert_before(ul, first, None).unwrap();
+        let li = p.dom.create_element(p.doc, "li").unwrap();
+        p.dom.append_child(empty, li).unwrap();
+        assert_matches_fresh(&p, &format!("round {round}: filled"));
+        p.dom.remove_child(empty, li).unwrap();
+        let kids: Vec<_> = p.dom.children(ul).unwrap().collect();
+        for k in kids.iter().take(kids.len() / 2) {
+            p.dom.remove_child(ul, *k).unwrap();
+        }
+        assert_matches_fresh(&p, &format!("round {round}: half removed"));
+    }
 }

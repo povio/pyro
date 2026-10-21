@@ -178,6 +178,100 @@ fn dump_flow_snapshot() {
             }
             eprintln!("{n} portal append+remove: {:?} per pass", t.elapsed() / (2 * n as u32));
         }
+        if let Ok(n) = std::env::var("FLOW_PROFILE_ROWS") {
+            // A list render after its data arrives: every table body loses
+            // its rows (loading state), then gets them back in one commit
+            // (new elements: cold style), followed by forced layouts after
+            // small mutations (effects reading metrics).
+            let n = n.parse::<usize>().unwrap_or(1);
+            let bodies: Vec<_> =
+                dom.descendants(doc).unwrap().filter(|&e| dom.tag_name(e).ok().as_deref() == Some("TBODY")).collect();
+            let mut rows = Vec::new();
+            for &b in &bodies {
+                for r in dom.children(b).unwrap() {
+                    rows.push((b, r));
+                }
+            }
+            for &(b, r) in &rows {
+                dom.remove_child(b, r).unwrap();
+            }
+            let t = std::time::Instant::now();
+            let _ = layout.flow(&dom);
+            eprintln!("rows: empty pass {:?} ({} rows removed)", t.elapsed(), rows.len());
+            // React builds each row off-document, node by node (every
+            // creation, attribute and append journaled), then inserts it.
+            fn rebuild(dom: &mut Dom, doc: lp_dom::NodeId, src: lp_dom::NodeId) -> lp_dom::NodeId {
+                if dom.node_type(src).ok() != Some(NodeType::Element) {
+                    let text = dom.char_data(src).unwrap_or("").to_owned();
+                    return dom.create_text(doc, &text).unwrap();
+                }
+                let e = dom.element(src).unwrap();
+                let ns = e.name.ns.to_string();
+                let local = e.name.local.to_string();
+                let attrs: Vec<(String, String)> =
+                    e.attrs.iter().map(|a| (a.name.local.to_string(), a.value.to_string())).collect();
+                let el = dom.create_element_ns(doc, Some(&ns), &local).unwrap();
+                for (n, v) in attrs {
+                    dom.set_attribute(el, &n, &v).unwrap();
+                }
+                let kids: Vec<_> = dom.children(src).unwrap().collect();
+                for k in kids {
+                    let c = rebuild(dom, doc, k);
+                    dom.append_child(el, c).unwrap();
+                }
+                el
+            }
+            let v0 = dom.version();
+            let t = std::time::Instant::now();
+            for &(b, r) in &rows {
+                let copy = rebuild(&mut dom, doc, r);
+                dom.append_child(b, copy).unwrap();
+            }
+            let built = t.elapsed();
+            let _ = layout.flow(&dom);
+            eprintln!(
+                "rows: rebuild {:?} + commit pass {:?} ({} journaled changes)",
+                built,
+                t.elapsed() - built,
+                dom.version() - v0
+            );
+            if let Ok(k) = std::env::var("FLOW_PROFILE_REBUILDS") {
+                // Repeated: remove the current rows, rebuild them, lay out.
+                let k = k.parse::<u32>().unwrap_or(1);
+                let t = std::time::Instant::now();
+                for _ in 0..k {
+                    for &b in &bodies {
+                        let kids: Vec<_> = dom.children(b).unwrap().collect();
+                        for r in kids {
+                            dom.remove_child(b, r).unwrap();
+                        }
+                    }
+                    let _ = layout.flow(&dom);
+                    for &(b, r) in &rows {
+                        let copy = rebuild(&mut dom, doc, r);
+                        dom.append_child(b, copy).unwrap();
+                    }
+                    let _ = layout.flow(&dom);
+                }
+                eprintln!("rows: {k} remove+pass+rebuild+pass {:?} per round", t.elapsed() / k);
+                // Incremental result against a fresh layout of the same DOM.
+                let inc = layout.flow(&dom);
+                let mut fresh = Layout::with_viewport(doc, Viewport::new(vw, vh));
+                fresh.style_mut().discover_style_elements(&dom);
+                fresh.set_geometry(Geometry::Flow);
+                let f = fresh.flow(&dom);
+                let same = f.boxes.len() == inc.boxes.len()
+                    && f.boxes.iter().all(|(k, b)| inc.boxes.get(k).is_some_and(|c| c.rect == b.rect));
+                eprintln!("rows: rebuilt vs fresh identical: {same} ({} boxes)", f.boxes.len());
+            }
+            let t = std::time::Instant::now();
+            for i in 0..n {
+                let (_, r) = rows[i % rows.len()];
+                dom.set_attribute(r, "data-flow-probe", &i.to_string()).unwrap();
+                let _ = layout.flow(&dom);
+            }
+            eprintln!("rows: {n} row mutate+pass {:?} per pass", t.elapsed() / n.max(1) as u32);
+        }
         let t = std::time::Instant::now();
         let _ = layout.flow(&dom);
         eprintln!("flow pass, no change (cached): {:?}", t.elapsed());

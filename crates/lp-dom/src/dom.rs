@@ -43,6 +43,12 @@ pub enum Change {
     Unknown(&'static std::panic::Location<'static>),
 }
 
+/// Most changes the journal holds (32 bytes each: at most 1 MiB per DOM).
+/// On overflow it keeps the newer half, so a consumer that reads it after
+/// every batch stays covered for batches of up to half of this (a React
+/// commit of a 50-row list journals some 13k changes).
+pub const JOURNAL_CAPACITY: usize = 32768;
+
 /// The hash `Change::Attr` records for an attribute local name.
 pub fn attr_name_hash(local: &str) -> u64 {
     markup5ever::LocalName::from(local).get_hash()
@@ -214,11 +220,24 @@ impl Dom {
         self.tree_version
     }
     fn push_change(&mut self, change: Change) {
-        const CAP: usize = 8192;
+        const CAP: usize = JOURNAL_CAPACITY;
         if self.journal.len() >= CAP {
-            self.journal.clear();
-            self.journal_floor = self.version;
-            return;
+            // Keep the newer half: consumers read the journal after every
+            // batch, so recent versions stay covered. (Clearing it all made
+            // the next style flush after every 8192 changes, e.g. in the
+            // middle of a React commit, restyle the whole document.)
+            let drop = CAP / 2;
+            // Entries share a version within one bump: cut at a version
+            // boundary so a version is either fully covered or not at all.
+            let cut_version = self.journal[drop - 1].0;
+            self.journal_floor = cut_version;
+            if cut_version == self.version {
+                // One bump filled the journal: it cannot cover its version.
+                self.journal.clear();
+                return;
+            }
+            let end = self.journal.partition_point(|(v, _)| *v <= cut_version);
+            self.journal.drain(..end);
         }
         self.journal.push((self.version, change));
     }
