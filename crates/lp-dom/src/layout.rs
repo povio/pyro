@@ -1462,6 +1462,7 @@ impl Layout {
         if owned {
             match name.as_str() {
                 "display" if self.style.has_display_none(dom, el) => return "none".into(),
+                "display" => return self.style.computed_display(dom, el).unwrap_or_default(),
                 "visibility" if self.style.has_visibility_hidden_inherited(dom, el) => return "hidden".into(),
                 "pointer-events" if self.style.has_pointer_events_none(dom, el) => return "none".into(),
                 "text-transform" => return self.style.text_transform(dom, el).keyword().into(),
@@ -1781,20 +1782,14 @@ fn default_property_value(dom: &Dom, el: NodeId, name: &str) -> &'static str {
     }
 }
 
-/// getDefaultDisplay + isInlineTag (CSSStyleDeclaration.zig:1060-1091): the
-/// HTML types upstream maps to `inline` (anchor, br, span, label, time,
-/// font, ins/del, q/blockquote) and the generic inline tags; everything
-/// else HTML is `block`; SVG (and other namespaces) `inline`.
+/// The UA default display: the flow layout's HTML table (`li` list-item,
+/// table parts, form controls inline-block, unknown tags inline); SVG and
+/// other namespaces `inline`.
 fn default_display(e: &crate::node::ElementData) -> &'static str {
     if !e.is_html() {
         return "inline";
     }
-    match &*e.name.local {
-        "a" | "br" | "span" | "label" | "time" | "font" | "ins" | "del" | "q" | "blockquote" => "inline",
-        "abbr" | "b" | "bdi" | "bdo" | "cite" | "code" | "dfn" | "em" | "i" | "kbd" | "mark" | "s" | "samp"
-        | "small" | "strong" | "sub" | "sup" | "u" | "var" | "wbr" => "inline",
-        _ => "block",
-    }
+    crate::style_flow::ua_display(&e.name.local.to_ascii_lowercase())
 }
 
 #[cfg(test)]

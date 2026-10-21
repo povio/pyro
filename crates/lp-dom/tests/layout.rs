@@ -2964,3 +2964,44 @@ fn canvas_font_shorthand_parses_like_chromium() {
     assert!(parse_font("nonsense", 10.0).is_none());
     assert!(parse_font("12px Menlo, monospace", 10.0).unwrap().is_monospace());
 }
+
+// Chromium blockifies flex/grid items, floats, absolutely positioned boxes
+// and the root (css-display-3 §2.7). Playwright's accessible name pads
+// non-inline children, so the @povio/ui `<label class=flex>Service
+// Type<span>*</span></label>` names its button "Service Type *".
+#[test]
+fn computed_display_blockifies_flex_and_grid_items() {
+    let mut p = page(
+        "<label id=label style='display:flex'>Service Type<span id=star>*</span>\
+           <div id=contents style='display:contents'><b id=deep>x</b></div>\
+           <i id=ib style='display:inline-flex'></i><em id=cell style='display:table-cell'></em>\
+           <span id=hidden style='display:none'></span></label>\
+         <div id=grid style='display:inline-grid'><a id=link>a</a></div>\
+         <p><span id=plain>p</span><span id=float style='float:left'>f</span>\
+           <span id=abs style='position:absolute'>a</span><button id=btn>b</button><span id=li style='display:list-item'></span></p>",
+    );
+    let cs = |p: &Page, id: &str| p.cs(p.id(id), "display");
+    assert_eq!(cs(&p, "label"), "flex");
+    assert_eq!(cs(&p, "star"), "block", "flex item");
+    assert_eq!(cs(&p, "contents"), "contents", "display:contents is not blockified");
+    assert_eq!(cs(&p, "deep"), "block", "a child of a display:contents flex item is a flex item");
+    assert_eq!(cs(&p, "ib"), "flex");
+    assert_eq!(cs(&p, "cell"), "block");
+    assert_eq!(cs(&p, "hidden"), "none");
+    assert_eq!(cs(&p, "grid"), "inline-grid");
+    assert_eq!(cs(&p, "link"), "block", "grid item");
+    assert_eq!(cs(&p, "plain"), "inline");
+    assert_eq!(cs(&p, "float"), "block");
+    assert_eq!(cs(&p, "abs"), "block");
+    assert_eq!(cs(&p, "btn"), "inline-block", "UA default");
+    assert_eq!(cs(&p, "li"), "list-item");
+    let html = p.html();
+    assert_eq!(p.cs(html, "display"), "block");
+
+    // A container switching to flex blockifies existing children.
+    let label = p.id("label");
+    p.style(label, "display:block");
+    assert_eq!(cs(&p, "star"), "inline");
+    p.style(label, "display:grid");
+    assert_eq!(cs(&p, "star"), "block");
+}

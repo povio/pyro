@@ -3079,6 +3079,50 @@ impl StyleEngine {
         self.value_with(dom, el, name, false)
     }
 
+    /// Computed `display`: the author value or the UA default, blockified
+    /// (css-display-3 §2.7) for the root, floats, absolutely positioned
+    /// boxes and flex/grid items, so a `<span>` in a flex `<label>` reports
+    /// `block` as in Chromium. `None` as for [`Self::computed_value`].
+    pub fn computed_display(&self, dom: &Dom, el: NodeId) -> Option<String> {
+        let idx = self.owns(dom, el)?;
+        self.ensure(dom);
+        let rules = self.cache.borrow().rules.clone();
+        let value =
+            |i: u32, name: &str| self.computed_value_at(dom, &rules, i, name, 0, false).map(|v| v.to_ascii_lowercase());
+        let display = |i: u32| {
+            value(i, "display").unwrap_or_else(|| match dom.n(i).element() {
+                Some(e) if e.is_html() => crate::style_flow::ua_display(&e.name.local.to_ascii_lowercase()).to_owned(),
+                _ => "inline".to_owned(),
+            })
+        };
+        let own = display(idx);
+        if matches!(own.as_str(), "none" | "contents") {
+            return Some(own);
+        }
+        let root = matches!(dom.n(dom.n(idx).parent).kind, NodeKind::Document(_));
+        let floated = value(idx, "float").is_some_and(|v| v != "none");
+        let out_of_flow = matches!(value(idx, "position").as_deref(), Some("absolute" | "fixed"));
+        // The parent box: display:contents ancestors generate none.
+        let mut parent = flat_tree_parent_element(dom, idx);
+        while let Some(p) = parent.filter(|&p| display(p) == "contents") {
+            parent = flat_tree_parent_element(dom, p);
+        }
+        let item =
+            parent.is_some_and(|p| matches!(display(p).as_str(), "flex" | "inline-flex" | "grid" | "inline-grid"));
+        if !(root || floated || out_of_flow || item) {
+            return Some(own);
+        }
+        let blockified = match own.as_str() {
+            "inline-flex" => "flex",
+            "inline-grid" => "grid",
+            "inline-table" => "table",
+            "inline" | "inline-block" | "run-in" => "block",
+            d if d.starts_with("table-") || d.starts_with("ruby") => "block",
+            _ => return Some(own),
+        };
+        Some(blockified.to_owned())
+    }
+
     /// Like [`Self::computed_value`], but numbers and px lengths keep full
     /// precision (Rust's shortest round-trip form) instead of Chromium's
     /// six-digit serialization. Layout inputs use this: rounded

@@ -305,7 +305,7 @@ fn px_of(value: Option<&str>) -> Option<f64> {
 
 /// HTML rendering section display defaults. `display: none` elements are
 /// filtered earlier by `has_display_none`.
-fn ua_display(tag: &str) -> &'static str {
+pub(crate) fn ua_display(tag: &str) -> &'static str {
     match tag {
         "html" | "body" | "div" | "p" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "ul" | "ol" | "dl" | "dt" | "dd"
         | "section" | "article" | "header" | "footer" | "nav" | "main" | "aside" | "form" | "fieldset" | "figure"
