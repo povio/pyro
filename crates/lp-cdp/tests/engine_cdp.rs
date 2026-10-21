@@ -3080,3 +3080,38 @@ fn scroll_into_view_if_needed_reveals_a_node_relative_rect() {
     );
     assert_eq!(visible, json!(true));
 }
+
+#[test]
+fn input_hover_after_scroll_carries_the_previous_element_like_chromium() {
+    // TOS HS field, measured in Chromium (W1 trace): with a span previously
+    // hovered, scrolling an off-screen field into view and moving onto it
+    // gives out on the span (relatedTarget = the field input) and over/enter
+    // on the input (relatedTarget = the span); nothing fires for the scroll.
+    let mut h = Harness::new();
+    eval_value(
+        &mut h,
+        r#"
+      document.body.innerHTML='<span id="span" style="display:block;width:200px;height:20px">S</span><div style="height:2000px"></div><div id="field"><input id="hs" tabindex="-1" style="display:block;width:190px;height:24px"></div>';
+      globalThis.log=[];
+      for (const t of ['pointerover','pointerout','pointerenter','pointerleave','mouseover','mouseout','mouseenter','mouseleave'])
+        document.addEventListener(t, e => { if (e.target.id) log.push(t + '@' + e.target.id + '<' + (e.relatedTarget?.id || e.relatedTarget?.nodeName || '-')) }, true);
+      1
+    "#,
+    );
+    let moved = |h: &mut Harness, id: &str| {
+        let point = eval_value(h, &format!("(() => {{ const r = document.getElementById('{id}').getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; }})()"));
+        let r = h.page(
+            "Input.dispatchMouseEvent",
+            json!({"type":"mouseMoved","x":point[0],"y":point[1],"button":"none","buttons":0}),
+        );
+        assert_eq!(r["result"], json!({}), "{r}");
+    };
+    moved(&mut h, "span");
+    eval_value(&mut h, "log.length = 0; document.getElementById('hs').scrollIntoView(); 1");
+    assert_eq!(eval_value(&mut h, "log.join(' ')"), json!(""), "scrolling alone dispatches nothing");
+    moved(&mut h, "hs");
+    assert_eq!(
+        eval_value(&mut h, "log.join(' ')"),
+        json!("pointerout@span<hs pointerleave@span<hs pointerover@hs<span pointerenter@field<span pointerenter@hs<span mouseout@span<hs mouseleave@span<hs mouseover@hs<span mouseenter@field<span mouseenter@hs<span")
+    );
+}
