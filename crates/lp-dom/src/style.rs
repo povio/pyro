@@ -1084,6 +1084,11 @@ struct RuleSet {
     /// The other `:has()` anchors: changes below a matching ancestor (within
     /// `depth` levels) may restyle it, its subtree and later siblings.
     has_anchors: Vec<HasAnchor>,
+    /// Every selector whose match can differ between elements of the same
+    /// attributes and inherited style (`:has()`, structural pseudo-classes,
+    /// sibling combinators, validity), with its bucket: style sharing
+    /// compares their matches on both elements (Stylo's revalidation).
+    revalidate: Vec<(Selectors, BucketKey)>,
     /// Keys of compounds testing `:valid`/`:invalid`. A form, fieldset or
     /// select is valid only if its controls are, so changes below one that
     /// matches a key may restyle it, its subtree and later siblings.
@@ -1302,6 +1307,7 @@ struct Builder<'v> {
     properties: FxHashMap<String, (bool, Option<Rc<str>>)>,
     has_relative: bool,
     has_anchors: Vec<HasAnchor>,
+    revalidate: Vec<(Selectors, BucketKey)>,
     validity_keys: Vec<AnchorKey>,
     sibling_keys: Vec<AnchorKey>,
     attr_names: FxHashSet<u64>,
@@ -1328,6 +1334,7 @@ impl<'v> Builder<'v> {
             properties: FxHashMap::default(),
             has_relative: false,
             has_anchors: Vec::new(),
+            revalidate: Vec::new(),
             validity_keys: Vec::new(),
             sibling_keys: Vec::new(),
             attr_names: FxHashSet::default(),
@@ -1355,6 +1362,11 @@ impl<'v> Builder<'v> {
                     let Some(list) = selectors else { continue };
                     for sel in list.slice() {
                         let mut anchors = Vec::new();
+                        if needs_revalidation(sel) {
+                            if let Some(bucket) = bucket_key(sel) {
+                                self.revalidate.push((SelectorList::from_one(sel.clone()), bucket));
+                            }
+                        }
                         if collect_has_anchors(sel, &mut anchors) {
                             for a in anchors {
                                 if !self.has_anchors.contains(&a) {
@@ -1605,6 +1617,7 @@ impl<'v> Builder<'v> {
         rs.properties = std::mem::take(&mut self.properties);
         rs.has_relative = self.has_relative;
         rs.has_anchors = std::mem::take(&mut self.has_anchors);
+        rs.revalidate = std::mem::take(&mut self.revalidate);
         rs.validity_keys = std::mem::take(&mut self.validity_keys);
         rs.sibling_keys = std::mem::take(&mut self.sibling_keys);
         rs.attr_names = std::mem::take(&mut self.attr_names);
@@ -1726,6 +1739,144 @@ pub fn with_pass_memo<R>(f: impl FnOnce() -> R) -> R {
     let r = f();
     PASS_MEMO.with(|m| *m.borrow_mut() = outer);
     r
+}
+
+/// Whether element `a` (unstyled) has the cascade of element `c`: see
+/// `StyleEngine::shared_flow_style`. `c` is `a`'s previous element sibling
+/// or a cousin at the same depth whose ancestors up to the common one share
+/// their cascade pairwise (recorded when they shared).
+fn shares_cascade(dom: &Dom, rules: &RuleSet, a: u32, c: u32) -> bool {
+    let (Some(ea), Some(ec)) = (dom.n(a).element(), dom.n(c).element()) else { return false };
+    if a == c || ea.name != ec.name || !ea.is_html() || !shareable_tag(&ea.name.local) {
+        return false;
+    }
+    let ignorable = |attr: &crate::node::Attr| {
+        let plain =
+            attr.name.ns.is_empty() && (attr.name.local.starts_with("data-") || attr.name.local.starts_with("aria-"));
+        plain && !rules.attr_names.contains(&attr.name.local.get_hash())
+    };
+    // The attributes that matter, sorted; None for an id or popover one.
+    fn attrs<'e>(
+        e: &'e crate::node::ElementData,
+        ignorable: &dyn Fn(&crate::node::Attr) -> bool,
+    ) -> Option<Vec<(&'e markup5ever::QualName, &'e str)>> {
+        let mut v = Vec::with_capacity(e.attrs.len());
+        for x in e.attrs.iter() {
+            if x.name.ns.is_empty() && matches!(&*x.name.local, "id" | "popover") {
+                return None;
+            }
+            if !ignorable(x) {
+                v.push((&x.name, &*x.value));
+            }
+        }
+        v.sort_by(|x, y| (&*x.0.local, &*x.0.ns).cmp(&(&*y.0.local, &*y.0.ns)));
+        Some(v)
+    }
+    match (attrs(ea, &ignorable), attrs(ec, &ignorable)) {
+        (Some(x), Some(y)) if x == y => {}
+        _ => return false,
+    }
+    // Selectors that can tell them apart (position among siblings, earlier
+    // siblings, contents via :has(), validity): those that can apply (same
+    // classes and tag on both) must match both or neither. Compounds above
+    // them test shared ancestors or pairs that shared.
+    let classes: Vec<&str> = ea.attr("class").map(|v| v.split_ascii_whitespace().collect()).unwrap_or_default();
+    for (selector, bucket) in &rules.revalidate {
+        let applies = match bucket {
+            BucketKey::Id(_) => false,
+            BucketKey::Class(k) => classes.contains(&k.as_str()),
+            BucketKey::Tag(t) => (*ea.name.local).eq_ignore_ascii_case(t),
+            BucketKey::Other => true,
+        };
+        if applies
+            && dom.matches(dom.id_of(a), selector).unwrap_or(true)
+                != dom.matches(dom.id_of(c), selector).unwrap_or(false)
+        {
+            return false;
+        }
+    }
+    // Hover and focus: `.group:hover .x` reads ancestors. Neither side, up
+    // to the common ancestor, may hold the hovered or focused element.
+    let doc = dom.n(a).owner_doc;
+    let targets = [dom.hovered_idx(doc), dom.focused_idx(doc)];
+    if targets.iter().any(|&t| t != NIL) {
+        let (mut x, mut y) = (a, c);
+        while x != y && x != NIL && y != NIL {
+            for side in [x, y] {
+                if targets.iter().any(|&t| t != NIL && dom.is_inclusive_ancestor(side, t)) {
+                    return false;
+                }
+            }
+            x = dom.n(x).parent;
+            y = dom.n(y).parent;
+        }
+        if x != y {
+            return false;
+        }
+    }
+    true
+}
+
+/// Tags whose style can depend on state no attribute shows (form controls,
+/// links, media, open/closed widgets): never shared.
+fn shareable_tag(tag: &str) -> bool {
+    !matches!(
+        tag,
+        "input"
+            | "select"
+            | "textarea"
+            | "button"
+            | "option"
+            | "optgroup"
+            | "label"
+            | "fieldset"
+            | "form"
+            | "output"
+            | "meter"
+            | "progress"
+            | "datalist"
+            | "a"
+            | "area"
+            | "link"
+            | "img"
+            | "picture"
+            | "video"
+            | "audio"
+            | "canvas"
+            | "iframe"
+            | "object"
+            | "embed"
+            | "svg"
+            | "math"
+            | "details"
+            | "summary"
+            | "dialog"
+            | "slot"
+            | "template"
+            | "html"
+            | "body"
+            | "head"
+    )
+}
+
+/// Whether a selector can match one of two elements and not the other
+/// although they have the same attributes and inherited style: `:has()`,
+/// structural pseudo-classes (`:nth-*`, `:first/last/only-*`, `:empty`),
+/// sibling combinators, `:valid`/`:invalid`, anywhere in it.
+fn needs_revalidation(sel: &Selector<Impl>) -> bool {
+    sel.iter_raw_match_order().any(|c| match c {
+        Component::Combinator(
+            selectors::parser::Combinator::NextSibling | selectors::parser::Combinator::LaterSibling,
+        ) => true,
+        Component::Nth(_) | Component::NthOf(_) | Component::Empty | Component::Has(_) => true,
+        Component::NonTSPseudoClass(pc) => matches!(pc, PseudoClass::Valid | PseudoClass::Invalid),
+        Component::Is(list) | Component::Where(list) | Component::Negation(list) => {
+            list.slice().iter().any(needs_revalidation)
+        }
+        Component::Slotted(s) => needs_revalidation(s),
+        Component::Host(Some(s)) => needs_revalidation(s),
+        _ => false,
+    })
 }
 
 /// Roots of the subtrees whose cached styles a set of DOM changes can
@@ -2894,11 +3045,22 @@ struct Cache {
     /// Winning generic declarations per element (`declared_map`), dropped with `memo`.
     declared: FxHashMap<NodeId, Rc<FxHashMap<String, String>>>,
     /// Flow layout inputs per element (`FlowStyleSource`), dropped with `memo`.
-    flow: FxHashMap<NodeId, Option<crate::flow::FlowStyle>>,
+    flow: FxHashMap<NodeId, FlowEntry>,
+    /// Stamps `flow` entries (a recomputed element gets a new one).
+    flow_seq: u64,
     extent: Option<(f64, f64)>,
     /// The focused and hovered elements of `stamp` (indices there), to tell
     /// a freed one from a live one.
     pseudo_ids: (Option<NodeId>, Option<NodeId>),
+}
+
+/// A cached flow style. `stamp` tells a recomputed entry from the one an
+/// element shared from; `shared_from` is (source element, its stamp then)
+/// when the style was shared rather than computed.
+struct FlowEntry {
+    style: Option<crate::flow::FlowStyle>,
+    stamp: u64,
+    shared_from: Option<(NodeId, u64)>,
 }
 
 /// The style engine of one document (upstream: one StyleManager per frame).
@@ -3183,11 +3345,87 @@ impl StyleEngine {
 
     pub(crate) fn cached_flow_style(&self, dom: &Dom, el: NodeId) -> Option<Option<crate::flow::FlowStyle>> {
         self.ensure(dom);
-        self.cache.borrow().flow.get(&el).cloned()
+        self.cache.borrow().flow.get(&el).map(|e| e.style.clone())
     }
 
-    pub(crate) fn store_flow_style(&self, el: NodeId, style: Option<crate::flow::FlowStyle>) {
-        self.cache.borrow_mut().flow.insert(el, style);
+    pub(crate) fn store_flow_style(
+        &self,
+        el: NodeId,
+        style: Option<crate::flow::FlowStyle>,
+        shared_from: Option<(NodeId, u64)>,
+    ) {
+        let mut cache = self.cache.borrow_mut();
+        cache.flow_seq += 1;
+        let stamp = cache.flow_seq;
+        cache.flow.insert(el, FlowEntry { style, stamp, shared_from });
+    }
+
+    /// The flow style of an element whose cascade must equal that of an
+    /// already styled one (Blink's and Stylo's style sharing): one of its
+    /// four previous element siblings (striped rows alternate), or the
+    /// element at its position under the element
+    /// its parent shared from (rows React inserts: each cell and its
+    /// contents then share with the row above). Returns the style and the
+    /// source with its stamp. Conservative: same tag, no id, the same
+    /// attributes (bar data-/aria- ones no selector reads), no state-bearing
+    /// elements (form controls, links, replaced, dialog/details, popovers),
+    /// the same result on both for every selector that could still tell
+    /// them apart (structural pseudo-classes, sibling combinators, :has(),
+    /// validity), no hovered or focused element under either side, and no
+    /// shadow roots or unbounded :has() at all.
+    pub(crate) fn shared_flow_style(
+        &self,
+        dom: &Dom,
+        el: NodeId,
+    ) -> Option<(Option<crate::flow::FlowStyle>, (NodeId, u64))> {
+        let idx = self.owns(dom, el)?;
+        let rules = self.cache.borrow().rules.clone();
+        if rules.has_relative || dom.shadow_root_count() != 0 {
+            return None;
+        }
+        let parent = dom.selector_parent(idx)?;
+        let cache = self.cache.borrow();
+        // Up to 4 previous element siblings (striped rows alternate).
+        let mut candidates: [Option<u32>; 5] = [None; 5];
+        let mut prev = dom.n(idx).prev;
+        let mut found = 0;
+        while prev != NIL && found < 4 {
+            if dom.n(prev).is_element() {
+                candidates[found] = Some(prev);
+                found += 1;
+            }
+            prev = dom.n(prev).prev;
+        }
+        // The same-position child of the element the parent shared from.
+        if let Some(&FlowEntry { shared_from: Some((src, stamp)), .. }) = cache.flow.get(&dom.id_of(parent)) {
+            if cache.flow.get(&src).is_some_and(|e| e.stamp == stamp) {
+                let position = |p: u32, of: Option<u32>, nth: Option<usize>| -> (usize, Option<u32>) {
+                    let mut i = 0;
+                    let mut c = dom.n(p).first_child;
+                    while c != NIL {
+                        if dom.n(c).is_element() {
+                            if Some(c) == of || Some(i) == nth {
+                                return (i, Some(c));
+                            }
+                            i += 1;
+                        }
+                        c = dom.n(c).next;
+                    }
+                    (i, None)
+                };
+                let (k, _) = position(parent, Some(idx), None);
+                if let Ok(src_idx) = dom.check(src) {
+                    candidates[4] = position(src_idx, None, Some(k)).1;
+                }
+            }
+        }
+        for c in candidates.into_iter().flatten() {
+            let Some(entry) = cache.flow.get(&dom.id_of(c)) else { continue };
+            if shares_cascade(dom, &rules, idx, c) {
+                return Some((entry.style.clone(), (dom.id_of(c), entry.stamp)));
+            }
+        }
+        None
     }
 
     pub(crate) fn cached_extent(&self, dom: &Dom) -> Option<(f64, f64)> {

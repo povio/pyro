@@ -2674,3 +2674,98 @@ fn flex_wrap_compressible_controls_shrink_into_the_line() {
     assert_eq!(p.metrics("single")[3], 28.0);
     assert_eq!(p.metrics("search")[1], p.metrics("multi")[1] + 2.0, "search input on the chips' line");
 }
+
+#[test]
+fn style_sharing_serves_each_elements_own_cascade() {
+    // Equivalent new elements share a computed flow style (up to 4 previous
+    // siblings, and the same position under a parent that shared: React
+    // rows). Each table isolates one way two such elements can still differ;
+    // every served style must equal the element's own cascade.
+    let css = "<style>\
+        td{height:12px} span,b{display:block;height:2px}\
+        .t1 tr:nth-child(odd) td{padding-left:3px} .t1 tbody>tr:last-child>td:first-child{width:77px} .t1 td:empty{height:5px}\
+        .t2 [data-state=open] span{font-size:20px}\
+        .t3 .group:hover b{width:55px} .t3 .group:focus-within span{width:66px}\
+        .t4 tr[data-hot] td{height:30px}\
+        .t5 td:has(.flag){height:21px} .t5 .a+.b{width:31px} .t5 .a~.c{width:41px}\
+        </style>";
+    let table = |class: &str, rows: &dyn Fn(usize) -> String| {
+        let body: String = (0..8).map(rows).collect();
+        format!("<table class={class}><tbody>{body}</tbody></table>")
+    };
+    let plain =
+        |_: usize| "<tr class=group><td><span>v</span></td><td><b></b><span><input></span></td></tr>".to_string();
+    let t1 = table("t1", &|i| {
+        if i == 5 {
+            "<tr class=group><td><span>v</span></td><td></td></tr>".into()
+        } else {
+            plain(i)
+        }
+    });
+    let t2 = table("t2", &|i| {
+        let state = if i == 4 { "open" } else { "closed" };
+        format!("<tr class=group data-state={state} data-unread={i}><td><span>v</span></td><td><b></b><span>w</span></td></tr>")
+    });
+    let t3 = table("t3", &plain);
+    let t4 = table("t4", &plain);
+    let t5 = table("t5", &|i| {
+        let flag = if i == 3 { "<i class=flag></i>" } else { "" };
+        format!("<tr class=group><td>{flag}<span>v</span></td><td><span class=a></span><span class=b></span><span class=c></span></td></tr>")
+    });
+    let html = format!("<!doctype html>{css}<body style=\"margin:0\">{t1}{t2}{t3}{t4}{t5}</body>");
+    let mut p = page(&html, Geometry::Flow);
+    let elements = |p: &Page, root: NodeId| -> Vec<NodeId> {
+        p.dom
+            .descendants(root)
+            .unwrap()
+            .filter(|&n| p.dom.node_type(n).ok() == Some(lp_dom::node::NodeType::Element))
+            .collect()
+    };
+    let check = |p: &Page, step: &str| {
+        use lp_dom::flow::FlowStyleSource;
+        let _ = p.layout.flow(&p.dom);
+        for e in elements(p, p.doc) {
+            let served = p.layout.style().flow_style(&p.dom, e);
+            let own = p.layout.style().flow_style_unshared(&p.dom, e);
+            assert_eq!(served, own, "{step}: <{}> served a style not its own", p.dom.tag_name(e).unwrap());
+        }
+        assert_matches_fresh(p, step);
+    };
+    check(&p, "initial");
+    let tables: Vec<NodeId> =
+        elements(&p, p.doc).into_iter().filter(|&n| p.dom.tag_name(n).ok().as_deref() == Some("TABLE")).collect();
+    let rows = |p: &Page, t: NodeId| -> Vec<NodeId> {
+        elements(p, t).into_iter().filter(|&n| p.dom.tag_name(n).ok().as_deref() == Some("TR")).collect()
+    };
+    let first = |p: &Page, root: NodeId, tag: &str| {
+        elements(p, root).into_iter().find(|&n| p.dom.tag_name(n).ok().as_deref() == Some(tag)).unwrap()
+    };
+    // t3: hover inside one row, focus inside the next.
+    let r3 = rows(&p, tables[2]);
+    let (b, input) = (first(&p, r3[2], "B"), first(&p, r3[3], "INPUT"));
+    p.dom.set_hovered(p.doc, Some(b)).unwrap();
+    p.dom.set_focused(p.doc, Some(input)).unwrap();
+    check(&p, "hover and focus");
+    // t4: the source row restyled after the next shared from it; then a cell
+    // of that next row restyles alone and must not share with the stale
+    // source's cell.
+    let r4 = rows(&p, tables[3]);
+    // (An attribute that restyles only the row, unlike `class` here,
+    // which sibling rules make restyle later rows too.)
+    p.dom.set_attribute(r4[0], "data-hot", "").unwrap();
+    check(&p, "source row restyled");
+    let cell = first(&p, r4[1], "TD");
+    p.dom.set_attribute(cell, "title", "z").unwrap();
+    let _ = p.layout.flow(&p.dom);
+    p.dom.remove_attribute(cell, "title").unwrap();
+    check(&p, "cell of a sharing row restyled alone");
+    // New rows appended to t1 (React commit) share with existing ones.
+    let tb1 = p.dom.parent_element(rows(&p, tables[0])[0]).unwrap().unwrap();
+    for _ in 0..3 {
+        let frag = p.dom.create_element(p.doc, "tbody").unwrap();
+        lp_dom::parse::set_inner_html(&mut p.dom, frag, &plain(0)).unwrap();
+        let tr = p.dom.children(frag).unwrap().next().unwrap();
+        p.dom.append_child(tb1, tr).unwrap();
+    }
+    check(&p, "rows appended");
+}

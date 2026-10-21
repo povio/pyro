@@ -254,6 +254,19 @@ fn dump_flow_snapshot() {
                     let _ = layout.flow(&dom);
                 }
                 eprintln!("rows: {k} remove+pass+rebuild+pass {:?} per round", t.elapsed() / k);
+                // Styles served by the pass (cached, maybe shared between
+                // equivalent elements) against each element's own cascade.
+                use lp_dom::flow::FlowStyleSource;
+                let all: Vec<_> = dom
+                    .descendants(doc)
+                    .unwrap()
+                    .filter(|&n| dom.node_type(n).ok() == Some(NodeType::Element))
+                    .collect();
+                let differ = all
+                    .iter()
+                    .filter(|&&e| layout.style().flow_style(&dom, e) != layout.style().flow_style_unshared(&dom, e))
+                    .count();
+                eprintln!("rows: served vs own-cascade styles differ: {differ} of {}", all.len());
                 // Incremental result against a fresh layout of the same DOM.
                 let inc = layout.flow(&dom);
                 let mut fresh = Layout::with_viewport(doc, Viewport::new(vw, vh));

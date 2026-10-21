@@ -26,13 +26,26 @@ impl FlowStyleSource for StyleEngine {
         if let Some(cached) = self.cached_flow_style(dom, el) {
             return cached;
         }
+        if let Some((style, from)) = self.shared_flow_style(dom, el) {
+            self.store_flow_style(el, style.clone(), Some(from));
+            return style;
+        }
         let started = crate::layout::flow_stats::enabled().then(std::time::Instant::now);
         let style = self.flow_style_uncached(dom, el);
         if let Some(t) = started {
             crate::layout::flow_stats::note_style_miss(t.elapsed());
         }
-        self.store_flow_style(el, style.clone());
+        self.store_flow_style(el, style.clone(), None);
         style
+    }
+}
+
+impl StyleEngine {
+    /// The element's flow style computed from its own cascade, never shared
+    /// or cached (differential tests of style sharing).
+    #[doc(hidden)]
+    pub fn flow_style_unshared(&self, dom: &Dom, el: NodeId) -> Option<FlowStyle> {
+        self.flow_style_uncached(dom, el)
     }
 }
 
