@@ -70,7 +70,7 @@ impl WindowData {
 
 /// Identity keys of the per-window singletons (one wrapper per realm).
 const KEY_LOCATION: u64 = 0x4c6f_6361_7469_6f6e;
-const KEY_HISTORY: u64 = 0x4869_7374_6f72_7900;
+pub(crate) const KEY_HISTORY: u64 = 0x4869_7374_6f72_7900;
 const KEY_PERFORMANCE: u64 = 0x5065_7266_6f72_6d00;
 
 impl lp_webapi::WindowHost for WindowData {
