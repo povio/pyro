@@ -1956,15 +1956,39 @@ fn invalidation_roots(
         NodeKind::Element(e) => Some(&**e),
         _ => None,
     };
-    let any_key = |keys: &[AnchorKey], x: u32| element(x).is_some_and(|e| keys.iter().any(|k| k.matches(e)));
+    // Keys are tested many times per element in a batch (each change, each
+    // key): split an element's class list once.
+    let class_cache: RefCell<FxHashMap<u32, Rc<[&str]>>> = RefCell::new(FxHashMap::default());
+    let classes = |x: u32| -> Rc<[&str]> {
+        if let Some(c) = class_cache.borrow().get(&x) {
+            return c.clone();
+        }
+        let c: Rc<[&str]> =
+            element(x).and_then(|e| e.attr("class")).map(|v| v.split_ascii_whitespace().collect()).unwrap_or_default();
+        class_cache.borrow_mut().insert(x, c.clone());
+        c
+    };
+    let key_at = |k: &AnchorKey, x: u32| -> bool {
+        let Some(e) = element(x) else { return false };
+        match k {
+            AnchorKey::Class(c) => classes(x).iter().any(|t| t == c),
+            _ => k.matches(e),
+        }
+    };
+    let child_key_at = |k: &ChildKey, x: u32, p: u32| -> bool {
+        key_at(&k.key, x) && k.parent.as_ref().is_none_or(|pk| p != NIL && key_at(pk, p))
+    };
+    let any_key = |keys: &[AnchorKey], x: u32| keys.iter().any(|k| key_at(k, x));
     // Whether a state change of element `x` (`attr`: the hash of a changed
     // attribute's name) can change its match of a sibling-combinator left
     // compound. Keys are necessary conditions: one that does not match now
     // matched before too unless the change touched the attribute it reads.
     let siblings_affected = |x: u32, attr: Option<u64>| -> bool {
-        let Some(e) = element(x) else { return true };
+        if element(x).is_none() {
+            return true;
+        }
         rules.sibling_keys.iter().any(|k| {
-            k.matches(e)
+            key_at(k, x)
                 || match (k, attr) {
                     (AnchorKey::Class(_), Some(h)) => h == local_name!("class").get_hash(),
                     (AnchorKey::Attr(name), Some(h)) => {
@@ -2088,7 +2112,7 @@ fn invalidation_roots(
         if !rules.nth_keys.is_empty() {
             let mut child = dom.n(p).first_child;
             while child != NIL {
-                if element(child).is_some_and(|e| rules.nth_keys.iter().any(|k| k.matches(e, element(p)))) {
+                if element(child).is_some() && rules.nth_keys.iter().any(|k| child_key_at(k, child, p)) {
                     out.push(child);
                 }
                 child = dom.n(child).next;
@@ -2102,7 +2126,7 @@ fn invalidation_roots(
     let adjacency = |x: u32, p: u32| {
         x != NIL
             && (!live(x)
-                || element(x).is_some_and(|e| rules.structural_sibling_keys.iter().any(|k| k.matches(e, element(p)))))
+                || (element(x).is_some() && rules.structural_sibling_keys.iter().any(|k| child_key_at(k, x, p))))
     };
 
     // (root, with later siblings)
@@ -2566,14 +2590,6 @@ impl AnchorKey {
 struct ChildKey {
     key: AnchorKey,
     parent: Option<AnchorKey>,
-}
-
-impl ChildKey {
-    /// Whether element `e`, a child of `parent` (None: not an element), can
-    /// match the compound.
-    fn matches(&self, e: &crate::node::ElementData, parent: Option<&crate::node::ElementData>) -> bool {
-        self.key.matches(e) && self.parent.as_ref().is_none_or(|k| parent.is_some_and(|p| k.matches(p)))
-    }
 }
 
 /// A potential `:has()` anchor: elements matching `key` whose descendants
