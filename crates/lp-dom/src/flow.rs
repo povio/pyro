@@ -1522,6 +1522,11 @@ impl<'a> Ctx<'a> {
         let mut sum: f64 = 0.0;
         let mut items = 0usize;
         let mut text_item = false;
+        // Max-content lines: collapsible whitespace between pieces (text
+        // nodes, inline elements) is one space, as in `collect_inline`
+        // ("Page <span>1</span>" keeps its space); none at line ends.
+        let mut pending_space: f64 = 0.0;
+        let mut line_started = false;
         for (child, s) in self.flatten_children(el) {
             let w = match s {
                 None => {
@@ -1551,8 +1556,17 @@ impl<'a> Ctx<'a> {
                     }
                     if min || flex {
                         best = best.max(w);
-                    } else {
+                    } else if !is_blank(text) {
+                        let space = text_width(" ", style.font_size, style.font_weight);
+                        if line_started && (pending_space > 0.0 || text.starts_with(|c: char| c.is_ascii_whitespace()))
+                        {
+                            line += pending_space.max(space);
+                        }
                         line += w;
+                        line_started = true;
+                        pending_space = if text.ends_with(|c: char| c.is_ascii_whitespace()) { space } else { 0.0 };
+                    } else if line_started && !text.is_empty() {
+                        pending_space = text_width(" ", style.font_size, style.font_weight);
                     }
                     continue;
                 }
@@ -1590,12 +1604,19 @@ impl<'a> Ctx<'a> {
             } else if outer == OuterDisplay::Inline && !flex {
                 if min {
                     best = best.max(w);
-                } else {
+                } else if w > 0.0 {
+                    if line_started {
+                        line += pending_space;
+                    }
                     line += w;
+                    line_started = true;
+                    pending_space = 0.0;
                 }
             } else {
                 best = best.max(line).max(w);
                 line = 0.0;
+                line_started = false;
+                pending_space = 0.0;
             }
         }
         if flex_row && items > 0 {

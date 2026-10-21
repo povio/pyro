@@ -2489,3 +2489,55 @@ fn flow_whitespace_normal_span_wraps_inside_nowrap_cell() {
     let cell = p.metrics("c-inherit");
     assert!(p.metrics("s-inherit")[2] > cell[2], "inherit: the nowrap line overflows the cell");
 }
+
+#[test]
+fn flow_max_content_keeps_whitespace_between_inline_pieces() {
+    // TOS quote document preview (pdfgen PageCounter): the page counter is
+    // `<p class="absolute bottom-0 right-0">Page <span>1</span>/<span>1</span></p>`
+    // under the PREVIEW corner label. Its shrink-to-fit width dropped the
+    // space before <span> (max-content summed trimmed text nodes), so the
+    // counter wrapped to two lines and rose 18px into the label (TOS
+    // quotes-document-preview-spacing: gap -11px).
+    // Chromium (Playwright 1.59.1, 12px system-ui, line-height 1.5), on this
+    // markup: every abs-pos <p> is one 18px line exactly as wide as the same
+    // content inline (plain 46.34, spans 46.38, span1 37.14, lead 37.14,
+    // blank 37.14, nospace 42.97).
+    let vs = [
+        ("plain", "Page 1/1"),
+        ("spans", "Page <span>1</span>/<span>1</span>"),
+        ("nospace", "Page1/1"),
+        ("span1", "Page <span>1</span>"),
+        ("lead", "<span>Page</span> 1"),
+        ("blank", "<span>Page</span> <span>1</span>"),
+    ];
+    let mut html = String::from(
+        "<!doctype html><style>*{margin:0;padding:0}html{line-height:1.5;font-family:system-ui}</style><body>",
+    );
+    for (k, t) in vs {
+        html.push_str(&format!(
+            "<div style=\"position:relative;width:600px;height:40px\"><p id={k} style=\"position:absolute;right:0;font-size:12px\">{t}</p></div>"
+        ));
+    }
+    for (k, t) in vs {
+        html.push_str(&format!("<div style=\"width:600px\"><span id=i-{k} style=\"font-size:12px\">{t}</span></div>"));
+    }
+    // The TOS header (W3 capture, 0267767): the counter sits at the bottom
+    // of the title block on one line.
+    html.push_str(
+        "<div style=\"width:794px\"><div style=\"position:relative;display:flex;flex-direction:column;gap:16px;padding:32px 0 16px\">\
+         <div id=label style=\"position:absolute;top:4px;right:4px;font-size:10pt;font-weight:600;letter-spacing:.025em\">PREVIEW</div>\
+         <div id=title style=\"position:relative;margin:0 68px\"><h1 style=\"font-size:18px;font-weight:700;line-height:17px\">Quotation - QE2ESE260000001 V.1</h1>\
+         <p id=counter style=\"position:absolute;bottom:0;right:0;font-size:12px\">Page <span class=pageNumber>1</span>/<span class=totalPages>1</span></p></div></div></div>",
+    );
+    let p = page(&html, Geometry::Flow);
+    for (k, _) in vs {
+        let abs = p.metrics(k);
+        assert_eq!(abs[2], p.metrics(&format!("i-{k}"))[2], "{k}: shrink-to-fit width is the inline width");
+        assert_eq!(abs[3], 18.0, "{k}: one line");
+    }
+    let (title, counter) = (p.metrics("title"), p.metrics("counter"));
+    assert_eq!(counter[3], 18.0, "counter on one line: {counter:?}");
+    assert_eq!(counter[1] + counter[3], title[1] + title[3], "counter at the title block's bottom");
+    let label = p.metrics("label");
+    assert!(counter[1] > label[1] + label[3], "counter {counter:?} below label {label:?}");
+}
