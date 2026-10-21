@@ -227,6 +227,7 @@ impl StyleEngine {
                 Some(v) => computed::resolve_len(&v, &cx).map_or(Dim::Auto, |l| Dim::Len(to_len(l))),
                 None => Dim::Auto,
             },
+            flex_basis_percent: value("flex-basis").is_some_and(|v| v.contains('%')),
             table_part,
             // border-spacing/collapse inherit, so cells and rows see their table's values; UA table spacing is 2px.
             border_spacing: value("border-spacing")

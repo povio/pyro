@@ -486,6 +486,9 @@ pub struct FlowStyle {
     pub flex_grow: f64,
     pub flex_shrink: f64,
     pub flex_basis: Dim,
+    /// `flex_basis` was a percentage (`flex: 1` gives `0%`): against an
+    /// indefinite container main size it is `content`.
+    pub flex_basis_percent: bool,
     /// None = `auto` (the container's align-items).
     pub align_self: Option<Align>,
     // Tables (Stage 3).
@@ -546,6 +549,7 @@ impl Default for FlowStyle {
             flex_grow: 0.0,
             flex_shrink: 1.0,
             flex_basis: Dim::Auto,
+            flex_basis_percent: false,
             align_self: None,
             table_part: TablePart::None,
             border_spacing: (0.0, 0.0),
@@ -2382,13 +2386,19 @@ impl<'a> Ctx<'a> {
         let edges = if row { e.horizontal() } else { e.vertical() };
         let to_border = |v: f64| if s.border_box { v.max(edges) } else { v + edges };
         let declared = if row { s.width.resolve(Some(width)) } else { s.height.resolve(container_main) };
+        // A percentage flex-basis against an indefinite container main size
+        // is `content` (css-flexbox §7.2.3): the content size, whatever the
+        // item's own width/height (Chromium; e.g. `flex: 1` in an auto-height
+        // column).
+        let content_basis = s.flex_basis_percent && container_main.is_none();
         let basis = match s.flex_basis {
-            Dim::Len(l) if l.percent == 0.0 || container_main.is_some() => {
+            Dim::Len(l) if !content_basis && (l.percent == 0.0 || container_main.is_some()) => {
                 Some(l.resolve(container_main.unwrap_or(0.0)))
             }
             _ => None,
         };
-        let main = match (basis, declared) {
+        let declared_basis = if content_basis { None } else { declared };
+        let main = match (basis, declared_basis) {
             (Some(b), _) => to_border(b),
             (None, Some(d)) => to_border(d),
             (None, None) => {

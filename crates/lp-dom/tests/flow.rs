@@ -2310,3 +2310,41 @@ fn flow_default_ignorable_characters_take_no_width() {
     assert_eq!(wid("zw"), plain, "ZWSP, LRM, BOM and soft hyphen add nothing");
     assert_eq!(wid("after"), wid("y"), "an isolate before normal text");
 }
+
+#[test]
+fn flow_percentage_flex_basis_in_an_indefinite_column_is_content() {
+    // TOS business-partner-invoices drawer: a `flex: 1 1 0%; min-height: 0`
+    // column item inside an auto-height `overflow: hidden` column flex
+    // container (itself in a block). The container's main size is
+    // indefinite, so the percentage basis is `content` (css-flexbox §7.2.3):
+    // Chromium sizes the item and the container to the 520px content, and a
+    // click inside lands on the content. Flow used a 0px basis, collapsed the
+    // container and clipped the table header out of hit testing. Against a
+    // definite height the 0% basis still resolves to 0 and grows. Values
+    // measured in Chromium (Playwright 1.59.1, 800x600).
+    let p = page(
+        "<!doctype html><body style=\"margin:0\">\
+         <div style=\"display:block\"><div id=c1 style=\"display:flex;flex-direction:column;overflow:hidden\">\
+         <div id=i1 style=\"display:flex;flex-direction:column;flex:1 1 0%;min-height:0\"><div id=k1 style=\"min-height:520px\"></div></div></div></div>\
+         <div id=c2 style=\"display:flex;flex-direction:column;height:300px;overflow:hidden\">\
+         <div id=i2 style=\"display:flex;flex-direction:column;flex:1 1 0%;min-height:0\"><div style=\"min-height:520px\"></div></div></div>\
+         <div id=c3 style=\"display:flex;flex-direction:column\"><div id=i3 style=\"flex:1 1 50%;min-height:0\"><div style=\"height:40px\"></div></div>\
+         <div id=j3 style=\"flex:1;min-height:0;height:10px\"></div></div>\
+         <div style=\"display:flex;width:400px\"><div id=i4 style=\"flex:1 1 0%;min-width:0\"><div style=\"width:300px;height:5px\"></div></div><div id=j4 style=\"flex:1 1 0%\"></div></div>\
+         </body>",
+        Geometry::Flow,
+    );
+    let m = |id: &str| {
+        let m = p.metrics(id);
+        (m[1], m[2], m[3])
+    };
+    assert_eq!(m("c1"), (0.0, 800.0, 520.0));
+    assert_eq!(m("i1"), (0.0, 800.0, 520.0));
+    assert_eq!(p.layout.element_from_point(&p.dom, 10.0, 400.0), Some(p.id("k1")), "Chromium hits #k1");
+    assert_eq!(m("c2"), (520.0, 800.0, 300.0), "definite height: 0% resolves and grows");
+    assert_eq!(m("i2"), (520.0, 800.0, 300.0));
+    assert_eq!(m("c3"), (820.0, 800.0, 40.0));
+    assert_eq!(m("i3"), (820.0, 800.0, 40.0), "50% of indefinite: content");
+    assert_eq!(m("j3"), (860.0, 800.0, 0.0), "content basis ignores height:10px");
+    assert_eq!((m("i4").1, m("j4").1), (200.0, 200.0), "definite row width: 0% resolves");
+}
