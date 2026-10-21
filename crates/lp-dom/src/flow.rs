@@ -681,9 +681,13 @@ struct Ctx<'a> {
 /// Per-pass caches. Nested flex/table measurement would otherwise lay the
 /// same subtree out again at every ancestor level (exponential in depth),
 /// and ask the style source for the same element many times.
+/// A pass's shared view of an element's flow style (looked up many times per
+/// pass; cloning the struct on every lookup dominated layout time).
+type StyleRef = std::rc::Rc<FlowStyle>;
+
 #[derive(Default)]
 struct Memo {
-    styles: RefCell<FxHashMap<NodeId, Option<FlowStyle>>>,
+    styles: RefCell<FxHashMap<NodeId, Option<StyleRef>>>,
     max_content: RefCell<FxHashMap<NodeId, f64>>,
     min_content: RefCell<FxHashMap<NodeId, f64>>,
     /// Content height by (element, content width bits).
@@ -694,7 +698,7 @@ struct Memo {
 
 struct Pending {
     el: NodeId,
-    style: FlowStyle,
+    style: StyleRef,
     static_x: f64,
     static_y: f64,
 }
@@ -730,21 +734,21 @@ enum InlineItem {
     Break,
     Atomic {
         el: NodeId,
-        style: Box<FlowStyle>,
+        style: StyleRef,
         owners: Vec<NodeId>,
     },
     /// A block-level box inside inline content (block-in-inline): it ends the
     /// current line and takes its own margin-box height, without a strut.
     Block {
         el: NodeId,
-        style: Box<FlowStyle>,
+        style: StyleRef,
         owners: Vec<NodeId>,
     },
     /// An absolutely/fixed positioned box inside inline content: placed
     /// later against its containing block, from the current line position.
     OutOfFlow {
         el: NodeId,
-        style: Box<FlowStyle>,
+        style: StyleRef,
     },
     /// An inline element that starts or ends (for empty inline boxes).
     Empty {
@@ -773,7 +777,7 @@ impl<'a> Ctx<'a> {
         }
     }
 
-    fn style_of(&self, el: NodeId) -> Option<FlowStyle> {
+    fn style_of(&self, el: NodeId) -> Option<StyleRef> {
         if let Some(s) = self.memo.styles.borrow().get(&el) {
             return s.clone();
         }
@@ -785,6 +789,7 @@ impl<'a> Ctx<'a> {
                 st.replaced = true;
             }
         }
+        let s = s.map(StyleRef::new);
         self.memo.styles.borrow_mut().insert(el, s.clone());
         s
     }
@@ -1237,7 +1242,7 @@ impl<'a> Ctx<'a> {
     /// Children of `el` with their styles (None for text), with
     /// `display: contents` elements replaced by their children and
     /// unrendered elements dropped.
-    fn flatten_children(&self, el: NodeId) -> Vec<(NodeId, Option<FlowStyle>)> {
+    fn flatten_children(&self, el: NodeId) -> Vec<(NodeId, Option<StyleRef>)> {
         let mut out = Vec::new();
         let Ok(children) = self.dom.children(el) else { return out };
         for c in children {
@@ -1262,7 +1267,7 @@ impl<'a> Ctx<'a> {
         out
     }
 
-    fn defer_absolute(&mut self, el: NodeId, style: FlowStyle, static_x: f64, static_y: f64) {
+    fn defer_absolute(&mut self, el: NodeId, style: StyleRef, static_x: f64, static_y: f64) {
         let entry = Pending { el, style, static_x, static_y };
         if entry.style.position == Position::Fixed {
             // The viewport is the containing block.
@@ -1652,7 +1657,7 @@ impl<'a> Ctx<'a> {
                         }
                     };
                     let at = line.x;
-                    line.push(at, outer_w, outer_h, ascent, owners, Some((el, *style)));
+                    line.push(at, outer_w, outer_h, ascent, owners, Some((el, style.clone())));
                     line.extents(strut);
                 }
                 InlineItem::Empty { owners, height, ascent } => {
@@ -1681,7 +1686,7 @@ impl<'a> Ctx<'a> {
                 }
                 InlineItem::OutOfFlow { el, style } => {
                     // Static position: where the next inline content would go.
-                    self.defer_absolute(el, *style, x - shift.0 + line.x, line_y);
+                    self.defer_absolute(el, style.clone(), x - shift.0 + line.x, line_y);
                 }
             }
         }
@@ -1936,17 +1941,17 @@ impl<'a> Ctx<'a> {
                     return;
                 }
                 if matches!(style.position, Position::Absolute | Position::Fixed) {
-                    items.push(InlineItem::OutOfFlow { el: n, style: Box::new(style) });
+                    items.push(InlineItem::OutOfFlow { el: n, style });
                     return;
                 }
                 if style.outer == OuterDisplay::Block {
-                    items.push(InlineItem::Block { el: n, style: Box::new(style), owners: owners.to_vec() });
+                    items.push(InlineItem::Block { el: n, style, owners: owners.to_vec() });
                     return;
                 }
                 let mut with = owners.to_vec();
                 with.push(n);
                 if style.replaced || style.inner != InnerDisplay::Flow {
-                    items.push(InlineItem::Atomic { el: n, style: Box::new(style), owners: owners.to_vec() });
+                    items.push(InlineItem::Atomic { el: n, style, owners: owners.to_vec() });
                     return;
                 }
                 let before = items.len();
@@ -2049,7 +2054,7 @@ struct LineItem {
     height: f64,
     ascent: f64,
     owners: Vec<NodeId>,
-    atomic: Option<(NodeId, FlowStyle)>,
+    atomic: Option<(NodeId, StyleRef)>,
     /// Text: the font's (ascent, descent) for its reported box.
     content: Option<(f64, f64)>,
 }
@@ -2062,7 +2067,7 @@ impl Line {
         height: f64,
         ascent: f64,
         owners: Vec<NodeId>,
-        atomic: Option<(NodeId, FlowStyle)>,
+        atomic: Option<(NodeId, StyleRef)>,
     ) {
         self.ascent = self.ascent.max(ascent);
         self.descent = self.descent.max(height - ascent);
@@ -2132,7 +2137,7 @@ fn union(frags: &mut FxHashMap<NodeId, Rect>, order: &mut Vec<NodeId>, el: NodeI
 struct FlexItem {
     el: Option<NodeId>,
     text: Vec<NodeId>,
-    style: FlowStyle,
+    style: StyleRef,
     margin: Sides<f64>,
     /// Border-box flex base size.
     base: f64,
@@ -2181,7 +2186,7 @@ impl<'a> Ctx<'a> {
                 items.push(FlexItem {
                     el: None,
                     text: std::mem::take(run),
-                    style: st,
+                    style: StyleRef::new(st),
                     margin: [0.0; 4],
                     base: 0.0,
                     main: 0.0,
@@ -2548,7 +2553,7 @@ impl<'a> Ctx<'a> {
             return;
         };
         let e = self.edges(&it.style, cb_width);
-        let mut s = it.style.clone();
+        let mut s = (*it.style).clone();
         s.border_box = true;
         s.width = Dim::px(w);
         s.height = Dim::px(h);
@@ -2659,14 +2664,14 @@ fn margins_cross(it: &FlexItem, row: bool) -> f64 {
 
 struct TableCell {
     el: NodeId,
-    style: FlowStyle,
+    style: StyleRef,
     col: usize,
     span: usize,
 }
 
 struct TableRow {
     el: Option<NodeId>,
-    style: Option<FlowStyle>,
+    style: Option<StyleRef>,
     group: Option<NodeId>,
     cells: Vec<TableCell>,
 }
@@ -2705,7 +2710,7 @@ impl<'a> Ctx<'a> {
         (rows, cols)
     }
 
-    fn table_row(&self, row: NodeId, style: FlowStyle, group: Option<NodeId>) -> TableRow {
+    fn table_row(&self, row: NodeId, style: StyleRef, group: Option<NodeId>) -> TableRow {
         let mut col = 0;
         let mut cells = Vec::new();
         for (c, cs) in self.flatten_children(row) {
@@ -2866,7 +2871,7 @@ impl<'a> Ctx<'a> {
             let row_order = self.next_order();
             for (c, (content_h, vertical)) in row.cells.iter().zip(cell_heights) {
                 let w = starts[c.col + c.span] - sx - starts[c.col];
-                let mut s = c.style.clone();
+                let mut s = (*c.style).clone();
                 s.border_box = true;
                 s.width = Dim::px(w);
                 s.height = Dim::px(row_h);
@@ -2965,7 +2970,7 @@ struct GridItem {
     /// None: an anonymous item for a run of text.
     el: Option<NodeId>,
     text: Vec<NodeId>,
-    style: FlowStyle,
+    style: StyleRef,
     col: usize,
     col_span: usize,
     row: usize,
@@ -3358,7 +3363,7 @@ fn size_tracks(
 impl<'a> Ctx<'a> {
     /// Grid items of `el` (with anonymous items for text runs); absolutely
     /// positioned children are returned separately.
-    fn grid_children(&self, el: NodeId, style: &FlowStyle) -> (Vec<GridItem>, Vec<(NodeId, FlowStyle)>) {
+    fn grid_children(&self, el: NodeId, style: &FlowStyle) -> (Vec<GridItem>, Vec<(NodeId, StyleRef)>) {
         let mut items = Vec::new();
         let mut absolute = Vec::new();
         let mut text: Vec<NodeId> = Vec::new();
@@ -3375,7 +3380,7 @@ impl<'a> Ctx<'a> {
                 items.push(GridItem {
                     el: None,
                     text: std::mem::take(text),
-                    style: st,
+                    style: StyleRef::new(st),
                     col: 0,
                     col_span: 1,
                     row: 0,
