@@ -161,9 +161,9 @@ impl StyleEngine {
                 Some(_) => px_of(value(&format!("border-{s}-width")).as_deref()).unwrap_or(3.0),
             }
         });
-        let clips = |name: &str| {
-            matches!(value(name).as_deref().map(str::trim), Some("hidden" | "scroll" | "auto" | "clip" | "overlay"))
-        };
+        // Computed overflow per axis, after `visible` → `auto` coercion.
+        let overflow =
+            crate::style::computed_overflow_keywords(value("overflow-x").as_deref(), value("overflow-y").as_deref());
         // Blink's ComputedLineHeightAsFixed: numbers and percentages scale the
         // font size into a truncated LayoutUnit (1/64 px), fixed lengths round,
         // so `1.8462` at 13px lays out as 24px.
@@ -192,8 +192,8 @@ impl StyleEngine {
             padding,
             border,
             border_box: value("box-sizing").is_some_and(|v| v.trim().eq_ignore_ascii_case("border-box")),
-            clips_x: clips("overflow-x"),
-            clips_y: clips("overflow-y"),
+            clips_x: overflow.0 != "visible",
+            clips_y: overflow.1 != "visible",
             font_size,
             line_height,
             nowrap,

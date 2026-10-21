@@ -4969,3 +4969,57 @@ fn scroll_offsets_round_like_chromium_so_synced_panes_settle() {
     tasks.drain();
     assert_eq!(eval(&e.main, "log.join(' ')"), "m1237>686 s686>1237");
 }
+
+#[test]
+fn single_axis_overflow_makes_a_scroll_container_like_chromium() {
+    // TOS bookkeeping exports (bookkeeping-vat-lines.e2e.ts:65): the table's
+    // scroller is `flex h-full grow flex-col overflow-x-auto`. CSS Overflow 3
+    // computes the other axis's `visible` to `auto` (and `clip` to `hidden`),
+    // so it scrolls vertically; Rust reported overflowY "" and refused
+    // scrollTop = 1000, so the virtualized rows never moved. Chromium
+    // (Playwright 1.59.1), 100px boxes with 300px content, scrollTop = 120:
+    // computed x/y/shorthand, scrollTop, scroll events.
+    let cases = [
+        ("xauto", "overflow-x:auto", "auto|auto|auto|120|1"),
+        ("yauto", "overflow-y:auto", "auto|auto|auto|120|1"),
+        ("xhidden", "overflow-x:hidden", "hidden|auto|hidden auto|120|1"),
+        ("xclip", "overflow-x:clip", "clip|visible|clip visible|0|0"),
+        ("xclipyscroll", "overflow-x:clip;overflow-y:scroll", "hidden|scroll|hidden scroll|120|1"),
+        ("none", "", "visible|visible|visible|0|0"),
+        ("both", "overflow:hidden auto", "hidden|auto|hidden auto|120|1"),
+    ];
+    let html: String = cases
+        .iter()
+        .map(|(k, css, _)| {
+            format!(
+                "<div id={k} style='height:100px;width:100px;{css}'><div style='height:300px;width:50px'></div></div>"
+            )
+        })
+        .collect();
+    let e = env(&format!("<body style='margin:0'>{html}</body>"));
+    e.page.layout.borrow_mut().set_geometry(lp_dom::layout::Geometry::Flow);
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    let ids: Vec<String> = cases.iter().map(|(k, _, _)| format!("'{k}'")).collect();
+    eval(
+        &e.main,
+        &format!(
+            "globalThis.scrolls={{}};for(const k of [{}]){{const el=document.getElementById(k);scrolls[k]=0;\
+             el.addEventListener('scroll',()=>scrolls[k]++);el.scrollTop=120}};'ok'",
+            ids.join(",")
+        ),
+    );
+    e.page.after_task();
+    tasks.drain();
+    for (k, _, want) in cases {
+        let got = eval(
+            &e.main,
+            &format!(
+                "(()=>{{const el=document.getElementById('{k}'),cs=getComputedStyle(el);\
+                 return [cs.overflowX,cs.overflowY,cs.overflow,el.scrollTop,scrolls['{k}']].join('|')}})()"
+            ),
+        );
+        assert_eq!(got, want, "{k}");
+    }
+    e.page.dispose();
+}

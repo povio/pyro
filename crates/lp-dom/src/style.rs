@@ -707,6 +707,7 @@ enum Overflow {
     #[default]
     Visible,
     Clip,
+    Hidden,
     Scroll,
 }
 impl Overflow {
@@ -716,12 +717,54 @@ impl Overflow {
             || value.eq_ignore_ascii_case("overlay")
         {
             Self::Scroll
-        } else if value.eq_ignore_ascii_case("hidden") || value.eq_ignore_ascii_case("clip") {
+        } else if value.eq_ignore_ascii_case("hidden") {
+            Self::Hidden
+        } else if value.eq_ignore_ascii_case("clip") {
             Self::Clip
         } else {
             Self::Visible
         }
     }
+
+    /// CSS Overflow 3: when one axis is neither `visible` nor `clip`, the
+    /// other axis's `visible` computes to `auto` and `clip` to `hidden`
+    /// (`overflow-x: auto` alone makes a vertical scroll container too).
+    fn coerce(x: Self, y: Self) -> (Self, Self) {
+        let scroller = |o: Self| matches!(o, Self::Hidden | Self::Scroll);
+        if !(scroller(x) || scroller(y)) {
+            return (x, y);
+        }
+        let fix = |o: Self| match o {
+            Self::Visible => Self::Scroll,
+            Self::Clip => Self::Hidden,
+            o => o,
+        };
+        (fix(x), fix(y))
+    }
+}
+
+/// The computed `overflow-x`/`overflow-y` keyword of one declared value
+/// after the per-axis coercion (`visible` → `auto`, `clip` → `hidden` when
+/// the other axis scrolls); `overlay` computes to `auto`.
+pub(crate) fn computed_overflow_keywords(x: Option<&str>, y: Option<&str>) -> (String, String) {
+    let norm = |v: Option<&str>| -> String {
+        match v.map(|v| v.trim().to_ascii_lowercase()) {
+            Some(v) if matches!(v.as_str(), "visible" | "hidden" | "clip" | "scroll" | "auto") => v,
+            Some(v) if v == "overlay" => "auto".into(),
+            _ => "visible".into(),
+        }
+    };
+    let (x, y) = (norm(x), norm(y));
+    let scroller = |v: &str| matches!(v, "hidden" | "scroll" | "auto");
+    if !(scroller(&x) || scroller(&y)) {
+        return (x, y);
+    }
+    let fix = |v: String| match v.as_str() {
+        "visible" => "auto".to_owned(),
+        "clip" => "hidden".to_owned(),
+        _ => v,
+    };
+    (fix(x), fix(y))
 }
 
 /// StyleManager.zig:1544-1547.
@@ -3014,10 +3057,10 @@ impl ComputedStyle {
             inert: parent.inert,
             in_display_none: own.display == Display::None || parent.in_display_none,
             in_opacity_zero: own.opacity_zero || parent.in_opacity_zero,
-            overflow_x_scrolls: own.overflow_x == Overflow::Scroll,
-            overflow_x_clips: own.overflow_x != Overflow::Visible,
-            overflow_y_scrolls: own.overflow_y == Overflow::Scroll,
-            overflow_y_clips: own.overflow_y != Overflow::Visible,
+            overflow_x_scrolls: Overflow::coerce(own.overflow_x, own.overflow_y).0 == Overflow::Scroll,
+            overflow_x_clips: Overflow::coerce(own.overflow_x, own.overflow_y).0 != Overflow::Visible,
+            overflow_y_scrolls: Overflow::coerce(own.overflow_x, own.overflow_y).1 == Overflow::Scroll,
+            overflow_y_clips: Overflow::coerce(own.overflow_x, own.overflow_y).1 != Overflow::Visible,
             overscroll_x_contains: own.overscroll_x,
             overscroll_y_contains: own.overscroll_y,
             width: own.width,

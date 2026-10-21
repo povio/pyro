@@ -1616,6 +1616,17 @@ impl Layout {
                 "visibility" if self.style.has_visibility_hidden_inherited(dom, el) => return "hidden".into(),
                 "pointer-events" if self.style.has_pointer_events_none(dom, el) => return "none".into(),
                 "text-transform" => return self.style.text_transform(dom, el).keyword().into(),
+                "overflow-x" | "overflow-y" | "overflow" => {
+                    let x = self.style.used_value(dom, el, "overflow-x");
+                    let y = self.style.used_value(dom, el, "overflow-y");
+                    let (x, y) = crate::style::computed_overflow_keywords(x.as_deref(), y.as_deref());
+                    return match name.as_str() {
+                        "overflow-x" => x,
+                        "overflow-y" => y,
+                        _ if x == y => x,
+                        _ => format!("{x} {y}"),
+                    };
+                }
                 _ => {}
             }
             if custom {

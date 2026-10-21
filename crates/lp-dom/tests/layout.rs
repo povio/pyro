@@ -2748,7 +2748,9 @@ fn flow_style_reports_used_values_from_the_cascade() {
     assert_eq!(pop.width, Dim::Len(Len { px: -8.0, percent: 100.0 }));
     assert_eq!(pop.padding, [Len::px(4.0), Len::px(8.0), Len::px(4.0), Len::px(8.0)]);
     assert_eq!(pop.border, [1.0; 4]);
-    assert!(pop.border_box && pop.clips_y && !pop.clips_x);
+    // `overflow-y: auto` alone: `overflow-x: visible` computes to `auto`
+    // (CSS Overflow 3), so both axes clip, as in Chromium.
+    assert!(pop.border_box && pop.clips_y && pop.clips_x);
     assert_eq!(pop.max_height, Dim::px(300.0));
     assert_eq!(pop.font_size, 14.0);
 
