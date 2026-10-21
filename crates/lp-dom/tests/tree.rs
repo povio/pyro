@@ -361,3 +361,41 @@ fn clone_deep_with_template() {
     let shallow = dm.clone_node(x, false, None).unwrap();
     assert_eq!(dm.child_count(shallow).unwrap(), 0);
 }
+
+#[test]
+fn get_element_by_id_index_tracks_mutations_in_tree_order() {
+    // getElementById uses a per-version id index (Playwright's
+    // accessible-name lookups made the tree walk quadratic on TOS pages).
+    let (dom, d) =
+        doc("<div id=a>1</div><section><p id=dup>first</p></section><p id=dup>second</p><span id=''></span>");
+    let mut dom = dom.borrow_mut();
+    let by = |dom: &Dom, id: &str| {
+        dom.get_element_by_id(d, id).unwrap().map(|n| dom.text_content(n).unwrap().unwrap_or_default())
+    };
+    assert_eq!(by(&dom, "dup").as_deref(), Some("first"), "first in tree order");
+    assert_eq!(by(&dom, ""), None);
+    assert_eq!(by(&dom, "missing"), None);
+    // An id change is visible to the next lookup.
+    let a = dom.get_element_by_id(d, "a").unwrap().unwrap();
+    dom.set_attribute(a, "id", "b").unwrap();
+    assert_eq!(by(&dom, "a"), None);
+    assert_eq!(by(&dom, "b").as_deref(), Some("1"));
+    // A new element inserted before the first duplicate wins.
+    let body = dom.body(d).unwrap().unwrap();
+    let early = dom.create_element(d, "i").unwrap();
+    dom.set_attribute(early, "id", "dup").unwrap();
+    let t = dom.create_text(d, "early").unwrap();
+    dom.append_child(early, t).unwrap();
+    let first_child = dom.first_child(body).unwrap();
+    dom.insert_before(body, early, first_child).unwrap();
+    assert_eq!(by(&dom, "dup").as_deref(), Some("early"));
+    // Removing it falls back to the next one; reinserting at the end does not win.
+    dom.remove_child(body, early).unwrap();
+    assert_eq!(by(&dom, "dup").as_deref(), Some("first"));
+    dom.append_child(body, early).unwrap();
+    assert_eq!(by(&dom, "dup").as_deref(), Some("first"));
+    // Removing the id attribute drops the element from the index.
+    let b = dom.get_element_by_id(d, "b").unwrap().unwrap();
+    dom.remove_attribute(b, "id").unwrap();
+    assert_eq!(by(&dom, "b"), None);
+}

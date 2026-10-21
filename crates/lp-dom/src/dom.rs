@@ -34,6 +34,9 @@ pub enum Change {
     Unknown,
 }
 
+/// Per root (slot index), the first element in tree order for each id.
+type IdIndex = rustc_hash::FxHashMap<u32, rustc_hash::FxHashMap<String, u32>>;
+
 pub struct Dom {
     /// Process-unique id (caches keyed by DOM identity and `version`).
     uid: u64,
@@ -63,6 +66,9 @@ pub struct Dom {
     pub(crate) iframes: crate::iframe::IframeQueue,
     /// Natural sizes of loaded `<img>` elements, set by the embedder.
     natural_sizes: rustc_hash::FxHashMap<NodeId, (f64, f64)>,
+    /// `getElementById` index: per root, the first element in tree order
+    /// for each id, valid for one `version`.
+    id_index: std::cell::RefCell<(u64, IdIndex)>,
 }
 
 impl Default for Dom {
@@ -101,6 +107,7 @@ impl Dom {
             resources: Default::default(),
             iframes: Default::default(),
             natural_sizes: Default::default(),
+            id_index: Default::default(),
         }
     }
 
@@ -1638,16 +1645,27 @@ impl Dom {
             return Ok(None);
         }
         let r = self.check(root)?;
-        let mut cur = self.n(r).first_child;
-        while cur != NIL {
-            if let Some(e) = self.n(cur).element() {
-                if e.id() == Some(id) {
-                    return Ok(Some(self.id_of(cur)));
-                }
-            }
-            cur = self.following_in(cur, r);
+        // Chromium keeps an id map; a tree walk per call made accessible-name
+        // computation (aria-labelledby/-describedby lookups) quadratic on
+        // large pages. The index is rebuilt lazily after any mutation.
+        let mut index = self.id_index.borrow_mut();
+        if index.0 != self.version {
+            *index = (self.version, Default::default());
         }
-        Ok(None)
+        let ids = index.1.entry(r).or_insert_with(|| {
+            let mut ids = rustc_hash::FxHashMap::default();
+            let mut cur = self.n(r).first_child;
+            while cur != NIL {
+                if let Some(v) = self.n(cur).element().and_then(|e| e.id()) {
+                    if !v.is_empty() {
+                        ids.entry(v.to_owned()).or_insert(cur);
+                    }
+                }
+                cur = self.following_in(cur, r);
+            }
+            ids
+        });
+        Ok(ids.get(id).map(|&i| self.id_of(i)))
     }
 
     /// `document.documentElement`.
