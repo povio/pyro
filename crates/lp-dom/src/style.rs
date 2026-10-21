@@ -1078,6 +1078,12 @@ struct RuleSet {
     /// `@property` registrations: (inherits, initial value). The last valid
     /// registration of a name wins.
     properties: FxHashMap<String, (bool, Option<Rc<str>>)>,
+    /// A `:has()` the selective invalidation cannot bound (sibling-relative,
+    /// or an unbounded universal anchor): DOM changes invalidate everything.
+    has_relative: bool,
+    /// The other `:has()` anchors: changes below a matching ancestor (within
+    /// `depth` levels) may restyle it, its subtree and later siblings.
+    has_anchors: Vec<HasAnchor>,
     /// Every author declaration of each selector, bucketed like `rules`, for
     /// the generic computed values (`StyleEngine::declared_map`).
     generic_rules: Vec<GenericRule>,
@@ -1190,6 +1196,8 @@ struct Builder<'v> {
     customs: Vec<PendingCustom>,
     generics: Vec<PendingGeneric>,
     properties: FxHashMap<String, (bool, Option<Rc<str>>)>,
+    has_relative: bool,
+    has_anchors: Vec<HasAnchor>,
 }
 
 impl<'v> Builder<'v> {
@@ -1205,6 +1213,8 @@ impl<'v> Builder<'v> {
             customs: Vec::new(),
             generics: Vec::new(),
             properties: FxHashMap::default(),
+            has_relative: false,
+            has_anchors: Vec::new(),
         }
     }
 
@@ -1221,6 +1231,18 @@ impl<'v> Builder<'v> {
             match item {
                 Item::Style { selectors, normal, important, normal_mask, important_mask, customs, generics } => {
                     let Some(list) = selectors else { continue };
+                    for sel in list.slice() {
+                        let mut anchors = Vec::new();
+                        if collect_has_anchors(sel, &mut anchors) {
+                            for a in anchors {
+                                if !self.has_anchors.contains(&a) {
+                                    self.has_anchors.push(a);
+                                }
+                            }
+                        } else {
+                            self.has_relative = true;
+                        }
+                    }
                     // StyleManager.zig:485-525; generic declarations share the block's order.
                     if !customs.is_empty() || !generics.is_empty() {
                         let doc = self.next_doc_order(layer);
@@ -1437,6 +1459,8 @@ impl<'v> Builder<'v> {
             (c.name, CustomRule { selector: SelectorList::from_one(c.selector), value: c.value, priority })
         };
         rs.properties = std::mem::take(&mut self.properties);
+        rs.has_relative = self.has_relative;
+        rs.has_anchors = std::mem::take(&mut self.has_anchors);
         for (name, rule) in self.customs.into_iter().map(to_rule) {
             rs.customs.entry(name).or_default().push(rule);
         }
@@ -1534,6 +1558,200 @@ pub fn with_pass_memo<R>(f: impl FnOnce() -> R) -> R {
     let r = f();
     PASS_MEMO.with(|m| *m.borrow_mut() = outer);
     r
+}
+
+/// Roots of the subtrees whose cached styles a set of DOM changes can
+/// affect, or None when full invalidation is needed. An element's own
+/// attributes or state affect it, its descendants (descendant/child
+/// combinators, inheritance) and its later siblings with their subtrees
+/// (sibling combinators); a child-list or text change affects the parent
+/// the same way (:empty, :nth-child, new or removed nodes).
+fn invalidation_roots(dom: &Dom, changes: &[crate::dom::Change], anchors: &[HasAnchor]) -> Option<Vec<u32>> {
+    use crate::dom::Change;
+    let mut roots: Vec<u32> = Vec::new();
+    let mut seen = FxHashSet::default();
+    // Nodes whose following siblings are already roots too: a walk can stop
+    // there. (A removed node is a root without its tail, and may have been
+    // reinserted elsewhere by a later change in the same batch.)
+    let mut tails = FxHashSet::default();
+    let mut push_with_siblings = |roots: &mut Vec<u32>, seen: &mut FxHashSet<u32>, start: u32| {
+        let mut cur = start;
+        while cur != NIL && tails.insert(cur) {
+            if seen.insert(cur) {
+                roots.push(cur);
+            }
+            cur = dom.n(cur).next;
+        }
+    };
+    for c in changes {
+        // :has() anchors among the ancestors of the changed nodes.
+        if !anchors.is_empty() {
+            let first = match *c {
+                Change::Attr(i) | Change::State(i) => dom.n(i).parent,
+                Change::Children(p) | Change::Removed(p, _) => p,
+                Change::Text(t) => dom.n(t).parent,
+                Change::Unknown => NIL,
+            };
+            let mut level = 1u32;
+            let mut cur = first;
+            while cur != NIL {
+                if let crate::node::NodeKind::Element(e) = &dom.n(cur).kind {
+                    if anchors.iter().any(|a| a.depth.is_none_or(|d| level <= d) && a.key.matches(e)) {
+                        push_with_siblings(&mut roots, &mut seen, cur);
+                    }
+                } else {
+                    break;
+                }
+                cur = dom.n(cur).parent;
+                level += 1;
+            }
+        }
+        let start = match *c {
+            Change::Attr(i) | Change::State(i) => i,
+            Change::Children(p) => p,
+            Change::Removed(p, n) => {
+                // The removed subtree itself (styles of detached elements are
+                // still computed), then the parent side as for an insertion.
+                if seen.insert(n) {
+                    roots.push(n);
+                }
+                p
+            }
+            Change::Text(t) => {
+                let p = dom.n(t).parent;
+                if p == NIL {
+                    continue;
+                }
+                p
+            }
+            Change::Unknown => return None,
+        };
+        if !matches!(dom.n(start).kind, crate::node::NodeKind::Element(_)) {
+            // The document or a fragment: everything below may change.
+            return None;
+        }
+        push_with_siblings(&mut roots, &mut seen, start);
+    }
+    Some(roots)
+}
+
+/// What a `:has()` anchor compound requires (a necessary condition).
+#[derive(Clone, Debug, PartialEq)]
+enum AnchorKey {
+    Class(String),
+    Tag(String),
+    Attr(String),
+    Any,
+}
+
+impl AnchorKey {
+    fn matches(&self, e: &crate::node::ElementData) -> bool {
+        match self {
+            AnchorKey::Class(c) => e.attr("class").is_some_and(|v| v.split_ascii_whitespace().any(|t| t == c)),
+            AnchorKey::Tag(t) => (*e.name.local).eq_ignore_ascii_case(t),
+            AnchorKey::Attr(a) => e.attrs.iter().any(|x| (*x.name.local).eq_ignore_ascii_case(a)),
+            AnchorKey::Any => true,
+        }
+    }
+}
+
+/// A potential `:has()` anchor: elements matching `key` whose descendants
+/// within `depth` levels (None: any depth) can change its match.
+#[derive(Clone, Debug, PartialEq)]
+struct HasAnchor {
+    key: AnchorKey,
+    depth: Option<u32>,
+}
+
+/// Collects the `:has()` anchors of a selector (recursing into `:is()`,
+/// `:where()` and `:not()`); false when one cannot be bounded: a
+/// sibling-relative argument, or a universal anchor at unlimited depth.
+fn collect_has_anchors(sel: &Selector<Impl>, out: &mut Vec<HasAnchor>) -> bool {
+    use selectors::parser::RelativeSelectorMatchHint as Hint;
+    let mut it = sel.iter();
+    loop {
+        let compound: Vec<&Component<Impl>> = (&mut it).collect();
+        for c in &compound {
+            match c {
+                Component::Has(list) => {
+                    for rel in list.iter() {
+                        if !matches!(rel.match_hint, Hint::InChild | Hint::InSubtree) {
+                            return false;
+                        }
+                        // Child-only chains bound the depth.
+                        let mut children = 0u32;
+                        let mut bounded = true;
+                        let mut ri = rel.selector.iter();
+                        loop {
+                            for _ in &mut ri {}
+                            match ri.next_sequence() {
+                                Some(selectors::parser::Combinator::Child) => children += 1,
+                                Some(_) => bounded = false,
+                                None => break,
+                            }
+                        }
+                        let depth = (bounded && children > 0).then_some(children);
+                        let key = compound_key(&compound);
+                        if key == AnchorKey::Any && depth.is_none() {
+                            return false;
+                        }
+                        out.push(HasAnchor { key, depth });
+                    }
+                }
+                Component::Is(list) | Component::Where(list) | Component::Negation(list) => {
+                    for inner in list.slice() {
+                        if !collect_has_anchors(inner, out) {
+                            return false;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        if it.next_sequence().is_none() {
+            return true;
+        }
+    }
+}
+
+/// A necessary condition for an element to match a compound: a class, else
+/// the tag, else an attribute name, else any element.
+fn compound_key(compound: &[&Component<Impl>]) -> AnchorKey {
+    for c in compound {
+        if let Component::Class(name) = c {
+            return AnchorKey::Class(name.0.to_string());
+        }
+    }
+    for c in compound {
+        if let Component::LocalName(l) = c {
+            return AnchorKey::Tag(l.lower_name.0.to_string());
+        }
+    }
+    for c in compound {
+        match c {
+            Component::AttributeInNoNamespaceExists { local_name, .. } => {
+                return AnchorKey::Attr(local_name.0.to_string());
+            }
+            Component::AttributeInNoNamespace { local_name, .. } => return AnchorKey::Attr(local_name.0.to_string()),
+            _ => {}
+        }
+    }
+    // `:where(.group)` / `:is(.x)` with one single-compound selector: its key.
+    for c in compound {
+        if let Component::Is(list) | Component::Where(list) = c {
+            if let [inner] = list.slice() {
+                let mut it = inner.iter();
+                let parts: Vec<&Component<Impl>> = (&mut it).collect();
+                if it.next_sequence().is_none() {
+                    let key = compound_key(&parts);
+                    if key != AnchorKey::Any {
+                        return key;
+                    }
+                }
+            }
+        }
+    }
+    AnchorKey::Any
 }
 
 fn custom_property_source(dom: &Dom, rules: &RuleSet, el: NodeId, name: &str) -> Option<(NodeId, String)> {
@@ -1868,6 +2086,8 @@ struct Cache {
     memo: FxHashMap<NodeId, ComputedStyle>,
     /// Winning generic declarations per element (`declared_map`), dropped with `memo`.
     declared: FxHashMap<NodeId, Rc<FxHashMap<String, String>>>,
+    /// Flow layout inputs per element (`FlowStyleSource`), dropped with `memo`.
+    flow: FxHashMap<NodeId, Option<crate::flow::FlowStyle>>,
     extent: Option<(f64, f64)>,
 }
 
@@ -2017,6 +2237,7 @@ impl StyleEngine {
             Some(old) => old.version != stamp.version || old.generation != stamp.generation,
             None => true,
         };
+        let mut rules_rebuilt = false;
         if tree_or_sheets_changed {
             let mut changed = cache.rules_generation != Some(self.generation);
             cache.parsed.resize_with(self.sheets.len(), || None);
@@ -2051,12 +2272,62 @@ impl StyleEngine {
                 }
                 cache.rules = Rc::new(b.finish());
                 cache.rules_generation = Some(self.generation);
+                rules_rebuilt = true;
             }
         }
-        cache.memo.clear();
-        cache.declared.clear();
+        // Selective invalidation when only the DOM changed and the journal
+        // covers it; anything uncertain (rules, generation, focus/hover,
+        // :has(), shadow trees, unknown changes) invalidates every element.
+        let changes = match cache.stamp {
+            Some(old)
+                if !rules_rebuilt
+                    && old.generation == stamp.generation
+                    && old.focused == stamp.focused
+                    && old.hovered == stamp.hovered
+                    && !cache.rules.has_relative
+                    && dom.shadow_root_count() == 0 =>
+            {
+                dom.changes_since(old.version).map(|c| c.collect::<Vec<_>>())
+            }
+            _ => None,
+        };
+        match changes.and_then(|c| invalidation_roots(dom, &c, &cache.rules.has_anchors)) {
+            Some(roots) => {
+                let mut stale = Vec::new();
+                for root in roots {
+                    if let Ok(it) = dom.descendants(dom.id_of(root)) {
+                        stale.extend(it);
+                    }
+                }
+                if stale.len() * 2 > cache.memo.len().max(cache.declared.len()).max(cache.flow.len()) {
+                    cache.memo.clear();
+                    cache.declared.clear();
+                    cache.flow.clear();
+                } else {
+                    for n in stale {
+                        cache.memo.remove(&n);
+                        cache.declared.remove(&n);
+                        cache.flow.remove(&n);
+                    }
+                }
+            }
+            None => {
+                cache.memo.clear();
+                cache.declared.clear();
+                cache.flow.clear();
+            }
+        }
         cache.extent = None;
         cache.stamp = Some(stamp);
+    }
+
+    pub(crate) fn cached_flow_style(&self, dom: &Dom, el: NodeId) -> Option<Option<crate::flow::FlowStyle>> {
+        self.ensure(dom);
+        self.cache.borrow().flow.get(&el).cloned()
+    }
+
+    pub(crate) fn store_flow_style(&self, el: NodeId, style: Option<crate::flow::FlowStyle>) {
+        self.cache.borrow_mut().flow.insert(el, style);
     }
 
     pub(crate) fn cached_extent(&self, dom: &Dom) -> Option<(f64, f64)> {
@@ -2808,5 +3079,51 @@ pub(crate) fn flat_tree_parent_element(dom: &Dom, idx: u32) -> Option<u32> {
         NodeKind::Element(_) => Some(p),
         NodeKind::Fragment(f) if f.shadow.is_some() && f.host != NIL => dom.n(f.host).is_element().then_some(f.host),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod has_anchor_tests {
+    use super::{collect_has_anchors, AnchorKey, HasAnchor};
+
+    fn anchors(text: &str) -> Option<Vec<HasAnchor>> {
+        let list = crate::select::parse_selectors(text).expect("selector");
+        let mut out = Vec::new();
+        for sel in list.slice() {
+            if !collect_has_anchors(sel, &mut out) {
+                return None;
+            }
+        }
+        Some(out)
+    }
+
+    fn one(key: AnchorKey, depth: Option<u32>) -> Option<Vec<HasAnchor>> {
+        Some(vec![HasAnchor { key, depth }])
+    }
+
+    #[test]
+    fn classifies_tailwind_has_selectors() {
+        // group-has-*: descendants of the group anchor, any depth.
+        assert_eq!(
+            anchors(r".x:is(:where(.group\/input-content):has(:is(input:disabled)) *)"),
+            one(AnchorKey::Class("group/input-content".into()), None)
+        );
+        // Arbitrary-value class names (serialized unescaped by the selector
+        // crate) are read from the syntax tree, not text.
+        assert_eq!(
+            anchors(r".\[\&\:has\(\[data-is-filled\]\)\]\:bg-card:has([data-is-filled])"),
+            one(AnchorKey::Class("[&:has([data-is-filled])]:bg-card".into()), None)
+        );
+        assert_eq!(anchors("td:has(input)"), one(AnchorKey::Tag("td".into()), None));
+        // Universal anchors are bounded only by child-only relative selectors.
+        assert_eq!(
+            anchors("[data-is-empty=true] :has(> [data-static-segment-type]) > .text-inherit"),
+            one(AnchorKey::Any, Some(1))
+        );
+        assert_eq!(anchors(":has(> div > [x])"), one(AnchorKey::Any, Some(2)));
+        assert_eq!(anchors(":has(.x)"), None, "unbounded universal anchor");
+        assert_eq!(anchors(".a:has(+ .b)"), None, "sibling-relative");
+        assert_eq!(anchors(".a:has(~ .b)"), None, "sibling-relative");
+        assert_eq!(anchors(".plain .selector"), Some(vec![]));
     }
 }

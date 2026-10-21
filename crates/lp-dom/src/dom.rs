@@ -16,6 +16,24 @@ struct Slot {
     node: Option<Node>,
 }
 
+/// One journaled DOM mutation (node indices in this DOM).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Change {
+    /// An attribute of the element was set, changed or removed.
+    Attr(u32),
+    /// Children were inserted into the node.
+    Children(u32),
+    /// `.1` was removed from parent `.0` (the removed subtree keeps cached
+    /// state, and may be queried detached or reinserted).
+    Removed(u32, u32),
+    /// The character data of the node changed.
+    Text(u32),
+    /// Form-control state of the element changed (:checked, :valid...).
+    State(u32),
+    /// Anything else (e.g. a shadow root attached).
+    Unknown,
+}
+
 pub struct Dom {
     /// Process-unique id (caches keyed by DOM identity and `version`).
     uid: u64,
@@ -31,6 +49,14 @@ pub struct Dom {
     live: u32,
     /// Bumped whenever a node is removed from its parent.
     removals: u64,
+    /// What each `version` bump changed, for caches that can update
+    /// selectively (style invalidation). Bounded: see `changes_since`.
+    journal: Vec<(u64, Change)>,
+    /// Versions at or below this have no complete journal.
+    journal_floor: u64,
+    /// Shadow roots ever attached (selective style invalidation does not
+    /// model slot assignment, so consumers fall back to full invalidation).
+    shadow_roots: u32,
     pub(crate) mutation: MutationState,
     pub(crate) events: crate::events::ListenerStore,
     pub(crate) resources: crate::script::ResourceQueue,
@@ -67,6 +93,9 @@ impl Dom {
             candidates: Vec::new(),
             live: 0,
             removals: 0,
+            journal: Vec::new(),
+            journal_floor: 0,
+            shadow_roots: 0,
             mutation: MutationState::default(),
             events: Default::default(),
             resources: Default::default(),
@@ -141,6 +170,9 @@ impl Dom {
     }
     pub(crate) fn bump(&mut self) {
         self.version = self.version.wrapping_add(1);
+        // Unknown until a precise `note` refines it: an un-annotated bump
+        // (forms, parser, script state) makes consumers invalidate fully.
+        self.push_change(Change::Unknown);
     }
     /// Bumped only by node insertion/removal, attribute changes and
     /// character-data changes (not by form-control state, focus or hover),
@@ -148,6 +180,40 @@ impl Dom {
     pub fn tree_version(&self) -> u64 {
         self.tree_version
     }
+    fn push_change(&mut self, change: Change) {
+        const CAP: usize = 8192;
+        if self.journal.len() >= CAP {
+            self.journal.clear();
+            self.journal_floor = self.version;
+            return;
+        }
+        self.journal.push((self.version, change));
+    }
+
+    /// Refines what the latest `version` bump changed (replacing its
+    /// `Unknown` entry).
+    fn note(&mut self, change: Change) {
+        match self.journal.last_mut() {
+            Some((v, c)) if *v == self.version => *c = change,
+            _ => {}
+        }
+    }
+
+    /// The changes made after `version`, in order, or None when the journal
+    /// no longer covers it (overflow): the caller must invalidate fully.
+    pub fn changes_since(&self, version: u64) -> Option<impl Iterator<Item = Change> + '_> {
+        if version < self.journal_floor || version > self.version {
+            return None;
+        }
+        let start = self.journal.partition_point(|(v, _)| *v <= version);
+        Some(self.journal[start..].iter().map(|(_, c)| *c))
+    }
+
+    /// Number of shadow roots attached in this DOM so far.
+    pub fn shadow_root_count(&self) -> u32 {
+        self.shadow_roots
+    }
+
     /// Records a tree, attribute or character-data mutation.
     pub(crate) fn bump_tree(&mut self) {
         self.tree_version = self.tree_version.wrapping_add(1);
@@ -186,10 +252,13 @@ impl Dom {
     pub(crate) fn link_raw(&mut self, node: u32, parent: u32, before: u32) {
         self.link(node, parent, before);
         self.bump_tree();
+        self.note(Change::Children(parent));
     }
     pub(crate) fn unlink_raw(&mut self, node: u32) {
+        let parent = self.n(node).parent;
         self.unlink(node);
         self.bump_tree();
+        self.note(if parent == NIL { Change::Unknown } else { Change::Removed(parent, node) });
     }
     pub(crate) fn set_owner_raw(&mut self, node: u32, doc: u32) {
         self.adopt_idx(node, doc);
@@ -447,7 +516,9 @@ impl Dom {
         let owner = self.n(h).owner_doc;
         let sr = self.alloc(NodeKind::Fragment(FragmentData { host: h, shadow: Some(mode) }), owner);
         self.n_mut(h).element_mut().unwrap().shadow_root = sr;
+        self.shadow_roots = self.shadow_roots.saturating_add(1);
         self.bump();
+        self.note(Change::Unknown);
         Ok(self.id_of(sr))
     }
     pub fn shadow_root(&self, host: NodeId) -> DomResult<Option<NodeId>> {
@@ -1003,6 +1074,7 @@ impl Dom {
             }
         }
         self.bump_tree();
+        self.note(Change::Children(parent));
         if !suppress {
             self.queue_child_list(parent, &nodes, &[], prev, child);
         }
@@ -1061,6 +1133,7 @@ impl Dom {
         self.add_transient_observers(parent, node);
         self.unlink(node);
         self.bump_tree();
+        self.note(Change::Removed(parent, node));
         if !suppress {
             self.queue_child_list(parent, &[], &[node], prev, next);
         }
@@ -1310,6 +1383,7 @@ impl Dom {
             self.tree_version = self.tree_version.wrapping_add(1);
         } else {
             self.bump_tree();
+            self.note(Change::Attr(i));
         }
         self.queue_attribute(i, &name, Some(&old));
         self.resources_after_attr(i, &name.local);
@@ -1317,6 +1391,7 @@ impl Dom {
     fn append_attr(&mut self, i: u32, name: QualName, value: &str) {
         self.n_mut(i).element_mut().unwrap().attrs.push(Attr { name: name.clone(), value: value.into() });
         self.bump_tree();
+        self.note(Change::Attr(i));
         self.queue_attribute(i, &name, None);
         self.resources_after_attr(i, &name.local);
     }
@@ -1346,6 +1421,7 @@ impl Dom {
     fn remove_attr_at(&mut self, i: u32, k: usize) {
         let attr = self.n_mut(i).element_mut().unwrap().attrs.remove(k);
         self.bump_tree();
+        self.note(Change::Attr(i));
         self.queue_attribute(i, &attr.name, Some(&attr.value));
         self.resources_after_attr(i, &attr.name.local);
     }
@@ -1470,6 +1546,7 @@ impl Dom {
             self.tree_version = self.tree_version.wrapping_add(1);
         } else {
             self.bump_tree();
+            self.note(Change::Text(i));
         }
         self.queue_character_data(i, &old);
         self.resources_after_text(i);
@@ -1612,6 +1689,7 @@ impl Dom {
         let i = self.check(id)?;
         // Control state feeds :checked/:indeterminate/:valid matching.
         self.bump();
+        self.note(Change::State(i));
         let el = self.n_mut(i).element_mut().ok_or(DomError::Type("not an element"))?;
         Ok(el.control.get_or_insert_with(Default::default))
     }

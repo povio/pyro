@@ -20,9 +20,22 @@ use crate::node::NodeId;
 use crate::style::{StyleEngine, DEFAULT_FONT_SIZE};
 
 impl FlowStyleSource for StyleEngine {
+    /// Cached per element across layout passes; the cache is invalidated
+    /// with the cascade memo (selectively for journaled DOM changes).
+    fn flow_style(&self, dom: &Dom, el: NodeId) -> Option<FlowStyle> {
+        if let Some(cached) = self.cached_flow_style(dom, el) {
+            return cached;
+        }
+        let style = self.flow_style_uncached(dom, el);
+        self.store_flow_style(el, style.clone());
+        style
+    }
+}
+
+impl StyleEngine {
     // flow.rs owns FlowStyle and adds fields (zoom, flex) over time; `..Default` keeps this file compiling.
     #[allow(clippy::needless_update)]
-    fn flow_style(&self, dom: &Dom, el: NodeId) -> Option<FlowStyle> {
+    fn flow_style_uncached(&self, dom: &Dom, el: NodeId) -> Option<FlowStyle> {
         let element = dom.element(el).ok()?;
         if self.has_display_none(dom, el) {
             return None;

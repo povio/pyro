@@ -1617,6 +1617,105 @@ fn flow_parity_image_intrinsic_sizing() {
     assert!(diffs.is_empty(), "image sizing:\n{}", diffs.join("\n"));
 }
 
+/// Every box of `p`'s cached flow result equals a fresh layout (no caches)
+/// of the same DOM.
+fn assert_matches_fresh(p: &Page, step: &str) {
+    let cached = p.layout.flow(&p.dom);
+    let mut fresh = Layout::with_viewport(p.doc, Viewport::new(800, 600));
+    fresh.style_mut().discover_style_elements(&p.dom);
+    fresh.set_geometry(Geometry::Flow);
+    let f = fresh.flow(&p.dom);
+    let mut diffs = Vec::new();
+    for (k, b) in &f.boxes {
+        match cached.boxes.get(k) {
+            Some(c) if c.rect == b.rect => {}
+            other => diffs.push(format!("{k:?}: cached {:?}, fresh {:?}", other.map(|c| c.rect), b.rect)),
+        }
+    }
+    if cached.boxes.len() != f.boxes.len() {
+        diffs.push(format!("box count cached {} fresh {}", cached.boxes.len(), f.boxes.len()));
+    }
+    assert!(diffs.is_empty(), "{step}: stale geometry\n{}", diffs.join("\n"));
+}
+
+#[test]
+fn incremental_style_invalidation_never_serves_stale_geometry() {
+    // Selective style invalidation (DOM change journal) must give exactly the
+    // geometry of a full recomputation after each kind of change it handles:
+    // descendant and sibling combinators, :has() anchors (group-has),
+    // :nth-child after insertion, removal and reinsertion elsewhere, :empty
+    // via text, inherited em sizes, form-control state, journal overflow.
+    let css = "<style>\
+        .on .child{width:200px} .child{width:100px;height:10px}\
+        .a{height:10px} .a.on + .b{width:300px} .b{width:50px;height:10px}\
+        .group:has(input:disabled) .icon{width:150px} .icon{width:20px;height:10px}\
+        li{height:10px;width:10px} li:nth-child(2){width:222px}\
+        .ctx .mv{width:333px} .mv{width:33px;height:10px}\
+        .e:empty{height:7px} .e{width:40px}\
+        .em{font-size:10px} .em.big{font-size:20px} .em span{display:block;width:3em;height:1em}\
+        input:checked + .lab{width:250px} .lab{display:block;width:25px;height:10px}\
+        </style>";
+    let html = format!(
+        "<!doctype html>{css}<body style=\"margin:0\"><div id=par><div id=child class=child></div></div><div id=a class=a></div><div id=b class=b></div><div class=group><div><input id=inp></div><div><div id=icon class=icon></div></div></div><ul id=ul><li id=l1></li><li id=l2></li></ul><div id=ctx class=ctx></div><div id=home><div id=mv class=mv></div></div><div id=e class=e></div><div id=em class=em><span id=emc>x</span></div><input id=cb type=checkbox><span id=lab class=lab></span></body>"
+    );
+    let mut p = page(&html, Geometry::Flow);
+    assert_matches_fresh(&p, "initial");
+    let id = |p: &Page, s: &str| p.id(s);
+    // Descendant combinator: ancestor attribute.
+    let par = id(&p, "par");
+    p.dom.set_attribute(par, "class", "on").unwrap();
+    assert_matches_fresh(&p, "ancestor class");
+    assert_eq!(p.layout.flow(&p.dom).get(id(&p, "child")).unwrap().rect.width, 200.0);
+    // Sibling combinator.
+    let a = id(&p, "a");
+    p.dom.set_attribute(a, "class", "a on").unwrap();
+    assert_matches_fresh(&p, "previous sibling class");
+    assert_eq!(p.layout.flow(&p.dom).get(id(&p, "b")).unwrap().rect.width, 300.0);
+    // :has() anchor: a descendant's attribute restyles a sibling subtree.
+    let inp = id(&p, "inp");
+    p.dom.set_attribute(inp, "disabled", "").unwrap();
+    assert_matches_fresh(&p, "group-has descendant attribute");
+    assert_eq!(p.layout.flow(&p.dom).get(id(&p, "icon")).unwrap().rect.width, 150.0);
+    // :nth-child after an insertion before the first item.
+    let ul = id(&p, "ul");
+    let new_li = p.dom.create_element(p.doc, "li").unwrap();
+    let l1 = id(&p, "l1");
+    p.dom.insert_before(ul, new_li, Some(l1)).unwrap();
+    assert_matches_fresh(&p, "insertion shifts nth-child");
+    assert_eq!(p.layout.flow(&p.dom).get(l1).unwrap().rect.width, 222.0);
+    // Removal, then reinsertion under a different context.
+    let (home, mv, ctx) = (id(&p, "home"), id(&p, "mv"), id(&p, "ctx"));
+    p.dom.remove_child(home, mv).unwrap();
+    assert_matches_fresh(&p, "removal");
+    p.dom.append_child(ctx, mv).unwrap();
+    assert_matches_fresh(&p, "reinsertion elsewhere");
+    assert_eq!(p.layout.flow(&p.dom).get(mv).unwrap().rect.width, 333.0);
+    // :empty via text.
+    let e = id(&p, "e");
+    let t = p.dom.create_text(p.doc, "text").unwrap();
+    p.dom.append_child(e, t).unwrap();
+    assert_matches_fresh(&p, "text makes :empty false");
+    p.dom.replace_data(t, 0, 4, "").unwrap();
+    assert_matches_fresh(&p, "text emptied");
+    // Inherited font size drives an em-sized child.
+    let em = id(&p, "em");
+    p.dom.set_attribute(em, "class", "em big").unwrap();
+    assert_matches_fresh(&p, "inherited font-size");
+    assert_eq!(p.layout.flow(&p.dom).get(id(&p, "emc")).unwrap().rect.width, 60.0);
+    // Form-control state (:checked) feeding a sibling combinator.
+    let cb = id(&p, "cb");
+    p.dom.set_checked(cb, true).unwrap();
+    assert_matches_fresh(&p, "checked state");
+    assert_eq!(p.layout.flow(&p.dom).get(id(&p, "lab")).unwrap().rect.width, 250.0);
+    // Journal overflow falls back to full invalidation.
+    for i in 0..9000 {
+        p.dom.set_attribute(par, "data-n", &i.to_string()).unwrap();
+    }
+    p.dom.set_attribute(par, "class", "").unwrap();
+    assert_matches_fresh(&p, "after journal overflow");
+    assert_eq!(p.layout.flow(&p.dom).get(id(&p, "child")).unwrap().rect.width, 100.0);
+}
+
 #[test]
 fn loaded_image_natural_size_reaches_flow_through_the_dom() {
     // TOS chat: <img class="max-h-64 w-full object-contain"> in a 240px
