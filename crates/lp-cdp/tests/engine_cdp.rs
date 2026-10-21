@@ -3067,6 +3067,63 @@ fn links_and_window_open_targeting_blank_open_paused_popups() {
 }
 
 #[test]
+fn tos_new_tab_activations_open_popups_with_their_opener() {
+    // TOS opens new tabs three ways (TP-4231, TP-4217, TS-106): react-aria
+    // onPress calling window.open(url, "_blank", "noopener,noreferrer") from
+    // synthetic (untrusted) pointer/mouse events (DOM activation), a click on
+    // a target=_blank link, and Enter on a focused target=_blank link
+    // (Playwright focus() + press("Enter")). Playwright's `popup` and
+    // context `page` events need a new target announced with openerId, as
+    // Chrome does for noopener popups.
+    let mut h = Harness::new();
+    let opener = h.frame_id.clone();
+    h.page("Page.enable", json!({}));
+    let page = "data:text/html,<button id=b>View Position</button><a id=a href=\"data:text/html,partner\" target=_blank>Open in new tab</a>\
+        <script>document.getElementById('b').addEventListener('click', () => { window.__r = String(window.open('data:text/html,master', '_blank', 'noopener,noreferrer')); });</script>";
+    let seen = h.page_with_events("Page.navigate", json!({ "url": page }));
+    if !seen.iter().any(|m| m["method"] == "Page.loadEventFired") {
+        h.until_event(|m| m["method"] == "Page.loadEventFired");
+    }
+    let mut popups: Vec<String> = Vec::new();
+    let next_popup = |h: &mut Harness, popups: &mut Vec<String>, what: &str| {
+        let known = popups.clone();
+        let attached = h.until_event(|m| {
+            m["method"] == "Target.attachedToTarget"
+                && m["params"]["targetInfo"]["targetId"] != opener
+                && !known.iter().any(|s| m["params"]["sessionId"] == json!(s))
+        });
+        assert_eq!(attached["params"]["targetInfo"]["openerId"], json!(opener), "{what}");
+        assert_eq!(attached["params"]["targetInfo"]["canAccessOpener"], json!(false), "{what}");
+        popups.push(attached["params"]["sessionId"].as_str().unwrap().to_owned());
+    };
+
+    // DOM activation: untrusted events, as TOS's E2E_DOM_ACTIVATION lane sends.
+    h.page(
+        "Runtime.evaluate",
+        json!({"expression":"document.getElementById('b').dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true}))"}),
+    );
+    next_popup(&mut h, &mut popups, "window.open noopener,noreferrer from an untrusted click");
+    let r = h.page("Runtime.evaluate", json!({"expression":"window.__r","returnByValue":true}));
+    assert_eq!(r["result"]["result"]["value"], json!("null"), "noopener window.open returns null");
+
+    // Enter on a focused target=_blank link.
+    h.page("Runtime.evaluate", json!({"expression":"document.getElementById('a').focus()"}));
+    h.page(
+        "Input.dispatchKeyEvent",
+        json!({"type":"keyDown","key":"Enter","code":"Enter","windowsVirtualKeyCode":13,"text":"\r","unmodifiedText":"\r"}),
+    );
+    h.page("Input.dispatchKeyEvent", json!({"type":"keyUp","key":"Enter","code":"Enter","windowsVirtualKeyCode":13}));
+    next_popup(&mut h, &mut popups, "Enter on a target=_blank link");
+
+    // The opener stays where it was.
+    let r = h.page(
+        "Runtime.evaluate",
+        json!({"expression":"location.href.startsWith('data:text/html,<button')","returnByValue":true}),
+    );
+    assert_eq!(r["result"]["result"]["value"], json!(true));
+}
+
+#[test]
 fn scroll_into_view_if_needed_reveals_a_node_relative_rect() {
     let mut h = Harness::new();
     let setup = h.page(
