@@ -89,6 +89,9 @@ pub struct PageDom {
     /// The last mouse input's position and state, for boundary events when
     /// content under a stationary pointer changes.
     pub(crate) pointer: RefCell<Option<crate::input::MouseInput>>,
+    /// A deferred hover update after the hovered element was removed is
+    /// scheduled (`crate::input::update_hover_after_task`).
+    pub(crate) hover_update_queued: Cell<bool>,
     press_target: Cell<Option<NodeId>>,
     /// Native drag source under a left press that has not moved past the
     /// drag threshold yet, with the press position.
@@ -311,6 +314,7 @@ impl PageDom {
             hovered: Cell::new(None),
             images: RefCell::new(FxHashMap::default()),
             pointer: RefCell::new(None),
+            hover_update_queued: Cell::new(false),
             press_target: Cell::new(None),
             drag_candidate: Cell::new(None),
             drag: RefCell::new(None),

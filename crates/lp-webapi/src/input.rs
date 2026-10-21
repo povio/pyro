@@ -1232,15 +1232,48 @@ fn dispatch_boundary_events(page: &Rc<PageDom>, prev: Option<NodeId>, target: No
     page.set_hovered(Some(target));
 }
 
-/// After a task removed the hovered element, the element now under the
-/// stationary pointer gets boundary events, as Chrome's hover update after
-/// layout does (no move events). Layout-only changes under the pointer are
-/// not tracked.
+/// Delay of the hover update after the hovered element is removed: Chromium
+/// updates hover for content that changed under a stationary pointer on its
+/// fake-mouse-move timer (~100 ms, measured 110 ms), not in the mutating task.
+/// Frameworks rely on that: React detaches a removed node's fiber in passive
+/// effects after the commit, and only then treats an over event whose
+/// relatedTarget is that node as an enter (the @povio/ui QueryAutocomplete
+/// static-to-live handoff in TOS needs this onMouseEnter).
+const HOVER_UPDATE_DELAY: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// After a task removed the hovered element, the element then under the
+/// stationary pointer gets boundary events (no out/leave to the removed
+/// node, relatedTarget = the removed node, no move events) once
+/// [`HOVER_UPDATE_DELAY`] has passed, as Chromium's hover update does.
+/// Layout-only changes under the pointer are not tracked.
 pub(crate) fn update_hover_after_task(page: &Rc<PageDom>) {
-    let Some(prev) = page.hovered_raw() else { return };
-    if page.dom.borrow().is_connected(prev).unwrap_or(false) {
+    if page.hover_update_queued.get() || !hovered_was_removed(page) || page.pointer.borrow().is_none() {
         return;
     }
+    let Some(hooks) = page.hooks() else { return };
+    page.hover_update_queued.set(true);
+    let weak = Rc::downgrade(page);
+    hooks.post_delayed_task(
+        HOVER_UPDATE_DELAY,
+        Box::new(move || {
+            if let Some(page) = weak.upgrade() {
+                page.hover_update_queued.set(false);
+                update_hover_now(&page);
+            }
+        }),
+    );
+}
+
+fn hovered_was_removed(page: &PageDom) -> bool {
+    page.hovered_raw().is_some_and(|h| !page.dom.borrow().is_connected(h).unwrap_or(false))
+}
+
+fn update_hover_now(page: &Rc<PageDom>) {
+    // A real mouse move in the meantime already updated hover.
+    if !hovered_was_removed(page) {
+        return;
+    }
+    let Some(prev) = page.hovered_raw() else { return };
     let Some(m) = page.pointer.borrow().clone() else { return };
     let Some(target) = pointer_target(page, m.x, m.y, true) else { return };
     let Some(tkey) = key_of(page, target) else { return };

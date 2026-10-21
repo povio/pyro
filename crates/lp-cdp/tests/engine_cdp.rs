@@ -1342,7 +1342,8 @@ fn input_boundary_events_carry_related_targets_and_follow_a_replaced_hovered_ele
     // mouseenter; react-aria's hover state then needs Chrome's boundary
     // events for the element now under the stationary pointer. A removed
     // hovered element gets no out/leave; over/enter name it as relatedTarget
-    // and no move events fire. Expectations follow Blink's
+    // and no move events fire, about 100 ms later (Chromium measured 110 ms
+    // in the @povio/ui QueryAutocomplete case). Expectations follow Blink's
     // BoundaryEventDispatcher::SendBoundaryEvents; they were not recorded
     // from Chromium.
     let mut h = Harness::new();
@@ -1376,6 +1377,11 @@ fn input_boundary_events_carry_related_targets_and_follow_a_replaced_hovered_ele
         &mut h,
         "const live = document.createElement('div'); live.id = 'live'; live.setAttribute('style', 'width:200px;height:40px'); document.getElementById('cell').replaceChildren(live); 1",
     );
+    // Not in the mutating task: Chromium updates hover on its fake-mouse-move
+    // timer (~100 ms), after frameworks have cleaned up the removed node.
+    h.run_for(30);
+    assert_eq!(eval_value(&mut h, "log.splice(0).join(' ')"), json!(""));
+    h.run_for(150);
     assert_eq!(
         eval_value(&mut h, "log.splice(0).join(' ')"),
         json!("pointerover@live<static pointerenter@#document<static pointerenter@HTML<static pointerenter@BODY<static pointerenter@cell<static pointerenter@live<static mouseover@live<static mouseenter@#document<static mouseenter@HTML<static mouseenter@BODY<static mouseenter@cell<static mouseenter@live<static")
