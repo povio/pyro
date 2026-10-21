@@ -50,6 +50,10 @@ pub struct PageDom {
     /// the identity map is weak, and script expandos / defineProperty
     /// overrides on them must survive collection.
     pub(crate) same_objects: RefCell<FxHashMap<RealmId, (Persistent, u32)>>,
+    /// Event targets of each realm's `visualViewport` and `screen.orientation`
+    /// (registered by their wrappers, removed when those are collected), for
+    /// the embedder's resize and orientation change events.
+    pub(crate) viewport_targets: RefCell<Vec<(crate::window::ViewportTarget, TargetKey)>>,
     /// Each realm's original `structuredClone` (MessagePort cloning).
     pub(crate) structured_clones: RefCell<FxHashMap<RealmId, Persistent>>,
     /// Each realm's original `Object.defineProperty` ([Replaceable] setters).
@@ -291,6 +295,7 @@ impl PageDom {
             window_keys: RefCell::new(Vec::new()),
             window_holders: RefCell::new(FxHashMap::default()),
             same_objects: RefCell::new(FxHashMap::default()),
+            viewport_targets: RefCell::new(Vec::new()),
             structured_clones: RefCell::new(FxHashMap::default()),
             define_properties: RefCell::new(FxHashMap::default()),
             pending_port_reconcile: RefCell::new(Vec::new()),
@@ -554,6 +559,12 @@ impl PageDom {
     }
 
     /// The Window event-target key created by `create_window_target`.
+    /// The live `visualViewport` (or `screen.orientation`) targets, one per
+    /// realm that has used it: the embedder fires `resize` (`change`) on each.
+    pub fn viewport_targets(&self, kind: crate::window::ViewportTarget) -> Vec<TargetKey> {
+        self.viewport_targets.borrow().iter().filter(|(k, _)| *k == kind).map(|(_, t)| *t).collect()
+    }
+
     pub fn window_target(&self) -> Option<TargetKey> {
         let doc = self.document();
         self.window_keys.borrow().iter().find(|(d, _)| *d == doc).map(|(_, k)| *k)

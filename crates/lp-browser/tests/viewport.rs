@@ -174,3 +174,88 @@ fn visual_viewport_matches_the_layout_viewport() {
         "1440|900|0|0|0|0|1|true|true|function"
     );
 }
+
+#[test]
+fn visual_viewport_and_screen_orientation_are_event_targets() {
+    // react-aria >= 3.53 tracks the virtual keyboard at module load:
+    // `addEventListener` on window.visualViewport ('resize') and
+    // window.screen.orientation ('change'). screen.orientation was a plain
+    // object, so the TOS app shell threw and never mounted. Both are
+    // EventTargets (VisualViewport, ScreenOrientation): listeners, handlers
+    // and dispatch, trusted resize/change from the embedder, per realm.
+    let mut t = BrowserThread::new().unwrap();
+    let page = t.browser.create_page().unwrap();
+    t.browser.set_viewport(page, Viewport::new(1000, 700)).unwrap();
+    settle(&mut t);
+    let world = t.browser.isolated_world(page, "automation").unwrap();
+    // The bundle's helper, as shipped.
+    let react_aria = "function cv(e,t,n,r){if(n==null||e==null)return()=>{};let i=Array.isArray(e)?e:[e];\
+        for(let e of i)e.addEventListener(t,n,r);return()=>{for(let e of i)e.removeEventListener(t,n,r)}}\
+        globalThis.log=[];cv(window.visualViewport,'resize',e=>log.push('vv:'+e.isTrusted+':'+visualViewport.width));\
+        cv(window.screen.orientation,'change',e=>log.push('o:'+e.isTrusted+':'+screen.orientation.type+':'+screen.orientation.angle));\
+        cv(window,'focus',()=>{},{capture:true,passive:true});'mounted'";
+    assert_eq!(eval(&t, page, react_aria), "mounted");
+    assert_eq!(
+        eval(
+            &t,
+            page,
+            "const v=visualViewport,o=screen.orientation;[v instanceof EventTarget,o instanceof EventTarget,o instanceof ScreenOrientation,\
+             o===screen.orientation,o.type,o.angle,typeof o.lock,typeof o.unlock].join('|')"
+        ),
+        "true|true|true|true|landscape-primary|0|function|function"
+    );
+    // Script dispatch, handlers and removal.
+    assert_eq!(
+        eval(
+            &t,
+            page,
+            "const seen=[];const f=e=>seen.push(e.type);visualViewport.addEventListener('scroll',f);\
+             visualViewport.onresize=e=>seen.push('on'+e.type);screen.orientation.onchange=e=>seen.push('on'+e.type);\
+             visualViewport.dispatchEvent(new Event('scroll'));visualViewport.dispatchEvent(new Event('resize'));\
+             screen.orientation.dispatchEvent(new Event('change'));visualViewport.removeEventListener('scroll',f);\
+             visualViewport.dispatchEvent(new Event('scroll'));visualViewport.onresize=null;screen.orientation.onchange=null;\
+             log.length=0;seen.join(',')"
+        ),
+        "scroll,onresize,onchange"
+    );
+    world
+        .scope()
+        .unwrap()
+        .eval(
+            "globalThis.n=0;visualViewport.addEventListener('resize',()=>n++);screen.orientation.addEventListener('change',()=>n+=10)",
+            None,
+            1,
+        )
+        .unwrap();
+    // A resize reaches visualViewport (trusted, after window; Chromium:
+    // `vv:true:600`) in every realm. The screen size is emulated, so the
+    // orientation does not change with it.
+    let sized = |w: u32, h: u32| Viewport { screen_width: Some(1000), screen_height: Some(700), ..Viewport::new(w, h) };
+    t.browser.set_viewport(page, sized(600, 900)).unwrap();
+    settle(&mut t);
+    assert_eq!(eval(&t, page, "log.join('|')"), "vv:true:600");
+    assert_eq!(world.scope().unwrap().eval("n", None, 1).unwrap().to_number().unwrap(), 1.0);
+    // An emulated rotation reaches screen.orientation, without a resize.
+    let rotated = Viewport {
+        orientation: Some(lp_dom::media::ScreenOrientation {
+            kind: lp_dom::media::OrientationType::PortraitPrimary,
+            angle: 90,
+        }),
+        ..sized(600, 900)
+    };
+    t.browser.set_viewport(page, rotated.clone()).unwrap();
+    settle(&mut t);
+    assert_eq!(eval(&t, page, "log.join('|')"), "vv:true:600|o:true:portrait-primary:90");
+    assert_eq!(world.scope().unwrap().eval("n", None, 1).unwrap().to_number().unwrap(), 11.0);
+    // No change, no events.
+    t.browser.set_viewport(page, rotated).unwrap();
+    settle(&mut t);
+    assert_eq!(eval(&t, page, "log.length"), "2");
+    // lock() resolves without rotating, unlock() is a no-op (headless Chromium).
+    assert_eq!(
+        eval(&t, page, "globalThis.locked='pending';screen.orientation.lock('landscape').then(()=>locked='ok',e=>locked=e.name);screen.orientation.unlock();'x'"),
+        "x"
+    );
+    settle(&mut t);
+    assert_eq!(eval(&t, page, "locked+':'+screen.orientation.type"), "ok:portrait-primary");
+}

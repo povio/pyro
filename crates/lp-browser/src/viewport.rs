@@ -26,6 +26,7 @@ impl Browser {
             return Ok(());
         }
         let old_size = (state.viewport.width, state.viewport.height);
+        let old_orientation = state.main_frame.page_dom.as_ref().map(|b| lp_webapi::window::screen_orientation(b));
         if let Some(bindings) = &state.main_frame.page_dom {
             bindings.set_viewport(viewport.clone());
         }
@@ -35,6 +36,7 @@ impl Browser {
             return Ok(());
         }
         state.pending_resize = Some(loader.clone());
+        let old_orientation = old_orientation.unwrap_or_default();
         self.scheduler().post(TaskSource::DomManipulation, move |browser| {
             let Some(state) = browser.page_mut(page) else { return };
             if state.pending_resize.as_ref() != Some(&loader) {
@@ -50,6 +52,17 @@ impl Browser {
                 if let Some(window) = bindings.window_target() {
                     let event = EventCore::trusted(&bindings, EventInterface::Event, "resize", false, false);
                     lp_webapi::target::fire(&bindings, window, &event);
+                }
+                // The visual viewport is the layout viewport: it resizes with it.
+                for target in bindings.viewport_targets(lp_webapi::window::ViewportTarget::VisualViewport) {
+                    let event = EventCore::trusted(&bindings, EventInterface::Event, "resize", false, false);
+                    lp_webapi::target::fire(&bindings, target, &event);
+                }
+            }
+            if lp_webapi::window::screen_orientation(&bindings) != old_orientation {
+                for target in bindings.viewport_targets(lp_webapi::window::ViewportTarget::Orientation) {
+                    let event = EventCore::trusted(&bindings, EventInterface::Event, "change", false, false);
+                    lp_webapi::target::fire(&bindings, target, &event);
                 }
             }
             // Media matching can stop a pending sheet from blocking a parser
