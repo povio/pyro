@@ -469,6 +469,9 @@ pub struct FlowStyle {
     /// `<img>`/`<iframe>`-like replaced element: atomic, sized by its own
     /// width/height only.
     pub replaced: bool,
+    /// Natural size (px) of a loaded image (`<img>`), from its resource;
+    /// None when unknown. Gives replaced sizing its intrinsic size and ratio.
+    pub intrinsic: Option<(f64, f64)>,
     /// Non-standard CSS `zoom` (1 = none). Carried for Stage 1; not yet
     /// applied to used sizes.
     pub zoom: f64,
@@ -532,6 +535,7 @@ impl Default for FlowStyle {
             font_weight: 400,
             text_align: TextAlign::Start,
             replaced: false,
+            intrinsic: None,
             zoom: 1.0,
             flex_direction: FlexDirection::Row,
             flex_wrap: false,
@@ -802,7 +806,7 @@ impl<'a> Ctx<'a> {
         // Average glyph advance of the control font.
         let avg = 0.525 * fs;
         let Some(kind) = control_kind(self.dom, el) else {
-            return self.replaced_intrinsic(el);
+            return self.replaced_intrinsic(el, style);
         };
         Some(match kind {
             Control::Text => (attr_num("size").unwrap_or(20.0) * avg + 0.4375 * fs, line),
@@ -841,18 +845,61 @@ impl<'a> Ctx<'a> {
     /// attributes (lucide icons: `<svg width="15" height="15">`), else the
     /// CSS default object size (300x150) for svg/canvas/video/iframe/embed/
     /// object; images without attributes have no known natural size.
-    fn replaced_intrinsic(&self, el: NodeId) -> Option<(f64, f64)> {
+    fn replaced_intrinsic(&self, el: NodeId, style: &FlowStyle) -> Option<(f64, f64)> {
         let tag = self.dom.tag_name(el).ok()?.to_ascii_lowercase();
         let default = match tag.as_str() {
             "svg" | "canvas" | "video" | "iframe" | "embed" | "object" => (300.0, 150.0),
-            "img" => (0.0, 0.0),
+            // A loaded image's natural size, else nothing known.
+            "img" => style.intrinsic.unwrap_or((0.0, 0.0)),
             _ => return None,
         };
-        let attr = |name: &str, fallback: f64| match self.dom.get_attribute(el, name).ok().flatten() {
-            None => fallback,
-            Some(v) => v.trim().trim_end_matches("px").parse::<f64>().ok().filter(|v| *v >= 0.0).unwrap_or(0.0),
+        let attr = |name: &str| {
+            self.dom
+                .get_attribute(el, name)
+                .ok()
+                .flatten()
+                .map(|v| v.trim().trim_end_matches("px").parse::<f64>().ok().filter(|v| *v >= 0.0).unwrap_or(0.0))
         };
-        Some((attr("width", default.0), attr("height", default.1)))
+        let ratio = (default.0 > 0.0 && default.1 > 0.0).then(|| default.0 / default.1);
+        Some(match (attr("width"), attr("height")) {
+            (Some(w), Some(h)) => (w, h),
+            // One attribute: the other follows the natural ratio when known.
+            (Some(w), None) => (w, ratio.map_or(default.1, |r| w / r)),
+            (None, Some(h)) => (ratio.map_or(default.0, |r| h * r), h),
+            (None, None) => default,
+        })
+    }
+
+    /// Intrinsic aspect ratio (width / height) of a replaced element that has
+    /// one (images with a natural size, svg/canvas/video defaults, width and
+    /// height attributes); form controls have none.
+    fn replaced_ratio(&self, el: NodeId, style: &FlowStyle) -> Option<f64> {
+        if control_kind(self.dom, el).is_some() {
+            return None;
+        }
+        let (w, h) = self.replaced_intrinsic(el, style)?;
+        (w > 0.0 && h > 0.0).then(|| w / h)
+    }
+
+    /// Content width of a replaced element whose width is auto (CSS 2.1
+    /// 10.3.2 and 10.4): from a definite height and the ratio, else the
+    /// intrinsic width; with a ratio, min/max-height clamps keep it.
+    fn replaced_auto_width(&self, el: NodeId, style: &FlowStyle) -> Option<f64> {
+        let (w, _) = self.intrinsic(el, style)?;
+        let Some(ratio) = self.replaced_ratio(el, style) else { return Some(w) };
+        let e = self.edges(style, 0.0);
+        let to_content = |h: f64| if style.border_box { (h - e.vertical()).max(0.0) } else { h };
+        if let Some(h) = style.height.resolve(self.cb_height).map(to_content) {
+            return Some(h * ratio);
+        }
+        let mut h = w / ratio;
+        if let Some(max) = style.max_height.resolve(self.cb_height).map(to_content) {
+            h = h.min(max);
+        }
+        if let Some(min) = style.min_height.resolve(self.cb_height).map(to_content) {
+            h = h.max(min);
+        }
+        Some(h * ratio)
     }
 
     fn insert_box(&mut self, el: NodeId, b: FlowBox) {
@@ -953,7 +1000,7 @@ impl<'a> Ctx<'a> {
         }
         if style.replaced {
             // Replaced boxes keep their intrinsic width instead of filling.
-            if let Some((w, _)) = self.intrinsic(el, style) {
+            if let Some(w) = self.replaced_auto_width(el, style) {
                 auto_width = w;
             }
         }
@@ -1111,7 +1158,11 @@ impl<'a> Ctx<'a> {
         shift: (f64, f64),
     ) -> f64 {
         if style.replaced {
-            return self.intrinsic(el, style).map_or(0.0, |(_, h)| h);
+            // With a ratio the height follows the used width (CSS 2.1 10.6.2).
+            return match self.replaced_ratio(el, style) {
+                Some(r) => width / r,
+                None => self.intrinsic(el, style).map_or(0.0, |(_, h)| h),
+            };
         }
         if style.inner == InnerDisplay::Flex {
             return self.flex(el, style, x, y, width, height, fixed, shift);
@@ -1359,7 +1410,7 @@ impl<'a> Ctx<'a> {
     /// Max-content width of an element's contents (no wrapping).
     fn max_content(&self, el: NodeId, style: &FlowStyle) -> f64 {
         if style.replaced {
-            return style.width.resolve(None).or_else(|| self.intrinsic(el, style).map(|(w, _)| w)).unwrap_or(0.0);
+            return style.width.resolve(None).or_else(|| self.replaced_auto_width(el, style)).unwrap_or(0.0);
         }
         if let Some(&w) = self.memo.max_content.borrow().get(&el) {
             return w;
@@ -1739,7 +1790,10 @@ impl<'a> Ctx<'a> {
                     h
                 }
             }
-            None if style.replaced => self.intrinsic(el, style).map_or(0.0, |(_, h)| h),
+            None if style.replaced => match self.replaced_ratio(el, style) {
+                Some(r) => content_w / r,
+                None => self.intrinsic(el, style).map_or(0.0, |(_, h)| h),
+            },
             None => self.measure_height(el, style, content_w),
         };
         content_h + e.vertical()

@@ -383,6 +383,16 @@ impl FlowStyleSource for InlineFlex<'_> {
             s.justify_items = v;
         }
         s.justify_self = decl("justify-self").and_then(|v| align(&v));
+        // Stand-in for a loaded image's natural size (W3's Dom::natural_size).
+        if let Some((w, h)) = dom
+            .get_attribute(el, "data-natural")
+            .ok()
+            .flatten()
+            .and_then(|v| v.split_once(',').map(|(w, h)| (w.trim().parse().ok(), h.trim().parse().ok())))
+            .and_then(|(w, h)| Some((w?, h?)))
+        {
+            s.intrinsic = Some((w, h));
+        }
         match decl("width").as_deref() {
             Some("fit-content") => s.width = Dim::Content(ContentSize::Fit),
             Some("max-content") => s.width = Dim::Content(ContentSize::Max),
@@ -1568,4 +1578,41 @@ fn flow_skips_relayout_for_identical_writes_but_not_real_changes() {
     p.dom.set_char_data(text, "abcdef").unwrap();
     let after = p.layout.text_rect(&p.dom, text).unwrap().width;
     assert!(after > before, "text box {before} -> {after}");
+}
+
+#[test]
+fn flow_parity_image_intrinsic_sizing() {
+    // CSS 2.1 10.3.2 / 10.6.2 with a loaded image's natural size: the TOS
+    // chat image (`w-full max-h-64`, 1x1 PNG in a 240px container) is
+    // 240x240; both auto gives the natural size; one auto follows the ratio;
+    // max-height with auto width keeps it. Chromium 1.59.1 with real PNGs.
+    let html = "<!doctype html><body style=\"margin:0;line-height:20px\"><div id=box style=\"width:240px\"><img id=tos data-natural=\"1,1\" style=\"display:block;width:100%;max-height:256px\"></div><img id=nat data-natural=\"200,100\" style=\"display:block\"><img id=h50 data-natural=\"200,100\" style=\"display:block;height:50px\"><img id=mh data-natural=\"200,100\" style=\"display:block;max-height:40px\"><img id=w300 data-natural=\"200,100\" style=\"display:block;width:300px\"><div id=line><img id=inl data-natural=\"200,100\" style=\"height:20px\"></div><img id=none style=\"display:block\"></body>";
+    let p = page(html, Geometry::Flow);
+    let src = InlineFlex { style: p.layout.style() };
+    let result = flow::layout(&p.dom, p.doc, &src, 800.0, 600.0);
+    let mut diffs = Vec::new();
+    for (id, want) in [
+        ("box", [0.0, 0.0, 240.0, 240.0]),
+        ("tos", [0.0, 0.0, 240.0, 240.0]),
+        ("nat", [0.0, 240.0, 200.0, 100.0]),
+        ("h50", [0.0, 340.0, 100.0, 50.0]),
+        ("mh", [0.0, 390.0, 80.0, 40.0]),
+        ("w300", [0.0, 430.0, 300.0, 150.0]),
+    ] {
+        let r = result.get(p.id(id)).unwrap().rect;
+        let got = [r.x, r.y, r.width, r.height];
+        if got.iter().zip(&want).any(|(g, w)| (g - w).abs() > 0.01) {
+            diffs.push(format!("#{id}: got {got:?}, Chromium {want:?}"));
+        }
+    }
+    let inl = result.get(p.id("inl")).unwrap().rect;
+    if (inl.width - 40.0).abs() > 0.01 || (inl.height - 20.0).abs() > 0.01 {
+        diffs.push(format!("#inl: got {}x{}, Chromium 40x20", inl.width, inl.height));
+    }
+    // Without a natural size (not loaded) an image stays 0x0, as before.
+    let none = result.get(p.id("none")).unwrap().rect;
+    if none.width != 0.0 || none.height != 0.0 {
+        diffs.push(format!("#none: got {}x{}", none.width, none.height));
+    }
+    assert!(diffs.is_empty(), "image sizing:\n{}", diffs.join("\n"));
 }
