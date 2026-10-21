@@ -2612,3 +2612,65 @@ fn large_react_like_batches_invalidate_without_stale_geometry() {
         assert_matches_fresh(&p, &format!("round {round}: half removed"));
     }
 }
+
+#[test]
+fn flex_wrap_compressible_controls_shrink_into_the_line() {
+    // TOS calendar filters (calendar-filters.e2e.ts L96): the multi-select
+    // Employee field holds its chips and a `w-full flex-1` search input in a
+    // `flex flex-wrap` row; the input took its intrinsic width as automatic
+    // minimum, wrapped below the chips, and the field grew from 28px.
+    // Chromium (Playwright 1.59.1), two 120px chips then the item in a 300px
+    // `flex-wrap` row with 8px gaps: text inputs, textareas and selects with
+    // a percentage width shrink to the 44px left (CSS Sizing 3 §5.2.2,
+    // compressible); auto, px or max-width-only inputs, buttons and
+    // percentage-width divs keep their minimum and wrap.
+    let shrink = [
+        ("inputPct", "<input style=\"width:100%;flex:1\">"),
+        ("inputPct50", "<input style=\"width:50%;flex:1\">"),
+        ("textareaPct", "<textarea style=\"width:100%;flex:1\"></textarea>"),
+        ("selectPct", "<select style=\"width:100%;flex:1\"><option>An option label here</option></select>"),
+    ];
+    let wrap = [
+        ("inputAuto", "<input style=\"flex:1\">"),
+        ("inputMaxPct", "<input style=\"max-width:100%;flex:1\">"),
+        ("inputPx", "<input style=\"width:200px;flex:1\">"),
+        ("buttonPct", "<button style=\"width:100%;flex:1\">Button label text</button>"),
+        ("divPct", "<div style=\"width:100%;flex:1\">LongUnbreakableWordInsideTheDivXXXXXXXX</div>"),
+    ];
+    let mut html = String::from(
+        "<!doctype html><style>*{box-sizing:border-box;margin:0;padding:0;border:0 solid}input,button,select,textarea{font:inherit}\
+         .w{display:flex;flex-wrap:wrap;gap:8px;width:300px;font:15px system-ui}.c{width:120px;height:20px}</style><body>",
+    );
+    for (k, item) in shrink.iter().chain(wrap.iter()) {
+        // `id=i-<key>` right after the tag name.
+        let at = item.find(' ').unwrap();
+        let item = format!("{} id=i-{k}{}", &item[..at], &item[at..]);
+        html.push_str(&format!("<div class=w id={k}><div class=c></div><div class=c></div>{item}</div>"));
+    }
+    // The TOS field (compiled CSS, @povio/ui 5.0.0-rc.10 SelectInput): one
+    // 28px line with two chips and the search input, like a single select.
+    html.push_str(
+        "<style>.field{position:relative;display:flex;width:400px;overflow:hidden;white-space:nowrap;border:1px solid;padding-inline:4px}\
+         .row{position:relative;display:flex;flex:1;align-items:center;gap:4px;overflow:hidden;white-space:nowrap;padding-block:1px;font-size:15px;line-height:1.6}\
+         .tags{display:flex;flex:1;flex-wrap:wrap;gap:8px;overflow:hidden;white-space:nowrap}\
+         .tag{display:inline-flex;align-items:center;gap:2px;height:20px;align-self:center;padding:0 2px 0 4px;overflow:hidden}\
+         .tag>span{line-height:20px}.tag>button{display:grid;width:16px;height:16px}</style>\
+         <div id=single class=field><div class=row><label style=\"font-size:13px;font-weight:700\">Routes</label><button style=\"width:100%\">All</button></div></div>\
+         <div id=multi class=field><div class=row><label style=\"font-size:13px;font-weight:700\">Employee</label><div class=tags>\
+         <div class=tag><span>FE E2E</span><button></button></div><div class=tag><span>Integration Only</span><button></button></div>\
+         <input id=search style=\"width:100%;flex:1\"></div></div></div>",
+    );
+    let p = page(&html, Geometry::Flow);
+    for (k, _) in shrink {
+        let (w, item) = (p.metrics(k), p.metrics(&format!("i-{k}")));
+        assert_eq!(item[1], w[1], "{k}: on the first line");
+        assert!((item[2] - 44.0).abs() < 0.5, "{k}: shrinks to the 44px left ({item:?})");
+    }
+    for (k, _) in wrap {
+        let (w, item) = (p.metrics(k), p.metrics(&format!("i-{k}")));
+        assert!(item[1] > w[1] + 19.0, "{k}: wraps to a second line ({item:?})");
+    }
+    assert_eq!(p.metrics("multi")[3], p.metrics("single")[3], "multi-select as tall as a single select");
+    assert_eq!(p.metrics("single")[3], 28.0);
+    assert_eq!(p.metrics("search")[1], p.metrics("multi")[1] + 2.0, "search input on the chips' line");
+}

@@ -2600,7 +2600,21 @@ impl<'a> Ctx<'a> {
             // shrink below its content (min-content width / content height),
             // capped by its specified size.
             None if (row && !s.clips_x) || (!row && !s.clips_y) => {
+                // Text inputs, textareas and selects with a percentage width
+                // are compressible (CSS Sizing 3 §5.2.2): no content-based
+                // minimum, so `width:100%; flex:1` shrinks into the rest of
+                // a flex line instead of wrapping (Chromium; TOS select
+                // chips beside their search input).
+                let compressible = row
+                    && matches!(s.width, Dim::Len(l) if l.percent != 0.0)
+                    && it.el.is_some_and(|el| {
+                        matches!(
+                            control_kind(self.dom, el),
+                            Some(Control::Text | Control::TextArea | Control::Select { .. })
+                        )
+                    });
                 let content = match (&it.el, row) {
+                    _ if compressible => 0.0,
                     (Some(el), true) => self.min_content(*el, s),
                     (Some(el), false) => self.measure_height(*el, s, self.flex_cross_width(it, width)),
                     (None, true) => it
