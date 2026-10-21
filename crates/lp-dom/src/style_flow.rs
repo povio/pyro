@@ -167,6 +167,8 @@ impl FlowStyleSource for StyleEngine {
                 v => v.parse::<f64>().map_or(400, |n| n.clamp(1.0, 1000.0) as u16),
             },
             replaced: matches!(tag.as_str(), "img" | "iframe" | "video" | "canvas" | "embed" | "object" | "svg"),
+            // A loaded <img>'s natural size (lp_dom::image via the embedder).
+            intrinsic: if tag == "img" { dom.natural_size(el) } else { None },
             // Non-standard `zoom`: a number or percentage; `normal`/unknown values are 1.
             zoom: value("zoom")
                 .and_then(|v| {

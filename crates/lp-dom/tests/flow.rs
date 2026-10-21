@@ -1616,3 +1616,23 @@ fn flow_parity_image_intrinsic_sizing() {
     }
     assert!(diffs.is_empty(), "image sizing:\n{}", diffs.join("\n"));
 }
+
+#[test]
+fn loaded_image_natural_size_reaches_flow_through_the_dom() {
+    // TOS chat: <img class="max-h-64 w-full object-contain"> in a 240px
+    // button, holding the uploaded 1x1 PNG. Unloaded it is 240x0 (hidden
+    // to Playwright); once the embedder records the natural size it is
+    // 240x240 as in Chromium, and a later size change relayouts.
+    let mut p = page(
+        "<body style='margin:0'><div style='width:240px'><button style='display:block;width:100%;padding:0;border:0'><span style='display:contents'><img id=i style='max-height:256px;width:100%'></span></button></div></body>",
+        Geometry::Flow,
+    );
+    let img = p.id("i");
+    assert_eq!(&p.metrics("i")[2..4], &[240.0, 0.0]);
+    p.dom.set_natural_size(img, Some((1.0, 1.0)));
+    assert_eq!(&p.metrics("i")[2..4], &[240.0, 240.0]);
+    p.dom.set_natural_size(img, Some((4.0, 1.0)));
+    assert_eq!(&p.metrics("i")[2..4], &[240.0, 60.0]);
+    p.dom.set_natural_size(img, None);
+    assert_eq!(&p.metrics("i")[2..4], &[240.0, 0.0]);
+}
