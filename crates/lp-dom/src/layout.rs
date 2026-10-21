@@ -237,14 +237,18 @@ impl Layout {
         let stamp = self.style.observation_stamp(dom);
         let v = self.viewport();
         let viewport = (v.width, v.height);
-        if let Some(c) = self.flow_cache.borrow().as_ref() {
-            if c.stamp == stamp && c.viewport == viewport {
-                return c.result.clone();
-            }
-        }
+        let previous = match self.flow_cache.borrow().as_ref() {
+            Some(c) if c.stamp == stamp && c.viewport == viewport => return c.result.clone(),
+            Some(c) => Some((c.stamp, c.viewport)),
+            None => None,
+        };
+        let started = flow_stats::enabled().then(std::time::Instant::now);
         let result = Rc::new(crate::style::with_pass_memo(|| {
             crate::flow::layout(dom, self.document(), &self.style, v.width as f64, v.height as f64)
         }));
+        if let Some(t) = started {
+            flow_stats::record(previous, (stamp, viewport), t.elapsed());
+        }
         *self.flow_cache.borrow_mut() = Some(FlowCache { stamp, viewport, result: result.clone() });
         result
     }
@@ -1819,5 +1823,80 @@ mod tests {
         let mut narrow = LineWrap::new(10.0, 10.0);
         narrow.add("aaaa aaaa");
         assert_eq!(narrow.lines, 2);
+    }
+}
+
+/// `LIGHTNINGPANDA_FLOW_STATS=1`: counts flow passes and why each ran (the
+/// first pass, DOM version, style generation, focus, hover, viewport),
+/// printed to stderr every 25 passes. Diagnostic only; off by default.
+mod flow_stats {
+    use std::cell::RefCell;
+    use std::sync::OnceLock;
+    use std::time::Duration;
+
+    type Key = ((u64, u64, u32, u32), (u32, u32));
+
+    #[derive(Default)]
+    struct Stats {
+        passes: u64,
+        total: Duration,
+        first: u64,
+        version: u64,
+        generation: u64,
+        focus: u64,
+        hover: u64,
+        viewport: u64,
+    }
+
+    thread_local! {
+        static STATS: RefCell<Stats> = RefCell::new(Stats::default());
+    }
+
+    pub(super) fn enabled() -> bool {
+        static ON: OnceLock<bool> = OnceLock::new();
+        *ON.get_or_init(|| std::env::var("LIGHTNINGPANDA_FLOW_STATS").is_ok_and(|v| v == "1"))
+    }
+
+    pub(super) fn record(previous: Option<Key>, now: Key, took: Duration) {
+        STATS.with(|s| {
+            let mut s = s.borrow_mut();
+            s.passes += 1;
+            s.total += took;
+            match previous {
+                None => s.first += 1,
+                Some((old, old_vp)) => {
+                    let (o, n) = (old, now.0);
+                    if o.0 != n.0 {
+                        s.version += 1;
+                    }
+                    if o.1 != n.1 {
+                        s.generation += 1;
+                    }
+                    if o.2 != n.2 {
+                        s.focus += 1;
+                    }
+                    if o.3 != n.3 {
+                        s.hover += 1;
+                    }
+                    if old_vp != now.1 {
+                        s.viewport += 1;
+                    }
+                }
+            }
+            if s.passes % 25 == 0 {
+                eprintln!(
+                    "flow-stats passes={} total_ms={} avg_ms={:.1} first={} version={} generation={} focus={} hover={} viewport={}",
+                    s.passes,
+                    s.total.as_millis(),
+                    s.total.as_secs_f64() * 1000.0 / s.passes as f64,
+                    s.first,
+                    s.version,
+                    s.generation,
+                    s.focus,
+                    s.hover,
+                    s.viewport
+                );
+            }
+        });
     }
 }

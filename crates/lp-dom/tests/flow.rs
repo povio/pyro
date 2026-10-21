@@ -1541,3 +1541,31 @@ fn flow_parity_text_rects() {
     let t = q.dom.children(q.id("d")).unwrap().next().unwrap();
     assert!(q.layout.text_rect(&q.dom, t).is_none());
 }
+
+#[test]
+fn flow_skips_relayout_for_identical_writes_but_not_real_changes() {
+    // Writing an attribute or text to its current value is still a mutation
+    // (records are queued) but changes nothing layout depends on: the flow
+    // result is reused. Real changes must relayout with fresh geometry.
+    let html = "<!doctype html><style>.w{width:100px}.x{width:300px}</style><body style=\"margin:0\"><div id=a class=w style=\"height:10px\"></div><span id=t>abc</span></body>";
+    let mut p = page(html, Geometry::Flow);
+    let a = p.id("a");
+    let first = p.layout.flow(&p.dom);
+    assert_eq!(first.get(a).unwrap().rect.width, 100.0);
+    let v = p.dom.version();
+    p.dom.set_attribute(a, "class", "w").unwrap();
+    p.dom.set_attribute(a, "style", "height:10px").unwrap();
+    let text = p.dom.children(p.id("t")).unwrap().next().unwrap();
+    p.dom.set_char_data(text, "abc").unwrap();
+    assert_eq!(p.dom.version(), v, "identical writes keep the version");
+    assert!(Rc::ptr_eq(&first, &p.layout.flow(&p.dom)), "flow result reused");
+    // Real attribute change: fresh geometry, never the cached 100px.
+    p.dom.set_attribute(a, "class", "x").unwrap();
+    assert_ne!(p.dom.version(), v);
+    assert_eq!(p.layout.flow(&p.dom).get(a).unwrap().rect.width, 300.0);
+    // Real text change relayouts too (the text box grows).
+    let before = p.layout.text_rect(&p.dom, text).unwrap().width;
+    p.dom.set_char_data(text, "abcdef").unwrap();
+    let after = p.layout.text_rect(&p.dom, text).unwrap().width;
+    assert!(after > before, "text box {before} -> {after}");
+}

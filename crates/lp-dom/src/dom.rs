@@ -1284,7 +1284,14 @@ impl Dom {
         let el = self.n(i).element().unwrap();
         let name = el.attrs[k].name.clone();
         let old = std::mem::replace(&mut self.n_mut(i).element_mut().unwrap().attrs[k].value, value.into());
-        self.bump_tree();
+        if *old == *value {
+            // Same value: still an attribute mutation (records, XPath
+            // iterators), but nothing that styles or geometry depend on
+            // changed, so caches keyed by `version` stay valid.
+            self.tree_version = self.tree_version.wrapping_add(1);
+        } else {
+            self.bump_tree();
+        }
         self.queue_attribute(i, &name, Some(&old));
         self.resources_after_attr(i, &name.local);
     }
@@ -1438,7 +1445,13 @@ impl Dom {
         let (a, b) = utf16_range(s, offset, count)?;
         let old = s.to_owned();
         self.n_mut(i).kind.char_data_mut().unwrap().replace_range(a..b, data);
-        self.bump_tree();
+        if self.n(i).kind.char_data() == Some(old.as_str()) {
+            // Unchanged text: a mutation for observers and XPath iterators
+            // only (see change_attr).
+            self.tree_version = self.tree_version.wrapping_add(1);
+        } else {
+            self.bump_tree();
+        }
         self.queue_character_data(i, &old);
         self.resources_after_text(i);
         Ok(())
