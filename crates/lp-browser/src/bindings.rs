@@ -47,6 +47,19 @@ impl PageHooks for Hooks {
         });
     }
 
+    fn post_delayed_task(&self, delay: std::time::Duration, task: Box<dyn FnOnce()>) {
+        let page = self.page;
+        let loader = self.loader.clone();
+        let task = std::cell::RefCell::new(Some(task));
+        self.sched.set_timer(delay, false, true, move |b| {
+            if b.doc(page).is_some_and(|p| p.main_frame.loader_id == loader) {
+                if let Some(task) = task.borrow_mut().take() {
+                    task();
+                }
+            }
+        });
+    }
+
     fn navigate(&self, request: NavigationRequest) {
         let page = self.page;
         let loader = self.loader.clone();

@@ -16,6 +16,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
+use std::time::{Duration, Instant};
 
 use lp_dom::layout::{Axis, Geometry, Rect};
 use lp_dom::NodeId;
@@ -39,6 +40,10 @@ pub(crate) struct BindingState {
     pub(crate) pins: RefCell<FxHashMap<u64, Persistent>>,
     stamp: Cell<Option<Stamp>>,
     queued: Cell<bool>,
+    /// Flow layout pacing: when the next gather may run, and whether a
+    /// delayed wake for it is pending.
+    next_gather: Cell<Option<Instant>>,
+    wake_queued: Cell<bool>,
 }
 
 /// Native node reference that does not keep the PageDom alive.
@@ -268,6 +273,34 @@ pub(crate) fn after_task(page: &PageDom) {
     }
     let Some(owner) = page.resizes.owner.borrow().upgrade() else { return };
     let stamp = (page.document(), page.layout.borrow().observation_stamp(&page.dom.borrow()));
+    let flow = page.layout.borrow().geometry() == Geometry::Flow;
+    if flow && page.resizes.stamp.get() != Some(stamp) && !page.resizes.observers.borrow().is_empty() {
+        // Each gather lays out the whole document under the flow layout.
+        // Chromium gathers once per rendering update, not per task: gather
+        // at most every max(16 ms, twice the last gather's cost), and wake
+        // once more so the final size is still delivered.
+        let now = Instant::now();
+        if let Some(next) = page.resizes.next_gather.get().filter(|&n| n > now) {
+            if !page.resizes.wake_queued.replace(true) {
+                if let Some(hooks) = page.hooks() {
+                    let weak = Rc::downgrade(&owner);
+                    hooks.post_delayed_task(
+                        next - now,
+                        Box::new(move || {
+                            if let Some(page) = weak.upgrade() {
+                                page.resizes.wake_queued.set(false);
+                                after_task(&page);
+                            }
+                        }),
+                    );
+                } else {
+                    page.resizes.wake_queued.set(false);
+                }
+            }
+            return;
+        }
+    }
+    let started = Instant::now();
     if page.resizes.stamp.replace(Some(stamp)) != Some(stamp) {
         let observers: Vec<_> = page.resizes.observers.borrow().iter().filter_map(Weak::upgrade).collect();
         for observer in observers {
@@ -288,6 +321,10 @@ pub(crate) fn after_task(page: &PageDom) {
             }
         }
         page.resizes.observers.borrow_mut().retain(|o| o.strong_count() > 0);
+        if flow {
+            let cost = started.elapsed();
+            page.resizes.next_gather.set(Some(Instant::now() + (cost * 2).max(Duration::from_millis(16))));
+        }
     }
     let pending =
         page.resizes.observers.borrow().iter().filter_map(Weak::upgrade).any(|o| !o.records.borrow().is_empty());

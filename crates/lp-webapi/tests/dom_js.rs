@@ -1741,6 +1741,11 @@ impl PageHooks for ObserverTasks {
     fn post_task(&self, task: Box<dyn FnOnce()>) {
         self.0.borrow_mut().push_back(task);
     }
+    fn post_delayed_task(&self, delay: std::time::Duration, task: Box<dyn FnOnce()>) {
+        // Single-threaded test loop: let the delay elapse, then queue.
+        std::thread::sleep(delay);
+        self.0.borrow_mut().push_back(task);
+    }
     fn navigate(&self, _: NavigationRequest) {}
 }
 impl ObserverTasks {
@@ -2302,6 +2307,13 @@ fn resize_observer_reports_the_flow_content_box() {
     let seen = eval(&e.main, "seen.join()");
     assert!(seen.starts_with("284x"), "{seen}");
     assert_eq!(eval(&e.main, "document.getElementById('a').clientWidth"), "296");
+    // Gathers are paced (each one lays out the document); a change right
+    // after a gather is still delivered by the delayed wake.
+    eval(&e.main, "document.getElementById('a').parentElement.style.width='200px'");
+    e.page.after_task();
+    tasks.drain();
+    let seen = eval(&e.main, "seen.join()");
+    assert!(seen.contains(",184x"), "{seen}");
     e.page.dispose();
 }
 

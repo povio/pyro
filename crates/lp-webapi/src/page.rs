@@ -204,6 +204,10 @@ pub trait PageHooks {
 
     /// Schedules `task` on the page's event loop as a separate task.
     fn post_task(&self, task: Box<dyn FnOnce()>);
+    /// Schedules `task` as a separate task after `delay` (default: at once).
+    fn post_delayed_task(&self, _delay: std::time::Duration, task: Box<dyn FnOnce()>) {
+        self.post_task(task)
+    }
     /// Starts a navigation of the frame showing the document.
     fn navigate(&self, request: NavigationRequest);
     /// Thread-safe poster that runs a closure as a task on the page's
