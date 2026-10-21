@@ -1510,3 +1510,34 @@ fn flow_parity_atomic_inline_baselines() {
     }
     assert!(diffs.is_empty(), "baselines:\n{}", diffs.join("\n"));
 }
+
+#[test]
+fn flow_parity_text_rects() {
+    // Range geometry over text: Chromium reports the text's content-area box
+    // (font ascent + descent, after the top half-leading), even inside a
+    // `display: contents` span that has no box of its own. TOS buttons wrap
+    // their label in such a span, and Playwright's accessible-name visibility
+    // check measures that text with Range.getBoundingClientRect.
+    // Chromium 1.59.1, system UI font; widths within 1.5px (no kerning).
+    let html = "<!doctype html><body style=\"margin:0;font-family:-apple-system,BlinkMacSystemFont,sans-serif;font-size:14px;line-height:20px\"><button id=btn style=\"display:inline-flex;padding:4px 8px;border:0;font:inherit\"><span id=c style=\"display:contents\">Files &amp; links</span></button><div id=d style=\"padding-left:10px\">Hello world</div></body>";
+    let p = page(html, Geometry::Flow);
+    let span = p.metrics("c");
+    assert_eq!(&span[..4], &[0.0, 0.0, 0.0, 0.0], "display:contents has no box");
+    let text = |id: &str| {
+        let el = p.id(id);
+        let t = p.dom.children(el).unwrap().next().unwrap();
+        p.layout.text_rect(&p.dom, t).unwrap_or_else(|| panic!("no text rect in #{id}"))
+    };
+    for (id, want) in [("c", [8.0, 5.0, 76.05, 17.0]), ("d", [10.0, 29.0, 72.34, 17.0])] {
+        let r = text(id);
+        let ok = (r.x - want[0]).abs() < 0.01
+            && (r.y - want[1]).abs() < 0.01
+            && (r.width - want[2]).abs() < 1.5
+            && (r.height - want[3]).abs() < 0.01;
+        assert!(ok, "#{id} text: got {:?}, Chromium {want:?}", (r.x, r.y, r.width, r.height));
+    }
+    // Default geometry has no text boxes (Range keeps its element fallback).
+    let q = page(html, Geometry::Approximate);
+    let t = q.dom.children(q.id("d")).unwrap().next().unwrap();
+    assert!(q.layout.text_rect(&q.dom, t).is_none());
+}

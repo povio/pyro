@@ -4912,3 +4912,23 @@ fn style_assignment_forwards_to_css_text() {
     );
     assert_eq!(got, r#"["width: 10px; color: red;",true,"10px","\"\"","fill: red;"]"#);
 }
+
+#[test]
+fn range_over_text_reports_the_text_box_in_flow_geometry() {
+    // Playwright's accessible-name check measures a label's text with
+    // Range.selectNode(text).getBoundingClientRect(); TOS buttons put the
+    // text in a `display: contents` span, which has no box. Chromium reports
+    // the text box (x 8, y 5, ~76 x 17 here); the role query then finds the
+    // button by name.
+    let e = env("<!doctype html><body style=\"margin:0;font-family:-apple-system,BlinkMacSystemFont,sans-serif;font-size:14px;line-height:20px\"><button id=btn style=\"display:inline-flex;padding:4px 8px;border:0;font:inherit\"><span id=c style=\"display:contents\">Files &amp; links</span></button></body>");
+    e.page.layout.borrow_mut().set_geometry(lp_dom::layout::Geometry::Flow);
+    let r = &e.main;
+    let got = eval(
+        r,
+        "(() => { const t = document.getElementById('c').firstChild; const range = document.createRange(); range.selectNode(t); \
+         const a = range.getBoundingClientRect(); const inner = document.createRange(); inner.selectNodeContents(t); \
+         const b = inner.getBoundingClientRect(); const span = document.getElementById('c').getBoundingClientRect(); \
+         return [a.x, a.y, a.height, a.width > 70 && a.width < 80, b.x, b.height, span.width, span.height].join(','); })()",
+    );
+    assert_eq!(got, "8,5,17,true,8,17,0,0");
+}

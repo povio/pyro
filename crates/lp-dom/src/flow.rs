@@ -591,6 +591,13 @@ pub struct FlowBox {
 #[derive(Default, Debug)]
 pub struct FlowResult {
     pub boxes: FxHashMap<NodeId, FlowBox>,
+    /// Text nodes laid out in line boxes: the union of their fragments
+    /// (document coordinates, or viewport ones inside `position: fixed`),
+    /// and whether they are inside a fixed box. Range geometry uses it.
+    pub texts: FxHashMap<NodeId, (Rect, bool)>,
+    /// Order stamp of each text entry, so later shifts of the boxes laid out
+    /// after an order (cell centring, bottom-anchored abs boxes) move them.
+    text_orders: Vec<(u32, NodeId)>,
     /// Document scroll size (at least the viewport).
     pub document_width: f64,
     pub document_height: f64,
@@ -708,6 +715,9 @@ enum InlineItem {
         space_before: f64,
         owners: Vec<NodeId>,
         ascent: f64,
+        /// The font's (ascent, descent) without leading: the content area
+        /// that text and inline element boxes report.
+        content: (f64, f64),
     },
     Break,
     Atomic {
@@ -852,6 +862,17 @@ impl<'a> Ctx<'a> {
         }
         self.by_order[i] = Some(el);
         self.out.boxes.insert(el, b);
+    }
+
+    /// Moves text entries recorded after `order` down by `dy`.
+    fn shift_texts_after(&mut self, order: u32, dy: f64) {
+        for (o, t) in &self.out.text_orders {
+            if *o >= order {
+                if let Some((r, _)) = self.out.texts.get_mut(t) {
+                    r.y += dy;
+                }
+            }
+        }
     }
 
     /// Calls `f` on every box recorded with an order above `order`.
@@ -1301,6 +1322,7 @@ impl<'a> Ctx<'a> {
             let delta = by - provisional_y;
             if delta != 0.0 {
                 self.boxes_after(first_new, |b| b.rect.y += delta);
+                self.shift_texts_after(first_new, delta);
             }
             let rect = Rect { x: bx, y: by, width: border_w, height: border_h };
             self.record(p.el, rect, &e, fixed, true, s.clips_x || s.clips_y, order, content_w, height, content_h);
@@ -1509,7 +1531,7 @@ impl<'a> Ctx<'a> {
                         parent.text_align,
                     );
                 }
-                InlineItem::Word { width: w, height: h, space_before, owners, ascent } => {
+                InlineItem::Word { width: w, height: h, space_before, owners, ascent, content } => {
                     let gap = if line.x > 0.0 { space_before } else { 0.0 };
                     if line.x > 0.0 && line.x + gap + w > width + FIT_EPSILON && !parent.nowrap {
                         line_y += self.flush_line(
@@ -1527,6 +1549,9 @@ impl<'a> Ctx<'a> {
                     } else {
                         let at = line.x + gap;
                         line.push(at, w, h, ascent, owners, None);
+                    }
+                    if let Some(it) = line.items.last_mut() {
+                        it.content = Some(content);
                     }
                     line.extents(strut);
                 }
@@ -1610,6 +1635,11 @@ impl<'a> Ctx<'a> {
         // Inline element boxes: union of their fragments.
         for el in order_of {
             if let Some(r) = frags.get(&el).copied() {
+                if self.dom.node_type(el).ok() == Some(NodeType::Text) {
+                    self.out.texts.insert(el, (r, fixed));
+                    self.out.text_orders.push((self.order, el));
+                    continue;
+                }
                 let order = self.next_order();
                 let positioned = self.style_of(el).is_some_and(|s| s.position != Position::Static);
                 self.insert_box(
@@ -1682,7 +1712,14 @@ impl<'a> Ctx<'a> {
                 }
                 continue;
             }
-            let r = Rect { x: left + shift.0, y: top + shift.1, width: it.width, height: it.height };
+            // Text fragments report the font's content area (Chromium's text
+            // and inline boxes), not the line height.
+            let r = match it.content {
+                Some((ca, cd)) => {
+                    Rect { x: left + shift.0, y: baseline - ca + shift.1, width: it.width, height: ca + cd }
+                }
+                None => Rect { x: left + shift.0, y: top + shift.1, width: it.width, height: it.height },
+            };
             for o in &it.owners {
                 union(frags, order_of, *o, r);
             }
@@ -1809,12 +1846,17 @@ impl<'a> Ctx<'a> {
                     if part.is_empty() {
                         continue;
                     }
+                    // The text node owns its words too: its box (FlowResult::texts)
+                    // is the union of their fragments, for Range geometry.
+                    let mut word_owners = owners.to_vec();
+                    word_owners.push(n);
                     items.push(InlineItem::Word {
                         width: text_width(part, fs, parent.font_weight),
                         height: lh,
                         space_before: if pending_space { space } else { 0.0 },
-                        owners: owners.to_vec(),
+                        owners: word_owners,
                         ascent,
+                        content: font_metrics(fs),
                     });
                     pending_space = false;
                 }
@@ -1825,6 +1867,7 @@ impl<'a> Ctx<'a> {
                         space_before: space,
                         owners: Vec::new(),
                         ascent: 0.0,
+                        content: (0.0, 0.0),
                     });
                 }
             }
@@ -1925,8 +1968,10 @@ fn text_extents(style: &FlowStyle) -> (f64, f64) {
     match style.line_height {
         None => (a, d),
         Some(lh) => {
-            let half = (lh - a - d) / 2.0;
-            (a + half, d + half)
+            // Chromium gives the top half of the leading floor(leading / 2)
+            // and the rest to the bottom.
+            let top = ((lh - a - d) / 2.0).floor();
+            (a + top, lh - a - top)
         }
     }
 }
@@ -1947,6 +1992,8 @@ struct LineItem {
     ascent: f64,
     owners: Vec<NodeId>,
     atomic: Option<(NodeId, FlowStyle)>,
+    /// Text: the font's (ascent, descent) for its reported box.
+    content: Option<(f64, f64)>,
 }
 
 impl Line {
@@ -1962,7 +2009,7 @@ impl Line {
         self.ascent = self.ascent.max(ascent);
         self.descent = self.descent.max(height - ascent);
         self.x = self.x.max(x + width);
-        self.items.push(LineItem { x, width, height, ascent, owners, atomic });
+        self.items.push(LineItem { x, width, height, ascent, owners, atomic, content: None });
     }
 
     /// The strut of the containing block's font.
@@ -2769,6 +2816,7 @@ impl<'a> Ctx<'a> {
                 if dy > 0.0 {
                     let cell_order = before + 1;
                     self.boxes_after(cell_order, |b| b.rect.y += dy);
+                    self.shift_texts_after(cell_order, dy);
                 }
             }
             let rect = Rect {

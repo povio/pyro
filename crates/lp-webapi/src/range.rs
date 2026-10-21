@@ -311,9 +311,9 @@ impl JsClass for Range {
             let frag = lp_dom::parse::parse_fragment(&mut page.dom.borrow_mut(), ctx, &html).js()?;
             Ok(wrap_node(s, &page, frag)?.value())
         });
-        def.method("getBoundingClientRect", 0, |s, r, _a| crate::layout_api::range_rect(s, &r.page(), points(r).0));
+        def.method("getBoundingClientRect", 0, |s, r, _a| crate::layout_api::range_rect(s, &r.page(), points(r)));
         def.method("getClientRects", 0, |s, r, _a| {
-            let rect = crate::layout_api::range_rect(s, &r.page(), points(r).0)?;
+            let rect = crate::layout_api::range_rect(s, &r.page(), points(r))?;
             Ok(s.array(&[rect])?.value())
         });
         def.method("deleteContents", 0, |_s, _r, _a| unsupported("deleteContents"));

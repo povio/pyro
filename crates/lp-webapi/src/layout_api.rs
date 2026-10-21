@@ -78,7 +78,33 @@ pub(crate) fn client_rects<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s
     Ok(s.array(&vals.iter(s).collect::<Vec<_>>())?.value())
 }
 
-pub(crate) fn range_rect<'s>(s: &Scope<'s>, page: &Rc<PageDom>, start: NodeId) -> JsResult<Value<'s>> {
+/// Range geometry for (start container, start offset, end container, end
+/// offset). A range in a text node, or selecting exactly one text node
+/// (`selectNode(text)`), reports that text's line-box rect when the layout
+/// has one (flow geometry); otherwise the start's element box.
+pub(crate) fn range_rect<'s>(
+    s: &Scope<'s>,
+    page: &Rc<PageDom>,
+    (start, start_offset, end, end_offset): (NodeId, u32, NodeId, u32),
+) -> JsResult<Value<'s>> {
+    let text = {
+        let dom = page.dom.borrow();
+        if dom.node_type(start).js()? == lp_dom::NodeType::Text {
+            Some(start)
+        } else if start == end && end_offset == start_offset + 1 {
+            dom.children(start)
+                .js()?
+                .nth(start_offset as usize)
+                .filter(|&c| dom.node_type(c).ok() == Some(lp_dom::NodeType::Text))
+        } else {
+            None
+        }
+    };
+    if let Some(t) = text {
+        if let Some(r) = page.layout.borrow().text_rect(&page.dom.borrow(), t) {
+            return rect_value(s, r);
+        }
+    }
     let el = {
         let dom = page.dom.borrow();
         if dom.node_type(start).js()? == lp_dom::NodeType::Element {

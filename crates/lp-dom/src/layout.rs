@@ -841,6 +841,21 @@ impl Layout {
         self.bounding_client_rect_for_visible(dom, el)
     }
 
+    /// A text node's line-box rect (the union of its fragments) in client
+    /// coordinates, in flow geometry; `None` otherwise or when it is not laid
+    /// out. Range geometry over text uses it (Chromium reports text boxes,
+    /// even inside a `display: contents` parent that has no box).
+    pub fn text_rect(&self, dom: &Dom, text: NodeId) -> Option<Rect> {
+        if !self.flow_mode() {
+            return None;
+        }
+        let flow = self.flow(dom);
+        let &(r, fixed) = flow.texts.get(&text)?;
+        let (dx, dy) = self.ancestor_scroll_offset(dom, text);
+        let (sx, sy) = if fixed { (0.0, 0.0) } else { (self.window_scroll.0 as f64, self.window_scroll.1 as f64) };
+        Some(Rect { x: r.x - sx - dx, y: r.y - sy - dy, width: r.width, height: r.height })
+    }
+
     /// The bounding rect, or `None` when the element isn't rendered.
     pub fn client_rect(&self, dom: &Dom, el: NodeId) -> Option<Rect> {
         self.is_visible(dom, el).then(|| self.bounding_client_rect_for_visible(dom, el))
