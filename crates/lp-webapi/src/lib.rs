@@ -111,6 +111,7 @@ pub fn register(engine: &lp_js::Engine) {
     engine.register::<url_search_params::URLSearchParams>();
     engine.register::<url_search_params::ParamsIterator>();
     engine.register::<response::Response>();
+    response::register_streams(engine);
     engine.register::<xhr::XMLHttpRequest>();
     engine.register::<xhr::XMLHttpRequestUpload>();
 }

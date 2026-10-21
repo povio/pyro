@@ -677,3 +677,98 @@ fn inherited_document_base_is_used_by_fetch_and_xhr_without_replacing_url() {
     assert_eq!(env.eval("result"), "{\"answer\":42}");
     assert_eq!(env.eval("document.URL"), "about:srcdoc");
 }
+
+#[test]
+fn fetch_body_stream_delivers_chunks_as_they_arrive() {
+    // TOS chat reads /chat/events (SSE) with response.body.getReader(); each
+    // frame must resolve a read before the response completes.
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    env.eval(
+        r#"globalThis.frames=[]; globalThis.state='pending';
+        (async()=>{
+          const r=await fetch('/sse');
+          const body=r.body;
+          if (body!==r.body || body.locked || r.bodyUsed) throw Error('fresh stream');
+          const reader=body.getReader();
+          if (!body.locked || !r.bodyUsed) throw Error('locked');
+          try { body.getReader(); throw Error('second reader') } catch(e) { if (!(e instanceof TypeError)) throw e; }
+          try { await r.text(); throw Error('text after reader') } catch(e) { if (!(e instanceof TypeError)) throw e; }
+          const decoder=new TextDecoder(); let buffer='';
+          while (true) {
+            const {value, done}=await reader.read();
+            if (!done && !(value instanceof Uint8Array)) throw Error('chunk type');
+            buffer+=decoder.decode(value,{stream:!done});
+            const parts=buffer.split('\n\n'); buffer=parts.pop();
+            for (const part of parts) frames.push(part.match(/^id: (.*)$/m)[1]+'='+part.match(/^data: (.*)$/m)[1]);
+            state=frames.join(' ');
+            if (done) break;
+          }
+          state='done '+frames.join(' ');
+        })().catch(e=>state='ERROR '+e);"#,
+    );
+    env.until("state!=='pending'");
+    assert_eq!(env.eval("state"), "1={\"n\":1}");
+    let _ = server.release.send(());
+    env.until("state!=='1={\"n\":1}'");
+    assert_eq!(env.eval("state"), "1={\"n\":1} 2={\"n\":2}");
+    let _ = server.release.send(());
+    env.until("state.startsWith('done') || state.startsWith('ERROR')");
+    assert_eq!(env.eval("state"), "done 1={\"n\":1} 2={\"n\":2}");
+    env.finish_network_tasks();
+    assert_eq!(env.page.fetch_usage(), (0, 0), "streamed bytes and the job are released");
+}
+
+#[test]
+fn fetch_body_stream_cancel_release_and_script_bodies() {
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    env.eval(
+        r#"globalThis.state='pending';
+        (async()=>{
+          const out=[];
+          // Script-created body: one chunk, then done.
+          const s=new Response('abc').body.getReader();
+          const first=await s.read(); const second=await s.read();
+          out.push(new TextDecoder().decode(first.value)+':'+first.done+':'+second.done+':'+second.value);
+          // Null-body responses have no stream.
+          out.push(String((await fetch('/empty')).body));
+          // releaseLock unlocks; a new reader continues the same stream.
+          const r=await fetch('/json'); const a=r.body.getReader(); a.releaseLock();
+          out.push(r.body.locked+':'+(await r.body.getReader().read()).value.length);
+          try { await a.read(); out.push('released read') } catch(e) { out.push(e instanceof TypeError ? 'released' : 'other') }
+          // cancel ends the stream: pending and later reads are done.
+          const c=await fetch('/sse'); const reader=c.body.getReader(); await reader.read();
+          const pending=reader.read(); await reader.cancel();
+          out.push((await pending).done+':'+(await reader.read()).done);
+          // The interface objects are not exposed (no constructor support).
+          out.push(typeof ReadableStream);
+          state=out.join('|');
+        })().catch(e=>state='ERROR '+e);"#,
+    );
+    env.until("state!=='pending'");
+    assert_eq!(env.eval("state"), "abc:false:true:undefined|null|false:13|released|true:true|undefined");
+    env.finish_network_tasks();
+    assert_eq!(env.page.fetch_usage(), (0, 0));
+}
+
+#[test]
+fn fetch_body_stream_abort_rejects_pending_read_with_reason() {
+    // Own server: the test server serves one connection at a time.
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    env.eval(
+        r#"globalThis.state='pending';
+        (async()=>{
+          const ac=new AbortController(); const reason={why:'stop'};
+          const reader=(await fetch('/sse',{signal:ac.signal})).body.getReader(); await reader.read();
+          const waiting=reader.read(); ac.abort(reason);
+          state=await waiting.then(()=>'resolved', e=>e===reason?'aborted':'other '+e);
+        })().catch(e=>state='ERROR '+e);"#,
+    );
+    env.until("state!=='pending'");
+    assert_eq!(env.eval("state"), "aborted");
+    let _ = server.release.send(());
+    env.finish_network_tasks();
+    assert_eq!(env.page.fetch_usage(), (0, 0));
+}
