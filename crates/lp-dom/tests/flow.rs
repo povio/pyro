@@ -3181,3 +3181,111 @@ fn fit_content_around_a_table_shrinks_to_its_min_content_like_chromium() {
         assert_eq!([w("item"), w("sc"), w("tb")], [900.0, 900.0, 900.0], "table style {extra:?}");
     }
 }
+
+/// x and width of `id`'s border box (fixed-table regressions).
+fn x_width(p: &Page, id: &str) -> [f64; 2] {
+    let r = p.layout.bounding_client_rect(&p.dom, p.id(id));
+    [r.x, r.width]
+}
+
+fn assert_x_widths(p: &Page, name: &str, expected: &[(&str, [f64; 2])]) {
+    for (id, [x, w]) in expected {
+        let [ax, aw] = x_width(p, id);
+        assert!((ax - x).abs() < 0.1 && (aw - w).abs() < 0.1, "{name} #{id}: got [{ax}, {aw}], Chromium [{x}, {w}]");
+    }
+}
+
+const FIXED_COLS: &str =
+    "<colgroup><col style=\"width:100px\"><col style=\"width:200px\"><col style=\"width:300px\"></colgroup>";
+
+/// A fit-content column-flex item (TOS `w-fit min-w-full`) of a `width`px
+/// column container around `table`.
+fn fit_wrapper(width: u32, table: &str) -> String {
+    format!(
+        "<!doctype html><body style=\"margin:0\"><div style=\"display:flex;flex-direction:column;width:{width}px;height:300px\">\
+         <div id=item style=\"display:flex;flex-direction:column;width:fit-content;min-width:100%;flex:1 1 0%;min-height:0\">{table}</div></div></body>"
+    )
+}
+
+#[test]
+fn fixed_tables_size_columns_by_their_col_widths_like_chromium() {
+    // TOS finance tables: `table-layout: fixed`, 100% wide, `<col>` widths
+    // summing to 1822px. The columns ignored `<col>` and the table's
+    // min-content counted cell contents, so `w-fit` wrappers grew to 2134px
+    // and every column stretched 1.17x (TS-88: Profit out of view). Chromium
+    // (800x600): columns take the `<col>` widths, scaled proportionally when
+    // the table is wider; the fixed table's min-content is their sum.
+    let fixed = |rows: &str, extra: &str| {
+        format!("<table id=tb style=\"width:100%;table-layout:fixed;border-collapse:separate;border-spacing:0;{extra}\">{FIXED_COLS}{rows}</table>")
+    };
+    let head = "<thead><tr><th id=h0 style=\"padding:0\">A</th><th id=h1 style=\"padding:0\">B</th><th id=h2 style=\"padding:0\">C</th></tr></thead>";
+    let body = "<tbody><tr><td id=c0 style=\"padding:0\">xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx</td><td id=c1 style=\"padding:0\">some text</td><td id=c2 style=\"padding:0\">more text here</td></tr></tbody>";
+    let rows = format!("{head}{body}");
+    let wide = format!(
+        "<tbody><tr><td id=c0 style=\"padding:0\">{}</td><td id=c1 style=\"padding:0\">{}</td><td id=c2 style=\"padding:0\">{}</td></tr></tbody>",
+        "x".repeat(60),
+        "y".repeat(60),
+        "z".repeat(60)
+    );
+    let third = 1000.0 / 6.0;
+    type Case = (&'static str, String, Vec<(&'static str, [f64; 2])>);
+    let cases: [Case; 4] = [
+        (
+            "wider than its columns",
+            fit_wrapper(1000, &fixed(&rows, "min-width:600px")),
+            vec![("item", [0.0, 1000.0]), ("tb", [0.0, 1000.0]), ("c0", [0.0, third]), ("c1", [third, 2.0 * third]), ("c2", [500.0, 500.0])],
+        ),
+        (
+            "container narrower than its columns",
+            fit_wrapper(400, &fixed(&rows, "min-width:600px")),
+            vec![("item", [0.0, 600.0]), ("tb", [0.0, 600.0]), ("c0", [0.0, 100.0]), ("c1", [100.0, 200.0]), ("c2", [300.0, 300.0])],
+        ),
+        (
+            "cell contents wider than every column",
+            fit_wrapper(300, &fixed(&wide, "")),
+            vec![("item", [0.0, 600.0]), ("tb", [0.0, 600.0]), ("c0", [0.0, 100.0]), ("c1", [100.0, 200.0]), ("c2", [300.0, 300.0])],
+        ),
+        (
+            "<col span>",
+            fit_wrapper(
+                1000,
+                "<table id=tb style=\"width:100%;table-layout:fixed;border-spacing:0\"><colgroup><col style=\"width:100px\"><col span=2 style=\"width:250px\"></colgroup>\
+                 <tbody><tr><td id=c0 style=\"padding:0\">a</td><td id=c1 style=\"padding:0\">b</td><td id=c2 style=\"padding:0\">c</td></tr></tbody></table>",
+            ),
+            vec![("tb", [0.0, 1000.0]), ("c0", [0.0, third]), ("c1", [third, 2500.0 / 6.0]), ("c2", [3500.0 / 6.0, 2500.0 / 6.0])],
+        ),
+    ];
+    for (name, html, expected) in cases {
+        let p = page(&html, Geometry::Flow);
+        assert_x_widths(&p, name, &expected);
+    }
+}
+
+#[test]
+fn fixed_tables_without_a_header_keep_col_widths_across_colspans_like_chromium() {
+    // TOS Grand Total table: same `<col>` widths, no thead, a first body row
+    // with a colspan. Its columns split the width evenly instead (194px vs
+    // 253px for the master table), so the totals tables misaligned.
+    let html = fit_wrapper(
+        1000,
+        &format!(
+            "<table id=tb style=\"width:100%;table-layout:fixed;min-width:600px;border-collapse:separate;border-spacing:0\">{FIXED_COLS}\
+             <tbody><tr><td id=c0 colspan=2 style=\"padding:0\">Grand Total</td><td id=c2 style=\"padding:0\">9</td></tr>\
+             <tr><td id=d0 style=\"padding:0\">a</td><td id=d1 style=\"padding:0\">b</td><td id=d2 style=\"padding:0\">c</td></tr></tbody></table>"
+        ),
+    );
+    let p = page(&html, Geometry::Flow);
+    let third = 1000.0 / 6.0;
+    assert_x_widths(
+        &p,
+        "no header, colspan first row",
+        &[
+            ("tb", [0.0, 1000.0]),
+            ("c0", [0.0, 500.0]),
+            ("c2", [500.0, 500.0]),
+            ("d0", [0.0, third]),
+            ("d1", [third, 2.0 * third]),
+            ("d2", [500.0, 500.0]),
+        ],
+    );
+}

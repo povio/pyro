@@ -3014,18 +3014,21 @@ impl<'a> Ctx<'a> {
 
     /// Column border-box widths for a table whose content box is `width`
     /// (None: shrink to the columns).
-    fn table_columns(&self, table: &FlowStyle, rows: &[TableRow], cols: usize, width: Option<f64>) -> Vec<f64> {
+    fn table_columns(
+        &self,
+        el: NodeId,
+        table: &FlowStyle,
+        rows: &[TableRow],
+        cols: usize,
+        width: Option<f64>,
+    ) -> Vec<f64> {
         let (sx, _) = Self::spacing(table);
         let spacing = sx * (cols as f64 + 1.0);
         let basis = width.unwrap_or(0.0) - spacing;
         let mut declared: Vec<Option<f64>> = vec![None; cols];
         let mut widths = vec![0.0; cols];
         if table.table_layout_fixed && width.is_some() {
-            if let Some(first) = rows.first() {
-                for c in first.cells.iter().filter(|c| c.span == 1) {
-                    declared[c.col] = self.cell_width(c, basis, false);
-                }
-            }
+            declared = self.fixed_column_widths(el, rows, cols, basis);
             for (i, d) in declared.iter().enumerate() {
                 widths[i] = d.unwrap_or(0.0);
             }
@@ -3071,7 +3074,73 @@ impl<'a> Ctx<'a> {
     fn table_max_content(&self, table: NodeId, style: &FlowStyle) -> f64 {
         let (rows, cols) = self.table_rows(table);
         let (sx, _) = Self::spacing(style);
-        self.table_columns(style, &rows, cols, None).iter().sum::<f64>() + sx * (cols as f64 + 1.0)
+        let content = self.table_columns(table, style, &rows, cols, None).iter().sum::<f64>();
+        // A fixed-layout table is at least its declared columns.
+        let fixed = if style.table_layout_fixed { self.fixed_columns_sum(table, &rows, cols) } else { 0.0 };
+        content.max(fixed) + sx * (cols as f64 + 1.0)
+    }
+
+    /// Declared widths of a fixed-layout table's columns (CSS 2.1 17.5.2.1):
+    /// `<col>`/`<colgroup>` widths (with `span`) first, then the first row's
+    /// cells, a spanning cell's width split evenly over its columns. None:
+    /// auto (shares what the table has left).
+    fn fixed_column_widths(&self, table: NodeId, rows: &[TableRow], cols: usize, basis: f64) -> Vec<Option<f64>> {
+        let mut declared: Vec<Option<f64>> = vec![None; cols];
+        let span_of = |el: NodeId| {
+            self.dom
+                .get_attribute(el, "span")
+                .ok()
+                .flatten()
+                .and_then(|v| v.trim().parse::<usize>().ok())
+                .filter(|&n| n > 0)
+                .unwrap_or(1)
+                .min(1000)
+        };
+        let mut next = 0usize;
+        let mut assign = |declared: &mut Vec<Option<f64>>, n: usize, w: Option<f64>| {
+            for d in declared.iter_mut().skip(next).take(n) {
+                *d = w;
+            }
+            next += n;
+        };
+        for (child, style) in self.flatten_children(table) {
+            let Some(style) = style else { continue };
+            match style.table_part {
+                TablePart::ColumnGroup => {
+                    let group_width = style.width.resolve(Some(basis));
+                    let columns: Vec<(NodeId, StyleRef)> = self
+                        .flatten_children(child)
+                        .into_iter()
+                        .filter_map(|(c, s)| s.filter(|s| s.table_part == TablePart::Column).map(|s| (c, s)))
+                        .collect();
+                    if columns.is_empty() {
+                        assign(&mut declared, span_of(child), group_width);
+                    }
+                    for (c, s) in columns {
+                        assign(&mut declared, span_of(c), s.width.resolve(Some(basis)).or(group_width));
+                    }
+                }
+                TablePart::Column => assign(&mut declared, span_of(child), style.width.resolve(Some(basis))),
+                _ => {}
+            }
+        }
+        if let Some(first) = rows.first() {
+            for c in &first.cells {
+                let Some(w) = self.cell_width(c, basis, false) else { continue };
+                let share = w / c.span as f64;
+                for d in declared.iter_mut().skip(c.col).take(c.span) {
+                    if d.is_none() {
+                        *d = Some(share);
+                    }
+                }
+            }
+        }
+        declared
+    }
+
+    /// The declared columns of a fixed-layout table, summed (auto: 0).
+    fn fixed_columns_sum(&self, table: NodeId, rows: &[TableRow], cols: usize) -> f64 {
+        self.fixed_column_widths(table, rows, cols, 0.0).iter().map(|d| d.unwrap_or(0.0)).sum()
     }
 
     /// Min-content width of a table's content box: each column at least its
@@ -3082,6 +3151,10 @@ impl<'a> Ctx<'a> {
     fn table_min_content(&self, table: NodeId, style: &FlowStyle) -> f64 {
         let (rows, cols) = self.table_rows(table);
         let (sx, _) = Self::spacing(style);
+        if style.table_layout_fixed {
+            // Fixed layout ignores cell contents: the declared columns.
+            return self.fixed_columns_sum(table, &rows, cols) + sx * (cols as f64 + 1.0);
+        }
         let mut widths = vec![0.0f64; cols];
         for row in &rows {
             for c in row.cells.iter().filter(|c| c.span == 1) {
@@ -3112,7 +3185,7 @@ impl<'a> Ctx<'a> {
             return 0.0;
         }
         let (sx, sy) = Self::spacing(style);
-        let widths = self.table_columns(style, &rows, cols, Some(width));
+        let widths = self.table_columns(el, style, &rows, cols, Some(width));
         let mut starts = Vec::with_capacity(cols + 1);
         let mut cx = x + sx;
         for w in &widths {
