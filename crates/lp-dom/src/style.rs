@@ -1119,6 +1119,89 @@ struct GenericRule {
     decls: Rc<[(String, Rc<str>, bool)]>,
     normal: u64,
     important: u64,
+    /// Bloom hashes its ancestor compounds require (0: none), to skip it for
+    /// elements whose ancestors lack one (`AncestorBits`).
+    ancestors: [u32; 4],
+}
+
+/// Selector ancestor hashes (no-quirks) of `sel`, unpacked; 0 for none.
+fn ancestor_hashes(sel: &Selector<Impl>) -> [u32; 4] {
+    let h = selectors::parser::AncestorHashes::new(sel, selectors::context::QuirksMode::NoQuirks);
+    let mask = selectors::bloom::BLOOM_HASH_MASK;
+    [h.packed_hashes[0] & mask, h.packed_hashes[1] & mask, h.packed_hashes[2] & mask, h.fourth_hash()]
+}
+
+/// A 2048-bit, two-probe Bloom filter of the ancestor filter hashes of an
+/// element's ancestors (`Dom::ancestor_filter_hashes`), like Blink's and
+/// Stylo's ancestor filter but memoized per element for a layout pass.
+#[derive(Clone)]
+struct AncestorBits([u64; 32]);
+
+impl AncestorBits {
+    fn probes(hash: u32) -> [usize; 2] {
+        let h = (hash & selectors::bloom::BLOOM_HASH_MASK) as usize;
+        [h & 2047, (h >> 11) & 2047]
+    }
+    fn insert(&mut self, hash: u32) {
+        for b in Self::probes(hash) {
+            self.0[b / 64] |= 1 << (b % 64);
+        }
+    }
+    fn might_contain(&self, hash: u32) -> bool {
+        Self::probes(hash).iter().all(|&b| self.0[b / 64] & (1 << (b % 64)) != 0)
+    }
+}
+
+/// The ancestor filter of element `idx` for the current layout pass; None
+/// outside a pass, in quirks mode (case-insensitive classes and ids) and in
+/// trees not rooted at a document (shadow trees, where matching may reach
+/// the host: full matching there).
+fn ancestor_bits(dom: &Dom, idx: u32) -> Option<Rc<AncestorBits>> {
+    if dom.in_quirks_mode(idx) {
+        return None;
+    }
+    PASS_MEMO.with(|m| {
+        let mut m = m.borrow_mut();
+        let memo = &mut m.as_mut()?.ancestor_bits;
+        let key = dom_key(dom);
+        if let Some(b) = memo.get(&(key, idx)) {
+            return b.clone();
+        }
+        // Walk up to a memoized parent (or the top), then fill in downwards:
+        // an element's filter is its parent's plus the parent's own hashes.
+        let mut chain = vec![idx];
+        let start = loop {
+            let top = *chain.last().expect("non-empty");
+            match dom.selector_parent(top) {
+                None => {
+                    let p = dom.n(top).parent;
+                    let rooted = p == NIL || matches!(dom.n(p).kind, NodeKind::Document(_));
+                    break rooted.then_some((AncestorBits([0; 32]), None));
+                }
+                Some(p) => match memo.get(&(key, p)) {
+                    Some(b) => break b.as_ref().map(|b| ((**b).clone(), Some(p))),
+                    None => chain.push(p),
+                },
+            }
+        };
+        let Some((mut bits, mut parent)) = start else {
+            for x in chain {
+                memo.insert((key, x), None);
+            }
+            return None;
+        };
+        let mut out = None;
+        while let Some(x) = chain.pop() {
+            if let Some(p) = parent {
+                dom.ancestor_filter_hashes(p, |h| bits.insert(h));
+            }
+            let rc = Rc::new(bits.clone());
+            memo.insert((key, x), Some(rc.clone()));
+            out = Some(rc);
+            parent = Some(x);
+        }
+        out
+    })
 }
 
 struct PendingGeneric {
@@ -1539,7 +1622,9 @@ impl<'v> Builder<'v> {
             let normal = (rank_of(layers, g.layer, false) << RANK_SHIFT) | spec | g.doc as u64;
             let important = (rank_of(layers, g.layer, true) << RANK_SHIFT) | spec | g.doc as u64 | IMPORTANT_BIT;
             let idx = rs.generic_rules.len() as u32;
+            let ancestors = ancestor_hashes(&g.selector);
             rs.generic_rules.push(GenericRule {
+                ancestors,
                 selector: SelectorList::from_one(g.selector),
                 decls: g.decls,
                 normal,
@@ -1623,6 +1708,7 @@ struct PassMemo {
     /// element, precise): an element without its own value takes its
     /// parent's, so each ancestor resolves once per pass.
     inherited: FxHashMap<String, InheritedByElement>,
+    ancestor_bits: FxHashMap<(usize, u32), Option<Rc<AncestorBits>>>,
 }
 
 fn dom_key(dom: &Dom) -> usize {
@@ -3718,9 +3804,18 @@ impl StyleEngine {
                 }
             }
         }
+        // Rules whose ancestor compounds need a tag, id or class no ancestor
+        // has cannot match (most `.a *`-style rules, tested on every element).
+        let mut bits: Option<Option<Rc<AncestorBits>>> = None;
         let mut check = |list: &[u32]| {
             for &ri in list {
                 let r = &rules.generic_rules[ri as usize];
+                if r.ancestors[0] != 0 {
+                    let b = bits.get_or_insert_with(|| dom.check(el).ok().and_then(|idx| ancestor_bits(dom, idx)));
+                    if b.as_ref().is_some_and(|b| r.ancestors.iter().any(|&h| h != 0 && !b.might_contain(h))) {
+                        continue;
+                    }
+                }
                 if !dom.matches(el, &r.selector).unwrap_or(false) {
                     continue;
                 }

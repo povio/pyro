@@ -457,6 +457,33 @@ impl selectors::Element for ElemRef<'_> {
 }
 
 impl Dom {
+    /// Hashes an ancestor compound of a selector can require of element
+    /// `idx` (selectors' `AncestorHashes`, no-quirks): its local name,
+    /// namespace, id and classes.
+    pub(crate) fn ancestor_filter_hashes(&self, idx: u32, mut f: impl FnMut(u32)) {
+        let Some(e) = self.n(idx).element() else { return };
+        f(e.name.local.precomputed_hash());
+        f(e.name.ns.precomputed_hash());
+        if let Some(id) = e.attr("id") {
+            f(LocalName::from(id).precomputed_hash());
+        }
+        for class in e.attr("class").unwrap_or("").split_ascii_whitespace() {
+            f(LocalName::from(class).precomputed_hash());
+        }
+    }
+
+    /// The parent element selector combinators step to (`parent_element`).
+    pub(crate) fn selector_parent(&self, idx: u32) -> Option<u32> {
+        let p = self.n(idx).parent;
+        (p != NIL && self.n(p).is_element()).then_some(p)
+    }
+
+    /// Whether the element's document is in quirks mode (class and id
+    /// selectors match case-insensitively).
+    pub(crate) fn in_quirks_mode(&self, idx: u32) -> bool {
+        self.quirks(idx) == SelQuirks::Quirks
+    }
+
     pub(crate) fn is_html_doc(&self, doc: u32) -> bool {
         matches!(&self.n(doc).kind, NodeKind::Document(d) if d.kind == crate::node::DocumentKind::Html)
     }

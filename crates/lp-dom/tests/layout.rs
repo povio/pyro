@@ -3005,3 +3005,102 @@ fn computed_display_blockifies_flex_and_grid_items() {
     p.style(label, "display:grid");
     assert_eq!(cs(&p, "star"), "block");
 }
+
+#[test]
+fn cascade_ancestor_prefilter_never_rejects_a_matching_rule() {
+    // Inside a layout pass, generic rules whose ancestor compounds need a
+    // tag, id or class no ancestor has are skipped before matching (an
+    // ancestor Bloom filter). Differential: every element's value in a pass
+    // equals full matching outside one, for each selector, in no-quirks and
+    // quirks documents, including a shadow tree.
+    let rules = [
+        ".a .x",
+        ".a > section .x",
+        "#Top .x",
+        "#top .x",
+        ".B .x",
+        ".b .x",
+        "div .x",
+        "DIV .x",
+        "section p > span",
+        "p > .x",
+        ":is(.a) .x",
+        ":where(.c) .x",
+        ":is(.a, .zz) .x",
+        ":where(.zz .q, .a) .x",
+        "[data-k] .x",
+        "[data-k=v] > li .x",
+        "ul li i",
+        "svg .x",
+        "foreignObject .x",
+        "foreignobject .x",
+        "g > rect",
+        "@namespace svg url(http://www.w3.org/2000/svg); svg|g .x",
+        "*|g .x",
+        ".c + ul .x",
+        "section ~ div em",
+        ".a .c ~ ul > li > .x",
+        ":not(.zz) .x",
+        ".a :not(.c) .x",
+        ".a:has(.y) .x",
+        "li:first-child .x",
+        ".c .x",
+        "span.x",
+        ":host .x",
+        ":host(.c) .x",
+        "body :host .x",
+        "div :host(.c) > .a > span",
+        ".a .c .x .zz",
+    ];
+    // Inherited values at several levels (memoized per pass too).
+    let body = r#"<div id=Top class="a B" style="color:rgb(1,2,3);font-weight:bolder;white-space:nowrap;line-height:1.5"><section class=c><p id=p class="x y" style="font-weight:lighter;white-space:normal"><span class=x>t</span><b>b</b></p></section><ul data-k=v><li class=x><i class=x>i</i></li></ul><svg><foreignObject><div class=x>f</div></foreignObject><g class=g><rect class=x /></g></svg><div class=FOO><em class=x>e</em></div></div>"#;
+    let decl = "{margin-left:7px}";
+    for doctype in ["<!doctype html>", ""] {
+        let mut matched = 0;
+        for rule in rules {
+            let html = format!("{doctype}<style>{rule}{decl}</style><body>{body}</body>");
+            let build = || {
+                let mut p = page(&html);
+                // A shadow tree under section.c: its elements match from the
+                // shadow root up (full matching stops there).
+                let host = p
+                    .dom
+                    .descendants(p.doc)
+                    .unwrap()
+                    .find(|&n| p.dom.tag_name(n).ok().as_deref() == Some("SECTION"))
+                    .unwrap();
+                let root = p.dom.attach_shadow(host, ShadowRootMode::Open).unwrap();
+                let (outer, inner) = (p.create("div"), p.create("span"));
+                p.dom.set_attribute(outer, "class", "a").unwrap();
+                p.dom.set_attribute(inner, "class", "x").unwrap();
+                p.append(root, outer);
+                p.append(outer, inner);
+                // The rule in a shadow-scoped sheet too (`:host`).
+                let style = p.create("style");
+                let text = p.dom.create_text(p.doc, &format!("{rule}{decl}")).unwrap();
+                p.append(style, text);
+                p.append(root, style);
+                p.layout.style_mut().discover_style_elements(&p.dom);
+                let mut els: Vec<NodeId> = p.dom.descendants(p.doc).unwrap().collect();
+                els.extend([outer, inner]);
+                els.retain(|&n| p.dom.node_type(n).ok() == Some(NodeType::Element));
+                (p, els)
+            };
+            let (full, els) = build();
+            let props = ["margin-left", "color", "font-weight", "white-space", "line-height"];
+            let values = |p: &Page| -> Vec<Vec<Option<String>>> {
+                els.iter().map(|&e| props.iter().map(|n| p.layout.style().used_value(&p.dom, e, n)).collect()).collect()
+            };
+            let reference = values(&full);
+            let (pass, els2) = build();
+            assert_eq!(els, els2);
+            let filtered = lp_dom::style::with_pass_memo(|| values(&pass));
+            assert_eq!(filtered, reference, "{doctype:?} {rule}");
+            matched += reference.iter().any(|v| v[0].as_deref() == Some("7px")) as usize;
+        }
+        // Not vacuous: most rules match something (no-quirks misses the
+        // case-mismatched id/class/tag, @namespace, the `:host` rules, which
+        // the cascade does not match today, and the impossible chain).
+        assert!(matched >= rules.len() - 9, "{doctype:?}: only {matched} rules matched");
+    }
+}
