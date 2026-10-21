@@ -2444,3 +2444,48 @@ fn flow_overflow_wrap_breaks_long_words_like_chromium() {
         assert!(w > 200.0, "{k}: the word's width is the min-content ({w})");
     }
 }
+
+#[test]
+fn flow_whitespace_normal_span_wraps_inside_nowrap_cell() {
+    // TOS FE CMR cargo editor table (TP-4194/4195): the cell is `whitespace-
+    // nowrap overflow-hidden text-ellipsis`, the value a Typography span with
+    // `whitespace-normal wrap-anywhere`. Soft wraps follow the white-space of
+    // the element containing the text, so the span wraps inside the cell.
+    // Chromium (Playwright 1.59.1, 500 18px system-ui), on this markup:
+    // - pkg (200px cell): 2 lines, span 191.4px wide (word broken anywhere,
+    //   "3ddea465" continues the second line), inside the 192px content box.
+    // - hs (170px cell): 3 lines, one HS code each, span 115.4px wide.
+    // - inherit (span without white-space): one 347.6px line, clipped.
+    let td =
+        "white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:2px 4px;line-height:1.25;position:relative";
+    let sp = "font:500 18px system-ui;white-space:normal;overflow-wrap:anywhere";
+    let cases = [
+        ("pkg", 200, "ReinforcedIndustrialTransportPallet 3ddea465", sp),
+        ("hs", 170, "9230602501, 9230603302, 9230603903", sp),
+        ("inherit", 170, "9230602501, 9230603302, 9230603903", "font:500 18px system-ui"),
+    ];
+    let mut html = String::from("<!doctype html><body style=\"margin:0;font:400 14px system-ui\">");
+    for (k, w, text, s) in cases {
+        html.push_str(&format!(
+            "<table style=\"table-layout:fixed;width:600px;border-collapse:collapse\"><tr><td id=c-{k} style=\"{td};width:{}px\"><span id=s-{k} style=\"{s}\">{text}</span></td><td>x</td></tr></table>",
+            w - 8
+        ));
+    }
+    let p = page(&html, Geometry::Flow);
+    // One line is the single-line span's height; each further line adds the
+    // line pitch (the step from 2 to 3 lines).
+    let one = p.metrics("s-inherit")[3];
+    let pitch = p.metrics("s-hs")[3] - p.metrics("s-pkg")[3];
+    assert!(pitch >= one, "line pitch {pitch} vs line {one}");
+    for (k, lines) in [("pkg", 2.0), ("hs", 3.0)] {
+        let cell = p.metrics(&format!("c-{k}"));
+        let text = p.metrics(&format!("s-{k}"));
+        assert_eq!(text[3], one + (lines - 1.0) * pitch, "{k}: {lines} lines, span {text:?}");
+        assert!(
+            text[0] >= cell[0] + 4.0 - 0.5 && text[0] + text[2] <= cell[0] + cell[2] - 4.0 + 0.5,
+            "{k}: span {text:?} inside the content box of cell {cell:?}"
+        );
+    }
+    let cell = p.metrics("c-inherit");
+    assert!(p.metrics("s-inherit")[2] > cell[2], "inherit: the nowrap line overflows the cell");
+}

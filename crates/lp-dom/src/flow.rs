@@ -780,6 +780,11 @@ enum InlineItem {
         /// The word, its font size and weight, when it may be broken if it
         /// cannot fit on an empty line (None: it overflows instead).
         breakable: Option<(std::rc::Rc<str>, f64, u16)>,
+        /// `white-space` of the element containing the word forbids a soft
+        /// wrap before it (nowrap / pre). The containing inline element
+        /// decides, not the block (a whitespace-normal span in a nowrap cell
+        /// wraps).
+        nowrap: bool,
     },
     Break,
     Atomic {
@@ -1660,9 +1665,9 @@ impl<'a> Ctx<'a> {
                         parent.text_align,
                     );
                 }
-                InlineItem::Word { width: w, height: h, space_before, owners, ascent, content, breakable } => {
+                InlineItem::Word { width: w, height: h, space_before, owners, ascent, content, breakable, nowrap } => {
                     let gap = if line.x > 0.0 { space_before } else { 0.0 };
-                    if line.x > 0.0 && line.x + gap + w > width + FIT_EPSILON && !parent.nowrap {
+                    if line.x > 0.0 && line.x + gap + w > width + FIT_EPSILON && !nowrap {
                         line_y += self.flush_line(
                             &mut line,
                             x,
@@ -2019,6 +2024,7 @@ impl<'a> Ctx<'a> {
                         ascent,
                         content: font_metrics(fs),
                         breakable,
+                        nowrap: parent.nowrap,
                     });
                     pending_space = false;
                 }
@@ -2031,6 +2037,7 @@ impl<'a> Ctx<'a> {
                         ascent: 0.0,
                         content: (0.0, 0.0),
                         breakable: None,
+                        nowrap: parent.nowrap,
                     });
                 }
             }
