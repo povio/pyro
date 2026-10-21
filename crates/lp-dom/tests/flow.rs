@@ -2348,3 +2348,46 @@ fn flow_percentage_flex_basis_in_an_indefinite_column_is_content() {
     assert_eq!(m("j3"), (860.0, 800.0, 0.0), "content basis ignores height:10px");
     assert_eq!((m("i4").1, m("j4").1), (200.0, 200.0), "definite row width: 0% resolves");
 }
+
+#[test]
+fn batched_changes_reach_depth_bounded_anchors_at_their_lowest_level() {
+    // One invalidation batch walks the ancestors of many changes and stops a
+    // walk at an ancestor already reached at the same or a lower level. A
+    // deep change first reaches the `:has(> .y)` anchor at level 2 (beyond
+    // its depth 1); a later change in the same batch reaches it at level 0
+    // and must still restyle it.
+    let css = "<style>\
+        .q:has(> .y) .z{width:290px} .z{width:29px;height:10px}\
+        .w:has(> .y) .v{width:300px} .v{width:30px;height:10px}\
+        </style>";
+    let html = format!(
+        "<!doctype html>{css}<body style=\"margin:0\">\
+         <div id=q class=q><div id=a><div id=b></div></div><div id=z class=z></div></div>\
+         <div id=w class=w><div id=c><div id=d></div></div><div id=v class=v></div></div>\
+         <div>FILLER</div></body>"
+    );
+    let mut p = page(&html, Geometry::Flow);
+    assert_matches_fresh(&p, "initial");
+    let w = |p: &Page, id: &str| p.layout.flow(&p.dom).get(p.id(id)).unwrap().rect;
+    let el = |p: &mut Page, class: &str| {
+        let e = p.dom.create_element(p.doc, "i").unwrap();
+        p.dom.set_attribute(e, "class", class).unwrap();
+        e
+    };
+    // Deep change first, then the shallow one, with no flush in between.
+    let (b, q) = (p.id("b"), p.id("q"));
+    let deep = el(&mut p, "x");
+    p.dom.append_child(b, deep).unwrap();
+    let y = el(&mut p, "y");
+    p.dom.append_child(q, y).unwrap();
+    assert_matches_fresh(&p, "deep then shallow in one batch");
+    assert_eq!(w(&p, "z").width, 290.0);
+    // Shallow first, then deep: the deep walk stops at the anchor.
+    let (d, ww) = (p.id("d"), p.id("w"));
+    let y2 = el(&mut p, "y");
+    p.dom.append_child(ww, y2).unwrap();
+    let deep2 = el(&mut p, "x");
+    p.dom.append_child(d, deep2).unwrap();
+    assert_matches_fresh(&p, "shallow then deep in one batch");
+    assert_eq!(w(&p, "v").width, 300.0);
+}

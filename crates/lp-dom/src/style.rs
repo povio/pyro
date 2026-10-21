@@ -1740,6 +1740,37 @@ fn invalidation_roots(
     // Ancestors from `first` up (`first` at `level`) that a change of an
     // element below may restyle: `:has()` anchors within their depth, and
     // forms, fieldsets and selects tested with `:valid`/`:invalid`.
+    // Per batch: each element's anchor reach (the largest depth of the
+    // anchors admitting it, u32::MAX for unbounded; None: no anchor) and
+    // validity match, computed once (a batch walks the same ancestors from
+    // many changes, and React forces a flush per metric read).
+    let reach_cache: RefCell<FxHashMap<u32, (Option<u32>, bool)>> = RefCell::new(FxHashMap::default());
+    let reach = |x: u32, e: &crate::node::ElementData| -> (Option<u32>, bool) {
+        if let Some(&r) = reach_cache.borrow().get(&x) {
+            return r;
+        }
+        let classes: Vec<&str> = e.attr("class").map(|c| c.split_ascii_whitespace().collect()).unwrap_or_default();
+        let key_matches = |k: &AnchorKey| match k {
+            AnchorKey::Class(c) => classes.iter().any(|t| t == c),
+            _ => k.matches(e),
+        };
+        let anchor = anchors
+            .iter()
+            .filter(|a| key_matches(&a.key) && a.admits_context(dom, x))
+            .map(|a| a.depth.unwrap_or(u32::MAX))
+            .max();
+        let validated = !validity.is_empty()
+            && e.is_html()
+            && matches!(&*e.name.local, "form" | "fieldset" | "select")
+            && validity.iter().any(key_matches);
+        reach_cache.borrow_mut().insert(x, (anchor, validated));
+        (anchor, validated)
+    };
+    // The lowest level each ancestor was reached at in this batch: a walk that
+    // reaches it again at that level or higher stops (depth bounds only admit
+    // more at lower levels, validity does not depend on the level, so every
+    // ancestor above was already examined at least as favourably).
+    let walked: RefCell<FxHashMap<u32, u32>> = RefCell::new(FxHashMap::default());
     let walk_up = |first: u32, level: u32| -> Vec<u32> {
         let mut out = Vec::new();
         if anchors.is_empty() && validity.is_empty() {
@@ -1749,12 +1780,17 @@ fn invalidation_roots(
         let mut cur = first;
         while cur != NIL {
             let Some(e) = element(cur) else { break };
-            let anchor = anchors.iter().any(|a| a.depth.is_none_or(|d| level <= d) && a.admits(dom, cur, e));
-            let validated = !validity.is_empty()
-                && e.is_html()
-                && matches!(&*e.name.local, "form" | "fieldset" | "select")
-                && validity.iter().any(|k| k.matches(e));
-            if anchor || validated {
+            {
+                let mut walked = walked.borrow_mut();
+                match walked.get(&cur) {
+                    Some(&seen) if seen <= level => break,
+                    _ => {
+                        walked.insert(cur, level);
+                    }
+                }
+            }
+            let (anchor, validated) = reach(cur, e);
+            if anchor.is_some_and(|d| level <= d) || validated {
                 out.push(cur);
             }
             cur = dom.n(cur).parent;
@@ -2298,13 +2334,11 @@ struct HasAnchor {
 }
 
 impl HasAnchor {
-    /// Whether element `x` can be this anchor: its key, and its context in
-    /// the current tree. (A change below `x` cannot change its ancestors; a
-    /// change of them in the same batch roots their subtree, `x` included.)
-    fn admits(&self, dom: &Dom, x: u32, e: &crate::node::ElementData) -> bool {
-        if !self.key.matches(e) {
-            return false;
-        }
+    /// Whether element `x`'s ancestors satisfy the context in the current
+    /// tree (the key is checked separately). A change below `x` cannot change
+    /// its ancestors; a change of them in the same batch roots their subtree,
+    /// `x` included.
+    fn admits_context(&self, dom: &Dom, x: u32) -> bool {
         let Some((key, parent_only)) = &self.context else { return true };
         let mut cur = dom.n(x).parent;
         while cur != NIL {

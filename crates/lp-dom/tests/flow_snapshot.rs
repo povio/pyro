@@ -67,6 +67,39 @@ fn dump_flow_snapshot() {
             }
             eprintln!("{n} mutate+pass: {:?} per pass", t.elapsed() / n as u32);
         }
+        if let Ok(n) = std::env::var("FLOW_PROFILE_METRIC_READS") {
+            // React-like churn: insert an element deep in the page, then read
+            // a layout metric (clientWidth) that forces a style flush, n times.
+            let n = n.parse::<usize>().unwrap_or(1);
+            let deep = els[els.len() * 3 / 4];
+            let reader = els[els.len() / 3];
+            let t = std::time::Instant::now();
+            for i in 0..n {
+                let e = dom.create_element(doc, "span").unwrap();
+                dom.set_attribute(e, "class", if i % 2 == 0 { "truncate text-small" } else { "flex items-center" })
+                    .unwrap();
+                dom.append_child(deep, e).unwrap();
+                let _ = layout.client_width(&dom, reader);
+            }
+            eprintln!("{n} insert+clientWidth: {:?} per iteration", t.elapsed() / n as u32);
+        }
+        if let Ok(n) = std::env::var("FLOW_PROFILE_STYLE_FLUSH") {
+            // React-like updates of attached elements (class toggles on 20
+            // elements across the page), then a style read that forces the
+            // invalidation (StyleEngine::ensure), n times. No layout.
+            let n = n.parse::<usize>().unwrap_or(1);
+            let targets: Vec<_> = (0..20).map(|k| els[els.len() / 4 + k * (els.len() / 2) / 20]).collect();
+            let reader = els[els.len() / 3];
+            let t = std::time::Instant::now();
+            for i in 0..n {
+                for &e in &targets {
+                    dom.set_attribute(e, "class", if i % 2 == 0 { "truncate text-small" } else { "flex items-center" })
+                        .unwrap();
+                }
+                let _ = layout.style().computed(&dom, reader);
+            }
+            eprintln!("{n} x (20 class updates + style flush): {:?} per iteration", t.elapsed() / n as u32);
+        }
         if let Ok(n) = std::env::var("FLOW_PROFILE_PORTAL") {
             // Portal churn on body (React overlays): append, lay out, remove.
             let n = n.parse::<usize>().unwrap_or(1);
