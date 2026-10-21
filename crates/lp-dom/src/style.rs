@@ -2284,20 +2284,45 @@ impl StyleEngine {
         // Selective invalidation when only the DOM changed and the journal
         // covers it; anything uncertain (rules, generation, focus/hover,
         // :has(), shadow trees, unknown changes) invalidates every element.
+        use crate::layout::flow_stats::{note_full, Full};
         let changes = match cache.stamp {
-            Some(old)
-                if !rules_rebuilt
-                    && old.generation == stamp.generation
-                    && old.focused == stamp.focused
-                    && old.hovered == stamp.hovered
-                    && !cache.rules.has_relative
-                    && dom.shadow_root_count() == 0 =>
-            {
-                dom.changes_since(old.version).map(|c| c.collect::<Vec<_>>())
+            Some(_) if rules_rebuilt => {
+                note_full(Full::Rules);
+                None
             }
-            _ => None,
+            Some(old)
+                if old.generation != stamp.generation
+                    || old.focused != stamp.focused
+                    || old.hovered != stamp.hovered =>
+            {
+                note_full(Full::Stamp);
+                None
+            }
+            Some(_) if cache.rules.has_relative => {
+                note_full(Full::Relative);
+                None
+            }
+            Some(_) if dom.shadow_root_count() != 0 => {
+                note_full(Full::ShadowRoots);
+                None
+            }
+            Some(old) => {
+                let changes = dom.changes_since(old.version).map(|c| c.collect::<Vec<_>>());
+                if changes.is_none() {
+                    note_full(Full::Journal);
+                }
+                changes
+            }
+            None => None,
         };
-        match changes.and_then(|c| invalidation_roots(dom, &c, &cache.rules.has_anchors)) {
+        let roots = changes.and_then(|c| {
+            let roots = invalidation_roots(dom, &c, &cache.rules.has_anchors);
+            if roots.is_none() {
+                note_full(Full::Unknown);
+            }
+            roots
+        });
+        match roots {
             Some(roots) => {
                 let mut stale = Vec::new();
                 for root in roots {
@@ -2306,10 +2331,12 @@ impl StyleEngine {
                     }
                 }
                 if stale.len() * 2 > cache.memo.len().max(cache.declared.len()).max(cache.flow.len()) {
+                    note_full(Full::Large);
                     cache.memo.clear();
                     cache.declared.clear();
                     cache.flow.clear();
                 } else {
+                    crate::layout::flow_stats::note_selective(stale.len());
                     for n in stale {
                         cache.memo.remove(&n);
                         cache.declared.remove(&n);

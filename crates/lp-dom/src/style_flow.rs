@@ -26,7 +26,11 @@ impl FlowStyleSource for StyleEngine {
         if let Some(cached) = self.cached_flow_style(dom, el) {
             return cached;
         }
+        let started = crate::layout::flow_stats::enabled().then(std::time::Instant::now);
         let style = self.flow_style_uncached(dom, el);
+        if let Some(t) = started {
+            crate::layout::flow_stats::note_style_miss(t.elapsed());
+        }
         self.store_flow_style(el, style.clone());
         style
     }

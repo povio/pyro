@@ -1828,8 +1828,10 @@ mod tests {
 
 /// `LIGHTNINGPANDA_FLOW_STATS=1`: counts flow passes and why each ran (the
 /// first pass, DOM version, style generation, focus, hover, viewport),
-/// printed to stderr every 25 passes. Diagnostic only; off by default.
-mod flow_stats {
+/// printed to stderr every 25 passes, with how the style cache was
+/// invalidated and how many flow styles were recomputed in those 25 passes.
+/// Diagnostic only; off by default.
+pub(crate) mod flow_stats {
     use std::cell::RefCell;
     use std::sync::OnceLock;
     use std::time::Duration;
@@ -1846,13 +1848,67 @@ mod flow_stats {
         focus: u64,
         hover: u64,
         viewport: u64,
+        // Since the last print.
+        window: Duration,
+        selective: u64,
+        dropped: u64,
+        full: [u64; Full::COUNT],
+        misses: u64,
+        miss_time: Duration,
+    }
+
+    /// Why the style cache was cleared entirely.
+    #[derive(Clone, Copy)]
+    pub(crate) enum Full {
+        /// The rule set was rebuilt (stylesheet change).
+        Rules,
+        /// Style generation, focus or hover changed.
+        Stamp,
+        /// Unbounded or sibling-relative `:has()` in the stylesheet.
+        Relative,
+        ShadowRoots,
+        /// The journal no longer covers the cached version.
+        Journal,
+        /// An unjournaled change (or a document-level root).
+        Unknown,
+        /// Selective roots covered more than half the cache.
+        Large,
+    }
+
+    impl Full {
+        const COUNT: usize = 7;
+        const NAMES: [&str; Full::COUNT] = ["rules", "stamp", "has", "shadow", "journal", "unknown", "large"];
+    }
+
+    pub(crate) fn note_full(reason: Full) {
+        if enabled() {
+            STATS.with(|s| s.borrow_mut().full[reason as usize] += 1);
+        }
+    }
+
+    pub(crate) fn note_selective(dropped: usize) {
+        if enabled() {
+            STATS.with(|s| {
+                let mut s = s.borrow_mut();
+                s.selective += 1;
+                s.dropped += dropped as u64;
+            });
+        }
+    }
+
+    pub(crate) fn note_style_miss(took: Duration) {
+        STATS.with(|s| {
+            let mut s = s.borrow_mut();
+            s.misses += 1;
+            s.miss_time += took;
+        });
     }
 
     thread_local! {
         static STATS: RefCell<Stats> = RefCell::new(Stats::default());
     }
 
-    pub(super) fn enabled() -> bool {
+    pub(crate) fn enabled() -> bool {
         static ON: OnceLock<bool> = OnceLock::new();
         *ON.get_or_init(|| std::env::var("LIGHTNINGPANDA_FLOW_STATS").is_ok_and(|v| v == "1"))
     }
@@ -1862,6 +1918,7 @@ mod flow_stats {
             let mut s = s.borrow_mut();
             s.passes += 1;
             s.total += took;
+            s.window += took;
             match previous {
                 None => s.first += 1,
                 Some((old, old_vp)) => {
@@ -1896,6 +1953,27 @@ mod flow_stats {
                     s.hover,
                     s.viewport
                 );
+                let full: Vec<String> = Full::NAMES
+                    .iter()
+                    .zip(s.full)
+                    .filter(|(_, n)| *n > 0)
+                    .map(|(name, n)| format!("{name}:{n}"))
+                    .collect();
+                eprintln!(
+                    "flow-stats last25 avg_ms={:.1} selective={} dropped={} full=[{}] style_misses={} style_ms={}",
+                    s.window.as_secs_f64() * 1000.0 / 25.0,
+                    s.selective,
+                    s.dropped,
+                    full.join(" "),
+                    s.misses,
+                    s.miss_time.as_millis()
+                );
+                s.window = Duration::ZERO;
+                s.selective = 0;
+                s.dropped = 0;
+                s.full = [0; Full::COUNT];
+                s.misses = 0;
+                s.miss_time = Duration::ZERO;
             }
         });
     }
