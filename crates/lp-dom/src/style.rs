@@ -1705,6 +1705,9 @@ fn whole_variable(raw: &str) -> Option<(String, Option<String>)> {
     Some(result)
 }
 
+/// Where one custom property's value comes from, by (document, element).
+type CustomByElement = FxHashMap<(usize, u32), Option<(NodeId, String)>>;
+
 /// Computed values of one property by (document, element, precise).
 type InheritedByElement = FxHashMap<(usize, u32, bool), Option<String>>;
 
@@ -1714,7 +1717,8 @@ type InheritedByElement = FxHashMap<(usize, u32, bool), Option<String>>;
 /// whose node indices overlap.
 #[derive(Default)]
 struct PassMemo {
-    custom: FxHashMap<(usize, u32, String), Option<(NodeId, String)>>,
+    /// Custom property sources by name, then (document, element).
+    custom: FxHashMap<String, CustomByElement>,
     font_size: FxHashMap<(usize, u32), f64>,
     font_weight: FxHashMap<(usize, u32), f64>,
     /// Computed values of inherited properties by property, then (document,
@@ -2754,8 +2758,8 @@ fn custom_property_inherited(dom: &Dom, rules: &RuleSet, el: NodeId, name: &str)
     let mut cur = dom.check(el).ok();
     let mut found = None;
     while let Some(idx) = cur {
-        if let Some(hit) = PASS_MEMO
-            .with(|m| m.borrow().as_ref().and_then(|m| m.custom.get(&(dom_key(dom), idx, name.to_owned())).cloned()))
+        if let Some(hit) =
+            PASS_MEMO.with(|m| m.borrow().as_ref().and_then(|m| m.custom.get(name)?.get(&(dom_key(dom), idx)).cloned()))
         {
             found = hit;
             break;
@@ -2770,7 +2774,11 @@ fn custom_property_inherited(dom: &Dom, rules: &RuleSet, el: NodeId, name: &str)
     PASS_MEMO.with(|m| {
         if let Some(m) = m.borrow_mut().as_mut() {
             for idx in visited {
-                m.custom.insert((dom_key(dom), idx, name.to_owned()), found.clone());
+                let by_el = match m.custom.get_mut(name) {
+                    Some(by_el) => by_el,
+                    None => m.custom.entry(name.to_owned()).or_default(),
+                };
+                by_el.insert((dom_key(dom), idx), found.clone());
             }
         }
     });
@@ -2778,11 +2786,18 @@ fn custom_property_inherited(dom: &Dom, rules: &RuleSet, el: NodeId, name: &str)
 }
 
 /// The custom property declared on the element itself (not inherited).
+/// Whether an inline style can declare custom property `name`: its text
+/// holds the name, or an escape that could spell it. Saves parsing every
+/// inline style (React sets `style` on many elements) for every variable.
+fn may_declare(style: &str, name: &str) -> bool {
+    style.contains(name) || style.contains('\\')
+}
+
 fn own_custom_property(dom: &Dom, rules: &RuleSet, idx: u32, name: &str) -> Option<(NodeId, String)> {
     let id = dom.id_of(idx);
     let mut value = None;
     let mut priority = 0;
-    if let Some(style) = dom.n(idx).element().and_then(|e| e.attr("style")) {
+    if let Some(style) = dom.n(idx).element().and_then(|e| e.attr("style")).filter(|s| may_declare(s, name)) {
         if let Some((raw, important)) = InlineStyle::parse(style).get(name) {
             value = Some(raw);
             priority = if important { INLINE_IMPORTANT_PRIORITY } else { INLINE_PRIORITY };
@@ -2803,7 +2818,7 @@ fn custom_property_source_walk(dom: &Dom, rules: &RuleSet, el: NodeId, name: &st
         let id = dom.id_of(idx);
         let mut value = None;
         let mut priority = 0;
-        if let Some(style) = dom.n(idx).element().and_then(|e| e.attr("style")) {
+        if let Some(style) = dom.n(idx).element().and_then(|e| e.attr("style")).filter(|s| may_declare(s, name)) {
             if let Some((raw, important)) = InlineStyle::parse(style).get(name) {
                 value = Some(raw);
                 priority = if important { INLINE_IMPORTANT_PRIORITY } else { INLINE_PRIORITY };

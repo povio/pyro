@@ -2866,3 +2866,30 @@ fn cross_pass_measurements_never_serve_stale_geometry() {
     p.layout.set_viewport(Viewport::new(500, 400));
     check(&p, "viewport");
 }
+
+#[test]
+fn inline_custom_properties_resolve_through_var() {
+    // An element's inline style is parsed for a custom property only when
+    // it can declare it (the name, or an escape, is in its text): every
+    // form of declaration must still resolve, inherited by descendants.
+    let p = page(
+        "<!doctype html><style>:root{--w:5px} .v{display:block;height:1px;width:var(--w)}</style><body style='margin:0'>\
+         <div style='--w:11px'><i id=plain class=v></i></div>\
+         <div style='color:red; --w : 12px !important ; height:2px'><i id=spaced class=v></i></div>\
+         <div style='--w:13px'><div style='color:blue'><i id=inherited class=v></i></div></div>\
+         <div style='height:3px;--wide:99px'><i id=prefix class=v></i></div>\
+         <div style='z-index:1'><i id=other class=v></i></div>\
+         <i id=own class=v style='--w:14px'></i>\
+         <div style='--\\77 :15px'><i id=escaped class=v></i></div>\
+         </body>",
+        Geometry::Flow,
+    );
+    let w = |id: &str| p.metrics(id)[2];
+    assert_eq!(w("plain"), 11.0);
+    assert_eq!(w("spaced"), 12.0);
+    assert_eq!(w("inherited"), 13.0);
+    assert_eq!(w("prefix"), 5.0, "--wide does not declare --w");
+    assert_eq!(w("other"), 5.0);
+    assert_eq!(w("own"), 14.0);
+    assert_eq!(w("escaped"), 15.0, "an escape can spell the name");
+}
