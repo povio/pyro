@@ -208,6 +208,7 @@ pub enum ElClass {
     Unknown,
     Generic,
     Svg,
+    SvgGraphics,
     SvgRoot,
     Other,
 }
@@ -215,7 +216,13 @@ pub enum ElClass {
 pub fn class_for(dom: &Dom, id: NodeId) -> ElClass {
     let Ok(e) = dom.element(id) else { return ElClass::Other };
     if e.namespace() == &markup5ever::ns!(svg) {
-        return if &*e.name.local == "svg" { ElClass::SvgRoot } else { ElClass::Svg };
+        return match &*e.name.local {
+            "svg" => ElClass::SvgRoot,
+            // SVGGraphicsElement interfaces (SVG 2).
+            "g" | "rect" | "circle" | "ellipse" | "line" | "polyline" | "polygon" | "path" | "text" | "tspan"
+            | "textPath" | "use" | "image" | "foreignObject" | "a" | "switch" | "defs" => ElClass::SvgGraphics,
+            _ => ElClass::Svg,
+        };
     }
     if !e.is_html() {
         return ElClass::Other;
@@ -362,6 +369,7 @@ pub fn wrap_element<'s>(s: &Scope<'s>, class: ElClass, d: NodeData, k: Option<Id
         Unknown => s.wrap::<HtmlUnknownElement>(d, k),
         Generic => s.wrap::<HtmlElement>(d, k),
         Svg => s.wrap::<SvgElement>(d, k),
+        SvgGraphics => s.wrap::<SvgGraphicsElement>(d, k),
         SvgRoot => s.wrap::<SvgSvgElement>(d, k),
         Other => s.wrap::<Element>(d, k),
     }
@@ -1447,8 +1455,12 @@ simple_class!(HtmlSlotElement, "HTMLSlotElement", HtmlElement, |def| {
 simple_class!(HtmlCanvasElement, "HTMLCanvasElement", HtmlElement, |def| {
     reflect_long!(def, "width", "width", 300);
     reflect_long!(def, "height", "height", 150);
-    // No rasterizer: getContext returns null (as for unsupported contexts).
-    def.method("getContext", 1, |s, _n, _a| Ok(s.null()));
+    // "2d": text measurement and state without a rasterizer (canvas.rs);
+    // other context types are unsupported (null).
+    def.method("getContext", 1, |s, n, a| {
+        let kind = arg_string(&a, 0, "HTMLCanvasElement.getContext")?;
+        crate::canvas::get_context(s, n.page(), n.id, &kind)
+    });
     def.method("toDataURL", 0, |s, _n, _a| Ok(s.string("data:,")));
 });
 simple_class!(HtmlMediaElement, "HTMLMediaElement", HtmlElement, |def| {
@@ -1630,7 +1642,16 @@ impl JsClass for SvgElement {
         });
     }
 }
-simple_class!(SvgGraphicsElement, "SVGGraphicsElement", SvgElement);
+simple_class!(SvgGraphicsElement, "SVGGraphicsElement", SvgElement, |def| {
+    // No rasterizer, but geometry is attribute-defined: the user-space box
+    // of shapes, paths, text and containers (lp_dom::svg_geometry).
+    def.method("getBBox", 0, |s, n, _a| {
+        let page = n.page();
+        let dom = page.dom.borrow();
+        let layout = page.layout.borrow();
+        crate::layout_api::rect_value(s, lp_dom::svg_geometry::bbox(&dom, layout.style(), n.id))
+    });
+});
 simple_class!(SvgSvgElement, "SVGSVGElement", SvgGraphicsElement);
 
 // ----- document helpers ---------------------------------------------------------------

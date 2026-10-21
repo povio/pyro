@@ -2906,3 +2906,61 @@ fn flow_style_reports_used_font_weight() {
     assert_eq!(w(&p, "th"), 700);
     assert_eq!(w(&p, "n"), 400);
 }
+
+#[test]
+fn svg_bbox_covers_shapes_paths_and_containers() {
+    let p = page(
+        r#"<!DOCTYPE html><body><svg width="600" height="300">
+  <rect id="r" x="10" y="20" width="30" height="40"/>
+  <path id="bar" d="M 96,145.3333 h 102 v 38.6667 h -102 Z"/>
+  <path id="rounded" d="M202,238A 4,4,0,0,0,206,242L 300,242A 4,4,0,0,0,
+        304,238L 304,184L 202,184 Z"/>
+  <path id="cubic" d="M0,0 C0,100 100,100 100,0"/>
+  <path id="arc" d="M0,50 A50,50 0 0 1 100,50"/>
+  <path id="rel" d="m10 10l5-5q5 10 10 0t10 0zM1e1 1.5e1"/>
+  <circle id="c" cx="50" cy="50" r="10"/>
+  <polygon id="poly" points="0,0 10,5 3,8"/>
+  <g id="g"><rect x="0" y="0" width="10" height="10" transform="translate(10,5)"/><circle cx="0" cy="0" r="2"/><rect x="99" width="5" height="5" style="display:none"/></g>
+  <linearGradient id="grad"/>
+</svg></body>"#,
+    );
+    let bb = |id: &str| {
+        let r = lp_dom::svg_geometry::bbox(&p.dom, p.layout.style(), p.id(id));
+        [r.x, r.y, r.width, r.height].map(|v| (v * 1e4).round() / 1e4)
+    };
+    assert_eq!(bb("r"), [10.0, 20.0, 30.0, 40.0]);
+    assert_eq!(bb("bar"), [96.0, 145.3333, 102.0, 38.6667]);
+    // recharts' rounded bar: the arcs stay inside the corners.
+    assert_eq!(bb("rounded"), [202.0, 184.0, 102.0, 58.0]);
+    // Curves use their extrema, not their control points.
+    assert_eq!(bb("cubic"), [0.0, 0.0, 100.0, 75.0]);
+    assert_eq!(bb("arc"), [0.0, 0.0, 100.0, 50.0]);
+    // Relative commands, a reflected `t` control (y = -5 gives a minimum of 0)
+    // and exponent numbers; a trailing moveto counts.
+    assert_eq!(bb("rel"), [10.0, 0.0, 25.0, 15.0]);
+    assert_eq!(bb("c"), [40.0, 40.0, 20.0, 20.0]);
+    assert_eq!(bb("poly"), [0.0, 0.0, 10.0, 8.0]);
+    // Children's transforms apply; display:none children do not count.
+    assert_eq!(bb("g"), [-2.0, -2.0, 22.0, 17.0]);
+    assert_eq!(bb("grad"), [0.0, 0.0, 0.0, 0.0]);
+}
+
+#[test]
+fn canvas_font_shorthand_parses_like_chromium() {
+    use lp_dom::text_metrics::parse_font;
+    let f = parse_font("bold 12px sans-serif", 10.0).unwrap();
+    assert_eq!(
+        (f.weight, f.size, f.family.as_str(), f.serialize().as_str()),
+        (700, 12.0, "sans-serif", "700 12px sans-serif")
+    );
+    let f = parse_font("400 16px / 24px system-ui, -apple-system", 10.0).unwrap();
+    assert_eq!(
+        (f.size, f.family.as_str(), f.serialize().as_str()),
+        (16.0, "system-ui, -apple-system", "16px system-ui, -apple-system")
+    );
+    let f = parse_font("italic 600 1.5em/2 Inter", 10.0).unwrap();
+    assert_eq!((f.style.as_str(), f.weight, f.size), ("italic", 600, 15.0));
+    assert!(parse_font("12px", 10.0).is_none());
+    assert!(parse_font("nonsense", 10.0).is_none());
+    assert!(parse_font("12px Menlo, monospace", 10.0).unwrap().is_monospace());
+}

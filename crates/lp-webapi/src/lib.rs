@@ -16,6 +16,7 @@
 //!    `page.dispose()`. Per-world removal can use `lifecycle::realm_disposed`.
 
 pub mod abort;
+pub mod canvas;
 pub mod collections;
 pub mod crypto;
 pub mod css;
@@ -84,6 +85,7 @@ pub fn register(engine: &lp_js::Engine) {
     collections::register(engine);
     css::register(engine);
     layout_api::register(engine);
+    canvas::register(engine);
     traversal::register(engine);
     range::register(engine);
     abort::register(engine);

@@ -2318,6 +2318,61 @@ fn resize_observer_reports_the_flow_content_box() {
 }
 
 #[test]
+fn svg_graphics_elements_report_get_bbox() {
+    // TOS analytics reads recharts bar geometry with getBBox().
+    let e = env(
+        "<body><svg id=s width=600 height=300><g id=g transform='translate(5,5)'><path id=p d='M202,238A 4,4,0,0,0,206,242L 300,242A 4,4,0,0,0,304,238L 304,184L 202,184 Z' fill='#38bdf8'/></g><linearGradient id='lg'></linearGradient></svg></body>",
+    );
+    assert_eq!(
+        eval(
+            &e.main,
+            "var b = document.getElementById('p').getBBox(); [b instanceof DOMRect, b.x, b.y, b.width, b.height, document.getElementById('p') instanceof SVGGraphicsElement, document.getElementById('s') instanceof SVGGraphicsElement, document.getElementById('lg') instanceof SVGGraphicsElement, typeof document.getElementById('lg').getBBox].join()"
+        ),
+        "true,202,184,102,58,true,true,false,undefined"
+    );
+    // A container's box is in its own user space: its own transform is excluded.
+    assert_eq!(eval(&e.main, "var g = document.getElementById('g').getBBox(); [g.x, g.y].join()"), "202,184");
+    e.page.dispose();
+}
+
+#[test]
+fn canvas_2d_measures_text_without_pixels() {
+    // TOS terms-layout sizes Days inputs with canvas measureText. The 2D
+    // context measures with the flow layout's text measure; there is no
+    // rasterizer, so pixel readback is explicitly unsupported.
+    let e = env("<body><canvas id=c></canvas><input id=i style='font: 600 15px system-ui'></body>");
+    assert_eq!(
+        eval(
+            &e.main,
+            "var c = document.getElementById('c'), x = c.getContext('2d'); [x === c.getContext('2d'), x.canvas === c, x instanceof CanvasRenderingContext2D, c.getContext('webgl'), x.font].join('|')"
+        ),
+        "true|true|true||10px sans-serif"
+    );
+    assert_eq!(eval(&e.main, "x.font = 'nonsense'; x.font"), "10px sans-serif");
+    assert_eq!(eval(&e.main, "x.font = 'bold 16px / 24px Inter, sans-serif'; x.font"), "700 16px Inter, sans-serif");
+    // Wider text measures wider; weight and size matter (the SF Pro table
+    // varies by optical size, so widths are not exactly proportional).
+    assert_eq!(
+        eval(
+            &e.main,
+            "x.font = '16px system-ui'; var a = x.measureText('999').width, b = x.measureText('9999').width; x.font = '700 16px system-ui'; var w = x.measureText('999').width; x.font = '32px system-ui'; var d = x.measureText('999').width; [a > 20 && a < 40, b > a, w > a, d > 1.8 * a].join()"
+        ),
+        "true,true,true,true"
+    );
+    assert_eq!(eval(&e.main, "x.save(); x.font = '20px monospace'; x.restore(); x.font"), "32px system-ui");
+    assert_eq!(
+        eval(&e.main, "try { x.getImageData(0, 0, 1, 1); 'returned' } catch (err) { err.name }"),
+        "NotSupportedError"
+    );
+    // The TOS pattern: drawing.font = getComputedStyle(input).font.
+    assert_eq!(
+        eval(&e.main, "x.font = getComputedStyle(document.getElementById('i')).font; x.font"),
+        "600 15px system-ui"
+    );
+    e.page.dispose();
+}
+
+#[test]
 fn resize_observer_realm_disposal_releases_observers() {
     let e = env("<body><div id=t style='width:10px;height:10px'></div></body>");
     let tasks = Rc::new(ObserverTasks::default());

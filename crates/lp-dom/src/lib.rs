@@ -21,6 +21,8 @@ pub mod select;
 pub mod serialize;
 pub mod style;
 pub mod style_flow;
+pub mod svg_geometry;
+pub mod text_metrics;
 pub mod xml;
 pub mod xpath;
 
