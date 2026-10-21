@@ -342,11 +342,11 @@ impl EngineHost {
 fn reveal(page: &Rc<PageDom>, node: NodeId) {
     let moved = page.layout.borrow_mut().scroll_into_view_targets(&page.dom.borrow(), node);
     for target in moved {
-        let (node, bubbles) = match target {
-            lp_dom::layout::ScrollTarget::Container(node) => (node, false),
-            lp_dom::layout::ScrollTarget::Viewport => (page.document(), true),
+        let node = match target {
+            lp_dom::layout::ScrollTarget::Container(node) => Some(node),
+            lp_dom::layout::ScrollTarget::Viewport => None,
         };
-        lp_webapi::input::queue_simple(page, node, "scroll", bubbles, false);
+        lp_webapi::layout_api::fire_scroll(page, node);
     }
 }
 
@@ -373,7 +373,7 @@ fn reveal_area(page: &Rc<PageDom>, node: NodeId, x: f64, y: f64, width: f64, hei
     if (dx.is_some() || dy.is_some()) && layout.window_scroll_to(&dom, dx, dy) {
         drop(layout);
         drop(dom);
-        lp_webapi::input::queue_simple(page, page.document(), "scroll", true, false);
+        lp_webapi::layout_api::fire_scroll(page, None);
     }
 }
 

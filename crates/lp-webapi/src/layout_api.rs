@@ -120,29 +120,42 @@ pub(crate) fn range_rect<'s>(
     rect_value(s, r)
 }
 
-pub(crate) fn fire_scroll(page: &Rc<PageDom>, target: Option<NodeId>) {
-    // Scroll events are delivered as a separate task (not throttled).
-    let p = page.clone();
+pub fn fire_scroll(page: &Rc<PageDom>, target: Option<NodeId>) {
+    // HTML "run the scroll steps": a scrolled target is queued once and its
+    // scroll event fires in the next rendering update, which ticks with
+    // requestAnimationFrame here (16 ms). Chromium dispatches it in its next
+    // frame: on a page that just rendered (TOS react-aria autocomplete) that
+    // was 23-29 ms after Playwright's scroll step, after its click; on an
+    // idle page a frame can run within ~1 ms. Fired as an immediate task, it
+    // let close-on-scroll handlers close the popover before the click.
     let doc = page.document();
-    page.post_task(Box::new(move || {
-        if p.is_disposed() || p.document() != doc {
-            return;
-        }
-        match target {
-            Some(el) => {
-                let connected = {
-                    let dom = p.dom.borrow();
-                    dom.is_connected(el).unwrap_or(false) && dom.node_document(el).ok() == Some(doc)
-                };
-                if connected {
-                    crate::input::fire_simple(&p, el, "scroll", false, false);
+    if !page.pending_scrolls.borrow_mut().insert((doc, target)) {
+        return;
+    }
+    let p = page.clone();
+    page.post_delayed_task(
+        std::time::Duration::from_millis(16),
+        Box::new(move || {
+            p.pending_scrolls.borrow_mut().remove(&(doc, target));
+            if p.is_disposed() || p.document() != doc {
+                return;
+            }
+            match target {
+                Some(el) => {
+                    let connected = {
+                        let dom = p.dom.borrow();
+                        dom.is_connected(el).unwrap_or(false) && dom.node_document(el).ok() == Some(doc)
+                    };
+                    if connected {
+                        crate::input::fire_simple(&p, el, "scroll", false, false);
+                    }
+                }
+                None => {
+                    crate::input::fire_simple(&p, doc, "scroll", true, false);
                 }
             }
-            None => {
-                crate::input::fire_simple(&p, doc, "scroll", true, false);
-            }
-        }
-    }));
+        }),
+    );
 }
 
 pub(crate) fn scroll_into_view<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {

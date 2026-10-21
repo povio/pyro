@@ -62,6 +62,11 @@ pub struct PageDom {
     pub net: RefCell<Option<lp_net::NetClient>>,
     pub(crate) intersections: crate::intersection_observer::BindingState,
     pub(crate) resizes: crate::resize_observer::BindingState,
+    /// Scroll event targets awaiting the next rendering update, per document
+    /// (None: the document itself), each fired once ("pending scroll event
+    /// targets"). Keyed by document: a task dropped by a navigation must not
+    /// block the next document's events.
+    pub(crate) pending_scrolls: RefCell<FxHashSet<(NodeId, Option<NodeId>)>>,
     pub(crate) mutations: crate::mutation_observer::BindingState,
     pub(crate) identity: RefCell<crate::identity::IdentityState>,
     pub(crate) fetch_state: crate::fetch::FetchState,
@@ -296,6 +301,7 @@ impl PageDom {
             mutations: Default::default(),
             intersections: Default::default(),
             resizes: Default::default(),
+            pending_scrolls: Default::default(),
             fetch_state: Default::default(),
             xhr_state: Default::default(),
             file_readers: Default::default(),
@@ -641,6 +647,12 @@ impl PageDom {
     pub(crate) fn post_task(&self, task: Box<dyn FnOnce()>) {
         match self.hooks() {
             Some(h) => h.post_task(task),
+            None => task(),
+        }
+    }
+    pub(crate) fn post_delayed_task(&self, delay: std::time::Duration, task: Box<dyn FnOnce()>) {
+        match self.hooks() {
+            Some(h) => h.post_delayed_task(delay, task),
             None => task(),
         }
     }

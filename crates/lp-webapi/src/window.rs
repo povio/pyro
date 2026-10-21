@@ -42,11 +42,7 @@ fn window_scroll(page: &Rc<PageDom>, a: &lp_js::Args<'_>, by: bool) -> JsResult<
         }
     };
     if moved {
-        let p = page.clone();
-        page.post_task(Box::new(move || {
-            let doc = p.document();
-            crate::input::fire_simple(&p, doc, "scroll", true, false);
-        }));
+        crate::layout_api::fire_scroll(page, None);
     }
     Ok(())
 }

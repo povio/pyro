@@ -1036,11 +1036,12 @@ fn input_mouse_wheel_scrolls_container_then_viewport_unless_canceled() {
         assert_eq!(r["result"], json!({}), "{r}");
     };
     wheel(&mut h, 300.0);
-    h.run_for(20);
+    // Scroll events arrive at the next frame (the harness pumps coarsely).
+    h.run_for(200);
     assert_eq!(eval_value(&mut h, "[box.scrollTop, scrollY, scrolls.join()]"), json!([300, 0, "box"]));
     wheel(&mut h, 300.0);
     wheel(&mut h, 50.0);
-    h.run_for(20);
+    h.run_for(200);
     // The box stops at its extent; the next delta goes to the viewport.
     assert_eq!(eval_value(&mut h, "[box.scrollTop, scrollY, scrolls.join()]"), json!([400, 50, "box,box,document"]));
     assert_eq!(
@@ -1050,7 +1051,7 @@ fn input_mouse_wheel_scrolls_container_then_viewport_unless_canceled() {
     // A non-passive listener that cancels the wheel prevents scrolling.
     eval_value(&mut h, "box.addEventListener('wheel', e => e.preventDefault(), {passive:false}); 1");
     wheel(&mut h, -100.0);
-    h.run_for(20);
+    h.run_for(200);
     assert_eq!(eval_value(&mut h, "[box.scrollTop, scrollY, wheels.length]"), json!([400, 50, 4]));
 }
 
@@ -1611,7 +1612,8 @@ fn content_disposition_attachment_navigation_becomes_download() {
 #[test]
 fn input_home_end_with_mac_scroll_commands_scroll_the_document() {
     // Playwright sends Home/End with scrollTo{Beginning,End}OfDocument on
-    // macOS. Outside editable content Chrome scrolls the document.
+    // macOS. Outside editable content Chrome scrolls the document. Scroll
+    // events arrive at the next frame, so each key waits past one.
     let mut h = Harness::new();
     eval_value(&mut h, "document.body.innerHTML = '<div style=\"height:5000px\"></div>'; globalThis.scrolls = 0; document.addEventListener('scroll', () => scrolls++); 1");
     for (key, command) in [("End", "scrollToEndOfDocument"), ("Home", "scrollToBeginningOfDocument")] {
@@ -1620,7 +1622,7 @@ fn input_home_end_with_mac_scroll_commands_scroll_the_document() {
             json!({"type":"rawKeyDown","key":key,"code":key,"windowsVirtualKeyCode":if key == "End" { 35 } else { 36 },"commands":[command]}),
         );
         assert_eq!(r["result"], json!({}), "{key}: {r}");
-        h.run_for(20);
+        h.run_for(200);
         let y = eval_value(&mut h, "scrollY").as_f64().unwrap();
         if key == "End" {
             assert!(y > 0.0, "End scrolls to the bottom");
@@ -1774,7 +1776,9 @@ fn dom_geometry_matches_native_rect_and_rejects_detached_or_foreign_objects() {
 }
 
 #[test]
-fn dom_scroll_delivers_each_changed_ancestor_before_following_task() {
+fn dom_scroll_delivers_each_changed_ancestor_at_the_next_frame() {
+    // Scroll events fire in the next rendering update (frame), once per
+    // changed scroller: reads wait past one frame (30 ms).
     for primed in [false, true] {
         let mut h = Harness::new();
         let setup = h.page(
@@ -1807,14 +1811,14 @@ fn dom_scroll_delivers_each_changed_ancestor_before_following_task() {
                 &mut h,
                 "document.querySelector('#inner').scrollTop=1;document.querySelector('#outer').scrollTop=1;true",
             );
-            let r = h.page("Runtime.evaluate", json!({"expression":"new Promise(r=>setTimeout(()=>{scrollEvents=[];r(true)},0))","awaitPromise":true,"returnByValue":true}));
+            let r = h.page("Runtime.evaluate", json!({"expression":"new Promise(r=>setTimeout(()=>{scrollEvents=[];r(true)},30))","awaitPromise":true,"returnByValue":true}));
             assert_eq!(r["result"]["result"]["value"], true, "{r}");
         }
         let before = eval_value(&mut h, "scrollState()");
         assert_eq!(before[0][1], false, "inner must initially clip the target: {before}");
         assert_eq!(before[1][1], false, "outer must initially clip the target: {before}");
         assert_eq!(h.page("DOM.scrollIntoViewIfNeeded", json!({"objectId":object}))["result"], json!({}));
-        let r = h.page("Runtime.evaluate", json!({"expression":"new Promise(r=>setTimeout(()=>r([scrollState(),scrollEvents]),0))","awaitPromise":true,"returnByValue":true}));
+        let r = h.page("Runtime.evaluate", json!({"expression":"new Promise(r=>setTimeout(()=>r([scrollState(),scrollEvents]),30))","awaitPromise":true,"returnByValue":true}));
         let value = &r["result"]["result"]["value"];
         for index in 0..2 {
             assert!(value[0][index][0].as_f64().unwrap() > 1.0, "ancestor must scroll: {r}");
@@ -1823,14 +1827,14 @@ fn dom_scroll_delivers_each_changed_ancestor_before_following_task() {
         assert_eq!(value[1], json!([["inner", false, true], ["outer", false, true], ["document", true, true]]));
         eval_value(&mut h, "scrollEvents=[];true");
         assert_eq!(h.page("DOM.scrollIntoViewIfNeeded", json!({"objectId":object}))["result"], json!({}));
-        let repeated = h.page("Runtime.evaluate", json!({"expression":"new Promise(r=>setTimeout(()=>r(scrollEvents),0))","awaitPromise":true,"returnByValue":true}));
+        let repeated = h.page("Runtime.evaluate", json!({"expression":"new Promise(r=>setTimeout(()=>r(scrollEvents),30))","awaitPromise":true,"returnByValue":true}));
         assert_eq!(
             repeated["result"]["result"]["value"],
             json!([]),
             "unchanged offsets must not emit scroll: {repeated}"
         );
         assert_eq!(h.page("DOM.focus", json!({"objectId":object}))["result"], json!({}));
-        let focused = h.page("Runtime.evaluate", json!({"expression":"new Promise(r=>setTimeout(()=>r([document.activeElement.id,scrollEvents]),0))","awaitPromise":true,"returnByValue":true}));
+        let focused = h.page("Runtime.evaluate", json!({"expression":"new Promise(r=>setTimeout(()=>r([document.activeElement.id,scrollEvents]),30))","awaitPromise":true,"returnByValue":true}));
         assert_eq!(
             focused["result"]["result"]["value"],
             json!(["target", []]),
@@ -3142,6 +3146,36 @@ fn scroll_into_view_if_needed_reveals_a_node_relative_rect() {
         "(() => { const top = document.querySelector('#t').getBoundingClientRect().top + 2900; return top >= 0 && top + 1 <= innerHeight; })()",
     );
     assert_eq!(visible, json!(true));
+}
+
+#[test]
+fn scroll_events_from_scroll_into_view_wait_for_the_next_frame() {
+    // Chromium fires the scroll event of DOM.scrollIntoViewIfNeeded (and of
+    // scripted scrolls) in a later rendering update, after the commands that
+    // follow it: Playwright's click scrolls the option into view and clicks
+    // at once. TOS's @povio/ui autocomplete (react-aria) closes its popover on
+    // scroll; delivered as an immediate task, the event closed it before the
+    // click and left aria-expanded and ariaHideOutside behind (Customer
+    // heading aria-hidden). Each scrolled target fires once per frame.
+    let mut h = Harness::new();
+    let setup = h.page(
+        "Runtime.evaluate",
+        json!({"expression": "document.body.innerHTML = '<div style=\"height:3000px\"></div><button id=b>b</button>'; \
+            globalThis.scrolls = []; addEventListener('scroll', e => scrolls.push(e.target === document ? 'document' : e.target.id), true); \
+            document.querySelector('#b')"}),
+    );
+    let object = setup["result"]["result"]["objectId"].clone();
+    let r = h.page("DOM.scrollIntoViewIfNeeded", json!({ "objectId": object }));
+    assert_eq!(r["result"], json!({}), "{r}");
+    // The scroll itself is applied at once; its event is not delivered yet,
+    // even after the few milliseconds before Playwright's next command.
+    h.run_for(5);
+    assert_eq!(eval_value(&mut h, "scrollY > 0"), json!(true));
+    assert_eq!(eval_value(&mut h, "scrolls.join()"), json!(""), "no scroll event before the next command");
+    // A second scroll of the same target before the frame: still one event.
+    eval_value(&mut h, "scrollBy(0, -10); 1");
+    h.run_for(60);
+    assert_eq!(eval_value(&mut h, "scrolls.join()"), json!("document"), "one event at the next frame");
 }
 
 #[test]
