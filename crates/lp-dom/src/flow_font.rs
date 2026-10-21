@@ -342,9 +342,12 @@ pub(crate) const ADVANCE: [[[u16; 96]; 10]; 4] = [
 ];
 
 /// Advance of `c` in em at `font_size` px and `weight`, or None outside the
-/// table (non-ASCII except U+00A0). Linear between measured sizes and
-/// weights, clamped at the ends.
+/// table (non-ASCII except U+00A0; default-ignorable characters are 0).
+/// Linear between measured sizes and weights, clamped at the ends.
 pub(crate) fn advance(c: char, font_size: f64, weight: u16) -> Option<f64> {
+    if default_ignorable(c) {
+        return Some(0.0);
+    }
     let glyph = match c as u32 {
         cp @ 0x20..=0x7e => (cp - 0x20) as usize,
         0xa0 => 95,
@@ -359,6 +362,33 @@ pub(crate) fn advance(c: char, font_size: f64, weight: u16) -> Option<f64> {
     Some(lerp(low, high, wt))
 }
 
+/// Unicode Default_Ignorable_Code_Point (DerivedCoreProperties): format
+/// controls such as the bidi isolates and marks Intl and react-aria emit
+/// around date segments, zero-width spaces and joiners, the soft hyphen,
+/// variation selectors and tags. Chromium draws them with no advance at
+/// every size and weight (measured with Playwright 1.59.1).
+fn default_ignorable(c: char) -> bool {
+    matches!(
+        c as u32,
+        0xad | 0x34f
+            | 0x61c
+            | 0x115f..=0x1160
+            | 0x17b4..=0x17b5
+            | 0x180b..=0x180f
+            | 0x200b..=0x200f
+            | 0x202a..=0x202e
+            | 0x2060..=0x206f
+            | 0x3164
+            | 0xfe00..=0xfe0f
+            | 0xfeff
+            | 0xffa0
+            | 0xfff0..=0xfff8
+            | 0x1bca0..=0x1bca3
+            | 0x1d173..=0x1d17a
+            | 0xe0000..=0xe0fff
+    )
+}
+
 /// Index of the lower bracketing entry and the fraction towards the next.
 fn bracket(values: &[f64], v: f64) -> (usize, f64) {
     let last = values.len() - 2;
@@ -370,6 +400,22 @@ fn bracket(values: &[f64], v: f64) -> (usize, f64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_ignorable_characters_have_no_advance() {
+        for c in [
+            '\u{2066}', '\u{2067}', '\u{2068}', '\u{2069}', '\u{200b}', '\u{200e}', '\u{202c}', '\u{2060}', '\u{feff}',
+            '\u{ad}', '\u{fe0f}',
+        ] {
+            for (size, weight) in [(10.0, 400), (14.0, 500), (32.0, 700)] {
+                assert_eq!(advance(c, size, weight), Some(0.0), "U+{:04X}", c as u32);
+            }
+        }
+        // Neighbours keep their advances; other non-ASCII stays outside the table.
+        assert!(advance('a', 14.0, 500).unwrap() > 0.0);
+        assert_eq!(advance('\u{202f}', 14.0, 500), None);
+        assert_eq!(advance('\u{e9}', 14.0, 500), None);
+    }
 
     #[test]
     fn interpolates_and_clamps() {

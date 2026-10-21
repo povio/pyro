@@ -2282,3 +2282,31 @@ fn has_anchor_context_bounds_universal_anchors_without_stale_geometry() {
     p.dom.remove_child(body, portal).unwrap();
     assert_matches_fresh(&p, "portal removed");
 }
+
+#[test]
+fn flow_default_ignorable_characters_take_no_width() {
+    // TOS date picker (react-aria DateSegments): Intl wraps literals in bidi
+    // isolates, e.g. "01:00\u{2069} PM". Chromium gives U+2066..U+2069 and the
+    // other default-ignorable format characters no advance; flow measured
+    // them with the 0.6em non-ASCII fallback (8.4px at 14px), pushing the
+    // Calendar button 3.74px past its cell. Adjacent text keeps its width.
+    let css = "<style>body{margin:0;font:500 14px system-ui} .row{display:flex;white-space:nowrap} .row span{flex:none}</style>";
+    let html = format!(
+        "<!doctype html>{css}<body>\
+         <div class=row><span id=plain>01:00 PM</span></div>\
+         <div class=row><span id=pdi>01:00\u{2069} PM</span></div>\
+         <div class=row><span id=iso>\u{2068}01:00\u{2069}\u{a0}\u{2066}PM\u{2069}</span></div>\
+         <div class=row><span id=nbsp>01:00\u{a0}PM</span></div>\
+         <div class=row><span id=zw>01\u{200b}:\u{200e}00\u{feff} \u{ad}PM</span></div>\
+         <div class=row><span id=x>x</span><span id=after>\u{2069}y</span><span id=y>y</span></div>\
+         </body>"
+    );
+    let p = page(&html, Geometry::Flow);
+    let wid = |id: &str| p.metrics(id)[2];
+    let plain = wid("plain");
+    assert!(plain > 50.0, "{plain}");
+    assert_eq!(wid("pdi"), plain, "U+2069 adds nothing");
+    assert_eq!(wid("iso"), wid("nbsp"), "isolates around both segments add nothing");
+    assert_eq!(wid("zw"), plain, "ZWSP, LRM, BOM and soft hyphen add nothing");
+    assert_eq!(wid("after"), wid("y"), "an isolate before normal text");
+}
