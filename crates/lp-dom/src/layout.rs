@@ -1029,14 +1029,13 @@ impl Layout {
     /// container's scrollport (the viewport when none) inset by its
     /// `top`/`bottom`/`left`/`right`, without leaving its containing block
     /// (the table for table parts). `top` wins over `bottom`, `left` over
-    /// `right`. Boxes inside `position: fixed` stay put.
+    /// `right`. Inside `position: fixed` the window scroll moves nothing, so
+    /// with no scroll container in between the scrollport is the viewport at
+    /// the origin.
     fn sticky_offset(&self, dom: &Dom, flow: &FlowResult, el: NodeId) -> (f64, f64) {
         use crate::flow::{FlowStyleSource, InnerDisplay, TablePart, BOTTOM, LEFT, RIGHT, TOP};
         let Some(b) = flow.get(el) else { return (0.0, 0.0) };
         let Some(style) = self.style.flow_style(dom, el) else { return (0.0, 0.0) };
-        if b.fixed {
-            return (0.0, 0.0);
-        }
         // Scrollport in document coordinates of the scrolled content.
         let mut port = None;
         let mut a = dom.parent_element(el).ok().flatten();
@@ -1058,12 +1057,9 @@ impl Layout {
             }
             a = dom.parent_element(p).ok().flatten();
         }
-        let port = port.unwrap_or(Rect {
-            x: self.window_scroll.0 as f64,
-            y: self.window_scroll.1 as f64,
-            width: self.inner_width() as f64,
-            height: self.inner_height() as f64,
-        });
+        let (wx, wy) = if b.fixed { (0.0, 0.0) } else { (self.window_scroll.0 as f64, self.window_scroll.1 as f64) };
+        let port =
+            port.unwrap_or(Rect { x: wx, y: wy, width: self.inner_width() as f64, height: self.inner_height() as f64 });
         // Containing block: the table for table parts, else the parent.
         let mut cb = dom.parent_element(el).ok().flatten();
         if style.table_part != TablePart::None {

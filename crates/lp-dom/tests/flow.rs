@@ -3109,3 +3109,44 @@ fn validity_has_anchors_invalidate_selectively_without_stale_geometry() {
     assert_matches_fresh(&p, "a radio leaving the group");
     assert_eq!([h(&p, "c4"), h(&p, "c5")], [40.0, 10.0]);
 }
+
+#[test]
+fn sticky_boxes_inside_fixed_containers_follow_their_scroller_like_chromium() {
+    // TOS position finances open in a `position: fixed` drawer over a fixed
+    // modal: sticky table headers and the totals footer there did not stick
+    // (TP-4230 measured the header 1621px off its scroller). Boxes inside a
+    // fixed subtree stick to their nearest scroll container like any other;
+    // with none, the scrollport is the viewport, which the window scroll does
+    // not move. Values measured in Chromium (800x600, body margin 0) after
+    // scrolling `#sc` to 600.
+    let rows: String = (0..40).map(|i| format!("<tr><td style=\"height:50px\">r{i}</td></tr>")).collect();
+    let cases = [
+        (
+            "fixed > scroller > table",
+            format!("<div style=\"position:fixed;inset:0;display:flex\"><div id=sc style=\"margin:40px;height:300px;width:400px;overflow:auto\"><table style=\"border-spacing:0;width:100%\"><thead><tr><th id=t style=\"position:sticky;top:0;height:25px;padding:0\">H</th></tr></thead><tbody>{rows}</tbody><tfoot><tr><td id=f style=\"position:sticky;bottom:0;height:20px;padding:0\">F</td></tr></tfoot></table></div></div>"),
+            [40.0, 40.0, 320.0],
+        ),
+        (
+            "fixed modal > fixed drawer > flex > scroller",
+            format!("<div style=\"position:fixed;inset:0;overflow-y:auto;display:flex\"><div style=\"position:fixed;top:0;right:0;bottom:0;width:500px\"><div style=\"display:flex;flex-direction:column;height:100%\"><div id=sc style=\"flex:1;min-height:0;overflow:auto\"><table style=\"border-spacing:0\"><thead><tr><th id=t style=\"position:sticky;top:0;height:25px;padding:0\">H</th></tr></thead><tbody>{rows}</tbody></table></div></div></div></div>"),
+            [0.0, 0.0, f64::NAN],
+        ),
+    ];
+    for (name, body, [before, after, foot]) in cases {
+        let mut p = page(&format!("<!doctype html><body style=\"margin:0\">{body}</body>"), Geometry::Flow);
+        let y = |p: &Page, id: &str| p.layout.bounding_client_rect(&p.dom, p.id(id)).y;
+        assert_eq!(y(&p, "t"), before, "{name}: before scrolling");
+        let sc = p.id("sc");
+        p.layout.element_scroll_to(&p.dom, sc, None, Some(600));
+        assert_eq!(y(&p, "t"), after, "{name}: header after scrolling");
+        if !foot.is_nan() {
+            assert_eq!(y(&p, "f"), foot, "{name}: footer");
+        }
+    }
+    // No scroll container inside the fixed box: nothing moves (Chromium 50).
+    let p = page(
+        "<!doctype html><body style=\"margin:0\"><div style=\"position:fixed;top:0;left:0;width:300px;height:200px\"><div style=\"height:1000px\"><div id=t style=\"position:sticky;top:10px;height:20px;margin-top:50px\">S</div></div></div></body>",
+        Geometry::Flow,
+    );
+    assert_eq!(p.layout.bounding_client_rect(&p.dom, p.id("t")).y, 50.0);
+}
