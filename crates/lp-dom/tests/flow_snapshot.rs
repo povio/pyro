@@ -67,6 +67,20 @@ fn dump_flow_snapshot() {
             }
             eprintln!("{n} mutate+pass: {:?} per pass", t.elapsed() / n as u32);
         }
+        if let Ok(n) = std::env::var("FLOW_PROFILE_PORTAL") {
+            // Portal churn on body (React overlays): append, lay out, remove.
+            let n = n.parse::<usize>().unwrap_or(1);
+            let body = dom.body(doc).unwrap().expect("body");
+            let t = std::time::Instant::now();
+            for _ in 0..n {
+                let portal = dom.create_element(doc, "div").unwrap();
+                dom.append_child(body, portal).unwrap();
+                let _ = layout.flow(&dom);
+                dom.remove_child(body, portal).unwrap();
+                let _ = layout.flow(&dom);
+            }
+            eprintln!("{n} portal append+remove: {:?} per pass", t.elapsed() / (2 * n as u32));
+        }
         let t = std::time::Instant::now();
         let _ = layout.flow(&dom);
         eprintln!("flow pass, no change (cached): {:?}", t.elapsed());

@@ -1749,7 +1749,7 @@ fn invalidation_roots(
         let mut cur = first;
         while cur != NIL {
             let Some(e) = element(cur) else { break };
-            let anchor = anchors.iter().any(|a| a.depth.is_none_or(|d| level <= d) && a.key.matches(e));
+            let anchor = anchors.iter().any(|a| a.depth.is_none_or(|d| level <= d) && a.admits(dom, cur, e));
             let validated = !validity.is_empty()
                 && e.is_html()
                 && matches!(&*e.name.local, "form" | "fieldset" | "select")
@@ -2287,11 +2287,38 @@ impl ChildKey {
 }
 
 /// A potential `:has()` anchor: elements matching `key` whose descendants
-/// within `depth` levels (None: any depth) can change its match.
+/// within `depth` levels (None: any depth) can change its match. `context`:
+/// the compound before the anchor's, through a child (`true`: the parent
+/// must match) or descendant combinator (an ancestor must match).
 #[derive(Clone, Debug, PartialEq)]
 struct HasAnchor {
     key: AnchorKey,
     depth: Option<u32>,
+    context: Option<(AnchorKey, bool)>,
+}
+
+impl HasAnchor {
+    /// Whether element `x` can be this anchor: its key, and its context in
+    /// the current tree. (A change below `x` cannot change its ancestors; a
+    /// change of them in the same batch roots their subtree, `x` included.)
+    fn admits(&self, dom: &Dom, x: u32, e: &crate::node::ElementData) -> bool {
+        if !self.key.matches(e) {
+            return false;
+        }
+        let Some((key, parent_only)) = &self.context else { return true };
+        let mut cur = dom.n(x).parent;
+        while cur != NIL {
+            let crate::node::NodeKind::Element(a) = &dom.n(cur).kind else { return false };
+            if key.matches(a) {
+                return true;
+            }
+            if *parent_only {
+                return false;
+            }
+            cur = dom.n(cur).parent;
+        }
+        false
+    }
 }
 
 /// Collects the `:has()` anchors of a selector (recursing into `:is()`,
@@ -2326,7 +2353,17 @@ fn collect_has_anchors(sel: &Selector<Impl>, out: &mut Vec<HasAnchor>) -> bool {
                         if key == AnchorKey::Any && depth.is_none() {
                             return false;
                         }
-                        out.push(HasAnchor { key, depth });
+                        let mut peek = it.clone();
+                        let parent_only = match peek.next_sequence() {
+                            Some(selectors::parser::Combinator::Child) => Some(true),
+                            Some(selectors::parser::Combinator::Descendant) => Some(false),
+                            _ => None,
+                        };
+                        let context = parent_only.and_then(|parent_only| {
+                            let before: Vec<&Component<Impl>> = (&mut peek).collect();
+                            Some((compound_key(&before), parent_only)).filter(|(k, _)| *k != AnchorKey::Any)
+                        });
+                        out.push(HasAnchor { key, depth, context });
                     }
                 }
                 Component::Is(list) | Component::Where(list) | Component::Negation(list) => {
@@ -3939,7 +3976,7 @@ mod has_anchor_tests {
     }
 
     fn one(key: AnchorKey, depth: Option<u32>) -> Option<Vec<HasAnchor>> {
-        Some(vec![HasAnchor { key, depth }])
+        Some(vec![HasAnchor { key, depth, context: None }])
     }
 
     #[test]
@@ -3957,9 +3994,23 @@ mod has_anchor_tests {
         );
         assert_eq!(anchors("td:has(input)"), one(AnchorKey::Tag("td".into()), None));
         // Universal anchors are bounded only by child-only relative selectors.
+        // TOS: a universal anchor below a [data-is-empty] ancestor (never
+        // html or body).
         assert_eq!(
             anchors("[data-is-empty=true] :has(> [data-static-segment-type]) > .text-inherit"),
-            one(AnchorKey::Any, Some(1))
+            Some(vec![HasAnchor {
+                key: AnchorKey::Any,
+                depth: Some(1),
+                context: Some((AnchorKey::Attr("data-is-empty".into()), false)),
+            }])
+        );
+        assert_eq!(
+            anchors(".p > :has(> b)"),
+            Some(vec![HasAnchor {
+                key: AnchorKey::Any,
+                depth: Some(1),
+                context: Some((AnchorKey::Class("p".into()), true))
+            }])
         );
         assert_eq!(anchors(":has(> div > [x])"), one(AnchorKey::Any, Some(2)));
         assert_eq!(anchors(":has(.x)"), None, "unbounded universal anchor");

@@ -2221,3 +2221,64 @@ fn insertions_and_removals_invalidate_selectively_without_stale_geometry() {
     p.dom.remove_child(body, portal).unwrap();
     assert_matches_fresh(&p, "portal removed");
 }
+
+#[test]
+fn has_anchor_context_bounds_universal_anchors_without_stale_geometry() {
+    // TOS: `[data-is-empty=true] :has(>[data-static-segment-type])>...`
+    // anchors are universal but must sit below a [data-is-empty] ancestor,
+    // so changes near html/body (portals) do not root html. Changes below a
+    // real anchor still restyle it.
+    let css = "<style>\
+        [data-is-empty=true] :has(>[data-static-segment-type])>.text-inherit{width:280px}\
+        [data-is-empty=true] :has(>div>[data-static-segment-type])>span.pe{width:290px}\
+        .text-inherit,.pe{display:block;width:28px;height:10px}\
+        </style>";
+    let html = format!(
+        "<!doctype html>{css}<body style=\"margin:0\">\
+         <div id=ctx data-is-empty=true><section>\
+         <div id=anc><span id=ti class=text-inherit></span></div>\
+         <div id=anc2><div id=mid></div><span id=pe class=pe></span></div>\
+         </section></div><div>FILLER</div></body>"
+    );
+    let mut p = page(&html, Geometry::Flow);
+    assert_matches_fresh(&p, "initial");
+    let w = |p: &Page, id: &str| p.layout.flow(&p.dom).get(p.id(id)).unwrap().rect;
+    let seg = |p: &mut Page| {
+        let e = p.dom.create_element(p.doc, "i").unwrap();
+        p.dom.set_attribute(e, "data-static-segment-type", "day").unwrap();
+        e
+    };
+    let anc = p.id("anc");
+    let s1 = seg(&mut p);
+    p.dom.append_child(anc, s1).unwrap();
+    assert_matches_fresh(&p, "segment child inserted (depth 1)");
+    assert_eq!(w(&p, "ti").width, 280.0);
+    p.dom.remove_child(anc, s1).unwrap();
+    assert_matches_fresh(&p, "segment child removed");
+    assert_eq!(w(&p, "ti").width, 28.0);
+    let mid = p.id("mid");
+    let s2 = seg(&mut p);
+    p.dom.append_child(mid, s2).unwrap();
+    assert_matches_fresh(&p, "segment grandchild inserted (depth 2)");
+    assert_eq!(w(&p, "pe").width, 290.0);
+    p.dom.remove_attribute(s2, "data-static-segment-type").unwrap();
+    assert_matches_fresh(&p, "segment attribute removed");
+    assert_eq!(w(&p, "pe").width, 28.0);
+    p.dom.set_attribute(s2, "data-static-segment-type", "x").unwrap();
+    let ctx = p.id("ctx");
+    p.dom.set_attribute(ctx, "data-is-empty", "false").unwrap();
+    assert_matches_fresh(&p, "context attribute changed");
+    assert_eq!(w(&p, "pe").width, 28.0);
+    p.dom.set_attribute(ctx, "data-is-empty", "true").unwrap();
+    assert_matches_fresh(&p, "context restored");
+    assert_eq!(w(&p, "pe").width, 290.0);
+    // A portal with a segment child on body: body is no anchor here.
+    let body = p.dom.parent(ctx).unwrap().unwrap();
+    let portal = p.dom.create_element(p.doc, "div").unwrap();
+    let s3 = seg(&mut p);
+    p.dom.append_child(portal, s3).unwrap();
+    p.dom.append_child(body, portal).unwrap();
+    assert_matches_fresh(&p, "portal appended to body");
+    p.dom.remove_child(body, portal).unwrap();
+    assert_matches_fresh(&p, "portal removed");
+}
