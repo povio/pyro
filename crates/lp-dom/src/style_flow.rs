@@ -156,6 +156,14 @@ impl StyleEngine {
         // so `1.8462` at 13px lays out as 24px.
         let nowrap = matches!(value("white-space").as_deref().map(str::trim), Some("nowrap" | "pre"));
         let keyword = |name: &str| value(name).map(|v| v.trim().to_ascii_lowercase()).unwrap_or_default();
+        // word-break: break-word is word-break: normal + overflow-wrap: anywhere.
+        let overflow_wrap =
+            Some(keyword("overflow-wrap")).filter(|v| !v.is_empty()).unwrap_or_else(|| keyword("word-wrap"));
+        let wrap = match (keyword("word-break").as_str(), overflow_wrap.as_str()) {
+            ("break-all" | "break-word", _) | (_, "anywhere") => crate::flow::WrapMode::Anywhere,
+            (_, "break-word") => crate::flow::WrapMode::BreakWord,
+            _ => crate::flow::WrapMode::Normal,
+        };
         Some(FlowStyle {
             outer,
             inner,
@@ -176,6 +184,7 @@ impl StyleEngine {
             font_size,
             line_height,
             nowrap,
+            wrap,
             // Used font-weight for the flow text measure.
             font_weight: match keyword("font-weight").as_str() {
                 "bold" | "bolder" => 700,

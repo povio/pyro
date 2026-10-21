@@ -461,6 +461,9 @@ pub struct FlowStyle {
     /// px; None = `normal`.
     pub line_height: Option<f64>,
     pub nowrap: bool,
+    /// Where an otherwise unbreakable word may break when it overflows its
+    /// line (overflow-wrap / word-break).
+    pub wrap: WrapMode,
     /// Used `font-weight` (100..900; 400 normal, 700 bold). Text is measured
     /// with the system UI font's advances at this weight.
     pub font_weight: u16,
@@ -535,6 +538,7 @@ impl Default for FlowStyle {
             font_size: 16.0,
             line_height: None,
             nowrap: false,
+            wrap: WrapMode::Normal,
             font_weight: 400,
             text_align: TextAlign::Start,
             replaced: false,
@@ -748,6 +752,20 @@ impl Edges {
     }
 }
 
+/// `overflow-wrap` / `word-break` for words longer than their line.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WrapMode {
+    /// Long words overflow (`overflow-wrap: normal`).
+    #[default]
+    Normal,
+    /// `overflow-wrap: break-word`: break a word that cannot fit on an empty
+    /// line; min-content sizes still keep whole words.
+    BreakWord,
+    /// `overflow-wrap: anywhere`, `word-break: break-all | break-word`: as
+    /// BreakWord, and min-content sizes allow a break between any characters.
+    Anywhere,
+}
+
 /// An item of an inline formatting context.
 enum InlineItem {
     Word {
@@ -759,6 +777,9 @@ enum InlineItem {
         /// The font's (ascent, descent) without leading: the content area
         /// that text and inline element boxes report.
         content: (f64, f64),
+        /// The word, its font size and weight, when it may be broken if it
+        /// cannot fit on an empty line (None: it overflows instead).
+        breakable: Option<(std::rc::Rc<str>, f64, u16)>,
     },
     Break,
     Atomic {
@@ -1504,9 +1525,7 @@ impl<'a> Ctx<'a> {
                         continue;
                     }
                     let w = if min && !style.nowrap {
-                        text.split_ascii_whitespace()
-                            .map(|t| text_width(t, style.font_size, style.font_weight))
-                            .fold(0.0, f64::max)
+                        min_text_width(text, style.font_size, style.font_weight, style.wrap)
                     } else {
                         collapsed_width(text, style.font_size, style.font_weight)
                     };
@@ -1641,7 +1660,7 @@ impl<'a> Ctx<'a> {
                         parent.text_align,
                     );
                 }
-                InlineItem::Word { width: w, height: h, space_before, owners, ascent, content } => {
+                InlineItem::Word { width: w, height: h, space_before, owners, ascent, content, breakable } => {
                     let gap = if line.x > 0.0 { space_before } else { 0.0 };
                     if line.x > 0.0 && line.x + gap + w > width + FIT_EPSILON && !parent.nowrap {
                         line_y += self.flush_line(
@@ -1655,11 +1674,38 @@ impl<'a> Ctx<'a> {
                             &mut order_of,
                             parent.text_align,
                         );
-                        line.push(0.0, w, h, ascent, owners, None);
-                    } else {
-                        let at = line.x + gap;
-                        line.push(at, w, h, ascent, owners, None);
                     }
+                    // A word wider than an empty line breaks where overflow-wrap
+                    // or word-break allows: the longest prefixes that fit, one
+                    // per line; the rest continues the last line.
+                    let mut w = w;
+                    if line.x == 0.0 && w > width + FIT_EPSILON {
+                        if let Some((text, fs, weight)) = &breakable {
+                            let pieces = break_word(text, *fs, *weight, width);
+                            let (last, full) = pieces.split_last().expect("a word has a piece");
+                            for &piece in full {
+                                line.push(0.0, piece, h, ascent, owners.clone(), None);
+                                if let Some(it) = line.items.last_mut() {
+                                    it.content = Some(content);
+                                }
+                                line.extents(strut);
+                                line_y += self.flush_line(
+                                    &mut line,
+                                    x,
+                                    line_y,
+                                    width,
+                                    fixed,
+                                    shift,
+                                    &mut frags,
+                                    &mut order_of,
+                                    parent.text_align,
+                                );
+                            }
+                            w = *last;
+                        }
+                    }
+                    let at = if line.x > 0.0 { line.x + space_before } else { 0.0 };
+                    line.push(at, w, h, ascent, owners, None);
                     if let Some(it) = line.items.last_mut() {
                         it.content = Some(content);
                     }
@@ -1963,6 +2009,8 @@ impl<'a> Ctx<'a> {
                     if part.is_empty() {
                         continue;
                     }
+                    let breakable = (parent.wrap != WrapMode::Normal && !parent.nowrap)
+                        .then(|| (std::rc::Rc::<str>::from(part), fs, parent.font_weight));
                     items.push(InlineItem::Word {
                         width: text_width(part, fs, parent.font_weight),
                         height: lh,
@@ -1970,6 +2018,7 @@ impl<'a> Ctx<'a> {
                         owners: word_owners.clone(),
                         ascent,
                         content: font_metrics(fs),
+                        breakable,
                     });
                     pending_space = false;
                 }
@@ -1981,6 +2030,7 @@ impl<'a> Ctx<'a> {
                         owners: Owners::from([]),
                         ascent: 0.0,
                         content: (0.0, 0.0),
+                        breakable: None,
                     });
                 }
             }
@@ -2153,6 +2203,40 @@ fn text_width(text: &str, font_size: f64, weight: u16) -> f64 {
 /// no-break space is content.
 fn is_blank(text: &str) -> bool {
     text.chars().all(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | '\x0c'))
+}
+
+/// Widths of the pieces a too-long word breaks into for a `width` line: each
+/// the longest prefix that fits (at least one character), the last the rest.
+fn break_word(text: &str, font_size: f64, weight: u16, width: f64) -> Vec<f64> {
+    let mut pieces = Vec::new();
+    let mut rest = text;
+    while !rest.is_empty() {
+        let (mut end, mut end_w) = (0, 0.0);
+        for (i, c) in rest.char_indices() {
+            let next = i + c.len_utf8();
+            let w = text_width(&rest[..next], font_size, weight);
+            if end > 0 && w > width + FIT_EPSILON {
+                break;
+            }
+            (end, end_w) = (next, w);
+        }
+        pieces.push(end_w);
+        rest = &rest[end..];
+    }
+    pieces
+}
+
+/// Min-content contribution of a text: its widest word, or with
+/// `WrapMode::Anywhere` its widest character (a break may fall anywhere).
+fn min_text_width(text: &str, font_size: f64, weight: u16, wrap: WrapMode) -> f64 {
+    if wrap == WrapMode::Anywhere {
+        text.chars()
+            .filter(|c| !c.is_ascii_whitespace())
+            .map(|c| text_width(c.encode_utf8(&mut [0; 4]), font_size, weight))
+            .fold(0.0, f64::max)
+    } else {
+        text.split_ascii_whitespace().map(|t| text_width(t, font_size, weight)).fold(0.0, f64::max)
+    }
 }
 
 fn collapsed_width(text: &str, font_size: f64, weight: u16) -> f64 {
@@ -2494,8 +2578,9 @@ impl<'a> Ctx<'a> {
                     (None, true) => it
                         .text
                         .iter()
-                        .flat_map(|&t| self.dom.char_data(t).unwrap_or("").split_ascii_whitespace())
-                        .map(|w| text_width(w, s.font_size, s.font_weight))
+                        .map(|&t| {
+                            min_text_width(self.dom.char_data(t).unwrap_or(""), s.font_size, s.font_weight, s.wrap)
+                        })
                         .fold(0.0, f64::max),
                     (None, false) => text_extents(s).0 + text_extents(s).1,
                 };
@@ -3471,8 +3556,11 @@ impl<'a> Ctx<'a> {
             (_, Some(w)) => (to_content(w), to_content(w)),
             (Some(el), None) => (self.min_content(*el, s), self.max_content(*el, s)),
             (None, None) => {
-                let words = it.text.iter().flat_map(|&t| self.dom.char_data(t).unwrap_or("").split_ascii_whitespace());
-                let min = words.map(|w| text_width(w, s.font_size, s.font_weight)).fold(0.0, f64::max);
+                let min = it
+                    .text
+                    .iter()
+                    .map(|&t| min_text_width(self.dom.char_data(t).unwrap_or(""), s.font_size, s.font_weight, s.wrap))
+                    .fold(0.0, f64::max);
                 let max = it
                     .text
                     .iter()

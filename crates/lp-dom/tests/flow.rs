@@ -2391,3 +2391,56 @@ fn batched_changes_reach_depth_bounded_anchors_at_their_lowest_level() {
     assert_matches_fresh(&p, "shallow then deep in one batch");
     assert_eq!(w(&p, "v").width, 300.0);
 }
+
+#[test]
+fn flow_overflow_wrap_breaks_long_words_like_chromium() {
+    // TOS CMR cargo cells (TP-4194/4195): `wrap-anywhere` (overflow-wrap:
+    // anywhere) on "ReinforcedIndustrialTransportPallet …" in a 120px cell.
+    // Chromium (Playwright 1.59.1, 14px system-ui), measured on this markup:
+    // - 120px block: the word breaks over two lines for anywhere /
+    //   break-word / break-all (3 lines with "6x"); normal overflows (2).
+    // - 120px table cell: anywhere / break-all keep the cell at 120px and the
+    //   text inside it. (break-word / normal grow the column to the word's
+    //   min-content; flow tables do not grow declared columns, not tested.)
+    // - shrink-to-fit inline-block in 60px: anywhere / break-all are 60px
+    //   wide (character min-content); break-word / normal 227.3px (the word).
+    let word = "ReinforcedIndustrialTransportPallet";
+    let modes = [
+        ("anywhere", "overflow-wrap:anywhere"),
+        ("breakword", "overflow-wrap:break-word"),
+        ("breakall", "word-break:break-all"),
+        ("normal", ""),
+    ];
+    let mut html = String::from("<!doctype html><body style=\"margin:0;font:400 14px system-ui\">");
+    for (k, css) in modes {
+        html.push_str(&format!("<div id=b-{k} style=\"width:120px;{css}\">{word} 6x</div>"));
+        html.push_str(&format!(
+            "<table style=\"border-collapse:collapse\"><tr><td id=t-{k} style=\"width:120px;padding:0;{css}\"><span id=s-{k}>{word} 6x</span></td></tr></table>"
+        ));
+        html.push_str(&format!(
+            "<div style=\"width:60px\"><div id=f-{k} style=\"display:inline-block;{css}\">{word}</div></div>"
+        ));
+    }
+    let p = page(&html, Geometry::Flow);
+    let line = p.metrics("b-normal")[3] / 2.0;
+    for k in ["anywhere", "breakword", "breakall"] {
+        assert_eq!(p.metrics(&format!("b-{k}"))[3], 3.0 * line, "{k}: the word breaks over two lines");
+    }
+    assert_eq!(p.metrics("b-normal")[3], 2.0 * line, "normal: the word overflows its line");
+    for k in ["anywhere", "breakall"] {
+        let cell = p.metrics(&format!("t-{k}"));
+        let text = p.metrics(&format!("s-{k}"));
+        assert_eq!(cell[2], 120.0, "{k}: the cell keeps its width");
+        assert!(
+            text[0] >= cell[0] - 1.0 && text[0] + text[2] <= cell[0] + cell[2] + 1.0,
+            "{k}: text {text:?} inside cell {cell:?}"
+        );
+        assert_eq!(p.metrics(&format!("f-{k}"))[2], 60.0, "{k}: character min-content");
+    }
+    for k in ["breakword", "normal"] {
+        let w = p.metrics(&format!("f-{k}"))[2];
+        // The word's whole width (Chromium 227.3px; flow's text measure
+        // differs for this word, which is not what this test covers).
+        assert!(w > 200.0, "{k}: the word's width is the min-content ({w})");
+    }
+}
