@@ -35,6 +35,8 @@ pub struct Dom {
     pub(crate) events: crate::events::ListenerStore,
     pub(crate) resources: crate::script::ResourceQueue,
     pub(crate) iframes: crate::iframe::IframeQueue,
+    /// Natural sizes of loaded `<img>` elements, set by the embedder.
+    natural_sizes: rustc_hash::FxHashMap<NodeId, (f64, f64)>,
 }
 
 impl Default for Dom {
@@ -69,6 +71,7 @@ impl Dom {
             events: Default::default(),
             resources: Default::default(),
             iframes: Default::default(),
+            natural_sizes: Default::default(),
         }
     }
 
@@ -111,6 +114,22 @@ impl Dom {
     pub fn node(&self, id: NodeId) -> DomResult<&Node> {
         let i = self.check(id)?;
         Ok(self.n(i))
+    }
+    /// Natural (intrinsic) size of a loaded image element, in CSS px.
+    pub fn natural_size(&self, el: NodeId) -> Option<(f64, f64)> {
+        self.check(el).ok()?;
+        self.natural_sizes.get(&el).copied()
+    }
+    /// Records or clears an image element's natural size. A change bumps
+    /// the version so layout and style caches recompute.
+    pub fn set_natural_size(&mut self, el: NodeId, size: Option<(f64, f64)>) {
+        let changed = match size {
+            Some(s) => self.natural_sizes.insert(el, s) != Some(s),
+            None => self.natural_sizes.remove(&el).is_some(),
+        };
+        if changed {
+            self.bump();
+        }
     }
     pub fn version(&self) -> u64 {
         self.version

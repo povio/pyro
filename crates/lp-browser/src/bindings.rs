@@ -282,6 +282,7 @@ impl Browser {
         }
         let events = host.dom.borrow_mut().take_resource_events();
         let mut stylesheet_nodes = std::collections::HashSet::new();
+        let mut image_nodes = std::collections::HashSet::new();
         for event in events {
             let document = host.dom.borrow().owner_document(event.node).ok().flatten();
             let target = host.keys().into_iter().find(|key| host.frame(*key).is_some_and(|f| f.document == document));
@@ -290,6 +291,10 @@ impl Browser {
             if event.kind == lp_dom::script::ResourceKind::Stylesheet {
                 if stylesheet_nodes.insert(event.node) {
                     self.stylesheet_event(target, event.node);
+                }
+            } else if event.kind == lp_dom::script::ResourceKind::Img {
+                if image_nodes.insert(event.node) {
+                    self.image_event(target, event.node);
                 }
             } else {
                 bindings.apply_style_event(&event);

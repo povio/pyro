@@ -9,6 +9,7 @@
 mod bindings;
 mod focus;
 mod frames;
+mod images;
 mod loader;
 mod nav;
 mod network_idle;
@@ -302,6 +303,7 @@ pub struct DocumentState {
     pub(crate) pending_cancel: Option<ResourceCancellation>,
     pub(crate) load: Option<loader::DocumentLoad>,
     pub(crate) stylesheets: stylesheets::Stylesheets,
+    pub(crate) images: images::Images,
     pub(crate) _owner_pin: Option<loader::ResourceNode>,
 }
 
@@ -597,6 +599,7 @@ impl Browser {
                 nav,
                 load: None,
                 stylesheets: Default::default(),
+                images: Default::default(),
                 _owner_pin: None,
             },
             session_storage,
@@ -844,6 +847,7 @@ impl Browser {
             p.pending_cancel = None;
             p.load = None;
             p.stylesheets = Default::default();
+            p.images = Default::default();
             let old_dom = p.main_frame.page_dom.replace(page_dom.clone());
             p.main_frame.dom = Some(page_dom.dom.clone());
             p.main_frame.document = Some(page_dom.document());

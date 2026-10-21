@@ -10,6 +10,7 @@ pub mod flow;
 mod flow_font;
 pub mod forms;
 pub mod iframe;
+pub mod image;
 pub mod inner_text;
 pub mod layout;
 pub mod media;

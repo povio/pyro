@@ -724,10 +724,11 @@ simple_class!(HtmlImageElement, "HTMLImageElement", HtmlElement, |def| {
     reflect_bool!(def, "isMap", "ismap");
     reflect_long!(def, "width", "width", 0);
     reflect_long!(def, "height", "height", 0);
-    // No image decoding: natural dimensions are unknown (0), as upstream.
-    def.getter("naturalWidth", |s, _n| Ok(s.number(0.0)));
-    def.getter("naturalHeight", |s, _n| Ok(s.number(0.0)));
-    def.getter("complete", |s, _n| Ok(s.boolean(true)));
+    // Natural size from the loaded file's header (no pixel decoding); 0
+    // while loading, for broken images and for unparsed formats.
+    def.getter("naturalWidth", |s, n| Ok(s.number(n.page().dom.borrow().natural_size(n.id).map_or(0.0, |(w, _)| w))));
+    def.getter("naturalHeight", |s, n| Ok(s.number(n.page().dom.borrow().natural_size(n.id).map_or(0.0, |(_, h)| h))));
+    def.getter("complete", |s, n| Ok(s.boolean(n.page().image_complete(n.id))));
     def.getter("currentSrc", |s, n| {
         let dom = n.page().dom.borrow();
         Ok(s.string(&dom.get_attribute(n.id, "src").js()?.map(|v| resolve_url(&dom, n.id, v)).unwrap_or_default()))

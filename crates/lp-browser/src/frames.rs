@@ -308,6 +308,7 @@ impl FrameHost {
                 pending_cancel: None,
                 load: None,
                 stylesheets: Default::default(),
+                images: Default::default(),
                 _owner_pin: Some(loader::ResourceNode { dom: self.dom.clone(), node }),
             },
         );

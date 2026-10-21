@@ -83,6 +83,9 @@ pub struct PageDom {
     clicking: RefCell<Vec<NodeId>>,
     submitting: RefCell<Vec<NodeId>>,
     hovered: Cell<Option<NodeId>>,
+    /// `<img>` resource state set by the embedder: the `src` value the
+    /// current load is for, and whether it is still loading.
+    images: RefCell<FxHashMap<NodeId, (String, bool)>>,
     /// The last mouse input's position and state, for boundary events when
     /// content under a stationary pointer changes.
     pub(crate) pointer: RefCell<Option<crate::input::MouseInput>>,
@@ -306,6 +309,7 @@ impl PageDom {
             clicking: RefCell::new(Vec::new()),
             submitting: RefCell::new(Vec::new()),
             hovered: Cell::new(None),
+            images: RefCell::new(FxHashMap::default()),
             pointer: RefCell::new(None),
             press_target: Cell::new(None),
             drag_candidate: Cell::new(None),
@@ -719,6 +723,30 @@ impl PageDom {
     }
     pub(crate) fn end_submit(&self, form: NodeId) {
         self.submitting.borrow_mut().retain(|&x| x != form);
+    }
+    /// Embedder: an `<img>` started (`pending`) or finished loading the
+    /// resource for `src` (the attribute value); `None` forgets the image.
+    pub fn set_image_state(&self, el: NodeId, src: Option<&str>, pending: bool) {
+        match src {
+            Some(src) => {
+                self.images.borrow_mut().insert(el, (src.to_owned(), pending));
+            }
+            None => {
+                self.images.borrow_mut().remove(&el);
+            }
+        }
+    }
+    /// HTMLImageElement.complete: no `src`, or the current `src` has
+    /// finished loading (successfully or not). A `src` set since the last
+    /// load started is not complete yet, as in Chromium.
+    pub(crate) fn image_complete(&self, el: NodeId) -> bool {
+        let src = self.dom.borrow().get_attribute(el, "src").ok().flatten().map(str::to_owned);
+        let Some(src) = src else { return true };
+        match self.images.borrow().get(&el) {
+            Some((loading, pending)) if *loading == src => !pending,
+            // Empty or unresolvable sources are complete (broken).
+            _ => src.trim().is_empty(),
+        }
     }
     pub(crate) fn hovered(&self) -> Option<NodeId> {
         self.hovered.get().filter(|&h| self.dom.borrow().is_alive(h))

@@ -256,7 +256,10 @@ pub struct StaticLoader {
 
 impl StaticLoader {
     pub fn insert(&self, url: &str, mime: &str, body: &str, delay: Duration) {
-        self.entries.borrow_mut().insert(url.to_string(), (mime.to_string(), body.as_bytes().to_vec(), delay));
+        self.insert_bytes(url, mime, body.as_bytes(), delay);
+    }
+    pub fn insert_bytes(&self, url: &str, mime: &str, body: &[u8], delay: Duration) {
+        self.entries.borrow_mut().insert(url.to_string(), (mime.to_string(), body.to_vec(), delay));
     }
 }
 
@@ -941,7 +944,11 @@ impl Browser {
             return;
         }
         let Some(mut state) = self.doc_mut(page) else { return };
-        if state.main_frame.loaded || !state.main_frame.dom_content_loaded || state.stylesheets.pending() != 0 {
+        if state.main_frame.loaded
+            || !state.main_frame.dom_content_loaded
+            || state.stylesheets.pending() != 0
+            || state.images.blocking_load() != 0
+        {
             return;
         }
         if let Some(load) = &mut state.load {
