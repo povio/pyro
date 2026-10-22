@@ -3623,3 +3623,127 @@ fn scroll_anchoring_keeps_the_visible_content_in_place_like_chromium() {
         );
     }
 }
+
+#[test]
+fn scroll_anchoring_rechecks_overflow_anchor_none_like_chromium() {
+    // An anchor recorded earlier must not be reused once it or an ancestor
+    // has become `overflow-anchor: none`. Chromium (800x600, measured;
+    // scroller 200px, 20 x 50px children, scrollTop 300, #i2 then grows by
+    // 100px): `none` on the anchor hands over to the next element (400,
+    // also within the same task); `none` on a wrapper holding every element
+    // leaves nothing to anchor (300); a scroller inside a `none` ancestor
+    // still anchors its own content (400).
+    let items: String = (0..20).map(|i| format!("<div id=i{i} style=\"height:50px\"></div>")).collect();
+    let flat = format!("<div id=sc style=\"height:200px;overflow:auto\">{items}</div>");
+    let wrapped = format!("<div id=sc style=\"height:200px;overflow:auto\"><div id=wrap>{items}</div></div>");
+    let inside_none = format!("<div style=\"overflow-anchor:none\">{flat}</div>");
+    // (name, body, element turned `none` (or ""), settle between, Chromium scrollTop after growth)
+    let cases = [
+        ("none on anchor, then grow", &flat, "i6", true, 400),
+        ("none on anchor with growth", &flat, "i6", false, 400),
+        ("none on wrapper, then grow", &wrapped, "wrap", true, 300),
+        ("none on wrapper with growth", &wrapped, "wrap", false, 300),
+        ("scroller inside none ancestor", &inside_none, "", false, 400),
+    ];
+    for (name, body, none, settle_between, expected) in cases {
+        let mut p = page(&format!("<!doctype html><body style=\"margin:0\">{body}</body>"), Geometry::Flow);
+        let sc = p.id("sc");
+        p.layout.set_scroll_top(&p.dom, sc, 300);
+        if !none.is_empty() {
+            let el = p.id(none);
+            let style = if none == "wrap" { "overflow-anchor:none" } else { "height:50px;overflow-anchor:none" };
+            p.dom.set_attribute(el, "style", style).unwrap();
+            if settle_between {
+                p.layout.clamp_scroll_offsets(&p.dom);
+                assert_eq!(p.layout.scroll_top(sc), 300, "{name}: Chromium 300 before growth");
+            }
+        }
+        let i2 = p.id("i2");
+        p.dom.set_attribute(i2, "style", "height:150px").unwrap();
+        p.layout.clamp_scroll_offsets(&p.dom);
+        assert_eq!(p.layout.scroll_top(sc), expected, "{name}: Chromium scrollTop {expected}");
+    }
+}
+
+#[test]
+fn scroll_anchoring_reselects_in_the_previous_layout_like_chromium() {
+    // The anchor is selected in the layout the scroller was settled in,
+    // with the current styles, however many earlier candidates are now
+    // excluded. Chromium (800x600, measured; growth of 100px above):
+    // - 400px scroller of 40 x 25px items at scrollTop 300: 7 of the 16
+    //   fully visible items turned `none` -> the next anchors (400); all
+    //   items `none` -> nothing anchors (300);
+    // - 300px scroller holding two wrappers of 10 x 50px at scrollTop 300:
+    //   the first wrapper `none` -> the second wrapper's first item anchors
+    //   (400; without growth 300);
+    // - the anchor made `display: none` or removed with the growth -> the
+    //   next item anchors, which moved 100px down and 50px up (350).
+    let items = |n: usize, h: u32, p: &str| -> String {
+        (0..n).map(|i| format!("<div id={p}{i} style=\"height:{h}px\"></div>")).collect()
+    };
+    let load = |body: String| page(&format!("<!doctype html><body style=\"margin:0\">{body}</body>"), Geometry::Flow);
+    let style = |p: &mut Page, id: &str, value: &str| {
+        let el = p.id(id);
+        p.dom.set_attribute(el, "style", value).unwrap();
+    };
+    let settle_top = |p: &mut Page| {
+        p.layout.clamp_scroll_offsets(&p.dom);
+        let sc = p.id("sc");
+        p.layout.scroll_top(sc)
+    };
+    let tall = || load(format!("<div id=sc style=\"height:400px;overflow:auto\">{}</div>", items(40, 25, "i")));
+    let wrappers = || {
+        load(format!(
+            "<div id=sc style=\"height:300px;overflow:auto\"><div id=wa>{}</div><div id=wb>{}</div></div>",
+            items(10, 50, "a"),
+            items(10, 50, "b")
+        ))
+    };
+    let short = || load(format!("<div id=sc style=\"height:200px;overflow:auto\">{}</div>", items(20, 50, "i")));
+    let scroll = |p: &mut Page| {
+        let sc = p.id("sc");
+        p.layout.set_scroll_top(&p.dom, sc, 300);
+    };
+
+    let mut p = tall();
+    scroll(&mut p);
+    for k in 12..=18 {
+        style(&mut p, &format!("i{k}"), "height:25px;overflow-anchor:none");
+    }
+    style(&mut p, "i2", "height:125px");
+    assert_eq!(settle_top(&mut p), 400, "7 candidates excluded: Chromium 400");
+
+    let mut p = tall();
+    scroll(&mut p);
+    for k in 0..40 {
+        style(
+            &mut p,
+            &format!("i{k}"),
+            if k == 2 { "height:125px;overflow-anchor:none" } else { "height:25px;overflow-anchor:none" },
+        );
+    }
+    assert_eq!(settle_top(&mut p), 300, "all excluded: Chromium 300");
+
+    for (grow, expected) in [(true, 400), (false, 300)] {
+        let mut p = wrappers();
+        scroll(&mut p);
+        style(&mut p, "wa", "overflow-anchor:none");
+        if grow {
+            style(&mut p, "a2", "height:150px");
+        }
+        assert_eq!(settle_top(&mut p), expected, "wrapper excluded (growth: {grow}): Chromium {expected}");
+    }
+
+    let mut p = short();
+    scroll(&mut p);
+    style(&mut p, "i6", "height:50px;display:none");
+    style(&mut p, "i2", "height:150px");
+    assert_eq!(settle_top(&mut p), 350, "anchor display:none with growth: Chromium 350");
+
+    let mut p = short();
+    scroll(&mut p);
+    let (sc, i6) = (p.id("sc"), p.id("i6"));
+    p.dom.remove_child(sc, i6).unwrap();
+    style(&mut p, "i2", "height:150px");
+    assert_eq!(settle_top(&mut p), 350, "anchor removed with growth: Chromium 350");
+}
