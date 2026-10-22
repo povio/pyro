@@ -3773,3 +3773,38 @@ fn caret_from_point_takes_the_nearest_character_boundary_like_chromium() {
     // Only text inside the given element (the hit element) is a candidate.
     assert_eq!(p.layout.caret_from_point(&p.dom, p.id("q"), r.x + 1.0, y, &|_| true).map(|(n, _, _)| n), Some(tq));
 }
+
+#[test]
+fn overflowing_text_extends_the_scroll_width_like_chromium() {
+    // A box's scroll size counted only descendant boxes, so a long name as
+    // the direct text of a `truncate` cell (nowrap, overflow hidden,
+    // text-overflow: ellipsis) kept scrollWidth == clientWidth, and TOS's
+    // ellipsis check failed. Chromium (800x600, measured): direct text
+    // overflows the scroll width like the same text in a span (374 > 100),
+    // also without clipping and inside a clipping box (its own scroll
+    // width); padded adds both paddings (394); text clipped by a box inside
+    // does not reach the outer box (100); wrapping text does not widen.
+    let t = "Bartholomew Longname International Freight Forwarding";
+    let clip = "width:100px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:16px;line-height:20px";
+    let html = format!(
+        "<!doctype html><body style=\"margin:0\">\
+         <div id=direct style=\"{clip}\">{t}</div>\
+         <div id=span style=\"{clip}\"><span>{t}</span></div>\
+         <div id=nested style=\"width:100px;overflow:hidden;font-size:16px;line-height:20px\"><div id=inner style=\"width:60px;overflow:hidden;white-space:nowrap\">{t}</div></div>\
+         <div id=wrap style=\"width:100px;overflow:hidden;font-size:16px;line-height:20px\">{t}</div>\
+         <div id=visible style=\"width:100px;white-space:nowrap;font-size:16px;line-height:20px\">{t}</div>\
+         <div id=padded style=\"{clip};padding:0 10px\">{t}</div></body>"
+    );
+    let p = page(&html, Geometry::Flow);
+    // [.., clientWidth, clientHeight, scrollWidth, scrollHeight]
+    let m = |id: &str| p.metrics(id);
+    let near = |a: f64, b: f64| (a - b).abs() < 0.01;
+    let text = m("span")[6];
+    assert!(text > 100.0, "span scrollWidth {text}");
+    assert!(near(m("direct")[6], text) && near(m("direct")[4], 100.0), "direct: {:?}, span {text}", m("direct"));
+    assert!(near(m("inner")[6], text) && near(m("inner")[4], 60.0), "inner: {:?}", m("inner"));
+    assert!(near(m("nested")[6], 100.0), "nested: {:?}", m("nested"));
+    assert!(near(m("visible")[6], text), "visible: {:?}", m("visible"));
+    assert!(near(m("padded")[6], text + 20.0) && near(m("padded")[4], 120.0), "padded: {:?}", m("padded"));
+    assert!(near(m("wrap")[6], 100.0) && near(m("wrap")[7], m("wrap")[5]), "wrap: {:?}", m("wrap"));
+}

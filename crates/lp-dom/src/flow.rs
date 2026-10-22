@@ -1346,6 +1346,28 @@ impl<'a> Ctx<'a> {
         let inner_y = rect.y + e.border[TOP];
         let mut sw = client_width;
         let mut sh = client_height.max(flow_h + e.padding[TOP] + e.padding[BOTTOM]);
+        // Overflowing text extends the scroll width too (Chromium: through
+        // the inline-end padding), unless a clipping element inside this one
+        // holds it.
+        let first = self.out.text_orders.partition_point(|(o, _)| *o < order);
+        for &(_, t) in &self.out.text_orders[first..] {
+            let Some(&(r, text_fixed)) = self.out.texts.get(&t) else { continue };
+            if text_fixed && !fixed {
+                continue;
+            }
+            let mut clipped_inside = false;
+            let mut cur = self.dom.parent_element(t).ok().flatten();
+            while let Some(a) = cur.filter(|&a| a != el) {
+                if self.style_of(a).is_some_and(|s| s.clips_x || s.clips_y) {
+                    clipped_inside = true;
+                    break;
+                }
+                cur = self.dom.parent_element(a).ok().flatten();
+            }
+            if !clipped_inside {
+                sw = sw.max(r.x + r.width - inner_x + e.padding[RIGHT]);
+            }
+        }
         self.boxes_after(order, |b| {
             let clipped_inside = b.clipped_by > order;
             if !clipped_inside && (fixed || !b.fixed) {
