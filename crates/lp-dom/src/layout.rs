@@ -153,6 +153,9 @@ pub struct Layout {
     window_scroll: (u32, u32),
     scroll_generation: u64,
     element_scroll: FxHashMap<NodeId, (u32, u32)>,
+    /// CSS Scroll Anchoring: each vertically scrolled element's anchor and
+    /// its border-box top minus the scroller's (flow coordinates).
+    scroll_anchors: FxHashMap<NodeId, (NodeId, f64)>,
     automatic_heights: RefCell<AutomaticHeights>,
     geometry: Geometry,
     flow_cache: RefCell<Option<FlowCache>>,
@@ -221,6 +224,7 @@ impl Layout {
             window_scroll: (0, 0),
             scroll_generation: 0,
             element_scroll: FxHashMap::default(),
+            scroll_anchors: FxHashMap::default(),
             automatic_heights: RefCell::default(),
             geometry: Geometry::default(),
             flow_cache: RefCell::new(None),
@@ -1436,10 +1440,115 @@ impl Layout {
         }
         self.element_scroll.insert(el, (x, y));
         self.scroll_generation = self.scroll_generation.wrapping_add(1);
+        self.capture_scroll_anchor(dom, el);
         true
     }
 
     /// Whether any element or the window is scrolled away from the origin.
+    /// Records `scroller`'s scroll anchor for the current layout (none at
+    /// the top, or with `overflow-anchor: none`).
+    fn capture_scroll_anchor(&mut self, dom: &Dom, scroller: NodeId) {
+        if !self.flow_mode() || self.scroll_top(scroller) == 0 {
+            self.scroll_anchors.remove(&scroller);
+            return;
+        }
+        let flow = self.flow(dom);
+        let anchor = self.scroll_anchor(dom, &flow, scroller).and_then(|a| {
+            let (ab, sb) = (flow.get(a)?, flow.get(scroller)?);
+            Some((a, ab.rect.y - sb.rect.y))
+        });
+        match anchor {
+            Some(a) => {
+                self.scroll_anchors.insert(scroller, a);
+            }
+            None => {
+                self.scroll_anchors.remove(&scroller);
+            }
+        }
+    }
+
+    /// The scroll anchor of a vertically scrolled `scroller` (CSS Scroll
+    /// Anchoring 2.2, as Chromium selects it): in tree order, the first
+    /// element entirely inside the scrollport, descending into a partly
+    /// visible one, which is the anchor when none of its descendants is.
+    /// `overflow-anchor: none` excludes an element and its subtree;
+    /// out-of-flow boxes are skipped and nested scrollers not entered.
+    fn scroll_anchor(&self, dom: &Dom, flow: &FlowResult, scroller: NodeId) -> Option<NodeId> {
+        if self.overflow_anchor_none(dom, scroller) {
+            return None;
+        }
+        let sb = flow.get(scroller)?;
+        let top = sb.rect.y + self.scroll_top(scroller) as f64;
+        self.anchor_in(dom, flow, scroller, top, top + sb.client_height)
+    }
+
+    fn anchor_in(&self, dom: &Dom, flow: &FlowResult, parent: NodeId, top: f64, bottom: f64) -> Option<NodeId> {
+        for child in dom.children(parent).ok()? {
+            if !dom.n(dom.check(child).ok()?).is_element() || self.overflow_anchor_none(dom, child) {
+                continue;
+            }
+            let Some(b) = flow.get(child) else {
+                // display: contents (no box) contributes its children.
+                if let Some(a) = self.anchor_in(dom, flow, child, top, bottom) {
+                    return Some(a);
+                }
+                continue;
+            };
+            if b.fixed || self.style.computed(dom, child).is_some_and(|c| c.absolutely_positioned) {
+                continue;
+            }
+            let (y0, y1) = (b.rect.y, b.rect.y + b.rect.height);
+            if y1 <= top || y0 >= bottom {
+                continue;
+            }
+            if y0 >= top && y1 <= bottom {
+                return Some(child);
+            }
+            let clips = self.style.overflow_clip_axes(dom, child);
+            if !(clips.x || clips.y) {
+                if let Some(a) = self.anchor_in(dom, flow, child, top, bottom) {
+                    return Some(a);
+                }
+            }
+            return Some(child);
+        }
+        None
+    }
+
+    fn overflow_anchor_none(&self, dom: &Dom, el: NodeId) -> bool {
+        self.style.computed_value(dom, el, "overflow-anchor").is_some_and(|v| v.trim().eq_ignore_ascii_case("none"))
+    }
+
+    /// Scroll anchoring after a layout change: each anchored scroller moves
+    /// by however far its anchor moved within it, as Chromium adjusts before
+    /// painting (and fires `scroll`).
+    fn apply_scroll_anchors(&mut self, dom: &Dom, moved: &mut Vec<ScrollTarget>) {
+        if self.scroll_anchors.is_empty() {
+            return;
+        }
+        let flow = self.flow(dom);
+        let mut anchors: Vec<(NodeId, (NodeId, f64))> = self.scroll_anchors.iter().map(|(&k, &v)| (k, v)).collect();
+        anchors.sort_by_key(|(k, _)| (k.idx, k.gen));
+        for (el, (anchor, before)) in anchors {
+            let Some(&(x, y)) = self.element_scroll.get(&el) else { continue };
+            let live = |n: NodeId| dom.is_connected(n).unwrap_or(false);
+            if y == 0 || !live(el) || !live(anchor) || !dom.contains(el, anchor).unwrap_or(false) {
+                continue;
+            }
+            if self.overflow_anchor_none(dom, el) {
+                continue;
+            }
+            let (Some(sb), Some(ab)) = (flow.get(el), flow.get(anchor)) else { continue };
+            let delta = (ab.rect.y - sb.rect.y) - before;
+            let ny = (y as f64 + delta).round().max(0.0) as u32;
+            if ny != y {
+                self.element_scroll.insert(el, (x, ny));
+                self.scroll_generation = self.scroll_generation.wrapping_add(1);
+                moved.push(ScrollTarget::Container(el));
+            }
+        }
+    }
+
     pub fn has_scroll_offsets(&self) -> bool {
         self.window_scroll != (0, 0) || self.element_scroll.values().any(|&o| o != (0, 0))
     }
@@ -1455,6 +1564,7 @@ impl Layout {
         if !self.flow_mode() || !self.has_scroll_offsets() {
             return moved;
         }
+        self.apply_scroll_anchors(dom, &mut moved);
         let mut scrolled: Vec<(NodeId, (u32, u32))> =
             self.element_scroll.iter().filter(|(_, &o)| o != (0, 0)).map(|(&k, &v)| (k, v)).collect();
         scrolled.sort_by_key(|(k, _)| (k.idx, k.gen));
@@ -1472,8 +1582,15 @@ impl Layout {
             if (nx, ny) != (x, y) {
                 self.element_scroll.insert(el, (nx, ny));
                 self.scroll_generation = self.scroll_generation.wrapping_add(1);
-                moved.push(ScrollTarget::Container(el));
+                if !moved.contains(&ScrollTarget::Container(el)) {
+                    moved.push(ScrollTarget::Container(el));
+                }
             }
+        }
+        let anchored: Vec<NodeId> = self.element_scroll.iter().filter(|(_, &(_, y))| y != 0).map(|(&k, _)| k).collect();
+        self.scroll_anchors.retain(|k, _| anchored.contains(k));
+        for el in anchored {
+            self.capture_scroll_anchor(dom, el);
         }
         if self.window_scroll != (0, 0) {
             let (w, h) = self.document_scroll_size(dom);

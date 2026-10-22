@@ -3537,3 +3537,89 @@ fn generated_content_follows_dom_changes_like_chromium() {
     p.dom.set_attribute(v, "style", "display:inline-block").unwrap();
     check(&p, "--c removed", abc, 0.0, (0.0, 0.0));
 }
+
+#[test]
+fn scroll_anchoring_keeps_the_visible_content_in_place_like_chromium() {
+    // TOS entity chat: with `overflow-anchor: auto`, a history message above
+    // the viewport growing by 200px must move the timeline's scrollTop by as
+    // much, keeping the visible messages in place. The engine had no scroll
+    // anchoring, so scrollTop stayed. Chromium (800x600, measured): a
+    // scroller moves by the change above its anchor, the first fully visible
+    // element (growth, shrink and insertion above; after a user wheel scroll
+    // too), reading scrollTop already adjusted; not for changes below or to
+    // the anchor itself, with `overflow-anchor: none` on the scroller, or at
+    // scrollTop 0. `none` on the would-be anchor moves the anchor to the next
+    // element; nested scrollers anchor independently.
+    let items = |n: usize, p: &str| -> String {
+        (0..n).map(|i| format!("<div id={p}{i} style=\"height:50px\"></div>")).collect()
+    };
+    let scroller = |id: &str, h: u32, inner: &str, extra: &str| {
+        format!("<div id={id} style=\"height:{h}px;overflow:auto;{extra}\">{inner}</div>")
+    };
+    let load = |body: &str| page(&format!("<!doctype html><body style=\"margin:0\">{body}</body>"), Geometry::Flow);
+    let set_style = |p: &mut Page, id: &str, style: &str| {
+        let el = p.id(id);
+        p.dom.set_attribute(el, "style", style).unwrap();
+    };
+    let one = scroller("sc", 200, &items(20, "i"), "");
+    // (name, scroller style, scrollTop, change on #id, Chromium scrollTop)
+    let cases: [(&str, &str, i32, &str, &str, u32); 6] = [
+        ("grow above", "", 300, "i2", "height:150px", 400),
+        ("shrink above", "", 300, "i2", "height:20px", 270),
+        ("grow below", "", 300, "i15", "height:150px", 300),
+        ("anchor grows", "", 300, "i6", "height:150px", 300),
+        ("none on scroller", "overflow-anchor:none;", 300, "i2", "height:150px", 300),
+        ("at top", "", 0, "i2", "height:150px", 0),
+    ];
+    for (name, extra, scroll, id, style, expected) in cases {
+        let mut p = load(&scroller("sc", 200, &items(20, "i"), extra));
+        let sc = p.id("sc");
+        p.layout.set_scroll_top(&p.dom, sc, scroll);
+        set_style(&mut p, id, style);
+        p.layout.clamp_scroll_offsets(&p.dom);
+        assert_eq!(p.layout.scroll_top(sc), expected, "{name}: Chromium scrollTop {expected}");
+    }
+    // `overflow-anchor: none` on #i6 before scrolling: #i7 anchors instead.
+    let mut p = load(&one.replace("id=i6 style=\"height:50px\"", "id=i6 style=\"height:50px;overflow-anchor:none\""));
+    let sc = p.id("sc");
+    p.layout.set_scroll_top(&p.dom, sc, 300);
+    set_style(&mut p, "i2", "height:150px");
+    p.layout.clamp_scroll_offsets(&p.dom);
+    assert_eq!(p.layout.scroll_top(sc), 400, "none on the would-be anchor: Chromium 400");
+    // Insertion above.
+    let mut p = load(&one);
+    let sc = p.id("sc");
+    p.layout.set_scroll_top(&p.dom, sc, 300);
+    let doc = p.doc;
+    let d = p.dom.create_element(doc, "div").unwrap();
+    p.dom.set_attribute(d, "style", "height:100px").unwrap();
+    let first = p.dom.first_child(sc).unwrap();
+    p.dom.insert_before(sc, d, first).unwrap();
+    p.layout.clamp_scroll_offsets(&p.dom);
+    assert_eq!(p.layout.scroll_top(sc), 400, "insert above: Chromium 400");
+    // A user wheel scroll (300 -> 400) re-anchors; growth above then moves it.
+    let mut p = load(&one);
+    let sc = p.id("sc");
+    p.layout.set_scroll_top(&p.dom, sc, 300);
+    p.layout.wheel_scroll(&p.dom, p.id("i7"), 0.0, 100.0);
+    assert_eq!(p.layout.scroll_top(sc), 400, "wheel");
+    set_style(&mut p, "i2", "height:150px");
+    p.layout.clamp_scroll_offsets(&p.dom);
+    assert_eq!(p.layout.scroll_top(sc), 500, "wheel then grow above: Chromium 500");
+    // Nested scrollers anchor independently.
+    let nested =
+        scroller("outer", 200, &(items(6, "o") + &scroller("inner", 300, &items(20, "n"), "") + &items(10, "p")), "");
+    for (change, outer_top, inner_top) in [("o1", 350, 200), ("n1", 250, 300)] {
+        let mut p = load(&nested);
+        let (outer, inner) = (p.id("outer"), p.id("inner"));
+        p.layout.set_scroll_top(&p.dom, outer, 250);
+        p.layout.set_scroll_top(&p.dom, inner, 200);
+        set_style(&mut p, change, "height:150px");
+        p.layout.clamp_scroll_offsets(&p.dom);
+        assert_eq!(
+            (p.layout.scroll_top(outer), p.layout.scroll_top(inner)),
+            (outer_top, inner_top),
+            "nested, #{change} grows: Chromium outer {outer_top}, inner {inner_top}"
+        );
+    }
+}
