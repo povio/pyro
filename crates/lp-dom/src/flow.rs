@@ -3215,7 +3215,7 @@ impl<'a> Ctx<'a> {
             let mut row_h = row.style.as_ref().and_then(|s| s.height.resolve(None)).unwrap_or(0.0);
             let mut cell_heights = Vec::new();
             for c in &row.cells {
-                let w = starts[c.col + c.span] - sx - starts[c.col];
+                let w = span_width(&widths, c, sx);
                 let e = self.edges(&c.style, width);
                 let content_w = (w - e.horizontal()).max(0.0);
                 let content_h = self.measure_height(c.el, &c.style, content_w);
@@ -3237,7 +3237,7 @@ impl<'a> Ctx<'a> {
             }
             let row_order = self.next_order();
             for (c, (content_h, vertical)) in row.cells.iter().zip(cell_heights) {
-                let w = starts[c.col + c.span] - sx - starts[c.col];
+                let w = span_width(&widths, c, sx);
                 let mut s = (*c.style).clone();
                 s.border_box = true;
                 s.width = Dim::px(w);
@@ -3284,6 +3284,14 @@ impl<'a> Ctx<'a> {
         }
         cursor - y
     }
+}
+
+/// A cell's border-box width: its columns' widths and the spacing between
+/// them, summed directly. The difference of the accumulated column starts
+/// loses exactness (a 150px column after fractional ones: 149.99999999999994),
+/// where Chromium's columns keep their width.
+fn span_width(widths: &[f64], cell: &TableCell, sx: f64) -> f64 {
+    widths[cell.col..cell.col + cell.span].iter().sum::<f64>() + sx * (cell.span - 1) as f64
 }
 
 fn simple_box(rect: Rect, fixed: bool, order: u32) -> FlowBox {

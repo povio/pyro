@@ -3385,3 +3385,20 @@ fn table_cell_min_and_max_widths_size_their_columns_like_chromium() {
         }
     }
 }
+
+#[test]
+fn table_columns_keep_their_exact_width_after_fractional_ones_like_chromium() {
+    // A cell's width was the difference of the accumulated column starts, so
+    // a 150px column after fractional ones came out 149.99999999999994 (TOS
+    // TS-102: a resize clamped to 150px read back below its minimum).
+    // Chromium (800x600): the column keeps exactly its width (150; the
+    // engine gave 149.99999999999994).
+    let html = "<!doctype html><body style=\"margin:0\"><div style=\"padding-left:156.415px\">\
+        <table style=\"border-spacing:0\"><tr>\
+        <td id=c0 style=\"padding:0;width:128.5244px\">a</td><td id=c1 style=\"padding:0;width:125.5754px\">b</td>\
+        <td id=c2 style=\"padding:0;width:150px\">c</td></tr>\
+        </table></div></body>";
+    let p = page(html, Geometry::Flow);
+    let r = p.layout.bounding_client_rect(&p.dom, p.id("c2"));
+    assert_eq!(r.width, 150.0, "Chromium keeps the 150px column exact");
+}
