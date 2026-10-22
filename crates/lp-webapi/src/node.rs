@@ -743,6 +743,7 @@ impl JsClass for Element {
             let value = dom_string(a.get(1))?;
             n.page().dom.borrow_mut().set_attribute(n.id, &name, &value).js()?;
             handler_attribute_changed(s, n, &name, Some(&value))?;
+            crate::input::blur_if_focus_disabled(n.page(), &name);
             Ok(s.undefined())
         });
         def.method("setAttributeNS", 3, |s, n, a| {
@@ -751,6 +752,9 @@ impl JsClass for Element {
             let name = dom_string(a.get(1))?;
             let value = dom_string(a.get(2))?;
             n.page().dom.borrow_mut().set_attribute_ns(n.id, ns.as_deref(), &name, &value).js()?;
+            if ns.is_none() {
+                crate::input::blur_if_focus_disabled(n.page(), &name);
+            }
             Ok(s.undefined())
         });
         def.method("removeAttribute", 1, |s, n, a| {
@@ -780,7 +784,9 @@ impl JsClass for Element {
         def.method("toggleAttribute", 1, |s, n, a| {
             let name = arg_string(&a, 0, "Element.toggleAttribute")?;
             let force = a.opt(1).filter(|v| !v.is_undefined()).map(|v| v.to_bool());
-            Ok(s.boolean(n.page().dom.borrow_mut().toggle_attribute(n.id, &name, force).js()?))
+            let present = n.page().dom.borrow_mut().toggle_attribute(n.id, &name, force).js()?;
+            crate::input::blur_if_focus_disabled(n.page(), &name);
+            Ok(s.boolean(present))
         });
         def.method("matches", 1, element_matches);
         def.method("webkitMatchesSelector", 1, element_matches);

@@ -3286,3 +3286,51 @@ fn select_then_insert_text_replaces_a_number_inputs_value_like_chromium() {
         json!("InvalidStateError")
     );
 }
+
+#[test]
+fn disabling_the_focused_control_blurs_it_like_chromium() {
+    // Chromium blurs a focused control the moment it becomes disabled (by
+    // attribute, property or a disabled fieldset): trusted blur and focusout
+    // with no related target and the body active, synchronously, before the
+    // change's MutationObserver callback. The engine kept the disabled input
+    // focused, so react-aria synthesized its own blur and the TOS Quotes
+    // Document drawer's FocusScope saw two blurs, reopening the Customer
+    // combobox (heading left aria-hidden).
+    let mut h = Harness::new();
+    let probe = |mode: &str| {
+        format!(
+            "new Promise(res => {{ \
+               document.body.innerHTML = '<fieldset id=fs><input id=i></fieldset>'; \
+               const i = document.getElementById('i'), fs = document.getElementById('fs'), log = []; \
+               const d = n => n ? (n.id || n.nodeName) : null; \
+               for (const t of ['blur', 'focusout', 'focus', 'focusin']) document.addEventListener(t, e => \
+                 log.push(`${{t}}@${{d(e.target)}} trusted=${{e.isTrusted}} rel=${{d(e.relatedTarget)}} active=${{d(document.activeElement)}}`), true); \
+               i.focus(); log.length = 0; \
+               new MutationObserver(() => log.push(`MO active=${{d(document.activeElement)}}`)).observe('{mode}' === 'fieldset' ? fs : i, {{ attributes: true }}); \
+               if ('{mode}' === 'attribute') i.setAttribute('disabled', ''); \
+               else if ('{mode}' === 'property') i.disabled = true; \
+               else fs.disabled = true; \
+               log.push(`sync active=${{d(document.activeElement)}}`); \
+               setTimeout(() => {{ log.push(`task active=${{d(document.activeElement)}}`); res(log.join(' | ')); }}, 0); \
+             }})"
+        )
+    };
+    for mode in ["attribute", "property", "fieldset"] {
+        let r =
+            h.page("Runtime.evaluate", json!({"expression": probe(mode), "awaitPromise": true, "returnByValue": true}));
+        assert_eq!(
+            r["result"]["result"]["value"],
+            "blur@i trusted=true rel=null active=BODY | focusout@i trusted=true rel=null active=BODY | sync active=BODY | MO active=BODY | task active=BODY",
+            "{mode}: {r}"
+        );
+    }
+    // Disabling an unfocused control, or re-enabling, moves no focus.
+    assert_eq!(
+        eval_value(
+            &mut h,
+            "(() => { document.body.innerHTML = '<input id=a><input id=b>'; const a = document.getElementById('a'), b = document.getElementById('b'); \
+             a.focus(); b.disabled = true; b.disabled = false; return document.activeElement.id; })()"
+        ),
+        json!("a")
+    );
+}

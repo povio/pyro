@@ -179,6 +179,25 @@ fn run_blur(page: &Rc<PageDom>, doc: NodeId, el: NodeId, related: Option<NodeId>
 }
 
 /// Explicit blur keeps the owner's selected frame and remembered edit target.
+/// After a `disabled` content attribute changed: the focused element that
+/// is no longer focusable (a disabled control, or one in a disabled
+/// fieldset) loses focus at once, as in Chromium: trusted `blur` and
+/// `focusout` with no related target, the body active, before the
+/// change's MutationObserver callbacks (react-aria synthesizes its own blur
+/// otherwise, and a dialog's FocusScope then sees two blurs).
+pub(crate) fn blur_if_focus_disabled(page: &Rc<PageDom>, attribute: &str) {
+    if !attribute.eq_ignore_ascii_case("disabled") {
+        return;
+    }
+    let lost = {
+        let dom = page.dom.borrow();
+        dom.focused(page.document()).ok().flatten().filter(|&f| !dom.is_focusable(f).unwrap_or(true))
+    };
+    if let Some(f) = lost {
+        blur_element(page, f);
+    }
+}
+
 pub fn blur_element(page: &Rc<PageDom>, el: NodeId) {
     if page.dom.borrow().focused(page.document()).ok().flatten() != Some(el) {
         return;
