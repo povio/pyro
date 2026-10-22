@@ -46,6 +46,7 @@ use selectors::parser::{Component, Selector, SelectorList};
 
 use crate::computed;
 use crate::dom::Dom;
+use crate::flow::{Generated, GeneratedDisplay};
 use crate::media::{self, Viewport};
 use crate::node::{NodeId, NodeKind, NIL};
 use crate::select::{parse_selectors, Impl, PseudoClass, Selectors};
@@ -1163,6 +1164,20 @@ struct RuleSet {
     generic_by_class: FxHashMap<String, Vec<u32>>,
     generic_by_tag: FxHashMap<String, Vec<u32>>,
     generic_other: Vec<u32>,
+    /// `::before` / `::after` rules, by their originating element's selector
+    /// (`StyleEngine::generated_content`).
+    generated_rules: Vec<GeneratedRule>,
+}
+
+/// A rule whose selector ends in `::before` or `::after`, with the
+/// pseudo-element stripped: it matches the originating element.
+struct GeneratedRule {
+    after: bool,
+    selector: Selectors,
+    decls: Rc<[(String, Rc<str>, bool)]>,
+    customs: Rc<[(String, Rc<str>, bool)]>,
+    normal: u64,
+    important: u64,
 }
 
 struct GenericRule {
@@ -1329,6 +1344,36 @@ struct PendingRule {
     bucket: BucketKey,
 }
 
+struct PendingGenerated {
+    after: bool,
+    /// The full selector (its specificity ranks the rule).
+    full: Selector<Impl>,
+    selector: Selectors,
+    decls: Rc<[(String, Rc<str>, bool)]>,
+    customs: Rc<[(String, Rc<str>, bool)]>,
+    layer: u16,
+    doc: u32,
+}
+
+/// `sel` without a final `::before` / `::after` (or the legacy one-colon
+/// forms): the originating element's selector, and whether it is `::after`.
+/// None for other pseudo-elements, or one followed by a pseudo-class.
+fn generated_selector(sel: &Selector<Impl>) -> Option<(bool, Selectors)> {
+    use cssparser::ToCss;
+    let text = sel.to_css_string();
+    let (rest, after) = match text.strip_suffix("::before") {
+        Some(r) => (r, false),
+        None => (text.strip_suffix("::after")?, true),
+    };
+    if rest.contains("::") {
+        return None;
+    }
+    // `::before` alone, or after a combinator, applies to any element.
+    let rest =
+        if rest.is_empty() || rest.ends_with([' ', '>', '+', '~']) { format!("{rest}*") } else { rest.to_owned() };
+    parse_selectors(&rest).ok().map(|s| (after, s))
+}
+
 struct PendingCustom {
     important: bool,
     name: String,
@@ -1350,6 +1395,7 @@ struct Builder<'v> {
     pending: Vec<PendingRule>,
     customs: Vec<PendingCustom>,
     generics: Vec<PendingGeneric>,
+    generated: Vec<PendingGenerated>,
     properties: FxHashMap<String, (bool, Option<Rc<str>>)>,
     has_relative: bool,
     has_anchors: Vec<HasAnchor>,
@@ -1378,6 +1424,7 @@ impl<'v> Builder<'v> {
             pending: Vec::new(),
             customs: Vec::new(),
             generics: Vec::new(),
+            generated: Vec::new(),
             properties: FxHashMap::default(),
             has_relative: false,
             has_anchors: Vec::new(),
@@ -1447,6 +1494,25 @@ impl<'v> Builder<'v> {
                         );
                         collect_keys(sel, &|c| pseudo(c, &[PseudoClass::FocusWithin]), &mut self.within_keys);
                         collect_keys(sel, &|c| pseudo(c, &[PseudoClass::Hover]), &mut self.hover_keys);
+                    }
+                    // `::before` / `::after` rules keep their declarations for
+                    // generated content; other pseudo-element rules are dropped.
+                    let generated: Vec<_> =
+                        list.slice().iter().filter_map(|sel| generated_selector(sel).map(|g| (sel, g))).collect();
+                    if !generated.is_empty() {
+                        let doc = self.next_doc_order(layer);
+                        let customs: Rc<[(String, Rc<str>, bool)]> = customs.clone().into();
+                        for (sel, (after, selector)) in generated {
+                            self.generated.push(PendingGenerated {
+                                after,
+                                full: sel.clone(),
+                                selector,
+                                decls: generics.clone(),
+                                customs: customs.clone(),
+                                layer,
+                                doc,
+                            });
+                        }
                     }
                     // StyleManager.zig:485-525; generic declarations share the block's order.
                     if !customs.is_empty() || !generics.is_empty() {
@@ -1699,6 +1765,17 @@ impl<'v> Builder<'v> {
                 BucketKey::Tag(k) => rs.generic_by_tag.entry(k).or_default().push(idx),
                 BucketKey::Other => rs.generic_other.push(idx),
             }
+        }
+        for g in self.generated {
+            let spec = (g.full.specificity() as u64) << SPEC_SHIFT;
+            rs.generated_rules.push(GeneratedRule {
+                after: g.after,
+                selector: g.selector,
+                decls: g.decls,
+                customs: g.customs,
+                normal: (rank_of(layers, g.layer, false) << RANK_SHIFT) | spec | g.doc as u64,
+                important: (rank_of(layers, g.layer, true) << RANK_SHIFT) | spec | g.doc as u64 | IMPORTANT_BIT,
+            });
         }
         rs
     }
@@ -2799,6 +2876,141 @@ fn compound_key(compound: &[&Component<Impl>]) -> AnchorKey {
 
 // Return the defining element too: substitution occurs there, before the value
 // is inherited, so a descendant's custom-property override cannot alter it.
+fn generated_uncached(dom: &Dom, rules: &RuleSet, idx: u32, after: bool) -> Option<Rc<Generated>> {
+    let e = dom.n(idx).element().filter(|e| e.is_html())?;
+    if matches!(
+        &*e.name.local,
+        "input"
+            | "textarea"
+            | "select"
+            | "img"
+            | "br"
+            | "wbr"
+            | "hr"
+            | "iframe"
+            | "video"
+            | "audio"
+            | "canvas"
+            | "object"
+            | "embed"
+            | "meter"
+            | "progress"
+    ) {
+        return None;
+    }
+    let el = dom.id_of(idx);
+    let mut winners: FxHashMap<&str, (&str, u64)> = FxHashMap::default();
+    let mut customs: FxHashMap<&str, (&str, u64)> = FxHashMap::default();
+    fn offer<'r>(map: &mut FxHashMap<&'r str, (&'r str, u64)>, name: &'r str, value: &'r str, p: u64) {
+        if map.get(name).is_none_or(|&(_, q)| q <= p) {
+            map.insert(name, (value, p));
+        }
+    }
+    for r in rules.generated_rules.iter().filter(|r| r.after == after) {
+        if !dom.matches(el, &r.selector).unwrap_or(false) {
+            continue;
+        }
+        for (name, value, important) in r.decls.iter() {
+            offer(&mut winners, name.as_str(), value, if *important { r.important } else { r.normal });
+        }
+        for (name, value, important) in r.customs.iter() {
+            offer(&mut customs, name.as_str(), value, if *important { r.important } else { r.normal });
+        }
+    }
+    let get = |name: &str| winners.get(name).map(|(v, _)| v.trim().to_ascii_lowercase());
+    let display = match get("display").as_deref() {
+        None | Some("inline" | "contents" | "initial" | "unset" | "revert" | "revert-layer") => {
+            GeneratedDisplay::Inline
+        }
+        Some("none") => return None,
+        Some(d) if d.starts_with("inline-") || d.contains("inline-block") => GeneratedDisplay::InlineBlock,
+        Some(_) => GeneratedDisplay::Block,
+    };
+    if matches!(get("position").as_deref(), Some("absolute" | "fixed"))
+        || matches!(get("float").as_deref(), Some("left" | "right" | "inline-start" | "inline-end"))
+    {
+        return None;
+    }
+    let raw = winners.get("content")?.0;
+    // The pseudo-element's own custom properties, else what it inherits from
+    // its originating element (a registered non-inheriting one: its initial
+    // value).
+    let mut lookup = |var: &str| -> Option<String> {
+        if let Some((v, _)) = customs.get(var) {
+            return Some((*v).to_owned());
+        }
+        match rules.properties.get(var) {
+            Some((false, initial)) => initial.as_ref().map(|v| v.to_string()),
+            Some((true, initial)) => custom_property_inherited(dom, rules, el, var)
+                .map(|(_, v)| v)
+                .or_else(|| initial.as_ref().map(|v| v.to_string())),
+            None => custom_property_inherited(dom, rules, el, var).map(|(_, v)| v),
+        }
+    };
+    let value = computed::substitute_vars(raw, &mut lookup, 0)?;
+    let text = content_strings(&value)?;
+    Some(Rc::new(Generated { text: Rc::from(text.as_str()), display }))
+}
+
+/// The concatenated strings of a `content` value made only of strings (an
+/// alternative text after `/` is dropped); None for anything else.
+fn content_strings(value: &str) -> Option<String> {
+    let mut out = String::new();
+    let mut chars = value.trim().chars().peekable();
+    let mut any = false;
+    while let Some(c) = chars.next() {
+        match c {
+            c if c.is_ascii_whitespace() => {}
+            '/' if any => return Some(out),
+            '"' | '\'' => {
+                let quote = c;
+                let mut closed = false;
+                while let Some(c) = chars.next() {
+                    match c {
+                        c if c == quote => {
+                            closed = true;
+                            break;
+                        }
+                        '\\' => match chars.peek().copied() {
+                            Some('\n') => {
+                                chars.next();
+                            }
+                            Some(h) if h.is_ascii_hexdigit() => {
+                                let mut code = 0u32;
+                                for _ in 0..6 {
+                                    match chars.peek().and_then(|h| h.to_digit(16)) {
+                                        Some(d) => {
+                                            code = code * 16 + d;
+                                            chars.next();
+                                        }
+                                        None => break,
+                                    }
+                                }
+                                if chars.peek().is_some_and(|c| c.is_ascii_whitespace()) {
+                                    chars.next();
+                                }
+                                out.push(char::from_u32(code).filter(|&c| c != '\0').unwrap_or('\u{FFFD}'));
+                            }
+                            Some(other) => {
+                                chars.next();
+                                out.push(other);
+                            }
+                            None => {}
+                        },
+                        c => out.push(c),
+                    }
+                }
+                if !closed {
+                    return None;
+                }
+                any = true;
+            }
+            _ => return None,
+        }
+    }
+    any.then_some(out)
+}
+
 fn custom_property_source(dom: &Dom, rules: &RuleSet, el: NodeId, name: &str) -> Option<(NodeId, String)> {
     // A registered property that does not inherit takes the element's own
     // value or its initial value (Tailwind registers its --tw-* variables
@@ -3142,6 +3354,9 @@ struct Cache {
     memo: FxHashMap<NodeId, ComputedStyle>,
     /// Winning generic declarations per element (`declared_map`), dropped with `memo`.
     declared: FxHashMap<NodeId, Rc<FxHashMap<String, String>>>,
+    /// Generated `::before` (false) / `::after` (true) content per element,
+    /// dropped with `memo`.
+    generated: FxHashMap<(NodeId, bool), Option<Rc<Generated>>>,
     /// Flow layout inputs per element (`FlowStyleSource`), dropped with `memo`.
     flow: FxHashMap<NodeId, FlowEntry>,
     /// Stamps `flow` entries (a recomputed element gets a new one).
@@ -3420,6 +3635,7 @@ impl StyleEngine {
                     note_full(Full::Large);
                     cache.memo.clear();
                     cache.declared.clear();
+                    cache.generated.clear();
                     cache.flow.clear();
                     cache.restyled = None;
                 } else {
@@ -3430,6 +3646,8 @@ impl StyleEngine {
                     for n in stale {
                         cache.memo.remove(&n);
                         cache.declared.remove(&n);
+                        cache.generated.remove(&(n, false));
+                        cache.generated.remove(&(n, true));
                         cache.flow.remove(&n);
                     }
                 }
@@ -3437,6 +3655,7 @@ impl StyleEngine {
             None => {
                 cache.memo.clear();
                 cache.declared.clear();
+                cache.generated.clear();
                 cache.flow.clear();
                 cache.restyled = None;
             }
@@ -4207,6 +4426,25 @@ impl StyleEngine {
         let map: Rc<FxHashMap<String, String>> = Rc::new(winners.into_iter().map(|(k, (v, _))| (k, v)).collect());
         self.cache.borrow_mut().declared.insert(el, map.clone());
         map
+    }
+
+    /// The generated `::before` (`after`: `::after`) content of `el`: one
+    /// or more strings (after `var()` substitution) in an in-flow box. None
+    /// for `content: none`/`normal`, other content values (counters,
+    /// `attr()`, images, quotes), `display: none`, absolute/fixed/floated
+    /// pseudo-elements, and elements without generated content (form
+    /// controls, replaced and void elements). The pseudo-element takes its
+    /// originating element's font; its own box properties are not read.
+    pub fn generated_content(&self, dom: &Dom, el: NodeId, after: bool) -> Option<Rc<Generated>> {
+        let idx = self.owns(dom, el)?;
+        self.ensure(dom);
+        if let Some(g) = self.cache.borrow().generated.get(&(el, after)) {
+            return g.clone();
+        }
+        let rules = self.cache.borrow().rules.clone();
+        let g = if rules.generated_rules.is_empty() { None } else { generated_uncached(dom, &rules, idx, after) };
+        self.cache.borrow_mut().generated.insert((el, after), g.clone());
+        g
     }
 
     /// Units for lengths declared on `idx`: its font-size (em), the root's (rem), the viewport (vw/vh).

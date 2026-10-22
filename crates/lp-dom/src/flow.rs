@@ -575,6 +575,30 @@ impl Default for FlowStyle {
 /// Supplies used style values. `None`: the element is not rendered.
 pub trait FlowStyleSource {
     fn flow_style(&self, dom: &Dom, el: NodeId) -> Option<FlowStyle>;
+    /// `el`'s generated `::before` (`after`: `::after`) content.
+    fn generated(&self, _dom: &Dom, _el: NodeId, _after: bool) -> Option<std::rc::Rc<Generated>> {
+        None
+    }
+}
+
+/// Generated content of a `::before` / `::after` pseudo-element: its text
+/// (strings only) and the box it lays out in, in its originating element's
+/// font.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Generated {
+    pub text: std::rc::Rc<str>,
+    pub display: GeneratedDisplay,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum GeneratedDisplay {
+    /// Text in the line, like the element's own text.
+    Inline,
+    /// An atomic box one line of its text wide; empty, it is a zero-size box
+    /// that still makes a line (the element's strut).
+    InlineBlock,
+    /// Its own line(s) in a block container.
+    Block,
 }
 
 // ----- output ---------------------------------------------------------------
@@ -877,6 +901,13 @@ enum InlineItem {
     OutOfFlow {
         el: NodeId,
         style: StyleRef,
+    },
+    /// A generated `::before` / `::after` inline-block box (no element).
+    Generated {
+        width: f64,
+        height: f64,
+        ascent: f64,
+        owners: Owners,
     },
     /// An inline element that starts or ends (for empty inline boxes).
     Empty {
@@ -1345,7 +1376,19 @@ impl<'a> Ctx<'a> {
         let kids = self.flatten_children(el);
         let mut cursor = y;
         let mut prev_margin_bottom: Option<f64> = None;
-        let mut inline_run: Vec<NodeId> = Vec::new();
+        // The current run of inline-level content (children and generated
+        // content), as items; `run_open`: it has begun.
+        let mut items: Vec<InlineItem> = Vec::new();
+        let mut run_open = false;
+        let none = Owners::from([]);
+        if let Some(g) = self.generated(el, false) {
+            generated_items(&g, style, &none, &mut items);
+            run_open = true;
+            if g.display == GeneratedDisplay::Block {
+                cursor += self.inline_items(std::mem::take(&mut items), style, x, cursor, width, fixed, shift);
+                run_open = false;
+            }
+        }
         for (child, child_style) in kids {
             let is_text = child_style.is_none();
             let out_of_flow =
@@ -1358,13 +1401,13 @@ impl<'a> Ctx<'a> {
             }
             let inline = is_text || child_style.as_ref().is_some_and(|s| s.outer == OuterDisplay::Inline);
             if inline {
-                inline_run.push(child);
+                self.collect_inline(child, style, &none, &mut items);
+                run_open = true;
                 continue;
             }
-            if !inline_run.is_empty() {
-                let run = std::mem::take(&mut inline_run);
-                let h = self.inline_run(
-                    &run,
+            if run_open {
+                let h = self.inline_items(
+                    std::mem::take(&mut items),
                     style,
                     x,
                     cursor + prev_margin_bottom.take().unwrap_or(0.0),
@@ -1373,6 +1416,7 @@ impl<'a> Ctx<'a> {
                     shift,
                 );
                 cursor += h;
+                run_open = false;
             }
             let s = child_style.expect("styled");
             let e = self.edges(&s, width);
@@ -1383,9 +1427,27 @@ impl<'a> Ctx<'a> {
             cursor = top + taken - e.margin[BOTTOM];
             prev_margin_bottom = Some(e.margin[BOTTOM]);
         }
-        if !inline_run.is_empty() {
-            let h = self.inline_run(
-                &inline_run,
+        let after = self.generated(el, true);
+        if let Some(g) = after.as_ref().filter(|g| g.display != GeneratedDisplay::Block) {
+            generated_items(g, style, &none, &mut items);
+            run_open = true;
+        }
+        if run_open {
+            let h = self.inline_items(
+                std::mem::take(&mut items),
+                style,
+                x,
+                cursor + prev_margin_bottom.take().unwrap_or(0.0),
+                width,
+                fixed,
+                shift,
+            );
+            cursor += h;
+        }
+        if let Some(g) = after.filter(|g| g.display == GeneratedDisplay::Block) {
+            generated_items(&g, style, &none, &mut items);
+            let h = self.inline_items(
+                std::mem::take(&mut items),
                 style,
                 x,
                 cursor + prev_margin_bottom.take().unwrap_or(0.0),
@@ -1611,6 +1673,44 @@ impl<'a> Ctx<'a> {
         // ("Page <span>1</span>" keeps its space); none at line ends.
         let mut pending_space: f64 = 0.0;
         let mut line_started = false;
+        // Generated content (flow containers only) is text, or one atomic
+        // box for an inline-block, or its own line(s) for a block.
+        let generated = |g: &Generated, best: &mut f64, line: &mut f64, line_started: &mut bool, pending: &mut f64| {
+            if g.text.chars().all(|c| c.is_ascii_whitespace()) {
+                return;
+            }
+            let (fs, weight) = (style.font_size, style.font_weight);
+            match g.display {
+                GeneratedDisplay::Block => {
+                    let w = if min {
+                        min_text_width(&g.text, fs, weight, style.wrap)
+                    } else {
+                        collapsed_width(&g.text, fs, weight)
+                    };
+                    *best = best.max(*line).max(w);
+                    *line = 0.0;
+                    *line_started = false;
+                    *pending = 0.0;
+                }
+                GeneratedDisplay::Inline if min && !style.nowrap => {
+                    *best = best.max(min_text_width(&g.text, fs, weight, style.wrap));
+                }
+                _ if min => *best = best.max(collapsed_width(&g.text, fs, weight)),
+                _ => {
+                    if *line_started {
+                        *line += *pending;
+                    }
+                    *line += collapsed_width(&g.text, fs, weight);
+                    *line_started = true;
+                    *pending = 0.0;
+                }
+            }
+        };
+        if !flex {
+            if let Some(g) = self.generated(el, false) {
+                generated(&g, &mut best, &mut line, &mut line_started, &mut pending_space);
+            }
+        }
         for (child, s) in self.flatten_children(el) {
             let w = match s {
                 None => {
@@ -1703,6 +1803,11 @@ impl<'a> Ctx<'a> {
                 pending_space = 0.0;
             }
         }
+        if !flex {
+            if let Some(g) = self.generated(el, true) {
+                generated(&g, &mut best, &mut line, &mut line_started, &mut pending_space);
+            }
+        }
         if flex_row && items > 0 {
             let gap = style.column_gap.resolve(0.0) * (items - 1) as f64;
             if !(min && style.flex_wrap) {
@@ -1743,6 +1848,22 @@ impl<'a> Ctx<'a> {
         for &n in run {
             self.collect_inline(n, parent, &Owners::from([]), &mut items);
         }
+        self.inline_items(items, parent, x, y, width, fixed, shift)
+    }
+
+    /// Lays out inline items (`inline_run`) as line boxes in [x, x+width);
+    /// returns their height.
+    #[allow(clippy::too_many_arguments)]
+    fn inline_items(
+        &mut self,
+        items: Vec<InlineItem>,
+        parent: &FlowStyle,
+        x: f64,
+        y: f64,
+        width: f64,
+        fixed: bool,
+        shift: (f64, f64),
+    ) -> f64 {
         let strut = text_extents(parent);
         let mut frags: FxHashMap<NodeId, Rect> = FxHashMap::default();
         let mut order_of: Vec<NodeId> = Vec::new();
@@ -1866,6 +1987,27 @@ impl<'a> Ctx<'a> {
                     line.push(at, outer_w, outer_h, ascent, owners, Some((el, style.clone())));
                     line.extents(strut);
                 }
+                InlineItem::Generated { width: w, height: h, ascent, owners } => {
+                    if line.x > 0.0 && line.x + w > width + FIT_EPSILON && !parent.nowrap {
+                        line_y += self.flush_line(
+                            &mut line,
+                            x,
+                            line_y,
+                            width,
+                            fixed,
+                            shift,
+                            &mut frags,
+                            &mut order_of,
+                            parent.text_align,
+                        );
+                    }
+                    let at = line.x;
+                    line.push(at, w, h, ascent, owners, None);
+                    if let Some(it) = line.items.last_mut() {
+                        it.generated = true;
+                    }
+                    line.extents(strut);
+                }
                 InlineItem::Empty { owners, height, ascent } => {
                     let at = line.x;
                     line.push(at, 0.0, height, ascent, owners, None);
@@ -1944,7 +2086,8 @@ impl<'a> Ctx<'a> {
     ) -> f64 {
         // A line holding only collapsible whitespace (zero-width spacers
         // with no owner) has no line box.
-        let blank = line.items.iter().all(|it| it.atomic.is_none() && it.owners.is_empty() && it.width == 0.0);
+        let blank =
+            line.items.iter().all(|it| it.atomic.is_none() && !it.generated && it.owners.is_empty() && it.width == 0.0);
         if blank {
             *line = Line::default();
             return 0.0;
@@ -1957,7 +2100,7 @@ impl<'a> Ctx<'a> {
         let extent = line
             .items
             .iter()
-            .filter(|it| it.atomic.is_some() || !it.owners.is_empty() || it.width > 0.0)
+            .filter(|it| it.atomic.is_some() || it.generated || !it.owners.is_empty() || it.width > 0.0)
             .map(|it| it.x + it.width)
             .fold(0.0, f64::max);
         let free = (width - extent).max(0.0);
@@ -2095,56 +2238,21 @@ impl<'a> Ctx<'a> {
         self.block_child(el, &s, x, y, content_w + e.horizontal() + e.margin[LEFT] + e.margin[RIGHT], fixed, shift);
     }
 
+    /// `el`'s generated `::before` (`after`: `::after`) content.
+    fn generated(&self, el: NodeId, after: bool) -> Option<std::rc::Rc<Generated>> {
+        self.src.generated(self.dom, el, after)
+    }
+
     /// Flattens an inline-level node into items. `owners`: enclosing inline
     /// elements whose boxes include this content.
     fn collect_inline(&mut self, n: NodeId, parent: &FlowStyle, owners: &Owners, items: &mut Vec<InlineItem>) {
         match self.dom.node_type(n) {
             Ok(NodeType::Text) => {
-                let dom = self.dom;
-                let text = dom.char_data(n).unwrap_or("");
+                let text = self.dom.char_data(n).unwrap_or("");
                 // The text node owns its words too: its box (FlowResult::texts)
                 // is the union of their fragments, for Range geometry.
                 let word_owners: Owners = owners.iter().copied().chain([n]).collect();
-                let fs = parent.font_size;
-                let (ascent, descent) = text_extents(parent);
-                let lh = ascent + descent;
-                let space = text_width(" ", fs, parent.font_weight);
-                // Collapsible whitespace becomes one space before the next word
-                // (also across element boundaries via a zero-width word).
-                let mut pending_space = false;
-                for (i, part) in text.split(|c: char| c.is_ascii_whitespace()).enumerate() {
-                    if i > 0 {
-                        pending_space = true;
-                    }
-                    if part.is_empty() {
-                        continue;
-                    }
-                    let breakable = (parent.wrap != WrapMode::Normal && !parent.nowrap)
-                        .then(|| (std::rc::Rc::<str>::from(part), fs, parent.font_weight));
-                    items.push(InlineItem::Word {
-                        width: text_width(part, fs, parent.font_weight),
-                        height: lh,
-                        space_before: if pending_space { space } else { 0.0 },
-                        owners: word_owners.clone(),
-                        ascent,
-                        content: font_metrics(fs),
-                        breakable,
-                        nowrap: parent.nowrap,
-                    });
-                    pending_space = false;
-                }
-                if pending_space {
-                    items.push(InlineItem::Word {
-                        width: 0.0,
-                        height: 0.0,
-                        space_before: space,
-                        owners: Owners::from([]),
-                        ascent: 0.0,
-                        content: (0.0, 0.0),
-                        breakable: None,
-                        nowrap: parent.nowrap,
-                    });
-                }
+                text_items(text, parent, &word_owners, items);
             }
             Ok(NodeType::Element) => {
                 let Some(style) = self.style_of(n) else { return };
@@ -2166,8 +2274,16 @@ impl<'a> Ctx<'a> {
                 }
                 let with: Owners = owners.iter().copied().chain([n]).collect();
                 let before = items.len();
+                // Generated content is inline here (a block-level one
+                // included).
+                if let Some(g) = self.generated(n, false) {
+                    generated_items(&g, &style, &with, items);
+                }
                 for (c, _) in self.flatten_children(n) {
                     self.collect_inline(c, &style, &with, items);
+                }
+                if let Some(g) = self.generated(n, true) {
+                    generated_items(&g, &style, &with, items);
                 }
                 if items.len() == before {
                     let (ascent, descent) = text_extents(&style);
@@ -2175,6 +2291,68 @@ impl<'a> Ctx<'a> {
                 }
             }
             _ => {}
+        }
+    }
+}
+
+/// Words of `text` in `parent`'s font, owned by `word_owners`.
+fn text_items(text: &str, parent: &FlowStyle, word_owners: &Owners, items: &mut Vec<InlineItem>) {
+    let fs = parent.font_size;
+    let (ascent, descent) = text_extents(parent);
+    let lh = ascent + descent;
+    let space = text_width(" ", fs, parent.font_weight);
+    // Collapsible whitespace becomes one space before the next word
+    // (also across element boundaries via a zero-width word).
+    let mut pending_space = false;
+    for (i, part) in text.split(|c: char| c.is_ascii_whitespace()).enumerate() {
+        if i > 0 {
+            pending_space = true;
+        }
+        if part.is_empty() {
+            continue;
+        }
+        let breakable = (parent.wrap != WrapMode::Normal && !parent.nowrap)
+            .then(|| (std::rc::Rc::<str>::from(part), fs, parent.font_weight));
+        items.push(InlineItem::Word {
+            width: text_width(part, fs, parent.font_weight),
+            height: lh,
+            space_before: if pending_space { space } else { 0.0 },
+            owners: word_owners.clone(),
+            ascent,
+            content: font_metrics(fs),
+            breakable,
+            nowrap: parent.nowrap,
+        });
+        pending_space = false;
+    }
+    if pending_space {
+        items.push(InlineItem::Word {
+            width: 0.0,
+            height: 0.0,
+            space_before: space,
+            owners: Owners::from([]),
+            ascent: 0.0,
+            content: (0.0, 0.0),
+            breakable: None,
+            nowrap: parent.nowrap,
+        });
+    }
+}
+
+/// Items of generated content in its originating element's font.
+fn generated_items(g: &Generated, parent: &FlowStyle, owners: &Owners, items: &mut Vec<InlineItem>) {
+    match g.display {
+        GeneratedDisplay::Inline | GeneratedDisplay::Block => text_items(&g.text, parent, owners, items),
+        GeneratedDisplay::InlineBlock => {
+            // One line of its text; an empty box sits on the baseline.
+            let empty = g.text.chars().all(|c| c.is_ascii_whitespace());
+            let (ascent, descent) = text_extents(parent);
+            items.push(InlineItem::Generated {
+                width: if empty { 0.0 } else { collapsed_width(&g.text, parent.font_size, parent.font_weight) },
+                height: if empty { 0.0 } else { ascent + descent },
+                ascent: if empty { 0.0 } else { ascent },
+                owners: owners.clone(),
+            });
         }
     }
 }
@@ -2268,6 +2446,9 @@ struct LineItem {
     atomic: Option<(NodeId, StyleRef)>,
     /// Text: the font's (ascent, descent) for its reported box.
     content: Option<(f64, f64)>,
+    /// A generated inline-block: content even when empty (its line has a
+    /// line box).
+    generated: bool,
 }
 
 impl Line {
@@ -2283,7 +2464,7 @@ impl Line {
         self.ascent = self.ascent.max(ascent);
         self.descent = self.descent.max(height - ascent);
         self.x = self.x.max(x + width);
-        self.items.push(LineItem { x, width, height, ascent, owners, atomic, content: None });
+        self.items.push(LineItem { x, width, height, ascent, owners, atomic, content: None, generated: false });
     }
 
     /// The strut of the containing block's font.

@@ -20,6 +20,10 @@ use crate::node::NodeId;
 use crate::style::{StyleEngine, DEFAULT_FONT_SIZE};
 
 impl FlowStyleSource for StyleEngine {
+    fn generated(&self, dom: &Dom, el: NodeId, after: bool) -> Option<std::rc::Rc<crate::flow::Generated>> {
+        self.generated_content(dom, el, after)
+    }
+
     /// Cached per element across layout passes; the cache is invalidated
     /// with the cascade memo (selectively for journaled DOM changes).
     fn flow_style(&self, dom: &Dom, el: NodeId) -> Option<FlowStyle> {

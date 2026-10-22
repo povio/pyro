@@ -3402,3 +3402,76 @@ fn table_columns_keep_their_exact_width_after_fractional_ones_like_chromium() {
     let r = p.layout.bounding_client_rect(&p.dom, p.id("c2"));
     assert_eq!(r.width, 150.0, "Chromium keeps the 150px column exact");
 }
+
+/// Styles for the generated-content regressions (16px/20px text).
+const GENERATED_STYLES: &str = "<style>body{margin:0;font-family:sans-serif;font-size:16px;line-height:20px}\
+    .e:empty::before{content:'';display:inline-block}\
+    .tw1:empty::before{content:var(--tw-content);display:inline-block}\
+    .tw2:empty::before{--tw-content:'';content:var(--tw-content)}\
+    .reg::before{content:var(--tw-content);display:inline-block}\
+    .a::after{content:'';display:inline-block}\
+    .none::before{content:none;display:inline-block}\
+    .unset::before{content:var(--nope);display:inline-block}\
+    .abs::before{content:'';display:inline-block;position:absolute}\
+    .hide::before{content:'';display:none}\
+    .blk::before{content:'';display:block}\
+    .blkt::before{content:'q';display:block}\
+    .txt::before{content:\"xyz\"}\
+    .ib::before{content:'x';display:block}\
+    @property --tw-content{syntax:'*';inherits:false;initial-value:''}</style>";
+
+#[test]
+fn generated_string_content_takes_a_line_like_chromium() {
+    // TOS Cost Type filter: an empty multi-select's trigger holds only
+    // `<span class="block truncate empty:before:inline-block
+    // empty:before:content-['']">`. The engine generated no ::before box, so
+    // the span and the button were 0px tall and Playwright reported the
+    // trigger hidden. Chromium (800x600, measured): an empty-string inline-block
+    // ::before/::after makes one line (the strut); none, an unresolved var(),
+    // an out-of-flow or display:none pseudo-element generates nothing; form
+    // controls have none.
+    let html = format!(
+        "<!doctype html><head>{GENERATED_STYLES}</head><body>\
+         <button id=btn style=\"display:block;width:200px;padding:0;border:0;font:inherit\"><span id=s class=e style=\"display:block\"></span></button>\
+         <span id=tw class=\"tw1 tw2\" style=\"display:block\"></span>\
+         <span id=reg class=reg style=\"display:block\"></span>\
+         <div id=a class=a></div>\
+         <div id=none class=none></div>\
+         <div id=unset class=unset></div>\
+         <div id=abs class=abs></div>\
+         <div id=hide class=hide></div>\
+         <div id=blk class=blk></div>\
+         <div id=blkt class=blkt></div>\
+         <div style=\"width:400px\"><span id=t1 class=txt>ab</span></div>\
+         <div style=\"width:400px\"><span id=t2>xyzab</span></div>\
+         <div id=b1 class=txt style=\"width:400px\">ab</div><div id=b2 style=\"width:400px\"><span id=b2s>xyzab</span></div>\
+         <div><div id=f1 class=txt style=\"display:inline-block\">ab</div></div><div><div id=f2 style=\"display:inline-block\">xyzab</div></div>\
+         <input id=in1 class=ib><input id=in2>\
+         </body>"
+    );
+    let p = page(&html, Geometry::Flow);
+    let h = |id: &str| p.layout.bounding_client_rect(&p.dom, p.id(id)).height;
+    let w = |id: &str| p.layout.bounding_client_rect(&p.dom, p.id(id)).width;
+    for (id, expected) in [
+        ("s", 20.0),
+        ("btn", 20.0),
+        ("tw", 20.0),
+        ("reg", 20.0),
+        ("a", 20.0),
+        ("none", 0.0),
+        ("unset", 0.0),
+        ("abs", 0.0),
+        ("hide", 0.0),
+        ("blk", 0.0),
+        ("blkt", 20.0),
+    ] {
+        assert!((h(id) - expected).abs() < 0.01, "#{id} height {}, Chromium {expected}", h(id));
+    }
+    // Inline generated text is laid out like the element's own text, in an
+    // inline element, a block's line and a shrink-to-fit box's width.
+    assert!((w("t1") - w("t2")).abs() < 0.01, "#t1 {} vs #t2 {}", w("t1"), w("t2"));
+    assert!((h("b1") - h("b2")).abs() < 0.01, "#b1 {} vs #b2 {}", h("b1"), h("b2"));
+    assert!((w("f1") - w("f2")).abs() < 0.01, "#f1 {} vs #f2 {}", w("f1"), w("f2"));
+    // An input generates no content.
+    assert_eq!(h("in1"), h("in2"));
+}
