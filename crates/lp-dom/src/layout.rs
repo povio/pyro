@@ -950,6 +950,78 @@ impl Layout {
         Some(Rect { x: r.x - sx - dx + kx, y: r.y - sy - dy + ky, width: r.width, height: r.height })
     }
 
+    /// The caret position (text node, UTF-16 offset) under a viewport
+    /// point, in flow geometry: the character boundary nearest to the point
+    /// in the word nearest to it on its line (else on the nearest line), and
+    /// whether the point is on that word. `selectable` filters the text
+    /// nodes considered.
+    pub fn caret_from_point(
+        &self,
+        dom: &Dom,
+        x: f64,
+        y: f64,
+        selectable: &dyn Fn(NodeId) -> bool,
+    ) -> Option<(NodeId, u32, bool)> {
+        if !self.flow_mode() {
+            return None;
+        }
+        let flow = self.flow(dom);
+        let (wx, wy) = (self.window_scroll.0 as f64, self.window_scroll.1 as f64);
+        let mut best: Option<((f64, f64), u32, NodeId, f64)> = None;
+        for (i, run) in flow.text_runs.iter().enumerate() {
+            if !dom.is_connected(run.node).unwrap_or(false) || !selectable(run.node) {
+                continue;
+            }
+            if dom.parent_element(run.node).ok().flatten().is_some_and(|p| !self.is_visible(dom, p)) {
+                continue;
+            }
+            let (dx, dy) = self.ancestor_scroll_offset(dom, run.node);
+            let (kx, ky) = self.sticky_shift(dom, &flow, run.node);
+            let (sx, sy) = if run.fixed { (0.0, 0.0) } else { (wx, wy) };
+            let (left, top) = (run.rect.x - sx - dx + kx, run.rect.y - sy - dy + ky);
+            let gap = |p: f64, lo: f64, len: f64| {
+                if p < lo {
+                    lo - p
+                } else if p > lo + len {
+                    p - lo - len
+                } else {
+                    0.0
+                }
+            };
+            let key = (gap(y, top, run.rect.height), gap(x, left, run.rect.width));
+            if best.is_none_or(|b| key < b.0) {
+                best = Some((key, i as u32, run.node, left));
+            }
+        }
+        // The flag: the point is on the word itself.
+        best.map(|(key, i, node, left)| (node, flow.text_runs[i as usize].offset_at(x - left), key == (0.0, 0.0)))
+    }
+
+    /// Whether `node` (or a text node's parent) cannot be selected: the
+    /// nearest element up the tree with a `user-select` other than `auto`
+    /// says `none` (`text`, `all` or `contain` inside a `none` ancestor
+    /// select again).
+    pub fn user_select_none(&self, dom: &Dom, node: NodeId) -> bool {
+        let mut cur = if dom.node_type(node).ok() == Some(crate::node::NodeType::Text) {
+            dom.parent_element(node).ok().flatten()
+        } else {
+            Some(node)
+        };
+        while let Some(e) = cur {
+            let v = self
+                .style
+                .computed_value(dom, e, "user-select")
+                .or_else(|| self.style.computed_value(dom, e, "-webkit-user-select"));
+            match v.map(|v| v.trim().to_ascii_lowercase()).as_deref() {
+                Some("none") => return true,
+                Some("text" | "all" | "contain") => return false,
+                _ => {}
+            }
+            cur = dom.parent_element(e).ok().flatten();
+        }
+        false
+    }
+
     /// The bounding rect, or `None` when the element isn't rendered.
     pub fn client_rect(&self, dom: &Dom, el: NodeId) -> Option<Rect> {
         self.is_visible(dom, el).then(|| self.bounding_client_rect_for_visible(dom, el))

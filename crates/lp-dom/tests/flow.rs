@@ -3747,3 +3747,26 @@ fn scroll_anchoring_reselects_in_the_previous_layout_like_chromium() {
     style(&mut p, "i2", "height:150px");
     assert_eq!(settle_top(&mut p), 350, "anchor removed with growth: Chromium 350");
 }
+
+#[test]
+fn caret_from_point_takes_the_nearest_character_boundary_like_chromium() {
+    // Native selection needs the caret under a point. Chromium (measured,
+    // monospace 20px): a point 20% into the third character is at offset 2,
+    // 80% into it at offset 3; past the end of a line, its end; on the next
+    // line, that line's text. Points here use the engine's own advances.
+    let html = "<!doctype html><body style=\"margin:0;font-size:20px;line-height:30px\">\
+        <p id=p style=\"margin:0\">abcdefghij</p><p id=q style=\"margin:0\">klmnopqrst</p></body>";
+    let p = page(html, Geometry::Flow);
+    let (tp, tq) = (p.dom.first_child(p.id("p")).unwrap().unwrap(), p.dom.first_child(p.id("q")).unwrap().unwrap());
+    let r = p.layout.text_rect(&p.dom, tp).unwrap();
+    let w = |s: &str| lp_dom::text_metrics::text_width(s, 20.0, 400);
+    let y = r.y + r.height / 2.0;
+    let at = |x: f64, y: f64| p.layout.caret_from_point(&p.dom, x, y, &|_| true).map(|(n, o, _)| (n, o));
+    assert_eq!(at(r.x + w("ab") + 0.2 * w("c"), y), Some((tp, 2)), "20% into the third character");
+    assert_eq!(at(r.x + w("ab") + 0.8 * w("c"), y), Some((tp, 3)), "80% into the third character");
+    assert_eq!(at(r.x + r.width + 40.0, y), Some((tp, 10)), "past the end of the line");
+    assert_eq!(at(r.x - 5.0, y), Some((tp, 0)), "before the line");
+    assert_eq!(at(r.x + 1.0, y + 30.0), Some((tq, 0)), "next line");
+    // A filtered-out text node is not a candidate.
+    assert_eq!(p.layout.caret_from_point(&p.dom, r.x + 1.0, y, &|n| n != tp).map(|(n, _, _)| n), Some(tq));
+}

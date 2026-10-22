@@ -108,6 +108,10 @@ pub struct PageDom {
     /// Native drag source under a left press that has not moved past the
     /// drag threshold yet, with the press position.
     pub(crate) drag_candidate: Cell<Option<(NodeId, f64, f64)>>,
+    /// Native text selection under a primary press: the anchor caret, and
+    /// whether `selectstart` let it start (a canceled one is fired again on
+    /// each move).
+    pub(crate) text_drag: Cell<Option<((NodeId, u32), bool)>>,
     /// The document selection (`crate::editing`), shared by every world.
     pub(crate) selection: RefCell<Option<crate::editing::DocSelection>>,
     pub(crate) selectionchange_pending: Cell<bool>,
@@ -332,6 +336,7 @@ impl PageDom {
             hover_update_queued: Cell::new(false),
             press_target: Cell::new(None),
             drag_candidate: Cell::new(None),
+            text_drag: Cell::new(None),
             drag: RefCell::new(None),
             selection: RefCell::new(None),
             selectionchange_pending: Cell::new(false),

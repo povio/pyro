@@ -3395,3 +3395,132 @@ fn disabled_writes_elsewhere_move_no_focus_like_chromium() {
         assert!(v.starts_with("same=true | sync active="), "{name}: {r}");
     }
 }
+
+/// Loads `body` (flow geometry, 20px/30px text), logs mouse/selection events
+/// and returns the page.
+fn selection_page(h: &mut Harness, body: &str, extra: &str) {
+    let page = h.browser.host().thread.browser.pages[0].main_frame.page_dom.as_ref().unwrap().clone();
+    page.layout.borrow_mut().set_geometry(lp_dom::layout::Geometry::Flow);
+    let setup = format!(
+        "(() => {{ document.head.innerHTML = '<style>body{{margin:0;font-size:20px;line-height:30px}} td{{padding:0 20px 0 0}}</style>'; \
+           document.body.innerHTML = {body:?}; globalThis.log = []; globalThis.cancel = {{}}; \
+           if (!globalThis.d) {{ \
+             globalThis.d = n => n ? (n.nodeType === 3 ? `#text(${{n.parentNode.id || n.parentNode.nodeName}})` : (n.id || n.nodeName)) : null; \
+             for (const t of ['mousedown', 'selectstart', 'mouseup', 'click']) document.addEventListener(t, e => {{ log.push(`${{t}}@${{d(e.target)}}`); if (cancel[t]) e.preventDefault(); }}, true); \
+             document.addEventListener('selectionchange', () => {{ if (log[log.length - 1] !== 'selectionchange') log.push('selectionchange'); }}); \
+           }} \
+           {extra} }})()"
+    );
+    eval_value(h, &setup);
+}
+
+/// A point at the vertical middle of `sel`'s text, `dx` px from its left
+/// edge (negative: from its right edge).
+fn text_point(h: &mut Harness, sel: &str, dx: f64) -> Value {
+    eval_value(
+        h,
+        &format!(
+            "(() => {{ const el = document.querySelector({sel:?}); const t = [...el.childNodes].find(n => n.nodeType === 3) || el; \
+               const r = document.createRange(); r.selectNodeContents(t); const b = r.getBoundingClientRect(); \
+               return [{dx} < 0 ? b.right + {dx} : b.left + {dx}, b.top + b.height / 2]; }})()"
+        ),
+    )
+}
+
+fn drag_select(h: &mut Harness, from: &Value, to: &Value) -> String {
+    mouse(h, "mousePressed", from, 0.0, 1);
+    for k in 1..=12 {
+        let f = k as f64 / 12.0;
+        let at = json!([
+            from[0].as_f64().unwrap() + (to[0].as_f64().unwrap() - from[0].as_f64().unwrap()) * f,
+            from[1].as_f64().unwrap() + (to[1].as_f64().unwrap() - from[1].as_f64().unwrap()) * f
+        ]);
+        mouse(h, "mouseMoved", &at, 0.0, 1);
+    }
+    mouse(h, "mouseReleased", to, 0.0, 0);
+    let r = h.page(
+        "Runtime.evaluate",
+        json!({"expression": "new Promise(res => setTimeout(() => { const s = getSelection(); \
+            res(`str=${JSON.stringify(s.toString())} type=${s.type} anchor=${d(s.anchorNode)}:${s.anchorOffset} focus=${d(s.focusNode)}:${s.focusOffset} active=${d(document.activeElement)} changed=${log.includes('selectionchange')} log=${log.filter(e => e !== 'selectionchange').join(',')}`); }, 20))",
+            "awaitPromise": true, "returnByValue": true}),
+    );
+    r["result"]["result"]["value"].as_str().unwrap_or_default().to_owned()
+}
+
+#[test]
+fn native_drag_selection_follows_chromium_rules() {
+    // Chromium selects text under a primary-button drag. The engine never
+    // did, so TOS table-viewport's native cross-row selection stayed empty.
+    // Chromium (800x600, measured): a press on text fires selectstart at the
+    // text node and collapses the selection there; moves extend it (anchor
+    // at the press, focus under the pointer, backwards too). A canceled
+    // mousedown or selectstart (refired on every move) selects nothing;
+    // user-select: none on the element or an ancestor selects nothing
+    // (user-select: text inside it does); a press on a button focuses it and
+    // selects nothing; a drag into user-select: none content stops at the end
+    // of the selectable text. The engine measures text with its own advance
+    // table, so points here are at text edges. (This harness runs the queued
+    // selectionchange task after the whole gesture; over CDP it comes after
+    // selectstart, as in Chromium, so only its firing is asserted.)
+    let mut h = Harness::new();
+    let p = "<p id=p style=\"margin:0\">abcdefghij</p><p id=q style=\"margin:0\">klmnopqrst</p>";
+    let whole = "str=\"abcdefghij\" type=Range anchor=#text(p):0 focus=#text(p):10 active=BODY changed=true log=mousedown@p,selectstart@#text(p),mouseup@p,click@p";
+    let run = |h: &mut Harness, body: &str, extra: &str, from: (&str, f64), to: (&str, f64)| {
+        selection_page(h, body, extra);
+        let (a, b) = (text_point(h, from.0, from.1), text_point(h, to.0, to.1));
+        drag_select(h, &a, &b)
+    };
+    assert_eq!(run(&mut h, p, "", ("#p", 1.0), ("#p", -0.5)), whole, "whole line");
+    assert_eq!(
+        run(&mut h, p, "", ("#p", -1.0), ("#p", 1.0)),
+        "str=\"abcdefghij\" type=Range anchor=#text(p):10 focus=#text(p):0 active=BODY changed=true log=mousedown@p,selectstart@#text(p),mouseup@p,click@p",
+        "backwards"
+    );
+    let r = run(&mut h, p, "", ("#p", 1.0), ("#q", -1.0));
+    assert!(
+        r.contains("anchor=#text(p):0 focus=#text(q):10")
+            && r.contains("log=mousedown@p,selectstart@#text(p),mouseup@q"),
+        "across lines: {r}"
+    );
+    let none =
+        "str=\"\" type=None anchor=null:0 focus=null:0 active=BODY changed=false log=mousedown@p,mouseup@p,click@p";
+    assert_eq!(run(&mut h, p, "cancel.mousedown = true", ("#p", 1.0), ("#p", -1.0)), none, "mousedown canceled");
+    let r = run(&mut h, p, "cancel.selectstart = true", ("#p", 1.0), ("#p", -1.0));
+    assert!(r.starts_with("str=\"\" type=None") && r.matches("selectstart@").count() > 1, "selectstart canceled: {r}");
+    let us = "<p id=p style=\"margin:0;user-select:none\">abcdefghij</p>";
+    assert_eq!(run(&mut h, us, "", ("#p", 1.0), ("#p", -1.0)), none, "user-select none");
+    let anc = "<div style=\"user-select:none\"><p id=p style=\"margin:0\">abcdefghij</p></div>";
+    assert_eq!(run(&mut h, anc, "", ("#p", 1.0), ("#p", -1.0)), none, "user-select none ancestor");
+    let text = "<div style=\"user-select:none\"><p id=p style=\"margin:0;user-select:text\">abcdefghij</p></div>";
+    assert_eq!(run(&mut h, text, "", ("#p", 1.0), ("#p", -1.0)), whole, "user-select text inside none");
+    let btn = "<button id=btn style=\"font:inherit\">button text</button><p id=p style=\"margin:0\">abcdefghij</p>";
+    let r = run(&mut h, btn, "", ("#btn", 1.0), ("#p", -1.0));
+    assert!(
+        r.starts_with("str=\"\" type=None") && r.contains("active=btn") && !r.contains("selectstart"),
+        "drag on button: {r}"
+    );
+    let into = "<p id=p style=\"margin:0\">abcdefghij</p><p id=q style=\"margin:0;user-select:none\">klmnopqrst</p>";
+    let r = run(&mut h, into, "", ("#p", 1.0), ("#q", -1.0));
+    assert!(
+        r.starts_with("str=\"abcdefghij\" type=Range anchor=#text(p):0 focus=#text(p):10"),
+        "into none region: {r}"
+    );
+    let table = "<table id=t style=\"border-spacing:0\"><tr><td id=a0>Alpha one</td><td id=b0>Beta one</td></tr><tr><td id=a1>Alpha two</td><td id=b1>Beta two</td></tr></table>";
+    let r = run(&mut h, table, "", ("#a0", 1.0), ("#b1", -1.0));
+    assert!(
+        r.contains("Alpha one") && r.contains("Alpha two") && r.contains("anchor=#text(a0):0"),
+        "table cross-row: {r}"
+    );
+    // A plain click collapses the selection there (the Selection API's own
+    // selection included), firing selectstart.
+    selection_page(
+        &mut h,
+        p,
+        "const t = document.getElementById('p').firstChild; getSelection().setBaseAndExtent(t, 1, t, 4);",
+    );
+    let at = text_point(&mut h, "#q", 1.0);
+    mouse(&mut h, "mousePressed", &at, 0.0, 1);
+    mouse(&mut h, "mouseReleased", &at, 0.0, 0);
+    let r = eval_value(&mut h, "(() => { const s = getSelection(); return `${s.type} ${d(s.anchorNode)}:${s.anchorOffset} ${log.filter(e => e !== 'selectionchange').join(',')}`; })()");
+    assert_eq!(r, json!("Caret #text(q):0 mousedown@q,selectstart@#text(q),mouseup@q,click@q"), "click collapses");
+}

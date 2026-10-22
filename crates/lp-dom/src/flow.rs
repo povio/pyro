@@ -624,6 +624,50 @@ pub struct FlowBox {
     pub clipped_by: u32,
 }
 
+/// One word of a text node on a line.
+#[derive(Clone, Debug)]
+pub struct TextRun {
+    pub node: NodeId,
+    /// UTF-16 offsets of the word in the node's data.
+    pub start: u32,
+    pub end: u32,
+    pub rect: Rect,
+    pub fixed: bool,
+    text: std::rc::Rc<str>,
+    font_size: f64,
+    weight: u16,
+    order: u32,
+}
+
+impl TextRun {
+    /// The offset of the character boundary nearest to `dx` px from the
+    /// run's left edge, as Chromium places a caret under a point.
+    pub fn offset_at(&self, dx: f64) -> u32 {
+        let mut x = 0.0;
+        let mut offset = self.start;
+        for c in self.text.chars() {
+            let w = text_width(c.encode_utf8(&mut [0; 4]), self.font_size, self.weight);
+            if dx < x + w / 2.0 {
+                return offset;
+            }
+            x += w;
+            offset += c.len_utf16() as u32;
+        }
+        self.end
+    }
+}
+
+/// Where a word comes from in its text node.
+#[derive(Clone, Debug)]
+struct WordSource {
+    node: NodeId,
+    start: u32,
+    end: u32,
+    text: std::rc::Rc<str>,
+    font_size: f64,
+    weight: u16,
+}
+
 #[derive(Default, Debug)]
 pub struct FlowResult {
     pub boxes: FxHashMap<NodeId, FlowBox>,
@@ -634,6 +678,9 @@ pub struct FlowResult {
     /// Order stamp of each text entry, so later shifts of the boxes laid out
     /// after an order (cell centring, bottom-anchored abs boxes) move them.
     text_orders: Vec<(u32, NodeId)>,
+    /// Each laid-out word of a text node, for positions within text (the
+    /// caret under a point). Same coordinates as `texts`.
+    pub text_runs: Vec<TextRun>,
     /// Document scroll size (at least the viewport).
     pub document_width: f64,
     pub document_height: f64,
@@ -882,6 +929,8 @@ enum InlineItem {
         /// decides, not the block (a whitespace-normal span in a nowrap cell
         /// wraps).
         nowrap: bool,
+        /// The text node and range the word comes from.
+        source: Option<WordSource>,
     },
     Break,
     Atomic {
@@ -947,6 +996,7 @@ impl<'a> Ctx<'a> {
             b.out.texts.clear();
             b.out.sticky.clear();
             b.out.text_orders.clear();
+            b.out.text_runs.clear();
             b.out.document_width = 0.0;
             b.out.document_height = 0.0;
             b.by_order.clear();
@@ -1118,6 +1168,9 @@ impl<'a> Ctx<'a> {
                     r.y += dy;
                 }
             }
+        }
+        for run in self.out.text_runs.iter_mut().filter(|r| r.order >= order) {
+            run.rect.y += dy;
         }
     }
 
@@ -1891,7 +1944,18 @@ impl<'a> Ctx<'a> {
                         parent.text_align,
                     );
                 }
-                InlineItem::Word { width: w, height: h, space_before, owners, ascent, content, breakable, nowrap } => {
+                InlineItem::Word {
+                    width: w,
+                    height: h,
+                    space_before,
+                    owners,
+                    ascent,
+                    content,
+                    breakable,
+                    nowrap,
+                    source,
+                } => {
+                    let mut source = source;
                     let gap = if line.x > 0.0 { space_before } else { 0.0 };
                     if line.x > 0.0 && line.x + gap + w > width + FIT_EPSILON && !nowrap {
                         line_y += self.flush_line(
@@ -1912,6 +1976,8 @@ impl<'a> Ctx<'a> {
                     let mut w = w;
                     if line.x == 0.0 && w > width + FIT_EPSILON {
                         if let Some((text, fs, weight)) = &breakable {
+                            // A word broken over lines has no text run.
+                            source = None;
                             let pieces = break_word(text, *fs, *weight, width);
                             let (last, full) = pieces.split_last().expect("a word has a piece");
                             for &piece in full {
@@ -1939,6 +2005,7 @@ impl<'a> Ctx<'a> {
                     line.push(at, w, h, ascent, owners, None);
                     if let Some(it) = line.items.last_mut() {
                         it.content = Some(content);
+                        it.source = source;
                     }
                     line.extents(strut);
                 }
@@ -2132,6 +2199,19 @@ impl<'a> Ctx<'a> {
             for o in it.owners.iter() {
                 union(frags, order_of, *o, r);
             }
+            if let Some(src) = it.source {
+                self.out.text_runs.push(TextRun {
+                    node: src.node,
+                    start: src.start,
+                    end: src.end,
+                    rect: r,
+                    fixed,
+                    text: src.text,
+                    font_size: src.font_size,
+                    weight: src.weight,
+                    order: self.order,
+                });
+            }
         }
         let height = line.ascent + line.descent;
         *line = Line::default();
@@ -2252,7 +2332,7 @@ impl<'a> Ctx<'a> {
                 // The text node owns its words too: its box (FlowResult::texts)
                 // is the union of their fragments, for Range geometry.
                 let word_owners: Owners = owners.iter().copied().chain([n]).collect();
-                text_items(text, parent, &word_owners, items);
+                text_items(text, parent, &word_owners, Some(n), items);
             }
             Ok(NodeType::Element) => {
                 let Some(style) = self.style_of(n) else { return };
@@ -2295,8 +2375,9 @@ impl<'a> Ctx<'a> {
     }
 }
 
-/// Words of `text` in `parent`'s font, owned by `word_owners`.
-fn text_items(text: &str, parent: &FlowStyle, word_owners: &Owners, items: &mut Vec<InlineItem>) {
+/// Words of `text` in `parent`'s font, owned by `word_owners`; `node`: the
+/// text node `text` is the data of (its words get a source).
+fn text_items(text: &str, parent: &FlowStyle, word_owners: &Owners, node: Option<NodeId>, items: &mut Vec<InlineItem>) {
     let fs = parent.font_size;
     let (ascent, descent) = text_extents(parent);
     let lh = ascent + descent;
@@ -2304,10 +2385,15 @@ fn text_items(text: &str, parent: &FlowStyle, word_owners: &Owners, items: &mut 
     // Collapsible whitespace becomes one space before the next word
     // (also across element boundaries via a zero-width word).
     let mut pending_space = false;
+    // UTF-16 position in the data (each separator is one unit).
+    let mut pos = 0u32;
     for (i, part) in text.split(|c: char| c.is_ascii_whitespace()).enumerate() {
         if i > 0 {
             pending_space = true;
+            pos += 1;
         }
+        let start = pos;
+        pos += part.encode_utf16().count() as u32;
         if part.is_empty() {
             continue;
         }
@@ -2322,6 +2408,14 @@ fn text_items(text: &str, parent: &FlowStyle, word_owners: &Owners, items: &mut 
             content: font_metrics(fs),
             breakable,
             nowrap: parent.nowrap,
+            source: node.map(|node| WordSource {
+                node,
+                start,
+                end: pos,
+                text: std::rc::Rc::from(part),
+                font_size: fs,
+                weight: parent.font_weight,
+            }),
         });
         pending_space = false;
     }
@@ -2335,6 +2429,7 @@ fn text_items(text: &str, parent: &FlowStyle, word_owners: &Owners, items: &mut 
             content: (0.0, 0.0),
             breakable: None,
             nowrap: parent.nowrap,
+            source: None,
         });
     }
 }
@@ -2342,7 +2437,8 @@ fn text_items(text: &str, parent: &FlowStyle, word_owners: &Owners, items: &mut 
 /// Items of generated content in its originating element's font.
 fn generated_items(g: &Generated, parent: &FlowStyle, owners: &Owners, items: &mut Vec<InlineItem>) {
     match g.display {
-        GeneratedDisplay::Inline | GeneratedDisplay::Block => text_items(&g.text, parent, owners, items),
+        // Generated text has no text node: no source, no text runs.
+        GeneratedDisplay::Inline | GeneratedDisplay::Block => text_items(&g.text, parent, owners, None, items),
         GeneratedDisplay::InlineBlock => {
             // One line of its text; an empty box sits on the baseline.
             let empty = g.text.chars().all(|c| c.is_ascii_whitespace());
@@ -2449,6 +2545,8 @@ struct LineItem {
     /// A generated inline-block: content even when empty (its line has a
     /// line box).
     generated: bool,
+    /// A word of a text node: where it comes from (a text run).
+    source: Option<WordSource>,
 }
 
 impl Line {
@@ -2464,7 +2562,17 @@ impl Line {
         self.ascent = self.ascent.max(ascent);
         self.descent = self.descent.max(height - ascent);
         self.x = self.x.max(x + width);
-        self.items.push(LineItem { x, width, height, ascent, owners, atomic, content: None, generated: false });
+        self.items.push(LineItem {
+            x,
+            width,
+            height,
+            ascent,
+            owners,
+            atomic,
+            content: None,
+            generated: false,
+            source: None,
+        });
     }
 
     /// The strut of the containing block's font.
