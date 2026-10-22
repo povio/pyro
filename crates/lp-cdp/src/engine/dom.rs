@@ -284,6 +284,12 @@ impl EngineHost {
                         .client_rect(&dom, node)
                         .ok_or_else(|| CdpError::server("Node does not have a layout object"))?
                 };
+                // In layout units, as Chromium reports untransformed geometry:
+                // the frame's offset and the element's rect each quantized,
+                // so the quad's edges give back the width exactly
+                // (Playwright's boundingBox).
+                let rect = rect.layout_units();
+                let (ox, oy) = (lp_dom::layout::layout_unit(ox), lp_dom::layout::layout_unit(oy));
                 let (rx, ry) = (rect.x + ox, rect.y + oy);
                 let quad = [rx, ry, rx + rect.width, ry, rx + rect.width, ry + rect.height, rx, ry + rect.height];
                 match action {
@@ -392,8 +398,9 @@ impl EngineHost {
                 .borrow()
                 .client_rect(&dom.dom.borrow(), owner)
                 .ok_or_else(|| CdpError::server("Frame owner does not have a layout object"))?;
-            x += r.x;
-            y += r.y;
+            // Each frame's offset in layout units (Chromium sums them).
+            x += lp_dom::layout::layout_unit(r.x);
+            y += lp_dom::layout::layout_unit(r.y);
             cur = parent;
         }
         Ok((x, y))

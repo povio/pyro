@@ -65,7 +65,7 @@ impl JsClass for DomRect {
 pub(crate) fn bounding_rect<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
     let page = n.page();
     let r = page.layout.borrow().bounding_client_rect(&page.dom.borrow(), n.id);
-    rect_value(s, r)
+    rect_value(s, r.layout_units())
 }
 
 pub(crate) fn client_rects<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
@@ -73,7 +73,7 @@ pub(crate) fn client_rects<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s
     let rects = page.layout.borrow().client_rects(&page.dom.borrow(), n.id);
     let mut vals = lp_js::RootedVec::new();
     for r in rects {
-        vals.push(s, rect_value(s, r)?);
+        vals.push(s, rect_value(s, r.layout_units())?);
     }
     Ok(s.array(&vals.iter(s).collect::<Vec<_>>())?.value())
 }
@@ -102,7 +102,7 @@ pub(crate) fn range_rect<'s>(
     };
     if let Some(t) = text {
         if let Some(r) = page.layout.borrow().text_rect(&page.dom.borrow(), t) {
-            return rect_value(s, r);
+            return rect_value(s, r.layout_units());
         }
     }
     let el = {
@@ -117,7 +117,7 @@ pub(crate) fn range_rect<'s>(
         Some(e) => page.layout.borrow().bounding_client_rect(&page.dom.borrow(), e),
         None => lp_dom::layout::Rect::default(),
     };
-    rect_value(s, r)
+    rect_value(s, r.layout_units())
 }
 
 pub fn fire_scroll(page: &Rc<PageDom>, target: Option<NodeId>) {

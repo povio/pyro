@@ -103,6 +103,32 @@ impl Rect {
     }
 }
 
+impl Rect {
+    /// The rect in layout units, as Chromium reports untransformed layout
+    /// geometry: position and size each truncated toward zero to 1/64 px
+    /// (measured: 100.7 -> 100.6875, -10.7 -> -10.6875, 33.33 -> 33.328125).
+    /// Edges computed from it are then exact (a quad's right edge minus its
+    /// left edge is the width again). Layout itself keeps full precision.
+    pub fn layout_units(self) -> Rect {
+        Rect {
+            x: layout_unit(self.x),
+            y: layout_unit(self.y),
+            width: layout_unit(self.width),
+            height: layout_unit(self.height),
+        }
+    }
+}
+
+/// A length in layout units (1/64 px), truncated toward zero like Chromium's
+/// LayoutUnit conversion.
+pub fn layout_unit(v: f64) -> f64 {
+    if v.is_finite() {
+        (v * 64.0).trunc() / 64.0
+    } else {
+        v
+    }
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Axis {
     Width,

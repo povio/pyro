@@ -3665,3 +3665,42 @@ fn native_drag_selection_resolves_hit_targets_and_removed_nodes_like_chromium() 
         "across a none region: {r}"
     );
 }
+
+#[test]
+fn reported_geometry_is_in_layout_units_like_chromium() {
+    // Chromium reports untransformed layout geometry in layout units: x, y,
+    // width and height each truncated toward zero to 1/64 px, so a quad's
+    // right edge minus its left edge is the width again. The engine reported
+    // full-precision coordinates: TOS bookkeeping's 150px header at
+    // x = 942.8340611353711 gave Playwright's boundingBox (quad maxX - minX)
+    // 149.9999999999999, below the column's 150px minimum. Chromium (800x600,
+    // measured): getBoundingClientRect and the box-model quad agree.
+    let mut h = Harness::new();
+    let page = h.browser.host().thread.browser.pages[0].main_frame.page_dom.as_ref().unwrap().clone();
+    page.layout.borrow_mut().set_geometry(lp_dom::layout::Geometry::Flow);
+    for (style, expected) in [
+        ("left:100.7px;top:10.3px;width:150px;height:20px", [100.6875, 10.296875, 150.0, 20.0]),
+        ("left:-10.7px;top:-3.3px;width:150px;height:20px", [-10.6875, -3.296875, 150.0, 20.0]),
+        ("left:100px;top:10px;width:150.7px;height:20.3px", [100.0, 10.0, 150.6875, 20.296875]),
+        ("left:100.3px;top:10px;width:33.33px;height:20px", [100.296875, 10.0, 33.328125, 20.0]),
+        ("left:942.8340611353711px;top:10px;width:150px;height:20px", [942.828125, 10.0, 150.0, 20.0]),
+    ] {
+        let setup = h.page(
+            "Runtime.evaluate",
+            json!({"expression": format!("document.body.style.margin = '0'; document.body.innerHTML = '<div id=e style=\"position:absolute;{style}\"></div>'; document.getElementById('e')")}),
+        );
+        let object = setup["result"]["result"]["objectId"].clone();
+        let rect = eval_value(&mut h, "(() => { const b = document.getElementById('e').getBoundingClientRect(); return [b.x, b.y, b.width, b.height]; })()");
+        let rect: Vec<f64> = rect.as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
+        assert_eq!(rect, expected, "{style}: DOMRect");
+        let model = h.page("DOM.getBoxModel", json!({ "objectId": object }));
+        let q = &model["result"]["model"]["border"];
+        let (x0, x1, y0, y2) =
+            (q[0].as_f64().unwrap(), q[2].as_f64().unwrap(), q[1].as_f64().unwrap(), q[5].as_f64().unwrap());
+        assert_eq!(
+            [x0, y0, x1 - x0, y2 - y0],
+            expected,
+            "{style}: box-model quad (and its width/height as Playwright derives them)"
+        );
+    }
+}
