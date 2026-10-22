@@ -3524,3 +3524,33 @@ fn native_drag_selection_follows_chromium_rules() {
     let r = eval_value(&mut h, "(() => { const s = getSelection(); return `${s.type} ${d(s.anchorNode)}:${s.anchorOffset} ${log.filter(e => e !== 'selectionchange').join(',')}`; })()");
     assert_eq!(r, json!("Caret #text(q):0 mousedown@q,selectstart@#text(q),mouseup@q,click@q"), "click collapses");
 }
+
+#[test]
+fn mouse_presses_over_empty_viewport_space_target_the_root_element() {
+    // Chromium hit-tests empty viewport space (below short content) as the
+    // root element: a click there fires pointerdown, mousedown, pointerup,
+    // mouseup and click at <html>. The engine rejected presses and releases
+    // there ("no element at point"), e.g. a drag released where content had
+    // been removed under the pointer.
+    let mut h = Harness::new();
+    let page = h.browser.host().thread.browser.pages[0].main_frame.page_dom.as_ref().unwrap().clone();
+    page.layout.borrow_mut().set_geometry(lp_dom::layout::Geometry::Flow);
+    eval_value(
+        &mut h,
+        "(() => { document.body.style.margin = '0'; document.body.innerHTML = '<p id=p style=\"margin:0;font-size:20px;line-height:30px\">abc</p>'; \
+          globalThis.log = []; for (const t of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) \
+          document.addEventListener(t, e => log.push(`${t}@${e.target.id || e.target.nodeName}`), true); })()",
+    );
+    let at = json!([200.0, 400.0]);
+    for (kind, buttons) in [("mousePressed", 1), ("mouseReleased", 0)] {
+        let r = h.page(
+            "Input.dispatchMouseEvent",
+            json!({"type":kind,"x":at[0],"y":at[1],"button":"left","buttons":buttons,"clickCount":1}),
+        );
+        assert!(r.get("error").is_none(), "{kind}: {r}");
+    }
+    assert_eq!(
+        eval_value(&mut h, "log.join(',')"),
+        json!("pointerdown@HTML,mousedown@HTML,pointerup@HTML,mouseup@HTML,click@HTML")
+    );
+}

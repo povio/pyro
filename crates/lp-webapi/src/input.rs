@@ -1406,7 +1406,11 @@ pub fn dispatch_mouse_intercepting_drags(
     m: &MouseInput,
     intercept_drags: bool,
 ) -> Result<Option<DragData>, String> {
-    let target = pointer_target(page, m.x, m.y, matches!(kind, MouseKind::Wheel | MouseKind::Moved))
+    // Empty viewport space targets the root element, as Chromium hit-tests
+    // it: for moves and wheels always, for presses and releases in flow
+    // geometry (the synthetic layout's gaps are not real empty space).
+    let flow = page.layout.borrow().geometry() == lp_dom::layout::Geometry::Flow;
+    let target = pointer_target(page, m.x, m.y, flow || matches!(kind, MouseKind::Wheel | MouseKind::Moved))
         .ok_or_else(|| "no element at point".to_owned())?;
     let Some(tkey) = key_of(page, target) else { return Err("stale target".into()) };
     match kind {
