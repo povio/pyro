@@ -178,26 +178,32 @@ fn run_blur(page: &Rc<PageDom>, doc: NodeId, el: NodeId, related: Option<NodeId>
     fire_focus_event(page, el, "focusout", true, related);
 }
 
-/// Explicit blur keeps the owner's selected frame and remembered edit target.
-/// After a `disabled` content attribute changed: the focused element that
-/// is no longer focusable (a disabled control, or one in a disabled
-/// fieldset) loses focus at once, as in Chromium: trusted `blur` and
-/// `focusout` with no related target, the body active, before the
-/// change's MutationObserver callbacks (react-aria synthesizes its own blur
-/// otherwise, and a dialog's FocusScope then sees two blurs).
-pub(crate) fn blur_if_focus_disabled(page: &Rc<PageDom>, attribute: &str) {
+/// After `owner`'s `disabled` content attribute changed: a connected focused
+/// control that it disabled (itself, or a descendant of the fieldset) loses
+/// focus at once, as in Chromium: trusted `blur` and `focusout` with no
+/// related target, the body active, before the change's MutationObserver
+/// callbacks (react-aria synthesizes its own blur otherwise, and a dialog's
+/// FocusScope then sees two blurs). A `disabled` write elsewhere moves no
+/// focus, nor does one while the focused element is detached.
+pub(crate) fn blur_if_focus_disabled(page: &Rc<PageDom>, owner: NodeId, attribute: &str) {
     if !attribute.eq_ignore_ascii_case("disabled") {
         return;
     }
     let lost = {
         let dom = page.dom.borrow();
-        dom.focused(page.document()).ok().flatten().filter(|&f| !dom.is_focusable(f).unwrap_or(true))
+        let fieldset = dom.element(owner).is_ok_and(|e| e.is_html() && &*e.name.local == "fieldset");
+        dom.focused(page.document()).ok().flatten().filter(|&f| {
+            (f == owner || (fieldset && dom.contains(owner, f).unwrap_or(false)))
+                && dom.is_connected(f).unwrap_or(false)
+                && dom.is_disabled(f).unwrap_or(false)
+        })
     };
     if let Some(f) = lost {
         blur_element(page, f);
     }
 }
 
+/// Explicit blur keeps the owner's selected frame and remembered edit target.
 pub fn blur_element(page: &Rc<PageDom>, el: NodeId) {
     if page.dom.borrow().focused(page.document()).ok().flatten() != Some(el) {
         return;

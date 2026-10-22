@@ -3334,3 +3334,64 @@ fn disabling_the_focused_control_blurs_it_like_chromium() {
         json!("a")
     );
 }
+
+#[test]
+fn disabled_writes_elsewhere_move_no_focus_like_chromium() {
+    // Chromium blurs only the focused control that a `disabled` write
+    // disables. A write on another control or on a fieldset that does not
+    // contain the focused control fires nothing, and neither does any write
+    // after the focused control was removed. The engine blurred whatever
+    // focused element was not focusable after any such write, so a detached
+    // one silently lost focus at the next unrelated write (TOS Quote Finances
+    // kept Select all checked after a tab round trip with that change).
+    let mut h = Harness::new();
+    let probe = |html: &str, action: &str| {
+        format!(
+            "new Promise(res => {{ \
+               document.body.innerHTML = '{html}'; \
+               const $ = id => document.getElementById(id), i = $('i'), other = $('other'), wrap = $('wrap'), fs2 = $('fs2'), log = []; \
+               const d = n => n ? (n.id || n.nodeName) : null; \
+               const mark = what => log.push(`${{what}} active=${{d(document.activeElement)}}`); \
+               for (const t of ['blur', 'focusout', 'focus', 'focusin']) document.addEventListener(t, e => \
+                 log.push(`${{t}}@${{d(e.target)}} trusted=${{e.isTrusted}}`), true); \
+               i.focus(); log.length = 0; \
+               new MutationObserver(() => mark('MO')).observe(document, {{ attributes: true, childList: true, subtree: true }}); \
+               {action}; \
+               mark('sync'); \
+               setTimeout(() => {{ mark('task'); res(log.join(' | ')); }}, 0); \
+             }})"
+        )
+    };
+    let unrelated = "<input id=i><button id=other>o</button>";
+    let fieldsets = "<fieldset id=fs1><input id=i></fieldset><fieldset id=fs2><button id=other>o</button></fieldset>";
+    for (name, html, action) in [
+        ("property", unrelated, "other.disabled = true"),
+        ("attribute", unrelated, "other.setAttribute('disabled', '')"),
+        ("toggle", unrelated, "other.toggleAttribute('disabled', true)"),
+        ("fieldset", fieldsets, "fs2.disabled = true"),
+    ] {
+        let r = h.page(
+            "Runtime.evaluate",
+            json!({"expression": probe(html, action), "awaitPromise": true, "returnByValue": true}),
+        );
+        assert_eq!(r["result"]["result"]["value"], "sync active=i | MO active=i | task active=i", "{name}: {r}");
+    }
+    // Chromium blurs a removed focused control at removal (the engine does
+    // not yet); either way a later `disabled` write, unrelated or on the
+    // detached control, fires nothing and keeps the active element.
+    for (name, html, action) in [
+        ("unrelated", "<div id=wrap><input id=i></div><button id=other>o</button>", "other.disabled = true"),
+        ("detached", "<div id=wrap><input id=i></div>", "i.disabled = true"),
+    ] {
+        let action = format!(
+            "wrap.remove(); const removed = document.activeElement; log.length = 0; {action}; \
+             log.push(`same=${{document.activeElement === removed}}`)"
+        );
+        let r = h.page(
+            "Runtime.evaluate",
+            json!({"expression": probe(html, &action), "awaitPromise": true, "returnByValue": true}),
+        );
+        let v = r["result"]["result"]["value"].as_str().unwrap_or_default().to_owned();
+        assert!(v.starts_with("same=true | sync active="), "{name}: {r}");
+    }
+}

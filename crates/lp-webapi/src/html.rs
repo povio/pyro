@@ -33,7 +33,7 @@ macro_rules! reflect_bool {
             |s, n| Ok(s.boolean(n.page().dom.borrow().has_attribute(n.id, $attr).js()?)),
             |_s, n, v| {
                 n.page().dom.borrow_mut().toggle_attribute(n.id, $attr, Some(v.to_bool())).js()?;
-                crate::input::blur_if_focus_disabled(n.page(), $attr);
+                crate::input::blur_if_focus_disabled(n.page(), n.id, $attr);
                 Ok(())
             },
         );
