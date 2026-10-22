@@ -3666,6 +3666,62 @@ fn scroll_anchoring_rechecks_overflow_anchor_none_like_chromium() {
 }
 
 #[test]
+fn scroll_anchoring_inside_a_position_fixed_container_like_chromium() {
+    // A scroller inside a `position: fixed` drawer anchors its content like
+    // any other (TOS entity chat: the timeline lives in a fixed Drawer).
+    // Chromium (800x600, measured): a 300px flex-item scroller of 20 x 50px
+    // messages (article in a wrapper div) at scrollTop 300; #m2 gets
+    // min-height 150px -> 400, also when the content's own min-height
+    // already covers the growth (scrollHeight unchanged), without the fixed
+    // drawer, and with a fixed or absolute box first in the scroller (at
+    // 320px, inside its layout window), which stays excluded.
+    let messages: String = (0..20)
+        .map(|i| {
+            format!(
+                "<div><article id=m{i} style=\"display:flex;height:50px\">\
+                 <div style=\"width:36px;flex-shrink:0\"></div><div style=\"flex:1\">m</div></article></div>"
+            )
+        })
+        .collect();
+    let timeline = |content_style: &str| {
+        format!(
+            "<div style=\"display:flex;flex-direction:column;height:100%\">\
+             <div id=sc style=\"min-height:0;flex:1 1 0%;overflow-y:auto\"> \
+             <div style=\"{content_style}\">{messages}</div> </div></div>"
+        )
+    };
+    let out_of_flow = |position: &str| {
+        format!(
+            "<div style=\"display:flex;flex-direction:column;height:100%\">\
+             <div id=sc style=\"min-height:0;flex:1 1 0%;overflow-y:auto\"> \
+             <div style=\"position:{position};top:320px;left:0;width:100px;height:20px\"></div>\
+             <div>{messages}</div> </div></div>"
+        )
+    };
+    let fixed =
+        |inner: String| format!("<div style=\"position:fixed;top:0;right:0;width:600px;height:300px\">{inner}</div>");
+    let flat = |inner: String| format!("<div style=\"width:600px;height:300px\">{inner}</div>");
+    let cases = [
+        ("in a fixed drawer", fixed(timeline(""))),
+        ("in a fixed drawer, content min-height covers the growth", fixed(timeline("min-height:1100px"))),
+        ("not fixed", flat(timeline(""))),
+        ("fixed box first", fixed(out_of_flow("fixed"))),
+        ("absolute box first", fixed(out_of_flow("absolute"))),
+    ];
+    for (name, body) in cases {
+        let mut p = page(&format!("<!doctype html><body style=\"margin:0\">{body}</body>"), Geometry::Flow);
+        let sc = p.id("sc");
+        p.layout.set_scroll_top(&p.dom, sc, 300);
+        p.layout.clamp_scroll_offsets(&p.dom);
+        assert_eq!(p.layout.scroll_top(sc), 300, "{name}: settled");
+        let m2 = p.id("m2");
+        p.dom.set_attribute(m2, "style", "display:flex;height:50px;min-height:150px").unwrap();
+        p.layout.clamp_scroll_offsets(&p.dom);
+        assert_eq!(p.layout.scroll_top(sc), 400, "{name}: Chromium scrollTop 400");
+    }
+}
+
+#[test]
 fn scroll_anchoring_reselects_in_the_previous_layout_like_chromium() {
     // The anchor is selected in the layout the scroller was settled in,
     // with the current styles, however many earlier candidates are now

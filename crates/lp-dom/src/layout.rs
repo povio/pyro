@@ -1631,7 +1631,10 @@ impl Layout {
                 }
                 continue;
             };
-            if b.fixed || !keep(child) || self.style.computed(dom, child).is_some_and(|c| c.absolutely_positioned) {
+            // Absolute and fixed boxes are skipped themselves; `b.fixed` also
+            // marks every box inside a fixed ancestor, which anchors normally
+            // when the scroller is inside it too (a scroller in a fixed drawer).
+            if !keep(child) || self.style.computed(dom, child).is_some_and(|c| c.absolutely_positioned) {
                 continue;
             }
             let (y0, y1) = (b.rect.y, b.rect.y + b.rect.height);
