@@ -108,10 +108,8 @@ pub struct PageDom {
     /// Native drag source under a left press that has not moved past the
     /// drag threshold yet, with the press position.
     pub(crate) drag_candidate: Cell<Option<(NodeId, f64, f64)>>,
-    /// Native text selection under a primary press: the anchor caret, and
-    /// whether `selectstart` let it start (a canceled one is fired again on
-    /// each move).
-    pub(crate) text_drag: Cell<Option<((NodeId, u32), bool)>>,
+    /// Native text selection under a primary press (`crate::input`).
+    pub(crate) text_drag: Cell<Option<crate::input::TextDrag>>,
     /// The document selection (`crate::editing`), shared by every world.
     pub(crate) selection: RefCell<Option<crate::editing::DocSelection>>,
     pub(crate) selectionchange_pending: Cell<bool>,

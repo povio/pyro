@@ -3403,10 +3403,11 @@ fn selection_page(h: &mut Harness, body: &str, extra: &str) {
     page.layout.borrow_mut().set_geometry(lp_dom::layout::Geometry::Flow);
     let setup = format!(
         "(() => {{ document.head.innerHTML = '<style>body{{margin:0;font-size:20px;line-height:30px}} td{{padding:0 20px 0 0}}</style>'; \
-           document.body.innerHTML = {body:?}; globalThis.log = []; globalThis.cancel = {{}}; \
+           document.body.innerHTML = {body:?}; globalThis.log = []; globalThis.cancel = {{}}; globalThis.hooks = {{}}; \
            if (!globalThis.d) {{ \
-             globalThis.d = n => n ? (n.nodeType === 3 ? `#text(${{n.parentNode.id || n.parentNode.nodeName}})` : (n.id || n.nodeName)) : null; \
-             for (const t of ['mousedown', 'selectstart', 'mouseup', 'click']) document.addEventListener(t, e => {{ log.push(`${{t}}@${{d(e.target)}}`); if (cancel[t]) e.preventDefault(); }}, true); \
+             globalThis.d = n => n ? (n.nodeType === 3 ? `#text(${{n.parentNode ? (n.parentNode.id || n.parentNode.nodeName) : 'detached'}})` : (n.id || n.nodeName)) : null; \
+             for (const t of ['mousedown', 'selectstart', 'mouseup', 'click']) document.addEventListener(t, e => {{ log.push(`${{t}}@${{d(e.target)}}`); if (cancel[t]) e.preventDefault(); if (hooks[t]) hooks[t](e); }}, true); \
+             document.addEventListener('mousemove', e => {{ if (hooks.mousemove) hooks.mousemove(e); }}); \
              document.addEventListener('selectionchange', () => {{ if (log[log.length - 1] !== 'selectionchange') log.push('selectionchange'); }}); \
            }} \
            {extra} }})()"
@@ -3552,5 +3553,115 @@ fn mouse_presses_over_empty_viewport_space_target_the_root_element() {
     assert_eq!(
         eval_value(&mut h, "log.join(',')"),
         json!("pointerdown@HTML,mousedown@HTML,pointerup@HTML,mouseup@HTML,click@HTML")
+    );
+}
+
+/// Like `drag_select`, but reports the Range text instead of Selection's.
+fn drag_select_range(h: &mut Harness, from: &Value, to: &Value) -> String {
+    drag_select(h, from, to);
+    eval_value(
+        h,
+        "(() => { const s = getSelection(); return `range=${JSON.stringify(s.rangeCount ? s.getRangeAt(0).toString() : '-')} type=${s.type} anchor=${d(s.anchorNode)}:${s.anchorOffset} focus=${d(s.focusNode)}:${s.focusOffset} log=${log.filter(e => e !== 'selectionchange').join(',')}`; })()",
+    )
+    .as_str()
+    .unwrap_or_default()
+    .to_owned()
+}
+
+#[test]
+fn native_drag_selection_resolves_hit_targets_and_removed_nodes_like_chromium() {
+    // Chromium (800x600, measured) resolves the caret within the element
+    // under the pointer: over empty space below a clipped container the
+    // caret is that element at offset 0 (not the clipped line nearer the
+    // point), on text covered by an opaque positioned element it is that
+    // element, and at the top of a scrolled container it is in the visible
+    // line; selectstart targets the text when the point is on it, else the
+    // element. A selectstart handler removing the text leaves no selection;
+    // an anchor removed or replaced mid-drag continues from where it was; a
+    // drag across user-select: none content keeps it inside the Range.
+    let mut h = Harness::new();
+    let lines: String = (0..8).map(|i| format!("<p id=l{i} style=\"margin:0\">line{i}text</p>")).collect();
+    let clipped = format!("<div id=sc style=\"height:90px;overflow:hidden\">{lines}</div><div style=\"height:100px\"></div><p id=v>visible text</p>");
+    let below = |h: &mut Harness, dx: f64| {
+        eval_value(h, &format!("(() => {{ const r = document.getElementById('sc').getBoundingClientRect(); return [{dx}, r.bottom + 15]; }})()"))
+    };
+    let click = |h: &mut Harness, at: &Value| {
+        mouse(h, "mousePressed", at, 0.0, 1);
+        mouse(h, "mouseReleased", at, 0.0, 0);
+        eval_value(h, "(() => { const s = getSelection(); return `type=${s.type} anchor=${d(s.anchorNode)}:${s.anchorOffset} log=${log.filter(e => e !== 'selectionchange').join(',')}`; })()")
+    };
+    selection_page(&mut h, &clipped, "document.getElementById('v').style.margin = '0'");
+    let at = below(&mut h, 20.0);
+    assert_eq!(
+        click(&mut h, &at),
+        json!("type=Caret anchor=DIV:0 log=mousedown@DIV,selectstart@DIV,mouseup@DIV,click@DIV"),
+        "click over a clipped line"
+    );
+    selection_page(&mut h, &clipped, "document.getElementById('v').style.margin = '0'");
+    let (a, z) = (text_point(&mut h, "#l0", 1.0), below(&mut h, 60.0));
+    assert_eq!(
+        drag_select_range(&mut h, &a, &z),
+        "range=\"line0textline1textline2textline3textline4textline5textline6textline7text\" type=Range anchor=#text(l0):0 focus=DIV:0 log=mousedown@l0,selectstart@#text(l0),mouseup@DIV,click@BODY",
+        "drag ending over a clipped line"
+    );
+    let scrolled = format!("<div id=sc style=\"height:90px;overflow:auto\">{lines}</div><p id=v>visible text</p>");
+    selection_page(&mut h, &scrolled, "document.getElementById('v').style.margin = '0'");
+    eval_value(&mut h, "document.getElementById('sc').scrollTop = 60");
+    let top = eval_value(
+        &mut h,
+        "(() => { const r = document.getElementById('sc').getBoundingClientRect(); return [20, r.top + 1]; })()",
+    );
+    let r = click(&mut h, &top);
+    assert!(
+        r.as_str().unwrap().starts_with("type=Caret anchor=#text(l2):")
+            && r.as_str().unwrap().contains("selectstart@l2"),
+        "top of a scrolled container: {r}"
+    );
+    let covered = "<p id=p style=\"margin:0\">abcdefghij</p><div id=ov style=\"position:absolute;left:0;top:0;width:400px;height:30px;background:white\"></div><p id=q style=\"margin:0\">klmnopqrst</p>";
+    selection_page(&mut h, covered, "");
+    let on_p = text_point(&mut h, "#p", 30.0);
+    assert_eq!(
+        click(&mut h, &on_p),
+        json!("type=Caret anchor=ov:0 log=mousedown@ov,selectstart@ov,mouseup@ov,click@ov"),
+        "click on covered text"
+    );
+    selection_page(&mut h, covered, "");
+    let (a, z) = (text_point(&mut h, "#q", -5.0), text_point(&mut h, "#p", 30.0));
+    let r = drag_select_range(&mut h, &a, &z);
+    assert!(
+        r.contains("anchor=#text(q):")
+            && r.contains("focus=ov:0")
+            && r.contains("log=mousedown@q,selectstart@#text(q),mouseup@ov"),
+        "drag ending on covered text: {r}"
+    );
+    let two = "<p id=p style=\"margin:0\">abcdefghij</p><p id=q style=\"margin:0\">klmnopqrst</p>";
+    selection_page(&mut h, two, "hooks.selectstart = e => { if (e.target.nodeType === 3 && e.target.parentNode && e.target.parentNode.id === 'p') e.target.remove(); };");
+    let (a, z) = (text_point(&mut h, "#p", 1.0), text_point(&mut h, "#q", -1.0));
+    let r = drag_select_range(&mut h, &a, &z);
+    assert!(
+        r.starts_with("range=\"-\" type=None") && r.contains("selectstart@#text(p)"),
+        "selectstart removes its text: {r}"
+    );
+    selection_page(&mut h, two, "let n = 0; hooks.mousemove = () => { if (++n === 4) { const t = document.getElementById('p').firstChild; if (t) t.remove(); } };");
+    let (a, z) = (text_point(&mut h, "#p", 1.0), text_point(&mut h, "#q", -1.0));
+    let r = drag_select_range(&mut h, &a, &z);
+    assert!(
+        r.starts_with("range=\"klmnopqrst\" type=Range") && r.contains("focus=#text(q):10"),
+        "anchor removed mid-drag: {r}"
+    );
+    selection_page(&mut h, two, "let n = 0; hooks.mousemove = () => { if (++n === 4) document.getElementById('p').textContent = 'ABCDEFGHIJ'; };");
+    let (a, z) = (text_point(&mut h, "#p", 1.0), text_point(&mut h, "#q", -1.0));
+    let r = drag_select_range(&mut h, &a, &z);
+    assert!(
+        r.starts_with("range=\"ABCDEFGHIJklmnopqrst\" type=Range anchor=#text(p):0 focus=#text(q):10"),
+        "anchor text replaced mid-drag: {r}"
+    );
+    let across = "<p id=p style=\"margin:0\">abcdefghij</p><p id=q style=\"margin:0;user-select:none\">klmnopqrst</p><p id=r style=\"margin:0\">uvwxyz</p>";
+    selection_page(&mut h, across, "");
+    let (a, z) = (text_point(&mut h, "#p", 1.0), text_point(&mut h, "#r", -1.0));
+    let r = drag_select_range(&mut h, &a, &z);
+    assert!(
+        r.starts_with("range=\"abcdefghijklmnopqrstuvwxyz\" type=Range anchor=#text(p):0 focus=#text(r):6"),
+        "across a none region: {r}"
     );
 }

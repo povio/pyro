@@ -951,13 +951,16 @@ impl Layout {
     }
 
     /// The caret position (text node, UTF-16 offset) under a viewport
-    /// point, in flow geometry: the character boundary nearest to the point
-    /// in the word nearest to it on its line (else on the nearest line), and
-    /// whether the point is on that word. `selectable` filters the text
-    /// nodes considered.
+    /// point, in flow geometry, within `within` (the element under the
+    /// point, as Chromium resolves positions in the hit element): the
+    /// character boundary nearest to the point in the visible word nearest
+    /// to it on its line (else on the nearest line), and whether the point
+    /// is on that word. Words clipped away by an overflow ancestor are not
+    /// candidates; `selectable` filters the text nodes considered.
     pub fn caret_from_point(
         &self,
         dom: &Dom,
+        within: NodeId,
         x: f64,
         y: f64,
         selectable: &dyn Fn(NodeId) -> bool,
@@ -969,7 +972,10 @@ impl Layout {
         let (wx, wy) = (self.window_scroll.0 as f64, self.window_scroll.1 as f64);
         let mut best: Option<((f64, f64), u32, NodeId, f64)> = None;
         for (i, run) in flow.text_runs.iter().enumerate() {
-            if !dom.is_connected(run.node).unwrap_or(false) || !selectable(run.node) {
+            if !dom.is_connected(run.node).unwrap_or(false)
+                || !dom.contains(within, run.node).unwrap_or(false)
+                || !selectable(run.node)
+            {
                 continue;
             }
             if dom.parent_element(run.node).ok().flatten().is_some_and(|p| !self.is_visible(dom, p)) {
@@ -979,6 +985,9 @@ impl Layout {
             let (kx, ky) = self.sticky_shift(dom, &flow, run.node);
             let (sx, sy) = if run.fixed { (0.0, 0.0) } else { (wx, wy) };
             let (left, top) = (run.rect.x - sx - dx + kx, run.rect.y - sy - dy + ky);
+            if self.text_clipped(dom, run.node, left, top, run.rect.width, run.rect.height) {
+                continue;
+            }
             let gap = |p: f64, lo: f64, len: f64| {
                 if p < lo {
                     lo - p
@@ -995,6 +1004,28 @@ impl Layout {
         }
         // The flag: the point is on the word itself.
         best.map(|(key, i, node, left)| (node, flow.text_runs[i as usize].offset_at(x - left), key == (0.0, 0.0)))
+    }
+
+    /// Whether a text box (viewport coordinates) lies entirely outside the
+    /// visible area of an overflow-clipping ancestor of `node`.
+    fn text_clipped(&self, dom: &Dom, node: NodeId, x: f64, y: f64, w: f64, h: f64) -> bool {
+        let mut cur = dom.parent_element(node).ok().flatten();
+        while let Some(a) = cur {
+            if self.is_root_container(dom, a) {
+                break;
+            }
+            let clips = self.style.overflow_clip_axes(dom, a);
+            if clips.x || clips.y {
+                let r = self.bounding_client_rect_for_visible(dom, a);
+                if (clips.x && (x + w <= r.x || x >= r.x + r.width))
+                    || (clips.y && (y + h <= r.y || y >= r.y + r.height))
+                {
+                    return true;
+                }
+            }
+            cur = dom.parent_element(a).ok().flatten();
+        }
+        false
     }
 
     /// Whether `node` (or a text node's parent) cannot be selected: the

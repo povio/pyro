@@ -1336,66 +1336,121 @@ fn press_selects_text(dom: &Dom, target: NodeId) -> bool {
     true
 }
 
-/// Native text selection, as Chromium's mouse selection: a primary press
-/// (not canceled, outside controls, editable content and drag sources) on
-/// selectable text fires `selectstart` at that text and, unless canceled,
-/// collapses the selection to the character boundary under the pointer. A
-/// press beside the text of a focusable element only focuses it.
-fn text_select_press(page: &Rc<PageDom>, target: NodeId, m: &MouseInput) {
-    let caret = {
-        let dom = page.dom.borrow();
-        let layout = page.layout.borrow();
-        if !press_selects_text(&dom, target) || layout.user_select_none(&dom, target) {
-            return;
-        }
-        layout.caret_from_point(&dom, m.x, m.y, &|n| !layout.user_select_none(&dom, n))
-    };
-    let Some((node, offset, on_text)) = caret else { return };
-    if !on_text && page.dom.borrow().is_focusable(target).unwrap_or(false) {
-        return;
-    }
-    let started = fire_simple(page, node, "selectstart", true, true);
-    if started {
-        crate::editing::set_selection(page, (node, offset), (node, offset));
-    }
-    page.text_drag.set(Some(((node, offset), started)));
+/// The anchor of a native text selection drag: the caret at the press, its
+/// node's parent and index there (a removed anchor continues from that
+/// position, as a live range would), and whether `selectstart` let the
+/// selection start (a canceled one is fired again on each move).
+#[derive(Copy, Clone, Debug)]
+pub(crate) struct TextDrag {
+    anchor: (NodeId, u32),
+    parent: Option<NodeId>,
+    index: u32,
+    started: bool,
 }
 
-/// A move with the primary button down extends the selection to the
-/// character boundary under the pointer; over `user-select: none` content
-/// it stops at the edge of the selectable text before (or after) it.
-fn text_select_move(page: &Rc<PageDom>, m: &MouseInput) {
-    let Some((anchor, started)) = page.text_drag.get() else { return };
-    if !started {
+/// The caret under the pointer within `target` (the element there), and the
+/// node `selectstart` targets: the text when the point is on it, else the
+/// element. An element without visible text under it is its own caret
+/// position (offset 0), as in Chromium.
+fn caret_in(page: &Rc<PageDom>, target: NodeId, m: &MouseInput, selectable: bool) -> ((NodeId, u32), NodeId) {
+    let dom = page.dom.borrow();
+    let layout = page.layout.borrow();
+    let filter = |n: NodeId| !selectable || !layout.user_select_none(&dom, n);
+    match layout.caret_from_point(&dom, target, m.x, m.y, &filter) {
+        Some((node, offset, on_text)) => ((node, offset), if on_text { node } else { target }),
+        None => ((target, 0), target),
+    }
+}
+
+/// Native text selection, as Chromium's mouse selection: a primary press
+/// (not canceled, outside controls, editable content and drag sources) on
+/// selectable content fires `selectstart` at the node under the pointer
+/// and, unless canceled (or the handler removed the position), collapses
+/// the selection to the caret there. A press beside the text of a
+/// focusable element only focuses it.
+fn text_select_press(page: &Rc<PageDom>, target: NodeId, m: &MouseInput) {
+    {
+        let dom = page.dom.borrow();
+        if !press_selects_text(&dom, target) || page.layout.borrow().user_select_none(&dom, target) {
+            return;
+        }
+    }
+    let (caret, event_target) = caret_in(page, target, m, true);
+    if event_target != caret.0 && caret.0 != target && page.dom.borrow().is_focusable(target).unwrap_or(false) {
+        return;
+    }
+    let started = fire_simple(page, event_target, "selectstart", true, true);
+    let (parent, index) = {
+        let dom = page.dom.borrow();
+        if !dom.is_connected(caret.0).unwrap_or(false) {
+            return;
+        }
+        let parent = dom.parent_element(caret.0).ok().flatten();
+        let index = parent
+            .and_then(|p| dom.children(p).ok().and_then(|mut c| c.position(|n| n == caret.0)))
+            .unwrap_or(0) as u32;
+        (parent, index)
+    };
+    if started {
+        crate::editing::set_selection(page, caret, caret);
+    }
+    page.text_drag.set(Some(TextDrag { anchor: caret, parent, index, started }));
+}
+
+/// The drag's anchor now: the press caret, or where its removed node was
+/// (the text node now at that position, else the parent there).
+fn live_anchor(page: &Rc<PageDom>, drag: &TextDrag) -> Option<(NodeId, u32)> {
+    let dom = page.dom.borrow();
+    if dom.is_connected(drag.anchor.0).unwrap_or(false) {
+        return Some(drag.anchor);
+    }
+    let parent = drag.parent.filter(|&p| dom.is_connected(p).unwrap_or(false))?;
+    let children: Vec<NodeId> = dom.children(parent).ok()?.collect();
+    match children.get(drag.index as usize) {
+        Some(&c) if dom.node_type(c).ok() == Some(lp_dom::NodeType::Text) => Some((c, 0)),
+        _ => Some((parent, (drag.index as usize).min(children.len()) as u32)),
+    }
+}
+
+/// A move with the primary button down extends the selection to the caret
+/// under the pointer; over `user-select: none` content it stops at the
+/// edge of the selectable text before (or after) it.
+fn text_select_move(page: &Rc<PageDom>, target: NodeId, m: &MouseInput) {
+    let Some(mut drag) = page.text_drag.get() else { return };
+    let Some(anchor) = live_anchor(page, &drag) else { return };
+    if !drag.started {
         if !fire_simple(page, anchor.0, "selectstart", true, true) {
             return;
         }
-        crate::editing::set_selection(page, anchor, anchor);
-        page.text_drag.set(Some((anchor, true)));
+        drag.started = true;
+        page.text_drag.set(Some(drag));
     }
+    let (hit, _) = caret_in(page, target, m, false);
     let focus = {
         let dom = page.dom.borrow();
         let layout = page.layout.borrow();
-        match layout.caret_from_point(&dom, m.x, m.y, &|_| true) {
-            Some((n, offset, _)) if !layout.user_select_none(&dom, n) => Some((n, offset)),
-            Some((n, _, _)) => {
-                let after = crate::editing::compare(page, (n, 0), anchor) > 0;
-                let flow = layout.flow(&dom);
-                let runs = flow.text_runs.iter().filter(|r| !layout.user_select_none(&dom, r.node));
-                if after {
-                    runs.filter(|r| crate::editing::compare(page, (r.node, r.end), (n, 0)) < 0)
-                        .map(|r| (r.node, r.end))
-                        .max_by(|a, b| crate::editing::compare(page, *a, *b).cmp(&0))
-                } else {
-                    runs.filter(|r| crate::editing::compare(page, (r.node, r.start), (n, 0)) > 0)
-                        .map(|r| (r.node, r.start))
-                        .min_by(|a, b| crate::editing::compare(page, *a, *b).cmp(&0))
-                }
+        if !layout.user_select_none(&dom, hit.0) {
+            Some(hit)
+        } else {
+            let after = crate::editing::compare(page, (hit.0, 0), anchor) > 0;
+            let flow = layout.flow(&dom);
+            let runs = flow
+                .text_runs
+                .iter()
+                .filter(|r| dom.is_connected(r.node).unwrap_or(false) && !layout.user_select_none(&dom, r.node));
+            if after {
+                runs.filter(|r| crate::editing::compare(page, (r.node, r.end), (hit.0, 0)) < 0)
+                    .map(|r| (r.node, r.end))
+                    .max_by(|a, b| crate::editing::compare(page, *a, *b).cmp(&0))
+            } else {
+                runs.filter(|r| crate::editing::compare(page, (r.node, r.start), (hit.0, 0)) > 0)
+                    .map(|r| (r.node, r.start))
+                    .min_by(|a, b| crate::editing::compare(page, *a, *b).cmp(&0))
             }
-            None => None,
         }
     };
-    if let Some(f) = focus {
+    let live = |n: NodeId| page.dom.borrow().is_connected(n).unwrap_or(false);
+    if let Some(f) = focus.filter(|f| live(f.0) && live(anchor.0)) {
         crate::editing::set_selection(page, anchor, f);
     }
 }
@@ -1423,7 +1478,7 @@ pub fn dispatch_mouse_intercepting_drags(
             fire(page, tkey, &mouse_event(page, EventInterface::PointerEvent, "pointermove", m, true));
             fire(page, tkey, &mouse_event(page, EventInterface::MouseEvent, "mousemove", m, true));
             if m.buttons & 1 != 0 {
-                text_select_move(page, m);
+                text_select_move(page, target, m);
             }
             if intercept_drags {
                 return Ok(start_drag(page, target, m));

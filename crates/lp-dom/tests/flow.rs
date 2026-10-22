@@ -3761,12 +3761,15 @@ fn caret_from_point_takes_the_nearest_character_boundary_like_chromium() {
     let r = p.layout.text_rect(&p.dom, tp).unwrap();
     let w = |s: &str| lp_dom::text_metrics::text_width(s, 20.0, 400);
     let y = r.y + r.height / 2.0;
-    let at = |x: f64, y: f64| p.layout.caret_from_point(&p.dom, x, y, &|_| true).map(|(n, o, _)| (n, o));
+    let body = p.dom.parent_element(p.id("p")).unwrap().unwrap();
+    let at = |x: f64, y: f64| p.layout.caret_from_point(&p.dom, body, x, y, &|_| true).map(|(n, o, _)| (n, o));
     assert_eq!(at(r.x + w("ab") + 0.2 * w("c"), y), Some((tp, 2)), "20% into the third character");
     assert_eq!(at(r.x + w("ab") + 0.8 * w("c"), y), Some((tp, 3)), "80% into the third character");
     assert_eq!(at(r.x + r.width + 40.0, y), Some((tp, 10)), "past the end of the line");
     assert_eq!(at(r.x - 5.0, y), Some((tp, 0)), "before the line");
     assert_eq!(at(r.x + 1.0, y + 30.0), Some((tq, 0)), "next line");
     // A filtered-out text node is not a candidate.
-    assert_eq!(p.layout.caret_from_point(&p.dom, r.x + 1.0, y, &|n| n != tp).map(|(n, _, _)| n), Some(tq));
+    assert_eq!(p.layout.caret_from_point(&p.dom, body, r.x + 1.0, y, &|n| n != tp).map(|(n, _, _)| n), Some(tq));
+    // Only text inside the given element (the hit element) is a candidate.
+    assert_eq!(p.layout.caret_from_point(&p.dom, p.id("q"), r.x + 1.0, y, &|_| true).map(|(n, _, _)| n), Some(tq));
 }
