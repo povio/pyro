@@ -51,8 +51,10 @@ impl<'a> From<&'a str> for CssLocalName {
     }
 }
 impl ToCss for CssLocalName {
+    /// Escaped as a CSS identifier, so a serialized selector parses back
+    /// to the same one (Tailwind's `.empty\:before\:inline-block`).
     fn to_css<W: fmt::Write>(&self, dest: &mut W) -> fmt::Result {
-        dest.write_str(&self.0)
+        cssparser::serialize_identifier(&self.0, dest)
     }
 }
 impl PrecomputedHash for CssLocalName {

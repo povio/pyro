@@ -3808,3 +3808,31 @@ fn overflowing_text_extends_the_scroll_width_like_chromium() {
     assert!(near(m("padded")[6], text + 20.0) && near(m("padded")[4], 120.0), "padded: {:?}", m("padded"));
     assert!(near(m("wrap")[6], 100.0) && near(m("wrap")[7], m("wrap")[5]), "wrap: {:?}", m("wrap"));
 }
+
+#[test]
+fn generated_content_with_tailwinds_escaped_selectors_like_chromium() {
+    // TOS's compiled CSS (build 1963ee2cebbd) gives the empty Cost Type
+    // trigger span its line through `.empty\:before\:inline-block:is(...):before`
+    // and `.empty\:before\:content-\[\'\'\]:is(...):before` in
+    // `@layer utilities`. The engine serialized class names unescaped when
+    // splitting off `::before`, so these selectors no longer parsed and the
+    // span stayed 0px tall (the trigger hidden). Chromium (800x600,
+    // measured): the span and the trigger button are 24px tall.
+    let is = ":is(:where([data-rac])[data-empty],:where(:not([data-rac])):empty)";
+    let css = format!(
+        "@layer utilities{{.empty\\:before\\:inline-block{is}:before{{content:var(--tw-content);display:inline-block}}\
+         .empty\\:before\\:content-\\[\\'\\'\\]{is}:before{{--tw-content:\"\";content:var(--tw-content)}}}}"
+    );
+    let html = format!(
+        "<!doctype html><head><style>body{{margin:0}}</style><style>{css}</style></head><body>\
+         <div style=\"display:flex;width:478px;overflow:hidden;white-space:nowrap;align-items:center;gap:8px;font-size:16px;line-height:24px\">\
+         <button id=t data-rac=\"\" type=button style=\"display:block;width:100%;overflow:hidden;white-space:nowrap;text-align:start;padding:0;border:0;background:none;font:inherit;line-height:inherit\">\
+         <span id=s class=\"block truncate empty:before:inline-block empty:before:content-[''] text-muted-foreground\" style=\"display:block;overflow:hidden;white-space:nowrap;text-overflow:ellipsis\"></span>\
+         </button></div></body>"
+    );
+    let p = page(&html, Geometry::Flow);
+    for id in ["s", "t"] {
+        let h = p.layout.bounding_client_rect(&p.dom, p.id(id)).height;
+        assert!((h - 24.0).abs() < 0.01, "#{id} height {h}, Chromium 24");
+    }
+}
