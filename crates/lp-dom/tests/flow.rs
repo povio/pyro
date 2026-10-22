@@ -3289,3 +3289,99 @@ fn fixed_tables_without_a_header_keep_col_widths_across_colspans_like_chromium()
         ],
     );
 }
+
+/// Expected `[x, width]` per element id.
+type XWidths<'a> = Vec<(&'a str, [f64; 2])>;
+
+#[test]
+fn table_cell_min_and_max_widths_size_their_columns_like_chromium() {
+    // Automatic-layout columns ignored a cell's min-width / max-width while
+    // the cell's own box honoured them, so a `min-w-80` cell spilled over the
+    // next column and the later positioned cell there won hit testing (TOS
+    // VAT Rule combobox: hover intercepted by the neighbouring colspan cell).
+    // Chromium (800x600): the column takes the clamped cell (min-width wins;
+    // max-width caps even wider content), free space is shared in proportion,
+    // and fixed layout ignores both.
+    let bx = |id: &str, w: u32| format!("<span id={id} style=\"display:inline-block;width:{w}px;height:20px\"></span>");
+    let td = |id: &str, style: &str, inner: &str, attrs: &str| {
+        format!("<td id={id} {attrs} style=\"padding:0;{style}\">{inner}</td>")
+    };
+    let table = |style: &str, rows: &str| format!("<table style=\"border-spacing:0;{style}\">{rows}</table>");
+    let row2 = format!(
+        "<tr>{}{}{}</tr>",
+        td("c", "", &bx("cx", 10), ""),
+        td("d", "", &bx("dx", 10), ""),
+        td("e", "", &bx("ex", 10), "")
+    );
+    let narrow = format!(
+        "<div style=\"width:400px\">{}</div>",
+        table(
+            "",
+            &format!(
+                "<tr>{}{}</tr>{row2}",
+                td("a", "min-width:320px;position:relative", "<div id=i style=\"height:20px\"></div>", ""),
+                td("b", "position:relative", &bx("bx", 10), "colspan=2")
+            )
+        )
+    );
+    let wide = table(
+        "width:900px",
+        &format!(
+            "<tr>{}{}</tr>{row2}",
+            td("a", "min-width:320px", &bx("ax", 20), ""),
+            td("b", "", &bx("bx", 10), "colspan=2")
+        ),
+    );
+    let pair = |style: &str, w: u32| {
+        table("", &format!("<tr>{}{}</tr>", td("a", style, &bx("ax", w), ""), td("b", "", &bx("bx", 10), "")))
+    };
+    let fixed = table(
+        "table-layout:fixed;width:400px",
+        &format!(
+            "<tr>{}{}{}</tr>",
+            td("a", "min-width:320px", &bx("ax", 20), ""),
+            td("b", "", &bx("bx", 10), ""),
+            td("c", "", &bx("cx", 10), "")
+        ),
+    );
+    let third = 400.0 / 3.0;
+    let cases: Vec<(&str, String, XWidths)> = vec![
+        (
+            "narrow",
+            narrow,
+            vec![
+                ("a", [0.0, 320.0]),
+                ("b", [320.0, 20.0]),
+                ("c", [0.0, 320.0]),
+                ("d", [320.0, 10.0]),
+                ("e", [330.0, 10.0]),
+            ],
+        ),
+        (
+            "wide",
+            wide,
+            vec![("a", [0.0, 847.047]), ("b", [847.047, 52.953]), ("d", [847.047, 26.469]), ("e", [873.516, 26.484])],
+        ),
+        ("min over width", pair("width:100px;min-width:250px", 20), vec![("a", [0.0, 250.0]), ("b", [250.0, 10.0])]),
+        ("max width", pair("max-width:50px", 120), vec![("a", [0.0, 50.0]), ("b", [50.0, 10.0])]),
+        (
+            "border-box min",
+            pair("box-sizing:border-box;min-width:200px;padding:0 10px;border:2px solid", 20),
+            vec![("a", [0.0, 200.0]), ("b", [200.0, 10.0])],
+        ),
+        (
+            "content-box min",
+            pair("min-width:200px;padding:0 10px", 20),
+            vec![("a", [0.0, 220.0]), ("b", [220.0, 10.0])],
+        ),
+        ("fixed", fixed, vec![("a", [0.0, third]), ("b", [third, third]), ("c", [2.0 * third, third])]),
+    ];
+    for (name, body, expected) in cases {
+        let p = page(&format!("<!doctype html><body style=\"margin:0\">{body}</body>"), Geometry::Flow);
+        assert_x_widths(&p, name, &expected);
+        if name == "narrow" {
+            // Inside #a, where the spilled cell used to lie under #b.
+            assert_eq!(p.layout.element_from_point(&p.dom, 20.0, 10.0), Some(p.id("i")), "Chromium hits #i");
+        }
+    }
+}

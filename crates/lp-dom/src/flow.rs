@@ -3012,6 +3012,19 @@ impl<'a> Ctx<'a> {
         }
     }
 
+    /// A border-box cell width clamped by the cell's `min-width` and
+    /// `max-width`, as an automatic-layout column takes them (`min-width`
+    /// wins). Chromium sizes the column to the clamped cell, so a cell is
+    /// never wider than its columns; fixed layout ignores both.
+    fn clamp_cell_width(&self, cell: &TableCell, basis: f64, w: f64) -> f64 {
+        let e = self.edges(&cell.style, basis);
+        let border = |v: f64| if cell.style.border_box { v.max(e.horizontal()) } else { v + e.horizontal() };
+        let max = cell.style.max_width.resolve(Some(basis)).map(border);
+        let min = cell.style.min_width.resolve(Some(basis)).map(border);
+        let w = max.map_or(w, |m| w.min(m));
+        min.map_or(w, |m| w.max(m))
+    }
+
     /// Column border-box widths for a table whose content box is `width`
     /// (None: shrink to the columns).
     fn table_columns(
@@ -3036,9 +3049,10 @@ impl<'a> Ctx<'a> {
             for row in rows {
                 for c in row.cells.iter().filter(|c| c.span == 1) {
                     if let Some(d) = self.cell_width(c, basis, false) {
+                        let d = self.clamp_cell_width(c, basis, d);
                         declared[c.col] = Some(declared[c.col].map_or(d, |p: f64| p.max(d)));
                     }
-                    let w = self.cell_width(c, basis, true).unwrap_or(0.0);
+                    let w = self.clamp_cell_width(c, basis, self.cell_width(c, basis, true).unwrap_or(0.0));
                     widths[c.col] = f64::max(widths[c.col], w);
                 }
             }
@@ -3159,8 +3173,8 @@ impl<'a> Ctx<'a> {
         for row in &rows {
             for c in row.cells.iter().filter(|c| c.span == 1) {
                 let e = self.edges(&c.style, 0.0);
-                let content = self.min_content(c.el, &c.style) + e.horizontal();
-                let declared = self.cell_width(c, 0.0, false).unwrap_or(0.0);
+                let content = self.clamp_cell_width(c, 0.0, self.min_content(c.el, &c.style) + e.horizontal());
+                let declared = self.cell_width(c, 0.0, false).map_or(0.0, |d| self.clamp_cell_width(c, 0.0, d));
                 widths[c.col] = widths[c.col].max(content).max(declared);
             }
         }
@@ -3229,6 +3243,9 @@ impl<'a> Ctx<'a> {
                 s.width = Dim::px(w);
                 s.height = Dim::px(row_h);
                 s.margin = [Dim::px(0.0); 4];
+                // The columns already took the cell's min/max width.
+                s.min_width = Dim::Auto;
+                s.max_width = Dim::Auto;
                 s.min_height = Dim::Auto;
                 s.max_height = Dim::Auto;
                 let before = self.order;
