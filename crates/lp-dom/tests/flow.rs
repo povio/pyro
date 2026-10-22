@@ -3475,3 +3475,65 @@ fn generated_string_content_takes_a_line_like_chromium() {
     // An input generates no content.
     assert_eq!(h("in1"), h("in2"));
 }
+
+#[test]
+fn generated_content_follows_dom_changes_like_chromium() {
+    // Generated content is cached per element (found and not found). TOS's
+    // trigger relies on `:empty`, so the cache must follow text added and
+    // removed, class changes and the custom property behind `content`.
+    // Chromium (800x600, measured): the empty trigger span stays one 20px
+    // line throughout; an `:empty::before{content:'abc'}` inline-block span
+    // is "abc" wide, then only its text "x" wide, then "abc" again; a class
+    // adding the ::before makes a 0px span 20px and removing it 0px again;
+    // `content: var(--c)` follows --c and generates nothing once it is gone.
+    let html = "<!doctype html><head><style>body{margin:0;font-family:sans-serif;font-size:16px;line-height:20px}\
+        .e:empty::before{content:'';display:inline-block}\
+        .t:empty::before{content:'abc';display:inline-block}\
+        .v::before{content:var(--c);display:inline-block}</style></head><body>\
+        <button id=btn style=\"display:block;width:200px;padding:0;border:0;font:inherit\"><span id=s class=e style=\"display:block\"></span></button>\
+        <div><span id=w class=t style=\"display:inline-block\"></span></div>\
+        <div><span id=k style=\"display:block\"></span></div>\
+        <div><span id=v class=v style=\"display:inline-block;--c:'abc'\"></span></div>\
+        <div><span id=rabc style=\"display:inline-block\">abc</span><span id=rx style=\"display:inline-block\">x</span></div></body>";
+    let mut p = page(html, Geometry::Flow);
+    let rect = |p: &Page, id: &str| p.layout.bounding_client_rect(&p.dom, p.id(id));
+    let near = |a: f64, b: f64| (a - b).abs() < 0.01;
+    let (abc, x) = (rect(&p, "rabc").width, rect(&p, "rx").width);
+    let check = |p: &Page, step: &str, w: f64, k_h: f64, v: (f64, f64)| {
+        assert!(near(rect(p, "s").height, 20.0), "{step}: #s height {}, Chromium 20", rect(p, "s").height);
+        assert!(near(rect(p, "w").width, w), "{step}: #w width {}, Chromium {w}", rect(p, "w").width);
+        assert!(near(rect(p, "k").height, k_h), "{step}: #k height {}, Chromium {k_h}", rect(p, "k").height);
+        let r = rect(p, "v");
+        assert!(
+            near(r.width, v.0) && near(r.height, v.1),
+            "{step}: #v {}x{}, Chromium {}x{}",
+            r.width,
+            r.height,
+            v.0,
+            v.1
+        );
+    };
+    check(&p, "initial", abc, 0.0, (abc, 20.0));
+    let doc = p.doc;
+    for id in ["s", "w"] {
+        let t = p.dom.create_text(doc, "x").unwrap();
+        let el = p.id(id);
+        p.dom.append_child(el, t).unwrap();
+    }
+    check(&p, "text added", x, 0.0, (abc, 20.0));
+    for id in ["s", "w"] {
+        let el = p.id(id);
+        p.dom.set_text_content(el, "").unwrap();
+    }
+    check(&p, "text removed", abc, 0.0, (abc, 20.0));
+    let k = p.id("k");
+    p.dom.set_attribute(k, "class", "e").unwrap();
+    check(&p, "class added", abc, 20.0, (abc, 20.0));
+    p.dom.set_attribute(k, "class", "").unwrap();
+    check(&p, "class removed", abc, 0.0, (abc, 20.0));
+    let v = p.id("v");
+    p.dom.set_attribute(v, "style", "display:inline-block;--c:'x'").unwrap();
+    check(&p, "--c changed", abc, 0.0, (x, 20.0));
+    p.dom.set_attribute(v, "style", "display:inline-block").unwrap();
+    check(&p, "--c removed", abc, 0.0, (0.0, 0.0));
+}
