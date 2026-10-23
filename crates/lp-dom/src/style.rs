@@ -3631,25 +3631,21 @@ impl StyleEngine {
                         crate::layout::flow_stats::note_root(stale.len() - before, || describe_root(dom, root));
                     }
                 }
-                if stale.len() * 2 > cache.memo.len().max(cache.declared.len()).max(cache.flow.len()) {
-                    note_full(Full::Large);
-                    cache.memo.clear();
-                    cache.declared.clear();
-                    cache.generated.clear();
-                    cache.flow.clear();
-                    cache.restyled = None;
-                } else {
-                    crate::layout::flow_stats::note_selective(stale.len());
-                    if let Some(restyled) = cache.restyled.as_mut() {
-                        restyled.extend_from_slice(&stale);
-                    }
-                    for n in stale {
-                        cache.memo.remove(&n);
-                        cache.declared.remove(&n);
-                        cache.generated.remove(&(n, false));
-                        cache.generated.remove(&(n, true));
-                        cache.flow.remove(&n);
-                    }
+                // However many elements the roots cover, drop only those: the
+                // others need no restyle, and a precise `restyled` lets layout
+                // keep their measurements. (Clearing everything once the roots
+                // covered half the cache restyled and remeasured the whole page
+                // whenever React re-rendered a large table.)
+                crate::layout::flow_stats::note_selective(stale.len());
+                if let Some(restyled) = cache.restyled.as_mut() {
+                    restyled.extend_from_slice(&stale);
+                }
+                for n in stale {
+                    cache.memo.remove(&n);
+                    cache.declared.remove(&n);
+                    cache.generated.remove(&(n, false));
+                    cache.generated.remove(&(n, true));
+                    cache.flow.remove(&n);
                 }
             }
             None => {
@@ -4860,5 +4856,48 @@ mod validity_has_invalidation_tests {
         let restyled = layout.style().take_restyled(&dom).expect("selective");
         assert!(restyled.contains(&card) && restyled.contains(&input), "{restyled:?}");
         assert!(restyled.len() <= 3, "{restyled:?}");
+    }
+}
+
+#[cfg(test)]
+mod large_invalidation_tests {
+    use crate::layout::{Geometry, Layout};
+    use crate::media::Viewport;
+    use crate::parse::{parse_document, DomRef};
+    use crate::Dom;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    #[test]
+    fn invalidating_most_elements_keeps_the_others_cached() {
+        // A class on a container of most of the page restyles its subtree and
+        // the sibling a combinator reaches; the elements outside keep their
+        // flow styles, and layout is told exactly which elements changed.
+        let rows: String = (0..40).map(|i| format!("<div class=row><span>{i}</span></div>")).collect();
+        let html = format!(
+            "<!doctype html><style>.list.dense .row{{height:5px}} .row{{height:10px}} \
+             .list.dense + .after{{width:300px}}</style><body><div id=side style=\"height:1px\"></div>\
+             <div id=list class=list>{rows}</div><div id=after class=after></div></body>"
+        );
+        let dom_ref: DomRef = Rc::new(RefCell::new(Dom::new()));
+        let doc = parse_document(&dom_ref, "http://test/", &html);
+        let mut dom = Rc::try_unwrap(dom_ref).ok().expect("sole owner").into_inner();
+        let mut layout = Layout::with_viewport(doc, Viewport::new(800, 600));
+        layout.style_mut().discover_style_elements(&dom);
+        layout.set_geometry(Geometry::Flow);
+        layout.flow(&dom);
+        layout.style().take_restyled(&dom);
+        let id = |dom: &Dom, s: &str| dom.get_element_by_id(doc, s).unwrap().unwrap();
+        let (side, list, after) = (id(&dom, "side"), id(&dom, "list"), id(&dom, "after"));
+        assert!(layout.style().cached_flow_style(&dom, side).is_some(), "side styled by the first pass");
+        dom.set_attribute(list, "class", "list dense").unwrap();
+        let restyled = layout.style().take_restyled(&dom).expect("selective, not a full clear");
+        // The list, its 40 rows and their spans, and the sibling after it:
+        // more than half of the elements styled so far.
+        assert!(restyled.contains(&list) && restyled.contains(&after), "{restyled:?}");
+        assert!(restyled.len() >= 81, "{}", restyled.len());
+        assert!(!restyled.contains(&side), "{restyled:?}");
+        assert!(layout.style().cached_flow_style(&dom, side).is_some(), "side kept its cached flow style");
+        assert!(layout.style().cached_flow_style(&dom, list).is_none(), "list dropped");
     }
 }

@@ -2491,13 +2491,11 @@ pub(crate) mod flow_stats {
         Journal,
         /// An unjournaled change (or a document-level root).
         Unknown,
-        /// Selective roots covered more than half the cache.
-        Large,
     }
 
     impl Full {
-        const COUNT: usize = 7;
-        const NAMES: [&str; Full::COUNT] = ["rules", "stamp", "has", "shadow", "journal", "unknown", "large"];
+        const COUNT: usize = 6;
+        const NAMES: [&str; Full::COUNT] = ["rules", "stamp", "has", "shadow", "journal", "unknown"];
     }
 
     pub(crate) fn note_full(reason: Full) {

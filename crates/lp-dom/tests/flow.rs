@@ -1717,6 +1717,81 @@ fn incremental_style_invalidation_never_serves_stale_geometry() {
 }
 
 #[test]
+fn invalidating_most_of_the_page_stays_selective_without_stale_geometry() {
+    // A React re-render of a large list restyles more than half of the cached
+    // elements. Only those are dropped; the rest keep their cached styles and
+    // measurements. Each step compares every box with a fresh layout: a
+    // container class reaching every row (with a sibling combinator past the
+    // subtree), an outside change afterwards, an inherited font size,
+    // replacing every row, an insertion shifting :nth-child of all of them.
+    let css = "<style>\
+        .side .item{width:40px;height:10px} .side .item.on{width:41px}\
+        .region{font-size:10px} .region.big{font-size:20px}\
+        .row{height:10px} .region .row:first-child{height:12px}\
+        .cell{display:block;width:30px;height:5px} .row:nth-child(2n) .cell{width:31px}\
+        .region.dense .cell{width:20px} .cell span{display:block;width:2em;height:1em}\
+        .after{width:50px;height:10px} .region.dense + .after{width:300px}\
+        </style>";
+    let row = |i: usize| format!("<div class=row id=r{i}><div class=cell id=c{i}><span>x</span></div><div class=cell><span>y</span></div></div>");
+    let rows: String = (0..60).map(row).collect();
+    let html = format!(
+        "<!doctype html>{css}<body style=\"margin:0\"><div class=side><div id=item class=item></div></div>\
+         <div id=region class=region>{rows}</div><div id=after class=after></div></body>"
+    );
+    let mut p = page(&html, Geometry::Flow);
+    assert_matches_fresh(&p, "initial");
+    let (region, item, after) = (p.id("region"), p.id("item"), p.id("after"));
+    let width = |p: &Page, n: NodeId| p.layout.flow(&p.dom).get(n).unwrap().rect.width;
+    // The container's class restyles every row, and the sibling after it.
+    p.dom.set_attribute(region, "class", "region dense").unwrap();
+    assert_matches_fresh(&p, "container class over most of the page");
+    assert_eq!(width(&p, p.id("c1")), 20.0);
+    assert_eq!(width(&p, after), 300.0);
+    // The elements outside it kept their entries; changing one still restyles it.
+    p.dom.set_attribute(item, "class", "item on").unwrap();
+    assert_matches_fresh(&p, "outside change after a large invalidation");
+    assert_eq!(width(&p, item), 41.0);
+    // Inherited font size into em-sized descendants of every row.
+    p.dom.set_attribute(region, "class", "region dense big").unwrap();
+    assert_matches_fresh(&p, "inherited font-size over most of the page");
+    // Replace every row (a keyless React re-render), then shift :nth-child.
+    for i in 0..60 {
+        let r = p.id(&format!("r{i}"));
+        p.dom.remove_child(region, r).unwrap();
+    }
+    for i in 0..60 {
+        let r = p.dom.create_element(p.doc, "div").unwrap();
+        p.dom.set_attribute(r, "class", "row").unwrap();
+        p.dom.set_attribute(r, "id", &format!("n{i}")).unwrap();
+        for (k, text) in ["x", "y"].into_iter().enumerate() {
+            let cell = p.dom.create_element(p.doc, "div").unwrap();
+            p.dom.set_attribute(cell, "class", "cell").unwrap();
+            if k == 0 {
+                p.dom.set_attribute(cell, "id", &format!("m{i}")).unwrap();
+            }
+            let span = p.dom.create_element(p.doc, "span").unwrap();
+            let t = p.dom.create_text(p.doc, text).unwrap();
+            p.dom.append_child(span, t).unwrap();
+            p.dom.append_child(cell, span).unwrap();
+            p.dom.append_child(r, cell).unwrap();
+        }
+        p.dom.append_child(region, r).unwrap();
+    }
+    assert_matches_fresh(&p, "every row replaced");
+    p.dom.set_attribute(region, "class", "region").unwrap();
+    assert_matches_fresh(&p, "container class removed");
+    assert_eq!(width(&p, p.id("m1")), 31.0);
+    let top = p.dom.create_element(p.doc, "div").unwrap();
+    p.dom.set_attribute(top, "class", "row").unwrap();
+    let n0 = p.id("n0");
+    p.dom.insert_before(region, top, Some(n0)).unwrap();
+    assert_matches_fresh(&p, "insertion shifts nth-child of every row");
+    // n0 is now the second row.
+    assert_eq!(width(&p, p.id("m0")), 31.0);
+    assert_eq!(width(&p, item), 41.0);
+}
+
+#[test]
 fn loaded_image_natural_size_reaches_flow_through_the_dom() {
     // TOS chat: <img class="max-h-64 w-full object-contain"> in a 240px
     // button, holding the uploaded 1x1 PNG. Unloaded it is 240x0 (hidden
