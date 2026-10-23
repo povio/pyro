@@ -1169,6 +1169,200 @@ struct RuleSet {
     generated_rules: Vec<GeneratedRule>,
 }
 
+/// The longhands `style_flow.rs` reads for every laid-out element, as slot
+/// indices of [`DeclaredEntry::flow`]. `font-size` and `font-weight` have
+/// their own cascade functions and are not slots.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
+pub(crate) enum FlowProp {
+    Display,
+    Position,
+    Top,
+    Right,
+    Bottom,
+    Left,
+    Width,
+    Height,
+    MinWidth,
+    MaxWidth,
+    MinHeight,
+    MaxHeight,
+    MarginTop,
+    MarginRight,
+    MarginBottom,
+    MarginLeft,
+    PaddingTop,
+    PaddingRight,
+    PaddingBottom,
+    PaddingLeft,
+    BorderTopStyle,
+    BorderRightStyle,
+    BorderBottomStyle,
+    BorderLeftStyle,
+    BorderTopWidth,
+    BorderRightWidth,
+    BorderBottomWidth,
+    BorderLeftWidth,
+    OverflowX,
+    OverflowY,
+    WhiteSpace,
+    OverflowWrap,
+    WordWrap,
+    WordBreak,
+    LineHeight,
+    Zoom,
+    BoxSizing,
+    FlexDirection,
+    FlexWrap,
+    RowGap,
+    ColumnGap,
+    AlignItems,
+    AlignSelf,
+    JustifyContent,
+    JustifyItems,
+    JustifySelf,
+    FlexGrow,
+    FlexShrink,
+    FlexBasis,
+    TableLayout,
+    BorderCollapse,
+    TextAlign,
+}
+
+impl FlowProp {
+    pub(crate) const COUNT: usize = FlowProp::TextAlign as usize + 1;
+    const NAMES: [&'static str; FlowProp::COUNT] = [
+        "display",
+        "position",
+        "top",
+        "right",
+        "bottom",
+        "left",
+        "width",
+        "height",
+        "min-width",
+        "max-width",
+        "min-height",
+        "max-height",
+        "margin-top",
+        "margin-right",
+        "margin-bottom",
+        "margin-left",
+        "padding-top",
+        "padding-right",
+        "padding-bottom",
+        "padding-left",
+        "border-top-style",
+        "border-right-style",
+        "border-bottom-style",
+        "border-left-style",
+        "border-top-width",
+        "border-right-width",
+        "border-bottom-width",
+        "border-left-width",
+        "overflow-x",
+        "overflow-y",
+        "white-space",
+        "overflow-wrap",
+        "word-wrap",
+        "word-break",
+        "line-height",
+        "zoom",
+        "box-sizing",
+        "flex-direction",
+        "flex-wrap",
+        "row-gap",
+        "column-gap",
+        "align-items",
+        "align-self",
+        "justify-content",
+        "justify-items",
+        "justify-self",
+        "flex-grow",
+        "flex-shrink",
+        "flex-basis",
+        "table-layout",
+        "border-collapse",
+        "text-align",
+    ];
+
+    pub(crate) fn name(self) -> &'static str {
+        FlowProp::NAMES[self as usize]
+    }
+
+    pub(crate) fn from_name(name: &str) -> Option<FlowProp> {
+        // SAFETY of the transmute: the index comes from NAMES, which has exactly COUNT entries in variant order.
+        FlowProp::NAMES.iter().position(|n| *n == name).map(|i| unsafe { std::mem::transmute::<u8, FlowProp>(i as u8) })
+    }
+
+    /// Whether the property inherits (an element without an own declaration
+    /// takes its parent's computed value).
+    pub(crate) fn inherited(self) -> bool {
+        static TABLE: std::sync::OnceLock<[bool; FlowProp::COUNT]> = std::sync::OnceLock::new();
+        TABLE.get_or_init(|| FlowProp::NAMES.map(computed::is_inherited))[self as usize]
+    }
+}
+
+/// A declared value in the form `style_flow.rs` can use without the string
+/// cascade: parsed once per rule (or per inline style), by syntax only.
+#[derive(Clone, Debug)]
+pub(crate) enum TypedValue {
+    /// `<number>px`.
+    Px(f64),
+    /// `<number>%`.
+    Pct(f64),
+    /// A unitless `<number>` (`0` included).
+    Number(f64),
+    /// Identifier words, trimmed, in the declared case (`auto`, `first baseline`).
+    Keyword(Rc<str>),
+    /// Everything the string cascade must resolve: `var()`, `calc()`,
+    /// relative or viewport units, CSS-wide keywords, lists, invalid values.
+    Other,
+}
+
+impl TypedValue {
+    fn parse(value: &str) -> TypedValue {
+        let v = value.trim();
+        if v.is_empty() {
+            return TypedValue::Other;
+        }
+        let bytes = v.as_bytes();
+        if bytes.iter().all(|b| b.is_ascii_alphabetic() || *b == b'-' || *b == b' ') {
+            return match v.to_ascii_lowercase().as_str() {
+                "inherit" | "initial" | "unset" | "revert" | "revert-layer" => TypedValue::Other,
+                _ => TypedValue::Keyword(Rc::from(v)),
+            };
+        }
+        // Numbers and absolute px/% lengths only; the CSS tokenizer decides validity exactly as the string path does.
+        let numeric = |s: &str| s.bytes().all(|b| b.is_ascii_digit() || matches!(b, b'.' | b'+' | b'-' | b'e' | b'E'));
+        let fonts = computed::LengthContext::fonts(DEFAULT_FONT_SIZE, DEFAULT_FONT_SIZE);
+        if let Some(n) = v.strip_suffix("px").or_else(|| v.strip_suffix("PX")).filter(|n| numeric(n)) {
+            return match computed::resolve_len(v, &fonts) {
+                Some((px, 0.0)) if !n.is_empty() => TypedValue::Px(px),
+                _ => TypedValue::Other,
+            };
+        }
+        if v.strip_suffix('%').is_some_and(|n| numeric(n) && !n.is_empty()) {
+            return match computed::resolve_len(v, &fonts) {
+                Some((0.0, pct)) => TypedValue::Pct(pct),
+                _ => TypedValue::Other,
+            };
+        }
+        if numeric(v) {
+            return computed::resolve_number(v).map_or(TypedValue::Other, TypedValue::Number);
+        }
+        TypedValue::Other
+    }
+}
+
+/// An element's winning author declarations: every longhand as text (for
+/// `getComputedStyle`), and the flow longhands as typed slots with their
+/// cascade priority, filled by the same matching pass.
+pub(crate) struct DeclaredEntry {
+    pub(crate) map: FxHashMap<String, String>,
+    pub(crate) flow: [Option<(TypedValue, u64)>; FlowProp::COUNT],
+}
+
 /// A rule whose selector ends in `::before` or `::after`, with the
 /// pseudo-element stripped: it matches the originating element.
 struct GeneratedRule {
@@ -1183,6 +1377,8 @@ struct GeneratedRule {
 struct GenericRule {
     selector: Selectors,
     decls: Rc<[(String, Rc<str>, bool)]>,
+    /// For each of `decls`: its flow slot and typed value, parsed once.
+    typed: Rc<[Option<(FlowProp, TypedValue)>]>,
     normal: u64,
     important: u64,
     /// Bloom hashes its ancestor compounds require (0: none), to skip it for
@@ -1752,10 +1948,16 @@ impl<'v> Builder<'v> {
             let important = (rank_of(layers, g.layer, true) << RANK_SHIFT) | spec | g.doc as u64 | IMPORTANT_BIT;
             let idx = rs.generic_rules.len() as u32;
             let ancestors = ancestor_hashes(&g.selector);
+            let typed: Rc<[Option<(FlowProp, TypedValue)>]> = g
+                .decls
+                .iter()
+                .map(|(name, value, _)| FlowProp::from_name(name).map(|p| (p, TypedValue::parse(value))))
+                .collect();
             rs.generic_rules.push(GenericRule {
                 ancestors,
                 selector: SelectorList::from_one(g.selector),
                 decls: g.decls,
+                typed,
                 normal,
                 important,
             });
@@ -3400,7 +3602,7 @@ struct Cache {
     rules: Rc<RuleSet>,
     memo: FxHashMap<NodeId, ComputedStyle>,
     /// Winning generic declarations per element (`declared_map`), dropped with `memo`.
-    declared: FxHashMap<NodeId, Rc<FxHashMap<String, String>>>,
+    declared: FxHashMap<NodeId, Rc<DeclaredEntry>>,
     /// Generated `::before` (false) / `::after` (true) content per element,
     /// dropped with `memo`.
     generated: FxHashMap<(NodeId, bool), Option<Rc<Generated>>>,
@@ -3437,6 +3639,9 @@ pub struct StyleEngine {
     /// (`add_sheet`, `discover_style_elements`): the next rebuild then clears
     /// every cached style instead of restyling the added rules' subjects.
     full_restyle: Cell<bool>,
+    /// `style_flow.rs` reads literal flow values from the typed slots; off,
+    /// every value goes through the string cascade (differential tests).
+    typed_flow_reads: Cell<bool>,
     cache: RefCell<Cache>,
 }
 
@@ -3453,12 +3658,24 @@ impl StyleEngine {
             popover_open: FxHashSet::default(),
             generation: 0,
             full_restyle: Cell::new(true),
+            typed_flow_reads: Cell::new(true),
             cache: RefCell::new(Cache::default()),
         }
     }
 
     pub fn document(&self) -> NodeId {
         self.doc
+    }
+
+    /// Differential tests: compare flow styles read through the typed slots
+    /// with the string cascade alone.
+    #[doc(hidden)]
+    pub fn set_typed_flow_reads(&self, on: bool) {
+        self.typed_flow_reads.set(on);
+    }
+
+    pub(crate) fn typed_flow_reads(&self) -> bool {
+        self.typed_flow_reads.get()
     }
 
     pub fn viewport(&self) -> &Viewport {
@@ -4428,7 +4645,7 @@ impl StyleEngine {
     /// The element's own winning declaration of a longhand: inline (shorthands
     /// expanded) against the author rules, then SVG presentation attributes.
     fn declared_value(&self, dom: &Dom, rules: &RuleSet, el: NodeId, name: &str) -> Option<String> {
-        if let Some(value) = self.declared_map(dom, rules, el).get(name) {
+        if let Some(value) = self.declared_map(dom, rules, el).map.get(name) {
             return Some(value.clone());
         }
         // SVG presentation attributes sit below every author rule (SVG 2 §6.6).
@@ -4441,11 +4658,19 @@ impl StyleEngine {
 
     /// All winning author declarations of `el`, computed in one pass over the
     /// bucketed candidate rules and cached until the DOM or sheets change.
-    fn declared_map(&self, dom: &Dom, rules: &RuleSet, el: NodeId) -> Rc<FxHashMap<String, String>> {
+    pub(crate) fn declared_entry(&self, dom: &Dom, el: NodeId) -> Option<Rc<DeclaredEntry>> {
+        self.owns(dom, el)?;
+        self.ensure(dom);
+        let rules = self.cache.borrow().rules.clone();
+        Some(self.declared_map(dom, &rules, el))
+    }
+
+    fn declared_map(&self, dom: &Dom, rules: &RuleSet, el: NodeId) -> Rc<DeclaredEntry> {
         if let Some(map) = self.cache.borrow().declared.get(&el) {
             return map.clone();
         }
         let mut winners: FxHashMap<String, (String, u64)> = FxHashMap::default();
+        let mut flow: [Option<(TypedValue, u64)>; FlowProp::COUNT] = std::array::from_fn(|_| None);
         let mut offer = |name: &str, value: &str, priority: u64| match winners.get_mut(name) {
             Some(slot) if slot.1 > priority => {}
             Some(slot) => *slot = (value.to_owned(), priority),
@@ -4453,7 +4678,12 @@ impl StyleEngine {
                 winners.insert(name.to_owned(), (value.to_owned(), priority));
             }
         };
-        let Ok(e) = dom.element(el) else { return Rc::default() };
+        // The same winner rule as `offer`, on the typed slot of a flow longhand.
+        let mut offer_typed = |prop: FlowProp, value: &TypedValue, priority: u64| match &flow[prop as usize] {
+            Some((_, p)) if *p > priority => {}
+            _ => flow[prop as usize] = Some((value.clone(), priority)),
+        };
+        let Ok(e) = dom.element(el) else { return Rc::new(DeclaredEntry { map: FxHashMap::default(), flow }) };
         if let Some(style) = e.attr("style") {
             for d in parse_declarations(style) {
                 if is_custom_property(&d.name) {
@@ -4462,6 +4692,9 @@ impl StyleEngine {
                 let p = if d.important { INLINE_IMPORTANT_PRIORITY } else { INLINE_PRIORITY };
                 for (longhand, v) in computed::expand(&d.name, &d.value) {
                     offer(&longhand, &v, p);
+                    if let Some(prop) = FlowProp::from_name(&longhand) {
+                        offer_typed(prop, &TypedValue::parse(&v), p);
+                    }
                 }
             }
         }
@@ -4480,8 +4713,12 @@ impl StyleEngine {
                 if !dom.matches(el, &r.selector).unwrap_or(false) {
                     continue;
                 }
-                for (name, value, important) in r.decls.iter() {
-                    offer(name, value, if *important { r.important } else { r.normal });
+                for ((name, value, important), typed) in r.decls.iter().zip(r.typed.iter()) {
+                    let priority = if *important { r.important } else { r.normal };
+                    offer(name, value, priority);
+                    if let Some((prop, typed)) = typed {
+                        offer_typed(*prop, typed, priority);
+                    }
                 }
             }
         };
@@ -4504,7 +4741,7 @@ impl StyleEngine {
             }
         }
         check(&rules.generic_other);
-        let map: Rc<FxHashMap<String, String>> = Rc::new(winners.into_iter().map(|(k, (v, _))| (k, v)).collect());
+        let map = Rc::new(DeclaredEntry { map: winners.into_iter().map(|(k, (v, _))| (k, v)).collect(), flow });
         self.cache.borrow_mut().declared.insert(el, map.clone());
         map
     }
