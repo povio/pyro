@@ -5114,9 +5114,14 @@ fn abort_controllers_and_traversal_filters_do_not_keep_a_disposed_page_alive() {
     main.dispose();
     drop(main);
     drop(page);
-    for _ in 0..6 {
+    // Conservative stack scanning can keep a wrapper alive for a few extra collections when other
+    // tests run on neighbouring threads; the page must still be released within a bounded number.
+    for _ in 0..40 {
         engine.collect_garbage_now();
         engine.drain_finalized();
+        if weak.upgrade().is_none() {
+            break;
+        }
     }
     assert!(weak.upgrade().is_none(), "an AbortController or traversal filter kept its disposed PageDom alive");
 }
