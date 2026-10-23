@@ -1,7 +1,37 @@
 //! Conversions between lp-dom/lp-net results and JS values (WebIDL-ish).
 
 use lp_dom::{DomError, NodeId};
-use lp_js::{Args, JsError, JsResult, Scope, Value};
+use lp_js::{Args, IdentityKey, JsError, JsResult, Object, Scope, Value, WeakRealm};
+
+/// A wrapper found again through its realm's identity map. A native payload
+/// keeps JS values its wrapper owns in hidden properties on that wrapper,
+/// which the GC traces, rather than in a `Persistent`, which is a root the GC
+/// cannot see through: a protected value that reaches back to the wrapper
+/// would keep both, its realm and its page alive after the page closes.
+pub(crate) struct WrapperRef {
+    realm: WeakRealm,
+    identity: IdentityKey,
+}
+
+impl WrapperRef {
+    pub(crate) fn new(s: &Scope<'_>, identity: IdentityKey) -> WrapperRef {
+        WrapperRef { realm: s.realm().downgrade(), identity }
+    }
+
+    /// The wrapper, from a call whose receiver (or argument) is that wrapper,
+    /// which keeps it alive.
+    pub(crate) fn get<'s>(&self, s: &Scope<'s>) -> JsResult<Object<'s>> {
+        let realm = self.realm.upgrade().ok_or(JsError::ContextDestroyed)?;
+        let owner = realm.scope()?;
+        let wrapper = owner.lookup_identity(self.identity).ok_or(JsError::ContextDestroyed)?;
+        // SAFETY: the caller's live receiver traces this same-VM wrapper.
+        Ok(unsafe { Value::from_raw(s.ctx(), wrapper.value().as_raw()) }.as_object().expect("wrapper"))
+    }
+
+    pub(crate) fn hidden<'s>(&self, s: &Scope<'s>, key: &str) -> JsResult<Option<Value<'s>>> {
+        s.get_hidden(self.get(s)?, key)
+    }
+}
 
 /// Maps a DOM error to the JS exception the bindings throw.
 pub fn dom_err(e: DomError) -> JsError {

@@ -3,6 +3,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+use crate::util::WrapperRef;
 use lp_dom::events::TargetKey;
 use lp_js::{ClassDef, JsClass, JsError, JsResult, NoParent, Object, Persistent, Scope, Value};
 
@@ -201,8 +202,17 @@ pub fn new_signal<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
     s.wrap::<AbortSignal>(data, Some(key))
 }
 
+/// The controller's signal, a hidden property of the controller's wrapper.
+const SIGNAL: &str = "__lpAbortControllerSignal";
+
 pub struct ControllerData {
-    signal: Persistent,
+    wrapper: WrapperRef,
+}
+
+impl ControllerData {
+    fn signal<'s>(&self, s: &Scope<'s>) -> JsResult<Value<'s>> {
+        Ok(self.wrapper.hidden(s, SIGNAL)?.unwrap_or(s.undefined()))
+    }
 }
 
 pub struct AbortController;
@@ -213,11 +223,16 @@ impl JsClass for AbortController {
     fn define(def: &mut ClassDef<Self>) {
         def.constructor(0, |s, nt, _a| {
             let sig = new_signal(s)?;
-            s.wrap_new::<AbortController>(ControllerData { signal: Persistent::new(s, sig.value()) }, nt, None)
+            let page = page_of(s)?;
+            let identity = page.event_identity(page.next_event_id());
+            let data = ControllerData { wrapper: WrapperRef::new(s, identity) };
+            let controller = s.wrap_new::<AbortController>(data, nt, Some(identity))?;
+            s.set_hidden(controller, SIGNAL, sig.value())?;
+            Ok(controller)
         });
-        def.getter("signal", |s, c| Ok(c.signal.get(s)));
+        def.getter("signal", |s, c| c.signal(s));
         def.method("abort", 0, |s, c, a| {
-            if let Some(d) = s.unwrap::<AbortSignal>(c.signal.get(s)) {
+            if let Some(d) = s.unwrap::<AbortSignal>(c.signal(s)?) {
                 d.abort(s, a.get(0));
             }
             Ok(s.undefined())

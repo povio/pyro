@@ -5060,3 +5060,63 @@ fn content_shrink_clamps_scroll_offsets_and_fires_scroll_like_chromium() {
     assert_eq!(eval(&e.main, "ev.join()"), "");
     e.page.dispose();
 }
+
+#[test]
+fn abort_controller_signal_and_traversal_filters_survive_gc_through_their_wrappers() {
+    let Env { engine, page, main } = env("<body><div id=a></div><div id=b></div><div id=c></div></body>");
+    // Only the controller / walkers keep these values reachable.
+    assert_eq!(
+        eval(
+            &main,
+            "(function(){ const c = new AbortController(); globalThis.c = c; c.signal.foo = 7;\
+             globalThis.w = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT,\
+               { tag: 'F', acceptNode(n) { return n.id === 'a' ? NodeFilter.FILTER_SKIP : NodeFilter.FILTER_ACCEPT; } });\
+             globalThis.it = document.createNodeIterator(document.body, NodeFilter.SHOW_ELEMENT,\
+               n => n.id === 'a' ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT); })(); 'ok'"
+        ),
+        "ok"
+    );
+    for _ in 0..4 {
+        engine.collect_garbage_now();
+        engine.drain_finalized();
+    }
+    assert_eq!(
+        eval(
+            &main,
+            "[c.signal.foo, c.signal === c.signal, c.signal.aborted, (c.abort('r'), c.signal.aborted), c.signal.reason,\
+              w.filter.tag, w.filter === w.filter, w.firstChild().id, it.nextNode().tagName, it.nextNode().id,\
+              typeof it.filter, document.createTreeWalker(document.body).filter].join()"
+        ),
+        "7,true,false,true,r,F,true,b,BODY,b,function,"
+    );
+    drop(page);
+}
+
+#[test]
+fn abort_controllers_and_traversal_filters_do_not_keep_a_disposed_page_alive() {
+    // A controller whose signal reaches back to it, and walkers whose filters
+    // reach back to them, through the page's globals: no native root may pin
+    // that cycle once the page is disposed.
+    let Env { engine, page, main } = env("<body><div id=a></div></body>");
+    assert_eq!(
+        eval(
+            &main,
+            "globalThis.c = new AbortController(); c.signal.owner = c; c.signal.addEventListener('abort', () => c);\
+             globalThis.w = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT, { acceptNode: () => (w, 1) });\
+             globalThis.it = document.createNodeIterator(document.body, NodeFilter.SHOW_ALL, () => (it, 1));\
+             w.firstChild(); it.nextNode(); 'ok'"
+        ),
+        "ok"
+    );
+    page.after_task();
+    let weak = Rc::downgrade(&page);
+    page.dispose();
+    main.dispose();
+    drop(main);
+    drop(page);
+    for _ in 0..6 {
+        engine.collect_garbage_now();
+        engine.drain_finalized();
+    }
+    assert!(weak.upgrade().is_none(), "an AbortController or traversal filter kept its disposed PageDom alive");
+}
