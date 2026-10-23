@@ -36,7 +36,7 @@
 //! state, [`StyleEngine::invalidate`]) or the document's focused/hovered
 //! element changes (upstream's `Page.style_version`).
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use cssparser::{ParseError, Parser, Token};
@@ -2069,6 +2069,53 @@ struct PseudoMove {
 /// restyles the elements whose `:focus`, `:focus-within` or `:hover` match
 /// changed: the old and new elements and the ancestors only one of them
 /// has. Sibling-relative `:has()` and shadow trees never get here.
+/// The elements a rule of `added` (built from sheets added since the last
+/// build) matches now: with the existing rules unchanged and still in the same
+/// order, only these elements, and their subtrees through inheritance, can
+/// style differently. None (restyle everything) when the added sheets register
+/// custom properties, which can change any element's values.
+fn added_rule_subjects(dom: &Dom, doc: NodeId, added: &RuleSet) -> Option<Vec<u32>> {
+    if !added.properties.is_empty() {
+        return None;
+    }
+    let mut subjects = Vec::new();
+    for id in dom.descendants(doc).ok()? {
+        let Some(e) = dom.node(id).ok().and_then(|n| n.element()) else { continue };
+        let rule =
+            |list: &[u32]| list.iter().any(|&r| dom.matches(id, &added.rules[r as usize].selector).unwrap_or(false));
+        let generic = |list: &[u32]| {
+            list.iter().any(|&r| dom.matches(id, &added.generic_rules[r as usize].selector).unwrap_or(false))
+        };
+        let mut hit = rule(&added.other) || generic(&added.generic_other);
+        if !hit {
+            if let Some(i) = e.attr("id") {
+                hit = added.by_id.get(i).is_some_and(|l| rule(l))
+                    || added.generic_by_id.get(i).is_some_and(|l| generic(l));
+            }
+        }
+        if !hit {
+            if let Some(class) = e.attr("class") {
+                hit = class.split(is_ascii_ws_char).filter(|s| !s.is_empty()).any(|t| {
+                    added.by_class.get(t).is_some_and(|l| rule(l))
+                        || added.generic_by_class.get(t).is_some_and(|l| generic(l))
+                });
+            }
+        }
+        if !hit {
+            let local = e.name.local.to_ascii_lowercase();
+            hit = added.by_tag.get(local.as_str()).is_some_and(|l| rule(l))
+                || added.generic_by_tag.get(local.as_str()).is_some_and(|l| generic(l));
+        }
+        hit = hit
+            || added.generated_rules.iter().any(|g| dom.matches(id, &g.selector).unwrap_or(false))
+            || added.customs.values().flatten().any(|c| dom.matches(id, &c.selector).unwrap_or(false));
+        if hit {
+            subjects.push(dom.check(id).ok()?);
+        }
+    }
+    Some(subjects)
+}
+
 fn invalidation_roots(
     dom: &Dom,
     changes: &[crate::dom::Change],
@@ -3386,6 +3433,10 @@ pub struct StyleEngine {
     sheets: Vec<Sheet>,
     popover_open: FxHashSet<NodeId>,
     generation: u64,
+    /// Set by every generation bump except a sheet being added or filled
+    /// (`add_sheet`, `discover_style_elements`): the next rebuild then clears
+    /// every cached style instead of restyling the added rules' subjects.
+    full_restyle: Cell<bool>,
     cache: RefCell<Cache>,
 }
 
@@ -3401,6 +3452,7 @@ impl StyleEngine {
             sheets: Vec::new(),
             popover_open: FxHashSet::default(),
             generation: 0,
+            full_restyle: Cell::new(true),
             cache: RefCell::new(Cache::default()),
         }
     }
@@ -3431,6 +3483,13 @@ impl StyleEngine {
     /// doesn't cover (form state written through `control_state_mut`, ...).
     pub fn invalidate(&mut self) {
         self.generation += 1;
+        self.full_restyle.set(true);
+    }
+
+    /// A sheet was added, or an empty one got its text: the rule set must be
+    /// rebuilt, but only elements the new rules match can style differently.
+    fn sheets_added(&mut self) {
+        self.generation += 1;
     }
 
     /// Adds (or replaces, keeping its position) the sheet owned by `owner`.
@@ -3443,7 +3502,9 @@ impl StyleEngine {
         } else {
             self.sheets.push(Sheet { owner, source });
         }
-        self.invalidate();
+        // A replaced sheet that had rules still restyles everything: `ensure`
+        // sees its old parse was not empty.
+        self.sheets_added();
     }
 
     /// Replaces the text of a loader-supplied sheet (or adds it).
@@ -3483,7 +3544,7 @@ impl StyleEngine {
                 self.sheets.push(Sheet { owner: n, source: SheetSource::StyleElement });
             }
         }
-        self.invalidate();
+        self.sheets_added();
     }
 
     /// Opens or closes a popover (`:popover-open`), which the UA rules read.
@@ -3526,6 +3587,11 @@ impl StyleEngine {
             None => true,
         };
         let mut rules_rebuilt = false;
+        // Sheets whose rules are all new (added, or empty before): when they
+        // are the only change to the sheets, cached styles stay valid except
+        // for the elements their rules match.
+        let mut only_added = !self.full_restyle.replace(false);
+        let mut added = Vec::new();
         if tree_or_sheets_changed {
             let mut changed = cache.rules_generation != Some(self.generation);
             cache.parsed.resize_with(self.sheets.len(), || None);
@@ -3546,6 +3612,11 @@ impl StyleEngine {
                 };
                 let up_to_date = cache.parsed[i].as_ref().is_some_and(|p| p.active == active && p.text == text);
                 if !up_to_date {
+                    if cache.parsed[i].as_ref().is_none_or(|p| p.items.is_empty()) {
+                        added.push(i);
+                    } else {
+                        only_added = false;
+                    }
                     let items = if active { parse_stylesheet(text) } else { Vec::new() };
                     cache.parsed[i] = Some(ParsedSheet { active, text: text.to_owned(), items: Rc::new(items) });
                     changed = true;
@@ -3563,16 +3634,27 @@ impl StyleEngine {
                 rules_rebuilt = true;
             }
         }
+        let added_subjects = if rules_rebuilt && only_added && cache.stamp.is_some() {
+            let mut b = Builder::new(&self.viewport);
+            for &i in &added {
+                if let Some(p) = cache.parsed[i].as_ref().filter(|p| p.active) {
+                    b.walk(&p.items, 0, NO_LAYER);
+                }
+            }
+            added_rule_subjects(dom, self.doc, &b.finish())
+        } else {
+            None
+        };
         // Selective invalidation when only the DOM changed and the journal
         // covers it; anything uncertain (rules, generation, focus/hover,
         // :has(), shadow trees, unknown changes) invalidates every element.
         use crate::layout::flow_stats::{note_full, Full};
         let changes = match cache.stamp {
-            Some(_) if rules_rebuilt => {
+            Some(_) if rules_rebuilt && added_subjects.is_none() => {
                 note_full(Full::Rules);
                 None
             }
-            Some(old) if old.generation != stamp.generation => {
+            Some(old) if old.generation != stamp.generation && added_subjects.is_none() => {
                 note_full(Full::Stamp);
                 None
             }
@@ -3609,7 +3691,10 @@ impl StyleEngine {
             new_hover: stamp.hovered,
         });
         let roots = changes.and_then(|c| match invalidation_roots(dom, &c, &cache.rules, pseudo?) {
-            Ok(roots) => Some(roots),
+            Ok(mut roots) => {
+                roots.extend(added_subjects.iter().flatten());
+                Some(roots)
+            }
             Err(why) => {
                 note_full(Full::Unknown);
                 crate::layout::flow_stats::note_unknown(|| match why {
@@ -4899,5 +4984,99 @@ mod large_invalidation_tests {
         assert!(!restyled.contains(&side), "{restyled:?}");
         assert!(layout.style().cached_flow_style(&dom, side).is_some(), "side kept its cached flow style");
         assert!(layout.style().cached_flow_style(&dom, list).is_none(), "list dropped");
+    }
+}
+
+#[cfg(test)]
+mod added_sheet_tests {
+    use crate::layout::{Geometry, Layout};
+    use crate::media::Viewport;
+    use crate::parse::{parse_document, DomRef};
+    use crate::{Dom, NodeId};
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    fn setup() -> (Dom, NodeId, Layout) {
+        let rows: String = (0..30).map(|i| format!("<div class=row id=r{i}><span>{i}</span></div>")).collect();
+        let html = format!(
+            "<!doctype html><style>.row{{height:10px}}</style><body><div id=side style=\"height:1px\"></div>\
+             <div id=list>{rows}</div></body>"
+        );
+        let dom_ref: DomRef = Rc::new(RefCell::new(Dom::new()));
+        let doc = parse_document(&dom_ref, "http://test/", &html);
+        let dom = Rc::try_unwrap(dom_ref).ok().expect("sole owner").into_inner();
+        let mut layout = Layout::with_viewport(doc, Viewport::new(800, 600));
+        layout.style_mut().discover_style_elements(&dom);
+        layout.set_geometry(Geometry::Flow);
+        layout.flow(&dom);
+        layout.style().take_restyled(&dom);
+        (dom, doc, layout)
+    }
+
+    fn add_style(dom: &mut Dom, doc: NodeId, layout: &mut Layout, css: &str) -> NodeId {
+        let style = dom.create_element(doc, "style").unwrap();
+        let text = dom.create_text(doc, css).unwrap();
+        dom.append_child(style, text).unwrap();
+        let body = dom.body(doc).unwrap().unwrap();
+        dom.append_child(body, style).unwrap();
+        layout.style_mut().discover_style_elements(dom);
+        style
+    }
+
+    #[test]
+    fn an_added_sheet_restyles_only_the_elements_its_rules_match() {
+        let (mut dom, doc, mut layout) = setup();
+        let id = |dom: &Dom, s: &str| dom.get_element_by_id(doc, s).unwrap().unwrap();
+        let (side, r3, r4) = (id(&dom, "side"), id(&dom, "r3"), id(&dom, "r4"));
+        // A sheet scoped to markup the page lacks (a lazily loaded chunk's CSS):
+        // only the inserted <style> element itself is new.
+        let style =
+            add_style(&mut dom, doc, &mut layout, ".doc-content p{height:99px} .doc-content>*+*{margin-top:3px}");
+        let restyled = layout.style().take_restyled(&dom).expect("selective, not a full clear");
+        assert!(restyled.iter().all(|&n| n == style || dom.parent(n).ok().flatten() == Some(style)), "{restyled:?}");
+        assert!(layout.style().cached_flow_style(&dom, side).is_some(), "side kept its flow style");
+        // A sheet matching one row: that row and its subtree only.
+        add_style(&mut dom, doc, &mut layout, "#r3{height:20px}");
+        let restyled = layout.style().take_restyled(&dom).expect("selective");
+        assert!(restyled.contains(&r3) && !restyled.contains(&r4) && !restyled.contains(&side), "{restyled:?}");
+        // Editing a sheet that has rules is not an addition: everything restyles.
+        let text = dom.first_child(style).unwrap().unwrap();
+        dom.replace_data(text, 0, 3, ".x ").unwrap();
+        layout.style_mut().discover_style_elements(&dom);
+        assert!(layout.style().take_restyled(&dom).is_none(), "an edited sheet clears every style");
+    }
+
+    #[test]
+    fn a_loader_sheet_filled_after_an_empty_placeholder_is_an_addition() {
+        let (mut dom, doc, mut layout) = setup();
+        let id = |dom: &Dom, s: &str| dom.get_element_by_id(doc, s).unwrap().unwrap();
+        let (side, r5) = (id(&dom, "side"), id(&dom, "r5"));
+        let span = dom.first_child(r5).unwrap().unwrap();
+        let link = dom.create_element(doc, "link").unwrap();
+        let body = dom.body(doc).unwrap().unwrap();
+        dom.append_child(body, link).unwrap();
+        layout.style_mut().set_sheet_text(link, "");
+        layout.style().take_restyled(&dom).expect("an empty sheet adds no rules");
+        layout.style_mut().set_sheet_text(link, "#r5 span{display:block;height:4px}");
+        let restyled = layout.style().take_restyled(&dom).expect("selective");
+        assert!(restyled.contains(&span) && !restyled.contains(&r5) && !restyled.contains(&side), "{restyled:?}");
+        // Replacing text that had rules restyles everything.
+        layout.style_mut().set_sheet_text(link, "#r6{height:1px}");
+        assert!(layout.style().take_restyled(&dom).is_none());
+    }
+
+    #[test]
+    fn viewport_popover_removal_and_registered_properties_still_restyle_everything() {
+        let (mut dom, doc, mut layout) = setup();
+        let style =
+            add_style(&mut dom, doc, &mut layout, "@property --h{syntax:'<length>';inherits:false;initial-value:2px}");
+        assert!(layout.style().take_restyled(&dom).is_none(), "@property can change any element");
+        dom.remove_child(dom.parent(style).unwrap().unwrap(), style).unwrap();
+        layout.style_mut().remove_sheet(style);
+        assert!(layout.style().take_restyled(&dom).is_none());
+        add_style(&mut dom, doc, &mut layout, "#r1{height:3px}");
+        layout.style().take_restyled(&dom).expect("selective");
+        layout.style_mut().set_viewport(Viewport::new(500, 400));
+        assert!(layout.style().take_restyled(&dom).is_none());
     }
 }

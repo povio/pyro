@@ -1732,7 +1732,9 @@ fn invalidating_most_of_the_page_stays_selective_without_stale_geometry() {
         .region.dense .cell{width:20px} .cell span{display:block;width:2em;height:1em}\
         .after{width:50px;height:10px} .region.dense + .after{width:300px}\
         </style>";
-    let row = |i: usize| format!("<div class=row id=r{i}><div class=cell id=c{i}><span>x</span></div><div class=cell><span>y</span></div></div>");
+    let row = |i: usize| {
+        format!("<div class=row id=r{i}><div class=cell id=c{i}><span>x</span></div><div class=cell><span>y</span></div></div>")
+    };
     let rows: String = (0..60).map(row).collect();
     let html = format!(
         "<!doctype html>{css}<body style=\"margin:0\"><div class=side><div id=item class=item></div></div>\
@@ -1789,6 +1791,74 @@ fn invalidating_most_of_the_page_stays_selective_without_stale_geometry() {
     // n0 is now the second row.
     assert_eq!(width(&p, p.id("m0")), 31.0);
     assert_eq!(width(&p, item), 41.0);
+}
+
+#[test]
+fn added_sheets_restyle_their_subjects_without_stale_geometry() {
+    // A sheet added after layout (a lazily loaded chunk's CSS, a library's
+    // injected <style>) restyles only what its rules match. Each step compares
+    // every box with a fresh layout: unmatched scoped rules, a matched subset,
+    // inherited font size into em sizes, generated content, a custom property
+    // read through var(), sibling and :has() selectors, @media, then an edit of
+    // a sheet with rules, a removed sheet and a viewport change (full restyles).
+    let rows: String = (0..40)
+        .map(|i| {
+            format!(
+                "<div class=row id=r{i}><div class=cell><span>x</span></div><div class=cell><span>y</span></div></div>"
+            )
+        })
+        .collect();
+    let html = format!(
+        "<!doctype html><style>.row{{height:10px}} .cell{{display:block;width:30px;height:var(--h,5px)}} \
+         .cell span{{display:block;width:2em;height:1em}}</style><body style=\"margin:0\"><div id=side style=\"height:1px\"></div>\
+         <div id=list>{rows}</div><div id=after></div></body>"
+    );
+    let mut p = page(&html, Geometry::Flow);
+    assert_matches_fresh(&p, "initial");
+    let add = |p: &mut Page, css: &str| {
+        let style = p.dom.create_element(p.doc, "style").unwrap();
+        let text = p.dom.create_text(p.doc, css).unwrap();
+        p.dom.append_child(style, text).unwrap();
+        let body = p.dom.body(p.doc).unwrap().unwrap();
+        p.dom.append_child(body, style).unwrap();
+        p.layout.style_mut().discover_style_elements(&p.dom);
+        style
+    };
+    add(&mut p, ".doc-content p{height:99px} .doc-content>*+*{margin-top:3px} .doc-content:after{content:'';height:32px;display:block}");
+    assert_matches_fresh(&p, "scoped sheet matching nothing");
+    add(&mut p, ".row:nth-child(2n) .cell{width:31px}");
+    assert_matches_fresh(&p, "sheet matching a subset");
+    add(&mut p, "#list{font-size:20px}");
+    assert_matches_fresh(&p, "inherited font size into em sizes");
+    add(&mut p, "#r7::before{content:'z';display:block;height:6px}");
+    assert_matches_fresh(&p, "generated content");
+    add(&mut p, "#r9{--h:9px}");
+    assert_matches_fresh(&p, "custom property through var()");
+    add(&mut p, ".row + .row{margin-top:1px} #side:has(+ #list){height:4px} #r3:has(span){height:14px}");
+    assert_matches_fresh(&p, "sibling and :has() selectors");
+    let media = add(&mut p, "@media (min-width: 700px){ #after{height:12px} .row:first-child{height:15px} }");
+    assert_matches_fresh(&p, "@media");
+    // A DOM change in the same pass as an added sheet.
+    let r2 = p.id("r2");
+    p.dom.set_attribute(r2, "style", "height:22px").unwrap();
+    add(&mut p, "#r2 .cell{width:40px}");
+    assert_matches_fresh(&p, "DOM change with an added sheet");
+    // Editing a sheet that has rules, removing one, and a viewport change.
+    let text = p.dom.first_child(media).unwrap().unwrap();
+    p.dom.replace_data(text, 0, 0, "#side{height:8px} ").unwrap();
+    p.layout.style_mut().discover_style_elements(&p.dom);
+    assert_matches_fresh(&p, "edited sheet");
+    p.dom.remove_child(p.dom.parent(media).unwrap().unwrap(), media).unwrap();
+    p.layout.style_mut().remove_sheet(media);
+    assert_matches_fresh(&p, "removed sheet");
+    p.layout.set_viewport(Viewport::new(600, 400));
+    let mut fresh_vp = Layout::with_viewport(p.doc, Viewport::new(600, 400));
+    fresh_vp.style_mut().discover_style_elements(&p.dom);
+    fresh_vp.set_geometry(Geometry::Flow);
+    let (cached, fresh) = (p.layout.flow(&p.dom), fresh_vp.flow(&p.dom));
+    for (k, b) in &fresh.boxes {
+        assert_eq!(cached.boxes.get(k).map(|c| c.rect), Some(b.rect), "viewport: {k:?}");
+    }
 }
 
 #[test]
