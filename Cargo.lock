@@ -638,6 +638,9 @@ dependencies = [
 [[package]]
 name = "lp-runtime"
 version = "0.0.1"
+dependencies = [
+ "libc",
+]
 
 [[package]]
 name = "lp-webapi"
