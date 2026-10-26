@@ -62,8 +62,9 @@ impl Change {
     }
 }
 
-/// Per root (slot index), the first element in tree order for each id.
-type IdIndex = rustc_hash::FxHashMap<u32, rustc_hash::FxHashMap<String, u32>>;
+/// Per root (slot index, with the slot generation it was built for), the
+/// first element in tree order for each id.
+type IdIndex = rustc_hash::FxHashMap<u32, (u32, rustc_hash::FxHashMap<String, u32>)>;
 
 pub struct Dom {
     /// Process-unique id (caches keyed by DOM identity and `version`).
@@ -95,8 +96,10 @@ pub struct Dom {
     /// Natural sizes of loaded `<img>` elements, set by the embedder.
     natural_sizes: rustc_hash::FxHashMap<NodeId, (f64, f64)>,
     /// `getElementById` index: per root, the first element in tree order
-    /// for each id, valid for one `version`.
+    /// for each id, valid at `version` `.0` (see `get_element_by_id`).
     id_index: std::cell::RefCell<(u64, IdIndex)>,
+    /// Number of per-root id maps built (tests check the index is reused).
+    id_index_builds: std::cell::Cell<u64>,
 }
 
 impl Default for Dom {
@@ -136,6 +139,7 @@ impl Dom {
             iframes: Default::default(),
             natural_sizes: Default::default(),
             id_index: Default::default(),
+            id_index_builds: Default::default(),
         }
     }
 
@@ -1705,25 +1709,68 @@ impl Dom {
         let r = self.check(root)?;
         // Chromium keeps an id map; a tree walk per call made accessible-name
         // computation (aria-labelledby/-describedby lookups) quadratic on
-        // large pages. The index is rebuilt lazily after any mutation.
+        // large pages. The index is rebuilt lazily after a mutation that can
+        // change it.
         let mut index = self.id_index.borrow_mut();
         if index.0 != self.version {
-            *index = (self.version, Default::default());
-        }
-        let ids = index.1.entry(r).or_insert_with(|| {
-            let mut ids = rustc_hash::FxHashMap::default();
-            let mut cur = self.n(r).first_child;
-            while cur != NIL {
-                if let Some(v) = self.n(cur).element().and_then(|e| e.id()) {
-                    if !v.is_empty() {
-                        ids.entry(v.to_owned()).or_insert(cur);
-                    }
-                }
-                cur = self.following_in(cur, r);
+            if self.id_index_survives(index.0) {
+                index.0 = self.version;
+            } else {
+                *index = (self.version, Default::default());
             }
-            ids
-        });
+        }
+        // A freed root's slot can be reused by a new node without a mutation
+        // being journaled: maps are only valid for the generation they were
+        // built for. (A live root keeps its whole subtree, and every node that
+        // leaves it is journaled as removed.)
+        let gen = self.slots[r as usize].gen;
+        if index.1.get(&r).is_some_and(|e| e.0 != gen) {
+            index.1.remove(&r);
+        }
+        let (_, ids) = index.1.entry(r).or_insert_with(|| (gen, self.build_id_map(r)));
         Ok(ids.get(id).map(|&i| self.id_of(i)))
+    }
+
+    fn build_id_map(&self, r: u32) -> rustc_hash::FxHashMap<String, u32> {
+        self.id_index_builds.set(self.id_index_builds.get() + 1);
+        let mut ids = rustc_hash::FxHashMap::default();
+        let mut cur = self.n(r).first_child;
+        while cur != NIL {
+            if let Some(v) = self.n(cur).element().and_then(|e| e.id()) {
+                if !v.is_empty() {
+                    ids.entry(v.to_owned()).or_insert(cur);
+                }
+            }
+            cur = self.following_in(cur, r);
+        }
+        ids
+    }
+
+    /// Whether the id index built at `since` is still valid: the journal
+    /// covers every change since then, and none of them can add, remove or
+    /// reorder an id (text, form-control state, focus/hover, attributes
+    /// other than `id`). Insertions, removals, `id` changes, unknown
+    /// changes and journal gaps rebuild. Long journals rebuild too, so the
+    /// scan never costs much more than the walk it saves.
+    fn id_index_survives(&self, since: u64) -> bool {
+        let Some(changes) = self.changes_since(since) else { return false };
+        let limit = self.live as usize;
+        if changes.size_hint().1.is_none_or(|n| n > limit) {
+            return false;
+        }
+        let id_hash = local_name!("id").get_hash();
+        let mut changes = changes;
+        changes.all(|c| match c {
+            Change::Text(_) | Change::State(_) | Change::Pseudo => true,
+            Change::Attr(_, hash, _) => hash != id_hash,
+            Change::Inserted(..) | Change::Removed(..) | Change::Unknown(_) => false,
+        })
+    }
+
+    /// Number of per-root id maps `get_element_by_id` has built.
+    #[doc(hidden)]
+    pub fn id_index_builds(&self) -> u64 {
+        self.id_index_builds.get()
     }
 
     /// `document.documentElement`.
