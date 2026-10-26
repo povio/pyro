@@ -173,6 +173,31 @@ pub(crate) fn input_files<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>
     Ok(s.wrap::<FileList>(FileListData { files }, None)?.value())
 }
 
+/// `input.files = list`: a FileList replaces the selection (bytes are shared,
+/// not copied); null is ignored, as is any list on a non-file input. Events are
+/// the caller's job (Playwright's in-memory setInputFiles dispatches them).
+pub(crate) fn set_input_files(s: &Scope<'_>, n: &NodeData, v: Value<'_>) -> JsResult<()> {
+    if v.is_nullish() {
+        return Ok(());
+    }
+    let Some(list) = s.unwrap::<FileList>(v) else {
+        return Err(JsError::Type(
+            "Failed to set the 'files' property on 'HTMLInputElement': The provided value is not of type 'FileList'."
+                .into(),
+        ));
+    };
+    if n.page().dom.borrow().input_type(n.id).js()? != lp_dom::forms::InputType::File {
+        return Ok(());
+    }
+    let mut entries = Vec::with_capacity(list.files.len());
+    for f in &list.files {
+        let f = s.unwrap::<File>(f.get(s)).ok_or_else(|| JsError::Type("FileList entry is not a File".into()))?;
+        let (name, last_modified) = f.file.clone().unwrap_or_default();
+        entries.push(FileEntry { name, mime: f.mime.clone(), bytes: f.bytes.clone(), last_modified });
+    }
+    n.page().set_input_files(n.id, entries).js()
+}
+
 pub(crate) fn register(engine: &lp_js::Engine) {
     engine.register::<Blob>();
     engine.register::<File>();

@@ -19,9 +19,12 @@ fn scroll_xy(a: &lp_js::Args<'_>) -> JsResult<(Option<i32>, Option<i32>)> {
     if let Some(o) = a.get(0).as_object() {
         let l = o.get("left")?;
         let t = o.get("top")?;
-        Ok(((!l.is_undefined()).then(|| to_i32(l)).transpose()?, (!t.is_undefined()).then(|| to_i32(t)).transpose()?))
+        Ok((
+            (!l.is_undefined()).then(|| to_scroll_offset(l)).transpose()?,
+            (!t.is_undefined()).then(|| to_scroll_offset(t)).transpose()?,
+        ))
     } else if a.len() >= 2 {
-        Ok((Some(to_i32(a.get(0))?), Some(to_i32(a.get(1))?)))
+        Ok((Some(to_scroll_offset(a.get(0))?), Some(to_scroll_offset(a.get(1))?)))
     } else {
         Ok((None, None))
     }
@@ -39,11 +42,7 @@ fn window_scroll(page: &Rc<PageDom>, a: &lp_js::Args<'_>, by: bool) -> JsResult<
         }
     };
     if moved {
-        let p = page.clone();
-        page.post_task(Box::new(move || {
-            let doc = p.document();
-            crate::input::fire_simple(&p, doc, "scroll", true, false);
-        }));
+        crate::layout_api::fire_scroll(page, None);
     }
     Ok(())
 }
@@ -86,6 +85,12 @@ where
         let key = lp_js::IdentityKey(w.page().id() | (1 << 57), 1);
         same_object(s, w.page(), key, || s.wrap::<Screen>(w.page().clone(), Some(key)))
     });
+    def.getter("visualViewport", |s, w| {
+        let key = viewport_identity(w.page(), ViewportTarget::VisualViewport);
+        same_object(s, w.page(), key, || {
+            s.wrap::<VisualViewport>(ViewportTargetData::new(w.page(), ViewportTarget::VisualViewport), Some(key))
+        })
+    });
     def.method("getComputedStyle", 1, |s, w, a| {
         let el = crate::node::node_arg(s, a.get(0), "Window.getComputedStyle")?;
         Ok(crate::layout_api::get_computed_style(s, w.page(), el)?.value())
@@ -95,6 +100,7 @@ where
         Ok(crate::layout_api::match_media(s, w.page(), q)?.value())
     });
     def.method("getSelection", 0, |s, w, _a| crate::range::get_selection(s, w.page()));
+    def.method("open", 0, |s, w, a| window_open(s, w.page(), &a));
     def.getter("innerWidth", |s, w| Ok(s.number(w.page().layout.borrow().inner_width() as f64)));
     def.getter("innerHeight", |s, w| Ok(s.number(w.page().layout.borrow().inner_height() as f64)));
     def.getter("outerWidth", |s, w| Ok(s.number(w.page().layout.borrow().inner_width() as f64)));
@@ -290,20 +296,150 @@ impl JsClass for Screen {
         def.getter("colorDepth", |s, _p| Ok(s.number(24.0)));
         def.getter("pixelDepth", |s, _p| Ok(s.number(24.0)));
         def.getter("orientation", |s, p| {
-            // An emulated orientation wins (upstream Screen.zig:105-120);
-            // otherwise the screen never rotates and follows its dimensions.
-            let (kind, angle) = match p.viewport().orientation {
-                Some(o) => (o.kind.as_str(), f64::from(o.angle)),
-                None => {
-                    let (w, h) = screen(p);
-                    (if w >= h { "landscape-primary" } else { "portrait-primary" }, 0.0)
-                }
-            };
-            let o = s.object();
-            o.set("type", s.string(kind))?;
-            o.set("angle", s.number(angle))?;
-            Ok(o.value())
+            let key = viewport_identity(p, ViewportTarget::Orientation);
+            same_object(s, p, key, || {
+                s.wrap::<ScreenOrientation>(ViewportTargetData::new(p, ViewportTarget::Orientation), Some(key))
+            })
         });
+    }
+}
+
+/// The screen's orientation: an emulated one wins (upstream
+/// Screen.zig:105-120); otherwise the screen never rotates and follows its
+/// dimensions. (type, angle)
+pub fn screen_orientation(p: &PageDom) -> (String, f64) {
+    match p.viewport().orientation {
+        Some(o) => (o.kind.as_str().to_owned(), f64::from(o.angle)),
+        None => {
+            let (w, h) = screen(p);
+            ((if w >= h { "landscape-primary" } else { "portrait-primary" }).to_owned(), 0.0)
+        }
+    }
+}
+
+/// Which viewport-related event target (`PageDom::viewport_targets`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ViewportTarget {
+    VisualViewport,
+    Orientation,
+}
+
+/// A realm's `visualViewport` or `screen.orientation` target, registered with
+/// its page for embedder events while the wrapper lives.
+pub struct ViewportTargetData {
+    target: EventTargetData,
+    kind: ViewportTarget,
+}
+
+impl ViewportTargetData {
+    fn new(page: &Rc<PageDom>, kind: ViewportTarget) -> ViewportTargetData {
+        let target = EventTargetData::new(page);
+        page.viewport_targets.borrow_mut().push((kind, target.key));
+        ViewportTargetData { target, kind }
+    }
+    fn page(&self) -> &Rc<PageDom> {
+        &self.target.page
+    }
+}
+
+impl Drop for ViewportTargetData {
+    fn drop(&mut self) {
+        let key = self.target.key;
+        if let Ok(mut targets) = self.target.page.viewport_targets.try_borrow_mut() {
+            targets.retain(|&(k, t)| !(k == self.kind && t == key));
+        }
+    }
+}
+
+fn viewport_identity(page: &PageDom, kind: ViewportTarget) -> lp_js::IdentityKey {
+    let slot = match kind {
+        ViewportTarget::VisualViewport => 3,
+        ViewportTarget::Orientation => 4,
+    };
+    lp_js::IdentityKey(page.id() | (1 << 57), slot)
+}
+
+/// This realm's wrapper of viewport target `key`, if it is one.
+pub(crate) fn viewport_target_object<'s>(
+    s: &Scope<'s>,
+    page: &PageDom,
+    key: lp_dom::events::TargetKey,
+) -> Option<lp_js::Object<'s>> {
+    let kind = page.viewport_targets.borrow().iter().find(|(_, t)| *t == key).map(|(k, _)| *k)?;
+    let object = s.lookup_identity(viewport_identity(page, kind))?;
+    let owns = match kind {
+        ViewportTarget::VisualViewport => s.unwrap::<VisualViewport>(object.value()).map(|d| d.target.key),
+        ViewportTarget::Orientation => s.unwrap::<ScreenOrientation>(object.value()).map(|d| d.target.key),
+    };
+    (owns == Some(key)).then_some(object)
+}
+
+/// `screen.orientation` (ScreenOrientation): an EventTarget whose `change`
+/// fires when its `type` or `angle` changes (an emulated orientation, or the
+/// screen size, which follows the viewport unless emulated; headless
+/// Chromium's screen does not follow viewport resizes). `type` and `angle`
+/// are live; `lock()` resolves without rotating and `unlock()` is a no-op,
+/// as in headless Chromium.
+pub struct ScreenOrientation;
+impl JsClass for ScreenOrientation {
+    const NAME: &'static str = "ScreenOrientation";
+    type Data = ViewportTargetData;
+    type Parent = crate::target::EventTarget;
+    fn define(def: &mut ClassDef<Self>) {
+        def.upcast(|d: &ViewportTargetData| &d.target);
+        def.getter("type", |s, d| Ok(s.string(&screen_orientation(d.page()).0)));
+        def.getter("angle", |s, d| Ok(s.number(screen_orientation(d.page()).1)));
+        // Headless Chromium resolves lock() without rotating.
+        def.method("lock", 1, |s, _d, _a| {
+            let deferred = s.deferred()?;
+            deferred.resolve(s, s.undefined())?;
+            Ok(deferred.promise.get(s))
+        });
+        def.method("unlock", 0, |s, _d, _a| Ok(s.undefined()));
+        def.accessor(
+            "onchange",
+            |s, d| crate::target::event_handler(s, &d.target, "change"),
+            |s, d, v| crate::target::set_event_handler(s, &d.target, "change", v),
+        );
+    }
+}
+
+/// `window.visualViewport`: there is no pinch zoom, so the visual viewport is
+/// the layout viewport (headless Chromium hides scrollbars). react-aria
+/// bounds popover max-height by `offsetTop + height`; without this object
+/// every popover got `max-height: 0`. An EventTarget: the embedder fires
+/// `resize` when the viewport size changes (react-aria tracks the virtual
+/// keyboard with it). With no pinch zoom the visual viewport never moves
+/// within the layout viewport, so `scroll`/`scrollend` never fire.
+pub struct VisualViewport;
+impl JsClass for VisualViewport {
+    const NAME: &'static str = "VisualViewport";
+    type Data = ViewportTargetData;
+    type Parent = crate::target::EventTarget;
+    fn define(def: &mut ClassDef<Self>) {
+        def.upcast(|d: &ViewportTargetData| &d.target);
+        def.getter("width", |s, d| Ok(s.number(d.page().layout.borrow().inner_width() as f64)));
+        def.getter("height", |s, d| Ok(s.number(d.page().layout.borrow().inner_height() as f64)));
+        def.getter("offsetLeft", |s, _d| Ok(s.number(0.0)));
+        def.getter("offsetTop", |s, _d| Ok(s.number(0.0)));
+        def.getter("pageLeft", |s, d| Ok(s.number(d.page().layout.borrow().scroll_x() as f64)));
+        def.getter("pageTop", |s, d| Ok(s.number(d.page().layout.borrow().scroll_y() as f64)));
+        def.getter("scale", |s, _d| Ok(s.number(1.0)));
+        def.accessor(
+            "onresize",
+            |s, d| crate::target::event_handler(s, &d.target, "resize"),
+            |s, d, v| crate::target::set_event_handler(s, &d.target, "resize", v),
+        );
+        def.accessor(
+            "onscroll",
+            |s, d| crate::target::event_handler(s, &d.target, "scroll"),
+            |s, d, v| crate::target::set_event_handler(s, &d.target, "scroll", v),
+        );
+        def.accessor(
+            "onscrollend",
+            |s, d| crate::target::event_handler(s, &d.target, "scrollend"),
+            |s, d, v| crate::target::set_event_handler(s, &d.target, "scrollend", v),
+        );
     }
 }
 
@@ -339,4 +475,45 @@ pub fn css_namespace<'s>(s: &Scope<'s>) -> JsResult<Value<'s>> {
 pub(crate) fn register(engine: &lp_js::Engine) {
     engine.register::<Navigator>();
     engine.register::<Screen>();
+    engine.register::<VisualViewport>();
+    engine.register::<ScreenOrientation>();
+}
+
+/// `window.open(url, target, features)`. A new browsing context opens as a
+/// popup page in the same browser context (the CDP layer announces it with
+/// its opener). With `noopener`/`noreferrer` it returns null, as browsers do.
+/// A popup the page could script (opener access) needs a cross-page
+/// WindowProxy, which this engine does not have: that case throws instead of
+/// returning a stand-in window. `_self`/`_top`/`_parent` navigate this page.
+fn window_open<'s>(s: &Scope<'s>, page: &Rc<PageDom>, a: &lp_js::Args<'s>) -> JsResult<Value<'s>> {
+    let url = crate::util::opt_dom_string(a.get(0))?.unwrap_or_default();
+    let target = crate::util::opt_dom_string(a.get(1))?.filter(|t| !t.is_empty()).unwrap_or_else(|| "_blank".into());
+    let features = crate::util::opt_dom_string(a.get(2))?.unwrap_or_default().to_ascii_lowercase();
+    let no_opener = features
+        .split(|c: char| c == ',' || c.is_ascii_whitespace())
+        .filter_map(|f| f.split('=').next())
+        .any(|f| f == "noopener" || f == "noreferrer");
+    let url = if url.is_empty() {
+        "about:blank".to_owned()
+    } else {
+        let dom = page.dom.borrow();
+        crate::html::resolve_url(&dom, page.document(), &url)
+    };
+    let same_context = matches!(target.to_ascii_lowercase().as_str(), "_self" | "_top" | "_parent");
+    if !same_context && !no_opener {
+        return Err(JsError::Unsupported("window.open with opener access (a scriptable popup window)"));
+    }
+    page.navigate(crate::page::NavigationRequest {
+        url,
+        target: Some(target),
+        method: "GET".into(),
+        body: None,
+        content_type: None,
+        opener: false,
+    });
+    if same_context {
+        Ok(s.global().value())
+    } else {
+        Ok(s.null())
+    }
 }

@@ -308,6 +308,7 @@ impl FrameHost {
                 pending_cancel: None,
                 load: None,
                 stylesheets: Default::default(),
+                images: Default::default(),
                 _owner_pin: Some(loader::ResourceNode { dom: self.dom.clone(), node }),
             },
         );
@@ -728,6 +729,7 @@ impl Browser {
                     mime: "text/html".into(),
                     charset: None,
                     body: html.into_bytes(),
+                    content_disposition: None,
                 },
                 HistoryHandling::Replace,
             )

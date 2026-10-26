@@ -138,6 +138,7 @@ pub fn focus_element_with_transition(page: &Rc<PageDom>, el: NodeId, token: &Foc
     if is_text_control(&page.dom.borrow(), el) {
         page.editing_target.set(Some(el));
     }
+    crate::editing::caret_on_focus(page, el);
     page.remember_focus_value(el);
     let scrolled = if token.prevents_scroll() {
         Vec::new()
@@ -175,6 +176,31 @@ fn run_blur(page: &Rc<PageDom>, doc: NodeId, el: NodeId, related: Option<NodeId>
         return;
     }
     fire_focus_event(page, el, "focusout", true, related);
+}
+
+/// After `owner`'s `disabled` content attribute changed: a connected focused
+/// control that it disabled (itself, or a descendant of the fieldset) loses
+/// focus at once, as in Chromium: trusted `blur` and `focusout` with no
+/// related target, the body active, before the change's MutationObserver
+/// callbacks (react-aria synthesizes its own blur otherwise, and a dialog's
+/// FocusScope then sees two blurs). A `disabled` write elsewhere moves no
+/// focus, nor does one while the focused element is detached.
+pub(crate) fn blur_if_focus_disabled(page: &Rc<PageDom>, owner: NodeId, attribute: &str) {
+    if !attribute.eq_ignore_ascii_case("disabled") {
+        return;
+    }
+    let lost = {
+        let dom = page.dom.borrow();
+        let fieldset = dom.element(owner).is_ok_and(|e| e.is_html() && &*e.name.local == "fieldset");
+        dom.focused(page.document()).ok().flatten().filter(|&f| {
+            (f == owner || (fieldset && dom.contains(owner, f).unwrap_or(false)))
+                && dom.is_connected(f).unwrap_or(false)
+                && dom.is_disabled(f).unwrap_or(false)
+        })
+    };
+    if let Some(f) = lost {
+        blur_element(page, f);
+    }
 }
 
 /// Explicit blur keeps the owner's selected frame and remembered edit target.
@@ -268,13 +294,34 @@ fn is_text_control(dom: &Dom, el: NodeId) -> bool {
 
 #[derive(Debug)]
 enum Activation {
-    Checkbox { el: NodeId, old: bool },
-    Radio { el: NodeId, previously_checked: Vec<NodeId>, was_checked: bool },
-    Submit { el: NodeId },
-    Reset { el: NodeId },
-    Link { el: NodeId },
-    Label { el: NodeId },
-    Summary { el: NodeId },
+    Checkbox {
+        el: NodeId,
+        old: bool,
+    },
+    Radio {
+        el: NodeId,
+        previously_checked: Vec<NodeId>,
+        was_checked: bool,
+    },
+    Submit {
+        el: NodeId,
+    },
+    Reset {
+        el: NodeId,
+    },
+    Link {
+        el: NodeId,
+    },
+    Label {
+        el: NodeId,
+    },
+    Summary {
+        el: NodeId,
+    },
+    /// `<input type=file>`: shows the file picker.
+    FilePicker {
+        el: NodeId,
+    },
 }
 
 fn local(dom: &Dom, id: NodeId) -> Option<String> {
@@ -292,6 +339,7 @@ fn activation_for(dom: &Dom, el: NodeId) -> Option<Activation> {
             InputType::Radio => Some(Activation::Radio { el, previously_checked: Vec::new(), was_checked: false }),
             InputType::Submit | InputType::Image => Some(Activation::Submit { el }),
             InputType::Reset => Some(Activation::Reset { el }),
+            InputType::File => Some(Activation::FilePicker { el }),
             _ => None,
         },
         "button" => match dom.get_attribute(el, "type").ok().flatten().map(|t| t.to_ascii_lowercase()).as_deref() {
@@ -400,7 +448,8 @@ pub fn dispatch_with_activation(page: &Rc<PageDom>, target: NodeId, ev: &EventDa
                 // the label) are not re-targeted.
                 let inside_control = page.dom.borrow().contains(c, target).unwrap_or(false);
                 if !inside_control && c != target {
-                    element_click(page, c);
+                    let trusted = ev.state.borrow().is_trusted;
+                    click_with_trust(page, c, trusted);
                     focus_element(page, c);
                 }
             }
@@ -410,6 +459,12 @@ pub fn dispatch_with_activation(page: &Rc<PageDom>, target: NodeId, ev: &EventDa
             if let Some(d) = details {
                 let _ = page.dom.borrow_mut().toggle_attribute(d, "open", None);
                 queue_simple(page, d, "toggle", false, false);
+            }
+        }
+        Activation::FilePicker { el } => {
+            if let Some(h) = page.hooks() {
+                let multiple = page.dom.borrow().has_attribute(el, "multiple").unwrap_or(false);
+                h.file_chooser(el, multiple);
             }
         }
     }
@@ -440,6 +495,12 @@ fn radio_group_checked(dom: &Dom, el: NodeId) -> Vec<NodeId> {
 /// `pointerType` is empty; libraries such as React Aria rely on `detail == 0`
 /// to recognise a virtual click.
 pub fn element_click(page: &Rc<PageDom>, el: NodeId) {
+    click_with_trust(page, el, false);
+}
+
+/// A click whose `isTrusted` follows the event that caused it (a label
+/// forwarding a user's click to its control, as Chrome does).
+fn click_with_trust(page: &Rc<PageDom>, el: NodeId, trusted: bool) {
     if page.dom.borrow().is_disabled(el).unwrap_or(false) {
         return;
     }
@@ -448,6 +509,7 @@ pub fn element_click(page: &Rc<PageDom>, el: NodeId) {
     }
     let ev = EventCore::new(page, EventInterface::PointerEvent, "click", true, true, true);
     ev.fields.borrow_mut().pointer_id = -1;
+    ev.state.borrow_mut().is_trusted = trusted;
     dispatch_with_activation(page, el, &ev);
     page.end_click(el);
 }
@@ -486,27 +548,53 @@ fn keyboard_click(page: &Rc<PageDom>, el: NodeId) {
 }
 
 fn follow_hyperlink(page: &Rc<PageDom>, el: NodeId) {
-    let (url, target) = {
+    let (url, target, opener) = {
         let dom = page.dom.borrow();
         let Some(href) = dom.get_attribute(el, "href").ok().flatten() else { return };
         let url = crate::html::resolve_url(&dom, el, href);
         // HTML "download the hyperlink": a `download` link to a blob:, data:
         // or same-origin URL downloads instead of navigating (browsers ignore
-        // the attribute cross-origin). Downloads are not performed yet
-        // (documented gap), but the page must not navigate away.
-        if dom.get_attribute(el, "download").ok().flatten().is_some() {
+        // the attribute cross-origin).
+        if let Some(filename) = dom.get_attribute(el, "download").ok().flatten().map(str::to_owned) {
             let doc_url = dom.document_data(page.document()).map(|d| d.url.to_string()).unwrap_or_default();
             let same_origin = |a: &str, b: &str| match (::url::Url::parse(a), ::url::Url::parse(b)) {
                 (Ok(a), Ok(b)) => a.origin().is_tuple() && a.origin() == b.origin(),
                 _ => false,
             };
             if url.starts_with("blob:") || url.starts_with("data:") || same_origin(&url, &doc_url) {
+                // Bytes are captured now: pages revoke blob URLs right after click().
+                let data = if url.starts_with("blob:") {
+                    match page.blob_url(&url) {
+                        Some(entry) => Some(entry),
+                        None => return,
+                    }
+                } else if url.starts_with("data:") {
+                    match ::url::Url::parse(&url).ok().as_ref().and_then(lp_net::data_url::parse) {
+                        Some((mime, bytes)) => Some((bytes, mime)),
+                        None => return,
+                    }
+                } else {
+                    None
+                };
+                drop(dom);
+                page.download(crate::page::DownloadRequest { url, filename, data });
                 return;
             }
         }
-        (url, dom.get_attribute(el, "target").ok().flatten().map(str::to_owned))
+        // HTML: a link that targets a new browsing context is noopener unless rel=opener.
+        let rel = dom.get_attribute(el, "rel").ok().flatten().unwrap_or_default().to_ascii_lowercase();
+        let rel: Vec<&str> = rel.split_ascii_whitespace().collect();
+        let opener = rel.contains(&"opener") && !rel.contains(&"noopener") && !rel.contains(&"noreferrer");
+        (url, dom.get_attribute(el, "target").ok().flatten().map(str::to_owned), opener)
     };
-    page.navigate(crate::page::NavigationRequest { url, target, method: "GET".into(), body: None, content_type: None });
+    page.navigate(crate::page::NavigationRequest {
+        url,
+        target,
+        method: "GET".into(),
+        body: None,
+        content_type: None,
+        opener,
+    });
 }
 
 // ----- forms ------------------------------------------------------------------
@@ -689,6 +777,14 @@ fn press_char(page: &Rc<PageDom>, target: NodeId, k: &KeyInput) {
     if k.modifiers.ctrl || k.modifiers.meta {
         return;
     }
+    if let Some(host) = editing_host_of(page, target) {
+        if k.text == "\r" || k.text == "\n" {
+            crate::editing::insert_paragraph(page, host);
+        } else {
+            crate::editing::insert_text(page, host, &k.text);
+        }
+        return;
+    }
     if k.text == "\r" || k.text == "\n" {
         enter_key(page, target);
     } else {
@@ -696,8 +792,31 @@ fn press_char(page: &Rc<PageDom>, target: NodeId, k: &KeyInput) {
     }
 }
 
+/// The contenteditable host the focused element edits, if any.
+fn editing_host_of(page: &PageDom, target: NodeId) -> Option<NodeId> {
+    crate::editing::editing_host(&page.dom.borrow(), target)
+}
+
+/// Default actions for keys in a contenteditable host.
+fn editing_key_action(page: &Rc<PageDom>, host: NodeId, k: &KeyInput) {
+    use crate::editing;
+    match k.key.as_str() {
+        "Backspace" => editing::delete(page, host, true),
+        "Delete" => editing::delete(page, host, false),
+        "Enter" => editing::insert_paragraph(page, host),
+        "Tab" => focus_next(page, host, k.modifiers.shift),
+        "a" | "A" if k.modifiers.ctrl || k.modifiers.meta => editing::select_all(page, host),
+        "ArrowLeft" | "ArrowRight" | "Home" | "End" => editing::move_caret(page, host, &k.key, k.modifiers.shift),
+        _ => {}
+    }
+}
+
 /// Default actions for non-text keys on the focused element.
 fn default_key_action(page: &Rc<PageDom>, target: NodeId, k: &KeyInput) {
+    if let Some(host) = editing_host_of(page, target) {
+        editing_key_action(page, host, k);
+        return;
+    }
     let editable = is_text_control(&page.dom.borrow(), target);
     match k.key.as_str() {
         "Backspace" if editable => delete(page, target, "deleteContentBackward", true),
@@ -711,6 +830,15 @@ fn default_key_action(page: &Rc<PageDom>, target: NodeId, k: &KeyInput) {
             }
         }
         "ArrowLeft" | "ArrowRight" | "Home" | "End" if editable => move_caret(page, target, &k.key, k.modifiers.shift),
+        // Outside editable content Home/End scroll the document (Chrome's
+        // scrollToBeginningOfDocument / scrollToEndOfDocument).
+        "Home" | "End" if !(k.modifiers.alt || k.modifiers.ctrl || k.modifiers.meta || k.modifiers.shift) => {
+            let top = if k.key == "Home" { 0 } else { i32::MAX };
+            let moved = page.layout.borrow_mut().window_scroll_to(&page.dom.borrow(), None, Some(top));
+            if moved {
+                crate::layout_api::fire_scroll(page, None);
+            }
+        }
         "ArrowUp" | "ArrowDown"
             if !(k.modifiers.alt || k.modifiers.ctrl || k.modifiers.meta)
                 && vertical_caret_control(&page.dom.borrow(), target) =>
@@ -910,6 +1038,16 @@ pub fn insert_text(page: &Rc<PageDom>, text: &str) {
         return;
     }
     let target = page.dom.borrow().focused(page.document()).ok().flatten();
+    if let Some(host) = target.and_then(|t| editing_host_of(page, t)) {
+        if text.is_empty() {
+            if crate::editing::selection_range(page).is_some_and(|(s, e)| s != e) {
+                crate::editing::delete(page, host, true);
+            }
+        } else {
+            crate::editing::insert_text(page, host, text);
+        }
+        return;
+    }
     let Some(target) = target.or_else(|| remembered_editing_target(page)) else { return };
     if text.is_empty() {
         let has_selection = page.dom.borrow().selection(target).map(|(s, e)| s != e).unwrap_or(false);
@@ -1036,32 +1174,325 @@ fn mouse_event(page: &Rc<PageDom>, iface: EventInterface, ty: &str, m: &MouseInp
     ev
 }
 
+/// The hit-test target at a viewport point. With `root_fallback`, empty
+/// viewport space targets the root element, as Chrome hit-tests it; the
+/// synthetic layout leaves such gaps (e.g. at Playwright's initial mouse
+/// position, 0,0).
+fn pointer_target(page: &PageDom, x: f64, y: f64, root_fallback: bool) -> Option<NodeId> {
+    let hit = crate::layout_api::hit_test(page, x, y);
+    if hit.is_some() || !root_fallback {
+        return hit;
+    }
+    let vp = page.viewport();
+    if (0.0..vp.width as f64).contains(&x) && (0.0..vp.height as f64).contains(&y) {
+        let doc = page.document();
+        return page.dom.borrow().document_element(doc).ok().flatten();
+    }
+    None
+}
+
+/// Inclusive ancestors of `node` up to and including its document, innermost
+/// first; empty when it is no longer in the page's document.
+fn hover_chain(page: &PageDom, node: NodeId) -> Vec<NodeId> {
+    let dom = page.dom.borrow();
+    let mut chain = Vec::new();
+    let mut cur = Some(node);
+    while let Some(c) = cur {
+        chain.push(c);
+        cur = dom.parent(c).ok().flatten();
+    }
+    if chain.last() != Some(&page.document()) {
+        chain.clear();
+    }
+    chain
+}
+
+/// Nodes that receive leave (innermost first) and enter (innermost first)
+/// when the hovered node changes from `prev` to `next`: each chain up to,
+/// excluding, their common ancestor.
+fn boundary_chains(page: &PageDom, prev: Option<NodeId>, next: NodeId) -> (Vec<NodeId>, Vec<NodeId>) {
+    let mut left = prev.map(|p| hover_chain(page, p)).unwrap_or_default();
+    let mut entered = hover_chain(page, next);
+    while let (Some(a), Some(b)) = (left.last(), entered.last()) {
+        if a != b {
+            break;
+        }
+        left.pop();
+        entered.pop();
+    }
+    (left, entered)
+}
+
+/// Chrome's boundary events from `prev` to `target`: out, leave (inner to
+/// outer), over, enter (outer to inner), for pointer then mouse events. Out
+/// and leave carry `target` as `relatedTarget`, over and enter carry `prev`.
+/// A `prev` that is no longer connected gets no out or leave events
+/// (BoundaryEventDispatcher::SendBoundaryEvents).
+fn dispatch_boundary_events(page: &Rc<PageDom>, prev: Option<NodeId>, target: NodeId, tkey: TargetKey, m: &MouseInput) {
+    let prev_connected = prev.is_some_and(|p| page.dom.borrow().is_connected(p).unwrap_or(false));
+    let (left, entered) = boundary_chains(page, prev, target);
+    let prev_key = prev.and_then(|p| key_of(page, p));
+    let related = |ev: EventData, key: Option<TargetKey>| {
+        ev.fields.borrow_mut().related_target = key;
+        ev
+    };
+    for (iface, prefix) in [(EventInterface::PointerEvent, "pointer"), (EventInterface::MouseEvent, "mouse")] {
+        if let Some(p) = prev_key.filter(|_| prev_connected) {
+            fire(page, p, &related(mouse_event(page, iface, &format!("{prefix}out"), m, true), Some(tkey)));
+        }
+        for &n in &left {
+            if let Some(k) = key_of(page, n) {
+                fire(page, k, &related(mouse_event(page, iface, &format!("{prefix}leave"), m, false), Some(tkey)));
+            }
+        }
+        fire(page, tkey, &related(mouse_event(page, iface, &format!("{prefix}over"), m, true), prev_key));
+        for &n in entered.iter().rev() {
+            if let Some(k) = key_of(page, n) {
+                fire(page, k, &related(mouse_event(page, iface, &format!("{prefix}enter"), m, false), prev_key));
+            }
+        }
+    }
+    let doc = page.document();
+    let _ = page.dom.borrow_mut().set_hovered(doc, Some(target));
+    page.set_hovered(Some(target));
+}
+
+/// Delay of the hover update after the hovered element is removed: Chromium
+/// updates hover for content that changed under a stationary pointer on its
+/// fake-mouse-move timer (~100 ms, measured 110 ms), not in the mutating task.
+/// Frameworks rely on that: React detaches a removed node's fiber in passive
+/// effects after the commit, and only then treats an over event whose
+/// relatedTarget is that node as an enter (the @povio/ui QueryAutocomplete
+/// static-to-live handoff in TOS needs this onMouseEnter).
+const HOVER_UPDATE_DELAY: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// After a task removed the hovered element, the element then under the
+/// stationary pointer gets boundary events (no out/leave to the removed
+/// node, relatedTarget = the removed node, no move events) once
+/// [`HOVER_UPDATE_DELAY`] has passed, as Chromium's hover update does.
+/// Layout-only changes under the pointer are not tracked.
+pub(crate) fn update_hover_after_task(page: &Rc<PageDom>) {
+    if page.hover_update_queued.get() || !hovered_was_removed(page) || page.pointer.borrow().is_none() {
+        return;
+    }
+    let Some(hooks) = page.hooks() else { return };
+    page.hover_update_queued.set(true);
+    let weak = Rc::downgrade(page);
+    hooks.post_delayed_task(
+        HOVER_UPDATE_DELAY,
+        Box::new(move || {
+            if let Some(page) = weak.upgrade() {
+                page.hover_update_queued.set(false);
+                update_hover_now(&page);
+            }
+        }),
+    );
+}
+
+fn hovered_was_removed(page: &PageDom) -> bool {
+    page.hovered_raw().is_some_and(|h| !page.dom.borrow().is_connected(h).unwrap_or(false))
+}
+
+fn update_hover_now(page: &Rc<PageDom>) {
+    // A real mouse move in the meantime already updated hover.
+    if !hovered_was_removed(page) {
+        return;
+    }
+    let Some(prev) = page.hovered_raw() else { return };
+    let Some(m) = page.pointer.borrow().clone() else { return };
+    let Some(target) = pointer_target(page, m.x, m.y, true) else { return };
+    let Some(tkey) = key_of(page, target) else { return };
+    dispatch_boundary_events(page, Some(prev), target, tkey, &m);
+}
+
 /// CDP `Input.dispatchMouseEvent`. Returns an error when hit testing is not
 /// possible (no element at the point).
 pub fn dispatch_mouse(page: &Rc<PageDom>, kind: MouseKind, m: &MouseInput) -> Result<(), String> {
-    let target = crate::layout_api::hit_test(page, m.x, m.y).ok_or_else(|| "no element at point".to_owned())?;
+    dispatch_mouse_intercepting_drags(page, kind, m, false).map(|_| ())
+}
+
+/// `dispatch_mouse` under CDP `Input.setInterceptDrags`. With
+/// `intercept_drags`, a left-button move past the drag threshold from a
+/// draggable source starts a native drag: `dragstart` fires on the source
+/// and, unless canceled, the drag data is returned for
+/// `Input.dragIntercepted`; `dispatch_drag` then drives the drag. Without
+/// interception no native drag starts (there is no OS drag loop).
+/// Elements a press in which does not select document text: form controls
+/// (with their own selection) and editable content.
+fn press_selects_text(dom: &Dom, target: NodeId) -> bool {
+    if crate::editing::editing_host(dom, target).is_some() {
+        return false;
+    }
+    let mut cur = Some(target);
+    while let Some(e) = cur {
+        if dom.element(e).is_ok_and(|el| {
+            el.is_html()
+                && matches!(&*el.name.local, "input" | "textarea" | "select" | "button" | "option" | "optgroup")
+        }) {
+            return false;
+        }
+        cur = dom.parent_element(e).ok().flatten();
+    }
+    true
+}
+
+/// The anchor of a native text selection drag: the caret at the press, its
+/// node's parent and index there (a removed anchor continues from that
+/// position, as a live range would), and whether `selectstart` let the
+/// selection start (a canceled one is fired again on each move).
+#[derive(Copy, Clone, Debug)]
+pub(crate) struct TextDrag {
+    anchor: (NodeId, u32),
+    parent: Option<NodeId>,
+    index: u32,
+    started: bool,
+}
+
+/// The caret under the pointer within `target` (the element there), and the
+/// node `selectstart` targets: the text when the point is on it, else the
+/// element. An element without visible text under it is its own caret
+/// position (offset 0), as in Chromium.
+fn caret_in(page: &Rc<PageDom>, target: NodeId, m: &MouseInput, selectable: bool) -> ((NodeId, u32), NodeId) {
+    let dom = page.dom.borrow();
+    let layout = page.layout.borrow();
+    let filter = |n: NodeId| !selectable || !layout.user_select_none(&dom, n);
+    match layout.caret_from_point(&dom, target, m.x, m.y, &filter) {
+        Some((node, offset, on_text)) => ((node, offset), if on_text { node } else { target }),
+        None => ((target, 0), target),
+    }
+}
+
+/// Native text selection, as Chromium's mouse selection: a primary press
+/// (not canceled, outside controls, editable content and drag sources) on
+/// selectable content fires `selectstart` at the node under the pointer
+/// and, unless canceled (or the handler removed the position), collapses
+/// the selection to the caret there. A press beside the text of a
+/// focusable element only focuses it.
+fn text_select_press(page: &Rc<PageDom>, target: NodeId, m: &MouseInput) {
+    {
+        let dom = page.dom.borrow();
+        if !press_selects_text(&dom, target) || page.layout.borrow().user_select_none(&dom, target) {
+            return;
+        }
+    }
+    let (caret, event_target) = caret_in(page, target, m, true);
+    if event_target != caret.0 && caret.0 != target && page.dom.borrow().is_focusable(target).unwrap_or(false) {
+        return;
+    }
+    let started = fire_simple(page, event_target, "selectstart", true, true);
+    let (parent, index) = {
+        let dom = page.dom.borrow();
+        if !dom.is_connected(caret.0).unwrap_or(false) {
+            return;
+        }
+        let parent = dom.parent_element(caret.0).ok().flatten();
+        let index = parent
+            .and_then(|p| dom.children(p).ok().and_then(|mut c| c.position(|n| n == caret.0)))
+            .unwrap_or(0) as u32;
+        (parent, index)
+    };
+    if started {
+        crate::editing::set_selection(page, caret, caret);
+    }
+    page.text_drag.set(Some(TextDrag { anchor: caret, parent, index, started }));
+}
+
+/// The drag's anchor now: the press caret, or where its removed node was
+/// (the text node now at that position, else the parent there).
+fn live_anchor(page: &Rc<PageDom>, drag: &TextDrag) -> Option<(NodeId, u32)> {
+    let dom = page.dom.borrow();
+    if dom.is_connected(drag.anchor.0).unwrap_or(false) {
+        return Some(drag.anchor);
+    }
+    let parent = drag.parent.filter(|&p| dom.is_connected(p).unwrap_or(false))?;
+    let children: Vec<NodeId> = dom.children(parent).ok()?.collect();
+    match children.get(drag.index as usize) {
+        Some(&c) if dom.node_type(c).ok() == Some(lp_dom::NodeType::Text) => Some((c, 0)),
+        _ => Some((parent, (drag.index as usize).min(children.len()) as u32)),
+    }
+}
+
+/// A move with the primary button down extends the selection to the caret
+/// under the pointer; over `user-select: none` content it stops at the
+/// edge of the selectable text before (or after) it.
+fn text_select_move(page: &Rc<PageDom>, target: NodeId, m: &MouseInput) {
+    let Some(mut drag) = page.text_drag.get() else { return };
+    let Some(anchor) = live_anchor(page, &drag) else { return };
+    if !drag.started {
+        if !fire_simple(page, anchor.0, "selectstart", true, true) {
+            return;
+        }
+        drag.started = true;
+        page.text_drag.set(Some(drag));
+    }
+    let (hit, _) = caret_in(page, target, m, false);
+    let focus = {
+        let dom = page.dom.borrow();
+        let layout = page.layout.borrow();
+        if !layout.user_select_none(&dom, hit.0) {
+            Some(hit)
+        } else {
+            let after = crate::editing::compare(page, (hit.0, 0), anchor) > 0;
+            let flow = layout.flow(&dom);
+            let runs = flow
+                .text_runs
+                .iter()
+                .filter(|r| dom.is_connected(r.node).unwrap_or(false) && !layout.user_select_none(&dom, r.node));
+            if after {
+                runs.filter(|r| crate::editing::compare(page, (r.node, r.end), (hit.0, 0)) < 0)
+                    .map(|r| (r.node, r.end))
+                    .max_by(|a, b| crate::editing::compare(page, *a, *b).cmp(&0))
+            } else {
+                runs.filter(|r| crate::editing::compare(page, (r.node, r.start), (hit.0, 0)) > 0)
+                    .map(|r| (r.node, r.start))
+                    .min_by(|a, b| crate::editing::compare(page, *a, *b).cmp(&0))
+            }
+        }
+    };
+    let live = |n: NodeId| page.dom.borrow().is_connected(n).unwrap_or(false);
+    if let Some(f) = focus.filter(|f| live(f.0) && live(anchor.0)) {
+        crate::editing::set_selection(page, anchor, f);
+    }
+}
+
+pub fn dispatch_mouse_intercepting_drags(
+    page: &Rc<PageDom>,
+    kind: MouseKind,
+    m: &MouseInput,
+    intercept_drags: bool,
+) -> Result<Option<DragData>, String> {
+    // Empty viewport space targets the root element, as Chromium hit-tests
+    // it: for moves and wheels always, for presses and releases in flow
+    // geometry (the synthetic layout's gaps are not real empty space).
+    let flow = page.layout.borrow().geometry() == lp_dom::layout::Geometry::Flow;
+    let target = pointer_target(page, m.x, m.y, flow || matches!(kind, MouseKind::Wheel | MouseKind::Moved))
+        .ok_or_else(|| "no element at point".to_owned())?;
     let Some(tkey) = key_of(page, target) else { return Err("stale target".into()) };
     match kind {
         MouseKind::Moved => {
+            *page.pointer.borrow_mut() = Some(m.clone());
             let prev = page.hovered();
             if prev != Some(target) {
-                if let Some(p) = prev.and_then(|p| key_of(page, p)) {
-                    fire(page, p, &mouse_event(page, EventInterface::PointerEvent, "pointerout", m, true));
-                    fire(page, p, &mouse_event(page, EventInterface::MouseEvent, "mouseout", m, true));
-                }
-                fire(page, tkey, &mouse_event(page, EventInterface::PointerEvent, "pointerover", m, true));
-                fire(page, tkey, &mouse_event(page, EventInterface::MouseEvent, "mouseover", m, true));
-                let doc = page.document();
-                let _ = page.dom.borrow_mut().set_hovered(doc, Some(target));
-                page.set_hovered(Some(target));
+                dispatch_boundary_events(page, prev, target, tkey, m);
             }
             fire(page, tkey, &mouse_event(page, EventInterface::PointerEvent, "pointermove", m, true));
             fire(page, tkey, &mouse_event(page, EventInterface::MouseEvent, "mousemove", m, true));
+            if m.buttons & 1 != 0 {
+                text_select_move(page, target, m);
+            }
+            if intercept_drags {
+                return Ok(start_drag(page, target, m));
+            }
         }
         MouseKind::Pressed => {
             let pd = fire(page, tkey, &mouse_event(page, EventInterface::PointerEvent, "pointerdown", m, true));
             let md = !pd || fire(page, tkey, &mouse_event(page, EventInterface::MouseEvent, "mousedown", m, true));
             page.set_press_target(Some(target));
+            let place_caret = m.button == MouseButton::Left && pd && md;
+            // A canceled mousedown prevents dragging, as in Chrome.
+            let source =
+                (m.button == MouseButton::Left && pd && md).then(|| drag_source(&page.dom.borrow(), target)).flatten();
+            page.drag_candidate.set(source.map(|s| (s, m.x, m.y)));
             // Default action of mousedown: focus the nearest focusable ancestor.
             if pd && md {
                 let focus_target = {
@@ -1091,8 +1522,17 @@ pub fn dispatch_mouse(page: &Rc<PageDom>, kind: MouseKind, m: &MouseInput) -> Re
                     }
                 }
             }
+            if place_caret {
+                crate::editing::caret_on_press(page, target);
+            }
+            page.text_drag.set(None);
+            if place_caret && source.is_none() {
+                text_select_press(page, target, m);
+            }
         }
         MouseKind::Released => {
+            page.drag_candidate.set(None);
+            page.text_drag.set(None);
             let pu = fire(page, tkey, &mouse_event(page, EventInterface::PointerEvent, "pointerup", m, true));
             if pu {
                 fire(page, tkey, &mouse_event(page, EventInterface::MouseEvent, "mouseup", m, true));
@@ -1121,10 +1561,382 @@ pub fn dispatch_mouse(page: &Rc<PageDom>, kind: MouseKind, m: &MouseInput) -> Re
             }
         }
         MouseKind::Wheel => {
-            fire(page, tkey, &mouse_event(page, EventInterface::WheelEvent, "wheel", m, true));
+            // Default action of an uncanceled wheel (frame/user_input.zig:
+            // 571-615): each axis scrolls the nearest container that can still
+            // move, else the viewport, then `scroll` fires as a task.
+            let doc = page.document();
+            if !fire(page, tkey, &mouse_event(page, EventInterface::WheelEvent, "wheel", m, true))
+                || page.is_disposed()
+                || page.document() != doc
+            {
+                return Ok(None);
+            }
+            let moved = page.layout.borrow_mut().wheel_scroll(&page.dom.borrow(), target, m.delta_x, m.delta_y);
+            for scrolled in moved {
+                let node = match scrolled {
+                    lp_dom::layout::ScrollTarget::Viewport => None,
+                    lp_dom::layout::ScrollTarget::Container(node) => Some(node),
+                };
+                crate::layout_api::fire_scroll(page, node);
+            }
         }
     }
+    Ok(None)
+}
+
+// ----- native drag and drop ------------------------------------------------------
+//
+// Modelled on Blink (EventHandler::UpdateDragAndDrop / PerformDragAndDrop /
+// CancelDragAndDrop) and checked against headless Chromium driven by
+// Playwright 1.59.1: event order, targets, cancelability, DataTransfer modes,
+// effectAllowed/dropEffect and the intercepted drag data.
+
+/// Chrome's macOS drag threshold (Blink kDragThresholdX/Y), CSS px.
+const DRAG_THRESHOLD: f64 = 3.0;
+const OP_COPY: i64 = 1;
+const OP_LINK: i64 = 2;
+const OP_MOVE: i64 = 16;
+const OP_ALL: i64 = OP_COPY | OP_LINK | OP_MOVE;
+
+/// One string item of CDP `Input.DragData`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DragItem {
+    pub mime_type: String,
+    pub data: String,
+    pub title: Option<String>,
+    pub base_url: Option<String>,
+}
+
+/// CDP `Input.DragData` (string items only; file drags are not supported).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DragData {
+    pub items: Vec<DragItem>,
+    /// Copy = 1, Link = 2, Move = 16; -1 when every operation is allowed.
+    pub drag_operations_mask: i64,
+}
+
+/// CDP `Input.dispatchDragEvent` types.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum DragKind {
+    Enter,
+    Over,
+    Drop,
+    Cancel,
+}
+
+pub(crate) struct DragSession {
+    /// The page's drag source and its DataTransfer; None for a drag entering
+    /// from outside the page.
+    source: Option<(NodeId, Rc<NativeTransfer>)>,
+    /// Current drop target (Blink drag_target_).
+    target: Option<NodeId>,
+    /// Blink should_only_fire_drag_over_event_: a new target got dragenter, so
+    /// the next update fires only dragover.
+    only_dragover: bool,
+    /// The operation the current target accepted by canceling the last
+    /// dragenter/dragover.
+    operation: Option<&'static str>,
+}
+
+use crate::data_transfer::{Mode, NativeTransfer};
+
+/// Nearest ancestor-or-self that is draggable: `draggable=true`, or a link
+/// with an href unless it says `draggable=false`. Images are not dragged:
+/// Chrome drags only decoded images and the engine decodes none.
+fn drag_source(dom: &Dom, target: NodeId) -> Option<NodeId> {
+    let mut cur = Some(target);
+    while let Some(c) = cur {
+        if let Ok(e) = dom.element(c) {
+            let draggable = e.attr("draggable");
+            if draggable.is_some_and(|d| d.eq_ignore_ascii_case("true")) {
+                return Some(c);
+            }
+            if e.is_html()
+                && *e.local_name() == *"a"
+                && e.attr("href").is_some()
+                && !draggable.is_some_and(|d| d.eq_ignore_ascii_case("false"))
+            {
+                return Some(c);
+            }
+        }
+        cur = dom.parent(c).ok().flatten();
+    }
+    None
+}
+
+fn mask_of(effect_allowed: &str) -> i64 {
+    match effect_allowed {
+        "none" => 0,
+        "copy" => OP_COPY,
+        "link" => OP_LINK,
+        "move" => OP_MOVE,
+        "copyLink" => OP_COPY | OP_LINK,
+        "copyMove" => OP_COPY | OP_MOVE,
+        "linkMove" => OP_LINK | OP_MOVE,
+        _ => -1,
+    }
+}
+
+fn allowed_ops(mask: i64) -> i64 {
+    if mask < 0 {
+        OP_ALL
+    } else {
+        mask & OP_ALL
+    }
+}
+
+fn effect_allowed_of(mask: i64) -> &'static str {
+    match allowed_ops(mask) {
+        0 => "none",
+        OP_COPY => "copy",
+        OP_LINK => "link",
+        OP_MOVE => "move",
+        3 => "copyLink",
+        17 => "copyMove",
+        18 => "linkMove",
+        _ => "all",
+    }
+}
+
+/// The operation a target accepting the drag gets: its dropEffect when the
+/// source allows it, else Chrome's default (copy, then move, then link).
+fn accepted_operation(drop_effect: &str, mask: i64) -> Option<&'static str> {
+    let ops = allowed_ops(mask);
+    let named = [("copy", OP_COPY), ("link", OP_LINK), ("move", OP_MOVE)];
+    if let Some(&(name, bit)) = named.iter().find(|(name, _)| *name == drop_effect) {
+        return (ops & bit != 0).then_some(name);
+    }
+    [("copy", OP_COPY), ("move", OP_MOVE), ("link", OP_LINK)]
+        .into_iter()
+        .find(|(_, bit)| ops & bit != 0)
+        .map(|(n, _)| n)
+}
+
+fn drag_event(page: &Rc<PageDom>, ty: &str, m: &MouseInput, cancelable: bool, transfer: &NativeTransfer) -> EventData {
+    let ev = mouse_event(page, EventInterface::DragEvent, ty, m, cancelable);
+    ev.fields.borrow_mut().data_transfer = Some(transfer.reference.clone());
+    ev
+}
+
+/// Fires `ty` on `target` with `transfer` in `mode`, disabling the store
+/// afterwards. Returns false if the event was canceled.
+fn fire_drag(
+    page: &Rc<PageDom>,
+    target: NodeId,
+    ty: &str,
+    m: &MouseInput,
+    cancelable: bool,
+    transfer: &NativeTransfer,
+    mode: Mode,
+) -> bool {
+    let Some(key) = key_of(page, target) else { return true };
+    transfer.set_mode(mode);
+    let not_canceled = fire(page, key, &drag_event(page, ty, m, cancelable, transfer));
+    transfer.set_mode(Mode::Disabled);
+    not_canceled
+}
+
+/// Link drag data, as Chrome fills it before dragstart.
+fn link_items(page: &PageDom, link: NodeId) -> Vec<DragItem> {
+    let dom = page.dom.borrow();
+    let Ok(e) = dom.element(link) else { return Vec::new() };
+    if !(e.is_html() && *e.local_name() == *"a") {
+        return Vec::new();
+    }
+    let Some(href) = e.attr("href") else { return Vec::new() };
+    let url = crate::html::resolve_url(&dom, link, href);
+    let title = dom.inner_text(page.layout.borrow().style(), link).unwrap_or_default();
+    let html = dom.outer_html(link).unwrap_or_default();
+    vec![
+        DragItem { mime_type: "text/uri-list".into(), data: url.clone(), title: Some(title), base_url: None },
+        DragItem { mime_type: "text/plain".into(), data: url.clone(), title: None, base_url: None },
+        DragItem { mime_type: "text/html".into(), data: html, title: None, base_url: Some(url) },
+    ]
+}
+
+fn start_drag(page: &Rc<PageDom>, pointer_target: NodeId, m: &MouseInput) -> Option<DragData> {
+    if m.buttons & 1 == 0 || page.drag.borrow().is_some() {
+        return None;
+    }
+    let (source, x0, y0) = page.drag_candidate.get()?;
+    if (m.x - x0).abs() < DRAG_THRESHOLD && (m.y - y0).abs() < DRAG_THRESHOLD {
+        return None;
+    }
+    page.drag_candidate.set(None);
+    if !page.dom.borrow().is_connected(source).unwrap_or(false) {
+        return None;
+    }
+    let defaults = link_items(page, source);
+    let strings: Vec<_> = defaults.iter().map(|i| (i.mime_type.clone(), i.data.clone())).collect();
+    let transfer = Rc::new(NativeTransfer::new(page, &strings, "uninitialized", Mode::ReadWrite)?);
+    let doc = page.document();
+    if !fire_drag(page, source, "dragstart", m, true, &transfer, Mode::ReadWrite)
+        || page.is_disposed()
+        || page.document() != doc
+    {
+        return None;
+    }
+    // The pointer stream ends: pointercancel, and no click on release.
+    if let Some(key) = key_of(page, pointer_target) {
+        let released = MouseInput { buttons: 0, ..m.clone() };
+        fire(page, key, &mouse_event(page, EventInterface::PointerEvent, "pointercancel", &released, false));
+    }
+    page.take_press_target();
+    let items = transfer
+        .strings()
+        .into_iter()
+        .map(|(mime_type, data)| {
+            // Prefilled link entries keep Chrome's title/baseURL metadata.
+            let default = defaults.iter().find(|d| d.mime_type == mime_type && d.data == data);
+            DragItem {
+                title: default.and_then(|d| d.title.clone()),
+                base_url: default.and_then(|d| d.base_url.clone()),
+                mime_type,
+                data,
+            }
+        })
+        .collect();
+    let data = DragData { items, drag_operations_mask: mask_of(&transfer.effect_allowed()) };
+    *page.drag.borrow_mut() =
+        Some(DragSession { source: Some((source, transfer)), target: None, only_dragover: false, operation: None });
+    Some(data)
+}
+
+/// Target-side entries in Chrome's order: text, URL and HTML first, then
+/// other formats as given.
+fn target_strings(data: &DragData) -> Vec<(String, String)> {
+    let rank = |t: &str| match t {
+        "text/plain" => 0,
+        "text/uri-list" => 1,
+        "text/html" => 2,
+        _ => 3,
+    };
+    let mut items: Vec<_> = data.items.iter().map(|i| (i.mime_type.to_ascii_lowercase(), i.data.clone())).collect();
+    items.sort_by_key(|(t, _)| rank(t));
+    items
+}
+
+fn fire_source_drag(page: &Rc<PageDom>, source: &Option<(NodeId, Rc<NativeTransfer>)>, m: &MouseInput) {
+    if let Some((node, transfer)) = source {
+        fire_drag(page, *node, "drag", m, true, transfer, Mode::Protected);
+    }
+}
+
+/// Blink UpdateDragAndDrop: drag on the source, then dragenter on a new
+/// target and dragleave on the old one, or dragover on the same target.
+fn update_drag(page: &Rc<PageDom>, m: &MouseInput, data: &DragData) -> Result<(), String> {
+    let target = pointer_target(page, m.x, m.y, true);
+    let (source, current, mut only_dragover) = {
+        let drag = page.drag.borrow();
+        let s = drag.as_ref().ok_or("no drag in progress")?;
+        (s.source.clone(), s.target, s.only_dragover)
+    };
+    let transfer =
+        NativeTransfer::new(page, &target_strings(data), effect_allowed_of(data.drag_operations_mask), Mode::Protected)
+            .ok_or("no script context for the drag")?;
+    let mut accepted = false;
+    if target != current {
+        if let Some(t) = target {
+            fire_source_drag(page, &source, m);
+            accepted = !fire_drag(page, t, "dragenter", m, true, &transfer, Mode::Protected);
+        }
+        if let Some(c) = current {
+            fire_drag(page, c, "dragleave", m, false, &transfer, Mode::Protected);
+        }
+        if target.is_some() {
+            only_dragover = true;
+        }
+    } else if let Some(t) = target {
+        if !only_dragover {
+            fire_source_drag(page, &source, m);
+        }
+        accepted = !fire_drag(page, t, "dragover", m, true, &transfer, Mode::Protected);
+        only_dragover = false;
+    }
+    let operation =
+        if accepted { accepted_operation(&transfer.drop_effect(), data.drag_operations_mask) } else { None };
+    if let Some(s) = page.drag.borrow_mut().as_mut() {
+        s.target = target;
+        s.only_dragover = only_dragover;
+        s.operation = operation;
+    }
     Ok(())
+}
+
+fn end_drag(page: &Rc<PageDom>, source: &Option<(NodeId, Rc<NativeTransfer>)>, m: &MouseInput, effect: &str) {
+    if let Some((node, transfer)) = source {
+        transfer.set_drop_effect(effect);
+        fire_drag(page, *node, "dragend", m, false, transfer, Mode::Protected);
+    }
+}
+
+/// CDP `Input.dispatchDragEvent` for the page's drag session. dragEnter and
+/// dragOver update the drop target; drop fires `drop` when the target
+/// accepted the drag (else drag/dragleave), then `dragend` on the source;
+/// dragCancel fires only `dragend`. A dragEnter without a session starts a
+/// drag entering from outside the page.
+pub fn dispatch_drag(
+    page: &Rc<PageDom>,
+    kind: DragKind,
+    x: f64,
+    y: f64,
+    data: &DragData,
+    modifiers: Modifiers,
+) -> Result<(), String> {
+    let m = MouseInput { x, y, modifiers, ..MouseInput::default() };
+    if page.drag.borrow().is_none() {
+        match kind {
+            DragKind::Cancel => return Ok(()),
+            DragKind::Drop => return Err("no drag in progress".into()),
+            DragKind::Enter | DragKind::Over => {}
+        }
+        *page.drag.borrow_mut() =
+            Some(DragSession { source: None, target: None, only_dragover: false, operation: None });
+    }
+    match kind {
+        DragKind::Enter | DragKind::Over => update_drag(page, &m, data),
+        DragKind::Drop => {
+            if page.drag.borrow().as_ref().is_some_and(|s| s.only_dragover) {
+                update_drag(page, &m, data)?;
+            }
+            let Some(session) = page.drag.borrow_mut().take() else { return Ok(()) };
+            match (session.operation, session.target) {
+                (Some(operation), Some(target)) => {
+                    let transfer = NativeTransfer::new(
+                        page,
+                        &target_strings(data),
+                        effect_allowed_of(data.drag_operations_mask),
+                        Mode::ReadOnly,
+                    )
+                    .ok_or("no script context for the drag")?;
+                    transfer.set_drop_effect(operation);
+                    fire_drag(page, target, "drop", &m, true, &transfer, Mode::ReadOnly);
+                    end_drag(page, &session.source, &m, operation);
+                }
+                (_, target) => {
+                    fire_source_drag(page, &session.source, &m);
+                    if let Some(t) = target {
+                        if let Some(transfer) = NativeTransfer::new(
+                            page,
+                            &target_strings(data),
+                            effect_allowed_of(data.drag_operations_mask),
+                            Mode::Protected,
+                        ) {
+                            fire_drag(page, t, "dragleave", &m, false, &transfer, Mode::Protected);
+                        }
+                    }
+                    end_drag(page, &session.source, &m, "none");
+                }
+            }
+            Ok(())
+        }
+        DragKind::Cancel => {
+            if let Some(session) = page.drag.borrow_mut().take() {
+                end_drag(page, &session.source, &m, "none");
+            }
+            Ok(())
+        }
+    }
 }
 
 fn common_ancestor(dom: &Dom, a: NodeId, b: NodeId) -> Option<NodeId> {

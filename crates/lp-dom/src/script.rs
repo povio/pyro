@@ -308,7 +308,9 @@ impl Dom {
         let i = self.check(el)?;
         let e = self.n_mut(i).element_mut().ok_or(DomError::Type("not an element"))?;
         e.flags |= element_flags::CUSTOM_DEFINED;
+        // :defined is element state.
         self.bump();
+        self.note(crate::dom::Change::State(i));
         Ok(())
     }
 

@@ -1,5 +1,7 @@
 //! CDP input dispatch into the document's native event/default-action path.
-use lp_webapi::input::{self, KeyInput, KeyKind, Modifiers, MouseButton, MouseInput, MouseKind};
+use lp_webapi::input::{
+    self, DragData, DragItem, DragKind, KeyInput, KeyKind, Modifiers, MouseButton, MouseInput, MouseKind,
+};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::rc::Rc;
@@ -72,6 +74,55 @@ struct MouseParams {
     timestamp: Option<f64>,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DragItemParams {
+    mime_type: String,
+    data: String,
+    title: Option<String>,
+    #[serde(rename = "baseURL")]
+    base_url: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DragDataParams {
+    items: Vec<DragItemParams>,
+    #[serde(default)]
+    files: Vec<String>,
+    drag_operations_mask: i64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DragParams {
+    #[serde(rename = "type")]
+    kind: String,
+    x: f64,
+    y: f64,
+    data: DragDataParams,
+    #[serde(default)]
+    modifiers: u32,
+}
+
+fn drag_data_json(data: &DragData) -> Value {
+    let items: Vec<Value> = data
+        .items
+        .iter()
+        .map(|i| {
+            let mut item = json!({"mimeType": i.mime_type, "data": i.data});
+            if let Some(title) = &i.title {
+                item["title"] = json!(title);
+            }
+            if let Some(base) = &i.base_url {
+                item["baseURL"] = json!(base);
+            }
+            item
+        })
+        .collect();
+    json!({"data": {"items": items, "dragOperationsMask": data.drag_operations_mask}})
+}
+
 /// macOS editing commands accepted with a key event, keyed by the shortcut
 /// Playwright 1.59 builds (`Shift+Control+Alt+Meta+code`, crInput
 /// `_commandsForCode` over playwright-core `macEditingCommands.js`). Only
@@ -96,6 +147,13 @@ const NATIVE_KEY_COMMANDS: &[(&str, &[&str], &str)] = &[
     ("Meta+KeyA", &["a", "A"], "selectAll"),
     // Escape's command edits nothing (Blink has no editor command for it), so
     // like the engine's default action (none) it only delivers the key events.
+    // Playwright's macOS Home/End commands scroll the document; the engine's
+    // key default action moves the caret in editable content, as Chrome's
+    // does for contenteditable hosts and text controls.
+    ("Home", &["Home"], "scrollToBeginningOfDocument"),
+    ("End", &["End"], "scrollToEndOfDocument"),
+    ("Shift+Home", &["Home"], "moveToBeginningOfDocumentAndModifySelection"),
+    ("Shift+End", &["End"], "moveToEndOfDocumentAndModifySelection"),
     ("Escape", &["Escape"], "cancelOperation"),
     ("Shift+Escape", &["Escape"], "cancelOperation"),
 ];
@@ -127,6 +185,15 @@ fn modifiers(bits: u32) -> CdpResult<Modifiers> {
 impl EngineHost {
     pub(super) fn input_domain(&mut self, action: &str, cmd: &PageCommand<'_, '_>) -> CdpResult<Option<Value>> {
         let native_id = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?.id;
+        if action == "setInterceptDrags" {
+            #[derive(Deserialize)]
+            struct P {
+                enabled: bool,
+            }
+            let enabled = cmd.command.params::<P>()?.enabled;
+            self.pages.get_mut(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?.intercept_drags = enabled;
+            return Ok(Some(json!({})));
+        }
         let page = if matches!(action, "dispatchKeyEvent" | "insertText") {
             self.thread.browser.focused_frame(native_id).and_then(|frame| frame.page_dom)
         } else {
@@ -219,7 +286,7 @@ impl EngineHost {
                     "mousePressed" => MouseKind::Pressed,
                     "mouseReleased" => MouseKind::Released,
                     "mouseMoved" => MouseKind::Moved,
-                    "mouseWheel" => return Err(CdpError::unsupported("Input mouse wheel default scrolling")),
+                    "mouseWheel" => MouseKind::Wheel,
                     _ => return Err(CdpError::invalid_params("Invalid mouse event type")),
                 };
                 let button = match p.button.as_deref().unwrap_or("none") {
@@ -245,9 +312,13 @@ impl EngineHost {
                 {
                     return Err(CdpError::unsupported("Input pen, custom pressure or timestamp"));
                 }
+                // A point over an iframe goes to its document, in its own
+                // viewport coordinates (recursively); only the innermost
+                // document receives the mouse events.
+                let (page, x, y) = self.descend_into_frames(native_id, page, p.x, p.y);
                 let mouse = MouseInput {
-                    x: p.x,
-                    y: p.y,
+                    x,
+                    y,
                     button,
                     buttons: p.buttons,
                     click_count: p.click_count,
@@ -255,15 +326,75 @@ impl EngineHost {
                     delta_x: p.delta_x,
                     delta_y: p.delta_y,
                 };
+                let intercept = self.pages.get(&cmd.page).is_some_and(|state| state.intercept_drags);
+                let dragged = input::dispatch_mouse_intercepting_drags(&page, kind, &mouse, intercept)
+                    .map_err(CdpError::server)?;
+                if let Some(data) = dragged {
+                    self.event("Input.dragIntercepted", &drag_data_json(&data), cmd.session_id);
+                }
+            }
+            "dispatchDragEvent" => {
+                let p: DragParams = cmd.command.params()?;
+                let kind = match p.kind.as_str() {
+                    "dragEnter" => DragKind::Enter,
+                    "dragOver" => DragKind::Over,
+                    "drop" => DragKind::Drop,
+                    "dragCancel" => DragKind::Cancel,
+                    _ => return Err(CdpError::invalid_params("Invalid drag event type")),
+                };
+                if !p.x.is_finite() || !p.y.is_finite() {
+                    return Err(CdpError::invalid_params("Invalid drag coordinates"));
+                }
+                if !p.data.files.is_empty() {
+                    return Err(CdpError::unsupported("Input drag events carrying files"));
+                }
                 if lp_webapi::layout_api::hit_test(&page, p.x, p.y)
                     .is_some_and(|node| self.thread.browser.frame_of_owner(native_id, node).is_some())
                 {
-                    return Err(CdpError::unsupported("Input mouse targeting a child frame"));
+                    return Err(CdpError::unsupported("Input drag targeting a child frame"));
                 }
-                input::dispatch_mouse(&page, kind, &mouse).map_err(CdpError::server)?;
+                let data = DragData {
+                    items: p
+                        .data
+                        .items
+                        .into_iter()
+                        .map(|i| DragItem {
+                            mime_type: i.mime_type,
+                            data: i.data,
+                            title: i.title,
+                            base_url: i.base_url,
+                        })
+                        .collect(),
+                    drag_operations_mask: p.data.drag_operations_mask,
+                };
+                input::dispatch_drag(&page, kind, p.x, p.y, &data, modifiers(p.modifiers)?)
+                    .map_err(CdpError::server)?;
             }
             _ => return Err(CdpError::unsupported(&cmd.command.method)),
         }
         Ok(Some(json!({})))
+    }
+}
+
+impl EngineHost {
+    /// The innermost frame document under (x, y) and the point in its
+    /// viewport coordinates.
+    fn descend_into_frames(
+        &self,
+        page_id: lp_browser::PageId,
+        mut page: Rc<lp_webapi::PageDom>,
+        mut x: f64,
+        mut y: f64,
+    ) -> (Rc<lp_webapi::PageDom>, f64, f64) {
+        for _ in 0..32 {
+            let Some(node) = lp_webapi::layout_api::hit_test(&page, x, y) else { break };
+            let Some(frame_id) = self.thread.browser.frame_of_owner(page_id, node) else { break };
+            let Some(child) = self.thread.browser.frame(page_id, &frame_id).and_then(|f| f.page_dom) else { break };
+            let Some(r) = page.layout.borrow().client_rect(&page.dom.borrow(), node) else { break };
+            x -= r.x;
+            y -= r.y;
+            page = child;
+        }
+        (page, x, y)
     }
 }

@@ -123,7 +123,12 @@ pub(crate) fn target_object<'s>(s: &Scope<'s>, page: &PageDom, key: TargetKey) -
                 None => Ok(None),
             }
         }
-        TargetKey::Other(k) => Ok(s.lookup_identity(page.other_identity(k))),
+        TargetKey::Other(k) => match s.lookup_identity(page.other_identity(k)) {
+            Some(o) => Ok(Some(o)),
+            // `visualViewport` / `screen.orientation` keep a per-window
+            // identity ([SameObject]); this realm's wrapper must own `key`.
+            None => Ok(crate::window::viewport_target_object(s, page, key)),
+        },
     }
 }
 
@@ -188,6 +193,23 @@ fn parse_options(v: Value<'_>) -> JsResult<(AddOptions, Option<Object<'_>>)> {
     }
 }
 
+/// DOM "default passive value": touchstart, touchmove, wheel and mousewheel
+/// listeners on the window, a document, its document element or its body are
+/// passive unless `passive` is given, so their `preventDefault()` cannot
+/// block scrolling (as in Chrome).
+fn default_passive(page: &PageDom, key: TargetKey, ty: &str) -> bool {
+    if !matches!(ty, "touchstart" | "touchmove" | "wheel" | "mousewheel") {
+        return false;
+    }
+    if page.window_target() == Some(key) {
+        return true;
+    }
+    let dom = page.dom.borrow();
+    let Some(node) = dom.key_node(key) else { return false };
+    let Ok(doc) = dom.node_document(node) else { return false };
+    node == doc || dom.document_element(doc).ok().flatten() == Some(node) || dom.body(doc).ok().flatten() == Some(node)
+}
+
 fn handle_for(realm: RealmId, slot: u32) -> ListenerHandle {
     ListenerHandle((u64::from(realm.0) << 32) | u64::from(slot))
 }
@@ -197,7 +219,10 @@ fn add_listener<'s>(s: &Scope<'s>, t: &EventTargetData, a: Args<'s>) -> JsResult
     let ty = dom_string(a.get(0))?;
     let cb = a.get(1);
     let Some(cb_obj) = cb.as_object() else { return Ok(()) };
-    let (opts, signal) = parse_options(a.get(2))?;
+    let (mut opts, signal) = parse_options(a.get(2))?;
+    if opts.passive.is_none() {
+        opts.passive = Some(default_passive(&t.page, t.key, &ty));
+    }
     if let Some(sig) = signal {
         if let Some(sd) = s.unwrap::<crate::abort::AbortSignal>(sig.value()) {
             if sd.aborted() {
@@ -471,7 +496,23 @@ fn handler_set(s: &Scope<'_>, object: Object<'_>, key: &str, value: Value<'_>) -
 pub(crate) fn event_handler<'s>(s: &Scope<'s>, target: &EventTargetData, ty: &str) -> JsResult<Value<'s>> {
     let object =
         target_object(s, &target.page, target.key)?.ok_or_else(|| JsError::Type("Illegal invocation".into()))?;
+    if handler_slot(s, target, object, ty)?.is_none() {
+        return Ok(s.null());
+    }
     Ok(handler_get(s, object, &format!("__lpHandler_{ty}"))?.unwrap_or(s.null()))
+}
+
+/// The handler's listener slot while its native listener is still
+/// registered; `document.open()` erases handlers natively.
+fn handler_slot(s: &Scope<'_>, target: &EventTargetData, object: Object<'_>, ty: &str) -> JsResult<Option<u32>> {
+    let slot = handler_get(s, object, &format!("__lpHandlerSlot_{ty}"))?
+        .filter(|v| !v.is_undefined())
+        .map(|v| v.to_number())
+        .transpose()?
+        .map(|v| v as u32);
+    Ok(slot.filter(|&slot| {
+        target.page.dom.borrow().listener_registration(target.key, ty, handle_for(s.realm_id(), slot), false).is_some()
+    }))
 }
 pub(crate) fn set_event_handler(
     s: &Scope<'_>,
@@ -484,11 +525,7 @@ pub(crate) fn set_event_handler(
     let value_key = format!("__lpHandler_{ty}");
     let slot_key = format!("__lpHandlerSlot_{ty}");
     let value = if value.as_object().is_some_and(|o| o.is_function()) { value } else { s.null() };
-    let slot = handler_get(s, object, &slot_key)?
-        .filter(|v| !v.is_undefined())
-        .map(|v| v.to_number())
-        .transpose()?
-        .map(|v| v as u32);
+    let slot = handler_slot(s, target, object, ty)?;
     handler_set(s, object, &value_key, value)?;
     if let Some(slot) = slot {
         if value.is_null() {

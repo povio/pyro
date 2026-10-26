@@ -304,6 +304,18 @@ impl Server {
                         let _ = stream.write_all(b"0\r\n\r\n");
                         continue;
                     }
+                    "/sse" => {
+                        // Server-sent events over a chunked body: each frame
+                        // arrives only after the test releases the gate.
+                        let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n");
+                        for frame in ["id: 1\nevent: message.created\ndata: {\"n\":1}\n\n", "id: 2\ndata: {\"n\":2}\n\n"] {
+                            let _ = write!(stream, "{:x}\r\n{frame}\r\n", frame.len());
+                            let _ = stream.flush();
+                            let _ = gate.recv_timeout(Duration::from_secs(5));
+                        }
+                        let _ = stream.write_all(b"0\r\n\r\n");
+                        continue;
+                    }
                     "/split-utf8" => {
                         let _=stream.write_all(b"HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 3\r\n\r\n\xe2\x82");
                         let _=stream.flush();let _=gate.recv_timeout(Duration::from_secs(5));let _=stream.write_all(b"\xac");continue;

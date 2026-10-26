@@ -299,10 +299,12 @@ fn media_query_zig_unit_tests() {
     for q in ["(min-width: 5cm)", "(min-width: 50mm)", "(min-width: 10pt)", "(min-width: 1in)", "(min-width: 50vw)"] {
         assert!(!mq(q), "{q}");
     }
-    // range syntax is unsupported
-    for q in ["(width >= 600px)", "(width <= 600px)", "(width < 100px)", "(600px <= width <= 1200px)"] {
+    // range syntax (Media Queries 4) at the 1920px default width; upstream rejected it
+    assert!(mq("(width >= 600px)"));
+    for q in ["(width <= 600px)", "(width < 100px)", "(600px <= width <= 1200px)"] {
         assert!(!mq(q), "{q}");
     }
+    assert!(mq("(600px <= width <= 1920px)"));
     // whitespace-tight and -loose features
     assert!(mq("(min-width:600px)"));
     assert!(mq("( min-width : 600px )"));
@@ -2174,7 +2176,8 @@ fn computed_style_defaults_and_inline() {
     assert_eq!(p.cs(div, "text-transform"), "lowercase");
     let imp = p.add("div");
     p.style(imp, "color: red !important; color: blue");
-    assert_eq!(p.cs(imp, "color"), "red");
+    // Colors serialize as Chromium computes them (upstream returned the declared "red").
+    assert_eq!(p.cs(imp, "color"), "rgb(255, 0, 0)");
 
     // hidden boxes compute width/height to auto (CSSStyleDeclaration.zig:203-212)
     let gone = p.add("div");
@@ -2606,4 +2609,503 @@ fn percentage_width_does_not_resolve_circular_or_positioned_bases() {
         parent = child;
     }
     assert_eq!(p.rect(parent).width, 320.0, "percentage chains resolve without recursive layout calls");
+}
+
+// ---------------------------------------------------------------------------
+// Generic computed values from author stylesheets (computed.rs)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn computed_style_resolves_author_stylesheet_values() {
+    let mut p = page("<!DOCTYPE html><body></body>");
+    p.add_style(concat!(
+        ":root{--spacing:.25rem;--brand:#7c3aed}",
+        ".badge{background-color:var(--brand);color:white}",
+        ".bg-\\[\\#7c3aed\\]{background-color:#7c3aed}",
+        "@layer utilities{.gap-2{gap:calc(var(--spacing) * 2)}.flex-1{flex:1}.scroll{overflow:hidden auto}}",
+        ".parent{color:rgb(1 2 3);font-family:Inter, Arial, sans-serif}",
+        ".cur{border-color:currentColor}",
+        ".mix{background-color:color-mix(in oklab, oklch(0.5 0 0) 50%, transparent)}",
+        ".size{width:calc(var(--spacing) * 3.5);margin-left:1.5rem}",
+        ".imp{color:red!important}.low{color:blue}",
+        ".missing{background-color:var(--nope)}",
+        ".unset{color:unset}",
+    ));
+    let badge = p.add("span");
+    p.set(badge, "class", "badge");
+    assert_eq!(p.cs(badge, "background-color"), "rgb(124, 58, 237)");
+    assert_eq!(p.cs(badge, "color"), "rgb(255, 255, 255)");
+
+    let escaped = p.add("span");
+    p.set(escaped, "class", "bg-[#7c3aed]");
+    assert_eq!(p.cs(escaped, "background-color"), "rgb(124, 58, 237)");
+
+    let flex = p.add("div");
+    p.set(flex, "class", "gap-2 flex-1 scroll");
+    assert_eq!(p.cs(flex, "column-gap"), "8px");
+    assert_eq!(p.cs(flex, "row-gap"), "8px");
+    assert_eq!(p.cs(flex, "flex-grow"), "1");
+    assert_eq!(p.cs(flex, "flex-basis"), "0%");
+    assert_eq!(p.cs(flex, "overflow-x"), "hidden");
+    assert_eq!(p.cs(flex, "overflow-y"), "auto");
+
+    // Inherited properties come from the nearest declaring ancestor; others do not inherit.
+    let parent = p.add("div");
+    p.set(parent, "class", "parent");
+    let child = p.add_to(parent, "span");
+    assert_eq!(p.cs(child, "color"), "rgb(1, 2, 3)");
+    assert_eq!(p.cs(child, "font-family"), "Inter, Arial, sans-serif");
+    assert_eq!(p.cs(child, "background-color"), "rgba(0, 0, 0, 0)");
+    let cur = p.add_to(parent, "span");
+    p.set(cur, "class", "cur");
+    assert_eq!(p.cs(cur, "border-top-color"), "rgb(1, 2, 3)");
+    let unset = p.add_to(parent, "span");
+    p.set(unset, "class", "unset");
+    assert_eq!(p.cs(unset, "color"), "rgb(1, 2, 3)");
+
+    let mix = p.add("div");
+    p.set(mix, "class", "mix");
+    assert_eq!(p.cs(mix, "background-color"), "oklab(0.5 0 0 / 0.5)");
+
+    let sized = p.add("div");
+    p.set(sized, "class", "size");
+    assert_eq!(p.cs(sized, "width"), "14px");
+    assert_eq!(p.cs(sized, "margin-left"), "24px");
+
+    // !important rules beat normal inline declarations; inline beats normal rules.
+    let imp = p.add("div");
+    p.set(imp, "class", "imp low");
+    p.style(imp, "color: green");
+    assert_eq!(p.cs(imp, "color"), "rgb(255, 0, 0)");
+    let low = p.add("div");
+    p.set(low, "class", "low");
+    p.style(low, "color: green");
+    assert_eq!(p.cs(low, "color"), "rgb(0, 128, 0)");
+
+    // Invalid at computed-value time falls back to the initial value.
+    let missing = p.add("div");
+    p.set(missing, "class", "missing");
+    assert_eq!(p.cs(missing, "background-color"), "rgba(0, 0, 0, 0)");
+
+    // Inline shorthands expand too; untouched properties keep their initial values.
+    let inline = p.add("div");
+    p.style(inline, "flex: none; padding: 1px 2px");
+    assert_eq!(p.cs(inline, "flex-grow"), "0");
+    assert_eq!(p.cs(inline, "padding-left"), "2px");
+    assert_eq!(p.cs(inline, "max-width"), "none");
+}
+
+#[test]
+fn computed_style_reads_svg_presentation_attributes() {
+    let mut p = page("<!DOCTYPE html><body><div id=host style='color: rgb(9, 8, 7)'><svg id=icon stroke='currentColor' fill='none'><path id=path d='M0 0'></path></svg></div><svg id=plain><rect id=rect></rect></svg></body>");
+    p.add_style("#rect{fill:#00f}");
+    let (icon, path, rect, plain) = (p.id("icon"), p.id("path"), p.id("rect"), p.id("plain"));
+    assert_eq!(p.cs(icon, "stroke"), "rgb(9, 8, 7)");
+    assert_eq!(p.cs(path, "stroke"), "rgb(9, 8, 7)");
+    assert_eq!(p.cs(path, "fill"), "none");
+    // Author rules beat presentation attributes; initial values apply otherwise.
+    assert_eq!(p.cs(rect, "fill"), "rgb(0, 0, 255)");
+    assert_eq!(p.cs(plain, "stroke"), "none");
+    assert_eq!(p.cs(plain, "fill"), "rgb(0, 0, 0)");
+}
+
+#[test]
+fn computed_lengths_use_cascaded_font_sizes() {
+    let mut p = page("<!DOCTYPE html><body><div id=outer><span id=inner>x</span></div></body>");
+    p.add_style("html{font-size:14px} #outer{font-size:1.5em;padding-left:1em;margin-left:2rem} #inner{font-size:50%;width:calc(100% - 8px);height:10vh}");
+    let (outer, inner) = (p.id("outer"), p.id("inner"));
+    assert_eq!(p.cs(outer, "font-size"), "21px");
+    assert_eq!(p.cs(outer, "padding-left"), "21px");
+    assert_eq!(p.cs(outer, "margin-left"), "28px");
+    assert_eq!(p.cs(inner, "font-size"), "10.5px");
+    // vh resolves against the 1920x1080 default viewport.
+    assert_eq!(p.cs(inner, "height"), "108px");
+}
+
+#[test]
+fn flow_style_reports_used_values_from_the_cascade() {
+    use lp_dom::flow::{Dim, FlowStyleSource, InnerDisplay, Len, OuterDisplay, Position};
+    let mut p = page(concat!(
+        "<!DOCTYPE html><body><div id=pop><ul id=list><li id=item>a</li></ul><span id=s>t</span>",
+        "<svg id=svg><path id=path></path></svg></div><p id=para>p</p><p id=gone hidden>h</p></body>"
+    ));
+    p.add_style(concat!(
+        "html{font-size:14px}",
+        "#pop{position:absolute;top:120px;left:12.5rem;width:calc(100% - 8px);padding:4px 8px;",
+        "border:1px solid red;box-sizing:border-box;overflow-y:auto;max-height:300px}",
+        "#list{display:flex;margin:0 auto;padding-left:0;flex-direction:column;flex-wrap:wrap;gap:calc(var(--g, 2px) * 2) 3px;align-items:center;justify-content:space-between}",
+        "#item{flex:1;align-self:flex-end}",
+        "#item{line-height:1.5;white-space:nowrap;font-size:1.5em}",
+        "#s{zoom:125%}#para{zoom:0.5}",
+    ));
+    let style = p.layout.style();
+    let get = |id: &str| style.flow_style(&p.dom, p.id(id));
+
+    let pop = get("pop").unwrap();
+    assert_eq!((pop.outer, pop.inner, pop.position), (OuterDisplay::Block, InnerDisplay::Flow, Position::Absolute));
+    assert_eq!(pop.inset[0], Dim::px(120.0));
+    assert_eq!(pop.inset[3], Dim::px(175.0));
+    assert_eq!(pop.width, Dim::Len(Len { px: -8.0, percent: 100.0 }));
+    assert_eq!(pop.padding, [Len::px(4.0), Len::px(8.0), Len::px(4.0), Len::px(8.0)]);
+    assert_eq!(pop.border, [1.0; 4]);
+    // `overflow-y: auto` alone: `overflow-x: visible` computes to `auto`
+    // (CSS Overflow 3), so both axes clip, as in Chromium.
+    assert!(pop.border_box && pop.clips_y && pop.clips_x);
+    assert_eq!(pop.max_height, Dim::px(300.0));
+    assert_eq!(pop.font_size, 14.0);
+
+    let list = get("list").unwrap();
+    assert_eq!((list.outer, list.inner), (OuterDisplay::Block, InnerDisplay::Flex));
+    assert_eq!(list.margin[1], Dim::Auto);
+    // Author padding-left overrides the UA 40px; UA vertical margins are replaced by the author's 0.
+    assert_eq!(list.padding[3], Len::ZERO);
+    assert_eq!(list.margin[0], Dim::px(0.0));
+
+    use lp_dom::flow::{Align, FlexDirection, Justify};
+    assert_eq!((list.flex_direction, list.flex_wrap), (FlexDirection::Column, true));
+    assert_eq!((list.row_gap, list.column_gap), (Len::px(4.0), Len::px(3.0)));
+    assert_eq!((list.align_items, list.justify_content, list.align_self), (Align::Center, Justify::SpaceBetween, None));
+    assert_eq!((list.flex_grow, list.flex_shrink, list.flex_basis), (0.0, 1.0, Dim::Auto));
+    let item = get("item").unwrap();
+    assert_eq!((item.flex_grow, item.flex_shrink, item.flex_basis), (1.0, 1.0, Dim::Len(Len::ZERO)));
+    assert_eq!(item.align_self, Some(Align::End));
+    assert_eq!(item.font_size, 21.0);
+    assert_eq!(item.line_height, Some(31.5));
+    assert!(item.nowrap);
+
+    assert_eq!(get("s").unwrap().outer, OuterDisplay::Inline);
+    assert_eq!((get("s").unwrap().zoom, get("para").unwrap().zoom, pop.zoom), (1.25, 0.5, 1.0));
+    let svg = get("svg").unwrap();
+    assert!(svg.replaced);
+    assert_eq!(get("path").unwrap().outer, OuterDisplay::Contents);
+    // UA margins when no author value applies: p gets 1em at its 14px
+    // root-inherited size, zoomed by its `zoom: 0.5` (used values carry the
+    // effective zoom, as Chromium's standardized zoom lays it out): 7px.
+    assert_eq!(get("para").unwrap().margin[0], Dim::px(7.0));
+    assert_eq!(get("para").unwrap().font_size, 7.0);
+    assert!(get("gone").is_none());
+}
+
+#[test]
+fn flow_style_reports_table_parts_and_spacing() {
+    use lp_dom::flow::{FlowStyleSource, InnerDisplay, Len, TablePart};
+    let mut p = page(concat!(
+        "<!DOCTYPE html><body><table id=t><thead id=h><tr><th id=th>a</th></tr></thead>",
+        "<tbody id=b><tr id=r><td id=td>b</td></tr></tbody></table>",
+        "<table id=fixed><tr><td id=c>c</td></tr></table></body>"
+    ));
+    p.add_style("#fixed{border-collapse:collapse;table-layout:fixed;border-spacing:4px 6px} #c{padding:3px}");
+    let style = p.layout.style();
+    let get = |id: &str| style.flow_style(&p.dom, p.id(id)).unwrap();
+    assert_eq!((get("t").inner, get("t").border_spacing), (InnerDisplay::Table, (2.0, 2.0)));
+    assert_eq!(get("h").table_part, TablePart::HeaderGroup);
+    assert_eq!(get("b").table_part, TablePart::BodyGroup);
+    assert_eq!(get("r").table_part, TablePart::Row);
+    assert_eq!((get("th").table_part, get("td").table_part), (TablePart::Cell, TablePart::Cell));
+    assert_eq!(get("td").padding, [Len::px(1.0); 4]);
+    let fixed = get("fixed");
+    assert!(fixed.border_collapse && fixed.table_layout_fixed);
+    assert_eq!(fixed.border_spacing, (4.0, 6.0));
+    // border-collapse inherits to the cell; author padding replaces the UA 1px.
+    assert!(get("c").border_collapse);
+    assert_eq!(get("c").padding, [Len::px(3.0); 4]);
+}
+
+#[test]
+fn computed_style_maps_logical_properties() {
+    let mut p = page("<!DOCTYPE html><body><button id=b class='px-3 py-1 border-x'>x</button></body>");
+    p.add_style(concat!(
+        ":root{--spacing-3:.75rem;--spacing-1:.25rem}",
+        ".px-3{padding-inline:var(--spacing-3)}.py-1{padding-block:var(--spacing-1)}",
+        ".border-x{border-inline-style:solid;border-inline-width:1px}",
+    ));
+    let b = p.id("b");
+    assert_eq!(p.cs(b, "padding-left"), "12px");
+    assert_eq!(p.cs(b, "padding-right"), "12px");
+    assert_eq!(p.cs(b, "padding-top"), "4px");
+    assert_eq!(p.cs(b, "border-left-width"), "1px");
+    assert_eq!(p.cs(b, "border-right-style"), "solid");
+    assert_eq!(p.cs(b, "border-top-width"), "0px");
+}
+
+#[test]
+fn flow_style_reports_inherited_text_align() {
+    use lp_dom::flow::{FlowStyleSource, TextAlign};
+    let mut p = page("<!DOCTYPE html><body><div id=c class=text-center><span id=s>x</span></div><p id=r style='text-align:end'>r</p><table><tr><th id=th>h</th><td id=td>d</td></tr></table></body>");
+    p.add_style(".text-center{text-align:center}");
+    let style = p.layout.style();
+    let get = |id: &str| style.flow_style(&p.dom, p.id(id)).unwrap().text_align;
+    assert_eq!((get("c"), get("s"), get("r")), (TextAlign::Center, TextAlign::Center, TextAlign::End));
+    assert_eq!((get("th"), get("td")), (TextAlign::Center, TextAlign::Start));
+}
+
+#[test]
+fn flow_inputs_keep_full_precision() {
+    use lp_dom::flow::FlowStyleSource;
+    let mut p = page("<!DOCTYPE html><body><button id=b class='text-sm'>Today</button></body>");
+    p.add_style(".text-sm{font-size:.875rem;line-height:calc(1.25 / .875);padding-block:calc(.25rem * 1.5)}");
+    let b = p.id("b");
+    // getComputedStyle keeps Chromium's six-digit serialization...
+    assert_eq!(p.cs(b, "line-height"), "1.42857");
+    // ...but layout sees the exact value: 14px x 1.25/0.875 = 20px.
+    let style = p.layout.style().flow_style(&p.dom, b).unwrap();
+    assert!((style.line_height.unwrap() - 20.0).abs() < 1e-9, "{:?}", style.line_height);
+    assert!((style.padding[0].px - 6.0).abs() < 1e-9);
+}
+
+#[test]
+fn inert_content_is_not_hit_testable() {
+    // react-aria's popover underlay is `<div inert>` covering the viewport;
+    // Blink's UsedPointerEvents is `none` for inert content while
+    // getComputedStyle still reports the cascaded value.
+    let p = page(
+        r#"<!DOCTYPE html>
+<body>
+  <div id="wrap" inert>
+    <div id="inner">Inner</div>
+  </div>
+  <div id="plain">Plain</div>
+</body>"#,
+    );
+    let inner = p.id("inner");
+    assert_eq!(p.cs(inner, "pointer-events"), "auto");
+    let (x, y) = p.center(inner);
+    let hit = p.efp(x, y);
+    assert!(hit != Some(inner) && hit != Some(p.id("wrap")), "{hit:?}");
+    assert!(!p.efps(x, y).iter().any(|&n| n == inner || n == p.id("wrap")));
+    let plain = p.id("plain");
+    let (x, y) = p.center(plain);
+    assert_eq!(p.efp(x, y), Some(plain));
+}
+
+#[test]
+fn flow_line_height_snaps_to_layout_units() {
+    use lp_dom::flow::FlowStyleSource;
+    let mut p = page("<!DOCTYPE html><body><button id=a>Today</button><span id=b>c</span><span id=c>d</span></body>");
+    p.add_style("#a{font-size:.8125rem;line-height:1.8462}#b{font-size:12px;line-height:1.3333}#c{line-height:20.3px}");
+    let lh = |p: &Page, id: &str| p.layout.style().flow_style(&p.dom, p.id(id)).unwrap().line_height.unwrap();
+    // Chromium lays out TOS's text-small Today button as 24px + padding, not
+    // 13 x 1.8462 = 24.0006px; numbers truncate to 1/64 px, fixed lengths round.
+    assert_eq!(lh(&p, "a"), 24.0);
+    assert_eq!(lh(&p, "b"), 15.984375);
+    assert_eq!(lh(&p, "c"), 20.296875);
+}
+
+#[test]
+fn flow_style_reports_used_font_weight() {
+    use lp_dom::flow::FlowStyleSource;
+    let mut p = page(
+        "<!DOCTYPE html><body><div id=semi><span id=inh>a</span><span id=bolder>b</span></div><b id=b>c</b><strong id=s>d</strong><h1 id=h>e</h1><table><tr><th id=th>f</th></tr></table><span id=n>g</span></body>",
+    );
+    p.add_style("#semi{font-weight:600}#bolder{font-weight:bolder}");
+    let w = |p: &Page, id: &str| p.layout.style().flow_style(&p.dom, p.id(id)).unwrap().font_weight;
+    assert_eq!(p.cs(p.id("bolder"), "font-weight"), "900");
+    assert_eq!(p.cs(p.id("th"), "font-weight"), "700");
+    // Chromium: inherited 600; bolder than 600 is 900; UA bold elements are 700,
+    // and getComputedStyle reports the resolved number.
+    assert_eq!(w(&p, "inh"), 600);
+    assert_eq!(w(&p, "bolder"), 900);
+    assert_eq!(w(&p, "b"), 700);
+    assert_eq!(w(&p, "s"), 700);
+    assert_eq!(w(&p, "h"), 700);
+    assert_eq!(w(&p, "th"), 700);
+    assert_eq!(w(&p, "n"), 400);
+}
+
+#[test]
+fn svg_bbox_covers_shapes_paths_and_containers() {
+    let p = page(
+        r#"<!DOCTYPE html><body><svg width="600" height="300">
+  <rect id="r" x="10" y="20" width="30" height="40"/>
+  <path id="bar" d="M 96,145.3333 h 102 v 38.6667 h -102 Z"/>
+  <path id="rounded" d="M202,238A 4,4,0,0,0,206,242L 300,242A 4,4,0,0,0,
+        304,238L 304,184L 202,184 Z"/>
+  <path id="cubic" d="M0,0 C0,100 100,100 100,0"/>
+  <path id="arc" d="M0,50 A50,50 0 0 1 100,50"/>
+  <path id="rel" d="m10 10l5-5q5 10 10 0t10 0zM1e1 1.5e1"/>
+  <circle id="c" cx="50" cy="50" r="10"/>
+  <polygon id="poly" points="0,0 10,5 3,8"/>
+  <g id="g"><rect x="0" y="0" width="10" height="10" transform="translate(10,5)"/><circle cx="0" cy="0" r="2"/><rect x="99" width="5" height="5" style="display:none"/></g>
+  <linearGradient id="grad"/>
+</svg></body>"#,
+    );
+    let bb = |id: &str| {
+        let r = lp_dom::svg_geometry::bbox(&p.dom, p.layout.style(), p.id(id));
+        [r.x, r.y, r.width, r.height].map(|v| (v * 1e4).round() / 1e4)
+    };
+    assert_eq!(bb("r"), [10.0, 20.0, 30.0, 40.0]);
+    assert_eq!(bb("bar"), [96.0, 145.3333, 102.0, 38.6667]);
+    // recharts' rounded bar: the arcs stay inside the corners.
+    assert_eq!(bb("rounded"), [202.0, 184.0, 102.0, 58.0]);
+    // Curves use their extrema, not their control points.
+    assert_eq!(bb("cubic"), [0.0, 0.0, 100.0, 75.0]);
+    assert_eq!(bb("arc"), [0.0, 0.0, 100.0, 50.0]);
+    // Relative commands, a reflected `t` control (y = -5 gives a minimum of 0)
+    // and exponent numbers; a trailing moveto counts.
+    assert_eq!(bb("rel"), [10.0, 0.0, 25.0, 15.0]);
+    assert_eq!(bb("c"), [40.0, 40.0, 20.0, 20.0]);
+    assert_eq!(bb("poly"), [0.0, 0.0, 10.0, 8.0]);
+    // Children's transforms apply; display:none children do not count.
+    assert_eq!(bb("g"), [-2.0, -2.0, 22.0, 17.0]);
+    assert_eq!(bb("grad"), [0.0, 0.0, 0.0, 0.0]);
+}
+
+#[test]
+fn canvas_font_shorthand_parses_like_chromium() {
+    use lp_dom::text_metrics::parse_font;
+    let f = parse_font("bold 12px sans-serif", 10.0).unwrap();
+    assert_eq!(
+        (f.weight, f.size, f.family.as_str(), f.serialize().as_str()),
+        (700, 12.0, "sans-serif", "700 12px sans-serif")
+    );
+    let f = parse_font("400 16px / 24px system-ui, -apple-system", 10.0).unwrap();
+    assert_eq!(
+        (f.size, f.family.as_str(), f.serialize().as_str()),
+        (16.0, "system-ui, -apple-system", "16px system-ui, -apple-system")
+    );
+    let f = parse_font("italic 600 1.5em/2 Inter", 10.0).unwrap();
+    assert_eq!((f.style.as_str(), f.weight, f.size), ("italic", 600, 15.0));
+    assert!(parse_font("12px", 10.0).is_none());
+    assert!(parse_font("nonsense", 10.0).is_none());
+    assert!(parse_font("12px Menlo, monospace", 10.0).unwrap().is_monospace());
+}
+
+// Chromium blockifies flex/grid items, floats, absolutely positioned boxes
+// and the root (css-display-3 §2.7). Playwright's accessible name pads
+// non-inline children, so the @povio/ui `<label class=flex>Service
+// Type<span>*</span></label>` names its button "Service Type *".
+#[test]
+fn computed_display_blockifies_flex_and_grid_items() {
+    let mut p = page(
+        "<label id=label style='display:flex'>Service Type<span id=star>*</span>\
+           <div id=contents style='display:contents'><b id=deep>x</b></div>\
+           <i id=ib style='display:inline-flex'></i><em id=cell style='display:table-cell'></em>\
+           <span id=hidden style='display:none'></span></label>\
+         <div id=grid style='display:inline-grid'><a id=link>a</a></div>\
+         <p><span id=plain>p</span><span id=float style='float:left'>f</span>\
+           <span id=abs style='position:absolute'>a</span><button id=btn>b</button><span id=li style='display:list-item'></span></p>",
+    );
+    let cs = |p: &Page, id: &str| p.cs(p.id(id), "display");
+    assert_eq!(cs(&p, "label"), "flex");
+    assert_eq!(cs(&p, "star"), "block", "flex item");
+    assert_eq!(cs(&p, "contents"), "contents", "display:contents is not blockified");
+    assert_eq!(cs(&p, "deep"), "block", "a child of a display:contents flex item is a flex item");
+    assert_eq!(cs(&p, "ib"), "flex");
+    assert_eq!(cs(&p, "cell"), "block");
+    assert_eq!(cs(&p, "hidden"), "none");
+    assert_eq!(cs(&p, "grid"), "inline-grid");
+    assert_eq!(cs(&p, "link"), "block", "grid item");
+    assert_eq!(cs(&p, "plain"), "inline");
+    assert_eq!(cs(&p, "float"), "block");
+    assert_eq!(cs(&p, "abs"), "block");
+    assert_eq!(cs(&p, "btn"), "inline-block", "UA default");
+    assert_eq!(cs(&p, "li"), "list-item");
+    let html = p.html();
+    assert_eq!(p.cs(html, "display"), "block");
+
+    // A container switching to flex blockifies existing children.
+    let label = p.id("label");
+    p.style(label, "display:block");
+    assert_eq!(cs(&p, "star"), "inline");
+    p.style(label, "display:grid");
+    assert_eq!(cs(&p, "star"), "block");
+}
+
+#[test]
+fn cascade_ancestor_prefilter_never_rejects_a_matching_rule() {
+    // Inside a layout pass, generic rules whose ancestor compounds need a
+    // tag, id or class no ancestor has are skipped before matching (an
+    // ancestor Bloom filter). Differential: every element's value in a pass
+    // equals full matching outside one, for each selector, in no-quirks and
+    // quirks documents, including a shadow tree.
+    let rules = [
+        ".a .x",
+        ".a > section .x",
+        "#Top .x",
+        "#top .x",
+        ".B .x",
+        ".b .x",
+        "div .x",
+        "DIV .x",
+        "section p > span",
+        "p > .x",
+        ":is(.a) .x",
+        ":where(.c) .x",
+        ":is(.a, .zz) .x",
+        ":where(.zz .q, .a) .x",
+        "[data-k] .x",
+        "[data-k=v] > li .x",
+        "ul li i",
+        "svg .x",
+        "foreignObject .x",
+        "foreignobject .x",
+        "g > rect",
+        "@namespace svg url(http://www.w3.org/2000/svg); svg|g .x",
+        "*|g .x",
+        ".c + ul .x",
+        "section ~ div em",
+        ".a .c ~ ul > li > .x",
+        ":not(.zz) .x",
+        ".a :not(.c) .x",
+        ".a:has(.y) .x",
+        "li:first-child .x",
+        ".c .x",
+        "span.x",
+        ":host .x",
+        ":host(.c) .x",
+        "body :host .x",
+        "div :host(.c) > .a > span",
+        ".a .c .x .zz",
+    ];
+    // Inherited values at several levels (memoized per pass too).
+    let body = r#"<div id=Top class="a B" style="color:rgb(1,2,3);font-weight:bolder;white-space:nowrap;line-height:1.5"><section class=c><p id=p class="x y" style="font-weight:lighter;white-space:normal"><span class=x>t</span><b>b</b></p></section><ul data-k=v><li class=x><i class=x>i</i></li></ul><svg><foreignObject><div class=x>f</div></foreignObject><g class=g><rect class=x /></g></svg><div class=FOO><em class=x>e</em></div></div>"#;
+    let decl = "{margin-left:7px}";
+    for doctype in ["<!doctype html>", ""] {
+        let mut matched = 0;
+        for rule in rules {
+            let html = format!("{doctype}<style>{rule}{decl}</style><body>{body}</body>");
+            let build = || {
+                let mut p = page(&html);
+                // A shadow tree under section.c: its elements match from the
+                // shadow root up (full matching stops there).
+                let host = p
+                    .dom
+                    .descendants(p.doc)
+                    .unwrap()
+                    .find(|&n| p.dom.tag_name(n).ok().as_deref() == Some("SECTION"))
+                    .unwrap();
+                let root = p.dom.attach_shadow(host, ShadowRootMode::Open).unwrap();
+                let (outer, inner) = (p.create("div"), p.create("span"));
+                p.dom.set_attribute(outer, "class", "a").unwrap();
+                p.dom.set_attribute(inner, "class", "x").unwrap();
+                p.append(root, outer);
+                p.append(outer, inner);
+                // The rule in a shadow-scoped sheet too (`:host`).
+                let style = p.create("style");
+                let text = p.dom.create_text(p.doc, &format!("{rule}{decl}")).unwrap();
+                p.append(style, text);
+                p.append(root, style);
+                p.layout.style_mut().discover_style_elements(&p.dom);
+                let mut els: Vec<NodeId> = p.dom.descendants(p.doc).unwrap().collect();
+                els.extend([outer, inner]);
+                els.retain(|&n| p.dom.node_type(n).ok() == Some(NodeType::Element));
+                (p, els)
+            };
+            let (full, els) = build();
+            let props = ["margin-left", "color", "font-weight", "white-space", "line-height"];
+            let values = |p: &Page| -> Vec<Vec<Option<String>>> {
+                els.iter().map(|&e| props.iter().map(|n| p.layout.style().used_value(&p.dom, e, n)).collect()).collect()
+            };
+            let reference = values(&full);
+            let (pass, els2) = build();
+            assert_eq!(els, els2);
+            let filtered = lp_dom::style::with_pass_memo(|| values(&pass));
+            assert_eq!(filtered, reference, "{doctype:?} {rule}");
+            matched += reference.iter().any(|v| v[0].as_deref() == Some("7px")) as usize;
+        }
+        // Not vacuous: most rules match something (no-quirks misses the
+        // case-mismatched id/class/tag, @namespace, the `:host` rules, which
+        // the cascade does not match today, and the impossible chain).
+        assert!(matched >= rules.len() - 9, "{doctype:?}: only {matched} rules matched");
+    }
 }

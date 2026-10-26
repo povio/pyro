@@ -317,6 +317,43 @@ fn push_and_replace_state_are_same_document() {
 }
 
 #[test]
+fn history_state_is_one_object_until_the_entry_changes_like_chromium() {
+    // Chromium (Playwright 1.59.1): history.state is deserialized once per
+    // pushState, replaceState or traversal and then the same object on every
+    // read (mutations visible); popstate's event.state is that object. The
+    // engine re-parsed it on every read, so identity checks in history and
+    // router libraries never settled (TanStack History builds its locations
+    // from history.state).
+    let (mut thread, _rec, page) = nav_setup();
+    assert_eq!(
+        js(
+            &thread,
+            page,
+            "globalThis.out = {}; out.initialNull = history.state === null; \
+             globalThis.obj = { a: 1, nested: { b: 2 } }; history.pushState(obj, '', '?p1'); \
+             globalThis.s1 = history.state; out.pushRepeat = s1 === history.state; out.pushIsClone = s1 !== obj; \
+             out.nestedRepeat = s1.nested === history.state.nested; s1.a = 99; out.mutationVisible = history.state.a; \
+             history.replaceState({ c: 3 }, '', '?r1'); globalThis.s2 = history.state; \
+             out.replaceNew = s2 !== s1; out.replaceRepeat = s2 === history.state; \
+             history.replaceState(history.state, ''); out.replaceSelfNew = history.state !== s2; \
+             globalThis.s2b = history.state; history.pushState({ d: 4 }, '', '?p2'); \
+             addEventListener('popstate', e => { out.popEventIsHistoryState = e.state === history.state; \
+               out.popRepeat = history.state === history.state; out.popValue = JSON.stringify(history.state); \
+               out.popNotOld = history.state !== s2b; }, { once: true }); \
+             history.back(); JSON.stringify(out)"
+        ),
+        r#"{"initialNull":true,"pushRepeat":true,"pushIsClone":true,"nestedRepeat":true,"mutationVisible":99,"replaceNew":true,"replaceRepeat":true,"replaceSelfNew":true}"#
+    );
+    thread.run_until_idle(Some(Instant::now() + Duration::from_secs(2)));
+    assert_eq!(
+        js(&thread, page, "JSON.stringify([out.popEventIsHistoryState, out.popRepeat, out.popValue, out.popNotOld])"),
+        r#"[true,true,"{\"c\":3}",true]"#
+    );
+    // Each realm (world) keeps its own object.
+    assert_eq!(js(&thread, page, "history.state === history.state && history.state.c"), "3");
+}
+
+#[test]
 fn back_traverses_same_document_and_hash_changes_are_fragments() {
     let (mut thread, rec, page) = nav_setup();
     js(&thread, page, "history.pushState(null, '', '/p2'); location.hash = 'frag'");

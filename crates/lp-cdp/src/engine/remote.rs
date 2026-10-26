@@ -104,18 +104,42 @@ pub(crate) fn describe(scope: &Scope<'_>, value: Value<'_>, by_value: bool) -> C
                     None => Err(CdpError::server("Object couldn't be returned by value")),
                 };
             }
+            let description = if subtype == Some("error") { error_description(value) } else { None };
             Ok(Described {
                 remote: RemoteObject {
                     kind,
                     subtype,
                     class_name: d.class_name,
-                    description: d.description,
+                    description: description.or(d.description),
                     ..RemoteObject::default()
                 },
                 keep: Some(Persistent::new(scope, value)),
             })
         }
     }
+}
+
+/// Chrome's description of an Error: `name: message` as they are now (like
+/// Error.prototype.toString), then the stack in V8's `    at` form.
+/// JavaScriptCore's `stack` holds only frames, so using it alone loses the
+/// message (and console.error(err) text with it).
+fn error_description(value: Value<'_>) -> Option<String> {
+    let object = value.as_object()?;
+    let read = |key: &str| -> String {
+        object.get(key).ok().filter(|v| !v.is_undefined()).and_then(|v| v.to_string().ok()).unwrap_or_default()
+    };
+    let name = object
+        .get("name")
+        .ok()
+        .filter(|v| !v.is_undefined())
+        .map_or("Error".to_owned(), |v| v.to_string().unwrap_or_default());
+    let message = read("message");
+    let frames = parse_jsc_stack(&read("stack"));
+    Some(if name.is_empty() {
+        v8_style_description(&message, "", &frames)
+    } else {
+        v8_style_description(&name, &message, &frames)
+    })
 }
 
 /// Finishes a [`Described`] by registering its handle (if any).

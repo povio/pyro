@@ -92,6 +92,9 @@ struct Wire {
     closed: bool,
     scheduled: bool,
     null_body: bool,
+    /// A `response.body` reader exists: data chunks wake the page so reads
+    /// resolve as bytes arrive.
+    streaming: bool,
     budget: Arc<Budget>,
 }
 impl Wire {
@@ -135,6 +138,10 @@ pub(crate) struct Body {
     id: RequestId,
     realm_id: RealmId,
     readers: RefCell<Vec<Reader>>,
+    /// Pending `ReadableStreamDefaultReader.read()` promises, in order.
+    stream_reads: RefCell<Vec<(WeakRealm, Deferred)>>,
+    /// The stream holds a consumer until it closes, errors or is canceled.
+    stream_open: Cell<bool>,
     consumers: Cell<usize>,
     abort_registration: RefCell<Option<AbortRegistration>>,
     abort_reason: RefCell<Weak<RefCell<Option<Persistent>>>>,
@@ -409,6 +416,7 @@ pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
                     closed: false,
                     scheduled: false,
                     null_body: request.method == Method::HEAD,
+                    streaming: false,
                     budget: page.fetch_state.budget.clone(),
                 }));
                 let body = Rc::new(Body {
@@ -418,6 +426,8 @@ pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
                     id,
                     realm_id: s.realm_id(),
                     readers: RefCell::new(Vec::new()),
+                    stream_reads: RefCell::new(Vec::new()),
+                    stream_open: Cell::new(false),
                     consumers: Cell::new(0),
                     abort_registration: RefCell::new(None),
                     abort_reason: RefCell::new(Weak::new()),
@@ -497,7 +507,7 @@ fn receive(
                 } else {
                     wire.bytes += bytes.len();
                     wire.chunks.push(bytes);
-                    false
+                    wire.streaming
                 }
             }
             ResponseEvent::Finished { .. } => {
@@ -575,6 +585,7 @@ fn pump(page_id: u64, id: RequestId) {
             }
         }
     }
+    job.body.settle_stream_reads();
     if let Some(result) = terminal {
         if result.is_err() {
             if let Some(net) = page.net.borrow().as_ref() {
@@ -607,6 +618,7 @@ impl Body {
             closed: true,
             scheduled: false,
             null_body: bytes.is_none(),
+            streaming: false,
             // Private budget pre-charged with this body so clear_body balances.
             budget: Arc::new(Budget { used: AtomicUsize::new(len), limit: AtomicUsize::new(usize::MAX) }),
         };
@@ -617,6 +629,8 @@ impl Body {
             id: RequestId(0),
             realm_id: s.realm_id(),
             readers: RefCell::new(Vec::new()),
+            stream_reads: RefCell::new(Vec::new()),
+            stream_open: Cell::new(false),
             consumers: Cell::new(0),
             abort_registration: RefCell::new(None),
             abort_reason: RefCell::new(Weak::new()),
@@ -791,6 +805,7 @@ impl Body {
             }
         }
         self.settle_readers();
+        self.settle_stream_reads();
     }
     fn dispose(&self) {
         self.disposed.set(true);
@@ -807,6 +822,116 @@ impl Body {
             self.release_consumer();
         }
         drop(readers);
+        drop(self.stream_reads.take());
+        self.close_stream();
+    }
+
+    // ----- response.body (ReadableStream) ------------------------------------
+
+    /// Starts streaming delivery for a `response.body` reader. The stream
+    /// takes over the Response's body consumer.
+    pub(crate) fn open_stream(&self) {
+        self.stream_open.set(true);
+        self.wire.lock().unwrap().streaming = true;
+    }
+    fn close_stream(&self) {
+        if self.stream_open.replace(false) {
+            self.wire.lock().unwrap().streaming = false;
+            self.release_consumer();
+        }
+    }
+    /// `ReadableStreamDefaultReader.read()`: the bytes received since the
+    /// previous read, `done` once the body completed, or the body's error.
+    pub(crate) fn stream_read<'s>(&self, s: &Scope<'s>) -> JsResult<Value<'s>> {
+        let deferred = s.deferred()?;
+        let promise = deferred.promise.get(s);
+        if !self.stream_open.get() {
+            let result = s.object();
+            result.set("value", s.undefined())?;
+            result.set("done", s.boolean(true))?;
+            deferred.resolve(s, result.value())?;
+            return Ok(promise);
+        }
+        self.stream_reads.borrow_mut().push((s.realm().downgrade(), deferred));
+        self.settle_stream_reads();
+        Ok(promise)
+    }
+    /// Resolves pending reads from buffered chunks, then completion or error.
+    pub(crate) fn settle_stream_reads(&self) {
+        loop {
+            if self.stream_reads.borrow().is_empty() {
+                return;
+            }
+            let (weak, deferred) = self.stream_reads.borrow_mut().remove(0);
+            let Some(realm) = weak.upgrade() else { continue };
+            let Ok(s) = realm.scope() else { continue };
+            let chunk = {
+                let mut wire = self.wire.lock().unwrap();
+                if wire.chunks.is_empty() {
+                    None
+                } else {
+                    let chunks = std::mem::take(&mut wire.chunks);
+                    let len: usize = chunks.iter().map(Bytes::len).sum();
+                    wire.bytes = wire.bytes.saturating_sub(len);
+                    wire.budget.used.fetch_sub(len, Ordering::AcqRel);
+                    let mut bytes = Vec::with_capacity(len);
+                    for c in &chunks {
+                        bytes.extend_from_slice(c);
+                    }
+                    Some(bytes)
+                }
+            };
+            let error = self.error(&s);
+            let done = self.is_null() || matches!(*self.visible_terminal.borrow(), Some(Ok(())));
+            if chunk.is_none() && error.is_none() && !done {
+                self.stream_reads.borrow_mut().insert(0, (weak, deferred));
+                return;
+            }
+            let settled = (|| -> JsResult<()> {
+                if let Some(bytes) = chunk.filter(|_| error.is_none()) {
+                    let result = s.object();
+                    result.set("value", crate::encoding::uint8_array(&s, &bytes)?)?;
+                    result.set("done", s.boolean(false))?;
+                    deferred.resolve(&s, result.value())?;
+                } else if let Some(error) = error {
+                    deferred.reject(&s, error)?;
+                    self.close_stream();
+                } else {
+                    let result = s.object();
+                    result.set("value", s.undefined())?;
+                    result.set("done", s.boolean(true))?;
+                    deferred.resolve(&s, result.value())?;
+                    self.close_stream();
+                }
+                Ok(())
+            })();
+            if settled.is_err() {
+                self.close_stream();
+            }
+        }
+    }
+    /// `ReadableStream.cancel()` / reader `cancel()`: stops the request,
+    /// drops buffered bytes and finishes pending reads as done.
+    pub(crate) fn cancel_stream(&self) {
+        {
+            let mut wire = self.wire.lock().unwrap();
+            wire.closed = true;
+            wire.clear_body();
+            if wire.terminal.is_none() {
+                wire.terminal = Some(Ok(()));
+            }
+        }
+        if self.visible_terminal.borrow().is_none() {
+            *self.visible_terminal.borrow_mut() = Some(Ok(()));
+        }
+        if let Some(page) = self.page.upgrade() {
+            if let Some(net) = page.net.borrow().as_ref() {
+                net.cancel(self.id);
+            }
+            page.fetch_state.jobs.borrow_mut().remove(&self.id);
+        }
+        self.settle_stream_reads();
+        self.close_stream();
     }
 }
 
@@ -850,6 +975,7 @@ mod tests {
             closed: false,
             scheduled: false,
             null_body: false,
+            streaming: false,
             budget: budget.clone(),
         }));
         let posts = Arc::new(AtomicUsize::new(0));

@@ -47,6 +47,15 @@ impl WsError {
             WsError::MessageTooBig => 1009,
         }
     }
+
+    /// Close frame reason, so a client sees why the connection ended.
+    pub fn close_reason(&self) -> &'static str {
+        match self {
+            WsError::Protocol(reason) => reason,
+            WsError::InvalidUtf8 => "text message is not valid UTF-8",
+            WsError::MessageTooBig => "message exceeds --cdp-max-message-size",
+        }
+    }
 }
 
 impl fmt::Display for WsError {
@@ -413,6 +422,8 @@ mod tests {
         let mut d = Decoder::new(WsConfig { max_message_size: 10 });
         d.feed(&client_frame(true, OP_TEXT, &[b'a'; 11])[..8]);
         assert_eq!(d.next_message(), Err(WsError::MessageTooBig));
+        assert_eq!(WsError::MessageTooBig.close_code(), 1009);
+        assert_eq!(WsError::MessageTooBig.close_reason(), "message exceeds --cdp-max-message-size");
 
         let mut d = Decoder::new(WsConfig { max_message_size: 10 });
         d.feed(&client_frame(false, OP_TEXT, &[b'a'; 6]));

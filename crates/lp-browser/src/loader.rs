@@ -38,6 +38,8 @@ pub enum ResourceKind {
     Stylesheet,
     Iframe,
     Image,
+    /// A hyperlink download (`<a download>`).
+    Download,
 }
 
 #[derive(Debug, Clone)]
@@ -61,6 +63,8 @@ pub struct Resource {
     pub mime: String,
     pub charset: Option<String>,
     pub body: Vec<u8>,
+    /// The `Content-Disposition` response header, if any.
+    pub content_disposition: Option<String>,
 }
 
 impl Resource {
@@ -172,6 +176,7 @@ impl ResourceLoader for NetLoader {
             ResourceKind::Stylesheet => lp_net::Destination::Style,
             ResourceKind::Iframe => lp_net::Destination::Iframe,
             ResourceKind::Image => lp_net::Destination::Image,
+            ResourceKind::Download => lp_net::Destination::Other,
         };
         let mut req = lp_net::Request::get(url, destination);
         if let Some(page) = browser.page(request.page) {
@@ -216,6 +221,11 @@ impl ResourceLoader for NetLoader {
                             status: h.status.as_u16(),
                             mime: h.mime,
                             charset: h.charset,
+                            content_disposition: h
+                                .headers
+                                .get(http::header::CONTENT_DISPOSITION)
+                                .and_then(|v| v.to_str().ok())
+                                .map(str::to_owned),
                             body: std::mem::take(&mut body),
                         }),
                         None => Err("net::ERR_EMPTY_RESPONSE".to_string()),
@@ -246,7 +256,10 @@ pub struct StaticLoader {
 
 impl StaticLoader {
     pub fn insert(&self, url: &str, mime: &str, body: &str, delay: Duration) {
-        self.entries.borrow_mut().insert(url.to_string(), (mime.to_string(), body.as_bytes().to_vec(), delay));
+        self.insert_bytes(url, mime, body.as_bytes(), delay);
+    }
+    pub fn insert_bytes(&self, url: &str, mime: &str, body: &[u8], delay: Duration) {
+        self.entries.borrow_mut().insert(url.to_string(), (mime.to_string(), body.to_vec(), delay));
     }
 }
 
@@ -259,7 +272,9 @@ impl ResourceLoader for StaticLoader {
         let id = browser.register_completion(done);
         browser.scheduler().set_timer(delay, false, true, move |b| {
             let result = match entry.clone() {
-                Some((mime, body, _)) => Ok(Resource { url: url.clone(), status: 200, mime, charset: None, body }),
+                Some((mime, body, _)) => {
+                    Ok(Resource { url: url.clone(), status: 200, mime, charset: None, body, content_disposition: None })
+                }
                 None => Err(format!("net::ERR_FILE_NOT_FOUND {url}")),
             };
             b.complete_fetch(id, result);
@@ -429,6 +444,35 @@ impl Browser {
                     }
                 }
                 match res {
+                    Ok(resource)
+                        if (200..300).contains(&resource.status)
+                            && resource.content_disposition.as_deref().is_some_and(is_attachment) =>
+                    {
+                        // A Content-Disposition: attachment response turns the
+                        // navigation into a download: nothing commits (Chrome
+                        // reports net::ERR_ABORTED to Page.navigate).
+                        b.navigation_failed(page, &opts, loader_id, "net::ERR_ABORTED".into());
+                        if let Some(frame_id) = b.doc(page).map(|p| p.main_frame.id.clone()) {
+                            let suggested = suggested_filename(
+                                resource
+                                    .content_disposition
+                                    .as_deref()
+                                    .and_then(disposition_filename)
+                                    .as_deref()
+                                    .unwrap_or(""),
+                                &resource.url,
+                            );
+                            b.emit(
+                                page.page,
+                                PageEvent::Download {
+                                    frame_id,
+                                    url: resource.url,
+                                    suggested_filename: suggested,
+                                    body: Ok(bytes::Bytes::from(resource.body)),
+                                },
+                            );
+                        }
+                    }
                     Ok(resource) if (200..300).contains(&resource.status) || resource.status == 0 => {
                         let mut opts = opts;
                         opts.url = resource.url.clone();
@@ -780,6 +824,97 @@ impl Browser {
         self.fire_dom_content_loaded(page);
     }
 
+    /// HTML "download the hyperlink": blob:/data: bytes arrive with the
+    /// request; same-origin HTTP(S) URLs are fetched. The result is reported
+    /// as `PageEvent::Download` for the embedder (CDP download behavior).
+    pub(crate) fn start_download(&mut self, page: FrameKey, request: lp_webapi::DownloadRequest) {
+        let Some(frame_id) = self.doc(page).map(|p| p.main_frame.id.clone()) else { return };
+        let suggested = suggested_filename(&request.filename, &request.url);
+        let attribute = request.filename.clone();
+        let lp_webapi::DownloadRequest { url, data, .. } = request;
+        match data {
+            Some((bytes, _mime)) => {
+                self.emit(
+                    page.page,
+                    PageEvent::Download { frame_id, url, suggested_filename: suggested, body: Ok(bytes) },
+                );
+            }
+            None => {
+                let Some(loader) = self.loader_for(page) else { return };
+                let referrer = self.doc(page).map(|p| p.main_frame.url.clone());
+                let loader_id = self.doc(page).map(|p| p.main_frame.loader_id.0.clone());
+                let req = FetchRequest {
+                    url: url.clone(),
+                    kind: ResourceKind::Download,
+                    page: page.page,
+                    referrer,
+                    frame_id: Some(frame_id.0.clone()),
+                    loader_id,
+                    crossorigin: None,
+                };
+                loader.fetch(
+                    self,
+                    req,
+                    Box::new(move |b, res| {
+                        // A Content-Disposition filename takes precedence over
+                        // the download attribute.
+                        let mut suggested = suggested;
+                        let body = match res {
+                            Ok(r) if (200..300).contains(&r.status) => {
+                                if let Some(name) = r.content_disposition.as_deref().and_then(disposition_filename) {
+                                    suggested = suggested_filename(&name, &r.url);
+                                } else if attribute.is_empty() {
+                                    suggested = suggested_filename("", &r.url);
+                                }
+                                Ok(bytes::Bytes::from(r.body))
+                            }
+                            Ok(r) => Err(format!("HTTP {} for {}", r.status, r.url)),
+                            Err(e) => Err(e),
+                        };
+                        b.emit(page.page, PageEvent::Download { frame_id, url, suggested_filename: suggested, body });
+                    }),
+                );
+            }
+        }
+    }
+
+    /// `document.open()` on the loaded document: it is loading again, so
+    /// DOMContentLoaded/load (and their CDP lifecycle events) can fire anew.
+    pub(crate) fn document_reopened(&mut self, page: FrameKey) {
+        let Some(mut state) = self.doc_mut(page) else { return };
+        state.main_frame.dom_content_loaded = false;
+        state.main_frame.loaded = false;
+        if let Some(load) = &mut state.load {
+            load.dcl_fired = false;
+            load.load_fired = false;
+        }
+        drop(state);
+        self.sync_root(page.page);
+    }
+
+    /// `document.close()` ended the script-created parser: "the end" steps
+    /// after readyState became interactive.
+    pub(crate) fn finish_written_document(&mut self, page: FrameKey) {
+        let Some(mut state) = self.doc_mut(page) else { return };
+        if state.main_frame.dom_content_loaded {
+            return;
+        }
+        if let Some(load) = &mut state.load {
+            load.dcl_fired = true;
+        }
+        state.main_frame.dom_content_loaded = true;
+        let frame_id = state.main_frame.id.clone();
+        let loader_id = state.main_frame.loader_id.clone();
+        let bindings = state.main_frame.page_dom.clone();
+        drop(state);
+        self.sync_root(page.page);
+        if let Some(dom) = bindings {
+            lp_webapi::lifecycle::dom_content_loaded(&dom, dom.document());
+        }
+        self.emit(page.page, PageEvent::FrameDomContentLoaded { frame_id, loader_id, timestamp: self.timestamp() });
+        self.maybe_fire_load(page);
+    }
+
     fn fire_dom_content_loaded(&mut self, page: FrameKey) {
         let Some(mut load) = self.load_mut(page) else { return };
         if load.dcl_fired {
@@ -809,7 +944,11 @@ impl Browser {
             return;
         }
         let Some(mut state) = self.doc_mut(page) else { return };
-        if state.main_frame.loaded || !state.main_frame.dom_content_loaded || state.stylesheets.pending() != 0 {
+        if state.main_frame.loaded
+            || !state.main_frame.dom_content_loaded
+            || state.stylesheets.pending() != 0
+            || state.images.blocking_load() != 0
+        {
             return;
         }
         if let Some(load) = &mut state.load {
@@ -949,4 +1088,119 @@ impl Browser {
 
 pub(crate) fn install_module_fetcher(sched: lp_runtime::Scheduler<Browser>, page: FrameKey, realm: &Realm) {
     realm.set_module_fetcher(Some(Rc::new(PageModuleFetcher { page, sched })));
+}
+
+/// The download's file name: the `download` attribute without path
+/// separators, else the URL's last path segment, else "download".
+fn suggested_filename(attribute: &str, url: &str) -> String {
+    let clean = |name: &str| -> String {
+        let name: String = name.chars().map(|c| if matches!(c, '/' | '\\' | '\0') { '_' } else { c }).collect();
+        let name = name.trim().trim_matches('.').to_owned();
+        name
+    };
+    let from_attribute = clean(attribute);
+    if !from_attribute.is_empty() {
+        return from_attribute;
+    }
+    if !url.starts_with("blob:") && !url.starts_with("data:") {
+        if let Some(segment) = url::Url::parse(url).ok().and_then(|u| u.path_segments()?.next_back().map(str::to_owned))
+        {
+            let segment = clean(&segment);
+            if !segment.is_empty() {
+                return segment;
+            }
+        }
+    }
+    "download".into()
+}
+
+/// Whether a Content-Disposition value has the `attachment` type.
+fn is_attachment(value: &str) -> bool {
+    value.split(';').next().is_some_and(|t| t.trim().eq_ignore_ascii_case("attachment"))
+}
+
+/// The file name of a Content-Disposition value (RFC 6266): `filename*`
+/// (RFC 8187 `charset'lang'pct-encoded`, UTF-8 or ISO-8859-1) wins over
+/// `filename` (token or quoted-string).
+fn disposition_filename(value: &str) -> Option<String> {
+    let mut plain = None;
+    let mut extended = None;
+    let mut rest = value.split_once(';').map(|(_, r)| r)?;
+    while !rest.trim().is_empty() {
+        let (name, after) = rest.split_once('=')?;
+        let name = name.trim().to_ascii_lowercase();
+        let after = after.trim_start();
+        let (val, next) = if let Some(quoted) = after.strip_prefix('"') {
+            let mut out = String::new();
+            let mut chars = quoted.char_indices();
+            let mut end = quoted.len();
+            while let Some((i, c)) = chars.next() {
+                match c {
+                    '\\' => {
+                        if let Some((_, n)) = chars.next() {
+                            out.push(n);
+                        }
+                    }
+                    '"' => {
+                        end = i + 1;
+                        break;
+                    }
+                    c => out.push(c),
+                }
+            }
+            let next = quoted[end..].split_once(';').map_or("", |(_, r)| r);
+            (out, next)
+        } else {
+            let (v, next) = after.split_once(';').unwrap_or((after, ""));
+            (v.trim().to_owned(), next)
+        };
+        match name.as_str() {
+            "filename*" => {
+                let mut parts = val.splitn(3, '\'');
+                if let (Some(charset), Some(_lang), Some(encoded)) = (parts.next(), parts.next(), parts.next()) {
+                    let bytes: Vec<u8> = percent_encoding::percent_decode_str(encoded).collect();
+                    extended = if charset.eq_ignore_ascii_case("utf-8") {
+                        String::from_utf8(bytes).ok()
+                    } else if charset.eq_ignore_ascii_case("iso-8859-1") {
+                        Some(bytes.iter().map(|&b| b as char).collect())
+                    } else {
+                        None
+                    };
+                }
+            }
+            "filename" => plain = Some(val),
+            _ => {}
+        }
+        rest = next;
+    }
+    extended.or(plain).filter(|n| !n.is_empty())
+}
+
+#[cfg(test)]
+mod disposition_tests {
+    use super::{disposition_filename, is_attachment, suggested_filename};
+
+    #[test]
+    fn content_disposition_names() {
+        assert!(is_attachment("attachment"));
+        assert!(is_attachment(" Attachment ; filename=a.txt"));
+        assert!(!is_attachment("inline; filename=a.txt"));
+        assert_eq!(disposition_filename("attachment"), None);
+        assert_eq!(disposition_filename("attachment; filename=plain.csv").as_deref(), Some("plain.csv"));
+        assert_eq!(
+            disposition_filename(r#"attachment; filename="a \"q\" b;c.txt"; size=3"#).as_deref(),
+            Some(r#"a "q" b;c.txt"#)
+        );
+        // filename* wins regardless of order.
+        assert_eq!(
+            disposition_filename("attachment; filename*=UTF-8''r%C3%A9port.xlsx; filename=\"report.xlsx\"").as_deref(),
+            Some("réport.xlsx")
+        );
+        assert_eq!(disposition_filename("attachment; filename*=iso-8859-1'en'%E9t%E9.txt").as_deref(), Some("été.txt"));
+        // Unknown charset: fall back to filename.
+        assert_eq!(disposition_filename("attachment; filename*=x-weird''a; filename=b").as_deref(), Some("b"));
+        assert_eq!(suggested_filename("../../etc/passwd", "http://h/x"), "_.._etc_passwd");
+        assert_eq!(suggested_filename("", "http://h/dir/file.pdf?x=1"), "file.pdf");
+        assert_eq!(suggested_filename("", "blob:http://h/uuid"), "download");
+    }
 }

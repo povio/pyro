@@ -243,7 +243,6 @@ impl Dom {
                 }
             }
         }
-        self.bump();
         Ok(())
     }
 
@@ -275,7 +274,7 @@ impl Dom {
         Ok(self.opt_id(self.form_owner_idx(i)))
     }
 
-    fn radio_group(&self, idx: u32) -> Vec<u32> {
+    pub(crate) fn radio_group(&self, idx: u32) -> Vec<u32> {
         let Some(name) = self.n(idx).element().and_then(|e| e.attr("name")).filter(|n| !n.is_empty()) else {
             return vec![idx];
         };
@@ -390,7 +389,6 @@ impl Dom {
             }
         }
         self.control_state_mut(opt)?.selected = Some(v);
-        self.bump();
         Ok(())
     }
     pub fn set_selected_index(&mut self, select: NodeId, index: i32) -> DomResult<()> {
@@ -400,7 +398,6 @@ impl Dom {
             let oid = self.id_of(o);
             self.control_state_mut(oid)?.selected = Some(k as i32 == index);
         }
-        self.bump();
         Ok(())
     }
 
@@ -512,7 +509,6 @@ impl Dom {
             }
             _ => self.set_attribute(id, "value", v)?,
         }
-        self.bump();
         Ok(())
     }
 
@@ -573,7 +569,6 @@ impl Dom {
         c.user_edited = true;
         c.selection = (caret, caret);
         c.selection_set = true;
-        self.bump();
         Ok(true)
     }
 
@@ -660,11 +655,17 @@ impl Dom {
             None => NIL,
         };
         let prev = self.focused_idx(d);
+        if prev == new {
+            // Refocusing the focused element changes nothing styles see.
+            return Ok(self.opt_id(prev));
+        }
         if let NodeKind::Document(dd) = &mut self.n_mut(d).kind {
             dd.focused = new;
         }
-        // :focus / :focus-within participate in style matching.
+        // :focus / :focus-within participate in style matching (the style
+        // cache compares the focused elements).
         self.bump();
+        self.note(crate::dom::Change::Pseudo);
         Ok(self.opt_id(prev))
     }
     pub fn set_hovered(&mut self, doc: NodeId, el: Option<NodeId>) -> DomResult<()> {
@@ -673,10 +674,14 @@ impl Dom {
             Some(e) => self.check(e)?,
             None => NIL,
         };
+        if self.hovered_idx(d) == new {
+            return Ok(());
+        }
         if let NodeKind::Document(dd) = &mut self.n_mut(d).kind {
             dd.hovered = new;
         }
         self.bump();
+        self.note(crate::dom::Change::Pseudo);
         Ok(())
     }
 

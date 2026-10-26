@@ -51,8 +51,10 @@ impl<'a> From<&'a str> for CssLocalName {
     }
 }
 impl ToCss for CssLocalName {
+    /// Escaped as a CSS identifier, so a serialized selector parses back
+    /// to the same one (Tailwind's `.empty\:before\:inline-block`).
     fn to_css<W: fmt::Write>(&self, dest: &mut W) -> fmt::Result {
-        dest.write_str(&self.0)
+        cssparser::serialize_identifier(&self.0, dest)
     }
 }
 impl PrecomputedHash for CssLocalName {
@@ -281,6 +283,18 @@ pub struct ElemRef<'a> {
     idx: u32,
 }
 
+/// Per-element class tokens as interned atoms sorted by their precomputed
+/// hash, valid for one (DOM uid, version).
+#[derive(Default)]
+struct ClassSets {
+    key: (u64, u64),
+    sets: FxHashMap<u32, Box<[LocalName]>>,
+}
+
+thread_local! {
+    static CLASS_SETS: std::cell::RefCell<ClassSets> = std::cell::RefCell::new(ClassSets::default());
+}
+
 impl fmt::Debug for ElemRef<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "ElemRef({})", self.idx)
@@ -390,9 +404,34 @@ impl selectors::Element for ElemRef<'_> {
         self.data().id().is_some_and(|v| cs.eq(v.as_bytes(), id.0.as_bytes()))
     }
     fn has_class(&self, name: &CssLocalName, cs: CaseSensitivity) -> bool {
-        self.data()
-            .attr("class")
-            .is_some_and(|v| v.split_ascii_whitespace().any(|c| cs.eq(c.as_bytes(), name.0.as_bytes())))
+        if cs != CaseSensitivity::CaseSensitive {
+            return self
+                .data()
+                .attr("class")
+                .is_some_and(|v| v.split_ascii_whitespace().any(|c| cs.eq(c.as_bytes(), name.0.as_bytes())));
+        }
+        // Tailwind class attributes run to dozens of tokens and selector
+        // matching tests them repeatedly (rightmost class, then ancestors for
+        // descendant combinators): keep each element's token hashes for the
+        // current DOM version.
+        let wanted = name.0.precomputed_hash();
+        CLASS_SETS.with(|cache| {
+            let mut cache = cache.borrow_mut();
+            let key = (self.dom.uid(), self.dom.version());
+            if cache.key != key {
+                cache.key = key;
+                cache.sets.clear();
+            }
+            let set = cache.sets.entry(self.idx).or_insert_with(|| {
+                let mut atoms: Vec<LocalName> =
+                    self.data().attr("class").unwrap_or("").split_ascii_whitespace().map(LocalName::from).collect();
+                atoms.sort_unstable_by_key(|a| a.precomputed_hash());
+                atoms.into_boxed_slice()
+            });
+            // Interned atoms: equal strings are the same atom.
+            let start = set.partition_point(|a| a.precomputed_hash() < wanted);
+            set[start..].iter().take_while(|a| a.precomputed_hash() == wanted).any(|a| *a == name.0)
+        })
     }
     fn has_custom_state(&self, _name: &CssLocalName) -> bool {
         false
@@ -420,6 +459,33 @@ impl selectors::Element for ElemRef<'_> {
 }
 
 impl Dom {
+    /// Hashes an ancestor compound of a selector can require of element
+    /// `idx` (selectors' `AncestorHashes`, no-quirks): its local name,
+    /// namespace, id and classes.
+    pub(crate) fn ancestor_filter_hashes(&self, idx: u32, mut f: impl FnMut(u32)) {
+        let Some(e) = self.n(idx).element() else { return };
+        f(e.name.local.precomputed_hash());
+        f(e.name.ns.precomputed_hash());
+        if let Some(id) = e.attr("id") {
+            f(LocalName::from(id).precomputed_hash());
+        }
+        for class in e.attr("class").unwrap_or("").split_ascii_whitespace() {
+            f(LocalName::from(class).precomputed_hash());
+        }
+    }
+
+    /// The parent element selector combinators step to (`parent_element`).
+    pub(crate) fn selector_parent(&self, idx: u32) -> Option<u32> {
+        let p = self.n(idx).parent;
+        (p != NIL && self.n(p).is_element()).then_some(p)
+    }
+
+    /// Whether the element's document is in quirks mode (class and id
+    /// selectors match case-insensitively).
+    pub(crate) fn in_quirks_mode(&self, idx: u32) -> bool {
+        self.quirks(idx) == SelQuirks::Quirks
+    }
+
     pub(crate) fn is_html_doc(&self, doc: u32) -> bool {
         matches!(&self.n(doc).kind, NodeKind::Document(d) if d.kind == crate::node::DocumentKind::Html)
     }

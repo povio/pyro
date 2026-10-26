@@ -79,6 +79,18 @@ struct Inflight {
     loader_id: String,
     frame_id: Option<String>,
     resource_type: &'static str,
+    /// A document response with Content-Disposition: attachment: the
+    /// navigation became a download, and Chrome reports its request as
+    /// aborted (no dataReceived, loadingFailed net::ERR_ABORTED).
+    download: bool,
+}
+
+fn is_attachment(head: &lp_net::ResponseHead) -> bool {
+    head.headers
+        .get(http::header::CONTENT_DISPOSITION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(';').next())
+        .is_some_and(|t| t.trim().eq_ignore_ascii_case("attachment"))
 }
 
 /// Translates network events for one page into CDP `Network.*` events.
@@ -109,6 +121,7 @@ impl NetworkTranslator {
                         loader_id: loader_id.clone(),
                         frame_id: request.frame_id.clone(),
                         resource_type,
+                        download: false,
                     },
                 );
                 let mut req = json!({
@@ -141,7 +154,11 @@ impl NetworkTranslator {
                 Some(("Network.requestWillBeSent", params))
             }
             NetEvent::ResponseReceived { id, head, timestamp, .. } => {
-                let inflight = self.inflight.get(id)?;
+                let inflight = self.inflight.get_mut(id)?;
+                inflight.download = matches!(inflight.resource_type, "Document" | "Iframe")
+                    && (200..300).contains(&head.status.as_u16())
+                    && is_attachment(head);
+                let inflight = &*inflight;
                 let mut params = json!({
                     "requestId": inflight.request_id,
                     "loaderId": inflight.loader_id,
@@ -156,7 +173,7 @@ impl NetworkTranslator {
                 Some(("Network.responseReceived", params))
             }
             NetEvent::DataReceived { id, data, timestamp } => {
-                let inflight = self.inflight.get(id)?;
+                let inflight = self.inflight.get(id).filter(|i| !i.download)?;
                 Some((
                     "Network.dataReceived",
                     json!({
@@ -169,6 +186,18 @@ impl NetworkTranslator {
             }
             NetEvent::LoadingFinished { id, encoded_len, timestamp } => {
                 let inflight = self.inflight.remove(id)?;
+                if inflight.download {
+                    return Some((
+                        "Network.loadingFailed",
+                        json!({
+                            "requestId": inflight.request_id,
+                            "timestamp": timestamp,
+                            "type": inflight.resource_type,
+                            "errorText": "net::ERR_ABORTED",
+                            "canceled": true,
+                        }),
+                    ));
+                }
                 Some((
                     "Network.loadingFinished",
                     json!({ "requestId": inflight.request_id, "timestamp": timestamp, "encodedDataLength": encoded_len }),

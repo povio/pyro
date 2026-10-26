@@ -16,7 +16,58 @@ struct Slot {
     node: Option<Node>,
 }
 
+/// One journaled DOM mutation (node indices in this DOM).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Change {
+    /// An attribute of the element was set, changed or removed; `.1` is the
+    /// hash of its local name (`attr_name_hash`), 0 for no attribute (state
+    /// only selectors cannot see, e.g. an image's natural size). `.2`: a
+    /// `data-*`/`aria-*` attribute (no namespace), which only selectors that
+    /// name it can observe (style and layout never read them).
+    Attr(u32, u64, bool),
+    /// Node `.1` was inserted into `.0` (one entry per inserted node).
+    Inserted(u32, u32),
+    /// `.1` was removed from parent `.0`, before sibling `.2` (NIL: it was
+    /// the last child). The removed subtree keeps cached state, and may be
+    /// queried detached or reinserted.
+    Removed(u32, u32, u32),
+    /// The character data of the node changed.
+    Text(u32),
+    /// Form-control state of the element changed (:checked, :valid...).
+    State(u32),
+    /// The focused or hovered element changed. Consumers compare the focused
+    /// and hovered elements themselves (this entry restyles nothing).
+    Pseudo,
+    /// Anything else (e.g. a shadow root attached), with where it was made
+    /// (diagnostics: `LIGHTNINGPANDA_FLOW_STATS`).
+    Unknown(&'static std::panic::Location<'static>),
+}
+
+/// Most changes the journal holds (32 bytes each: at most 1 MiB per DOM).
+/// On overflow it keeps the newer half, so a consumer that reads it after
+/// every batch stays covered for batches of up to half of this (a React
+/// commit of a 50-row list journals some 13k changes).
+pub const JOURNAL_CAPACITY: usize = 32768;
+
+/// The hash `Change::Attr` records for an attribute local name.
+pub fn attr_name_hash(local: &str) -> u64 {
+    markup5ever::LocalName::from(local).get_hash()
+}
+
+impl Change {
+    /// An attribute change of element `i`.
+    pub(crate) fn attr(i: u32, name: &QualName) -> Change {
+        let plain = name.ns.is_empty() && (name.local.starts_with("data-") || name.local.starts_with("aria-"));
+        Change::Attr(i, name.local.get_hash(), plain)
+    }
+}
+
+/// Per root (slot index), the first element in tree order for each id.
+type IdIndex = rustc_hash::FxHashMap<u32, rustc_hash::FxHashMap<String, u32>>;
+
 pub struct Dom {
+    /// Process-unique id (caches keyed by DOM identity and `version`).
+    uid: u64,
     slots: Vec<Slot>,
     free: Vec<u32>,
     /// Bumped on every tree, attribute or character-data mutation. Live
@@ -29,10 +80,23 @@ pub struct Dom {
     live: u32,
     /// Bumped whenever a node is removed from its parent.
     removals: u64,
+    /// What each `version` bump changed, for caches that can update
+    /// selectively (style invalidation). Bounded: see `changes_since`.
+    journal: Vec<(u64, Change)>,
+    /// Versions at or below this have no complete journal.
+    journal_floor: u64,
+    /// Shadow roots ever attached (selective style invalidation does not
+    /// model slot assignment, so consumers fall back to full invalidation).
+    shadow_roots: u32,
     pub(crate) mutation: MutationState,
     pub(crate) events: crate::events::ListenerStore,
     pub(crate) resources: crate::script::ResourceQueue,
     pub(crate) iframes: crate::iframe::IframeQueue,
+    /// Natural sizes of loaded `<img>` elements, set by the embedder.
+    natural_sizes: rustc_hash::FxHashMap<NodeId, (f64, f64)>,
+    /// `getElementById` index: per root, the first element in tree order
+    /// for each id, valid for one `version`.
+    id_index: std::cell::RefCell<(u64, IdIndex)>,
 }
 
 impl Default for Dom {
@@ -53,7 +117,9 @@ pub mod position {
 
 impl Dom {
     pub fn new() -> Self {
+        static NEXT_UID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         Dom {
+            uid: NEXT_UID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             slots: Vec::new(),
             free: Vec::new(),
             version: 0,
@@ -61,10 +127,15 @@ impl Dom {
             candidates: Vec::new(),
             live: 0,
             removals: 0,
+            journal: Vec::new(),
+            journal_floor: 0,
+            shadow_roots: 0,
             mutation: MutationState::default(),
             events: Default::default(),
             resources: Default::default(),
             iframes: Default::default(),
+            natural_sizes: Default::default(),
+            id_index: Default::default(),
         }
     }
 
@@ -108,11 +179,39 @@ impl Dom {
         let i = self.check(id)?;
         Ok(self.n(i))
     }
+    /// Natural (intrinsic) size of a loaded image element, in CSS px.
+    pub fn natural_size(&self, el: NodeId) -> Option<(f64, f64)> {
+        self.check(el).ok()?;
+        self.natural_sizes.get(&el).copied()
+    }
+    /// Records or clears an image element's natural size. A change bumps
+    /// the version so layout and style caches recompute; it is journaled
+    /// like an attribute change of the image (only its own box depends on it).
+    pub fn set_natural_size(&mut self, el: NodeId, size: Option<(f64, f64)>) {
+        let Ok(i) = self.check(el) else { return };
+        let changed = match size {
+            Some(s) => self.natural_sizes.insert(el, s) != Some(s),
+            None => self.natural_sizes.remove(&el).is_some(),
+        };
+        if changed {
+            self.bump();
+            self.note(Change::Attr(i, 0, false));
+        }
+    }
     pub fn version(&self) -> u64 {
         self.version
     }
+    /// Process-unique identity of this DOM (with `version`, a cache key
+    /// that changes on every mutation).
+    pub fn uid(&self) -> u64 {
+        self.uid
+    }
+    #[track_caller]
     pub(crate) fn bump(&mut self) {
         self.version = self.version.wrapping_add(1);
+        // Unknown until a precise `note` refines it: an un-annotated bump
+        // (forms, parser, script state) makes consumers invalidate fully.
+        self.push_change(Change::Unknown(std::panic::Location::caller()));
     }
     /// Bumped only by node insertion/removal, attribute changes and
     /// character-data changes (not by form-control state, focus or hover),
@@ -120,7 +219,62 @@ impl Dom {
     pub fn tree_version(&self) -> u64 {
         self.tree_version
     }
+    fn push_change(&mut self, change: Change) {
+        const CAP: usize = JOURNAL_CAPACITY;
+        if self.journal.len() >= CAP {
+            // Keep the newer half: consumers read the journal after every
+            // batch, so recent versions stay covered. (Clearing it all made
+            // the next style flush after every 8192 changes, e.g. in the
+            // middle of a React commit, restyle the whole document.)
+            let drop = CAP / 2;
+            // Entries share a version within one bump: cut at a version
+            // boundary so a version is either fully covered or not at all.
+            let cut_version = self.journal[drop - 1].0;
+            self.journal_floor = cut_version;
+            if cut_version == self.version {
+                // One bump filled the journal: it cannot cover its version.
+                self.journal.clear();
+                return;
+            }
+            let end = self.journal.partition_point(|(v, _)| *v <= cut_version);
+            self.journal.drain(..end);
+        }
+        self.journal.push((self.version, change));
+    }
+
+    /// Refines what the latest `version` bump changed (replacing its
+    /// `Unknown` entry).
+    pub(crate) fn note(&mut self, change: Change) {
+        match self.journal.last_mut() {
+            Some((v, c)) if *v == self.version => *c = change,
+            _ => {}
+        }
+    }
+
+    /// Adds another change to the latest `version` bump (after `note`).
+    fn note_more(&mut self, change: Change) {
+        if self.journal.last().is_some_and(|(v, _)| *v == self.version) {
+            self.push_change(change);
+        }
+    }
+
+    /// The changes made after `version`, in order, or None when the journal
+    /// no longer covers it (overflow): the caller must invalidate fully.
+    pub fn changes_since(&self, version: u64) -> Option<impl Iterator<Item = Change> + '_> {
+        if version < self.journal_floor || version > self.version {
+            return None;
+        }
+        let start = self.journal.partition_point(|(v, _)| *v <= version);
+        Some(self.journal[start..].iter().map(|(_, c)| *c))
+    }
+
+    /// Number of shadow roots attached in this DOM so far.
+    pub fn shadow_root_count(&self) -> u32 {
+        self.shadow_roots
+    }
+
     /// Records a tree, attribute or character-data mutation.
+    #[track_caller]
     pub(crate) fn bump_tree(&mut self) {
         self.tree_version = self.tree_version.wrapping_add(1);
         self.bump();
@@ -158,10 +312,16 @@ impl Dom {
     pub(crate) fn link_raw(&mut self, node: u32, parent: u32, before: u32) {
         self.link(node, parent, before);
         self.bump_tree();
+        self.note(Change::Inserted(parent, node));
     }
     pub(crate) fn unlink_raw(&mut self, node: u32) {
+        let parent = self.n(node).parent;
+        let next = self.n(node).next;
         self.unlink(node);
         self.bump_tree();
+        if parent != NIL {
+            self.note(Change::Removed(parent, node, next));
+        }
     }
     pub(crate) fn set_owner_raw(&mut self, node: u32, doc: u32) {
         self.adopt_idx(node, doc);
@@ -419,6 +579,7 @@ impl Dom {
         let owner = self.n(h).owner_doc;
         let sr = self.alloc(NodeKind::Fragment(FragmentData { host: h, shadow: Some(mode) }), owner);
         self.n_mut(h).element_mut().unwrap().shadow_root = sr;
+        self.shadow_roots = self.shadow_roots.saturating_add(1);
         self.bump();
         Ok(self.id_of(sr))
     }
@@ -975,6 +1136,10 @@ impl Dom {
             }
         }
         self.bump_tree();
+        self.note(Change::Inserted(parent, nodes[0]));
+        for &k in &nodes[1..] {
+            self.note_more(Change::Inserted(parent, k));
+        }
         if !suppress {
             self.queue_child_list(parent, &nodes, &[], prev, child);
         }
@@ -1033,6 +1198,7 @@ impl Dom {
         self.add_transient_observers(parent, node);
         self.unlink(node);
         self.bump_tree();
+        self.note(Change::Removed(parent, node, next));
         if !suppress {
             self.queue_child_list(parent, &[], &[node], prev, next);
         }
@@ -1275,13 +1441,22 @@ impl Dom {
         let el = self.n(i).element().unwrap();
         let name = el.attrs[k].name.clone();
         let old = std::mem::replace(&mut self.n_mut(i).element_mut().unwrap().attrs[k].value, value.into());
-        self.bump_tree();
+        if *old == *value {
+            // Same value: still an attribute mutation (records, XPath
+            // iterators), but nothing that styles or geometry depend on
+            // changed, so caches keyed by `version` stay valid.
+            self.tree_version = self.tree_version.wrapping_add(1);
+        } else {
+            self.bump_tree();
+            self.note(Change::attr(i, &name));
+        }
         self.queue_attribute(i, &name, Some(&old));
         self.resources_after_attr(i, &name.local);
     }
     fn append_attr(&mut self, i: u32, name: QualName, value: &str) {
         self.n_mut(i).element_mut().unwrap().attrs.push(Attr { name: name.clone(), value: value.into() });
         self.bump_tree();
+        self.note(Change::attr(i, &name));
         self.queue_attribute(i, &name, None);
         self.resources_after_attr(i, &name.local);
     }
@@ -1311,6 +1486,7 @@ impl Dom {
     fn remove_attr_at(&mut self, i: u32, k: usize) {
         let attr = self.n_mut(i).element_mut().unwrap().attrs.remove(k);
         self.bump_tree();
+        self.note(Change::attr(i, &attr.name));
         self.queue_attribute(i, &attr.name, Some(&attr.value));
         self.resources_after_attr(i, &attr.name.local);
     }
@@ -1429,7 +1605,14 @@ impl Dom {
         let (a, b) = utf16_range(s, offset, count)?;
         let old = s.to_owned();
         self.n_mut(i).kind.char_data_mut().unwrap().replace_range(a..b, data);
-        self.bump_tree();
+        if self.n(i).kind.char_data() == Some(old.as_str()) {
+            // Unchanged text: a mutation for observers and XPath iterators
+            // only (see change_attr).
+            self.tree_version = self.tree_version.wrapping_add(1);
+        } else {
+            self.bump_tree();
+            self.note(Change::Text(i));
+        }
         self.queue_character_data(i, &old);
         self.resources_after_text(i);
         Ok(())
@@ -1520,16 +1703,27 @@ impl Dom {
             return Ok(None);
         }
         let r = self.check(root)?;
-        let mut cur = self.n(r).first_child;
-        while cur != NIL {
-            if let Some(e) = self.n(cur).element() {
-                if e.id() == Some(id) {
-                    return Ok(Some(self.id_of(cur)));
-                }
-            }
-            cur = self.following_in(cur, r);
+        // Chromium keeps an id map; a tree walk per call made accessible-name
+        // computation (aria-labelledby/-describedby lookups) quadratic on
+        // large pages. The index is rebuilt lazily after any mutation.
+        let mut index = self.id_index.borrow_mut();
+        if index.0 != self.version {
+            *index = (self.version, Default::default());
         }
-        Ok(None)
+        let ids = index.1.entry(r).or_insert_with(|| {
+            let mut ids = rustc_hash::FxHashMap::default();
+            let mut cur = self.n(r).first_child;
+            while cur != NIL {
+                if let Some(v) = self.n(cur).element().and_then(|e| e.id()) {
+                    if !v.is_empty() {
+                        ids.entry(v.to_owned()).or_insert(cur);
+                    }
+                }
+                cur = self.following_in(cur, r);
+            }
+            ids
+        });
+        Ok(ids.get(id).map(|&i| self.id_of(i)))
     }
 
     /// `document.documentElement`.
@@ -1571,6 +1765,7 @@ impl Dom {
         let i = self.check(id)?;
         // Control state feeds :checked/:indeterminate/:valid matching.
         self.bump();
+        self.note(Change::State(i));
         let el = self.n_mut(i).element_mut().ok_or(DomError::Type("not an element"))?;
         Ok(el.control.get_or_insert_with(Default::default))
     }

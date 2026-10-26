@@ -49,6 +49,10 @@ struct NavState {
     index: usize,
     doc_seq: u64,
     entry_seq: u64,
+    /// Bumped whenever the active entry's state is (re)activated: pushState,
+    /// replaceState and same-document traversal. `history.state` returns one
+    /// deserialized object per realm until it changes.
+    state_version: u64,
     scroll_restoration_manual: bool,
 }
 
@@ -93,6 +97,7 @@ impl PageNav {
                 index: 0,
                 doc_seq: 0,
                 entry_seq: 0,
+                state_version: 0,
                 scroll_restoration_manual: false,
             }),
             document: RefCell::new(None),
@@ -189,6 +194,7 @@ impl PageNav {
     fn same_document(&self, url: &str, state: Option<String>, kind: SameDocumentKind) {
         {
             let mut st = self.state.borrow_mut();
+            st.state_version += 1;
             let doc = st.entries.get(st.index).map_or(st.doc_seq, |e| e.doc);
             let id = st.next_entry_id();
             let entry = Entry { url: url.to_string(), state, doc, id };
@@ -268,6 +274,7 @@ impl PageNav {
                     return;
                 }
                 state.index = index;
+                state.state_version += 1;
             }
             if entry.doc == current_doc {
                 let old_url = nav.url();
@@ -316,6 +323,28 @@ impl PageNav {
         st.entries.get(st.index).and_then(|e| e.state.clone())
     }
 
+    /// `history.state` in `s`'s realm: the active entry's state deserialized
+    /// once per (re)activation and then the same object on every read, as in
+    /// browsers (`history.state === history.state`; mutations are visible
+    /// until the next pushState, replaceState or traversal). Cached on the
+    /// realm's History wrapper (one per realm), so each world has its own
+    /// object.
+    fn state_value<'s>(nav: &Rc<PageNav>, s: &Scope<'s>) -> JsResult<Value<'s>> {
+        const VALUE: &str = "lpHistoryState";
+        const VERSION: &str = "lpHistoryStateVersion";
+        let version = nav.state.borrow().state_version as f64;
+        let history = s.wrap::<History>(nav.clone(), Some(lp_js::IdentityKey(crate::window::KEY_HISTORY, 0)))?;
+        if let (Some(v), Some(cached)) = (s.get_hidden(history, VERSION)?, s.get_hidden(history, VALUE)?) {
+            if v.to_number().ok() == Some(version) {
+                return Ok(cached);
+            }
+        }
+        let value = nav.state_json().and_then(|j| s.parse_json(&j)).unwrap_or_else(|| s.null());
+        s.set_hidden(history, VALUE, value)?;
+        s.set_hidden(history, VERSION, s.number(version))?;
+        Ok(value)
+    }
+
     /// Milliseconds since the current document's time origin.
     pub fn now_ms(&self) -> f64 {
         self.time_origin.get().elapsed().as_secs_f64() * 1000.0
@@ -354,8 +383,13 @@ impl Browser {
     fn fire_popstate(&mut self, page: crate::frames::FrameKey, state: Option<&str>, old_url: &str, new_url: &str) {
         let Some(p) = self.doc(page) else { return };
         let Some(dom) = p.main_frame.page_dom.clone() else { return };
+        // The event's state is the history state object itself (browsers:
+        // `event.state === history.state`).
+        let nav = p.nav.clone();
         let state = match (state, p.main_frame.main_realm().and_then(|r| r.scope().ok())) {
-            (Some(json), Some(scope)) => scope.parse_json(json).map(|v| lp_js::Persistent::new(&scope, v)),
+            (Some(_), Some(scope)) => {
+                PageNav::state_value(&nav, &scope).ok().map(|v| lp_js::Persistent::new(&scope, v))
+            }
             _ => None,
         };
         drop(p);
@@ -510,7 +544,7 @@ impl JsClass for History {
         // `(push ? history.pushState : history.replaceState)(state, "", url)`.
         def.global_receiver(|s| s.global_data::<crate::Window>().map(|w| w.nav()));
         def.getter("length", |s, n| Ok(s.number(n.history_length() as f64)));
-        def.getter("state", |s, n| Ok(n.state_json().and_then(|j| s.parse_json(&j)).unwrap_or_else(|| s.null())));
+        def.getter("state", |s, n| PageNav::state_value(n, s));
         def.accessor(
             "scrollRestoration",
             |s, n| Ok(s.string(if n.state.borrow().scroll_restoration_manual { "manual" } else { "auto" })),

@@ -110,11 +110,28 @@ fn child_frame_owner_description_and_isolated_world_use_native_identity() {
     let node = node["result"]["result"]["objectId"].as_str().unwrap();
     let body = h.page("DOM.describeNode", json!({"objectId":node,"depth":0}));
     assert_eq!(body["result"]["node"]["nodeName"], "BODY", "{body}");
+    // Child geometry is reported in main-frame coordinates, never child-local.
     let geometry = h.page("DOM.getContentQuads", json!({"objectId":node}));
-    assert!(
-        geometry["error"]["message"].as_str().is_some_and(|s| s.contains("child frame")),
-        "phase1 cannot pretend child-local coordinates are top-level: {geometry}"
+    let expected = top_level_origin(&mut h, "same-origin", context, "document.body");
+    assert_eq!(&geometry["result"]["quads"][0].as_array().unwrap()[..2], &expected[..], "{geometry}");
+}
+
+/// (x, y) of `selector`'s client rect inside the child frame `frame_id`'s
+/// document, offset by the owner iframe's client rect in the main frame.
+fn top_level_origin(h: &mut Harness, frame_id: &str, context: i64, expr: &str) -> [Value; 2] {
+    let owner = eval_value(
+        h,
+        &format!(
+            "(() => {{ const r = document.getElementById({}).getBoundingClientRect(); return [r.x, r.y]; }})()",
+            json!(frame_id)
+        ),
     );
+    let inner =
+        eval_in(h, context, &format!("(() => {{ const r = {expr}.getBoundingClientRect(); return [r.x, r.y]; }})()"));
+    [
+        json!(owner[0].as_f64().unwrap() + inner[0].as_f64().unwrap()),
+        json!(owner[1].as_f64().unwrap() + inner[1].as_f64().unwrap()),
+    ]
 }
 
 #[test]
@@ -297,7 +314,7 @@ fn child_fetch_interception_and_detach_reply_are_frame_scoped() {
 }
 
 #[test]
-fn child_backend_ids_are_document_scoped_and_geometry_stays_unsupported() {
+fn child_backend_ids_are_document_scoped_and_geometry_uses_main_frame_coordinates() {
     let mut h = Harness::new();
     enable(&mut h);
     let root = h.page("Runtime.evaluate", json!({"expression":"document.body"}));
@@ -315,10 +332,25 @@ fn child_backend_ids_are_document_scoped_and_geometry_stays_unsupported() {
     let root_context = default_context(&h.page_with_events("Runtime.enable", json!({})), &h.frame_id);
     assert!(h.page("DOM.resolveNode", json!({"backendNodeId":backend,"executionContextId":root_context}))["error"]
         .is_object());
-    for method in ["DOM.scrollIntoViewIfNeeded", "DOM.getBoxModel"] {
-        let error = h.page(method, json!({"backendNodeId":backend}));
-        assert!(error["error"]["message"].as_str().is_some_and(|s| s.contains("child frame")), "{error}");
-    }
+    // Child-frame geometry is in main-frame viewport coordinates (Chrome's
+    // same-process iframes): the owner's client rect plus the node's rect.
+    let owner = eval_value(
+        &mut h,
+        "(() => { const r = document.getElementById('nodes').getBoundingClientRect(); return [r.x, r.y]; })()",
+    );
+    let inner = eval_in(
+        &mut h,
+        context,
+        "(() => { const r = document.body.getBoundingClientRect(); return [r.x, r.y, r.width, r.height]; })()",
+    );
+    let (ox, oy) = (owner[0].as_f64().unwrap(), owner[1].as_f64().unwrap());
+    let (x, y) = (inner[0].as_f64().unwrap() + ox, inner[1].as_f64().unwrap() + oy);
+    let (w, hgt) = (inner[2].as_f64().unwrap(), inner[3].as_f64().unwrap());
+    let quads = h.page("DOM.getContentQuads", json!({"backendNodeId":backend}));
+    assert_eq!(quads["result"]["quads"][0], json!([x, y, x + w, y, x + w, y + hgt, x, y + hgt]), "{quads}");
+    let model = h.page("DOM.getBoxModel", json!({"backendNodeId":backend}));
+    assert_eq!(model["result"]["model"]["border"][0].as_f64(), Some(x), "{model}");
+    assert_eq!(h.page("DOM.scrollIntoViewIfNeeded", json!({"backendNodeId":backend}))["result"], json!({}));
     h.page("Page.navigate", json!({"frameId":frame,"url":"about:blank"}));
     assert!(h.page("DOM.describeNode", json!({"backendNodeId":backend}))["error"].is_object());
     assert!(h.page("DOM.describeNode", json!({"objectId":object_id}))["error"].is_object());
@@ -516,7 +548,7 @@ fn frame_focus_sibling_switch_and_detach_never_redirect_to_old_parent_input() {
 }
 
 #[test]
-fn frame_focus_dom_focus_accepts_child_node_without_claiming_child_geometry() {
+fn frame_focus_dom_focus_accepts_child_node_and_reports_top_level_geometry() {
     let mut h = Harness::new();
     enable(&mut h);
     let (_, context) = focus_fixture(&mut h, "child", None);
@@ -528,7 +560,9 @@ fn frame_focus_dom_focus_accepts_child_node_without_claiming_child_geometry() {
     insert(&mut h, "focused");
     assert_eq!(eval_in(&mut h, context, "document.querySelector('#field').value"), "focused");
     let geometry = h.page("DOM.getBoxModel", json!({"objectId":object}));
-    assert!(geometry["error"]["message"].as_str().is_some_and(|m| m.contains("child frame")), "{geometry}");
+    let border = geometry["result"]["model"]["border"].as_array().unwrap_or_else(|| panic!("{geometry}"));
+    let local = eval_in(&mut h, context, "document.querySelector('#field').getBoundingClientRect().y");
+    assert!(border[1].as_f64().unwrap() > local.as_f64().unwrap(), "offset by the owner iframe: {geometry}");
 }
 
 #[test]
@@ -687,4 +721,37 @@ fn frame_focus_char_suppression_is_page_scoped() {
     let key = h.page("Input.dispatchKeyEvent", json!({"type":"char","text":"A"}));
     assert_eq!(key["result"], json!({}), "{key}");
     assert_eq!(eval_in(&mut h, context, "document.querySelector('#field').value"), "A");
+}
+
+#[test]
+fn mouse_input_at_main_frame_coordinates_reaches_child_frame_content() {
+    // Playwright clicks inside an iframe at main-frame coordinates.
+    let mut h = Harness::new();
+    enable(&mut h);
+    let events = add_srcdoc(&mut h, "clicky", "child", None);
+    // The approximate layout sizes iframes from their width/height only.
+    eval_value(&mut h, "document.getElementById('clicky').setAttribute('width', '300'); document.getElementById('clicky').setAttribute('height', '150'); 1");
+    let frame = child(&mut h, "clicky")["frame"]["id"].as_str().unwrap().to_owned();
+    let context = default_context(&events, &frame);
+    eval_in(
+        &mut h,
+        context,
+        "(() => { const b = document.createElement('button'); b.id = 'b'; b.style.cssText = 'width:80px;height:30px'; \
+           globalThis.hits = []; b.addEventListener('click', e => hits.push(e.isTrusted)); document.body.appendChild(b); return 1; })()",
+    );
+    let owner = eval_value(
+        &mut h,
+        "(() => { const r = document.getElementById('clicky').getBoundingClientRect(); return [r.x, r.y]; })()",
+    );
+    let inner = eval_in(&mut h, context, "(() => { const r = document.getElementById('b').getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()");
+    let x = owner[0].as_f64().unwrap() + inner[0].as_f64().unwrap();
+    let y = owner[1].as_f64().unwrap() + inner[1].as_f64().unwrap();
+    for (kind, buttons) in [("mousePressed", 1), ("mouseReleased", 0)] {
+        let r = h.page(
+            "Input.dispatchMouseEvent",
+            json!({"type":kind,"x":x,"y":y,"button":"left","buttons":buttons,"clickCount":1}),
+        );
+        assert_eq!(r["result"], json!({}), "{r}");
+    }
+    assert_eq!(eval_in(&mut h, context, "hits"), json!([true]));
 }

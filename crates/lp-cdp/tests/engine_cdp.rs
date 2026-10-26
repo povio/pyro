@@ -79,6 +79,7 @@ impl Harness {
         let mut sink = self.out.clone();
         self.browser.handle_text(&message.to_string(), &mut sink);
         self.browser.host_mut().flush();
+        self.browser.adopt_popups(&mut sink);
         id
     }
 
@@ -108,6 +109,26 @@ impl Harness {
             let host = self.browser.host_mut();
             host.run_until_work(Some(Instant::now() + Duration::from_millis(20)), || false);
             host.flush();
+            let mut sink = self.out.clone();
+            self.browser.adopt_popups(&mut sink);
+        }
+    }
+
+    /// Runs the engine until a message matching `pred` arrives.
+    fn until_event(&mut self, pred: impl Fn(&Value) -> bool) -> Value {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut seen = Vec::new();
+        loop {
+            seen.extend(self.drain());
+            if let Some(found) = seen.iter().find(|m| pred(m)) {
+                return found.clone();
+            }
+            assert!(Instant::now() < deadline, "event not seen; saw {seen:#?}");
+            let host = self.browser.host_mut();
+            host.run_until_work(Some(Instant::now() + Duration::from_millis(20)), || false);
+            host.flush();
+            let mut sink = self.out.clone();
+            self.browser.adopt_popups(&mut sink);
         }
     }
 
@@ -382,6 +403,27 @@ impl Harness {
         r["result"]["sessionId"].as_str().unwrap().to_owned()
     }
 
+    /// Runs until the reply to `id` arrives or `ms` elapse; returns everything seen.
+    /// A condition-based, explicitly bounded wait: callers assert the reply's exact payload.
+    fn until_reply(&mut self, id: u64, ms: u64) -> Vec<Value> {
+        let deadline = Instant::now() + Duration::from_millis(ms);
+        let mut seen = Vec::new();
+        while Instant::now() < deadline {
+            let host = self.browser.host_mut();
+            host.run_until_work(Some(Instant::now() + Duration::from_millis(5)), || false);
+            host.flush();
+            seen.extend(self.drain());
+            if seen.iter().any(|m| m["id"] == id) {
+                break;
+            }
+        }
+        seen
+    }
+
+    fn pending_replies(&self) -> usize {
+        self.browser.host().pending_awaited_replies()
+    }
+
     fn run_for(&mut self, ms: u64) -> Vec<Value> {
         let deadline = Instant::now() + Duration::from_millis(ms);
         let mut seen = Vec::new();
@@ -445,6 +487,102 @@ fn navigation_fails_pending_awaited_evaluations() {
     seen.extend(h.run_for(20));
     let reply = seen.iter().find(|m| m["id"] == id).expect("pending evaluation answered after its context died");
     assert_eq!(reply["error"]["message"], "Execution context was destroyed.");
+}
+
+const CONTEXT_DESTROYED: &str = "Execution context was destroyed.";
+
+/// A never-settling promise nobody references is garbage; collecting it must
+/// not lose the evaluation's reply: navigation still answers it, exactly once.
+#[test]
+fn never_settling_awaited_evaluation_is_answered_after_gc_and_navigation() {
+    let mut h = Harness::new();
+    h.install_gc();
+    let session = h.session.clone();
+    let id =
+        h.send(Some(&session), "Runtime.evaluate", json!({"expression":"new Promise(() => {})","awaitPromise":true}));
+    h.drain();
+    assert_eq!(h.pending_replies(), 1);
+    for _ in 0..3 {
+        let r = h.page("Runtime.evaluate", json!({"expression":"reviewGc(); reviewGc(); 1","returnByValue":true}));
+        assert_eq!(r["result"]["result"]["value"], 1, "{r}");
+    }
+    assert_eq!(h.pending_replies(), 1, "the pending reply must survive collection of its promise");
+    let mut seen = h.page_with_events("Page.navigate", json!({"url":"about:blank"}));
+    seen.extend(h.until_reply(id, 2000));
+    let replies: Vec<&Value> = seen.iter().filter(|m| m["id"] == id).collect();
+    assert_eq!(replies.len(), 1, "exactly one reply: {:?}", methods(&seen));
+    assert_eq!(replies[0]["error"]["message"], CONTEXT_DESTROYED);
+    assert_eq!(replies[0]["error"]["code"], -32000);
+    assert_eq!(replies[0]["sessionId"], session.as_str());
+    assert_eq!(h.pending_replies(), 0);
+    // Quiet after navigation: nothing else answers it later.
+    let later = h.run_for(50);
+    assert!(later.iter().all(|m| m["id"] != id), "{later:?}");
+}
+
+/// Settled awaited evaluations reply with their value and leave the table.
+#[test]
+fn settled_awaited_replies_leave_the_pending_table() {
+    let mut h = Harness::new();
+    for i in 0..5u32 {
+        let r = h.page(
+            "Runtime.evaluate",
+            json!({"expression": format!("Promise.resolve({i})"), "awaitPromise": true, "returnByValue": true}),
+        );
+        assert_eq!(r["result"]["result"]["value"], i, "{r}");
+    }
+    let r = h.page(
+        "Runtime.evaluate",
+        json!({"expression":"Promise.reject(new Error('nope'))","awaitPromise":true,"returnByValue":true}),
+    );
+    assert_eq!(r["result"]["exceptionDetails"]["exception"]["description"].as_str().map(|d| d.starts_with("Error: nope")), Some(true), "{r}");
+    assert_eq!(h.pending_replies(), 0);
+}
+
+/// The table is bounded; context destruction empties it and new evaluations register again.
+#[test]
+fn pending_awaited_replies_are_bounded_and_freed_by_context_destruction() {
+    let mut h = Harness::new();
+    h.browser.host().set_pending_reply_limit(3);
+    let session = h.session.clone();
+    let ids: Vec<u64> = (0..3)
+        .map(|_| h.send(Some(&session), "Runtime.evaluate", json!({"expression":"new Promise(() => {})","awaitPromise":true})))
+        .collect();
+    h.drain();
+    assert_eq!(h.pending_replies(), 3);
+    let r = h.page("Runtime.evaluate", json!({"expression":"new Promise(() => {})","awaitPromise":true}));
+    assert_eq!(r["error"]["message"], "Too many pending awaitPromise evaluations", "{r}");
+    assert_eq!(h.pending_replies(), 3);
+    let mut seen = h.page_with_events("Page.navigate", json!({"url":"about:blank"}));
+    for id in &ids {
+        if !seen.iter().any(|m| m["id"] == *id) {
+            seen.extend(h.until_reply(*id, 2000));
+        }
+    }
+    for id in &ids {
+        let replies: Vec<&Value> = seen.iter().filter(|m| m["id"] == *id).collect();
+        assert_eq!(replies.len(), 1, "reply {id}: {:?}", methods(&seen));
+        assert_eq!(replies[0]["error"]["message"], CONTEXT_DESTROYED);
+    }
+    assert_eq!(h.pending_replies(), 0);
+    let r = h.page("Runtime.evaluate", json!({"expression":"Promise.resolve(7)","awaitPromise":true,"returnByValue":true}));
+    assert_eq!(r["result"]["result"]["value"], 7, "{r}");
+}
+
+/// Detaching a session cancels its pending replies silently and frees the table.
+#[test]
+fn detaching_a_session_cancels_its_pending_replies_and_frees_the_table() {
+    let mut h = Harness::new();
+    let a = h.attach_second_session();
+    let id = h.send(Some(&a), "Runtime.evaluate", json!({"expression":"new Promise(() => {})","awaitPromise":true}));
+    h.drain();
+    assert_eq!(h.pending_replies(), 1);
+    h.call(None, "Target.detachFromTarget", json!({"sessionId": a}));
+    assert_eq!(h.pending_replies(), 0);
+    let later = h.run_for(50);
+    assert!(later.iter().all(|m| m["id"] != id), "reply sent to detached session: {later:?}");
+    let seen = h.page_with_events("Page.navigate", json!({"url":"about:blank"}));
+    assert!(seen.iter().all(|m| m["id"] != id), "cancelled reply answered after navigation: {seen:?}");
 }
 
 #[test]
@@ -988,6 +1126,679 @@ fn input_mouse_hit_tests_and_runs_trusted_checkbox_activation() {
 }
 
 #[test]
+fn input_mouse_wheel_scrolls_container_then_viewport_unless_canceled() {
+    let mut h = Harness::new();
+    eval_value(
+        &mut h,
+        r#"
+      document.body.innerHTML='<div id="box" style="height:100px;overflow:auto"><div id="inner" style="height:500px"></div></div><div style="height:10000px"></div>';
+      globalThis.box=document.getElementById('box'); globalThis.inner=document.getElementById('inner');
+      globalThis.wheels=[]; globalThis.scrolls=[];
+      box.addEventListener('wheel', e => wheels.push([e.isTrusted, e.cancelable, e.deltaX, e.deltaY, e.target.id]));
+      box.addEventListener('scroll', () => scrolls.push('box'));
+      document.addEventListener('scroll', () => scrolls.push('document'));
+      // Default-passive: this cannot stop scrolling (as in Chrome).
+      document.addEventListener('wheel', e => e.preventDefault());
+      const r = inner.getBoundingClientRect(); globalThis.point = [r.x + r.width / 2, r.y + 5]; 1
+    "#,
+    );
+    let point = eval_value(&mut h, "point");
+    let (x, y) = (point[0].as_f64().unwrap(), point[1].as_f64().unwrap());
+    // Playwright 1.59 crInput.wheel sends exactly these fields.
+    let wheel = |h: &mut Harness, dy: f64| {
+        let r = h.page(
+            "Input.dispatchMouseEvent",
+            json!({"type":"mouseWheel","x":x,"y":y,"modifiers":0,"deltaX":0,"deltaY":dy}),
+        );
+        assert_eq!(r["result"], json!({}), "{r}");
+    };
+    wheel(&mut h, 300.0);
+    // Scroll events arrive at the next frame (the harness pumps coarsely).
+    h.run_for(200);
+    assert_eq!(eval_value(&mut h, "[box.scrollTop, scrollY, scrolls.join()]"), json!([300, 0, "box"]));
+    wheel(&mut h, 300.0);
+    wheel(&mut h, 50.0);
+    h.run_for(200);
+    // The box stops at its extent; the next delta goes to the viewport.
+    assert_eq!(eval_value(&mut h, "[box.scrollTop, scrollY, scrolls.join()]"), json!([400, 50, "box,box,document"]));
+    assert_eq!(
+        eval_value(&mut h, "wheels"),
+        json!([[true, true, 0, 300, "inner"], [true, true, 0, 300, "inner"], [true, true, 0, 50, "inner"]])
+    );
+    // A non-passive listener that cancels the wheel prevents scrolling.
+    eval_value(&mut h, "box.addEventListener('wheel', e => e.preventDefault(), {passive:false}); 1");
+    wheel(&mut h, -100.0);
+    h.run_for(200);
+    assert_eq!(eval_value(&mut h, "[box.scrollTop, scrollY, wheels.length]"), json!([400, 50, 4]));
+}
+
+#[test]
+fn input_mouse_wheel_over_empty_viewport_space_scrolls_the_viewport() {
+    let mut h = Harness::new();
+    eval_value(&mut h, "document.body.innerHTML='<div style=\"height:10000px\"></div>'; 1");
+    // Playwright's initial mouse position; the synthetic layout has no
+    // element there, where Chrome would hit the root element.
+    assert_eq!(eval_value(&mut h, "document.elementFromPoint(0, 0) === null"), json!(true));
+    let r = h.page("Input.dispatchMouseEvent", json!({"type":"mouseWheel","x":0,"y":0,"deltaX":0,"deltaY":70}));
+    assert_eq!(r["result"], json!({}), "{r}");
+    assert_eq!(eval_value(&mut h, "scrollY"), json!(70));
+    let r = h.page("Input.dispatchMouseEvent", json!({"type":"mouseWheel","x":-1,"y":0,"deltaX":0,"deltaY":70}));
+    assert!(r["error"]["message"].as_str().is_some_and(|m| m.contains("no element at point")), "{r}");
+    eval_value(&mut h, "scrollTo(0, 0); 1");
+    let r = h.page("Input.dispatchMouseEvent", json!({"type":"mousePressed","x":0,"y":0,"button":"left","buttons":1}));
+    assert!(
+        r["error"]["message"].as_str().is_some_and(|m| m.contains("no element at point")),
+        "clicks keep the error: {r}"
+    );
+}
+
+/// Pages for the drag tests: centers of #src, #dst and #plain, and a capture
+/// log of drag/pointer events in Chromium's probe format.
+fn drag_page(h: &mut Harness) -> (Value, Value, Value) {
+    eval_value(
+        h,
+        r#"
+      document.body.innerHTML='<div id="src" draggable="true" style="width:100px;height:40px">src</div><a id="lnk" href="/doc?id=7" style="display:block;width:80px;height:20px">link <b>x</b></a><div id="dst" style="width:200px;height:80px">dst</div><div id="plain" style="width:100px;height:40px">plain</div>';
+      globalThis.log=[];
+      const short = e => e.type + '@' + (e.target.id||e.target.nodeName) + (e.dataTransfer ? '[' + [e.dataTransfer.dropEffect, e.dataTransfer.effectAllowed, e.dataTransfer.types.join('+'), e.dataTransfer.getData('text/plain')].join(',') + ']' : '') + ' b' + e.buttons + (e.cancelable ? ' c' : '') + (e.isTrusted ? '' : ' untrusted');
+      for (const t of ['dragstart','drag','dragenter','dragover','dragleave','drop','dragend','pointercancel','mouseup','click'])
+        document.addEventListener(t, e => log.push(short(e)), true);
+      globalThis.moves = 0; document.addEventListener('mousemove', () => moves++);
+      const src = document.getElementById('src'), dst = document.getElementById('dst');
+      src.addEventListener('dragstart', e => { e.dataTransfer.setData('text/plain', 'payload'); e.dataTransfer.setData('application/x-custom', 'c'); if (globalThis.EA) e.dataTransfer.effectAllowed = EA; });
+      dst.addEventListener('dragover', e => { e.dataTransfer.setData('text/plain', 'ignored'); if (!globalThis.NO_ACCEPT) e.preventDefault(); });
+      dst.addEventListener('drop', e => { globalThis.dropped = e.dataTransfer; e.preventDefault(); });
+      globalThis.center = id => { const r = document.getElementById(id).getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; };
+      1
+    "#,
+    );
+    (eval_value(h, "center('src')"), eval_value(h, "center('dst')"), eval_value(h, "center('plain')"))
+}
+
+fn mouse(h: &mut Harness, kind: &str, at: &Value, dy: f64, buttons: u16) -> Vec<Value> {
+    let button = if kind == "mouseMoved" && buttons == 0 { "none" } else { "left" };
+    h.page_with_events(
+        "Input.dispatchMouseEvent",
+        json!({"type":kind,"x":at[0],"y":at[1].as_f64().unwrap() + dy,"button":button,"buttons":buttons,"clickCount":1}),
+    )
+}
+
+fn drag(h: &mut Harness, kind: &str, at: &Value, data: &Value) -> Value {
+    h.page("Input.dispatchDragEvent", json!({"type":kind,"x":at[0],"y":at[1],"data":data,"modifiers":0}))
+}
+
+#[test]
+fn input_set_intercept_drags_keeps_pointer_drags_on_mouse_events() {
+    // Playwright 1.59 wraps every left-button mouse.move in
+    // setInterceptDrags(true/false); pointer-driven drags (column resizing,
+    // dnd-kit's MouseSensor) must still see plain mouse events.
+    let mut h = Harness::new();
+    let (_, _, plain) = drag_page(&mut h);
+    mouse(&mut h, "mousePressed", &plain, 0.0, 1);
+    assert_eq!(h.page("Input.setInterceptDrags", json!({"enabled":true}))["result"], json!({}));
+    for dy in [6.0, 12.0, 18.0] {
+        let events = mouse(&mut h, "mouseMoved", &plain, dy, 1);
+        assert!(!events.iter().any(|e| e["method"] == "Input.dragIntercepted"), "{events:?}");
+    }
+    assert_eq!(h.page("Input.setInterceptDrags", json!({"enabled":false}))["result"], json!({}));
+    mouse(&mut h, "mouseReleased", &plain, 18.0, 0);
+    assert_eq!(eval_value(&mut h, "[moves, log.join('|')]"), json!([3, "mouseup@plain b0 c|click@plain b0 c"]));
+    assert_eq!(h.page("Input.setInterceptDrags", json!({}))["error"]["code"], -32602);
+}
+
+#[test]
+fn input_intercepted_native_drag_matches_chromium_event_sequence() {
+    let mut h = Harness::new();
+    let (src, dst, _) = drag_page(&mut h);
+    // Without interception there is no OS drag loop: no dragstart.
+    mouse(&mut h, "mousePressed", &src, 0.0, 1);
+    mouse(&mut h, "mouseMoved", &src, 10.0, 1);
+    mouse(&mut h, "mouseReleased", &src, 10.0, 0);
+    assert_eq!(eval_value(&mut h, "log.splice(0).join('|')"), json!("mouseup@src b0 c|click@src b0 c"));
+
+    // A move below the 3px threshold does not start a drag; past it,
+    // dragstart fires and Input.dragIntercepted reports the data.
+    mouse(&mut h, "mousePressed", &src, 0.0, 1);
+    h.page("Input.setInterceptDrags", json!({"enabled":true}));
+    let events = mouse(&mut h, "mouseMoved", &src, 2.0, 1);
+    assert!(!events.iter().any(|e| e["method"] == "Input.dragIntercepted"), "{events:?}");
+    let events = mouse(&mut h, "mouseMoved", &src, 3.0, 1);
+    h.page("Input.setInterceptDrags", json!({"enabled":false}));
+    let intercepted = events.iter().find(|e| e["method"] == "Input.dragIntercepted").expect("dragIntercepted");
+    let data = intercepted["params"]["data"].clone();
+    assert_eq!(
+        data,
+        json!({"items":[{"mimeType":"text/plain","data":"payload"},{"mimeType":"application/x-custom","data":"c"}],"dragOperationsMask":-1})
+    );
+    assert_eq!(drag(&mut h, "dragEnter", &dst, &data)["result"], json!({}));
+    assert_eq!(drag(&mut h, "drop", &dst, &data)["result"], json!({}));
+    // Mouse release after the drop: no click (the pointer stream was canceled).
+    let types = "text/plain+application/x-custom";
+    assert_eq!(
+        eval_value(&mut h, "log.splice(0)"),
+        json!([
+            "dragstart@src[none,uninitialized,,] b1 c",
+            "pointercancel@src b0",
+            format!("drag@src[none,uninitialized,{types},] b0 c"),
+            format!("dragenter@dst[none,all,{types},] b0 c"),
+            format!("dragover@dst[none,all,{types},] b0 c"),
+            format!("drop@dst[copy,all,{types},payload] b0 c"),
+            format!("dragend@src[copy,uninitialized,{types},] b0"),
+        ])
+    );
+    // The protected-mode setData in dragover was ignored; the drop store is
+    // disabled once its event is over.
+    assert_eq!(eval_value(&mut h, "[dropped.types.length, dropped.getData('text/plain')]"), json!([0, ""]));
+
+    // Not accepted (dragover not canceled): drag + dragleave, dragend none.
+    eval_value(&mut h, "globalThis.NO_ACCEPT = true; globalThis.EA = 'move'; 1");
+    mouse(&mut h, "mousePressed", &src, 0.0, 1);
+    h.page("Input.setInterceptDrags", json!({"enabled":true}));
+    let events = mouse(&mut h, "mouseMoved", &src, 5.0, 1);
+    h.page("Input.setInterceptDrags", json!({"enabled":false}));
+    let data = events.iter().find(|e| e["method"] == "Input.dragIntercepted").unwrap()["params"]["data"].clone();
+    assert_eq!(data["dragOperationsMask"], 16);
+    drag(&mut h, "dragEnter", &dst, &data);
+    drag(&mut h, "drop", &dst, &data);
+    assert_eq!(
+        eval_value(&mut h, "log.splice(0).slice(2)"),
+        json!([
+            format!("drag@src[none,move,{types},] b0 c"),
+            format!("dragenter@dst[none,move,{types},] b0 c"),
+            format!("dragover@dst[none,move,{types},] b0 c"),
+            format!("drag@src[none,move,{types},] b0 c"),
+            format!("dragleave@dst[none,move,{types},] b0"),
+            format!("dragend@src[none,move,{types},] b0"),
+        ])
+    );
+
+    // dragCancel (Escape) ends with dragend only; a canceled dragstart starts
+    // no drag and the release still clicks.
+    eval_value(&mut h, "globalThis.NO_ACCEPT = false; globalThis.EA = undefined; 1");
+    mouse(&mut h, "mousePressed", &src, 0.0, 1);
+    h.page("Input.setInterceptDrags", json!({"enabled":true}));
+    let events = mouse(&mut h, "mouseMoved", &src, 5.0, 1);
+    h.page("Input.setInterceptDrags", json!({"enabled":false}));
+    let data = events.iter().find(|e| e["method"] == "Input.dragIntercepted").unwrap()["params"]["data"].clone();
+    drag(&mut h, "dragEnter", &dst, &data);
+    assert_eq!(drag(&mut h, "dragCancel", &dst, &json!({"items":[],"dragOperationsMask":65535}))["result"], json!({}));
+    assert_eq!(
+        eval_value(&mut h, "log.splice(0).slice(-2)"),
+        json!([
+            format!("dragenter@dst[none,all,{types},] b0 c"),
+            format!("dragend@src[none,uninitialized,{types},] b0")
+        ])
+    );
+    eval_value(&mut h, "document.getElementById('src').addEventListener('dragstart', e => e.preventDefault()); 1");
+    mouse(&mut h, "mousePressed", &src, 0.0, 1);
+    h.page("Input.setInterceptDrags", json!({"enabled":true}));
+    let events = mouse(&mut h, "mouseMoved", &src, 5.0, 1);
+    h.page("Input.setInterceptDrags", json!({"enabled":false}));
+    assert!(!events.iter().any(|e| e["method"] == "Input.dragIntercepted"), "{events:?}");
+    mouse(&mut h, "mouseReleased", &src, 5.0, 0);
+    assert_eq!(
+        eval_value(&mut h, "log.splice(0)"),
+        json!(["dragstart@src[none,uninitialized,,] b1 c", "mouseup@src b0 c", "click@src b0 c"])
+    );
+    assert_eq!(drag(&mut h, "drop", &dst, &data)["error"]["message"], "no drag in progress");
+    let files = json!({"items":[],"files":["/etc/hosts"],"dragOperationsMask":1});
+    assert_eq!(drag(&mut h, "dragEnter", &dst, &files)["error"]["code"], -32000);
+}
+
+#[test]
+fn input_intercepted_link_drag_carries_chromium_link_data() {
+    let mut h = Harness::new();
+    drag_page(&mut h);
+    let link = eval_value(&mut h, "center('lnk')");
+    mouse(&mut h, "mousePressed", &link, 0.0, 1);
+    h.page("Input.setInterceptDrags", json!({"enabled":true}));
+    let events = mouse(&mut h, "mouseMoved", &link, 4.0, 1);
+    h.page("Input.setInterceptDrags", json!({"enabled":false}));
+    let data =
+        events.iter().find(|e| e["method"] == "Input.dragIntercepted").expect("link drag")["params"]["data"].clone();
+    let url = eval_value(&mut h, "document.getElementById('lnk').href");
+    let html = eval_value(&mut h, "document.getElementById('lnk').outerHTML");
+    let title = eval_value(&mut h, "document.getElementById('lnk').innerText");
+    assert_eq!(
+        data,
+        json!({"items":[
+            {"mimeType":"text/uri-list","data":url,"title":title},
+            {"mimeType":"text/plain","data":url},
+            {"mimeType":"text/html","data":html,"baseURL":url},
+        ],"dragOperationsMask":-1})
+    );
+    drag(&mut h, "dragCancel", &link, &data);
+}
+
+#[test]
+fn set_content_document_write_reports_fresh_lifecycle_after_console_tag() {
+    let mut h = Harness::new();
+    h.page("Runtime.enable", json!({}));
+    h.page("Page.enable", json!({}));
+    h.page_with_events("Page.setLifecycleEventsEnabled", json!({"enabled":true}));
+    h.run_for(50);
+    let frame = h.frame_id.clone();
+    let utility = h.page("Page.createIsolatedWorld", json!({"frameId":frame,"worldName":"__pw_utility"}))["result"]
+        ["executionContextId"]
+        .clone();
+    // Playwright 1.59 frames.setContent, evaluated in the utility world.
+    let source = r#"(({ html, tag }) => { document.open(); console.debug(tag); document.write(html); document.close(); })({ html: '<!doctype html><title>mail</title><a href="/next">Open conversation</a><script>window.ran = document.readyState<\/script>', tag: '--tag--' })"#;
+    let mut events =
+        h.page_with_events("Runtime.evaluate", json!({"expression":source,"contextId":utility,"awaitPromise":true}));
+    events.extend(h.run_for(100));
+    let at = |pred: &dyn Fn(&Value) -> bool| events.iter().position(pred);
+    let tag = at(&|e| e["method"] == "Runtime.consoleAPICalled" && e["params"]["args"][0]["value"] == "--tag--")
+        .unwrap_or_else(|| panic!("console tag: {events:#?}"));
+    let frame = h.frame_id.clone();
+    let lifecycle = |name: &str| {
+        events.iter().position(|e| {
+            e["method"] == "Page.lifecycleEvent" && e["params"]["name"] == name && e["params"]["frameId"] == frame
+        })
+    };
+    let dcl = lifecycle("DOMContentLoaded").unwrap_or_else(|| panic!("DOMContentLoaded: {events:#?}"));
+    let load = lifecycle("load").unwrap_or_else(|| panic!("load: {events:#?}"));
+    assert!(tag < dcl && dcl < load, "{events:#?}");
+    assert!(at(&|e| e["method"] == "Page.loadEventFired").is_some_and(|i| i > tag), "{events:#?}");
+    assert_eq!(
+        eval_value(
+            &mut h,
+            "[window.ran, document.title, document.readyState, document.querySelector('a').href.endsWith('/next')]"
+        ),
+        json!(["loading", "mail", "complete", true])
+    );
+}
+
+#[test]
+fn input_mouse_move_to_empty_viewport_space_leaves_hovered_element_as_chromium() {
+    // TOS TS-100 dismisses a hover tooltip with page.mouse.move(0, 0). Chrome
+    // hit-tests empty viewport space as the root element; the synthetic
+    // layout has no element there. Expected sequences recorded from headless
+    // Chromium (Playwright 1.59.1) for the same page.
+    let mut h = Harness::new();
+    eval_value(
+        &mut h,
+        r#"
+      document.body.innerHTML='<header><button id="trigger" style="width:120px;height:30px">MSKU</button></header>';
+      globalThis.log=[];
+      for (const t of ['pointerover','pointerout','pointerenter','pointerleave','mouseover','mouseout','mouseenter','mouseleave','mousemove'])
+        document.addEventListener(t, e => log.push(t + '@' + (e.target.id || e.target.nodeName) + (e.bubbles ? '' : ' nb') + (e.cancelable ? ' c' : '')), true);
+      const r = document.getElementById('trigger').getBoundingClientRect(); globalThis.point = [r.x + r.width / 2, r.y + r.height / 2];
+      1
+    "#,
+    );
+    let point = eval_value(&mut h, "point");
+    assert_eq!(eval_value(&mut h, "document.elementFromPoint(0, 0) === null"), json!(true));
+    let mut moved = |x: &Value, y: &Value| {
+        let r =
+            h.page("Input.dispatchMouseEvent", json!({"type":"mouseMoved","x":x,"y":y,"button":"none","buttons":0}));
+        assert_eq!(r["result"], json!({}), "{r}");
+        eval_value(&mut h, "log.splice(0).join(' ')")
+    };
+    assert_eq!(
+        moved(&json!(0), &json!(0)),
+        json!("pointerover@HTML c pointerenter@#document nb pointerenter@HTML nb mouseover@HTML c mouseenter@#document nb mouseenter@HTML nb mousemove@HTML c")
+    );
+    assert_eq!(
+        moved(&point[0], &point[1]),
+        json!("pointerout@HTML c pointerover@trigger c pointerenter@BODY nb pointerenter@HEADER nb pointerenter@trigger nb mouseout@HTML c mouseover@trigger c mouseenter@BODY nb mouseenter@HEADER nb mouseenter@trigger nb mousemove@trigger c")
+    );
+    assert_eq!(
+        moved(&json!(0), &json!(0)),
+        json!("pointerout@trigger c pointerleave@trigger nb pointerleave@HEADER nb pointerleave@BODY nb pointerover@HTML c mouseout@trigger c mouseleave@trigger nb mouseleave@HEADER nb mouseleave@BODY nb mouseover@HTML c mousemove@HTML c")
+    );
+    // Outside the viewport and presses on empty space keep the explicit error.
+    let r =
+        h.page("Input.dispatchMouseEvent", json!({"type":"mouseMoved","x":-5,"y":2000,"button":"none","buttons":0}));
+    assert!(r["error"]["message"].as_str().is_some_and(|m| m.contains("no element at point")), "{r}");
+    let r = h.page("Input.dispatchMouseEvent", json!({"type":"mousePressed","x":0,"y":0,"button":"left","buttons":1}));
+    assert!(r["error"]["message"].as_str().is_some_and(|m| m.contains("no element at point")), "{r}");
+}
+
+#[test]
+fn input_boundary_events_carry_related_targets_and_follow_a_replaced_hovered_element() {
+    // @povio/ui swaps a static input for the interactive one a frame after
+    // mouseenter; react-aria's hover state then needs Chrome's boundary
+    // events for the element now under the stationary pointer. A removed
+    // hovered element gets no out/leave; over/enter name it as relatedTarget
+    // and no move events fire, about 100 ms later (Chromium measured 110 ms
+    // in the @povio/ui QueryAutocomplete case). Expectations follow Blink's
+    // BoundaryEventDispatcher::SendBoundaryEvents; they were not recorded
+    // from Chromium.
+    let mut h = Harness::new();
+    eval_value(
+        &mut h,
+        r#"
+      document.body.innerHTML='<div id="other" style="width:200px;height:40px">O</div><div id="cell" style="margin-top:100px"><div id="static" style="width:200px;height:40px">S</div></div>';
+      globalThis.log=[];
+      for (const t of ['pointerover','pointerout','pointerenter','pointerleave','mouseover','mouseout','mouseenter','mouseleave','mousemove'])
+        document.addEventListener(t, e => log.push(t + '@' + (e.target.id || e.target.nodeName) + '<' + (e.relatedTarget?.id || e.relatedTarget?.nodeName || '-')), true);
+      const c = (id) => { const r = document.getElementById(id).getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; };
+      globalThis.points = [c('static'), c('other')];
+      1
+    "#,
+    );
+    let points = eval_value(&mut h, "points");
+    let mut moved = |p: &Value| {
+        let r = h.page(
+            "Input.dispatchMouseEvent",
+            json!({"type":"mouseMoved","x":p[0],"y":p[1],"button":"none","buttons":0}),
+        );
+        assert_eq!(r["result"], json!({}), "{r}");
+        eval_value(&mut h, "log.splice(0).join(' ')")
+    };
+    moved(&points[1]);
+    assert_eq!(
+        moved(&points[0]),
+        json!("pointerout@other<static pointerleave@other<static pointerover@static<other pointerenter@cell<other pointerenter@static<other mouseout@other<static mouseleave@other<static mouseover@static<other mouseenter@cell<other mouseenter@static<other mousemove@static<-")
+    );
+    eval_value(
+        &mut h,
+        "const live = document.createElement('div'); live.id = 'live'; live.setAttribute('style', 'width:200px;height:40px'); document.getElementById('cell').replaceChildren(live); 1",
+    );
+    // Not in the mutating task: Chromium updates hover on its fake-mouse-move
+    // timer (~100 ms), after frameworks have cleaned up the removed node.
+    h.run_for(30);
+    assert_eq!(eval_value(&mut h, "log.splice(0).join(' ')"), json!(""));
+    h.run_for(150);
+    assert_eq!(
+        eval_value(&mut h, "log.splice(0).join(' ')"),
+        json!("pointerover@live<static pointerenter@#document<static pointerenter@HTML<static pointerenter@BODY<static pointerenter@cell<static pointerenter@live<static mouseover@live<static mouseenter@#document<static mouseenter@HTML<static mouseenter@BODY<static mouseenter@cell<static mouseenter@live<static")
+    );
+    assert_eq!(eval_value(&mut h, "document.getElementById('live').matches(':hover')"), json!(true));
+}
+
+#[test]
+fn hyperlink_downloads_follow_set_download_behavior_like_chromium() {
+    // Playwright 1.59 sets allowAndName per context and waits for
+    // Browser.downloadWillBegin / downloadProgress on the browser session, then
+    // reads downloadPath/guid. Event shapes recorded from headless Chromium.
+    static HTML: &str = "<!doctype html><title>dl</title>";
+    let (addr, server) = serve_html(2, HTML);
+    let mut h = Harness::new();
+    let targets = h.call(None, "Target.getTargets", json!({}));
+    let frame = h.frame_id.clone();
+    let ctx = targets["result"]["targetInfos"].as_array().unwrap().iter().find(|t| t["targetId"] == frame).unwrap()
+        ["browserContextId"]
+        .clone();
+    let dir = std::env::temp_dir().join(format!("lp-downloads-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let r = h.call(
+        None,
+        "Browser.setDownloadBehavior",
+        json!({"behavior":"allowAndName","browserContextId":ctx,"downloadPath":dir,"eventsEnabled":true}),
+    );
+    assert_eq!(r["result"], json!({}), "{r}");
+    h.page("Page.enable", json!({}));
+    let events = h.page_with_events("Page.navigate", json!({"url": format!("http://{addr}/page")}));
+    if !events.iter().any(|e| e["method"] == "Page.loadEventFired") {
+        until_event(&mut h, "Page.loadEventFired");
+    }
+    let download = |h: &mut Harness, script: &str| -> Vec<Value> {
+        eval_value(h, script);
+        let mut events = h.run_for(150);
+        events.retain(|e| e["method"].as_str().is_some_and(|m| m.starts_with("Browser.download")));
+        events
+    };
+    let check = |events: &[Value], name: &str, url_prefix: &str, body: &[u8]| {
+        assert_eq!(events.len(), 3, "{events:#?}");
+        let begin = &events[0]["params"];
+        assert_eq!(events[0]["method"], "Browser.downloadWillBegin");
+        assert!(events.iter().all(|e| e.get("sessionId").is_none()), "browser-session events: {events:#?}");
+        assert_eq!(begin["frameId"], frame);
+        assert_eq!(begin["suggestedFilename"], name);
+        assert!(begin["url"].as_str().unwrap().starts_with(url_prefix), "{begin}");
+        let guid = begin["guid"].as_str().unwrap();
+        assert_eq!(guid.len(), 36);
+        let total = body.len();
+        assert_eq!(events[1]["params"], json!({"guid":guid,"totalBytes":total,"receivedBytes":0,"state":"inProgress"}));
+        let path = dir.join(guid);
+        assert_eq!(
+            events[2]["params"],
+            json!({"guid":guid,"totalBytes":total,"receivedBytes":total,"state":"completed","filePath":path.to_string_lossy()})
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), body);
+    };
+    // blob: link revoked right after click() (TOS file.utils downloadFileFromUrl).
+    let events = download(
+        &mut h,
+        r#"const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['hello,world\n'], {type: 'text/csv'}));
+           a.download = 'export-1.csv'; document.body.appendChild(a); a.click(); URL.revokeObjectURL(a.href); a.remove(); 1"#,
+    );
+    let origin = format!("blob:http://{addr}/");
+    check(&events, "export-1.csv", &origin, b"hello,world\n");
+    // Dispatched (untrusted) click, as TOS downloadFile does; no navigation.
+    let events = download(
+        &mut h,
+        r#"const b = document.createElement('a'); b.href = 'data:text/plain;base64,aGk='; b.download = '';
+           b.dispatchEvent(new MouseEvent('click')); 1"#,
+    );
+    check(&events, "download", "data:text/plain", b"hi");
+    // Same-origin HTTP link: fetched, named from the URL.
+    let events = download(
+        &mut h,
+        "const c = document.createElement('a'); c.href = '/reports/q3.txt'; c.download = ''; c.click(); 1",
+    );
+    check(&events, "q3.txt", &format!("http://{addr}/reports/q3.txt"), HTML.as_bytes());
+    assert_eq!(eval_value(&mut h, "location.pathname + '|' + document.title"), json!("/page|dl"));
+    server.join().unwrap();
+    // Deny delivers nothing.
+    h.call(None, "Browser.setDownloadBehavior", json!({"behavior":"deny","browserContextId":ctx}));
+    let events = download(
+        &mut h,
+        "const d = document.createElement('a'); d.href = URL.createObjectURL(new Blob(['x'])); d.download = 'x.txt'; d.click(); 1",
+    );
+    assert!(events.is_empty(), "{events:#?}");
+    let r = h.call(None, "Browser.setDownloadBehavior", json!({"behavior":"allow","browserContextId":ctx}));
+    assert_eq!(r["error"]["code"], -32602, "{r}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn error_remote_objects_carry_chrome_style_name_and_message() {
+    // console.error(err) text is built from the argument's description. Chrome
+    // describes errors as `name: message` plus `    at` frames; JSC's stack
+    // alone has only frames, which hid TOS app errors behind bare stacks.
+    let mut h = Harness::new();
+    h.page("Runtime.enable", json!({}));
+    h.run_for(20);
+    let mut events = h.page_with_events(
+        "Runtime.evaluate",
+        json!({"expression": r#"
+          function load() { throw new TypeError("bad id"); }
+          try { load(); } catch (e) { console.error(e); }
+          const renamed = new Error("custom message"); renamed.name = "AxiosError"; console.error("Query failed:", renamed);
+          console.error(new DOMException("aborted", "AbortError"));
+          const anon = new Error("only message"); anon.name = ""; console.error(anon);
+          1"#}),
+    );
+    events.extend(h.run_for(50));
+    let args: Vec<Value> = events
+        .iter()
+        .filter(|e| e["method"] == "Runtime.consoleAPICalled")
+        .flat_map(|e| e["params"]["args"].as_array().unwrap().clone())
+        .filter(|a| a["subtype"] == "error")
+        .collect();
+    let first_line = |a: &Value| a["description"].as_str().unwrap().lines().next().unwrap().to_owned();
+    assert_eq!(
+        args.iter().map(first_line).collect::<Vec<_>>(),
+        ["TypeError: bad id", "AxiosError: custom message", "AbortError: aborted", "only message"]
+    );
+    let typed = args[0]["description"].as_str().unwrap();
+    assert!(typed.lines().nth(1).is_some_and(|l| l.starts_with("    at load")), "{typed}");
+    assert_eq!(args[0]["className"], "TypeError");
+}
+
+/// Serves `responses` requests: `/page` as HTML (links to `/file`), anything
+/// else with the given extra headers and body.
+fn serve_attachment(
+    responses: usize,
+    headers: &'static str,
+    body: &'static [u8],
+) -> (std::net::SocketAddr, std::thread::JoinHandle<()>) {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = std::thread::spawn(move || {
+        for _ in 0..responses {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+            let mut request = Vec::new();
+            let mut chunk = [0; 1024];
+            while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                let n = stream.read(&mut chunk).unwrap();
+                assert!(n > 0);
+                request.extend_from_slice(&chunk[..n]);
+            }
+            let page = request.starts_with(b"GET /page ");
+            let (head, body): (String, &[u8]) = if page {
+                let html: &[u8] = b"<!doctype html><title>stay</title><a id=f href=\"/file/report.bin\">f</a>";
+                (format!("Content-Type: text/html\r\nContent-Length: {}\r\n", html.len()), html)
+            } else {
+                (format!("{headers}Content-Length: {}\r\n", body.len()), body)
+            };
+            stream.write_all(format!("HTTP/1.1 200 OK\r\n{head}Connection: close\r\n\r\n").as_bytes()).unwrap();
+            stream.write_all(body).unwrap();
+        }
+    });
+    (address, server)
+}
+
+#[test]
+fn content_disposition_attachment_navigation_becomes_download() {
+    // Recorded from headless Chromium: the navigation starts, is aborted
+    // without frameNavigated (Page.navigate gets net::ERR_ABORTED), the page
+    // stays, and the response is delivered as a download named by
+    // filename* over filename.
+    let (addr, server) = serve_attachment(
+        3,
+        "Content-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=\"report 2026.xlsx\"; filename*=UTF-8''r%C3%A9port.xlsx\r\n",
+        b"\x01\x02\x03",
+    );
+    let mut h = Harness::new();
+    let targets = h.call(None, "Target.getTargets", json!({}));
+    let frame = h.frame_id.clone();
+    let ctx = targets["result"]["targetInfos"].as_array().unwrap().iter().find(|t| t["targetId"] == frame).unwrap()
+        ["browserContextId"]
+        .clone();
+    let dir = std::env::temp_dir().join(format!("lp-cd-downloads-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    h.call(
+        None,
+        "Browser.setDownloadBehavior",
+        json!({"behavior":"allowAndName","browserContextId":ctx,"downloadPath":dir,"eventsEnabled":true}),
+    );
+    h.page("Page.enable", json!({}));
+    h.page("Network.enable", json!({}));
+    let events = h.page_with_events("Page.navigate", json!({"url": format!("http://{addr}/page")}));
+    if !events.iter().any(|e| e["method"] == "Page.loadEventFired") {
+        until_event(&mut h, "Page.loadEventFired");
+    }
+    // A link click (anchor navigation).
+    eval_value(&mut h, "document.getElementById('f').click(); 1");
+    let mut events = h.run_for(300);
+    let downloads: Vec<&Value> =
+        events.iter().filter(|e| e["method"].as_str().is_some_and(|m| m.starts_with("Browser.download"))).collect();
+    assert_eq!(downloads.len(), 3, "{events:#?}");
+    assert_eq!(downloads[0]["params"]["suggestedFilename"], "réport.xlsx");
+    assert_eq!(downloads[0]["params"]["url"], format!("http://{addr}/file/report.bin"));
+    let path = downloads[2]["params"]["filePath"].as_str().unwrap().to_owned();
+    assert_eq!(std::fs::read(&path).unwrap(), b"\x01\x02\x03");
+    assert!(!events.iter().any(|e| e["method"] == "Page.frameNavigated"), "{events:#?}");
+    // Playwright resolves the pending navigation from these: the document
+    // request fails as aborted (no dataReceived), and the requested
+    // navigation is cleared before loading stops.
+    let at = |m: &str| events.iter().position(|e| e["method"] == m);
+    let failed = events.iter().find(|e| e["method"] == "Network.loadingFailed").expect("loadingFailed");
+    assert_eq!(failed["params"]["errorText"], "net::ERR_ABORTED");
+    assert_eq!(failed["params"]["canceled"], true);
+    assert_eq!(failed["params"]["type"], "Document");
+    assert!(!events.iter().any(|e| e["method"] == "Network.dataReceived" || e["method"] == "Network.loadingFinished"));
+    let cleared = at("Page.frameClearedScheduledNavigation").expect("cleared");
+    assert!(cleared < at("Page.frameStoppedLoading").unwrap(), "{events:#?}");
+    assert_eq!(eval_value(&mut h, "document.title + '|' + location.pathname"), json!("stay|/page"));
+    // Page.navigate to an attachment URL answers net::ERR_ABORTED.
+    events = h.page_with_events("Page.navigate", json!({"url": format!("http://{addr}/file/direct.bin")}));
+    events.extend(h.run_for(300));
+    let response = events.iter().find(|e| e.get("id").is_some() && e["result"].get("frameId").is_some()).unwrap();
+    assert_eq!(response["result"]["errorText"], "net::ERR_ABORTED", "{response}");
+    assert!(events.iter().any(|e| e["method"] == "Browser.downloadWillBegin"), "{events:#?}");
+    server.join().unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn input_home_end_with_mac_scroll_commands_scroll_the_document() {
+    // Playwright sends Home/End with scrollTo{Beginning,End}OfDocument on
+    // macOS. Outside editable content Chrome scrolls the document. Scroll
+    // events arrive at the next frame, so each key waits past one.
+    let mut h = Harness::new();
+    eval_value(&mut h, "document.body.innerHTML = '<div style=\"height:5000px\"></div>'; globalThis.scrolls = 0; document.addEventListener('scroll', () => scrolls++); 1");
+    for (key, command) in [("End", "scrollToEndOfDocument"), ("Home", "scrollToBeginningOfDocument")] {
+        let r = h.page(
+            "Input.dispatchKeyEvent",
+            json!({"type":"rawKeyDown","key":key,"code":key,"windowsVirtualKeyCode":if key == "End" { 35 } else { 36 },"commands":[command]}),
+        );
+        assert_eq!(r["result"], json!({}), "{key}: {r}");
+        h.run_for(200);
+        let y = eval_value(&mut h, "scrollY").as_f64().unwrap();
+        if key == "End" {
+            assert!(y > 0.0, "End scrolls to the bottom");
+        } else {
+            assert_eq!(y, 0.0, "Home scrolls to the top");
+        }
+    }
+    assert_eq!(eval_value(&mut h, "scrolls"), json!(2));
+}
+
+#[test]
+fn file_inputs_report_file_chooser_opened_when_intercepted() {
+    // Playwright's waitForEvent('filechooser') enables interception, then
+    // expects Page.fileChooserOpened (shapes recorded from headless Chromium).
+    let mut h = Harness::new();
+    eval_value(
+        &mut h,
+        r#"document.body.innerHTML = '<input type="file" id="f" style="width:100px;height:30px"><input type="file" id="m" multiple style="width:100px;height:30px"><label for="f" id="lab" style="display:block;width:100px;height:30px">Up</label>';
+           globalThis.clicks = []; document.getElementById('f').addEventListener('click', e => clicks.push(e.isTrusted));
+           globalThis.center = id => { const r = document.getElementById(id).getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; }; 1"#,
+    );
+    let click = |h: &mut Harness, id: &str| -> Vec<Value> {
+        let at = eval_value(h, &format!("center('{id}')"));
+        let mut events = Vec::new();
+        for (kind, buttons) in [("mousePressed", 1), ("mouseReleased", 0)] {
+            events.extend(h.page_with_events(
+                "Input.dispatchMouseEvent",
+                json!({"type":kind,"x":at[0],"y":at[1],"button":"left","buttons":buttons,"clickCount":1}),
+            ));
+        }
+        events.extend(h.run_for(30));
+        events.into_iter().filter(|e| e["method"] == "Page.fileChooserOpened").collect()
+    };
+    assert!(click(&mut h, "f").is_empty(), "no interception, no event");
+    assert_eq!(h.page("Page.setInterceptFileChooserDialog", json!({"enabled":true}))["result"], json!({}));
+    let frame = h.frame_id.clone();
+    let opened = click(&mut h, "f");
+    assert_eq!(opened.len(), 1, "{opened:?}");
+    assert_eq!(opened[0]["params"]["frameId"], frame);
+    assert_eq!(opened[0]["params"]["mode"], "selectSingle");
+    let backend = opened[0]["params"]["backendNodeId"].clone();
+    let resolved = h.page("DOM.resolveNode", json!({"backendNodeId": backend}));
+    let object = resolved["result"]["object"]["objectId"].clone();
+    let id = h.page(
+        "Runtime.callFunctionOn",
+        json!({"objectId": object, "functionDeclaration": "function() { return this.id; }", "returnByValue": true}),
+    );
+    assert_eq!(id["result"]["result"]["value"], "f");
+    let opened = click(&mut h, "m");
+    assert_eq!(opened[0]["params"]["mode"], "selectMultiple");
+    // A label forwards the user's (trusted) click and opens its control's chooser.
+    let opened = click(&mut h, "lab");
+    assert_eq!(opened.len(), 1, "{opened:?}");
+    assert_eq!(eval_value(&mut h, "clicks"), json!([true, true, true]));
+    h.page("Page.setInterceptFileChooserDialog", json!({"enabled":false}));
+    assert!(click(&mut h, "f").is_empty());
+}
+
+#[test]
 fn dom_backend_nodes_adopt_across_worlds_and_expire_on_navigation() {
     let mut h = Harness::new();
     assert_eq!(h.page("DOM.enable", json!({}))["result"], json!({}));
@@ -1082,7 +1893,9 @@ fn dom_geometry_matches_native_rect_and_rejects_detached_or_foreign_objects() {
 }
 
 #[test]
-fn dom_scroll_delivers_each_changed_ancestor_before_following_task() {
+fn dom_scroll_delivers_each_changed_ancestor_at_the_next_frame() {
+    // Scroll events fire in the next rendering update (frame), once per
+    // changed scroller: reads wait past one frame (30 ms).
     for primed in [false, true] {
         let mut h = Harness::new();
         let setup = h.page(
@@ -1115,14 +1928,14 @@ fn dom_scroll_delivers_each_changed_ancestor_before_following_task() {
                 &mut h,
                 "document.querySelector('#inner').scrollTop=1;document.querySelector('#outer').scrollTop=1;true",
             );
-            let r = h.page("Runtime.evaluate", json!({"expression":"new Promise(r=>setTimeout(()=>{scrollEvents=[];r(true)},0))","awaitPromise":true,"returnByValue":true}));
+            let r = h.page("Runtime.evaluate", json!({"expression":"new Promise(r=>setTimeout(()=>{scrollEvents=[];r(true)},30))","awaitPromise":true,"returnByValue":true}));
             assert_eq!(r["result"]["result"]["value"], true, "{r}");
         }
         let before = eval_value(&mut h, "scrollState()");
         assert_eq!(before[0][1], false, "inner must initially clip the target: {before}");
         assert_eq!(before[1][1], false, "outer must initially clip the target: {before}");
         assert_eq!(h.page("DOM.scrollIntoViewIfNeeded", json!({"objectId":object}))["result"], json!({}));
-        let r = h.page("Runtime.evaluate", json!({"expression":"new Promise(r=>setTimeout(()=>r([scrollState(),scrollEvents]),0))","awaitPromise":true,"returnByValue":true}));
+        let r = h.page("Runtime.evaluate", json!({"expression":"new Promise(r=>setTimeout(()=>r([scrollState(),scrollEvents]),30))","awaitPromise":true,"returnByValue":true}));
         let value = &r["result"]["result"]["value"];
         for index in 0..2 {
             assert!(value[0][index][0].as_f64().unwrap() > 1.0, "ancestor must scroll: {r}");
@@ -1131,14 +1944,14 @@ fn dom_scroll_delivers_each_changed_ancestor_before_following_task() {
         assert_eq!(value[1], json!([["inner", false, true], ["outer", false, true], ["document", true, true]]));
         eval_value(&mut h, "scrollEvents=[];true");
         assert_eq!(h.page("DOM.scrollIntoViewIfNeeded", json!({"objectId":object}))["result"], json!({}));
-        let repeated = h.page("Runtime.evaluate", json!({"expression":"new Promise(r=>setTimeout(()=>r(scrollEvents),0))","awaitPromise":true,"returnByValue":true}));
+        let repeated = h.page("Runtime.evaluate", json!({"expression":"new Promise(r=>setTimeout(()=>r(scrollEvents),30))","awaitPromise":true,"returnByValue":true}));
         assert_eq!(
             repeated["result"]["result"]["value"],
             json!([]),
             "unchanged offsets must not emit scroll: {repeated}"
         );
         assert_eq!(h.page("DOM.focus", json!({"objectId":object}))["result"], json!({}));
-        let focused = h.page("Runtime.evaluate", json!({"expression":"new Promise(r=>setTimeout(()=>r([document.activeElement.id,scrollEvents]),0))","awaitPromise":true,"returnByValue":true}));
+        let focused = h.page("Runtime.evaluate", json!({"expression":"new Promise(r=>setTimeout(()=>r([document.activeElement.id,scrollEvents]),30))","awaitPromise":true,"returnByValue":true}));
         assert_eq!(
             focused["result"]["result"]["value"],
             json!(["target", []]),
@@ -1576,7 +2389,6 @@ fn input_accepts_mac_key_derived_editing_commands() {
     // clipboard, undo and word movement too), and commands that are not the
     // key's own encoding, are refused without delivering events.
     for (key, code, modifiers, commands) in [
-        ("Home", "Home", 0, json!(["scrollToBeginningOfDocument"])),
         ("ArrowLeft", "ArrowLeft", 1, json!(["moveWordLeft"])),
         ("z", "KeyZ", 4, json!(["undo"])),
         ("ArrowRight", "ArrowRight", 0, json!(["moveLeft"])),
@@ -1622,6 +2434,47 @@ fn input_accepts_mac_key_derived_editing_commands() {
             ["result"]["result"]["value"],
         json!(["ad", 1])
     );
+}
+
+#[test]
+fn layout_metrics_report_viewport_scroll_and_document_size() {
+    let mut h = Harness::new();
+    let metrics = json!({"width":800,"height":600,"deviceScaleFactor":2,"mobile":false});
+    assert_eq!(h.page("Emulation.setDeviceMetricsOverride", metrics)["result"], json!({}));
+    h.page("Page.enable", json!({}));
+    let load = |h: &mut Harness, url: &str| {
+        let events = h.page_with_events("Page.navigate", json!({ "url": url }));
+        if !events.iter().any(|e| e["method"] == "Page.loadEventFired") {
+            until_event(h, "Page.loadEventFired");
+        }
+    };
+    // Expected values are what headless Chromium (Playwright 1.59.1's build)
+    // reports for the same page, viewport and scroll offsets at DPR 2.
+    let expected = |x: u32, y: u32, w: u32, h: u32| {
+        let layout = json!({"pageX":x,"pageY":y,"clientWidth":800,"clientHeight":600});
+        let visual = json!({"offsetX":0,"offsetY":0,"pageX":x,"pageY":y,"clientWidth":800,"clientHeight":600,"scale":1,"zoom":1});
+        let content = json!({"x":0,"y":0,"width":w,"height":h});
+        json!({"layoutViewport":layout,"visualViewport":visual,"contentSize":content,
+               "cssLayoutViewport":layout,"cssVisualViewport":visual,"cssContentSize":content})
+    };
+    // Sizes are f64 (`1500.0`); compare them as JSON numbers.
+    let metrics = |h: &mut Harness| -> Value {
+        let r = h.page("Page.getLayoutMetrics", json!({}));
+        serde_json::from_str(&r["result"].to_string().replace(".0,", ",").replace(".0}", "}")).unwrap()
+    };
+    load(&mut h, "data:text/html,<!doctype html><body style=margin:0><div style=width:1500px;height:2500px></div>");
+    assert_eq!(
+        eval_value(&mut h, "[document.documentElement.scrollWidth, document.documentElement.scrollHeight]"),
+        json!([1500, 2500])
+    );
+    assert_eq!(metrics(&mut h), expected(0, 0, 1500, 2500));
+    assert_eq!(eval_value(&mut h, "scrollTo(100, 300); [scrollX, scrollY]"), json!([100, 300]));
+    assert_eq!(metrics(&mut h), expected(100, 300, 1500, 2500));
+    // Content smaller than the viewport reports the viewport size.
+    load(&mut h, "data:text/html,<!doctype html><body>short");
+    assert_eq!(metrics(&mut h), expected(0, 0, 800, 600));
+    let r = h.page("Page.getLayoutMetrics", json!({"bogus":1}));
+    assert_eq!(r["error"]["code"], -32602, "{r}");
 }
 
 fn eval_value(h: &mut Harness, expression: &str) -> Value {
@@ -2282,3 +3135,689 @@ fn network_idle_waits_for_in_flight_requests() {
 
 #[path = "engine_cdp/frames.rs"]
 mod frames;
+
+#[test]
+fn links_and_window_open_targeting_blank_open_paused_popups() {
+    let mut h = Harness::new();
+    let opener = h.frame_id.clone();
+    h.page("Page.enable", json!({}));
+    let page = "data:text/html,<a id=a href=\"data:text/html,<title>popped</title>\" target=_blank>a</a>";
+    let seen = h.page_with_events("Page.navigate", json!({ "url": page }));
+    if !seen.iter().any(|m| m["method"] == "Page.loadEventFired") {
+        h.until_event(|m| m["method"] == "Page.loadEventFired");
+    }
+    h.page("Runtime.evaluate", json!({"expression":"document.getElementById('a').click()"}));
+
+    // Chrome: a paused popup target in the opener's context, announced with its opener.
+    let attached =
+        h.until_event(|m| m["method"] == "Target.attachedToTarget" && m["params"]["targetInfo"]["targetId"] != opener);
+    let info = &attached["params"]["targetInfo"];
+    assert_eq!(info["openerId"], json!(opener));
+    assert_eq!(info["canAccessOpener"], json!(false), "target=_blank links are noopener");
+    assert_eq!(attached["params"]["waitingForDebugger"], json!(true));
+    let popup = attached["params"]["sessionId"].as_str().unwrap().to_owned();
+
+    // Uncommitted initial document until the client resumes the popup.
+    let tree = h.call(Some(&popup), "Page.getFrameTree", json!({}));
+    assert_eq!(tree["result"]["frameTree"]["frame"]["url"], json!(":"));
+    h.call(Some(&popup), "Page.enable", json!({}));
+    // Resuming starts the held navigation; its events may share the response's batch.
+    let id = h.send(Some(&popup), "Runtime.runIfWaitingForDebugger", json!({}));
+    let mut seen = h.until_response(id);
+    let is_navigated = |m: &Value| m["method"] == "Page.frameNavigated" && m["sessionId"] == json!(popup);
+    let navigated = match seen.iter().position(is_navigated) {
+        Some(i) => seen.swap_remove(i),
+        None => h.until_event(is_navigated),
+    };
+    assert_eq!(navigated["params"]["frame"]["url"], json!("data:text/html,<title>popped</title>"));
+
+    // window.open with noopener opens a popup and returns null; opener access is refused explicitly.
+    let r = h.page(
+        "Runtime.evaluate",
+        json!({"expression":"String(window.open('data:text/html,second', '_blank', 'noopener'))","returnByValue":true}),
+    );
+    assert_eq!(r["result"]["result"]["value"], json!("null"));
+    let second = h.until_event(|m| {
+        m["method"] == "Target.attachedToTarget"
+            && m["params"]["targetInfo"]["targetId"] != opener
+            && m["params"]["sessionId"] != json!(popup)
+    });
+    assert_eq!(second["params"]["targetInfo"]["openerId"], json!(opener));
+    let r = h.page("Runtime.evaluate", json!({"expression":"window.open('data:text/html,x')"}));
+    assert!(r["result"]["exceptionDetails"].is_object(), "scriptable popups are unsupported: {r}");
+}
+
+#[test]
+fn tos_new_tab_activations_open_popups_with_their_opener() {
+    // TOS opens new tabs three ways (TP-4231, TP-4217, TS-106): react-aria
+    // onPress calling window.open(url, "_blank", "noopener,noreferrer") from
+    // synthetic (untrusted) pointer/mouse events (DOM activation), a click on
+    // a target=_blank link, and Enter on a focused target=_blank link
+    // (Playwright focus() + press("Enter")). Playwright's `popup` and
+    // context `page` events need a new target announced with openerId, as
+    // Chrome does for noopener popups.
+    let mut h = Harness::new();
+    let opener = h.frame_id.clone();
+    h.page("Page.enable", json!({}));
+    let page = "data:text/html,<button id=b>View Position</button><a id=a href=\"data:text/html,partner\" target=_blank>Open in new tab</a>\
+        <script>document.getElementById('b').addEventListener('click', () => { window.__r = String(window.open('data:text/html,master', '_blank', 'noopener,noreferrer')); });</script>";
+    let seen = h.page_with_events("Page.navigate", json!({ "url": page }));
+    if !seen.iter().any(|m| m["method"] == "Page.loadEventFired") {
+        h.until_event(|m| m["method"] == "Page.loadEventFired");
+    }
+    let mut popups: Vec<String> = Vec::new();
+    let next_popup = |h: &mut Harness, popups: &mut Vec<String>, what: &str| {
+        let known = popups.clone();
+        let attached = h.until_event(|m| {
+            m["method"] == "Target.attachedToTarget"
+                && m["params"]["targetInfo"]["targetId"] != opener
+                && !known.iter().any(|s| m["params"]["sessionId"] == json!(s))
+        });
+        assert_eq!(attached["params"]["targetInfo"]["openerId"], json!(opener), "{what}");
+        assert_eq!(attached["params"]["targetInfo"]["canAccessOpener"], json!(false), "{what}");
+        popups.push(attached["params"]["sessionId"].as_str().unwrap().to_owned());
+    };
+
+    // DOM activation: untrusted events, as TOS's E2E_DOM_ACTIVATION lane sends.
+    h.page(
+        "Runtime.evaluate",
+        json!({"expression":"document.getElementById('b').dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true}))"}),
+    );
+    next_popup(&mut h, &mut popups, "window.open noopener,noreferrer from an untrusted click");
+    let r = h.page("Runtime.evaluate", json!({"expression":"window.__r","returnByValue":true}));
+    assert_eq!(r["result"]["result"]["value"], json!("null"), "noopener window.open returns null");
+
+    // Enter on a focused target=_blank link.
+    h.page("Runtime.evaluate", json!({"expression":"document.getElementById('a').focus()"}));
+    h.page(
+        "Input.dispatchKeyEvent",
+        json!({"type":"keyDown","key":"Enter","code":"Enter","windowsVirtualKeyCode":13,"text":"\r","unmodifiedText":"\r"}),
+    );
+    h.page("Input.dispatchKeyEvent", json!({"type":"keyUp","key":"Enter","code":"Enter","windowsVirtualKeyCode":13}));
+    next_popup(&mut h, &mut popups, "Enter on a target=_blank link");
+
+    // The opener stays where it was.
+    let r = h.page(
+        "Runtime.evaluate",
+        json!({"expression":"location.href.startsWith('data:text/html,<button')","returnByValue":true}),
+    );
+    assert_eq!(r["result"]["result"]["value"], json!(true));
+}
+
+#[test]
+fn scroll_into_view_if_needed_reveals_a_node_relative_rect() {
+    let mut h = Harness::new();
+    let setup = h.page(
+        "Runtime.evaluate",
+        json!({"expression": "document.body.innerHTML = '<div id=t style=\"height:3000px;width:100px\">t</div>'; document.querySelector('#t')"}),
+    );
+    let object = setup["result"]["result"]["objectId"].clone();
+    // Playwright sends `rect` for positional clicks; the area near the node's bottom must end up in view.
+    let r = h.page(
+        "DOM.scrollIntoViewIfNeeded",
+        json!({"objectId": object, "rect": {"x": 10, "y": 2900, "width": 1, "height": 1}}),
+    );
+    assert_eq!(r["result"], json!({}), "{r}");
+    let visible = eval_value(
+        &mut h,
+        "(() => { const top = document.querySelector('#t').getBoundingClientRect().top + 2900; return top >= 0 && top + 1 <= innerHeight; })()",
+    );
+    assert_eq!(visible, json!(true));
+}
+
+#[test]
+fn scroll_into_view_if_needed_leaves_a_visible_node_alone() {
+    // Chromium's DOM.scrollIntoViewIfNeeded does not scroll a node that is
+    // already in view. Playwright sends it before every click; start-aligning
+    // the window instead fired a scroll that react-aria's close-on-scroll
+    // treats as moving the trigger, so a combobox popover on any page taller
+    // than the viewport never rendered.
+    let mut h = Harness::new();
+    // Flow geometry (TOS runs it): approximate client rects cannot tell what is in view.
+    let page = h.browser.host().thread.browser.pages[0].main_frame.page_dom.as_ref().unwrap().clone();
+    page.layout.borrow_mut().set_geometry(lp_dom::layout::Geometry::Flow);
+    let setup = h.page(
+        "Runtime.evaluate",
+        json!({"expression": "document.body.innerHTML = '<div style=\"height:150px\"></div><button id=b>b</button><div style=\"height:3000px\"></div>'; \
+            globalThis.scrolls = []; addEventListener('scroll', e => scrolls.push(e.target === document ? 'document' : e.target.id), true); \
+            document.querySelector('#b')"}),
+    );
+    let object = setup["result"]["result"]["objectId"].clone();
+    assert_eq!(eval_value(&mut h, "(() => { const r = document.querySelector('#b').getBoundingClientRect(); return r.top > 0 && r.bottom < innerHeight; })()"), json!(true));
+    let r = h.page("DOM.scrollIntoViewIfNeeded", json!({ "objectId": object }));
+    assert_eq!(r["result"], json!({}), "{r}");
+    h.run_for(60);
+    assert_eq!(eval_value(&mut h, "[scrollY, scrolls.join()]"), json!([0, ""]));
+}
+
+#[test]
+fn scroll_events_from_scroll_into_view_wait_for_the_next_frame() {
+    // Chromium fires the scroll event of DOM.scrollIntoViewIfNeeded (and of
+    // scripted scrolls) in a later rendering update, after the commands that
+    // follow it: Playwright's click scrolls the option into view and clicks
+    // at once. TOS's @povio/ui autocomplete (react-aria) closes its popover on
+    // scroll; delivered as an immediate task, the event closed it before the
+    // click and left aria-expanded and ariaHideOutside behind (Customer
+    // heading aria-hidden). Each scrolled target fires once per frame.
+    let mut h = Harness::new();
+    let setup = h.page(
+        "Runtime.evaluate",
+        json!({"expression": "document.body.innerHTML = '<div style=\"height:3000px\"></div><button id=b>b</button>'; \
+            globalThis.scrolls = []; addEventListener('scroll', e => scrolls.push(e.target === document ? 'document' : e.target.id), true); \
+            document.querySelector('#b')"}),
+    );
+    let object = setup["result"]["result"]["objectId"].clone();
+    let r = h.page("DOM.scrollIntoViewIfNeeded", json!({ "objectId": object }));
+    assert_eq!(r["result"], json!({}), "{r}");
+    // The scroll itself is applied at once; its event is not delivered yet,
+    // even after the few milliseconds before Playwright's next command.
+    h.run_for(5);
+    assert_eq!(eval_value(&mut h, "scrollY > 0"), json!(true));
+    assert_eq!(eval_value(&mut h, "scrolls.join()"), json!(""), "no scroll event before the next command");
+    // A second scroll of the same target before the frame: still one event.
+    eval_value(&mut h, "scrollBy(0, -10); 1");
+    h.run_for(60);
+    assert_eq!(eval_value(&mut h, "scrolls.join()"), json!("document"), "one event at the next frame");
+}
+
+#[test]
+fn input_hover_after_scroll_carries_the_previous_element_like_chromium() {
+    // TOS HS field, measured in Chromium (W1 trace): with a span previously
+    // hovered, scrolling an off-screen field into view and moving onto it
+    // gives out on the span (relatedTarget = the field input) and over/enter
+    // on the input (relatedTarget = the span); nothing fires for the scroll.
+    let mut h = Harness::new();
+    eval_value(
+        &mut h,
+        r#"
+      document.body.innerHTML='<span id="span" style="display:block;width:200px;height:20px">S</span><div style="height:2000px"></div><div id="field"><input id="hs" tabindex="-1" style="display:block;width:190px;height:24px"></div>';
+      globalThis.log=[];
+      for (const t of ['pointerover','pointerout','pointerenter','pointerleave','mouseover','mouseout','mouseenter','mouseleave'])
+        document.addEventListener(t, e => { if (e.target.id) log.push(t + '@' + e.target.id + '<' + (e.relatedTarget?.id || e.relatedTarget?.nodeName || '-')) }, true);
+      1
+    "#,
+    );
+    let moved = |h: &mut Harness, id: &str| {
+        let point = eval_value(h, &format!("(() => {{ const r = document.getElementById('{id}').getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; }})()"));
+        let r = h.page(
+            "Input.dispatchMouseEvent",
+            json!({"type":"mouseMoved","x":point[0],"y":point[1],"button":"none","buttons":0}),
+        );
+        assert_eq!(r["result"], json!({}), "{r}");
+    };
+    moved(&mut h, "span");
+    eval_value(&mut h, "log.length = 0; document.getElementById('hs').scrollIntoView(); 1");
+    assert_eq!(eval_value(&mut h, "log.join(' ')"), json!(""), "scrolling alone dispatches nothing");
+    moved(&mut h, "hs");
+    assert_eq!(
+        eval_value(&mut h, "log.join(' ')"),
+        json!("pointerout@span<hs pointerleave@span<hs pointerover@hs<span pointerenter@field<span pointerenter@hs<span mouseout@span<hs mouseleave@span<hs mouseover@hs<span mouseenter@field<span mouseenter@hs<span")
+    );
+}
+
+#[test]
+fn select_then_insert_text_replaces_a_number_inputs_value_like_chromium() {
+    // Playwright's fill() on input[type=number] is select(), focus(), then
+    // Input.insertText. select() did nothing for number inputs (they have no
+    // selection API), so the text was appended: TOS Projects split read
+    // "10.75" for fill("0.75") over "1" and the Create Position button
+    // stayed disabled. Chromium replaces the value (its queued `select`
+    // event timing varies, so it is not asserted); the selection API still
+    // reports null and throws.
+    let mut h = Harness::new();
+    eval_value(
+        &mut h,
+        "document.body.innerHTML = '<input id=n type=number max=2 step=any value=1><input id=n2 type=number value=1.26>'; \
+         globalThis.ev = []; for (const id of ['n', 'n2']) for (const type of ['select', 'beforeinput', 'input']) \
+           document.getElementById(id).addEventListener(type, e => ev.push(id + ':' + type + '=' + e.target.value)); 1",
+    );
+    let fill = |h: &mut Harness, id: &str, text: &str| {
+        eval_value(
+            h,
+            &format!("(() => {{ const e = document.getElementById('{id}'); e.select(); e.focus(); return 1; }})()"),
+        );
+        assert_eq!(h.page("Input.insertText", json!({ "text": text }))["result"], json!({}));
+    };
+    fill(&mut h, "n", "0.75");
+    fill(&mut h, "n2", "1.25");
+    assert_eq!(
+        eval_value(
+            &mut h,
+            "(() => { const n = document.getElementById('n'), n2 = document.getElementById('n2'); \
+             return [n.value, n2.value, n.validity.valid, n.selectionStart, ev.filter(e => !e.includes(':select')).join(' ')]; })()"
+        ),
+        json!([
+            "0.75",
+            "1.25",
+            true,
+            null,
+            "n:beforeinput=1 n:input=0.75 n2:beforeinput=1.26 n2:input=1.25"
+        ])
+    );
+    // The selection API stays unavailable on number inputs.
+    assert_eq!(
+        eval_value(
+            &mut h,
+            "(() => { try { document.getElementById('n').setSelectionRange(0, 1); return 'ok'; } catch (e) { return e.name; } })()"
+        ),
+        json!("InvalidStateError")
+    );
+}
+
+#[test]
+fn disabling_the_focused_control_blurs_it_like_chromium() {
+    // Chromium blurs a focused control the moment it becomes disabled (by
+    // attribute, property or a disabled fieldset): trusted blur and focusout
+    // with no related target and the body active, synchronously, before the
+    // change's MutationObserver callback. The engine kept the disabled input
+    // focused, so react-aria synthesized its own blur and the TOS Quotes
+    // Document drawer's FocusScope saw two blurs, reopening the Customer
+    // combobox (heading left aria-hidden).
+    let mut h = Harness::new();
+    let probe = |mode: &str| {
+        format!(
+            "new Promise(res => {{ \
+               document.body.innerHTML = '<fieldset id=fs><input id=i></fieldset>'; \
+               const i = document.getElementById('i'), fs = document.getElementById('fs'), log = []; \
+               const d = n => n ? (n.id || n.nodeName) : null; \
+               for (const t of ['blur', 'focusout', 'focus', 'focusin']) document.addEventListener(t, e => \
+                 log.push(`${{t}}@${{d(e.target)}} trusted=${{e.isTrusted}} rel=${{d(e.relatedTarget)}} active=${{d(document.activeElement)}}`), true); \
+               i.focus(); log.length = 0; \
+               new MutationObserver(() => log.push(`MO active=${{d(document.activeElement)}}`)).observe('{mode}' === 'fieldset' ? fs : i, {{ attributes: true }}); \
+               if ('{mode}' === 'attribute') i.setAttribute('disabled', ''); \
+               else if ('{mode}' === 'property') i.disabled = true; \
+               else fs.disabled = true; \
+               log.push(`sync active=${{d(document.activeElement)}}`); \
+               setTimeout(() => {{ log.push(`task active=${{d(document.activeElement)}}`); res(log.join(' | ')); }}, 0); \
+             }})"
+        )
+    };
+    for mode in ["attribute", "property", "fieldset"] {
+        let r =
+            h.page("Runtime.evaluate", json!({"expression": probe(mode), "awaitPromise": true, "returnByValue": true}));
+        assert_eq!(
+            r["result"]["result"]["value"],
+            "blur@i trusted=true rel=null active=BODY | focusout@i trusted=true rel=null active=BODY | sync active=BODY | MO active=BODY | task active=BODY",
+            "{mode}: {r}"
+        );
+    }
+    // Disabling an unfocused control, or re-enabling, moves no focus.
+    assert_eq!(
+        eval_value(
+            &mut h,
+            "(() => { document.body.innerHTML = '<input id=a><input id=b>'; const a = document.getElementById('a'), b = document.getElementById('b'); \
+             a.focus(); b.disabled = true; b.disabled = false; return document.activeElement.id; })()"
+        ),
+        json!("a")
+    );
+}
+
+#[test]
+fn disabled_writes_elsewhere_move_no_focus_like_chromium() {
+    // Chromium blurs only the focused control that a `disabled` write
+    // disables. A write on another control or on a fieldset that does not
+    // contain the focused control fires nothing, and neither does any write
+    // after the focused control was removed. The engine blurred whatever
+    // focused element was not focusable after any such write, so a detached
+    // one silently lost focus at the next unrelated write (TOS Quote Finances
+    // kept Select all checked after a tab round trip with that change).
+    let mut h = Harness::new();
+    let probe = |html: &str, action: &str| {
+        format!(
+            "new Promise(res => {{ \
+               document.body.innerHTML = '{html}'; \
+               const $ = id => document.getElementById(id), i = $('i'), other = $('other'), wrap = $('wrap'), fs2 = $('fs2'), log = []; \
+               const d = n => n ? (n.id || n.nodeName) : null; \
+               const mark = what => log.push(`${{what}} active=${{d(document.activeElement)}}`); \
+               for (const t of ['blur', 'focusout', 'focus', 'focusin']) document.addEventListener(t, e => \
+                 log.push(`${{t}}@${{d(e.target)}} trusted=${{e.isTrusted}}`), true); \
+               i.focus(); log.length = 0; \
+               new MutationObserver(() => mark('MO')).observe(document, {{ attributes: true, childList: true, subtree: true }}); \
+               {action}; \
+               mark('sync'); \
+               setTimeout(() => {{ mark('task'); res(log.join(' | ')); }}, 0); \
+             }})"
+        )
+    };
+    let unrelated = "<input id=i><button id=other>o</button>";
+    let fieldsets = "<fieldset id=fs1><input id=i></fieldset><fieldset id=fs2><button id=other>o</button></fieldset>";
+    for (name, html, action) in [
+        ("property", unrelated, "other.disabled = true"),
+        ("attribute", unrelated, "other.setAttribute('disabled', '')"),
+        ("toggle", unrelated, "other.toggleAttribute('disabled', true)"),
+        ("fieldset", fieldsets, "fs2.disabled = true"),
+    ] {
+        let r = h.page(
+            "Runtime.evaluate",
+            json!({"expression": probe(html, action), "awaitPromise": true, "returnByValue": true}),
+        );
+        assert_eq!(r["result"]["result"]["value"], "sync active=i | MO active=i | task active=i", "{name}: {r}");
+    }
+    // Chromium blurs a removed focused control at removal (the engine does
+    // not yet); either way a later `disabled` write, unrelated or on the
+    // detached control, fires nothing and keeps the active element.
+    for (name, html, action) in [
+        ("unrelated", "<div id=wrap><input id=i></div><button id=other>o</button>", "other.disabled = true"),
+        ("detached", "<div id=wrap><input id=i></div>", "i.disabled = true"),
+    ] {
+        let action = format!(
+            "wrap.remove(); const removed = document.activeElement; log.length = 0; {action}; \
+             log.push(`same=${{document.activeElement === removed}}`)"
+        );
+        let r = h.page(
+            "Runtime.evaluate",
+            json!({"expression": probe(html, &action), "awaitPromise": true, "returnByValue": true}),
+        );
+        let v = r["result"]["result"]["value"].as_str().unwrap_or_default().to_owned();
+        assert!(v.starts_with("same=true | sync active="), "{name}: {r}");
+    }
+}
+
+/// Loads `body` (flow geometry, 20px/30px text), logs mouse/selection events
+/// and returns the page.
+fn selection_page(h: &mut Harness, body: &str, extra: &str) {
+    let page = h.browser.host().thread.browser.pages[0].main_frame.page_dom.as_ref().unwrap().clone();
+    page.layout.borrow_mut().set_geometry(lp_dom::layout::Geometry::Flow);
+    let setup = format!(
+        "(() => {{ document.head.innerHTML = '<style>body{{margin:0;font-size:20px;line-height:30px}} td{{padding:0 20px 0 0}}</style>'; \
+           document.body.innerHTML = {body:?}; globalThis.log = []; globalThis.cancel = {{}}; globalThis.hooks = {{}}; \
+           if (!globalThis.d) {{ \
+             globalThis.d = n => n ? (n.nodeType === 3 ? `#text(${{n.parentNode ? (n.parentNode.id || n.parentNode.nodeName) : 'detached'}})` : (n.id || n.nodeName)) : null; \
+             for (const t of ['mousedown', 'selectstart', 'mouseup', 'click']) document.addEventListener(t, e => {{ log.push(`${{t}}@${{d(e.target)}}`); if (cancel[t]) e.preventDefault(); if (hooks[t]) hooks[t](e); }}, true); \
+             document.addEventListener('mousemove', e => {{ if (hooks.mousemove) hooks.mousemove(e); }}); \
+             document.addEventListener('selectionchange', () => {{ if (log[log.length - 1] !== 'selectionchange') log.push('selectionchange'); }}); \
+           }} \
+           {extra} }})()"
+    );
+    eval_value(h, &setup);
+}
+
+/// A point at the vertical middle of `sel`'s text, `dx` px from its left
+/// edge (negative: from its right edge).
+fn text_point(h: &mut Harness, sel: &str, dx: f64) -> Value {
+    eval_value(
+        h,
+        &format!(
+            "(() => {{ const el = document.querySelector({sel:?}); const t = [...el.childNodes].find(n => n.nodeType === 3) || el; \
+               const r = document.createRange(); r.selectNodeContents(t); const b = r.getBoundingClientRect(); \
+               return [{dx} < 0 ? b.right + {dx} : b.left + {dx}, b.top + b.height / 2]; }})()"
+        ),
+    )
+}
+
+fn drag_select(h: &mut Harness, from: &Value, to: &Value) -> String {
+    mouse(h, "mousePressed", from, 0.0, 1);
+    for k in 1..=12 {
+        let f = k as f64 / 12.0;
+        let at = json!([
+            from[0].as_f64().unwrap() + (to[0].as_f64().unwrap() - from[0].as_f64().unwrap()) * f,
+            from[1].as_f64().unwrap() + (to[1].as_f64().unwrap() - from[1].as_f64().unwrap()) * f
+        ]);
+        mouse(h, "mouseMoved", &at, 0.0, 1);
+    }
+    mouse(h, "mouseReleased", to, 0.0, 0);
+    let r = h.page(
+        "Runtime.evaluate",
+        json!({"expression": "new Promise(res => setTimeout(() => { const s = getSelection(); \
+            res(`str=${JSON.stringify(s.toString())} type=${s.type} anchor=${d(s.anchorNode)}:${s.anchorOffset} focus=${d(s.focusNode)}:${s.focusOffset} active=${d(document.activeElement)} changed=${log.includes('selectionchange')} log=${log.filter(e => e !== 'selectionchange').join(',')}`); }, 20))",
+            "awaitPromise": true, "returnByValue": true}),
+    );
+    r["result"]["result"]["value"].as_str().unwrap_or_default().to_owned()
+}
+
+#[test]
+fn native_drag_selection_follows_chromium_rules() {
+    // Chromium selects text under a primary-button drag. The engine never
+    // did, so TOS table-viewport's native cross-row selection stayed empty.
+    // Chromium (800x600, measured): a press on text fires selectstart at the
+    // text node and collapses the selection there; moves extend it (anchor
+    // at the press, focus under the pointer, backwards too). A canceled
+    // mousedown or selectstart (refired on every move) selects nothing;
+    // user-select: none on the element or an ancestor selects nothing
+    // (user-select: text inside it does); a press on a button focuses it and
+    // selects nothing; a drag into user-select: none content stops at the end
+    // of the selectable text. The engine measures text with its own advance
+    // table, so points here are at text edges. (This harness runs the queued
+    // selectionchange task after the whole gesture; over CDP it comes after
+    // selectstart, as in Chromium, so only its firing is asserted.)
+    let mut h = Harness::new();
+    let p = "<p id=p style=\"margin:0\">abcdefghij</p><p id=q style=\"margin:0\">klmnopqrst</p>";
+    let whole = "str=\"abcdefghij\" type=Range anchor=#text(p):0 focus=#text(p):10 active=BODY changed=true log=mousedown@p,selectstart@#text(p),mouseup@p,click@p";
+    let run = |h: &mut Harness, body: &str, extra: &str, from: (&str, f64), to: (&str, f64)| {
+        selection_page(h, body, extra);
+        let (a, b) = (text_point(h, from.0, from.1), text_point(h, to.0, to.1));
+        drag_select(h, &a, &b)
+    };
+    assert_eq!(run(&mut h, p, "", ("#p", 1.0), ("#p", -0.5)), whole, "whole line");
+    assert_eq!(
+        run(&mut h, p, "", ("#p", -1.0), ("#p", 1.0)),
+        "str=\"abcdefghij\" type=Range anchor=#text(p):10 focus=#text(p):0 active=BODY changed=true log=mousedown@p,selectstart@#text(p),mouseup@p,click@p",
+        "backwards"
+    );
+    let r = run(&mut h, p, "", ("#p", 1.0), ("#q", -1.0));
+    assert!(
+        r.contains("anchor=#text(p):0 focus=#text(q):10")
+            && r.contains("log=mousedown@p,selectstart@#text(p),mouseup@q"),
+        "across lines: {r}"
+    );
+    let none =
+        "str=\"\" type=None anchor=null:0 focus=null:0 active=BODY changed=false log=mousedown@p,mouseup@p,click@p";
+    assert_eq!(run(&mut h, p, "cancel.mousedown = true", ("#p", 1.0), ("#p", -1.0)), none, "mousedown canceled");
+    let r = run(&mut h, p, "cancel.selectstart = true", ("#p", 1.0), ("#p", -1.0));
+    assert!(r.starts_with("str=\"\" type=None") && r.matches("selectstart@").count() > 1, "selectstart canceled: {r}");
+    let us = "<p id=p style=\"margin:0;user-select:none\">abcdefghij</p>";
+    assert_eq!(run(&mut h, us, "", ("#p", 1.0), ("#p", -1.0)), none, "user-select none");
+    let anc = "<div style=\"user-select:none\"><p id=p style=\"margin:0\">abcdefghij</p></div>";
+    assert_eq!(run(&mut h, anc, "", ("#p", 1.0), ("#p", -1.0)), none, "user-select none ancestor");
+    let text = "<div style=\"user-select:none\"><p id=p style=\"margin:0;user-select:text\">abcdefghij</p></div>";
+    assert_eq!(run(&mut h, text, "", ("#p", 1.0), ("#p", -1.0)), whole, "user-select text inside none");
+    let btn = "<button id=btn style=\"font:inherit\">button text</button><p id=p style=\"margin:0\">abcdefghij</p>";
+    let r = run(&mut h, btn, "", ("#btn", 1.0), ("#p", -1.0));
+    assert!(
+        r.starts_with("str=\"\" type=None") && r.contains("active=btn") && !r.contains("selectstart"),
+        "drag on button: {r}"
+    );
+    let into = "<p id=p style=\"margin:0\">abcdefghij</p><p id=q style=\"margin:0;user-select:none\">klmnopqrst</p>";
+    let r = run(&mut h, into, "", ("#p", 1.0), ("#q", -1.0));
+    assert!(
+        r.starts_with("str=\"abcdefghij\" type=Range anchor=#text(p):0 focus=#text(p):10"),
+        "into none region: {r}"
+    );
+    let table = "<table id=t style=\"border-spacing:0\"><tr><td id=a0>Alpha one</td><td id=b0>Beta one</td></tr><tr><td id=a1>Alpha two</td><td id=b1>Beta two</td></tr></table>";
+    let r = run(&mut h, table, "", ("#a0", 1.0), ("#b1", -1.0));
+    assert!(
+        r.contains("Alpha one") && r.contains("Alpha two") && r.contains("anchor=#text(a0):0"),
+        "table cross-row: {r}"
+    );
+    // A plain click collapses the selection there (the Selection API's own
+    // selection included), firing selectstart.
+    selection_page(
+        &mut h,
+        p,
+        "const t = document.getElementById('p').firstChild; getSelection().setBaseAndExtent(t, 1, t, 4);",
+    );
+    let at = text_point(&mut h, "#q", 1.0);
+    mouse(&mut h, "mousePressed", &at, 0.0, 1);
+    mouse(&mut h, "mouseReleased", &at, 0.0, 0);
+    let r = eval_value(&mut h, "(() => { const s = getSelection(); return `${s.type} ${d(s.anchorNode)}:${s.anchorOffset} ${log.filter(e => e !== 'selectionchange').join(',')}`; })()");
+    assert_eq!(r, json!("Caret #text(q):0 mousedown@q,selectstart@#text(q),mouseup@q,click@q"), "click collapses");
+}
+
+#[test]
+fn mouse_presses_over_empty_viewport_space_target_the_root_element() {
+    // Chromium hit-tests empty viewport space (below short content) as the
+    // root element: a click there fires pointerdown, mousedown, pointerup,
+    // mouseup and click at <html>. The engine rejected presses and releases
+    // there ("no element at point"), e.g. a drag released where content had
+    // been removed under the pointer.
+    let mut h = Harness::new();
+    let page = h.browser.host().thread.browser.pages[0].main_frame.page_dom.as_ref().unwrap().clone();
+    page.layout.borrow_mut().set_geometry(lp_dom::layout::Geometry::Flow);
+    eval_value(
+        &mut h,
+        "(() => { document.body.style.margin = '0'; document.body.innerHTML = '<p id=p style=\"margin:0;font-size:20px;line-height:30px\">abc</p>'; \
+          globalThis.log = []; for (const t of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) \
+          document.addEventListener(t, e => log.push(`${t}@${e.target.id || e.target.nodeName}`), true); })()",
+    );
+    let at = json!([200.0, 400.0]);
+    for (kind, buttons) in [("mousePressed", 1), ("mouseReleased", 0)] {
+        let r = h.page(
+            "Input.dispatchMouseEvent",
+            json!({"type":kind,"x":at[0],"y":at[1],"button":"left","buttons":buttons,"clickCount":1}),
+        );
+        assert!(r.get("error").is_none(), "{kind}: {r}");
+    }
+    assert_eq!(
+        eval_value(&mut h, "log.join(',')"),
+        json!("pointerdown@HTML,mousedown@HTML,pointerup@HTML,mouseup@HTML,click@HTML")
+    );
+}
+
+/// Like `drag_select`, but reports the Range text instead of Selection's.
+fn drag_select_range(h: &mut Harness, from: &Value, to: &Value) -> String {
+    drag_select(h, from, to);
+    eval_value(
+        h,
+        "(() => { const s = getSelection(); return `range=${JSON.stringify(s.rangeCount ? s.getRangeAt(0).toString() : '-')} type=${s.type} anchor=${d(s.anchorNode)}:${s.anchorOffset} focus=${d(s.focusNode)}:${s.focusOffset} log=${log.filter(e => e !== 'selectionchange').join(',')}`; })()",
+    )
+    .as_str()
+    .unwrap_or_default()
+    .to_owned()
+}
+
+#[test]
+fn native_drag_selection_resolves_hit_targets_and_removed_nodes_like_chromium() {
+    // Chromium (800x600, measured) resolves the caret within the element
+    // under the pointer: over empty space below a clipped container the
+    // caret is that element at offset 0 (not the clipped line nearer the
+    // point), on text covered by an opaque positioned element it is that
+    // element, and at the top of a scrolled container it is in the visible
+    // line; selectstart targets the text when the point is on it, else the
+    // element. A selectstart handler removing the text leaves no selection;
+    // an anchor removed or replaced mid-drag continues from where it was; a
+    // drag across user-select: none content keeps it inside the Range.
+    let mut h = Harness::new();
+    let lines: String = (0..8).map(|i| format!("<p id=l{i} style=\"margin:0\">line{i}text</p>")).collect();
+    let clipped = format!("<div id=sc style=\"height:90px;overflow:hidden\">{lines}</div><div style=\"height:100px\"></div><p id=v>visible text</p>");
+    let below = |h: &mut Harness, dx: f64| {
+        eval_value(h, &format!("(() => {{ const r = document.getElementById('sc').getBoundingClientRect(); return [{dx}, r.bottom + 15]; }})()"))
+    };
+    let click = |h: &mut Harness, at: &Value| {
+        mouse(h, "mousePressed", at, 0.0, 1);
+        mouse(h, "mouseReleased", at, 0.0, 0);
+        eval_value(h, "(() => { const s = getSelection(); return `type=${s.type} anchor=${d(s.anchorNode)}:${s.anchorOffset} log=${log.filter(e => e !== 'selectionchange').join(',')}`; })()")
+    };
+    selection_page(&mut h, &clipped, "document.getElementById('v').style.margin = '0'");
+    let at = below(&mut h, 20.0);
+    assert_eq!(
+        click(&mut h, &at),
+        json!("type=Caret anchor=DIV:0 log=mousedown@DIV,selectstart@DIV,mouseup@DIV,click@DIV"),
+        "click over a clipped line"
+    );
+    selection_page(&mut h, &clipped, "document.getElementById('v').style.margin = '0'");
+    let (a, z) = (text_point(&mut h, "#l0", 1.0), below(&mut h, 60.0));
+    assert_eq!(
+        drag_select_range(&mut h, &a, &z),
+        "range=\"line0textline1textline2textline3textline4textline5textline6textline7text\" type=Range anchor=#text(l0):0 focus=DIV:0 log=mousedown@l0,selectstart@#text(l0),mouseup@DIV,click@BODY",
+        "drag ending over a clipped line"
+    );
+    let scrolled = format!("<div id=sc style=\"height:90px;overflow:auto\">{lines}</div><p id=v>visible text</p>");
+    selection_page(&mut h, &scrolled, "document.getElementById('v').style.margin = '0'");
+    eval_value(&mut h, "document.getElementById('sc').scrollTop = 60");
+    let top = eval_value(
+        &mut h,
+        "(() => { const r = document.getElementById('sc').getBoundingClientRect(); return [20, r.top + 1]; })()",
+    );
+    let r = click(&mut h, &top);
+    assert!(
+        r.as_str().unwrap().starts_with("type=Caret anchor=#text(l2):")
+            && r.as_str().unwrap().contains("selectstart@l2"),
+        "top of a scrolled container: {r}"
+    );
+    let covered = "<p id=p style=\"margin:0\">abcdefghij</p><div id=ov style=\"position:absolute;left:0;top:0;width:400px;height:30px;background:white\"></div><p id=q style=\"margin:0\">klmnopqrst</p>";
+    selection_page(&mut h, covered, "");
+    let on_p = text_point(&mut h, "#p", 30.0);
+    assert_eq!(
+        click(&mut h, &on_p),
+        json!("type=Caret anchor=ov:0 log=mousedown@ov,selectstart@ov,mouseup@ov,click@ov"),
+        "click on covered text"
+    );
+    selection_page(&mut h, covered, "");
+    let (a, z) = (text_point(&mut h, "#q", -5.0), text_point(&mut h, "#p", 30.0));
+    let r = drag_select_range(&mut h, &a, &z);
+    assert!(
+        r.contains("anchor=#text(q):")
+            && r.contains("focus=ov:0")
+            && r.contains("log=mousedown@q,selectstart@#text(q),mouseup@ov"),
+        "drag ending on covered text: {r}"
+    );
+    let two = "<p id=p style=\"margin:0\">abcdefghij</p><p id=q style=\"margin:0\">klmnopqrst</p>";
+    selection_page(&mut h, two, "hooks.selectstart = e => { if (e.target.nodeType === 3 && e.target.parentNode && e.target.parentNode.id === 'p') e.target.remove(); };");
+    let (a, z) = (text_point(&mut h, "#p", 1.0), text_point(&mut h, "#q", -1.0));
+    let r = drag_select_range(&mut h, &a, &z);
+    assert!(
+        r.starts_with("range=\"-\" type=None") && r.contains("selectstart@#text(p)"),
+        "selectstart removes its text: {r}"
+    );
+    selection_page(&mut h, two, "let n = 0; hooks.mousemove = () => { if (++n === 4) { const t = document.getElementById('p').firstChild; if (t) t.remove(); } };");
+    let (a, z) = (text_point(&mut h, "#p", 1.0), text_point(&mut h, "#q", -1.0));
+    let r = drag_select_range(&mut h, &a, &z);
+    assert!(
+        r.starts_with("range=\"klmnopqrst\" type=Range") && r.contains("focus=#text(q):10"),
+        "anchor removed mid-drag: {r}"
+    );
+    selection_page(&mut h, two, "let n = 0; hooks.mousemove = () => { if (++n === 4) document.getElementById('p').textContent = 'ABCDEFGHIJ'; };");
+    let (a, z) = (text_point(&mut h, "#p", 1.0), text_point(&mut h, "#q", -1.0));
+    let r = drag_select_range(&mut h, &a, &z);
+    assert!(
+        r.starts_with("range=\"ABCDEFGHIJklmnopqrst\" type=Range anchor=#text(p):0 focus=#text(q):10"),
+        "anchor text replaced mid-drag: {r}"
+    );
+    let across = "<p id=p style=\"margin:0\">abcdefghij</p><p id=q style=\"margin:0;user-select:none\">klmnopqrst</p><p id=r style=\"margin:0\">uvwxyz</p>";
+    selection_page(&mut h, across, "");
+    let (a, z) = (text_point(&mut h, "#p", 1.0), text_point(&mut h, "#r", -1.0));
+    let r = drag_select_range(&mut h, &a, &z);
+    assert!(
+        r.starts_with("range=\"abcdefghijklmnopqrstuvwxyz\" type=Range anchor=#text(p):0 focus=#text(r):6"),
+        "across a none region: {r}"
+    );
+}
+
+#[test]
+fn reported_geometry_is_in_layout_units_like_chromium() {
+    // Chromium reports untransformed layout geometry in layout units: x, y,
+    // width and height each truncated toward zero to 1/64 px, so a quad's
+    // right edge minus its left edge is the width again. The engine reported
+    // full-precision coordinates: TOS bookkeeping's 150px header at
+    // x = 942.8340611353711 gave Playwright's boundingBox (quad maxX - minX)
+    // 149.9999999999999, below the column's 150px minimum. Chromium (800x600,
+    // measured): getBoundingClientRect and the box-model quad agree.
+    let mut h = Harness::new();
+    let page = h.browser.host().thread.browser.pages[0].main_frame.page_dom.as_ref().unwrap().clone();
+    page.layout.borrow_mut().set_geometry(lp_dom::layout::Geometry::Flow);
+    for (style, expected) in [
+        ("left:100.7px;top:10.3px;width:150px;height:20px", [100.6875, 10.296875, 150.0, 20.0]),
+        ("left:-10.7px;top:-3.3px;width:150px;height:20px", [-10.6875, -3.296875, 150.0, 20.0]),
+        ("left:100px;top:10px;width:150.7px;height:20.3px", [100.0, 10.0, 150.6875, 20.296875]),
+        ("left:100.3px;top:10px;width:33.33px;height:20px", [100.296875, 10.0, 33.328125, 20.0]),
+        ("left:942.8340611353711px;top:10px;width:150px;height:20px", [942.828125, 10.0, 150.0, 20.0]),
+    ] {
+        let setup = h.page(
+            "Runtime.evaluate",
+            json!({"expression": format!("document.body.style.margin = '0'; document.body.innerHTML = '<div id=e style=\"position:absolute;{style}\"></div>'; document.getElementById('e')")}),
+        );
+        let object = setup["result"]["result"]["objectId"].clone();
+        let rect = eval_value(&mut h, "(() => { const b = document.getElementById('e').getBoundingClientRect(); return [b.x, b.y, b.width, b.height]; })()");
+        let rect: Vec<f64> = rect.as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
+        assert_eq!(rect, expected, "{style}: DOMRect");
+        let model = h.page("DOM.getBoxModel", json!({ "objectId": object }));
+        let q = &model["result"]["model"]["border"];
+        let (x0, x1, y0, y2) =
+            (q[0].as_f64().unwrap(), q[2].as_f64().unwrap(), q[1].as_f64().unwrap(), q[5].as_f64().unwrap());
+        assert_eq!(
+            [x0, y0, x1 - x0, y2 - y0],
+            expected,
+            "{style}: box-model quad (and its width/height as Playwright derives them)"
+        );
+    }
+}

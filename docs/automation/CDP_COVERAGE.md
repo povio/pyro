@@ -17,9 +17,9 @@ Storage cookie commands use the network cookie jar, including HTTP response cook
 
 Capture uses a shared process payload budget (default 64 MiB, 8 MiB/body), at most 4096 response records per page, and bounded network subscriptions (1024 events/8 MiB logical bytes per context). Observer overflow closes the CDP connection instead of silently losing events. Disabling the last Network session, main navigation, or page teardown releases retained bodies; child navigation/removal releases only that frame's captures. Per-session `Network.enable` buffer options are explicitly unsupported. These are logical retention limits, not an RSS measurement; shared chunk allocations and metadata contribute additional memory.
 
-The browser integration smoke also exercises DOM access before init scripts, shared DOM across isolated worlds, page fetch with exact Network frame/loader correlation, route fulfillment/abort after headers, and Web Storage context/page/navigation isolation. These checks use local HTTP and JavaScript evaluation; The full DOM protocol and actual TOS workflows remain unvalidated. A separate Input check covers keyboard typing/text insertion and mouse checkbox activation; editing commands, wheel default scrolling, pen/touch and drag remain unsupported. Mouse coordinates follow the native synthetic layout, not full CSS positioning; the smoke derives its click point from the reported rectangle and verifies the exact hit target.
+The browser integration smoke also exercises DOM access before init scripts, shared DOM across isolated worlds, page fetch with exact Network frame/loader correlation, route fulfillment/abort after headers, and Web Storage context/page/navigation isolation. These checks use local HTTP and JavaScript evaluation; The full DOM protocol and actual TOS workflows remain unvalidated. A separate Input check covers keyboard typing/text insertion and mouse checkbox activation; editing commands and pen/touch remain unsupported; native drag-and-drop works under Playwright's drag interception; wheel default scrolling follows the synthetic layout. Mouse coordinates follow the native synthetic layout, not full CSS positioning; the smoke derives its click point from the reported rectangle and verifies the exact hit target.
 
-Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 48 engine, 9 accepted/recorded only, 2 conditional, 42 pending (counts from the table below).
+Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 53 engine, 7 accepted/recorded only, 2 conditional, 39 pending (counts from the table below).
 
 | Method | Upstream 2ad38773f | Rewrite | Notes |
 | --- | --- | --- | --- |
@@ -30,7 +30,7 @@ Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 48 engi
 | `Browser.grantPermissions` | yes | pending |  |
 | `Browser.resetPermissions` | yes | pending |  |
 | `Browser.setDockTile` | **no** | pending |  |
-| `Browser.setDownloadBehavior` | yes | accepted, recorded only | accepted; the loader does not implement download delivery yet |
+| `Browser.setDownloadBehavior` | yes | engine | per browser context; under allow/allowAndName, `<a download>` links to blob:, data: or same-origin URLs (blob bytes captured at click, so an immediate revokeObjectURL is fine; HTTP fetched) are written to downloadPath (guid-named for allowAndName) with Chrome's Browser.downloadWillBegin and downloadProgress inProgress/completed (filePath) events on the browser session when eventsEnabled; failures report canceled; deny/default deliver nothing. A navigation answered with Content-Disposition: attachment becomes a download as in Chrome: nothing commits (Page.navigate gets net::ERR_ABORTED; the document request reports Network.loadingFailed net::ERR_ABORTED, canceled; a requested navigation is cleared). Name: Content-Disposition filename* then filename, else the download attribute, else the URL's last segment, else "download" |
 | `Browser.setWindowBounds` | yes | accepted, recorded only | stores the bounds, which getWindowForTarget reports back; no page API (outerWidth, screen) observes them yet (upstream: no-op) |
 | `CSS.disable` | **no** | pending |  |
 | `CSS.enable` | yes | pending |  |
@@ -40,7 +40,7 @@ Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 48 engi
 | `DOM.disable` | **no** | engine | stops documentUpdated notifications |
 | `DOM.enable` | yes | engine | documentUpdated notifications; frontend mirror/mutation tracking unsupported |
 | `DOM.getFrameOwner` | yes | engine | native child owner backend ID in the same page session; missing/main frame rejected |
-| `DOM.scrollIntoViewIfNeeded` | yes | engine | connected visible elements over native synthetic layout; rectangle override unsupported |
+| `DOM.scrollIntoViewIfNeeded` | yes | engine | in a child frame, also reveals each owning iframe in its parent; connected visible elements over native synthetic layout; `rect` (node-relative area, sent by Playwright for positional clicks) scrolls the window to the nearest edge after revealing the node |
 | `DOM.setFileInputFiles` | yes | pending |  |
 | `Debugger.disable` | yes | pending |  |
 | `Debugger.enable` | yes | pending |  |
@@ -64,12 +64,12 @@ Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 48 engi
 | `HeapProfiler.collectGarbage` | **no** | pending |  |
 | `IO.close` | yes | pending |  |
 | `IO.read` | yes | pending |  |
-| `Input.dispatchDragEvent` | **no** | pending |  |
+| `Input.dispatchDragEvent` | **no** | engine | drives the page's native drag session as Blink does: dragEnter/dragOver fire `drag` on the source, then `dragenter`/`dragleave` on a changed target or `dragover` on the same one; drop fires `drop` (read-only data) when the last dragenter/dragover was canceled, else `drag` + `dragleave`, then `dragend` with the accepted operation; dragCancel fires `dragend` only. Target data follows the CDP items and operations mask (protected mode in dragenter/dragover/dragleave). A dragEnter without a session is a drag entering from outside. Drags carrying `files` and child-frame targets are unsupported |
 | `Input.dispatchKeyEvent` | yes | engine | native focused-frame keyboard routing, trusted events and control default actions; raw-key cross-document char suppression. The macOS editing commands Playwright derives are accepted only where the engine's default action matches: ArrowLeft/Right/Up/Down with or without Shift (Up/Down in single-line text inputs and textareas), Backspace, Delete, Meta+A, and Escape (`cancelOperation`, events only). Other commands and alternate metadata are unsupported |
-| `Input.dispatchMouseEvent` | yes | engine | native root-frame hit testing, trusted mouse/pointer events and activation; child coordinates, wheel scrolling, pen and custom pressure unsupported |
+| `Input.dispatchMouseEvent` | yes | engine | hit testing descends into iframes (the point is translated into the innermost frame document, which alone receives the events), trusted mouse/pointer events and activation; `mouseWheel` fires a trusted cancelable `wheel` and, unless canceled, scrolls the nearest container that can still move per axis, else the viewport (wheel/touch listeners on window, document, html and body default to passive); a wheel or move over empty viewport space targets the root element (as Chrome hit-tests it; presses there and points outside the viewport stay errors); moves fire Chrome's boundary events (out, leave inner to outer, over, enter outer to inner, for pointer then mouse); pen and custom pressure unsupported |
 | `Input.dispatchTouchEvent` | yes | pending |  |
 | `Input.insertText` | yes | engine | native focus/selection and cancellable beforeinput/input |
-| `Input.setInterceptDrags` | **no** | pending |  |
+| `Input.setInterceptDrags` | **no** | engine | while enabled, a left-button `mouseMoved` at least 3px (Chrome's macOS threshold) from a press on a draggable source (`draggable=true`, or a link with href) fires `dragstart` and, unless canceled, `pointercancel` and `Input.dragIntercepted` with the drag data (links prefill uri-list/plain/html as Chrome) and mask. Pointer-driven drags keep plain mouse events. Without interception no native drag starts (no OS drag loop); images are not draggable (no image decoding) |
 | `Log.enable` | yes | accepted, recorded only | console goes through Runtime.consoleAPICalled; no Log entries are produced |
 | `Network.clearBrowserCache` | yes | engine | empties the HTTP cache of the page's browser context (shared by its pages, as in Chrome 147) via `NetClient::clear_http_cache()`, and, when the opt-in shared public-asset cache is on (`LIGHTNINGPANDA_SHARED_ASSET_CACHE_MB`), its process-wide store via `clear_shared_asset_cache()`; cache hits, including shared ones, report `fromDiskCache: true` with `encodedDataLength: 0` |
 | `Network.emulateNetworkConditions` | yes | pending |  |
@@ -84,7 +84,7 @@ Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 48 engi
 | `Page.close` | yes | pending |  |
 | `Page.enable` | yes | engine |  |
 | `Page.getFrameTree` | yes | engine | nested native frames with per-document loader and actual security origin |
-| `Page.getLayoutMetrics` | yes | pending |  |
+| `Page.getLayoutMetrics` | yes | engine | main frame, CSS px: emulated viewport, window scroll offset and document scroll size (at least the viewport); no pinch zoom, so the visual viewport equals the layout viewport with `scale`/`zoom` 1; the deprecated fields repeat the CSS values, as headless Chromium on macOS reports at DPR 1 and 2. `page.screenshot` still fails at `Page.captureScreenshot` (no rasterizer) |
 | `Page.getNavigationHistory` | yes | engine | main-frame session history with stable entry ids; `title` is empty and `transitionType` is `other`; the initial about:blank entry is kept by the first navigation (Chrome replaces it) |
 | `Page.handleJavaScriptDialog` | yes | pending |  |
 | `Page.navigate` | yes | engine | about:blank, data and HTTP documents; frameId supports native children; explicit failures, no joint child history |
@@ -94,7 +94,7 @@ Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 48 engi
 | `Page.removeScriptToEvaluateOnNewDocument` | yes | engine |  |
 | `Page.setBypassCSP` | yes | accepted, recorded only | no CSP enforcement exists |
 | `Page.setFontFamilies` | **no** | pending |  |
-| `Page.setInterceptFileChooserDialog` | yes | accepted, recorded only | no file chooser exists |
+| `Page.setInterceptFileChooserDialog` | yes | engine | per session; activating an `<input type=file>` (click, label, script `click()`) emits `Page.fileChooserOpened` {frameId, mode selectSingle/selectMultiple, backendNodeId} to intercepting sessions; no native picker exists |
 | `Page.setLifecycleEventsEnabled` | yes | engine | per-frame lifecycle events and replay of reached milestones |
 | `Page.startScreencast` | **no** | pending |  |
 | `Profiler.disable` | **no** | pending |  |
@@ -108,7 +108,7 @@ Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 48 engi
 | `Runtime.evaluate` | yes | engine |  |
 | `Runtime.getProperties` | yes | engine |  |
 | `Runtime.releaseObject` | yes | engine |  |
-| `Runtime.runIfWaitingForDebugger` | yes | engine |  |
+| `Runtime.runIfWaitingForDebugger` | yes | engine | starts a paused popup's navigation; other targets never start paused |
 | `Security.setIgnoreCertificateErrors` | yes | pending |  |
 | `Storage.clearCookies` | yes | engine | per-context native cookie jar; omitted context uses a distinct default context |
 | `Storage.getCookies` | yes | engine | per-context native cookie jar; omitted context uses a distinct default context |
@@ -117,7 +117,7 @@ Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 48 engi
 | `Target.attachToTarget` | yes | engine |  |
 | `Target.closeTarget` | yes | engine |  |
 | `Target.createBrowserContext` | yes | engine | `proxyServer` is refused |
-| `Target.createTarget` | yes | engine |  |
+| `Target.createTarget` | yes | engine | engine-opened popups (`target=_blank`/named links, `window.open` with `noopener`) become targets in the opener's context with `openerId`, paused (`waitingForDebugger`) under auto-attach; `window.open` with opener access throws (no cross-page WindowProxy); named targets always open a new page |
 | `Target.detachFromTarget` | yes | engine |  |
 | `Target.disposeBrowserContext` | yes | engine |  |
 | `Target.getTargetInfo` | yes | engine |  |

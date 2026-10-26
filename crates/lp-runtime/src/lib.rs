@@ -16,7 +16,141 @@ use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, VecDeque};
 use std::rc::Rc;
 use std::sync::mpsc;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+/// Timed waits of the loop. `std`'s `recv_timeout`/`park_timeout`/`sleep`
+/// are kernel-coalesced on macOS: measured on macOS 27 (M1 Pro), a 16 ms
+/// wait returned after 100-145 ms and a 100 ms wait after ~240 ms, while a
+/// `poll(2)`/`kevent(2)` timeout returned within 2 ms of the request. Every
+/// delayed timer, `requestAnimationFrame` and the scroll/debounce cadences
+/// built on them inherited that lateness. The loop therefore sleeps in
+/// `poll(2)` on a self-pipe that cross-thread posters write to.
+#[cfg(unix)]
+mod wake {
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    /// Write end, shared by every [`super::LoopHandle`].
+    pub(super) struct Notifier(OwnedFd);
+    /// Read end, owned by the loop. Once every notifier is gone the pipe
+    /// reports POLLHUP for good, so later waits sleep on no descriptor.
+    pub(super) struct Sleeper(OwnedFd, std::cell::Cell<bool>);
+
+    pub(super) fn pair() -> std::io::Result<(Sleeper, Arc<Notifier>)> {
+        let mut fds = [0i32; 2];
+        // SAFETY: `fds` is a valid 2-element buffer for pipe(2).
+        if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        // SAFETY: pipe(2) returned two fresh descriptors we now own.
+        let (read, write) = unsafe { (OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1])) };
+        for fd in [&read, &write] {
+            // SAFETY: valid descriptor; flags are plain ints.
+            unsafe {
+                let flags = libc::fcntl(fd.as_raw_fd(), libc::F_GETFL);
+                if flags < 0 || libc::fcntl(fd.as_raw_fd(), libc::F_SETFL, flags | libc::O_NONBLOCK) < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                if libc::fcntl(fd.as_raw_fd(), libc::F_SETFD, libc::FD_CLOEXEC) < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+            }
+        }
+        // A handle may post just as the loop (and the read end) goes away:
+        // the write must fail with EPIPE, never raise SIGPIPE. Rust binaries
+        // ignore SIGPIPE at startup; embedders may not, so pin it per fd.
+        #[cfg(target_os = "macos")]
+        // SAFETY: valid descriptor; F_SETNOSIGPIPE takes an int flag.
+        if unsafe { libc::fcntl(write.as_raw_fd(), libc::F_SETNOSIGPIPE, 1) } < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok((Sleeper(read, std::cell::Cell::new(false)), Arc::new(Notifier(write))))
+    }
+
+    impl Notifier {
+        /// Wakes the loop. A full pipe (EAGAIN) already holds a pending wake;
+        /// EPIPE means the loop is gone and the channel send already failed
+        /// or the task can never run; EINTR is retried. Anything else is a
+        /// programming error (bad descriptor): surfaced in debug builds.
+        pub(super) fn notify(&self) {
+            loop {
+                // SAFETY: one byte from a valid buffer to our descriptor.
+                if unsafe { libc::write(self.0.as_raw_fd(), [1u8].as_ptr().cast(), 1) } == 1 {
+                    return;
+                }
+                let err = std::io::Error::last_os_error();
+                match err.raw_os_error() {
+                    Some(libc::EINTR) => continue,
+                    Some(libc::EAGAIN) | Some(libc::EPIPE) => return,
+                    _ => {
+                        debug_assert!(false, "event loop wake pipe write failed: {err}");
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    impl Sleeper {
+        /// Sleeps until `wait` elapses (forever when `None`) or a notifier
+        /// writes or every notifier is gone. Returns whether a notifier
+        /// still exists (`false` once the write end is closed everywhere).
+        pub(super) fn sleep(&self, wait: Option<Duration>) -> bool {
+            // poll(2) counts whole milliseconds: round up so the loop never
+            // wakes before a deadline and spins.
+            let timeout = match wait {
+                None => -1,
+                Some(w) => i32::try_from(w.as_millis() + u128::from(w.subsec_nanos() % 1_000_000 != 0)).unwrap_or(i32::MAX),
+            };
+            if self.1.get() {
+                // No notifier can wake us: a plain timed wait (still poll(2),
+                // which is not coalesced). `None` would block forever: callers
+                // never pass it once every sender is gone.
+                // SAFETY: zero descriptors; poll only sleeps.
+                unsafe { libc::poll(std::ptr::null_mut(), 0, timeout.max(0)) };
+                return false;
+            }
+            let mut fd = libc::pollfd { fd: self.0.as_raw_fd(), events: libc::POLLIN, revents: 0 };
+            // SAFETY: one valid pollfd.
+            let n = unsafe { libc::poll(&mut fd, 1, timeout) };
+            if n < 0 {
+                let err = std::io::Error::last_os_error();
+                // EINTR: the caller recomputes its wait and polls again.
+                debug_assert!(err.raw_os_error() == Some(libc::EINTR), "event loop wake pipe poll failed: {err}");
+                return true;
+            }
+            // Drain every pending wake byte. EAGAIN ends the drain; EINTR
+            // retries; anything else is a programming error (bad descriptor).
+            let mut buf = [0u8; 64];
+            loop {
+                // SAFETY: valid buffer and descriptor; non-blocking read.
+                let got = unsafe { libc::read(self.0.as_raw_fd(), buf.as_mut_ptr().cast(), buf.len()) };
+                if got > 0 {
+                    continue;
+                }
+                if got == 0 {
+                    break; // write end closed: POLLHUP below records it
+                }
+                let err = std::io::Error::last_os_error();
+                match err.raw_os_error() {
+                    Some(libc::EINTR) => continue,
+                    Some(libc::EAGAIN) => break,
+                    _ => {
+                        debug_assert!(false, "event loop wake pipe read failed: {err}");
+                        break;
+                    }
+                }
+            }
+            if n > 0 && fd.revents & libc::POLLHUP != 0 {
+                self.1.set(true);
+                return false;
+            }
+            true
+        }
+    }
+}
 
 /// HTML task sources (informational today; kept for ordering policies).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -186,17 +320,26 @@ type Stamped<S> = (Instant, RemoteTask<S>);
 /// Cross-thread posting handle. Tasks are delivered in posting order.
 pub struct LoopHandle<S> {
     tx: mpsc::Sender<Stamped<S>>,
+    #[cfg(unix)]
+    wake: Arc<wake::Notifier>,
 }
 
 impl<S> Clone for LoopHandle<S> {
     fn clone(&self) -> Self {
-        LoopHandle { tx: self.tx.clone() }
+        LoopHandle {
+            tx: self.tx.clone(),
+            #[cfg(unix)]
+            wake: self.wake.clone(),
+        }
     }
 }
 
 impl<S> LoopHandle<S> {
     pub fn post(&self, task: impl FnOnce(&mut S) + Send + 'static) -> Result<(), LoopClosed> {
-        self.tx.send((Instant::now(), Box::new(task))).map_err(|_| LoopClosed)
+        self.tx.send((Instant::now(), Box::new(task))).map_err(|_| LoopClosed)?;
+        #[cfg(unix)]
+        self.wake.notify();
+        Ok(())
     }
 }
 
@@ -217,6 +360,11 @@ pub struct EventLoop<S> {
     sched: Scheduler<S>,
     tx: Option<mpsc::Sender<Stamped<S>>>,
     rx: mpsc::Receiver<Stamped<S>>,
+    /// The loop's own notifier handle; dropped with `tx` by `close_remote`.
+    #[cfg(unix)]
+    wake_tx: Option<Arc<wake::Notifier>>,
+    #[cfg(unix)]
+    sleeper: wake::Sleeper,
     /// Remote tasks received from `rx`, in posting order, awaiting their turn.
     remote: VecDeque<Stamped<S>>,
     remote_open: bool,
@@ -231,7 +379,13 @@ impl<S: LoopState + 'static> Default for EventLoop<S> {
 impl<S: LoopState + 'static> EventLoop<S> {
     pub fn new() -> Self {
         let (tx, rx) = mpsc::channel();
+        #[cfg(unix)]
+        let (sleeper, wake_tx) = wake::pair().expect("event loop wake pipe");
         EventLoop {
+            #[cfg(unix)]
+            wake_tx: Some(wake_tx),
+            #[cfg(unix)]
+            sleeper,
             sched: Scheduler {
                 inner: Rc::new(Inner {
                     tasks: RefCell::new(VecDeque::new()),
@@ -257,13 +411,21 @@ impl<S: LoopState + 'static> EventLoop<S> {
     /// A new cross-thread handle. Handles created before
     /// [`EventLoop::close_remote`] keep working until dropped.
     pub fn handle(&self) -> LoopHandle<S> {
-        LoopHandle { tx: self.tx.clone().expect("remote posting closed") }
+        LoopHandle {
+            tx: self.tx.clone().expect("remote posting closed"),
+            #[cfg(unix)]
+            wake: self.wake_tx.clone().expect("remote posting closed"),
+        }
     }
 
     /// Drops the loop's own sender so `run_until_idle` can finish once all
     /// external handles are gone.
     pub fn close_remote(&mut self) {
         self.tx = None;
+        #[cfg(unix)]
+        {
+            self.wake_tx = None;
+        }
     }
 
     /// Runs one ready task or due timer. Returns false if nothing was ready.
@@ -355,6 +517,28 @@ impl<S: LoopState + 'static> EventLoop<S> {
         }
     }
 
+    /// Blocks until `wait` elapses, a remote task is posted, or every remote
+    /// sender is gone. Returns false once no sender is left.
+    #[cfg(unix)]
+    fn sleep(&mut self, wait: Option<Duration>) -> bool {
+        self.sleeper.sleep(wait)
+    }
+
+    #[cfg(not(unix))]
+    fn sleep(&mut self, wait: Option<Duration>) -> bool {
+        let msg = match wait {
+            Some(w) => self.rx.recv_timeout(w).map_err(|e| matches!(e, mpsc::RecvTimeoutError::Disconnected)),
+            None => self.rx.recv().map_err(|_| true),
+        };
+        match msg {
+            Ok(task) => {
+                self.remote.push_back(task);
+                true
+            }
+            Err(disconnected) => !disconnected,
+        }
+    }
+
     fn next_deadline(&self) -> Option<Instant> {
         self.sched.inner.clean_heap_top();
         self.sched.inner.heap.borrow().peek().map(|r| r.0 .0)
@@ -396,29 +580,25 @@ impl<S: LoopState + 'static> EventLoop<S> {
             let wake = [self.next_deadline(), deadline].into_iter().flatten().min();
             let wait = wake.map(|w| w.saturating_duration_since(now));
             if !self.remote_open {
-                // No sender left: recv would return immediately; just sleep.
-                match wait {
-                    Some(w) => std::thread::sleep(w),
-                    None => return RunOutcome::Idle,
-                }
+                // No sender left: nothing can arrive; wait for the deadline.
+                let Some(w) = wait else { return RunOutcome::Idle };
+                self.sleep(Some(w));
                 continue;
             }
-            let msg = match wait {
-                Some(w) => self.rx.recv_timeout(w).map_err(|e| matches!(e, mpsc::RecvTimeoutError::Disconnected)),
-                None => self.rx.recv().map_err(|_| true),
-            };
-            match msg {
-                // Ordered against page work by run_one on the next iteration
-                // (a timer may have become due before this was posted).
+            // Posted tasks are pulled by run_one on the next iteration, ordered
+            // against page work (a timer may have become due before the post).
+            let mut senders_left = self.sleep(wait);
+            match self.rx.try_recv() {
                 Ok(task) => self.remote.push_back(task),
-                Err(true) => {
-                    // Every sender is gone (including ours after close_remote).
-                    self.remote_open = false;
-                    if wake.is_none() {
-                        return RunOutcome::Idle;
-                    }
+                Err(mpsc::TryRecvError::Disconnected) => senders_left = false,
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+            if !senders_left {
+                // Every sender is gone (including ours after close_remote).
+                self.remote_open = false;
+                if wake.is_none() {
+                    return RunOutcome::Idle;
                 }
-                Err(false) => {}
             }
         }
     }
@@ -433,6 +613,142 @@ impl<S: LoopState + 'static> EventLoop<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn thread_cpu() -> Duration {
+        #[cfg(unix)]
+        {
+            let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+            // SAFETY: valid timespec out-pointer.
+            unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut ts) };
+            Duration::new(ts.tv_sec as u64, ts.tv_nsec as u32)
+        }
+        #[cfg(not(unix))]
+        Duration::ZERO
+    }
+
+    /// With every remote sender gone, the loop still waits for its deadline
+    /// without spinning (the hung-up wake pipe must not be polled again).
+    #[test]
+    fn idle_wait_without_senders_sleeps_instead_of_spinning() {
+        let mut lp = EventLoop::<St>::new();
+        lp.close_remote();
+        let mut st = St::default();
+        let s = lp.scheduler();
+        let fired = Rc::new(Cell::new(false));
+        let f = fired.clone();
+        s.set_timer(Duration::from_millis(60), false, true, move |_| f.set(true));
+        let start = Instant::now();
+        let cpu0 = thread_cpu();
+        let r = lp.run_until(&mut st, Some(start + Duration::from_millis(500)), false, |_| fired.get());
+        let cpu = thread_cpu() - cpu0;
+        assert_eq!(r, RunOutcome::Done);
+        assert!(start.elapsed() >= Duration::from_millis(60));
+        assert!(start.elapsed() < Duration::from_millis(120), "late: {:?}", start.elapsed());
+        assert!(cpu < Duration::from_millis(15), "spun for {cpu:?} of {:?}", start.elapsed());
+        assert!(!lp.remote_open);
+    }
+
+    /// A remote post while the loop sleeps on a far deadline wakes it promptly
+    /// and the task runs; nothing is lost when the post lands around the wait.
+    #[test]
+    fn remote_post_wakes_a_sleeping_loop_promptly() {
+        let mut lp = EventLoop::<St>::new();
+        let handle = lp.handle();
+        let mut st = St::default();
+        for round in 0..20 {
+            let h = handle.clone();
+            let delay = Duration::from_micros(200 * round);
+            std::thread::spawn(move || {
+                std::thread::sleep(delay);
+                h.post(|st| st.log.push("remote".into())).unwrap();
+            });
+            let start = Instant::now();
+            let before = st.log.len();
+            let r = lp.run_until(&mut st, Some(start + Duration::from_secs(5)), false, |st| st.log.len() > before);
+            assert_eq!(r, RunOutcome::Done);
+            assert!(start.elapsed() < Duration::from_millis(100), "round {round}: {:?}", start.elapsed());
+        }
+        assert_eq!(st.log.len(), 20);
+    }
+
+    /// Many posts without the loop running fill the wake pipe; every task still
+    /// runs once, in order, and the loop does not block on the full pipe.
+    #[test]
+    fn posts_beyond_the_wake_pipe_capacity_all_run_in_order() {
+        let mut lp = EventLoop::<St>::new();
+        let handle = lp.handle();
+        let mut st = St::default();
+        for i in 0..70_000u32 {
+            handle.post(move |st| st.log.push(i.to_string())).unwrap();
+        }
+        let r = lp.run_until(&mut st, Some(Instant::now() + Duration::from_secs(10)), false, |st| st.log.len() == 70_000);
+        assert_eq!(r, RunOutcome::Done);
+        assert!(st.log.iter().enumerate().all(|(i, v)| v == &i.to_string()));
+        // The drained pipe still wakes for later posts.
+        handle.post(|st| st.log.push("after".into())).unwrap();
+        let r = lp.run_until(&mut st, Some(Instant::now() + Duration::from_secs(5)), false, |st| st.log.last().is_some_and(|v| v == "after"));
+        assert_eq!(r, RunOutcome::Done);
+    }
+
+    /// Dropping the last handle while the loop sleeps with no deadline and no
+    /// work ends the remote phase promptly with Idle (as recv() returning
+    /// Disconnected did); with a deadline the loop keeps waiting for it.
+    #[test]
+    fn dropping_every_sender_during_the_wait_is_noticed() {
+        let mut lp = EventLoop::<St>::new();
+        let handle = lp.handle();
+        lp.close_remote();
+        let mut st = St::default();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(20));
+            drop(handle);
+        });
+        let start = Instant::now();
+        let r = lp.run_until(&mut st, None, false, |_| false);
+        assert_eq!(r, RunOutcome::Idle);
+        assert!(start.elapsed() < Duration::from_millis(500), "{:?}", start.elapsed());
+        assert!(!lp.remote_open);
+        // With a deadline and no senders, the loop waits (without the pipe) until it.
+        let start = Instant::now();
+        let r = lp.run_until(&mut st, Some(start + Duration::from_millis(40)), false, |_| false);
+        assert_eq!(r, RunOutcome::TimedOut);
+        assert!(start.elapsed() >= Duration::from_millis(40) && start.elapsed() < Duration::from_millis(100), "{:?}", start.elapsed());
+    }
+
+    /// Posting after the loop (and its wake pipe read end) is gone fails
+    /// cleanly: no SIGPIPE, no panic, LoopClosed from the channel.
+    #[test]
+    fn post_after_the_loop_is_dropped_fails_cleanly() {
+        let lp = EventLoop::<St>::new();
+        let handle = lp.handle();
+        drop(lp);
+        assert!(handle.post(|_| {}).is_err());
+        // Direct notifier write with the read end closed: EPIPE path, no signal.
+        #[cfg(unix)]
+        handle.wake.notify();
+    }
+
+    /// A delayed timer fires close to its deadline while the loop sleeps
+    /// (macOS coalesces std sleeps by ~100-140 ms; the loop waits in poll).
+    #[test]
+    fn short_timers_fire_close_to_their_deadline_while_idle() {
+        let mut lp = EventLoop::<St>::new();
+        let _handle = lp.handle(); // a live remote sender: the loop sleeps in its wake wait, not in idle exit
+        let mut st = St::default();
+        let s = lp.scheduler();
+        let mut lateness = Vec::new();
+        for _ in 0..5 {
+            let start = Instant::now();
+            let fired = Rc::new(Cell::new(false));
+            let f = fired.clone();
+            s.set_timer(Duration::from_millis(16), false, true, move |_| f.set(true));
+            let r = lp.run_until(&mut st, Some(start + Duration::from_millis(500)), false, |_| fired.get());
+            assert_eq!(r, RunOutcome::Done);
+            lateness.push(start.elapsed().saturating_sub(Duration::from_millis(16)));
+        }
+        lateness.sort();
+        assert!(lateness[2] < Duration::from_millis(40), "median lateness {:?} (all {:?})", lateness[2], lateness);
+    }
 
     #[derive(Default)]
     struct St {

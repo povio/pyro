@@ -9,6 +9,7 @@
 mod bindings;
 mod focus;
 mod frames;
+mod images;
 mod loader;
 mod nav;
 mod network_idle;
@@ -183,6 +184,27 @@ pub enum PageEvent {
         message: String,
         default_prompt: Option<String>,
     },
+    /// An `<input type=file>` was activated (no native picker opens).
+    FileChooserOpened {
+        frame_id: FrameId,
+        input: lp_dom::NodeId,
+        multiple: bool,
+    },
+    /// A link or `window.open` targets a new browsing context: the embedder
+    /// opens `url` in a new page of the same browser context (no engine page
+    /// exists yet). `opener` is whether the popup keeps its opener.
+    PopupRequested {
+        frame_id: FrameId,
+        url: String,
+        opener: bool,
+    },
+    /// A hyperlink download finished fetching (or failed).
+    Download {
+        frame_id: FrameId,
+        url: String,
+        suggested_filename: String,
+        body: Result<bytes::Bytes, String>,
+    },
 }
 
 /// Receives page events in emission order on the browser thread.
@@ -281,6 +303,7 @@ pub struct DocumentState {
     pub(crate) pending_cancel: Option<ResourceCancellation>,
     pub(crate) load: Option<loader::DocumentLoad>,
     pub(crate) stylesheets: stylesheets::Stylesheets,
+    pub(crate) images: images::Images,
     pub(crate) _owner_pin: Option<loader::ResourceNode>,
 }
 
@@ -576,6 +599,7 @@ impl Browser {
                 nav,
                 load: None,
                 stylesheets: Default::default(),
+                images: Default::default(),
                 _owner_pin: None,
             },
             session_storage,
@@ -823,6 +847,7 @@ impl Browser {
             p.pending_cancel = None;
             p.load = None;
             p.stylesheets = Default::default();
+            p.images = Default::default();
             let old_dom = p.main_frame.page_dom.replace(page_dom.clone());
             p.main_frame.dom = Some(page_dom.dom.clone());
             p.main_frame.document = Some(page_dom.document());

@@ -65,7 +65,7 @@ impl JsClass for DomRect {
 pub(crate) fn bounding_rect<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
     let page = n.page();
     let r = page.layout.borrow().bounding_client_rect(&page.dom.borrow(), n.id);
-    rect_value(s, r)
+    rect_value(s, r.layout_units())
 }
 
 pub(crate) fn client_rects<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
@@ -73,12 +73,38 @@ pub(crate) fn client_rects<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s
     let rects = page.layout.borrow().client_rects(&page.dom.borrow(), n.id);
     let mut vals = lp_js::RootedVec::new();
     for r in rects {
-        vals.push(s, rect_value(s, r)?);
+        vals.push(s, rect_value(s, r.layout_units())?);
     }
     Ok(s.array(&vals.iter(s).collect::<Vec<_>>())?.value())
 }
 
-pub(crate) fn range_rect<'s>(s: &Scope<'s>, page: &Rc<PageDom>, start: NodeId) -> JsResult<Value<'s>> {
+/// Range geometry for (start container, start offset, end container, end
+/// offset). A range in a text node, or selecting exactly one text node
+/// (`selectNode(text)`), reports that text's line-box rect when the layout
+/// has one (flow geometry); otherwise the start's element box.
+pub(crate) fn range_rect<'s>(
+    s: &Scope<'s>,
+    page: &Rc<PageDom>,
+    (start, start_offset, end, end_offset): (NodeId, u32, NodeId, u32),
+) -> JsResult<Value<'s>> {
+    let text = {
+        let dom = page.dom.borrow();
+        if dom.node_type(start).js()? == lp_dom::NodeType::Text {
+            Some(start)
+        } else if start == end && end_offset == start_offset + 1 {
+            dom.children(start)
+                .js()?
+                .nth(start_offset as usize)
+                .filter(|&c| dom.node_type(c).ok() == Some(lp_dom::NodeType::Text))
+        } else {
+            None
+        }
+    };
+    if let Some(t) = text {
+        if let Some(r) = page.layout.borrow().text_rect(&page.dom.borrow(), t) {
+            return rect_value(s, r.layout_units());
+        }
+    }
     let el = {
         let dom = page.dom.borrow();
         if dom.node_type(start).js()? == lp_dom::NodeType::Element {
@@ -91,32 +117,100 @@ pub(crate) fn range_rect<'s>(s: &Scope<'s>, page: &Rc<PageDom>, start: NodeId) -
         Some(e) => page.layout.borrow().bounding_client_rect(&page.dom.borrow(), e),
         None => lp_dom::layout::Rect::default(),
     };
-    rect_value(s, r)
+    rect_value(s, r.layout_units())
 }
 
-pub(crate) fn fire_scroll(page: &Rc<PageDom>, target: Option<NodeId>) {
-    // Scroll events are delivered as a separate task (not throttled).
-    let p = page.clone();
+pub fn fire_scroll(page: &Rc<PageDom>, target: Option<NodeId>) {
+    // HTML "run the scroll steps": a scrolled target is queued once and its
+    // scroll event fires in the next rendering update, which ticks with
+    // requestAnimationFrame here (16 ms). Chromium dispatches it in its next
+    // frame: on a page that just rendered (TOS react-aria autocomplete) that
+    // was 23-29 ms after Playwright's scroll step, after its click; on an
+    // idle page a frame can run within ~1 ms. Fired as an immediate task, it
+    // let close-on-scroll handlers close the popover before the click.
     let doc = page.document();
-    page.post_task(Box::new(move || {
-        if p.is_disposed() || p.document() != doc {
-            return;
-        }
-        match target {
-            Some(el) => {
-                let connected = {
-                    let dom = p.dom.borrow();
-                    dom.is_connected(el).unwrap_or(false) && dom.node_document(el).ok() == Some(doc)
-                };
-                if connected {
-                    crate::input::fire_simple(&p, el, "scroll", false, false);
-                }
+    if !page.pending_scrolls.borrow_mut().insert((doc, target)) {
+        return;
+    }
+    let p = page.clone();
+    page.post_delayed_task(
+        std::time::Duration::from_millis(16),
+        Box::new(move || {
+            p.pending_scrolls.borrow_mut().remove(&(doc, target));
+            dispatch_scroll(&p, doc, target);
+        }),
+    );
+}
+
+fn dispatch_scroll(p: &Rc<PageDom>, doc: NodeId, target: Option<NodeId>) {
+    if p.is_disposed() || p.document() != doc {
+        return;
+    }
+    match target {
+        Some(el) => {
+            let connected = {
+                let dom = p.dom.borrow();
+                dom.is_connected(el).unwrap_or(false) && dom.node_document(el).ok() == Some(doc)
+            };
+            if connected {
+                crate::input::fire_simple(p, el, "scroll", false, false);
             }
-            None => {
-                crate::input::fire_simple(&p, doc, "scroll", true, false);
-            }
         }
-    }));
+        None => {
+            crate::input::fire_simple(p, doc, "scroll", true, false);
+        }
+    }
+}
+
+/// Re-clamps scroll offsets that the current layout no longer reaches and
+/// fires their `scroll` events: `now` (a rendering update) dispatches them
+/// at once, otherwise (a script read) at the next frame like other scrolls.
+pub(crate) fn clamp_scrolls(page: &Rc<PageDom>, now: bool) {
+    if !page.layout.borrow().has_scroll_offsets() {
+        return;
+    }
+    let moved = {
+        let dom = page.dom.borrow();
+        let moved = page.layout.borrow_mut().clamp_scroll_offsets(&dom);
+        page.scroll_clamp.set((Some(dom.version()), page.scroll_clamp.get().1));
+        moved
+    };
+    let doc = page.document();
+    for target in moved {
+        let node = match target {
+            lp_dom::layout::ScrollTarget::Container(node) => Some(node),
+            lp_dom::layout::ScrollTarget::Viewport => None,
+        };
+        if !now {
+            fire_scroll(page, node);
+        } else if !page.pending_scrolls.borrow().contains(&(doc, node)) {
+            dispatch_scroll(page, doc, node);
+        }
+    }
+}
+
+/// After a task that changed the DOM while something is scrolled: re-clamp
+/// at the next frame (16 ms, the scroll event cadence), when Chromium's
+/// rendering update would lay out without any script read.
+pub(crate) fn schedule_scroll_clamp(page: &Rc<PageDom>) {
+    let (checked, queued) = page.scroll_clamp.get();
+    if queued || page.is_disposed() || !page.layout.borrow().has_scroll_offsets() {
+        return;
+    }
+    if checked == Some(page.dom.borrow().version()) {
+        return;
+    }
+    page.scroll_clamp.set((checked, true));
+    let p = page.clone();
+    page.post_delayed_task(
+        std::time::Duration::from_millis(16),
+        Box::new(move || {
+            p.scroll_clamp.set((p.scroll_clamp.get().0, false));
+            if !p.is_disposed() {
+                clamp_scrolls(&p, true);
+            }
+        }),
+    );
 }
 
 pub(crate) fn scroll_into_view<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
@@ -144,9 +238,12 @@ fn scroll_args(a: &Args<'_>) -> JsResult<(Option<i32>, Option<i32>)> {
     if let Some(o) = a.get(0).as_object() {
         let l = o.get("left")?;
         let t = o.get("top")?;
-        Ok(((!l.is_undefined()).then(|| to_i32(l)).transpose()?, (!t.is_undefined()).then(|| to_i32(t)).transpose()?))
+        Ok((
+            (!l.is_undefined()).then(|| to_scroll_offset(l)).transpose()?,
+            (!t.is_undefined()).then(|| to_scroll_offset(t)).transpose()?,
+        ))
     } else if a.len() >= 2 {
-        Ok((Some(to_i32(a.get(0))?), Some(to_i32(a.get(1))?)))
+        Ok((Some(to_scroll_offset(a.get(0))?), Some(to_scroll_offset(a.get(1))?)))
     } else {
         Ok((None, None))
     }
@@ -171,12 +268,14 @@ pub(crate) fn scroll_to<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>, by: bool) 
 }
 
 pub(crate) fn scroll_get<'s>(s: &Scope<'s>, n: &NodeData, top: bool) -> JsResult<Value<'s>> {
+    // Reading a scroll offset sees the current layout (clamped to it).
+    clamp_scrolls(n.page(), false);
     let layout = n.page().layout.borrow();
     Ok(s.number(if top { layout.scroll_top(n.id) } else { layout.scroll_left(n.id) } as f64))
 }
 
 pub(crate) fn scroll_set(_s: &Scope<'_>, n: &NodeData, v: Value<'_>, top: bool) -> JsResult<()> {
-    let value = to_i32(v)?;
+    let value = to_scroll_offset(v)?;
     let page = n.page();
     let moved = {
         let dom = page.dom.borrow();

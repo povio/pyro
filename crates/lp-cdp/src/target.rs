@@ -71,6 +71,15 @@ pub trait Host {
     fn page_title(&self, page: PageKey) -> String;
     /// A session attached to `page`; the host may start emitting its events.
     fn session_attached(&mut self, page: PageKey, session_id: &str);
+    /// Popups the engine asked for since the last call (links/`window.open`
+    /// targeting a new browsing context), oldest first.
+    fn take_popup_requests(&mut self) -> Vec<PopupRequest> {
+        Vec::new()
+    }
+    /// Marks a paused popup that has not started its first navigation.
+    /// Chrome reports such a frame's URL as ":" in `Page.getFrameTree`, which
+    /// is how clients know to wait for the first real navigation.
+    fn set_initial_popup(&mut self, _page: PageKey, _initial: bool) {}
     /// A session detached; the host must stop emitting events for it and drop
     /// per-session state (enabled domains, object handles, interception).
     fn session_detached(&mut self, page: PageKey, session_id: &str);
@@ -96,10 +105,25 @@ pub const MAX_CONTEXTS: usize = 256;
 pub const MAX_TARGETS: usize = 256;
 pub const MAX_SESSIONS: usize = 512;
 
+/// A page the engine wants opened as a popup of `opener`.
+#[derive(Debug, Clone)]
+pub struct PopupRequest {
+    pub opener: PageKey,
+    pub url: String,
+    /// Whether the popup may script its opener (`canAccessOpener`).
+    pub opener_access: bool,
+}
+
 struct TargetEntry {
     id: String,
     context_id: String,
     page: PageKey,
+    /// Target that opened this popup (`TargetInfo.openerId`).
+    opener_id: Option<String>,
+    can_access_opener: bool,
+    /// Popup navigation held until the client's `Runtime.runIfWaitingForDebugger`
+    /// (Chrome pauses popups so init scripts and listeners are installed first).
+    pending_url: Option<String>,
 }
 
 struct SessionEntry {
@@ -130,6 +154,10 @@ struct TargetInfo<'a> {
     url: &'a str,
     attached: bool,
     can_access_opener: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    opener_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    opener_frame_id: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     browser_context_id: Option<&'a str>,
 }
@@ -271,8 +299,9 @@ impl<H: Host> Browser<H> {
                 out.send(msg::result_frame(cmd.id, &serde_json::json!({ "targetInfo": info }), Some(session_id)));
             }
             "Runtime.runIfWaitingForDebugger" => {
-                // Targets never start paused (waitingForDebugger is always false).
+                // Only popups start paused; resuming starts their navigation.
                 out.send(msg::result_frame(cmd.id, &Empty {}, Some(session_id)));
+                self.release_popup(&target_id, out);
             }
             _ => self.host.page_command(PageCommand { page, target_id: &target_id, session_id, command: cmd }, out),
         }
@@ -300,7 +329,10 @@ impl<H: Host> Browser<H> {
             title,
             url,
             attached,
-            can_access_opener: false,
+            can_access_opener: target.can_access_opener,
+            // Page targets' main frame ids equal their target ids.
+            opener_id: target.opener_id.as_deref(),
+            opener_frame_id: target.opener_id.as_deref(),
             browser_context_id: Some(&target.context_id),
         }
     }
@@ -468,7 +500,14 @@ impl<H: Host> Browser<H> {
                     return Err(CdpError::server("Too many sessions"));
                 }
                 let (page, target_id) = self.host.create_page(context_key)?;
-                self.targets.push(TargetEntry { id: target_id.clone(), context_id, page });
+                self.targets.push(TargetEntry {
+                    id: target_id.clone(),
+                    context_id,
+                    page,
+                    opener_id: None,
+                    can_access_opener: false,
+                    pending_url: None,
+                });
                 if self.discover {
                     self.send_target_created(self.targets.len() - 1, out);
                 }
@@ -587,6 +626,17 @@ impl<H: Host> Browser<H> {
         auto_attached: bool,
         out: &mut dyn Sink,
     ) -> CdpResult<String> {
+        self.attach_paused(target_id, parent, auto_attached, false, out)
+    }
+
+    fn attach_paused(
+        &mut self,
+        target_id: &str,
+        parent: Option<&str>,
+        auto_attached: bool,
+        waiting_for_debugger: bool,
+        out: &mut dyn Sink,
+    ) -> CdpResult<String> {
         if self.sessions.len() + self.browser_sessions.len() >= MAX_SESSIONS {
             return Err(CdpError::server("Too many sessions"));
         }
@@ -610,7 +660,7 @@ impl<H: Host> Browser<H> {
         let event = Attached {
             session_id: &session_id,
             target_info: self.info(target, &url, &title, true),
-            waiting_for_debugger: false,
+            waiting_for_debugger,
         };
         out.send(msg::event_frame("Target.attachedToTarget", &event, parent));
         self.host.session_attached(page, &session_id);
@@ -679,6 +729,56 @@ impl<H: Host> Browser<H> {
         if let Some(pos) = self.contexts.iter().position(|c| c.id == context_id) {
             let context = self.contexts.remove(pos);
             self.host.dispose_context(context.key);
+        }
+    }
+
+    /// Opens the popups the engine requested: a new target in the opener's
+    /// browser context, announced with `openerId`. With auto-attach the popup
+    /// starts paused (`waitingForDebugger`) and navigates on
+    /// `Runtime.runIfWaitingForDebugger`, as Chrome does; otherwise it
+    /// navigates immediately. Requests from closed openers are dropped.
+    pub fn adopt_popups(&mut self, out: &mut dyn Sink) {
+        for request in self.host.take_popup_requests() {
+            let Some(opener) = self.targets.iter().find(|t| t.page == request.opener) else { continue };
+            let (opener_id, context_id) = (opener.id.clone(), opener.context_id.clone());
+            let Ok(context_key) = self.context(&context_id).map(|c| c.key) else { continue };
+            if self.targets.len() >= MAX_TARGETS
+                || (self.auto_attach && self.sessions.len() + self.browser_sessions.len() >= MAX_SESSIONS)
+            {
+                continue;
+            }
+            let Ok((page, target_id)) = self.host.create_page(context_key) else { continue };
+            let paused = self.auto_attach;
+            self.targets.push(TargetEntry {
+                id: target_id.clone(),
+                context_id,
+                page,
+                opener_id: Some(opener_id),
+                can_access_opener: request.opener_access,
+                pending_url: paused.then(|| request.url.clone()),
+            });
+            if self.discover {
+                self.send_target_created(self.targets.len() - 1, out);
+            }
+            if paused {
+                self.host.set_initial_popup(page, true);
+                if self.attach_paused(&target_id, None, true, true, out).is_err() {
+                    self.close_target(&target_id, out);
+                }
+            } else if self.host.navigate(page, &request.url).is_err() {
+                self.close_target(&target_id, out);
+            }
+        }
+    }
+
+    /// Starts a paused popup's navigation (once).
+    fn release_popup(&mut self, target_id: &str, out: &mut dyn Sink) {
+        let Some(target) = self.targets.iter_mut().find(|t| t.id == target_id) else { return };
+        let Some(url) = target.pending_url.take() else { return };
+        let page = target.page;
+        self.host.set_initial_popup(page, false);
+        if url != "about:blank" && self.host.navigate(page, &url).is_err() {
+            self.close_target(target_id, out);
         }
     }
 

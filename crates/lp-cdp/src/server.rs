@@ -272,7 +272,11 @@ async fn read_loop(
                 Ok(Some(Message::Pong(_))) => None,
                 Ok(Some(Message::Close(code))) => Some((code.map_or(1000, |(c, _)| c), "")),
                 Ok(None) => break,
-                Err(error) => Some((error.close_code(), "")),
+                Err(error) => {
+                    // The client only sees a closed socket; leave the reason where operators look.
+                    eprintln!("lightningpanda: closing CDP connection: {error}");
+                    Some((error.close_code(), error.close_reason()))
+                }
             };
             if let Some((code, reason)) = close {
                 let _ = control(control_tx, ws::control_frame(Control::Close(code, reason)));

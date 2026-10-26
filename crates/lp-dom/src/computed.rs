@@ -1,0 +1,1231 @@
+//! Computed-value serialization for author-declared properties that the
+//! renderless layout does not track (see `style.rs`). `getComputedStyle`
+//! reports these from the cascade, the way Chromium serializes them:
+//! colors as `rgb()`/`rgba()` (or normalized `oklch()`/`oklab()`), absolute
+//! lengths and `calc()` of absolute lengths in px, other values as declared.
+//!
+//! This is value serialization, not layout: percentages, `auto` and other
+//! used-value-dependent lengths stay as declared, and nothing here affects
+//! geometry or hit testing.
+
+use cssparser::{ParseError, Parser, Token};
+
+/// Properties whose value inherits when nothing is declared on the element.
+pub fn is_inherited(name: &str) -> bool {
+    matches!(
+        name,
+        "color"
+            | "caret-color"
+            | "cursor"
+            | "direction"
+            | "fill"
+            | "fill-opacity"
+            | "font-family"
+            | "font-feature-settings"
+            | "font-stretch"
+            | "font-style"
+            | "font-variant"
+            | "font-variant-numeric"
+            | "font-weight"
+            | "hyphens"
+            | "letter-spacing"
+            | "line-height"
+            | "list-style-position"
+            | "list-style-type"
+            | "overflow-wrap"
+            | "quotes"
+            | "stroke"
+            | "stroke-width"
+            | "tab-size"
+            | "text-align"
+            | "text-indent"
+            | "text-shadow"
+            | "white-space"
+            | "word-break"
+            | "word-spacing"
+            | "-webkit-text-fill-color"
+            | "border-spacing"
+            | "border-collapse"
+            | "caption-side"
+            | "empty-cells"
+    )
+}
+
+/// SVG presentation attributes mapped to the property of the same name.
+pub fn is_presentation_attribute(name: &str) -> bool {
+    matches!(
+        name,
+        "fill"
+            | "fill-opacity"
+            | "stroke"
+            | "stroke-width"
+            | "stroke-opacity"
+            | "stroke-linecap"
+            | "stroke-linejoin"
+            | "stroke-dasharray"
+            | "opacity"
+            | "color"
+            | "visibility"
+            | "display"
+            | "font-family"
+            | "font-size"
+            | "font-weight"
+            | "text-anchor"
+    )
+}
+
+/// Properties whose computed value is a color.
+pub fn is_color_property(name: &str) -> bool {
+    matches!(
+        name,
+        "color"
+            | "background-color"
+            | "border-color"
+            | "border-top-color"
+            | "border-right-color"
+            | "border-bottom-color"
+            | "border-left-color"
+            | "caret-color"
+            | "column-rule-color"
+            | "fill"
+            | "outline-color"
+            | "stroke"
+            | "text-decoration-color"
+            | "accent-color"
+            | "-webkit-text-fill-color"
+    )
+}
+
+/// Properties whose absolute lengths (`rem`, `em`, `calc()`) compute to px.
+pub fn is_length_property(name: &str) -> bool {
+    matches!(
+        name,
+        "margin-top"
+            | "margin-right"
+            | "margin-bottom"
+            | "margin-left"
+            | "padding-top"
+            | "padding-right"
+            | "padding-bottom"
+            | "padding-left"
+            | "row-gap"
+            | "column-gap"
+            | "top"
+            | "right"
+            | "bottom"
+            | "left"
+            | "width"
+            | "height"
+            | "min-width"
+            | "min-height"
+            | "max-width"
+            | "max-height"
+            | "flex-basis"
+            | "font-size"
+            | "letter-spacing"
+            | "word-spacing"
+            | "text-indent"
+            | "border-top-width"
+            | "border-right-width"
+            | "border-bottom-width"
+            | "border-left-width"
+            | "outline-width"
+            | "outline-offset"
+            | "border-top-left-radius"
+            | "border-top-right-radius"
+            | "border-bottom-right-radius"
+            | "border-bottom-left-radius"
+    )
+}
+
+const BORDER_STYLES: &[&str] =
+    &["none", "hidden", "dotted", "dashed", "solid", "double", "groove", "ridge", "inset", "outset"];
+
+/// Splits a value at top-level whitespace, keeping functions and blocks whole.
+fn top_level_parts(value: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut depth = 0u32;
+    let mut quote: Option<char> = None;
+    let mut cur = String::new();
+    for c in value.chars() {
+        if let Some(q) = quote {
+            cur.push(c);
+            if c == q {
+                quote = None;
+            }
+            continue;
+        }
+        match c {
+            '"' | '\'' => {
+                quote = Some(c);
+                cur.push(c);
+            }
+            '(' | '[' => {
+                depth += 1;
+                cur.push(c);
+            }
+            ')' | ']' => {
+                depth = depth.saturating_sub(1);
+                cur.push(c);
+            }
+            c if c.is_ascii_whitespace() && depth == 0 => {
+                if !cur.is_empty() {
+                    parts.push(std::mem::take(&mut cur));
+                }
+            }
+            c => cur.push(c),
+        }
+    }
+    if !cur.is_empty() {
+        parts.push(cur);
+    }
+    parts
+}
+
+fn sides(prefix: &str, suffix: &str, value: &str) -> Vec<(String, String)> {
+    let parts = top_level_parts(value);
+    let [t, r, b, l] = match parts.as_slice() {
+        [a] => [a, a, a, a],
+        [a, b] => [a, b, a, b],
+        [a, b, c] => [a, b, c, b],
+        [a, b, c, d] => [a, b, c, d],
+        _ => return Vec::new(),
+    };
+    [("top", t), ("right", r), ("bottom", b), ("left", l)]
+        .into_iter()
+        .map(|(side, v)| (format!("{prefix}{side}{suffix}"), v.clone()))
+        .collect()
+}
+
+fn is_number(s: &str) -> bool {
+    s.parse::<f64>().is_ok()
+}
+
+/// Logical properties for a left-to-right, horizontal-tb writing mode (as
+/// TOS renders): `padding-inline: a b` sets left/right, `*-block` top/bottom,
+/// `-start`/`-end` one side, `inline-size`/`block-size` width/height. The
+/// result is physical names, still possibly shorthands (`border-left`).
+fn logical_to_physical(name: &str, value: &str) -> Option<Vec<(String, String)>> {
+    let size = match name {
+        "inline-size" => Some("width"),
+        "min-inline-size" => Some("min-width"),
+        "max-inline-size" => Some("max-width"),
+        "block-size" => Some("height"),
+        "min-block-size" => Some("min-height"),
+        "max-block-size" => Some("max-height"),
+        _ => None,
+    };
+    if let Some(physical) = size {
+        return Some(vec![(physical.to_owned(), value.to_owned())]);
+    }
+    let (prop, rest) = ["padding", "margin", "inset", "border"]
+        .iter()
+        .find_map(|p| name.strip_prefix(p).and_then(|r| r.strip_prefix('-')).map(|r| (*p, r)))?;
+    let (axis, rest) = match rest.strip_prefix("inline") {
+        Some(r) => (["left", "right"], r),
+        None => (["top", "bottom"], rest.strip_prefix("block")?),
+    };
+    let (sides, suffix): (&[&str], &str) = if let Some(r) = rest.strip_prefix("-start") {
+        (&axis[..1], r)
+    } else if let Some(r) = rest.strip_prefix("-end") {
+        (&axis[1..], r)
+    } else {
+        (&axis[..], rest)
+    };
+    if !matches!(suffix, "" | "-width" | "-style" | "-color") || (prop != "border" && !suffix.is_empty()) {
+        return None;
+    }
+    let physical = |side: &str| if prop == "inset" { side.to_owned() } else { format!("{prop}-{side}{suffix}") };
+    // `padding-inline: a b` gives start a, end b. Border shorthands keep their whole value per side.
+    let parts = top_level_parts(value);
+    let pair = sides.len() == 2 && !(prop == "border" && suffix.is_empty());
+    Some(match (pair, parts.as_slice()) {
+        (true, [a, b]) => vec![(physical(sides[0]), a.clone()), (physical(sides[1]), b.clone())],
+        (true, [_]) | (false, _) => sides.iter().map(|side| (physical(side), value.to_owned())).collect(),
+        (true, _) => return None,
+    })
+}
+
+/// The longhands a declaration sets. Unknown shorthands are kept as written
+/// under their own name; `var()` in a multi-part shorthand cannot be split
+/// before substitution and is assigned to each longhand whole.
+pub fn expand(name: &str, value: &str) -> Vec<(String, String)> {
+    if let Some(physical) = logical_to_physical(name, value) {
+        return physical.into_iter().flat_map(|(n, v)| expand(&n, &v)).collect();
+    }
+    let one = |n: &str| vec![(n.to_owned(), value.to_owned())];
+    match name {
+        "overflow" | "overscroll-behavior" => {
+            let parts = top_level_parts(value);
+            let (x, y) = match parts.as_slice() {
+                [a] => (a.clone(), a.clone()),
+                [a, b] => (a.clone(), b.clone()),
+                _ => return one(name),
+            };
+            vec![(format!("{name}-x"), x), (format!("{name}-y"), y)]
+        }
+        "gap" | "grid-gap" => {
+            let parts = top_level_parts(value);
+            let (r, c) = match parts.as_slice() {
+                [a] => (a.clone(), a.clone()),
+                [a, b] => (a.clone(), b.clone()),
+                _ => return one(name),
+            };
+            vec![("row-gap".into(), r), ("column-gap".into(), c)]
+        }
+        "margin" | "padding" => sides(&format!("{name}-"), "", value),
+        // place-*: `<align> [<justify>]`, the second defaulting to the first.
+        "place-items" | "place-content" | "place-self" => {
+            let suffix = &name["place-".len()..];
+            let parts = top_level_parts(value);
+            let (align, justify) = match parts.as_slice() {
+                [a] => (a.clone(), a.clone()),
+                [a, b] => (a.clone(), b.clone()),
+                // `place-content: first baseline center` etc. are not split.
+                _ => return one(name),
+            };
+            vec![(format!("align-{suffix}"), align), (format!("justify-{suffix}"), justify)]
+        }
+        "inset" => sides("", "", value),
+        "border" | "border-top" | "border-right" | "border-bottom" | "border-left" => {
+            let sides = match name.strip_prefix("border-") {
+                Some(side) => vec![side],
+                None => vec!["top", "right", "bottom", "left"],
+            };
+            let (mut width, mut style, mut color) = ("medium".to_owned(), "none".to_owned(), "currentcolor".to_owned());
+            for part in top_level_parts(value) {
+                let lower = part.to_ascii_lowercase();
+                if BORDER_STYLES.contains(&lower.as_str()) {
+                    style = part;
+                } else if matches!(lower.as_str(), "thin" | "medium" | "thick")
+                    || lower.starts_with("calc(")
+                    || lower.chars().next().is_some_and(|c| c.is_ascii_digit() || c == '.')
+                {
+                    width = part;
+                } else {
+                    color = part;
+                }
+            }
+            sides
+                .iter()
+                .flat_map(|side| {
+                    [
+                        (format!("border-{side}-width"), width.clone()),
+                        (format!("border-{side}-style"), style.clone()),
+                        (format!("border-{side}-color"), color.clone()),
+                    ]
+                })
+                .collect()
+        }
+        "border-color" | "border-width" | "border-style" => {
+            let suffix = &name["border".len()..];
+            sides("border-", suffix, value)
+        }
+        "flex" => {
+            let v = value.trim();
+            let (g, s, b) = match v.to_ascii_lowercase().as_str() {
+                "none" => ("0".into(), "0".into(), "auto".into()),
+                "auto" => ("1".into(), "1".into(), "auto".into()),
+                "initial" => ("0".into(), "1".into(), "auto".into()),
+                _ => {
+                    let parts = top_level_parts(v);
+                    match parts.as_slice() {
+                        [a] if is_number(a) => (a.clone(), "1".into(), "0%".into()),
+                        [a] => ("1".into(), "1".into(), a.clone()),
+                        [a, b] if is_number(a) && is_number(b) => (a.clone(), b.clone(), "0%".into()),
+                        [a, b] if is_number(a) => (a.clone(), "1".into(), b.clone()),
+                        [a, b, c] => (a.clone(), b.clone(), c.clone()),
+                        _ => return one(name),
+                    }
+                }
+            };
+            vec![("flex-grow".into(), g), ("flex-shrink".into(), s), ("flex-basis".into(), b)]
+        }
+        "background" => {
+            // Only a lone color sets background-color; layered backgrounds are not modelled.
+            if parse_color(value.trim()).is_some() || value.trim().to_ascii_lowercase().starts_with("var(") {
+                vec![("background-color".into(), value.to_owned())]
+            } else {
+                Vec::new()
+            }
+        }
+        _ => one(name),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// var() substitution
+// ---------------------------------------------------------------------------
+
+/// Replaces every `var(--x[, fallback])` using `lookup`, recursively.
+/// `None` means the value is invalid at computed-value time.
+pub fn substitute_vars(value: &str, lookup: &mut dyn FnMut(&str) -> Option<String>, depth: u8) -> Option<String> {
+    if depth > 32 {
+        return None;
+    }
+    // ASCII case-insensitive `var(` (byte offsets are char boundaries: the
+    // match is ASCII).
+    let Some(start) = value.as_bytes().windows(4).position(|w| w.eq_ignore_ascii_case(b"var(")) else {
+        return Some(value.to_owned());
+    };
+    let open = start + 4;
+    let mut level = 1u32;
+    let mut end = None;
+    for (i, c) in value[open..].char_indices() {
+        match c {
+            '(' => level += 1,
+            ')' => {
+                level -= 1;
+                if level == 0 {
+                    end = Some(open + i);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let end = end?;
+    let inner = &value[open..end];
+    let (name, fallback) = match split_top_level_comma(inner) {
+        Some((n, f)) => (n.trim(), Some(f.trim())),
+        None => (inner.trim(), None),
+    };
+    if !name.starts_with("--") {
+        return None;
+    }
+    let replacement = match lookup(name) {
+        Some(v) if !v.trim().eq_ignore_ascii_case("initial") => substitute_vars(&v, lookup, depth + 1),
+        _ => None,
+    };
+    let replacement = match replacement {
+        Some(v) => v,
+        None => substitute_vars(fallback?, lookup, depth + 1)?,
+    };
+    let rest = substitute_vars(&value[end + 1..], lookup, depth + 1)?;
+    Some(format!("{}{}{}", &value[..start], replacement.trim(), rest))
+}
+
+fn split_top_level_comma(s: &str) -> Option<(&str, &str)> {
+    let mut depth = 0u32;
+    for (i, c) in s.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => return Some((&s[..i], &s[i + 1..])),
+            _ => {}
+        }
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
+// Numbers and lengths
+// ---------------------------------------------------------------------------
+
+/// Chromium-style number serialization: at most six significant digits,
+/// no trailing zeros, no exponent for the ranges CSS values use.
+pub fn fmt_num(x: f64) -> String {
+    if !x.is_finite() {
+        return "0".into();
+    }
+    if (x - x.round()).abs() < 1e-9 {
+        return format!("{}", x.round() as i64);
+    }
+    let digits = 6 - (x.abs().log10().floor() as i32 + 1);
+    let digits = digits.clamp(0, 10) as usize;
+    let s = format!("{x:.digits$}");
+    let s = s.trim_end_matches('0').trim_end_matches('.');
+    if s == "-0" {
+        "0".into()
+    } else {
+        s.to_owned()
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq)]
+enum CalcValue {
+    Number(f64),
+    /// `px + percent%` (percent of the property's percentage basis).
+    Linear(f64, f64),
+}
+
+/// What relative units resolve against.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct LengthContext {
+    pub font_size: f64,
+    pub root_font_size: f64,
+    pub viewport_width: f64,
+    pub viewport_height: f64,
+    /// The element's used line height in px, for the `lh` unit (None: `lh`
+    /// does not resolve).
+    pub line_height: Option<f64>,
+    /// Effective CSS `zoom` (the element's and its ancestors', multiplied):
+    /// absolute lengths, `rem` and viewport units scale by it (as in
+    /// Chromium); `em` and `lh` follow the (already zoomed) font size and
+    /// line height.
+    pub zoom: f64,
+}
+
+impl LengthContext {
+    pub fn fonts(font_size: f64, root_font_size: f64) -> Self {
+        LengthContext {
+            font_size,
+            root_font_size,
+            viewport_width: 0.0,
+            viewport_height: 0.0,
+            line_height: None,
+            zoom: 1.0,
+        }
+    }
+}
+
+fn calc_sum(p: &mut Parser<'_>, cx: &LengthContext) -> Option<CalcValue> {
+    let mut acc = calc_product(p, cx)?;
+    loop {
+        let state = p.state();
+        match p.next() {
+            Ok(Token::Delim('+')) => acc = add(acc, calc_product(p, cx)?, 1.0)?,
+            Ok(Token::Delim('-')) => acc = add(acc, calc_product(p, cx)?, -1.0)?,
+            // Anything else (a comma between min()/max() arguments, or junk) is the caller's to check.
+            _ => {
+                p.reset(&state);
+                return Some(acc);
+            }
+        }
+    }
+}
+
+fn add(a: CalcValue, b: CalcValue, sign: f64) -> Option<CalcValue> {
+    match (a, b) {
+        (CalcValue::Number(x), CalcValue::Number(y)) => Some(CalcValue::Number(x + sign * y)),
+        (CalcValue::Linear(x, xp), CalcValue::Linear(y, yp)) => Some(CalcValue::Linear(x + sign * y, xp + sign * yp)),
+        // `0 + 1px` is invalid in CSS; zero lengths are written with units by Tailwind.
+        _ => None,
+    }
+}
+
+fn calc_product(p: &mut Parser<'_>, cx: &LengthContext) -> Option<CalcValue> {
+    let mut acc = calc_factor(p, cx)?;
+    loop {
+        let state = p.state();
+        match p.next() {
+            Ok(Token::Delim('*')) => {
+                let rhs = calc_factor(p, cx)?;
+                acc = match (acc, rhs) {
+                    (CalcValue::Number(x), CalcValue::Number(y)) => CalcValue::Number(x * y),
+                    (CalcValue::Linear(x, xp), CalcValue::Number(y))
+                    | (CalcValue::Number(y), CalcValue::Linear(x, xp)) => CalcValue::Linear(x * y, xp * y),
+                    _ => return None,
+                };
+            }
+            Ok(Token::Delim('/')) => {
+                acc = match (acc, calc_factor(p, cx)?) {
+                    (_, CalcValue::Number(y) | CalcValue::Linear(y, 0.0)) if y == 0.0 => return None,
+                    (CalcValue::Number(x), CalcValue::Number(y)) => CalcValue::Number(x / y),
+                    (CalcValue::Linear(x, xp), CalcValue::Number(y)) => CalcValue::Linear(x / y, xp / y),
+                    // A length divided by a length is a number (CSS Values 4
+                    // typed arithmetic): `calc(210mm / 96rem)`. Percentages
+                    // have no basis here.
+                    (CalcValue::Linear(x, 0.0), CalcValue::Linear(y, 0.0)) => CalcValue::Number(x / y),
+                    _ => return None,
+                };
+            }
+            _ => {
+                p.reset(&state);
+                return Some(acc);
+            }
+        }
+    }
+}
+
+/// The f64 value of a numeric token's source text (`1.25`, `-.5rem`, `50%`).
+/// cssparser stores numbers as f32, which drifts sub-pixel values (e.g.
+/// 14px x 1.25/0.875 = 20.0000005); Chromium computes these in double.
+fn source_number(text: &str, fallback: f32) -> f64 {
+    let text = text.trim_start();
+    let end = text
+        .char_indices()
+        .find(|&(i, c)| {
+            !(c.is_ascii_digit()
+                || c == '.'
+                || ((c == '+' || c == '-') && (i == 0 || text[..i].ends_with(['e', 'E'])))
+                || ((c == 'e' || c == 'E')
+                    && text[i + 1..].starts_with(|n: char| n.is_ascii_digit() || n == '+' || n == '-')))
+        })
+        .map_or(text.len(), |(i, _)| i);
+    text[..end].parse().unwrap_or(fallback as f64)
+}
+
+fn calc_factor(p: &mut Parser<'_>, cx: &LengthContext) -> Option<CalcValue> {
+    let start = p.position();
+    let token = p.next().ok()?.clone();
+    let exact = |fallback: f32| source_number(p.slice_from(start), fallback);
+    match token {
+        Token::Number { value, .. } => Some(CalcValue::Number(exact(value))),
+        Token::Percentage { unit_value, .. } => Some(CalcValue::Linear(0.0, exact(unit_value * 100.0))),
+        Token::Dimension { value, ref unit, .. } => Some(CalcValue::Linear(absolute_px(exact(value), unit, cx)?, 0.0)),
+        Token::ParenthesisBlock => p.parse_nested_block(|p| nested(p, cx)).ok(),
+        Token::Function(ref name) if name.eq_ignore_ascii_case("calc") => p.parse_nested_block(|p| nested(p, cx)).ok(),
+        Token::Function(ref name) if matches!(name.to_ascii_lowercase().as_str(), "min" | "max" | "clamp") => {
+            let kind = name.to_ascii_lowercase();
+            let args = p.parse_nested_block(|p| comma_args(p, cx)).ok()?;
+            compare_args(&kind, &args)
+        }
+        _ => None,
+    }
+}
+
+fn comma_args(p: &mut Parser<'_>, cx: &LengthContext) -> Result<Vec<CalcValue>, ParseError<()>> {
+    let mut args = Vec::new();
+    loop {
+        args.push(calc_sum(p, cx).ok_or_else(|| ParseError::custom(()))?);
+        match p.next() {
+            Ok(Token::Comma) => continue,
+            Err(_) => return Ok(args),
+            Ok(_) => return Err(ParseError::custom(())),
+        }
+    }
+}
+
+/// min()/max()/clamp() when every argument is comparable without a
+/// percentage basis: all numbers, or lengths with the same percent part.
+fn compare_args(kind: &str, args: &[CalcValue]) -> Option<CalcValue> {
+    let keys: Vec<(f64, Option<f64>)> = args
+        .iter()
+        .map(|a| match *a {
+            CalcValue::Number(n) => (n, None),
+            CalcValue::Linear(px, pct) => (px, Some(pct)),
+        })
+        .collect();
+    let percent = keys.first()?.1;
+    if keys.iter().any(|k| k.1 != percent) {
+        return None;
+    }
+    let values: Vec<f64> = keys.iter().map(|k| k.0).collect();
+    let value = match (kind, values.as_slice()) {
+        ("min", _) => values.iter().copied().fold(f64::INFINITY, f64::min),
+        ("max", _) => values.iter().copied().fold(f64::NEG_INFINITY, f64::max),
+        ("clamp", [lo, v, hi]) => v.min(*hi).max(*lo),
+        _ => return None,
+    };
+    Some(match percent {
+        None => CalcValue::Number(value),
+        Some(pct) => CalcValue::Linear(value, pct),
+    })
+}
+
+fn nested(p: &mut Parser<'_>, cx: &LengthContext) -> Result<CalcValue, ParseError<()>> {
+    let value = calc_sum(p, cx).ok_or_else(|| ParseError::custom(()))?;
+    p.expect_exhausted().map_err(|_| ParseError::custom(()))?;
+    Ok(value)
+}
+
+fn absolute_px(value: f64, unit: &str, cx: &LengthContext) -> Option<f64> {
+    let unit = unit.to_ascii_lowercase();
+    let z = cx.zoom;
+    Some(match unit.as_str() {
+        "px" => value * z,
+        "rem" => value * cx.root_font_size * z,
+        "em" => value * cx.font_size,
+        "pt" => value * 96.0 / 72.0 * z,
+        "pc" => value * 16.0 * z,
+        "in" => value * 96.0 * z,
+        "cm" => value * 96.0 / 2.54 * z,
+        "mm" => value * 96.0 / 25.4 * z,
+        "q" => value * 96.0 / 101.6 * z,
+        "vw" | "dvw" | "svw" | "lvw" if cx.viewport_width > 0.0 => value * cx.viewport_width / 100.0 * z,
+        "vh" | "dvh" | "svh" | "lvh" if cx.viewport_height > 0.0 => value * cx.viewport_height / 100.0 * z,
+        "lh" if cx.line_height.is_some() => value * cx.line_height.unwrap_or_default(),
+        _ => return None,
+    })
+}
+
+/// A single length, percentage or `calc()` of them as `(px, percent)`.
+/// `None` for keywords, lists and unsupported units.
+pub fn resolve_len(value: &str, cx: &LengthContext) -> Option<(f64, f64)> {
+    let mut p = Parser::new(value.trim());
+    let result = calc_factor(&mut p, cx)?;
+    p.expect_exhausted().ok()?;
+    match result {
+        CalcValue::Linear(px, pct) => Some((px, pct)),
+        CalcValue::Number(0.0) => Some((0.0, 0.0)),
+        CalcValue::Number(_) => None,
+    }
+}
+
+/// A single length or `calc()` of absolute lengths, as `Npx`. `None` keeps
+/// the declared value (percentages, keywords, viewport units, lists).
+pub fn resolve_length(value: &str, font_size: f64, root_font_size: f64) -> Option<String> {
+    if value.contains('%') {
+        return None;
+    }
+    let (px, _) = resolve_len(value, &LengthContext::fonts(font_size, root_font_size))?;
+    Some(format!("{}px", fmt_num(px)))
+}
+
+/// A unitless number or `calc()` of numbers (lengths divided by lengths
+/// included, resolved in `cx`), else `None`.
+pub fn resolve_number_in(value: &str, cx: &LengthContext) -> Option<f64> {
+    let mut p = Parser::new(value.trim());
+    let result = calc_factor(&mut p, cx)?;
+    p.expect_exhausted().ok()?;
+    match result {
+        CalcValue::Number(n) => Some(n),
+        CalcValue::Linear(..) => None,
+    }
+}
+
+/// A unitless number or `calc()` of numbers, else `None`.
+pub fn resolve_number(value: &str) -> Option<f64> {
+    let mut p = Parser::new(value.trim());
+    let result = calc_factor(&mut p, &LengthContext::fonts(16.0, 16.0))?;
+    p.expect_exhausted().ok()?;
+    match result {
+        CalcValue::Number(n) => Some(n),
+        CalcValue::Linear(..) => None,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Colors
+// ---------------------------------------------------------------------------
+
+#[derive(Copy, Clone, Debug, PartialEq)]
+enum Color {
+    /// sRGB channels 0..=255 and alpha 0..=1.
+    Rgb(f64, f64, f64, f64),
+    /// Already-normalized Oklab/Oklch components and alpha.
+    Oklab(f64, f64, f64, f64),
+    Oklch(f64, f64, f64, f64),
+    /// `currentcolor`.
+    Current,
+}
+
+/// The computed color for `value`; `current` supplies `currentcolor`.
+pub fn serialize_color(value: &str, current: &mut dyn FnMut() -> Option<String>) -> Option<String> {
+    let color = parse_color(value.trim())?;
+    Some(match color {
+        Color::Current => return current(),
+        Color::Rgb(r, g, b, a) => serialize_rgb(r, g, b, a),
+        Color::Oklab(l, a, b, alpha) => {
+            format!("oklab({} {} {}{})", fmt_num(l), fmt_num(a), fmt_num(b), alpha_suffix(alpha))
+        }
+        Color::Oklch(l, c, h, alpha) => {
+            format!("oklch({} {} {}{})", fmt_num(l), fmt_num(c), fmt_num(h), alpha_suffix(alpha))
+        }
+    })
+}
+
+fn alpha_suffix(alpha: f64) -> String {
+    if alpha >= 1.0 {
+        String::new()
+    } else {
+        format!(" / {}", fmt_num(alpha))
+    }
+}
+
+fn serialize_rgb(r: f64, g: f64, b: f64, a: f64) -> String {
+    let c = |v: f64| v.round().clamp(0.0, 255.0) as u8;
+    if a >= 1.0 {
+        format!("rgb({}, {}, {})", c(r), c(g), c(b))
+    } else {
+        format!("rgba({}, {}, {}, {})", c(r), c(g), c(b), serialize_alpha(a))
+    }
+}
+
+/// Chromium stores alpha in 8 bits and prints the shortest decimal that
+/// round-trips (two places when possible, else three).
+fn serialize_alpha(a: f64) -> String {
+    let a8 = (a.clamp(0.0, 1.0) * 255.0).round();
+    let two = (a8 / 255.0 * 100.0).round() / 100.0;
+    let value = if (two * 255.0).round() == a8 { two } else { (a8 / 255.0 * 1000.0).round() / 1000.0 };
+    fmt_num(value)
+}
+
+fn parse_color(value: &str) -> Option<Color> {
+    let lower = value.to_ascii_lowercase();
+    if lower == "currentcolor" {
+        return Some(Color::Current);
+    }
+    if lower == "transparent" {
+        return Some(Color::Rgb(0.0, 0.0, 0.0, 0.0));
+    }
+    if let Some(hex) = lower.strip_prefix('#') {
+        return parse_hex(hex);
+    }
+    if let Some(rgb) = named_color(&lower) {
+        return Some(Color::Rgb(((rgb >> 16) & 255) as f64, ((rgb >> 8) & 255) as f64, (rgb & 255) as f64, 1.0));
+    }
+    let open = lower.find('(')?;
+    if !lower.ends_with(')') {
+        return None;
+    }
+    let func = &lower[..open];
+    let args = &lower[open + 1..lower.len() - 1];
+    match func {
+        "rgb" | "rgba" => parse_rgb_args(args),
+        "hsl" | "hsla" => parse_hsl_args(args),
+        "oklch" => {
+            let (c, alpha) = component_args(args)?;
+            let [l, ch, h] = c.as_slice() else { return None };
+            Some(Color::Oklch(unit_or_percent(l, 1.0)?, unit_or_percent(ch, 0.4)?, hue(h)?, alpha))
+        }
+        "oklab" => {
+            let (c, alpha) = component_args(args)?;
+            let [l, a, b] = c.as_slice() else { return None };
+            Some(Color::Oklab(unit_or_percent(l, 1.0)?, unit_or_percent(a, 0.4)?, unit_or_percent(b, 0.4)?, alpha))
+        }
+        "color-mix" => parse_color_mix(args),
+        _ => None,
+    }
+}
+
+fn parse_hex(hex: &str) -> Option<Color> {
+    let digit = |i: usize, n: usize| u8::from_str_radix(&hex[i..i + n], 16).ok().map(|v| v as f64);
+    let short = |i: usize| digit(i, 1).map(|v| v * 17.0);
+    match hex.len() {
+        3 => Some(Color::Rgb(short(0)?, short(1)?, short(2)?, 1.0)),
+        4 => Some(Color::Rgb(short(0)?, short(1)?, short(2)?, short(3)? / 255.0)),
+        6 => Some(Color::Rgb(digit(0, 2)?, digit(2, 2)?, digit(4, 2)?, 1.0)),
+        8 => Some(Color::Rgb(digit(0, 2)?, digit(2, 2)?, digit(4, 2)?, digit(6, 2)? / 255.0)),
+        _ => None,
+    }
+}
+
+/// Space- or comma-separated components with an optional `/ alpha`.
+fn component_args(args: &str) -> Option<(Vec<String>, f64)> {
+    let (main, alpha) = match args.split_once('/') {
+        Some((m, a)) => (m, Some(a.trim())),
+        None => (args, None),
+    };
+    let parts: Vec<String> = main
+        .split(|c: char| c == ',' || c.is_ascii_whitespace())
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .collect();
+    let alpha = match alpha {
+        Some(a) => unit_or_percent(a, 1.0)?.clamp(0.0, 1.0),
+        None => 1.0,
+    };
+    Some((parts, alpha))
+}
+
+/// A number, or a percentage of `full`.
+fn unit_or_percent(s: &str, full: f64) -> Option<f64> {
+    if s == "none" {
+        return Some(0.0);
+    }
+    match s.strip_suffix('%') {
+        Some(p) => p.parse::<f64>().ok().map(|v| v / 100.0 * full),
+        None => s.parse::<f64>().ok(),
+    }
+}
+
+fn hue(s: &str) -> Option<f64> {
+    if s == "none" {
+        return Some(0.0);
+    }
+    let (v, scale) = if let Some(v) = s.strip_suffix("deg") {
+        (v, 1.0)
+    } else if let Some(v) = s.strip_suffix("grad") {
+        (v, 0.9)
+    } else if let Some(v) = s.strip_suffix("rad") {
+        (v, 180.0 / std::f64::consts::PI)
+    } else if let Some(v) = s.strip_suffix("turn") {
+        (v, 360.0)
+    } else {
+        (s, 1.0)
+    };
+    v.parse::<f64>().ok().map(|v| v * scale)
+}
+
+fn parse_rgb_args(args: &str) -> Option<Color> {
+    let (parts, alpha) = component_args(args)?;
+    let (rgb, alpha) = match parts.as_slice() {
+        [r, g, b] => ([r, g, b], alpha),
+        // Legacy `rgba(r, g, b, a)`.
+        [r, g, b, a] if !args.contains('/') => ([r, g, b], unit_or_percent(a, 1.0)?.clamp(0.0, 1.0)),
+        _ => return None,
+    };
+    let channel = |s: &String| unit_or_percent(s, 255.0);
+    Some(Color::Rgb(channel(rgb[0])?, channel(rgb[1])?, channel(rgb[2])?, alpha))
+}
+
+fn parse_hsl_args(args: &str) -> Option<Color> {
+    let (parts, alpha) = component_args(args)?;
+    let (h, s, l, alpha) = match parts.as_slice() {
+        [h, s, l] => (h, s, l, alpha),
+        [h, s, l, a] if !args.contains('/') => (h, s, l, unit_or_percent(a, 1.0)?.clamp(0.0, 1.0)),
+        _ => return None,
+    };
+    let h = hue(h)?.rem_euclid(360.0) / 360.0;
+    let s = unit_or_percent(s, 1.0)?.clamp(0.0, 1.0);
+    let l = unit_or_percent(l, 1.0)?.clamp(0.0, 1.0);
+    let q = if l < 0.5 { l * (1.0 + s) } else { l + s - l * s };
+    let p = 2.0 * l - q;
+    let channel = |t: f64| {
+        let t = t.rem_euclid(1.0);
+        let v = if t < 1.0 / 6.0 {
+            p + (q - p) * 6.0 * t
+        } else if t < 0.5 {
+            q
+        } else if t < 2.0 / 3.0 {
+            p + (q - p) * (2.0 / 3.0 - t) * 6.0
+        } else {
+            p
+        };
+        v * 255.0
+    };
+    Some(Color::Rgb(channel(h + 1.0 / 3.0), channel(h), channel(h - 1.0 / 3.0), alpha))
+}
+
+/// `color-mix(in <space>, C [p%], transparent [q%])` as Tailwind emits for
+/// opacity modifiers. Mixing with transparent keeps the color and scales
+/// alpha (premultiplied interpolation); other mixes are not computed.
+fn parse_color_mix(args: &str) -> Option<Color> {
+    let (space, rest) = split_top_level_comma(args)?;
+    let space = space.trim().strip_prefix("in ")?.trim();
+    let (first, second) = split_top_level_comma(rest)?;
+    let operand = |s: &str| -> Option<(Color, Option<f64>)> {
+        let parts = top_level_parts(s.trim());
+        match parts.as_slice() {
+            [c] => Some((parse_color(c)?, None)),
+            [c, p] if p.ends_with('%') => Some((parse_color(c)?, Some(unit_or_percent(p, 1.0)?))),
+            [p, c] if p.ends_with('%') => Some((parse_color(c)?, Some(unit_or_percent(p, 1.0)?))),
+            _ => None,
+        }
+    };
+    let (a, pa) = operand(first)?;
+    let (b, pb) = operand(second)?;
+    let transparent = Color::Rgb(0.0, 0.0, 0.0, 0.0);
+    let (color, weight) = match (a == transparent, b == transparent) {
+        (false, true) => (a, pa.or(pb.map(|q| 1.0 - q)).unwrap_or(0.5)),
+        (true, false) => (b, pb.or(pa.map(|q| 1.0 - q)).unwrap_or(0.5)),
+        _ => return None,
+    };
+    let scaled = |alpha: f64| (alpha * weight).clamp(0.0, 1.0);
+    Some(match (space, color) {
+        ("oklab", Color::Oklab(l, a, b, alpha)) => Color::Oklab(l, a, b, scaled(alpha)),
+        ("oklab", Color::Oklch(l, c, h, alpha)) => {
+            let rad = h.to_radians();
+            Color::Oklab(l, c * rad.cos(), c * rad.sin(), scaled(alpha))
+        }
+        ("oklab", Color::Rgb(r, g, b, alpha)) => {
+            let (l, a, b) = srgb_to_oklab(r, g, b);
+            Color::Oklab(l, a, b, scaled(alpha))
+        }
+        ("oklch", Color::Oklch(l, c, h, alpha)) => Color::Oklch(l, c, h, scaled(alpha)),
+        ("srgb", Color::Rgb(r, g, b, alpha)) => Color::Rgb(r, g, b, scaled(alpha)),
+        _ => return None,
+    })
+}
+
+fn srgb_to_oklab(r: f64, g: f64, b: f64) -> (f64, f64, f64) {
+    let lin = |c: f64| {
+        let c = c / 255.0;
+        if c <= 0.04045 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    let (r, g, b) = (lin(r), lin(g), lin(b));
+    let l = (0.412_221_470_8 * r + 0.536_332_536_3 * g + 0.051_445_992_9 * b).cbrt();
+    let m = (0.211_903_498_2 * r + 0.680_699_545_1 * g + 0.107_396_956_6 * b).cbrt();
+    let s = (0.088_302_461_9 * r + 0.281_718_837_6 * g + 0.629_978_700_5 * b).cbrt();
+    (
+        0.210_454_255_3 * l + 0.793_617_785 * m - 0.004_072_046_8 * s,
+        1.977_998_495_1 * l - 2.428_592_205 * m + 0.450_593_709_9 * s,
+        0.025_904_037_1 * l + 0.782_771_766_2 * m - 0.808_675_766 * s,
+    )
+}
+
+fn named_color(name: &str) -> Option<u32> {
+    NAMED_COLORS.binary_search_by(|(n, _)| n.cmp(&name)).ok().map(|i| NAMED_COLORS[i].1)
+}
+
+/// CSS Color 4 named colors, sorted for binary search.
+const NAMED_COLORS: &[(&str, u32)] = &[
+    ("aliceblue", 0xf0f8ff),
+    ("antiquewhite", 0xfaebd7),
+    ("aqua", 0x00ffff),
+    ("aquamarine", 0x7fffd4),
+    ("azure", 0xf0ffff),
+    ("beige", 0xf5f5dc),
+    ("bisque", 0xffe4c4),
+    ("black", 0x000000),
+    ("blanchedalmond", 0xffebcd),
+    ("blue", 0x0000ff),
+    ("blueviolet", 0x8a2be2),
+    ("brown", 0xa52a2a),
+    ("burlywood", 0xdeb887),
+    ("cadetblue", 0x5f9ea0),
+    ("chartreuse", 0x7fff00),
+    ("chocolate", 0xd2691e),
+    ("coral", 0xff7f50),
+    ("cornflowerblue", 0x6495ed),
+    ("cornsilk", 0xfff8dc),
+    ("crimson", 0xdc143c),
+    ("cyan", 0x00ffff),
+    ("darkblue", 0x00008b),
+    ("darkcyan", 0x008b8b),
+    ("darkgoldenrod", 0xb8860b),
+    ("darkgray", 0xa9a9a9),
+    ("darkgreen", 0x006400),
+    ("darkgrey", 0xa9a9a9),
+    ("darkkhaki", 0xbdb76b),
+    ("darkmagenta", 0x8b008b),
+    ("darkolivegreen", 0x556b2f),
+    ("darkorange", 0xff8c00),
+    ("darkorchid", 0x9932cc),
+    ("darkred", 0x8b0000),
+    ("darksalmon", 0xe9967a),
+    ("darkseagreen", 0x8fbc8f),
+    ("darkslateblue", 0x483d8b),
+    ("darkslategray", 0x2f4f4f),
+    ("darkslategrey", 0x2f4f4f),
+    ("darkturquoise", 0x00ced1),
+    ("darkviolet", 0x9400d3),
+    ("deeppink", 0xff1493),
+    ("deepskyblue", 0x00bfff),
+    ("dimgray", 0x696969),
+    ("dimgrey", 0x696969),
+    ("dodgerblue", 0x1e90ff),
+    ("firebrick", 0xb22222),
+    ("floralwhite", 0xfffaf0),
+    ("forestgreen", 0x228b22),
+    ("fuchsia", 0xff00ff),
+    ("gainsboro", 0xdcdcdc),
+    ("ghostwhite", 0xf8f8ff),
+    ("gold", 0xffd700),
+    ("goldenrod", 0xdaa520),
+    ("gray", 0x808080),
+    ("green", 0x008000),
+    ("greenyellow", 0xadff2f),
+    ("grey", 0x808080),
+    ("honeydew", 0xf0fff0),
+    ("hotpink", 0xff69b4),
+    ("indianred", 0xcd5c5c),
+    ("indigo", 0x4b0082),
+    ("ivory", 0xfffff0),
+    ("khaki", 0xf0e68c),
+    ("lavender", 0xe6e6fa),
+    ("lavenderblush", 0xfff0f5),
+    ("lawngreen", 0x7cfc00),
+    ("lemonchiffon", 0xfffacd),
+    ("lightblue", 0xadd8e6),
+    ("lightcoral", 0xf08080),
+    ("lightcyan", 0xe0ffff),
+    ("lightgoldenrodyellow", 0xfafad2),
+    ("lightgray", 0xd3d3d3),
+    ("lightgreen", 0x90ee90),
+    ("lightgrey", 0xd3d3d3),
+    ("lightpink", 0xffb6c1),
+    ("lightsalmon", 0xffa07a),
+    ("lightseagreen", 0x20b2aa),
+    ("lightskyblue", 0x87cefa),
+    ("lightslategray", 0x778899),
+    ("lightslategrey", 0x778899),
+    ("lightsteelblue", 0xb0c4de),
+    ("lightyellow", 0xffffe0),
+    ("lime", 0x00ff00),
+    ("limegreen", 0x32cd32),
+    ("linen", 0xfaf0e6),
+    ("magenta", 0xff00ff),
+    ("maroon", 0x800000),
+    ("mediumaquamarine", 0x66cdaa),
+    ("mediumblue", 0x0000cd),
+    ("mediumorchid", 0xba55d3),
+    ("mediumpurple", 0x9370db),
+    ("mediumseagreen", 0x3cb371),
+    ("mediumslateblue", 0x7b68ee),
+    ("mediumspringgreen", 0x00fa9a),
+    ("mediumturquoise", 0x48d1cc),
+    ("mediumvioletred", 0xc71585),
+    ("midnightblue", 0x191970),
+    ("mintcream", 0xf5fffa),
+    ("mistyrose", 0xffe4e1),
+    ("moccasin", 0xffe4b5),
+    ("navajowhite", 0xffdead),
+    ("navy", 0x000080),
+    ("oldlace", 0xfdf5e6),
+    ("olive", 0x808000),
+    ("olivedrab", 0x6b8e23),
+    ("orange", 0xffa500),
+    ("orangered", 0xff4500),
+    ("orchid", 0xda70d6),
+    ("palegoldenrod", 0xeee8aa),
+    ("palegreen", 0x98fb98),
+    ("paleturquoise", 0xafeeee),
+    ("palevioletred", 0xdb7093),
+    ("papayawhip", 0xffefd5),
+    ("peachpuff", 0xffdab9),
+    ("peru", 0xcd853f),
+    ("pink", 0xffc0cb),
+    ("plum", 0xdda0dd),
+    ("powderblue", 0xb0e0e6),
+    ("purple", 0x800080),
+    ("rebeccapurple", 0x663399),
+    ("red", 0xff0000),
+    ("rosybrown", 0xbc8f8f),
+    ("royalblue", 0x4169e1),
+    ("saddlebrown", 0x8b4513),
+    ("salmon", 0xfa8072),
+    ("sandybrown", 0xf4a460),
+    ("seagreen", 0x2e8b57),
+    ("seashell", 0xfff5ee),
+    ("sienna", 0xa0522d),
+    ("silver", 0xc0c0c0),
+    ("skyblue", 0x87ceeb),
+    ("slateblue", 0x6a5acd),
+    ("slategray", 0x708090),
+    ("slategrey", 0x708090),
+    ("snow", 0xfffafa),
+    ("springgreen", 0x00ff7f),
+    ("steelblue", 0x4682b4),
+    ("tan", 0xd2b48c),
+    ("teal", 0x008080),
+    ("thistle", 0xd8bfd8),
+    ("tomato", 0xff6347),
+    ("turquoise", 0x40e0d0),
+    ("violet", 0xee82ee),
+    ("wheat", 0xf5deb3),
+    ("white", 0xffffff),
+    ("whitesmoke", 0xf5f5f5),
+    ("yellow", 0xffff00),
+    ("yellowgreen", 0x9acd32),
+];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn color(v: &str) -> Option<String> {
+        serialize_color(v, &mut || Some("rgb(1, 2, 3)".into()))
+    }
+
+    #[test]
+    fn named_colors_are_sorted() {
+        assert!(NAMED_COLORS.windows(2).all(|w| w[0].0 < w[1].0));
+    }
+
+    #[test]
+    fn colors_serialize_like_chromium() {
+        assert_eq!(color("#7c3aed").as_deref(), Some("rgb(124, 58, 237)"));
+        assert_eq!(color("#FFF").as_deref(), Some("rgb(255, 255, 255)"));
+        assert_eq!(color("#ffffff80").as_deref(), Some("rgba(255, 255, 255, 0.5)"));
+        assert_eq!(color("white").as_deref(), Some("rgb(255, 255, 255)"));
+        assert_eq!(color("transparent").as_deref(), Some("rgba(0, 0, 0, 0)"));
+        assert_eq!(color("rgb(1 2 3 / 50%)").as_deref(), Some("rgba(1, 2, 3, 0.5)"));
+        assert_eq!(color("rgba(10, 20, 30, 0.25)").as_deref(), Some("rgba(10, 20, 30, 0.25)"));
+        assert_eq!(color("hsl(0 100% 50%)").as_deref(), Some("rgb(255, 0, 0)"));
+        assert_eq!(color("currentColor").as_deref(), Some("rgb(1, 2, 3)"));
+        assert_eq!(color("oklch(54.1% 0.281 293.009)").as_deref(), Some("oklch(0.541 0.281 293.009)"));
+        assert_eq!(color("oklch(0.5 0.1 20 / 0.5)").as_deref(), Some("oklch(0.5 0.1 20 / 0.5)"));
+        assert_eq!(
+            color("color-mix(in oklab, oklch(0.5 0 0) 50%, transparent)").as_deref(),
+            Some("oklab(0.5 0 0 / 0.5)")
+        );
+        assert_eq!(color("not-a-color"), None);
+    }
+
+    #[test]
+    fn lengths_and_calc_compute_to_px() {
+        assert_eq!(resolve_length("calc(0.25rem * 2)", 16.0, 16.0).as_deref(), Some("8px"));
+        assert_eq!(resolve_length("calc(0.25rem * 3.5)", 16.0, 16.0).as_deref(), Some("14px"));
+        assert_eq!(resolve_length("1.5em", 10.0, 16.0).as_deref(), Some("15px"));
+        assert_eq!(resolve_length("calc(100% - 2px)", 16.0, 16.0), None);
+        assert_eq!(resolve_length("auto", 16.0, 16.0), None);
+        assert_eq!(resolve_length("0", 16.0, 16.0).as_deref(), Some("0px"));
+        assert_eq!(resolve_length("calc((1px + 2px) * 2)", 16.0, 16.0).as_deref(), Some("6px"));
+        assert_eq!(resolve_length("13.333333px", 16.0, 16.0).as_deref(), Some("13.3333px"));
+        assert_eq!(resolve_number("calc(1 + 1)"), Some(2.0));
+        // Typed arithmetic: a length divided by a length is a number.
+        assert_eq!(resolve_number("calc(10px / 4px)"), Some(2.5));
+        assert_eq!(resolve_number("calc(calc(96px / 48px) * 1.5)"), Some(3.0));
+        assert_eq!(resolve_number("calc(1px / 0px)"), None);
+        assert_eq!(resolve_number("calc(10% / 5px)"), None);
+        assert_eq!(resolve_len("calc(10px / 2px)", &LengthContext::fonts(16.0, 16.0)), None, "a number, not a length");
+        let mm_rem = resolve_number_in("calc(210mm / 96rem)", &LengthContext::fonts(16.0, 16.0)).unwrap();
+        assert!((mm_rem - 210.0 * 96.0 / 25.4 / 1536.0).abs() < 1e-9);
+        let cx = LengthContext {
+            font_size: 10.0,
+            root_font_size: 14.0,
+            viewport_width: 1440.0,
+            viewport_height: 900.0,
+            line_height: None,
+            zoom: 1.0,
+        };
+        assert_eq!(resolve_len("calc(100% - 8px)", &cx), Some((-8.0, 100.0)));
+        assert_eq!(resolve_len("50vw", &cx), Some((720.0, 0.0)));
+        assert_eq!(resolve_len("2rem", &cx), Some((28.0, 0.0)));
+        assert_eq!(resolve_len("auto", &cx), None);
+        assert_eq!(resolve_len("min(1180px, calc(100vw - 40px))", &cx), Some((1180.0, 0.0)));
+        assert_eq!(resolve_len("max(1rem, 10px)", &cx), Some((14.0, 0.0)));
+        assert_eq!(resolve_len("clamp(10px, 50vw, 600px)", &cx), Some((600.0, 0.0)));
+        assert_eq!(resolve_len("calc(min(10px, 20px) * 2)", &cx), Some((20.0, 0.0)));
+        assert_eq!(resolve_len("min(100%, 40px)", &cx), None);
+        assert_eq!(resolve_number("max(1, 2)"), Some(2.0));
+        assert_eq!(resolve_number("calc(1.25 / .875)").map(|n| n * 14.0), Some(20.0));
+        assert_eq!(resolve_len("-1.5e1px", &cx), Some((-15.0, 0.0)));
+        assert_eq!(resolve_len("12.5%", &cx), Some((0.0, 12.5)));
+    }
+
+    #[test]
+    fn var_substitution_uses_fallbacks_and_rejects_missing() {
+        let mut lookup = |n: &str| match n {
+            "--spacing" => Some("0.25rem".to_owned()),
+            "--nested" => Some("var(--spacing)".to_owned()),
+            _ => None,
+        };
+        assert_eq!(substitute_vars("calc(var(--spacing) * 2)", &mut lookup, 0).as_deref(), Some("calc(0.25rem * 2)"));
+        assert_eq!(substitute_vars("var(--nested)", &mut lookup, 0).as_deref(), Some("0.25rem"));
+        assert_eq!(substitute_vars("var(--missing, red)", &mut lookup, 0).as_deref(), Some("red"));
+        assert_eq!(substitute_vars("var(--missing)", &mut lookup, 0), None);
+    }
+
+    #[test]
+    fn shorthands_expand_to_longhands() {
+        assert_eq!(
+            expand("flex", "1"),
+            vec![
+                ("flex-grow".into(), "1".into()),
+                ("flex-shrink".into(), "1".into()),
+                ("flex-basis".into(), "0%".into())
+            ]
+        );
+        assert_eq!(expand("overflow", "hidden auto")[1], ("overflow-y".into(), "auto".into()));
+        assert_eq!(expand("gap", "calc(var(--spacing) * 2)")[1].0, "column-gap");
+        assert_eq!(expand("margin", "1px 2px")[3], ("margin-left".into(), "2px".into()));
+        assert_eq!(expand("background", "#fff"), vec![("background-color".into(), "#fff".into())]);
+        assert!(expand("background", "url(x.png) no-repeat").is_empty());
+        assert_eq!(
+            expand("padding-inline", "var(--spacing-3)"),
+            vec![
+                ("padding-left".into(), "var(--spacing-3)".into()),
+                ("padding-right".into(), "var(--spacing-3)".into())
+            ]
+        );
+        assert_eq!(
+            expand("margin-block", "1px 2px"),
+            vec![("margin-top".into(), "1px".into()), ("margin-bottom".into(), "2px".into())]
+        );
+        assert_eq!(expand("padding-inline-end", "4px"), vec![("padding-right".into(), "4px".into())]);
+        assert_eq!(expand("inset-inline", "0"), vec![("left".into(), "0".into()), ("right".into(), "0".into())]);
+        assert_eq!(expand("inset-block-start", "2px"), vec![("top".into(), "2px".into())]);
+        assert_eq!(expand("border-inline-start-width", "3px"), vec![("border-left-width".into(), "3px".into())]);
+        assert_eq!(expand("border-block", "1px solid red").len(), 6);
+        assert_eq!(expand("max-inline-size", "10rem"), vec![("max-width".into(), "10rem".into())]);
+        assert_eq!(expand("block-size", "5px"), vec![("height".into(), "5px".into())]);
+        assert!(expand("padding-inline-foo", "1px") == vec![("padding-inline-foo".into(), "1px".into())]);
+        assert_eq!(
+            expand("place-items", "center start"),
+            vec![("align-items".into(), "center".into()), ("justify-items".into(), "start".into())]
+        );
+        assert_eq!(expand("place-self", "end")[1], ("justify-self".into(), "end".into()));
+        let border = expand("border", "1px solid red");
+        assert_eq!(border.len(), 12);
+        assert!(border.contains(&("border-left-style".into(), "solid".into())));
+        assert_eq!(expand("border-bottom", "2px dashed")[2], ("border-bottom-color".into(), "currentcolor".into()));
+    }
+}

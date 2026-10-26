@@ -495,6 +495,39 @@ fn es_modules_through_fetcher() {
 }
 
 #[test]
+fn import_meta_url_is_set_for_entry_and_fetched_modules() {
+    let e = engine();
+    if !e.capabilities().modules {
+        eprintln!("module SPI unavailable; skipping");
+        return;
+    }
+    struct Fetcher;
+    impl ModuleFetcher for Fetcher {
+        fn fetch(&self, realm: &Realm, url: String, request: ModuleRequest) {
+            let s = realm.scope().unwrap();
+            if url == "http://site.test/dep.js" {
+                request.resolve(&s, "export const url = import.meta.url;").unwrap();
+            } else {
+                request.reject(&s, &JsError::Type(format!("unexpected module {url}"))).unwrap();
+            }
+        }
+    }
+
+    let r = e.create_realm(RealmOptions::default()).unwrap();
+    r.set_module_fetcher(Some(Rc::new(Fetcher)));
+    let s = r.scope().unwrap();
+    s.eval_module(
+        "import { url as depUrl } from './dep.js'; \
+         globalThis.metaUrls = [import.meta.url, depUrl];",
+        "http://site.test/main.js",
+    )
+    .unwrap();
+
+    assert_eq!(eval_str(&r, "metaUrls[0]"), "http://site.test/main.js");
+    assert_eq!(eval_str(&r, "metaUrls[1]"), "http://site.test/dep.js");
+}
+
+#[test]
 fn terminate_handle_stops_infinite_loop() {
     let e = engine();
     let Ok(handle) = e.terminate_handle() else {

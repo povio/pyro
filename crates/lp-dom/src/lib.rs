@@ -2,11 +2,15 @@
 //! of lightpanda-io/browser (AGPL-3.0-only). Pure Rust, no JS engine
 //! dependency; JS bindings live in `lp-webapi`.
 
+pub mod computed;
 pub mod dom;
 pub mod error;
 pub mod events;
+pub mod flow;
+mod flow_font;
 pub mod forms;
 pub mod iframe;
+pub mod image;
 pub mod inner_text;
 pub mod layout;
 pub mod media;
@@ -17,6 +21,9 @@ pub mod script;
 pub mod select;
 pub mod serialize;
 pub mod style;
+pub mod style_flow;
+pub mod svg_geometry;
+pub mod text_metrics;
 pub mod xml;
 pub mod xpath;
 

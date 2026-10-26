@@ -32,6 +32,14 @@ pub enum EventInterface {
     HashChangeEvent,
     PageTransitionEvent,
     MessageEvent,
+    StorageEvent,
+}
+
+/// `StorageEvent.storageArea`: the receiving window's own `Storage` (resolved
+/// in the observing realm), or one passed to the constructor.
+pub enum StorageAreaRef {
+    Window { session: bool },
+    Object(Persistent),
 }
 
 /// Interface-specific fields (flat; unused fields keep defaults).
@@ -88,6 +96,11 @@ pub struct EventFields {
     pub message_source: Option<TargetKey>,
     pub origin: String,
     pub(crate) data_transfer: Option<crate::data_transfer::DataTransferRef>,
+    pub storage_key: Option<String>,
+    pub storage_old: Option<String>,
+    pub storage_new: Option<String>,
+    pub storage_url: String,
+    pub storage_area: Option<StorageAreaRef>,
 }
 
 pub struct EventCore {
@@ -235,6 +248,7 @@ pub fn wrap_event<'s>(s: &Scope<'s>, core: &EventData) -> JsResult<Object<'s>> {
         EventInterface::HashChangeEvent => s.wrap::<HashChangeEvent>(d, Some(key)),
         EventInterface::PageTransitionEvent => s.wrap::<PageTransitionEvent>(d, Some(key)),
         EventInterface::MessageEvent => s.wrap::<MessageEvent>(d, Some(key)),
+        EventInterface::StorageEvent => s.wrap::<StorageEvent>(d, Some(key)),
     }?;
     core.trace_targets(s, wrapper)?;
     Ok(wrapper)
@@ -416,6 +430,30 @@ fn fill_error<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) 
         if !e.is_undefined() {
             f.error = Some(Persistent::new(s, e));
         }
+    }
+    Ok(())
+}
+
+fn fill_storage<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
+    let Some(o) = init else { return Ok(()) };
+    let nullable = |name: &str| -> JsResult<Option<String>> {
+        let v = o.get(name)?;
+        if v.is_undefined() || v.is_null() {
+            Ok(None)
+        } else {
+            Ok(Some(crate::util::dom_string(v)?))
+        }
+    };
+    f.storage_key = nullable("key")?;
+    f.storage_old = nullable("oldValue")?;
+    f.storage_new = nullable("newValue")?;
+    f.storage_url = get_str(Some(o), "url")?;
+    let area = o.get("storageArea")?;
+    if !area.is_undefined() && !area.is_null() {
+        if s.unwrap::<crate::storage::Storage>(area).is_none() {
+            return Err(JsError::Type("StorageEvent: storageArea is not a Storage".into()));
+        }
+        f.storage_area = Some(StorageAreaRef::Object(Persistent::new(s, area)));
     }
     Ok(())
 }
@@ -854,6 +892,34 @@ impl JsClass for PopStateEvent {
     }
 }
 
+fn nullable_string<'s>(s: &Scope<'s>, v: &Option<String>) -> lp_js::Value<'s> {
+    v.as_deref().map_or(s.null(), |v| s.string(v))
+}
+
+/// `storage` events (HTML Web Storage): the change another same-origin
+/// document made to a storage area this window shares.
+pub struct StorageEvent;
+impl JsClass for StorageEvent {
+    const NAME: &'static str = "StorageEvent";
+    type Data = EventData;
+    type Parent = Event;
+    fn define(def: &mut ClassDef<Self>) {
+        def.constructor(1, |s, nt, a| construct::<StorageEvent>(s, nt, a, EventInterface::StorageEvent, fill_storage));
+        def.getter("key", |s, e| Ok(nullable_string(s, &e.fields.borrow().storage_key)));
+        def.getter("oldValue", |s, e| Ok(nullable_string(s, &e.fields.borrow().storage_old)));
+        def.getter("newValue", |s, e| Ok(nullable_string(s, &e.fields.borrow().storage_new)));
+        def.getter("url", |s, e| Ok(s.string(&e.fields.borrow().storage_url)));
+        def.getter("storageArea", |s, e| {
+            let session = match &e.fields.borrow().storage_area {
+                None => return Ok(s.null()),
+                Some(StorageAreaRef::Object(p)) => return Ok(p.get(s)),
+                Some(StorageAreaRef::Window { session }) => *session,
+            };
+            crate::storage::window_storage(s, &e.page, session)
+        });
+    }
+}
+
 pub struct HashChangeEvent;
 impl JsClass for HashChangeEvent {
     const NAME: &'static str = "HashChangeEvent";
@@ -919,4 +985,5 @@ pub(crate) fn register(engine: &lp_js::Engine) {
     engine.register::<HashChangeEvent>();
     engine.register::<PageTransitionEvent>();
     engine.register::<MessageEvent>();
+    engine.register::<StorageEvent>();
 }

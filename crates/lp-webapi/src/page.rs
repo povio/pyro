@@ -50,6 +50,10 @@ pub struct PageDom {
     /// the identity map is weak, and script expandos / defineProperty
     /// overrides on them must survive collection.
     pub(crate) same_objects: RefCell<FxHashMap<RealmId, (Persistent, u32)>>,
+    /// Event targets of each realm's `visualViewport` and `screen.orientation`
+    /// (registered by their wrappers, removed when those are collected), for
+    /// the embedder's resize and orientation change events.
+    pub(crate) viewport_targets: RefCell<Vec<(crate::window::ViewportTarget, TargetKey)>>,
     /// Each realm's original `structuredClone` (MessagePort cloning).
     pub(crate) structured_clones: RefCell<FxHashMap<RealmId, Persistent>>,
     /// Each realm's original `Object.defineProperty` ([Replaceable] setters).
@@ -62,6 +66,14 @@ pub struct PageDom {
     pub net: RefCell<Option<lp_net::NetClient>>,
     pub(crate) intersections: crate::intersection_observer::BindingState,
     pub(crate) resizes: crate::resize_observer::BindingState,
+    /// Scroll event targets awaiting the next rendering update, per document
+    /// (None: the document itself), each fired once ("pending scroll event
+    /// targets"). Keyed by document: a task dropped by a navigation must not
+    /// block the next document's events.
+    pub(crate) pending_scrolls: RefCell<FxHashSet<(NodeId, Option<NodeId>)>>,
+    /// The DOM version scroll offsets were last re-clamped at, and whether a
+    /// re-clamp is queued for the next frame (`layout_api::clamp_scrolls`).
+    pub(crate) scroll_clamp: Cell<(Option<u64>, bool)>,
     pub(crate) mutations: crate::mutation_observer::BindingState,
     pub(crate) identity: RefCell<crate::identity::IdentityState>,
     pub(crate) fetch_state: crate::fetch::FetchState,
@@ -83,7 +95,33 @@ pub struct PageDom {
     clicking: RefCell<Vec<NodeId>>,
     submitting: RefCell<Vec<NodeId>>,
     hovered: Cell<Option<NodeId>>,
+    /// `<img>` resource state set by the embedder: the `src` value the
+    /// current load is for, and whether it is still loading.
+    images: RefCell<FxHashMap<NodeId, (String, bool)>>,
+    /// The last mouse input's position and state, for boundary events when
+    /// content under a stationary pointer changes.
+    pub(crate) pointer: RefCell<Option<crate::input::MouseInput>>,
+    /// A deferred hover update after the hovered element was removed is
+    /// scheduled (`crate::input::update_hover_after_task`).
+    pub(crate) hover_update_queued: Cell<bool>,
     press_target: Cell<Option<NodeId>>,
+    /// Native drag source under a left press that has not moved past the
+    /// drag threshold yet, with the press position.
+    pub(crate) drag_candidate: Cell<Option<(NodeId, f64, f64)>>,
+    /// Native text selection under a primary press (`crate::input`).
+    pub(crate) text_drag: Cell<Option<crate::input::TextDrag>>,
+    /// The document selection (`crate::editing`), shared by every world.
+    pub(crate) selection: RefCell<Option<crate::editing::DocSelection>>,
+    pub(crate) selectionchange_pending: Cell<bool>,
+    /// The native drag-and-drop session in progress, if any.
+    pub(crate) drag: RefCell<Option<crate::input::DragSession>>,
+    /// `document.open()`'s script-created parser (`crate::html` document
+    /// open/write/close), a close() deferred from a script it runs, and that
+    /// script nesting level.
+    pub(crate) script_parser: RefCell<Option<lp_dom::parse::DocumentParser>>,
+    pub(crate) script_parser_active: Cell<bool>,
+    pub(crate) script_parser_close: Cell<bool>,
+    pub(crate) script_nesting: Cell<u32>,
     /// Control activated by a Space keydown, clicked on the matching keyup.
     pub(crate) space_target: Cell<Option<NodeId>>,
     dialog_returns: RefCell<FxHashMap<NodeId, String>>,
@@ -104,6 +142,21 @@ pub struct NavigationRequest {
     pub method: String,
     pub body: Option<Vec<u8>>,
     pub content_type: Option<String>,
+    /// A new browsing context (popup) keeps its opener (`window.opener`):
+    /// `window.open` without `noopener`, or a link with `rel=opener`.
+    pub opener: bool,
+}
+
+/// HTML "download the hyperlink" for a `download` link.
+#[derive(Clone, Debug)]
+pub struct DownloadRequest {
+    pub url: String,
+    /// The `download` attribute value (may be empty).
+    pub filename: String,
+    /// `blob:`/`data:` bytes and MIME type, captured at activation: the page
+    /// may revoke a blob URL right after `click()`. None for HTTP(S) URLs,
+    /// which the embedder fetches.
+    pub data: Option<(bytes::Bytes, String)>,
 }
 
 /// Posts a `Send` closure to run on the browser thread as a separate task.
@@ -171,6 +224,10 @@ pub trait PageHooks {
 
     /// Schedules `task` on the page's event loop as a separate task.
     fn post_task(&self, task: Box<dyn FnOnce()>);
+    /// Schedules `task` as a separate task after `delay` (default: at once).
+    fn post_delayed_task(&self, _delay: std::time::Duration, task: Box<dyn FnOnce()>) {
+        self.post_task(task)
+    }
     /// Starts a navigation of the frame showing the document.
     fn navigate(&self, request: NavigationRequest);
     /// Thread-safe poster that runs a closure as a task on the page's
@@ -183,6 +240,20 @@ pub trait PageHooks {
     /// Called after the delivery snapshot and before any resulting JS, with
     /// binding locks/borrows released. Default embedders need no observer.
     fn network_delivery(&self, _id: lp_net::RequestId, _frontier: lp_net::NetworkDelivery) {}
+    /// A hyperlink download. The default embedder performs none.
+    fn download(&self, _request: DownloadRequest) {}
+    /// An `<input type=file>` was activated: the embedder may report a file
+    /// chooser (CDP Page.fileChooserOpened). There is no native picker.
+    fn file_chooser(&self, _input: NodeId, _multiple: bool) {}
+    /// `document.open()` replaced the loaded document's content: the frame is
+    /// loading again, so DOMContentLoaded/load can be reported anew.
+    fn document_reopened(&self) {}
+    /// `document.close()` finished the script-created parser (readyState is
+    /// already "interactive"): fire DOMContentLoaded, then load once nothing
+    /// blocks it. Returns false when the embedder does not handle it.
+    fn document_closed(&self) -> bool {
+        false
+    }
     /// Called without DOM/hook borrows before the inserting native call returns.
     fn iframe_connected(&self, _iframe: NodeId) {}
     /// Removed iframe owners, descendants before ancestors.
@@ -229,6 +300,7 @@ impl PageDom {
             window_keys: RefCell::new(Vec::new()),
             window_holders: RefCell::new(FxHashMap::default()),
             same_objects: RefCell::new(FxHashMap::default()),
+            viewport_targets: RefCell::new(Vec::new()),
             structured_clones: RefCell::new(FxHashMap::default()),
             define_properties: RefCell::new(FxHashMap::default()),
             pending_port_reconcile: RefCell::new(Vec::new()),
@@ -239,6 +311,8 @@ impl PageDom {
             mutations: Default::default(),
             intersections: Default::default(),
             resizes: Default::default(),
+            pending_scrolls: Default::default(),
+            scroll_clamp: Default::default(),
             fetch_state: Default::default(),
             xhr_state: Default::default(),
             file_readers: Default::default(),
@@ -255,22 +329,37 @@ impl PageDom {
             clicking: RefCell::new(Vec::new()),
             submitting: RefCell::new(Vec::new()),
             hovered: Cell::new(None),
+            images: RefCell::new(FxHashMap::default()),
+            pointer: RefCell::new(None),
+            hover_update_queued: Cell::new(false),
             press_target: Cell::new(None),
+            drag_candidate: Cell::new(None),
+            text_drag: Cell::new(None),
+            drag: RefCell::new(None),
+            selection: RefCell::new(None),
+            selectionchange_pending: Cell::new(false),
+            script_parser: RefCell::new(None),
+            script_parser_active: Cell::new(false),
+            script_parser_close: Cell::new(false),
+            script_nesting: Cell::new(0),
             space_target: Cell::new(None),
             dialog_returns: RefCell::new(FxHashMap::default()),
             sheet_rules: RefCell::new(FxHashMap::default()),
             files: RefCell::new(FxHashMap::default()),
-            layout: RefCell::new(lp_dom::layout::Layout::new(document)),
+            layout: RefCell::new(new_layout(lp_dom::layout::Layout::new(document))),
         })
     }
 
     /// Set before installing realms. Share local storage per browser context
     /// and session storage per top-level page across document replacements.
     pub fn set_storage_namespaces(
-        &self,
+        self: &Rc<Self>,
         local: crate::storage::StorageNamespace,
         session: crate::storage::StorageNamespace,
     ) {
+        // Attached pages receive other pages' `storage` events.
+        local.attach(self);
+        session.attach(self);
         *self.local_storage.borrow_mut() = local;
         *self.session_storage.borrow_mut() = session;
     }
@@ -352,7 +441,7 @@ impl PageDom {
         drop(self.blob_urls.take());
         drop(self.reflected_url_base.take());
         let viewport = self.layout.borrow().viewport().clone();
-        *self.layout.borrow_mut() = lp_dom::layout::Layout::with_viewport(doc, viewport);
+        *self.layout.borrow_mut() = new_layout(lp_dom::layout::Layout::with_viewport(doc, viewport));
     }
 
     /// Browser-owned sandbox policy. Explicit inspector/Realm evaluation is
@@ -480,6 +569,12 @@ impl PageDom {
     }
 
     /// The Window event-target key created by `create_window_target`.
+    /// The live `visualViewport` (or `screen.orientation`) targets, one per
+    /// realm that has used it: the embedder fires `resize` (`change`) on each.
+    pub fn viewport_targets(&self, kind: crate::window::ViewportTarget) -> Vec<TargetKey> {
+        self.viewport_targets.borrow().iter().filter(|(k, _)| *k == kind).map(|(_, t)| *t).collect()
+    }
+
     pub fn window_target(&self) -> Option<TargetKey> {
         let doc = self.document();
         self.window_keys.borrow().iter().find(|(d, _)| *d == doc).map(|(_, k)| *k)
@@ -520,12 +615,14 @@ impl PageDom {
     /// Safe point (after each task): applies deferred releases, unpins
     /// listener-holding wrappers of disconnected nodes, re-pins reconnected
     /// ones, and frees unreachable DOM nodes.
-    pub fn after_task(&self) {
+    pub fn after_task(self: &Rc<Self>) {
         self.flush_iframe_events();
         crate::message_channel::reconcile_ports(self);
         crate::mutation_observer::after_task(self);
         crate::intersection_observer::after_task(self);
         crate::resize_observer::after_task(self);
+        crate::layout_api::schedule_scroll_clamp(self);
+        crate::input::update_hover_after_task(self);
         self.url_params_helpers.borrow_mut().retain(|realm, _| {
             self.realms.borrow().get(realm).and_then(|r| r.upgrade()).is_some_and(|r| !r.is_disposed())
         });
@@ -560,10 +657,30 @@ impl PageDom {
     pub(crate) fn hooks(&self) -> Option<Rc<dyn PageHooks>> {
         self.hooks.borrow().clone()
     }
+    /// The page's main-world realm: the earliest live realm without a world
+    /// name (isolated worlds are named).
+    pub(crate) fn main_world_realm(&self) -> Option<lp_js::Realm> {
+        let realms = self.realms.borrow();
+        let mut live: Vec<_> = realms.iter().filter_map(|(id, r)| Some((id.0, r.upgrade()?))).collect();
+        live.retain(|(_, r)| !r.is_disposed() && r.name().is_empty());
+        live.into_iter().min_by_key(|(id, _)| *id).map(|(_, r)| r)
+    }
+
     pub(crate) fn post_task(&self, task: Box<dyn FnOnce()>) {
         match self.hooks() {
             Some(h) => h.post_task(task),
             None => task(),
+        }
+    }
+    pub(crate) fn post_delayed_task(&self, delay: std::time::Duration, task: Box<dyn FnOnce()>) {
+        match self.hooks() {
+            Some(h) => h.post_delayed_task(delay, task),
+            None => task(),
+        }
+    }
+    pub(crate) fn download(&self, request: DownloadRequest) {
+        if let Some(h) = self.hooks() {
+            h.download(request);
         }
     }
     pub(crate) fn navigate(&self, req: NavigationRequest) {
@@ -645,8 +762,36 @@ impl PageDom {
     pub(crate) fn end_submit(&self, form: NodeId) {
         self.submitting.borrow_mut().retain(|&x| x != form);
     }
+    /// Embedder: an `<img>` started (`pending`) or finished loading the
+    /// resource for `src` (the attribute value); `None` forgets the image.
+    pub fn set_image_state(&self, el: NodeId, src: Option<&str>, pending: bool) {
+        match src {
+            Some(src) => {
+                self.images.borrow_mut().insert(el, (src.to_owned(), pending));
+            }
+            None => {
+                self.images.borrow_mut().remove(&el);
+            }
+        }
+    }
+    /// HTMLImageElement.complete: no `src`, or the current `src` has
+    /// finished loading (successfully or not). A `src` set since the last
+    /// load started is not complete yet, as in Chromium.
+    pub(crate) fn image_complete(&self, el: NodeId) -> bool {
+        let src = self.dom.borrow().get_attribute(el, "src").ok().flatten().map(str::to_owned);
+        let Some(src) = src else { return true };
+        match self.images.borrow().get(&el) {
+            Some((loading, pending)) if *loading == src => !pending,
+            // Empty or unresolvable sources are complete (broken).
+            _ => src.trim().is_empty(),
+        }
+    }
     pub(crate) fn hovered(&self) -> Option<NodeId> {
         self.hovered.get().filter(|&h| self.dom.borrow().is_alive(h))
+    }
+    /// The hovered element even when it is no longer connected.
+    pub(crate) fn hovered_raw(&self) -> Option<NodeId> {
+        self.hovered.get()
     }
     pub(crate) fn set_hovered(&self, el: Option<NodeId>) {
         self.hovered.set(el);
@@ -691,4 +836,11 @@ impl PageDom {
     pub fn with_dom<R>(&self, f: impl FnOnce(&mut Dom) -> R) -> R {
         f(&mut self.dom.borrow_mut())
     }
+}
+
+/// A document layout with the process's geometry selection
+/// (`LIGHTNINGPANDA_GEOMETRY=flow` opts into the flow layout).
+fn new_layout(mut layout: lp_dom::layout::Layout) -> lp_dom::layout::Layout {
+    layout.set_geometry(lp_dom::layout::Geometry::from_env());
+    layout
 }

@@ -26,6 +26,9 @@ fn reason_name(reason: NavigationReason) -> Option<&'static str> {
 pub(crate) struct FrameEvents {
     parent: Option<FrameId>,
     navigating: bool,
+    /// A frameRequestedNavigation was announced for the pending navigation;
+    /// an aborted navigation then reports frameClearedScheduledNavigation.
+    requested: bool,
     pending_realms: Vec<(RealmId, Option<String>, String)>,
 }
 
@@ -86,7 +89,12 @@ impl EngineHost {
                 let frames = self.thread.browser.frames(page.id);
                 let root =
                     frames.iter().find(|f| f.parent.is_none()).ok_or_else(|| CdpError::server("page is gone"))?;
-                Ok(Some(json!({"frameTree": frame_tree(root, &frames)})))
+                let mut tree = frame_tree(root, &frames);
+                if page.initial_popup {
+                    // Chrome's uncommitted initial popup document (see Host::set_initial_popup).
+                    tree["frame"]["url"] = json!(":");
+                }
+                Ok(Some(json!({"frameTree": tree})))
             }
             "setLifecycleEventsEnabled" => {
                 #[derive(Deserialize)]
@@ -209,9 +217,19 @@ impl EngineHost {
                 }
                 Ok(Some(json!({})))
             }
+            "getLayoutMetrics" => self.layout_metrics(cmd),
             // Accepted because there is nothing to change: the engine enforces
             // no CSP, opens no file chooser and has a single foreground page.
-            "setBypassCSP" | "setInterceptFileChooserDialog" | "bringToFront" => Ok(Some(json!({}))),
+            "setInterceptFileChooserDialog" => {
+                #[derive(Deserialize)]
+                struct P {
+                    enabled: bool,
+                }
+                let enabled = cmd.command.params::<P>()?.enabled;
+                self.session_mut(cmd.session_id)?.intercept_file_chooser = enabled;
+                Ok(Some(json!({})))
+            }
+            "setBypassCSP" | "bringToFront" => Ok(Some(json!({}))),
             _ => Err(CdpError::unsupported(&cmd.command.method)),
         }
     }
@@ -325,6 +343,7 @@ impl EngineHost {
                 if let Some(state) = self.pages.get_mut(&page) {
                     let frame = state.frames.entry(frame_id.clone()).or_default();
                     frame.navigating = true;
+                    frame.requested = reason_name(reason).is_some();
                     frame.pending_realms.clear();
                     if root.as_ref() == Some(&frame_id) {
                         state.network.bodies.clear();
@@ -458,9 +477,11 @@ impl EngineHost {
                 }
             }
             PageEvent::FrameNavigateFailed { frame_id, loader_id, error, cdp_request_id, .. } => {
+                let mut requested = false;
                 if let Some(state) = self.pages.get_mut(&page) {
                     let frame = state.frames.entry(frame_id.clone()).or_default();
                     frame.navigating = false;
+                    requested = std::mem::take(&mut frame.requested);
                     frame.pending_realms.clear();
                 }
                 if let Some(id) = cdp_request_id {
@@ -472,6 +493,11 @@ impl EngineHost {
                     );
                 }
                 for s in &all {
+                    // Chrome clears a requested (anchor/script) navigation it
+                    // aborted, e.g. when the response became a download.
+                    if requested {
+                        self.event("Page.frameClearedScheduledNavigation", &json!({ "frameId": frame_id.0 }), s);
+                    }
                     self.event("Page.frameStoppedLoading", &json!({ "frameId": frame_id.0 }), s);
                 }
             }
@@ -519,7 +545,12 @@ impl EngineHost {
                 if let Some(state) = self.pages.get_mut(&page) {
                     state.frames.insert(
                         frame_id.clone(),
-                        FrameEvents { parent: Some(parent.clone()), navigating: true, pending_realms: Vec::new() },
+                        FrameEvents {
+                            parent: Some(parent.clone()),
+                            navigating: true,
+                            requested: false,
+                            pending_realms: Vec::new(),
+                        },
                     );
                 }
                 for s in &all {
@@ -546,6 +577,15 @@ impl EngineHost {
                     self.event("Page.frameDetached", &json!({ "frameId": frame_id.0, "reason": "remove" }), s);
                 }
             }
+            PageEvent::PopupRequested { url, opener, .. } => {
+                self.popup_requests.push(crate::target::PopupRequest { opener: page, url, opener_access: opener });
+            }
+            PageEvent::FileChooserOpened { frame_id, input, multiple } => {
+                self.file_chooser_opened(page, &frame_id, input, multiple);
+            }
+            PageEvent::Download { frame_id, url, suggested_filename, body } => {
+                self.deliver_download(page, &frame_id.0, &url, &suggested_filename, body);
+            }
             PageEvent::JavascriptDialogOpening { kind, message, default_prompt, .. } => {
                 let (_, _, url) = self.main_frame(page).unwrap_or_default();
                 for s in &all {
@@ -562,4 +602,84 @@ impl EngineHost {
             PageEvent::FrameDestroyed { .. } => {}
         }
     }
+}
+
+impl EngineHost {
+    /// Delivers a page download as Chrome does under an allow behavior:
+    /// Browser.downloadWillBegin, the file written to downloadPath (named by
+    /// guid for allowAndName, else as suggested), then Browser.downloadProgress
+    /// inProgress and completed (with filePath), or canceled on failure. Events
+    /// go to the browser session and only when eventsEnabled. Deny and default
+    /// behaviors deliver nothing.
+    fn deliver_download(
+        &mut self,
+        page: PageKey,
+        frame_id: &str,
+        url: &str,
+        suggested_filename: &str,
+        body: Result<bytes::Bytes, String>,
+    ) {
+        let context = self.pages.get(&page).map(|p| p.context);
+        let Some(behavior) =
+            self.download_behavior.get(&context).or_else(|| self.download_behavior.get(&None)).cloned()
+        else {
+            return;
+        };
+        let Some(dir) =
+            behavior.download_path.filter(|_| matches!(behavior.behavior.as_str(), "allow" | "allowAndName"))
+        else {
+            return;
+        };
+        let guid = new_guid();
+        let name = if behavior.behavior == "allowAndName" { guid.clone() } else { suggested_filename.to_owned() };
+        let path = std::path::Path::new(&dir).join(name);
+        let emit = |host: &Self, method: &str, params: serde_json::Value| {
+            if behavior.events_enabled {
+                host.out.push(crate::msg::event_frame(method, &params, None));
+            }
+        };
+        emit(
+            self,
+            "Browser.downloadWillBegin",
+            json!({"frameId": frame_id, "guid": guid, "url": url, "suggestedFilename": suggested_filename}),
+        );
+        let written = body.and_then(|bytes| {
+            std::fs::create_dir_all(&dir)
+                .and_then(|_| std::fs::write(&path, &bytes))
+                .map(|_| bytes.len())
+                .map_err(|e| e.to_string())
+        });
+        match written {
+            Ok(total) => {
+                emit(
+                    self,
+                    "Browser.downloadProgress",
+                    json!({"guid": guid, "totalBytes": total, "receivedBytes": 0, "state": "inProgress"}),
+                );
+                emit(
+                    self,
+                    "Browser.downloadProgress",
+                    json!({"guid": guid, "totalBytes": total, "receivedBytes": total, "state": "completed", "filePath": path.to_string_lossy()}),
+                );
+            }
+            Err(_) => emit(
+                self,
+                "Browser.downloadProgress",
+                json!({"guid": guid, "totalBytes": 0, "receivedBytes": 0, "state": "canceled"}),
+            ),
+        }
+    }
+}
+
+/// A random version-4 UUID, as Chrome uses for download guids.
+fn new_guid() -> String {
+    let mut b = [0u8; 16];
+    if getrandom::fill(&mut b).is_err() {
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+        b = nanos.to_le_bytes();
+    }
+    b[6] = (b[6] & 0x0f) | 0x40;
+    b[8] = (b[8] & 0x3f) | 0x80;
+    let h: String = b.iter().map(|x| format!("{x:02x}")).collect();
+    format!("{}-{}-{}-{}-{}", &h[0..8], &h[8..12], &h[12..16], &h[16..20], &h[20..32])
 }

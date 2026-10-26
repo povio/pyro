@@ -4,7 +4,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use lp_dom::NodeId;
-use lp_js::{Args, ClassDef, JsClass, JsError, JsResult, NoParent, Persistent, Scope, Value};
+use lp_js::{Args, ClassDef, JsClass, JsError, JsResult, NoParent, Scope, Value};
 
 use crate::collections::NodeHold;
 use crate::node::{node_arg, wrap_node, NodeData};
@@ -48,7 +48,8 @@ pub struct WalkerData {
     root: NodeHold,
     current: RefCell<NodeHold>,
     what_to_show: u32,
-    filter: Option<Persistent>,
+    /// The filter, a hidden property of the walker's wrapper (None: no filter).
+    filter: Option<WrapperRef>,
     active: Cell<bool>,
     /// NodeIterator: pointer-before-reference flag.
     before_ref: Cell<bool>,
@@ -68,7 +69,7 @@ impl WalkerData {
             return Ok(FILTER_SKIP);
         }
         let Some(f) = &self.filter else { return Ok(FILTER_ACCEPT) };
-        let fv = f.get(s);
+        let fv = f.hidden(s, FILTER)?.unwrap_or(s.null());
         let Some(fo) = fv.as_object() else { return Ok(FILTER_ACCEPT) };
         let node_v = wrap_node(s, self.page(), node)?.value();
         self.active.set(true);
@@ -92,31 +93,51 @@ impl WalkerData {
     }
 }
 
-fn new_walker(s: &Scope<'_>, n: &NodeData, a: &Args<'_>) -> JsResult<WalkerData> {
+const FILTER: &str = "__lpTraversalFilter";
+
+/// The walker data, with its identity key when it has a filter to keep on its wrapper.
+fn new_walker(s: &Scope<'_>, n: &NodeData, a: &Args<'_>) -> JsResult<(WalkerData, Option<lp_js::IdentityKey>)> {
     let root = node_arg(s, a.get(0), "createTreeWalker")?;
     let what = if a.get(1).is_undefined() { 0xFFFF_FFFF } else { to_u32(a.get(1))? };
-    let filter = a.get(2);
-    let filter = (!filter.is_nullish()).then(|| Persistent::new(s, filter));
-    Ok(WalkerData {
-        root: NodeHold::new(n.page(), root)?,
-        current: RefCell::new(NodeHold::new(n.page(), root)?),
-        what_to_show: what,
-        filter,
-        active: Cell::new(false),
-        before_ref: Cell::new(true),
-    })
+    let identity = (!a.get(2).is_nullish()).then(|| n.page().event_identity(n.page().next_event_id()));
+    let filter = identity.map(|key| WrapperRef::new(s, key));
+    Ok((
+        WalkerData {
+            root: NodeHold::new(n.page(), root)?,
+            current: RefCell::new(NodeHold::new(n.page(), root)?),
+            what_to_show: what,
+            filter,
+            active: Cell::new(false),
+            before_ref: Cell::new(true),
+        },
+        identity,
+    ))
+}
+
+/// Wraps walker data and stores its filter on the wrapper.
+fn wrap_walker<'s, C: JsClass<Data = WalkerData>>(
+    s: &Scope<'s>,
+    a: &Args<'s>,
+    d: (WalkerData, Option<lp_js::IdentityKey>),
+) -> JsResult<Value<'s>> {
+    let (data, identity) = d;
+    let wrapper = s.wrap::<C>(data, identity)?;
+    if identity.is_some() {
+        s.set_hidden(wrapper, FILTER, a.get(2))?;
+    }
+    Ok(wrapper.value())
 }
 
 pub(crate) fn create_tree_walker<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
     a.require(1, "Document.createTreeWalker")?;
     let d = new_walker(s, n, &a)?;
-    Ok(s.wrap::<TreeWalker>(d, None)?.value())
+    wrap_walker::<TreeWalker>(s, &a, d)
 }
 
 pub(crate) fn create_node_iterator<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
     a.require(1, "Document.createNodeIterator")?;
     let d = new_walker(s, n, &a)?;
-    Ok(s.wrap::<NodeIterator>(d, None)?.value())
+    wrap_walker::<NodeIterator>(s, &a, d)
 }
 
 type Step = fn(&lp_dom::Dom, NodeId) -> Option<NodeId>;
@@ -222,7 +243,10 @@ impl JsClass for TreeWalker {
     fn define(def: &mut ClassDef<Self>) {
         def.getter("root", |s, w| Ok(wrap_node(s, w.page(), w.root.id)?.value()));
         def.getter("whatToShow", |s, w| Ok(s.number(w.what_to_show as f64)));
-        def.getter("filter", |s, w| Ok(w.filter.as_ref().map_or(s.null(), |f| f.get(s))));
+        def.getter("filter", |s, w| match &w.filter {
+            Some(f) => Ok(f.hidden(s, FILTER)?.unwrap_or(s.null())),
+            None => Ok(s.null()),
+        });
         def.accessor(
             "currentNode",
             |s, w| Ok(wrap_node(s, w.page(), w.cur())?.value()),
@@ -397,7 +421,10 @@ impl JsClass for NodeIterator {
         def.getter("referenceNode", |s, w| Ok(wrap_node(s, w.page(), w.cur())?.value()));
         def.getter("pointerBeforeReferenceNode", |s, w| Ok(s.boolean(w.before_ref.get())));
         def.getter("whatToShow", |s, w| Ok(s.number(w.what_to_show as f64)));
-        def.getter("filter", |s, w| Ok(w.filter.as_ref().map_or(s.null(), |f| f.get(s))));
+        def.getter("filter", |s, w| match &w.filter {
+            Some(f) => Ok(f.hidden(s, FILTER)?.unwrap_or(s.null())),
+            None => Ok(s.null()),
+        });
         def.method("nextNode", 0, |s, w, _a| iterate(s, w, true));
         def.method("previousNode", 0, |s, w, _a| iterate(s, w, false));
         def.method("detach", 0, |s, _w, _a| Ok(s.undefined()));

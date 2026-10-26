@@ -362,6 +362,52 @@ fn reentrant_string_conversion_does_not_double_borrow() {
 }
 
 #[test]
+fn child_node_methods_accept_the_context_node_and_its_siblings() {
+    // Upstream lightpanda-io/browser#4072 (replaceWith compliance): insertion is
+    // relative to the nearest sibling that is not an argument, so passing the
+    // node itself or a neighbour must not throw NotFoundError or drop nodes.
+    let e = env("<body><p id=p></p></body>");
+    let r = &e.main;
+    eval(
+        r,
+        r#"function run(html, fn) {
+            const p = document.getElementById('p'); p.innerHTML = html;
+            try { fn(...p.children); return p.innerHTML; } catch (e) { return 'THROW ' + e.name + ' ' + p.innerHTML; }
+        }"#,
+    );
+    for (call, want) in [
+        ("(a) => a.replaceWith(a, 'x')", "<a></a>x<b></b>"),
+        ("(a) => a.replaceWith('x', a)", "x<a></a><b></b>"),
+        ("(a, b) => a.replaceWith(b, 't')", "<b></b>t"),
+        ("(a) => a.replaceWith(a)", "<a></a><b></b>"),
+        ("(a) => a.replaceWith()", "<b></b>"),
+        ("(a, b) => a.after(b, 't')", "<a></a><b></b>t"),
+        ("(a) => a.after(a, 'x')", "<a></a>x<b></b>"),
+        ("(a, b) => b.before('x', b)", "<a></a>x<b></b>"),
+        ("(a, b) => b.before(a, b)", "<a></a><b></b>"),
+        ("(a, b) => a.before(b)", "<b></b><a></a>"),
+    ] {
+        assert_eq!(eval(r, &format!("run('<a></a><b></b>', {call})")), want, "{call}");
+    }
+    assert_eq!(eval(r, "run('<a></a><b></b><i></i>', (a, b, i) => a.after(b, 't'))"), "<a></a><b></b>t<i></i>");
+    assert_eq!(eval(r, "run('<a></a><b></b><i></i>', (a, b, i) => i.before(a, b))"), "<a></a><b></b><i></i>");
+    // Hierarchy errors still throw before the context node is touched.
+    assert_eq!(
+        eval(
+            r,
+            "const o = document.createElement('div'), t = o.appendChild(new Text('t'));
+             try { t.replaceWith(o); 'no throw' } catch (e) { e.name + ':' + (t.parentNode === o) }"
+        ),
+        "HierarchyRequestError:true"
+    );
+    // A string argument's toString detaching the context node turns the call into a no-op.
+    assert_eq!(
+        eval(r, "run('<a></a><b></b>', (a) => a.replaceWith({ toString() { a.remove(); return 'x'; } }))"),
+        "<b></b>"
+    );
+}
+
+#[test]
 fn navigation_releases_pinned_listener_wrappers_of_old_document() {
     let e = env("<body><div id=a></div></body>");
     eval(&e.main, "for (let i = 0; i < 50; i++) { const d = document.createElement('div'); d.addEventListener('x', () => {}); document.body.appendChild(d); }");
@@ -1741,6 +1787,11 @@ impl PageHooks for ObserverTasks {
     fn post_task(&self, task: Box<dyn FnOnce()>) {
         self.0.borrow_mut().push_back(task);
     }
+    fn post_delayed_task(&self, delay: std::time::Duration, task: Box<dyn FnOnce()>) {
+        // Single-threaded test loop: let the delay elapse, then queue.
+        std::thread::sleep(delay);
+        self.0.borrow_mut().push_back(task);
+    }
     fn navigate(&self, _: NavigationRequest) {}
 }
 impl ObserverTasks {
@@ -2278,6 +2329,92 @@ fn resize_observer_initial_changes_hidden_and_disconnect() {
     tasks.drain();
     assert_eq!(eval(&e.main, "seen.length"), "4");
     assert_eq!(eval(&e.main, "try { new ResizeObserver(1) } catch (x) { x instanceof TypeError }"), "true");
+    e.page.dispose();
+}
+
+#[test]
+fn resize_observer_reports_the_flow_content_box() {
+    // @povio/ui sizes select popovers from a ResizeObserver contentRect; the
+    // faux axis (5 px for an auto-width block) clipped every option. Under
+    // the flow layout the entry is the content box, as in Chromium.
+    let e = env(
+        "<body style='margin:0'><div style='width:300px'><div id=a style='padding:4px 6px;border:2px solid'>x</div></div></body>",
+    );
+    e.page.layout.borrow_mut().set_geometry(lp_dom::layout::Geometry::Flow);
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    eval(
+        &e.main,
+        "window.seen=[]; new ResizeObserver(l => { for (const en of l) seen.push(en.contentRect.width + 'x' + en.contentRect.height) }).observe(document.getElementById('a'))",
+    );
+    e.page.after_task();
+    tasks.drain();
+    // 300 - 2 * (6 padding + 2 border) wide; one line tall.
+    let seen = eval(&e.main, "seen.join()");
+    assert!(seen.starts_with("284x"), "{seen}");
+    assert_eq!(eval(&e.main, "document.getElementById('a').clientWidth"), "296");
+    // Gathers are paced (each one lays out the document); a change right
+    // after a gather is still delivered by the delayed wake.
+    eval(&e.main, "document.getElementById('a').parentElement.style.width='200px'");
+    e.page.after_task();
+    tasks.drain();
+    let seen = eval(&e.main, "seen.join()");
+    assert!(seen.contains(",184x"), "{seen}");
+    e.page.dispose();
+}
+
+#[test]
+fn svg_graphics_elements_report_get_bbox() {
+    // TOS analytics reads recharts bar geometry with getBBox().
+    let e = env(
+        "<body><svg id=s width=600 height=300><g id=g transform='translate(5,5)'><path id=p d='M202,238A 4,4,0,0,0,206,242L 300,242A 4,4,0,0,0,304,238L 304,184L 202,184 Z' fill='#38bdf8'/></g><linearGradient id='lg'></linearGradient></svg></body>",
+    );
+    assert_eq!(
+        eval(
+            &e.main,
+            "var b = document.getElementById('p').getBBox(); [b instanceof DOMRect, b.x, b.y, b.width, b.height, document.getElementById('p') instanceof SVGGraphicsElement, document.getElementById('s') instanceof SVGGraphicsElement, document.getElementById('lg') instanceof SVGGraphicsElement, typeof document.getElementById('lg').getBBox].join()"
+        ),
+        "true,202,184,102,58,true,true,false,undefined"
+    );
+    // A container's box is in its own user space: its own transform is excluded.
+    assert_eq!(eval(&e.main, "var g = document.getElementById('g').getBBox(); [g.x, g.y].join()"), "202,184");
+    e.page.dispose();
+}
+
+#[test]
+fn canvas_2d_measures_text_without_pixels() {
+    // TOS terms-layout sizes Days inputs with canvas measureText. The 2D
+    // context measures with the flow layout's text measure; there is no
+    // rasterizer, so pixel readback is explicitly unsupported.
+    let e = env("<body><canvas id=c></canvas><input id=i style='font: 600 15px system-ui'></body>");
+    assert_eq!(
+        eval(
+            &e.main,
+            "var c = document.getElementById('c'), x = c.getContext('2d'); [x === c.getContext('2d'), x.canvas === c, x instanceof CanvasRenderingContext2D, c.getContext('webgl'), x.font].join('|')"
+        ),
+        "true|true|true||10px sans-serif"
+    );
+    assert_eq!(eval(&e.main, "x.font = 'nonsense'; x.font"), "10px sans-serif");
+    assert_eq!(eval(&e.main, "x.font = 'bold 16px / 24px Inter, sans-serif'; x.font"), "700 16px Inter, sans-serif");
+    // Wider text measures wider; weight and size matter (the SF Pro table
+    // varies by optical size, so widths are not exactly proportional).
+    assert_eq!(
+        eval(
+            &e.main,
+            "x.font = '16px system-ui'; var a = x.measureText('999').width, b = x.measureText('9999').width; x.font = '700 16px system-ui'; var w = x.measureText('999').width; x.font = '32px system-ui'; var d = x.measureText('999').width; [a > 20 && a < 40, b > a, w > a, d > 1.8 * a].join()"
+        ),
+        "true,true,true,true"
+    );
+    assert_eq!(eval(&e.main, "x.save(); x.font = '20px monospace'; x.restore(); x.font"), "32px system-ui");
+    assert_eq!(
+        eval(&e.main, "try { x.getImageData(0, 0, 1, 1); 'returned' } catch (err) { err.name }"),
+        "NotSupportedError"
+    );
+    // The TOS pattern: drawing.font = getComputedStyle(input).font.
+    assert_eq!(
+        eval(&e.main, "x.font = getComputedStyle(document.getElementById('i')).font; x.font"),
+        "600 15px system-ui"
+    );
     e.page.dispose();
 }
 
@@ -3233,6 +3370,320 @@ fn data_transfer_store_items_and_files() {
     "#
         ),
         "none|none|true|0|0|hello|<b>x</b>|true|text/html,text/plain|true|file|text/plain|text/html,text/plain,Files|3|1|a.txt|3|5|true|a.txt||NotSupportedError|TypeError|text/plain,Files|Files|1|true||0|0|none|none|copy|copyMove|https://a.example/|text/uri-list|0|0"
+    );
+}
+
+#[test]
+fn input_files_setter_accepts_data_transfer_files() {
+    let e = env("<body><form id=fm><input type=file id=f name=up multiple><input id=t name=t value=v></form></body>");
+    let r = &e.main;
+    // Playwright's in-memory setInputFiles (injected script, 1.59) verbatim.
+    assert_eq!(
+        eval(
+            r,
+            r#"
+        window.seen = [];
+        const input = document.getElementById('f');
+        input.addEventListener('input', ev => seen.push(ev.type + ':' + ev.bubbles + ':' + ev.composed + ':' + input.files.length));
+        input.addEventListener('change', ev => seen.push(ev.type + ':' + ev.bubbles + ':' + input.files.length));
+        const payloads = [
+            { name: 'a.txt', mimeType: 'text/plain', buffer: btoa('hi'), lastModifiedMs: 1234 },
+            { name: 'b.bin', mimeType: 'application/octet-stream', buffer: btoa(String.fromCharCode(0, 255, 7)) },
+        ];
+        const files = payloads.map((file) => {
+            const bytes = Uint8Array.from(atob(file.buffer), (c) => c.charCodeAt(0));
+            return new File([bytes], file.name, { type: file.mimeType, lastModified: file.lastModifiedMs });
+        });
+        const dt = new DataTransfer();
+        for (const file of files)
+            dt.items.add(file);
+        input.files = dt.files;
+        input.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+        const fl = input.files;
+        [fl instanceof FileList, fl.length, fl[0] instanceof File, fl[0].name, fl[0].type, fl[0].size, fl[0].lastModified,
+         fl.item(1).name, fl[1].type, fl[1].size, fl[1].lastModified > 0, input.value, seen.join(',')].join('|')
+    "#
+        ),
+        "true|2|true|a.txt|text/plain|2|1234|b.bin|application/octet-stream|3|true|C:\\fakepath\\a.txt|input:true:true:2,change:true:2"
+    );
+    // The bytes survive into the selection and into form submission data.
+    eval(r, "window.texts = []; input.files[0].text().then(t => texts.push(t)); input.files[1].arrayBuffer().then(b => texts.push([...new Uint8Array(b)].join('.'))); 1");
+    assert_eq!(eval(r, "texts.join('|')"), "hi|0.255.7");
+    assert_eq!(
+        eval(r, "[...new FormData(document.getElementById('fm'))].map(([k, v]) => k + '=' + (v instanceof File ? v.name + ':' + v.size + ':' + v.type : v)).join('&')"),
+        "up=a.txt:2:text/plain&up=b.bin:3:application/octet-stream&t=v"
+    );
+    // Assigning a replacement selection, and an empty one, replaces it.
+    assert_eq!(
+        eval(r, "const d2 = new DataTransfer(); d2.items.add(new File(['xyz'], 'c.csv', { type: 'text/csv' })); input.files = d2.files; [input.files.length, input.files[0].name, input.value].join('|')"),
+        "1|c.csv|C:\\fakepath\\c.csv"
+    );
+    assert_eq!(
+        eval(r, "input.files = new DataTransfer().files; [input.files.length, JSON.stringify(input.value)].join('|')"),
+        "0|\"\""
+    );
+    // `value = ''` is the usual reset; it clears both the name and the files.
+    assert_eq!(
+        eval(r, "input.files = dt.files; const before = input.files.length; input.value = ''; [before, input.files.length, JSON.stringify(input.value)].join('|')"),
+        "2|0|\"\""
+    );
+    // Null is ignored; non-FileList values throw (WebIDL `FileList?`).
+    assert_eq!(
+        eval(
+            r,
+            r#"
+        input.files = dt.files;
+        const out = [];
+        input.files = null; out.push(input.files.length);
+        input.files = undefined; out.push(input.files.length);
+        for (const bad of [{}, [new File(['x'], 'x')], 'a.txt', new File(['x'], 'x')]) {
+            try { input.files = bad; out.push('no throw'); } catch (err) { out.push(err instanceof TypeError); }
+        }
+        out.push(input.files.length, Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'files').set !== undefined);
+        out.join('|')
+    "#
+        ),
+        "2|2|true|true|true|true|2|true"
+    );
+    // A non-file input keeps `files === null` and ignores the assignment.
+    assert_eq!(
+        eval(r, "const t = document.getElementById('t'); t.files = dt.files; [t.files, t.value].join('|')"),
+        "|v"
+    );
+}
+
+#[test]
+fn wheel_and_touch_listeners_on_window_document_html_body_default_to_passive() {
+    let e = env("<body><div id=d></div></body>");
+    let r = &e.main;
+    assert_eq!(
+        eval(
+            r,
+            r#"
+        const out = [];
+        const cancel = (target, type, opts) => {
+            const seen = [];
+            const fn = ev => { ev.preventDefault(); seen.push(ev.defaultPrevented); };
+            target.addEventListener(type, fn, opts);
+            const ev = type === 'wheel' ? new WheelEvent(type, { cancelable: true, bubbles: true }) : new Event(type, { cancelable: true, bubbles: true });
+            const notCanceled = d.dispatchEvent(ev);
+            target.removeEventListener(type, fn, opts);
+            return seen.join() + ':' + notCanceled;
+        };
+        const d = document.getElementById('d');
+        for (const t of [window, document, document.documentElement, document.body])
+            out.push(cancel(t, 'wheel'));
+        out.push(cancel(document, 'touchstart'), cancel(window, 'touchmove'), cancel(document.body, 'mousewheel'));
+        // Explicit passive:false, other targets and other event types still cancel.
+        out.push(cancel(document, 'wheel', { passive: false }), cancel(d, 'wheel'), cancel(document, 'click'));
+        out.push(cancel(document, 'wheel', true));
+        out.join('|')
+    "#
+        ),
+        "false:true|false:true|false:true|false:true|false:true|false:true|false:true|true:false|true:false|true:false|false:true"
+    );
+}
+
+#[test]
+fn document_open_write_close_replaces_a_loaded_document() {
+    let e = env("<body><p id=o>orig</p></body>");
+    let r = &e.main;
+    eval(
+        r,
+        "window.keep = 'kept'; window.oldClicks = 0; window.addEventListener('click', () => oldClicks++); \
+         document.addEventListener('custom', () => window.oldDoc = true); window.onload = () => window.oldLoad = true; 1",
+    );
+    // Playwright's page.setContent, verbatim.
+    assert_eq!(
+        eval(
+            r,
+            r#"
+        const returned = document.open() === document;
+        document.write('<!doctype html><html><head><title>t</title></head><body><p id=a>a</p>' +
+            '<script>window.log = [document.readyState, document.currentScript.tagName, typeof keep, !!document.getElementById("a"), !!document.getElementById("o")];' +
+            'document.addEventListener("DOMContentLoaded", () => log.push("DCL:" + document.readyState));' +
+            'window.addEventListener("load", () => log.push("load:" + document.readyState));' +
+            'document.write("<p id=w>w<scr" + "ipt>log.push(\x27nested\x27)</scr" + "ipt></p>"); log.push(!!document.getElementById("w"));<\/script>');
+        document.write('<p id=after>after</p>');
+        document.writeln('<script type=module>log.push("module")<\/script>'.replace('module', 'text/x-data'));
+        document.close();
+        [returned, log.join(), document.title, [...document.body.children].map(x => x.id || x.tagName).join(), document.readyState].join('|')
+    "#
+        ),
+        "true|loading,SCRIPT,string,true,false,nested,true,DCL:interactive,load:complete|t|a,SCRIPT,w,after,SCRIPT|complete"
+    );
+    // Old listeners and handlers were erased; handlers can be set again.
+    assert_eq!(
+        eval(
+            r,
+            "document.dispatchEvent(new Event('custom')); document.body.click(); \
+             let n = 0; const before = window.onload; window.onload = null; document.body.onclick = () => n++; document.body.click(); \
+             [String(window.oldDoc), oldClicks, before, n, String(window.oldLoad)].join()"
+        ),
+        "undefined,0,,1,undefined"
+    );
+    // Implicit open on a loaded document; external scripts are reported.
+    assert_eq!(
+        eval(r, "document.write('<p id=x>x</p>'); const t = [document.readyState, document.body.children.length]; document.close(); [t, document.readyState].join()"),
+        "loading,1,complete"
+    );
+    assert_eq!(
+        eval(
+            r,
+            r#"try { document.write('<script src=/a.js><\/script>'); 'no throw' } catch (e) { document.close(); e.name }"#
+        ),
+        "NotSupportedError"
+    );
+    assert_eq!(
+        eval(
+            r,
+            "const x = document.implementation.createDocument(null, 'r'); try { x.open(); 'no' } catch (e) { e.name }"
+        ),
+        "InvalidStateError"
+    );
+}
+
+/// Contenteditable editing against sequences recorded in headless Chromium
+/// (Playwright 1.59.1) for `<div id=ed contenteditable><p>hello</p></div>`.
+fn ce_env() -> Env {
+    let e = env("<body><input id=other><div id=ed contenteditable=true><p>hello</p></div></body>");
+    eval(
+        &e.main,
+        r#"
+        window.log = [];
+        const ed = document.getElementById('ed');
+        for (const t of ['keydown', 'beforeinput', 'input'])
+            document.addEventListener(t, ev => log.push(t + (ev.inputType ? ':' + ev.inputType + ':' + (ev.data ?? '') : '') + (t === 'keydown' ? ':' + ev.key : '')), true);
+        window.sel = () => { const s = getSelection(); const n = x => x ? (x.nodeType === 3 ? '#text"' + x.data + '"' : x.nodeName) : null;
+            return [s.rangeCount, n(s.anchorNode), s.anchorOffset, n(s.focusNode), s.focusOffset, document.activeElement.id].join(','); };
+        window.state = () => [ed.innerHTML, sel(), log.splice(0).join(' ')].join(' | ');
+        1"#,
+    );
+    e
+}
+
+fn key(page: &Rc<PageDom>, key: &str, text: &str, modifiers: input::Modifiers) {
+    let k = input::KeyInput { key: key.into(), code: key.into(), text: text.into(), modifiers, ..Default::default() };
+    input::dispatch_key(page, if text.is_empty() { input::KeyKind::RawKeyDown } else { input::KeyKind::KeyDown }, &k);
+    input::dispatch_key(page, input::KeyKind::KeyUp, &k);
+}
+
+fn click_p(e: &Env) {
+    let r = eval(&e.main, "const b = document.querySelector('#ed p').getBoundingClientRect(); [b.x + b.width / 2, b.y + b.height / 2].join()");
+    let (x, y) = r.split_once(',').unwrap();
+    let m = input::MouseInput {
+        x: x.parse().unwrap(),
+        y: y.parse().unwrap(),
+        button: input::MouseButton::Left,
+        buttons: 1,
+        click_count: 1,
+        ..Default::default()
+    };
+    input::dispatch_mouse(&e.page, input::MouseKind::Pressed, &m).unwrap();
+    input::dispatch_mouse(&e.page, input::MouseKind::Released, &input::MouseInput { buttons: 0, ..m }).unwrap();
+}
+
+#[test]
+fn contenteditable_typing_deleting_and_caret_keys_match_chromium() {
+    let none = input::Modifiers::default();
+    // click + type
+    let e = ce_env();
+    click_p(&e);
+    key(&e.page, "X", "X", none);
+    assert_eq!(
+        eval(&e.main, "state()"),
+        r#"<p>helloX</p> | 1,#text"helloX",6,#text"helloX",6,ed | keydown:X beforeinput:insertText:X input:insertText:X"#
+    );
+    // click + ArrowLeft ×2 + type
+    drop(e);
+    let e = ce_env();
+    click_p(&e);
+    key(&e.page, "ArrowLeft", "", none);
+    key(&e.page, "ArrowLeft", "", none);
+    key(&e.page, "Y", "Y", none);
+    assert_eq!(
+        eval(&e.main, "[ed.innerHTML, sel()].join(' | ')"),
+        r#"<p>helYlo</p> | 1,#text"helYlo",4,#text"helYlo",4,ed"#
+    );
+    // click + Backspace
+    drop(e);
+    let e = ce_env();
+    click_p(&e);
+    key(&e.page, "Backspace", "", none);
+    assert_eq!(
+        eval(&e.main, "state()"),
+        r#"<p>hell</p> | 1,#text"hell",4,#text"hell",4,ed | keydown:Backspace beforeinput:deleteContentBackward: input:deleteContentBackward:"#
+    );
+    // select all + Backspace leaves Chrome's placeholder
+    drop(e);
+    let e = ce_env();
+    click_p(&e);
+    key(&e.page, "a", "", input::Modifiers { meta: true, ..none });
+    key(&e.page, "Backspace", "", none);
+    assert_eq!(eval(&e.main, "[ed.innerHTML, sel()].join(' | ')"), "<p><br></p> | 1,P,0,P,0,ed");
+    // focus puts the caret at the start; End moves it to the end
+    drop(e);
+    let e = ce_env();
+    eval(&e.main, "ed.focus(); 1");
+    assert_eq!(eval(&e.main, "sel()"), r#"1,#text"hello",0,#text"hello",0,ed"#);
+    key(&e.page, "End", "", none);
+    key(&e.page, "!", "!", none);
+    assert_eq!(eval(&e.main, "ed.innerHTML"), "<p>hello!</p>");
+    // JS collapse + type
+    drop(e);
+    let e = ce_env();
+    eval(&e.main, "ed.focus(); getSelection().collapse(document.querySelector('#ed p').firstChild, 2); 1");
+    key(&e.page, "Z", "Z", none);
+    assert_eq!(
+        eval(&e.main, "[ed.innerHTML, sel()].join(' | ')"),
+        r#"<p>heZllo</p> | 1,#text"heZllo",3,#text"heZllo",3,ed"#
+    );
+    // Enter splits the paragraph
+    drop(e);
+    let e = ce_env();
+    click_p(&e);
+    key(&e.page, "Enter", "\r", none);
+    key(&e.page, "W", "W", none);
+    assert_eq!(
+        eval(&e.main, "state()"),
+        r#"<p>hello</p><p>W</p> | 1,#text"W",1,#text"W",1,ed | keydown:Enter beforeinput:insertParagraph: input:insertParagraph: keydown:W beforeinput:insertText:W input:insertText:W"#
+    );
+    // A canceled beforeinput leaves the DOM alone (ProseMirror handles keys itself).
+    drop(e);
+    let e = ce_env();
+    eval(&e.main, "ed.addEventListener('beforeinput', ev => ev.preventDefault()); 1");
+    click_p(&e);
+    key(&e.page, "Q", "Q", none);
+    assert_eq!(eval(&e.main, "ed.innerHTML"), "<p>hello</p>");
+}
+
+#[test]
+fn contenteditable_fill_uses_the_document_selection_from_another_world() {
+    // Playwright's fill(): focus + selectNodeContents/addRange in its utility
+    // world, then Input.insertText.
+    let e = ce_env();
+    let class = e.engine.register::<TestWindow>();
+    let utility = new_realm(&e.engine, class, &e.page, "__playwright_utility_world__");
+    eval(
+        &utility,
+        "const el = document.getElementById('ed'); el.focus(); const r = document.createRange(); r.selectNodeContents(el); \
+         const s = getSelection(); s.removeAllRanges(); s.addRange(r); 1",
+    );
+    assert_eq!(eval(&e.main, "getSelection().rangeCount + ':' + getSelection().toString()"), "1:hello");
+    input::insert_text(&e.page, "filled");
+    assert_eq!(
+        eval(&e.main, "state()"),
+        r#"<p>filled</p> | 1,#text"filled",6,#text"filled",6,ed | beforeinput:insertText:filled input:insertText:filled"#
+    );
+    // fill('') then deletes the selection, leaving the placeholder.
+    eval(&utility, "const r2 = document.createRange(); r2.selectNodeContents(el); getSelection().removeAllRanges(); getSelection().addRange(r2); 1");
+    input::insert_text(&e.page, "");
+    assert_eq!(eval(&e.main, "[ed.innerHTML, sel()].join(' | ')"), "<p><br></p> | 1,P,0,P,0,ed");
+    // Selection offsets are validated.
+    assert_eq!(
+        eval(&e.main, "try { getSelection().collapse(ed, 9); 'no' } catch (err) { err.name }"),
+        "IndexSizeError"
     );
 }
 
@@ -4488,4 +4939,235 @@ fn pointer_focus_preserves_cancellation_and_reentrant_script_reveal() {
             );
         }
     }
+}
+
+#[test]
+fn style_assignment_forwards_to_css_text() {
+    // [PutForwards=cssText]: Chromium 1.59.1 gives
+    // ["width: 10px; color: red;", true, "10px", "\"\"", "fill: red;"].
+    let e = env("<!doctype html><body><div id=d style='color: blue'></div><svg id=s></svg></body>");
+    let r = &e.main;
+    let got = eval(
+        r,
+        "(() => { 'use strict'; const d = document.getElementById('d'); const before = d.style; \
+         d.style = 'width: 10px; color: red'; \
+         const r1 = d.getAttribute('style'); const same = d.style === before; const w = d.style.width; \
+         d.style = null; const r2 = JSON.stringify(d.getAttribute('style')); \
+         const s = document.getElementById('s'); s.style = 'fill: red'; const r3 = s.getAttribute('style'); \
+         return JSON.stringify([r1, same, w, r2, r3]); })()",
+    );
+    assert_eq!(got, r#"["width: 10px; color: red;",true,"10px","\"\"","fill: red;"]"#);
+}
+
+#[test]
+fn range_over_text_reports_the_text_box_in_flow_geometry() {
+    // Playwright's accessible-name check measures a label's text with
+    // Range.selectNode(text).getBoundingClientRect(); TOS buttons put the
+    // text in a `display: contents` span, which has no box. Chromium reports
+    // the text box (x 8, y 5, ~76 x 17 here); the role query then finds the
+    // button by name.
+    let e = env("<!doctype html><body style=\"margin:0;font-family:-apple-system,BlinkMacSystemFont,sans-serif;font-size:14px;line-height:20px\"><button id=btn style=\"display:inline-flex;padding:4px 8px;border:0;font:inherit\"><span id=c style=\"display:contents\">Files &amp; links</span></button></body>");
+    e.page.layout.borrow_mut().set_geometry(lp_dom::layout::Geometry::Flow);
+    let r = &e.main;
+    let got = eval(
+        r,
+        "(() => { const t = document.getElementById('c').firstChild; const range = document.createRange(); range.selectNode(t); \
+         const a = range.getBoundingClientRect(); const inner = document.createRange(); inner.selectNodeContents(t); \
+         const b = inner.getBoundingClientRect(); const span = document.getElementById('c').getBoundingClientRect(); \
+         return [a.x, a.y, a.height, a.width > 70 && a.width < 80, b.x, b.height, span.width, span.height].join(','); })()",
+    );
+    assert_eq!(got, "8,5,17,true,8,17,0,0");
+}
+
+#[test]
+fn scroll_offsets_round_like_chromium_so_synced_panes_settle() {
+    // TOS useScrollSync mirrors two panes by ratio from their scroll events
+    // (target.scrollTop = ratio * range). Chromium rounds the written offset
+    // to the nearest pixel, so main 1237 -> sidebar 686 -> main 1237 settles
+    // after 2 events. Truncation (ToInt32) moved each pane 1-2px per round
+    // and ping-ponged ~1200 scroll tasks down to 0. Values measured in
+    // Chromium (Playwright 1.59.1).
+    let e = env("<!doctype html><body style=\"margin:0\"><div id=m style=\"height:500px;overflow:auto\"><div style=\"height:5003px\"></div></div><div id=s style=\"height:500px;overflow:auto\"><div style=\"height:2997px\"></div></div><div style=\"height:9000px\"></div></body>");
+    e.page.layout.borrow_mut().set_geometry(lp_dom::layout::Geometry::Flow);
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    let got = eval(
+        &e.main,
+        "(() => { const m = document.getElementById('m'); const out = [];
+           for (const v of [10.5, 10.49, 1e10, -3, 4294967396, NaN]) { m.scrollTop = 0; m.scrollTop = v; out.push(m.scrollTop); }
+           m.scrollTo({ top: 20.5 }); out.push(m.scrollTop);
+           m.scrollTo(0, 30.4); out.push(m.scrollTop);
+           m.scrollBy(0, 0.5); out.push(m.scrollTop);
+           window.scrollTo(0, 40.5); out.push(scrollY);
+           m.scrollTop = 0; return out.join(); })()",
+    );
+    assert_eq!(got, "11,10,4503,0,4503,0,21,30,31,41");
+    tasks.drain();
+    eval(
+        &e.main,
+        "globalThis.log = [];
+         const m = document.getElementById('m'), s = document.getElementById('s');
+         const sync = (src, t) => { t.scrollTop = src.scrollTop / (src.scrollHeight - src.clientHeight) * (t.scrollHeight - t.clientHeight); log.push(src.id + src.scrollTop + '>' + t.scrollTop); };
+         m.addEventListener('scroll', () => sync(m, s));
+         s.addEventListener('scroll', () => sync(s, m));
+         m.scrollTop = 1237; 1",
+    );
+    tasks.drain();
+    assert_eq!(eval(&e.main, "log.join(' ')"), "m1237>686 s686>1237");
+}
+
+#[test]
+fn single_axis_overflow_makes_a_scroll_container_like_chromium() {
+    // TOS bookkeeping exports (bookkeeping-vat-lines.e2e.ts:65): the table's
+    // scroller is `flex h-full grow flex-col overflow-x-auto`. CSS Overflow 3
+    // computes the other axis's `visible` to `auto` (and `clip` to `hidden`),
+    // so it scrolls vertically; Rust reported overflowY "" and refused
+    // scrollTop = 1000, so the virtualized rows never moved. Chromium
+    // (Playwright 1.59.1), 100px boxes with 300px content, scrollTop = 120:
+    // computed x/y/shorthand, scrollTop, scroll events.
+    let cases = [
+        ("xauto", "overflow-x:auto", "auto|auto|auto|120|1"),
+        ("yauto", "overflow-y:auto", "auto|auto|auto|120|1"),
+        ("xhidden", "overflow-x:hidden", "hidden|auto|hidden auto|120|1"),
+        ("xclip", "overflow-x:clip", "clip|visible|clip visible|0|0"),
+        ("xclipyscroll", "overflow-x:clip;overflow-y:scroll", "hidden|scroll|hidden scroll|120|1"),
+        ("none", "", "visible|visible|visible|0|0"),
+        ("both", "overflow:hidden auto", "hidden|auto|hidden auto|120|1"),
+    ];
+    let html: String = cases
+        .iter()
+        .map(|(k, css, _)| {
+            format!(
+                "<div id={k} style='height:100px;width:100px;{css}'><div style='height:300px;width:50px'></div></div>"
+            )
+        })
+        .collect();
+    let e = env(&format!("<body style='margin:0'>{html}</body>"));
+    e.page.layout.borrow_mut().set_geometry(lp_dom::layout::Geometry::Flow);
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    let ids: Vec<String> = cases.iter().map(|(k, _, _)| format!("'{k}'")).collect();
+    eval(
+        &e.main,
+        &format!(
+            "globalThis.scrolls={{}};for(const k of [{}]){{const el=document.getElementById(k);scrolls[k]=0;\
+             el.addEventListener('scroll',()=>scrolls[k]++);el.scrollTop=120}};'ok'",
+            ids.join(",")
+        ),
+    );
+    e.page.after_task();
+    tasks.drain();
+    for (k, _, want) in cases {
+        let got = eval(
+            &e.main,
+            &format!(
+                "(()=>{{const el=document.getElementById('{k}'),cs=getComputedStyle(el);\
+                 return [cs.overflowX,cs.overflowY,cs.overflow,el.scrollTop,scrolls['{k}']].join('|')}})()"
+            ),
+        );
+        assert_eq!(got, want, "{k}");
+    }
+    e.page.dispose();
+}
+
+#[test]
+fn content_shrink_clamps_scroll_offsets_and_fires_scroll_like_chromium() {
+    // Chromium clamps a scroll position when layout shrinks the scrollable
+    // overflow below it and fires `scroll`; the engine kept the stale offset
+    // silently. react-aria's virtualizer takes its window from that event
+    // when measured rows come out shorter than estimated (TOS QRef: a stale
+    // window and an extra measuring round). Chromium: 900, then 400 at the
+    // read with an event, then 200 at the next frame without a read.
+    let e = env("<body style='margin:0'><div id=s style='height:100px;overflow:auto'><div id=c style='height:1000px'></div></div></body>");
+    e.page.layout.borrow_mut().set_geometry(lp_dom::layout::Geometry::Flow);
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    eval(
+        &e.main,
+        "globalThis.s = document.getElementById('s'); globalThis.c = document.getElementById('c'); globalThis.ev = []; \
+         s.addEventListener('scroll', () => ev.push(s.scrollTop)); s.scrollTop = 900; 1",
+    );
+    tasks.drain();
+    assert_eq!(eval(&e.main, "ev.join()"), "900");
+    // Shrunk, then read: clamped at once; its event comes at the next frame.
+    assert_eq!(eval(&e.main, "ev = []; c.style.height = '500px'; s.scrollTop"), "400");
+    assert_eq!(eval(&e.main, "ev.join()"), "", "the event is not synchronous");
+    tasks.drain();
+    assert_eq!(eval(&e.main, "ev.join()"), "400");
+    // Shrunk without a read: the next frame clamps and fires.
+    eval(&e.main, "ev = []; c.style.height = '300px'; 1");
+    e.page.after_task();
+    tasks.drain();
+    assert_eq!(eval(&e.main, "[ev.join(), s.scrollTop].join('|')"), "200|200");
+    // Nothing changed since: no further clamp or event.
+    eval(&e.main, "ev = []; 1");
+    e.page.after_task();
+    tasks.drain();
+    assert_eq!(eval(&e.main, "ev.join()"), "");
+    e.page.dispose();
+}
+
+#[test]
+fn abort_controller_signal_and_traversal_filters_survive_gc_through_their_wrappers() {
+    let Env { engine, page, main } = env("<body><div id=a></div><div id=b></div><div id=c></div></body>");
+    // Only the controller / walkers keep these values reachable.
+    assert_eq!(
+        eval(
+            &main,
+            "(function(){ const c = new AbortController(); globalThis.c = c; c.signal.foo = 7;\
+             globalThis.w = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT,\
+               { tag: 'F', acceptNode(n) { return n.id === 'a' ? NodeFilter.FILTER_SKIP : NodeFilter.FILTER_ACCEPT; } });\
+             globalThis.it = document.createNodeIterator(document.body, NodeFilter.SHOW_ELEMENT,\
+               n => n.id === 'a' ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT); })(); 'ok'"
+        ),
+        "ok"
+    );
+    for _ in 0..4 {
+        engine.collect_garbage_now();
+        engine.drain_finalized();
+    }
+    assert_eq!(
+        eval(
+            &main,
+            "[c.signal.foo, c.signal === c.signal, c.signal.aborted, (c.abort('r'), c.signal.aborted), c.signal.reason,\
+              w.filter.tag, w.filter === w.filter, w.firstChild().id, it.nextNode().tagName, it.nextNode().id,\
+              typeof it.filter, document.createTreeWalker(document.body).filter].join()"
+        ),
+        "7,true,false,true,r,F,true,b,BODY,b,function,"
+    );
+    drop(page);
+}
+
+#[test]
+fn abort_controllers_and_traversal_filters_do_not_keep_a_disposed_page_alive() {
+    // A controller whose signal reaches back to it, and walkers whose filters
+    // reach back to them, through the page's globals: no native root may pin
+    // that cycle once the page is disposed.
+    let Env { engine, page, main } = env("<body><div id=a></div></body>");
+    assert_eq!(
+        eval(
+            &main,
+            "globalThis.c = new AbortController(); c.signal.owner = c; c.signal.addEventListener('abort', () => c);\
+             globalThis.w = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT, { acceptNode: () => (w, 1) });\
+             globalThis.it = document.createNodeIterator(document.body, NodeFilter.SHOW_ALL, () => (it, 1));\
+             w.firstChild(); it.nextNode(); 'ok'"
+        ),
+        "ok"
+    );
+    page.after_task();
+    let weak = Rc::downgrade(&page);
+    page.dispose();
+    main.dispose();
+    drop(main);
+    drop(page);
+    // Conservative stack scanning can keep a wrapper alive for a few extra collections when other
+    // tests run on neighbouring threads; the page must still be released within a bounded number.
+    for _ in 0..40 {
+        engine.collect_garbage_now();
+        engine.drain_finalized();
+        if weak.upgrade().is_none() {
+            break;
+        }
+    }
+    assert!(weak.upgrade().is_none(), "an AbortController or traversal filter kept its disposed PageDom alive");
 }

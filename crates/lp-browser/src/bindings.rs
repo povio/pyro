@@ -47,6 +47,19 @@ impl PageHooks for Hooks {
         });
     }
 
+    fn post_delayed_task(&self, delay: std::time::Duration, task: Box<dyn FnOnce()>) {
+        let page = self.page;
+        let loader = self.loader.clone();
+        let task = std::cell::RefCell::new(Some(task));
+        self.sched.set_timer(delay, false, true, move |b| {
+            if b.doc(page).is_some_and(|p| p.main_frame.loader_id == loader) {
+                if let Some(task) = task.borrow_mut().take() {
+                    task();
+                }
+            }
+        });
+    }
+
     fn navigate(&self, request: NavigationRequest) {
         let page = self.page;
         let loader = self.loader.clone();
@@ -54,8 +67,23 @@ impl PageHooks for Hooks {
             if !b.doc(page).is_some_and(|p| p.main_frame.loader_id == loader) {
                 return;
             }
+            let new_context = request
+                .target
+                .as_deref()
+                .is_some_and(|t| !matches!(t.to_ascii_lowercase().as_str(), "" | "_self" | "_top" | "_parent"));
+            // `_blank` (and, until named browsing contexts exist, any other
+            // name) opens a popup page; the embedder creates and navigates it.
+            if new_context && request.method == "GET" && page.child.is_none() {
+                if let Some(frame_id) = b.doc(page).map(|p| p.main_frame.id.clone()) {
+                    b.emit(
+                        page.page,
+                        crate::PageEvent::PopupRequested { frame_id, url: request.url, opener: request.opener },
+                    );
+                }
+                return;
+            }
             let result = if request.method != "GET"
-                || request.target.as_deref().is_some_and(|t| !matches!(t, "" | "_self" | "_top" | "_parent"))
+                || new_context
                 || (page.child.is_some() && request.target.as_deref().is_some_and(|t| matches!(t, "_top" | "_parent")))
             {
                 Err(JsError::Unsupported("form POST and cross-frame navigation targets"))
@@ -80,6 +108,50 @@ impl PageHooks for Hooks {
                 }
             }
         });
+    }
+
+    fn file_chooser(&self, input: lp_dom::NodeId, multiple: bool) {
+        let page = self.page;
+        let loader = self.loader.clone();
+        self.sched.post(TaskSource::UserInteraction, move |b| {
+            let Some(frame_id) =
+                b.doc(page).filter(|p| p.main_frame.loader_id == loader).map(|p| p.main_frame.id.clone())
+            else {
+                return;
+            };
+            b.emit(page.page, crate::PageEvent::FileChooserOpened { frame_id, input, multiple });
+        });
+    }
+
+    fn download(&self, request: lp_webapi::DownloadRequest) {
+        let page = self.page;
+        let loader = self.loader.clone();
+        self.sched.post(TaskSource::Navigation, move |b| {
+            if b.doc(page).is_some_and(|p| p.main_frame.loader_id == loader) {
+                b.start_download(page, request);
+            }
+        });
+    }
+
+    fn document_reopened(&self) {
+        let page = self.page;
+        let loader = self.loader.clone();
+        self.sched.post(TaskSource::DomManipulation, move |b| {
+            if b.doc(page).is_some_and(|p| p.main_frame.loader_id == loader) {
+                b.document_reopened(page);
+            }
+        });
+    }
+
+    fn document_closed(&self) -> bool {
+        let page = self.page;
+        let loader = self.loader.clone();
+        self.sched.post(TaskSource::DomManipulation, move |b| {
+            if b.doc(page).is_some_and(|p| p.main_frame.loader_id == loader) {
+                b.finish_written_document(page);
+            }
+        });
+        true
     }
 
     fn network_delivery(&self, id: lp_net::RequestId, frontier: lp_net::NetworkDelivery) {
@@ -210,6 +282,7 @@ impl Browser {
         }
         let events = host.dom.borrow_mut().take_resource_events();
         let mut stylesheet_nodes = std::collections::HashSet::new();
+        let mut image_nodes = std::collections::HashSet::new();
         for event in events {
             let document = host.dom.borrow().owner_document(event.node).ok().flatten();
             let target = host.keys().into_iter().find(|key| host.frame(*key).is_some_and(|f| f.document == document));
@@ -218,6 +291,10 @@ impl Browser {
             if event.kind == lp_dom::script::ResourceKind::Stylesheet {
                 if stylesheet_nodes.insert(event.node) {
                     self.stylesheet_event(target, event.node);
+                }
+            } else if event.kind == lp_dom::script::ResourceKind::Img {
+                if image_nodes.insert(event.node) {
+                    self.image_event(target, event.node);
                 }
             } else {
                 bindings.apply_style_event(&event);

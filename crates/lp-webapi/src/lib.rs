@@ -16,12 +16,14 @@
 //!    `page.dispose()`. Per-world removal can use `lifecycle::realm_disposed`.
 
 pub mod abort;
+pub mod canvas;
 pub mod collections;
 pub mod crypto;
 pub mod css;
 pub mod custom;
 pub mod data_transfer;
 pub mod dom_parser;
+pub mod editing;
 pub mod encoding;
 pub mod event;
 pub mod fetch;
@@ -66,7 +68,9 @@ pub use fetch::{FetchLimits, RequestContext};
 pub use file_reader::FileReaderLimits;
 pub use identity::UserAgentOverride;
 pub use node::{wrap_node, NodeData};
-pub use page::{FocusTarget, FocusTransition, IframeAttribute, NavigationRequest, PageDom, PageHooks, RemotePoster};
+pub use page::{
+    DownloadRequest, FocusTarget, FocusTransition, IframeAttribute, NavigationRequest, PageDom, PageHooks, RemotePoster,
+};
 pub use storage::StorageNamespace;
 pub use target::{EventTarget, EventTargetData};
 pub use window::{define_members, WindowHost};
@@ -81,6 +85,7 @@ pub fn register(engine: &lp_js::Engine) {
     collections::register(engine);
     css::register(engine);
     layout_api::register(engine);
+    canvas::register(engine);
     traversal::register(engine);
     range::register(engine);
     abort::register(engine);
@@ -106,6 +111,7 @@ pub fn register(engine: &lp_js::Engine) {
     engine.register::<url_search_params::URLSearchParams>();
     engine.register::<url_search_params::ParamsIterator>();
     engine.register::<response::Response>();
+    response::register_streams(engine);
     engine.register::<xhr::XMLHttpRequest>();
     engine.register::<xhr::XMLHttpRequestUpload>();
 }
