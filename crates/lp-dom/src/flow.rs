@@ -864,6 +864,35 @@ struct Memo {
     /// Buffers of finished measuring probes, reused (cleared, capacity kept)
     /// by the next probe: probes lay whole subtrees out and are discarded.
     probe_buffers: RefCell<Vec<ProbeBuffers>>,
+    /// Per element: its DOM depth and the depth of its nearest (inclusive)
+    /// ancestor whose style clips overflow. Per pass only (the DOM and the
+    /// memoized `style_of` answers are fixed for the pass and its probes).
+    clip_facts: RefCell<FxHashMap<NodeId, ClipFact>>,
+    /// Scratch path for `clip_fact` (reused, so a miss allocates nothing).
+    clip_path: RefCell<Vec<NodeId>>,
+}
+
+/// DOM depth of an element (document element = 1) and the depth of its
+/// nearest inclusive clipping ancestor (`NO_CLIP` when none).
+#[derive(Clone, Copy)]
+struct ClipFact {
+    depth: u32,
+    clip_depth: u32,
+}
+
+const NO_CLIP: u32 = 0;
+
+/// Work counters for the text scroll-size scan (debug builds only; read by
+/// the in-crate benchmark). Not compiled into release binaries.
+#[cfg(debug_assertions)]
+pub mod record_scan_stats {
+    use std::sync::atomic::AtomicU64;
+    /// Ancestor steps of the reference walk (`clipped_inside_walk`).
+    pub static WALK_STEPS: AtomicU64 = AtomicU64::new(0);
+    /// Elements whose clip fact was computed (one path node each).
+    pub static FACT_STEPS: AtomicU64 = AtomicU64::new(0);
+    /// Text-per-box pairs examined.
+    pub static PAIRS: AtomicU64 = AtomicU64::new(0);
 }
 
 #[derive(Default)]
@@ -1325,6 +1354,55 @@ impl<'a> Ctx<'a> {
     }
 
     #[allow(clippy::too_many_arguments)]
+    /// DOM depth of `el` and the depth of its nearest inclusive clipping
+    /// ancestor, memoized for the pass. Iterative: walks up to the first
+    /// element with a known fact (or the root), then fills the path back
+    /// down, so each element is resolved once per pass and the walk is
+    /// bounded by the DOM depth, not by recursion.
+    fn clip_fact(&self, el: NodeId) -> ClipFact {
+        if let Some(&f) = self.memo.clip_facts.borrow().get(&el) {
+            return f;
+        }
+        let mut path = std::mem::take(&mut *self.memo.clip_path.borrow_mut());
+        path.clear();
+        let mut base = ClipFact { depth: 0, clip_depth: NO_CLIP };
+        let mut cur = Some(el);
+        while let Some(n) = cur {
+            if let Some(&f) = self.memo.clip_facts.borrow().get(&n) {
+                base = f;
+                break;
+            }
+            path.push(n);
+            cur = self.dom.parent_element(n).ok().flatten();
+        }
+        #[cfg(debug_assertions)]
+        record_scan_stats::FACT_STEPS.fetch_add(path.len() as u64, std::sync::atomic::Ordering::Relaxed);
+        for &n in path.iter().rev() {
+            let depth = base.depth + 1;
+            let clips = self.style_of(n).is_some_and(|s| s.clips_x || s.clips_y);
+            base = ClipFact { depth, clip_depth: if clips { depth } else { base.clip_depth } };
+            self.memo.clip_facts.borrow_mut().insert(n, base);
+        }
+        *self.memo.clip_path.borrow_mut() = path;
+        base
+    }
+
+    /// Reference form of the text clip test (the walk the memoized facts
+    /// replace): some ancestor of `t` strictly below `el` clips. Kept for the
+    /// debug-build equality assertion in `record` and the benchmark.
+    #[cfg(debug_assertions)]
+    fn clipped_inside_walk(&self, t: NodeId, el: NodeId) -> bool {
+        let mut cur = self.dom.parent_element(t).ok().flatten();
+        while let Some(a) = cur.filter(|&a| a != el) {
+            record_scan_stats::WALK_STEPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if self.style_of(a).is_some_and(|s| s.clips_x || s.clips_y) {
+                return true;
+            }
+            cur = self.dom.parent_element(a).ok().flatten();
+        }
+        false
+    }
+
     fn record(
         &mut self,
         el: NodeId,
@@ -1349,20 +1427,27 @@ impl<'a> Ctx<'a> {
         // Overflowing text extends the scroll width too (Chromium: through
         // the inline-end padding), unless a clipping element inside this one
         // holds it.
+        // Every text recorded after this box's order lies inside it (orders
+        // are assigned at box start and texts take the current order while the
+        // box's contents, including its own absolutely positioned descendants,
+        // are laid out), so "clipped by an element inside this box" is: the
+        // text's nearest clipping ancestor is deeper than this box.
         let first = self.out.text_orders.partition_point(|(o, _)| *o < order);
+        let el_depth = self.clip_fact(el).depth;
         for &(_, t) in &self.out.text_orders[first..] {
             let Some(&(r, text_fixed)) = self.out.texts.get(&t) else { continue };
             if text_fixed && !fixed {
                 continue;
             }
-            let mut clipped_inside = false;
-            let mut cur = self.dom.parent_element(t).ok().flatten();
-            while let Some(a) = cur.filter(|&a| a != el) {
-                if self.style_of(a).is_some_and(|s| s.clips_x || s.clips_y) {
-                    clipped_inside = true;
-                    break;
-                }
-                cur = self.dom.parent_element(a).ok().flatten();
+            let clipped_inside = match self.dom.parent_element(t).ok().flatten() {
+                Some(p) => self.clip_fact(p).clip_depth > el_depth,
+                None => false,
+            };
+            #[cfg(debug_assertions)]
+            {
+                record_scan_stats::PAIRS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                debug_assert!(self.dom.contains(el, t).unwrap_or(false), "text run outside the recorded box");
+                debug_assert_eq!(clipped_inside, self.clipped_inside_walk(t, el), "clip fact differs from the walk");
             }
             if !clipped_inside {
                 sw = sw.max(r.x + r.width - inner_x + e.padding[RIGHT]);
