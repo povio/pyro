@@ -2396,42 +2396,88 @@ fn invalidation_roots(
     // anchors admitting it, u32::MAX for unbounded; None: no anchor) and
     // validity match, computed once (a batch walks the same ancestors from
     // many changes, and React forces a flush per metric read).
-    let reach_cache: RefCell<FxHashMap<u32, (Option<u32>, bool)>> = RefCell::new(FxHashMap::default());
-    let reach = |x: u32, e: &crate::node::ElementData| -> (Option<u32>, bool) {
-        if let Some(&r) = reach_cache.borrow().get(&x) {
-            return r;
+    // The node on the path directly below the ancestor being examined:
+    // `None` when unknown (freed, or changed since), `Some(NIL)` for a
+    // text node; `attr`: the attribute a change of it just altered.
+    #[derive(Clone, Copy)]
+    struct Below {
+        node: Option<u32>,
+        attr: Option<u64>,
+    }
+    // Whether the path node can satisfy an anchor's argument key, now or
+    // before its attribute changed.
+    let arg_ok = |arg: &AnchorKey, below: Below| -> bool {
+        if matches!(arg, AnchorKey::Any) {
+            return true;
+        }
+        let Some(n) = below.node else { return true };
+        if n == NIL {
+            return false;
+        }
+        let Some(e) = element(n) else { return false };
+        if arg.matches(e) {
+            return true;
+        }
+        match (arg, below.attr) {
+            (AnchorKey::Attr(a), Some(h)) => crate::dom::attr_name_hash(a) == h,
+            (AnchorKey::Class(_), Some(h)) => h == local_name!("class").get_hash(),
+            _ => false,
+        }
+    };
+    // (indexes of the anchors keyed on the element, validity match)
+    type Reach = (Rc<[usize]>, bool);
+    let reach_cache: RefCell<FxHashMap<u32, Reach>> = RefCell::new(FxHashMap::default());
+    let reach = |x: u32, e: &crate::node::ElementData| -> Reach {
+        if let Some(r) = reach_cache.borrow().get(&x) {
+            return r.clone();
         }
         let classes: Vec<&str> = e.attr("class").map(|c| c.split_ascii_whitespace().collect()).unwrap_or_default();
         let key_matches = |k: &AnchorKey| match k {
             AnchorKey::Class(c) => classes.iter().any(|t| t == c),
             _ => k.matches(e),
         };
-        let anchor = anchors
+        let admitted: Rc<[usize]> = anchors
             .iter()
-            .filter(|a| key_matches(&a.key) && a.admits_context(dom, x))
-            .map(|a| a.depth.unwrap_or(u32::MAX))
-            .max();
+            .enumerate()
+            .filter(|(_, a)| key_matches(&a.key) && a.admits_context(dom, x))
+            .map(|(i, _)| i)
+            .collect();
         let validated = !validity.is_empty()
             && e.is_html()
             && matches!(&*e.name.local, "form" | "fieldset" | "select")
             && validity.iter().any(key_matches);
-        reach_cache.borrow_mut().insert(x, (anchor, validated));
-        (anchor, validated)
+        reach_cache.borrow_mut().insert(x, (admitted.clone(), validated));
+        (admitted, validated)
     };
     // The lowest level each ancestor was reached at in this batch: a walk that
     // reaches it again at that level or higher stops (depth bounds only admit
     // more at lower levels, validity does not depend on the level, so every
     // ancestor above was already examined at least as favourably).
     let walked: RefCell<FxHashMap<u32, u32>> = RefCell::new(FxHashMap::default());
-    let walk_up = |first: u32, level: u32| -> Vec<u32> {
+    let walk_up = |first: u32, level: u32, below: Below| -> Vec<u32> {
         let mut out = Vec::new();
         if anchors.is_empty() && validity.is_empty() {
             return out;
         }
         let mut level = level;
+        let mut below = below;
         let mut cur = first;
         while cur != NIL {
             let Some(e) = element(cur) else { break };
+            // `cur` itself depends on this walk's path node; the ancestors
+            // above see `cur` as theirs, the same for every walk through it.
+            let (admitted, validated) = reach(cur, e);
+            if validated
+                || admitted.iter().any(|&i| {
+                    let a = &anchors[i];
+                    match a.depth {
+                        Some(d) => level <= d && arg_ok(&a.arg, below),
+                        None => true,
+                    }
+                })
+            {
+                out.push(cur);
+            }
             {
                 let mut walked = walked.borrow_mut();
                 match walked.get(&cur) {
@@ -2441,10 +2487,7 @@ fn invalidation_roots(
                     }
                 }
             }
-            let (anchor, validated) = reach(cur, e);
-            if anchor.is_some_and(|d| level <= d) || validated {
-                out.push(cur);
-            }
+            below = Below { node: Some(cur), attr: None };
             cur = dom.n(cur).parent;
             level += 1;
         }
@@ -2456,7 +2499,7 @@ fn invalidation_roots(
         let mut out = Vec::new();
         for m in radios {
             out.push(m);
-            out.extend(walk_up(dom.n(m).parent, 1));
+            out.extend(walk_up(dom.n(m).parent, 1, Below { node: Some(m), attr: None }));
         }
         out
     };
@@ -2488,7 +2531,7 @@ fn invalidation_roots(
     // :has()/validity ancestors (from the parent itself, whose children
     // changed), and its children's structural pseudo-classes.
     let parent_side = |p: u32| -> Vec<u32> {
-        let mut out = walk_up(p, 0);
+        let mut out = Vec::new();
         if any_key(&rules.empty_keys, p) {
             out.push(p);
         }
@@ -2520,6 +2563,10 @@ fn invalidation_roots(
     // over all of its children.
     let mut sided: FxHashSet<u32> = FxHashSet::default();
     let state = |x: u32| (x, siblings_affected(x, None));
+    // Elements whose attributes change in this batch: a detached node among
+    // them may have satisfied an argument key when it was removed.
+    let attr_changed: FxHashSet<u32> =
+        changes.iter().filter_map(|c| if let Change::Attr(i, ..) = *c { Some(i) } else { None }).collect();
     for c in changes {
         match *c {
             Change::Pseudo => {}
@@ -2529,7 +2576,8 @@ fn invalidation_roots(
                 if !live(i) || (plain && !rules.attr_names.contains(&h)) {
                     continue;
                 }
-                found.extend(walk_up(dom.n(i).parent, 1).into_iter().map(state));
+                found
+                    .extend(walk_up(dom.n(i).parent, 1, Below { node: Some(i), attr: Some(h) }).into_iter().map(state));
                 // `type`, `name`, `form`, `checked` and `required` regroup or
                 // revalidate radio groups (also when `type` leaves radio).
                 let input = element(i).is_some_and(|e| e.is_html() && e.name.local == local_name!("input"));
@@ -2542,7 +2590,7 @@ fn invalidation_roots(
                 if !live(i) {
                     continue;
                 }
-                found.extend(walk_up(dom.n(i).parent, 1).into_iter().map(state));
+                found.extend(walk_up(dom.n(i).parent, 1, Below { node: Some(i), attr: None }).into_iter().map(state));
                 if radio_validity && is_radio(i) {
                     found.extend(radio_roots(dom.radio_group(i)).into_iter().map(state));
                 }
@@ -2552,6 +2600,8 @@ fn invalidation_roots(
                 if !live(p) {
                     continue;
                 }
+                let node = (live(n) && dom.n(n).parent == p).then_some(n);
+                found.extend(walk_up(p, 0, Below { node, attr: None }).into_iter().map(state));
                 if sided.insert(p) {
                     found.extend(parent_side(p).into_iter().map(state));
                 }
@@ -2575,6 +2625,8 @@ fn invalidation_roots(
                 if !live(p) {
                     continue;
                 }
+                let node = (live(n) && !attr_changed.contains(&n)).then_some(n);
+                found.extend(walk_up(p, 0, Below { node, attr: None }).into_iter().map(state));
                 if sided.insert(p) {
                     found.extend(parent_side(p).into_iter().map(state));
                 }
@@ -2608,7 +2660,7 @@ fn invalidation_roots(
                 if p == NIL {
                     continue;
                 }
-                found.extend(walk_up(p, 0).into_iter().map(state));
+                found.extend(walk_up(p, 0, Below { node: Some(NIL), attr: None }).into_iter().map(state));
                 if element(p).is_some() {
                     found.push(state(p));
                 }
@@ -2651,7 +2703,7 @@ fn invalidation_roots(
     pseudo_changed.sort_unstable();
     pseudo_changed.dedup();
     for x in pseudo_changed {
-        found.extend(walk_up(dom.n(x).parent, 1).into_iter().map(state));
+        found.extend(walk_up(dom.n(x).parent, 1, Below { node: Some(x), attr: None }).into_iter().map(state));
     }
 
     let mut roots: Vec<u32> = Vec::new();
@@ -2998,6 +3050,11 @@ struct HasAnchor {
     key: AnchorKey,
     depth: Option<u32>,
     context: Option<(AnchorKey, bool)>,
+    /// Key of the argument's first compound. For a child-only argument
+    /// (`depth` set) a change can only alter the anchor's match through a
+    /// child of the anchor satisfying it; with a descendant combinator any
+    /// element below may, so the key is not used.
+    arg: AnchorKey,
 }
 
 impl HasAnchor {
@@ -3041,8 +3098,16 @@ fn collect_has_anchors(sel: &Selector<Impl>, out: &mut Vec<HasAnchor>) -> bool {
                         let mut children = 0u32;
                         let mut bounded = true;
                         let mut ri = rel.selector.iter();
+                        // Compounds come subject first; the last one is the
+                        // argument's first (topmost) compound.
+                        let mut first: Vec<&Component<Impl>> = Vec::new();
                         loop {
-                            for _ in &mut ri {}
+                            // The last sequence is the combinator to the anchor: no compound.
+                            let compound: Vec<&Component<Impl>> =
+                                (&mut ri).filter(|c| !matches!(c, Component::RelativeSelectorAnchor)).collect();
+                            if !compound.is_empty() {
+                                first = compound;
+                            }
                             match ri.next_sequence() {
                                 Some(selectors::parser::Combinator::Child) => children += 1,
                                 Some(_) => bounded = false,
@@ -3064,7 +3129,8 @@ fn collect_has_anchors(sel: &Selector<Impl>, out: &mut Vec<HasAnchor>) -> bool {
                             let before: Vec<&Component<Impl>> = (&mut peek).collect();
                             Some((compound_key(&before), parent_only)).filter(|(k, _)| *k != AnchorKey::Any)
                         });
-                        out.push(HasAnchor { key, depth, context });
+                        let arg = compound_key(&first);
+                        out.push(HasAnchor { key, depth, context, arg });
                     }
                 }
                 Component::Is(list) | Component::Where(list) | Component::Negation(list) => {
@@ -5088,8 +5154,8 @@ mod has_anchor_tests {
         Some(out)
     }
 
-    fn one(key: AnchorKey, depth: Option<u32>) -> Option<Vec<HasAnchor>> {
-        Some(vec![HasAnchor { key, depth, context: None }])
+    fn one(key: AnchorKey, depth: Option<u32>, arg: AnchorKey) -> Option<Vec<HasAnchor>> {
+        Some(vec![HasAnchor { key, depth, context: None, arg }])
     }
 
     #[test]
@@ -5099,20 +5165,24 @@ mod has_anchor_tests {
             anchors(
                 r".has-invalid\:border:has(:is(:where([data-rac])[data-invalid], :where(:not([data-rac])):invalid))"
             ),
-            one(AnchorKey::Class("has-invalid:border".into()), None)
+            one(AnchorKey::Class("has-invalid:border".into()), None, AnchorKey::Any)
         );
         // group-has-*: descendants of the group anchor, any depth.
         assert_eq!(
             anchors(r".x:is(:where(.group\/input-content):has(:is(input:disabled)) *)"),
-            one(AnchorKey::Class("group/input-content".into()), None)
+            one(AnchorKey::Class("group/input-content".into()), None, AnchorKey::Tag("input".into()))
         );
         // Arbitrary-value class names (serialized unescaped by the selector
         // crate) are read from the syntax tree, not text.
         assert_eq!(
             anchors(r".\[\&\:has\(\[data-is-filled\]\)\]\:bg-card:has([data-is-filled])"),
-            one(AnchorKey::Class("[&:has([data-is-filled])]:bg-card".into()), None)
+            one(
+                AnchorKey::Class("[&:has([data-is-filled])]:bg-card".into()),
+                None,
+                AnchorKey::Attr("data-is-filled".into())
+            )
         );
-        assert_eq!(anchors("td:has(input)"), one(AnchorKey::Tag("td".into()), None));
+        assert_eq!(anchors("td:has(input)"), one(AnchorKey::Tag("td".into()), None, AnchorKey::Tag("input".into())));
         // Universal anchors are bounded only by child-only relative selectors.
         // TOS: a universal anchor below a [data-is-empty] ancestor (never
         // html or body).
@@ -5122,6 +5192,7 @@ mod has_anchor_tests {
                 key: AnchorKey::Any,
                 depth: Some(1),
                 context: Some((AnchorKey::Attr("data-is-empty".into()), false)),
+                arg: AnchorKey::Attr("data-static-segment-type".into()),
             }])
         );
         assert_eq!(
@@ -5129,10 +5200,11 @@ mod has_anchor_tests {
             Some(vec![HasAnchor {
                 key: AnchorKey::Any,
                 depth: Some(1),
-                context: Some((AnchorKey::Class("p".into()), true))
+                context: Some((AnchorKey::Class("p".into()), true)),
+                arg: AnchorKey::Tag("b".into()),
             }])
         );
-        assert_eq!(anchors(":has(> div > [x])"), one(AnchorKey::Any, Some(2)));
+        assert_eq!(anchors(":has(> div > [x])"), one(AnchorKey::Any, Some(2), AnchorKey::Tag("div".into())));
         assert_eq!(anchors(":has(.x)"), None, "unbounded universal anchor");
         assert_eq!(anchors(".a:has(+ .b)"), None, "sibling-relative");
         assert_eq!(anchors(".a:has(~ .b)"), None, "sibling-relative");
@@ -5178,6 +5250,68 @@ mod validity_has_invalidation_tests {
         let restyled = layout.style().take_restyled(&dom).expect("selective");
         assert!(restyled.contains(&card) && restyled.contains(&input), "{restyled:?}");
         assert!(restyled.len() <= 3, "{restyled:?}");
+    }
+
+    #[test]
+    fn universal_has_anchors_root_only_parents_of_matching_children() {
+        // TOS: `:has(> [data-static-segment-type]) > .x` makes every element
+        // a potential anchor; a style write on any child used to restyle the
+        // whole parent subtree (the drawer root: 21k elements per write).
+        let rows: String = (0..40).map(|i| format!("<div class=row><span>{i}</span></div>")).collect();
+        let html = format!(
+            "<!doctype html><style>:has(> [data-static-segment-type]) > .x{{color:red}}</style><body>\
+             <div id=shell><div id=child style=\"height:1px\"></div>{rows}</div>\
+             <div id=field><span id=seg data-static-segment-type=day>d</span><span class=x id=lit>/</span></div></body>"
+        );
+        let dom_ref: DomRef = Rc::new(RefCell::new(Dom::new()));
+        let doc = parse_document(&dom_ref, "http://test/", &html);
+        let mut dom = Rc::try_unwrap(dom_ref).ok().expect("sole owner").into_inner();
+        let mut layout = Layout::with_viewport(doc, Viewport::new(800, 600));
+        layout.style_mut().discover_style_elements(&dom);
+        layout.set_geometry(Geometry::Flow);
+        layout.flow(&dom);
+        layout.style().take_restyled(&dom);
+        let id = |dom: &Dom, s: &str| dom.get_element_by_id(doc, s).unwrap().unwrap();
+        let (shell, child, field, seg, lit) =
+            (id(&dom, "shell"), id(&dom, "child"), id(&dom, "field"), id(&dom, "seg"), id(&dom, "lit"));
+        // The child cannot satisfy the argument: the shell is not an anchor of this change.
+        dom.set_attribute(child, "style", "height:2px").unwrap();
+        assert_eq!(layout.style().take_restyled(&dom), Some(vec![child]));
+        // Appending a plain child neither.
+        let extra = dom.create_element(doc, "div").unwrap();
+        dom.append_child(shell, extra).unwrap();
+        let restyled = layout.style().take_restyled(&dom).expect("selective");
+        assert!(!restyled.contains(&shell), "{restyled:?}");
+        // The segment's key attribute changing may have changed the field's match.
+        dom.set_attribute(seg, "data-static-segment-type", "month").unwrap();
+        let restyled = layout.style().take_restyled(&dom).expect("selective");
+        assert!(restyled.contains(&field) && restyled.contains(&lit), "{restyled:?}");
+        // The child gaining the key attribute makes the shell an anchor.
+        dom.set_attribute(child, "data-static-segment-type", "day").unwrap();
+        let restyled = layout.style().take_restyled(&dom).expect("selective");
+        assert!(restyled.contains(&shell), "{restyled:?}");
+    }
+
+    #[test]
+    fn descendant_has_anchors_keep_rooting_through_wrappers() {
+        // `.group:has(input:disabled)`: the input sits below a wrapper that
+        // does not satisfy the argument's first compound; the group is still
+        // an anchor of the input's change.
+        let html = "<!doctype html><style>.group:has(input:disabled){color:red}</style><body>\
+             <div id=g class=group><div id=wrap><label><input id=i></label></div></div></body>";
+        let dom_ref: DomRef = Rc::new(RefCell::new(Dom::new()));
+        let doc = parse_document(&dom_ref, "http://test/", html);
+        let mut dom = Rc::try_unwrap(dom_ref).ok().expect("sole owner").into_inner();
+        let mut layout = Layout::with_viewport(doc, Viewport::new(800, 600));
+        layout.style_mut().discover_style_elements(&dom);
+        layout.set_geometry(Geometry::Flow);
+        layout.flow(&dom);
+        layout.style().take_restyled(&dom);
+        let id = |dom: &Dom, s: &str| dom.get_element_by_id(doc, s).unwrap().unwrap();
+        let (group, input) = (id(&dom, "g"), id(&dom, "i"));
+        dom.set_attribute(input, "disabled", "").unwrap();
+        let restyled = layout.style().take_restyled(&dom).expect("selective");
+        assert!(restyled.contains(&group) && restyled.contains(&input), "{restyled:?}");
     }
 }
 
