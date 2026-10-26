@@ -141,26 +141,45 @@ impl Reply {
     }
 }
 
-/// Replies waiting for a promise to settle, held weakly (the promise
-/// reactions own them).
-#[derive(Default)]
+/// Replies waiting for a promise to settle, held strongly.
+///
+/// The promise reactions hold the reply too, but a never-settling promise
+/// nobody references is garbage: once collected (release builds do so before
+/// a later navigation), a weakly held reply was gone and `fail_context` had
+/// nothing left to answer, so the evaluation never got its reply. A `Reply`
+/// owns only the collector queue, strings and a weak handle table, so holding
+/// it here creates no cycle; answered or cancelled entries are pruned on every
+/// table operation and the table is bounded by `limit`.
 pub(crate) struct PendingReplies {
-    replies: RefCell<Vec<Weak<Reply>>>,
+    replies: RefCell<Vec<Rc<Reply>>>,
+    limit: Cell<usize>,
+}
+
+impl Default for PendingReplies {
+    fn default() -> Self {
+        PendingReplies { replies: RefCell::new(Vec::new()), limit: Cell::new(MAX_PENDING_REPLIES) }
+    }
 }
 
 impl PendingReplies {
+    fn prune(&self) {
+        self.replies.borrow_mut().retain(|r| !r.is_done());
+    }
+
     fn register(&self, reply: &Rc<Reply>) -> CdpResult<()> {
+        self.prune();
         let mut replies = self.replies.borrow_mut();
-        replies.retain(|r| r.upgrade().is_some_and(|r| !r.is_done()));
-        if replies.len() >= MAX_PENDING_REPLIES {
+        if replies.len() >= self.limit.get() {
             return Err(CdpError::server("Too many pending awaitPromise evaluations"));
         }
-        replies.push(Rc::downgrade(reply));
+        replies.push(reply.clone());
         Ok(())
     }
 
+    /// The unanswered replies (a snapshot: answering one must not re-enter the table).
     fn live(&self) -> Vec<Rc<Reply>> {
-        self.replies.borrow().iter().filter_map(Weak::upgrade).filter(|r| !r.is_done()).collect()
+        self.prune();
+        self.replies.borrow().clone()
     }
 
     /// Cancels every pending reply of a detached session.
@@ -170,6 +189,7 @@ impl PendingReplies {
                 reply.cancel();
             }
         }
+        self.prune();
     }
 
     /// Fails every pending reply whose execution context was destroyed.
@@ -179,6 +199,25 @@ impl PendingReplies {
                 reply.error(&CdpError::server("Execution context was destroyed."));
             }
         }
+        self.prune();
+    }
+
+    /// Cancels everything (connection teardown).
+    pub(crate) fn cancel_all(&self) {
+        for reply in self.live() {
+            reply.cancel();
+        }
+        self.prune();
+    }
+
+    /// Unanswered replies currently held.
+    pub(crate) fn len(&self) -> usize {
+        self.prune();
+        self.replies.borrow().len()
+    }
+
+    pub(crate) fn set_limit(&self, limit: usize) {
+        self.limit.set(limit);
     }
 }
 

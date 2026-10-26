@@ -333,6 +333,7 @@ impl EngineHost {
 
     /// Disposes every page and realm (connection teardown).
     pub fn close_all(&mut self) {
+        self.pending.cancel_all();
         self.sessions.clear();
         self.pages.clear();
         self.thread.browser.close_all();
@@ -345,6 +346,17 @@ impl EngineHost {
     /// Recomputes whether console/exception notifications are collected.
     pub(crate) fn update_runtime_wanted(&self) {
         self.collector.runtime_wanted.set(self.sessions.values().any(|s| s.runtime_enabled));
+    }
+
+    /// Unanswered `awaitPromise` evaluations held for settlement, context
+    /// destruction or session detach (diagnostics/tests).
+    pub fn pending_awaited_replies(&self) -> usize {
+        self.pending.len()
+    }
+
+    /// Replaces the bound on pending `awaitPromise` evaluations (tests).
+    pub fn set_pending_reply_limit(&self, limit: usize) {
+        self.pending.set_limit(limit);
     }
 
     /// Replaces the connection's handle budget (tests, embedders with other
