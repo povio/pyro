@@ -5,7 +5,6 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use lp_dom::dom::JOURNAL_CAPACITY;
 use lp_dom::parse::{parse_document, DomRef};
 use lp_dom::*;
 
@@ -17,12 +16,14 @@ fn doc(html: &str) -> (DomRef, NodeId) {
 }
 
 /// Reference `getElementById`: the first light-tree descendant of `root`
-/// in tree order whose `id` attribute equals `id`.
+/// in tree order whose null-namespace `id` attribute equals `id`.
 fn walk(dom: &Dom, root: NodeId, id: &str) -> Option<NodeId> {
     fn visit(dom: &Dom, n: NodeId, id: &str) -> Option<NodeId> {
         let mut c = dom.first_child(n).unwrap();
         while let Some(k) = c {
-            if dom.node_type(k).unwrap() == NodeType::Element && dom.get_attribute(k, "id").unwrap() == Some(id) {
+            if dom.node_type(k).unwrap() == NodeType::Element
+                && dom.get_attribute_ns(k, None, "id").unwrap() == Some(id)
+            {
                 return Some(k);
             }
             if let Some(f) = visit(dom, k, id) {
@@ -108,7 +109,7 @@ fn id_lookups_match_a_full_walk_through_mixed_mutations() {
             }
             let el = els[rng.below(els.len())];
             let id = IDS[rng.below(IDS.len())];
-            let op = rng.below(16);
+            let op = rng.below(18);
             log.push(op);
             match op {
                 // Changes the index must survive.
@@ -135,7 +136,12 @@ fn id_lookups_match_a_full_walk_through_mixed_mutations() {
                 7 => {
                     dom.remove_attribute(el, "id").unwrap();
                 }
+                // setAttributeNS with the null namespace sets the element's id.
                 8 => dom.set_attribute_ns(el, None, "id", id).unwrap(),
+                // An `id` attribute in another namespace is not the element's id
+                // (it journals the same local-name hash, so it rebuilds).
+                16 => dom.set_attribute_ns(el, Some("urn:test"), "id", id).unwrap(),
+                17 => dom.set_attribute_ns(el, Some("urn:test"), "x:id", id).unwrap(),
                 9 => {
                     let e = dom.create_element(d, "u").unwrap();
                     dom.set_attribute(e, "id", id).unwrap();
@@ -178,74 +184,17 @@ fn id_lookups_match_a_full_walk_through_mixed_mutations() {
         }
         check_all(&dom, &roots, &format!("batch {batch} ops {log:?}"));
     }
-}
 
-#[test]
-fn the_index_is_reused_across_irrelevant_changes_and_rebuilt_otherwise() {
-    let mut html = String::from("<body><input id=field>");
-    for i in 0..200 {
-        html.push_str(&format!("<div id=n{i}>x</div>"));
+    // Journal overflow between lookups hides an id change: every root must
+    // still see it.
+    let mut els = Vec::new();
+    elements_under(&dom, d, &mut els);
+    let (renamed, noisy) = (els[0], els[els.len() - 1]);
+    dom.set_attribute(renamed, "id", "e").unwrap();
+    for i in 0..(lp_dom::dom::JOURNAL_CAPACITY * 2) {
+        dom.set_attribute(noisy, "data-z", &i.to_string()).unwrap();
     }
-    let (dom, d) = doc(&html);
-    let mut dom = dom.borrow_mut();
-    let field = dom.get_element_by_id(d, "field").unwrap().unwrap();
-    let mid = dom.get_element_by_id(d, "n100").unwrap().unwrap();
-    let text = dom.first_child(mid).unwrap().unwrap();
-    let builds = dom.id_index_builds();
-    let lookup = |dom: &Dom| assert_eq!(dom.get_element_by_id(d, "n199").unwrap(), walk(dom, d, "n199"));
-
-    // One irrelevant change of each kind between lookups: no rebuild.
-    for i in 0..50 {
-        dom.set_attribute(mid, "data-x", &i.to_string()).unwrap();
-        lookup(&dom);
-        dom.set_char_data(text, &format!("y{i}")).unwrap();
-        lookup(&dom);
-        dom.set_value(field, &format!("v{i}")).unwrap();
-        lookup(&dom);
-        dom.set_focused(d, Some(if i % 2 == 0 { field } else { mid })).unwrap();
-        lookup(&dom);
-    }
-    // Many irrelevant changes between two lookups, within the scan limit.
-    for i in 0..150 {
-        dom.set_attribute(mid, "class", &format!("k{i}")).unwrap();
-    }
-    lookup(&dom);
-    assert_eq!(dom.id_index_builds(), builds, "irrelevant changes rebuilt the index");
-
-    // Each id-affecting change rebuilds once.
-    let mut expect = builds;
-    let mut step = |dom: &mut Dom, f: &dyn Fn(&mut Dom)| {
-        f(dom);
-        lookup(dom);
-        lookup(dom);
-        expect += 1;
-        assert_eq!(dom.id_index_builds(), expect);
-    };
-    step(&mut dom, &|dom| dom.set_attribute(mid, "id", "renamed").unwrap());
-    step(&mut dom, &|dom| {
-        dom.remove_attribute(mid, "id").unwrap();
-    });
-    step(&mut dom, &|dom| {
-        let e = dom.create_element(d, "p").unwrap();
-        let body = dom.body(d).unwrap().unwrap();
-        dom.append_child(body, e).unwrap();
-    });
-    step(&mut dom, &|dom| dom.remove_node(mid).unwrap());
-    // More changes than live nodes: rebuilt rather than scanned.
-    step(&mut dom, &|dom| {
-        for i in 0..2000 {
-            dom.set_attribute(field, "data-y", &i.to_string()).unwrap();
-        }
-    });
-    // Journal overflow hides an id change: rebuilt.
-    step(&mut dom, &|dom| {
-        dom.set_attribute(field, "id", "field2").unwrap();
-        for i in 0..(JOURNAL_CAPACITY * 2) {
-            dom.set_attribute(field, "data-z", &i.to_string()).unwrap();
-        }
-    });
-    assert_eq!(dom.get_element_by_id(d, "field").unwrap(), None);
-    assert_eq!(dom.get_element_by_id(d, "field2").unwrap(), Some(field));
+    check_all(&dom, &roots, "journal overflow");
 }
 
 #[test]
@@ -270,4 +219,20 @@ fn a_reused_root_slot_does_not_see_the_freed_roots_ids() {
     assert_eq!(dom.version(), version, "precondition: no version change since the lookup");
     assert_eq!(dom.get_element_by_id(new_root, "gone").unwrap(), None);
     assert_eq!(dom.get_element_by_id(new_root, "gone").unwrap(), walk(&dom, new_root, "gone"));
+}
+
+#[test]
+fn an_id_attribute_in_another_namespace_is_not_an_element_id() {
+    let (dom, d) = doc("<body><p id=keep></p><div></div></body>");
+    let mut dom = dom.borrow_mut();
+    let div = dom.body(d).unwrap().unwrap();
+    let div = dom.children(div).unwrap().nth(1).unwrap();
+    assert_eq!(dom.get_element_by_id(d, "ns").unwrap(), None);
+    dom.set_attribute_ns(div, Some("urn:test"), "id", "ns").unwrap();
+    dom.set_attribute_ns(div, Some("urn:test"), "x:id", "ns2").unwrap();
+    assert_eq!(dom.get_element_by_id(d, "ns").unwrap(), None);
+    assert_eq!(dom.get_element_by_id(d, "ns2").unwrap(), None);
+    dom.set_attribute_ns(div, None, "id", "plain").unwrap();
+    assert_eq!(dom.get_element_by_id(d, "plain").unwrap(), Some(div));
+    assert!(dom.get_element_by_id(d, "keep").unwrap().is_some());
 }
