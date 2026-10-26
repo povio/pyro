@@ -403,6 +403,27 @@ impl Harness {
         r["result"]["sessionId"].as_str().unwrap().to_owned()
     }
 
+    /// Runs until the reply to `id` arrives or `ms` elapse; returns everything seen.
+    /// A condition-based, explicitly bounded wait: callers assert the reply's exact payload.
+    fn until_reply(&mut self, id: u64, ms: u64) -> Vec<Value> {
+        let deadline = Instant::now() + Duration::from_millis(ms);
+        let mut seen = Vec::new();
+        while Instant::now() < deadline {
+            let host = self.browser.host_mut();
+            host.run_until_work(Some(Instant::now() + Duration::from_millis(5)), || false);
+            host.flush();
+            seen.extend(self.drain());
+            if seen.iter().any(|m| m["id"] == id) {
+                break;
+            }
+        }
+        seen
+    }
+
+    fn pending_replies(&self) -> usize {
+        self.browser.host().pending_awaited_replies()
+    }
+
     fn run_for(&mut self, ms: u64) -> Vec<Value> {
         let deadline = Instant::now() + Duration::from_millis(ms);
         let mut seen = Vec::new();
@@ -466,6 +487,102 @@ fn navigation_fails_pending_awaited_evaluations() {
     seen.extend(h.run_for(20));
     let reply = seen.iter().find(|m| m["id"] == id).expect("pending evaluation answered after its context died");
     assert_eq!(reply["error"]["message"], "Execution context was destroyed.");
+}
+
+const CONTEXT_DESTROYED: &str = "Execution context was destroyed.";
+
+/// A never-settling promise nobody references is garbage; collecting it must
+/// not lose the evaluation's reply: navigation still answers it, exactly once.
+#[test]
+fn never_settling_awaited_evaluation_is_answered_after_gc_and_navigation() {
+    let mut h = Harness::new();
+    h.install_gc();
+    let session = h.session.clone();
+    let id =
+        h.send(Some(&session), "Runtime.evaluate", json!({"expression":"new Promise(() => {})","awaitPromise":true}));
+    h.drain();
+    assert_eq!(h.pending_replies(), 1);
+    for _ in 0..3 {
+        let r = h.page("Runtime.evaluate", json!({"expression":"reviewGc(); reviewGc(); 1","returnByValue":true}));
+        assert_eq!(r["result"]["result"]["value"], 1, "{r}");
+    }
+    assert_eq!(h.pending_replies(), 1, "the pending reply must survive collection of its promise");
+    let mut seen = h.page_with_events("Page.navigate", json!({"url":"about:blank"}));
+    seen.extend(h.until_reply(id, 2000));
+    let replies: Vec<&Value> = seen.iter().filter(|m| m["id"] == id).collect();
+    assert_eq!(replies.len(), 1, "exactly one reply: {:?}", methods(&seen));
+    assert_eq!(replies[0]["error"]["message"], CONTEXT_DESTROYED);
+    assert_eq!(replies[0]["error"]["code"], -32000);
+    assert_eq!(replies[0]["sessionId"], session.as_str());
+    assert_eq!(h.pending_replies(), 0);
+    // Quiet after navigation: nothing else answers it later.
+    let later = h.run_for(50);
+    assert!(later.iter().all(|m| m["id"] != id), "{later:?}");
+}
+
+/// Settled awaited evaluations reply with their value and leave the table.
+#[test]
+fn settled_awaited_replies_leave_the_pending_table() {
+    let mut h = Harness::new();
+    for i in 0..5u32 {
+        let r = h.page(
+            "Runtime.evaluate",
+            json!({"expression": format!("Promise.resolve({i})"), "awaitPromise": true, "returnByValue": true}),
+        );
+        assert_eq!(r["result"]["result"]["value"], i, "{r}");
+    }
+    let r = h.page(
+        "Runtime.evaluate",
+        json!({"expression":"Promise.reject(new Error('nope'))","awaitPromise":true,"returnByValue":true}),
+    );
+    assert_eq!(r["result"]["exceptionDetails"]["exception"]["description"].as_str().map(|d| d.starts_with("Error: nope")), Some(true), "{r}");
+    assert_eq!(h.pending_replies(), 0);
+}
+
+/// The table is bounded; context destruction empties it and new evaluations register again.
+#[test]
+fn pending_awaited_replies_are_bounded_and_freed_by_context_destruction() {
+    let mut h = Harness::new();
+    h.browser.host().set_pending_reply_limit(3);
+    let session = h.session.clone();
+    let ids: Vec<u64> = (0..3)
+        .map(|_| h.send(Some(&session), "Runtime.evaluate", json!({"expression":"new Promise(() => {})","awaitPromise":true})))
+        .collect();
+    h.drain();
+    assert_eq!(h.pending_replies(), 3);
+    let r = h.page("Runtime.evaluate", json!({"expression":"new Promise(() => {})","awaitPromise":true}));
+    assert_eq!(r["error"]["message"], "Too many pending awaitPromise evaluations", "{r}");
+    assert_eq!(h.pending_replies(), 3);
+    let mut seen = h.page_with_events("Page.navigate", json!({"url":"about:blank"}));
+    for id in &ids {
+        if !seen.iter().any(|m| m["id"] == *id) {
+            seen.extend(h.until_reply(*id, 2000));
+        }
+    }
+    for id in &ids {
+        let replies: Vec<&Value> = seen.iter().filter(|m| m["id"] == *id).collect();
+        assert_eq!(replies.len(), 1, "reply {id}: {:?}", methods(&seen));
+        assert_eq!(replies[0]["error"]["message"], CONTEXT_DESTROYED);
+    }
+    assert_eq!(h.pending_replies(), 0);
+    let r = h.page("Runtime.evaluate", json!({"expression":"Promise.resolve(7)","awaitPromise":true,"returnByValue":true}));
+    assert_eq!(r["result"]["result"]["value"], 7, "{r}");
+}
+
+/// Detaching a session cancels its pending replies silently and frees the table.
+#[test]
+fn detaching_a_session_cancels_its_pending_replies_and_frees_the_table() {
+    let mut h = Harness::new();
+    let a = h.attach_second_session();
+    let id = h.send(Some(&a), "Runtime.evaluate", json!({"expression":"new Promise(() => {})","awaitPromise":true}));
+    h.drain();
+    assert_eq!(h.pending_replies(), 1);
+    h.call(None, "Target.detachFromTarget", json!({"sessionId": a}));
+    assert_eq!(h.pending_replies(), 0);
+    let later = h.run_for(50);
+    assert!(later.iter().all(|m| m["id"] != id), "reply sent to detached session: {later:?}");
+    let seen = h.page_with_events("Page.navigate", json!({"url":"about:blank"}));
+    assert!(seen.iter().all(|m| m["id"] != id), "cancelled reply answered after navigation: {seen:?}");
 }
 
 #[test]
