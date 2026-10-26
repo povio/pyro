@@ -4270,3 +4270,53 @@ fn text_clip_facts_are_per_pass_across_reparenting_and_style_changes() {
     p.layout.set_viewport(Viewport::new(500, 400));
     assert_eq!(sw(&p, "wrap"), 120.0);
 }
+
+#[test]
+fn text_clip_facts_cover_absolute_tables_inline_splits_generated_and_shadow_text() {
+    // Absolute containing block above intervening (one clipping) wrappers; the absolute box's text is
+    // clipped by the wrapper for every ancestor above it and extends only the absolute box itself.
+    let p = page(
+        r#"<div id=cb style="position:relative;width:200px"><div id=w1 style="width:150px"><div id=w2 style="width:150px;overflow:hidden"><div><div id=abs style="position:absolute;left:0;top:0;width:30px"><span style="white-space:nowrap">absolute text behind two wrappers that overflows a lot</span></div></div></div></div></div>"#,
+        Geometry::Flow,
+    );
+    assert!(sw(&p, "abs") > 30.0);
+    // Wrappers record before the absolute box is placed, so their scroll sizes ignore it; the containing
+    // block's scroll size is extended by the placed absolute boxes afterwards (box scan, unchanged here).
+    assert_eq!(sw(&p, "w1"), 150.0);
+    assert_eq!(sw(&p, "w2"), 150.0);
+    assert!(sw(&p, "cb") >= 200.0);
+    // Table cell text inside a clipping container, and a cell whose text overflows the table.
+    let p = page(
+        r#"<div id=tc style="width:120px;overflow:hidden"><table id=tbl style="width:100px"><tr><td style="width:40px"><span style="white-space:nowrap">a long table cell text that overflows the cell and the table</span></td><td>x</td></tr></table></div><div id=after style="width:120px">after</div>"#,
+        Geometry::Flow,
+    );
+    assert!(sw(&p, "tbl") >= 100.0);
+    let _ = sw(&p, "tc");
+    assert_eq!(sw(&p, "after"), 120.0);
+    // Inline element split by a block child (anonymous block boxes around the inline runs).
+    let p = page(
+        r#"<div id=split style="width:100px"><span id=sp>inline start text<div style="width:50px"><span style="white-space:nowrap">block inside the inline with overflowing text</span></div>inline end text</span></div>"#,
+        Geometry::Flow,
+    );
+    assert!(sw(&p, "split") >= 100.0);
+    // Generated ::before text through the real style engine (laid out as an inline item, not a text run).
+    let p = page(
+        r#"<style>#gen::before{content:"generated text long enough to overflow its narrow host box"; white-space:nowrap}</style><div id=genwrap style="width:200px"><div id=gen style="width:60px;overflow:hidden"></div></div>"#,
+        Geometry::Flow,
+    );
+    let _ = (sw(&p, "gen"), sw(&p, "genwrap"));
+    // Shadow root with a slot: the engine lays the light text out in its DOM position; the assertions
+    // in `record` still hold for every pair.
+    let mut p = page(
+        r#"<div id=shwrap style="width:200px"><div id=host style="width:80px"><span id=light style="white-space:nowrap">slotted light text that overflows the host</span></div></div>"#,
+        Geometry::Flow,
+    );
+    let host = p.id("host");
+    let root = p.dom.attach_shadow(host, lp_dom::ShadowRootMode::Open).unwrap();
+    let clip = p.dom.create_element(p.doc, "div").unwrap();
+    p.dom.set_attribute(clip, "style", "width:40px;overflow:hidden").unwrap();
+    let slot = p.dom.create_element(p.doc, "slot").unwrap();
+    p.dom.append_child(clip, slot).unwrap();
+    p.dom.append_child(root, clip).unwrap();
+    let _ = (sw(&p, "host"), sw(&p, "shwrap"));
+}
