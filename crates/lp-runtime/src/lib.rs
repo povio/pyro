@@ -34,8 +34,9 @@ mod wake {
 
     /// Write end, shared by every [`super::LoopHandle`].
     pub(super) struct Notifier(OwnedFd);
-    /// Read end, owned by the loop.
-    pub(super) struct Sleeper(OwnedFd);
+    /// Read end, owned by the loop. Once every notifier is gone the pipe
+    /// reports POLLHUP for good, so later waits sleep on no descriptor.
+    pub(super) struct Sleeper(OwnedFd, std::cell::Cell<bool>);
 
     pub(super) fn pair() -> std::io::Result<(Sleeper, Arc<Notifier>)> {
         let mut fds = [0i32; 2];
@@ -53,7 +54,7 @@ mod wake {
                 libc::fcntl(fd.as_raw_fd(), libc::F_SETFD, libc::FD_CLOEXEC);
             }
         }
-        Ok((Sleeper(read), Arc::new(Notifier(write))))
+        Ok((Sleeper(read, std::cell::Cell::new(false)), Arc::new(Notifier(write))))
     }
 
     impl Notifier {
@@ -75,15 +76,26 @@ mod wake {
                 None => -1,
                 Some(w) => i32::try_from(w.as_millis() + u128::from(w.subsec_nanos() % 1_000_000 != 0)).unwrap_or(i32::MAX),
             };
+            if self.1.get() {
+                // No notifier can wake us: a plain timed wait (still poll(2),
+                // which is not coalesced). `None` would block forever: callers
+                // never pass it once every sender is gone.
+                // SAFETY: zero descriptors; poll only sleeps.
+                unsafe { libc::poll(std::ptr::null_mut(), 0, timeout.max(0)) };
+                return false;
+            }
             let mut fd = libc::pollfd { fd: self.0.as_raw_fd(), events: libc::POLLIN, revents: 0 };
             // SAFETY: one valid pollfd.
             let n = unsafe { libc::poll(&mut fd, 1, timeout) };
-            let hung_up = n > 0 && fd.revents & libc::POLLHUP != 0;
-            // Drain every pending wake byte.
+            // Drain every pending wake byte (EINTR/early returns just loop again).
             let mut buf = [0u8; 64];
             // SAFETY: valid buffer and descriptor; non-blocking read.
             while unsafe { libc::read(self.0.as_raw_fd(), buf.as_mut_ptr().cast(), buf.len()) } > 0 {}
-            !hung_up
+            if n > 0 && fd.revents & libc::POLLHUP != 0 {
+                self.1.set(true);
+                return false;
+            }
+            true
         }
     }
 }
@@ -549,6 +561,107 @@ impl<S: LoopState + 'static> EventLoop<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn thread_cpu() -> Duration {
+        #[cfg(unix)]
+        {
+            let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+            // SAFETY: valid timespec out-pointer.
+            unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut ts) };
+            Duration::new(ts.tv_sec as u64, ts.tv_nsec as u32)
+        }
+        #[cfg(not(unix))]
+        Duration::ZERO
+    }
+
+    /// With every remote sender gone, the loop still waits for its deadline
+    /// without spinning (the hung-up wake pipe must not be polled again).
+    #[test]
+    fn idle_wait_without_senders_sleeps_instead_of_spinning() {
+        let mut lp = EventLoop::<St>::new();
+        lp.close_remote();
+        let mut st = St::default();
+        let s = lp.scheduler();
+        let fired = Rc::new(Cell::new(false));
+        let f = fired.clone();
+        s.set_timer(Duration::from_millis(60), false, true, move |_| f.set(true));
+        let start = Instant::now();
+        let cpu0 = thread_cpu();
+        let r = lp.run_until(&mut st, Some(start + Duration::from_millis(500)), false, |_| fired.get());
+        let cpu = thread_cpu() - cpu0;
+        assert_eq!(r, RunOutcome::Done);
+        assert!(start.elapsed() >= Duration::from_millis(60));
+        assert!(start.elapsed() < Duration::from_millis(120), "late: {:?}", start.elapsed());
+        assert!(cpu < Duration::from_millis(15), "spun for {cpu:?} of {:?}", start.elapsed());
+        assert!(!lp.remote_open);
+    }
+
+    /// A remote post while the loop sleeps on a far deadline wakes it promptly
+    /// and the task runs; nothing is lost when the post lands around the wait.
+    #[test]
+    fn remote_post_wakes_a_sleeping_loop_promptly() {
+        let mut lp = EventLoop::<St>::new();
+        let handle = lp.handle();
+        let mut st = St::default();
+        for round in 0..20 {
+            let h = handle.clone();
+            let delay = Duration::from_micros(200 * round);
+            std::thread::spawn(move || {
+                std::thread::sleep(delay);
+                h.post(|st| st.log.push("remote".into())).unwrap();
+            });
+            let start = Instant::now();
+            let before = st.log.len();
+            let r = lp.run_until(&mut st, Some(start + Duration::from_secs(5)), false, |st| st.log.len() > before);
+            assert_eq!(r, RunOutcome::Done);
+            assert!(start.elapsed() < Duration::from_millis(100), "round {round}: {:?}", start.elapsed());
+        }
+        assert_eq!(st.log.len(), 20);
+    }
+
+    /// Many posts without the loop running fill the wake pipe; every task still
+    /// runs once, in order, and the loop does not block on the full pipe.
+    #[test]
+    fn posts_beyond_the_wake_pipe_capacity_all_run_in_order() {
+        let mut lp = EventLoop::<St>::new();
+        let handle = lp.handle();
+        let mut st = St::default();
+        for i in 0..70_000u32 {
+            handle.post(move |st| st.log.push(i.to_string())).unwrap();
+        }
+        let r = lp.run_until(&mut st, Some(Instant::now() + Duration::from_secs(10)), false, |st| st.log.len() == 70_000);
+        assert_eq!(r, RunOutcome::Done);
+        assert!(st.log.iter().enumerate().all(|(i, v)| v == &i.to_string()));
+        // The drained pipe still wakes for later posts.
+        handle.post(|st| st.log.push("after".into())).unwrap();
+        let r = lp.run_until(&mut st, Some(Instant::now() + Duration::from_secs(5)), false, |st| st.log.last().is_some_and(|v| v == "after"));
+        assert_eq!(r, RunOutcome::Done);
+    }
+
+    /// Dropping the last handle while the loop sleeps with no deadline and no
+    /// work ends the remote phase promptly with Idle (as recv() returning
+    /// Disconnected did); with a deadline the loop keeps waiting for it.
+    #[test]
+    fn dropping_every_sender_during_the_wait_is_noticed() {
+        let mut lp = EventLoop::<St>::new();
+        let handle = lp.handle();
+        lp.close_remote();
+        let mut st = St::default();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(20));
+            drop(handle);
+        });
+        let start = Instant::now();
+        let r = lp.run_until(&mut st, None, false, |_| false);
+        assert_eq!(r, RunOutcome::Idle);
+        assert!(start.elapsed() < Duration::from_millis(500), "{:?}", start.elapsed());
+        assert!(!lp.remote_open);
+        // With a deadline and no senders, the loop waits (without the pipe) until it.
+        let start = Instant::now();
+        let r = lp.run_until(&mut st, Some(start + Duration::from_millis(40)), false, |_| false);
+        assert_eq!(r, RunOutcome::TimedOut);
+        assert!(start.elapsed() >= Duration::from_millis(40) && start.elapsed() < Duration::from_millis(100), "{:?}", start.elapsed());
+    }
 
     /// A delayed timer fires close to its deadline while the loop sleeps
     /// (macOS coalesces std sleeps by ~100-140 ms; the loop waits in poll).
