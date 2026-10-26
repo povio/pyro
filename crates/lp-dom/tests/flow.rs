@@ -4037,3 +4037,143 @@ fn generated_content_with_tailwinds_escaped_selectors_like_chromium() {
         assert!((h - 24.0).abs() < 0.01, "#{id} height {h}, Chromium 24");
     }
 }
+
+/// Cached computed `color` and `width` of `ids` equal a fresh style engine's
+/// (no caches) for the same DOM, and the cached geometry equals a fresh
+/// layout; returns the cached colors in `ids` order.
+fn assert_styles_match_fresh(p: &Page, step: &str, ids: &[&str]) -> Vec<String> {
+    assert_matches_fresh(p, step);
+    let mut fresh = Layout::with_viewport(p.doc, Viewport::new(800, 600));
+    fresh.style_mut().discover_style_elements(&p.dom);
+    fresh.set_geometry(Geometry::Flow);
+    fresh.flow(&p.dom);
+    let mut colors = Vec::new();
+    for id in ids {
+        let el = p.id(id);
+        for prop in ["color", "width"] {
+            let cached = p.layout.style().computed_value(&p.dom, el, prop);
+            let expected = fresh.style().computed_value(&p.dom, el, prop);
+            assert_eq!(cached, expected, "{step}: #{id} {prop} cached vs fresh");
+        }
+        colors.push(p.layout.style().computed_value(&p.dom, el, "color").expect("color"));
+    }
+    colors
+}
+
+#[test]
+fn has_anchor_argument_guard_never_serves_stale_styles() {
+    // `:has()` anchors are rooted only through path nodes that can satisfy
+    // the argument's first compound. Every kind of change the guard looks at
+    // must still give exactly the styles (color: the motivating TOS rule is a
+    // color rule) and geometry of a fresh computation, and the discriminators
+    // show the rules really switch both ways.
+    let html = "<!doctype html><style>\
+        .lit{display:block;width:10px;height:10px;color:rgb(0,0,0)} :has(> [k]) > .lit{color:rgb(1,2,3);width:30px}\
+        .in{display:block;width:10px;height:10px;color:rgb(0,0,0)} .grp:has(> .m) .in{color:rgb(4,5,6);width:40px}\
+        .deep{display:block;width:10px;height:10px;color:rgb(0,0,0)} .d2:has(> div > [x]) > .deep{color:rgb(7,8,9);width:50px}\
+        .ui{display:block;width:10px;height:10px;color:rgb(0,0,0)} .un:has(.leaf[y]) .ui{color:rgb(10,11,12);width:60px}\
+        </style><body style=\"margin:0\">\
+        <div id=p1><span id=c1 class=lit>a</span><span id=s1>s</span></div>\
+        <div id=p2><span id=c2 class=lit>b</span><span id=s2>s</span></div>\
+        <div id=g class=grp><div id=gc>g</div><span id=in class=in>c</span></div>\
+        <div id=d class=d2><div id=dw><span id=dx>x</span></div><i id=dsw><span id=dy>y</span></i><span id=deep class=deep>d</span></div>\
+        <div id=u class=un><div><div><span id=leaf class=leaf>l</span></div></div><span id=ui class=ui>e</span></div>\
+        <div id=q><span id=qlit class=lit>f</span></div></body>";
+    let mut p = page(html, Geometry::Flow);
+    let subjects = ["c1", "c2", "in", "deep", "ui", "qlit"];
+    let base = assert_styles_match_fresh(&p, "initial", &subjects);
+    let black = base[0].clone();
+    assert!(base.iter().all(|c| *c == black), "{base:?}");
+    let id = |p: &Page, s: &str| p.id(s);
+    let (p1, p2, s1, s2, gc, dx, dy, leaf, q) = (
+        id(&p, "p1"),
+        id(&p, "p2"),
+        id(&p, "s1"),
+        id(&p, "s2"),
+        id(&p, "gc"),
+        id(&p, "dx"),
+        id(&p, "dy"),
+        id(&p, "leaf"),
+        id(&p, "q"),
+    );
+    // Key attribute gain and loss on a child (universal depth-1 anchor).
+    p.dom.set_attribute(s1, "k", "").unwrap();
+    let c = assert_styles_match_fresh(&p, "key gain", &subjects);
+    assert_ne!(c[0], black, "c1 restyled through its parent anchor");
+    assert_eq!(c[1], black);
+    p.dom.remove_attribute(s1, "k").unwrap();
+    let c = assert_styles_match_fresh(&p, "key loss", &subjects);
+    assert_eq!(c[0], black, "loss invalidates the anchor too");
+    // Class gain and loss (class-keyed argument).
+    p.dom.set_attribute(gc, "class", "m").unwrap();
+    let c = assert_styles_match_fresh(&p, "class gain", &subjects);
+    assert_ne!(c[2], black);
+    p.dom.set_attribute(gc, "class", "").unwrap();
+    let c = assert_styles_match_fresh(&p, "class loss", &subjects);
+    assert_eq!(c[2], black);
+    // Matching child insertion and removal.
+    let n = p.dom.create_element(p.doc, "span").unwrap();
+    p.dom.set_attribute(n, "k", "").unwrap();
+    p.dom.append_child(p2, n).unwrap();
+    let c = assert_styles_match_fresh(&p, "matching child inserted", &subjects);
+    assert_ne!(c[1], black);
+    p.dom.remove_child(p2, n).unwrap();
+    let c = assert_styles_match_fresh(&p, "matching child removed", &subjects);
+    assert_eq!(c[1], black);
+    // One journal batch: a matching child removed then changed while
+    // detached, and a matching child moved from one parent to another.
+    let n3 = p.dom.create_element(p.doc, "span").unwrap();
+    p.dom.set_attribute(n3, "k", "").unwrap();
+    p.dom.append_child(q, n3).unwrap();
+    p.dom.set_attribute(s1, "k", "").unwrap();
+    let c = assert_styles_match_fresh(&p, "before the batch", &subjects);
+    assert_ne!(c[5], black);
+    assert_ne!(c[0], black);
+    p.dom.remove_child(q, n3).unwrap();
+    p.dom.set_attribute(n3, "k", "changed").unwrap();
+    p.dom.remove_child(p1, s1).unwrap();
+    p.dom.append_child(p2, s1).unwrap();
+    let c = assert_styles_match_fresh(&p, "batch: removal + detached change + move", &subjects);
+    assert_eq!(c[5], black, "q lost its matching child");
+    assert_eq!(c[0], black, "p1 lost its matching child");
+    assert_ne!(c[1], black, "p2 gained it");
+    p.dom.remove_child(p2, s1).unwrap();
+    p.dom.append_child(p1, s1).unwrap();
+    p.dom.remove_attribute(s1, "k").unwrap();
+    let c = assert_styles_match_fresh(&p, "moved back and key removed in one batch", &subjects);
+    assert_eq!(c[0], black);
+    assert_eq!(c[1], black);
+    // Bounded two-level chain on a class-keyed anchor: only a grandchild
+    // below a `div` counts.
+    p.dom.set_attribute(dx, "x", "").unwrap();
+    let c = assert_styles_match_fresh(&p, "chain gain under div", &subjects);
+    assert_ne!(c[3], black);
+    p.dom.remove_attribute(dx, "x").unwrap();
+    let c = assert_styles_match_fresh(&p, "chain loss", &subjects);
+    assert_eq!(c[3], black);
+    p.dom.set_attribute(dy, "x", "").unwrap();
+    let c = assert_styles_match_fresh(&p, "chain under a non-div wrapper", &subjects);
+    assert_eq!(c[3], black);
+    p.dom.remove_attribute(dy, "x").unwrap();
+    // Several changed paths in one batch, sharing ancestors: a non-admitting
+    // walk through p2 first, then an admitting one, and another anchor.
+    p.dom.set_attribute(s2, "style", "height:2px").unwrap();
+    p.dom.set_attribute(s2, "k", "").unwrap();
+    p.dom.set_attribute(s1, "k", "").unwrap();
+    let c = assert_styles_match_fresh(&p, "batch: two anchors, memoised walks", &subjects);
+    assert_ne!(c[0], black);
+    assert_ne!(c[1], black);
+    p.dom.remove_attribute(s1, "k").unwrap();
+    p.dom.remove_attribute(s2, "k").unwrap();
+    let c = assert_styles_match_fresh(&p, "batch: both keys lost", &subjects);
+    assert_eq!(c[0], black);
+    assert_eq!(c[1], black);
+    // Descendant (unbounded) argument: the change reaches the anchor through
+    // wrappers that do not satisfy the argument's first compound.
+    p.dom.set_attribute(leaf, "y", "").unwrap();
+    let c = assert_styles_match_fresh(&p, "unbounded gain through wrappers", &subjects);
+    assert_ne!(c[4], black);
+    p.dom.remove_attribute(leaf, "y").unwrap();
+    let c = assert_styles_match_fresh(&p, "unbounded loss", &subjects);
+    assert_eq!(c[4], black);
+}

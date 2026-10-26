@@ -5290,6 +5290,12 @@ mod validity_has_invalidation_tests {
         dom.set_attribute(child, "data-static-segment-type", "day").unwrap();
         let restyled = layout.style().take_restyled(&dom).expect("selective");
         assert!(restyled.contains(&shell), "{restyled:?}");
+        // Losing it may have changed the match too (the key no longer
+        // holds, but it did before the change).
+        layout.flow(&dom);
+        dom.remove_attribute(child, "data-static-segment-type").unwrap();
+        let restyled = layout.style().take_restyled(&dom).expect("selective");
+        assert!(restyled.contains(&shell), "{restyled:?}");
     }
 
     #[test]
