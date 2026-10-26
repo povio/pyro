@@ -4208,7 +4208,12 @@ fn text_clip_facts_nested_block_and_inline_clippers() {
     // extends it and the outer box; the clipping container's text extends neither.
     assert!(sw(&p, "inl") > 100.0);
     let widest_open = sw(&p, "open").max(sw(&p, "inl"));
-    assert!((sw(&p, "outer") - widest_open).abs() < 0.01, "outer {} widest open child {}", sw(&p, "outer"), widest_open);
+    assert!(
+        (sw(&p, "outer") - widest_open).abs() < 0.01,
+        "outer {} widest open child {}",
+        sw(&p, "outer"),
+        widest_open
+    );
     assert!(sw(&p, "outer") < sw(&p, "clip") + sw(&p, "open"), "outer must not add the clipped text");
 }
 
@@ -4235,7 +4240,9 @@ fn text_clip_facts_deep_nesting_without_recursion() {
     let depth = 400;
     let open: String = (0..depth).map(|i| format!("<div id=n{i} style=\"padding-left:1px\">")).collect();
     let close = "</div>".repeat(depth);
-    let html = format!("{open}<span id=leaf style=\"white-space:nowrap\">deep text that overflows the narrow nesting</span>{close}");
+    let html = format!(
+        "{open}<span id=leaf style=\"white-space:nowrap\">deep text that overflows the narrow nesting</span>{close}"
+    );
     let p = page(&html, Geometry::Flow);
     assert!(sw(&p, "n0") > 0.0);
     assert!(sw(&p, &format!("n{}", depth - 1)) > 0.0);

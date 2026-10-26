@@ -4,13 +4,13 @@
 //! Run: cargo test -p lp-dom --test record_scan_bench -- --ignored --nocapture
 //! Shapes: deep (single page clipper, 25-deep nested flex), near (every text's
 //! parent clips), shallow (5-deep, wide). No speed assertion.
-use std::cell::RefCell;
-use std::rc::Rc;
-use std::time::Instant;
 use lp_dom::layout::{Geometry, Layout};
 use lp_dom::media::Viewport;
 use lp_dom::parse::{parse_document, DomRef};
 use lp_dom::Dom;
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::time::Instant;
 
 fn doc(depth: usize, rows: usize, near_clip: bool) -> String {
     let leaf_style = if near_clip { "overflow:hidden;white-space:nowrap" } else { "white-space:nowrap" };
