@@ -1353,7 +1353,6 @@ impl<'a> Ctx<'a> {
         self.order
     }
 
-    #[allow(clippy::too_many_arguments)]
     /// DOM depth of `el` and the depth of its nearest inclusive clipping
     /// ancestor, memoized for the pass. Iterative: walks up to the first
     /// element with a known fact (or the root), then fills the path back
@@ -1403,6 +1402,7 @@ impl<'a> Ctx<'a> {
         false
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn record(
         &mut self,
         el: NodeId,
