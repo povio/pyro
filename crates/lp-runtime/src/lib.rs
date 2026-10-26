@@ -50,18 +50,46 @@ mod wake {
             // SAFETY: valid descriptor; flags are plain ints.
             unsafe {
                 let flags = libc::fcntl(fd.as_raw_fd(), libc::F_GETFL);
-                libc::fcntl(fd.as_raw_fd(), libc::F_SETFL, flags | libc::O_NONBLOCK);
-                libc::fcntl(fd.as_raw_fd(), libc::F_SETFD, libc::FD_CLOEXEC);
+                if flags < 0 || libc::fcntl(fd.as_raw_fd(), libc::F_SETFL, flags | libc::O_NONBLOCK) < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                if libc::fcntl(fd.as_raw_fd(), libc::F_SETFD, libc::FD_CLOEXEC) < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
             }
+        }
+        // A handle may post just as the loop (and the read end) goes away:
+        // the write must fail with EPIPE, never raise SIGPIPE. Rust binaries
+        // ignore SIGPIPE at startup; embedders may not, so pin it per fd.
+        #[cfg(target_os = "macos")]
+        // SAFETY: valid descriptor; F_SETNOSIGPIPE takes an int flag.
+        if unsafe { libc::fcntl(write.as_raw_fd(), libc::F_SETNOSIGPIPE, 1) } < 0 {
+            return Err(std::io::Error::last_os_error());
         }
         Ok((Sleeper(read, std::cell::Cell::new(false)), Arc::new(Notifier(write))))
     }
 
     impl Notifier {
-        /// Wakes the loop. A full pipe already holds a pending wake.
+        /// Wakes the loop. A full pipe (EAGAIN) already holds a pending wake;
+        /// EPIPE means the loop is gone and the channel send already failed
+        /// or the task can never run; EINTR is retried. Anything else is a
+        /// programming error (bad descriptor): surfaced in debug builds.
         pub(super) fn notify(&self) {
-            // SAFETY: one byte from a valid buffer to our descriptor.
-            unsafe { libc::write(self.0.as_raw_fd(), [1u8].as_ptr().cast(), 1) };
+            loop {
+                // SAFETY: one byte from a valid buffer to our descriptor.
+                if unsafe { libc::write(self.0.as_raw_fd(), [1u8].as_ptr().cast(), 1) } == 1 {
+                    return;
+                }
+                let err = std::io::Error::last_os_error();
+                match err.raw_os_error() {
+                    Some(libc::EINTR) => continue,
+                    Some(libc::EAGAIN) | Some(libc::EPIPE) => return,
+                    _ => {
+                        debug_assert!(false, "event loop wake pipe write failed: {err}");
+                        return;
+                    }
+                }
+            }
         }
     }
 
@@ -87,10 +115,34 @@ mod wake {
             let mut fd = libc::pollfd { fd: self.0.as_raw_fd(), events: libc::POLLIN, revents: 0 };
             // SAFETY: one valid pollfd.
             let n = unsafe { libc::poll(&mut fd, 1, timeout) };
-            // Drain every pending wake byte (EINTR/early returns just loop again).
+            if n < 0 {
+                let err = std::io::Error::last_os_error();
+                // EINTR: the caller recomputes its wait and polls again.
+                debug_assert!(err.raw_os_error() == Some(libc::EINTR), "event loop wake pipe poll failed: {err}");
+                return true;
+            }
+            // Drain every pending wake byte. EAGAIN ends the drain; EINTR
+            // retries; anything else is a programming error (bad descriptor).
             let mut buf = [0u8; 64];
-            // SAFETY: valid buffer and descriptor; non-blocking read.
-            while unsafe { libc::read(self.0.as_raw_fd(), buf.as_mut_ptr().cast(), buf.len()) } > 0 {}
+            loop {
+                // SAFETY: valid buffer and descriptor; non-blocking read.
+                let got = unsafe { libc::read(self.0.as_raw_fd(), buf.as_mut_ptr().cast(), buf.len()) };
+                if got > 0 {
+                    continue;
+                }
+                if got == 0 {
+                    break; // write end closed: POLLHUP below records it
+                }
+                let err = std::io::Error::last_os_error();
+                match err.raw_os_error() {
+                    Some(libc::EINTR) => continue,
+                    Some(libc::EAGAIN) => break,
+                    _ => {
+                        debug_assert!(false, "event loop wake pipe read failed: {err}");
+                        break;
+                    }
+                }
+            }
             if n > 0 && fd.revents & libc::POLLHUP != 0 {
                 self.1.set(true);
                 return false;
@@ -661,6 +713,19 @@ mod tests {
         let r = lp.run_until(&mut st, Some(start + Duration::from_millis(40)), false, |_| false);
         assert_eq!(r, RunOutcome::TimedOut);
         assert!(start.elapsed() >= Duration::from_millis(40) && start.elapsed() < Duration::from_millis(100), "{:?}", start.elapsed());
+    }
+
+    /// Posting after the loop (and its wake pipe read end) is gone fails
+    /// cleanly: no SIGPIPE, no panic, LoopClosed from the channel.
+    #[test]
+    fn post_after_the_loop_is_dropped_fails_cleanly() {
+        let lp = EventLoop::<St>::new();
+        let handle = lp.handle();
+        drop(lp);
+        assert!(handle.post(|_| {}).is_err());
+        // Direct notifier write with the read end closed: EPIPE path, no signal.
+        #[cfg(unix)]
+        handle.wake.notify();
     }
 
     /// A delayed timer fires close to its deadline while the loop sleeps
