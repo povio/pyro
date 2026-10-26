@@ -362,6 +362,52 @@ fn reentrant_string_conversion_does_not_double_borrow() {
 }
 
 #[test]
+fn child_node_methods_accept_the_context_node_and_its_siblings() {
+    // Upstream lightpanda-io/browser#4072 (replaceWith compliance): insertion is
+    // relative to the nearest sibling that is not an argument, so passing the
+    // node itself or a neighbour must not throw NotFoundError or drop nodes.
+    let e = env("<body><p id=p></p></body>");
+    let r = &e.main;
+    eval(
+        r,
+        r#"function run(html, fn) {
+            const p = document.getElementById('p'); p.innerHTML = html;
+            try { fn(...p.children); return p.innerHTML; } catch (e) { return 'THROW ' + e.name + ' ' + p.innerHTML; }
+        }"#,
+    );
+    for (call, want) in [
+        ("(a) => a.replaceWith(a, 'x')", "<a></a>x<b></b>"),
+        ("(a) => a.replaceWith('x', a)", "x<a></a><b></b>"),
+        ("(a, b) => a.replaceWith(b, 't')", "<b></b>t"),
+        ("(a) => a.replaceWith(a)", "<a></a><b></b>"),
+        ("(a) => a.replaceWith()", "<b></b>"),
+        ("(a, b) => a.after(b, 't')", "<a></a><b></b>t"),
+        ("(a) => a.after(a, 'x')", "<a></a>x<b></b>"),
+        ("(a, b) => b.before('x', b)", "<a></a>x<b></b>"),
+        ("(a, b) => b.before(a, b)", "<a></a><b></b>"),
+        ("(a, b) => a.before(b)", "<b></b><a></a>"),
+    ] {
+        assert_eq!(eval(r, &format!("run('<a></a><b></b>', {call})")), want, "{call}");
+    }
+    assert_eq!(eval(r, "run('<a></a><b></b><i></i>', (a, b, i) => a.after(b, 't'))"), "<a></a><b></b>t<i></i>");
+    assert_eq!(eval(r, "run('<a></a><b></b><i></i>', (a, b, i) => i.before(a, b))"), "<a></a><b></b><i></i>");
+    // Hierarchy errors still throw before the context node is touched.
+    assert_eq!(
+        eval(
+            r,
+            "const o = document.createElement('div'), t = o.appendChild(new Text('t'));
+             try { t.replaceWith(o); 'no throw' } catch (e) { e.name + ':' + (t.parentNode === o) }"
+        ),
+        "HierarchyRequestError:true"
+    );
+    // A string argument's toString detaching the context node turns the call into a no-op.
+    assert_eq!(
+        eval(r, "run('<a></a><b></b>', (a) => a.replaceWith({ toString() { a.remove(); return 'x'; } }))"),
+        "<b></b>"
+    );
+}
+
+#[test]
 fn navigation_releases_pinned_listener_wrappers_of_old_document() {
     let e = env("<body><div id=a></div></body>");
     eval(&e.main, "for (let i = 0; i < 50; i++) { const d = document.createElement('div'); d.addEventListener('x', () => {}); document.body.appendChild(d); }");
