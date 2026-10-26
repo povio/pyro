@@ -98,38 +98,67 @@ pub fn opt_node_arg(s: &Scope<'_>, v: Value<'_>, what: &str) -> JsResult<Option<
 
 /// `(Node or DOMString)...` -> single node (ParentNode/ChildNode helpers).
 fn convert_nodes(s: &Scope<'_>, n: &NodeData, a: &Args<'_>) -> JsResult<Option<NodeId>> {
-    let page = n.page();
-    // Convert strings (which may run JS toString) before borrowing the DOM.
-    enum Item {
-        Node(NodeId),
-        Text(String),
+    NodeArgs::collect(s, a)?.into_node(n)
+}
+
+/// `(Node or DOMString)...` arguments with strings already converted, so the
+/// ChildNode methods can find their viable sibling between IDL conversion
+/// (which may run JS toString) and the DOM spec's "convert nodes into a node".
+struct NodeArgs(Vec<NodeArg>);
+
+enum NodeArg {
+    Node(NodeId),
+    Text(String),
+}
+
+impl NodeArgs {
+    fn collect(s: &Scope<'_>, a: &Args<'_>) -> JsResult<Self> {
+        let mut items = Vec::with_capacity(a.len());
+        for v in a.iter() {
+            items.push(match s.unwrap::<Node>(v) {
+                Some(nd) => NodeArg::Node(nd.id),
+                None => NodeArg::Text(dom_string(v)?),
+            });
+        }
+        Ok(Self(items))
     }
-    let mut items = Vec::with_capacity(a.len());
-    for v in a.iter() {
-        let node = s.unwrap::<Node>(v).map(|nd| nd.id);
-        items.push(match node {
-            Some(id) => Item::Node(id),
-            None => Item::Text(dom_string(v)?),
-        });
+
+    fn contains(&self, id: NodeId) -> bool {
+        self.0.iter().any(|it| matches!(it, NodeArg::Node(n) if *n == id))
     }
-    let mut dom = page.dom.borrow_mut();
-    let doc = dom.node_document(n.id).js()?;
-    let mut nodes = Vec::with_capacity(items.len());
-    for it in items {
-        match it {
-            Item::Node(id) => nodes.push(id),
-            Item::Text(t) => nodes.push(dom.create_text(doc, &t).js()?),
+
+    /// First sibling of `id` in the given direction that is not an argument.
+    fn viable_sibling(&self, dom: &lp_dom::Dom, id: NodeId, forward: bool) -> JsResult<Option<NodeId>> {
+        let mut cur = id;
+        loop {
+            let next = if forward { dom.next_sibling(cur).js()? } else { dom.prev_sibling(cur).js()? };
+            match next {
+                Some(c) if self.contains(c) => cur = c,
+                other => return Ok(other),
+            }
         }
     }
-    match nodes.len() {
-        0 => Ok(None),
-        1 => Ok(Some(nodes[0])),
-        _ => {
-            let frag = dom.create_fragment(doc).js()?;
-            for c in nodes {
-                dom.append_child(frag, c).js()?;
+
+    fn into_node(self, n: &NodeData) -> JsResult<Option<NodeId>> {
+        let mut dom = n.page().dom.borrow_mut();
+        let doc = dom.node_document(n.id).js()?;
+        let mut nodes = Vec::with_capacity(self.0.len());
+        for it in self.0 {
+            match it {
+                NodeArg::Node(id) => nodes.push(id),
+                NodeArg::Text(t) => nodes.push(dom.create_text(doc, &t).js()?),
             }
-            Ok(Some(frag))
+        }
+        match nodes.len() {
+            0 => Ok(None),
+            1 => Ok(Some(nodes[0])),
+            _ => {
+                let frag = dom.create_fragment(doc).js()?;
+                for c in nodes {
+                    dom.append_child(frag, c).js()?;
+                }
+                Ok(Some(frag))
+            }
         }
     }
 }
@@ -379,34 +408,62 @@ fn define_child_node<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
         n.page().dom.borrow_mut().remove_node(n.id).js()?;
         Ok(s.undefined())
     });
+    // before/after/replaceWith insert relative to the nearest sibling that is not
+    // itself an argument (the DOM spec's viable sibling), found before the
+    // arguments move into a fragment, so the context node and its siblings can be
+    // passed as arguments.
     def.method("before", 0, |s, n, a| {
-        let parent = n.page().dom.borrow().parent(n.id).js()?;
-        let Some(parent) = parent else { return Ok(s.undefined()) };
-        if let Some(c) = convert_nodes(s, n, &a)? {
-            n.page().dom.borrow_mut().insert_before(parent, c, Some(n.id)).js()?;
+        let args = NodeArgs::collect(s, &a)?;
+        let (parent, viable_prev) = {
+            let dom = n.page().dom.borrow();
+            let Some(parent) = dom.parent(n.id).js()? else { return Ok(s.undefined()) };
+            (parent, args.viable_sibling(&dom, n.id, false)?)
+        };
+        if let Some(c) = args.into_node(n)? {
+            let mut dom = n.page().dom.borrow_mut();
+            let child = match viable_prev {
+                Some(p) => dom.next_sibling(p).js()?,
+                None => dom.first_child(parent).js()?,
+            };
+            dom.insert_before(parent, c, child).js()?;
         }
         Ok(s.undefined())
     });
     def.method("after", 0, |s, n, a| {
-        let (parent, next) = {
+        let args = NodeArgs::collect(s, &a)?;
+        let (parent, viable_next) = {
             let dom = n.page().dom.borrow();
-            (dom.parent(n.id).js()?, dom.next_sibling(n.id).js()?)
+            let Some(parent) = dom.parent(n.id).js()? else { return Ok(s.undefined()) };
+            (parent, args.viable_sibling(&dom, n.id, true)?)
         };
-        let Some(parent) = parent else { return Ok(s.undefined()) };
-        if let Some(c) = convert_nodes(s, n, &a)? {
-            n.page().dom.borrow_mut().insert_before(parent, c, next).js()?;
+        if let Some(c) = args.into_node(n)? {
+            n.page().dom.borrow_mut().insert_before(parent, c, viable_next).js()?;
         }
         Ok(s.undefined())
     });
     def.method("replaceWith", 0, |s, n, a| {
-        let parent = n.page().dom.borrow().parent(n.id).js()?;
-        let Some(parent) = parent else { return Ok(s.undefined()) };
-        match convert_nodes(s, n, &a)? {
-            Some(c) if c != n.id => {
-                n.page().dom.borrow_mut().replace_child(parent, c, n.id).js()?;
+        let args = NodeArgs::collect(s, &a)?;
+        let (parent, viable_next) = {
+            let dom = n.page().dom.borrow();
+            let Some(parent) = dom.parent(n.id).js()? else { return Ok(s.undefined()) };
+            (parent, args.viable_sibling(&dom, n.id, true)?)
+        };
+        let c = args.into_node(n)?;
+        let mut dom = n.page().dom.borrow_mut();
+        // The context node itself may have moved into the fragment.
+        let still_child = dom.parent(n.id).js()? == Some(parent);
+        match c {
+            Some(c) if c == n.id => {}
+            Some(c) if still_child => {
+                dom.replace_child(parent, c, n.id).js()?;
             }
-            Some(_) => {}
-            None => n.page().dom.borrow_mut().remove_child(parent, n.id).map(|_| ()).js()?,
+            Some(c) => {
+                dom.insert_before(parent, c, viable_next).js()?;
+            }
+            None if still_child => {
+                dom.remove_child(parent, n.id).js()?;
+            }
+            None => {}
         }
         Ok(s.undefined())
     });
