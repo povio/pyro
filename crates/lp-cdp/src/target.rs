@@ -229,10 +229,12 @@ impl<H: Host> Browser<H> {
             ("LP", "perfReset") => {
                 crate::perf::reset();
                 out.send(msg::result_frame(cmd.id, &Empty {}, cmd.session_id()));
+                Ok(())
             }
             #[cfg(feature = "perf-trace")]
             ("LP", "perfStats") => {
                 out.send(msg::result_frame(cmd.id, &crate::perf::snapshot(), cmd.session_id()));
+                Ok(())
             }
             ("Browser", "getVersion") => {
                 #[derive(Serialize)]
