@@ -1117,13 +1117,13 @@ impl JsClass for Document {
         def.accessor(
             "cookie",
             |s, n| {
-                if s.realm().origin() == Some("null") {
+                if s.realm().origin().as_deref() == Some("null") {
                     return Err(JsError::dom("SecurityError", "Cookies are unavailable for an opaque origin."));
                 }
                 Ok(s.string(&crate::html::document_cookie(n.page(), n.id)))
             },
             |s, n, v| {
-                if s.realm().origin() == Some("null") {
+                if s.realm().origin().as_deref() == Some("null") {
                     return Err(JsError::dom("SecurityError", "Cookies are unavailable for an opaque origin."));
                 }
                 crate::html::set_document_cookie(n.page(), n.id, &dom_string(v)?);
@@ -1132,7 +1132,7 @@ impl JsClass for Document {
         );
         def.getter("referrer", |s, _n| Ok(s.string("")));
         def.getter("domain", |s, n| {
-            if s.realm().origin() == Some("null") {
+            if s.realm().origin().as_deref() == Some("null") {
                 return Ok(s.string(""));
             }
             let url = n.page().dom.borrow().document_data(n.id).js()?.url.to_string();

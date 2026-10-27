@@ -812,6 +812,9 @@ impl Browser {
         );
         if opts.url != "about:blank" && self.loader_for(page).is_some() {
             self.start_document_fetch(page, opts, loader_id.clone(), history)?;
+            // The response arrives on a later task: build the realm the commit
+            // will need while this thread would otherwise wait for it.
+            let _ = self.prepare_spare_realm();
             return Ok(loader_id);
         }
         if opts.url != "about:blank" {
@@ -998,7 +1001,15 @@ impl Browser {
         for id in ids {
             self.close_page(id);
         }
+        frames::drop_spare_realm();
         self.engine.drain_finalized();
+    }
+
+    /// Builds a main-world realm now for this thread's next page, so page
+    /// creation skips interface installation. Call while idle (before the
+    /// connection that will use this thread exists).
+    pub fn prepare_spare_realm(&self) -> Result<(), JsError> {
+        frames::prepare_spare_realm(self.engine.register::<Window>())
     }
 }
 
@@ -1007,6 +1018,7 @@ mod tests;
 
 impl Drop for Browser {
     fn drop(&mut self) {
+        frames::drop_spare_realm();
         self.close_all();
     }
 }

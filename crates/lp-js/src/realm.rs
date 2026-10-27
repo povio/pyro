@@ -134,7 +134,7 @@ pub type NativeCallbackHook = Rc<dyn for<'s> Fn(&Scope<'s>)>;
 pub(crate) struct RealmInner {
     pub(crate) id: RealmId,
     name: String,
-    origin: Option<String>,
+    origin: RefCell<Option<String>>,
     pub(crate) engine: Rc<EngineInner>,
     ctx: Cell<sys::JSGlobalContextRef>,
     protos: RefCell<Vec<Option<Persistent>>>,
@@ -295,8 +295,15 @@ impl Realm {
         &self.inner.name
     }
 
-    pub fn origin(&self) -> Option<&str> {
-        self.inner.origin.as_deref()
+    pub fn origin(&self) -> Option<String> {
+        self.inner.origin.borrow().clone()
+    }
+
+    /// Sets the origin used for root-relative module specifiers. For realms
+    /// created ahead of their frame (see lp-browser's spare realm); call
+    /// before any script runs in the realm.
+    pub fn set_origin(&self, origin: Option<String>) {
+        *self.inner.origin.borrow_mut() = origin;
     }
 
     pub fn is_disposed(&self) -> bool {
@@ -1035,7 +1042,7 @@ pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResul
     let inner = Rc::new(RealmInner {
         id,
         name: options.name,
-        origin: options.origin,
+        origin: RefCell::new(options.origin),
         engine: engine.clone(),
         ctx: Cell::new(ctx),
         protos: RefCell::new(Vec::new()),
@@ -1484,7 +1491,8 @@ unsafe extern "C" fn module_fetch(
         class::guard(ctx as sys::JSContextRef, ptr::null_mut(), (), |scope| {
             let realm = scope.realm;
             let key = crate::string::to_rust_string(identifier);
-            let url = remap_module_url(&key, realm.origin.as_deref());
+            let origin = realm.origin.borrow().clone();
+            let url = remap_module_url(&key, origin.as_deref());
             let request = ModuleRequest {
                 url: url.clone(),
                 key,

@@ -280,17 +280,36 @@ pub struct EngineHost {
 impl EngineHost {
     /// Creates the engine for the current thread (at most one per thread).
     pub fn new(out: Outbox) -> CdpResult<EngineHost> {
+        Self::with_body_budget(out, Self::body_budget())
+    }
+
+    /// The process-wide retained-body budget shared by every connection.
+    pub fn body_budget() -> BodyBudget {
         static BODY_BUDGET: OnceLock<BodyBudget> = OnceLock::new();
-        Self::with_body_budget(out, BODY_BUDGET.get_or_init(|| BodyBudget::new(BodyLimits::default())).clone())
+        BODY_BUDGET.get_or_init(|| BodyBudget::new(BodyLimits::default())).clone()
     }
 
     /// Uses a caller-supplied process budget (shared by every connection).
     pub fn with_body_budget(out: Outbox, body_budget: BodyBudget) -> CdpResult<EngineHost> {
+        Self::with_thread(Self::prepare_thread()?, out, body_budget)
+    }
+
+    /// The engine and network client of a connection, created ahead of the
+    /// connection (`serve` keeps one spare per process so a client's first
+    /// command does not wait for engine start). Must stay on this thread.
+    pub fn prepare_thread() -> CdpResult<BrowserThread> {
         let mut thread =
             BrowserThread::new().map_err(|e| CdpError::server(format!("JavaScript engine unavailable: {e}")))?;
         thread
             .enable_network(lp_net::NetConfig::default())
             .map_err(|e| CdpError::server(format!("network unavailable: {e}")))?;
+        // Best effort: a failure here only costs the first page its head start.
+        let _ = thread.browser.prepare_spare_realm();
+        Ok(thread)
+    }
+
+    /// `with_body_budget` for a thread from `prepare_thread`.
+    pub fn with_thread(mut thread: BrowserThread, out: Outbox, body_budget: BodyBudget) -> CdpResult<EngineHost> {
         let collector = Rc::new(Collector::new(out.clone()));
         thread.browser.set_observer(Some(collector.clone()));
         thread.browser.set_engine_hooks(Some(collector.clone()));

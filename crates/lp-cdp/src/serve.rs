@@ -145,7 +145,7 @@ pub fn serve_main(args: &[String]) -> ExitCode {
     };
     let result = runtime.block_on(async {
         let addr = SocketAddr::new(options.host, options.port);
-        let server = Server::bind(addr, options.server.clone(), ThreadPerConnection::default()).await?;
+        let server = Server::bind(addr, options.server.clone(), ThreadPerConnection::with_spare()?).await?;
         if options.log_level <= LogLevel::Info {
             eprintln!("lightningpanda: CDP server listening on ws://{}/", server.local_addr()?);
         }
@@ -160,10 +160,64 @@ pub fn serve_main(args: &[String]) -> ExitCode {
     }
 }
 
-/// Starts one browser thread per upgraded connection.
+/// Starts one browser thread per upgraded connection. One thread with its
+/// engine already created waits in `spare`; a connection takes it and a new
+/// spare starts, so engine start (~8 ms) overlaps the client's own setup
+/// instead of delaying its first command.
 #[derive(Default)]
 pub struct ThreadPerConnection {
     next: AtomicU64,
+    spare: std::sync::Mutex<Option<std::sync::mpsc::Sender<Assignment>>>,
+}
+
+/// What a prepared browser thread needs to serve a connection.
+struct Assignment {
+    outbox: Outbox,
+    state: Arc<CloseState>,
+    ready: oneshot::Sender<()>,
+    permits: Arc<Semaphore>,
+    /// Dropped when the thread ends, however it ends: releases the slot.
+    finished: oneshot::Sender<()>,
+}
+
+impl ThreadPerConnection {
+    /// A factory whose first spare thread starts creating its engine now, so
+    /// the first connection (TOS uses one per process) finds it ready.
+    pub fn with_spare() -> std::io::Result<Self> {
+        let factory = Self::default();
+        let spare = factory.spawn_spare()?;
+        *factory.spare.lock().unwrap_or_else(|e| e.into_inner()) = Some(spare);
+        Ok(factory)
+    }
+
+    /// Spawns a thread that creates its engine now and serves a later connection.
+    fn spawn_spare(&self) -> std::io::Result<std::sync::mpsc::Sender<Assignment>> {
+        let n = self.next.fetch_add(1, Ordering::Relaxed);
+        let (tx, rx) = std::sync::mpsc::channel::<Assignment>();
+        std::thread::Builder::new().name(format!("lp-browser-{n}")).spawn(move || {
+            let prepared = EngineHost::prepare_thread();
+            // No connection ever claims this thread when the sender is dropped.
+            let Ok(a) = rx.recv() else { return };
+            let _finished = a.finished;
+            run_browser_thread(prepared, a.outbox, a.state, a.ready, a.permits);
+        })?;
+        Ok(tx)
+    }
+
+    /// The spare thread (started earlier) or a fresh one; then starts the next spare.
+    fn claim(&self) -> std::io::Result<std::sync::mpsc::Sender<Assignment>> {
+        let taken = self.spare.lock().unwrap_or_else(|e| e.into_inner()).take();
+        let next = self.spawn_spare();
+        match taken {
+            Some(tx) => {
+                if let Ok(next) = next {
+                    *self.spare.lock().unwrap_or_else(|e| e.into_inner()) = Some(next);
+                }
+                Ok(tx)
+            }
+            None => next,
+        }
+    }
 }
 
 /// What the I/O side needs to reach a browser thread.
@@ -210,7 +264,6 @@ impl CloseState {
 
 impl SessionFactory for ThreadPerConnection {
     fn start(&self, _peer: SocketAddr) -> std::io::Result<SessionChannels> {
-        let n = self.next.fetch_add(1, Ordering::Relaxed);
         let (inbound_tx, mut inbound_rx) = mpsc::channel::<Inbound>(INFLIGHT);
         let (outbox, outbound) = Outbox::channel(DEFAULT_OUTBOUND_BUDGET);
         let state = Arc::new(CloseState::default());
@@ -218,12 +271,14 @@ impl SessionFactory for ThreadPerConnection {
         let (finished_tx, finished_rx) = oneshot::channel::<()>();
         let (closed_tx, mut closed_rx) = tokio::sync::watch::channel(false);
         let permits = Arc::new(Semaphore::new(INFLIGHT));
-        let (thread_permits, thread_state) = (permits.clone(), state.clone());
-        std::thread::Builder::new().name(format!("lp-browser-{n}")).spawn(move || {
-            // Dropped when the thread ends, however it ends: releases the slot.
-            let _finished = finished_tx;
-            run_browser_thread(outbox, thread_state, ready_tx, thread_permits);
-        })?;
+        let thread = self.claim()?;
+        // `finished_tx` travels with the assignment and drops when the thread
+        // ends, however it ends: that releases the connection slot.
+        let assignment =
+            Assignment { outbox, state: state.clone(), ready: ready_tx, permits: permits.clone(), finished: finished_tx };
+        if thread.send(assignment).is_err() {
+            return Err(std::io::Error::other("browser thread ended before the connection started"));
+        }
         // Forwards socket messages, in order, to the browser thread. At most
         // INFLIGHT messages wait there; beyond that the socket reader stops.
         // It never consumes messages it does not forward.
@@ -260,8 +315,14 @@ thread_local! {
     static INBOX: RefCell<VecDeque<Inbound>> = const { RefCell::new(VecDeque::new()) };
 }
 
-fn run_browser_thread(outbox: Outbox, state: Arc<CloseState>, ready: oneshot::Sender<()>, permits: Arc<Semaphore>) {
-    let host = match EngineHost::new(outbox.clone()) {
+fn run_browser_thread(
+    prepared: Result<lp_browser::BrowserThread, crate::msg::CdpError>,
+    outbox: Outbox,
+    state: Arc<CloseState>,
+    ready: oneshot::Sender<()>,
+    permits: Arc<Semaphore>,
+) {
+    let host = match prepared.and_then(|t| EngineHost::with_thread(t, outbox.clone(), EngineHost::body_budget())) {
         Ok(host) => host,
         Err(e) => {
             eprintln!("lightningpanda: {}", e.message);

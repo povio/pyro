@@ -340,7 +340,7 @@ fn parse_request<'s>(
         Some(Persistent::new(s, signal))
     };
     let document_url = page.dom.borrow().document_data(page.document()).map(|d| d.url.to_string()).unwrap_or_default();
-    request.origin = Some(s.realm().origin().map(str::to_owned).unwrap_or_else(|| {
+    request.origin = Some(s.realm().origin().unwrap_or_else(|| {
         lp_net::Url::parse(&document_url).map(|u| u.origin().ascii_serialization()).unwrap_or_else(|_| "null".into())
     }));
     let context = page.fetch_state.context.borrow();

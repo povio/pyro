@@ -101,6 +101,37 @@ pub(crate) struct Settings {
     pub scripts: Vec<InitScript>,
 }
 
+thread_local! {
+    /// A main-world realm created ahead of its page, by this thread's browser
+    /// while idle. Realm creation installs ~170 interfaces (about 0.9 ms), so
+    /// a connection's first page saves that when the spare is ready.
+    static SPARE_REALM: RefCell<Option<Realm>> = const { RefCell::new(None) };
+}
+
+/// Creates the spare realm for this thread if none is waiting. `class` is
+/// the Window class of the thread's engine.
+pub(crate) fn prepare_spare_realm(class: lp_js::ClassId) -> Result<(), JsError> {
+    if SPARE_REALM.with(|s| s.borrow().as_ref().is_some_and(|r| !r.is_disposed())) {
+        return Ok(());
+    }
+    let realm = Engine::create_realm_in_current_thread(RealmOptions {
+        name: String::new(),
+        global_class: Some(class),
+        origin: None,
+    })?;
+    SPARE_REALM.with(|s| *s.borrow_mut() = Some(realm));
+    Ok(())
+}
+
+/// Drops this thread's spare realm (engine teardown).
+pub(crate) fn drop_spare_realm() {
+    SPARE_REALM.with(|s| {
+        if let Some(r) = s.borrow_mut().take() {
+            r.dispose();
+        }
+    });
+}
+
 /// Frame keys of one page without a heap allocation for up to four frames.
 pub type FrameKeys = smallvec::SmallVec<[FrameKey; 4]>;
 
@@ -213,11 +244,20 @@ impl FrameHost {
         let frame = self.frame(key).ok_or(JsError::ContextDestroyed)?;
         let dom = frame.page_dom.ok_or(JsError::ContextDestroyed)?;
         let class = self.window_class();
-        let realm = Engine::create_realm_in_current_thread(RealmOptions {
-            name: world.clone().unwrap_or_default(),
-            global_class: Some(class),
-            origin: Some(frame.origin.clone()),
-        })?;
+        // A main-world realm prepared while this thread was idle (see
+        // `prepare_spare_realm`) only needs its origin; otherwise build one.
+        let spare = if world.is_none() { SPARE_REALM.with(|s| s.borrow_mut().take()) } else { None };
+        let realm = match spare.filter(|r| !r.is_disposed()) {
+            Some(realm) => {
+                realm.set_origin(Some(frame.origin.clone()));
+                realm
+            }
+            None => Engine::create_realm_in_current_thread(RealmOptions {
+                name: world.clone().unwrap_or_default(),
+                global_class: Some(class),
+                origin: Some(frame.origin.clone()),
+            })?,
+        };
         realm.set_global_data::<Window>(WindowData::for_frame(
             self.sched.clone(),
             nav,
