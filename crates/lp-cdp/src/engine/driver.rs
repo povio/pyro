@@ -926,7 +926,8 @@ enum StepParams {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct RunParams {
-    steps: Vec<StepParams>,
+    /// Parsed one at a time, so a malformed step is reported by its index.
+    steps: Vec<Box<serde_json::value::RawValue>>,
     /// Per-step timeout unless a step sets its own.
     timeout: Option<u64>,
 }
@@ -1081,9 +1082,11 @@ impl EngineHost {
                     return Err(CdpError::invalid_params("too many steps"));
                 }
                 let mut steps = Vec::with_capacity(p.steps.len());
-                for (i, s) in p.steps.into_iter().enumerate() {
-                    let (step, timeout) =
-                        s.step().map_err(|e| CdpError::invalid_params(format!("step {i}: {}", e.message)))?;
+                for (i, raw) in p.steps.iter().enumerate() {
+                    let (step, timeout) = serde_json::from_str::<StepParams>(raw.get())
+                        .map_err(|e| CdpError::invalid_params(e.to_string()))
+                        .and_then(StepParams::step)
+                        .map_err(|e| CdpError::invalid_params(format!("step {i}: {}", e.message)))?;
                     steps.push((step, timeout_of(timeout, p.timeout)));
                 }
                 (steps, false)
