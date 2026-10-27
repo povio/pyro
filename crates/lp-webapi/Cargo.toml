@@ -27,5 +27,14 @@ url = "2"
 name = "integration"
 path = "tests/integration.rs"
 
+# Observes GC outcomes (a closed realm must be collected after bounded synchronous GC). Its own process
+# restores the conditions its retention tests were validated under (no other engine collecting alongside),
+# like lp-js string_allocation. It does not cure the intermittency of
+# formdata_cross_realm_file_does_not_leak_after_both_realms_close, an engine behaviour that also occurs
+# without this layout; see the pull request that added this target.
+[[test]]
+name = "payload_cycles"
+path = "tests/payload_cycles.rs"
+
 [lints]
 workspace = true

@@ -460,6 +460,12 @@ impl Browser {
     }
 }
 
+/// Maximum interval between services of the thread's native run loop while
+/// the JavaScriptCore VM exists (macOS; see `lp_runtime` docs). Diagnostic-
+/// backed initial policy: up to 4 idle wakes/s per browser thread.
+#[cfg(target_os = "macos")]
+const JSC_RUNLOOP_SERVICE_MAX_IDLE: std::time::Duration = std::time::Duration::from_millis(250);
+
 /// A browser thread's loop plus its state.
 pub struct BrowserThread {
     pub event_loop: EventLoop<Browser>,
@@ -477,6 +483,15 @@ impl BrowserThread {
         engine.register::<History>();
         engine.register::<Performance>();
         let event_loop = EventLoop::new();
+        // JavaScriptCore binds this VM's timers to this thread's run loop; the
+        // loop services it at a bounded interval for the VM's whole lifetime
+        // (closed-page garbage lives in the VM, not in open pages).
+        #[cfg(target_os = "macos")]
+        let event_loop = {
+            let mut event_loop = event_loop;
+            event_loop.enable_native_runloop_service(JSC_RUNLOOP_SERVICE_MAX_IDLE);
+            event_loop
+        };
         let browser = Browser {
             engine,
             sched: event_loop.scheduler(),

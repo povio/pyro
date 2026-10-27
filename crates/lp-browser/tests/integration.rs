@@ -18,6 +18,7 @@ mod navigation_tasks;
 mod network_delivery;
 mod network_idle;
 mod remote_ordering;
+mod runloop_idle_finalization;
 mod storage_events;
 mod stylesheets;
 mod stylesheets_http;

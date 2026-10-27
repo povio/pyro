@@ -8,11 +8,11 @@ use std::sync::{
 };
 
 use crate::{
-    abort::{AbortRegistration, AbortSignal},
+    abort::{AbortRegistration, AbortSignal, AbortSignalData},
     headers,
     page::{PageDom, RemotePoster},
     target::page_of,
-    util::dom_string,
+    util::{dom_string, WrapperRef},
 };
 use bytes::Bytes;
 use lp_js::{Deferred, JsError, JsResult, Persistent, RealmId, Scope, Value, WeakRealm};
@@ -144,7 +144,8 @@ pub(crate) struct Body {
     stream_open: Cell<bool>,
     consumers: Cell<usize>,
     abort_registration: RefCell<Option<AbortRegistration>>,
-    abort_reason: RefCell<Weak<RefCell<Option<Persistent>>>>,
+    /// The aborting signal's own wrapper reference, for its reason. None without a signal.
+    abort_signal: RefCell<Option<WrapperRef>>,
     aborted: Cell<bool>,
     disposed: Cell<bool>,
     pub(crate) mime: RefCell<String>,
@@ -356,7 +357,7 @@ fn parse_request<'s>(
 /// implementation; other objects are stringified as the Web IDL union's last
 /// member, USVString.
 pub(crate) fn extract_body(s: &Scope<'_>, body: Value<'_>) -> JsResult<(Bytes, String)> {
-    if let Some((bytes, mime)) = crate::form_data::multipart_body(s, body) {
+    if let Some((bytes, mime)) = crate::form_data::multipart_body(s, body)? {
         return Ok((bytes, mime));
     }
     Ok(if let Some(blob) = s.unwrap::<crate::file::Blob>(body) {
@@ -430,7 +431,7 @@ pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
                     stream_open: Cell::new(false),
                     consumers: Cell::new(0),
                     abort_registration: RefCell::new(None),
-                    abort_reason: RefCell::new(Weak::new()),
+                    abort_signal: RefCell::new(None),
                     aborted: Cell::new(false),
                     disposed: Cell::new(false),
                     mime: RefCell::new(String::new()),
@@ -438,7 +439,7 @@ pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
                 page.fetch_state.bodies.borrow_mut().insert(id, Rc::downgrade(&body));
                 if let Some(signal) = &signal {
                     let signal = s.unwrap::<AbortSignal>(signal.get(s)).expect("validated signal");
-                    *body.abort_reason.borrow_mut() = signal.reason_weak();
+                    *body.abort_signal.borrow_mut() = Some(signal.wrapper.clone());
                     let weak = Rc::downgrade(&body);
                     *body.abort_registration.borrow_mut() = signal.register_native(Box::new(move |_| {
                         if let Some(body) = weak.upgrade() {
@@ -633,7 +634,7 @@ impl Body {
             stream_open: Cell::new(false),
             consumers: Cell::new(0),
             abort_registration: RefCell::new(None),
-            abort_reason: RefCell::new(Weak::new()),
+            abort_signal: RefCell::new(None),
             aborted: Cell::new(false),
             disposed: Cell::new(false),
             mime: RefCell::new(mime),
@@ -676,11 +677,10 @@ impl Body {
         self.wire.lock().unwrap().null_body
     }
     fn abort_error<'s>(&self, s: &Scope<'s>) -> Value<'s> {
-        let reason = self.abort_reason.borrow().upgrade();
-        reason
-            .as_ref()
-            .and_then(|r| r.borrow().as_ref().map(|v| v.get(s)))
-            .unwrap_or_else(|| JsError::dom("AbortError", "Fetch aborted").to_value(s))
+        // The signal's reason when its wrapper is still alive; otherwise (no signal, or the
+        // signal was collected before the body was read) the default AbortError.
+        let reason = self.abort_signal.borrow().as_ref().and_then(|w| AbortSignalData::stored_reason(w, s));
+        reason.unwrap_or_else(|| JsError::dom("AbortError", "Fetch aborted").to_value(s))
     }
     fn error<'s>(&self, s: &Scope<'s>) -> Option<Value<'s>> {
         // A null body has no stream for abort or network failure to error.

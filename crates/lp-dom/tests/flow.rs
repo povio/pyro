@@ -4177,3 +4177,146 @@ fn has_anchor_argument_guard_never_serves_stale_styles() {
     let c = assert_styles_match_fresh(&p, "unbounded loss", &subjects);
     assert_eq!(c[4], black);
 }
+
+// ---------------------------------------------------------------------------
+// Text scroll-size scan: memoized clip facts vs the reference ancestor walk.
+// In debug builds `record` asserts, for every text/box pair, that the fact-based
+// clip test equals the walk and that the text lies inside the recorded box, so
+// these fixtures exercise the producers of text runs (block, inline, fixed,
+// absolute, padding, display:contents, deep nesting, reparenting, viewport and
+// style changes) and lock the observable scroll sizes.
+// ---------------------------------------------------------------------------
+
+fn sw(p: &Page, id: &str) -> f64 {
+    p.layout.scroll_width(&p.dom, p.id(id))
+}
+
+#[test]
+fn text_clip_facts_nested_block_and_inline_clippers() {
+    let p = page(
+        r#"<div id=outer style="width:200px"><div id=clip style="width:100px;overflow:hidden"><span id=s style="white-space:nowrap">a very long run of text that overflows its clipping container by far</span></div>
+<div id=open style="width:100px;padding-right:7px"><span style="white-space:nowrap">another very long run of text that overflows an open container</span></div>
+<div id=inl style="width:100px"><span id=ispan style="overflow:hidden;white-space:nowrap">inline overflow hidden does not clip in chromium but the walk sees the style</span></div></div>"#,
+        Geometry::Flow,
+    );
+    // Like Chromium, a clipping container's own scrollWidth reports its overflowing text, but the text is
+    // clipped inside the outer box and does not extend it beyond its own open children.
+    assert!(sw(&p, "clip") > 100.0, "clip sw {}", sw(&p, "clip"));
+    // The open container is extended by its text through its inline-end padding, and so is the outer box.
+    assert!(sw(&p, "open") > 107.0, "open sw {}", sw(&p, "open"));
+    // An inline `overflow:hidden` span does not clip (as in Chromium), so the third child's text also
+    // extends it and the outer box; the clipping container's text extends neither.
+    assert!(sw(&p, "inl") > 100.0);
+    let widest_open = sw(&p, "open").max(sw(&p, "inl"));
+    assert!(
+        (sw(&p, "outer") - widest_open).abs() < 0.01,
+        "outer {} widest open child {}",
+        sw(&p, "outer"),
+        widest_open
+    );
+    assert!(sw(&p, "outer") < sw(&p, "clip") + sw(&p, "open"), "outer must not add the clipped text");
+}
+
+#[test]
+fn text_clip_facts_fixed_absolute_and_contents_wrappers() {
+    let p = page(
+        r#"<div id=root style="width:300px;height:200px;overflow:auto;position:relative">
+<div id=rel style="position:relative;width:120px;padding:4px"><div id=abs style="position:absolute;left:0;top:0;width:50px"><span style="white-space:nowrap">absolute child text that is long enough to overflow</span></div>
+<div style="display:contents"><span id=c style="white-space:nowrap">text under a display contents wrapper that overflows the relative box</span></div></div>
+<div id=fix style="position:fixed;left:0;top:0;width:40px"><span style="white-space:nowrap">fixed text that must not extend a non fixed ancestor</span></div>
+<div id=pad style="width:80px;padding:0 9px"><span style="white-space:nowrap">padded container with overflowing text</span></div></div>"#,
+        Geometry::Flow,
+    );
+    assert!(sw(&p, "abs") > 50.0);
+    assert!(sw(&p, "rel") > 120.0);
+    assert!(sw(&p, "pad") > 89.0);
+    // Fixed text does not extend the scrolling root; its own box reports its text width.
+    assert!(sw(&p, "fix") > 40.0);
+    let _ = sw(&p, "root");
+}
+
+#[test]
+fn text_clip_facts_deep_nesting_without_recursion() {
+    let depth = 400;
+    let open: String = (0..depth).map(|i| format!("<div id=n{i} style=\"padding-left:1px\">")).collect();
+    let close = "</div>".repeat(depth);
+    let html = format!(
+        "{open}<span id=leaf style=\"white-space:nowrap\">deep text that overflows the narrow nesting</span>{close}"
+    );
+    let p = page(&html, Geometry::Flow);
+    assert!(sw(&p, "n0") > 0.0);
+    assert!(sw(&p, &format!("n{}", depth - 1)) > 0.0);
+}
+
+#[test]
+fn text_clip_facts_are_per_pass_across_reparenting_and_style_changes() {
+    let mut p = page(
+        r#"<div id=wrap style="width:120px"><div id=a style="width:120px;overflow:hidden"><span id=t style="white-space:nowrap">a long run of text that overflows whichever container holds it</span></div><div id=b style="width:120px"></div></div>"#,
+        Geometry::Flow,
+    );
+    // Clipped inside `a`: the wrapper is not extended.
+    assert!(sw(&p, "a") > 120.0);
+    assert_eq!(sw(&p, "wrap"), 120.0);
+    // Move the text under the open container: the new pass must not reuse the old container's clip fact.
+    let (t, b) = (p.id("t"), p.id("b"));
+    p.dom.append_child(b, t).unwrap();
+    assert_eq!(sw(&p, "a"), 120.0);
+    assert!(sw(&p, "wrap") > 120.0, "wrap sw {}", sw(&p, "wrap"));
+    // Style change: the open container starts clipping and the wrapper shrinks back.
+    p.dom.set_attribute(b, "style", "width:120px;overflow:hidden").unwrap();
+    assert!(sw(&p, "b") > 120.0);
+    assert_eq!(sw(&p, "wrap"), 120.0);
+    // Viewport change: facts are recomputed with the same result.
+    p.layout.set_viewport(Viewport::new(500, 400));
+    assert_eq!(sw(&p, "wrap"), 120.0);
+}
+
+#[test]
+fn text_clip_facts_cover_absolute_tables_inline_splits_generated_and_shadow_text() {
+    // Absolute containing block above intervening (one clipping) wrappers; the absolute box's text is
+    // clipped by the wrapper for every ancestor above it and extends only the absolute box itself.
+    let p = page(
+        r#"<div id=cb style="position:relative;width:200px"><div id=w1 style="width:150px"><div id=w2 style="width:150px;overflow:hidden"><div><div id=abs style="position:absolute;left:0;top:0;width:30px"><span style="white-space:nowrap">absolute text behind two wrappers that overflows a lot</span></div></div></div></div></div>"#,
+        Geometry::Flow,
+    );
+    assert!(sw(&p, "abs") > 30.0);
+    // Wrappers record before the absolute box is placed, so their scroll sizes ignore it; the containing
+    // block's scroll size is extended by the placed absolute boxes afterwards (box scan, unchanged here).
+    assert_eq!(sw(&p, "w1"), 150.0);
+    assert_eq!(sw(&p, "w2"), 150.0);
+    assert!(sw(&p, "cb") >= 200.0);
+    // Table cell text inside a clipping container, and a cell whose text overflows the table.
+    let p = page(
+        r#"<div id=tc style="width:120px;overflow:hidden"><table id=tbl style="width:100px"><tr><td style="width:40px"><span style="white-space:nowrap">a long table cell text that overflows the cell and the table</span></td><td>x</td></tr></table></div><div id=after style="width:120px">after</div>"#,
+        Geometry::Flow,
+    );
+    assert!(sw(&p, "tbl") >= 100.0);
+    let _ = sw(&p, "tc");
+    assert_eq!(sw(&p, "after"), 120.0);
+    // Inline element split by a block child (anonymous block boxes around the inline runs).
+    let p = page(
+        r#"<div id=split style="width:100px"><span id=sp>inline start text<div style="width:50px"><span style="white-space:nowrap">block inside the inline with overflowing text</span></div>inline end text</span></div>"#,
+        Geometry::Flow,
+    );
+    assert!(sw(&p, "split") >= 100.0);
+    // Generated ::before text through the real style engine (laid out as an inline item, not a text run).
+    let p = page(
+        r#"<style>#gen::before{content:"generated text long enough to overflow its narrow host box"; white-space:nowrap}</style><div id=genwrap style="width:200px"><div id=gen style="width:60px;overflow:hidden"></div></div>"#,
+        Geometry::Flow,
+    );
+    let _ = (sw(&p, "gen"), sw(&p, "genwrap"));
+    // Shadow root with a slot: the engine lays the light text out in its DOM position; the assertions
+    // in `record` still hold for every pair.
+    let mut p = page(
+        r#"<div id=shwrap style="width:200px"><div id=host style="width:80px"><span id=light style="white-space:nowrap">slotted light text that overflows the host</span></div></div>"#,
+        Geometry::Flow,
+    );
+    let host = p.id("host");
+    let root = p.dom.attach_shadow(host, lp_dom::ShadowRootMode::Open).unwrap();
+    let clip = p.dom.create_element(p.doc, "div").unwrap();
+    p.dom.set_attribute(clip, "style", "width:40px;overflow:hidden").unwrap();
+    let slot = p.dom.create_element(p.doc, "slot").unwrap();
+    p.dom.append_child(clip, slot).unwrap();
+    p.dom.append_child(root, clip).unwrap();
+    let _ = (sw(&p, "host"), sw(&p, "shwrap"));
+}
