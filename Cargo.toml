@@ -33,12 +33,12 @@ debug = "line-tables-only"
 # Cargo otherwise strips after our linker signs when DEBUG=0, losing allow-jit.
 strip = "none"
 
-# lp-webapi's ~170 interface classes instantiate ~12,000 lp-js trampolines
-# (one per member). With one codegen unit per crate rustc merges every
-# class module into a single unit and LLVM optimizes all of them on one
-# core (~60 s of a clean build). More units for this crate let that codegen
-# run in parallel; thin LTO still inlines across units. Measured clean
-# release build: 128 s -> 69 s (lp-webapi 64 -> 23 s). lp-dom and lp-cdp
+# lp-webapi's ~170 interface classes are small modules that rustc merges
+# into one codegen unit, together with every lp-js invoker they instantiate,
+# so LLVM optimizes all of them on one core. More units for this crate let
+# that codegen run in parallel; thin LTO still inlines across units.
+# Measured clean release build (one member trampoline per member, before
+# lp-js switched to one invoker per class): 128 s -> 69 s. lp-dom and lp-cdp
 # are off the critical path and keep one unit: splitting them cost ~10% on
 # the in-process CDP microbench for no wall-time gain.
 [profile.release.package.lp-webapi]
