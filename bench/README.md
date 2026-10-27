@@ -107,6 +107,14 @@ Method:
 - The run records the load average at start, per round and at end, and warns when the 1-minute load is above
   half the CPU count. The output JSON keeps every sample, so results can be re-analysed later.
 
+Inner CDP stages: build with `cargo build --release --features perf-trace` (use its own `CARGO_TARGET_DIR`) and
+add `--perf-trace`. The browser then times each stage of every command (`io.ws_decode`, the `io.to_browser`
+hop, `cdp.parse`, `cdp.dispatch <Method>`, `cdp.params`, `js.eval` / `js.call_function`, `remote.describe`,
+`json.serialize`, `outbox.push`, `host.flush`, the `io.outbound_queue` hop and `io.ws_write`), and the report
+lists every stage costing at least 10 ns per operation, with the timer floor measured on that host. Stages
+are inclusive and timing adds a few tens of ns per stage, so compare traced builds only with traced builds.
+Normal builds compile the timers out (`crates/lp-cdp/src/perf.rs`).
+
 Reading it for optimization: compare `rtt.Browser.getVersion` (protocol floor) with the other `rtt`/`runtime`
 rows to see the cost of the browser-thread hop and JS work; the navigation milestones show whether time goes
 to fetching/committing (navigate reply), parsing (DOMContentLoaded) or subresources (load); `target.lifecycle`

@@ -67,10 +67,13 @@ impl Reply {
             return;
         }
         let Some(handles) = self.handles.upgrade() else { return self.done.set(true) };
+        let describe = crate::perf::span("remote.describe");
         let result = remote::describe(scope, value, self.by_value);
+        drop(describe);
         if self.done.get() {
             return; // describe ran JavaScript, which may have cancelled us
         }
+        let _t = crate::perf::span("remote.register+reply");
         match result.and_then(|d| remote::register(d, &handles, self.context, self.group.as_deref())) {
             Ok(remote) => self.send(&json!({ "result": remote })),
             Err(e) => self.error(&e),
@@ -380,7 +383,10 @@ impl EngineHost {
         let reply = self.reply_for(cmd, p.return_by_value, p.object_group, &realm)?;
         let exception_id = self.next_exception_id();
         let scope = realm.scope().map_err(remote::js_to_cdp)?;
-        match scope.eval(&p.expression, None, 1) {
+        let eval = crate::perf::span("js.eval");
+        let evaluated = scope.eval(&p.expression, None, 1);
+        drop(eval);
+        match evaluated {
             Ok(value) => reply.settle(&self.pending, &scope, value, p.await_promise, exception_id),
             Err(error) => reply.exception(&scope, &error.details(&scope), exception_id),
         }
@@ -419,7 +425,10 @@ impl EngineHost {
             let value = remote::argument(&scope, arg, &handles, context)?;
             args.push(&scope, value);
         }
-        match scope.call_function_rooted(&p.function_declaration, this.as_ref(), &args) {
+        let call = crate::perf::span("js.call_function");
+        let called = scope.call_function_rooted(&p.function_declaration, this.as_ref(), &args);
+        drop(call);
+        match called {
             Ok(value) => reply.settle(&self.pending, &scope, value, p.await_promise, exception_id),
             Err(error) => reply.exception(&scope, &error.details(&scope), exception_id),
         }

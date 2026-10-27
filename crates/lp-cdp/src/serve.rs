@@ -241,8 +241,12 @@ impl SessionFactory for ThreadPerConnection {
                 };
                 let Ok(permit) = permit else { return };
                 permit.forget();
-                if control.handle.post(move |_| INBOX.with(|q| q.borrow_mut().push_back(Inbound::Text(text)))).is_err()
-                {
+                let posted = crate::perf::now();
+                let deliver = move |_: &mut lp_browser::Browser| {
+                    INBOX.with(|q| q.borrow_mut().push_back(Inbound::Text(text)));
+                    POSTED.with(|q| q.borrow_mut().push_back(posted));
+                };
+                if control.handle.post(deliver).is_err() {
                     return;
                 }
             }
@@ -258,6 +262,9 @@ impl SessionFactory for ThreadPerConnection {
 thread_local! {
     /// Messages delivered to this browser thread, in arrival order.
     static INBOX: RefCell<VecDeque<Inbound>> = const { RefCell::new(VecDeque::new()) };
+    /// When each `Inbound::Text` in INBOX was posted by the I/O thread
+    /// (zero-sized unless perf-trace is on).
+    static POSTED: RefCell<VecDeque<crate::perf::Stamp>> = const { RefCell::new(VecDeque::new()) };
 }
 
 fn run_browser_thread(outbox: Outbox, state: Arc<CloseState>, ready: oneshot::Sender<()>, permits: Arc<Semaphore>) {
@@ -287,9 +294,16 @@ fn run_browser_thread(outbox: Outbox, state: Arc<CloseState>, ready: oneshot::Se
         while let Some(message) = INBOX.with(|q| q.borrow_mut().pop_front()) {
             match message {
                 Inbound::Text(text) => {
+                    if let Some(posted) = POSTED.with(|q| q.borrow_mut().pop_front()) {
+                        crate::perf::record_since("io.to_browser", posted);
+                    }
                     permits.add_permits(1);
+                    let handle = crate::perf::span("cdp.handle_text");
                     browser.handle_text(&text, &mut sink);
+                    drop(handle);
+                    let flush = crate::perf::span("host.flush");
                     browser.host_mut().flush();
+                    drop(flush);
                     browser.adopt_popups(&mut sink);
                     if closing() {
                         break;
@@ -305,4 +319,5 @@ fn run_browser_thread(outbox: Outbox, state: Arc<CloseState>, ready: oneshot::Se
     browser.shutdown();
     browser.host_mut().close_all();
     INBOX.with(|q| q.borrow_mut().clear());
+    POSTED.with(|q| q.borrow_mut().clear());
 }

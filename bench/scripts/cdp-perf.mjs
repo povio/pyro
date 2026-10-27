@@ -4,7 +4,7 @@
 // Usage:
 //   node cdp-perf.mjs --bin [label=]/abs/lightningpanda [--bin base=/abs/other] --out /abs/result.json
 //                     [--rounds 5] [--scale 1] [--quick] [--filter REGEX] [--list]
-//                     [--sampler /abs/rss-sampler] [--playwright]
+//                     [--sampler /abs/rss-sampler] [--playwright] [--perf-trace]
 //
 // Run it with `bun` to include the Bun.WebView scenarios (its Chrome backend attached to the endpoint);
 // `node` runs the raw CDP scenarios only. --playwright adds the Playwright scenarios (playwright-core).
@@ -14,6 +14,9 @@
 // compare on a busy machine. Timings are wall-clock milliseconds measured by this harness (Node + `ws`), so
 // they include the WebSocket hop. Browser CPU per operation comes from the native sampler (macOS) or /proc
 // (Linux) and excludes the harness.
+//
+// --perf-trace needs binaries built with `--features perf-trace`: it resets the browser's stage timers after
+// warmup and reads them (LP.perfStats) after the measured loop, attributing inner CDP costs per scenario.
 //
 // Exit status: 0 when every scenario passed for every binary, 1 if any failed (results are written either
 // way), 2 for usage errors.
@@ -42,7 +45,7 @@ const opt = (k, d) => {
 const many = (k) => argv.flatMap((a, i) => (a === k ? [argv[i + 1]] : []));
 const usage = () => {
   console.error('usage: node cdp-perf.mjs --bin [label=]/abs/binary [--bin ...] --out /abs/result.json');
-  console.error('       [--rounds N] [--scale X] [--quick] [--filter REGEX] [--list] [--sampler PATH] [--playwright]');
+  console.error('       [--rounds N] [--scale X] [--quick] [--filter REGEX] [--list] [--sampler PATH] [--playwright] [--perf-trace]');
   process.exit(2);
 };
 
@@ -51,6 +54,7 @@ const ROUNDS = Number(opt('--rounds', QUICK ? 1 : 5));
 const SCALE = Number(opt('--scale', QUICK ? 0.2 : 1));
 const FILTER = opt('--filter') ? new RegExp(opt('--filter')) : null;
 const OUT = opt('--out');
+const PERF_TRACE = flag('--perf-trace');
 const BINS = many('--bin').map((spec, i) => {
   const eq = spec.indexOf('=');
   const label = eq > 0 ? spec.slice(0, eq) : i === 0 ? 'current' : `bin${i}`;
@@ -1027,6 +1031,7 @@ async function runScenario(sc, bin, site, playwright) {
   const b = await startBrowser(bin);
   const result = { startupMs: b.startupMs, samples: [], phases: {} };
   let cdp;
+  let perfCdp;
   let state = {};
   const env = { wsUrl: b.wsUrl, site, playwright, WebView: globalThis.Bun?.WebView };
   try {
@@ -1035,6 +1040,9 @@ async function runScenario(sc, bin, site, playwright) {
         if (!sc.playwright && !sc.webview) env.cdp = cdp = await Cdp.open(b.wsUrl);
         if (sc.setup) state = await sc.setup(env);
         for (let i = 0; i < warmup; i++) await sc.run(state, -1 - i, env);
+        // Stage timers are process-wide, so one control connection sees every client's commands.
+        const control = PERF_TRACE ? (cdp ?? (perfCdp = await Cdp.open(b.wsUrl))) : null;
+        if (control) await control.send('LP.perfReset');
         const before = await cpuSnapshot(b.cp.pid);
         const t0 = now();
         for (let i = 0; i < iterations; i++) {
@@ -1045,6 +1053,7 @@ async function runScenario(sc, bin, site, playwright) {
         }
         result.wallMs = now() - t0;
         const after = await cpuSnapshot(b.cp.pid);
+        if (control) result.perf = await control.send('LP.perfStats');
         if (before && after) {
           result.cpuMsPerOp = (after.cpuMs - before.cpuMs) / (iterations * (sc.opsPerSample ?? 1));
           result.rssKiB = after.rssKiB;
@@ -1061,9 +1070,30 @@ async function runScenario(sc, bin, site, playwright) {
   } finally {
     await Promise.resolve(sc.teardown?.(state, env)).catch(() => {});
     await cdp?.close().catch(() => {});
+    await perfCdp?.close().catch(() => {});
     await stopBrowser(b);
   }
   return result;
+}
+
+// Per stage: inclusive ns per benchmark operation and per call, median over rounds.
+function perfStages(rounds, ops) {
+  const traced = rounds.filter((r) => r.perf);
+  if (!traced.length) return null;
+  const names = [...new Set(traced.flatMap((r) => r.perf.stages.map((st) => st.name)))];
+  const stages = names.map((name) => {
+    const per = traced.map((r) => r.perf.stages.find((st) => st.name === name)).filter(Boolean);
+    return {
+      name,
+      nsPerOp: +median(per.map((st) => st.totalNs / ops)).toFixed(1),
+      callsPerOp: +median(per.map((st) => st.count / ops)).toFixed(2),
+      meanNs: +median(per.map((st) => st.meanNs)).toFixed(1),
+      p50Ns: median(per.map((st) => st.p50Ns)),
+      p99Ns: median(per.map((st) => st.p99Ns)),
+    };
+  });
+  stages.sort((a, b) => b.nsPerOp - a.nsPerOp);
+  return { clockNs: +median(traced.map((r) => r.perf.clockNs)).toFixed(1), recordNs: +median(traced.map((r) => r.perf.recordNs)).toFixed(1), stages };
 }
 
 // ---------- report ----------
@@ -1096,6 +1126,23 @@ function markdown(report) {
       for (const l of labels) {
         const ph = sc.results[l]?.phases ?? {};
         lines.push(`- ${sc.name} [${l}]: ${Object.entries(ph).map(([k, v]) => `${k} ${fmt(v.median)}`).join(', ')}`);
+      }
+    }
+  }
+  const traced = report.scenarios.filter((sc) => labels.some((l) => sc.results[l]?.stages));
+  if (traced.length) {
+    lines.push('', '## Inner CDP stages (perf-trace)', '');
+    lines.push('Inclusive nanoseconds per benchmark operation (stages nest: `cdp.handle_text` contains `cdp.parse` and `cdp.dispatch ...`, which contains `js.*`, `remote.*`, `json.serialize`, `outbox.push`). Stages under 10 ns/op are left out. `io.*` stages run on the socket thread; `io.to_browser` and `io.outbound_queue` are the cross-thread hops.', '');
+    for (const sc of traced) {
+      for (const l of labels) {
+        const st = sc.results[l]?.stages;
+        if (!st) continue;
+        lines.push(`### ${sc.name} [${l}]`, '', `Timer floor: clock ${st.clockNs} ns, one record ${st.recordNs} ns.`, '');
+        lines.push('| stage | ns/op | calls/op | mean ns | p50 ns | p99 ns |', '|---|---:|---:|---:|---:|---:|');
+        for (const x of st.stages.filter((x) => x.nsPerOp >= 10)) {
+          lines.push(`| ${x.name} | ${x.nsPerOp} | ${x.callsPerOp} | ${x.meanNs} | ${x.p50Ns} | ${x.p99Ns} |`);
+        }
+        lines.push('');
       }
     }
   }
@@ -1142,6 +1189,7 @@ async function main() {
     rounds: ROUNDS,
     scale: SCALE,
     filter: FILTER?.source ?? null,
+    perfTrace: PERF_TRACE,
     harnessSha256: sha256(fileURLToPath(import.meta.url)),
     cpuSource: process.platform === 'linux' ? '/proc/<pid>/task/*/schedstat' : SAMPLER ? SAMPLER : null,
     loadavg: { start: os.loadavg(), perRound: [] },
@@ -1188,6 +1236,7 @@ async function main() {
           const samples = slot.rounds.flatMap((r) => r.samples);
           const phaseNames = [...new Set(slot.rounds.flatMap((r) => Object.keys(r.phases)))];
           const cpu = slot.rounds.map((r) => r.cpuMsPerOp).filter((x) => x != null);
+          const ops = Math.max(3, Math.round(sc.iterations * SCALE)) * (sc.opsPerSample ?? 1);
           return [
             label,
             {
@@ -1196,6 +1245,7 @@ async function main() {
               cpuMsPerOp: cpu.length ? +median(cpu).toFixed(4) : null,
               rssKiB: slot.rounds.map((r) => r.rssKiB).filter((x) => x != null),
               phases: Object.fromEntries(phaseNames.map((k) => [k, summarize(slot.rounds.flatMap((r) => r.phases[k] ?? []))])),
+              stages: perfStages(slot.rounds, ops),
               samples: slot.rounds.map((r) => r.samples.map((x) => +x.toFixed(4))),
               errors: slot.errors,
             },

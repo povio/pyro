@@ -8,6 +8,10 @@ license.workspace = true
 autotests = false
 rust-version.workspace = true
 
+[features]
+# Stage timers for CDP handling, read with LP.perfStats (see src/perf.rs).
+perf-trace = []
+
 [dependencies]
 lp-browser.workspace = true
 lp-js.workspace = true

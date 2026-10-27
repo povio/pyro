@@ -11,6 +11,7 @@ pub mod http;
 pub mod msg;
 pub mod network_protocol;
 pub mod outbox;
+pub mod perf;
 pub mod runtime_protocol;
 pub mod serve;
 pub mod server;

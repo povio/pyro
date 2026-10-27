@@ -52,6 +52,7 @@ impl Outbox {
 
     /// Queues a frame; frames for a closed or over-budget connection are dropped.
     pub fn push(&self, frame: OutFrame) {
+        let _t = crate::perf::span("outbox.push");
         if self.budget.exceeded.load(Ordering::Relaxed) {
             return;
         }
