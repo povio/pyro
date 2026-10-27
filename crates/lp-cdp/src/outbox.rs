@@ -15,6 +15,9 @@ struct Budget {
     queued: AtomicUsize,
     limit: usize,
     exceeded: AtomicBool,
+    /// Wakes the thread that drains the channel when it may be asleep (the
+    /// browser thread serving the connection): set once by that thread.
+    waker: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>>,
 }
 
 /// Cloneable handle to a connection's outbound frames. Clones share one
@@ -46,7 +49,7 @@ pub enum Outbound {
 impl Outbox {
     pub fn channel(limit: usize) -> (Outbox, OutboundRx) {
         let (tx, rx) = mpsc::unbounded_channel();
-        let budget = Arc::new(Budget { queued: AtomicUsize::new(0), limit, exceeded: AtomicBool::new(false) });
+        let budget = Arc::new(Budget { queued: AtomicUsize::new(0), limit, exceeded: AtomicBool::new(false), waker: std::sync::OnceLock::new() });
         (Outbox { tx, budget: budget.clone() }, OutboundRx { rx, budget })
     }
 
@@ -76,7 +79,16 @@ impl Outbox {
         if !self.budget.exceeded.swap(true, Ordering::Relaxed) {
             // Not counted against the budget: it is the wake-up itself.
             let _ = self.tx.send(Outbound::Exceeded);
+            if let Some(wake) = self.budget.waker.get() {
+                wake();
+            }
         }
+    }
+
+    /// Called by [`Outbox::exceed`] from any thread, so a reader that polls
+    /// [`OutboundRx::try_recv`] on its own loop notices without waiting.
+    pub fn set_waker(&self, wake: Box<dyn Fn() + Send + Sync>) {
+        let _ = self.budget.waker.set(wake);
     }
 
     pub fn is_exceeded(&self) -> bool {
@@ -111,6 +123,11 @@ impl OutboundRx {
 }
 
 impl OutboundRx {
+    /// Whether the budget was exceeded (the connection must close with 1008).
+    pub fn is_exceeded(&self) -> bool {
+        self.budget.exceeded.load(Ordering::Relaxed)
+    }
+
     /// Next queued frame without waiting (tests, synchronous drivers).
     pub fn try_recv(&mut self) -> Option<Outbound> {
         if self.budget.exceeded.load(Ordering::Relaxed) {
