@@ -89,11 +89,46 @@ fn fetch_abort_reason_comes_from_a_signal_of_another_realm() {
         first.engine.collect_garbage_now();
         first.engine.drain_finalized();
     }
-    second.eval("result='pending';reader.read().then(()=>result='unexpected',e=>result=e===reasonA?'aborted':'wrong reason')");
+    second.eval(
+        "result='pending';reader.read().then(()=>result='unexpected',e=>result=e===reasonA?'aborted':'wrong reason')",
+    );
     first.eval("ac.abort(reason)");
     assert_eq!(second.eval("result"), "aborted");
     second.finish_network_tasks();
     assert_eq!(second.page.fetch_usage(), (0, 0));
+    let _ = server.release.send(());
+}
+
+#[test]
+fn abort_signal_timeout_reason_identity_and_any() {
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    env.eval("globalThis.t=AbortSignal.timeout(20);globalThis.viaAny=AbortSignal.any([t]);globalThis.result='pending'");
+    assert_eq!(env.eval("[t.aborted,viaAny.aborted,t.reason===undefined].join()"), "false,false,true");
+    env.until("t.aborted");
+    assert_eq!(
+        env.eval(
+            "const r=t.reason;let thrown;try{t.throwIfAborted()}catch(e){thrown=e};\
+             [r instanceof DOMException,r.name,t.reason===r,thrown===r,viaAny.aborted,viaAny.reason===r].join()"
+        ),
+        "true,TimeoutError,true,true,true,true"
+    );
+    let _ = server.release.send(());
+}
+
+#[test]
+fn fetch_with_an_already_aborted_signal_rejects_with_its_reason_without_a_request() {
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    env.eval(
+        "globalThis.reason={pre:1};globalThis.result='pending';\
+         fetch('/gated',{signal:AbortSignal.abort(reason)}).then(()=>result='unexpected',e=>result=e===reason?'aborted':'wrong reason');\
+         globalThis.dflt='pending';\
+         fetch('/gated',{signal:AbortSignal.abort()}).then(()=>dflt='unexpected',e=>dflt=e.name)",
+    );
+    assert_eq!(env.eval("result"), "aborted");
+    assert_eq!(env.eval("dflt"), "AbortError");
+    assert_eq!(env.page.fetch_usage(), (0, 0));
     let _ = server.release.send(());
 }
 

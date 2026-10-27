@@ -371,11 +371,13 @@ fn drag_in_flight_at_dispose_does_not_retain_the_realm() {
 
 /// A signal aborted with a reason that reaches back to the signal, kept on the global: the shape
 /// that rooted the realm when the reason was a `Persistent` in the signal's payload.
-const KEEP_ABORTED_SIGNAL: &str = "(function () { const c = new AbortController(); const reason = { signal: c.signal, deep: { n: 1 } }; \
+const KEEP_ABORTED_SIGNAL: &str =
+    "(function () { const c = new AbortController(); const reason = { signal: c.signal, deep: { n: 1 } }; \
     c.abort(reason); globalThis.__reason = reason; globalThis.__sig = c.signal; })()";
 
 /// The same through `AbortSignal.any`, whose abort step reads the source's reason.
-const KEEP_ANY_SIGNAL: &str = "(function () { const c = new AbortController(); const any = AbortSignal.any([c.signal]); \
+const KEEP_ANY_SIGNAL: &str =
+    "(function () { const c = new AbortController(); const any = AbortSignal.any([c.signal]); \
     const reason = { signal: any }; c.abort(reason); globalThis.__any = any; globalThis.__src = c; })()";
 
 #[test]
@@ -430,7 +432,10 @@ fn abortsignal_reason_survives_gc_through_the_hidden_slot_only() {
     lab.gc_live();
     assert_eq!(eval(&realm, "[__sig.reason.marker.deep, __any.reason.via].join()"), "42,any");
     lab.gc_live();
-    assert_eq!(eval(&realm, "[__sig.reason.marker.deep, __any.reason.via, __sig.reason === __sig.reason].join()"), "42,any,true");
+    assert_eq!(
+        eval(&realm, "[__sig.reason.marker.deep, __any.reason.via, __sig.reason === __sig.reason].join()"),
+        "42,any,true"
+    );
 }
 
 #[test]
@@ -465,7 +470,10 @@ fn abortsignal_cross_realm_any_and_reason() {
         sb.global().set("__preA", pre).unwrap();
     }
     // `any` in realm B over a signal of realm A: aborted now, and aborted later.
-    run(&b, "globalThis.__anyNow = AbortSignal.any([__preA]); globalThis.__anyLater = AbortSignal.any([__ctrlA.signal]);");
+    run(
+        &b,
+        "globalThis.__anyNow = AbortSignal.any([__preA]); globalThis.__anyLater = AbortSignal.any([__ctrlA.signal]);",
+    );
     lab.gc_live();
     run(&a, "__ctrl.abort({ late: 2 });");
     lab.gc_live();
