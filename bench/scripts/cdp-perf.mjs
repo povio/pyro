@@ -1132,7 +1132,7 @@ function markdown(report) {
   const traced = report.scenarios.filter((sc) => labels.some((l) => sc.results[l]?.stages));
   if (traced.length) {
     lines.push('', '## Inner CDP stages (perf-trace)', '');
-    lines.push('Inclusive nanoseconds per benchmark operation (stages nest: `cdp.handle_text` contains `cdp.parse` and `cdp.dispatch ...`, which contains `js.*`, `remote.*`, `json.serialize`, `outbox.push`). Stages under 10 ns/op are left out. `io.*` stages run on the socket thread; `io.to_browser` and `io.outbound_queue` are the cross-thread hops.', '');
+    lines.push('Inclusive nanoseconds per benchmark operation (stages nest: `cdp.handle_text` contains `cdp.parse` and `cdp.dispatch ...`, which contains `js.*`, `remote.*`, `json.serialize`, `outbox.push`). Stages under 10 ns/op are left out. `io.*` stages are the socket I/O, done on the browser thread itself; `io.outbound_queue` is how long a frame waited for the socket.', '');
     for (const sc of traced) {
       for (const l of labels) {
         const st = sc.results[l]?.stages;

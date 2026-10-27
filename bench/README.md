@@ -108,9 +108,8 @@ Method:
   half the CPU count. The output JSON keeps every sample, so results can be re-analysed later.
 
 Inner CDP stages: build with `cargo build --release --features perf-trace` (use its own `CARGO_TARGET_DIR`) and
-add `--perf-trace`. The browser then times each stage of every command (`io.ws_decode`, the `io.to_browser`
-hop, `cdp.parse`, `cdp.dispatch <Method>`, `cdp.params`, `js.eval` / `js.call_function`, `remote.describe`,
-`json.serialize`, `outbox.push`, `host.flush`, the `io.outbound_queue` hop and `io.ws_write`), and the report
+add `--perf-trace`. The browser then times each stage of every command (`io.ws_read`, `io.ws_decode`, `cdp.parse`, `cdp.dispatch <Method>`, `cdp.params`, `js.eval` / `js.call_function`, `remote.describe`,
+`json.serialize`, `outbox.push`, `host.flush`, `io.outbound_queue` (time a frame waits for the socket) and `io.ws_write`), and the report
 lists every stage costing at least 10 ns per operation, with the timer floor measured on that host. Stages
 are inclusive and timing adds a few tens of ns per stage, so compare traced builds only with traced builds.
 Normal builds compile the timers out (`crates/lp-cdp/src/perf.rs`).
