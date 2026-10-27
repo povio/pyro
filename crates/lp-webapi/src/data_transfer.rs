@@ -15,7 +15,7 @@ use std::rc::Rc;
 use bytes::Bytes;
 use lp_js::{ClassDef, IdentityKey, JsClass, JsError, JsResult, NoParent, Object, Persistent, Scope, Value, WeakRealm};
 
-use crate::file::{BlobData, File, FileList, FileListData};
+use crate::file::{BlobData, File, FileListBuilder};
 use crate::target::page_of;
 use crate::util::*;
 
@@ -194,13 +194,13 @@ impl JsClass for DataTransfer {
         });
         def.getter("files", |s, d| {
             let entries = d.store.entries.borrow();
-            let mut files = Vec::new();
+            let mut files = FileListBuilder::new(s)?;
             for e in entries.iter().filter(|_| d.store.readable()) {
                 if let Some(f) = d.store.file(s, e)? {
-                    files.push(Persistent::new(s, f.value()));
+                    files.push(f.value())?;
                 }
             }
-            Ok(s.wrap::<FileList>(FileListData::new(files), None)?.value())
+            files.finish(s)
         });
         def.method("getData", 1, |s, d, a| {
             let format = normalize_format(&arg_string(&a, 0, "DataTransfer.getData")?);

@@ -1,7 +1,7 @@
 //! Blob, File and FileList (bytes held as refcounted `Bytes`).
 
 use bytes::Bytes;
-use lp_js::{ClassDef, JsClass, JsError, JsResult, NoParent, Scope, Value};
+use lp_js::{ClassDef, JsClass, JsError, JsResult, NoParent, Object, Scope, Value};
 
 use crate::node::NodeData;
 use crate::util::*;
@@ -130,13 +130,55 @@ impl JsClass for File {
     }
 }
 
+/// Hidden slot on a `FileList` wrapper: the JS array of its `File` wrappers.
+/// A traced edge, not a `Persistent`: a root held by the list's payload would
+/// keep the files' realm (their prototypes reach the global) alive for as long
+/// as the list's wrapper is reachable from that realm, and so forever once the
+/// page closes.
+const FILES: &str = "__lpFileListFiles";
+
 pub struct FileListData {
-    files: Vec<lp_js::Persistent>,
+    len: usize,
+    wrapper: WrapperRef,
 }
 
 impl FileListData {
-    pub(crate) fn new(files: Vec<lp_js::Persistent>) -> Self {
-        FileListData { files }
+    /// The File at `index`, read from the hidden array of this list's own wrapper.
+    fn get<'s>(&self, s: &Scope<'s>, index: usize) -> JsResult<Option<Value<'s>>> {
+        if index >= self.len {
+            return Ok(None);
+        }
+        let array = self.wrapper.hidden(s, FILES)?.and_then(|v| v.as_object()).ok_or(JsError::ContextDestroyed)?;
+        Ok(Some(array.get_index(index as u32)?))
+    }
+}
+
+/// Builds a `FileList`: the JS array exists first and every fresh `File`
+/// wrapper goes into it immediately (a Rust `Vec<Value>` is not scanned by the
+/// GC), then the array becomes the list wrapper's hidden slot.
+pub(crate) struct FileListBuilder<'s> {
+    array: Object<'s>,
+    len: usize,
+}
+
+impl<'s> FileListBuilder<'s> {
+    pub(crate) fn new(s: &Scope<'s>) -> JsResult<Self> {
+        Ok(FileListBuilder { array: s.array(&[])?, len: 0 })
+    }
+
+    pub(crate) fn push(&mut self, file: Value<'_>) -> JsResult<()> {
+        self.array.set_index(self.len as u32, file)?;
+        self.len += 1;
+        Ok(())
+    }
+
+    pub(crate) fn finish(self, s: &Scope<'s>) -> JsResult<Value<'s>> {
+        let page = crate::target::page_of(s)?;
+        let identity = page.event_identity(page.next_event_id());
+        let data = FileListData { len: self.len, wrapper: WrapperRef::new(s, identity) };
+        let list = s.wrap::<FileList>(data, Some(identity))?;
+        s.set_hidden(list, FILES, self.array.value())?;
+        Ok(list.value())
     }
 }
 
@@ -146,12 +188,12 @@ impl JsClass for FileList {
     type Data = FileListData;
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
-        def.getter("length", |s, l| Ok(s.number(l.files.len() as f64)));
+        def.getter("length", |s, l| Ok(s.number(l.len as f64)));
         def.method("item", 1, |s, l, a| {
             let i = to_u32(a.get(0))? as usize;
-            Ok(l.files.get(i).map_or(s.null(), |f| f.get(s)))
+            Ok(l.get(s, i)?.unwrap_or(s.null()))
         });
-        def.indexed(|s, l, i| Ok(l.files.get(i as usize).map(|f| f.get(s))));
+        def.indexed(|s, l, i| l.get(s, i as usize));
         def.indexed_iterable();
     }
 }
@@ -162,15 +204,15 @@ pub(crate) fn input_files<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>
         return Ok(s.null());
     }
     let entries = n.page().files.borrow().get(&n.id).cloned().unwrap_or_default();
-    let mut files = Vec::with_capacity(entries.len());
+    let mut files = FileListBuilder::new(s)?;
     for e in entries {
         let f = s.wrap::<File>(
             BlobData { bytes: e.bytes.clone(), mime: e.mime.clone(), file: Some((e.name.clone(), e.last_modified)) },
             None,
         )?;
-        files.push(lp_js::Persistent::new(s, f.value()));
+        files.push(f.value())?;
     }
-    Ok(s.wrap::<FileList>(FileListData { files }, None)?.value())
+    files.finish(s)
 }
 
 /// `input.files = list`: a FileList replaces the selection (bytes are shared,
@@ -189,9 +231,12 @@ pub(crate) fn set_input_files(s: &Scope<'_>, n: &NodeData, v: Value<'_>) -> JsRe
     if n.page().dom.borrow().input_type(n.id).js()? != lp_dom::forms::InputType::File {
         return Ok(());
     }
-    let mut entries = Vec::with_capacity(list.files.len());
-    for f in &list.files {
-        let f = s.unwrap::<File>(f.get(s)).ok_or_else(|| JsError::Type("FileList entry is not a File".into()))?;
+    let mut entries = Vec::with_capacity(list.len);
+    for i in 0..list.len {
+        let f = list
+            .get(s, i)?
+            .and_then(|v| s.unwrap::<File>(v))
+            .ok_or_else(|| JsError::Type("FileList entry is not a File".into()))?;
         let (name, last_modified) = f.file.clone().unwrap_or_default();
         entries.push(FileEntry { name, mime: f.mime.clone(), bytes: f.bytes.clone(), last_modified });
     }
