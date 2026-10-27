@@ -83,6 +83,20 @@ pub trait Host {
     /// A session detached; the host must stop emitting events for it and drop
     /// per-session state (enabled domains, object handles, interception).
     fn session_detached(&mut self, page: PageKey, session_id: &str);
+
+    /// Pages the host booted before this connection existed (`serve
+    /// --prepare`), to adopt as prepared pages. Taken once.
+    fn take_prebooted(&mut self) -> Vec<PrebootedEntry> {
+        Vec::new()
+    }
+    /// Whether the page's main document finished loading (prepared pages).
+    fn page_loaded(&self, _page: PageKey) -> bool {
+        false
+    }
+    /// Installs a script that runs in every new document of the page.
+    fn add_init_script(&mut self, _page: PageKey, _source: &str) {}
+    /// Sets the page's viewport size.
+    fn set_viewport(&mut self, _page: PageKey, _width: u32, _height: u32) {}
     /// Handles a page-scoped command. Must send exactly one response for
     /// `command.id`, now or later, unless the session detaches first.
     fn page_command(&mut self, cmd: PageCommand<'_, '_>, out: &mut dyn Sink);
@@ -98,6 +112,55 @@ struct ContextEntry {
     /// The implicit context of `createTarget` without `browserContextId`.
     /// Not listed by `getBrowserContexts` and not disposable, as in Chrome.
     is_default: bool,
+    /// Holds a prepared page the client has not acquired yet: not listed.
+    hidden: bool,
+}
+
+/// A page booted ahead of a test (`serve --prepare`,
+/// `Lightningpanda.registerPreparedPage`): its own browser context (seeded
+/// local storage), init scripts, viewport, then a navigation to `url`.
+/// `pool` pages per profile are kept ready; each acquisition starts the next.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreparedProfile {
+    pub url: String,
+    #[serde(default)]
+    pub init_scripts: Vec<String>,
+    #[serde(default)]
+    pub viewport: Option<ViewportSize>,
+    #[serde(default = "default_pool")]
+    pub pool: usize,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct ViewportSize {
+    pub width: u32,
+    pub height: u32,
+}
+
+fn default_pool() -> usize {
+    1
+}
+
+/// At most this many pages booting ahead per profile.
+pub const MAX_POOL: usize = 8;
+
+/// A page the host booted ahead of the connection, with its context.
+#[derive(Debug, Clone)]
+pub struct PrebootedEntry {
+    pub context: ContextKey,
+    pub page: PageKey,
+    pub target_id: String,
+    /// Index into the profiles the connection starts with.
+    pub profile: usize,
+}
+
+/// A booted (or booting) page waiting for a test; not a target yet.
+struct PreparedEntry {
+    profile: usize,
+    context_id: String,
+    page: PageKey,
+    target_id: String,
 }
 
 /// Per-connection budgets: a client cannot grow protocol state without limit.
@@ -142,6 +205,11 @@ pub struct Browser<H: Host> {
     sessions: HashMap<String, SessionEntry>,
     browser_sessions: HashSet<String>,
     next_id: u64,
+    prepared_profiles: Vec<PreparedProfile>,
+    prepared: Vec<PreparedEntry>,
+    /// The last refill could create nothing (limits, failures): wait for
+    /// the next acquisition before trying again.
+    refill_blocked: bool,
 }
 
 #[derive(Serialize)]
@@ -173,7 +241,193 @@ impl<H: Host> Browser<H> {
             sessions: HashMap::new(),
             browser_sessions: HashSet::new(),
             next_id: 1,
+            prepared_profiles: Vec::new(),
+            prepared: Vec::new(),
+            refill_blocked: false,
         }
+    }
+
+    /// `new`, then starts booting `profiles`' pages right away so the first
+    /// acquisition finds them ready (or at least under way).
+    pub fn with_prepared(host: H, profiles: Vec<PreparedProfile>) -> Self {
+        let mut browser = Self::new(host);
+        browser.prepared_profiles = profiles;
+        for e in browser.host.take_prebooted() {
+            if e.profile >= browser.prepared_profiles.len() {
+                browser.host.close_page(e.page);
+                browser.host.dispose_context(e.context);
+                continue;
+            }
+            let context_id = browser.mint("");
+            browser.contexts.push(ContextEntry {
+                id: context_id.clone(),
+                key: e.context,
+                is_default: false,
+                hidden: true,
+            });
+            browser.prepared.push(PreparedEntry {
+                profile: e.profile,
+                context_id,
+                page: e.page,
+                target_id: e.target_id,
+            });
+        }
+        browser.refill_prepared();
+        browser
+    }
+
+    /// Whether some profile has fewer pages waiting than its pool asks for
+    /// and a refill may succeed. The connection loop refills once the
+    /// thread has been quiet for a moment, so a test's own commands are
+    /// never queued behind the next page's boot.
+    pub fn needs_refill(&self) -> bool {
+        !self.refill_blocked
+            && self
+                .prepared_profiles
+                .iter()
+                .enumerate()
+                .any(|(i, p)| self.prepared.iter().filter(|e| e.profile == i).count() < p.pool.clamp(1, MAX_POOL))
+    }
+
+    /// Boots the missing pages now (see `needs_refill`).
+    pub fn refill_prepared(&mut self) {
+        if !self.fill_prepared() {
+            self.refill_blocked = true;
+        }
+    }
+
+    /// Boots pages until every profile has `pool` of them waiting; whether
+    /// any page was started.
+    fn fill_prepared(&mut self) -> bool {
+        let mut started = false;
+        for index in 0..self.prepared_profiles.len() {
+            loop {
+                let profile = self.prepared_profiles[index].clone();
+                let have = self.prepared.iter().filter(|p| p.profile == index).count();
+                if have >= profile.pool.clamp(1, MAX_POOL) {
+                    break;
+                }
+                if self.contexts.len() >= MAX_CONTEXTS || self.targets.len() + self.prepared.len() >= MAX_TARGETS {
+                    break;
+                }
+                let Ok(context_id) = self.new_context_with(false, true) else { break };
+                let key = self.contexts.iter().find(|c| c.id == context_id).expect("just created").key;
+                let Ok((page, target_id)) = self.host.create_page(key) else {
+                    self.dispose_context(&context_id, &mut Discard);
+                    break;
+                };
+                for script in &profile.init_scripts {
+                    self.host.add_init_script(page, script);
+                }
+                if let Some(v) = profile.viewport {
+                    self.host.set_viewport(page, v.width, v.height);
+                }
+                if self.host.navigate(page, &profile.url).is_err() {
+                    self.host.close_page(page);
+                    self.dispose_context(&context_id, &mut Discard);
+                    break;
+                }
+                self.prepared.push(PreparedEntry { profile: index, context_id, page, target_id });
+                started = true;
+            }
+        }
+        started
+    }
+
+    /// `Lightningpanda.*`: the prepared-page extension.
+    fn lightningpanda_command(&mut self, action: &str, cmd: &Command<'_>, out: &mut dyn Sink) -> CdpResult<()> {
+        let id = cmd.id;
+        match action {
+            "registerPreparedPage" => {
+                let profile: PreparedProfile = cmd.params()?;
+                if lp_net::Url::parse(&profile.url).is_err() {
+                    return Err(CdpError::invalid_params("url is not an absolute URL"));
+                }
+                if profile.pool == 0 || profile.pool > MAX_POOL {
+                    return Err(CdpError::invalid_params("pool must be between 1 and 8"));
+                }
+                self.prepared_profiles.push(profile);
+                self.refill_blocked = false;
+                self.refill_prepared();
+                let profile_id = self.prepared_profiles.len() - 1;
+                out.send(msg::result_frame(id, &serde_json::json!({ "profileId": profile_id }), cmd.session_id()));
+            }
+            "acquirePreparedPage" => {
+                #[derive(Deserialize)]
+                #[serde(rename_all = "camelCase")]
+                struct P {
+                    url: Option<String>,
+                    profile_id: Option<usize>,
+                }
+                let p: P = cmd.params()?;
+                let matches = |b: &Self, e: &PreparedEntry| {
+                    p.profile_id.is_none_or(|i| e.profile == i)
+                        && p.url.as_deref().is_none_or(|u| b.prepared_profiles[e.profile].url == u)
+                };
+                // A loaded page first, else the one booting longest.
+                let pos = self
+                    .prepared
+                    .iter()
+                    .position(|e| matches(self, e) && self.host.page_loaded(e.page))
+                    .or_else(|| self.prepared.iter().position(|e| matches(self, e)));
+                let Some(pos) = pos else {
+                    return Err(CdpError::invalid_params(
+                        "No prepared page for that url: register one with Lightningpanda.registerPreparedPage or serve --prepare",
+                    ));
+                };
+                if self.targets.len() >= MAX_TARGETS {
+                    return Err(CdpError::server("Too many targets"));
+                }
+                let entry = self.prepared.remove(pos);
+                let ready = self.host.page_loaded(entry.page);
+                let url = self.prepared_profiles[entry.profile].url.clone();
+                if let Some(c) = self.contexts.iter_mut().find(|c| c.id == entry.context_id) {
+                    c.hidden = false;
+                }
+                let target_id = entry.target_id.clone();
+                self.targets.push(TargetEntry {
+                    id: target_id.clone(),
+                    context_id: entry.context_id.clone(),
+                    page: entry.page,
+                    opener_id: None,
+                    can_access_opener: false,
+                    pending_url: None,
+                });
+                if self.discover {
+                    self.send_target_created(self.targets.len() - 1, out);
+                }
+                let session_id = if self.auto_attach { Some(self.attach(&target_id, None, true, out)?) } else { None };
+                out.send(msg::result_frame(
+                    id,
+                    &serde_json::json!({
+                        "targetId": target_id,
+                        "browserContextId": entry.context_id,
+                        "sessionId": session_id,
+                        "url": url,
+                        "ready": ready,
+                    }),
+                    cmd.session_id(),
+                ));
+                // The replacement boots once the thread is quiet (`needs_refill`).
+                self.refill_blocked = false;
+            }
+            "preparedPages" => {
+                let pages: Vec<serde_json::Value> = self
+                    .prepared
+                    .iter()
+                    .map(|e| {
+                        serde_json::json!({
+                            "profileId": e.profile,
+                            "url": self.prepared_profiles[e.profile].url,
+                            "ready": self.host.page_loaded(e.page),
+                        })
+                    })
+                    .collect();
+                out.send(msg::result_frame(id, &serde_json::json!({ "pages": pages }), cmd.session_id()));
+            }
+            _ => return Err(CdpError::method_not_found(&cmd.method)),
+        }
+        Ok(())
     }
 
     pub fn host(&self) -> &H {
@@ -261,6 +515,7 @@ impl<H: Host> Browser<H> {
                 Ok(())
             }
             ("Target", _) => self.target_command(action, cmd, out),
+            ("Lightningpanda", _) => self.lightningpanda_command(action, cmd, out),
             _ => {
                 #[derive(Deserialize)]
                 #[serde(rename_all = "camelCase")]
@@ -456,7 +711,8 @@ impl<H: Host> Browser<H> {
                 out.send(msg::result_frame(id, &serde_json::json!({ "targetInfos": infos }), cmd.session_id()));
             }
             "getBrowserContexts" => {
-                let ids: Vec<&str> = self.contexts.iter().filter(|c| !c.is_default).map(|c| c.id.as_str()).collect();
+                let ids: Vec<&str> =
+                    self.contexts.iter().filter(|c| !c.is_default && !c.hidden).map(|c| c.id.as_str()).collect();
                 out.send(msg::result_frame(id, &serde_json::json!({ "browserContextIds": ids }), cmd.session_id()));
             }
             "createBrowserContext" => {
@@ -625,12 +881,16 @@ impl<H: Host> Browser<H> {
     }
 
     fn new_context(&mut self, is_default: bool) -> CdpResult<String> {
+        self.new_context_with(is_default, false)
+    }
+
+    fn new_context_with(&mut self, is_default: bool, hidden: bool) -> CdpResult<String> {
         if self.contexts.len() >= MAX_CONTEXTS {
             return Err(CdpError::server("Too many browser contexts"));
         }
         let key = self.host.create_context()?;
         let id = self.mint("");
-        self.contexts.push(ContextEntry { id: id.clone(), key, is_default });
+        self.contexts.push(ContextEntry { id: id.clone(), key, is_default, hidden });
         Ok(id)
     }
 
@@ -813,16 +1073,22 @@ impl<H: Host> Browser<H> {
     /// `disposeOnDetach` contexts are disposed: the flag refers to the
     /// connection, not to page sessions.
     pub fn shutdown(&mut self) {
-        struct Discard;
-        impl Sink for Discard {
-            fn send(&mut self, _frame: OutFrame) {}
-        }
         self.browser_sessions.clear();
+        self.prepared_profiles.clear();
+        for entry in std::mem::take(&mut self.prepared) {
+            self.host.close_page(entry.page);
+        }
         let ids: Vec<String> = self.contexts.iter().map(|c| c.id.clone()).collect();
         for id in ids {
             self.dispose_context(&id, &mut Discard);
         }
     }
+}
+
+/// A sink for internal operations whose events no client should see.
+struct Discard;
+impl Sink for Discard {
+    fn send(&mut self, _frame: OutFrame) {}
 }
 
 /// CDP `Target.TargetFilter` entry: the first entry whose `type` matches (or

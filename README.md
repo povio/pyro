@@ -50,6 +50,16 @@ lightningpanda serve --static http://localhost:3000=/path/to/dist \
 `LIGHTNINGPANDA_STATIC` (entries separated by `;`) and `LIGHTNINGPANDA_LOCAL_STORAGE`
 from the environment, for launchers that cannot pass flags.
 
+To hide the app's own boot time as well, `--prepare http://localhost:3000/dashboard`
+(env `LIGHTNINGPANDA_PREPARE`) keeps one page per connection booted at that URL
+before any client connects and boots the next one whenever the thread is quiet.
+A test takes it with the browser-level CDP command
+`Lightningpanda.acquirePreparedPage {url}`: the page is announced like a new
+target, so Playwright sees it as a page of its default context, already loaded.
+`Lightningpanda.registerPreparedPage {url, initScripts, viewport, pool}` declares
+a profile at run time, including the scripts a test would otherwise install
+with `addInitScript`; `Lightningpanda.preparedPages` lists what is waiting.
+
 ## License
 
 AGPL-3.0-only. This is a derivative of Lightpanda; see [NOTICE](NOTICE).

@@ -45,6 +45,9 @@ options:
   --static <ORIGIN>=<DIR>               serve GET requests for ORIGIN from DIR, no server
                                         needed there (repeatable; env LIGHTNINGPANDA_STATIC,
                                         entries separated by ';')
+  --prepare <URL>                       keep one page booted at URL per connection, ready
+                                        for Lightningpanda.acquirePreparedPage (repeatable;
+                                        env LIGHTNINGPANDA_PREPARE, ';'-separated)
 
 HTTP and data: document loading are supported; browser API coverage is partial.
 --experimental-features and --load-resources are accepted for CLI compatibility;
@@ -62,7 +65,24 @@ back to DIR/index.html (single-page-app routes). Requests the directory cannot
 answer (no such file, POST, other origins) go to the network as usual, so API
 calls on the same origin still reach their server. Playwright routes still
 see these requests.
+
+--prepare: every connection boots a page at URL in its own browser context
+(with the --local-storage seed) before any command arrives, and boots the next
+one each time a test takes it. A client takes one with the browser-level
+command Lightningpanda.acquirePreparedPage {url?} -> {targetId,
+browserContextId, sessionId?, ready}; the page is announced like a new target
+(Target.targetCreated / attachedToTarget), so Playwright sees it as a page of
+its default context. Lightningpanda.registerPreparedPage {url, initScripts?,
+viewport?, pool?} declares a profile at run time, with the init scripts a
+test would otherwise install after the page exists. Lightningpanda.preparedPages
+lists what is waiting.
 ";
+
+/// How long a spare thread keeps booting prepared pages before it just waits.
+const PREBOOT_LIMIT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// No command for this long after a prepared page was taken: boot the next.
+const REFILL_QUIET: std::time::Duration = std::time::Duration::from_millis(15);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServeOptions {
@@ -78,6 +98,8 @@ pub struct ServeOptions {
     /// `--static ORIGIN=DIR` (or `LIGHTNINGPANDA_STATIC`): directories served
     /// in place of origins.
     pub static_roots: Vec<(String, PathBuf)>,
+    /// `--prepare URL` (or `LIGHTNINGPANDA_PREPARE`): pages booted ahead.
+    pub prepare: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -105,9 +127,16 @@ impl Default for ServeOptions {
                     v.split(';').filter(|e| !e.trim().is_empty()).filter_map(|e| parse_static_root(e).ok()).collect()
                 })
                 .unwrap_or_default(),
+            prepare: std::env::var(PREPARE_ENV)
+                .ok()
+                .map(|v| v.split(';').map(str::trim).filter(|e| !e.is_empty()).map(str::to_owned).collect())
+                .unwrap_or_default(),
         }
     }
 }
+
+/// Environment equivalent of `--prepare` entries, separated by `;` (flags add to it).
+pub const PREPARE_ENV: &str = "LIGHTNINGPANDA_PREPARE";
 
 /// Environment equivalent of `--local-storage` (the flag wins).
 pub const LOCAL_STORAGE_ENV: &str = "LIGHTNINGPANDA_LOCAL_STORAGE";
@@ -171,6 +200,7 @@ pub fn parse_args(args: &[String]) -> Result<ServeOptions, String> {
             },
             "--local-storage" => o.local_storage = Some(PathBuf::from(value()?)),
             "--static" => o.static_roots.push(parse_static_root(&value()?)?),
+            "--prepare" => o.prepare.push(value()?),
             other => return Err(format!("unknown option '{other}'")),
         }
     }
@@ -218,6 +248,15 @@ pub fn browser_profile(options: &ServeOptions) -> Result<BrowserProfile, String>
         profile.net.static_files =
             lp_net::StaticFiles::new(options.static_roots.clone()).map_err(|e| format!("--static: {e}"))?;
     }
+    for url in &options.prepare {
+        lp_net::Url::parse(url).map_err(|e| format!("--prepare: '{url}' is not an absolute URL ({e})"))?;
+        profile.prepared.push(crate::target::PreparedProfile {
+            url: url.clone(),
+            init_scripts: Vec::new(),
+            viewport: None,
+            pool: 1,
+        });
+    }
     Ok(profile)
 }
 
@@ -247,6 +286,9 @@ pub fn serve_main(args: &[String]) -> ExitCode {
         }
         for (origin, dir) in profile.net.static_files.summary() {
             eprintln!("lightningpanda: serving {origin} from {}", dir.display());
+        }
+        for prepared in &profile.prepared {
+            eprintln!("lightningpanda: preparing a page at {} per connection", prepared.url);
         }
     }
     let runtime = match tokio::runtime::Builder::new_current_thread().enable_io().enable_time().build() {
@@ -311,11 +353,36 @@ impl ThreadPerConnection {
         let (tx, rx) = std::sync::mpsc::channel::<Assignment>();
         let profile = self.profile.clone();
         std::thread::Builder::new().name(format!("lp-browser-{n}")).spawn(move || {
-            let prepared = EngineHost::prepare_thread_with(&profile);
+            let mut prepared = EngineHost::prepare_thread_with(&profile).map(|mut thread| {
+                let prebooted = EngineHost::preboot(&mut thread, &profile.prepared);
+                (thread, prebooted)
+            });
+            // Prepared pages boot while no connection exists yet; a
+            // connection arriving mid-boot takes the thread at the next task.
+            let claimed = RefCell::new(None);
+            if let Ok((thread, prebooted)) = &mut prepared {
+                if !prebooted.is_empty() {
+                    let deadline = std::time::Instant::now() + PREBOOT_LIMIT;
+                    thread.run_until(Some(deadline), |_| {
+                        if claimed.borrow().is_none() {
+                            if let Ok(a) = rx.try_recv() {
+                                *claimed.borrow_mut() = Some(a);
+                            }
+                        }
+                        claimed.borrow().is_some()
+                    });
+                }
+            }
             // No connection ever claims this thread when the sender is dropped.
-            let Ok(a) = rx.recv() else { return };
+            let a = match claimed.into_inner() {
+                Some(a) => a,
+                None => {
+                    let Ok(a) = rx.recv() else { return };
+                    a
+                }
+            };
             let _finished = a.finished;
-            run_browser_thread(prepared, a.socket, &a.buffered, a.config);
+            run_browser_thread(prepared, &profile, a.socket, &a.buffered, a.config);
         })?;
         Ok(tx)
     }
@@ -373,7 +440,8 @@ const FLUSH_EVERY: usize = 16;
 /// Serves one connection on this (browser) thread until it ends: the
 /// connection's socket is read and written here (see [`crate::conn`]).
 fn run_browser_thread(
-    prepared: Result<lp_browser::BrowserThread, crate::msg::CdpError>,
+    prepared: Result<(lp_browser::BrowserThread, Vec<crate::engine::Prebooted>), crate::msg::CdpError>,
+    profile: &BrowserProfile,
     socket: std::net::TcpStream,
     buffered: &[u8],
     config: ServerConfig,
@@ -386,7 +454,11 @@ fn run_browser_thread(
             return;
         }
     };
-    let host = match prepared.and_then(|t| EngineHost::with_thread(t, outbox.clone(), EngineHost::body_budget())) {
+    let host = match prepared.and_then(|(t, prebooted)| {
+        let mut host = EngineHost::with_thread(t, outbox.clone(), EngineHost::body_budget())?;
+        host.adopt_prebooted(prebooted);
+        Ok(host)
+    }) {
         Ok(host) => host,
         Err(e) => {
             eprintln!("lightningpanda: {}", e.message);
@@ -395,7 +467,7 @@ fn run_browser_thread(
             return;
         }
     };
-    let mut browser = Browser::new(host);
+    let mut browser = Browser::with_prepared(host, profile.prepared.clone());
     // Network threads that exceed the budget wake this loop to close (1008).
     let handle = browser.host().thread.handle();
     outbox.set_waker(Box::new(move || {
@@ -416,8 +488,20 @@ fn run_browser_thread(
     let mut sink = outbox;
     let mut inbox: VecDeque<Inbound> = VecDeque::new();
     let closed = |inbox: &VecDeque<Inbound>| matches!(inbox.back(), Some(Inbound::Closed));
+    // When the last command that was not a prepared-page status query ran.
+    let mut quiet_since = std::time::Instant::now();
     'serve: loop {
-        let deadline = conn.borrow().next_deadline();
+        // A prepared page was taken: boot its replacement only after a quiet
+        // moment with no command, so the test is not delayed.
+        let quiet_at = browser.needs_refill().then(|| quiet_since + REFILL_QUIET);
+        if quiet_at.is_some_and(|at| std::time::Instant::now() >= at) && inbox.is_empty() {
+            browser.refill_prepared();
+            continue;
+        }
+        let deadline = match (conn.borrow().next_deadline(), quiet_at) {
+            (Some(d), Some(q)) => Some(d.min(q)),
+            (d, q) => d.or(q),
+        };
         let outcome = browser.host_mut().run_until_work(deadline, || {
             conn.borrow_mut().service(&mut inbox);
             !inbox.is_empty()
@@ -433,6 +517,10 @@ fn run_browser_thread(
             match message {
                 Inbound::Text(text) => {
                     lp_browser::note_client_activity();
+                    // Polling the pool's status is not test activity.
+                    if !text.contains("\"Lightningpanda.preparedPages\"") {
+                        quiet_since = std::time::Instant::now();
+                    }
                     let handle = crate::perf::span("cdp.handle_text");
                     browser.handle_text(&text, &mut sink);
                     drop(handle);

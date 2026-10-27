@@ -7,7 +7,7 @@
 // Phases (ms from spawn): ready (/json/version 200), connected (connectOverCDP),
 // context (newContext resolved), page (newPage), loaded (goto app, `load`),
 // asserted (first assertion on app state rendered from localStorage).
-// Usage: node startup-to-first-test.mjs --bin PATH [--runs 8] [--assets N] [--kind css|js|both] [--size KB] [--out file.json] [--only server|overlay|preload]
+// Usage: node startup-to-first-test.mjs --bin PATH [--runs 8] [--assets N] [--kind css|js|both] [--size KB] [--gap MS] [--out file.json] [--only server|overlay|preload|prepared]
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
@@ -29,6 +29,9 @@ const assets = Number(args.includes('--assets') ? args[args.indexOf('--assets') 
 const kind = args.includes('--kind') ? args[args.indexOf('--kind') + 1] : 'both';
 // Size of each extra asset in KB (realistic code: many functions / rules).
 const sizeKb = Number(args.includes('--size') ? args[args.indexOf('--size') + 1] : 2);
+// Simulated harness work between the first and the second test (database
+// reset, fixtures...), in ms: idle time the browser can boot the next page in.
+const gapMs = Number(args.includes('--gap') ? args[args.indexOf('--gap') + 1] : 0);
 function jsChunk(i, kb) {
   let out = `globalThis.chunks = (globalThis.chunks || 0) + 1;\n`;
   let n = 0;
@@ -101,6 +104,7 @@ async function once(mode) {
   } else {
     fs.writeFileSync(seedPath, JSON.stringify({ [origin]: Object.fromEntries(entries.map((e) => [e.name, e.value])) }));
     extra.push('--static', `${origin}=${dist}`, '--local-storage', seedPath);
+    if (mode === 'prepared') extra.push('--prepare', `${origin}/dashboard`);
   }
   const t0 = performance.now();
   const env = { ...process.env, LIGHTPANDA_DISABLE_TELEMETRY: 'true', LIGHTNINGPANDA_STATIC_DIRECT: mode === 'overlay' ? '0' : '1' };
@@ -116,6 +120,38 @@ async function once(mode) {
     rec.ready = performance.now() - t0;
     browser = await chromium.connectOverCDP(`ws://127.0.0.1:${port}`, { timeout: 15000 });
     rec.connected = performance.now() - t0;
+    if (mode === 'prepared') {
+      // The page was booted before we connected: take it, no context, no goto.
+      const cdp = await browser.newBrowserCDPSession();
+      const defaultContext = browser.contexts()[0];
+      const take = async () => {
+        const [page] = await Promise.all([defaultContext.waitForEvent('page'), cdp.send('Lightningpanda.acquirePreparedPage', { url: origin + '/dashboard' })]);
+        await page.waitForLoadState('load');
+        return page;
+      };
+      const settle = async (page) => {
+        const deadline = performance.now() + 5000;
+        for (;;) {
+          const text = await page.evaluate(() => document.getElementById('app').textContent);
+          if (text === expected) return;
+          if (performance.now() > deadline) throw new Error(`app text ${JSON.stringify(text)}`);
+          await new Promise((r) => setTimeout(r, 1));
+        }
+      };
+      rec.context = performance.now() - t0;
+      const page = await take();
+      rec.page = rec.loaded = performance.now() - t0;
+      await settle(page);
+      rec.asserted = performance.now() - t0;
+      // The next test: the pool has been refilling since the acquisition.
+      if (gapMs) await new Promise((r) => setTimeout(r, gapMs));
+      const t1 = performance.now();
+      const next = await take();
+      await settle(next);
+      rec.reload = performance.now() - t1;
+      await browser.close().catch(() => {});
+      return finish(rec);
+    }
     const ctx = mode === 'server'
       ? await browser.newContext({ storageState: { cookies: [], origins: [{ origin, localStorage: entries }] } })
       : await browser.newContext();
@@ -138,6 +174,7 @@ async function once(mode) {
     rec.asserted = performance.now() - t0;
     // A second navigation in the same context: what a later test in the
     // same browser process pays (duration of the goto alone).
+    if (gapMs) await new Promise((r) => setTimeout(r, gapMs));
     const t1 = performance.now();
     await page.goto(origin + '/dashboard/again', { waitUntil: 'load', timeout: 10000 });
     rec.reload = performance.now() - t1;
@@ -149,6 +186,10 @@ async function once(mode) {
     await new Promise((r) => (child.exitCode !== null || child.signalCode !== null ? r() : child.once('exit', r)));
     if (server) await new Promise((r) => server.close(r));
   }
+  return finish(rec);
+}
+
+function finish(rec) {
   for (const k of ['ready', 'connected', 'context', 'page', 'loaded', 'asserted', 'reload']) if (rec[k] !== null) rec[k] = +rec[k].toFixed(1);
   return rec;
 }
@@ -156,12 +197,13 @@ async function once(mode) {
 const median = (xs) => { const s = xs.filter((x) => x !== null).sort((a, b) => a - b); return s.length ? s[Math.floor(s.length / 2)] : null; };
 // server: external static server; overlay: --static answered on the network
 // I/O thread; preload: --static answered on the browser thread from memory.
-const modes = only ? [only] : ['server', 'overlay', 'preload'];
+// prepared: --prepare boots the page before the connection; the test takes it.
+const modes = only ? [only] : ['server', 'overlay', 'preload', 'prepared'];
 const results = Object.fromEntries(modes.map((m) => [m, []]));
 for (let i = 0; i < runs; i++) for (const m of modes) results[m].push(await once(m));
 const phases = ['ready', 'connected', 'context', 'page', 'loaded', 'asserted', 'reload'];
 const summary = Object.fromEntries(modes.map((m) => [m, Object.fromEntries(phases.map((k) => [k, median(results[m].map((r) => r[k]))]))]));
-const report = { bin, runs, assets, kind, sizeKb, flags: FLAGS, summary, results };
+const report = { bin, runs, assets, kind, sizeKb, gapMs, flags: FLAGS, summary, results };
 if (out) fs.writeFileSync(out, JSON.stringify(report, null, 2));
 console.log(JSON.stringify(summary, null, 2));
 const failed = Object.values(results).flat().filter((r) => r.asserted === null);

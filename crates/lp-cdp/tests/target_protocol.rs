@@ -467,3 +467,80 @@ fn auto_attach_capacity_failure_is_atomic_and_has_one_reply() {
     let targets: Vec<_> = r[1..].iter().map(|event| event["params"]["targetInfo"]["targetId"].clone()).collect();
     assert_eq!(targets, [first, second, third]);
 }
+
+/// Prepared pages: booted in a hidden context at start, listed nowhere,
+/// handed over by `Lightningpanda.acquirePreparedPage` like a new target,
+/// and replaced right away.
+#[test]
+fn prepared_pages_are_hidden_until_acquired_and_refilled() {
+    let profile: lp_cdp::target::PreparedProfile =
+        serde_json::from_value(json!({"url": "http://app.test/base", "initScripts": ["globalThis.x = 1"], "viewport": {"width": 1440, "height": 900}}))
+            .unwrap();
+    let mut b = Browser::with_prepared(Recorder::default(), vec![profile]);
+    assert_eq!(
+        b.host().calls,
+        ["create_context -> 1", "create_page 1 -> 2", "navigate 2 http://app.test/base"],
+        "booted before any command"
+    );
+    let r = send(&mut b, json!({"id":1,"method":"Target.getTargets"}));
+    assert_eq!(r[0]["result"]["targetInfos"].as_array().unwrap().len(), 0, "not a target yet");
+    let r = send(&mut b, json!({"id":2,"method":"Target.getBrowserContexts"}));
+    assert_eq!(r[0]["result"]["browserContextIds"].as_array().unwrap().len(), 0, "its context is hidden");
+    let r = send(&mut b, json!({"id":3,"method":"Lightningpanda.preparedPages"}));
+    assert_eq!(r[0]["result"]["pages"], json!([{"profileId": 0, "url": "http://app.test/base", "ready": false}]));
+
+    send(&mut b, json!({"id":4,"method":"Target.setAutoAttach","params":{"autoAttach":true,"flatten":true}}));
+    let r = send(
+        &mut b,
+        json!({"id":5,"method":"Lightningpanda.acquirePreparedPage","params":{"url":"http://app.test/base"}}),
+    );
+    assert_eq!(r.len(), 2);
+    assert_eq!(r[0]["method"], "Target.attachedToTarget", "announced like a created target");
+    let target_id = r[0]["params"]["targetInfo"]["targetId"].as_str().unwrap().to_owned();
+    assert_eq!(r[1]["result"]["targetId"], target_id);
+    assert_eq!(r[1]["result"]["sessionId"], r[0]["params"]["sessionId"]);
+    assert_eq!(r[1]["result"]["ready"], false, "the recording host never loads");
+    let ctx = r[1]["result"]["browserContextId"].as_str().unwrap().to_owned();
+    assert_eq!(r[0]["params"]["targetInfo"]["browserContextId"], ctx);
+    assert_eq!(b.host().calls[3..], ["session_attached 2"], "no boot competes with the test's commands");
+    assert!(b.needs_refill());
+    b.refill_prepared();
+    assert_eq!(
+        b.host().calls[4..],
+        ["create_context -> 3", "create_page 3 -> 4", "navigate 4 http://app.test/base"],
+        "the replacement boots when the loop finds the thread quiet"
+    );
+    assert!(!b.needs_refill());
+    let r = send(&mut b, json!({"id":6,"method":"Target.getTargets"}));
+    assert_eq!(r[0]["result"]["targetInfos"].as_array().unwrap().len(), 1);
+    let r = send(&mut b, json!({"id":7,"method":"Target.getBrowserContexts"}));
+    assert_eq!(r[0]["result"]["browserContextIds"], json!([ctx]), "visible once acquired");
+
+    let r = send(
+        &mut b,
+        json!({"id":8,"method":"Lightningpanda.acquirePreparedPage","params":{"url":"http://other.test/"}}),
+    );
+    assert_eq!(r[0]["error"]["code"], -32602, "unknown url");
+
+    let r = send(
+        &mut b,
+        json!({"id":9,"method":"Lightningpanda.registerPreparedPage","params":{"url":"http://app.test/other","pool":2}}),
+    );
+    assert_eq!(r[0]["result"]["profileId"], 1);
+    let r = send(&mut b, json!({"id":10,"method":"Lightningpanda.preparedPages"}));
+    assert_eq!(r[0]["result"]["pages"].as_array().unwrap().len(), 3, "one of profile 0, two of profile 1");
+    // A refill that can create nothing stops asking until the next acquisition.
+    let mut blocked = Browser::with_prepared(
+        Recorder { fail_navigation: true, ..Default::default() },
+        vec![serde_json::from_value(json!({"url": "http://app.test/base"})).unwrap()],
+    );
+    assert!(!blocked.needs_refill(), "startup fill failed: {:?}", blocked.host().calls);
+    blocked.refill_prepared();
+    assert!(!blocked.needs_refill());
+    let r = send(&mut b, json!({"id":11,"method":"Lightningpanda.registerPreparedPage","params":{"url":"relative"}}));
+    assert_eq!(r[0]["error"]["code"], -32602);
+
+    b.shutdown();
+    let closes = b.host().calls.iter().filter(|c| c.starts_with("close_page")).count();
+    assert_eq!(closes, 4, "the acquired page and the three waiting ones");
+}
