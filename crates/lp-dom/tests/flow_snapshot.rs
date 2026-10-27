@@ -1,7 +1,7 @@
 //! Diagnostic: lays out a static page snapshot in flow mode and prints every
 //! body element's border box, one line per element in tree order:
 //! `tag x y w h`. Run with
-//! `FLOW_SNAPSHOT=page.html FLOW_VIEWPORT=1440x900 cargo test -p lp-dom --test flow_snapshot -- --ignored --nocapture`.
+//! `FLOW_SNAPSHOT=page.html FLOW_VIEWPORT=1440x900 cargo test -p lp-dom --test integration -- flow_snapshot:: --ignored --nocapture`.
 use std::cell::RefCell;
 use std::rc::Rc;
 

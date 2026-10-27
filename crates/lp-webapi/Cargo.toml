@@ -4,6 +4,8 @@ description = "JavaScript bindings for DOM/network WebAPIs over lp-js (worker 2)
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+# One integration test binary (tests/integration.rs) instead of one per file.
+autotests = false
 
 [dependencies]
 base64 = "0.23.1"
@@ -20,6 +22,10 @@ rustc-hash = "2"
 sha1 = "0.10"
 sha2 = "0.10"
 url = "2"
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
 
 [lints]
 workspace = true
