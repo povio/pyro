@@ -51,14 +51,15 @@ The browser is started with the exact flags and environment TOS uses (`apps/fe/e
 ## CDP performance suite (regressions and optimization baseline)
 
 `cdp-perf.mjs` measures latency and throughput of realistic CDP workloads against one or more `serve`
-binaries; `cdp-perf-compare.mjs` diffs two results and flags regressions. Use it to check that a change does
+binaries. Run it with `bun` (1.4+): the high-level client scenarios use `Bun.WebView` with its Chrome backend
+attached to the endpoint. Under `node` only the raw CDP scenarios run; `cdp-perf-compare.mjs` diffs two results and flags regressions. Use it to check that a change does
 not slow CDP down, and to see where time goes before optimizing.
 
 ```sh
 cargo build --release                                        # from the repository root (JIT-entitled linker)
 (cd bench && bun install && (cd rss-sampler && cargo build --release))
-node bench/scripts/cdp-perf.mjs --list                       # scenarios
-node bench/scripts/cdp-perf.mjs --bin $PWD/target/release/lightningpanda --out /tmp/cdp-perf/now.json
+bun bench/scripts/cdp-perf.mjs --list                        # scenarios
+bun bench/scripts/cdp-perf.mjs --bin $PWD/target/release/lightningpanda --out /tmp/cdp-perf/now.json
 bench/scripts/cdp-perf-ab.sh origin/main                     # main vs. the working tree, interleaved
 node bench/scripts/cdp-perf-compare.mjs run.json --base base --head head
 node bench/scripts/cdp-perf-compare.mjs old.json new.json    # two separate runs (less reliable)
@@ -80,8 +81,12 @@ harness only):
 - **targets**: context + target create, attach, `Page`/`Runtime.enable`, close, dispose, with per-step laps.
 - **network**: 20 parallel `fetch()` with `Network.enable`; one `Fetch.requestPaused` → `fulfillRequest`.
 - **input**: `Input.dispatchMouseEvent` clicks and `Input.dispatchKeyEvent` typing, verified in the page.
-- **playwright** (`playwright-core` 1.59.1): `connectOverCDP`, new context/page, `goto`, `evaluate`, locator
-  `textContent`, fill + click + response, `route.fulfill`, and a whole test flow with laps.
+- **webview** (`Bun.WebView`, needs `bun`): open + navigate + close, `navigate` of each fixture page,
+  `evaluate`, raw `view.cdp()`, selector `click` (with its actionability checks), `type`, and a whole form
+  test flow with laps.
+- **playwright** (opt-in with `--playwright`; `playwright-core` 1.59.1, the version TOS pins): `connectOverCDP`,
+  new context/page, `goto`, `evaluate`, locator `textContent`, fill + click + response, `route.fulfill`, and a
+  whole test flow with laps.
 
 Every scenario checks its result (counts, values, events), so a broken feature fails instead of looking fast.
 

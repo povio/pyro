@@ -4,7 +4,10 @@
 // Usage:
 //   node cdp-perf.mjs --bin [label=]/abs/lightningpanda [--bin base=/abs/other] --out /abs/result.json
 //                     [--rounds 5] [--scale 1] [--quick] [--filter REGEX] [--list]
-//                     [--sampler /abs/rss-sampler] [--no-playwright]
+//                     [--sampler /abs/rss-sampler] [--playwright]
+//
+// Run it with `bun` to include the Bun.WebView scenarios (its Chrome backend attached to the endpoint);
+// `node` runs the raw CDP scenarios only. --playwright adds the Playwright scenarios (playwright-core).
 //
 // Every scenario runs in a fresh browser process, once per round and binary. With several binaries the order
 // alternates every round (AB, BA, ...), so host drift hits each binary equally; that is the only fair way to
@@ -39,7 +42,7 @@ const opt = (k, d) => {
 const many = (k) => argv.flatMap((a, i) => (a === k ? [argv[i + 1]] : []));
 const usage = () => {
   console.error('usage: node cdp-perf.mjs --bin [label=]/abs/binary [--bin ...] --out /abs/result.json');
-  console.error('       [--rounds N] [--scale X] [--quick] [--filter REGEX] [--list] [--sampler PATH] [--no-playwright]');
+  console.error('       [--rounds N] [--scale X] [--quick] [--filter REGEX] [--list] [--sampler PATH] [--playwright]');
   process.exit(2);
 };
 
@@ -251,7 +254,7 @@ const BIG_FN = `function(a) { ${Array.from({ length: 2000 }, (_, i) => `const v$
 // ---------- scenarios ----------
 // Each scenario: name, group, what it measures, iterations (before --scale), optional opsPerSample,
 // setup(env) -> state, run(state, i) -> optional phase timings, check(state) after all iterations.
-// env = { wsUrl, site, cdp (one browser-level connection), playwright }.
+// env = { wsUrl, site, cdp (one browser-level connection, raw-CDP scenarios only), playwright, WebView }.
 const SCENARIOS = [
   {
     name: 'connect.ws+getVersion',
@@ -589,7 +592,166 @@ const SCENARIOS = [
     },
   },
 
-  // ---- Playwright (playwright-core pinned in bench/package.json) ----
+  // ---- Bun.WebView (Chrome backend over CDP; needs `bun`, which this script then runs under) ----
+  {
+    name: 'wv.open+navigate+close',
+    group: 'webview',
+    what: 'new Bun.WebView on the endpoint, navigate a small page, close (client attach cost)',
+    iterations: 20,
+    webview: true,
+    run: async (s, i, env) => {
+      const view = wvOpen(env);
+      try {
+        await view.navigate(`${env.site}/simple`);
+      } finally {
+        await view.close();
+      }
+    },
+  },
+  {
+    name: 'wv.navigate.simple',
+    group: 'webview',
+    what: 'view.navigate of a small page (resolves on load)',
+    iterations: 50,
+    webview: true,
+    setup: wvSetup('about:blank'),
+    run: async (s, i, env) => {
+      await s.view.navigate(`${env.site}/simple`);
+    },
+    teardown: wvClose,
+  },
+  {
+    name: 'wv.navigate.scripts',
+    group: 'webview',
+    what: 'view.navigate of the 10-script / 5-stylesheet page',
+    iterations: 30,
+    webview: true,
+    setup: wvSetup('about:blank'),
+    run: async (s, i, env) => {
+      await s.view.navigate(`${env.site}/scripts`);
+      assert((await s.view.evaluate('window.__loaded')) === 10, 'all scripts ran');
+    },
+    teardown: wvClose,
+  },
+  {
+    name: 'wv.navigate.dom2k',
+    group: 'webview',
+    what: 'view.navigate of a 2000-row document',
+    iterations: 30,
+    webview: true,
+    setup: wvSetup('about:blank'),
+    run: async (s, i, env) => {
+      await s.view.navigate(`${env.site}/dom?n=2000`);
+    },
+    teardown: wvClose,
+  },
+  {
+    name: 'wv.evaluate',
+    group: 'webview',
+    what: 'view.evaluate of a small expression',
+    iterations: 300,
+    webview: true,
+    setup: wvSetup('/simple'),
+    run: async (s, i) => {
+      assert((await s.view.evaluate(`${i}+1`)) === i + 1, 'evaluate');
+    },
+    teardown: wvClose,
+  },
+  {
+    name: 'wv.evaluate.query2k',
+    group: 'webview',
+    what: 'view.evaluate of a selector query over a 2000-row document',
+    iterations: 200,
+    webview: true,
+    setup: wvSetup('/dom?n=2000'),
+    run: async (s) => {
+      const n = await s.view.evaluate(`document.querySelectorAll('.item[data-k="3"] span').length`);
+      assert(n === 286, `query count ${n}`);
+    },
+    teardown: wvClose,
+  },
+  {
+    name: 'wv.cdp.Runtime.evaluate',
+    group: 'webview',
+    what: 'view.cdp("Runtime.evaluate") raw round trip through Bun',
+    iterations: 300,
+    webview: true,
+    setup: wvSetup('/simple'),
+    run: async (s) => {
+      const r = await s.view.cdp('Runtime.evaluate', { expression: '1+1', returnByValue: true });
+      assert(r.result.value === 2, 'cdp evaluate');
+    },
+    teardown: wvClose,
+  },
+  {
+    name: 'wv.click.selector',
+    group: 'webview',
+    what: 'view.click("#b"): actionability checks, then a real mouse click',
+    iterations: 100,
+    webview: true,
+    setup: async (env) => ({ ...(await wvSetup('/click')(env)), n: 0 }),
+    run: async (s) => {
+      await s.view.click('#b');
+      s.n++;
+    },
+    check: async (s) => {
+      const clicks = await s.view.evaluate('window.__clicks');
+      assert(clicks === s.n, `clicks ${clicks} != ${s.n}`);
+    },
+    teardown: wvClose,
+  },
+  {
+    name: 'wv.type',
+    group: 'webview',
+    what: 'view.type of 10 characters into a focused input',
+    iterations: 100,
+    webview: true,
+    setup: async (env) => {
+      const s = await wvSetup('/click')(env);
+      await s.view.evaluate(`document.getElementById('t').focus()`);
+      return { ...s, n: 0 };
+    },
+    run: async (s) => {
+      await s.view.type('abcdefghij');
+      s.n += 10;
+    },
+    check: async (s) => {
+      const len = await s.view.evaluate(`document.getElementById('t').value.length`);
+      assert(len === s.n, `typed ${len} != ${s.n}`);
+    },
+    teardown: wvClose,
+  },
+  {
+    name: 'wv.flow.e2e',
+    group: 'webview',
+    what: 'Whole test: open view, navigate form, click + type name, click submit, wait for result, close',
+    iterations: 15,
+    webview: true,
+    run: async (s, i, env) => {
+      const t0 = now();
+      const phases = {};
+      const lap = (k) => {
+        phases[k] = now() - t0;
+      };
+      const view = wvOpen(env);
+      try {
+        await view.navigate(`${env.site}/form`);
+        lap('navigate');
+        await view.click('#name');
+        await view.type(`w${i}`);
+        await view.click('#submit');
+        lap('input');
+        await wvPollText(view, 'out', `Hello, w${i}`);
+        lap('result');
+      } finally {
+        await view.close();
+      }
+      lap('close');
+      return phases;
+    },
+  },
+
+  // ---- Playwright (opt-in with --playwright; playwright-core pinned in bench/package.json) ----
   {
     name: 'pw.connectOverCDP',
     group: 'playwright',
@@ -739,6 +901,30 @@ const SCENARIOS = [
   },
 ];
 
+function wvOpen(env) {
+  return new env.WebView({ width: 1280, height: 720, backend: { type: 'chrome', url: env.wsUrl } });
+}
+// A view already on `path` (or about:blank); Bun.WebView needs one navigate before cdp() works.
+function wvSetup(path) {
+  return async (env) => {
+    const view = wvOpen(env);
+    await view.navigate(path === 'about:blank' ? path : `${env.site}${path}`);
+    return { view };
+  };
+}
+async function wvClose(s) {
+  await s.view?.close();
+}
+async function wvPollText(view, id, want) {
+  let txt = '';
+  for (let k = 0; k < 200; k++) {
+    txt = await view.evaluate(`document.getElementById(${JSON.stringify(id)}).textContent`);
+    if (txt === want) return;
+    await sleep(2);
+  }
+  throw new Error(`#${id} = ${JSON.stringify(txt)}, want ${JSON.stringify(want)}`);
+}
+
 async function pwConnect(env) {
   return { browser: await env.playwright.chromium.connectOverCDP(env.wsUrl, { timeout: 10_000 }) };
 }
@@ -842,11 +1028,11 @@ async function runScenario(sc, bin, site, playwright) {
   const result = { startupMs: b.startupMs, samples: [], phases: {} };
   let cdp;
   let state = {};
-  const env = { wsUrl: b.wsUrl, site, playwright };
+  const env = { wsUrl: b.wsUrl, site, playwright, WebView: globalThis.Bun?.WebView };
   try {
     await withTimeout(
       (async () => {
-        if (!sc.playwright) env.cdp = cdp = await Cdp.open(b.wsUrl);
+        if (!sc.playwright && !sc.webview) env.cdp = cdp = await Cdp.open(b.wsUrl);
         if (sc.setup) state = await sc.setup(env);
         for (let i = 0; i < warmup; i++) await sc.run(state, -1 - i, env);
         const before = await cpuSnapshot(b.cp.pid);
@@ -931,14 +1117,18 @@ async function main() {
     if (!fs.existsSync(b.path)) throw new Error(`no such binary: ${b.path}`);
   }
   let playwright = null;
-  if (!flag('--no-playwright') && selected.some((s) => s.playwright)) {
+  if (flag('--playwright') && selected.some((s) => s.playwright)) {
     try {
       playwright = require(process.env.PLAYWRIGHT_CORE_PATH ?? 'playwright-core');
     } catch {
       console.error('cdp-perf: playwright-core not installed (run `bun install` in bench/); skipping Playwright scenarios');
     }
   }
-  const scenarios = selected.filter((s) => !s.playwright || playwright);
+  const webview = globalThis.Bun?.WebView;
+  if (!webview && selected.some((s) => s.webview)) {
+    console.error('cdp-perf: not running under Bun with Bun.WebView; skipping webview scenarios (run with `bun`)');
+  }
+  const scenarios = selected.filter((s) => (!s.playwright || playwright) && (!s.webview || webview));
   if (!scenarios.length) throw new Error('no scenarios selected');
 
   fs.mkdirSync(path.dirname(path.resolve(OUT)), { recursive: true });
@@ -947,6 +1137,7 @@ async function main() {
     startedAt: new Date().toISOString(),
     host: { platform: process.platform, release: os.release(), arch: process.arch, cpus: os.cpus().length, cpuModel: os.cpus()[0]?.model ?? '?', totalMemMiB: Math.round(os.totalmem() / 2 ** 20), hostname: os.hostname() },
     node: process.version,
+    bun: globalThis.Bun?.version ?? null,
     playwright: playwright ? require(`${process.env.PLAYWRIGHT_CORE_PATH ?? 'playwright-core'}/package.json`).version : null,
     rounds: ROUNDS,
     scale: SCALE,

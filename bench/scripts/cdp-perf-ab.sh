@@ -4,7 +4,7 @@
 # Usage: bench/scripts/cdp-perf-ab.sh BASE_REF [HEAD_REF] [-- cdp-perf.mjs options...]
 #   BASE_REF   any commit-ish (e.g. origin/main); built in its own worktree and target directory
 #   HEAD_REF   commit-ish to compare; omitted = the current working tree, uncommitted changes included
-#   options after `--` go to cdp-perf.mjs (default: --rounds 5)
+#   options after `--` go to cdp-perf.mjs, which runs under bun (default: --rounds 5)
 #
 # Each revision gets a target directory keyed by its full SHA under $LP_PERF_WORK (default
 # ${TMPDIR:-/tmp}/lp-cdp-perf), so a rebuild of the same SHA is reused and two SHAs never share one: a
@@ -59,6 +59,6 @@ fi
 
 out="$work/results/${base_sha:0:9}-${head_name}-$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$out"
-node "$root/bench/scripts/cdp-perf.mjs" --bin "base=$base_bin" --bin "head=$head_bin" --out "$out/run.json" "${perf_args[@]}" || true
+bun "$root/bench/scripts/cdp-perf.mjs" --bin "base=$base_bin" --bin "head=$head_bin" --out "$out/run.json" "${perf_args[@]}" || true
 echo "cdp-perf-ab: results in $out" >&2
 node "$root/bench/scripts/cdp-perf-compare.mjs" "$out/run.json" --base base --head head --md "$out/compare.md"
