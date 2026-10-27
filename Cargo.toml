@@ -32,6 +32,11 @@ debug = "line-tables-only"
 # Cargo otherwise strips after our linker signs when DEBUG=0, losing allow-jit.
 strip = "none"
 
+[profile.dev]
+# Backtraces keep file:line; debuggers lose local variables. Cuts clean builds
+# and target/ size; incremental rebuilds are unaffected.
+debug = "line-tables-only"
+
 [profile.dev.package."*"]
 opt-level = 2
 # Line tables keep backtraces readable; full debug info for dependencies is
