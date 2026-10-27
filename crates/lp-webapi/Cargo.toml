@@ -27,5 +27,11 @@ url = "2"
 name = "integration"
 path = "tests/integration.rs"
 
+# Observes GC outcomes (a closed realm must be collected after bounded synchronous GC), so it must not
+# share a process with other engines collecting concurrently: its own binary, like lp-js string_allocation.
+[[test]]
+name = "payload_cycles"
+path = "tests/payload_cycles.rs"
+
 [lints]
 workspace = true
