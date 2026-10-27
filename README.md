@@ -52,7 +52,8 @@ from the environment, for launchers that cannot pass flags.
 
 To hide the app's own boot time as well, `--prepare http://localhost:3000/dashboard`
 (env `LIGHTNINGPANDA_PREPARE`) keeps one page per connection booted at that URL
-before any client connects and boots the next one whenever the thread is quiet.
+before any client connects and boots the next one whenever the thread is quiet
+or the connection has no open page.
 A test takes it with the browser-level CDP command
 `Lightningpanda.acquirePreparedPage {url}`: the page is announced like a new
 target, so Playwright sees it as a page of its default context, already loaded.
@@ -67,6 +68,18 @@ closes, capping the count at the pool size; the default boots it as soon as
 the thread is quiet. Closed pages are collected and their memory returned to
 the OS right away (`LIGHTNINGPANDA_RELEASE_ON_CLOSE=0` disables that for
 comparisons); a 20-test loop on a 2 MB app plateaus at 275 MB instead of 323.
+
+### Fast E2E tests: `LP.run` and `lightningpanda-test`
+
+Page sessions also accept a native test driver, `LP.run {steps}`: a whole
+scenario (navigate, locate, click, fill, press, check, read, check requests)
+runs on the browser thread and replies once, waiting in place instead of
+polling from the client. [`packages/lightningpanda-test`](packages/lightningpanda-test)
+is the `bun test` client for it, with Playwright-shaped locators and signed-in
+page pools; its [LLM.md](packages/lightningpanda-test/LLM.md) is the guide for
+coding agents writing tests with it. TOS's positions-close test runs in about
+3 ms per test this way, against about 34 ms in Playwright
+(`bench/results/lp-tos-e501cef`).
 
 ## License
 

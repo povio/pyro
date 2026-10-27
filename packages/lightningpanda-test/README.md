@@ -53,6 +53,8 @@ test.concurrent('closes a position', async () => {
   request the page made during the run) and `ms`. A failure throws `RunError`
   naming the step and why it was still waiting.
 
+Coding agents: read [LLM.md](LLM.md) before writing tests.
+
 `examples/positions-close.test.ts` is TOS's `positions-close.e2e.ts` ported.
 `bench/scripts/cdp-perf.mjs --filter '^(pw\.)?tos\.'` runs the same flow
 against a TOS-shaped app in the bench site, as Playwright, step by step, as one
