@@ -137,7 +137,7 @@ export class Lightningpanda {
     this.profiles.set(name, { ids, profile, scripts });
   }
 
-  /** Waits until every connection has a booted page of profile `name`. */
+  /** Waits until every connection's pool of profile `name` is fully booted. */
   async warm(name: string, timeoutMs = 5_000): Promise<void> {
     const entry = this.profiles.get(name);
     if (!entry?.ids) return;
@@ -146,7 +146,9 @@ export class Lightningpanda {
       this.conns.map(async (c, i) => {
         for (;;) {
           const { pages } = await c.cdp.send('Lightningpanda.preparedPages');
-          if (pages.some((p: { profileId: number; ready: boolean }) => p.profileId === entry.ids![i] && p.ready)) return;
+          const ready = pages.filter((p: { profileId: number; ready: boolean }) => p.profileId === entry.ids![i] && p.ready);
+          // A partly booted pool is still booting on this thread, in the way of the next test.
+          if (ready.length >= (entry.profile.pool ?? 2)) return;
           if (Date.now() > deadline) throw new Error(`no booted page for ${name} after ${timeoutMs} ms`);
           await new Promise((r) => setTimeout(r, 2));
         }
