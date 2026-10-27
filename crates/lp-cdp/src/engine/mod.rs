@@ -7,6 +7,7 @@
 //! while JavaScript is on the stack.
 
 mod dom;
+mod driver;
 mod fetch;
 mod input;
 mod metrics;
@@ -278,6 +279,8 @@ pub struct EngineHost {
     /// Pages booted before the connection (`preboot`), handed to the
     /// protocol layer once by `Host::take_prebooted`.
     prebooted: Vec<crate::target::PrebootedEntry>,
+    /// `LP.act` / `LP.expect` commands waiting for their page to change.
+    waiters: driver::Waiters,
 }
 
 /// A page booted on a thread before any connection, with its context.
@@ -437,6 +440,7 @@ impl EngineHost {
             pending: runtime::PendingReplies::default(),
             popup_requests: Vec::new(),
             prebooted: Vec::new(),
+            waiters: driver::Waiters::default(),
         })
     }
 
@@ -454,14 +458,17 @@ impl EngineHost {
         let collector = &self.collector;
         let thread = &mut self.thread;
         let network_wake = &self.network_wake;
+        let waiters = &self.waiters;
+        let deadline = [deadline, waiters.next_deadline()].into_iter().flatten().min();
         thread.event_loop.run_until(&mut thread.browser, deadline, false, |_| {
-            wake() || !collector.is_empty() || network_wake.ready()
+            wake() || !collector.is_empty() || network_wake.ready() || waiters.ready()
         })
     }
 
     /// Disposes every page and realm (connection teardown).
     pub fn close_all(&mut self) {
         self.pending.cancel_all();
+        self.waiters.clear();
         self.sessions.clear();
         self.pages.clear();
         self.thread.browser.close_all();
@@ -565,6 +572,7 @@ impl EngineHost {
 
     /// Translates queued engine notifications into CDP events, in order.
     pub fn flush(&mut self) {
+        self.service_waiters();
         while let Some(item) = self.collector.pop() {
             match item {
                 // Owner-delivered network observations stay in order with
@@ -607,6 +615,7 @@ impl EngineHost {
             "Network" => self.network_domain(action, cmd),
             "Fetch" => self.fetch_domain(action, cmd),
             "Input" => self.input_domain(action, cmd),
+            "LP" => self.driver_domain(action, cmd),
             "Log" if matches!(action, "enable" | "disable") => Ok(Some(serde_json::json!({}))),
             _ => Err(CdpError::unsupported(&cmd.command.method)),
         }

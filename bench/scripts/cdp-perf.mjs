@@ -755,6 +755,84 @@ const SCENARIOS = [
     },
   },
 
+  // ---- LP.* native driver through the same Bun.WebView client (view.cdp) ----
+  // One command per action: locators, actionability and waiting run in the browser.
+  {
+    name: 'wv.lp.click',
+    group: 'webview',
+    what: 'LP.act click on "#b" through view.cdp (compare wv.click.selector)',
+    iterations: 100,
+    webview: true,
+    setup: async (env) => ({ ...(await wvSetup('/click')(env)), n: 0 }),
+    run: async (s) => {
+      await s.view.cdp('LP.act', { locator: { css: '#b' }, action: 'click' });
+      s.n++;
+    },
+    check: async (s) => {
+      const clicks = await s.view.evaluate('window.__clicks');
+      assert(clicks === s.n, `clicks ${clicks} != ${s.n}`);
+    },
+    teardown: wvClose,
+  },
+  {
+    name: 'wv.lp.fill',
+    group: 'webview',
+    what: 'LP.act fill of 10 characters into "#t" (compare wv.type, which needs a focused input)',
+    iterations: 100,
+    webview: true,
+    setup: wvSetup('/click'),
+    run: async (s, i) => {
+      await s.view.cdp('LP.act', { locator: { css: '#t' }, action: 'fill', value: `abcdefg${String(i).padStart(3, '0')}` });
+    },
+    check: async (s) => {
+      const len = await s.view.evaluate(`document.getElementById('t').value.length`);
+      assert(len === 10, `value length ${len}`);
+    },
+    teardown: wvClose,
+  },
+  {
+    name: 'wv.lp.flow.e2e',
+    group: 'webview',
+    what: 'wv.flow.e2e on LP.*: open view, navigate form, fill name, click submit, LP.expect the result, close',
+    iterations: 15,
+    webview: true,
+    run: async (s, i, env) => lpFlow(env, i, false, false),
+  },
+  {
+    name: 'wv.lp.flow.pipelined',
+    group: 'webview',
+    what: 'wv.lp.flow.e2e with fill and click sent without awaiting (one wait for the expect)',
+    iterations: 15,
+    webview: true,
+    run: async (s, i, env) => lpFlow(env, i, true, false),
+  },
+  {
+    name: 'wv.lp.flow.role',
+    group: 'webview',
+    what: 'wv.lp.flow.e2e with label / role / text locators instead of CSS ids',
+    iterations: 15,
+    webview: true,
+    run: async (s, i, env) => lpFlow(env, i, false, true),
+  },
+  ...[
+    ['css', { css: '.item[data-k="3"] span' }, 286],
+    ['testId', { testId: '3', testIdAttribute: 'data-k' }, 286],
+    ['text', { text: 'row 1999', exact: true }, 1],
+    ['role', { role: 'link', name: 'link' }, 2000],
+  ].map(([kind, locator, want]) => ({
+    name: `wv.lp.locate.${kind}`,
+    group: 'webview',
+    what: `LP.query count of a ${kind} locator over a 2000-row document (compare wv.evaluate.query2k)`,
+    iterations: 100,
+    webview: true,
+    setup: wvSetup('/dom?n=2000'),
+    run: async (s) => {
+      const r = await s.view.cdp('LP.query', { locator, read: 'count' });
+      assert(r.value === want, `${kind} count ${r.value} != ${want}`);
+    },
+    teardown: wvClose,
+  })),
+
   // ---- Playwright (opt-in with --playwright; playwright-core pinned in bench/package.json) ----
   {
     name: 'pw.connectOverCDP',
@@ -918,6 +996,37 @@ function wvSetup(path) {
 }
 async function wvClose(s) {
   await s.view?.close();
+}
+// The form flow on LP.*: fill, click, then one LP.expect that the browser answers
+// when the fetch response has updated the DOM (no client polling).
+async function lpFlow(env, i, pipelined, semantic) {
+  const t0 = now();
+  const phases = {};
+  const lap = (k) => {
+    phases[k] = now() - t0;
+  };
+  const name = semantic ? { label: 'Name' } : { css: '#name' };
+  const submit = semantic ? { role: 'button', name: 'Send' } : { css: '#submit' };
+  const out = semantic ? { text: `Hello, w${i}`, exact: true } : { css: '#out' };
+  const view = wvOpen(env);
+  try {
+    await view.navigate(`${env.site}/form`);
+    lap('navigate');
+    const fill = view.cdp('LP.act', { locator: name, action: 'fill', value: `w${i}` });
+    if (!pipelined) await fill;
+    const click = view.cdp('LP.act', { locator: submit, action: 'click' });
+    if (!pipelined) await click;
+    lap('input');
+    const expect = semantic
+      ? view.cdp('LP.expect', { locator: out, assert: 'visible' })
+      : view.cdp('LP.expect', { locator: out, assert: 'text', expected: `Hello, w${i}` });
+    await Promise.all([fill, click, expect]);
+    lap('result');
+  } finally {
+    await view.close();
+  }
+  lap('close');
+  return phases;
 }
 async function wvPollText(view, id, want) {
   let txt = '';

@@ -345,7 +345,7 @@ impl EngineHost {
 }
 
 /// `DOM.scrollIntoViewIfNeeded` for `node` in its document, queueing the scroll events.
-fn reveal(page: &Rc<PageDom>, node: NodeId) {
+pub(super) fn reveal(page: &Rc<PageDom>, node: NodeId) {
     let moved = page.layout.borrow_mut().scroll_into_view_if_needed_targets(&page.dom.borrow(), node);
     for target in moved {
         let node = match target {

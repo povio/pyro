@@ -3875,3 +3875,81 @@ fn host_create_close_all_drop_repeats_on_one_thread() {
         drop(h);
     }
 }
+
+/// `data:` URL of an HTML document (every byte outside a safe set escaped).
+fn html_url(html: &str) -> String {
+    let mut url = String::from("data:text/html,");
+    for b in html.bytes() {
+        if b.is_ascii_alphanumeric() || b"<>=/-_.:;'\"(){}!,+".contains(&b) {
+            url.push(b as char);
+        } else {
+            url.push_str(&format!("%{b:02X}"));
+        }
+    }
+    url
+}
+
+fn load_html(h: &mut Harness, html: &str) {
+    h.page("Page.enable", json!({}));
+    let events = h.page_with_events("Page.navigate", json!({ "url": html_url(html) }));
+    if !events.iter().any(|e| e["method"] == "Page.loadEventFired") {
+        h.until_event(|m| m["method"] == "Page.loadEventFired");
+    }
+}
+
+const DRIVER_FORM: &str = r#"<!doctype html><body>
+<label for="name">Your name</label> <input id="name">
+<button id="go">Send</button> <button id="off" disabled>Off</button>
+<div id="out"></div>
+<div data-testid="row">one</div><div data-testid="row">two</div>
+<a href="/x" style="display:none">Hidden link</a>
+<script>
+  document.getElementById('go').addEventListener('click', () => {
+    const name = document.getElementById('name').value;
+    setTimeout(() => { document.getElementById('out').textContent = 'Hello, ' + name; }, 30);
+  });
+</script>"#;
+
+#[test]
+fn driver_fills_clicks_and_waits_for_a_later_change() {
+    let mut h = Harness::new();
+    load_html(&mut h, DRIVER_FORM);
+    let r = h.page("LP.act", json!({"locator":{"label":"your name"},"action":"fill","value":"Ada"}));
+    assert_eq!(r["result"], json!({}), "{r}");
+    assert_eq!(h.page("LP.query", json!({"locator":{"css":"input"},"read":"value"}))["result"]["value"], "Ada");
+    // Filling again replaces the value.
+    h.page("LP.act", json!({"locator":{"css":"input"},"action":"fill","value":"Grace"}));
+    let r = h.page("LP.act", json!({"locator":{"role":"button","name":"Send"},"action":"click"}));
+    assert_eq!(r["result"], json!({}), "{r}");
+    // The text appears 30 ms later, from a timer: the expect is answered
+    // once that task changed the DOM, with no further command.
+    let start = Instant::now();
+    let r = h.page("LP.expect", json!({"locator":{"css":"div[id=out]"},"assert":"text","expected":"Hello, Grace"}));
+    assert_eq!(r["result"]["actual"], "Hello, Grace", "{r}");
+    assert!(start.elapsed() >= Duration::from_millis(20) && start.elapsed() < Duration::from_secs(2));
+    let r = h.page("LP.expect", json!({"locator":{"text":"hello, grace"},"assert":"visible"}));
+    assert_eq!(r["result"]["actual"], true, "{r}");
+}
+
+#[test]
+fn driver_locators_are_strict_and_report_why_they_wait() {
+    let mut h = Harness::new();
+    load_html(&mut h, DRIVER_FORM);
+    let r = h.page("LP.act", json!({"locator":{"testId":"row"},"action":"click"}));
+    let message = r["error"]["message"].as_str().unwrap_or_default();
+    assert!(message.contains("strict mode violation") && message.contains("2 elements"), "{r}");
+    let r = h.page("LP.query", json!({"locator":{"testId":"row","nth":-1},"read":"text"}));
+    assert_eq!(r["result"]["value"], "two", "{r}");
+    let r = h.page("LP.expect", json!({"locator":{"testId":"row"},"assert":"count","expected":2}));
+    assert_eq!(r["result"]["actual"], 2, "{r}");
+    // Hidden elements have no role.
+    let r = h.page("LP.query", json!({"locator":{"role":"link"},"read":"count"}));
+    assert_eq!(r["result"]["value"], 0, "{r}");
+    let r = h.page("LP.expect", json!({"locator":{"css":".missing"},"assert":"hidden"}));
+    assert_eq!(r["result"]["actual"], false, "{r}");
+    let r = h.page("LP.act", json!({"locator":{"role":"button","name":"Off"},"action":"click","timeout":50}));
+    let message = r["error"]["message"].as_str().unwrap_or_default();
+    assert!(message.contains("timed out after 50 ms") && message.contains("disabled"), "{r}");
+    let r = h.page("LP.act", json!({"locator":{"css":"p","text":"x"},"action":"click"}));
+    assert!(r["error"]["message"].as_str().unwrap_or_default().contains("exactly one"), "{r}");
+}
