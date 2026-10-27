@@ -30,7 +30,7 @@ pub use loader::{
 };
 pub use nav::{History, HistoryEntry, Location, PageNav, Performance};
 pub use network_idle::NetworkIdle;
-pub use window::{Window, WindowData};
+pub use window::{note_client_activity, Window, WindowData};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct PageId(pub u32);

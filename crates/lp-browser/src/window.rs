@@ -10,11 +10,37 @@ use lp_runtime::{Scheduler, TimerId};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Frame interval without rendering. Upstream Lightpanda schedules each
 /// animation frame callback 5 ms out (`Window.requestAnimationFrame`).
 const FRAME_MS: u64 = 5;
+/// Frame interval while an automation client is driving the page. Nothing
+/// renders, so a frame only paces script; clients that wait for frames (e.g.
+/// Bun.WebView's "stable for two frames" click check) would otherwise wait
+/// on an idle clock.
+const ACTIVE_FRAME_MS: u64 = 1;
+/// How long after a client command frames stay on [`ACTIVE_FRAME_MS`]. Long
+/// enough to cover the frames a command's follow-up work waits for (a few
+/// ms), short enough that a page with a perpetual `requestAnimationFrame`
+/// loop falls back to the 5 ms cadence as soon as the client goes quiet.
+const CLIENT_ACTIVE_WINDOW: Duration = Duration::from_millis(50);
+
+thread_local! {
+    /// Until when this browser thread counts its client as active.
+    static CLIENT_ACTIVE_UNTIL: Cell<Option<Instant>> = const { Cell::new(None) };
+}
+
+/// Notes that an automation client just sent a command to this thread's
+/// browser: animation frames run on the short interval for a little while.
+pub fn note_client_activity() {
+    CLIENT_ACTIVE_UNTIL.with(|c| c.set(Some(Instant::now() + CLIENT_ACTIVE_WINDOW)));
+}
+
+fn frame_interval() -> Duration {
+    let active = CLIENT_ACTIVE_UNTIL.with(|c| c.get()).is_some_and(|until| Instant::now() < until);
+    Duration::from_millis(if active { ACTIVE_FRAME_MS } else { FRAME_MS })
+}
 
 #[derive(Default)]
 struct AnimationFrame {
@@ -266,7 +292,7 @@ fn request_animation_frame<'s>(s: &Scope<'s>, w: &WindowData, cb: Persistent) ->
     if frame.timer.is_none() {
         // Timers must not keep a disposed realm alive: hold it weakly.
         let realm_weak = s.realm().downgrade();
-        frame.timer = Some(w.sched.set_timer(Duration::from_millis(FRAME_MS), false, true, move |_browser| {
+        frame.timer = Some(w.sched.set_timer(frame_interval(), false, true, move |_browser| {
             let Some(realm) = realm_weak.upgrade() else { return };
             let Ok(scope) = realm.scope() else { return };
             run_animation_frame(&scope);

@@ -71,6 +71,40 @@ fn initial_navigation_event_order() {
     assert_eq!(*rec.events.borrow(), ["navigate", "realm:main", "navigated", "dcl", "load", "almost-idle", "idle"]);
 }
 
+/// Elapsed ms of ten chained animation frames.
+fn ten_frames_ms(t: &mut BrowserThread, rec: &Recorder, page: PageId) -> f64 {
+    rec.console.borrow_mut().clear();
+    eval(
+        t,
+        page,
+        "{ const start = performance.now(); let n = 0;
+           const step = () => { if (++n < 10) requestAnimationFrame(step); else console.log('frames ' + (performance.now() - start)); };
+           requestAnimationFrame(step); }",
+    );
+    let r = t.run_until_idle(Some(Instant::now() + Duration::from_secs(5)));
+    assert_eq!(r, RunOutcome::Idle);
+    let log = rec.console.borrow();
+    let line = log.iter().find_map(|l| l.strip_prefix("log:frames ")).expect("frames ran");
+    line.parse().unwrap()
+}
+
+#[test]
+fn animation_frames_run_every_5_ms_without_a_client() {
+    let (mut t, rec, page) = setup();
+    let ms = ten_frames_ms(&mut t, &rec, page);
+    // Loop timers never fire early: ten frames take at least 10 x 5 ms.
+    assert!(ms >= 49.0, "idle frames came too fast: {ms} ms");
+}
+
+#[test]
+fn animation_frames_run_every_1_ms_while_a_client_is_active() {
+    let (mut t, rec, page) = setup();
+    crate::note_client_activity();
+    let ms = ten_frames_ms(&mut t, &rec, page);
+    // 10 x 1 ms plus loop overhead; the idle cadence would need 50 ms.
+    assert!(ms < 40.0, "active frames too slow: {ms} ms");
+}
+
 #[test]
 fn animation_frame_callbacks_share_a_frame_and_timestamp() {
     let (mut t, rec, page) = setup();

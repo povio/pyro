@@ -359,6 +359,7 @@ fn run_browser_thread(
                         crate::perf::record_since("io.to_browser", posted);
                     }
                     permits.add_permits(1);
+                    lp_browser::note_client_activity();
                     let handle = crate::perf::span("cdp.handle_text");
                     browser.handle_text(&text, &mut sink);
                     drop(handle);
