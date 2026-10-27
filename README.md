@@ -39,7 +39,16 @@ An explicit strip override requires re-signing the final binary afterward. Check
 lightningpanda version
 lightningpanda eval -e 'setTimeout(() => console.log("hi"), 10)'
 lightningpanda eval script.js --timeout-ms 5000
+lightningpanda serve --port 9222
+# Test runs that need no front-end server and no per-context auth setup:
+# serve a build directory in place of its origin and preload localStorage.
+lightningpanda serve --static http://localhost:3000=/path/to/dist \
+  --local-storage auth.json   # {"http://localhost:3000": {"token": "..."}}
 ```
+
+`serve --help` lists every option. `--static` and `--local-storage` also read
+`LIGHTNINGPANDA_STATIC` (entries separated by `;`) and `LIGHTNINGPANDA_LOCAL_STORAGE`
+from the environment, for launchers that cannot pass flags.
 
 ## License
 

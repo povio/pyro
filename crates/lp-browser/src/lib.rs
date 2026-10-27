@@ -393,6 +393,8 @@ pub struct Browser {
     contexts: Vec<ContextState>,
     /// When set, every new context gets its own NetClient with this config.
     net_config: Option<lp_net::NetConfig>,
+    /// Entries every context's local storage starts with.
+    local_storage_seed: lp_webapi::StorageSeed,
     /// Completions of in-flight fetches, keyed by completion id.
     pub(crate) completions: std::collections::HashMap<u64, FetchDone>,
 }
@@ -509,6 +511,7 @@ impl BrowserThread {
                 local_storage: Default::default(),
             }],
             net_config: None,
+            local_storage_seed: Default::default(),
             completions: std::collections::HashMap::new(),
         };
         Ok(BrowserThread { event_loop, browser })
@@ -523,6 +526,16 @@ impl BrowserThread {
     pub fn enable_network(&mut self, config: lp_net::NetConfig) -> std::io::Result<()> {
         self.browser.net_config = Some(config);
         self.browser.attach_network(DEFAULT_CONTEXT)
+    }
+
+    /// Preloads local storage: every browser context (the existing ones and
+    /// those created later) gets `seed`'s entries. Existing areas keep their
+    /// other keys; no `storage` events fire.
+    pub fn set_local_storage_seed(&mut self, seed: lp_webapi::StorageSeed) {
+        for context in &self.browser.contexts {
+            context.local_storage.seed(&seed);
+        }
+        self.browser.local_storage_seed = seed;
     }
 
     /// Runs tasks/timers until idle or the deadline.
@@ -584,7 +597,8 @@ impl Browser {
     /// Creates an isolated browser context with its own network state.
     pub fn create_context(&mut self) -> std::io::Result<ContextId> {
         let id = ContextId(self.next() as u32);
-        self.contexts.push(ContextState { id, loader: None, net: None, local_storage: Default::default() });
+        let local_storage = lp_webapi::StorageNamespace::seeded(&self.local_storage_seed);
+        self.contexts.push(ContextState { id, loader: None, net: None, local_storage });
         if self.net_config.is_some() {
             self.attach_network(id)?;
         }

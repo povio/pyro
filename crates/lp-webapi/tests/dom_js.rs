@@ -646,6 +646,43 @@ fn storage_page(
 }
 
 #[test]
+fn storage_seed_preloads_local_storage_per_origin() {
+    let engine = Engine::new().unwrap();
+    register(&engine);
+    let seed = StorageSeed::new(vec![
+        // A URL normalizes to its origin; the default port is dropped.
+        ("http://example.test:80/app/index.html".into(), vec![("token".into(), "synthetic".into())]),
+        ("http://example.test".into(), vec![("theme".into(), "dark".into()), ("token".into(), "last".into())]),
+        ("http://other.test:8080".into(), vec![("k".into(), "v".into())]),
+    ])
+    .unwrap();
+    assert_eq!(seed.summary(), vec![("http://example.test".to_string(), 2), ("http://other.test:8080".to_string(), 1)]);
+    assert!(StorageSeed::new(vec![("data:text/html,x".into(), vec![])]).is_err());
+    assert!(StorageSeed::new(vec![("not a url".into(), vec![])]).is_err());
+    assert!(StorageSeed::default().is_empty());
+
+    let local = StorageNamespace::seeded(&seed);
+    assert_eq!(local.get("http://example.test", "token").as_deref(), Some("last"));
+    let (_p1, r1) = storage_page(&engine, "http://example.test/a", local.clone(), StorageNamespace::default());
+    assert_eq!(
+        eval(&r1, "localStorage.length + ':' + localStorage.token + ':' + localStorage.getItem('theme')"),
+        "2:last:dark"
+    );
+    // Seeded bytes count against the quota of later writes.
+    assert_eq!(eval(&r1, "localStorage.setItem('more', 'x'); localStorage.length"), "3");
+    let (_p2, r2) = storage_page(&engine, "http://other.test:8080/", local.clone(), StorageNamespace::default());
+    assert_eq!(eval(&r2, "localStorage.k + ':' + localStorage.getItem('token')"), "v:null");
+    // Another namespace from the same seed is an independent copy.
+    let (_p3, r3) =
+        storage_page(&engine, "http://example.test/", StorageNamespace::seeded(&seed), StorageNamespace::default());
+    assert_eq!(eval(&r3, "localStorage.length + ':' + localStorage.getItem('more')"), "2:null");
+    // Unseeded namespaces are unaffected.
+    let (_p4, r4) =
+        storage_page(&engine, "http://example.test/", StorageNamespace::default(), StorageNamespace::default());
+    assert_eq!(eval(&r4, "localStorage.length"), "0");
+}
+
+#[test]
 fn storage_partitions_origins_contexts_and_page_sessions() {
     let engine = Engine::new().unwrap();
     register(&engine);

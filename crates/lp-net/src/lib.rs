@@ -8,6 +8,7 @@ pub mod cookies;
 pub mod cors;
 pub mod data_url;
 pub mod request;
+pub mod static_files;
 mod subscription;
 pub use subscription::{NetSubscription, NetWake, SubscriptionError, SubscriptionLimits};
 
@@ -17,6 +18,7 @@ pub use client::{
     NetSettings, PausedRequest, RequestInfo, ResponseSink,
 };
 pub use cookies::CookieJar;
+pub use static_files::{StaticFile, StaticFiles, StaticHit, StaticMemoryHit};
 /// HTTP types used by Request/ResponseHead for native consumers.
 pub use http;
 pub use request::*;

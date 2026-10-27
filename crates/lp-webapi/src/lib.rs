@@ -71,7 +71,7 @@ pub use node::{wrap_node, NodeData};
 pub use page::{
     DownloadRequest, FocusTarget, FocusTransition, IframeAttribute, NavigationRequest, PageDom, PageHooks, RemotePoster,
 };
-pub use storage::StorageNamespace;
+pub use storage::{StorageNamespace, StorageSeed};
 pub use target::{EventTarget, EventTargetData};
 pub use window::{define_members, WindowHost};
 pub use xhr::XhrLimits;
