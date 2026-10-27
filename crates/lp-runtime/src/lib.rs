@@ -120,28 +120,53 @@ mod wake {
         /// Sleeps until `wait` elapses (forever when `None`) or a notifier
         /// writes or every notifier is gone. Returns whether a notifier
         /// still exists (`false` once the write end is closed everywhere).
-        pub(super) fn sleep(&self, wait: Option<Duration>) -> bool {
+        pub(super) fn sleep(&self, wait: Option<Duration>, watch: Option<&super::FdWatch>) -> bool {
             // poll(2) counts whole milliseconds: round up so the loop never
             // wakes before a deadline and spins.
             let timeout = match wait {
                 None => -1,
                 Some(w) => i32::try_from(w.as_millis() + u128::from(w.subsec_nanos() % 1_000_000 != 0)).unwrap_or(i32::MAX),
             };
-            if self.1.get() {
-                // No notifier can wake us: a plain timed wait (still poll(2),
-                // which is not coalesced). `None` would block forever: callers
-                // never pass it once every sender is gone.
+            let watched = watch.and_then(|w| {
+                let events = (if w.read.get() { libc::POLLIN } else { 0 }) | (if w.write.get() { libc::POLLOUT } else { 0 });
+                (events != 0).then(|| libc::pollfd { fd: w.fd, events, revents: 0 })
+            });
+            let mut fds = [libc::pollfd { fd: self.0.as_raw_fd(), events: libc::POLLIN, revents: 0 }; 2];
+            let mut nfds = 0;
+            if !self.1.get() {
+                nfds += 1;
+            }
+            if let Some(w) = watched {
+                fds[nfds] = w;
+                nfds += 1;
+            }
+            let pipe_watched = !self.1.get();
+            if nfds == 0 {
+                // No notifier and no descriptor: a plain timed wait (still
+                // poll(2), which is not coalesced). `None` would block forever:
+                // callers never pass it once every sender is gone.
                 // SAFETY: zero descriptors; poll only sleeps.
                 unsafe { libc::poll(std::ptr::null_mut(), 0, timeout.max(0)) };
                 return false;
             }
-            let mut fd = libc::pollfd { fd: self.0.as_raw_fd(), events: libc::POLLIN, revents: 0 };
-            // SAFETY: one valid pollfd.
-            let n = unsafe { libc::poll(&mut fd, 1, timeout) };
+            // SAFETY: `nfds` initialized pollfds.
+            let n = unsafe { libc::poll(fds.as_mut_ptr(), nfds as libc::nfds_t, timeout) };
             if n < 0 {
                 let err = std::io::Error::last_os_error();
                 // EINTR: the caller recomputes its wait and polls again.
                 debug_assert!(err.raw_os_error() == Some(libc::EINTR), "event loop wake pipe poll failed: {err}");
+                return pipe_watched;
+            }
+            if let (Some(w), true) = (watch, watched.is_some()) {
+                if fds[nfds - 1].revents != 0 {
+                    w.ready.set(true);
+                }
+            }
+            if !pipe_watched {
+                return false;
+            }
+            let pipe = fds[0];
+            if pipe.revents == 0 {
                 return true;
             }
             // Drain every pending wake byte. EAGAIN ends the drain; EINTR
@@ -166,7 +191,7 @@ mod wake {
                     }
                 }
             }
-            if n > 0 && fd.revents & libc::POLLHUP != 0 {
+            if pipe.revents & libc::POLLHUP != 0 {
                 self.1.set(true);
                 return false;
             }
@@ -391,6 +416,38 @@ pub struct EventLoop<S> {
     /// Remote tasks received from `rx`, in posting order, awaiting their turn.
     remote: VecDeque<Stamped<S>>,
     remote_open: bool,
+    /// A descriptor the loop also waits on while it sleeps (see [`FdWatch`]).
+    fd_watch: Option<Rc<FdWatch>>,
+}
+
+/// A descriptor (e.g. a client socket) the loop waits on next to its own wake
+/// pipe, so the owner can do its I/O on the loop's thread without a thread of
+/// its own. The owner sets which readiness it wants; when the loop wakes for
+/// it, [`FdWatch::take_ready`] reports so. Interest must be dropped while the
+/// owner will not act on it, or a ready descriptor keeps the loop awake.
+#[derive(Debug)]
+pub struct FdWatch {
+    #[cfg_attr(not(unix), allow(dead_code))]
+    fd: i32,
+    read: Cell<bool>,
+    write: Cell<bool>,
+    ready: Cell<bool>,
+}
+
+impl FdWatch {
+    pub fn new(fd: i32) -> Rc<FdWatch> {
+        Rc::new(FdWatch { fd, read: Cell::new(false), write: Cell::new(false), ready: Cell::new(false) })
+    }
+
+    pub fn set_interest(&self, read: bool, write: bool) {
+        self.read.set(read);
+        self.write.set(write);
+    }
+
+    /// Whether the loop woke for this descriptor since the last call.
+    pub fn take_ready(&self) -> bool {
+        self.ready.replace(false)
+    }
 }
 
 impl<S: LoopState + 'static> Default for EventLoop<S> {
@@ -424,7 +481,13 @@ impl<S: LoopState + 'static> EventLoop<S> {
             rx,
             remote: VecDeque::new(),
             remote_open: true,
+            fd_watch: None,
         }
+    }
+
+    /// Also waits on `watch`'s descriptor while sleeping (`None` stops).
+    pub fn watch_fd(&mut self, watch: Option<Rc<FdWatch>>) {
+        self.fd_watch = watch;
     }
 
     pub fn scheduler(&self) -> Scheduler<S> {
@@ -553,7 +616,7 @@ impl<S: LoopState + 'static> EventLoop<S> {
                 true
             }
             // No sender left: the sleeper still waits out `wait` (as before).
-            Err(_) => self.sleeper.sleep(wait),
+            Err(_) => self.sleeper.sleep(wait, self.fd_watch.as_deref()),
         };
         self.sleeper.announce(false);
         senders_left
@@ -729,6 +792,38 @@ mod tests {
         poster.join().unwrap();
         assert_eq!(r, RunOutcome::Done, "lost a wake-up after {} tasks", st.log.len());
         assert!(st.log.iter().enumerate().all(|(i, v)| v == &i.to_string()));
+    }
+
+    /// A watched descriptor wakes the sleeping loop when it becomes readable;
+    /// without interest a ready descriptor does not keep the loop awake.
+    #[cfg(unix)]
+    #[test]
+    fn watched_descriptor_wakes_the_loop_only_with_interest() {
+        use std::io::Write;
+        use std::os::fd::AsRawFd;
+        let (mut tx, rx) = std::os::unix::net::UnixStream::pair().unwrap();
+        let mut lp = EventLoop::<St>::new();
+        let _handle = lp.handle();
+        let mut st = St::default();
+        let watch = FdWatch::new(rx.as_raw_fd());
+        watch.set_interest(true, false);
+        lp.watch_fd(Some(watch.clone()));
+        let writer = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(30));
+            tx.write_all(b"x").unwrap();
+            tx
+        });
+        let start = Instant::now();
+        let r = lp.run_until(&mut st, Some(Instant::now() + Duration::from_secs(5)), false, |_| watch.take_ready());
+        assert_eq!(r, RunOutcome::Done);
+        assert!(start.elapsed() < Duration::from_secs(1), "woke after {:?}", start.elapsed());
+        let _tx = writer.join().unwrap();
+        // Still readable (nothing read), but no interest: the loop sleeps until the deadline.
+        watch.set_interest(false, false);
+        let cpu = thread_cpu();
+        let r = lp.run_until(&mut st, Some(Instant::now() + Duration::from_millis(100)), false, |_| watch.take_ready());
+        assert_eq!(r, RunOutcome::TimedOut);
+        assert!(thread_cpu() - cpu < Duration::from_millis(30), "spun while the descriptor stayed ready");
     }
 
     /// Many posts without the loop running fill the wake pipe; every task still
