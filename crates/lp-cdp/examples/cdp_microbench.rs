@@ -146,6 +146,17 @@ fn main() {
         .as_str()
         .unwrap()
         .to_owned();
+    if let Some(secs) = std::env::var("LP_SPIN_BIG_SECS").ok().and_then(|v| v.parse::<u64>().ok()) {
+        let big = format!("function(x) {{ const t = [{}]; return x + t.length; }}", "\"abcdefgh\",".repeat(3400));
+        let end = Instant::now() + Duration::from_secs(secs);
+        let mut n = 0u64;
+        while Instant::now() < end {
+            h.call(Some(&session), "Runtime.callFunctionOn", json!({"functionDeclaration": big, "objectId": realm, "arguments":[{"value":1}], "returnByValue": true}));
+            n += 1;
+        }
+        eprintln!("spin: {n} big callFunctionOn ({} bytes) in {secs}s = {:.1}us each", big.len(), secs as f64 * 1e6 / n as f64);
+        std::process::exit(0);
+    }
     for (label, source) in
         [("callFunctionOn small fn", "function(a){return a+1}".to_owned()), ("callFunctionOn ~38KB fn", big)]
     {

@@ -149,6 +149,9 @@ pub(crate) struct RealmInner {
     helper_cache: RefCell<HashMap<&'static str, Persistent>>,
     /// The realm's `Object.prototype`, for the plain-object fast path of `is_plain_object`.
     object_proto: RefCell<Option<Persistent>>,
+    /// Functions compiled by `call_function*`, keyed by source: CDP clients
+    /// send the same (large) `functionDeclaration` on every call.
+    fn_cache: RefCell<HashMap<u64, (String, Persistent)>>,
     dom_exception: RefCell<Option<Persistent>>,
     module_loader: Cell<*mut c_void>,
     module_fetcher: RefCell<Option<Rc<dyn ModuleFetcher>>>,
@@ -248,6 +251,7 @@ impl RealmInner {
         self.helpers.borrow_mut().take();
         self.helper_cache.borrow_mut().clear();
         self.object_proto.borrow_mut().take();
+        self.fn_cache.borrow_mut().clear();
         self.dom_exception.borrow_mut().take();
         if let Some((_, release, _)) = sys::spi::get().weak() {
             for (_, w) in self.identity.borrow_mut().drain() {
@@ -515,11 +519,7 @@ impl<'s> Scope<'s> {
         this: Option<Value<'_>>,
         args: &[Value<'_>],
     ) -> JsResult<Value<'s>> {
-        let f = self.eval(&format!("({function_source}\n)"), None, 1)?;
-        let f = f
-            .as_object()
-            .filter(|o| o.is_function())
-            .ok_or_else(|| JsError::Type("Given expression does not evaluate to a function".into()))?;
+        let f = self.function_for_source(function_source)?;
         match this {
             Some(t) if !t.is_object() => {
                 // Primitive receivers: route through Function.prototype.call.
@@ -538,17 +538,44 @@ impl<'s> Scope<'s> {
     /// [`Scope::call_function`] with arguments in a [`crate::RootedVec`]
     /// (CDP `callFunctionOn` converts arguments one by one; each conversion can
     /// trigger GC, so they must be rooted, not kept in a `Vec<Value>`).
+    /// The function object for `function_source`, compiled once per realm
+    /// and source text. The same object is returned on later calls: its
+    /// identity and expando properties persist, which inspector clients do
+    /// not observe. Bounded; a full cache is emptied.
+    fn function_for_source(&self, function_source: &str) -> JsResult<Object<'s>> {
+        use std::hash::{Hash, Hasher};
+        const MAX_CACHED: usize = 512;
+        // Fx: hashing a 38 KB declaration with SipHash costs ~40 us.
+        let mut hasher = rustc_hash::FxHasher::default();
+        function_source.hash(&mut hasher);
+        let key = hasher.finish();
+        if let Some((source, f)) = self.realm.fn_cache.borrow().get(&key) {
+            if source == function_source {
+                if let Some(o) = f.get(self).as_object() {
+                    return Ok(o);
+                }
+            }
+        }
+        let f = self.eval(&format!("({function_source}\n)"), None, 1)?;
+        let f = f
+            .as_object()
+            .filter(|o| o.is_function())
+            .ok_or_else(|| JsError::Type("Given expression does not evaluate to a function".into()))?;
+        let mut cache = self.realm.fn_cache.borrow_mut();
+        if cache.len() >= MAX_CACHED {
+            cache.clear();
+        }
+        cache.insert(key, (function_source.to_owned(), Persistent::new(self, f.value())));
+        Ok(f)
+    }
+
     pub fn call_function_rooted(
         &self,
         function_source: &str,
         this: Option<&Persistent>,
         args: &crate::RootedVec,
     ) -> JsResult<Value<'s>> {
-        let f = self.eval(&format!("({function_source}\n)"), None, 1)?;
-        let f = f
-            .as_object()
-            .filter(|o| o.is_function())
-            .ok_or_else(|| JsError::Type("Given expression does not evaluate to a function".into()))?;
+        let f = self.function_for_source(function_source)?;
         let this_v = this.map(|p| p.get(self));
         match this_v {
             Some(t) if !t.is_object() => {
@@ -1019,6 +1046,7 @@ pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResul
         helpers: RefCell::new(None),
         helper_cache: RefCell::new(HashMap::new()),
         object_proto: RefCell::new(None),
+        fn_cache: RefCell::new(HashMap::new()),
         dom_exception: RefCell::new(None),
         module_loader: Cell::new(ptr::null_mut()),
         module_fetcher: RefCell::new(None),
