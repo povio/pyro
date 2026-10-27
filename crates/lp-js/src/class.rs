@@ -55,7 +55,6 @@ impl JsClass for NoParent {
 }
 
 /// Raw `JSObjectCallAsFunctionCallback`.
-type RawFn = sys::JSObjectCallAsFunctionCallbackRaw;
 type IndexedFn = unsafe fn(&Scope<'_>, *mut Header, u32) -> JsResult<Option<sys::JSValueRef>>;
 type NamedFn = unsafe fn(&Scope<'_>, *mut Header, &str) -> JsResult<Option<sys::JSValueRef>>;
 type NamedSetFn = unsafe fn(&Scope<'_>, *mut Header, &str, sys::JSValueRef) -> JsResult<bool>;
@@ -65,14 +64,36 @@ type NamesFn = unsafe fn(&Scope<'_>, *mut Header) -> JsResult<Vec<String>>;
 pub(crate) struct MethodSpec {
     pub name: &'static str,
     pub length: u32,
-    pub call: RawFn,
+    pub call: MemberCall,
 }
 
 pub(crate) struct AccessorSpec {
     pub name: &'static str,
-    pub get: RawFn,
-    pub set: Option<RawFn>,
+    pub get: MemberCall,
+    pub set: Option<MemberCall>,
 }
+
+/// A member's Rust callback, type-erased, plus the invoker that knows its
+/// real type. One invoker exists per class and member kind (not per member),
+/// which keeps the number of monomorphized functions small: lp-webapi has
+/// ~1,000 members, and one trampoline each made its codegen serial.
+#[derive(Clone, Copy)]
+pub(crate) struct MemberCall {
+    pub invoke: InvokeFn,
+    pub f: *const (),
+}
+
+/// Calls `f` (a member callback, cast back to its real fn-pointer type) for
+/// `this` with `args`.
+pub(crate) type InvokeFn =
+    unsafe fn(&Scope<'_>, sys::JSObjectRef, Args<'_>, *const ()) -> JsResult<sys::JSValueRef>;
+
+/// Member callback types: plain fn pointers. Non-capturing closures coerce.
+pub type MethodFn<C> = for<'s> fn(&Scope<'s>, &<C as JsClass>::Data, Args<'s>) -> JsResult<Value<'s>>;
+pub type GetterFn<C> = for<'s> fn(&Scope<'s>, &<C as JsClass>::Data) -> JsResult<Value<'s>>;
+pub type SetterFn<C> = for<'s> fn(&Scope<'s>, &<C as JsClass>::Data, Value<'s>) -> JsResult<()>;
+pub type StaticFn = for<'s> fn(&Scope<'s>, Args<'s>) -> JsResult<Value<'s>>;
+pub type CtorFn = for<'s> fn(&Scope<'s>, Object<'s>, Args<'s>) -> JsResult<Object<'s>>;
 
 #[derive(Default, Clone, Copy)]
 pub(crate) struct PropertyHooks {
@@ -110,7 +131,7 @@ pub struct ClassDef<C: JsClass> {
     pub(crate) statics: Vec<MethodSpec>,
     pub(crate) accessors: Vec<AccessorSpec>,
     pub(crate) constants: Vec<(&'static str, f64)>,
-    pub(crate) constructor: Option<RawFn>,
+    pub(crate) constructor: Option<MemberCall>,
     pub(crate) ctor_length: u32,
     pub(crate) hooks: PropertyHooks,
     pub(crate) exposed: bool,
@@ -165,34 +186,23 @@ impl<C: JsClass> ClassDef<C> {
     }
 
     /// Adds an operation on the prototype.
-    pub fn method<F>(&mut self, name: &'static str, length: u32, _f: F) -> &mut Self
-    where
-        F: for<'s> Fn(&Scope<'s>, &C::Data, Args<'s>) -> JsResult<Value<'s>> + Copy + 'static,
-    {
-        assert_zst::<F>();
-        self.methods.push(MethodSpec { name, length, call: method_tramp::<C, F> });
+    pub fn method(&mut self, name: &'static str, length: u32, f: MethodFn<C>) -> &mut Self {
+        self.methods.push(MethodSpec { name, length, call: MemberCall { invoke: method_invoke::<C>, f: f as *const () } });
         self
     }
 
     /// Adds a read-only attribute.
-    pub fn getter<G>(&mut self, name: &'static str, _g: G) -> &mut Self
-    where
-        G: for<'s> Fn(&Scope<'s>, &C::Data) -> JsResult<Value<'s>> + Copy + 'static,
-    {
-        assert_zst::<G>();
-        self.accessors.push(AccessorSpec { name, get: getter_tramp::<C, G>, set: None });
+    pub fn getter(&mut self, name: &'static str, g: GetterFn<C>) -> &mut Self {
+        let get = MemberCall { invoke: getter_invoke::<C>, f: g as *const () };
+        self.accessors.push(AccessorSpec { name, get, set: None });
         self
     }
 
     /// Adds a read-write attribute.
-    pub fn accessor<G, S>(&mut self, name: &'static str, _g: G, _s: S) -> &mut Self
-    where
-        G: for<'s> Fn(&Scope<'s>, &C::Data) -> JsResult<Value<'s>> + Copy + 'static,
-        S: for<'s> Fn(&Scope<'s>, &C::Data, Value<'s>) -> JsResult<()> + Copy + 'static,
-    {
-        assert_zst::<G>();
-        assert_zst::<S>();
-        self.accessors.push(AccessorSpec { name, get: getter_tramp::<C, G>, set: Some(setter_tramp::<C, S>) });
+    pub fn accessor(&mut self, name: &'static str, g: GetterFn<C>, s: SetterFn<C>) -> &mut Self {
+        let get = MemberCall { invoke: getter_invoke::<C>, f: g as *const () };
+        let set = MemberCall { invoke: setter_invoke::<C>, f: s as *const () };
+        self.accessors.push(AccessorSpec { name, get, set: Some(set) });
         self
     }
 
@@ -203,12 +213,8 @@ impl<C: JsClass> ClassDef<C> {
     }
 
     /// Adds a static operation on the interface object.
-    pub fn static_method<F>(&mut self, name: &'static str, length: u32, _f: F) -> &mut Self
-    where
-        F: for<'s> Fn(&Scope<'s>, Args<'s>) -> JsResult<Value<'s>> + Copy + 'static,
-    {
-        assert_zst::<F>();
-        self.statics.push(MethodSpec { name, length, call: static_tramp::<F> });
+    pub fn static_method(&mut self, name: &'static str, length: u32, f: StaticFn) -> &mut Self {
+        self.statics.push(MethodSpec { name, length, call: MemberCall { invoke: static_invoke, f: f as *const () } });
         self
     }
 
@@ -216,12 +222,8 @@ impl<C: JsClass> ClassDef<C> {
     /// (for subclassing, e.g. custom elements) and returns the new object,
     /// typically via [`Scope::wrap_new`]. Without this, `new X()` throws
     /// "Illegal constructor".
-    pub fn constructor<F>(&mut self, length: u32, _f: F) -> &mut Self
-    where
-        F: for<'s> Fn(&Scope<'s>, Object<'s>, Args<'s>) -> JsResult<Object<'s>> + Copy + 'static,
-    {
-        assert_zst::<F>();
-        self.constructor = Some(ctor_tramp::<F>);
+    pub fn constructor(&mut self, length: u32, f: CtorFn) -> &mut Self {
+        self.constructor = Some(MemberCall { invoke: ctor_invoke, f: f as *const () });
         self.ctor_length = length;
         self
     }
@@ -334,7 +336,7 @@ pub(crate) struct ClassDefErased {
     pub statics: Vec<MethodSpec>,
     pub accessors: Vec<AccessorSpec>,
     pub constants: Vec<(&'static str, f64)>,
-    pub constructor: Option<RawFn>,
+    pub constructor: Option<MemberCall>,
     pub ctor_length: u32,
     pub hooks: PropertyHooks,
     pub exposed: bool,
@@ -349,6 +351,10 @@ pub(crate) struct ClassRegistry {
     pub base: sys::JSClassRef,
     /// Callable objects backed by Rust closures.
     pub closure: sys::JSClassRef,
+    /// Interface member functions (methods, accessors, statics, constructors):
+    /// callable objects whose private data is a `MemberCall`. Not a `base`
+    /// subclass: their private pointer is not a `Header`.
+    pub member: sys::JSClassRef,
 }
 
 impl ClassRegistry {
@@ -366,7 +372,13 @@ impl ClassRegistry {
         cdef.parentClass = base;
         cdef.callAsFunction = Some(crate::realm::closure_call);
         let closure = unsafe { sys::JSClassCreate(&cdef) };
-        ClassRegistry { classes: Vec::new(), by_type: HashMap::new(), base, closure }
+        let mut mdef = sys::JSClassDefinition::EMPTY;
+        mdef.className = c"Function".as_ptr();
+        mdef.attributes = sys::kJSClassAttributeNoAutomaticPrototype;
+        mdef.callAsFunction = Some(member_call);
+        mdef.finalize = Some(member_finalize);
+        let member = unsafe { sys::JSClassCreate(&mdef) };
+        ClassRegistry { classes: Vec::new(), by_type: HashMap::new(), base, closure, member }
     }
 
     pub fn id_of<C: JsClass>(&self) -> Option<ClassId> {
@@ -397,6 +409,7 @@ impl ClassRegistry {
                 sys::JSClassRelease(c.instance_class);
             }
             sys::JSClassRelease(self.closure);
+            sys::JSClassRelease(self.member);
             sys::JSClassRelease(self.base);
         }
         self.classes.clear();
@@ -828,115 +841,105 @@ where
     f(scope).map(|d| d as *const C::Data as *const u8)
 }
 
-unsafe extern "C" fn method_tramp<C, F>(
+/// `callAsFunction` of every member function object: the object's private
+/// data is its `MemberCall`.
+pub(crate) unsafe extern "C" fn member_call(
     ctx: sys::JSContextRef,
-    _function: sys::JSObjectRef,
+    function: sys::JSObjectRef,
     this: sys::JSObjectRef,
     argc: usize,
     argv: *const sys::JSValueRef,
     exc: *mut sys::JSValueRef,
-) -> sys::JSValueRef
-where
-    C: JsClass,
-    F: for<'s> Fn(&Scope<'s>, &C::Data, Args<'s>) -> JsResult<Value<'s>> + Copy + 'static,
-{
+) -> sys::JSValueRef {
     unsafe {
         guard(ctx, exc, ptr::null(), |scope| {
-            let data = this_data::<C>(scope, this)?;
-            let args = Args::from_raw(ctx, argc, argv);
-            conjure::<F>()(scope, data, args).map(|v| v.raw)
+            let call = sys::JSObjectGetPrivate(function) as *const MemberCall;
+            if call.is_null() {
+                return Err(JsError::Type("Illegal invocation".into()));
+            }
+            let call = *call;
+            (call.invoke)(scope, this, Args::from_raw(ctx, argc, argv), call.f)
         })
     }
 }
 
-unsafe extern "C" fn getter_tramp<C, G>(
-    ctx: sys::JSContextRef,
-    _function: sys::JSObjectRef,
+/// Frees a member function object's `MemberCall` (runs inside GC: no JSC
+/// calls, no Rust destructors beyond the deallocation).
+pub(crate) unsafe extern "C" fn member_finalize(object: sys::JSObjectRef) {
+    let p = unsafe { sys::JSObjectGetPrivate(object) } as *mut MemberCall;
+    if !p.is_null() {
+        unsafe { drop(Box::from_raw(p)) };
+    }
+}
+
+unsafe fn method_invoke<C: JsClass>(
+    scope: &Scope<'_>,
     this: sys::JSObjectRef,
-    _argc: usize,
-    _argv: *const sys::JSValueRef,
-    exc: *mut sys::JSValueRef,
-) -> sys::JSValueRef
-where
-    C: JsClass,
-    G: for<'s> Fn(&Scope<'s>, &C::Data) -> JsResult<Value<'s>> + Copy + 'static,
-{
-    unsafe {
-        guard(ctx, exc, ptr::null(), |scope| {
-            let data = this_data::<C>(scope, this)?;
-            conjure::<G>()(scope, data).map(|v| v.raw)
-        })
-    }
+    args: Args<'_>,
+    f: *const (),
+) -> JsResult<sys::JSValueRef> {
+    let data = unsafe { this_data::<C>(scope, this) }?;
+    // SAFETY: stored by `ClassDef::method` from exactly this fn-pointer type.
+    let f: MethodFn<C> = unsafe { std::mem::transmute(f) };
+    f(scope, data, args).map(|v| v.raw)
 }
 
-unsafe extern "C" fn setter_tramp<C, S>(
-    ctx: sys::JSContextRef,
-    _function: sys::JSObjectRef,
+unsafe fn getter_invoke<C: JsClass>(
+    scope: &Scope<'_>,
     this: sys::JSObjectRef,
-    argc: usize,
-    argv: *const sys::JSValueRef,
-    exc: *mut sys::JSValueRef,
-) -> sys::JSValueRef
-where
-    C: JsClass,
-    S: for<'s> Fn(&Scope<'s>, &C::Data, Value<'s>) -> JsResult<()> + Copy + 'static,
-{
-    unsafe {
-        guard(ctx, exc, ptr::null(), |scope| {
-            let data = this_data::<C>(scope, this)?;
-            let v = Args::from_raw(ctx, argc, argv).get(0);
-            conjure::<S>()(scope, data, v)?;
-            Ok(sys::JSValueMakeUndefined(ctx))
-        })
-    }
+    _args: Args<'_>,
+    f: *const (),
+) -> JsResult<sys::JSValueRef> {
+    let data = unsafe { this_data::<C>(scope, this) }?;
+    // SAFETY: stored by `ClassDef::getter`/`accessor` from this fn-pointer type.
+    let f: GetterFn<C> = unsafe { std::mem::transmute(f) };
+    f(scope, data).map(|v| v.raw)
 }
 
-unsafe extern "C" fn static_tramp<F>(
-    ctx: sys::JSContextRef,
-    _function: sys::JSObjectRef,
+unsafe fn setter_invoke<C: JsClass>(
+    scope: &Scope<'_>,
+    this: sys::JSObjectRef,
+    args: Args<'_>,
+    f: *const (),
+) -> JsResult<sys::JSValueRef> {
+    let data = unsafe { this_data::<C>(scope, this) }?;
+    // SAFETY: stored by `ClassDef::accessor` from this fn-pointer type.
+    let f: SetterFn<C> = unsafe { std::mem::transmute(f) };
+    f(scope, data, args.get(0))?;
+    Ok(unsafe { sys::JSValueMakeUndefined(scope.ctx) })
+}
+
+unsafe fn static_invoke(
+    scope: &Scope<'_>,
     _this: sys::JSObjectRef,
-    argc: usize,
-    argv: *const sys::JSValueRef,
-    exc: *mut sys::JSValueRef,
-) -> sys::JSValueRef
-where
-    F: for<'s> Fn(&Scope<'s>, Args<'s>) -> JsResult<Value<'s>> + Copy + 'static,
-{
-    unsafe {
-        guard(ctx, exc, ptr::null(), |scope| {
-            let args = Args::from_raw(ctx, argc, argv);
-            conjure::<F>()(scope, args).map(|v| v.raw)
-        })
-    }
+    args: Args<'_>,
+    f: *const (),
+) -> JsResult<sys::JSValueRef> {
+    // SAFETY: stored by `ClassDef::static_method` from this fn-pointer type.
+    let f: StaticFn = unsafe { std::mem::transmute(f) };
+    f(scope, args).map(|v| v.raw)
 }
 
 /// Called by the realm's JS constructor shim as `native(newTarget, argsArray)`.
-unsafe extern "C" fn ctor_tramp<F>(
-    ctx: sys::JSContextRef,
-    _function: sys::JSObjectRef,
+unsafe fn ctor_invoke(
+    scope: &Scope<'_>,
     _this: sys::JSObjectRef,
-    argc: usize,
-    argv: *const sys::JSValueRef,
-    exc: *mut sys::JSValueRef,
-) -> sys::JSValueRef
-where
-    F: for<'s> Fn(&Scope<'s>, Object<'s>, Args<'s>) -> JsResult<Object<'s>> + Copy + 'static,
-{
-    unsafe {
-        guard(ctx, exc, ptr::null(), |scope| {
-            let a = Args::from_raw(ctx, argc, argv);
-            let new_target = a.get(0).as_object().ok_or_else(|| JsError::Type("Illegal constructor".into()))?;
-            let list = a.get(1).as_object().ok_or_else(|| JsError::Type("Illegal constructor".into()))?;
-            let len = list.get("length")?.to_number()? as usize;
-            // Arguments stay reachable through `list` (a live argument array).
-            let mut raw = Vec::with_capacity(len);
-            for i in 0..len {
-                raw.push(list.get_index(i as u32)?.raw);
-            }
-            let args = Args { ctx, raw: &raw };
-            conjure::<F>()(scope, new_target, args).map(|o| o.raw as sys::JSValueRef)
-        })
+    a: Args<'_>,
+    f: *const (),
+) -> JsResult<sys::JSValueRef> {
+    // SAFETY: stored by `ClassDef::constructor` from this fn-pointer type.
+    let f: CtorFn = unsafe { std::mem::transmute(f) };
+    let ctx = scope.ctx;
+    let new_target = a.get(0).as_object().ok_or_else(|| JsError::Type("Illegal constructor".into()))?;
+    let list = a.get(1).as_object().ok_or_else(|| JsError::Type("Illegal constructor".into()))?;
+    let len = list.get("length")?.to_number()? as usize;
+    // Arguments stay reachable through `list` (a live argument array).
+    let mut raw = Vec::with_capacity(len);
+    for i in 0..len {
+        raw.push(list.get_index(i as u32)?.raw);
     }
+    let args = Args { ctx, raw: &raw };
+    f(scope, new_target, args).map(|o| o.raw as sys::JSValueRef)
 }
 
 unsafe fn indexed_erased<C, F>(scope: &Scope<'_>, h: *mut Header, index: u32) -> JsResult<Option<sys::JSValueRef>>
