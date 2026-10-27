@@ -85,8 +85,10 @@ impl JsClass for Node {
 }
 ```
 
-- Callbacks must be non-capturing closures or fn items (checked). Each one becomes a monomorphized `extern "C"`
-  trampoline, so a call allocates nothing and looks nothing up.
+- Callbacks are plain fn pointers (non-capturing closures coerce). Each member is a callable object whose private
+  data holds its fn pointer plus a per-class invoker (`lp-js` `MemberCall`): one `extern "C"` entry for all members,
+  one invoker per class and member kind. A call reads the pointer from the object and looks nothing else up. One
+  trampoline per member was the earlier design; it made lp-webapi's codegen serial and the binary 6 MB larger.
 - Panics are caught at the boundary and become `Error("Internal error: …")`.
 - The interface shape follows WebIDL:
   - accessors live on the prototype, so `Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')` works as React needs;
