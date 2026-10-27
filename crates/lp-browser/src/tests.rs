@@ -72,6 +72,72 @@ fn initial_navigation_event_order() {
 }
 
 #[test]
+fn local_storage_seed_applies_to_existing_and_new_contexts() {
+    let (mut t, _rec, _page) = setup();
+    let seed =
+        lp_webapi::StorageSeed::new(vec![("http://app.test:3000".into(), vec![("token".into(), "t".into())])]).unwrap();
+    t.set_local_storage_seed(seed);
+    let fresh = t.browser.create_context().unwrap();
+    for context in [DEFAULT_CONTEXT, fresh] {
+        let namespace = &t.browser.contexts.iter().find(|c| c.id == context).unwrap().local_storage;
+        assert_eq!(namespace.get("http://app.test:3000", "token").as_deref(), Some("t"), "{context:?}");
+        assert_eq!(namespace.get("http://app.test:3000", "other"), None);
+    }
+    // Contexts are independent copies: a write in one is invisible in the other.
+    let default = t.browser.contexts.iter().find(|c| c.id == DEFAULT_CONTEXT).unwrap().local_storage.clone();
+    default.seed(
+        &lp_webapi::StorageSeed::new(vec![("http://app.test:3000".into(), vec![("x".into(), "1".into())])]).unwrap(),
+    );
+    let other = &t.browser.contexts.iter().find(|c| c.id == fresh).unwrap().local_storage;
+    assert_eq!(other.get("http://app.test:3000", "x"), None);
+}
+
+#[test]
+fn static_files_load_on_the_browser_thread_with_network_events() {
+    let dir = std::env::temp_dir().join(format!("lp-browser-static-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("assets")).unwrap();
+    std::fs::write(
+        dir.join("index.html"),
+        "<link rel=stylesheet href=/assets/s.css><script src=/assets/a.js></script><p id=p>hi</p>",
+    )
+    .unwrap();
+    std::fs::write(dir.join("assets/a.js"), "console.log('static:' + location.pathname)").unwrap();
+    std::fs::write(dir.join("assets/s.css"), "p { color: red }").unwrap();
+    // Port 1: nothing listens; every byte must come from memory.
+    let origin = "http://127.0.0.1:1";
+    let config = lp_net::NetConfig {
+        static_files: lp_net::StaticFiles::new(vec![(origin.into(), dir.clone())]).unwrap(),
+        static_direct: true,
+        ..lp_net::NetConfig::default()
+    };
+    let (mut t, rec, page) = setup();
+    t.enable_network(config).unwrap();
+    let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = events.clone();
+    let subscription = t.browser.context_net(DEFAULT_CONTEXT).unwrap().subscribe();
+    t.browser.navigate(page, NavigateOpts::address_bar(format!("{origin}/app/route"))).unwrap();
+    until_network_idle(&mut t, &rec);
+    while let Ok(ev) = subscription.try_recv() {
+        sink.lock().unwrap().push(match ev {
+            lp_net::NetEvent::RequestWillBeSent { request, .. } => format!("sent:{}", request.url.path()),
+            lp_net::NetEvent::ResponseReceived { head, .. } => format!("response:{}:{}", head.url.path(), head.mime),
+            lp_net::NetEvent::LoadingFinished { encoded_len, .. } => format!("finished:{encoded_len}"),
+            lp_net::NetEvent::DataReceived { .. } => "data".into(),
+            lp_net::NetEvent::LoadingFailed { error, .. } => format!("failed:{error}"),
+        });
+    }
+    assert!(rec.console.borrow().iter().any(|c| c == "log:static:/app/route"), "{:?}", rec.console.borrow());
+    let events = events.lock().unwrap();
+    assert!(events.contains(&"sent:/app/route".to_string()), "{events:?}");
+    assert!(events.contains(&"response:/app/route:text/html".to_string()), "{events:?}");
+    assert!(events.contains(&"response:/assets/a.js:text/javascript".to_string()), "{events:?}");
+    assert!(events.contains(&"response:/assets/s.css:text/css".to_string()), "{events:?}");
+    assert!(!events.iter().any(|e| e.starts_with("failed:")), "{events:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn timers_run_in_order_and_clear() {
     let (mut t, rec, page) = setup();
     eval(

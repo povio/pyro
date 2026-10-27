@@ -19,6 +19,7 @@
 use std::cell::RefCell;
 use std::rc::{Rc, Weak};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use lp_js::{ClassDef, IdentityKey, JsClass, JsError, JsResult, NoParent, Scope, Value};
 use rustc_hash::FxHashMap;
@@ -77,6 +78,63 @@ fn entry_bytes(key: &str, value: &str) -> usize {
     (key.encode_utf16().count() + value.encode_utf16().count()).saturating_mul(2)
 }
 
+/// Entries every new local-storage namespace starts with (the `serve
+/// --local-storage` preload): per tuple origin, key/value pairs in order.
+/// Built once per process and shared by every browser thread; each context
+/// gets its own copy of the entries, so pages never see another context's
+/// writes. Seeding bypasses the quota (the operator chose the data); later
+/// writes are checked against the quota including the seeded bytes.
+#[derive(Clone, Debug, Default)]
+pub struct StorageSeed(Arc<SeedEntries>);
+
+/// Per origin (storage key form), the key/value pairs in order.
+type SeedEntries = Vec<(String, Vec<(String, String)>)>;
+
+impl StorageSeed {
+    /// `origins`: (origin or URL, entries). Each origin is normalized to the
+    /// storage key form (`scheme://host[:port]`); an opaque origin such as a
+    /// `data:` URL is an error. Repeated origins merge; a repeated key within
+    /// one origin keeps the last value.
+    pub fn new(origins: SeedEntries) -> Result<Self, String> {
+        let mut out: SeedEntries = Vec::new();
+        for (origin, entries) in origins {
+            let key = seed_origin(&origin)?;
+            let slot = match out.iter_mut().find(|(o, _)| *o == key) {
+                Some((_, slot)) => slot,
+                None => {
+                    out.push((key, Vec::new()));
+                    &mut out.last_mut().expect("just pushed").1
+                }
+            };
+            for (k, v) in entries {
+                match slot.iter_mut().find(|(sk, _)| *sk == k) {
+                    Some((_, sv)) => *sv = v,
+                    None => slot.push((k, v)),
+                }
+            }
+        }
+        Ok(Self(Arc::new(out)))
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.iter().all(|(_, entries)| entries.is_empty())
+    }
+
+    /// (origin, entry count) per seeded origin.
+    pub fn summary(&self) -> Vec<(String, usize)> {
+        self.0.iter().map(|(o, e)| (o.clone(), e.len())).collect()
+    }
+}
+
+/// The storage origin key for an origin or URL string.
+fn seed_origin(text: &str) -> Result<String, String> {
+    let url = url::Url::parse(text.trim()).map_err(|e| format!("'{text}': not an origin or URL ({e})"))?;
+    match url.origin() {
+        url::Origin::Tuple(..) => Ok(url.origin().ascii_serialization()),
+        url::Origin::Opaque(_) => Err(format!("'{text}': opaque origins have no local storage")),
+    }
+}
+
 struct Namespace {
     indexed_db: crate::indexeddb::Namespace,
     origins: RefCell<FxHashMap<String, Rc<RefCell<Area>>>>,
@@ -106,6 +164,44 @@ impl StorageNamespace {
             quota: bytes,
             pages: RefCell::new(Vec::new()),
         }))
+    }
+
+    /// A namespace with the default quota holding a copy of `seed`'s entries.
+    pub fn seeded(seed: &StorageSeed) -> Self {
+        let namespace = Self::default();
+        namespace.seed(seed);
+        namespace
+    }
+
+    /// Writes `seed`'s entries into this namespace (existing keys are
+    /// overwritten, other keys kept). No `storage` events: the namespace is
+    /// expected to be fresh, and seeding is not a script-visible change.
+    pub fn seed(&self, seed: &StorageSeed) {
+        for (origin, entries) in seed.0.iter() {
+            if entries.is_empty() {
+                continue;
+            }
+            let area = self.area(origin.clone());
+            let mut area = area.borrow_mut();
+            for (key, value) in entries {
+                match area.entries.iter().position(|(k, _)| k == key) {
+                    Some(i) => {
+                        area.bytes = area.bytes.saturating_sub(entry_bytes(key, &area.entries[i].1));
+                        area.entries[i].1 = value.clone();
+                    }
+                    None => area.entries.push((key.clone(), value.clone())),
+                }
+                area.bytes = area.bytes.saturating_add(entry_bytes(key, value));
+            }
+        }
+    }
+
+    /// The value stored for `key` under `origin` (storage key form), if any.
+    /// Does not create an area for an unknown origin.
+    pub fn get(&self, origin: &str, key: &str) -> Option<String> {
+        let area = self.0.origins.borrow().get(origin)?.clone();
+        let value = area.borrow().get(key).map(str::to_owned);
+        value
     }
 
     /// Registers a page that uses this namespace (for `storage` events).

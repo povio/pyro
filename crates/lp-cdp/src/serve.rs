@@ -7,6 +7,7 @@
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::net::{IpAddr, SocketAddr};
+use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -14,7 +15,7 @@ use std::sync::{Arc, OnceLock};
 use lp_runtime::RunOutcome;
 use tokio::sync::{mpsc, oneshot, Semaphore};
 
-use crate::engine::EngineHost;
+use crate::engine::{BrowserProfile, EngineHost};
 use crate::outbox::{Outbox, DEFAULT_OUTBOUND_BUDGET};
 use crate::server::{Inbound, Server, ServerConfig, SessionChannels, SessionFactory};
 use crate::target::Browser;
@@ -35,10 +36,29 @@ options:
   --log-level <LEVEL>                   debug|info|warn|error|fatal (default info)
   --experimental-features <NAME>        accepted: cors (repeatable)
   --load-resources <KIND>               accepted: stylesheet, iframe (repeatable)
+  --local-storage <FILE>                JSON preloaded into every browser context's
+                                        localStorage: {\"http://host:port\": {\"key\": \"value\"}}
+                                        (env LIGHTNINGPANDA_LOCAL_STORAGE)
+  --static <ORIGIN>=<DIR>               serve GET requests for ORIGIN from DIR, no server
+                                        needed there (repeatable; env LIGHTNINGPANDA_STATIC,
+                                        entries separated by ';')
 
 HTTP and data: document loading are supported; browser API coverage is partial.
 --experimental-features and --load-resources are accepted for CLI compatibility;
 the current loader configuration is fixed.
+
+--local-storage: top-level keys are origins (or URLs; only their origin is used),
+values are objects of string entries. A non-string entry value is stored as its
+JSON text, so {\"settings\": {\"theme\": \"dark\"}} reads back as the string
+'{\"theme\":\"dark\"}'. Every connection and every Target.createBrowserContext
+starts with a fresh copy; pages still write to their own context only.
+
+--static: like a static file server for a front-end build: DIR/<path>, a
+directory's index.html, and for navigations any path without a file falls
+back to DIR/index.html (single-page-app routes). Requests the directory cannot
+answer (no such file, POST, other origins) go to the network as usual, so API
+calls on the same origin still reach their server. Playwright routes still
+see these requests.
 ";
 
 /// Inbound messages waiting on a browser thread.
@@ -52,6 +72,12 @@ pub struct ServeOptions {
     pub log_level: LogLevel,
     pub experimental_features: Vec<String>,
     pub load_resources: Vec<String>,
+    /// `--local-storage` (or `LIGHTNINGPANDA_LOCAL_STORAGE`): JSON file of
+    /// per-origin localStorage entries preloaded into every context.
+    pub local_storage: Option<PathBuf>,
+    /// `--static ORIGIN=DIR` (or `LIGHTNINGPANDA_STATIC`): directories served
+    /// in place of origins.
+    pub static_roots: Vec<(String, PathBuf)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -72,8 +98,34 @@ impl Default for ServeOptions {
             log_level: LogLevel::Info,
             experimental_features: Vec::new(),
             load_resources: Vec::new(),
+            local_storage: std::env::var_os(LOCAL_STORAGE_ENV).filter(|v| !v.is_empty()).map(PathBuf::from),
+            static_roots: std::env::var(STATIC_ENV)
+                .ok()
+                .map(|v| {
+                    v.split(';').filter(|e| !e.trim().is_empty()).filter_map(|e| parse_static_root(e).ok()).collect()
+                })
+                .unwrap_or_default(),
         }
     }
+}
+
+/// Environment equivalent of `--local-storage` (the flag wins).
+pub const LOCAL_STORAGE_ENV: &str = "LIGHTNINGPANDA_LOCAL_STORAGE";
+/// Environment equivalent of `--static` entries, separated by `;` (flags add to it).
+pub const STATIC_ENV: &str = "LIGHTNINGPANDA_STATIC";
+
+/// `ORIGIN=DIR` for `--static`. The first `=` after the origin's `://` splits.
+fn parse_static_root(entry: &str) -> Result<(String, PathBuf), String> {
+    let entry = entry.trim();
+    let after_scheme = entry.find("://").map_or(0, |i| i + 3);
+    let Some(eq) = entry[after_scheme..].find('=').map(|i| i + after_scheme) else {
+        return Err(format!("--static: '{entry}' is not ORIGIN=DIR"));
+    };
+    let (origin, dir) = (entry[..eq].trim(), entry[eq + 1..].trim());
+    if origin.is_empty() || dir.is_empty() {
+        return Err(format!("--static: '{entry}' is not ORIGIN=DIR"));
+    }
+    Ok((origin.to_owned(), PathBuf::from(dir)))
 }
 
 pub fn parse_args(args: &[String]) -> Result<ServeOptions, String> {
@@ -117,10 +169,56 @@ pub fn parse_args(args: &[String]) -> Result<ServeOptions, String> {
                 v @ ("stylesheet" | "iframe") => o.load_resources.push(v.to_owned()),
                 other => return Err(format!("--load-resources: unsupported kind '{other}'")),
             },
+            "--local-storage" => o.local_storage = Some(PathBuf::from(value()?)),
+            "--static" => o.static_roots.push(parse_static_root(&value()?)?),
             other => return Err(format!("unknown option '{other}'")),
         }
     }
     Ok(o)
+}
+
+/// Parses the `--local-storage` document: `{origin: {key: value}}`. String
+/// values are stored as they are; any other JSON value is stored as its
+/// serialized text (apps commonly keep JSON objects in localStorage).
+pub fn parse_local_storage(text: &str) -> Result<lp_webapi::StorageSeed, String> {
+    let doc: serde_json::Value = serde_json::from_str(text).map_err(|e| format!("not valid JSON: {e}"))?;
+    let Some(origins) = doc.as_object() else {
+        return Err("top level must be an object keyed by origin".into());
+    };
+    let mut seed = Vec::with_capacity(origins.len());
+    for (origin, entries) in origins {
+        let Some(entries) = entries.as_object() else {
+            return Err(format!("'{origin}': value must be an object of localStorage entries"));
+        };
+        let entries = entries
+            .iter()
+            .map(|(key, value)| {
+                let value = match value {
+                    serde_json::Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                };
+                (key.clone(), value)
+            })
+            .collect();
+        seed.push((origin.clone(), entries));
+    }
+    lp_webapi::StorageSeed::new(seed)
+}
+
+/// The browser profile for `options`: reads and validates the preload files.
+pub fn browser_profile(options: &ServeOptions) -> Result<BrowserProfile, String> {
+    let mut profile = BrowserProfile::default();
+    if let Some(path) = &options.local_storage {
+        let text = std::fs::read_to_string(path)
+            .map_err(|e| format!("--local-storage: cannot read {}: {e}", path.display()))?;
+        profile.local_storage =
+            parse_local_storage(&text).map_err(|e| format!("--local-storage: {}: {e}", path.display()))?;
+    }
+    if !options.static_roots.is_empty() {
+        profile.net.static_files =
+            lp_net::StaticFiles::new(options.static_roots.clone()).map_err(|e| format!("--static: {e}"))?;
+    }
+    Ok(profile)
 }
 
 /// Entry point for `lightningpanda serve`.
@@ -136,6 +234,21 @@ pub fn serve_main(args: &[String]) -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    let profile = match browser_profile(&options) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("lightningpanda serve: {e}");
+            return ExitCode::from(2);
+        }
+    };
+    if options.log_level <= LogLevel::Info {
+        for (origin, count) in profile.local_storage.summary() {
+            eprintln!("lightningpanda: localStorage preload for {origin}: {count} entries");
+        }
+        for (origin, dir) in profile.net.static_files.summary() {
+            eprintln!("lightningpanda: serving {origin} from {}", dir.display());
+        }
+    }
     let runtime = match tokio::runtime::Builder::new_current_thread().enable_io().enable_time().build() {
         Ok(r) => r,
         Err(e) => {
@@ -145,7 +258,8 @@ pub fn serve_main(args: &[String]) -> ExitCode {
     };
     let result = runtime.block_on(async {
         let addr = SocketAddr::new(options.host, options.port);
-        let server = Server::bind(addr, options.server.clone(), ThreadPerConnection::with_spare()?).await?;
+        let factory = ThreadPerConnection::with_spare(profile)?;
+        let server = Server::bind(addr, options.server.clone(), factory).await?;
         if options.log_level <= LogLevel::Info {
             eprintln!("lightningpanda: CDP server listening on ws://{}/", server.local_addr()?);
         }
@@ -168,6 +282,7 @@ pub fn serve_main(args: &[String]) -> ExitCode {
 pub struct ThreadPerConnection {
     next: AtomicU64,
     spare: std::sync::Mutex<Option<std::sync::mpsc::Sender<Assignment>>>,
+    profile: Arc<BrowserProfile>,
 }
 
 /// What a prepared browser thread needs to serve a connection.
@@ -183,8 +298,8 @@ struct Assignment {
 impl ThreadPerConnection {
     /// A factory whose first spare thread starts creating its engine now, so
     /// the first connection (TOS uses one per process) finds it ready.
-    pub fn with_spare() -> std::io::Result<Self> {
-        let factory = Self::default();
+    pub fn with_spare(profile: BrowserProfile) -> std::io::Result<Self> {
+        let factory = Self { profile: Arc::new(profile), ..Self::default() };
         let spare = factory.spawn_spare()?;
         *factory.spare.lock().unwrap_or_else(|e| e.into_inner()) = Some(spare);
         Ok(factory)
@@ -194,8 +309,9 @@ impl ThreadPerConnection {
     fn spawn_spare(&self) -> std::io::Result<std::sync::mpsc::Sender<Assignment>> {
         let n = self.next.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = std::sync::mpsc::channel::<Assignment>();
+        let profile = self.profile.clone();
         std::thread::Builder::new().name(format!("lp-browser-{n}")).spawn(move || {
-            let prepared = EngineHost::prepare_thread();
+            let prepared = EngineHost::prepare_thread_with(&profile);
             // No connection ever claims this thread when the sender is dropped.
             let Ok(a) = rx.recv() else { return };
             let _finished = a.finished;
@@ -274,8 +390,13 @@ impl SessionFactory for ThreadPerConnection {
         let thread = self.claim()?;
         // `finished_tx` travels with the assignment and drops when the thread
         // ends, however it ends: that releases the connection slot.
-        let assignment =
-            Assignment { outbox, state: state.clone(), ready: ready_tx, permits: permits.clone(), finished: finished_tx };
+        let assignment = Assignment {
+            outbox,
+            state: state.clone(),
+            ready: ready_tx,
+            permits: permits.clone(),
+            finished: finished_tx,
+        };
         if thread.send(assignment).is_err() {
             return Err(std::io::Error::other("browser thread ended before the connection started"));
         }
@@ -366,4 +487,76 @@ fn run_browser_thread(
     browser.shutdown();
     browser.host_mut().close_all();
     INBOX.with(|q| q.borrow_mut().clear());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_storage_flag_and_document() {
+        let o = parse_args(&["--local-storage".to_owned(), "seed.json".to_owned()]).unwrap();
+        assert_eq!(o.local_storage, Some(PathBuf::from("seed.json")));
+        assert!(parse_args(&["--local-storage".to_owned()]).is_err());
+
+        let seed = parse_local_storage(
+            r#"{"http://localhost:3000/": {"token": "abc", "settings": {"theme": "dark"}, "n": 1},
+                "http://api.test": {}}"#,
+        )
+        .unwrap();
+        let mut summary = seed.summary();
+        summary.sort();
+        assert_eq!(summary, vec![("http://api.test".to_string(), 0), ("http://localhost:3000".to_string(), 3)]);
+        let ns = lp_webapi::StorageNamespace::seeded(&seed);
+        assert_eq!(ns.get("http://localhost:3000", "settings").as_deref(), Some(r#"{"theme":"dark"}"#));
+        assert_eq!(ns.get("http://localhost:3000", "n").as_deref(), Some("1"));
+
+        assert!(parse_local_storage("[]").is_err());
+        assert!(parse_local_storage(r#"{"http://a.test": "x"}"#).is_err());
+        assert!(parse_local_storage(r#"{"data:text/html,x": {}}"#).is_err());
+        assert!(parse_local_storage("{").is_err());
+
+        let missing =
+            ServeOptions { local_storage: Some(PathBuf::from("/nonexistent/seed.json")), ..Default::default() };
+        assert!(browser_profile(&missing).is_err());
+        assert!(browser_profile(&ServeOptions { local_storage: None, ..Default::default() })
+            .unwrap()
+            .local_storage
+            .is_empty());
+    }
+
+    #[test]
+    fn static_flag() {
+        let o = parse_args(&["--static".to_owned(), "http://localhost:3000=/tmp/dist".to_owned()]).unwrap();
+        assert_eq!(o.static_roots, vec![("http://localhost:3000".to_string(), PathBuf::from("/tmp/dist"))]);
+        let o = parse_args(&[
+            "--static".to_owned(),
+            "http://a.test=/a".to_owned(),
+            "--static".to_owned(),
+            " http://b.test:8080/ = /b/with=equals ".to_owned(),
+        ])
+        .unwrap();
+        assert_eq!(
+            o.static_roots,
+            vec![
+                ("http://a.test".to_string(), PathBuf::from("/a")),
+                ("http://b.test:8080/".to_string(), PathBuf::from("/b/with=equals"))
+            ]
+        );
+        assert!(parse_args(&["--static".to_owned(), "http://a.test".to_owned()]).is_err());
+        assert!(parse_args(&["--static".to_owned(), "=/dir".to_owned()]).is_err());
+        assert!(parse_args(&["--static".to_owned()]).is_err());
+
+        let dir = std::env::temp_dir();
+        let o = ServeOptions { static_roots: vec![("http://a.test".into(), dir.clone())], ..Default::default() };
+        assert_eq!(
+            browser_profile(&o).unwrap().net.static_files.summary(),
+            vec![("http://a.test".to_string(), dir.clone())]
+        );
+        let o = ServeOptions {
+            static_roots: vec![("http://a.test".into(), dir.join("no-such-dir"))],
+            ..Default::default()
+        };
+        assert!(browser_profile(&o).is_err());
+    }
 }
