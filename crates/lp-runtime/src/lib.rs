@@ -29,14 +29,16 @@ use std::time::{Duration, Instant};
 #[cfg(unix)]
 mod wake {
     use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
     use std::time::Duration;
 
-    /// Write end, shared by every [`super::LoopHandle`].
-    pub(super) struct Notifier(OwnedFd);
+    /// Write end, shared by every [`super::LoopHandle`], and whether the
+    /// loop is (about to be) asleep: posts write to the pipe only then.
+    pub(super) struct Notifier(OwnedFd, Arc<AtomicBool>);
     /// Read end, owned by the loop. Once every notifier is gone the pipe
     /// reports POLLHUP for good, so later waits sleep on no descriptor.
-    pub(super) struct Sleeper(OwnedFd, std::cell::Cell<bool>);
+    pub(super) struct Sleeper(OwnedFd, std::cell::Cell<bool>, Arc<AtomicBool>);
 
     pub(super) fn pair() -> std::io::Result<(Sleeper, Arc<Notifier>)> {
         let mut fds = [0i32; 2];
@@ -66,10 +68,22 @@ mod wake {
         if unsafe { libc::fcntl(write.as_raw_fd(), libc::F_SETNOSIGPIPE, 1) } < 0 {
             return Err(std::io::Error::last_os_error());
         }
-        Ok((Sleeper(read, std::cell::Cell::new(false)), Arc::new(Notifier(write))))
+        let sleeping = Arc::new(AtomicBool::new(false));
+        Ok((Sleeper(read, std::cell::Cell::new(false), sleeping.clone()), Arc::new(Notifier(write, sleeping))))
     }
 
     impl Notifier {
+        /// Wakes the loop if it sleeps or is about to: called after the task
+        /// is in the channel. Pairs with [`Sleeper::announce`] (both sides
+        /// publish, fence, then read the other's state), so either this sees
+        /// the flag or the loop sees the task before it blocks.
+        pub(super) fn notify_if_sleeping(&self) {
+            std::sync::atomic::fence(Ordering::SeqCst);
+            if self.1.load(Ordering::SeqCst) {
+                self.notify();
+            }
+        }
+
         /// Wakes the loop. A full pipe (EAGAIN) already holds a pending wake;
         /// EPIPE means the loop is gone and the channel send already failed
         /// or the task can never run; EINTR is retried. Anything else is a
@@ -94,6 +108,15 @@ mod wake {
     }
 
     impl Sleeper {
+        /// Marks the loop as going to sleep (`true`, before its last check of
+        /// the task channel) or awake again (`false`).
+        pub(super) fn announce(&self, sleeping: bool) {
+            self.2.store(sleeping, Ordering::SeqCst);
+            if sleeping {
+                std::sync::atomic::fence(Ordering::SeqCst);
+            }
+        }
+
         /// Sleeps until `wait` elapses (forever when `None`) or a notifier
         /// writes or every notifier is gone. Returns whether a notifier
         /// still exists (`false` once the write end is closed everywhere).
@@ -338,7 +361,7 @@ impl<S> LoopHandle<S> {
     pub fn post(&self, task: impl FnOnce(&mut S) + Send + 'static) -> Result<(), LoopClosed> {
         self.tx.send((Instant::now(), Box::new(task))).map_err(|_| LoopClosed)?;
         #[cfg(unix)]
-        self.wake.notify();
+        self.wake.notify_if_sleeping();
         Ok(())
     }
 }
@@ -521,7 +544,19 @@ impl<S: LoopState + 'static> EventLoop<S> {
     /// sender is gone. Returns false once no sender is left.
     #[cfg(unix)]
     fn sleep(&mut self, wait: Option<Duration>) -> bool {
-        self.sleeper.sleep(wait)
+        // Posters write to the wake pipe only while the loop is announced as
+        // sleeping; a task posted before the announcement is caught here.
+        self.sleeper.announce(true);
+        let senders_left = match self.rx.try_recv() {
+            Ok(task) => {
+                self.remote.push_back(task);
+                true
+            }
+            // No sender left: the sleeper still waits out `wait` (as before).
+            Err(_) => self.sleeper.sleep(wait),
+        };
+        self.sleeper.announce(false);
+        senders_left
     }
 
     #[cfg(not(unix))]
@@ -669,6 +704,31 @@ mod tests {
             assert!(start.elapsed() < Duration::from_millis(100), "round {round}: {:?}", start.elapsed());
         }
         assert_eq!(st.log.len(), 20);
+    }
+
+    /// Posters skip the wake pipe while the loop is awake. Racing posts from
+    /// another thread, with and without pauses that let the loop fall asleep,
+    /// must never be missed: each one runs, in order, well before the deadline.
+    #[test]
+    fn posts_racing_the_loop_falling_asleep_are_never_missed() {
+        let mut lp = EventLoop::<St>::new();
+        let handle = lp.handle();
+        let mut st = St::default();
+        const N: u32 = 20_000;
+        let poster = std::thread::spawn(move || {
+            for i in 0..N {
+                handle.post(move |st| st.log.push(i.to_string())).unwrap();
+                match i % 97 {
+                    0 => std::thread::sleep(Duration::from_micros(200)),
+                    1..=3 => std::thread::yield_now(),
+                    _ => {}
+                }
+            }
+        });
+        let r = lp.run_until(&mut st, Some(Instant::now() + Duration::from_secs(20)), false, |st| st.log.len() == N as usize);
+        poster.join().unwrap();
+        assert_eq!(r, RunOutcome::Done, "lost a wake-up after {} tasks", st.log.len());
+        assert!(st.log.iter().enumerate().all(|(i, v)| v == &i.to_string()));
     }
 
     /// Many posts without the loop running fill the wake pipe; every task still
