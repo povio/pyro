@@ -154,10 +154,22 @@ impl FrameHost {
         id
     }
     pub fn frame(&self, key: FrameKey) -> Option<Frame> {
+        self.with_frame(key, Frame::clone)
+    }
+    /// Reads a frame without cloning it. `f` must not touch this host.
+    pub fn with_frame<R>(&self, key: FrameKey, f: impl FnOnce(&Frame) -> R) -> Option<R> {
         match key.child {
-            None => Some(self.root.borrow().clone()),
-            Some(id) => self.children.borrow().get(&id).map(|d| d.main_frame.clone()),
+            None => Some(f(&self.root.borrow())),
+            Some(id) => self.children.borrow().get(&id).map(|d| f(&d.main_frame)),
         }
+    }
+    /// The frame's document bindings, if any (an `Rc` clone, not a `Frame` clone).
+    pub fn page_dom(&self, key: FrameKey) -> Option<Rc<lp_webapi::PageDom>> {
+        self.with_frame(key, |f| f.page_dom.clone()).flatten()
+    }
+    /// Whether this page has any child frames.
+    pub fn has_children(&self) -> bool {
+        !self.children.borrow().is_empty()
     }
     pub fn key(&self, id: &FrameId) -> Option<FrameKey> {
         if self.root.borrow().id == *id {
@@ -185,7 +197,7 @@ impl FrameHost {
         emit_to(&self.observer, self.page, &event);
     }
     pub fn matches(&self, key: FrameKey, loader: &LoaderId) -> bool {
-        self.frame(key).is_some_and(|f| f.loader_id == *loader)
+        self.with_frame(key, |f| f.loader_id == *loader).unwrap_or(false)
     }
     pub fn make_realm(
         self: &Rc<Self>,
@@ -420,7 +432,7 @@ impl FrameHost {
     }
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct Sandbox {
     pub opaque: bool,
     pub scripts_disabled: bool,
@@ -467,11 +479,14 @@ impl FrameHost {
         self.frame(key).and_then(|f| f.parent).and_then(|id| self.key(&id)).unwrap_or(key)
     }
     pub fn child_keys(&self, key: FrameKey) -> Vec<FrameKey> {
-        let Some(frame) = self.frame(key) else { return Vec::new() };
+        if !self.has_children() {
+            return Vec::new();
+        }
+        let Some(id) = self.with_frame(key, |f| f.id.clone()) else { return Vec::new() };
         self.children
             .borrow()
             .iter()
-            .filter(|(_, d)| d.main_frame.parent.as_ref() == Some(&frame.id))
+            .filter(|(_, d)| d.main_frame.parent.as_ref() == Some(&id))
             .map(|(id, _)| FrameKey { page: self.page, child: Some(*id) })
             .collect()
     }
@@ -602,6 +617,10 @@ impl lp_js::JsClass for CrossWindow {
 impl Browser {
     pub(crate) fn sync_root(&self, page: PageId) {
         if let Some(p) = self.page(page) {
+            // Runs at every checkpoint: skip the clone when nothing changed.
+            if p.frames.root.borrow().same_as(&p.main_frame) {
+                return;
+            }
             let mut frame = p.main_frame.clone();
             let mut root = p.frames.root.borrow_mut();
             if root.loader_id == frame.loader_id {

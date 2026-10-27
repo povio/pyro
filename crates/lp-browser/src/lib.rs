@@ -286,6 +286,35 @@ pub struct Frame {
 }
 
 impl Frame {
+    /// Field-wise equality by identity (realm ids, shared `Rc`s), without cloning.
+    pub(crate) fn same_as(&self, other: &Frame) -> bool {
+        self.id == other.id
+            && self.parent == other.parent
+            && self.owner == other.owner
+            && self.name == other.name
+            && self.base_url == other.base_url
+            && self.sandbox == other.sandbox
+            && self.url == other.url
+            && self.loader_id == other.loader_id
+            && self.realms.len() == other.realms.len()
+            && self.realms.iter().zip(&other.realms).all(|(a, b)| a.world == b.world && a.realm.id() == b.realm.id())
+            && match (&self.dom, &other.dom) {
+                (Some(a), Some(b)) => Rc::ptr_eq(a, b),
+                (None, None) => true,
+                _ => false,
+            }
+            && self.document == other.document
+            && match (&self.page_dom, &other.page_dom) {
+                (Some(a), Some(b)) => Rc::ptr_eq(a, b),
+                (None, None) => true,
+                _ => false,
+            }
+            && self.network_idle == other.network_idle
+            && self.origin == other.origin
+            && self.opaque_origin == other.opaque_origin
+            && self.dom_content_loaded == other.dom_content_loaded
+            && self.loaded == other.loaded
+    }
     pub fn main_realm(&self) -> Option<&Realm> {
         self.realms.iter().find(|r| r.world.is_none()).map(|r| &r.realm)
     }
@@ -383,9 +412,10 @@ impl Browser {
             let Some(host) = self.page(id).map(|p| p.frames.clone()) else { continue };
             self.apply_same_document_url(id);
             self.sync_root(id);
+            // Resource events are queued per page; one drain covers every frame.
+            self.drain_dom_resources(id.into());
             for key in host.keys() {
-                self.drain_dom_resources(key);
-                if let Some(bindings) = self.doc(key).and_then(|p| p.main_frame.page_dom.clone()) {
+                if let Some(bindings) = host.page_dom(key) {
                     bindings.after_task();
                 }
                 if key.child.is_some() {
@@ -401,7 +431,7 @@ impl Browser {
             }
             host.drain_retired();
             for key in host.keys() {
-                self.maybe_fire_load(key);
+                self.fire_load_if_ready(key);
             }
         }
     }
