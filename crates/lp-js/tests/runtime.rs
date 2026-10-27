@@ -187,6 +187,9 @@ fn brand_checks_and_errors() {
     expose::<List>(&r, "l", node(2, &drops), None);
     let checks = [
         ("try { Node.prototype.ping.call({}) } catch (e) { e.constructor.name + ': ' + e.message }", "TypeError: Illegal invocation"),
+        // Member functions are native objects too, but not wrappers.
+        ("try { Node.prototype.ping.call(Node.prototype.ping) } catch (e) { e.message }", "Illegal invocation"),
+        ("try { Node.prototype.ping.call(Object.getOwnPropertyDescriptor(Node.prototype, 'nodeId').get) } catch (e) { e.message }", "Illegal invocation"),
         ("try { Object.getOwnPropertyDescriptor(Node.prototype, 'nodeId').get.call(l) } catch (e) { e.message }", "Illegal invocation"),
         ("try { n.fail() } catch (e) { [e instanceof DOMException, e instanceof Error, e.name, e.code, e.message].join() }", "true,true,NotFoundError,8,no such node"),
         ("try { n.childAt() } catch (e) { e.constructor.name }", "TypeError"),

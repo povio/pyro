@@ -380,7 +380,26 @@ pub(crate) fn install(s: &Scope<'_>, page: &Rc<PageDom>) -> JsResult<()> {
             checkpoint(&page);
         }
     })))?;
+    let weak = Rc::downgrade(page);
+    s.realm().set_native_callback_pending(Some(Rc::new(move || weak.upgrade().is_some_and(|page| hook_pending(&page)))))?;
     Ok(())
+}
+
+/// Whether the native callback hook (iframe events, then [`checkpoint`]) has
+/// anything to do. Conservative: true whenever either could act.
+fn hook_pending(page: &PageDom) -> bool {
+    if page.is_disposed() {
+        return false;
+    }
+    let Ok(dom) = page.dom.try_borrow() else { return true };
+    let m = &page.mutations;
+    dom.has_iframe_events()
+        || !m.pending_drops.borrow().is_empty()
+        || !dom.pending_observers_from(m.rooted.get()).is_empty()
+        || (!m.pending_roots.borrow().is_empty() && m.queued.get().is_none())
+        // The reconcile pass of `checkpoint` only acts on observers or pins;
+        // it is idempotent, so a version it skipped is reconciled later.
+        || (m.version.get() != Some(dom.version()) && (!m.observers.borrow().is_empty() || !m.pins.borrow().is_empty()))
 }
 pub(crate) fn cancel_realm(page: &PageDom, realm: RealmId) {
     if page.mutations.queued.get().is_some_and(|(owner, _)| owner == realm) {

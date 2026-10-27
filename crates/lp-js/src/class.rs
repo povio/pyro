@@ -495,9 +495,28 @@ pub(crate) enum Kind {
     Closure,
 }
 
+/// First word of every object private payload in the VM: wrapper payloads
+/// ([`Header`]) and member functions ([`MemberPayload`]). Lets
+/// `Scope::header_of_object` tell a wrapper from a member function by reading
+/// its private pointer, without the class check (which takes the JSC lock).
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(u64)]
+pub(crate) enum PayloadTag {
+    Wrapper = 0x4c50_5752_4150_5052, // "LPWRAPPR"
+    Member = 0x4c50_4d45_4d42_4552,  // "LPMEMBER"
+}
+
+/// Private payload of a member function object.
+#[repr(C)]
+pub(crate) struct MemberPayload {
+    pub tag: PayloadTag,
+    pub call: MemberCall,
+}
+
 /// Header at the start of every wrapper payload (`Boxed<T>`).
 #[repr(C)]
 pub(crate) struct Header {
+    pub tag: PayloadTag,
     pub class: ClassId,
     pub kind: Kind,
     pub realm: RealmId,
@@ -550,6 +569,7 @@ pub(crate) fn new_payload<T: 'static>(
 ) -> *mut Header {
     let b = Box::new(Boxed {
         header: Header {
+            tag: PayloadTag::Wrapper,
             class,
             kind,
             realm,
@@ -820,7 +840,7 @@ unsafe fn this_data<'a, C: JsClass>(scope: &Scope<'_>, this: sys::JSObjectRef) -
     drop(reg);
     if let Some(f) = fallback {
         // SAFETY: only for receivers that resolve to the realm's global.
-        let global_receiver = this.is_null() || this == unsafe { sys::JSContextGetGlobalObject(scope.ctx) };
+        let global_receiver = this.is_null() || this == scope.global_object_raw();
         if global_receiver {
             if let Some(p) = unsafe { f(scope) } {
                 // SAFETY: the pointer refers to C::Data owned by the realm's
@@ -853,11 +873,11 @@ pub(crate) unsafe extern "C" fn member_call(
 ) -> sys::JSValueRef {
     unsafe {
         guard(ctx, exc, ptr::null(), |scope| {
-            let call = sys::JSObjectGetPrivate(function) as *const MemberCall;
-            if call.is_null() {
+            let payload = sys::JSObjectGetPrivate(function) as *const MemberPayload;
+            if payload.is_null() {
                 return Err(JsError::Type("Illegal invocation".into()));
             }
-            let call = *call;
+            let call = (*payload).call;
             (call.invoke)(scope, this, Args::from_raw(ctx, argc, argv), call.f)
         })
     }
@@ -866,7 +886,7 @@ pub(crate) unsafe extern "C" fn member_call(
 /// Frees a member function object's `MemberCall` (runs inside GC: no JSC
 /// calls, no Rust destructors beyond the deallocation).
 pub(crate) unsafe extern "C" fn member_finalize(object: sys::JSObjectRef) {
-    let p = unsafe { sys::JSObjectGetPrivate(object) } as *mut MemberCall;
+    let p = unsafe { sys::JSObjectGetPrivate(object) } as *mut MemberPayload;
     if !p.is_null() {
         unsafe { drop(Box::from_raw(p)) };
     }

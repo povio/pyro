@@ -494,7 +494,7 @@ impl<'s> Scope<'s> {
         (!v.is_null()).then(|| unsafe { Value::from_raw(self.ctx, v) })
     }
     pub fn global(&self) -> Object<'s> {
-        unsafe { Object::from_raw(self.ctx, sys::JSContextGetGlobalObject(self.ctx)) }
+        unsafe { Object::from_raw(self.ctx, self.global_object_raw()) }
     }
 }
 

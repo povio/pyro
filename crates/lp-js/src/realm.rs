@@ -156,6 +156,9 @@ pub(crate) struct RealmInner {
     module_loader: Cell<*mut c_void>,
     module_fetcher: RefCell<Option<Rc<dyn ModuleFetcher>>>,
     native_callback_hook: RefCell<Option<NativeCallbackHook>>,
+    /// Optional cheap test of whether the hook has anything to do; when it
+    /// says no, the hook (and the rooting of the callback result) is skipped.
+    native_callback_pending: RefCell<Option<Rc<dyn Fn() -> bool>>>,
     native_callback_hook_active: Cell<bool>,
     /// Sources of top-level modules passed to `eval_module`; JSC requests the
     /// entry module itself through the fetch hook.
@@ -165,14 +168,21 @@ pub(crate) struct RealmInner {
     /// Payload of the global object (set once; freed when the realm is dropped,
     /// never while a callback can still borrow it).
     global_payload: Cell<*mut Header>,
+    /// `JSContextGetGlobalObject` of the realm's context, cached: the C API
+    /// call takes the JSC lock and binding calls ask for it constantly.
+    global_object: Cell<sys::JSObjectRef>,
 }
 
 impl RealmInner {
     pub(crate) fn native_callback_hook(&self) -> Option<NativeCallbackHook> {
         if self.ctx.get().is_null() || self.native_callback_hook_active.get() {
-            None
-        } else {
-            self.native_callback_hook.borrow().clone()
+            return None;
+        }
+        let hook = self.native_callback_hook.borrow().clone()?;
+        let pending = self.native_callback_pending.borrow().clone();
+        match pending {
+            Some(pending) if !pending() => None,
+            _ => Some(hook),
         }
     }
 
@@ -236,6 +246,7 @@ impl RealmInner {
         if ctx.is_null() {
             return;
         }
+        self.global_object.set(ptr::null_mut());
         self.engine.realms.borrow_mut().retain(|(g, _)| *g != ctx);
         let loader = self.module_loader.replace(ptr::null_mut());
         if !loader.is_null() {
@@ -244,6 +255,7 @@ impl RealmInner {
         self.module_fetcher.borrow_mut().take();
         // Release captured embedder state without holding the hook cell borrow.
         drop(self.native_callback_hook.take());
+        drop(self.native_callback_pending.take());
         self.protos.borrow_mut().clear();
         self.ctors.borrow_mut().clear();
         self.targets.borrow_mut().clear();
@@ -372,6 +384,14 @@ impl Realm {
         Ok(())
     }
 
+    /// Lets the native callback hook be skipped while `pending` returns false.
+    /// It must return true whenever the hook would do anything.
+    pub fn set_native_callback_pending(&self, pending: Option<Rc<dyn Fn() -> bool>>) -> JsResult<()> {
+        self.scope()?;
+        drop(self.inner.native_callback_pending.replace(pending));
+        Ok(())
+    }
+
     pub fn set_module_fetcher(&self, fetcher: Option<Rc<dyn ModuleFetcher>>) {
         *self.inner.module_fetcher.borrow_mut() = fetcher;
     }
@@ -412,6 +432,11 @@ pub struct Scope<'s> {
 
 pub(crate) fn realm_for_ctx(ctx: sys::JSContextRef) -> Option<Rc<RealmInner>> {
     let engine = crate::engine::current_inner()?;
+    // Callbacks receive the global context itself; only other contexts need
+    // the (locking) lookup of their global context.
+    if let Some(realm) = engine.realm_for_global(ctx as sys::JSGlobalContextRef) {
+        return Some(realm);
+    }
     let global = unsafe { sys::JSContextGetGlobalContext(ctx) };
     engine.realm_for_global(global)
 }
@@ -842,18 +867,30 @@ impl<'s> Scope<'s> {
 
     /// Payload header of an object: wrappers, or this realm's global.
     unsafe fn header_of_object(&self, obj: sys::JSObjectRef) -> Option<*mut Header> {
-        let base = self.realm.engine.classes.borrow().base;
         unsafe {
-            if sys::JSValueIsObjectOfClass(self.ctx, obj as sys::JSValueRef, base) {
-                let h = sys::JSObjectGetPrivate(obj) as *mut Header;
-                return (!h.is_null()).then_some(h);
+            // Every private pointer in the VM is a wrapper header or a member
+            // function payload, told apart by their first word. Reading it does
+            // not take the JSC lock, unlike the class check.
+            let h = sys::JSObjectGetPrivate(obj) as *mut Header;
+            if !h.is_null() {
+                return ((*h).tag == class::PayloadTag::Wrapper).then_some(h);
             }
-            if obj == sys::JSContextGetGlobalObject(self.ctx) {
+            if obj == self.global_object_raw() {
                 let h = self.realm.global_payload.get();
                 return (!h.is_null()).then_some(h);
             }
         }
         None
+    }
+
+    /// The realm's global object (`JSContextGetGlobalObject`, cached).
+    pub(crate) fn global_object_raw(&self) -> sys::JSObjectRef {
+        let g = self.realm.global_object.get();
+        if g.is_null() {
+            unsafe { sys::JSContextGetGlobalObject(self.ctx) }
+        } else {
+            g
+        }
     }
 
     /// Payload header of a callback receiver, mapping `null`/global to the
@@ -863,7 +900,7 @@ impl<'s> Scope<'s> {
     /// `this` must be the receiver JSC passed to the current callback.
     pub(crate) unsafe fn header_of_receiver(&self, this: sys::JSObjectRef) -> Option<*mut Header> {
         unsafe {
-            let obj = if this.is_null() { sys::JSContextGetGlobalObject(self.ctx) } else { this };
+            let obj = if this.is_null() { self.global_object_raw() } else { this };
             self.header_of_object(obj)
         }
     }
@@ -1058,11 +1095,14 @@ pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResul
         module_loader: Cell::new(ptr::null_mut()),
         module_fetcher: RefCell::new(None),
         native_callback_hook: RefCell::new(None),
+        native_callback_pending: RefCell::new(None),
         native_callback_hook_active: Cell::new(false),
         inline_modules: RefCell::new(HashMap::new()),
         embedder: RefCell::new(None),
         global_class: options.global_class,
         global_payload: Cell::new(ptr::null_mut()),
+        // SAFETY: fresh, retained global context.
+        global_object: Cell::new(unsafe { sys::JSContextGetGlobalObject(ctx) }),
     });
     engine.realms.borrow_mut().push((ctx, Rc::downgrade(&inner)));
     let realm = Realm { inner };
@@ -1299,7 +1339,7 @@ fn make_member_fn(
     length: u32,
     keys: &MemberKeys,
 ) -> JsResult<Object<'static>> {
-    let payload = Box::into_raw(Box::new(call)) as *mut c_void;
+    let payload = Box::into_raw(Box::new(class::MemberPayload { tag: class::PayloadTag::Member, call })) as *mut c_void;
     let f = unsafe { Object::from_raw(ctx, sys::JSObjectMake(ctx, class, payload)) };
     let attrs = sys::kJSPropertyAttributeReadOnly | sys::kJSPropertyAttributeDontEnum;
     unsafe {
