@@ -289,7 +289,12 @@ impl OutFrame {
         let header_len = write_header(&mut header, opcode, len);
         let start = MAX_HEADER - header_len;
         self.buf[start..MAX_HEADER].copy_from_slice(&header[..header_len]);
-        FrameBytes { buf: self.buf, start }
+        FrameBytes {
+            buf: self.buf,
+            start,
+            #[cfg(feature = "perf-trace")]
+            queued_at: crate::perf::now(),
+        }
     }
 }
 
@@ -297,6 +302,9 @@ impl OutFrame {
 pub struct FrameBytes {
     buf: Vec<u8>,
     start: usize,
+    /// When the frame was finished, for the outbound queue stage.
+    #[cfg(feature = "perf-trace")]
+    pub(crate) queued_at: crate::perf::Stamp,
 }
 
 impl AsRef<[u8]> for FrameBytes {

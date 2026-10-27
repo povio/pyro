@@ -187,6 +187,9 @@ fn brand_checks_and_errors() {
     expose::<List>(&r, "l", node(2, &drops), None);
     let checks = [
         ("try { Node.prototype.ping.call({}) } catch (e) { e.constructor.name + ': ' + e.message }", "TypeError: Illegal invocation"),
+        // Member functions are native objects too, but not wrappers.
+        ("try { Node.prototype.ping.call(Node.prototype.ping) } catch (e) { e.message }", "Illegal invocation"),
+        ("try { Node.prototype.ping.call(Object.getOwnPropertyDescriptor(Node.prototype, 'nodeId').get) } catch (e) { e.message }", "Illegal invocation"),
         ("try { Object.getOwnPropertyDescriptor(Node.prototype, 'nodeId').get.call(l) } catch (e) { e.message }", "Illegal invocation"),
         ("try { n.fail() } catch (e) { [e instanceof DOMException, e instanceof Error, e.name, e.code, e.message].join() }", "true,true,NotFoundError,8,no such node"),
         ("try { n.childAt() } catch (e) { e.constructor.name }", "TypeError"),
@@ -546,6 +549,31 @@ fn terminate_handle_stops_infinite_loop() {
     assert!(res.is_err());
     assert!(start.elapsed() < std::time::Duration::from_secs(5));
     // The engine keeps working afterwards.
+    assert_eq!(s.eval("1 + 1", None, 1).unwrap().to_number().unwrap(), 2.0);
+}
+
+#[test]
+fn interrupt_check_stops_running_javascript_from_the_same_thread() {
+    let e = engine();
+    if e.terminate_handle().is_err() {
+        eprintln!("termination SPI unavailable; skipping");
+        return;
+    }
+    let r = e.create_realm(RealmOptions::default()).unwrap();
+    let start = std::time::Instant::now();
+    let polls = Rc::new(Cell::new(0u32));
+    let seen = polls.clone();
+    e.set_interrupt_check(Some(Rc::new(move || {
+        seen.set(seen.get() + 1);
+        start.elapsed() > std::time::Duration::from_millis(100)
+    })));
+    let s = r.scope().unwrap();
+    let res = s.eval("for (;;) {}", None, 1);
+    assert!(matches!(res, Err(JsError::Terminated)), "{res:?}");
+    assert!(start.elapsed() < std::time::Duration::from_secs(5));
+    assert!(polls.get() >= 2, "checked while the script ran");
+    // Without the check the engine runs normally again.
+    e.set_interrupt_check(None);
     assert_eq!(s.eval("1 + 1", None, 1).unwrap().to_number().unwrap(), 2.0);
 }
 

@@ -75,6 +75,7 @@ impl<'a> Command<'a> {
 
     /// Deserializes params into `T`; absent params deserialize from `{}`.
     pub fn params<T: DeserializeOwned>(&self) -> CdpResult<T> {
+        let _t = crate::perf::span("cdp.params");
         let raw = self.params.map_or("{}", RawValue::get);
         serde_json::from_str(raw).map_err(|e| CdpError::invalid_params(format!("Invalid parameters: {e}")))
     }
@@ -83,6 +84,7 @@ impl<'a> Command<'a> {
     /// fields with `#[serde(borrow)]` avoid copying large strings such as a
     /// `functionDeclaration`).
     pub fn params_borrowed<T: Deserialize<'a>>(&self) -> CdpResult<T> {
+        let _t = crate::perf::span("cdp.params");
         let raw = self.params.map_or("{}", RawValue::get);
         serde_json::from_str(raw).map_err(|e| CdpError::invalid_params(format!("Invalid parameters: {e}")))
     }
@@ -161,6 +163,7 @@ pub fn event_frame<T: Serialize + ?Sized>(method: &str, params: &T, session_id: 
 }
 
 fn to_frame<T: Serialize>(value: &T) -> OutFrame {
+    let _t = crate::perf::span("json.serialize");
     let mut frame = OutFrame::with_capacity(128);
     // Serializing plain structs/maps into a Vec cannot fail.
     serde_json::to_writer(frame.payload(), value).expect("CDP message serializes");

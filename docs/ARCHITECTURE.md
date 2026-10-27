@@ -31,13 +31,26 @@ in their own crate manifests. W1 reconciles the lockfile on integration.
 
 - **One browser thread per CDP connection** (as upstream does). It owns the `lp_js::Engine` (one JSC context group =
   one VM/heap), the DOM, and an `EventLoop<Browser>`. Every JS/DOM type is `!Send`. No locks guard JS or DOM state.
-- **I/O thread(s)** run a tokio runtime that handles socket accept, WebSocket framing and HTTP for `lp-net`.
-  - They post work to the browser thread with `LoopHandle::post(Box<dyn FnOnce(&mut Browser) + Send>)`.
-  - The loop processes posted work in arrival order. `post` returns `Err(LoopClosed)` once the browser thread has exited.
-  - Responses and events go back through one ordered channel per connection.
+- **The CDP I/O thread** (tokio, current-thread) accepts sockets, answers the HTTP discovery endpoints and performs
+  the WebSocket upgrade. It then hands the socket to the connection's browser thread and only holds the connection
+  slot until that thread has finished (`SessionFactory::start_owned`).
+- **The browser thread serves its own connection** (`lp-cdp/src/conn.rs`): it reads, decodes, runs and answers each
+  command, and writes replies and events, all on that thread. The non-blocking socket is registered with the
+  browser loop (`lp_runtime::FdWatch`), so an idle thread sleeps in one `poll(2)` on its wake pipe and the socket.
+  Between loop tasks the connection is serviced (read at most every 100 µs while page work keeps the loop busy, at
+  once when the socket wakes it). While JavaScript runs, the engine watchdog polls the connection
+  (`Engine::set_interrupt_check`, about every 50 ms): it keeps reading and decoding, answers pings, and stops the
+  script when the client closes or leaves, the outbound budget is exceeded, or the session takes nothing for the
+  stall timeout. Guarantees kept from the channel design: in-order handling with at most 64 decoded messages
+  waiting; replies and events written in production order, with pongs and close frames at frame boundaries; the
+  64 MiB outbound budget (frames are pulled from the ordered outbound channel one at a time, so it counts what the
+  socket has not taken) closing with 1008; frame, write, stall and close timeouts.
+- **Other I/O threads** (lp-net's tokio runtime for HTTP) post work to the browser thread with
+  `LoopHandle::post(Box<dyn FnOnce(&mut Browser) + Send>)`. The loop processes posted work in arrival order and
+  writes its wake pipe only while asleep. `post` returns `Err(LoopClosed)` once the browser thread has exited.
 - **At most one `Engine` per thread** (enforced). Callbacks find their engine and realm through thread-local state.
-- On connection close, a teardown task runs `Browser::close_all()` before the loop exits. That disposes the realms
-  and cancels the timers.
+- On connection close the browser thread runs `Browser::close_all()`, which disposes the realms and cancels the
+  timers, then writes what is still queued and a close frame within the close timeout, and shuts the socket.
 
 ## lp-js contract (implemented, tested)
 

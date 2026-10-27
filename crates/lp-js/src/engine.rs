@@ -204,6 +204,9 @@ thread_local! {
     pub(crate) static DEPTH: Cell<u32> = const { Cell::new(0) };
     /// A termination is propagating through the VM on this thread.
     pub(crate) static TERMINATING: Cell<bool> = const { Cell::new(false) };
+    /// Asked at each watchdog poll while JavaScript runs on this thread;
+    /// returning true terminates it (see [`Engine::set_interrupt_check`]).
+    static INTERRUPT_CHECK: RefCell<Option<Rc<dyn Fn() -> bool>>> = const { RefCell::new(None) };
 }
 
 /// The live engine whose VM `ctx` belongs to, even if its owner was dropped
@@ -311,6 +314,15 @@ impl Engine {
         crate::realm::create(&inner, options)
     }
 
+    /// Installs a check this thread runs at every watchdog poll (about every
+    /// 50 ms) while JavaScript executes; when it returns true the running
+    /// script is terminated as by [`TerminateHandle::terminate`]. Lets the
+    /// owner of the thread notice external events (a client disconnecting)
+    /// without a second thread. It must be cheap and must not call JSC.
+    pub fn set_interrupt_check(&self, check: Option<Rc<dyn Fn() -> bool>>) {
+        INTERRUPT_CHECK.with(|c| *c.borrow_mut() = check);
+    }
+
     /// Thread-safe handle to request termination of running JavaScript.
     pub fn terminate_handle(&self) -> Result<TerminateHandle, JsError> {
         if !self.inner.caps.termination {
@@ -414,6 +426,35 @@ fn arm_watchdog(group: sys::JSContextGroupRef, state: &Arc<TerminateState>) {
     }
 }
 
+/// Suspends the execution time limit while the engine runs its own setup
+/// code (no page script), restoring it on drop. With the limit armed, every
+/// VM entry reads the thread's CPU time (a system call); realm creation
+/// makes hundreds of entries. Only at depth 0: with page JavaScript on the
+/// stack the watchdog keeps running. A termination requested meanwhile is
+/// seen at the first poll after the limit is restored.
+pub(crate) struct WatchdogPause<'a>(Option<&'a EngineInner>);
+
+impl<'a> WatchdogPause<'a> {
+    pub(crate) fn new(engine: &'a EngineInner) -> Self {
+        let spi = sys::spi::get();
+        if !engine.caps.termination || DEPTH.with(Cell::get) > 0 || spi.set_execution_time_limit.is_none() {
+            return WatchdogPause(None);
+        }
+        let Some(clear) = spi.clear_execution_time_limit else { return WatchdogPause(None) };
+        // SAFETY: valid group owned by the engine.
+        unsafe { clear(engine.group) };
+        WatchdogPause(Some(engine))
+    }
+}
+
+impl Drop for WatchdogPause<'_> {
+    fn drop(&mut self) {
+        if let Some(engine) = self.0 {
+            arm_watchdog(engine.group, &engine.terminate);
+        }
+    }
+}
+
 /// Called when native code observed a termination while JS is still on the
 /// stack: request it again and restart the watchdog timer for this entry.
 pub(crate) fn rearm_termination(ctx: sys::JSContextRef) {
@@ -442,6 +483,10 @@ unsafe extern "C" fn should_terminate(ctx: sys::JSContextRef, data: *mut c_void)
     // SAFETY: data is the TerminateState kept alive by EngineInner. This runs
     // on the thread executing JavaScript (the engine thread).
     let state = unsafe { &*(data as *const TerminateState) };
+    let check = INTERRUPT_CHECK.try_with(|c| c.borrow().clone()).ok().flatten();
+    if check.is_some_and(|check| check()) {
+        state.requested.store(true, Ordering::SeqCst);
+    }
     if state.requested.swap(false, Ordering::SeqCst) {
         let _ = TERMINATING.try_with(|t| t.set(true));
         return true;

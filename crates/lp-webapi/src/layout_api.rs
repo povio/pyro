@@ -122,8 +122,7 @@ pub(crate) fn range_rect<'s>(
 
 pub fn fire_scroll(page: &Rc<PageDom>, target: Option<NodeId>) {
     // HTML "run the scroll steps": a scrolled target is queued once and its
-    // scroll event fires in the next rendering update, which ticks with
-    // requestAnimationFrame here (16 ms). Chromium dispatches it in its next
+    // scroll event fires in the next rendering update, which ticks    // requestAnimationFrame here (16 ms). Chromium dispatches it in its next
     // frame: on a page that just rendered (TOS react-aria autocomplete) that
     // was 23-29 ms after Playwright's scroll step, after its click; on an
     // idle page a frame can run within ~1 ms. Fired as an immediate task, it

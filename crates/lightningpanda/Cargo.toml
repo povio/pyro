@@ -9,6 +9,10 @@ license.workspace = true
 name = "lightningpanda"
 path = "src/main.rs"
 
+[features]
+# CDP stage timers (LP.perfStats); for profiling builds only.
+perf-trace = ["lp-cdp/perf-trace"]
+
 [dependencies]
 lp-js.workspace = true
 lp-runtime.workspace = true

@@ -222,6 +222,40 @@ fn playwright_page_initialization_sequence() {
 }
 
 #[test]
+fn by_value_results_keep_key_order_as_on_the_wire() {
+    let mut h = Harness::new();
+    let session = h.session.clone();
+    h.drain();
+    let id = h.send(
+        Some(&session),
+        "Runtime.evaluate",
+        json!({"expression":"({b: 1, a: [3, 1], c: {z: 1e21, y: 'q', x: null}, \"\": true})","returnByValue":true}),
+    );
+    let mut texts = Vec::new();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !texts.iter().any(|t: &String| t.contains(&format!("\"id\":{id},"))) {
+        assert!(Instant::now() < deadline, "no response; saw {texts:?}");
+        while let Some(Outbound::Frame(f)) = h.rx.try_recv() {
+            let bytes = f.as_ref();
+            let header = match bytes[1] {
+                126 => 4,
+                127 => 10,
+                _ => 2,
+            };
+            texts.push(String::from_utf8(bytes[header..].to_vec()).unwrap());
+        }
+        h.browser.host_mut().run_until_work(Some(Instant::now() + Duration::from_millis(20)), || false);
+        h.browser.host_mut().flush();
+    }
+    // Insertion order, like Chrome (JSON.stringify's text, numbers included).
+    let reply = texts.iter().find(|t| t.contains(&format!("\"id\":{id},"))).unwrap();
+    assert!(
+        reply.contains(r#""value":{"b":1,"a":[3,1],"c":{"z":1e+21,"y":"q","x":null},"":true}"#),
+        "{reply}"
+    );
+}
+
+#[test]
 fn evaluate_call_function_and_handles() {
     let mut h = Harness::new();
     h.page("Runtime.enable", json!({}));

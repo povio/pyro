@@ -192,7 +192,10 @@ impl<H: Host> Browser<H> {
 
     /// Handles one text message from the client.
     pub fn handle_text(&mut self, text: &str, out: &mut dyn Sink) {
-        let command = match msg::parse_command(text) {
+        let parse = crate::perf::span("cdp.parse");
+        let parsed = msg::parse_command(text);
+        drop(parse);
+        let command = match parsed {
             Ok(command) => command,
             Err(failure) => {
                 out.send(msg::error_frame(failure.id, &failure.error, failure.session_id.as_deref()));
@@ -200,6 +203,7 @@ impl<H: Host> Browser<H> {
             }
         };
         let session_id = command.session_id().map(str::to_owned);
+        let _t = crate::perf::span_with(|| format!("cdp.dispatch {}", command.method));
         if let Err(error) = self.dispatch(&command, out) {
             out.send(msg::error_frame(Some(command.id), &error, session_id.as_deref()));
         }
@@ -221,6 +225,17 @@ impl<H: Host> Browser<H> {
         }
         let (domain, action) = cmd.domain_and_action().ok_or_else(|| CdpError::method_not_found(&cmd.method))?;
         match (domain, action) {
+            #[cfg(feature = "perf-trace")]
+            ("LP", "perfReset") => {
+                crate::perf::reset();
+                out.send(msg::result_frame(cmd.id, &Empty {}, cmd.session_id()));
+                Ok(())
+            }
+            #[cfg(feature = "perf-trace")]
+            ("LP", "perfStats") => {
+                out.send(msg::result_frame(cmd.id, &crate::perf::snapshot(), cmd.session_id()));
+                Ok(())
+            }
             ("Browser", "getVersion") => {
                 #[derive(Serialize)]
                 #[serde(rename_all = "camelCase")]

@@ -221,3 +221,160 @@ async fn commands_are_answered_while_page_tasks_and_timers_never_go_idle() {
     }
     assert_eq!(ids, (100..200).collect::<Vec<_>>());
 }
+
+/// A client frame (masked) with any opcode; payloads up to 64 KiB.
+fn masked_frame(opcode: u8, payload: &[u8]) -> Vec<u8> {
+    let mut f = masked(payload);
+    f[0] = 0x80 | opcode;
+    f
+}
+
+/// Next server frame as (opcode, payload).
+async fn read_frame(s: &mut TcpStream) -> Option<(u8, Vec<u8>)> {
+    let mut h = [0u8; 2];
+    s.read_exact(&mut h).await.ok()?;
+    let len = match h[1] & 0x7f {
+        126 => {
+            let mut b = [0u8; 2];
+            s.read_exact(&mut b).await.ok()?;
+            u16::from_be_bytes(b) as usize
+        }
+        127 => {
+            let mut b = [0u8; 8];
+            s.read_exact(&mut b).await.ok()?;
+            u64::from_be_bytes(b) as usize
+        }
+        n => n as usize,
+    };
+    let mut p = vec![0u8; len];
+    s.read_exact(&mut p).await.ok()?;
+    Some((h[0] & 0x0f, p))
+}
+
+/// Reads frames until a close frame; returns its status code.
+async fn close_code(s: &mut TcpStream) -> u16 {
+    loop {
+        let (op, p) = tokio::time::timeout(Duration::from_secs(20), read_frame(s))
+            .await
+            .expect("close frame in time")
+            .expect("close frame before EOF");
+        if op == 8 {
+            return u16::from_be_bytes([p[0], p[1]]);
+        }
+    }
+}
+
+async fn page_session(s: &mut TcpStream) -> Value {
+    let target = call(s, json!({"id":1,"method":"Target.createTarget","params":{"url":"about:blank"}})).await;
+    let target = target["result"]["targetId"].clone();
+    let session =
+        call(s, json!({"id":2,"method":"Target.attachToTarget","params":{"targetId":target,"flatten":true}})).await;
+    session["result"]["sessionId"].clone()
+}
+
+async fn serve(config: ServerConfig) -> SocketAddr {
+    let server = Server::bind("127.0.0.1:0".parse().unwrap(), config, ThreadPerConnection::default()).await.unwrap();
+    let addr = server.local_addr().unwrap();
+    tokio::spawn(server.run());
+    addr
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn close_frame_during_a_script_stops_it_and_frees_the_slot() {
+    let addr = serve(ServerConfig { max_connections: 1, ..ServerConfig::default() }).await;
+    let mut s = connect(addr).await;
+    let session = page_session(&mut s).await;
+    s.write_all(&masked(
+        json!({"id":3,"method":"Runtime.evaluate","params":{"expression":"while (true) {}"},"sessionId":session})
+            .to_string()
+            .as_bytes(),
+    ))
+    .await
+    .unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    // A close handshake (not just EOF) while the script spins.
+    s.write_all(&masked_frame(8, &1000u16.to_be_bytes())).await.unwrap();
+    assert_eq!(close_code(&mut s).await, 1000);
+    let mut second = tokio::time::timeout(Duration::from_secs(10), async {
+        let mut s = connect(addr).await;
+        let v = call(&mut s, json!({"id":1,"method":"Browser.getVersion"})).await;
+        assert!(v["result"]["product"].is_string());
+        s
+    })
+    .await
+    .expect("script stopped and slot released");
+    let _ = second.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn oversized_message_closes_with_1009() {
+    let mut config = ServerConfig::default();
+    config.ws.max_message_size = 1024;
+    let addr = serve(config).await;
+    let mut s = connect(addr).await;
+    let v = call(&mut s, json!({"id":1,"method":"Browser.getVersion"})).await;
+    assert!(v["result"]["product"].is_string());
+    let big = json!({"id":2,"method":"Runtime.evaluate","params":{"expression":"x".repeat(2000)}}).to_string();
+    s.write_all(&masked(big.as_bytes())).await.unwrap();
+    assert_eq!(close_code(&mut s).await, 1009);
+    let mut rest = Vec::new();
+    let eof = tokio::time::timeout(Duration::from_secs(5), s.read_to_end(&mut rest)).await;
+    assert!(eof.is_ok(), "socket closed after the close frame");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_client_that_stops_reading_is_closed_with_1008_at_the_budget() {
+    let addr = serve(ServerConfig::default()).await;
+    let mut s = connect(addr).await;
+    let session = page_session(&mut s).await;
+    // ~96 MiB of by-value replies (budget: 64 MiB) while the client reads nothing.
+    let mut burst = Vec::new();
+    for id in 10..34 {
+        burst.extend(masked(
+            json!({"id":id,"method":"Runtime.evaluate","params":{"expression":"'x'.repeat(4 << 20)","returnByValue":true},"sessionId":session})
+                .to_string()
+                .as_bytes(),
+        ));
+    }
+    s.write_all(&burst).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    assert_eq!(close_code(&mut s).await, 1008);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pings_are_answered_in_order_while_the_page_is_busy() {
+    let addr = serve(ServerConfig::default()).await;
+    let mut s = connect(addr).await;
+    let session = page_session(&mut s).await;
+    let busy = "(function tick() { const t = Date.now(); while (Date.now() - t < 2) {} setTimeout(tick, 0); })(); 0";
+    call(&mut s, json!({"id":3,"method":"Runtime.evaluate","params":{"expression":busy},"sessionId":session})).await;
+    let mut burst = Vec::new();
+    for i in 0..20u8 {
+        burst.extend(masked_frame(9, &[i; 4]));
+        burst.extend(masked(
+            json!({"id":100 + i as u64,"method":"Runtime.evaluate","params":{"expression":format!("{i}"),"returnByValue":true},"sessionId":session})
+                .to_string()
+                .as_bytes(),
+        ));
+    }
+    s.write_all(&burst).await.unwrap();
+    let (mut pongs, mut ids) = (Vec::new(), Vec::new());
+    while pongs.len() < 20 || ids.len() < 20 {
+        let (op, p) = tokio::time::timeout(Duration::from_secs(10), read_frame(&mut s))
+            .await
+            .expect("pong/reply in time")
+            .expect("frame");
+        match op {
+            0xA => pongs.push(p[0]),
+            1 => {
+                let m: Value = serde_json::from_slice(&p).unwrap();
+                if let Some(id) = m["id"].as_u64() {
+                    ids.push(id);
+                }
+            }
+            other => panic!("unexpected opcode {other}"),
+        }
+    }
+    assert_eq!(pongs, (0..20).collect::<Vec<u8>>());
+    assert_eq!(ids, (100..120).collect::<Vec<u64>>());
+}

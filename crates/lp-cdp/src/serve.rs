@@ -1,20 +1,23 @@
 //! `lightningpanda serve`: the CDP server process.
 //!
-//! The main thread runs a single-threaded tokio runtime for sockets. Each
-//! upgraded connection gets its own browser thread owning a JavaScriptCore
-//! engine, an [`EngineHost`] and the protocol state (docs/ARCHITECTURE.md).
+//! The main thread runs a single-threaded tokio runtime that accepts sockets
+//! and upgrades them. Each upgraded connection is then served entirely by its
+//! own browser thread, which owns a JavaScriptCore engine, an [`EngineHost`],
+//! the protocol state and the socket (docs/ARCHITECTURE.md, [`crate::conn`]).
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use lp_runtime::RunOutcome;
-use tokio::sync::{mpsc, oneshot, Semaphore};
+use tokio::sync::oneshot;
 
+use crate::conn::Conn;
 use crate::engine::{BrowserProfile, EngineHost};
 use crate::outbox::{Outbox, DEFAULT_OUTBOUND_BUDGET};
 use crate::server::{Inbound, Server, ServerConfig, SessionChannels, SessionFactory};
@@ -60,9 +63,6 @@ answer (no such file, POST, other origins) go to the network as usual, so API
 calls on the same origin still reach their server. Playwright routes still
 see these requests.
 ";
-
-/// Inbound messages waiting on a browser thread.
-const INFLIGHT: usize = 64;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServeOptions {
@@ -287,10 +287,10 @@ pub struct ThreadPerConnection {
 
 /// What a prepared browser thread needs to serve a connection.
 struct Assignment {
-    outbox: Outbox,
-    state: Arc<CloseState>,
-    ready: oneshot::Sender<()>,
-    permits: Arc<Semaphore>,
+    socket: std::net::TcpStream,
+    /// Bytes read past the upgrade request.
+    buffered: Vec<u8>,
+    config: ServerConfig,
     /// Dropped when the thread ends, however it ends: releases the slot.
     finished: oneshot::Sender<()>,
 }
@@ -315,7 +315,7 @@ impl ThreadPerConnection {
             // No connection ever claims this thread when the sender is dropped.
             let Ok(a) = rx.recv() else { return };
             let _finished = a.finished;
-            run_browser_thread(prepared, a.outbox, a.state, a.ready, a.permits);
+            run_browser_thread(prepared, a.socket, &a.buffered, a.config);
         })?;
         Ok(tx)
     }
@@ -336,157 +336,137 @@ impl ThreadPerConnection {
     }
 }
 
-/// What the I/O side needs to reach a browser thread.
-struct ThreadControl {
-    handle: lp_runtime::LoopHandle<lp_browser::Browser>,
-    /// Interrupts running JavaScript; `None` if this JSC lacks the capability.
-    terminate: Option<lp_js::TerminateHandle>,
-}
-
-impl ThreadControl {
-    /// Connection gone: stop any running script, then queue teardown ahead
-    /// of the per-message permits (the thread may be busy).
-    fn close(&self) {
-        if let Some(t) = &self.terminate {
-            t.terminate();
-        }
-        let _ = self.handle.post(|_| INBOX.with(|q| q.borrow_mut().push_back(Inbound::Closed)));
-    }
-}
-
-/// Close coordination between the connection (I/O side) and its browser thread.
-#[derive(Default)]
-struct CloseState {
-    control: OnceLock<ThreadControl>,
-    closed: AtomicBool,
-}
-
-impl CloseState {
-    /// Connection ended. Whichever of this and the thread's start-up comes
-    /// second performs the close, so a close during engine start is not lost.
-    fn close(&self) {
-        self.closed.store(true, Ordering::SeqCst);
-        if let Some(control) = self.control.get() {
-            control.close();
-        }
-    }
-
-    fn set_control(&self, control: ThreadControl) {
-        if self.control.set(control).is_ok() && self.closed.load(Ordering::SeqCst) {
-            self.control.get().expect("just set").close();
-        }
-    }
-}
-
 impl SessionFactory for ThreadPerConnection {
     fn start(&self, _peer: SocketAddr) -> std::io::Result<SessionChannels> {
-        let (inbound_tx, mut inbound_rx) = mpsc::channel::<Inbound>(INFLIGHT);
-        let (outbox, outbound) = Outbox::channel(DEFAULT_OUTBOUND_BUDGET);
-        let state = Arc::new(CloseState::default());
-        let (ready_tx, ready_rx) = oneshot::channel::<()>();
+        Err(std::io::Error::other("ThreadPerConnection serves the upgraded socket itself (start_owned)"))
+    }
+
+    fn owns_sockets(&self) -> bool {
+        true
+    }
+
+    fn start_owned(
+        &self,
+        _peer: SocketAddr,
+        socket: std::net::TcpStream,
+        buffered: Vec<u8>,
+        config: &ServerConfig,
+    ) -> Option<std::io::Result<oneshot::Receiver<()>>> {
         let (finished_tx, finished_rx) = oneshot::channel::<()>();
-        let (closed_tx, mut closed_rx) = tokio::sync::watch::channel(false);
-        let permits = Arc::new(Semaphore::new(INFLIGHT));
-        let thread = self.claim()?;
+        let thread = match self.claim() {
+            Ok(thread) => thread,
+            Err(e) => return Some(Err(e)),
+        };
         // `finished_tx` travels with the assignment and drops when the thread
         // ends, however it ends: that releases the connection slot.
-        let assignment = Assignment {
-            outbox,
-            state: state.clone(),
-            ready: ready_tx,
-            permits: permits.clone(),
-            finished: finished_tx,
-        };
+        let assignment = Assignment { socket, buffered, config: config.clone(), finished: finished_tx };
         if thread.send(assignment).is_err() {
-            return Err(std::io::Error::other("browser thread ended before the connection started"));
+            return Some(Err(std::io::Error::other("browser thread ended before the connection started")));
         }
-        // Forwards socket messages, in order, to the browser thread. At most
-        // INFLIGHT messages wait there; beyond that the socket reader stops.
-        // It never consumes messages it does not forward.
-        let forward_state = state.clone();
-        tokio::spawn(async move {
-            if ready_rx.await.is_err() {
-                return; // engine failed to start; the thread already ended
-            }
-            let control = forward_state.control.get().expect("set before ready");
-            while let Some(Inbound::Text(text)) = inbound_rx.recv().await {
-                let permit = tokio::select! {
-                    permit = permits.acquire() => permit,
-                    // A busy session must not keep this task alive after close.
-                    _ = closed_rx.wait_for(|closed| *closed) => return,
-                };
-                let Ok(permit) = permit else { return };
-                permit.forget();
-                if control.handle.post(move |_| INBOX.with(|q| q.borrow_mut().push_back(Inbound::Text(text)))).is_err()
-                {
-                    return;
-                }
-            }
-        });
-        let on_close: Box<dyn FnOnce() + Send> = Box::new(move || {
-            let _ = closed_tx.send(true);
-            state.close();
-        });
-        Ok(SessionChannels { inbound: inbound_tx, outbound, finished: Some(finished_rx), on_close: Some(on_close) })
+        Some(Ok(finished_rx))
     }
 }
 
-thread_local! {
-    /// Messages delivered to this browser thread, in arrival order.
-    static INBOX: RefCell<VecDeque<Inbound>> = const { RefCell::new(VecDeque::new()) };
-}
+/// Replies to pipelined commands are written at least every this many commands.
+const FLUSH_EVERY: usize = 16;
 
+/// Serves one connection on this (browser) thread until it ends: the
+/// connection's socket is read and written here (see [`crate::conn`]).
 fn run_browser_thread(
     prepared: Result<lp_browser::BrowserThread, crate::msg::CdpError>,
-    outbox: Outbox,
-    state: Arc<CloseState>,
-    ready: oneshot::Sender<()>,
-    permits: Arc<Semaphore>,
+    socket: std::net::TcpStream,
+    buffered: &[u8],
+    config: ServerConfig,
 ) {
+    let (outbox, outbound) = Outbox::channel(DEFAULT_OUTBOUND_BUDGET);
+    let conn = match Conn::new(socket, buffered, outbound, config) {
+        Ok(conn) => conn,
+        Err(e) => {
+            eprintln!("lightningpanda: CDP connection: {e}");
+            return;
+        }
+    };
     let host = match prepared.and_then(|t| EngineHost::with_thread(t, outbox.clone(), EngineHost::body_budget())) {
         Ok(host) => host,
         Err(e) => {
             eprintln!("lightningpanda: {}", e.message);
-            return; // dropping outbox and `ready` closes the connection
+            drop(outbox);
+            conn.finish(); // a normal close, as when a session ends
+            return;
         }
     };
     let mut browser = Browser::new(host);
-    let terminate = browser.host().thread.browser.engine.terminate_handle().ok();
-    state.set_control(ThreadControl { handle: browser.host().thread.handle(), terminate });
-    if ready.send(()).is_err() {
-        return;
-    }
+    // Network threads that exceed the budget wake this loop to close (1008).
+    let handle = browser.host().thread.handle();
+    outbox.set_waker(Box::new(move || {
+        let _ = handle.post(|_| {});
+    }));
+    let conn = Rc::new(RefCell::new(conn));
+    browser.host_mut().thread.event_loop.watch_fd(Some(conn.borrow().watch()));
+    // While JavaScript runs nothing else reads the socket: the watchdog asks
+    // the connection whether the client left (or stalled) and stops the script.
+    let check = conn.clone();
+    browser
+        .host()
+        .thread
+        .browser
+        .engine
+        .set_interrupt_check(Some(Rc::new(move || check.try_borrow_mut().is_ok_and(|mut c| c.check_during_script()))));
+
     let mut sink = outbox;
-    let closing = || INBOX.with(|q| q.borrow().iter().any(|m| matches!(m, Inbound::Closed)));
-    loop {
-        let has_mail = || INBOX.with(|q| !q.borrow().is_empty());
-        let outcome = browser.host_mut().run_until_work(None, has_mail);
+    let mut inbox: VecDeque<Inbound> = VecDeque::new();
+    let closed = |inbox: &VecDeque<Inbound>| matches!(inbox.back(), Some(Inbound::Closed));
+    'serve: loop {
+        let deadline = conn.borrow().next_deadline();
+        let outcome = browser.host_mut().run_until_work(deadline, || {
+            conn.borrow_mut().service(&mut inbox);
+            !inbox.is_empty()
+        });
         browser.host_mut().flush();
         browser.adopt_popups(&mut sink);
-        if closing() || (matches!(outcome, RunOutcome::Idle | RunOutcome::Stopped) && !has_mail()) {
+        conn.borrow_mut().flush(&mut inbox);
+        if closed(&inbox) || (matches!(outcome, RunOutcome::Idle | RunOutcome::Stopped) && inbox.is_empty()) {
             break; // queued commands of a closed connection are not run
         }
-        while let Some(message) = INBOX.with(|q| q.borrow_mut().pop_front()) {
+        let mut unflushed = 0;
+        while let Some(message) = inbox.pop_front() {
             match message {
                 Inbound::Text(text) => {
-                    permits.add_permits(1);
+                    lp_browser::note_client_activity();
+                    let handle = crate::perf::span("cdp.handle_text");
                     browser.handle_text(&text, &mut sink);
+                    drop(handle);
+                    let flush = crate::perf::span("host.flush");
                     browser.host_mut().flush();
+                    drop(flush);
                     browser.adopt_popups(&mut sink);
-                    if closing() {
-                        break;
+                    // With more commands already decoded (a pipelining client),
+                    // their replies go out together in one write.
+                    unflushed += 1;
+                    if inbox.is_empty() || unflushed >= FLUSH_EVERY {
+                        unflushed = 0;
+                        conn.borrow_mut().flush(&mut inbox);
+                    }
+                    if closed(&inbox) {
+                        break 'serve;
                     }
                 }
-                Inbound::Closed => break,
+                Inbound::Closed => break 'serve,
             }
         }
-        if closing() {
+        if conn.borrow().ended() {
             break;
         }
     }
+    browser.host().thread.browser.engine.set_interrupt_check(None);
+    browser.host_mut().thread.event_loop.watch_fd(None);
     browser.shutdown();
     browser.host_mut().close_all();
-    INBOX.with(|q| q.borrow_mut().clear());
+    drop(sink);
+    match Rc::try_unwrap(conn) {
+        Ok(conn) => conn.into_inner().finish(),
+        Err(_) => debug_assert!(false, "connection still shared at teardown"),
+    }
 }
 
 #[cfg(test)]

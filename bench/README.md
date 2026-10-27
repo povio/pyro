@@ -48,6 +48,79 @@ The browser is started with the exact flags and environment TOS uses (`apps/fe/e
   and 60 ms with one core kept busy (`--warm-cpu`). Treat this as a limitation of the measurement. Report both
   series and compare engines only under the same mode.
 
+## CDP performance suite (regressions and optimization baseline)
+
+`cdp-perf.mjs` measures latency and throughput of realistic CDP workloads against one or more `serve`
+binaries. Run it with `bun` (1.4+): the high-level client scenarios use `Bun.WebView` with its Chrome backend
+attached to the endpoint. Under `node` only the raw CDP scenarios run; `cdp-perf-compare.mjs` diffs two results and flags regressions. Use it to check that a change does
+not slow CDP down, and to see where time goes before optimizing.
+
+```sh
+cargo build --release                                        # from the repository root (JIT-entitled linker)
+(cd bench && bun install && (cd rss-sampler && cargo build --release))
+bun bench/scripts/cdp-perf.mjs --list                        # scenarios
+bun bench/scripts/cdp-perf.mjs --bin $PWD/target/release/lightningpanda --out /tmp/cdp-perf/now.json
+bench/scripts/cdp-perf-ab.sh origin/main                     # main vs. the working tree, interleaved
+node bench/scripts/cdp-perf-compare.mjs run.json --base base --head head
+node bench/scripts/cdp-perf-compare.mjs old.json new.json    # two separate runs (less reliable)
+```
+
+Scenarios (`--filter REGEX` matches names or groups; `--quick` = 1 round at 20% iterations, for checking the
+harness only):
+
+- **connection**: WebSocket connect + `Browser.getVersion` + close. Each connection creates a browser thread and
+  a JavaScriptCore engine, so this is the per-client setup cost.
+- **protocol**: `Browser.getVersion` round trip (the WebSocket + dispatch floor), `Runtime.evaluate "1+1"`
+  round trip, and 256 pipelined evaluates (throughput).
+- **runtime**: large by-value results, `callFunctionOn` with a tiny and a ~38 KB function (Playwright re-sends
+  its utilities), handle creation + `releaseObject`.
+- **dom**: `querySelectorAll` and `textContent` over a 2000-row document, 1000-element create/append/remove,
+  and Playwright's click preparation (`describeNode` + `getContentQuads`).
+- **navigation**: `about:blank`, a small page, 10 scripts + 5 stylesheets, and a 2000-row document, each
+  timed to `Page.loadEventFired`, with milestones (navigate reply, `frameNavigated`, DOMContentLoaded, load).
+- **targets**: context + target create, attach, `Page`/`Runtime.enable`, close, dispose, with per-step laps.
+- **network**: 20 parallel `fetch()` with `Network.enable`; one `Fetch.requestPaused` → `fulfillRequest`.
+- **input**: `Input.dispatchMouseEvent` clicks and `Input.dispatchKeyEvent` typing, verified in the page.
+- **webview** (`Bun.WebView`, needs `bun`): open + navigate + close, `navigate` of each fixture page,
+  `evaluate`, raw `view.cdp()`, selector `click` (with its actionability checks), `type`, and a whole form
+  test flow with laps.
+- **playwright** (opt-in with `--playwright`; `playwright-core` 1.59.1, the version TOS pins): `connectOverCDP`,
+  new context/page, `goto`, `evaluate`, locator `textContent`, fill + click + response, `route.fulfill`, and a
+  whole test flow with laps.
+
+Every scenario checks its result (counts, values, events), so a broken feature fails instead of looking fast.
+
+Method:
+
+- Every scenario runs in a **fresh browser process**, once per round and binary, after a short warmup
+  (10% of its iterations). One sample is one operation, timed in Node, so it includes the WebSocket hop.
+- With several `--bin label=path` binaries the order **alternates every round** (AB, BA, ...), so host drift
+  (thermal state, other load, DVFS) hits both equally. Compare binaries within one run whenever possible.
+- `cpu/op` is browser CPU per operation (all threads), from `rss-sampler` on macOS (auto-detected when built)
+  or `/proc` on Linux. On a loaded host it is steadier than wall time, and it shows where the browser itself
+  spends time rather than the client or the socket.
+- A round is the unit of evidence: samples within one process are correlated. `cdp-perf-compare.mjs` calls a
+  scenario a **REGRESSION** only when the median of round medians is slower by at least `--threshold`
+  (default 10%) *and* an exact Mann-Whitney U test on the round medians gives p < `--alpha` (default 0.05).
+  With 5 rounds per side that needs near-complete separation; with fewer than 4 rounds nothing can reach
+  it, so large changes are reported as `unclear`. Exit status is 1 on any regression or failed scenario.
+- The run records the load average at start, per round and at end, and warns when the 1-minute load is above
+  half the CPU count. The output JSON keeps every sample, so results can be re-analysed later.
+
+Inner CDP stages: build with `cargo build --release --features perf-trace` (use its own `CARGO_TARGET_DIR`) and
+add `--perf-trace`. The browser then times each stage of every command (`io.ws_read`, `io.ws_decode`, `cdp.parse`, `cdp.dispatch <Method>`, `cdp.params`, `js.eval` / `js.call_function`, `remote.describe`,
+`json.serialize`, `outbox.push`, `host.flush`, `io.outbound_queue` (time a frame waits for the socket) and `io.ws_write`), and the report
+lists every stage costing at least 10 ns per operation, with the timer floor measured on that host. Stages
+are inclusive and timing adds a few tens of ns per stage, so compare traced builds only with traced builds.
+Normal builds compile the timers out (`crates/lp-cdp/src/perf.rs`).
+
+Reading it for optimization: compare `rtt.Browser.getVersion` (protocol floor) with the other `rtt`/`runtime`
+rows to see the cost of the browser-thread hop and JS work; the navigation milestones show whether time goes
+to fetching/committing (navigate reply), parsing (DOMContentLoaded) or subresources (load); `target.lifecycle`
+laps show which step of page creation dominates. Running an upstream Lightpanda binary as a second `--bin`
+shows where the rewrite is behind. For in-process costs without sockets, see
+`cargo run --release -p lp-cdp --example cdp_microbench`.
+
 ## Matched CPU and retained-memory workload (macOS)
 
 `compare-resources.mjs` alternates upstream/rewrite release binaries on one host. Each fresh process warms
