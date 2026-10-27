@@ -655,7 +655,7 @@ impl PageDom {
     /// queued for release, reconciliation or observation, and no layout
     /// observer is registered (those deliver initial entries without a DOM
     /// change). Runs after every CDP command, so this is the common case.
-    fn quiet_since_last_task(&self) -> bool {
+    pub fn quiet_since_last_task(&self) -> bool {
         if self.is_disposed() {
             return false;
         }

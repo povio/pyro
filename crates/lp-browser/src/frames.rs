@@ -406,6 +406,9 @@ impl FrameHost {
             self.detach(key);
         }
     }
+    pub fn has_retired(&self) -> bool {
+        !self.retired.borrow().is_empty()
+    }
     pub fn drain_retired(&self) {
         let retired = std::mem::take(&mut *self.retired.borrow_mut());
         for state in retired {

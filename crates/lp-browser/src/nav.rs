@@ -220,6 +220,9 @@ impl PageNav {
         crate::emit_to(&self.observer, self.page, &event);
     }
 
+    pub(crate) fn has_pending_frame_url(&self) -> bool {
+        self.pending_frame_url.borrow().is_some()
+    }
     pub(crate) fn take_pending_frame_url(&self) -> Option<String> {
         self.pending_frame_url.borrow_mut().take()
     }

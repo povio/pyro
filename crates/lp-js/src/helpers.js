@@ -230,6 +230,13 @@
       defineProperty(global, toStringTag, { value: name, writable: false, enumerable: false, configurable: true });
     },
     describe,
+    // `describe` as one NUL-separated string (type, subtype, className,
+    // description; empty for absent): one native string read instead of
+    // four property reads. Hot: every remote-object handle.
+    describePacked(v) {
+      const d = describe(v);
+      return d.type + '\0' + (d.subtype ?? '') + '\0' + (d.className ?? '') + '\0' + (d.description ?? '');
+    },
     properties(obj, ownOnly) {
       const out = [];
       const seen = new Set();

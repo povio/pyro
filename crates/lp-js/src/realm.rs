@@ -146,6 +146,7 @@ pub(crate) struct RealmInner {
     populated: RefCell<Vec<bool>>,
     identity: RefCell<HashMap<IdentityKey, sys::JSWeakRef>>,
     helpers: RefCell<Option<Persistent>>,
+    helper_cache: RefCell<HashMap<&'static str, Persistent>>,
     dom_exception: RefCell<Option<Persistent>>,
     module_loader: Cell<*mut c_void>,
     module_fetcher: RefCell<Option<Rc<dyn ModuleFetcher>>>,
@@ -195,6 +196,16 @@ impl RealmInner {
         self.dom_exception.borrow().as_ref().and_then(|p| p.get(scope).as_object())
     }
 
+    /// `helper` with the function handle kept per realm: a property read on
+    /// the helpers object costs more than the call for the hot helpers.
+    fn cached_helper<'s>(&self, scope: &Scope<'s>, name: &'static str) -> JsResult<Object<'s>> {
+        if let Some(p) = self.helper_cache.borrow().get(name) {
+            return p.get(scope).as_object().ok_or(JsError::Type("missing helper".into()));
+        }
+        let f = self.helper(scope, name)?;
+        self.helper_cache.borrow_mut().insert(name, Persistent::new(scope, f.value()));
+        Ok(f)
+    }
     fn helper<'s>(&self, scope: &Scope<'s>, name: &str) -> JsResult<Object<'s>> {
         let h = self.helpers.borrow();
         let h = h.as_ref().ok_or(JsError::ContextDestroyed)?.get(scope);
@@ -233,6 +244,7 @@ impl RealmInner {
         self.targets.borrow_mut().clear();
         self.populated.borrow_mut().clear();
         self.helpers.borrow_mut().take();
+        self.helper_cache.borrow_mut().clear();
         self.dom_exception.borrow_mut().take();
         if let Some((_, release, _)) = sys::spi::get().weak() {
             for (_, w) in self.identity.borrow_mut().drain() {
@@ -841,13 +853,14 @@ impl<'s> Scope<'s> {
     /// Describes a value for remote-object protocols: `(type, subtype, className)`
     /// following CDP `Runtime.RemoteObject`.
     pub fn describe(&self, value: Value<'_>) -> JsResult<ValueDescription> {
-        let d = self.realm.helper(self, "describe")?.call(None, &[value])?;
-        let d = d.as_object().expect("describe result");
+        let packed = self.realm.cached_helper(self, "describePacked")?.call(None, &[value])?.to_string()?;
+        let mut parts = packed.splitn(4, '\0');
+        let mut next = || parts.next().filter(|s| !s.is_empty()).map(str::to_owned);
         Ok(ValueDescription {
-            ty: d.get("type")?.as_string().unwrap_or_default(),
-            subtype: d.get("subtype")?.as_string(),
-            class_name: d.get("className")?.as_string(),
-            description: d.get("description")?.as_string(),
+            ty: next().unwrap_or_default(),
+            subtype: next(),
+            class_name: next(),
+            description: next(),
         })
     }
 
@@ -963,6 +976,7 @@ pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResul
         populated: RefCell::new(Vec::new()),
         identity: RefCell::new(HashMap::new()),
         helpers: RefCell::new(None),
+        helper_cache: RefCell::new(HashMap::new()),
         dom_exception: RefCell::new(None),
         module_loader: Cell::new(ptr::null_mut()),
         module_fetcher: RefCell::new(None),

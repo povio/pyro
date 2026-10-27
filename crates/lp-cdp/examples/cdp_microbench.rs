@@ -98,6 +98,18 @@ fn main() {
     for _ in 0..500 {
         let t = Instant::now();
         h.call(Some(&session), "Runtime.evaluate", json!({"expression":"1+1","returnByValue":true}));
+        if let Some(secs) = std::env::var("LP_SPIN_HANDLE_SECS").ok().and_then(|v| v.parse::<u64>().ok()) {
+            let end = Instant::now() + Duration::from_secs(secs);
+            let mut n = 0u64;
+            while Instant::now() < end {
+                let r = h.call(Some(&session), "Runtime.evaluate", json!({"expression":"({a:1})"}));
+                let id = r["result"]["result"]["objectId"].as_str().unwrap().to_owned();
+                h.call(Some(&session), "Runtime.releaseObject", json!({"objectId": id}));
+                n += 1;
+            }
+            eprintln!("spin: {n} handle pairs in {secs}s = {:.1}us each", secs as f64 * 1e6 / n as f64);
+            std::process::exit(0);
+        }
         if let Some(secs) = std::env::var("LP_SPIN_SECS").ok().and_then(|v| v.parse::<u64>().ok()) {
             let end = Instant::now() + Duration::from_secs(secs);
             let mut n = 0u64;

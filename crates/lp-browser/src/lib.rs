@@ -404,12 +404,33 @@ impl LoopState for Browser {
 }
 
 impl Browser {
+    /// A loaded single-frame page with nothing queued: every step of the
+    /// checkpoint below would be a no-op. Checked first because the
+    /// checkpoint runs after every CDP command.
+    fn page_idle(p: &Page) -> bool {
+        if p.root_dirty.get()
+            || !p.main_frame.loaded
+            || p.nav.has_pending_frame_url()
+            || p.frames.has_children()
+            || p.frames.has_retired()
+        {
+            return false;
+        }
+        {
+            let Ok(dom) = p.frames.dom.try_borrow() else { return false };
+            if dom.has_iframe_events() || dom.has_resource_events() {
+                return false;
+            }
+        }
+        p.main_frame.page_dom.as_ref().is_none_or(|d| d.quiet_since_last_task())
+    }
+
     /// Owner-thread safe point after synchronous host/inspector JavaScript.
     /// Call only after releasing DOM borrows. Event-loop tasks invoke it automatically.
     pub fn checkpoint(&mut self) {
         let n = self.engine.drain_finalized();
         *self.released_payloads.borrow_mut() += n as u64;
-        let pages: Vec<_> = self.pages.iter().map(|p| p.id).collect();
+        let pages: Vec<_> = self.pages.iter().filter(|p| !Self::page_idle(p)).map(|p| p.id).collect();
         for id in pages {
             let Some(host) = self.page(id).map(|p| p.frames.clone()) else { continue };
             self.apply_same_document_url(id);
