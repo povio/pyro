@@ -19,6 +19,7 @@ lp-runtime = { path = "crates/lp-runtime" }
 lp-browser = { path = "crates/lp-browser" }
 lp-dom = { path = "crates/lp-dom" }
 lp-net = { path = "crates/lp-net" }
+lp-psl = { path = "crates/lp-psl" }
 lp-webapi = { path = "crates/lp-webapi" }
 lp-cdp = { path = "crates/lp-cdp" }
 
@@ -36,6 +37,10 @@ strip = "none"
 # Backtraces keep file:line; debuggers lose local variables. Cuts clean builds
 # and target/ size; incremental rebuilds are unaffected.
 debug = "line-tables-only"
+
+# Generated public suffix list: compiled once, so optimizing it is cheap.
+[profile.dev.package.lp-psl]
+opt-level = 2
 
 [profile.dev.package."*"]
 opt-level = 2
