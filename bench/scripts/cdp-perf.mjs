@@ -899,7 +899,17 @@ const SCENARIOS = [
   {
     name: 'tos.close.run',
     group: 'tos',
-    what: 'tos.close.run.fresh on a pre-booted signed-in page: lp.page({ as, route }) + one LP.run',
+    what: 'tos.close.run.fresh on a pre-booted signed-in page: lp.page({ as, route }) + one LP.run (untimed: wait for a booted page)',
+    iterations: 15,
+    setup: tosSetup(true),
+    before: (s) => s.lp.warm('employee'),
+    run: async (s, i, env) => tosClose(s, env, 'run'),
+    teardown: tosTeardown,
+  },
+  {
+    name: 'tos.close.run.busy',
+    group: 'tos',
+    what: 'tos.close.run back to back: the pool refills only after 15 ms without commands, so most pages boot on demand',
     iterations: 15,
     setup: tosSetup(true),
     run: async (s, i, env) => tosClose(s, env, 'run'),
@@ -1404,13 +1414,18 @@ async function runScenario(sc, bin, site, playwright) {
       (async () => {
         if (!sc.playwright && !sc.webview) env.cdp = cdp = await Cdp.open(b.wsUrl);
         if (sc.setup) state = await sc.setup(env);
-        for (let i = 0; i < warmup; i++) await sc.run(state, -1 - i, env);
+        for (let i = 0; i < warmup; i++) {
+          await sc.before?.(state, -1 - i, env);
+          await sc.run(state, -1 - i, env);
+        }
         // Stage timers are process-wide, so one control connection sees every client's commands.
         const control = PERF_TRACE ? (cdp ?? (perfCdp = await Cdp.open(b.wsUrl))) : null;
         if (control) await control.send('LP.perfReset');
         const before = await cpuSnapshot(b.cp.pid);
         const t0 = now();
         for (let i = 0; i < iterations; i++) {
+          // Untimed per-sample preparation (e.g. waiting for a pre-booted page).
+          await sc.before?.(state, i, env);
           const t = now();
           const phases = await sc.run(state, i, env);
           result.samples.push(now() - t);

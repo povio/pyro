@@ -113,6 +113,19 @@ export class Lightningpanda {
     this.profiles.set(name, { id: profileId, profile, scripts });
   }
 
+  /** Waits until a page of profile `name` has booted (the pool refills while the connection is quiet). */
+  async warm(name: string, timeoutMs = 5_000): Promise<void> {
+    const entry = this.profiles.get(name);
+    if (!entry || entry.id === null) return;
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const { pages } = await this.cdp.send('Lightningpanda.preparedPages');
+      if (pages.some((p: { profileId: number; ready: boolean }) => p.profileId === entry.id && p.ready)) return;
+      if (Date.now() > deadline) throw new Error(`no booted page for ${name} after ${timeoutMs} ms`);
+      await new Promise((r) => setTimeout(r, 2));
+    }
+  }
+
   /**
    * A page of profile `as` (signed in, booted ahead when one is waiting),
    * or a blank page in its own context. `route` (same-document) or `url`
