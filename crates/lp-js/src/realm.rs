@@ -1103,6 +1103,7 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
     let make_interface = realm.helper(scope, "makeInterface")?;
     let lazy_interface = realm.helper(scope, "lazyInterface")?;
     let populate = make_native_fn(scope, "populate", populate_tramp);
+    let keys = MemberKeys::new();
     let n = reg.classes.len();
     let mut protos: Vec<Option<Persistent>> = Vec::with_capacity(n);
     let mut ctors: Vec<Option<Persistent>> = Vec::with_capacity(n);
@@ -1115,7 +1116,7 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
         };
         proto.set_prototype(parent_proto);
         let native = match info.def.constructor {
-            Some(c) => make_native_fn(scope, info.name, c).value(),
+            Some(c) => make_member_fn(scope.ctx, reg.member, c, info.name, info.def.ctor_length, &keys)?.value(),
             None => scope.null(),
         };
         let parent_ctor = match info.parent {
@@ -1286,6 +1287,46 @@ fn install_members(scope: &Scope<'_>, id: ClassId) -> JsResult<()> {
 /// Installs `id`'s members onto `proto`/`target` using only `ctx` and the
 /// realm's helper object, so it also works for a disposed realm (whose
 /// interface objects are still referenced from another realm).
+/// A callable object for a member: `member_call` reads the boxed
+/// `MemberCall` from its private data; `member_finalize` frees it. `length`
+/// and `name` are defined like a built-in function's (non-writable,
+/// non-enumerable, configurable), in that order.
+fn make_member_fn(
+    ctx: sys::JSContextRef,
+    class: sys::JSClassRef,
+    call: class::MemberCall,
+    name: &str,
+    length: u32,
+    keys: &MemberKeys,
+) -> JsResult<Object<'static>> {
+    let payload = Box::into_raw(Box::new(call)) as *mut c_void;
+    let f = unsafe { Object::from_raw(ctx, sys::JSObjectMake(ctx, class, payload)) };
+    let attrs = sys::kJSPropertyAttributeReadOnly | sys::kJSPropertyAttributeDontEnum;
+    unsafe {
+        let mut exc = ptr::null();
+        let len = sys::JSValueMakeNumber(ctx, length as f64);
+        sys::JSObjectSetProperty(ctx, f.raw, keys.length.as_raw(), len, attrs, &mut exc);
+        check(ctx, exc)?;
+        let v = JsString::new(name);
+        let nm = sys::JSValueMakeString(ctx, v.as_raw());
+        sys::JSObjectSetProperty(ctx, f.raw, keys.name.as_raw(), nm, attrs, &mut exc);
+        check(ctx, exc)?;
+    }
+    Ok(f)
+}
+
+/// The `length` and `name` keys, created once per installation pass.
+struct MemberKeys {
+    length: JsString,
+    name: JsString,
+}
+
+impl MemberKeys {
+    fn new() -> MemberKeys {
+        MemberKeys { length: JsString::new("length"), name: JsString::new("name") }
+    }
+}
+
 fn install_members_raw(
     ctx: sys::JSContextRef,
     engine: &EngineInner,
@@ -1310,26 +1351,34 @@ fn install_members_raw(
     let num = |n: f64| unsafe { Value::from_raw(ctx, sys::JSValueMakeNumber(ctx, n)) };
     let string = |t: &str| unsafe { Value::from_raw(ctx, sys::JSValueMakeString(ctx, JsString::new(t).as_raw())) };
     let undefined = unsafe { Value::from_raw(ctx, sys::JSValueMakeUndefined(ctx)) };
-    let native = |name: &str, call| unsafe {
-        let n = JsString::new(name);
-        Object::from_raw(ctx, sys::JSObjectMakeFunctionWithCallback(ctx, n.as_raw(), Some(call)))
-    };
     let helper = |name: &str| -> JsResult<Object<'_>> {
         helpers.get(name)?.as_object().ok_or_else(|| JsError::Type("missing helper".into()))
     };
-    let set_length = helper("setLength")?;
-    for (name, length, call) in methods {
-        let f = native(name, call);
-        proto.set(name, f.value())?;
-        // JSC callback functions already have a configurable length of 0.
-        if length != 0 {
-            set_length.call(None, &[f.value(), num(length as f64)])?;
+    let function_proto = unsafe {
+        let global = Object::from_raw(ctx, sys::JSContextGetGlobalObject(ctx));
+        global.get("Function")?.as_object().map(|f| f.get("prototype")).transpose()?
+    };
+    let member_class = engine.classes.borrow().member;
+    let keys = MemberKeys::new();
+    let native = |name: &str, length: u32, call: class::MemberCall| -> JsResult<Object<'_>> {
+        let f = make_member_fn(ctx, member_class, call, name, length, &keys)?;
+        if let Some(p) = function_proto {
+            f.set_prototype(p);
         }
+        Ok(f)
+    };
+    for (name, length, call) in methods {
+        let f = native(name, length, call)?;
+        proto.set(name, f.value())?;
     }
     let accessor = helper("accessor")?;
     for (name, get, set) in accessors {
-        let g = native(name, get);
-        let st = set.map(|f| native(name, f).value()).unwrap_or(undefined);
+        let g = native(name, 0, get)?;
+        let st = match set {
+            // Setters keep length 0, as JSC's callback functions had.
+            Some(f) => native(name, 0, f)?.value(),
+            None => undefined,
+        };
         accessor.call(None, &[proto.value(), string(name), g.value(), st])?;
     }
     let constant = helper("constant")?;
@@ -1338,11 +1387,8 @@ fn install_members_raw(
         constant.call(None, &[proto.value(), string(name), num(v)])?;
     }
     for (name, length, call) in statics {
-        let f = native(name, call);
+        let f = native(name, length, call)?;
         target.set(name, f.value())?;
-        if length != 0 {
-            set_length.call(None, &[f.value(), num(length as f64)])?;
-        }
     }
     if iterable {
         helper("iterable")?.call(None, &[proto.value()])?;
