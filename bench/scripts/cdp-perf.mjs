@@ -815,6 +815,42 @@ const SCENARIOS = [
     run: async (s, i, env) => cdpLpFlow(env, i, true),
   },
   {
+    name: 'lp.run.steps',
+    group: 'webview',
+    what: 'lp.flow.e2e with fill, click and expect as one LP.run (click settles on its fetch)',
+    iterations: 15,
+    run: async (s, i, env) => cdpRunFlow(env, i, false),
+  },
+  {
+    name: 'lp.run.flow',
+    group: 'webview',
+    what: 'lp.run.steps with the navigation as a goto step too: new page, one LP.run, close',
+    iterations: 15,
+    run: async (s, i, env) => cdpRunFlow(env, i, true),
+  },
+  {
+    name: 'wv.lp.run.flow',
+    group: 'webview',
+    what: 'wv.lp.flow.e2e with fill, click and expect as one LP.run: open view, navigate form, LP.run, close',
+    iterations: 15,
+    webview: true,
+    run: async (s, i, env) => {
+      const t0 = now();
+      const phases = {};
+      const view = wvOpen(env);
+      try {
+        await view.navigate(`${env.site}/form`);
+        phases.navigate = now() - t0;
+        await view.cdp('LP.run', { steps: formSteps(i) });
+        phases.result = now() - t0;
+      } finally {
+        await view.close();
+      }
+      phases.close = now() - t0;
+      return phases;
+    },
+  },
+  {
     name: 'wv.lp.flow.role',
     group: 'webview',
     what: 'wv.lp.flow.e2e with label / role / text locators instead of CSS ids',
@@ -1056,6 +1092,40 @@ async function cdpLpFlow(env, i, pipelined) {
     lap('input');
     const expect = send('LP.expect', { locator: { css: '#out' }, assert: 'text', expected: `Hello, w${i}` });
     await Promise.all([fill, click, expect]);
+    lap('result');
+  } finally {
+    await closePage(c, page);
+  }
+  lap('close');
+  return phases;
+}
+// The form flow as LP.run steps.
+function formSteps(i) {
+  return [
+    { act: { locator: { css: '#name' }, action: 'fill', value: `w${i}` } },
+    { act: { locator: { css: '#submit' }, action: 'click' } },
+    { check: { locator: { css: '#out' }, assert: 'text', expected: `Hello, w${i}` } },
+  ];
+}
+// The form flow as one LP.run on the raw CDP client, with or without the navigation in it.
+async function cdpRunFlow(env, i, withGoto) {
+  const t0 = now();
+  const phases = {};
+  const lap = (k) => {
+    phases[k] = now() - t0;
+  };
+  const c = env.cdp;
+  const page = await newPage(c);
+  try {
+    lap('page');
+    let steps = formSteps(i);
+    if (withGoto) steps = [{ goto: { url: `${env.site}/form` } }, ...steps];
+    else {
+      await navigate(c, page.sessionId, `${env.site}/form`);
+      lap('navigate');
+    }
+    const r = await c.send('LP.run', { steps }, page.sessionId);
+    assert(r.results.length === steps.length, `LP.run results ${JSON.stringify(r)}`);
     lap('result');
   } finally {
     await closePage(c, page);

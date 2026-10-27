@@ -460,8 +460,8 @@ impl EngineHost {
         let network_wake = &self.network_wake;
         let waiters = &self.waiters;
         let deadline = [deadline, waiters.next_deadline()].into_iter().flatten().min();
-        thread.event_loop.run_until(&mut thread.browser, deadline, false, |_| {
-            wake() || !collector.is_empty() || network_wake.ready() || waiters.ready()
+        thread.event_loop.run_until(&mut thread.browser, deadline, false, |b| {
+            wake() || !collector.is_empty() || network_wake.ready() || waiters.ready(b)
         })
     }
 

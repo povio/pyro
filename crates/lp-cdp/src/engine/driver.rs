@@ -1,24 +1,36 @@
-//! `LP.*`: a native test driver, one command per user action.
+//! `LP.*`: a native test driver.
 //!
-//! A test client sends `LP.act` (click, fill, ...) or `LP.expect` (visible,
-//! text, ...) with a locator. The locator is resolved against the arena DOM in
-//! Rust and the actionability checks (unique, visible, enabled, editable, not
-//! covered) run here, so an action costs one round trip and no JavaScript.
+//! `LP.run` takes a whole scenario, a list of steps (`goto`, `act`, `check`,
+//! `read`), and replies once, when the last step holds or the first one fails.
+//! `LP.act` and `LP.expect` are one-step runs. Locators (with `within` and
+//! `filter` chains) are resolved against the arena DOM in Rust and the
+//! actionability checks (unique, visible, enabled, editable, not covered) run
+//! here, so a scenario costs one round trip and no JavaScript.
 //!
-//! A command whose condition does not hold yet becomes a [`Waiter`]: it is
-//! tried again only when the page's DOM version moves (or its document is
-//! replaced) and fails at its deadline. Nothing polls: `EngineHost::run_until_work`
-//! returns to the serve loop after a task that changed a waited-on document,
-//! and `EngineHost::flush` retries the waiters before sending queued events.
-use std::cell::RefCell;
+//! A run whose current step cannot finish yet becomes a [`Waiter`]. Nothing
+//! polls: a waiting step is tried again only when the page's DOM version moves
+//! (or its document is replaced), a `goto` when its document reaches `load`,
+//! and an action's settle when the requests it started are done.
+//! `EngineHost::run_until_work` returns to the serve loop when a waiter is
+//! ready, and `EngineHost::flush` drives the ready ones before sending queued
+//! events.
+//!
+//! Settle: after an action (unless `settle: false`), the next step waits until
+//! the page has no more requests in flight than before the action, then for
+//! the tasks already queued to run (a marker task that re-queues itself while
+//! others are pending). It gives up after [`SETTLE_MAX`] and carries on.
+use std::cell::{Cell, RefCell};
+use std::collections::HashSet;
 use std::rc::{Rc, Weak};
 use std::time::{Duration, Instant};
 
+use lp_browser::{Browser, NavigateOpts, PageId};
 use lp_dom::select::SelectorCache;
 use lp_dom::{Dom, NodeId, NodeKind};
+use lp_runtime::{Scheduler, TaskSource};
 use lp_webapi::input::{self, MouseButton, MouseInput, MouseKind};
 use lp_webapi::PageDom;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use super::{EngineHost, Queued};
@@ -27,12 +39,19 @@ use crate::target::{PageCommand, PageKey};
 
 const DEFAULT_TIMEOUT_MS: u64 = 5_000;
 const MAX_TIMEOUT_MS: u64 = 600_000;
-/// Waiting commands per connection (each holds only its parsed request).
+/// Waiting runs per connection (each holds only its parsed steps).
 const MAX_WAITERS: usize = 1024;
+const MAX_STEPS: usize = 10_000;
+/// Longest an action waits for the requests it started.
+const SETTLE_MAX: Duration = Duration::from_millis(1_000);
+/// How many times the settle marker lets queued tasks go first.
+const MARKER_HOPS: u32 = 4;
 
-/// What a locator names. Exactly one of `css`, `testId`, `text`, `role` or
-/// `label`; `nth` picks one match instead of requiring a unique one.
-#[derive(Deserialize, Clone, Debug, Default)]
+/// What a locator names. Exactly one of `css`, `testId`, `text`, `role`,
+/// `label` or `placeholder`, searched inside each match of `within` (else the
+/// document), narrowed by `filter`; `nth` then picks one match instead of
+/// requiring a unique one.
+#[derive(Deserialize, Serialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct Locator {
     css: Option<String>,
@@ -44,12 +63,29 @@ pub(super) struct Locator {
     /// Accessible name for `role`.
     name: Option<String>,
     label: Option<String>,
-    /// Whole-string, case-sensitive match for text, name and label (after
-    /// whitespace normalization); otherwise a case-insensitive substring.
+    placeholder: Option<String>,
+    /// Whole-string, case-sensitive match for text, name, label and
+    /// placeholder (after whitespace normalization); otherwise a
+    /// case-insensitive substring.
     #[serde(default)]
     exact: bool,
+    within: Option<Box<Locator>>,
+    filter: Option<Filter>,
     /// Index into the matches (negative counts from the end).
     nth: Option<i64>,
+}
+
+/// Narrows a locator's matches. Every given condition must hold.
+#[derive(Deserialize, Serialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Filter {
+    visible: Option<bool>,
+    /// Case-insensitive substring of the element's text.
+    has_text: Option<String>,
+    has_not_text: Option<String>,
+    /// Matches at least one element inside.
+    has: Option<Box<Locator>>,
+    has_not: Option<Box<Locator>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -72,30 +108,122 @@ enum Assert {
     Checked,
 }
 
-#[derive(Clone, Debug)]
-enum Request {
-    Act { locator: Locator, action: Action, value: String },
-    Expect { locator: Locator, assert: Assert, expected: Value, not: bool },
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Read {
+    Count,
+    Text,
+    Value,
+    Visible,
+    Box,
 }
 
-/// One try of a request.
+#[derive(Clone, Debug)]
+enum Step {
+    Goto { url: String, dom_ready: bool },
+    Act { locator: Locator, action: Action, value: String, settle: bool },
+    Check { locator: Locator, assert: Assert, expected: Value, not: bool },
+    Read { locator: Locator, read: Read, key: Option<String> },
+}
+
+impl Step {
+    fn describe(&self) -> String {
+        match self {
+            Step::Goto { url, .. } => format!("goto {url}"),
+            Step::Act { locator, action, .. } => format!("{action:?} {}", locator.describe()),
+            Step::Check { locator, assert, .. } => format!("expect {assert:?} {}", locator.describe()),
+            Step::Read { locator, read, .. } => format!("read {read:?} {}", locator.describe()),
+        }
+    }
+}
+
+/// One try of a step.
 enum Attempt {
     Done(Value),
     /// Not yet: the reason is reported if the deadline passes.
     Retry(String),
 }
 
-pub(super) struct Waiter {
+/// A command's steps and what they produced so far.
+struct Job {
     id: u64,
     session: String,
     page: PageKey,
-    request: Request,
-    deadline: Instant,
-    timeout: Duration,
+    pid: PageId,
+    steps: Vec<(Step, Duration)>,
+    index: usize,
+    results: Vec<Value>,
+    reads: serde_json::Map<String, Value>,
+    /// `LP.act` / `LP.expect`: reply with the step's own result.
+    single: bool,
+    started: Instant,
+}
+
+impl Job {
+    fn reply(mut self) -> Value {
+        if self.single {
+            return self.results.pop().unwrap_or_else(|| json!({}));
+        }
+        json!({
+            "results": self.results,
+            "reads": self.reads,
+            "ms": self.started.elapsed().as_secs_f64() * 1e3,
+        })
+    }
+
+    fn fail(&self, error: CdpError) -> CdpError {
+        if self.single {
+            return error;
+        }
+        let what = self.steps.get(self.index).map(|(s, _)| s.describe()).unwrap_or_default();
+        CdpError::server(format!("step {} ({what}): {}", self.index, error.message))
+    }
+}
+
+/// Where the current step is.
+enum Phase {
+    /// Tried; tried again when the document changes.
+    Try,
+    /// `goto` started; waits for the new document's `load` (or DOMContentLoaded).
+    Load { loader: String, dom_ready: bool },
+    /// The step's action ran; waits for the requests it started.
+    Settle { loader: String, baseline: usize, marker: Option<Rc<Cell<bool>>>, since: Instant, until: Instant },
+}
+
+pub(super) struct Waiter {
+    job: Job,
+    phase: Phase,
+    step_deadline: Instant,
     /// Document and DOM version the last try saw.
     doc: Weak<PageDom>,
     seen: u64,
     reason: String,
+}
+
+impl Waiter {
+    fn deadline(&self) -> Instant {
+        match &self.phase {
+            Phase::Settle { until, .. } => *until,
+            _ => self.step_deadline,
+        }
+    }
+
+    /// Whether driving it can make progress.
+    fn ready(&self, browser: &Browser, now: Instant) -> bool {
+        if now >= self.deadline() {
+            return true;
+        }
+        match &self.phase {
+            Phase::Try => match self.doc.upgrade() {
+                Some(doc) => doc.is_disposed() || doc.dom.borrow().version() != self.seen,
+                None => true,
+            },
+            Phase::Load { loader, dom_ready } => load_reached(browser, self.job.pid, loader, *dom_ready),
+            Phase::Settle { loader, baseline, marker, .. } => match marker {
+                Some(done) => done.get(),
+                None => inflight(browser, self.job.pid, loader) <= *baseline,
+            },
+        }
+    }
 }
 
 #[derive(Default)]
@@ -105,29 +233,61 @@ pub(crate) struct Waiters {
 }
 
 impl Waiters {
-    /// Whether a waiter can make progress: its document changed or was
-    /// replaced, or its deadline passed. Called between loop tasks.
-    pub(super) fn ready(&self) -> bool {
+    /// Whether a waiter can make progress. Called between loop tasks.
+    pub(super) fn ready(&self, browser: &Browser) -> bool {
         if self.list.is_empty() {
             return false;
         }
         let now = Instant::now();
-        self.list.iter().any(|w| {
-            now >= w.deadline
-                || match w.doc.upgrade() {
-                    Some(doc) => doc.is_disposed() || doc.dom.borrow().version() != w.seen,
-                    None => true,
-                }
-        })
+        self.list.iter().any(|w| w.ready(browser, now))
     }
 
     pub(super) fn next_deadline(&self) -> Option<Instant> {
-        self.list.iter().map(|w| w.deadline).min()
+        self.list.iter().map(Waiter::deadline).min()
     }
 
     pub(super) fn clear(&mut self) {
         self.list.clear();
     }
+}
+
+fn load_reached(browser: &Browser, pid: PageId, loader: &str, dom_ready: bool) -> bool {
+    match browser.page(pid) {
+        None => true,
+        Some(p) => {
+            let f = &p.main_frame;
+            f.loader_id.0 == loader && if dom_ready { f.dom_content_loaded } else { f.loaded }
+        }
+    }
+}
+
+/// The page's current document loader and its requests in flight.
+fn net_state(browser: &Browser, pid: PageId) -> (String, usize) {
+    let Some(p) = browser.page(pid) else { return (String::new(), 0) };
+    let loader = p.main_frame.loader_id.0.clone();
+    let n = inflight(browser, pid, &loader);
+    (loader, n)
+}
+
+fn inflight(browser: &Browser, pid: PageId, loader: &str) -> usize {
+    browser
+        .page(pid)
+        .and_then(|p| browser.context_net(p.context))
+        .and_then(|net| net.activity(loader))
+        .map_or(0, |a| a.inflight)
+}
+
+/// Sets `done` from a task that runs after the tasks queued now; while others
+/// are queued behind it, it goes to the back again (up to `hops` times).
+fn post_marker(sched: Scheduler<Browser>, done: Rc<Cell<bool>>, hops: u32) {
+    let next = sched.clone();
+    sched.post(TaskSource::Internal, move |_| {
+        if hops > 0 && next.pending_tasks() > 0 {
+            post_marker(next, done, hops - 1);
+        } else {
+            done.set(true);
+        }
+    });
 }
 
 fn normalize(s: &str) -> String {
@@ -143,7 +303,7 @@ fn text_matches(have: &str, want: &str, exact: bool) -> bool {
     }
 }
 
-fn local<'d>(dom: &'d Dom, id: NodeId) -> Option<&'d str> {
+fn local(dom: &Dom, id: NodeId) -> Option<&str> {
     match &dom.node(id).ok()?.kind {
         NodeKind::Element(e) if e.is_html() => Some(&e.name.local),
         _ => None,
@@ -349,14 +509,22 @@ fn by_text(dom: &Dom, root: NodeId, want: &str, exact: bool, out: &mut Vec<NodeI
     child_matched || here
 }
 
+/// Drops nulls and `false` from a serialized locator, for messages.
+fn prune(v: Value) -> Value {
+    match v {
+        Value::Object(m) => Value::Object(
+            m.into_iter()
+                .filter(|(_, v)| !v.is_null() && *v != Value::Bool(false))
+                .map(|(k, v)| (k, prune(v)))
+                .collect(),
+        ),
+        v => v,
+    }
+}
+
 impl Locator {
     fn describe(&self) -> String {
-        serde_json::to_string(&json!({
-            "css": self.css, "testId": self.test_id, "text": self.text, "role": self.role,
-            "name": self.name, "label": self.label, "nth": self.nth,
-        }))
-        .unwrap_or_default()
-        .replace(",\"name\":null", "")
+        serde_json::to_value(self).map(prune).map(|v| v.to_string()).unwrap_or_default()
     }
 
     fn validate(&self) -> CdpResult<()> {
@@ -366,31 +534,89 @@ impl Locator {
             self.text.is_some(),
             self.role.is_some(),
             self.label.is_some(),
+            self.placeholder.is_some(),
         ];
         if kinds.iter().filter(|k| **k).count() != 1 {
-            return Err(CdpError::invalid_params("locator needs exactly one of css, testId, text, role, label"));
+            return Err(CdpError::invalid_params(
+                "locator needs exactly one of css, testId, text, role, label, placeholder",
+            ));
+        }
+        if let Some(within) = &self.within {
+            within.validate()?;
+        }
+        if let Some(f) = &self.filter {
+            for l in [&f.has, &f.has_not].into_iter().flatten() {
+                l.validate()?;
+            }
         }
         Ok(())
     }
 
     fn resolve(&self, page: &PageDom, selectors: &RefCell<SelectorCache>) -> CdpResult<Vec<NodeId>> {
+        self.resolve_at(page, selectors, page.document())
+    }
+
+    /// Matches inside `base` (the document, or the element a `has` filter tests).
+    fn resolve_at(&self, page: &PageDom, selectors: &RefCell<SelectorCache>, base: NodeId) -> CdpResult<Vec<NodeId>> {
+        let roots = match &self.within {
+            Some(outer) => outer.resolve_at(page, selectors, base)?,
+            None => vec![base],
+        };
+        let mut found = Vec::new();
+        if let [root] = roots[..] {
+            found = self.matches_in(page, selectors, root)?;
+        } else {
+            let mut seen = HashSet::new();
+            for root in roots {
+                found.extend(self.matches_in(page, selectors, root)?.into_iter().filter(|n| seen.insert(*n)));
+            }
+        }
+        if let Some(f) = &self.filter {
+            let mut kept = Vec::with_capacity(found.len());
+            for n in found {
+                if f.keeps(page, selectors, n)? {
+                    kept.push(n);
+                }
+            }
+            found = kept;
+        }
+        if let Some(nth) = self.nth {
+            let len = found.len() as i64;
+            let i = if nth < 0 { len + nth } else { nth };
+            return Ok(if (0..len).contains(&i) { vec![found[i as usize]] } else { Vec::new() });
+        }
+        Ok(found)
+    }
+
+    /// Matches strictly inside `root` (the document, or a `within` match).
+    fn matches_in(&self, page: &PageDom, selectors: &RefCell<SelectorCache>, root: NodeId) -> CdpResult<Vec<NodeId>> {
         let dom = page.dom.borrow();
         let doc = page.document();
+        let inside = |n: &NodeId| *n != root;
         let mut found = Vec::new();
         if let Some(css) = &self.css {
             let sel = selectors.borrow_mut().get(css).map_err(|_| CdpError::invalid_params("invalid css selector"))?;
-            found = dom.query_selector_all(doc, &sel).map_err(|e| CdpError::server(format!("{e:?}")))?;
+            found = dom.query_selector_all(root, &sel).map_err(|e| CdpError::server(format!("{e:?}")))?;
         } else if let Some(id) = &self.test_id {
             let name = self.test_id_attribute.as_deref().unwrap_or("data-testid");
-            found = elements(&dom, doc).filter(|n| attr(&dom, *n, name) == Some(id.as_str())).collect();
+            found = elements(&dom, root).filter(inside).filter(|n| attr(&dom, *n, name) == Some(id.as_str())).collect();
         } else if let Some(text) = &self.text {
-            if let Ok(Some(body)) = dom.document_element(doc) {
-                by_text(&dom, body, text, self.exact, &mut found);
+            if root == doc {
+                if let Ok(Some(html)) = dom.document_element(doc) {
+                    by_text(&dom, html, text, self.exact, &mut found);
+                }
+            } else {
+                for c in dom.children(root).into_iter().flatten() {
+                    if dom.element(c).is_ok() && !skipped_for_text(&dom, c) {
+                        by_text(&dom, c, text, self.exact, &mut found);
+                    }
+                }
             }
         } else if let Some(role) = &self.role {
             let role = role.to_ascii_lowercase();
             let layout = page.layout.borrow();
-            found = elements(&dom, doc)
+            found = elements(&dom, root)
+                .filter(inside)
                 .filter(|n| role_of(&dom, *n).as_deref() == Some(role.as_str()))
                 .filter(|n| attr(&dom, *n, "aria-hidden") != Some("true") && layout.is_visible(&dom, *n))
                 .filter(|n| match &self.name {
@@ -399,7 +625,7 @@ impl Locator {
                 })
                 .collect();
         } else if let Some(want) = &self.label {
-            for n in elements(&dom, doc) {
+            for n in elements(&dom, root).filter(inside) {
                 let control = matches!(local(&dom, n), Some("input" | "textarea" | "select" | "button"));
                 let labelled = attr(&dom, n, "aria-label").is_some_and(|l| text_matches(l, want, self.exact))
                     || (control && label_text(&dom, doc, n).is_some_and(|l| text_matches(&l, want, self.exact)));
@@ -407,13 +633,40 @@ impl Locator {
                     found.push(n);
                 }
             }
-        }
-        if let Some(nth) = self.nth {
-            let len = found.len() as i64;
-            let i = if nth < 0 { len + nth } else { nth };
-            return Ok(if (0..len).contains(&i) { vec![found[i as usize]] } else { Vec::new() });
+        } else if let Some(want) = &self.placeholder {
+            found = elements(&dom, root)
+                .filter(inside)
+                .filter(|n| matches!(local(&dom, *n), Some("input" | "textarea")))
+                .filter(|n| attr(&dom, *n, "placeholder").is_some_and(|p| text_matches(p, want, self.exact)))
+                .collect();
         }
         Ok(found)
+    }
+}
+
+impl Filter {
+    fn keeps(&self, page: &PageDom, selectors: &RefCell<SelectorCache>, n: NodeId) -> CdpResult<bool> {
+        if let Some(want) = self.visible {
+            if visible_box(page, n).is_some() != want {
+                return Ok(false);
+            }
+        }
+        if self.has_text.is_some() || self.has_not_text.is_some() {
+            let text = text_of(&page.dom.borrow(), n);
+            if self.has_text.as_ref().is_some_and(|t| !text_matches(&text, t, false))
+                || self.has_not_text.as_ref().is_some_and(|t| text_matches(&text, t, false))
+            {
+                return Ok(false);
+            }
+        }
+        for (inner, want) in [(&self.has, true), (&self.has_not, false)] {
+            if let Some(inner) = inner {
+                if inner.resolve_at(page, selectors, n)?.is_empty() == want {
+                    return Ok(false);
+                }
+            }
+        }
+        Ok(true)
     }
 }
 
@@ -616,17 +869,28 @@ fn expect(
 }
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct GotoParams {
+    url: String,
+    /// `load` (default) or `domcontentloaded`.
+    wait_until: Option<String>,
+    timeout: Option<u64>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ActParams {
     locator: Locator,
     action: String,
     #[serde(default)]
     value: String,
+    /// Wait for the requests the action started (default: true in `LP.run`).
+    settle: Option<bool>,
     timeout: Option<u64>,
 }
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ExpectParams {
     locator: Locator,
     assert: String,
@@ -638,10 +902,128 @@ struct ExpectParams {
 }
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct QueryParams {
     locator: Locator,
     read: String,
+    /// Key of the value in the run's `reads`.
+    #[serde(rename = "as")]
+    key: Option<String>,
+    timeout: Option<u64>,
+}
+
+/// One `LP.run` step: `{"goto": {...}}`, `{"act": {...}}`, `{"check": {...}}`
+/// or `{"read": {...}}`.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+enum StepParams {
+    Goto(GotoParams),
+    Act(ActParams),
+    Check(ExpectParams),
+    Read(QueryParams),
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RunParams {
+    steps: Vec<StepParams>,
+    /// Per-step timeout unless a step sets its own.
+    timeout: Option<u64>,
+}
+
+fn timeout_of(step: Option<u64>, default: Option<u64>) -> Duration {
+    Duration::from_millis(step.or(default).unwrap_or(DEFAULT_TIMEOUT_MS).min(MAX_TIMEOUT_MS))
+}
+
+impl ActParams {
+    fn step(self, settle_default: bool) -> CdpResult<(Step, Option<u64>)> {
+        self.locator.validate()?;
+        let action = match self.action.as_str() {
+            "click" => Action::Click,
+            "fill" => Action::Fill,
+            "focus" => Action::Focus,
+            "check" => Action::Check,
+            "uncheck" => Action::Uncheck,
+            _ => return Err(CdpError::invalid_params("action must be click, fill, focus, check or uncheck")),
+        };
+        let settle = self.settle.unwrap_or(settle_default);
+        Ok((Step::Act { locator: self.locator, action, value: self.value, settle }, self.timeout))
+    }
+}
+
+impl ExpectParams {
+    fn step(self) -> CdpResult<(Step, Option<u64>)> {
+        self.locator.validate()?;
+        let assert = match self.assert.as_str() {
+            "visible" => Assert::Visible,
+            "hidden" => Assert::Hidden,
+            "text" => Assert::Text,
+            "containsText" => Assert::ContainsText,
+            "value" => Assert::Value,
+            "count" => Assert::Count,
+            "checked" => Assert::Checked,
+            _ => {
+                return Err(CdpError::invalid_params(
+                    "assert must be visible, hidden, text, containsText, value, count or checked",
+                ))
+            }
+        };
+        Ok((Step::Check { locator: self.locator, assert, expected: self.expected, not: self.not }, self.timeout))
+    }
+}
+
+impl QueryParams {
+    fn read(&self) -> CdpResult<Read> {
+        self.locator.validate()?;
+        Ok(match self.read.as_str() {
+            "count" => Read::Count,
+            "text" => Read::Text,
+            "value" => Read::Value,
+            "visible" => Read::Visible,
+            "box" => Read::Box,
+            _ => return Err(CdpError::invalid_params("read must be count, text, value, visible or box")),
+        })
+    }
+}
+
+impl StepParams {
+    fn step(self) -> CdpResult<(Step, Option<u64>)> {
+        match self {
+            StepParams::Goto(p) => {
+                let dom_ready = match p.wait_until.as_deref() {
+                    None | Some("load") => false,
+                    Some("domcontentloaded") => true,
+                    _ => return Err(CdpError::invalid_params("waitUntil must be load or domcontentloaded")),
+                };
+                Ok((Step::Goto { url: p.url, dom_ready }, p.timeout))
+            }
+            StepParams::Act(p) => p.step(true),
+            StepParams::Check(p) => p.step(),
+            StepParams::Read(p) => {
+                let read = p.read()?;
+                Ok((Step::Read { locator: p.locator, read, key: p.key }, p.timeout))
+            }
+        }
+    }
+}
+
+fn read_value(page: &PageDom, el: NodeId, read: Read) -> Value {
+    match read {
+        Read::Count => Value::Null,
+        Read::Text => json!(normalize(&text_of(&page.dom.borrow(), el))),
+        Read::Value => json!(page.dom.borrow().value(el).unwrap_or_default()),
+        Read::Visible => json!(visible_box(page, el).is_some()),
+        Read::Box => match visible_box(page, el) {
+            Some(r) => json!({"x": r.x, "y": r.y, "width": r.width, "height": r.height}),
+            None => Value::Null,
+        },
+    }
+}
+
+/// How driving a run ended for now.
+enum Drive {
+    Done(Value),
+    Park(Box<Waiter>),
 }
 
 impl EngineHost {
@@ -654,167 +1036,250 @@ impl EngineHost {
             .ok_or_else(|| CdpError::server("page has no document"))
     }
 
-    fn attempt(&mut self, page: &Rc<PageDom>, request: &Request) -> CdpResult<Attempt> {
-        match request {
-            Request::Act { locator, action, value } => {
+    /// One try of a locator step.
+    fn attempt(&mut self, page: &Rc<PageDom>, step: &Step) -> CdpResult<Attempt> {
+        let no_match = |locator: &Locator| Attempt::Retry(format!("{} matched no element", locator.describe()));
+        match step {
+            Step::Goto { .. } => unreachable!("goto is not a locator step"),
+            Step::Act { locator, action, value, .. } => {
                 let found = locator.resolve(page, &self.waiters.selectors)?;
-                let el = single(&found, &page.dom.borrow(), locator)?;
-                let Some(el) = el else {
-                    return Ok(Attempt::Retry(format!("{} matched no element", locator.describe())));
-                };
+                let Some(el) = single(&found, &page.dom.borrow(), locator)? else { return Ok(no_match(locator)) };
                 let result = act(page, el, *action, value);
                 if matches!(result, Attempt::Done(_)) {
                     self.thread.browser.checkpoint();
                 }
                 Ok(result)
             }
-            Request::Expect { locator, assert, expected, not } => {
+            Step::Check { locator, assert, expected, not } => {
                 let found = locator.resolve(page, &self.waiters.selectors)?;
                 expect(page, &found, locator, *assert, expected, *not)
+            }
+            Step::Read { locator, read, .. } => {
+                let found = locator.resolve(page, &self.waiters.selectors)?;
+                if *read == Read::Count {
+                    return Ok(Attempt::Done(json!(found.len())));
+                }
+                let Some(el) = single(&found, &page.dom.borrow(), locator)? else { return Ok(no_match(locator)) };
+                Ok(Attempt::Done(read_value(page, el, *read)))
             }
         }
     }
 
     pub(super) fn driver_domain(&mut self, action: &str, cmd: &PageCommand<'_, '_>) -> CdpResult<Option<Value>> {
-        let (request, timeout) = match action {
+        let (steps, single) = match action {
             "act" => {
-                let p: ActParams = cmd.command.params()?;
-                p.locator.validate()?;
-                let action = match p.action.as_str() {
-                    "click" => Action::Click,
-                    "fill" => Action::Fill,
-                    "focus" => Action::Focus,
-                    "check" => Action::Check,
-                    "uncheck" => Action::Uncheck,
-                    _ => return Err(CdpError::invalid_params("action must be click, fill, focus, check or uncheck")),
-                };
-                (Request::Act { locator: p.locator, action, value: p.value }, p.timeout)
+                let (step, timeout) = cmd.command.params::<ActParams>()?.step(false)?;
+                (vec![(step, timeout_of(timeout, None))], true)
             }
             "expect" => {
-                let p: ExpectParams = cmd.command.params()?;
-                p.locator.validate()?;
-                let assert = match p.assert.as_str() {
-                    "visible" => Assert::Visible,
-                    "hidden" => Assert::Hidden,
-                    "text" => Assert::Text,
-                    "containsText" => Assert::ContainsText,
-                    "value" => Assert::Value,
-                    "count" => Assert::Count,
-                    "checked" => Assert::Checked,
-                    _ => {
-                        return Err(CdpError::invalid_params(
-                            "assert must be visible, hidden, text, containsText, value, count or checked",
-                        ))
-                    }
-                };
-                (Request::Expect { locator: p.locator, assert, expected: p.expected, not: p.not }, p.timeout)
+                let (step, timeout) = cmd.command.params::<ExpectParams>()?.step()?;
+                (vec![(step, timeout_of(timeout, None))], true)
+            }
+            "run" => {
+                let p: RunParams = cmd.command.params()?;
+                if p.steps.len() > MAX_STEPS {
+                    return Err(CdpError::invalid_params("too many steps"));
+                }
+                let mut steps = Vec::with_capacity(p.steps.len());
+                for (i, s) in p.steps.into_iter().enumerate() {
+                    let (step, timeout) =
+                        s.step().map_err(|e| CdpError::invalid_params(format!("step {i}: {}", e.message)))?;
+                    steps.push((step, timeout_of(timeout, p.timeout)));
+                }
+                (steps, false)
             }
             "query" => return self.driver_query(cmd).map(Some),
             _ => return Err(CdpError::unsupported(&cmd.command.method)),
         };
-        let timeout = Duration::from_millis(timeout.unwrap_or(DEFAULT_TIMEOUT_MS).min(MAX_TIMEOUT_MS));
-        let page = self.main_document(cmd.page)?;
-        let reason = match self.attempt(&page, &request)? {
-            Attempt::Done(value) => return Ok(Some(value)),
-            Attempt::Retry(reason) => reason,
-        };
-        if timeout.is_zero() {
-            return Err(CdpError::server(format!("{}: {reason}", cmd.command.method)));
-        }
-        if self.waiters.list.len() >= MAX_WAITERS {
-            return Err(CdpError::server("too many waiting LP commands"));
-        }
-        let seen = page.dom.borrow().version();
-        self.waiters.list.push(Waiter {
+        let pid = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?.id;
+        let now = Instant::now();
+        let first = steps.first().map_or(Duration::ZERO, |(_, t)| *t);
+        let job = Job {
             id: cmd.command.id,
             session: cmd.session_id.to_owned(),
             page: cmd.page,
-            request,
-            deadline: Instant::now() + timeout,
-            timeout,
-            doc: Rc::downgrade(&page),
-            seen,
-            reason,
-        });
-        // Replied by `service_waiters`.
-        Ok(None)
+            pid,
+            steps,
+            index: 0,
+            results: Vec::new(),
+            reads: Default::default(),
+            single,
+            started: now,
+        };
+        let waiter = Waiter {
+            job,
+            phase: Phase::Try,
+            step_deadline: now + first,
+            doc: Weak::new(),
+            seen: 0,
+            reason: String::new(),
+        };
+        match self.drive(waiter)? {
+            Drive::Done(value) => Ok(Some(value)),
+            Drive::Park(w) => {
+                if self.waiters.list.len() >= MAX_WAITERS {
+                    return Err(CdpError::server("too many waiting LP commands"));
+                }
+                self.waiters.list.push(*w);
+                // Replied by `service_waiters`.
+                Ok(None)
+            }
+        }
+    }
+
+    /// Runs a job's steps until one has to wait or the last one is done.
+    fn drive(&mut self, mut w: Waiter) -> CdpResult<Drive> {
+        loop {
+            let now = Instant::now();
+            let pid = w.job.pid;
+            match std::mem::replace(&mut w.phase, Phase::Try) {
+                Phase::Settle { loader, baseline, mut marker, since, until } => {
+                    let gave_up = now >= until;
+                    if !gave_up {
+                        if inflight(&self.thread.browser, pid, &loader) > baseline {
+                            // A request is (again) in flight: the marker restarts after it.
+                            w.phase = Phase::Settle { loader, baseline, marker: None, since, until };
+                            return Ok(Drive::Park(Box::new(w)));
+                        }
+                        let done = marker.get_or_insert_with(|| {
+                            let done = Rc::new(Cell::new(false));
+                            post_marker(self.thread.browser.scheduler(), done.clone(), MARKER_HOPS);
+                            done
+                        });
+                        if !done.get() {
+                            w.phase = Phase::Settle { loader, baseline, marker, since, until };
+                            return Ok(Drive::Park(Box::new(w)));
+                        }
+                    }
+                    if let Some(Value::Object(r)) = w.job.results.last_mut() {
+                        r.insert("settleMs".into(), json!(since.elapsed().as_secs_f64() * 1e3));
+                        if gave_up {
+                            r.insert("settled".into(), json!(false));
+                        }
+                    }
+                    self.next_step(&mut w);
+                }
+                Phase::Load { loader, dom_ready } => {
+                    if !load_reached(&self.thread.browser, pid, &loader, dom_ready) {
+                        if now >= w.step_deadline {
+                            let error = CdpError::server(format!(
+                                "timed out after {} ms waiting for {}",
+                                w.job.steps[w.job.index].1.as_millis(),
+                                if dom_ready { "DOMContentLoaded" } else { "load" }
+                            ));
+                            return Err(w.job.fail(error));
+                        }
+                        w.phase = Phase::Load { loader, dom_ready };
+                        return Ok(Drive::Park(Box::new(w)));
+                    }
+                    if self.thread.browser.page(pid).is_none() {
+                        return Err(w.job.fail(CdpError::server("page is gone")));
+                    }
+                    w.job.results.push(json!({}));
+                    self.next_step(&mut w);
+                }
+                Phase::Try => {
+                    let Some((step, timeout)) = w.job.steps.get(w.job.index) else {
+                        return Ok(Drive::Done(w.job.reply()));
+                    };
+                    let (step, timeout) = (step.clone(), *timeout);
+                    if let Step::Goto { url, dom_ready } = &step {
+                        let loader = self
+                            .thread
+                            .browser
+                            .navigate(pid, NavigateOpts::address_bar(url.as_str()))
+                            .map_err(|e| w.job.fail(CdpError::server(format!("navigation failed: {e}"))))?;
+                        self.thread.browser.checkpoint();
+                        w.phase = Phase::Load { loader: loader.0, dom_ready: *dom_ready };
+                        continue;
+                    }
+                    let page = self.main_document(w.job.page).map_err(|e| w.job.fail(e))?;
+                    let before =
+                        matches!(step, Step::Act { settle: true, .. }).then(|| net_state(&self.thread.browser, pid));
+                    match self.attempt(&page, &step).map_err(|e| w.job.fail(e))? {
+                        Attempt::Done(value) => {
+                            if let Step::Read { key: Some(key), .. } = &step {
+                                w.job.reads.insert(key.clone(), value.clone());
+                            }
+                            w.job.results.push(value);
+                            match before {
+                                Some((loader, baseline)) => {
+                                    let since = Instant::now();
+                                    w.phase = Phase::Settle {
+                                        loader,
+                                        baseline,
+                                        marker: None,
+                                        since,
+                                        until: since + SETTLE_MAX,
+                                    };
+                                }
+                                None => self.next_step(&mut w),
+                            }
+                        }
+                        Attempt::Retry(reason) => {
+                            if now >= w.step_deadline {
+                                let error = CdpError::server(format!(
+                                    "timed out after {} ms: {}: {reason}",
+                                    timeout.as_millis(),
+                                    step.describe()
+                                ));
+                                return Err(w.job.fail(error));
+                            }
+                            w.seen = page.dom.borrow().version();
+                            w.doc = Rc::downgrade(&page);
+                            w.reason = reason;
+                            return Ok(Drive::Park(Box::new(w)));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn next_step(&mut self, w: &mut Waiter) {
+        w.job.index += 1;
+        w.phase = Phase::Try;
+        if let Some((_, timeout)) = w.job.steps.get(w.job.index) {
+            w.step_deadline = Instant::now() + *timeout;
+        }
     }
 
     fn driver_query(&mut self, cmd: &PageCommand<'_, '_>) -> CdpResult<Value> {
         let p: QueryParams = cmd.command.params()?;
-        p.locator.validate()?;
+        let read = p.read()?;
         let page = self.main_document(cmd.page)?;
         let found = p.locator.resolve(&page, &self.waiters.selectors)?;
-        if p.read == "count" {
+        if read == Read::Count {
             return Ok(json!({ "value": found.len() }));
         }
         let el = single(&found, &page.dom.borrow(), &p.locator)?
             .ok_or_else(|| CdpError::server(format!("{} matched no element", p.locator.describe())))?;
-        let value = match p.read.as_str() {
-            "text" => json!(normalize(&text_of(&page.dom.borrow(), el))),
-            "value" => json!(page.dom.borrow().value(el).unwrap_or_default()),
-            "visible" => json!(visible_box(&page, el).is_some()),
-            "box" => match visible_box(&page, el) {
-                Some(r) => json!({"x": r.x, "y": r.y, "width": r.width, "height": r.height}),
-                None => Value::Null,
-            },
-            _ => return Err(CdpError::invalid_params("read must be count, text, value, visible or box")),
-        };
-        Ok(json!({ "value": value }))
+        Ok(json!({ "value": read_value(&page, el, read) }))
     }
 
-    /// Retries the waiters whose document changed, replies to those that now
-    /// hold or whose deadline passed. Replies are queued behind the events
-    /// the retry produced.
+    /// Drives the waiters that can make progress and replies to those that
+    /// finished or failed. Replies are queued behind the events the steps
+    /// produced.
     pub(super) fn service_waiters(&mut self) {
         if self.waiters.list.is_empty() {
             return;
         }
         let now = Instant::now();
-        let mut i = 0;
-        while i < self.waiters.list.len() {
-            let w = &self.waiters.list[i];
-            if !self.sessions.contains_key(&w.session) {
-                self.waiters.list.swap_remove(i);
-                continue;
-            }
-            let expired = now >= w.deadline;
-            let changed = match w.doc.upgrade() {
-                Some(doc) => doc.is_disposed() || doc.dom.borrow().version() != w.seen,
-                None => true,
-            };
-            if !changed && !expired {
-                i += 1;
-                continue;
-            }
-            let w = self.waiters.list.swap_remove(i);
-            let outcome = self.main_document(w.page).and_then(|page| {
-                let attempt = if changed { self.attempt(&page, &w.request)? } else { Attempt::Retry(w.reason.clone()) };
-                Ok((page, attempt))
-            });
-            let frame = match outcome {
-                Ok((_, Attempt::Done(value))) => msg::result_frame(w.id, &value, Some(&w.session)),
-                Ok((page, Attempt::Retry(reason))) if !expired => {
-                    let seen = page.dom.borrow().version();
-                    let id = self.waiters.list.len();
-                    self.waiters.list.push(Waiter { doc: Rc::downgrade(&page), seen, reason, ..w });
-                    // Keep scanning from the same index: the moved-in entry
-                    // was not visited yet unless it is the one just pushed.
-                    if i == id {
-                        i += 1;
-                    }
+        let sessions = &self.sessions;
+        self.waiters.list.retain(|w| sessions.contains_key(&w.job.session));
+        let browser = &self.thread.browser;
+        let (ready, waiting): (Vec<_>, Vec<_>) =
+            std::mem::take(&mut self.waiters.list).into_iter().partition(|w| w.ready(browser, now));
+        self.waiters.list = waiting;
+        for w in ready {
+            let (id, session) = (w.job.id, w.job.session.clone());
+            let frame = match self.drive(w) {
+                Ok(Drive::Park(w)) => {
+                    self.waiters.list.push(*w);
                     continue;
                 }
-                Ok((_, Attempt::Retry(reason))) => {
-                    let what = match &w.request {
-                        Request::Act { locator, action, .. } => format!("{action:?} {}", locator.describe()),
-                        Request::Expect { locator, assert, .. } => format!("expect {assert:?} {}", locator.describe()),
-                    };
-                    let error =
-                        CdpError::server(format!("timed out after {} ms: {what}: {reason}", w.timeout.as_millis()));
-                    msg::error_frame(Some(w.id), &error, Some(&w.session))
-                }
-                Err(error) => msg::error_frame(Some(w.id), &error, Some(&w.session)),
+                Ok(Drive::Done(value)) => msg::result_frame(id, &value, Some(&session)),
+                Err(error) => msg::error_frame(Some(id), &error, Some(&session)),
             };
             self.collector.push(Queued::Frame(frame));
         }
