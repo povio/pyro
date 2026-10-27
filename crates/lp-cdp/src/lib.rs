@@ -4,6 +4,7 @@
 //! 2ad38773fd674d3c9cea26a263b814ee46f6ba84, AGPL-3.0-only) and the CDP
 //! surface Playwright 1.59 drives; see `docs/automation/` for coverage.
 
+mod conn;
 pub mod engine;
 pub mod fetch_protocol;
 mod handshake_crypto;
