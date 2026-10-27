@@ -42,7 +42,7 @@ use std::rc::Rc;
 use cssparser::{ParseError, Parser, Token};
 use markup5ever::{local_name, ns};
 use rustc_hash::{FxHashMap, FxHashSet};
-use selectors::parser::{Component, Selector, SelectorList};
+use selectors::parser::{Component, NthSelectorData, Selector, SelectorList};
 
 use crate::computed;
 use crate::dom::Dom;
@@ -1103,6 +1103,9 @@ struct Rule {
     decl: Rc<Declared>,
     mask: u32,
     priority: u64,
+    /// Ancestor-compound hashes (`ancestor_hashes`): skips the selector on
+    /// elements whose ancestors lack one (`AncestorBits`).
+    ancestors: [u32; 4],
 }
 
 struct CustomRule {
@@ -1117,6 +1120,7 @@ struct RuleSet {
     by_id: FxHashMap<String, Vec<u32>>,
     by_class: FxHashMap<String, Vec<u32>>,
     by_tag: FxHashMap<String, Vec<u32>>,
+    by_attr: FxHashMap<String, Vec<u32>>,
     other: Vec<u32>,
     customs: FxHashMap<String, Vec<CustomRule>>,
     /// `@property` registrations: (inherits, initial value). The last valid
@@ -1153,6 +1157,10 @@ struct RuleSet {
     /// `:first-child`...), `:empty`, `:focus`/`:focus-visible`,
     /// `:focus-within` and `:hover`.
     nth_keys: Vec<ChildKey>,
+    /// The `nth_keys` that count from the end (`:last-*`, `:nth-last-*`,
+    /// `:only-*`): an insertion or removal changes them only for earlier
+    /// siblings; the others only for later ones.
+    nth_last_keys: Vec<ChildKey>,
     empty_keys: Vec<AnchorKey>,
     focus_keys: Vec<AnchorKey>,
     within_keys: Vec<AnchorKey>,
@@ -1163,6 +1171,7 @@ struct RuleSet {
     generic_by_id: FxHashMap<String, Vec<u32>>,
     generic_by_class: FxHashMap<String, Vec<u32>>,
     generic_by_tag: FxHashMap<String, Vec<u32>>,
+    generic_by_attr: FxHashMap<String, Vec<u32>>,
     generic_other: Vec<u32>,
     /// `::before` / `::after` rules, by their originating element's selector
     /// (`StyleEngine::generated_content`).
@@ -1414,18 +1423,36 @@ impl AncestorBits {
     }
 }
 
-/// The ancestor filter of element `idx` for the current layout pass; None
-/// outside a pass, in quirks mode (case-insensitive classes and ids) and in
-/// trees not rooted at a document (shadow trees, where matching may reach
-/// the host: full matching there).
-fn ancestor_bits(dom: &Dom, idx: u32) -> Option<Rc<AncestorBits>> {
+/// The ancestor filter of element `idx`; None in quirks mode
+/// (case-insensitive classes and ids) and in trees not rooted at a document
+/// (shadow trees, where matching may reach the host: full matching there).
+/// Memoized in the layout pass memo when one is active, else in `fallback`
+/// (the style cache's per-version map).
+fn ancestor_bits(
+    dom: &Dom,
+    idx: u32,
+    fallback: &mut FxHashMap<(usize, u32), Option<Rc<AncestorBits>>>,
+) -> Option<Rc<AncestorBits>> {
     if dom.in_quirks_mode(idx) {
         return None;
     }
+    let key = dom_key(dom);
     PASS_MEMO.with(|m| {
         let mut m = m.borrow_mut();
-        let memo = &mut m.as_mut()?.ancestor_bits;
-        let key = dom_key(dom);
+        match m.as_mut() {
+            Some(pass) => ancestor_bits_in(dom, idx, key, &mut pass.ancestor_bits),
+            None => ancestor_bits_in(dom, idx, key, fallback),
+        }
+    })
+}
+
+fn ancestor_bits_in(
+    dom: &Dom,
+    idx: u32,
+    key: usize,
+    memo: &mut FxHashMap<(usize, u32), Option<Rc<AncestorBits>>>,
+) -> Option<Rc<AncestorBits>> {
+    {
         if let Some(b) = memo.get(&(key, idx)) {
             return b.clone();
         }
@@ -1463,7 +1490,7 @@ fn ancestor_bits(dom: &Dom, idx: u32) -> Option<Rc<AncestorBits>> {
             parent = Some(x);
         }
         out
-    })
+    }
 }
 
 struct PendingGeneric {
@@ -1478,6 +1505,9 @@ enum BucketKey {
     Id(String),
     Class(String),
     Tag(String),
+    /// Rightmost compound tests an attribute (lower-cased local name) and
+    /// nothing cheaper: checked only on elements that carry it.
+    Attr(String),
     Other,
 }
 
@@ -1498,8 +1528,18 @@ fn bucket_key(sel: &Selector<Impl>) -> Option<BucketKey> {
                 }
             }
             Component::LocalName(l) => {
-                if matches!(best, BucketKey::Other) {
+                if matches!(best, BucketKey::Other | BucketKey::Attr(_)) {
                     best = BucketKey::Tag(l.lower_name.0.to_string());
+                }
+            }
+            Component::AttributeInNoNamespaceExists { local_name_lower, .. } => {
+                if matches!(best, BucketKey::Other) {
+                    best = BucketKey::Attr(local_name_lower.0.to_string());
+                }
+            }
+            Component::AttributeInNoNamespace { local_name, .. } => {
+                if matches!(best, BucketKey::Other) {
+                    best = BucketKey::Attr((*local_name.0).to_ascii_lowercase());
                 }
             }
             Component::NonTSPseudoClass(pc) => {
@@ -1602,6 +1642,7 @@ struct Builder<'v> {
     attr_names: FxHashSet<u64>,
     structural_sibling_keys: Vec<ChildKey>,
     nth_keys: Vec<ChildKey>,
+    nth_last_keys: Vec<ChildKey>,
     empty_keys: Vec<AnchorKey>,
     focus_keys: Vec<AnchorKey>,
     within_keys: Vec<AnchorKey>,
@@ -1631,6 +1672,7 @@ impl<'v> Builder<'v> {
             attr_names: FxHashSet::default(),
             structural_sibling_keys: Vec::new(),
             nth_keys: Vec::new(),
+            nth_last_keys: Vec::new(),
             empty_keys: Vec::new(),
             focus_keys: Vec::new(),
             within_keys: Vec::new(),
@@ -1681,7 +1723,7 @@ impl<'v> Builder<'v> {
                         collect_sibling_keys(sel, &mut self.sibling_keys, &mut self.structural_sibling_keys);
                         collect_attr_names(sel, &mut self.attr_names);
                         let pseudo = |c: &Component<Impl>, wanted: &[PseudoClass]| matches!(c, Component::NonTSPseudoClass(pc) if wanted.contains(pc));
-                        collect_nth_keys(sel, &mut self.nth_keys, false);
+                        collect_nth_keys(sel, &mut self.nth_keys, &mut self.nth_last_keys, false);
                         collect_keys(sel, &|c| matches!(c, Component::Empty), &mut self.empty_keys);
                         collect_keys(
                             sel,
@@ -1907,11 +1949,19 @@ impl<'v> Builder<'v> {
                 priority |= IMPORTANT_BIT;
             }
             let idx = rs.rules.len() as u32;
-            rs.rules.push(Rule { selector: SelectorList::from_one(p.selector), decl: p.decl, mask: p.mask, priority });
+            let ancestors = ancestor_hashes(&p.selector);
+            rs.rules.push(Rule {
+                selector: SelectorList::from_one(p.selector),
+                decl: p.decl,
+                mask: p.mask,
+                priority,
+                ancestors,
+            });
             match p.bucket {
                 BucketKey::Id(k) => rs.by_id.entry(k).or_default().push(idx),
                 BucketKey::Class(k) => rs.by_class.entry(k).or_default().push(idx),
                 BucketKey::Tag(k) => rs.by_tag.entry(k).or_default().push(idx),
+                BucketKey::Attr(k) => rs.by_attr.entry(k).or_default().push(idx),
                 BucketKey::Other => rs.other.push(idx),
             }
         }
@@ -1935,6 +1985,7 @@ impl<'v> Builder<'v> {
         rs.attr_names = std::mem::take(&mut self.attr_names);
         rs.structural_sibling_keys = std::mem::take(&mut self.structural_sibling_keys);
         rs.nth_keys = std::mem::take(&mut self.nth_keys);
+        rs.nth_last_keys = std::mem::take(&mut self.nth_last_keys);
         rs.empty_keys = std::mem::take(&mut self.empty_keys);
         rs.focus_keys = std::mem::take(&mut self.focus_keys);
         rs.within_keys = std::mem::take(&mut self.within_keys);
@@ -1965,6 +2016,7 @@ impl<'v> Builder<'v> {
                 BucketKey::Id(k) => rs.generic_by_id.entry(k).or_default().push(idx),
                 BucketKey::Class(k) => rs.generic_by_class.entry(k).or_default().push(idx),
                 BucketKey::Tag(k) => rs.generic_by_tag.entry(k).or_default().push(idx),
+                BucketKey::Attr(k) => rs.generic_by_attr.entry(k).or_default().push(idx),
                 BucketKey::Other => rs.generic_other.push(idx),
             }
         }
@@ -1988,6 +2040,7 @@ fn clone_bucket(b: &BucketKey) -> BucketKey {
         BucketKey::Id(s) => BucketKey::Id(s.clone()),
         BucketKey::Class(s) => BucketKey::Class(s.clone()),
         BucketKey::Tag(s) => BucketKey::Tag(s.clone()),
+        BucketKey::Attr(s) => BucketKey::Attr(s.clone()),
         BucketKey::Other => BucketKey::Other,
     }
 }
@@ -2119,6 +2172,7 @@ fn shares_cascade(dom: &Dom, rules: &RuleSet, a: u32, c: u32) -> bool {
             BucketKey::Id(_) => false,
             BucketKey::Class(k) => classes.contains(&k.as_str()),
             BucketKey::Tag(t) => (*ea.name.local).eq_ignore_ascii_case(t),
+            BucketKey::Attr(n) => ea.attrs.iter().any(|a| (*a.name.local).eq_ignore_ascii_case(n)),
             BucketKey::Other => true,
         };
         if applies
@@ -2307,6 +2361,13 @@ fn added_rule_subjects(dom: &Dom, doc: NodeId, added: &RuleSet) -> Option<Vec<u3
             let local = e.name.local.to_ascii_lowercase();
             hit = added.by_tag.get(local.as_str()).is_some_and(|l| rule(l))
                 || added.generic_by_tag.get(local.as_str()).is_some_and(|l| generic(l));
+        }
+        if !hit {
+            hit = e.attrs.iter().any(|a| {
+                let n = a.name.local.to_ascii_lowercase();
+                added.by_attr.get(n.as_str()).is_some_and(|l| rule(l))
+                    || added.generic_by_attr.get(n.as_str()).is_some_and(|l| generic(l))
+            });
         }
         hit = hit
             || added.generated_rules.iter().any(|g| dom.matches(id, &g.selector).unwrap_or(false))
@@ -2530,19 +2591,33 @@ fn invalidation_roots(
     // The parent side of an insertion or removal: its own :empty, the
     // :has()/validity ancestors (from the parent itself, whose children
     // changed), and its children's structural pseudo-classes.
-    let parent_side = |p: u32| -> Vec<u32> {
+    // Children of `p` whose structural pseudo-classes a change can affect.
+    // `at` (an insertion's node, or the sibling after a removal; None: the
+    // whole parent): children before it can only change in keys that count
+    // from the end; children from it on in either kind. Appending a row to a
+    // list styled with `:nth-child` thus restyles only the row.
+    let parent_side = |p: u32, at: Option<u32>| -> Vec<u32> {
         let mut out = Vec::new();
         if any_key(&rules.empty_keys, p) {
             out.push(p);
         }
-        if !rules.nth_keys.is_empty() {
-            let mut child = dom.n(p).first_child;
-            while child != NIL {
-                if element(child).is_some() && rules.nth_keys.iter().any(|k| child_key_at(k, child, p)) {
+        if rules.nth_keys.is_empty() && rules.nth_last_keys.is_empty() {
+            return out;
+        }
+        let mut before = at.is_some();
+        let mut child = dom.n(p).first_child;
+        while child != NIL {
+            if at == Some(child) {
+                before = false;
+            }
+            if element(child).is_some() {
+                let last = || rules.nth_last_keys.iter().any(|k| child_key_at(k, child, p));
+                let hit = if before { last() } else { rules.nth_keys.iter().any(|k| child_key_at(k, child, p)) || last() };
+                if hit {
                     out.push(child);
                 }
-                child = dom.n(child).next;
             }
+            child = dom.n(child).next;
         }
         out
     };
@@ -2603,7 +2678,7 @@ fn invalidation_roots(
                 let node = (live(n) && dom.n(n).parent == p).then_some(n);
                 found.extend(walk_up(p, 0, Below { node, attr: None }).into_iter().map(state));
                 if sided.insert(p) {
-                    found.extend(parent_side(p).into_iter().map(state));
+                    found.extend(parent_side(p, node).into_iter().map(state));
                 }
                 // Moved on since: its later entries cover where it went.
                 if !live(n) || dom.n(n).parent != p {
@@ -2628,7 +2703,8 @@ fn invalidation_roots(
                 let node = (live(n) && !attr_changed.contains(&n)).then_some(n);
                 found.extend(walk_up(p, 0, Below { node, attr: None }).into_iter().map(state));
                 if sided.insert(p) {
-                    found.extend(parent_side(p).into_iter().map(state));
+                    let at = (live(next) && dom.n(next).parent == p).then_some(next);
+                    found.extend(parent_side(p, at).into_iter().map(state));
                 }
                 let mut siblings = live(next) && (adjacency(n, p) || adjacency(dom.n(next).prev, p));
                 if live(n) {
@@ -2807,14 +2883,21 @@ fn parent_key(it: &selectors::parser::SelectorIter<'_, Impl>) -> Option<AnchorKe
 /// is only an `:is()`/`:where()` stands for its inner selectors' subjects
 /// (TOS `:where(.space-y-4>:not(:last-child))`); other inner subjects are
 /// the outer element, keyed by the outer compound.
-fn collect_nth_keys(sel: &Selector<Impl>, out: &mut Vec<ChildKey>, skip_subject: bool) {
-    fn hit(c: &Component<Impl>) -> bool {
+fn collect_nth_keys(sel: &Selector<Impl>, out: &mut Vec<ChildKey>, out_last: &mut Vec<ChildKey>, skip_subject: bool) {
+    /// (counts from the start, counts from the end) over a component's
+    /// structural pseudo-classes; `:only-*` counts both ways.
+    fn hit(c: &Component<Impl>) -> (bool, bool) {
+        let dir = |d: &NthSelectorData| (!d.ty.is_from_end() || d.ty.is_only(), d.ty.is_from_end() || d.ty.is_only());
         match c {
-            Component::Nth(_) | Component::NthOf(_) => true,
-            Component::Is(list) | Component::Where(list) | Component::Negation(list) => {
-                list.slice().iter().any(|inner| inner.iter().any(hit))
-            }
-            _ => false,
+            Component::Nth(d) => dir(d),
+            Component::NthOf(d) => dir(d.nth_data()),
+            Component::Is(list) | Component::Where(list) | Component::Negation(list) => list
+                .slice()
+                .iter()
+                .flat_map(|inner| inner.iter())
+                .map(hit)
+                .fold((false, false), |a, b| (a.0 || b.0, a.1 || b.1)),
+            _ => (false, false),
         }
     }
     let mut it = sel.iter();
@@ -2827,19 +2910,23 @@ fn collect_nth_keys(sel: &Selector<Impl>, out: &mut Vec<ChildKey>, skip_subject:
         };
         if let Some(list) = wrapper {
             for inner in list.slice() {
-                collect_nth_keys(inner, out, skip_subject && subject);
+                collect_nth_keys(inner, out, out_last, skip_subject && subject);
             }
         } else {
-            if compound.iter().any(|c| hit(c)) && !(skip_subject && subject) {
+            let (fwd, back) = compound.iter().map(|c| hit(c)).fold((false, false), |a, b| (a.0 || b.0, a.1 || b.1));
+            if (fwd || back) && !(skip_subject && subject) {
                 let entry = ChildKey { key: compound_key(&compound), parent: parent_key(&it) };
-                if !out.contains(&entry) {
-                    out.push(entry);
+                if fwd && !out.contains(&entry) {
+                    out.push(entry.clone());
+                }
+                if back && !out_last.contains(&entry) {
+                    out_last.push(entry);
                 }
             }
             for c in &compound {
                 if let Component::Is(list) | Component::Where(list) | Component::Negation(list) = c {
                     for inner in list.slice() {
-                        collect_nth_keys(inner, out, true);
+                        collect_nth_keys(inner, out, out_last, true);
                     }
                 }
             }
@@ -3679,6 +3766,11 @@ struct Cache {
     /// Elements whose cached styles were dropped since layout last asked
     /// (`take_restyled`); None: all of them.
     restyled: Option<Vec<NodeId>>,
+    /// Ancestor filters by element for `ancestor_bits_cached`, valid for one
+    /// DOM version (`bits_version`); used when no layout pass memo is active
+    /// (`getComputedStyle` outside layout).
+    bits: FxHashMap<(usize, u32), Option<Rc<AncestorBits>>>,
+    bits_version: Option<(u64, u64)>,
     extent: Option<(f64, f64)>,
     /// The focused and hovered elements of `stamp` (indices there), to tell
     /// a freed one from a live one.
@@ -4025,6 +4117,10 @@ impl StyleEngine {
             }
         }
         cache.extent = None;
+        if cache.bits_version != Some((dom.uid(), stamp.version)) {
+            cache.bits.clear();
+            cache.bits_version = Some((dom.uid(), stamp.version));
+        }
         cache.stamp = Some(stamp);
         cache.pseudo_ids = (
             (stamp.focused != NIL).then(|| dom.id_of(stamp.focused)),
@@ -4148,8 +4244,8 @@ impl StyleEngine {
         let idx = self.owns(dom, el)?;
         self.ensure(dom);
         let mut cache = self.cache.borrow_mut();
-        let Cache { rules, memo, .. } = &mut *cache;
-        Some(self.computed_idx(dom, rules, memo, idx))
+        let Cache { rules, memo, bits, .. } = &mut *cache;
+        Some(self.computed_idx(dom, rules, memo, bits, idx))
     }
 
     /// inheritedProps (StyleManager.zig:927-952): resolves the flat-tree path
@@ -4159,6 +4255,7 @@ impl StyleEngine {
         dom: &Dom,
         rules: &RuleSet,
         memo: &mut FxHashMap<NodeId, ComputedStyle>,
+        bits: &mut FxHashMap<(usize, u32), Option<Rc<AncestorBits>>>,
         idx: u32,
     ) -> ComputedStyle {
         let mut path: Vec<(u32, Cascaded, u32)> = Vec::new();
@@ -4169,7 +4266,7 @@ impl StyleEngine {
                 above = *m;
                 break;
             }
-            let (own, mask) = self.cascade_own(dom, rules, e);
+            let (own, mask) = self.cascade_own(dom, rules, bits, e);
             path.push((e, own, mask));
             cur = flat_tree_parent_element(dom, e);
         }
@@ -4184,7 +4281,13 @@ impl StyleEngine {
     /// compute (StyleManager.zig:963-1057) for every group at once. The
     /// returned mask carries the important-rule fields, and bit 31 when an
     /// author declaration set `display`.
-    fn cascade_own(&self, dom: &Dom, rules: &RuleSet, idx: u32) -> (Cascaded, u32) {
+    fn cascade_own(
+        &self,
+        dom: &Dom,
+        rules: &RuleSet,
+        bits_memo: &mut FxHashMap<(usize, u32), Option<Rc<AncestorBits>>>,
+        idx: u32,
+    ) -> (Cascaded, u32) {
         let mut c = Cascaded::default();
         let mut pri = [0u64; NF];
         let e = dom.n(idx).element().expect("element");
@@ -4202,9 +4305,18 @@ impl StyleEngine {
         }
 
         let id = dom.id_of(idx);
+        // Rules whose ancestor compounds need a tag, id or class no ancestor
+        // has cannot match (`.a *`-style rules, bucketed on every element).
+        let mut bits: Option<Option<Rc<AncestorBits>>> = None;
         let mut check = |list: &[u32]| {
             for &ri in list {
                 let r = &rules.rules[ri as usize];
+                if r.ancestors[0] != 0 {
+                    let b = bits.get_or_insert_with(|| ancestor_bits(dom, idx, bits_memo));
+                    if b.as_ref().is_some_and(|b| r.ancestors.iter().any(|&h| h != 0 && !b.might_contain(h))) {
+                        continue;
+                    }
+                }
                 let mut relevant = false;
                 let mut m = r.mask;
                 while m != 0 {
@@ -4237,6 +4349,13 @@ impl StyleEngine {
             let local = e.name.local.to_ascii_lowercase();
             if let Some(list) = rules.by_tag.get(local.as_str()) {
                 check(list);
+            }
+        }
+        if !rules.by_attr.is_empty() {
+            for a in &e.attrs {
+                if let Some(list) = rules.by_attr.get(a.name.local.to_ascii_lowercase().as_str()) {
+                    check(list);
+                }
             }
         }
         check(&rules.other);
@@ -4771,7 +4890,10 @@ impl StyleEngine {
             for &ri in list {
                 let r = &rules.generic_rules[ri as usize];
                 if r.ancestors[0] != 0 {
-                    let b = bits.get_or_insert_with(|| dom.check(el).ok().and_then(|idx| ancestor_bits(dom, idx)));
+                    let b = bits.get_or_insert_with(|| {
+                        let idx = dom.check(el).ok()?;
+                        ancestor_bits(dom, idx, &mut self.cache.borrow_mut().bits)
+                    });
                     if b.as_ref().is_some_and(|b| r.ancestors.iter().any(|&h| h != 0 && !b.might_contain(h))) {
                         continue;
                     }
@@ -4804,6 +4926,13 @@ impl StyleEngine {
             let local = e.name.local.to_ascii_lowercase();
             if let Some(list) = rules.generic_by_tag.get(local.as_str()) {
                 check(list);
+            }
+        }
+        if !rules.generic_by_attr.is_empty() {
+            for a in &e.attrs {
+                if let Some(list) = rules.generic_by_attr.get(a.name.local.to_ascii_lowercase().as_str()) {
+                    check(list);
+                }
             }
         }
         check(&rules.generic_other);
@@ -5071,14 +5200,32 @@ mod has_anchor_tests {
         assert_eq!(keys(".y:not(:hover)", &hover), vec![AnchorKey::Class("y".into())]);
         // Inside :has(): the anchor walk's business.
         assert_eq!(keys(".g:has(:hover)", &hover), vec![]);
-        let nth = |text: &str| {
+        let nth_both = |text: &str| {
             let list = crate::select::parse_selectors(text).expect("selector");
-            let mut out = Vec::new();
+            let (mut out, mut out_last) = (Vec::new(), Vec::new());
             for sel in list.slice() {
-                super::collect_nth_keys(sel, &mut out, false);
+                super::collect_nth_keys(sel, &mut out, &mut out_last, false);
             }
-            out
+            (out, out_last)
         };
+        // Keys of either direction (the union, as before the split).
+        let nth = |text: &str| {
+            let (mut a, b) = nth_both(text);
+            for k in b {
+                if !a.contains(&k) {
+                    a.push(k);
+                }
+            }
+            a
+        };
+        // Direction: `:nth-child` counts from the start (later siblings
+        // change), `:last-child` from the end (earlier ones), `:only-child` both.
+        assert_eq!(nth_both(".a:nth-child(2n)").1, vec![]);
+        assert_eq!(nth_both(".a:last-child").0, vec![]);
+        assert_eq!(nth_both(".a:nth-last-of-type(3)").0, vec![]);
+        let only = nth_both(".a:only-child");
+        assert_eq!(only.0, only.1);
+        assert_eq!(only.0.len(), 1);
         // TOS space-y/divide: any child, of a .space-y-4 parent.
         assert_eq!(
             nth(r":where(.space-y-4>:not(:last-child))"),
