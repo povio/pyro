@@ -97,6 +97,9 @@ pub trait Host {
     fn add_init_script(&mut self, _page: PageKey, _source: &str) {}
     /// Sets the page's viewport size.
     fn set_viewport(&mut self, _page: PageKey, _width: u32, _height: u32) {}
+    /// A prepared page finished booting and now waits: shrink it to its
+    /// live size (full collection, free pages returned).
+    fn settle_page(&mut self, _page: PageKey) {}
     /// Handles a page-scoped command. Must send exactly one response for
     /// `command.id`, now or later, unless the session detaches first.
     fn page_command(&mut self, cmd: PageCommand<'_, '_>, out: &mut dyn Sink);
@@ -130,6 +133,12 @@ pub struct PreparedProfile {
     pub viewport: Option<ViewportSize>,
     #[serde(default = "default_pool")]
     pub pool: usize,
+    /// Boot the replacement only once the acquired page's context is
+    /// closed (instead of when the thread is quiet): at most `pool` booted
+    /// apps instead of `pool` + 1, at the price of the next test waiting
+    /// for the boot when tests run back to back.
+    #[serde(default)]
+    pub refill_after_close: bool,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -161,6 +170,8 @@ struct PreparedEntry {
     context_id: String,
     page: PageKey,
     target_id: String,
+    /// `settle_page` ran once the page had loaded.
+    settled: bool,
 }
 
 /// Per-connection budgets: a client cannot grow protocol state without limit.
@@ -187,6 +198,8 @@ struct TargetEntry {
     /// Popup navigation held until the client's `Runtime.runIfWaitingForDebugger`
     /// (Chrome pauses popups so init scripts and listeners are installed first).
     pending_url: Option<String>,
+    /// The prepared-page profile this target was acquired from.
+    prepared_profile: Option<usize>,
 }
 
 struct SessionEntry {
@@ -270,6 +283,8 @@ impl<H: Host> Browser<H> {
                 context_id,
                 page: e.page,
                 target_id: e.target_id,
+                // The spare thread settles what it booted before the connection.
+                settled: true,
             });
         }
         browser.refill_prepared();
@@ -281,12 +296,38 @@ impl<H: Host> Browser<H> {
     /// thread has been quiet for a moment, so a test's own commands are
     /// never queued behind the next page's boot.
     pub fn needs_refill(&self) -> bool {
-        !self.refill_blocked
-            && self
-                .prepared_profiles
-                .iter()
-                .enumerate()
-                .any(|(i, p)| self.prepared.iter().filter(|e| e.profile == i).count() < p.pool.clamp(1, MAX_POOL))
+        !self.refill_blocked && (0..self.prepared_profiles.len()).any(|i| self.profile_wants_page(i))
+    }
+
+    /// Whether profile `i` is below its pool and allowed to boot now.
+    fn profile_wants_page(&self, i: usize) -> bool {
+        let profile = &self.prepared_profiles[i];
+        let waiting = self.prepared.iter().filter(|e| e.profile == i).count();
+        let in_use = self.targets.iter().filter(|t| t.prepared_profile == Some(i)).count();
+        let pool = profile.pool.clamp(1, MAX_POOL);
+        if profile.refill_after_close {
+            waiting + in_use < pool
+        } else {
+            waiting < pool
+        }
+    }
+
+    /// Settles prepared pages that finished loading since the last call
+    /// (one full collection each), so a waiting page costs its live size.
+    /// Called by the connection loop when the thread is quiet.
+    pub fn settle_prepared(&mut self) {
+        for i in 0..self.prepared.len() {
+            if !self.prepared[i].settled && self.host.page_loaded(self.prepared[i].page) {
+                self.prepared[i].settled = true;
+                let page = self.prepared[i].page;
+                self.host.settle_page(page);
+            }
+        }
+    }
+
+    /// Whether some loaded prepared page has not been settled yet.
+    pub fn needs_settle(&self) -> bool {
+        self.prepared.iter().any(|e| !e.settled && self.host.page_loaded(e.page))
     }
 
     /// Boots the missing pages now (see `needs_refill`).
@@ -303,8 +344,7 @@ impl<H: Host> Browser<H> {
         for index in 0..self.prepared_profiles.len() {
             loop {
                 let profile = self.prepared_profiles[index].clone();
-                let have = self.prepared.iter().filter(|p| p.profile == index).count();
-                if have >= profile.pool.clamp(1, MAX_POOL) {
+                if !self.profile_wants_page(index) {
                     break;
                 }
                 if self.contexts.len() >= MAX_CONTEXTS || self.targets.len() + self.prepared.len() >= MAX_TARGETS {
@@ -327,7 +367,7 @@ impl<H: Host> Browser<H> {
                     self.dispose_context(&context_id, &mut Discard);
                     break;
                 }
-                self.prepared.push(PreparedEntry { profile: index, context_id, page, target_id });
+                self.prepared.push(PreparedEntry { profile: index, context_id, page, target_id, settled: false });
                 started = true;
             }
         }
@@ -392,6 +432,7 @@ impl<H: Host> Browser<H> {
                     opener_id: None,
                     can_access_opener: false,
                     pending_url: None,
+                    prepared_profile: Some(entry.profile),
                 });
                 if self.discover {
                     self.send_target_created(self.targets.len() - 1, out);
@@ -778,6 +819,7 @@ impl<H: Host> Browser<H> {
                     opener_id: None,
                     can_access_opener: false,
                     pending_url: None,
+                    prepared_profile: None,
                 });
                 if self.discover {
                     self.send_target_created(self.targets.len() - 1, out);
@@ -984,6 +1026,9 @@ impl<H: Host> Browser<H> {
         }
         if let Some(pos) = self.targets.iter().position(|t| t.id == target_id) {
             let target = self.targets.remove(pos);
+            if target.prepared_profile.is_some() {
+                self.refill_blocked = false;
+            }
             self.host.close_page(target.page);
             if self.discover {
                 out.send(msg::event_frame(
@@ -1031,6 +1076,7 @@ impl<H: Host> Browser<H> {
                 opener_id: Some(opener_id),
                 can_access_opener: request.opener_access,
                 pending_url: paused.then(|| request.url.clone()),
+                prepared_profile: None,
             });
             if self.discover {
                 self.send_target_created(self.targets.len() - 1, out);

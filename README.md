@@ -60,6 +60,14 @@ target, so Playwright sees it as a page of its default context, already loaded.
 a profile at run time, including the scripts a test would otherwise install
 with `addInitScript`; `Lightningpanda.preparedPages` lists what is waiting.
 
+Memory: every booted page is a full copy of the app, so a pool of N holds N
+of them plus one in use. `--prepare-refill after-close` (or `refillAfterClose`
+in the profile) boots the replacement only once the acquired page's context
+closes, capping the count at the pool size; the default boots it as soon as
+the thread is quiet. Closed pages are collected and their memory returned to
+the OS right away (`LIGHTNINGPANDA_RELEASE_ON_CLOSE=0` disables that for
+comparisons); a 20-test loop on a 2 MB app plateaus at 275 MB instead of 323.
+
 ## License
 
 AGPL-3.0-only. This is a derivative of Lightpanda; see [NOTICE](NOTICE).
