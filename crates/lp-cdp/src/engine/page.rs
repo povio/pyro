@@ -25,7 +25,7 @@ fn reason_name(reason: NavigationReason) -> Option<&'static str> {
 #[derive(Default)]
 pub(crate) struct FrameEvents {
     parent: Option<FrameId>,
-    navigating: bool,
+    pub(super) navigating: bool,
     /// A frameRequestedNavigation was announced for the pending navigation;
     /// an aborted navigation then reports frameClearedScheduledNavigation.
     requested: bool,

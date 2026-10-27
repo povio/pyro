@@ -275,6 +275,17 @@ pub struct EngineHost {
     pub(crate) pending: runtime::PendingReplies,
     /// Popups requested by pages, taken by the protocol layer after `flush`.
     pub(crate) popup_requests: Vec<crate::target::PopupRequest>,
+    /// Pages booted before the connection (`preboot`), handed to the
+    /// protocol layer once by `Host::take_prebooted`.
+    prebooted: Vec<crate::target::PrebootedEntry>,
+}
+
+/// A page booted on a thread before any connection, with its context.
+#[derive(Debug, Clone, Copy)]
+pub struct Prebooted {
+    pub context: lp_browser::ContextId,
+    pub page: lp_browser::PageId,
+    pub profile: usize,
 }
 
 /// Startup configuration shared by every browser thread of a `serve`
@@ -285,6 +296,8 @@ pub struct BrowserProfile {
     pub net: lp_net::NetConfig,
     /// Local storage entries every browser context starts with.
     pub local_storage: lp_webapi::StorageSeed,
+    /// Pages booted ahead of every connection (`serve --prepare URL`).
+    pub prepared: Vec<crate::target::PreparedProfile>,
 }
 
 impl EngineHost {
@@ -326,6 +339,83 @@ impl EngineHost {
         Ok(thread)
     }
 
+    /// Starts the pages of `profiles` on a prepared thread, before any
+    /// connection: each in its own context, with the profile's init scripts
+    /// and viewport. The caller runs the thread's loop to let them boot and
+    /// adopts them with `adopt_prebooted` once the host exists.
+    pub fn preboot(thread: &mut BrowserThread, profiles: &[crate::target::PreparedProfile]) -> Vec<Prebooted> {
+        let mut out = Vec::new();
+        for (index, profile) in profiles.iter().enumerate() {
+            for _ in 0..profile.pool.clamp(1, crate::target::MAX_POOL) {
+                let Ok(context) = thread.browser.create_context() else { break };
+                let Ok(page) = thread.browser.create_page_in(context) else {
+                    thread.browser.close_context(context);
+                    break;
+                };
+                for (n, source) in profile.init_scripts.iter().enumerate() {
+                    thread.browser.add_init_script(
+                        page,
+                        lp_browser::InitScript { id: format!("prebooted-{n}"), source: source.clone(), world: None },
+                    );
+                }
+                if let Some(v) = profile.viewport {
+                    if let Some(p) = thread.browser.page(page) {
+                        let mut viewport = p.viewport().clone();
+                        viewport.width = v.width;
+                        viewport.height = v.height;
+                        let _ = thread.browser.set_viewport(page, viewport);
+                    }
+                }
+                if thread.browser.navigate(page, lp_browser::NavigateOpts::address_bar(&profile.url)).is_err() {
+                    thread.browser.close_page(page);
+                    thread.browser.close_context(context);
+                    break;
+                }
+                out.push(Prebooted { context, page, profile: index });
+            }
+        }
+        out
+    }
+
+    /// Registers pages from `preboot` with this host (their events before
+    /// now went nowhere, which is fine: no session existed).
+    pub fn adopt_prebooted(&mut self, pages: Vec<Prebooted>) {
+        for p in pages {
+            if self.thread.browser.page(p.page).is_none() {
+                continue;
+            }
+            let context = u64::from(p.context.0);
+            self.contexts.entry(context).or_insert_with(|| network::NetworkContext::new(p.context));
+            let (page, target_id) = self.register_page(p.page, context);
+            self.prebooted.push(crate::target::PrebootedEntry { context, page, target_id, profile: p.profile });
+        }
+    }
+
+    /// Protocol state for a page of the engine; its target id is the main frame's.
+    fn register_page(&mut self, id: PageId, context: ContextKey) -> (PageKey, String) {
+        let key = PageKey::from(id.0);
+        self.pages.insert(
+            key,
+            PageState {
+                id,
+                context,
+                sessions: Vec::new(),
+                frames: HashMap::new(),
+                pending_navigations: Vec::new(),
+                window_bounds: None,
+                emulated_media: None,
+                next_script_id: 1,
+                initial_popup: false,
+                suppress_next_char: false,
+                intercept_drags: false,
+                network: network::NetworkPage::new(self.body_budget.clone()),
+                dom_nodes: dom::BackendNodes::default(),
+            },
+        );
+        let target_id = self.thread.browser.page(id).expect("page exists").main_frame.id.0.clone();
+        (key, target_id)
+    }
+
     /// `with_body_budget` for a thread from `prepare_thread`.
     pub fn with_thread(mut thread: BrowserThread, out: Outbox, body_budget: BodyBudget) -> CdpResult<EngineHost> {
         let collector = Rc::new(Collector::new(out.clone()));
@@ -346,6 +436,7 @@ impl EngineHost {
             next_backend_node: 1,
             pending: runtime::PendingReplies::default(),
             popup_requests: Vec::new(),
+            prebooted: Vec::new(),
         })
     }
 
@@ -679,29 +770,14 @@ impl Host for EngineHost {
             .browser
             .create_page_in(context_id)
             .map_err(|e| CdpError::server(format!("cannot create page: {e}")))?;
-        let key = PageKey::from(id.0);
-        self.pages.insert(
-            key,
-            PageState {
-                id,
-                context,
-                sessions: Vec::new(),
-                frames: HashMap::new(),
-                pending_navigations: Vec::new(),
-                window_bounds: None,
-                emulated_media: None,
-                next_script_id: 1,
-                initial_popup: false,
-                suppress_next_char: false,
-                intercept_drags: false,
-                network: network::NetworkPage::new(self.body_budget.clone()),
-                dom_nodes: dom::BackendNodes::default(),
-            },
-        );
+        let (key, target_id) = self.register_page(id, context);
         // Events of the initial about:blank load precede any session.
         self.flush();
-        let target_id = self.thread.browser.page(id).expect("page just created").main_frame.id.0.clone();
         Ok((key, target_id))
+    }
+
+    fn take_prebooted(&mut self) -> Vec<crate::target::PrebootedEntry> {
+        std::mem::take(&mut self.prebooted)
     }
 
     fn navigate(&mut self, page: PageKey, url: &str) -> CdpResult<()> {
@@ -757,6 +833,32 @@ impl Host for EngineHost {
                 handles: Rc::new(RefCell::new(HandleTable::new(self.handle_budget.clone()))),
             },
         );
+    }
+
+    fn page_loaded(&self, page: PageKey) -> bool {
+        let Some(state) = self.pages.get(&page) else { return false };
+        let Some(p) = self.thread.browser.page(state.id) else { return false };
+        let navigating = state.frames.get(&p.main_frame.id).is_some_and(|f| f.navigating);
+        p.main_frame.loaded && !navigating
+    }
+
+    fn add_init_script(&mut self, page: PageKey, source: &str) {
+        let Some(state) = self.pages.get_mut(&page) else { return };
+        let id = format!("prepared-{}", state.next_script_id);
+        state.next_script_id += 1;
+        let page_id = state.id;
+        self.thread
+            .browser
+            .add_init_script(page_id, lp_browser::InitScript { id, source: source.to_owned(), world: None });
+    }
+
+    fn set_viewport(&mut self, page: PageKey, width: u32, height: u32) {
+        let Some(state) = self.pages.get(&page) else { return };
+        let Some(p) = self.thread.browser.page(state.id) else { return };
+        let mut viewport = p.viewport().clone();
+        viewport.width = width;
+        viewport.height = height;
+        let _ = self.thread.browser.set_viewport(state.id, viewport);
     }
 
     fn session_detached(&mut self, page: PageKey, session_id: &str) {
