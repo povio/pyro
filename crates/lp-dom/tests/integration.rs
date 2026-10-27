@@ -4,9 +4,11 @@
 
 mod flow;
 mod flow_snapshot;
+mod id_index;
 mod inner_text;
 mod layout;
 mod loader;
+mod record_scan_bench;
 mod select_forms;
 mod tree;
 mod typed_flow;

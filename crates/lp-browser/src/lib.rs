@@ -393,6 +393,8 @@ pub struct Browser {
     contexts: Vec<ContextState>,
     /// When set, every new context gets its own NetClient with this config.
     net_config: Option<lp_net::NetConfig>,
+    /// Entries every context's local storage starts with.
+    local_storage_seed: lp_webapi::StorageSeed,
     /// Completions of in-flight fetches, keyed by completion id.
     pub(crate) completions: std::collections::HashMap<u64, FetchDone>,
 }
@@ -460,6 +462,12 @@ impl Browser {
     }
 }
 
+/// Maximum interval between services of the thread's native run loop while
+/// the JavaScriptCore VM exists (macOS; see `lp_runtime` docs). Diagnostic-
+/// backed initial policy: up to 4 idle wakes/s per browser thread.
+#[cfg(target_os = "macos")]
+const JSC_RUNLOOP_SERVICE_MAX_IDLE: std::time::Duration = std::time::Duration::from_millis(250);
+
 /// A browser thread's loop plus its state.
 pub struct BrowserThread {
     pub event_loop: EventLoop<Browser>,
@@ -477,6 +485,15 @@ impl BrowserThread {
         engine.register::<History>();
         engine.register::<Performance>();
         let event_loop = EventLoop::new();
+        // JavaScriptCore binds this VM's timers to this thread's run loop; the
+        // loop services it at a bounded interval for the VM's whole lifetime
+        // (closed-page garbage lives in the VM, not in open pages).
+        #[cfg(target_os = "macos")]
+        let event_loop = {
+            let mut event_loop = event_loop;
+            event_loop.enable_native_runloop_service(JSC_RUNLOOP_SERVICE_MAX_IDLE);
+            event_loop
+        };
         let browser = Browser {
             engine,
             sched: event_loop.scheduler(),
@@ -494,6 +511,7 @@ impl BrowserThread {
                 local_storage: Default::default(),
             }],
             net_config: None,
+            local_storage_seed: Default::default(),
             completions: std::collections::HashMap::new(),
         };
         Ok(BrowserThread { event_loop, browser })
@@ -508,6 +526,16 @@ impl BrowserThread {
     pub fn enable_network(&mut self, config: lp_net::NetConfig) -> std::io::Result<()> {
         self.browser.net_config = Some(config);
         self.browser.attach_network(DEFAULT_CONTEXT)
+    }
+
+    /// Preloads local storage: every browser context (the existing ones and
+    /// those created later) gets `seed`'s entries. Existing areas keep their
+    /// other keys; no `storage` events fire.
+    pub fn set_local_storage_seed(&mut self, seed: lp_webapi::StorageSeed) {
+        for context in &self.browser.contexts {
+            context.local_storage.seed(&seed);
+        }
+        self.browser.local_storage_seed = seed;
     }
 
     /// Runs tasks/timers until idle or the deadline.
@@ -569,7 +597,8 @@ impl Browser {
     /// Creates an isolated browser context with its own network state.
     pub fn create_context(&mut self) -> std::io::Result<ContextId> {
         let id = ContextId(self.next() as u32);
-        self.contexts.push(ContextState { id, loader: None, net: None, local_storage: Default::default() });
+        let local_storage = lp_webapi::StorageNamespace::seeded(&self.local_storage_seed);
+        self.contexts.push(ContextState { id, loader: None, net: None, local_storage });
         if self.net_config.is_some() {
             self.attach_network(id)?;
         }

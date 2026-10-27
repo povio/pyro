@@ -2,63 +2,131 @@
 //! from a `<form>` (+ submitter) via the form data set algorithm, and usable
 //! as a fetch/XHR body (multipart/form-data).
 //!
-//! File values are kept as their JS `File` objects (rooted while the entry
-//! exists) so `get()` returns the same object each time; Blob values become
-//! Files named "blob" (or the given filename), as in browsers.
+//! File values are kept as their JS `File` objects in a JS array that is a hidden
+//! property of the FormData wrapper (`__lpFormDataFiles`): the GC traces it, so the
+//! Files live exactly as long as the FormData and `get()` returns the same object
+//! each time, and no payload-owned `Persistent` can keep a closed realm alive. An
+//! entry stores only its slot number in that array. Slots are never reused; removed
+//! entries leave an `undefined` tombstone so a dropped File becomes collectable.
+//! Blob values become Files named "blob" (or the given filename), as in browsers.
 //! Iteration (`entries/keys/values/@@iterator/forEach`) snapshots the entry
 //! list when the iterator is created (live mutation during iteration is not
 //! reflected — documented deviation).
+//!
+//! No `RefCell` borrow of the entry list is ever held across a call that can reach
+//! JS, and the hidden array has a null prototype, so script-defined indexed
+//! accessors on `Array.prototype`/`Object.prototype` can neither observe nor change it.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 
 use bytes::Bytes;
-use lp_js::{Args, ClassDef, JsClass, JsError, JsResult, NoParent, Persistent, Scope, Value};
+use lp_js::{Args, ClassDef, JsClass, JsError, JsResult, NoParent, Object, Scope, Value};
 
 use crate::file::{Blob, BlobData, File};
 use crate::formdata::EntryValue;
 use crate::util::*;
 
+/// The File objects of a FormData, a hidden property of its wrapper.
+const FILES: &str = "__lpFormDataFiles";
+
+#[derive(Clone)]
 enum Entry {
     Text(String),
-    File(Persistent),
+    /// Slot number in the hidden files array.
+    File(u32),
 }
 
-#[derive(Default)]
 pub struct FormDataData {
     entries: RefCell<Vec<(String, Entry)>>,
+    wrapper: WrapperRef,
+    next_slot: Cell<u32>,
 }
 
 impl FormDataData {
-    /// Entry list as plain values for multipart serialization.
-    pub(crate) fn entry_values(&self, s: &Scope<'_>) -> Vec<(String, EntryValue)> {
-        self.entries
-            .borrow()
-            .iter()
-            .map(|(name, e)| {
-                let v = match e {
-                    Entry::Text(t) => EntryValue::Text(t.clone()),
-                    Entry::File(p) => {
-                        let file = s.unwrap::<Blob>(p.get(s));
-                        let (bytes, mime, fname, lm) = match file.as_deref() {
-                            Some(b) => (
-                                b.bytes.clone(),
-                                b.mime.clone(),
-                                b.file.as_ref().map_or("blob".to_owned(), |f| f.0.clone()),
-                                b.file.as_ref().map_or(0.0, |f| f.1),
-                            ),
-                            None => (Bytes::new(), String::new(), "blob".to_owned(), 0.0),
-                        };
-                        EntryValue::File(crate::file::FileEntry { name: fname, mime, bytes, last_modified: lm })
-                    }
-                };
-                (name.clone(), v)
-            })
-            .collect()
+    fn new(wrapper: WrapperRef) -> Self {
+        FormDataData { entries: RefCell::new(Vec::new()), wrapper, next_slot: Cell::new(0) }
+    }
+
+    /// The hidden files array of this FormData's own wrapper. Fails with
+    /// `ContextDestroyed` once the realm that created the FormData is disposed.
+    fn files<'s>(&self, s: &Scope<'s>) -> JsResult<Object<'s>> {
+        self.wrapper.hidden(s, FILES)?.and_then(|v| v.as_object()).ok_or(JsError::ContextDestroyed)
+    }
+
+    /// Puts `file` in the next free slot of `files`. A fresh File wrapper goes into
+    /// the array immediately; a Rust `Vec<Value>` is not scanned by the GC.
+    fn store(&self, files: &Object<'_>, file: Value<'_>) -> JsResult<u32> {
+        let slot = self.next_slot.get();
+        let next = slot.checked_add(1).ok_or_else(|| JsError::Type("Too many files in this FormData".into()))?;
+        files.set_index(slot, file)?;
+        self.next_slot.set(next);
+        Ok(slot)
+    }
+
+    /// A copy of the entry list, so no borrow is held while JS runs.
+    fn copy_entries(&self) -> Vec<(String, Entry)> {
+        self.entries.borrow().clone()
+    }
+
+    /// Releases removed Files (best effort: the entries are already gone from the
+    /// list, and a failed write only delays the release until the FormData dies).
+    fn release(&self, s: &Scope<'_>, slots: &[u32]) {
+        if slots.is_empty() {
+            return;
+        }
+        if let Ok(files) = self.files(s) {
+            for slot in slots {
+                let _ = files.set_index(*slot, s.undefined());
+            }
+        }
+    }
+
+    /// Entry list as plain values for multipart serialization. `this` is the
+    /// FormData value being serialized: its hidden array is read directly, so
+    /// serialization does not depend on the owner realm being alive and never
+    /// silently substitutes an empty file for an unreadable one.
+    pub(crate) fn entry_values<'s>(&self, s: &Scope<'s>, this: Value<'_>) -> JsResult<Vec<(String, EntryValue)>> {
+        let entries = self.copy_entries();
+        let mut files: Option<Object<'s>> = None;
+        let mut out = Vec::with_capacity(entries.len());
+        for (name, e) in entries {
+            let v = match e {
+                Entry::Text(t) => EntryValue::Text(t),
+                Entry::File(slot) => {
+                    let array = match &files {
+                        Some(a) => *a,
+                        None => {
+                            let owner = this.as_object().ok_or(JsError::ContextDestroyed)?;
+                            let a = s
+                                .get_hidden(owner, FILES)?
+                                .and_then(|v| v.as_object())
+                                .ok_or(JsError::ContextDestroyed)?;
+                            files = Some(a);
+                            a
+                        }
+                    };
+                    let file = array.get_index(slot)?;
+                    let blob = s
+                        .unwrap::<Blob>(file)
+                        .ok_or_else(|| JsError::Type("A FormData file entry is no longer available".into()))?;
+                    EntryValue::File(crate::file::FileEntry {
+                        name: blob.file.as_ref().map_or("blob".to_owned(), |f| f.0.clone()),
+                        mime: blob.mime.clone(),
+                        bytes: blob.bytes.clone(),
+                        last_modified: blob.file.as_ref().map_or(0.0, |f| f.1),
+                    })
+                }
+            };
+            out.push((name, v));
+        }
+        Ok(out)
     }
 }
 
-/// Converts `value` (+ optional filename) into an entry value.
-fn entry_value(s: &Scope<'_>, value: Value<'_>, filename: Option<Value<'_>>) -> JsResult<Entry> {
+/// Converts `value` (+ optional filename) into an entry value. A File goes into the
+/// next slot of the hidden array right here (before the caller touches the entry
+/// list), so no fresh wrapper is ever held only by Rust.
+fn entry_value(s: &Scope<'_>, d: &FormDataData, value: Value<'_>, filename: Option<Value<'_>>) -> JsResult<Entry> {
     let blob = s.unwrap::<Blob>(value).map(|b| (b.bytes.clone(), b.mime.clone(), b.file.clone()));
     match blob {
         None => Ok(Entry::Text(dom_string(value)?)),
@@ -69,20 +137,27 @@ fn entry_value(s: &Scope<'_>, value: Value<'_>, filename: Option<Value<'_>>) -> 
             };
             // Files keep identity unless renamed; Blobs become Files.
             if file.is_some() && filename.is_none() {
-                return Ok(Entry::File(Persistent::new(s, value)));
+                return Ok(Entry::File(d.store(&d.files(s)?, value)?));
             }
             let name = filename.unwrap_or_else(|| file.as_ref().map_or("blob".to_owned(), |f| f.0.clone()));
             let lm = file.as_ref().map_or_else(crate::encoding::now_ms, |f| f.1);
+            let files = d.files(s)?;
             let f = s.wrap::<File>(BlobData { bytes, mime, file: Some((name, lm)) }, None)?;
-            Ok(Entry::File(Persistent::new(s, f.value())))
+            Ok(Entry::File(d.store(&files, f.value())?))
         }
     }
 }
 
-fn entry_js<'s>(s: &Scope<'s>, e: &Entry) -> Value<'s> {
+/// The JS value of an entry. `files` caches the hidden array for the caller's loop.
+fn read_entry<'s>(s: &Scope<'s>, d: &FormDataData, files: &mut Option<Object<'s>>, e: &Entry) -> JsResult<Value<'s>> {
     match e {
-        Entry::Text(t) => s.string(t),
-        Entry::File(p) => p.get(s),
+        Entry::Text(t) => Ok(s.string(t)),
+        Entry::File(slot) => {
+            if files.is_none() {
+                *files = Some(d.files(s)?);
+            }
+            files.as_ref().expect("files set above").get_index(*slot)
+        }
     }
 }
 
@@ -91,12 +166,17 @@ fn name_arg(a: &Args<'_>, what: &str) -> JsResult<String> {
 }
 
 fn snapshot<'s>(s: &Scope<'s>, d: &FormDataData, kind: u8) -> JsResult<Value<'s>> {
+    let entries = d.copy_entries();
+    let mut files = None;
     let mut items = lp_js::RootedVec::new();
-    for (name, e) in d.entries.borrow().iter() {
+    for (name, e) in &entries {
         let v = match kind {
-            0 => s.array(&[s.string(name), entry_js(s, e)])?.value(),
+            0 => {
+                let value = read_entry(s, d, &mut files, e)?;
+                s.array(&[s.string(name), value])?.value()
+            }
             1 => s.string(name),
-            _ => entry_js(s, e),
+            _ => read_entry(s, d, &mut files, e)?,
         };
         items.push(s, v);
     }
@@ -112,10 +192,16 @@ impl JsClass for FormData {
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
         def.constructor(0, |s, nt, a| {
-            let data = FormDataData::default();
+            // The wrapper needs an identity (the payload finds its own wrapper again
+            // through the realm's identity map) and the hidden array must exist
+            // before any File wrapper is created.
+            let page = crate::target::page_of(s)?;
+            let identity = page.event_identity(page.next_event_id());
+            let data = FormDataData::new(WrapperRef::new(s, identity));
+            let files = s.array(&[])?;
+            files.set_prototype(s.null());
             let form = a.get(0);
             if !form.is_undefined() {
-                let page = crate::target::page_of(s)?;
                 let node = s.unwrap::<crate::node::Node>(form).map(|n| n.id);
                 let is_form = node.is_some_and(|id| {
                     page.dom.borrow().element(id).is_ok_and(|e| e.is_html() && *e.local_name() == *"form")
@@ -141,7 +227,7 @@ impl JsClass for FormData {
                     }
                 };
                 let entries = crate::formdata::form_entries(&page, form_id, submitter);
-                let mut list = data.entries.borrow_mut();
+                let mut list = Vec::with_capacity(entries.len());
                 for (name, v) in entries {
                     let e = match v {
                         EntryValue::Text(t) => Entry::Text(t),
@@ -150,54 +236,87 @@ impl JsClass for FormData {
                                 BlobData { bytes: f.bytes, mime: f.mime, file: Some((f.name, f.last_modified)) },
                                 None,
                             )?;
-                            Entry::File(Persistent::new(s, file.value()))
+                            Entry::File(data.store(&files, file.value())?)
                         }
                     };
                     list.push((name, e));
                 }
+                *data.entries.borrow_mut() = list;
             }
-            s.wrap_new::<FormData>(data, nt, None)
+            let fd = s.wrap_new::<FormData>(data, nt, Some(identity))?;
+            s.set_hidden(fd, FILES, files.value())?;
+            Ok(fd)
         });
         def.method("append", 2, |s, d, a| {
             a.require(2, "FormData.append")?;
             let name = dom_string(a.get(0))?;
-            let e = entry_value(s, a.get(1), a.opt(2))?;
+            let e = entry_value(s, d, a.get(1), a.opt(2))?;
             d.entries.borrow_mut().push((name, e));
             Ok(s.undefined())
         });
         def.method("set", 2, |s, d, a| {
             a.require(2, "FormData.set")?;
             let name = dom_string(a.get(0))?;
-            let e = entry_value(s, a.get(1), a.opt(2))?;
-            let mut list = d.entries.borrow_mut();
-            match list.iter().position(|(n, _)| *n == name) {
-                Some(first) => {
-                    list[first].1 = e;
-                    let mut i = 0;
-                    list.retain(|(n, _)| {
-                        let keep = *n != name || i == first;
-                        i += 1;
-                        keep
-                    });
+            // The new entry (and its slot) exists before the list is borrowed.
+            let e = entry_value(s, d, a.get(1), a.opt(2))?;
+            let mut removed = Vec::new();
+            {
+                let mut list = d.entries.borrow_mut();
+                match list.iter().position(|(n, _)| *n == name) {
+                    Some(first) => {
+                        if let Entry::File(slot) = std::mem::replace(&mut list[first].1, e) {
+                            removed.push(slot);
+                        }
+                        let mut i = 0;
+                        list.retain(|(n, old)| {
+                            let keep = *n != name || i == first;
+                            if !keep {
+                                if let Entry::File(slot) = old {
+                                    removed.push(*slot);
+                                }
+                            }
+                            i += 1;
+                            keep
+                        });
+                    }
+                    None => list.push((name, e)),
                 }
-                None => list.push((name, e)),
             }
+            d.release(s, &removed);
             Ok(s.undefined())
         });
         def.method("delete", 1, |s, d, a| {
             let name = name_arg(&a, "FormData.delete")?;
-            d.entries.borrow_mut().retain(|(n, _)| *n != name);
+            let mut removed = Vec::new();
+            d.entries.borrow_mut().retain(|(n, e)| {
+                if *n != name {
+                    return true;
+                }
+                if let Entry::File(slot) = e {
+                    removed.push(*slot);
+                }
+                false
+            });
+            d.release(s, &removed);
             Ok(s.undefined())
         });
         def.method("get", 1, |s, d, a| {
             let name = name_arg(&a, "FormData.get")?;
-            Ok(d.entries.borrow().iter().find(|(n, _)| *n == name).map_or(s.null(), |(_, e)| entry_js(s, e)))
+            let found = d.entries.borrow().iter().find(|(n, _)| *n == name).map(|(_, e)| e.clone());
+            match found {
+                None => Ok(s.null()),
+                Some(e) => read_entry(s, d, &mut None, &e),
+            }
         });
         def.method("getAll", 1, |s, d, a| {
             let name = name_arg(&a, "FormData.getAll")?;
+            let matching: Vec<Entry> =
+                d.entries.borrow().iter().filter(|(n, _)| *n == name).map(|(_, e)| e.clone()).collect();
+            let mut files = None;
             let mut items = lp_js::RootedVec::new();
-            for (_, e) in d.entries.borrow().iter().filter(|(n, _)| *n == name) {
-                items.push(s, entry_js(s, e));
+            for e in &matching {
+                let v = read_entry(s, d, &mut files, e)?;
+                items.push(s, v);
             }
             Ok(s.array(&items.iter(s).collect::<Vec<_>>())?.value())
         });
@@ -228,12 +347,14 @@ pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
     Ok(())
 }
 
-/// Multipart body for a FormData value: (bytes, Content-Type with boundary).
-pub(crate) fn multipart_body(s: &Scope<'_>, v: Value<'_>) -> Option<(Bytes, String)> {
-    let data = s.unwrap::<FormData>(v)?;
-    let entries = data.entry_values(s);
+/// Multipart body for a FormData value: (bytes, Content-Type with boundary), or
+/// `None` when `v` is not a FormData. Fails (instead of sending an empty file)
+/// when an entry's File can no longer be read.
+pub(crate) fn multipart_body(s: &Scope<'_>, v: Value<'_>) -> JsResult<Option<(Bytes, String)>> {
+    let Some(data) = s.unwrap::<FormData>(v) else { return Ok(None) };
+    let entries = data.entry_values(s, v)?;
     let (ct, body) = crate::formdata::multipart(&entries);
-    Some((Bytes::from(body), ct))
+    Ok(Some((Bytes::from(body), ct)))
 }
 
 pub(crate) fn register(engine: &lp_js::Engine) {

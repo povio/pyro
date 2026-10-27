@@ -206,6 +206,21 @@ impl ResourceLoader for NetLoader {
         req.referrer = request.referrer.as_deref().and_then(|r| url::Url::parse(r).ok());
         req.frame_id = request.frame_id;
         req.loader_id = request.loader_id;
+        // A preloaded static file: answered here, on the browser thread, with
+        // no I/O-thread round trip. Observers still get the Network events.
+        if let Some(hit) = self.client.static_direct(&req) {
+            let head = self.client.report_local(&req, &hit);
+            let resource = Resource {
+                url: head.url.to_string(),
+                status: 200,
+                mime: head.mime,
+                charset: head.charset,
+                content_disposition: None,
+                body: hit.file.body.to_vec(),
+            };
+            browser.scheduler().post(TaskSource::Networking, move |b| b.complete_fetch(id, Ok(resource)));
+            return None;
+        }
         let mut head: Option<lp_net::ResponseHead> = None;
         let mut body: Vec<u8> = Vec::new();
         let native_id = self.client.fetch(

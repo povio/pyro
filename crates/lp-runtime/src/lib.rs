@@ -10,6 +10,13 @@
 //! Microtasks are drained by JavaScriptCore when the outermost API call
 //! returns; after every task the loop calls [`LoopState::after_task`] (the
 //! embedder's checkpoint: finalizer drain, observer delivery, ...).
+//!
+//! macOS, opt-in ([`EventLoop::enable_native_runloop_service`]): a loop that
+//! owns a JavaScriptCore VM also runs one non-blocking pass of the thread's
+//! `CFRunLoop` at a bounded interval, because JavaScriptCore binds a VM's
+//! timers (GC activity callbacks, incremental sweeper, collector handoff,
+//! deferred work) to the run loop of the thread that created the VM and
+//! nothing else ever runs that loop. See [`native_runloop`].
 
 use std::cell::{Cell, RefCell};
 use std::cmp::Reverse;
@@ -125,7 +132,9 @@ mod wake {
             // wakes before a deadline and spins.
             let timeout = match wait {
                 None => -1,
-                Some(w) => i32::try_from(w.as_millis() + u128::from(w.subsec_nanos() % 1_000_000 != 0)).unwrap_or(i32::MAX),
+                Some(w) => {
+                    i32::try_from(w.as_millis() + u128::from(w.subsec_nanos() % 1_000_000 != 0)).unwrap_or(i32::MAX)
+                }
             };
             let watched = watch.and_then(|w| {
                 let events = (if w.read.get() { libc::POLLIN } else { 0 }) | (if w.write.get() { libc::POLLOUT } else { 0 });
@@ -200,6 +209,75 @@ mod wake {
     }
 }
 
+/// Bounded service of the thread's native run loop (macOS, opt-in).
+///
+/// Policy: at most one non-blocking `CFRunLoopRunInMode(default, 0, true)`
+/// pass becomes due `max_idle` after the previous pass *completed* (a single
+/// monotonic deadline; wakes for other reasons never move it, so frequent
+/// pipe or timer wakes cannot starve it). The loop checks the deadline after
+/// every completed task and after every wait, and shortens its idle wait to
+/// the remaining time, so service also progresses while ready work keeps the
+/// loop from sleeping. After every actual pass the loop calls
+/// [`LoopState::after_native_runloop_pass`] exactly once.
+///
+/// Costs, stated: up to `1 / max_idle` idle wakes per second per opted-in
+/// loop (4/s at the 250 ms default used by lp-browser); a pass runs its
+/// callbacks to completion (GC sweep slices of ~10 ms were observed, single
+/// passes up to 60 ms), and the next task after such a pass is delayed by
+/// that time. The deadline sets *eligibility* for a pass; it is not a timer
+/// delivery guarantee under long tasks or OS scheduling. The precision of
+/// lp-runtime timers and remote wakes is unchanged: the wait primitive is
+/// still `poll(2)` and is only ever shortened.
+#[cfg(target_os = "macos")]
+mod native_runloop {
+    use std::ffi::c_void;
+    use std::time::{Duration, Instant};
+
+    #[link(name = "CoreFoundation", kind = "framework")]
+    extern "C" {
+        static kCFRunLoopDefaultMode: *const c_void;
+        fn CFRunLoopRunInMode(mode: *const c_void, seconds: f64, return_after_source_handled: u8) -> i32;
+    }
+
+    pub(super) struct Service {
+        max_idle: Duration,
+        next_due: Instant,
+        /// Completed passes (tests assert one safe point per pass).
+        pub(super) passes: u64,
+    }
+
+    impl Service {
+        /// `max_idle` must be positive and representable as an `Instant`
+        /// offset from now; both are validated here, at the capability boundary.
+        pub(super) fn new(max_idle: Duration) -> Service {
+            assert!(max_idle > Duration::ZERO, "native run-loop service interval must be positive");
+            let next_due =
+                Instant::now().checked_add(max_idle).expect("native run-loop service interval overflows Instant");
+            Service { max_idle, next_due, passes: 0 }
+        }
+
+        pub(super) fn due(&self, now: Instant) -> bool {
+            now >= self.next_due
+        }
+
+        /// Time until the next pass is due (zero when it already is).
+        pub(super) fn remaining(&self, now: Instant) -> Duration {
+            self.next_due.saturating_duration_since(now)
+        }
+
+        /// One non-blocking pass; the next one is due `max_idle` after this
+        /// one completed. Call only between tasks on the owning thread.
+        pub(super) fn pass(&mut self) {
+            // SAFETY: CoreFoundation call on the current thread's own loop;
+            // timeout zero never blocks on CF timing. No task is running and
+            // no JavaScriptCore API call of this thread is on the stack.
+            unsafe { CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.0, 1) };
+            self.passes += 1;
+            self.next_due = Instant::now().checked_add(self.max_idle).expect("validated by Service::new");
+        }
+    }
+}
+
 /// HTML task sources (informational today; kept for ordering policies).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskSource {
@@ -219,6 +297,14 @@ pub type RemoteTask<S> = Box<dyn FnOnce(&mut S) + Send>;
 pub trait LoopState {
     /// Called after every task (checkpoint for embedder work).
     fn after_task(&mut self) {}
+
+    /// Called exactly once after every native run-loop pass (macOS, opted-in
+    /// loops only): callbacks of that loop may have finalized objects or run
+    /// host JavaScript, so this is the same safe point as
+    /// [`LoopState::after_task`] by default.
+    fn after_native_runloop_pass(&mut self) {
+        self.after_task();
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -418,6 +504,8 @@ pub struct EventLoop<S> {
     remote_open: bool,
     /// A descriptor the loop also waits on while it sleeps (see [`FdWatch`]).
     fd_watch: Option<Rc<FdWatch>>,
+    #[cfg(target_os = "macos")]
+    service: Option<native_runloop::Service>,
 }
 
 /// A descriptor (e.g. a client socket) the loop waits on next to its own wake
@@ -482,6 +570,47 @@ impl<S: LoopState + 'static> EventLoop<S> {
             remote: VecDeque::new(),
             remote_open: true,
             fd_watch: None,
+            #[cfg(target_os = "macos")]
+            service: None,
+        }
+    }
+
+    /// Opts this loop into bounded service of the thread's native run loop
+    /// (see [`native_runloop`]): for loops that own a JavaScriptCore VM on
+    /// this thread, for the VM's whole lifetime. `max_idle` must be positive.
+    #[cfg(target_os = "macos")]
+    pub fn enable_native_runloop_service(&mut self, max_idle: Duration) {
+        self.service = Some(native_runloop::Service::new(max_idle));
+    }
+
+    /// Ends the service (for embedders that drop the VM before the loop).
+    #[cfg(target_os = "macos")]
+    pub fn disable_native_runloop_service(&mut self) {
+        self.service = None;
+    }
+
+    /// Runs one native run-loop pass if one is due, then the safe point.
+    /// Called only between tasks, never with a task or JavaScriptCore call on
+    /// the stack. Never adds keep-alive work: idle detection is unaffected.
+    #[cfg(target_os = "macos")]
+    fn service_if_due(&mut self, state: &mut S) {
+        if let Some(service) = &mut self.service {
+            if service.due(Instant::now()) {
+                service.pass();
+                state.after_native_runloop_pass();
+            }
+        }
+    }
+
+    /// Shortens an idle wait to the time left until the next pass is due.
+    #[cfg(target_os = "macos")]
+    fn service_wait(&self, wait: Option<Duration>) -> Option<Duration> {
+        match &self.service {
+            Some(service) => {
+                let remaining = service.remaining(Instant::now());
+                Some(wait.map_or(remaining, |w| w.min(remaining)))
+            }
+            None => wait,
         }
     }
 
@@ -667,6 +796,9 @@ impl<S: LoopState + 'static> EventLoop<S> {
                 return RunOutcome::TimedOut;
             }
             if self.run_one(state) {
+                // Service stays bounded while ready work keeps the loop awake.
+                #[cfg(target_os = "macos")]
+                self.service_if_due(state);
                 continue;
             }
             let now = Instant::now();
@@ -680,12 +812,20 @@ impl<S: LoopState + 'static> EventLoop<S> {
             if !self.remote_open {
                 // No sender left: nothing can arrive; wait for the deadline.
                 let Some(w) = wait else { return RunOutcome::Idle };
+                #[cfg(target_os = "macos")]
+                let w = self.service_wait(Some(w)).unwrap_or(w);
                 self.sleep(Some(w));
+                #[cfg(target_os = "macos")]
+                self.service_if_due(state);
                 continue;
             }
             // Posted tasks are pulled by run_one on the next iteration, ordered
             // against page work (a timer may have become due before the post).
+            #[cfg(target_os = "macos")]
+            let wait = self.service_wait(wait);
             let mut senders_left = self.sleep(wait);
+            #[cfg(target_os = "macos")]
+            self.service_if_due(state);
             match self.rx.try_recv() {
                 Ok(task) => self.remote.push_back(task),
                 Err(mpsc::TryRecvError::Disconnected) => senders_left = false,
@@ -836,12 +976,15 @@ mod tests {
         for i in 0..70_000u32 {
             handle.post(move |st| st.log.push(i.to_string())).unwrap();
         }
-        let r = lp.run_until(&mut st, Some(Instant::now() + Duration::from_secs(10)), false, |st| st.log.len() == 70_000);
+        let r =
+            lp.run_until(&mut st, Some(Instant::now() + Duration::from_secs(10)), false, |st| st.log.len() == 70_000);
         assert_eq!(r, RunOutcome::Done);
         assert!(st.log.iter().enumerate().all(|(i, v)| v == &i.to_string()));
         // The drained pipe still wakes for later posts.
         handle.post(|st| st.log.push("after".into())).unwrap();
-        let r = lp.run_until(&mut st, Some(Instant::now() + Duration::from_secs(5)), false, |st| st.log.last().is_some_and(|v| v == "after"));
+        let r = lp.run_until(&mut st, Some(Instant::now() + Duration::from_secs(5)), false, |st| {
+            st.log.last().is_some_and(|v| v == "after")
+        });
         assert_eq!(r, RunOutcome::Done);
     }
 
@@ -867,7 +1010,11 @@ mod tests {
         let start = Instant::now();
         let r = lp.run_until(&mut st, Some(start + Duration::from_millis(40)), false, |_| false);
         assert_eq!(r, RunOutcome::TimedOut);
-        assert!(start.elapsed() >= Duration::from_millis(40) && start.elapsed() < Duration::from_millis(100), "{:?}", start.elapsed());
+        assert!(
+            start.elapsed() >= Duration::from_millis(40) && start.elapsed() < Duration::from_millis(100),
+            "{:?}",
+            start.elapsed()
+        );
     }
 
     /// Posting after the loop (and its wake pipe read end) is gone fails
@@ -909,10 +1056,16 @@ mod tests {
     struct St {
         log: Vec<String>,
         checkpoints: u32,
+        /// Safe points after native run-loop passes (macOS), counted apart
+        /// from task checkpoints so per-task assertions keep exact counts.
+        pass_safe_points: u32,
     }
     impl LoopState for St {
         fn after_task(&mut self) {
             self.checkpoints += 1;
+        }
+        fn after_native_runloop_pass(&mut self) {
+            self.pass_safe_points += 1;
         }
     }
 
@@ -1220,5 +1373,349 @@ mod tests {
         let s2 = s.clone();
         s.post(TaskSource::Internal, move |_| s2.stop());
         assert_eq!(lp.run_until(&mut st, None, false, |_| false), RunOutcome::Stopped);
+    }
+
+    /// Native run-loop service (macOS, opt-in). Public CoreFoundation timers
+    /// stand in for JavaScriptCore's timers on the owning thread's loop.
+    /// Bounds are generous; tests marked "stress" exercise behavior under
+    /// load and are not proofs of an exact interleaving.
+    #[cfg(target_os = "macos")]
+    mod native_service {
+        use super::*;
+        use std::ffi::c_void;
+        use std::sync::{Arc, Mutex};
+
+        type Ref = *const c_void;
+        #[repr(C)]
+        struct TimerContext {
+            version: isize,
+            info: *mut c_void,
+            retain: Option<unsafe extern "C" fn(*const c_void) -> *const c_void>,
+            release: Option<unsafe extern "C" fn(*const c_void)>,
+            copy_description: Option<unsafe extern "C" fn(*const c_void) -> Ref>,
+        }
+        #[link(name = "CoreFoundation", kind = "framework")]
+        extern "C" {
+            static kCFRunLoopDefaultMode: Ref;
+            fn CFRunLoopGetCurrent() -> Ref;
+            fn CFAbsoluteTimeGetCurrent() -> f64;
+            fn CFRunLoopTimerCreate(
+                allocator: Ref,
+                fire_date: f64,
+                interval: f64,
+                flags: usize,
+                order: isize,
+                callout: unsafe extern "C" fn(Ref, *mut c_void),
+                context: *const TimerContext,
+            ) -> Ref;
+            fn CFRunLoopAddTimer(rl: Ref, timer: Ref, mode: Ref);
+            fn CFRunLoopTimerInvalidate(timer: Ref);
+            fn CFRelease(cf: Ref);
+        }
+
+        /// Shared with the timer callback; `fired` is read by the loop thread.
+        struct ForeignCtx {
+            fired: Arc<Mutex<Option<Instant>>>,
+            action: Option<Box<dyn Fn() + Send>>,
+        }
+        unsafe extern "C" fn foreign_fire(_t: Ref, info: *mut c_void) {
+            // SAFETY: `info` is the boxed context kept alive until the timer
+            // is invalidated. Nothing here can panic.
+            let ctx = unsafe { &*info.cast::<ForeignCtx>().cast_const() };
+            if let Ok(mut f) = ctx.fired.lock() {
+                f.get_or_insert_with(Instant::now);
+            }
+            if let Some(a) = &ctx.action {
+                a();
+            }
+        }
+        struct Foreign {
+            fired: Arc<Mutex<Option<Instant>>>,
+            timer: usize,
+            _ctx: Box<ForeignCtx>,
+        }
+        /// Creates a timer due now on the loop `rl` (any thread may call this).
+        fn foreign_on(rl: usize, action: Option<Box<dyn Fn() + Send>>) -> Foreign {
+            let fired = Arc::new(Mutex::new(None));
+            let ctx = Box::new(ForeignCtx { fired: fired.clone(), action });
+            let info = std::ptr::from_ref::<ForeignCtx>(&ctx).cast_mut().cast::<c_void>();
+            let tc = TimerContext { version: 0, info, retain: None, release: None, copy_description: None };
+            // SAFETY: public CF calls; the context box outlives the timer.
+            let timer = unsafe {
+                let t =
+                    CFRunLoopTimerCreate(std::ptr::null(), CFAbsoluteTimeGetCurrent(), 0.0, 0, 0, foreign_fire, &tc);
+                assert!(!t.is_null());
+                CFRunLoopAddTimer(rl as Ref, t, kCFRunLoopDefaultMode);
+                t
+            };
+            Foreign { fired, timer: timer as usize, _ctx: ctx }
+        }
+        impl Foreign {
+            fn fired(&self) -> bool {
+                self.fired.lock().unwrap().is_some()
+            }
+        }
+        impl Drop for Foreign {
+            fn drop(&mut self) {
+                // SAFETY: created by `foreign_on`; invalidation ends callouts.
+                unsafe {
+                    CFRunLoopTimerInvalidate(self.timer as Ref);
+                    CFRelease(self.timer as Ref);
+                }
+            }
+        }
+        fn current_loop() -> usize {
+            // SAFETY: query only.
+            unsafe { CFRunLoopGetCurrent() as usize }
+        }
+        const SERVICE: Duration = Duration::from_millis(250);
+
+        #[test]
+        fn service_is_off_by_default_and_adds_no_safe_points() {
+            let mut lp = EventLoop::<St>::new();
+            let mut st = St::default();
+            let r = lp.run_until(&mut st, Some(Instant::now() + Duration::from_millis(300)), false, |_| false);
+            assert_eq!(r, RunOutcome::TimedOut);
+            assert_eq!(st.pass_safe_points, 0);
+            assert_eq!(st.checkpoints, 0);
+        }
+
+        #[test]
+        #[should_panic(expected = "must be positive")]
+        fn enabling_with_a_zero_interval_is_rejected() {
+            EventLoop::<St>::new().enable_native_runloop_service(Duration::ZERO);
+        }
+
+        #[test]
+        fn enabled_service_runs_at_a_bounded_idle_interval_without_spinning() {
+            let mut lp = EventLoop::<St>::new();
+            lp.enable_native_runloop_service(SERVICE);
+            let mut st = St::default();
+            let cpu0 = thread_cpu();
+            let r = lp.run_until(&mut st, Some(Instant::now() + Duration::from_millis(1100)), false, |_| false);
+            let cpu = thread_cpu() - cpu0;
+            assert_eq!(r, RunOutcome::TimedOut);
+            assert!((3..=6).contains(&st.pass_safe_points), "{} passes in 1.1 s", st.pass_safe_points);
+            assert_eq!(st.pass_safe_points as u64, lp.service.as_ref().unwrap().passes, "one safe point per pass");
+            assert!(cpu < Duration::from_millis(50), "spent {cpu:?} of CPU idling");
+        }
+
+        #[test]
+        fn cross_thread_armed_timer_during_an_indefinite_wait_is_serviced_within_the_cap() {
+            let mut lp = EventLoop::<St>::new();
+            lp.enable_native_runloop_service(SERVICE);
+            let rl = current_loop();
+            let slot: Arc<Mutex<Option<Foreign>>> = Arc::new(Mutex::new(None));
+            let slot2 = slot.clone();
+            let armed_at = Arc::new(Mutex::new(None));
+            let armed_at2 = armed_at.clone();
+            let arming = std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(100));
+                *armed_at2.lock().unwrap() = Some(Instant::now());
+                *slot2.lock().unwrap() = Some(foreign_on(rl, None));
+            });
+            let mut st = St::default();
+            let fired = |_: &mut St| slot.lock().unwrap().as_ref().is_some_and(Foreign::fired);
+            // No lp-runtime work at all: without the service this wait is indefinite (3 s here).
+            let r = lp.run_until(&mut st, Some(Instant::now() + Duration::from_secs(3)), false, fired);
+            arming.join().unwrap();
+            assert_eq!(r, RunOutcome::Done, "timer armed from another thread must be serviced");
+            let at = slot.lock().unwrap().as_ref().unwrap().fired.lock().unwrap().unwrap();
+            let latency = at.saturating_duration_since(armed_at.lock().unwrap().unwrap());
+            assert!(
+                latency < Duration::from_millis(700),
+                "serviced {latency:?} after arming (cap 250 ms + coalescing)"
+            );
+            assert!(st.pass_safe_points >= 1);
+            drop(slot.lock().unwrap().take());
+        }
+
+        #[test]
+        fn without_the_service_a_cross_thread_armed_timer_is_never_serviced() {
+            let mut lp = EventLoop::<St>::new();
+            let rl = current_loop();
+            let slot: Arc<Mutex<Option<Foreign>>> = Arc::new(Mutex::new(None));
+            let slot2 = slot.clone();
+            let arming = std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(50));
+                *slot2.lock().unwrap() = Some(foreign_on(rl, None));
+            });
+            let mut st = St::default();
+            let fired = |_: &mut St| slot.lock().unwrap().as_ref().is_some_and(Foreign::fired);
+            let r = lp.run_until(&mut st, Some(Instant::now() + Duration::from_millis(1200)), false, fired);
+            arming.join().unwrap();
+            assert_eq!(r, RunOutcome::TimedOut, "baseline discriminator: nothing runs the loop");
+            assert_eq!(st.pass_safe_points, 0);
+            drop(slot.lock().unwrap().take());
+        }
+
+        #[test]
+        fn short_timers_stay_precise_with_the_service_enabled() {
+            let mut lp = EventLoop::<St>::new();
+            lp.enable_native_runloop_service(SERVICE);
+            let s = lp.scheduler();
+            let mut st = St::default();
+            let mut lateness = Vec::new();
+            for _ in 0..5 {
+                let start = Instant::now();
+                let fired = Rc::new(Cell::new(false));
+                let f = fired.clone();
+                s.set_timer(Duration::from_millis(16), false, true, move |_| f.set(true));
+                let r = lp.run_until(&mut st, Some(start + Duration::from_millis(500)), false, |_| fired.get());
+                assert_eq!(r, RunOutcome::Done);
+                lateness.push(start.elapsed().saturating_sub(Duration::from_millis(16)));
+            }
+            lateness.sort();
+            assert!(lateness[2] < Duration::from_millis(40), "median lateness {:?} (all {:?})", lateness[2], lateness);
+        }
+
+        #[test]
+        fn remote_posts_wake_promptly_with_the_service_enabled() {
+            let mut lp = EventLoop::<St>::new();
+            lp.enable_native_runloop_service(SERVICE);
+            let h = lp.handle();
+            let posted = Arc::new(Mutex::new(None));
+            let posted2 = posted.clone();
+            let poster = std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(30));
+                *posted2.lock().unwrap() = Some(Instant::now());
+                h.post(|st| st.log.push("remote".into())).unwrap();
+            });
+            let mut st = St::default();
+            let r =
+                lp.run_until(&mut st, Some(Instant::now() + Duration::from_secs(3)), false, |st| !st.log.is_empty());
+            let ran = Instant::now();
+            poster.join().unwrap();
+            assert_eq!(r, RunOutcome::Done);
+            let latency = ran.saturating_duration_since(posted.lock().unwrap().unwrap());
+            assert!(latency < Duration::from_millis(50), "remote task ran {latency:?} after posting");
+        }
+
+        #[test]
+        fn frequent_early_wakes_do_not_push_the_service_deadline() {
+            // stress: a 10 ms repeating timer plus remote posts every ~15 ms keep
+            // waking the loop early for 1 s; service must still happen ~4 times.
+            let mut lp = EventLoop::<St>::new();
+            lp.enable_native_runloop_service(SERVICE);
+            let s = lp.scheduler();
+            let h = lp.handle();
+            s.set_timer(Duration::from_millis(10), true, true, |_| {});
+            let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let stop2 = stop.clone();
+            let poster = std::thread::spawn(move || {
+                let mut n = 0u32;
+                while !stop2.load(std::sync::atomic::Ordering::Relaxed) {
+                    if h.post(|_| {}).is_err() {
+                        break;
+                    }
+                    n += 1;
+                    std::thread::sleep(Duration::from_millis(15));
+                }
+                n
+            });
+            let mut st = St::default();
+            let r = lp.run_until(&mut st, Some(Instant::now() + Duration::from_millis(1000)), false, |_| false);
+            stop.store(true, std::sync::atomic::Ordering::Relaxed);
+            let posts = poster.join().unwrap();
+            assert_eq!(r, RunOutcome::TimedOut);
+            assert!(posts >= 10, "poster only managed {posts} posts");
+            assert!(
+                (3..=6).contains(&st.pass_safe_points),
+                "{} passes in 1 s under constant wakes",
+                st.pass_safe_points
+            );
+        }
+
+        #[test]
+        fn sustained_ready_work_is_serviced_without_ever_sleeping() {
+            // stress: a self-reposting chain keeps run_one busy for ~700 ms (no
+            // idle wait is reached); remote posts interleave. Service must still
+            // progress at least twice, after completed tasks.
+            let mut lp = EventLoop::<St>::new();
+            lp.enable_native_runloop_service(SERVICE);
+            let s = lp.scheduler();
+            let h = lp.handle();
+            let start = Instant::now();
+            fn chain(s: Scheduler<St>, start: Instant) {
+                let next = s.clone();
+                s.post(TaskSource::Internal, move |st| {
+                    st.log.push("c".into());
+                    if start.elapsed() < Duration::from_millis(700) {
+                        chain(next, start);
+                    }
+                });
+            }
+            chain(s.clone(), start);
+            let poster = std::thread::spawn(move || {
+                for _ in 0..200 {
+                    h.post(|st| st.log.push("r".into())).unwrap();
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+            });
+            let mut st = St::default();
+            let r = lp.run_until(&mut st, Some(start + Duration::from_secs(5)), false, |st| {
+                st.log.iter().filter(|l| *l == "r").count() == 200 && start.elapsed() >= Duration::from_millis(700)
+            });
+            poster.join().unwrap();
+            assert_eq!(r, RunOutcome::Done);
+            assert!(st.pass_safe_points >= 2, "{} passes during 700 ms of continuous work", st.pass_safe_points);
+            assert_eq!(st.pass_safe_points as u64, lp.service.as_ref().unwrap().passes);
+            assert_eq!(st.log.iter().filter(|l| *l == "r").count(), 200);
+        }
+
+        #[test]
+        fn callback_posting_local_work_or_stopping_takes_effect_promptly() {
+            let mut lp = EventLoop::<St>::new();
+            lp.enable_native_runloop_service(SERVICE);
+            let s = lp.scheduler();
+            // The callback box is `Send` (shared with the cross-thread helper), so
+            // it signals through a flag that a loop task turns into `stop()`.
+            let want_stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let want_stop2 = want_stop.clone();
+            let f = foreign_on(
+                current_loop(),
+                Some(Box::new(move || want_stop2.store(true, std::sync::atomic::Ordering::Relaxed))),
+            );
+            let s2 = s.clone();
+            let ws = want_stop.clone();
+            s.set_timer(Duration::from_millis(5), true, true, move |_| {
+                if ws.load(std::sync::atomic::Ordering::Relaxed) {
+                    s2.stop();
+                }
+            });
+            let mut st = St::default();
+            let start = Instant::now();
+            let r = lp.run_until(&mut st, Some(start + Duration::from_secs(5)), false, |_| false);
+            assert_eq!(r, RunOutcome::Stopped);
+            assert!(f.fired());
+            assert!(start.elapsed() < Duration::from_secs(1), "took {:?}", start.elapsed());
+        }
+
+        #[test]
+        fn run_until_idle_still_stops_on_lp_keepalive_only() {
+            let mut lp = EventLoop::<St>::new();
+            lp.enable_native_runloop_service(SERVICE);
+            let s = lp.scheduler();
+            s.set_timer(Duration::from_millis(50), false, true, |st| st.log.push("t50".into()));
+            let mut st = St::default();
+            let start = Instant::now();
+            let r = lp.run_until_idle(&mut st, Some(start + Duration::from_secs(3)));
+            assert_eq!(r, RunOutcome::Idle);
+            assert_eq!(st.log, ["t50"]);
+            assert!(start.elapsed() < Duration::from_millis(400), "idle detection delayed to {:?}", start.elapsed());
+        }
+
+        #[test]
+        fn repeated_loops_with_the_service_on_one_thread() {
+            for _ in 0..50 {
+                let mut lp = EventLoop::<St>::new();
+                lp.enable_native_runloop_service(Duration::from_millis(1));
+                let s = lp.scheduler();
+                s.set_timer(Duration::from_millis(2), false, true, |_| {});
+                let mut st = St::default();
+                assert_eq!(lp.run_until_idle(&mut st, Some(Instant::now() + Duration::from_secs(2))), RunOutcome::Idle);
+                lp.disable_native_runloop_service();
+            }
+        }
     }
 }

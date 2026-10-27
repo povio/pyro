@@ -65,6 +65,14 @@ pub struct NetConfig {
     /// browser process). `None` (the default unless `LIGHTNINGPANDA_SHARED_ASSET_CACHE_MB`
     /// is set) keeps every context fully isolated.
     pub shared_asset_cache: Option<crate::cache::SharedAssetCache>,
+    /// Directories answering GET/HEAD requests for whole origins from disk
+    /// (`serve --static ORIGIN=DIR`); empty by default.
+    pub static_files: crate::static_files::StaticFiles,
+    /// Let embedders answer `static_files` hits on their own thread from the
+    /// preloaded bytes (`NetClient::report_local`) instead of sending the
+    /// request through the I/O thread. Default true; `LIGHTNINGPANDA_STATIC_DIRECT=0`
+    /// turns it off (benchmark comparison).
+    pub static_direct: bool,
 }
 
 impl Default for NetConfig {
@@ -81,6 +89,8 @@ impl Default for NetConfig {
             http_cache_max_bytes: 64 * 1024 * 1024,
             http_cache_max_entry_bytes: 8 * 1024 * 1024,
             shared_asset_cache: crate::cache::SharedAssetCache::from_env(),
+            static_files: Default::default(),
+            static_direct: std::env::var("LIGHTNINGPANDA_STATIC_DIRECT").map_or(true, |v| v != "0"),
         }
     }
 }
@@ -882,6 +892,15 @@ impl Io {
                 }
             }
 
+            // Static files for an origin served from disk: after interception
+            // (routes can still override) and before the cache and network.
+            if (method == Method::GET || method == Method::HEAD) && !self.shared.config.static_files.is_empty() {
+                let document = req.destination == Destination::Document;
+                if let Some(hit) = self.shared.config.static_files.resolve(&url, document) {
+                    return self.serve_static(id, &req, sink, &url, &method, hit, cors_cross).await;
+                }
+            }
+
             // CORS preflight.
             if cors_cross && cors::needs_preflight(&req) {
                 let origin = req.origin.clone().unwrap_or_else(|| "null".into());
@@ -1388,6 +1407,51 @@ impl Io {
         Ok(())
     }
 
+    /// Answers a request from a `static_files` root: 200 with the file,
+    /// typed by extension, allowed for any origin so cross-origin scripts,
+    /// fonts and `fetch` from other pages work like a permissive asset host.
+    #[allow(clippy::too_many_arguments)]
+    async fn serve_static(
+        &self,
+        id: RequestId,
+        req: &Request,
+        sink: &SharedSink,
+        url: &Url,
+        method: &Method,
+        hit: crate::static_files::StaticHit,
+        cors_cross: bool,
+    ) -> Result<(), NetError> {
+        let document = req.destination == Destination::Document;
+        let body = match self.shared.config.static_files.lookup(url, document) {
+            Some(memory) if memory.file.path == hit.path => memory.file.body.clone(),
+            _ => match tokio::fs::read(&hit.path).await {
+                Ok(bytes) => Bytes::from(bytes),
+                Err(e) => return Err(NetError::Other(format!("static file {}: {e}", hit.path.display()))),
+            },
+        };
+        let mut headers = static_headers(crate::static_files::content_type(&hit.path), body.len(), hit.spa_fallback);
+        if cors_cross && req.credentials == Credentials::Include {
+            // `*` never satisfies a credentialed check: echo the requester.
+            let origin = req.origin.clone().unwrap_or_else(|| "null".into());
+            if let Ok(v) = HeaderValue::from_str(&origin) {
+                headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, v);
+                headers.insert(header::ACCESS_CONTROL_ALLOW_CREDENTIALS, HeaderValue::from_static("true"));
+            }
+        }
+        let kind = if cors_cross {
+            cors::cors_check(&headers, req.origin.as_deref().unwrap_or("null"), req.credentials)
+                .map_err(NetError::Cors)?;
+            ResponseKind::Cors
+        } else if req.mode == RequestMode::NoCors && !cors::is_same_origin_request(req) {
+            ResponseKind::Opaque
+        } else {
+            ResponseKind::Basic
+        };
+        let head = self.head(url, StatusCode::OK, headers, kind, false);
+        let body = if *method == Method::HEAD { Bytes::new() } else { body };
+        self.deliver_body(id, req, sink, head, body)
+    }
+
     fn fulfill(
         &self,
         id: RequestId,
@@ -1416,6 +1480,97 @@ impl Io {
         }
         let head = self.head(&req.url, StatusCode::OK, headers, ResponseKind::Basic, false);
         self.deliver_body(id, req, sink, head, body)
+    }
+}
+
+/// Response headers of a static-file answer (`serve_static`, `report_local`).
+fn static_headers(content_type: &'static str, len: usize, spa_fallback: bool) -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+    headers.insert(header::CONTENT_LENGTH, HeaderValue::from(len));
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+    headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
+    headers.insert(header::ACCESS_CONTROL_EXPOSE_HEADERS, HeaderValue::from_static("*"));
+    headers.insert(http::header::HeaderName::from_static("x-lightningpanda-static"), HeaderValue::from_static("1"));
+    if spa_fallback {
+        headers.insert(
+            http::header::HeaderName::from_static("x-lightningpanda-spa-fallback"),
+            HeaderValue::from_static("1"),
+        );
+    }
+    headers
+}
+
+impl NetClient {
+    /// The in-memory static file for `req`, when the embedder may answer it
+    /// itself (`NetConfig::static_direct`): GET only, same rules as the I/O
+    /// path. The embedder then calls `report_local` so observers see the
+    /// request like any other. Interception and the HTTP cache are skipped.
+    pub fn static_direct(&self, req: &Request) -> Option<crate::static_files::StaticMemoryHit> {
+        let config = &self.inner.shared.config;
+        if !config.static_direct || config.static_files.is_empty() || req.method != Method::GET {
+            return None;
+        }
+        if self.inner.shared.settings.lock().unwrap().offline {
+            return None;
+        }
+        config.static_files.lookup(&req.url, req.destination == Destination::Document)
+    }
+
+    /// Publishes the `NetEvent`s of a request the embedder answered from a
+    /// `static_direct` hit (on the caller's thread, in order, all at once)
+    /// and returns the response head to build the resource from.
+    pub fn report_local(&self, req: &Request, hit: &crate::static_files::StaticMemoryHit) -> ResponseHead {
+        let shared = &self.inner.shared;
+        let id = self.next_request_id();
+        let body = &hit.file.body;
+        let headers = static_headers(hit.file.content_type, body.len(), hit.spa_fallback);
+        let (mime, charset) = parse_content_type(hit.file.content_type);
+        let head = ResponseHead {
+            url: req.url.clone(),
+            status: StatusCode::OK,
+            status_text: "OK".into(),
+            headers,
+            mime,
+            charset,
+            redirected: false,
+            from_cache: false,
+            kind: ResponseKind::Basic,
+            remote_addr: None,
+        };
+        if !shared.observed() {
+            return head;
+        }
+        let info = RequestInfo {
+            url: req.url.clone(),
+            method: req.method.clone(),
+            headers: req.headers.clone(),
+            post_data: None,
+            destination: req.destination,
+            frame_id: req.frame_id.clone(),
+            loader_id: req.loader_id.clone(),
+        };
+        let now = shared.now();
+        shared.emit(NetEvent::RequestWillBeSent {
+            id,
+            request: Box::new(info),
+            redirect_response: None,
+            timestamp: now,
+            wall_time: wall_time(),
+        });
+        shared.emit(NetEvent::ResponseReceived {
+            id,
+            head: Box::new(head.clone()),
+            destination: req.destination,
+            frame_id: req.frame_id.clone(),
+            loader_id: req.loader_id.clone(),
+            timestamp: now,
+        });
+        if !body.is_empty() {
+            shared.emit(NetEvent::DataReceived { id, data: body.clone(), timestamp: now });
+        }
+        shared.emit(NetEvent::LoadingFinished { id, encoded_len: body.len() as u64, timestamp: now });
+        head
     }
 }
 

@@ -277,6 +277,16 @@ pub struct EngineHost {
     pub(crate) popup_requests: Vec<crate::target::PopupRequest>,
 }
 
+/// Startup configuration shared by every browser thread of a `serve`
+/// process (built once from the command line).
+#[derive(Clone, Debug, Default)]
+pub struct BrowserProfile {
+    /// Network client configuration of every browser context.
+    pub net: lp_net::NetConfig,
+    /// Local storage entries every browser context starts with.
+    pub local_storage: lp_webapi::StorageSeed,
+}
+
 impl EngineHost {
     /// Creates the engine for the current thread (at most one per thread).
     pub fn new(out: Outbox) -> CdpResult<EngineHost> {
@@ -298,11 +308,19 @@ impl EngineHost {
     /// connection (`serve` keeps one spare per process so a client's first
     /// command does not wait for engine start). Must stay on this thread.
     pub fn prepare_thread() -> CdpResult<BrowserThread> {
+        Self::prepare_thread_with(&BrowserProfile::default())
+    }
+
+    /// `prepare_thread` with the process's startup configuration.
+    pub fn prepare_thread_with(profile: &BrowserProfile) -> CdpResult<BrowserThread> {
         let mut thread =
             BrowserThread::new().map_err(|e| CdpError::server(format!("JavaScript engine unavailable: {e}")))?;
         thread
-            .enable_network(lp_net::NetConfig::default())
+            .enable_network(profile.net.clone())
             .map_err(|e| CdpError::server(format!("network unavailable: {e}")))?;
+        if !profile.local_storage.is_empty() {
+            thread.set_local_storage_seed(profile.local_storage.clone());
+        }
         // Best effort: a failure here only costs the first page its head start.
         let _ = thread.browser.prepare_spare_realm();
         Ok(thread)

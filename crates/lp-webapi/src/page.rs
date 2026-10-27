@@ -415,6 +415,8 @@ impl PageDom {
         drop(self.data_view_readers.take());
         drop(self.header_helpers.take());
         drop(self.url_params_helpers.take());
+        // A drag in flight owns a Persistent to its DataTransfer wrapper.
+        drop(self.drag.take());
         self.opaque_storage.clear();
         drop(self.blob_urls.take());
         drop(self.reflected_url_base.take());
