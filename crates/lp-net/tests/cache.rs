@@ -565,7 +565,7 @@ fn default_config_follows_the_environment_opt_in() {
     let exe = std::env::current_exe().unwrap();
     for (expect, value) in [("off", None), ("off", Some("0")), ("off", Some("junk")), ("on", Some("4"))] {
         let mut cmd = std::process::Command::new(&exe);
-        cmd.args(["--exact", "default_config_follows_the_environment_opt_in", "--test-threads=1"]);
+        cmd.args(["--exact", "cache::default_config_follows_the_environment_opt_in", "--test-threads=1"]);
         cmd.env("LP_NET_CACHE_ENV_CHILD", expect);
         match value {
             Some(v) => cmd.env(SHARED_ASSET_CACHE_ENV, v),

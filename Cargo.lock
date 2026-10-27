@@ -628,11 +628,18 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "lp-psl",
  "percent-encoding",
- "psl",
  "rustc-hash",
  "tokio",
  "url",
+]
+
+[[package]]
+name = "lp-psl"
+version = "0.0.1"
+dependencies = [
+ "psl",
 ]
 
 [[package]]

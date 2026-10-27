@@ -4,6 +4,8 @@ description = "Chrome DevTools Protocol server and domains (worker 3)."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+# One integration test binary (tests/integration.rs) instead of one per file.
+autotests = false
 rust-version.workspace = true
 
 [dependencies]
@@ -23,6 +25,14 @@ tokio = { version = "1", features = ["rt", "net", "io-util", "sync", "macros", "
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "time"] }
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
+
+[[test]]
+name = "server_socket"
+path = "tests/server_socket.rs"
 
 [lints]
 workspace = true

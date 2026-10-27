@@ -1,4 +1,4 @@
-mod support;
+use crate::support;
 use lp_js::RealmOptions;
 use lp_webapi::*;
 use std::{rc::Rc, sync::atomic::Ordering, time::Duration};

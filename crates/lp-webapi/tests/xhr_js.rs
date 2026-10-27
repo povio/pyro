@@ -1,4 +1,4 @@
-mod support;
+use crate::support;
 use lp_webapi::*;
 use std::time::Duration;
 use support::network::*;

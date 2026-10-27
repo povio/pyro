@@ -109,7 +109,7 @@ pub fn site_of(host: &str) -> &str {
     if is_ip(host) {
         host
     } else {
-        psl::domain_str(host).unwrap_or(host)
+        lp_psl::domain_str(host).unwrap_or(host)
     }
 }
 
@@ -169,7 +169,7 @@ fn canonical_domain(domain: &str) -> Option<(String, bool)> {
         }
     }
     let host = parsed.to_string();
-    if !host_only && !is_ip(&host) && psl::suffix_str(&host) == Some(host.as_str()) {
+    if !host_only && !is_ip(&host) && lp_psl::suffix_str(&host) == Some(host.as_str()) {
         return None;
     }
     Some((host, host_only))
@@ -197,7 +197,7 @@ impl CookieJar {
         let (domain, host_only) = match parsed.domain() {
             Some(d) if !d.is_empty() => {
                 let d = d.trim_start_matches('.').trim_end_matches('.').to_ascii_lowercase();
-                let public_suffix = !is_ip(&d) && psl::suffix_str(&d) == Some(d.as_str());
+                let public_suffix = !is_ip(&d) && lp_psl::suffix_str(&d) == Some(d.as_str());
                 if public_suffix && d != host {
                     return false;
                 }

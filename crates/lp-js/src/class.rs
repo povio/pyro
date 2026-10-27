@@ -663,6 +663,9 @@ impl CallbackResult for sys::JSValueRef {
 /// Realm lookup, the body, error conversion and the release of the realm
 /// handle (which may dispose it and call hooks) all happen inside the unwind
 /// boundary.
+///
+/// Every trampoline instantiates this once per callback (thousands of times),
+/// so it only adapts `body` to [`guard_erased`], which holds the logic once.
 #[inline]
 pub(crate) unsafe fn guard<R: CallbackResult>(
     ctx: sys::JSContextRef,
@@ -670,15 +673,46 @@ pub(crate) unsafe fn guard<R: CallbackResult>(
     fallback: R,
     body: impl FnOnce(&Scope<'_>) -> JsResult<R>,
 ) -> R {
-    let mut fallback = Some(fallback);
+    let mut body = Some(body);
+    let mut out = None;
+    let mut step = |scope: &Scope<'_>, step: Step| match step {
+        Step::Run => {
+            out = Some(body.take().expect("callback body runs once")(scope)?);
+            Ok(None)
+        }
+        Step::Root => Ok(out.as_ref().and_then(|v| v.root(scope))),
+    };
+    match unsafe { guard_erased(ctx, exc, &mut step) } {
+        true => out.expect("successful callback result"),
+        false => fallback,
+    }
+}
+
+/// What [`guard_erased`] asks of the typed callback.
+enum Step {
+    /// Run the body, keeping its result.
+    Run,
+    /// Root the kept result (see [`CallbackResult::root`]).
+    Root,
+}
+
+/// The body of [`guard`]; returns whether the callback's result stands.
+/// Dev builds keep one copy. Release builds inline it so the `dyn` call
+/// disappears from the JS-to-native hot path.
+#[cfg_attr(not(debug_assertions), inline(always))]
+unsafe fn guard_erased(
+    ctx: sys::JSContextRef,
+    exc: *mut sys::JSValueRef,
+    step: &mut dyn FnMut(&Scope<'_>, Step) -> JsResult<Option<crate::Persistent>>,
+) -> bool {
     let outcome = catch_unwind(AssertUnwindSafe(|| {
         let _depth = DepthGuard::enter();
         let Some(realm) = crate::realm::realm_for_ctx(ctx) else {
             unsafe { throw_message(ctx, "Execution context was destroyed.", exc) };
-            return None;
+            return false;
         };
         let scope = Scope::new(ctx, &realm);
-        let result = body(&scope);
+        let result = step(&scope, Step::Run);
         let hook = if matches!(result, Err(JsError::Terminated)) || crate::engine::TERMINATING.with(|t| t.get()) {
             None
         } else {
@@ -686,7 +720,10 @@ pub(crate) unsafe fn guard<R: CallbackResult>(
         };
         // Error::Thrown already owns a Persistent. Other errors materialize only
         // after the hook. Keep successful JS results protected until returning.
-        let _return_root = hook.as_ref().and_then(|_| result.as_ref().ok().and_then(|v| v.root(&scope)));
+        let _return_root = match (&hook, &result) {
+            (Some(_), Ok(_)) => step(&scope, Step::Root).ok().flatten(),
+            _ => None,
+        };
         if let Some(hook) = hook {
             realm.run_native_callback_hook(&scope, hook);
         }
@@ -697,22 +734,21 @@ pub(crate) unsafe fn guard<R: CallbackResult>(
             r => r,
         };
         match result {
-            Ok(v) => Some(v),
+            Ok(_) => true,
             Err(JsError::Terminated) => {
                 // Keep terminating: page code may catch the rethrown value.
                 crate::engine::rearm_termination(ctx);
                 unsafe { throw_message_value(ctx, "JavaScript execution terminated.", exc) };
-                None
+                false
             }
             Err(e) => {
                 unsafe { throw_into(&scope, &e, exc) };
-                None
+                false
             }
         }
     }));
     match outcome {
-        Ok(Some(v)) => v,
-        Ok(None) => fallback.take().expect("fallback"),
+        Ok(stands) => stands,
         Err(panic) => {
             let msg = panic
                 .downcast_ref::<&str>()
@@ -721,7 +757,7 @@ pub(crate) unsafe fn guard<R: CallbackResult>(
                 .unwrap_or_else(|| "panic".into());
             // Creating the error cannot unwind (no Rust callbacks involved).
             unsafe { throw_message(ctx, &format!("Internal error: {msg}"), exc) };
-            fallback.take().expect("fallback")
+            false
         }
     }
 }

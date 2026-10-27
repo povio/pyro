@@ -19,6 +19,7 @@ lp-runtime = { path = "crates/lp-runtime" }
 lp-browser = { path = "crates/lp-browser" }
 lp-dom = { path = "crates/lp-dom" }
 lp-net = { path = "crates/lp-net" }
+lp-psl = { path = "crates/lp-psl" }
 lp-webapi = { path = "crates/lp-webapi" }
 lp-cdp = { path = "crates/lp-cdp" }
 
@@ -32,5 +33,64 @@ debug = "line-tables-only"
 # Cargo otherwise strips after our linker signs when DEBUG=0, losing allow-jit.
 strip = "none"
 
+[profile.dev]
+# Backtraces keep file:line; debuggers lose local variables. Cuts clean builds
+# and target/ size; incremental rebuilds are unaffected.
+debug = "line-tables-only"
+
+# Generated public suffix list: compiled once, so optimizing it is cheap.
+[profile.dev.package.lp-psl]
+opt-level = 2
+
 [profile.dev.package."*"]
 opt-level = 2
+# Line tables keep backtraces readable; full debug info for dependencies is
+# rarely stepped into and only slows codegen.
+debug = "line-tables-only"
+
+# The "*" override above also applies to proc macros and build-script deps
+# (it outranks build-override), so syn, serde_derive and friends were being
+# optimized on every clean build. Expansion is cheap; compile them at -O0.
+# Cargo warns if one of these drops out of the dependency graph.
+[profile.dev.package.proc-macro2]
+opt-level = 0
+[profile.dev.package.quote]
+opt-level = 0
+[profile.dev.package.syn]
+opt-level = 0
+[profile.dev.package.unicode-ident]
+opt-level = 0
+[profile.dev.package.synstructure]
+opt-level = 0
+[profile.dev.package.serde_derive]
+opt-level = 0
+[profile.dev.package.zerofrom-derive]
+opt-level = 0
+[profile.dev.package.yoke-derive]
+opt-level = 0
+[profile.dev.package.zerovec-derive]
+opt-level = 0
+[profile.dev.package.displaydoc]
+opt-level = 0
+[profile.dev.package.tokio-macros]
+opt-level = 0
+[profile.dev.package.derive_more-impl]
+opt-level = 0
+[profile.dev.package.phf_macros]
+opt-level = 0
+[profile.dev.package.phf_generator]
+opt-level = 0
+[profile.dev.package.cssparser-macros]
+opt-level = 0
+[profile.dev.package.rustversion]
+opt-level = 0
+[profile.dev.package.time-macros]
+opt-level = 0
+[profile.dev.package.multiversion_no_op]
+opt-level = 0
+[profile.dev.package.cc]
+opt-level = 0
+[profile.dev.package.shlex]
+opt-level = 0
+[profile.dev.package.find-msvc-tools]
+opt-level = 0

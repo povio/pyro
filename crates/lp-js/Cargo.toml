@@ -4,10 +4,20 @@ description = "Safe, thread-affine JavaScriptCore runtime layer: engine, realms,
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+# One integration test binary (tests/integration.rs) instead of one per file.
+autotests = false
 
 [dependencies]
 lp-jsc-sys.workspace = true
 serde_json = "1"
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
+
+[[test]]
+name = "string_allocation"
+path = "tests/string_allocation.rs"
 
 [lints]
 workspace = true

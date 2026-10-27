@@ -172,7 +172,7 @@ fn typed_flow_slots_match_the_string_cascade_through_mutations() {
     assert_same(&mut p, "removed");
 }
 
-/// Real pages: `FLOW_SNAPSHOT_DIR=dir cargo test -p lp-dom --test typed_flow -- --ignored --nocapture`
+/// Real pages: `FLOW_SNAPSHOT_DIR=dir cargo test -p lp-dom --test integration -- typed_flow:: --ignored --nocapture`
 /// compares every element of every `*.html` in the directory.
 #[test]
 #[ignore]
