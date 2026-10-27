@@ -28,6 +28,11 @@ pub(crate) struct BindingState {
     queued: Cell<bool>,
     origin: Cell<Option<Instant>>,
 }
+impl BindingState {
+    pub(crate) fn has_observers(&self) -> bool {
+        !self.observers.borrow().is_empty()
+    }
+}
 struct NodeLease {
     page: Weak<PageDom>,
     id: NodeId,

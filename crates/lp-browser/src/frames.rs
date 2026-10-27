@@ -101,6 +101,40 @@ pub(crate) struct Settings {
     pub scripts: Vec<InitScript>,
 }
 
+thread_local! {
+    /// A main-world realm created ahead of its page, by this thread's browser
+    /// while idle. Realm creation installs ~170 interfaces (about 0.9 ms), so
+    /// a connection's first page saves that when the spare is ready.
+    static SPARE_REALM: RefCell<Option<Realm>> = const { RefCell::new(None) };
+}
+
+/// Creates the spare realm for this thread if none is waiting. `class` is
+/// the Window class of the thread's engine.
+pub(crate) fn prepare_spare_realm(class: lp_js::ClassId) -> Result<(), JsError> {
+    if SPARE_REALM.with(|s| s.borrow().as_ref().is_some_and(|r| !r.is_disposed())) {
+        return Ok(());
+    }
+    let realm = Engine::create_realm_in_current_thread(RealmOptions {
+        name: String::new(),
+        global_class: Some(class),
+        origin: None,
+    })?;
+    SPARE_REALM.with(|s| *s.borrow_mut() = Some(realm));
+    Ok(())
+}
+
+/// Drops this thread's spare realm (engine teardown).
+pub(crate) fn drop_spare_realm() {
+    SPARE_REALM.with(|s| {
+        if let Some(r) = s.borrow_mut().take() {
+            r.dispose();
+        }
+    });
+}
+
+/// Frame keys of one page without a heap allocation for up to four frames.
+pub type FrameKeys = smallvec::SmallVec<[FrameKey; 4]>;
+
 pub(crate) struct FrameHost {
     pub children: RefCell<BTreeMap<u64, DocumentState>>,
     pub root: RefCell<Frame>,
@@ -154,10 +188,22 @@ impl FrameHost {
         id
     }
     pub fn frame(&self, key: FrameKey) -> Option<Frame> {
+        self.with_frame(key, Frame::clone)
+    }
+    /// Reads a frame without cloning it. `f` must not touch this host.
+    pub fn with_frame<R>(&self, key: FrameKey, f: impl FnOnce(&Frame) -> R) -> Option<R> {
         match key.child {
-            None => Some(self.root.borrow().clone()),
-            Some(id) => self.children.borrow().get(&id).map(|d| d.main_frame.clone()),
+            None => Some(f(&self.root.borrow())),
+            Some(id) => self.children.borrow().get(&id).map(|d| f(&d.main_frame)),
         }
+    }
+    /// The frame's document bindings, if any (an `Rc` clone, not a `Frame` clone).
+    pub fn page_dom(&self, key: FrameKey) -> Option<Rc<lp_webapi::PageDom>> {
+        self.with_frame(key, |f| f.page_dom.clone()).flatten()
+    }
+    /// Whether this page has any child frames.
+    pub fn has_children(&self) -> bool {
+        !self.children.borrow().is_empty()
     }
     pub fn key(&self, id: &FrameId) -> Option<FrameKey> {
         if self.root.borrow().id == *id {
@@ -169,7 +215,9 @@ impl FrameHost {
             .find(|(_, d)| d.main_frame.id == *id)
             .map(|(id, _)| FrameKey { page: self.page, child: Some(*id) })
     }
-    pub fn keys(&self) -> Vec<FrameKey> {
+    /// Root first, then child frames. Inline for the common single-frame
+    /// page: this runs several times per checkpoint.
+    pub fn keys(&self) -> FrameKeys {
         std::iter::once(self.page.into())
             .chain(self.children.borrow().keys().map(|id| FrameKey { page: self.page, child: Some(*id) }))
             .collect()
@@ -185,7 +233,7 @@ impl FrameHost {
         emit_to(&self.observer, self.page, &event);
     }
     pub fn matches(&self, key: FrameKey, loader: &LoaderId) -> bool {
-        self.frame(key).is_some_and(|f| f.loader_id == *loader)
+        self.with_frame(key, |f| f.loader_id == *loader).unwrap_or(false)
     }
     pub fn make_realm(
         self: &Rc<Self>,
@@ -196,11 +244,20 @@ impl FrameHost {
         let frame = self.frame(key).ok_or(JsError::ContextDestroyed)?;
         let dom = frame.page_dom.ok_or(JsError::ContextDestroyed)?;
         let class = self.window_class();
-        let realm = Engine::create_realm_in_current_thread(RealmOptions {
-            name: world.clone().unwrap_or_default(),
-            global_class: Some(class),
-            origin: Some(frame.origin.clone()),
-        })?;
+        // A main-world realm prepared while this thread was idle (see
+        // `prepare_spare_realm`) only needs its origin; otherwise build one.
+        let spare = if world.is_none() { SPARE_REALM.with(|s| s.borrow_mut().take()) } else { None };
+        let realm = match spare.filter(|r| !r.is_disposed()) {
+            Some(realm) => {
+                realm.set_origin(Some(frame.origin.clone()));
+                realm
+            }
+            None => Engine::create_realm_in_current_thread(RealmOptions {
+                name: world.clone().unwrap_or_default(),
+                global_class: Some(class),
+                origin: Some(frame.origin.clone()),
+            })?,
+        };
         realm.set_global_data::<Window>(WindowData::for_frame(
             self.sched.clone(),
             nav,
@@ -389,6 +446,9 @@ impl FrameHost {
             self.detach(key);
         }
     }
+    pub fn has_retired(&self) -> bool {
+        !self.retired.borrow().is_empty()
+    }
     pub fn drain_retired(&self) {
         let retired = std::mem::take(&mut *self.retired.borrow_mut());
         for state in retired {
@@ -420,7 +480,7 @@ impl FrameHost {
     }
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct Sandbox {
     pub opaque: bool,
     pub scripts_disabled: bool,
@@ -466,12 +526,15 @@ impl FrameHost {
     fn parent_key(&self, key: FrameKey) -> FrameKey {
         self.frame(key).and_then(|f| f.parent).and_then(|id| self.key(&id)).unwrap_or(key)
     }
-    pub fn child_keys(&self, key: FrameKey) -> Vec<FrameKey> {
-        let Some(frame) = self.frame(key) else { return Vec::new() };
+    pub fn child_keys(&self, key: FrameKey) -> FrameKeys {
+        if !self.has_children() {
+            return FrameKeys::new();
+        }
+        let Some(id) = self.with_frame(key, |f| f.id.clone()) else { return FrameKeys::new() };
         self.children
             .borrow()
             .iter()
-            .filter(|(_, d)| d.main_frame.parent.as_ref() == Some(&frame.id))
+            .filter(|(_, d)| d.main_frame.parent.as_ref() == Some(&id))
             .map(|(id, _)| FrameKey { page: self.page, child: Some(*id) })
             .collect()
     }
@@ -602,6 +665,11 @@ impl lp_js::JsClass for CrossWindow {
 impl Browser {
     pub(crate) fn sync_root(&self, page: PageId) {
         if let Some(p) = self.page(page) {
+            // Runs at every checkpoint: compare only after a mutable access,
+            // and clone only when the frames differ.
+            if !p.root_dirty.replace(false) || p.frames.root.borrow().same_as(&p.main_frame) {
+                return;
+            }
             let mut frame = p.main_frame.clone();
             let mut root = p.frames.root.borrow_mut();
             if root.loader_id == frame.loader_id {
@@ -634,6 +702,16 @@ impl Browser {
                 loaded: f.loaded,
             })
             .collect()
+    }
+    /// The page's realm with this id, searching the root frame first. A
+    /// handle clone only; no frame is cloned (hot: every `Runtime.*` command).
+    pub fn realm_in_page(&self, page: PageId, realm: RealmId) -> Option<Realm> {
+        let p = self.page(page)?;
+        let find = |f: &Frame| f.realms.iter().find(|r| r.realm.id() == realm).map(|r| r.realm.clone());
+        if let Some(r) = find(&p.main_frame) {
+            return Some(r);
+        }
+        p.frames.children.borrow().values().find_map(|d| find(&d.main_frame))
     }
     /// Owned snapshot with cloned realm and PageDom handles; never a live registry borrow.
     pub fn frame(&self, page: PageId, id: &FrameId) -> Option<Frame> {

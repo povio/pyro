@@ -47,6 +47,10 @@ impl Dom {
     /// Transfers pinned events to the caller. Call `release(event.node)` once
     /// per event after callbacks, including skipped events. Other documents'
     /// queues are untouched; loader resource draining does not consume these.
+    /// Whether any document has queued iframe events.
+    pub fn has_iframe_events(&self) -> bool {
+        self.iframes.events.values().any(|v| !v.is_empty())
+    }
     pub fn take_iframe_events(&mut self, document: NodeId) -> Vec<IframeEvent> {
         self.iframes.events.remove(&document).unwrap_or_default()
     }

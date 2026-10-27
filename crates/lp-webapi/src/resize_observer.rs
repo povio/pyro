@@ -45,6 +45,11 @@ pub(crate) struct BindingState {
     next_gather: Cell<Option<Instant>>,
     wake_queued: Cell<bool>,
 }
+impl BindingState {
+    pub(crate) fn has_observers(&self) -> bool {
+        !self.observers.borrow().is_empty()
+    }
+}
 
 /// Native node reference that does not keep the PageDom alive.
 struct NodeLease {

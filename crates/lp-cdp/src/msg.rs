@@ -79,6 +79,14 @@ impl<'a> Command<'a> {
         serde_json::from_str(raw).map_err(|e| CdpError::invalid_params(format!("Invalid parameters: {e}")))
     }
 
+    /// `params` for a type that borrows from the message text (`Cow<str>`
+    /// fields with `#[serde(borrow)]` avoid copying large strings such as a
+    /// `functionDeclaration`).
+    pub fn params_borrowed<T: Deserialize<'a>>(&self) -> CdpResult<T> {
+        let raw = self.params.map_or("{}", RawValue::get);
+        serde_json::from_str(raw).map_err(|e| CdpError::invalid_params(format!("Invalid parameters: {e}")))
+    }
+
     pub fn raw_params(&self) -> Option<&'a RawValue> {
         self.params
     }

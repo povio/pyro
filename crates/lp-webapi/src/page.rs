@@ -31,6 +31,8 @@ pub struct PageDom {
     /// Node references released by finalized wrappers while the DOM was
     /// borrowed; applied at the next safe point.
     pending_release: RefCell<Vec<NodeId>>,
+    /// (DOM version, removal count) seen by the last `after_task`.
+    after_task_stamp: Cell<Option<(u64, u64)>>,
     current_script: Cell<Option<NodeId>>,
     pub(crate) realms: RefCell<FxHashMap<RealmId, WeakRealm>>,
     pub(crate) url_params_helpers: RefCell<FxHashMap<RealmId, Persistent>>,
@@ -291,6 +293,7 @@ impl PageDom {
             connected_iframes: RefCell::new(FxHashSet::default()),
             selectors: RefCell::new(SelectorCache::default()),
             pending_release: RefCell::new(Vec::new()),
+            after_task_stamp: Cell::new(None),
             current_script: Cell::new(None),
             realms: RefCell::new(FxHashMap::default()),
             data_view_readers: RefCell::new(FxHashMap::default()),
@@ -616,6 +619,9 @@ impl PageDom {
     /// listener-holding wrappers of disconnected nodes, re-pins reconnected
     /// ones, and frees unreachable DOM nodes.
     pub fn after_task(self: &Rc<Self>) {
+        if self.quiet_since_last_task() {
+            return;
+        }
         self.flush_iframe_events();
         crate::message_channel::reconcile_ports(self);
         crate::mutation_observer::after_task(self);
@@ -642,6 +648,31 @@ impl PageDom {
         let released = dom.take_released_listeners();
         drop(dom);
         crate::target::release_listener_slots(self, released);
+    }
+
+    /// True when no step of `after_task` can have work: the DOM is unchanged
+    /// since the last task (version covers tree, focus and hover), nothing is
+    /// queued for release, reconciliation or observation, and no layout
+    /// observer is registered (those deliver initial entries without a DOM
+    /// change). Runs after every CDP command, so this is the common case.
+    pub fn quiet_since_last_task(&self) -> bool {
+        if self.is_disposed() {
+            return false;
+        }
+        let Ok(dom) = self.dom.try_borrow() else { return false };
+        let stamp = (dom.version(), dom.removal_count());
+        if self.after_task_stamp.get() != Some(stamp) {
+            self.after_task_stamp.set(Some(stamp));
+            return false;
+        }
+        !dom.has_iframe_events()
+            && !dom.has_pending_mutations()
+            && !dom.has_gc_candidates()
+            && self.mutations.pending_drops_is_empty()
+            && self.pending_release.borrow().is_empty()
+            && self.pending_port_reconcile.borrow().is_empty()
+            && !self.intersections.has_observers()
+            && !self.resizes.has_observers()
     }
 
     pub fn set_hooks(&self, hooks: Option<Rc<dyn PageHooks>>) {

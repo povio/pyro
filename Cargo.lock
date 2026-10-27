@@ -563,6 +563,7 @@ dependencies = [
  "lp-runtime",
  "lp-webapi",
  "percent-encoding",
+ "smallvec",
  "url",
 ]
 
@@ -604,6 +605,7 @@ name = "lp-js"
 version = "0.0.1"
 dependencies = [
  "lp-jsc-sys",
+ "rustc-hash",
  "serde_json",
 ]
 

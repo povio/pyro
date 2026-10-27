@@ -935,6 +935,16 @@ impl Browser {
 
     pub(crate) fn maybe_fire_load(&mut self, page: FrameKey) {
         self.drain_dom_resources(page);
+        self.fire_load_if_ready(page);
+    }
+
+    /// `maybe_fire_load` for a caller that has already drained DOM resources
+    /// (the checkpoint drains once per page, then visits every frame).
+    pub(crate) fn fire_load_if_ready(&mut self, page: FrameKey) {
+        // Runs at every checkpoint: a loaded frame has nothing left to fire.
+        if self.doc(page).is_none_or(|d| d.main_frame.loaded) {
+            return;
+        }
         let Some(host) = self.page(page.page).map(|p| p.frames.clone()) else { return };
         if host
             .child_keys(page)

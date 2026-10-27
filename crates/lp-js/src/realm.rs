@@ -134,7 +134,7 @@ pub type NativeCallbackHook = Rc<dyn for<'s> Fn(&Scope<'s>)>;
 pub(crate) struct RealmInner {
     pub(crate) id: RealmId,
     name: String,
-    origin: Option<String>,
+    origin: RefCell<Option<String>>,
     pub(crate) engine: Rc<EngineInner>,
     ctx: Cell<sys::JSGlobalContextRef>,
     protos: RefCell<Vec<Option<Persistent>>>,
@@ -146,6 +146,12 @@ pub(crate) struct RealmInner {
     populated: RefCell<Vec<bool>>,
     identity: RefCell<HashMap<IdentityKey, sys::JSWeakRef>>,
     helpers: RefCell<Option<Persistent>>,
+    helper_cache: RefCell<HashMap<&'static str, Persistent>>,
+    /// The realm's `Object.prototype`, for the plain-object fast path of `is_plain_object`.
+    object_proto: RefCell<Option<Persistent>>,
+    /// Functions compiled by `call_function*`, keyed by source: CDP clients
+    /// send the same (large) `functionDeclaration` on every call.
+    fn_cache: RefCell<HashMap<u64, (String, Persistent)>>,
     dom_exception: RefCell<Option<Persistent>>,
     module_loader: Cell<*mut c_void>,
     module_fetcher: RefCell<Option<Rc<dyn ModuleFetcher>>>,
@@ -195,6 +201,16 @@ impl RealmInner {
         self.dom_exception.borrow().as_ref().and_then(|p| p.get(scope).as_object())
     }
 
+    /// `helper` with the function handle kept per realm: a property read on
+    /// the helpers object costs more than the call for the hot helpers.
+    fn cached_helper<'s>(&self, scope: &Scope<'s>, name: &'static str) -> JsResult<Object<'s>> {
+        if let Some(p) = self.helper_cache.borrow().get(name) {
+            return p.get(scope).as_object().ok_or(JsError::Type("missing helper".into()));
+        }
+        let f = self.helper(scope, name)?;
+        self.helper_cache.borrow_mut().insert(name, Persistent::new(scope, f.value()));
+        Ok(f)
+    }
     fn helper<'s>(&self, scope: &Scope<'s>, name: &str) -> JsResult<Object<'s>> {
         let h = self.helpers.borrow();
         let h = h.as_ref().ok_or(JsError::ContextDestroyed)?.get(scope);
@@ -233,6 +249,9 @@ impl RealmInner {
         self.targets.borrow_mut().clear();
         self.populated.borrow_mut().clear();
         self.helpers.borrow_mut().take();
+        self.helper_cache.borrow_mut().clear();
+        self.object_proto.borrow_mut().take();
+        self.fn_cache.borrow_mut().clear();
         self.dom_exception.borrow_mut().take();
         if let Some((_, release, _)) = sys::spi::get().weak() {
             for (_, w) in self.identity.borrow_mut().drain() {
@@ -276,8 +295,15 @@ impl Realm {
         &self.inner.name
     }
 
-    pub fn origin(&self) -> Option<&str> {
-        self.inner.origin.as_deref()
+    pub fn origin(&self) -> Option<String> {
+        self.inner.origin.borrow().clone()
+    }
+
+    /// Sets the origin used for root-relative module specifiers. For realms
+    /// created ahead of their frame (see lp-browser's spare realm); call
+    /// before any script runs in the realm.
+    pub fn set_origin(&self, origin: Option<String>) {
+        *self.inner.origin.borrow_mut() = origin;
     }
 
     pub fn is_disposed(&self) -> bool {
@@ -500,11 +526,7 @@ impl<'s> Scope<'s> {
         this: Option<Value<'_>>,
         args: &[Value<'_>],
     ) -> JsResult<Value<'s>> {
-        let f = self.eval(&format!("({function_source}\n)"), None, 1)?;
-        let f = f
-            .as_object()
-            .filter(|o| o.is_function())
-            .ok_or_else(|| JsError::Type("Given expression does not evaluate to a function".into()))?;
+        let f = self.function_for_source(function_source)?;
         match this {
             Some(t) if !t.is_object() => {
                 // Primitive receivers: route through Function.prototype.call.
@@ -523,17 +545,44 @@ impl<'s> Scope<'s> {
     /// [`Scope::call_function`] with arguments in a [`crate::RootedVec`]
     /// (CDP `callFunctionOn` converts arguments one by one; each conversion can
     /// trigger GC, so they must be rooted, not kept in a `Vec<Value>`).
+    /// The function object for `function_source`, compiled once per realm
+    /// and source text. The same object is returned on later calls: its
+    /// identity and expando properties persist, which inspector clients do
+    /// not observe. Bounded; a full cache is emptied.
+    fn function_for_source(&self, function_source: &str) -> JsResult<Object<'s>> {
+        use std::hash::{Hash, Hasher};
+        const MAX_CACHED: usize = 512;
+        // Fx: hashing a 38 KB declaration with SipHash costs ~40 us.
+        let mut hasher = rustc_hash::FxHasher::default();
+        function_source.hash(&mut hasher);
+        let key = hasher.finish();
+        if let Some((source, f)) = self.realm.fn_cache.borrow().get(&key) {
+            if source == function_source {
+                if let Some(o) = f.get(self).as_object() {
+                    return Ok(o);
+                }
+            }
+        }
+        let f = self.eval(&format!("({function_source}\n)"), None, 1)?;
+        let f = f
+            .as_object()
+            .filter(|o| o.is_function())
+            .ok_or_else(|| JsError::Type("Given expression does not evaluate to a function".into()))?;
+        let mut cache = self.realm.fn_cache.borrow_mut();
+        if cache.len() >= MAX_CACHED {
+            cache.clear();
+        }
+        cache.insert(key, (function_source.to_owned(), Persistent::new(self, f.value())));
+        Ok(f)
+    }
+
     pub fn call_function_rooted(
         &self,
         function_source: &str,
         this: Option<&Persistent>,
         args: &crate::RootedVec,
     ) -> JsResult<Value<'s>> {
-        let f = self.eval(&format!("({function_source}\n)"), None, 1)?;
-        let f = f
-            .as_object()
-            .filter(|o| o.is_function())
-            .ok_or_else(|| JsError::Type("Given expression does not evaluate to a function".into()))?;
+        let f = self.function_for_source(function_source)?;
         let this_v = this.map(|p| p.get(self));
         match this_v {
             Some(t) if !t.is_object() => {
@@ -725,6 +774,44 @@ impl<'s> Scope<'s> {
         }
     }
 
+    /// Interface name of a native wrapper instance of this engine (not a
+    /// global object), without running JavaScript. `None` for other values.
+    pub fn host_class_name(&self, value: Value<'_>) -> Option<&'static str> {
+        let o = value.as_object()?;
+        if unsafe { sys::JSContextGetGroup(value.ctx) } != self.realm.engine.group() {
+            return None;
+        }
+        let h = unsafe { self.header_of_object(o.raw) }?;
+        if h == self.realm.global_payload.get() {
+            return None;
+        }
+        unsafe {
+            if (*h).kind != Kind::Instance {
+                return None;
+            }
+            self.realm.engine.classes.borrow().classes.get((*h).class as usize).map(|c| c.name)
+        }
+    }
+
+    /// An ordinary object whose prototype is this realm's `Object.prototype`:
+    /// not callable, not an array or date, not a native wrapper. Decided
+    /// natively, without invoking getters or proxy traps.
+    pub fn is_plain_object(&self, value: Value<'_>) -> bool {
+        let Some(o) = value.as_object() else { return false };
+        if unsafe { sys::JSContextGetGroup(value.ctx) } != self.realm.engine.group() {
+            return false;
+        }
+        if value.is_function() || value.is_array() || value.is_date() {
+            return false;
+        }
+        if unsafe { self.header_of_object(o.raw) }.is_some() {
+            return false;
+        }
+        let proto = self.realm.object_proto.borrow();
+        let Some(proto) = proto.as_ref() else { return false };
+        unsafe { sys::JSObjectGetPrototype(self.ctx, o.raw) == proto.get(self).raw }
+    }
+
     /// Tests for one of this engine's native wrappers/closures or a same-VM
     /// global object, without invoking getters, proxy traps, or other JS.
     /// Includes globals retained by another realm after their owner is disposed.
@@ -841,13 +928,14 @@ impl<'s> Scope<'s> {
     /// Describes a value for remote-object protocols: `(type, subtype, className)`
     /// following CDP `Runtime.RemoteObject`.
     pub fn describe(&self, value: Value<'_>) -> JsResult<ValueDescription> {
-        let d = self.realm.helper(self, "describe")?.call(None, &[value])?;
-        let d = d.as_object().expect("describe result");
+        let packed = self.realm.cached_helper(self, "describePacked")?.call(None, &[value])?.to_string()?;
+        let mut parts = packed.splitn(4, '\0');
+        let mut next = || parts.next().filter(|s| !s.is_empty()).map(str::to_owned);
         Ok(ValueDescription {
-            ty: d.get("type")?.as_string().unwrap_or_default(),
-            subtype: d.get("subtype")?.as_string(),
-            class_name: d.get("className")?.as_string(),
-            description: d.get("description")?.as_string(),
+            ty: next().unwrap_or_default(),
+            subtype: next(),
+            class_name: next(),
+            description: next(),
         })
     }
 
@@ -954,7 +1042,7 @@ pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResul
     let inner = Rc::new(RealmInner {
         id,
         name: options.name,
-        origin: options.origin,
+        origin: RefCell::new(options.origin),
         engine: engine.clone(),
         ctx: Cell::new(ctx),
         protos: RefCell::new(Vec::new()),
@@ -963,6 +1051,9 @@ pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResul
         populated: RefCell::new(Vec::new()),
         identity: RefCell::new(HashMap::new()),
         helpers: RefCell::new(None),
+        helper_cache: RefCell::new(HashMap::new()),
+        object_proto: RefCell::new(None),
+        fn_cache: RefCell::new(HashMap::new()),
         dom_exception: RefCell::new(None),
         module_loader: Cell::new(ptr::null_mut()),
         module_fetcher: RefCell::new(None),
@@ -982,6 +1073,8 @@ pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResul
         let dom_exc = helpers.as_object().expect("helpers").get("DOMException")?;
         *realm.inner.dom_exception.borrow_mut() = Some(Persistent::new(&scope, dom_exc));
         install_classes(&scope)?;
+        let object_proto = scope.global().get("Object")?.as_object().expect("Object").get("prototype")?;
+        *realm.inner.object_proto.borrow_mut() = Some(Persistent::new(&scope, object_proto));
         install_console(&scope)?;
         install_rejection_tracking(&scope)?;
         if engine.caps.modules {
@@ -1398,7 +1491,8 @@ unsafe extern "C" fn module_fetch(
         class::guard(ctx as sys::JSContextRef, ptr::null_mut(), (), |scope| {
             let realm = scope.realm;
             let key = crate::string::to_rust_string(identifier);
-            let url = remap_module_url(&key, realm.origin.as_deref());
+            let origin = realm.origin.borrow().clone();
+            let url = remap_module_url(&key, origin.as_deref());
             let request = ModuleRequest {
                 url: url.clone(),
                 key,
