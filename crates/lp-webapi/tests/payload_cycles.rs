@@ -803,13 +803,10 @@ const FD_RETENTION: &[(&str, &str)] = &[
 
 #[test]
 fn formdata_kept_in_a_closed_page_does_not_retain_the_realm() {
-    for (name, script) in FD_RETENTION {
-        assert_eq!(
-            closed_realm_drops(script),
-            1,
-            "closed realm survived the bounded collection rounds (FormData: {name})"
-        );
-    }
+    // Every variant runs (no early exit) so one log shows exactly which variants leak.
+    let leaked: Vec<&str> =
+        FD_RETENTION.iter().filter(|(_, script)| closed_realm_drops(script) != 1).map(|(name, _)| *name).collect();
+    assert!(leaked.is_empty(), "closed realm survived the bounded collection rounds (FormData variants: {leaked:?})");
 }
 
 #[inline(never)]
@@ -880,4 +877,88 @@ fn formdata_ignores_poisoned_array_and_object_prototype_indices() {
         ),
         "true,true,false,0"
     );
+}
+
+#[test]
+fn formdata_prototype_methods_on_a_disposed_realm_formdata_propagate_context_destroyed() {
+    let lab = Lab::new();
+    let (page, a) = lab.open("<body>");
+    let b = new_realm(&lab.engine, lab.window_class, &page, "other");
+    run(&a, "globalThis.__fd = new FormData(); __fd.append('t', 'txt'); __fd.append('f', new File(['abc'], 'a.txt'));");
+    transfer(&a, &b, "__fd", "__fdA");
+    lifecycle::realm_disposed(&page, a.id());
+    a.dispose();
+    drop(a);
+    lab.gc_live();
+    // B's own prototype methods run on A's FormData: a File entry cannot be read (ContextDestroyed, never null),
+    // text entries and name-only methods still work.
+    let out = eval(
+        &b,
+        r#"(() => { const t = (f) => { try { return String(f()); } catch (e) { return 'threw'; } };
+            return [t(() => FormData.prototype.get.call(__fdA, 'f')), t(() => FormData.prototype.getAll.call(__fdA, 'f')),
+                    t(() => FormData.prototype.entries.call(__fdA)), t(() => FormData.prototype.get.call(__fdA, 't')),
+                    t(() => FormData.prototype.has.call(__fdA, 'f')), t(() => [...FormData.prototype.keys.call(__fdA)].join('+'))].join(','); })()"#,
+    );
+    assert_eq!(out, "threw,threw,threw,txt,true,t+f");
+}
+
+#[test]
+fn formdata_survives_script_reentrancy_from_conversions_and_callbacks() {
+    let lab = Lab::new();
+    let (_page, realm) = lab.open("<body>");
+    let out = eval(
+        &realm,
+        r#"(() => {
+            const out = [];
+            const fd = new FormData();
+            const file = new File(['abc'], 'a.txt');
+            fd.append('victim', 'v');
+            fd.append('f', file);
+            // filename conversion mutates the FormData before the entry is stored
+            fd.append('x', file, { toString() { fd.append('re', 'entrant'); fd.delete('victim'); return 'renamed.txt'; } });
+            out.push([...fd.keys()].join('+'), fd.get('x').name, fd.get('f') === file);
+            // value conversion in set removes the entry being set
+            fd.set('re', { toString() { fd.append('mid', 'm'); fd.delete('re'); return 'v2'; } });
+            out.push([...fd.keys()].join('+'), fd.get('re'));
+            // name conversion mutates
+            fd.append({ toString() { fd.delete('f'); return 'n'; } }, 'nv');
+            out.push([...fd.keys()].join('+'), fd.has('f'));
+            // forEach callback mutates the FormData: iteration is a snapshot, values stay readable
+            const seen = [];
+            fd.forEach((v, k) => {
+                if (k === 'x') { fd.delete('x'); fd.append('late', new File(['l'], 'l.txt')); }
+                seen.push(k + ':' + (typeof v === 'string' ? v : v.name));
+            });
+            out.push(seen.join(','), [...fd.keys()].join('+'), fd.get('late').name);
+            return out.join('|');
+        })()"#,
+    );
+    assert_eq!(
+        out,
+        "f+re+x|renamed.txt|true|f+x+mid+re|v2|x+mid+re+n|false|x:renamed.txt,mid:m,re:v2,n:nv|mid+re+n+late|l.txt"
+    );
+}
+
+#[test]
+fn formdata_serializes_a_file_whose_own_realm_is_closed() {
+    let lab = Lab::new();
+    let (page, a) = lab.open("<body>");
+    let b = new_realm(&lab.engine, lab.window_class, &page, "other");
+    run(&a, "globalThis.__fileA = new File(['aaa'], 'A.txt', { type: 'text/plain' });");
+    transfer(&a, &b, "__fileA", "__fileA");
+    run(&b, "globalThis.__fdB = new FormData(); __fdB.append('f', __fileA); delete globalThis.__fileA;");
+    run(&a, "delete globalThis.__fileA;");
+    lifecycle::realm_disposed(&page, a.id());
+    a.dispose();
+    drop(a);
+    lab.gc_live();
+    run(
+        &b,
+        "globalThis.__body = 'pending'; new Response(__fdB).text().then(t => { globalThis.__body = t; }, e => { globalThis.__body = 'ERROR ' + e; });",
+    );
+    let out = eval(
+        &b,
+        r##"[__body.includes('filename="A.txt"'), __body.includes('aaa'), __body.startsWith('ERROR')].join()"##,
+    );
+    assert_eq!(out, "true,true,false");
 }
