@@ -204,6 +204,9 @@ thread_local! {
     pub(crate) static DEPTH: Cell<u32> = const { Cell::new(0) };
     /// A termination is propagating through the VM on this thread.
     pub(crate) static TERMINATING: Cell<bool> = const { Cell::new(false) };
+    /// Asked at each watchdog poll while JavaScript runs on this thread;
+    /// returning true terminates it (see [`Engine::set_interrupt_check`]).
+    static INTERRUPT_CHECK: RefCell<Option<Rc<dyn Fn() -> bool>>> = const { RefCell::new(None) };
 }
 
 /// The live engine whose VM `ctx` belongs to, even if its owner was dropped
@@ -309,6 +312,15 @@ impl Engine {
     pub fn create_realm_in_current_thread(options: RealmOptions) -> Result<Realm, JsError> {
         let inner = current_inner().ok_or(JsError::ContextDestroyed)?;
         crate::realm::create(&inner, options)
+    }
+
+    /// Installs a check this thread runs at every watchdog poll (about every
+    /// 50 ms) while JavaScript executes; when it returns true the running
+    /// script is terminated as by [`TerminateHandle::terminate`]. Lets the
+    /// owner of the thread notice external events (a client disconnecting)
+    /// without a second thread. It must be cheap and must not call JSC.
+    pub fn set_interrupt_check(&self, check: Option<Rc<dyn Fn() -> bool>>) {
+        INTERRUPT_CHECK.with(|c| *c.borrow_mut() = check);
     }
 
     /// Thread-safe handle to request termination of running JavaScript.
@@ -471,6 +483,10 @@ unsafe extern "C" fn should_terminate(ctx: sys::JSContextRef, data: *mut c_void)
     // SAFETY: data is the TerminateState kept alive by EngineInner. This runs
     // on the thread executing JavaScript (the engine thread).
     let state = unsafe { &*(data as *const TerminateState) };
+    let check = INTERRUPT_CHECK.try_with(|c| c.borrow().clone()).ok().flatten();
+    if check.is_some_and(|check| check()) {
+        state.requested.store(true, Ordering::SeqCst);
+    }
     if state.requested.swap(false, Ordering::SeqCst) {
         let _ = TERMINATING.try_with(|t| t.set(true));
         return true;

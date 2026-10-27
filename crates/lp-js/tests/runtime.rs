@@ -553,6 +553,31 @@ fn terminate_handle_stops_infinite_loop() {
 }
 
 #[test]
+fn interrupt_check_stops_running_javascript_from_the_same_thread() {
+    let e = engine();
+    if e.terminate_handle().is_err() {
+        eprintln!("termination SPI unavailable; skipping");
+        return;
+    }
+    let r = e.create_realm(RealmOptions::default()).unwrap();
+    let start = std::time::Instant::now();
+    let polls = Rc::new(Cell::new(0u32));
+    let seen = polls.clone();
+    e.set_interrupt_check(Some(Rc::new(move || {
+        seen.set(seen.get() + 1);
+        start.elapsed() > std::time::Duration::from_millis(100)
+    })));
+    let s = r.scope().unwrap();
+    let res = s.eval("for (;;) {}", None, 1);
+    assert!(matches!(res, Err(JsError::Terminated)), "{res:?}");
+    assert!(start.elapsed() < std::time::Duration::from_secs(5));
+    assert!(polls.get() >= 2, "checked while the script ran");
+    // Without the check the engine runs normally again.
+    e.set_interrupt_check(None);
+    assert_eq!(s.eval("1 + 1", None, 1).unwrap().to_number().unwrap(), 2.0);
+}
+
+#[test]
 fn isolated_worlds_have_distinct_wrappers() {
     let (e, main) = setup();
     let world =
