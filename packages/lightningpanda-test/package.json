@@ -1,0 +1,11 @@
+{
+  "name": "lightningpanda-test",
+  "version": "0.0.1",
+  "private": true,
+  "description": "E2E tests for bun test on Lightningpanda: a whole scenario per LP.run call",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": ["src"]
+}

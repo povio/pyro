@@ -72,8 +72,9 @@ see these requests.
 
 --prepare: every connection boots a page at URL in its own browser context
 (with the --local-storage seed) before any command arrives, and boots the next
-one each time a test takes it. A client takes one with the browser-level
-command Lightningpanda.acquirePreparedPage {url?} -> {targetId,
+one each time a test takes it (once the connection has no open page, or after
+15 ms without commands). A client takes one with the browser-level
+command Lightningpanda.acquirePreparedPage {url?, profileId?, attach?} -> {targetId,
 browserContextId, sessionId?, ready}; the page is announced like a new target
 (Target.targetCreated / attachedToTarget), so Playwright sees it as a page of
 its default context. Lightningpanda.registerPreparedPage {url, initScripts?,
@@ -512,9 +513,18 @@ fn run_browser_thread(
     // When the last command that was not a prepared-page status query ran.
     let mut quiet_since = std::time::Instant::now();
     'serve: loop {
-        // A prepared page was taken: boot its replacement only after a quiet
-        // moment with no command, so the test is not delayed.
-        let quiet_at = (browser.needs_refill() || browser.needs_settle()).then(|| quiet_since + REFILL_QUIET);
+        // A prepared page was taken: boot its replacement once no page is
+        // open (the test closed its page), else only after a quiet moment
+        // with no command, so a running test is not delayed. Loaded
+        // prepared pages are settled at the same moments.
+        let refill = browser.needs_refill();
+        let quiet_at = (refill || browser.needs_settle()).then(|| {
+            if refill && browser.no_open_pages() {
+                quiet_since
+            } else {
+                quiet_since + REFILL_QUIET
+            }
+        });
         if quiet_at.is_some_and(|at| std::time::Instant::now() >= at) && inbox.is_empty() {
             browser.settle_prepared();
             browser.refill_prepared();

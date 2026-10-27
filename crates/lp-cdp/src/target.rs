@@ -291,10 +291,17 @@ impl<H: Host> Browser<H> {
         browser
     }
 
+    /// No page is open on this connection: no test is using it, so a refill
+    /// delays nobody.
+    pub fn no_open_pages(&self) -> bool {
+        self.targets.is_empty()
+    }
+
     /// Whether some profile has fewer pages waiting than its pool asks for
     /// and a refill may succeed. The connection loop refills once the
-    /// thread has been quiet for a moment, so a test's own commands are
-    /// never queued behind the next page's boot.
+    /// thread has been quiet for a moment (or right away when no page is
+    /// open), so a test's own commands are never queued behind the next
+    /// page's boot.
     pub fn needs_refill(&self) -> bool {
         !self.refill_blocked && (0..self.prepared_profiles.len()).any(|i| self.profile_wants_page(i))
     }
@@ -398,6 +405,9 @@ impl<H: Host> Browser<H> {
                 struct P {
                     url: Option<String>,
                     profile_id: Option<usize>,
+                    /// Attach a flat session in the same call (as `attachToTarget`).
+                    #[serde(default)]
+                    attach: bool,
                 }
                 let p: P = cmd.params()?;
                 let matches = |b: &Self, e: &PreparedEntry| {
@@ -437,7 +447,13 @@ impl<H: Host> Browser<H> {
                 if self.discover {
                     self.send_target_created(self.targets.len() - 1, out);
                 }
-                let session_id = if self.auto_attach { Some(self.attach(&target_id, None, true, out)?) } else { None };
+                let session_id = if self.auto_attach {
+                    Some(self.attach(&target_id, None, true, out)?)
+                } else if p.attach {
+                    Some(self.attach(&target_id, cmd.session_id(), false, out)?)
+                } else {
+                    None
+                };
                 out.send(msg::result_frame(
                     id,
                     &serde_json::json!({

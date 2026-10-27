@@ -56,11 +56,116 @@ impl NetworkContext {
 pub(super) struct NetworkPage {
     pub(super) bodies: BodyStore,
     translator: NetworkTranslator,
+    /// The page's requests, kept once an `LP.run` asked for them.
+    pub(super) log: Option<RequestLog>,
 }
 
 impl NetworkPage {
     pub(super) fn new(budget: BodyBudget) -> Self {
-        Self { bodies: BodyStore::new(budget), translator: NetworkTranslator::default() }
+        Self { bodies: BodyStore::new(budget), translator: NetworkTranslator::default(), log: None }
+    }
+}
+
+/// Requests kept per page in the log; older ones are dropped in halves.
+const MAX_LOGGED: usize = 2_000;
+
+/// A page's requests in the order they started (`LP.run`'s `request` steps
+/// and reply). A redirect ends one entry and starts the next.
+#[derive(Default)]
+pub(super) struct RequestLog {
+    entries: Vec<LoggedRequest>,
+    open: HashMap<RequestId, usize>,
+    /// Entries dropped from the front: `seq` keeps counting across drops.
+    dropped: usize,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct LoggedRequest {
+    pub(super) method: String,
+    pub(super) url: String,
+    pub(super) status: Option<u16>,
+    pub(super) error: Option<String>,
+    /// Finished or failed.
+    pub(super) done: bool,
+    start: f64,
+    end: Option<f64>,
+}
+
+impl LoggedRequest {
+    pub(super) fn path(&self) -> &str {
+        let rest = self.url.split_once("://").map_or(self.url.as_str(), |(_, r)| r);
+        let path = rest.find('/').map_or("/", |i| &rest[i..]);
+        path.split(['?', '#']).next().unwrap_or(path)
+    }
+
+    pub(super) fn to_json(&self) -> Value {
+        json!({
+            "method": self.method,
+            "url": self.url,
+            "status": self.status,
+            "error": self.error,
+            "ms": self.end.map(|e| (e - self.start) * 1e3),
+        })
+    }
+}
+
+impl RequestLog {
+    /// Sequence number of the next request.
+    pub(super) fn seq(&self) -> usize {
+        self.dropped + self.entries.len()
+    }
+
+    /// Requests started at or after `seq`.
+    pub(super) fn since(&self, seq: usize) -> &[LoggedRequest] {
+        &self.entries[seq.saturating_sub(self.dropped).min(self.entries.len())..]
+    }
+
+    fn observe(&mut self, event: &NetEvent) {
+        match event {
+            NetEvent::RequestWillBeSent { id, request, redirect_response, timestamp, .. } => {
+                if let (Some(head), Some(i)) = (redirect_response, self.open.remove(id)) {
+                    let e = &mut self.entries[i];
+                    (e.status, e.done, e.end) = (Some(head.status.as_u16()), true, Some(*timestamp));
+                }
+                if self.entries.len() >= MAX_LOGGED {
+                    let cut = MAX_LOGGED / 2;
+                    self.entries.drain(..cut);
+                    self.dropped += cut;
+                    self.open.retain(|_, i| {
+                        let keep = *i >= cut;
+                        *i = i.saturating_sub(cut);
+                        keep
+                    });
+                }
+                self.open.insert(*id, self.entries.len());
+                self.entries.push(LoggedRequest {
+                    method: request.method.to_string(),
+                    url: request.url.to_string(),
+                    status: None,
+                    error: None,
+                    done: false,
+                    start: *timestamp,
+                    end: None,
+                });
+            }
+            NetEvent::ResponseReceived { id, head, .. } => {
+                if let Some(&i) = self.open.get(id) {
+                    self.entries[i].status = Some(head.status.as_u16());
+                }
+            }
+            NetEvent::DataReceived { .. } => {}
+            NetEvent::LoadingFinished { id, timestamp, .. } => {
+                if let Some(i) = self.open.remove(id) {
+                    (self.entries[i].done, self.entries[i].end) = (true, Some(*timestamp));
+                }
+            }
+            NetEvent::LoadingFailed { id, error, timestamp, .. } => {
+                if let Some(i) = self.open.remove(id) {
+                    let e = &mut self.entries[i];
+                    (e.error, e.done, e.end) = (Some(error.to_string()), true, Some(*timestamp));
+                }
+            }
+        }
     }
 }
 
@@ -182,10 +287,10 @@ impl EngineHost {
         for (key, context) in &mut self.contexts {
             let wanted = self.pages.values().any(|page| {
                 page.context == *key
-                    && page
-                        .sessions
-                        .iter()
-                        .any(|s| self.sessions.get(s).is_some_and(|s| s.network_enabled || s.fetch.needs_observation()))
+                    && (page.network.log.is_some()
+                        || page.sessions.iter().any(|s| {
+                            self.sessions.get(s).is_some_and(|s| s.network_enabled || s.fetch.needs_observation())
+                        }))
             });
             if wanted && context.subscription.is_none() {
                 if let Some(net) = self.thread.browser.context_net(context.id) {
@@ -204,9 +309,10 @@ impl EngineHost {
                 context.routes.clear();
             }
             context.routes.retain(|_, page| {
-                self.pages
-                    .get(page)
-                    .is_some_and(|p| p.sessions.iter().any(|s| self.sessions.get(s).is_some_and(|s| s.network_enabled)))
+                self.pages.get(page).is_some_and(|p| {
+                    p.network.log.is_some()
+                        || p.sessions.iter().any(|s| self.sessions.get(s).is_some_and(|s| s.network_enabled))
+                })
             });
         }
     }
@@ -253,7 +359,8 @@ impl EngineHost {
                 (page.context == context && self.owns_frame(page.id, request.frame_id.as_ref())).then_some(*key)
             });
             let Some(page) = page else { return };
-            if self.sessions_of(page, |s| s.network_enabled).is_empty() {
+            let logged = self.pages.get(&page).is_some_and(|p| p.network.log.is_some());
+            if !logged && self.sessions_of(page, |s| s.network_enabled).is_empty() {
                 return;
             }
             let context = self.contexts.get_mut(&context).expect("subscribed context");
@@ -268,6 +375,10 @@ impl EngineHost {
             self.contexts.get_mut(&context).expect("subscribed context").routes.remove(&id);
         }
         let Some(state) = self.pages.get_mut(&page) else { return };
+        if let Some(log) = &mut state.network.log {
+            log.observe(&event);
+            self.waiters.log_changed = true;
+        }
         state.network.bodies.observe(&event);
         if let Some((method, params)) = state.network.translator.translate(&event) {
             for session in self.sessions_of(page, |s| s.network_enabled) {

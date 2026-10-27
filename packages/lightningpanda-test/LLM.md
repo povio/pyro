@@ -1,0 +1,149 @@
+# Writing E2E tests with lightningpanda-test: instructions for coding agents
+
+Read this before writing or porting a test. It is the whole contract; the
+source is `src/steps.ts` (builders) and `src/index.ts` (pages and runs).
+
+## The model
+
+- A test is **seeding, then one `page.run([...steps])`**. The browser runs every
+  step itself and replies once. Do not split a scenario into several `run`
+  calls unless plain code (an API call, a computation) must happen between
+  them.
+- **Nothing is polled from the test.** Every step waits in the browser until it
+  holds (default 5 s per step). Never write `sleep`, retry loops,
+  `expect.poll`, `waitForTimeout` or `waitForResponse`.
+- **Actions settle.** After `click`, `fill`, `press`, `check`, `uncheck` and
+  `route`, the next step starts only when the requests the action started have
+  finished and the tasks already queued have run. Assert the outcome with the
+  next `check`; do not wait for the request.
+- **Requests are recorded, not awaited.** `check.request(method, path)` looks
+  at the requests made during *this* run (it waits for one to appear and
+  finish). Put it in the same `run` as the action that sends the request.
+
+## Skeleton
+
+```ts
+import { afterAll, beforeAll, expect, test } from 'bun:test';
+import { Lightningpanda, button, check, dialog, text, label } from 'lightningpanda-test';
+
+let lp: Lightningpanda;
+beforeAll(async () => {
+  lp = await Lightningpanda.connect(process.env.LIGHTNINGPANDA_WS!, { connections: 4 });
+  await lp.profile('employee', {
+    url: `${APP}/platform`,                 // any page of the app: it boots signed in and waits
+    localStorage: authEntries,              // what the app reads at boot (tokens, user store)
+    viewport: { width: 1440, height: 900 },
+    pool: 2,
+  });
+});
+afterAll(() => lp.close());
+
+test.concurrent('closes a position', async () => {
+  const position = await api.createPosition();                    // seed through the API, not the UI
+  await using page = await lp.page({ as: 'employee', route: `/positions/${position.id}` });
+  const r = await page.run([
+    check(text(position.number)).visible(),
+    button('Settings', { exact: true }).click(),
+    dialog().hasText('will be closed').button('Close Position', { exact: true }).click(),
+    check.request('POST', `/positions/${position.id}/close`).status(200),
+    check(button('Reopen Position')).count(1),
+    text(/^Closed by: /).read('closedBy'),
+  ]);
+  expect(r.values.closedBy).toContain('E2E');                     // bun:test expect on values read
+});
+```
+
+- `lp.page({ as, route })`: a pre-booted, signed-in page; `route` changes the
+  URL in place (pushState + popstate), so the app does not boot again. Use
+  `url` instead only when a full page load is the point of the test.
+- `await using page` closes the page when the test ends (do not leave pages
+  open: an open page stops its connection from refilling).
+- One profile per kind of user (`as`). Several profiles are fine.
+
+## Locators
+
+Build them with the exported helpers; they are data, so build them once and
+reuse them.
+
+| Want | Write |
+|---|---|
+| Button / link / heading / dialog … by accessible name | `button('Save')`, `link('Docs')`, `heading('Positions')`, `dialog()`, `role('tab', 'Air')` |
+| Form control by its label | `label('Email')` |
+| By placeholder | `placeholder('Search')` |
+| By visible text | `text('Saved')`, `text(/^Updated by .*/)` |
+| By test id | `testId('row-42')` (`testId(id, 'data-test')` for another attribute) |
+| CSS as a last resort | `css('#out')` |
+| Inside another locator | `dialog().button('OK')`, `row('EXP-1001').button('Edit')`, `css('.card').text('Total')` |
+| Narrow the matches | `.visible()`, `.hasText('beta')`, `.hasNotText('alpha')`, `.has(button('Edit'))`, `.hasNot(…)` |
+| Pick one of several | `.first()`, `.last()`, `.nth(i)` (after the filters) |
+
+- Strings match **case-insensitive substrings** after whitespace
+  normalization; pass `{ exact: true }` for a whole, case-sensitive match. A
+  `RegExp` (flags `i`, `m`, `s` only) tests the normalized text.
+- **Strict mode:** an action on a locator that matches several elements fails
+  at once and lists them. Fix the locator (scope it, filter it, `exact`), and
+  use `.first()` only when any match will do.
+- Prefer role + name, then label / placeholder / text, then test id, then CSS.
+- Hidden elements (`display: none`, `aria-hidden`) have no role: `button('X')`
+  does not match a hidden button. Add `.visible()` to `text()` / `css()`
+  locators when hidden copies exist.
+
+## Steps
+
+| Step | Notes |
+|---|---|
+| `loc.click()` | visible, enabled, not covered, scrolled into view, then a real mouse click |
+| `loc.fill('text')` | replaces the value of an input, textarea or contenteditable |
+| `loc.press('Enter')` | focuses, then a key or chord: `Escape`, `Tab`, `ArrowDown`, `Shift+Tab`, `ControlOrMeta+A`, `a` |
+| `loc.check()` / `loc.uncheck()` | checkbox or radio; no-op when already in that state |
+| `loc.focus()` | |
+| `loc.read('name', 'text' \| 'value' \| 'count' \| 'visible' \| 'box')` | value lands in `r.values.name` |
+| `check(loc).visible()` / `.hidden()` | |
+| `check(loc).text('…')` / `.containsText('…')` / `.value('…')` / `.count(n)` / `.checked()` | `check(loc).not.visible()` negates |
+| `check.request('POST', '/exact/path').status(200)` | path is exact (no query); a `RegExp` tests the full URL; `.count(n)` for exactly n |
+| `goto(url)` / `route(path)` | full navigation / same-document route change |
+| `evaluate('expression', 'name')` | escape hatch: JSON value of a page expression into `r.values.name` |
+
+Every action and check takes `{ timeout }` (ms); `page.run(steps, { timeout })`
+sets the default for the run. Pass `{ settle: false }` to an action whose
+requests never finish (polling, streaming) or that you do not want to wait for.
+
+## Porting from Playwright
+
+| Playwright | lightningpanda-test |
+|---|---|
+| `page.getByRole('button', { name: 'X' })` | `button('X')` |
+| `locator.filter({ visible: true }).first()` | `loc.visible().first()` |
+| `page.getByRole('dialog').filter({ hasText }).last().getByRole('button', …)` | `dialog().hasText(…).last().button(…)` |
+| `await expect(loc).toBeVisible()` / `toHaveText` / `toHaveCount` | `check(loc).visible()` / `.text()` / `.count()` |
+| `await expect.poll(() => loc.count()).toBe(1)` | `check(loc).count(1)` |
+| `Promise.all([page.waitForResponse(…), loc.click()])` | `loc.click()` then `check.request(method, path).status(200)` |
+| `browser.newContext({ storageState }) + newPage + goto` | `lp.profile(...)` once, then `lp.page({ as, route })` |
+| `page.evaluate(fn)` | `evaluate('expression', 'name')` (an expression string, no closures) |
+| helpers that retry clicks or re-open dropdowns | delete them: actions wait for actionability and settle |
+
+## When a run fails
+
+`page.run` throws `RunError` with the step index and why that step was still
+waiting when it timed out, for example:
+
+- `matched no element`: wrong locator, or the UI never got there; check the
+  step before it.
+- `strict mode violation: … matched 3 elements: <button> "Edit", …`: scope or
+  filter the locator.
+- `<div> intercepts pointer events`: an overlay covers the element; close it
+  first or click what the user would click.
+- `element is disabled` / `not editable` / `not visible`.
+- `no matching request yet` / `last match was {…status: 500…}`: the request
+  check; the reply's `requests` lists everything the page requested.
+
+Do not raise timeouts to fix a failure: a step waits only for its own
+condition, so a timeout means the condition never held.
+
+## Do not
+
+- Do not add waits, sleeps or retry loops; do not wrap steps in try/catch.
+- Do not drive login or seeding through the UI; use the profile and the API.
+- Do not send one `run` per step "to be safe": it costs a round trip per step
+  and request checks only see their own run.
+- Do not share a page between tests; take a new one per test.

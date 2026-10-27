@@ -249,10 +249,7 @@ fn by_value_results_keep_key_order_as_on_the_wire() {
     }
     // Insertion order, like Chrome (JSON.stringify's text, numbers included).
     let reply = texts.iter().find(|t| t.contains(&format!("\"id\":{id},"))).unwrap();
-    assert!(
-        reply.contains(r#""value":{"b":1,"a":[3,1],"c":{"z":1e+21,"y":"q","x":null},"":true}"#),
-        "{reply}"
-    );
+    assert!(reply.contains(r#""value":{"b":1,"a":[3,1],"c":{"z":1e+21,"y":"q","x":null},"":true}"#), "{reply}");
 }
 
 #[test]
@@ -569,7 +566,11 @@ fn settled_awaited_replies_leave_the_pending_table() {
         "Runtime.evaluate",
         json!({"expression":"Promise.reject(new Error('nope'))","awaitPromise":true,"returnByValue":true}),
     );
-    assert_eq!(r["result"]["exceptionDetails"]["exception"]["description"].as_str().map(|d| d.starts_with("Error: nope")), Some(true), "{r}");
+    assert_eq!(
+        r["result"]["exceptionDetails"]["exception"]["description"].as_str().map(|d| d.starts_with("Error: nope")),
+        Some(true),
+        "{r}"
+    );
     assert_eq!(h.pending_replies(), 0);
 }
 
@@ -580,7 +581,13 @@ fn pending_awaited_replies_are_bounded_and_freed_by_context_destruction() {
     h.browser.host().set_pending_reply_limit(3);
     let session = h.session.clone();
     let ids: Vec<u64> = (0..3)
-        .map(|_| h.send(Some(&session), "Runtime.evaluate", json!({"expression":"new Promise(() => {})","awaitPromise":true})))
+        .map(|_| {
+            h.send(
+                Some(&session),
+                "Runtime.evaluate",
+                json!({"expression":"new Promise(() => {})","awaitPromise":true}),
+            )
+        })
         .collect();
     h.drain();
     assert_eq!(h.pending_replies(), 3);
@@ -599,7 +606,8 @@ fn pending_awaited_replies_are_bounded_and_freed_by_context_destruction() {
         assert_eq!(replies[0]["error"]["message"], CONTEXT_DESTROYED);
     }
     assert_eq!(h.pending_replies(), 0);
-    let r = h.page("Runtime.evaluate", json!({"expression":"Promise.resolve(7)","awaitPromise":true,"returnByValue":true}));
+    let r =
+        h.page("Runtime.evaluate", json!({"expression":"Promise.resolve(7)","awaitPromise":true,"returnByValue":true}));
     assert_eq!(r["result"]["result"]["value"], 7, "{r}");
 }
 
@@ -3874,4 +3882,244 @@ fn host_create_close_all_drop_repeats_on_one_thread() {
         h.browser.host_mut().close_all();
         drop(h);
     }
+}
+
+/// `data:` URL of an HTML document (every byte outside a safe set escaped).
+fn html_url(html: &str) -> String {
+    let mut url = String::from("data:text/html,");
+    for b in html.bytes() {
+        if b.is_ascii_alphanumeric() || b"<>=/-_.:;'\"(){}!,+".contains(&b) {
+            url.push(b as char);
+        } else {
+            url.push_str(&format!("%{b:02X}"));
+        }
+    }
+    url
+}
+
+fn load_html(h: &mut Harness, html: &str) {
+    h.page("Page.enable", json!({}));
+    let events = h.page_with_events("Page.navigate", json!({ "url": html_url(html) }));
+    if !events.iter().any(|e| e["method"] == "Page.loadEventFired") {
+        h.until_event(|m| m["method"] == "Page.loadEventFired");
+    }
+}
+
+const DRIVER_FORM: &str = r#"<!doctype html><body>
+<label for="name">Your name</label> <input id="name">
+<button id="go">Send</button> <button id="off" disabled>Off</button>
+<div id="out"></div>
+<div data-testid="row">one</div><div data-testid="row">two</div>
+<a href="/x" style="display:none">Hidden link</a>
+<script>
+  document.getElementById('go').addEventListener('click', () => {
+    const name = document.getElementById('name').value;
+    setTimeout(() => { document.getElementById('out').textContent = 'Hello, ' + name; }, 30);
+  });
+</script>"#;
+
+#[test]
+fn driver_fills_clicks_and_waits_for_a_later_change() {
+    let mut h = Harness::new();
+    load_html(&mut h, DRIVER_FORM);
+    let r = h.page("LP.act", json!({"locator":{"label":"your name"},"action":"fill","value":"Ada"}));
+    assert_eq!(r["result"], json!({}), "{r}");
+    assert_eq!(h.page("LP.query", json!({"locator":{"css":"input"},"read":"value"}))["result"]["value"], "Ada");
+    // Filling again replaces the value.
+    h.page("LP.act", json!({"locator":{"css":"input"},"action":"fill","value":"Grace"}));
+    let r = h.page("LP.act", json!({"locator":{"role":"button","name":"Send"},"action":"click"}));
+    assert_eq!(r["result"], json!({}), "{r}");
+    // The text appears 30 ms later, from a timer: the expect is answered
+    // once that task changed the DOM, with no further command.
+    let start = Instant::now();
+    let r = h.page("LP.expect", json!({"locator":{"css":"div[id=out]"},"assert":"text","expected":"Hello, Grace"}));
+    assert_eq!(r["result"]["actual"], "Hello, Grace", "{r}");
+    assert!(start.elapsed() >= Duration::from_millis(20) && start.elapsed() < Duration::from_secs(2));
+    let r = h.page("LP.expect", json!({"locator":{"text":"hello, grace"},"assert":"visible"}));
+    assert_eq!(r["result"]["actual"], true, "{r}");
+}
+
+#[test]
+fn driver_locators_are_strict_and_report_why_they_wait() {
+    let mut h = Harness::new();
+    load_html(&mut h, DRIVER_FORM);
+    let r = h.page("LP.act", json!({"locator":{"testId":"row"},"action":"click"}));
+    let message = r["error"]["message"].as_str().unwrap_or_default();
+    assert!(message.contains("strict mode violation") && message.contains("2 elements"), "{r}");
+    let r = h.page("LP.query", json!({"locator":{"testId":"row","nth":-1},"read":"text"}));
+    assert_eq!(r["result"]["value"], "two", "{r}");
+    let r = h.page("LP.expect", json!({"locator":{"testId":"row"},"assert":"count","expected":2}));
+    assert_eq!(r["result"]["actual"], 2, "{r}");
+    // Hidden elements have no role.
+    let r = h.page("LP.query", json!({"locator":{"role":"link"},"read":"count"}));
+    assert_eq!(r["result"]["value"], 0, "{r}");
+    let r = h.page("LP.expect", json!({"locator":{"css":".missing"},"assert":"hidden"}));
+    assert_eq!(r["result"]["actual"], false, "{r}");
+    let r = h.page("LP.act", json!({"locator":{"role":"button","name":"Off"},"action":"click","timeout":50}));
+    let message = r["error"]["message"].as_str().unwrap_or_default();
+    assert!(message.contains("timed out after 50 ms") && message.contains("disabled"), "{r}");
+    let r = h.page("LP.act", json!({"locator":{"css":"p","text":"x"},"action":"click"}));
+    assert!(r["error"]["message"].as_str().unwrap_or_default().contains("exactly one"), "{r}");
+}
+
+/// Serves `/form` (a form whose button fetches `/api?name=...`, answered after
+/// 100 ms) until the test ends.
+fn driver_site() -> std::net::SocketAddr {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { return };
+            std::thread::spawn(move || {
+                let mut request = Vec::new();
+                let mut chunk = [0; 1024];
+                while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                    match stream.read(&mut chunk) {
+                        Ok(0) | Err(_) => return,
+                        Ok(n) => request.extend_from_slice(&chunk[..n]),
+                    }
+                }
+                let line = String::from_utf8_lossy(&request).lines().next().unwrap_or_default().to_owned();
+                let path = line.split(' ').nth(1).unwrap_or("/").to_owned();
+                let (ty, body) = if let Some(name) = path.strip_prefix("/api?name=") {
+                    std::thread::sleep(Duration::from_millis(100));
+                    ("application/json", format!(r#"{{"greeting":"Hello, {name}"}}"#))
+                } else {
+                    ("text/html", DRIVER_SITE_FORM.to_owned())
+                };
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: {ty}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = stream.write_all(head.as_bytes());
+                let _ = stream.write_all(body.as_bytes());
+            });
+        }
+    });
+    address
+}
+
+const DRIVER_SITE_FORM: &str = r#"<!doctype html><body>
+<input id="name" aria-label="Name"> <input id="city" placeholder="City">
+<button id="go">Send</button> <div id="out"></div>
+<ul><li>Alpha <button>Edit</button></li><li>Beta <button>Edit</button></li></ul>
+<div id="picked"></div> <div id="path"></div>
+<button id="settings">Settings</button>
+<div id="menu" style="display:none"><button>Close Position</button></div>
+<script>
+  window.addEventListener('popstate', async () => {
+    document.getElementById('path').textContent = location.pathname;
+    const r = await fetch('/api?name=' + location.pathname.slice(1));
+    document.getElementById('out').textContent = (await r.json()).greeting;
+  });
+  document.getElementById('settings').addEventListener('click', () => {
+    document.getElementById('menu').style.display = 'block';
+  });
+  document.getElementById('go').addEventListener('click', async () => {
+    const name = document.getElementById('name').value;
+    const r = await fetch('/api?name=' + encodeURIComponent(name));
+    document.getElementById('out').textContent = (await r.json()).greeting;
+  });
+  for (const li of document.querySelectorAll('li')) {
+    li.querySelector('button').addEventListener('click', () => {
+      document.getElementById('picked').textContent = li.firstChild.textContent.trim();
+    });
+  }
+</script>"#;
+
+/// `LP.run`: navigation, actions, checks and reads in one command. A click's
+/// settle waits for the fetch it started, so the read right after it already
+/// sees the response's effect; chained locators pick a button inside a row.
+#[test]
+fn driver_run_does_a_whole_scenario_in_one_reply() {
+    let address = driver_site();
+    let mut h = Harness::new();
+    let steps = json!([
+        {"goto": {"url": format!("http://{address}/form")}},
+        {"act": {"locator": {"label": "Name"}, "action": "fill", "value": "Ada"}},
+        {"act": {"locator": {"placeholder": "city"}, "action": "fill", "value": "Ljubljana"}},
+        {"act": {"locator": {"role": "button", "name": "Send"}, "action": "click"}},
+        {"read": {"locator": {"css": "#out"}, "read": "text", "as": "greeting"}},
+        {"act": {"locator": {"role": "button", "name": "Edit",
+                             "within": {"css": "li", "filter": {"hasText": "beta"}}}, "action": "click"}},
+        {"check": {"locator": {"css": "#picked"}, "assert": "text", "expected": "Beta"}},
+        {"read": {"locator": {"css": "li", "filter": {"has": {"role": "button"}, "hasNotText": "alpha"}},
+                  "read": "text"}},
+        {"read": {"locator": {"role": "button", "name": "Edit"}, "read": "count"}},
+        {"read": {"locator": {"css": "#city"}, "read": "value"}},
+    ]);
+    let r = h.page("LP.run", json!({ "steps": steps }));
+    let result = &r["result"];
+    assert_eq!(result["reads"]["greeting"], "Hello, Ada", "{r}");
+    let results = result["results"].as_array().unwrap_or_else(|| panic!("{r}"));
+    assert_eq!(results.len(), 10, "{r}");
+    // The click waited for the 100 ms response.
+    assert!(results[3]["settleMs"].as_f64().unwrap() >= 80.0, "{r}");
+    assert!(results[3].get("settled").is_none(), "{r}");
+    assert_eq!(results[6]["actual"], "Beta", "{r}");
+    assert_eq!(results[7], "Beta Edit", "{r}");
+    assert_eq!(results[8], 2, "{r}");
+    assert_eq!(results[9], "Ljubljana", "{r}");
+
+    // The first failing step ends the run, named in the error.
+    let r = h.page(
+        "LP.run",
+        json!({"timeout": 50, "steps": [
+            {"check": {"locator": {"css": "#picked"}, "assert": "text", "expected": "Beta"}},
+            {"act": {"locator": {"role": "button", "name": "Edit"}, "action": "click"}},
+            {"act": {"locator": {"css": "#missing"}, "action": "click"}},
+        ]}),
+    );
+    let message = r["error"]["message"].as_str().unwrap_or_default();
+    assert!(message.starts_with("step 1 (Click") && message.contains("strict mode violation"), "{r}");
+    let r = h.page(
+        "LP.run",
+        json!({"timeout": 50, "steps": [{"act": {"locator": {"css": "#missing"}, "action": "click"}}]}),
+    );
+    let message = r["error"]["message"].as_str().unwrap_or_default();
+    assert!(message.starts_with("step 0 (Click") && message.contains("timed out after 50 ms"), "{r}");
+    let r = h.page("LP.run", json!({"steps": [{"jump": {}}]}));
+    assert!(r["error"]["message"].as_str().unwrap_or_default().starts_with("step 0"), "{r}");
+}
+
+/// `LP.run`'s same-document `route` settles on the fetch the app starts for
+/// it; `press` activates a focused button; `eval` and regex locators read
+/// values; `request` steps check the run's request log, which the reply
+/// carries too.
+#[test]
+fn driver_run_routes_presses_and_checks_requests() {
+    let address = driver_site();
+    let mut h = Harness::new();
+    let steps = json!([
+        {"goto": {"url": format!("http://{address}/form")}},
+        {"route": {"url": "/positions"}},
+        {"read": {"locator": {"css": "#out"}, "read": "text", "as": "out"}},
+        {"check": {"locator": {"css": "#path"}, "assert": "text", "expected": "/positions"}},
+        {"request": {"method": "GET", "path": "/api", "status": 200}},
+        {"act": {"locator": {"role": "button", "name": "Settings", "exact": true}, "action": "press", "value": "Enter"}},
+        {"check": {"locator": {"role": "button", "name": "Close Position"}, "assert": "visible"}},
+        {"eval": {"expression": "location.pathname", "as": "where"}},
+        {"read": {"locator": {"text": {"regex": "^hello, pos.*$", "flags": "i"}}, "read": "text", "as": "re"}},
+        {"request": {"path": "/api", "count": 1}},
+        {"request": {"path": "/nothing", "count": 0}},
+    ]);
+    let r = h.page("LP.run", json!({ "steps": steps }));
+    let result = &r["result"];
+    assert_eq!(result["reads"]["out"], "Hello, positions", "{r}");
+    assert_eq!(result["reads"]["where"], "/positions", "{r}");
+    assert_eq!(result["reads"]["re"], "Hello, positions", "{r}");
+    assert_eq!(result["results"][4]["status"], 200, "{r}");
+    let requests = result["requests"].as_array().unwrap_or_else(|| panic!("{r}"));
+    let urls: Vec<&str> = requests.iter().filter_map(|q| q["url"].as_str()).collect();
+    assert!(
+        urls.iter().any(|u| u.ends_with("/form")) && urls.iter().any(|u| u.ends_with("/api?name=positions")),
+        "{r}"
+    );
+
+    let r = h.page("LP.run", json!({"timeout": 50, "steps": [{"request": {"method": "POST", "path": "/api"}}]}));
+    let message = r["error"]["message"].as_str().unwrap_or_default();
+    assert!(message.starts_with("step 0 (request") && message.contains("no matching request yet"), "{r}");
+    let r = h.page("LP.run", json!({"steps": [{"eval": {"expression": "missing.call()"}}]}));
+    assert!(r["error"]["message"].as_str().unwrap_or_default().contains("threw"), "{r}");
 }

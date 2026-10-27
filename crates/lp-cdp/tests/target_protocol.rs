@@ -559,6 +559,26 @@ fn prepared_pages_are_hidden_until_acquired_and_refilled() {
     assert_eq!(closes, 4, "the acquired page and the three waiting ones");
 }
 
+/// `attach: true` takes a prepared page and attaches a session to it in one
+/// call, without `Target.setAutoAttach`. Closing it leaves no open page.
+#[test]
+fn acquiring_a_prepared_page_can_attach_in_the_same_call() {
+    let profile: lp_cdp::target::PreparedProfile =
+        serde_json::from_value(json!({"url": "http://app.test/base"})).unwrap();
+    let mut b = Browser::with_prepared(Recorder::default(), vec![profile]);
+    let r = send(&mut b, json!({"id":1,"method":"Lightningpanda.acquirePreparedPage","params":{"attach":true}}));
+    let reply = r.last().unwrap();
+    let session = reply["result"]["sessionId"].as_str().unwrap_or_else(|| panic!("{r:?}"));
+    assert!(r.iter().any(|m| m["method"] == "Target.attachedToTarget" && m["params"]["sessionId"] == session), "{r:?}");
+    assert!(b.host().calls.iter().any(|c| c.starts_with("session_attached")), "{:?}", b.host().calls);
+    // The serve loop refills right away once the test closed its page.
+    assert!(b.needs_refill() && !b.no_open_pages());
+    let target_id = reply["result"]["targetId"].clone();
+    send(&mut b, json!({"id":2,"method":"Target.closeTarget","params":{"targetId": target_id}}));
+    assert!(b.no_open_pages());
+    b.shutdown();
+}
+
 /// `refillAfterClose`: no replacement while the acquired page is open;
 /// closing its target lets the pool refill. Loaded pages are settled once.
 #[test]

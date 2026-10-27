@@ -755,6 +755,176 @@ const SCENARIOS = [
     },
   },
 
+  // ---- LP.* native driver through the same Bun.WebView client (view.cdp) ----
+  // One command per action: locators, actionability and waiting run in the browser.
+  {
+    name: 'wv.lp.click',
+    group: 'webview',
+    what: 'LP.act click on "#b" through view.cdp (compare wv.click.selector)',
+    iterations: 100,
+    webview: true,
+    setup: async (env) => ({ ...(await wvSetup('/click')(env)), n: 0 }),
+    run: async (s) => {
+      await s.view.cdp('LP.act', { locator: { css: '#b' }, action: 'click' });
+      s.n++;
+    },
+    check: async (s) => {
+      const clicks = await s.view.evaluate('window.__clicks');
+      assert(clicks === s.n, `clicks ${clicks} != ${s.n}`);
+    },
+    teardown: wvClose,
+  },
+  {
+    name: 'wv.lp.fill',
+    group: 'webview',
+    what: 'LP.act fill of 10 characters into "#t" (compare wv.type, which needs a focused input)',
+    iterations: 100,
+    webview: true,
+    setup: wvSetup('/click'),
+    run: async (s, i) => {
+      await s.view.cdp('LP.act', { locator: { css: '#t' }, action: 'fill', value: `abcdefg${String(i).padStart(3, '0')}` });
+    },
+    check: async (s) => {
+      const len = await s.view.evaluate(`document.getElementById('t').value.length`);
+      assert(len === 10, `value length ${len}`);
+    },
+    teardown: wvClose,
+  },
+  {
+    name: 'wv.lp.flow.e2e',
+    group: 'webview',
+    what: 'wv.flow.e2e on LP.*: open view, navigate form, fill name, click submit, LP.expect the result, close',
+    iterations: 15,
+    webview: true,
+    run: async (s, i, env) => lpFlow(env, i, false, false),
+  },
+  // Bun.WebView's view.cdp() allows one call in flight ("a cdp() is already pending"),
+  // so the pipelined flow runs on the raw CDP client, next to a sequential twin.
+  {
+    name: 'lp.flow.e2e',
+    group: 'webview',
+    what: 'wv.lp.flow.e2e on the raw CDP client: new page, navigate form, LP.act fill + click, LP.expect, close',
+    iterations: 15,
+    run: async (s, i, env) => cdpLpFlow(env, i, false),
+  },
+  {
+    name: 'lp.flow.pipelined',
+    group: 'webview',
+    what: 'lp.flow.e2e with fill, click and expect sent at once (one wait for all three)',
+    iterations: 15,
+    run: async (s, i, env) => cdpLpFlow(env, i, true),
+  },
+  {
+    name: 'lp.run.steps',
+    group: 'webview',
+    what: 'lp.flow.e2e with fill, click and expect as one LP.run (click settles on its fetch)',
+    iterations: 15,
+    run: async (s, i, env) => cdpRunFlow(env, i, false),
+  },
+  {
+    name: 'lp.run.flow',
+    group: 'webview',
+    what: 'lp.run.steps with the navigation as a goto step too: new page, one LP.run, close',
+    iterations: 15,
+    run: async (s, i, env) => cdpRunFlow(env, i, true),
+  },
+  {
+    name: 'wv.lp.run.flow',
+    group: 'webview',
+    what: 'wv.lp.flow.e2e with fill, click and expect as one LP.run: open view, navigate form, LP.run, close',
+    iterations: 15,
+    webview: true,
+    run: async (s, i, env) => {
+      const t0 = now();
+      const phases = {};
+      const view = wvOpen(env);
+      try {
+        await view.navigate(`${env.site}/form`);
+        phases.navigate = now() - t0;
+        await view.cdp('LP.run', { steps: formSteps(i) });
+        phases.result = now() - t0;
+      } finally {
+        await view.close();
+      }
+      phases.close = now() - t0;
+      return phases;
+    },
+  },
+  {
+    name: 'wv.lp.flow.role',
+    group: 'webview',
+    what: 'wv.lp.flow.e2e with label / role / text locators instead of CSS ids',
+    iterations: 15,
+    webview: true,
+    run: async (s, i, env) => lpFlow(env, i, false, true),
+  },
+  ...[
+    ['css', { css: '.item[data-k="3"] span' }, 286],
+    ['testId', { testId: '3', testIdAttribute: 'data-k' }, 286],
+    ['text', { text: 'row 1999', exact: true }, 1],
+    ['role', { role: 'link', name: 'link' }, 2000],
+  ].map(([kind, locator, want]) => ({
+    name: `wv.lp.locate.${kind}`,
+    group: 'webview',
+    what: `LP.query count of a ${kind} locator over a 2000-row document (compare wv.evaluate.query2k)`,
+    iterations: 100,
+    webview: true,
+    setup: wvSetup('/dom?n=2000'),
+    run: async (s) => {
+      const r = await s.view.cdp('LP.query', { locator, read: 'count' });
+      assert(r.value === want, `${kind} count ${r.value} != ${want}`);
+    },
+    teardown: wvClose,
+  })),
+
+  // ---- TOS positions-close on the lightningpanda-test client (Bun only: the client is TypeScript) ----
+  {
+    name: 'tos.close.steps',
+    group: 'tos',
+    what: 'TOS positions-close, one LP.run per step: seed, new signed-in page, navigate to the overview, 8 steps, close',
+    iterations: 15,
+    setup: tosSetup(false),
+    run: async (s, i, env) => tosClose(s, env, 'steps'),
+    teardown: tosTeardown,
+  },
+  {
+    name: 'tos.close.run.fresh',
+    group: 'tos',
+    what: 'tos.close.steps as one LP.run (navigation included), still on a page booted for the test',
+    iterations: 15,
+    setup: tosSetup(false),
+    run: async (s, i, env) => tosClose(s, env, 'run'),
+    teardown: tosTeardown,
+  },
+  {
+    name: 'tos.close.run',
+    group: 'tos',
+    what: 'tos.close.run.fresh on a pre-booted signed-in page: lp.page({ as, route }) + one LP.run (untimed: wait for a booted page)',
+    iterations: 15,
+    setup: tosSetup(true),
+    before: (s) => s.lp.warm('employee'),
+    run: async (s, i, env) => tosClose(s, env, 'run'),
+    teardown: tosTeardown,
+  },
+  {
+    name: 'tos.close.run.busy',
+    group: 'tos',
+    what: 'tos.close.run back to back on one connection: its pool refills when the test closes its page, next to the next test',
+    iterations: 15,
+    setup: tosSetup(true),
+    run: async (s, i, env) => tosClose(s, env, 'run'),
+    teardown: tosTeardown,
+  },
+  {
+    name: 'tos.close.run.conn4',
+    group: 'tos',
+    what: 'tos.close.run.busy over 4 connections (browser threads): each refills while the others run tests',
+    iterations: 15,
+    setup: tosSetup(true, 4),
+    run: async (s, i, env) => tosClose(s, env, 'run'),
+    teardown: tosTeardown,
+  },
+
   // ---- Playwright (opt-in with --playwright; playwright-core pinned in bench/package.json) ----
   {
     name: 'pw.connectOverCDP',
@@ -778,6 +948,48 @@ const SCENARIOS = [
       const ctx = await s.browser.newContext();
       await ctx.newPage();
       await ctx.close();
+    },
+    teardown: pwClose,
+  },
+  {
+    name: 'pw.tos.close',
+    group: 'tos',
+    what: "TOS positions-close as TOS writes it: Playwright context with the token, goto, locators, waitForResponse",
+    iterations: 15,
+    playwright: true,
+    setup: pwConnect,
+    run: async (s, i, env) => {
+      const t0 = now();
+      const phases = {};
+      const p = await tosSeed(env);
+      phases.seed = now() - t0;
+      const ctx = await s.browser.newContext({ viewport: { width: 1440, height: 900 } });
+      await ctx.addInitScript(() => localStorage.setItem('auth-token', 'e2e-token'));
+      const page = await ctx.newPage();
+      phases.page = now() - t0;
+      const isGet = (r) => r.request().method() === 'GET' && r.url().endsWith(`/tos-api/positions/${p.id}`);
+      try {
+        const details = page.waitForResponse(isGet);
+        await page.goto(`${env.site}${tosOverview(p.id)}`);
+        await details;
+        await page.getByText(p.number).waitFor();
+        phases.open = now() - t0;
+        await page.getByRole('button', { name: 'Settings', exact: true }).press('Enter');
+        await page.getByRole('button', { name: 'Close Position' }).filter({ visible: true }).first().click();
+        const dialog = page.getByRole('dialog').filter({ hasText: 'This position will be closed' }).last();
+        await dialog.waitFor();
+        const closed = page.waitForResponse((r) => r.request().method() === 'POST' && r.url().endsWith('/close') && r.status() === 200);
+        const refresh = page.waitForResponse(isGet);
+        await dialog.getByRole('button', { name: 'Close Position', exact: true }).click();
+        await Promise.all([closed, refresh]);
+        await page.getByText(/^Position Closed · .* · Manual · Closed by:/).filter({ visible: true }).waitFor();
+        await page.getByRole('button', { name: 'Reopen Position' }).waitFor();
+        phases.run = now() - t0;
+      } finally {
+        await ctx.close();
+      }
+      phases.close = now() - t0;
+      return phases;
     },
     teardown: pwClose,
   },
@@ -919,6 +1131,178 @@ function wvSetup(path) {
 async function wvClose(s) {
   await s.view?.close();
 }
+// The form flow on LP.*: fill, click, then one LP.expect that the browser answers
+// when the fetch response has updated the DOM (no client polling).
+async function lpFlow(env, i, pipelined, semantic) {
+  const t0 = now();
+  const phases = {};
+  const lap = (k) => {
+    phases[k] = now() - t0;
+  };
+  const name = semantic ? { label: 'Name' } : { css: '#name' };
+  const submit = semantic ? { role: 'button', name: 'Send' } : { css: '#submit' };
+  const out = semantic ? { text: `Hello, w${i}`, exact: true } : { css: '#out' };
+  const view = wvOpen(env);
+  try {
+    await view.navigate(`${env.site}/form`);
+    lap('navigate');
+    const fill = view.cdp('LP.act', { locator: name, action: 'fill', value: `w${i}` });
+    if (!pipelined) await fill;
+    const click = view.cdp('LP.act', { locator: submit, action: 'click' });
+    if (!pipelined) await click;
+    lap('input');
+    const expect = semantic
+      ? view.cdp('LP.expect', { locator: out, assert: 'visible' })
+      : view.cdp('LP.expect', { locator: out, assert: 'text', expected: `Hello, w${i}` });
+    await Promise.all([fill, click, expect]);
+    lap('result');
+  } finally {
+    await view.close();
+  }
+  lap('close');
+  return phases;
+}
+// lpFlow on the raw CDP client, where commands can be in flight together.
+async function cdpLpFlow(env, i, pipelined) {
+  const t0 = now();
+  const phases = {};
+  const lap = (k) => {
+    phases[k] = now() - t0;
+  };
+  const c = env.cdp;
+  const page = await newPage(c);
+  try {
+    await navigate(c, page.sessionId, `${env.site}/form`);
+    lap('navigate');
+    const send = (method, params) => c.send(method, params, page.sessionId);
+    const fill = send('LP.act', { locator: { css: '#name' }, action: 'fill', value: `w${i}` });
+    if (!pipelined) await fill;
+    const click = send('LP.act', { locator: { css: '#submit' }, action: 'click' });
+    if (!pipelined) await click;
+    lap('input');
+    const expect = send('LP.expect', { locator: { css: '#out' }, assert: 'text', expected: `Hello, w${i}` });
+    await Promise.all([fill, click, expect]);
+    lap('result');
+  } finally {
+    await closePage(c, page);
+  }
+  lap('close');
+  return phases;
+}
+// ---------- TOS positions-close (lightningpanda-test) ----------
+const TOS_AUTH = { authorization: 'Bearer e2e-token' };
+const tosOverview = (id) => `/tos/platform/logistics/positions/${id}/overview`;
+async function tosSeed(env) {
+  const r = await fetch(`${env.site}/tos-api/positions`, { method: 'POST', headers: TOS_AUTH });
+  assert(r.status === 201, `seed status ${r.status}`);
+  return r.json();
+}
+// The steps of TOS's 'closes an open Position from the Position overview' (see
+// packages/lightningpanda-test/examples/positions-close.test.ts).
+function tosCloseSteps(t, p) {
+  const { check, button, dialog, text } = t;
+  return [
+    check(text(p.number)).visible(),
+    button('Settings', { exact: true }).press('Enter'),
+    button('Close Position').visible().first().click(),
+    dialog().hasText('This position will be closed').last().button('Close Position', { exact: true }).click(),
+    check.request('POST', `/tos-api/positions/${p.id}/close`).status(200),
+    check.request('GET', `/tos-api/positions/${p.id}`).status(200),
+    check(text(/^Position Closed · .* · Manual · Closed by:/).visible()).count(1),
+    check(button('Reopen Position')).count(1),
+  ];
+}
+function tosSetup(prepared, connections = 1) {
+  return async (env) => {
+    if (!globalThis.Bun) throw new Error('needs bun (the lightningpanda-test client is TypeScript)');
+    const t = await import('../../packages/lightningpanda-test/src/index.ts');
+    const lp = await t.Lightningpanda.connect(env.wsUrl, { connections });
+    await lp.profile('employee', {
+      url: `${env.site}/tos/platform`,
+      localStorage: { 'auth-token': 'e2e-token' },
+      viewport: { width: 1440, height: 900 },
+      pool: 2,
+      prepare: prepared,
+    });
+    if (prepared) await sleep(300); // let the first pages boot
+    return { t, lp, prepared };
+  };
+}
+async function tosTeardown(s) {
+  if (s.lp) console.error(`      lightningpanda-test pages: ${JSON.stringify(s.lp.stats)}`);
+  s.lp?.close();
+}
+async function tosClose(s, env, mode) {
+  const t0 = now();
+  const phases = {};
+  const lap = (k) => {
+    phases[k] = now() - t0;
+  };
+  const p = await tosSeed(env);
+  lap('seed');
+  // A pre-booted page changes route in place; a fresh one navigates to the overview.
+  const page = await s.lp.page(
+    s.prepared ? { as: 'employee', route: tosOverview(p.id) } : { as: 'employee', url: `${env.site}${tosOverview(p.id)}` },
+  );
+  lap('page');
+  const steps = tosCloseSteps(s.t, p);
+  try {
+    if (mode === 'steps') {
+      await page.run([]); // the navigation
+      lap('open');
+      // A request check sees only its run's log, so it goes with the action that sent the request.
+      const runs = [];
+      for (const step of steps) {
+        if (step.toStep().request && runs.length) runs.at(-1).push(step);
+        else runs.push([step]);
+      }
+      for (const run of runs) await page.run(run);
+    } else {
+      const r = await page.run(steps);
+      assert(r.requests.some((q) => q.method === 'POST' && q.url.endsWith('/close')), 'POST close in the log');
+    }
+    lap('run');
+  } finally {
+    page.close();
+  }
+  lap('close');
+  return phases;
+}
+
+// The form flow as LP.run steps.
+function formSteps(i) {
+  return [
+    { act: { locator: { css: '#name' }, action: 'fill', value: `w${i}` } },
+    { act: { locator: { css: '#submit' }, action: 'click' } },
+    { check: { locator: { css: '#out' }, assert: 'text', expected: `Hello, w${i}` } },
+  ];
+}
+// The form flow as one LP.run on the raw CDP client, with or without the navigation in it.
+async function cdpRunFlow(env, i, withGoto) {
+  const t0 = now();
+  const phases = {};
+  const lap = (k) => {
+    phases[k] = now() - t0;
+  };
+  const c = env.cdp;
+  const page = await newPage(c);
+  try {
+    lap('page');
+    let steps = formSteps(i);
+    if (withGoto) steps = [{ goto: { url: `${env.site}/form` } }, ...steps];
+    else {
+      await navigate(c, page.sessionId, `${env.site}/form`);
+      lap('navigate');
+    }
+    const r = await c.send('LP.run', { steps }, page.sessionId);
+    assert(r.results.length === steps.length, `LP.run results ${JSON.stringify(r)}`);
+    lap('result');
+  } finally {
+    await closePage(c, page);
+  }
+  lap('close');
+  return phases;
+}
 async function wvPollText(view, id, want) {
   let txt = '';
   for (let k = 0; k < 200; k++) {
@@ -1039,13 +1423,18 @@ async function runScenario(sc, bin, site, playwright) {
       (async () => {
         if (!sc.playwright && !sc.webview) env.cdp = cdp = await Cdp.open(b.wsUrl);
         if (sc.setup) state = await sc.setup(env);
-        for (let i = 0; i < warmup; i++) await sc.run(state, -1 - i, env);
+        for (let i = 0; i < warmup; i++) {
+          await sc.before?.(state, -1 - i, env);
+          await sc.run(state, -1 - i, env);
+        }
         // Stage timers are process-wide, so one control connection sees every client's commands.
         const control = PERF_TRACE ? (cdp ?? (perfCdp = await Cdp.open(b.wsUrl))) : null;
         if (control) await control.send('LP.perfReset');
         const before = await cpuSnapshot(b.cp.pid);
         const t0 = now();
         for (let i = 0; i < iterations; i++) {
+          // Untimed per-sample preparation (e.g. waiting for a pre-booted page).
+          await sc.before?.(state, i, env);
           const t = now();
           const phases = await sc.run(state, i, env);
           result.samples.push(now() - t);
