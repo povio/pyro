@@ -39,6 +39,14 @@ const MAX_PENDING_CONTROL: usize = 32;
 /// unless the loop woke for it (an idle loop reads as soon as data arrives).
 const BUSY_READ_INTERVAL: Duration = Duration::from_micros(100);
 
+/// Frames and bytes handed to one `writev(2)` (well under IOV_MAX).
+const MAX_BATCH: usize = 64;
+const MAX_BATCH_BYTES: usize = 64 * 1024;
+
+fn is_close(p: &Pending) -> bool {
+    matches!(p, Pending::Control(c) if c.first() == Some(&0x88))
+}
+
 enum Pending {
     Frame(FrameBytes),
     Control(Vec<u8>),
@@ -71,6 +79,8 @@ pub(crate) struct Conn {
     read_ahead: usize,
     out: OutboundRx,
     control: VecDeque<Vec<u8>>,
+    /// Frames taken from the channel for a batch but not written yet.
+    queued: VecDeque<Pending>,
     /// Messages decoded while a script ran, handed to the session next.
     held: VecDeque<Inbound>,
     current: Option<(Pending, usize)>,
@@ -102,6 +112,7 @@ impl Conn {
             read_ahead,
             out,
             control: VecDeque::new(),
+            queued: VecDeque::new(),
             held: VecDeque::new(),
             current: None,
             state: State::Open,
@@ -203,21 +214,13 @@ impl Conn {
         let deadline = Instant::now() + self.config.close_timeout;
         if self.state == State::Open {
             // Frames the teardown produced go out before the close frame.
-            while self.state == State::Open {
-                if self.current.is_none() {
-                    match self.out.try_recv() {
-                        Some(Outbound::Frame(frame)) => self.current = Some((Pending::Frame(frame), 0)),
-                        Some(Outbound::Exceeded) => {
-                            self.start_close(1008, "outbound buffer limit exceeded");
-                            break;
-                        }
-                        None => {
-                            self.start_close(1000, "");
-                            break;
-                        }
-                    }
+            loop {
+                if !self.write_blocking(deadline) || self.state != State::Open {
+                    break;
                 }
-                if !self.write_blocking(deadline) {
+                if self.current.is_none() && self.queued.is_empty() && self.control.is_empty() {
+                    // write() stopped with nothing ready: the channel is empty.
+                    self.start_close(1000, "");
                     break;
                 }
             }
@@ -230,7 +233,7 @@ impl Conn {
         let _ = self.sock.shutdown(Shutdown::Both);
     }
 
-    /// Writes until `current` and the control queue are out or the deadline
+    /// Writes until everything ready is out or the deadline
     /// passes (blocking). Returns false when no more progress is possible.
     fn write_blocking(&mut self, deadline: Instant) -> bool {
         let remaining = deadline.saturating_duration_since(Instant::now());
@@ -330,70 +333,139 @@ impl Conn {
         }
     }
 
+    /// The next whole item to write: control frames first (at a frame
+    /// boundary), then frames already taken from the channel, then the
+    /// channel. Nothing after a close frame; `None` when nothing is ready.
+    fn next_item(&mut self) -> Option<Pending> {
+        loop {
+            if let Some(c) = self.control.pop_front() {
+                return Some(Pending::Control(c));
+            }
+            if self.state != State::Open {
+                // Closing: only the close frame (a control frame) is left to send.
+                return None;
+            }
+            if let Some(q) = self.queued.pop_front() {
+                return Some(q);
+            }
+            match self.out.try_recv() {
+                Some(Outbound::Frame(frame)) => {
+                    #[cfg(feature = "perf-trace")]
+                    crate::perf::record_since("io.outbound_queue", frame.queued_at);
+                    return Some(Pending::Frame(frame));
+                }
+                Some(Outbound::Exceeded) => self.start_close(1008, "outbound buffer limit exceeded"),
+                None => return None,
+            }
+        }
+    }
+
     /// Writes queued bytes until the socket would block: the frame in
-    /// progress first, then control frames, then data frames in order.
+    /// progress first, then control frames, then data frames in order,
+    /// several frames per `writev(2)` (at most [`MAX_BATCH`] or
+    /// [`MAX_BATCH_BYTES`]).
     fn write(&mut self) {
         loop {
             if self.state == State::Gone {
                 self.current = None;
+                self.queued.clear();
+                return;
+            }
+            if self.close_written {
                 return;
             }
             if self.current.is_none() {
-                if let Some(c) = self.control.pop_front() {
-                    self.current = Some((Pending::Control(c), 0));
-                } else if self.state == State::Closing {
-                    if self.close_written {
-                        return;
-                    }
-                    // The close frame is out: nothing is written after it.
-                    self.close_written = true;
-                    let _ = self.sock.shutdown(Shutdown::Write);
-                    return;
-                } else {
-                    match self.out.try_recv() {
-                        Some(Outbound::Frame(frame)) => {
-                            #[cfg(feature = "perf-trace")]
-                            crate::perf::record_since("io.outbound_queue", frame.queued_at);
-                            self.current = Some((Pending::Frame(frame), 0));
-                        }
-                        Some(Outbound::Exceeded) => {
-                            self.start_close(1008, "outbound buffer limit exceeded");
-                            continue;
-                        }
-                        None => return,
-                    }
+                match self.next_item() {
+                    Some(item) => self.current = Some((item, 0)),
+                    None => return,
                 }
             }
-            let (pending, offset) = self.current.as_mut().expect("set above");
-            let is_close = matches!(pending, Pending::Control(c) if c.first() == Some(&0x88));
-            let bytes = &pending.as_ref()[*offset..];
-            let write = crate::perf::now();
-            match (&self.sock).write(bytes) {
-                Ok(n) => {
+            // Whole items after the frame in progress, up to the batch bounds
+            // and never past a close frame.
+            let mut batch: Vec<Pending> = Vec::new();
+            let (first, offset) = self.current.as_ref().expect("set above");
+            let mut bytes = first.as_ref().len() - offset;
+            let mut closes = is_close(first);
+            while !closes && batch.len() + 1 < MAX_BATCH && bytes < MAX_BATCH_BYTES {
+                let Some(item) = self.next_item() else { break };
+                bytes += item.as_ref().len();
+                closes = is_close(&item);
+                batch.push(item);
+            }
+            let written = {
+                let (first, offset) = self.current.as_ref().expect("set above");
+                let mut slices = Vec::with_capacity(batch.len() + 1);
+                slices.push(std::io::IoSlice::new(&first.as_ref()[*offset..]));
+                slices.extend(batch.iter().map(|p| std::io::IoSlice::new(p.as_ref())));
+                let write = crate::perf::now();
+                let r = (&self.sock).write_vectored(&slices);
+                if r.is_ok() {
                     crate::perf::record_since("io.ws_write", write);
+                }
+                r
+            };
+            match written {
+                Ok(mut n) => {
                     self.write_blocked_since = None;
-                    *offset += n;
-                    if *offset == pending.as_ref().len() {
-                        self.current = None;
-                        if is_close {
-                            self.state = State::Closing;
-                            self.close_written = true;
-                            let _ = self.sock.shutdown(Shutdown::Write);
-                            return;
+                    // Advance through the frame in progress, then the batch.
+                    let mut items = std::iter::once(self.current.take().expect("set above")).chain(
+                        batch.into_iter().map(|p| (p, 0)),
+                    );
+                    let mut leftover: Vec<(Pending, usize)> = Vec::new();
+                    for (item, offset) in items.by_ref() {
+                        let len = item.as_ref().len() - offset;
+                        if n >= len {
+                            n -= len;
+                            if is_close(&item) {
+                                // The close frame is out: nothing is written after it.
+                                self.close_written = true;
+                                self.state = State::Closing;
+                                let _ = self.sock.shutdown(Shutdown::Write);
+                                return;
+                            }
+                        } else {
+                            leftover.push((item, offset + n));
+                            break;
                         }
+                    }
+                    leftover.extend(items);
+                    let mut leftover = leftover.into_iter();
+                    if let Some((item, offset)) = leftover.next() {
+                        self.current = Some((item, offset));
+                        self.requeue(leftover.map(|(p, _)| p));
                     }
                 }
                 Err(e) if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::TimedOut => {
+                    self.requeue(batch);
                     self.write_blocked_since.get_or_insert_with(Instant::now);
                     return;
                 }
-                Err(e) if e.kind() == ErrorKind::Interrupted => {}
+                Err(e) if e.kind() == ErrorKind::Interrupted => self.requeue(batch),
                 Err(_) => {
                     self.state = State::Gone;
                     self.current = None;
+                    self.queued.clear();
                     return;
                 }
             }
+        }
+    }
+
+    /// Puts unwritten whole items back, ahead of anything not yet taken:
+    /// control frames return to the control queue, data frames to `queued`.
+    fn requeue(&mut self, items: impl IntoIterator<Item = Pending>) {
+        let (mut controls, mut data) = (Vec::new(), Vec::new());
+        for item in items {
+            match item {
+                Pending::Control(c) => controls.push(c),
+                frame => data.push(frame),
+            }
+        }
+        for c in controls.into_iter().rev() {
+            self.control.push_front(c);
+        }
+        for d in data.into_iter().rev() {
+            self.queued.push_front(d);
         }
     }
 

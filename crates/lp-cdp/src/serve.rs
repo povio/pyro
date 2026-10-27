@@ -250,6 +250,9 @@ impl SessionFactory for ThreadPerConnection {
     }
 }
 
+/// Replies to pipelined commands are written at least every this many commands.
+const FLUSH_EVERY: usize = 16;
+
 /// Serves one connection on this (browser) thread until it ends: the
 /// connection's socket is read and written here (see [`crate::conn`]).
 fn run_browser_thread(
@@ -308,6 +311,7 @@ fn run_browser_thread(
         if closed(&inbox) || (matches!(outcome, RunOutcome::Idle | RunOutcome::Stopped) && inbox.is_empty()) {
             break; // queued commands of a closed connection are not run
         }
+        let mut unflushed = 0;
         while let Some(message) = inbox.pop_front() {
             match message {
                 Inbound::Text(text) => {
@@ -319,7 +323,13 @@ fn run_browser_thread(
                     browser.host_mut().flush();
                     drop(flush);
                     browser.adopt_popups(&mut sink);
-                    conn.borrow_mut().flush(&mut inbox);
+                    // With more commands already decoded (a pipelining client),
+                    // their replies go out together in one write.
+                    unflushed += 1;
+                    if inbox.is_empty() || unflushed >= FLUSH_EVERY {
+                        unflushed = 0;
+                        conn.borrow_mut().flush(&mut inbox);
+                    }
                     if closed(&inbox) {
                         break 'serve;
                     }
