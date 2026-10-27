@@ -1231,7 +1231,13 @@ async function tosClose(s, env, mode) {
     if (mode === 'steps') {
       await page.run([]); // the navigation
       lap('open');
-      for (const step of steps) await page.run([step]);
+      // A request check sees only its run's log, so it goes with the action that sent the request.
+      const runs = [];
+      for (const step of steps) {
+        if (step.toStep().request && runs.length) runs.at(-1).push(step);
+        else runs.push([step]);
+      }
+      for (const run of runs) await page.run(run);
     } else {
       const r = await page.run(steps);
       assert(r.requests.some((q) => q.method === 'POST' && q.url.endsWith('/close')), 'POST close in the log');
