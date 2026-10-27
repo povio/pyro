@@ -3830,7 +3830,11 @@ fn host_create_close_all_drop_repeats_on_one_thread() {
     for round in 0..10 {
         let mut h = Harness::new();
         let session = h.session.clone();
-        let r = h.call(Some(&session), "Runtime.evaluate", json!({"expression": format!("{round} + 1"), "returnByValue": true}));
+        let r = h.call(
+            Some(&session),
+            "Runtime.evaluate",
+            json!({"expression": format!("{round} + 1"), "returnByValue": true}),
+        );
         assert_eq!(r["result"]["result"]["value"], json!(round + 1), "{r}");
         h.browser.host_mut().run_until_work(Some(Instant::now() + Duration::from_millis(20)), || false);
         h.browser.host_mut().close_all();
