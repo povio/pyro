@@ -1135,6 +1135,13 @@ struct RuleSet {
     /// sibling combinators, validity), with its bucket: style sharing
     /// compares their matches on both elements (Stylo's revalidation).
     revalidate: Vec<(Selectors, BucketKey)>,
+    /// `revalidate` indices by bucket key, so `shares_cascade` visits only
+    /// the selectors that can apply to an element (Tailwind sheets carry
+    /// hundreds of `:first-child`/`:last-child`/sibling selectors).
+    revalidate_by_class: FxHashMap<String, Vec<u32>>,
+    revalidate_by_tag: FxHashMap<String, Vec<u32>>,
+    revalidate_by_attr: FxHashMap<String, Vec<u32>>,
+    revalidate_other: Vec<u32>,
     /// Keys of compounds testing `:valid`/`:invalid`. A form, fieldset or
     /// select is valid only if its controls are, so changes below one that
     /// matches a key may restyle it, its subtree and later siblings.
@@ -2020,6 +2027,18 @@ impl<'v> Builder<'v> {
         rs.has_relative = self.has_relative;
         rs.has_anchors = std::mem::take(&mut self.has_anchors);
         rs.revalidate = std::mem::take(&mut self.revalidate);
+        for (i, (_, bucket)) in rs.revalidate.iter().enumerate() {
+            let i = i as u32;
+            match bucket {
+                BucketKey::Id(_) => {}
+                BucketKey::Class(k) => rs.revalidate_by_class.entry(k.clone()).or_default().push(i),
+                BucketKey::Tag(t) => rs.revalidate_by_tag.entry(t.clone()).or_default().push(i),
+                BucketKey::Attr(n) | BucketKey::AttrValue(n, _) => {
+                    rs.revalidate_by_attr.entry(n.clone()).or_default().push(i)
+                }
+                BucketKey::Other => rs.revalidate_other.push(i),
+            }
+        }
         rs.validity_keys = std::mem::take(&mut self.validity_keys);
         rs.has_validity = self.has_validity;
         rs.sibling_keys = std::mem::take(&mut self.sibling_keys);
@@ -2182,9 +2201,10 @@ pub fn with_pass_memo<R>(f: impl FnOnce() -> R) -> R {
 /// `StyleEngine::shared_flow_style`. `c` is `a`'s previous element sibling
 /// or a cousin at the same depth whose ancestors up to the common one share
 /// their cascade pairwise (recorded when they shared).
-fn shares_cascade(dom: &Dom, rules: &RuleSet, a: u32, c: u32) -> bool {
+fn shares_cascade(dom: &Dom, rules: &RuleSet, a: u32, c: u32, reval: &RefCell<FxHashMap<(u32, u32), bool>>) -> bool {
     let (Some(ea), Some(ec)) = (dom.n(a).element(), dom.n(c).element()) else { return false };
-    if a == c || ea.name != ec.name || !ea.is_html() || !shareable_tag(&ea.name.local) {
+    let svg = ea.name.ns == ns!(svg);
+    if a == c || ea.name != ec.name || !(ea.is_html() || svg) || (!svg && !shareable_tag(&ea.name.local)) {
         return false;
     }
     let ignorable = |attr: &crate::node::Attr| {
@@ -2218,21 +2238,41 @@ fn shares_cascade(dom: &Dom, rules: &RuleSet, a: u32, c: u32) -> bool {
     // classes and tag on both) must match both or neither. Compounds above
     // them test shared ancestors or pairs that shared.
     let classes: Vec<&str> = ea.attr("class").map(|v| v.split_ascii_whitespace().collect()).unwrap_or_default();
-    for (selector, bucket) in &rules.revalidate {
-        let applies = match bucket {
-            BucketKey::Id(_) => false,
-            BucketKey::Class(k) => classes.contains(&k.as_str()),
-            BucketKey::Tag(t) => (*ea.name.local).eq_ignore_ascii_case(t),
-            BucketKey::Attr(n) => ea.attrs.iter().any(|a| (*a.name.local).eq_ignore_ascii_case(n)),
-            BucketKey::AttrValue(n, v) => {
-                ea.attrs.iter().any(|a| (*a.name.local).eq_ignore_ascii_case(n) && &*a.value == v.as_str())
+    let matches = |x: u32, i: usize, selector: &Selectors, default: bool| -> bool {
+        let key = (x, i as u32);
+        if let Some(&m) = reval.borrow().get(&key) {
+            return m;
+        }
+        let m = dom.matches(dom.id_of(x), selector).unwrap_or(default);
+        reval.borrow_mut().insert(key, m);
+        m
+    };
+    // Only the selectors whose bucket key the element carries can apply.
+    let mut applicable: Vec<u32> = rules.revalidate_other.clone();
+    for k in &classes {
+        if let Some(l) = rules.revalidate_by_class.get(*k) {
+            applicable.extend_from_slice(l);
+        }
+    }
+    if let Some(l) = rules.revalidate_by_tag.get(&*ea.name.local.to_ascii_lowercase()) {
+        applicable.extend_from_slice(l);
+    }
+    for at in &ea.attrs {
+        if let Some(l) = rules.revalidate_by_attr.get(&*at.name.local.to_ascii_lowercase()) {
+            for &i in l {
+                let applies = match &rules.revalidate[i as usize].1 {
+                    BucketKey::AttrValue(_, v) => &*at.value == v.as_str(),
+                    _ => true,
+                };
+                if applies {
+                    applicable.push(i);
+                }
             }
-            BucketKey::Other => true,
-        };
-        if applies
-            && dom.matches(dom.id_of(a), selector).unwrap_or(true)
-                != dom.matches(dom.id_of(c), selector).unwrap_or(false)
-        {
+        }
+    }
+    for i in applicable {
+        let selector = &rules.revalidate[i as usize].0;
+        if matches(a, i as usize, selector, true) != matches(c, i as usize, selector, false) {
             return false;
         }
     }
@@ -3831,10 +3871,21 @@ struct Cache {
     /// Typed cascade result per element, produced by the same pass as
     /// `declared` (`declared_map_in`); `computed_idx` reads it. Dropped
     /// with `memo`.
-    cascaded: FxHashMap<NodeId, (Cascaded, [u64; NF])>,
+    cascaded: FxHashMap<NodeId, Rc<(Cascaded, [u64; NF])>>,
     /// Shared entry for elements no rule or inline declaration applies to
     /// (most elements of a page under a class-keyed sheet).
     empty_entry: Option<Rc<DeclaredEntry>>,
+    /// Per element: a stamp for its `declared` entry and, when it was shared
+    /// rather than matched, the source element and the source's stamp then
+    /// (so a child can share with the source's same-position child).
+    /// Dropped with `declared`.
+    declared_meta: FxHashMap<NodeId, (u64, Option<(NodeId, u64)>)>,
+    declared_seq: u64,
+    /// `shares_cascade` revalidation results by (element index, selector
+    /// index in `rules.revalidate`): a candidate is tested by every later
+    /// sibling, and Tailwind's `:last-child`/sibling rules apply to every
+    /// element. Cleared with `declared`.
+    reval: RefCell<FxHashMap<(u32, u32), bool>>,
     extent: Option<(f64, f64)>,
     /// The focused and hovered elements of `stamp` (indices there), to tell
     /// a freed one from a live one.
@@ -4164,10 +4215,14 @@ impl StyleEngine {
                 if let Some(restyled) = cache.restyled.as_mut() {
                     restyled.extend_from_slice(&stale);
                 }
+                // The revalidation memo is keyed by element index: one clear
+                // beats pruning per stale element (quadratic on a large set).
+                cache.reval.borrow_mut().clear();
                 for n in stale {
                     cache.memo.remove(&n);
                     cache.cascaded.remove(&n);
                     cache.declared.remove(&n);
+                    cache.declared_meta.remove(&n);
                     cache.generated.remove(&(n, false));
                     cache.generated.remove(&(n, true));
                     cache.flow.remove(&n);
@@ -4177,6 +4232,8 @@ impl StyleEngine {
                 cache.memo.clear();
                 cache.cascaded.clear();
                 cache.declared.clear();
+                cache.declared_meta.clear();
+                cache.reval.borrow_mut().clear();
                 cache.generated.clear();
                 cache.flow.clear();
                 cache.restyled = None;
@@ -4280,7 +4337,7 @@ impl StyleEngine {
         }
         for c in candidates.into_iter().flatten() {
             let Some(entry) = cache.flow.get(&dom.id_of(c)) else { continue };
-            if shares_cascade(dom, &rules, idx, c) {
+            if shares_cascade(dom, &rules, idx, c, &cache.reval) {
                 return Some((entry.style.clone(), (dom.id_of(c), entry.stamp)));
             }
         }
@@ -4348,7 +4405,7 @@ impl StyleEngine {
         if !cache.cascaded.contains_key(&id) {
             Self::declared_map_in(dom, rules, id, cache);
         }
-        let (mut c, pri) = cache.cascaded.get(&id).cloned().unwrap_or_default();
+        let (mut c, pri) = cache.cascaded.get(&id).map(|r| (r.0.clone(), r.1)).unwrap_or_default();
         if let Some(raw) = &c.width_variable {
             c.width = resolve_dimension_variable(dom, rules, id, raw);
         }
@@ -4861,6 +4918,15 @@ impl StyleEngine {
         if let Some(map) = cache.declared.get(&el) {
             return map.clone();
         }
+        if let Some((map, source)) = Self::shared_declared(dom, rules, el, cache) {
+            if let Some(cascaded) = cache.cascaded.get(&source.0).cloned() {
+                cache.cascaded.insert(el, cascaded);
+            }
+            cache.declared.insert(el, map.clone());
+            cache.declared_seq += 1;
+            cache.declared_meta.insert(el, (cache.declared_seq, Some(source)));
+            return map;
+        }
         let mut c = Cascaded::default();
         let mut pri = [0u64; NF];
         let mut winners: FxHashMap<String, (String, u64)> = FxHashMap::default();
@@ -5020,8 +5086,73 @@ impl StyleEngine {
             Rc::new(DeclaredEntry { map: winners.into_iter().map(|(k, (v, _))| (k, v)).collect(), flow })
         };
         cache.declared.insert(el, map.clone());
-        cache.cascaded.insert(el, (c, pri));
+        cache.cascaded.insert(el, Rc::new((c, pri)));
+        cache.declared_seq += 1;
+        cache.declared_meta.insert(el, (cache.declared_seq, None));
         map
+    }
+
+    /// Style sharing for the declared map (Blink's and Stylo's): the entry of
+    /// an already styled element whose cascade must equal `el`'s, by the
+    /// same candidates and the same predicate as `shared_flow_style` (up to
+    /// four previous element siblings, or the same-position child of the
+    /// element the parent shared from; `shares_cascade`). Returns the entry
+    /// and (source, source stamp). On a 1,000-row Tailwind table every row
+    /// after the first shares: matching and declaration expansion ran once
+    /// per element before.
+    fn shared_declared(
+        dom: &Dom,
+        rules: &RuleSet,
+        el: NodeId,
+        cache: &Cache,
+    ) -> Option<(Rc<DeclaredEntry>, (NodeId, u64))> {
+        if rules.has_relative || dom.shadow_root_count() != 0 {
+            return None;
+        }
+        let idx = dom.check(el).ok()?;
+        let parent = dom.selector_parent(idx)?;
+        let mut candidates: [Option<u32>; 5] = [None; 5];
+        let mut prev = dom.n(idx).prev;
+        let mut found = 0;
+        while prev != NIL && found < 4 {
+            if dom.n(prev).is_element() {
+                candidates[found] = Some(prev);
+                found += 1;
+            }
+            prev = dom.n(prev).prev;
+        }
+        if let Some(&(_, Some((src, stamp)))) = cache.declared_meta.get(&dom.id_of(parent)) {
+            if cache.declared_meta.get(&src).is_some_and(|m| m.0 == stamp) {
+                let position = |p: u32, of: Option<u32>, nth: Option<usize>| -> (usize, Option<u32>) {
+                    let mut i = 0;
+                    let mut c = dom.n(p).first_child;
+                    while c != NIL {
+                        if dom.n(c).is_element() {
+                            if Some(c) == of || Some(i) == nth {
+                                return (i, Some(c));
+                            }
+                            i += 1;
+                        }
+                        c = dom.n(c).next;
+                    }
+                    (i, None)
+                };
+                let (k, _) = position(parent, Some(idx), None);
+                if let Ok(src_idx) = dom.check(src) {
+                    candidates[4] = position(src_idx, None, Some(k)).1;
+                }
+            }
+        }
+        for c in candidates.into_iter().flatten() {
+            let cid = dom.id_of(c);
+            let (Some(entry), Some(&(stamp, _))) = (cache.declared.get(&cid), cache.declared_meta.get(&cid)) else {
+                continue;
+            };
+            if shares_cascade(dom, rules, idx, c, &cache.reval) {
+                return Some((entry.clone(), (cid, stamp)));
+            }
+        }
+        None
     }
 
     /// The generated `::before` (`after`: `::after`) content of `el`: one
