@@ -51,3 +51,40 @@ pool drains after its first two pages and every later page falls back to a fresh
 tos.close.run and tos.close.run.fresh is therefore mostly the route-vs-goto difference on the few prepared pages
 plus noise. A real test suite with gaps between tests (or a larger pool, or a bench pause between samples) would
 see the prepared path; measuring that needs a scenario that waits for `preparedPages` to report ready pages.
+
+## Follow-up: tos.close.run on a booted page (d58d909)
+
+Same binary (sha256 `9a0fdd328151656a`), bench JS and client at d58d909: the harness has an untimed per-sample
+`before` hook, `tos.close.run` waits for a booted page before each sample (`lp.warm()`), and `tos.close.run.busy`
+is the earlier back-to-back variant. 5 rounds, 2026-10-27T17:26Z.
+Load average at start 12.12/11.40/9.13, at end 11.91/11.39/9.15 (still very busy).
+
+```sh
+bun bench/scripts/cdp-perf.mjs --bin head=$PWD/target/release/lightningpanda --filter '^(pw\.)?tos\.' --playwright --rounds 5 --out /tmp/lp-tos2.json
+```
+
+| scenario | median ms | p90 | cpu/op | seed | page | open | run | close |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| tos.close.steps | 11.044 | 13.031 | 11.620 | 0.263 | 2.670 | 8.198 | 11.004 | 11.038 |
+| tos.close.run.fresh | 10.031 | 11.461 | 11.179 | 0.263 | 2.667 | | 9.976 | 9.994 |
+| tos.close.run (booted page) | 4.055 | 6.922 | 11.507 | 0.292 | 0.726 | | 4.033 | 4.048 |
+| tos.close.run.busy (back-to-back) | 10.707 | 12.630 | 11.763 | 0.267 | 2.823 | | 10.682 | 10.703 |
+| pw.tos.close | 40.134 | 47.843 | 32.115 | 0.280 | 4.226 | 19.259 | 39.094 | 40.130 |
+
+Client page stats, identical in all 5 rounds (17 pages each):
+
+| scenario | prepared | preparedBooting | fresh |
+|---|---:|---:|---:|
+| tos.close.steps | 0 | 0 | 17 |
+| tos.close.run.fresh | 0 | 0 | 17 |
+| tos.close.run | 17 | 0 | 0 |
+| tos.close.run.busy | 2 | 0 | 15 |
+
+With a booted, signed-in page waiting, the whole close flow takes 4.06 ms: acquiring the page is 0.46 ms
+(page 0.73 minus seed) instead of ~2.4 ms, and the route change plus all steps take 3.3 ms instead of ~7.3 ms
+for a fresh page that has to navigate and boot the app. That is ~2.5x faster than the fresh path and ~10x faster
+than Playwright (40.1 ms). The spread is wide (rsd 0.50, p90 6.9 ms) on this loaded host. cpu/op stays ~11.5
+because the booting of the replacement page in the untimed `before` hook is still browser CPU charged to the
+operation: the work moves out of the test's wall time, it does not disappear. tos.close.run.busy reproduces the
+first run (2 prepared, 15 fresh, 10.7 ms), confirming that back-to-back acquires outrun the 15 ms refill quiet
+period.

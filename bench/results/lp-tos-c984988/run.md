@@ -81,3 +81,78 @@ Times are milliseconds per sample (median, p90 over all rounds); `rsd` is the ro
 - tos.close.run [head]: seed 0.265, page 2.797, run 11.046, close 11.073
 - pw.tos.close [head]: seed 0.305, page 4.968, open 21.387, run 42.806, close 43.694
 ```
+
+# Follow-up run (d58d909)
+
+```
+cdp-perf: warning: 1-minute load average 12.1 on 10 CPUs; expect noisy timings
+      lightningpanda-test pages: {"prepared":0,"preparedBooting":0,"fresh":17}
+  tos.close.steps                    [head] round 1/5: median 10.565 ms
+      lightningpanda-test pages: {"prepared":0,"preparedBooting":0,"fresh":17}
+  tos.close.run.fresh                [head] round 1/5: median 10.051 ms
+      lightningpanda-test pages: {"prepared":17,"preparedBooting":0,"fresh":0}
+  tos.close.run                      [head] round 1/5: median 4.784 ms
+      lightningpanda-test pages: {"prepared":2,"preparedBooting":0,"fresh":15}
+  tos.close.run.busy                 [head] round 1/5: median 10.766 ms
+  pw.tos.close                       [head] round 1/5: median 40.664 ms
+      lightningpanda-test pages: {"prepared":0,"preparedBooting":0,"fresh":17}
+  tos.close.steps                    [head] round 2/5: median 11.982 ms
+      lightningpanda-test pages: {"prepared":0,"preparedBooting":0,"fresh":17}
+  tos.close.run.fresh                [head] round 2/5: median 10.393 ms
+      lightningpanda-test pages: {"prepared":17,"preparedBooting":0,"fresh":0}
+  tos.close.run                      [head] round 2/5: median 2.941 ms
+      lightningpanda-test pages: {"prepared":2,"preparedBooting":0,"fresh":15}
+  tos.close.run.busy                 [head] round 2/5: median 10.089 ms
+  pw.tos.close                       [head] round 2/5: median 42.679 ms
+      lightningpanda-test pages: {"prepared":0,"preparedBooting":0,"fresh":17}
+  tos.close.steps                    [head] round 3/5: median 11.528 ms
+      lightningpanda-test pages: {"prepared":0,"preparedBooting":0,"fresh":17}
+  tos.close.run.fresh                [head] round 3/5: median 9.761 ms
+      lightningpanda-test pages: {"prepared":17,"preparedBooting":0,"fresh":0}
+  tos.close.run                      [head] round 3/5: median 4.029 ms
+      lightningpanda-test pages: {"prepared":2,"preparedBooting":0,"fresh":15}
+  tos.close.run.busy                 [head] round 3/5: median 10.960 ms
+  pw.tos.close                       [head] round 3/5: median 39.284 ms
+      lightningpanda-test pages: {"prepared":0,"preparedBooting":0,"fresh":17}
+  tos.close.steps                    [head] round 4/5: median 10.487 ms
+      lightningpanda-test pages: {"prepared":0,"preparedBooting":0,"fresh":17}
+  tos.close.run.fresh                [head] round 4/5: median 10.270 ms
+      lightningpanda-test pages: {"prepared":17,"preparedBooting":0,"fresh":0}
+  tos.close.run                      [head] round 4/5: median 2.948 ms
+      lightningpanda-test pages: {"prepared":2,"preparedBooting":0,"fresh":15}
+  tos.close.run.busy                 [head] round 4/5: median 10.268 ms
+  pw.tos.close                       [head] round 4/5: median 38.764 ms
+      lightningpanda-test pages: {"prepared":0,"preparedBooting":0,"fresh":17}
+  tos.close.steps                    [head] round 5/5: median 10.401 ms
+      lightningpanda-test pages: {"prepared":0,"preparedBooting":0,"fresh":17}
+  tos.close.run.fresh                [head] round 5/5: median 9.422 ms
+      lightningpanda-test pages: {"prepared":17,"preparedBooting":0,"fresh":0}
+  tos.close.run                      [head] round 5/5: median 4.015 ms
+      lightningpanda-test pages: {"prepared":2,"preparedBooting":0,"fresh":15}
+  tos.close.run.busy                 [head] round 5/5: median 11.538 ms
+  pw.tos.close                       [head] round 5/5: median 40.121 ms
+# CDP performance: head
+
+2026-10-27T17:26:49.912Z on Apple M1 Max (10 CPUs, darwin 27.0.0), 5 round(s), scale 1.
+Load average at start 12.12/11.40/9.13, at end 11.91/11.39/9.15.
+
+- **head**: `/Users/xban1x/Povio/lp-driver-wt/target/release/lightningpanda` sha256 `9a0fdd328151656a`, startup median 8.187 ms
+
+Times are milliseconds per sample (median, p90 over all rounds); `rsd` is the robust relative spread; `cpu/op` is browser CPU per operation.
+
+| scenario | head median | p90 | rsd | ops/s | cpu/op |
+|---|---:|---:|---:|---:|---:|
+| tos.close.steps | 11.044 | 13.031 | 0.11 | 91 | 11.620 |
+| tos.close.run.fresh | 10.031 | 11.461 | 0.10 | 100 | 11.179 |
+| tos.close.run | 4.055 | 6.922 | 0.50 | 247 | 11.507 |
+| tos.close.run.busy | 10.707 | 12.630 | 0.13 | 93 | 11.763 |
+| pw.tos.close | 40.134 | 47.843 | 0.07 | 25 | 32.115 |
+
+## Phase breakdown (median ms since the step started)
+
+- tos.close.steps [head]: seed 0.263, page 2.670, open 8.198, run 11.004, close 11.038
+- tos.close.run.fresh [head]: seed 0.263, page 2.667, run 9.976, close 9.994
+- tos.close.run [head]: seed 0.292, page 0.726, run 4.033, close 4.048
+- tos.close.run.busy [head]: seed 0.267, page 2.823, run 10.682, close 10.703
+- pw.tos.close [head]: seed 0.280, page 4.226, open 19.259, run 39.094, close 40.130
+```
