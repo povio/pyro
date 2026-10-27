@@ -274,20 +274,36 @@ impl Browser {
 
     pub(crate) fn drain_dom_resources(&mut self, page: FrameKey) {
         let Some(host) = self.page(page.page).map(|p| p.frames.clone()) else { return };
+        // Runs at every checkpoint: leave early when nothing is queued.
+        let (iframe_events, resource_events) = {
+            let dom = host.dom.borrow();
+            (dom.has_iframe_events(), dom.has_resource_events())
+        };
+        if !iframe_events && !resource_events {
+            return;
+        }
         // Parser mutations have no native-callback boundary: flush before scripts.
-        for key in host.keys() {
-            if let Some(bindings) = host.frame(key).and_then(|f| f.page_dom) {
-                bindings.flush_iframe_events();
+        if iframe_events {
+            for key in host.keys() {
+                if let Some(bindings) = host.page_dom(key) {
+                    bindings.flush_iframe_events();
+                }
             }
+        }
+        if !resource_events {
+            return;
         }
         let events = host.dom.borrow_mut().take_resource_events();
         let mut stylesheet_nodes = std::collections::HashSet::new();
         let mut image_nodes = std::collections::HashSet::new();
         for event in events {
             let document = host.dom.borrow().owner_document(event.node).ok().flatten();
-            let target = host.keys().into_iter().find(|key| host.frame(*key).is_some_and(|f| f.document == document));
+            let target = host
+                .keys()
+                .into_iter()
+                .find(|key| host.with_frame(*key, |f| f.document == document).unwrap_or(false));
             let Some(target) = target else { continue };
-            let Some(bindings) = host.frame(target).and_then(|f| f.page_dom) else { continue };
+            let Some(bindings) = host.page_dom(target) else { continue };
             if event.kind == lp_dom::script::ResourceKind::Stylesheet {
                 if stylesheet_nodes.insert(event.node) {
                     self.stylesheet_event(target, event.node);

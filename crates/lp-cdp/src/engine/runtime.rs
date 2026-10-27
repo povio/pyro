@@ -242,8 +242,10 @@ struct EvaluateParams {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct CallFunctionOnParams {
-    function_declaration: String,
+struct CallFunctionOnParams<'a> {
+    /// Borrowed from the message: Playwright sends a ~40 KB declaration per call.
+    #[serde(borrow)]
+    function_declaration: std::borrow::Cow<'a, str>,
     object_id: Option<String>,
     execution_context_id: Option<ExecutionContextId>,
     #[serde(default)]
@@ -339,8 +341,8 @@ impl EngineHost {
         for info in self.thread.browser.frames(state.id) {
             let Some(frame) = self.thread.browser.frame(state.id, &info.id) else { continue };
             for r in &frame.realms {
-                let origin = r.realm.origin().unwrap_or("");
-                let context = context_description(r.realm.id(), r.world.as_deref(), origin, &info.id.0);
+                let origin = r.realm.origin().unwrap_or_default();
+                let context = context_description(r.realm.id(), r.world.as_deref(), &origin, &info.id.0);
                 self.event("Runtime.executionContextCreated", &json!({ "context": context }), session_id);
             }
         }
@@ -394,7 +396,7 @@ impl EngineHost {
     }
 
     fn call_function_on(&mut self, cmd: &PageCommand<'_, '_>) -> CdpResult<()> {
-        let p: CallFunctionOnParams = cmd.command.params()?;
+        let p: CallFunctionOnParams<'_> = cmd.command.params_borrowed()?;
         let handles =
             self.sessions.get(cmd.session_id).ok_or_else(|| CdpError::server("session is gone"))?.handles.clone();
         // The target object decides the realm (and, unless overridden, the

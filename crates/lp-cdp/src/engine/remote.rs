@@ -88,6 +88,37 @@ pub(crate) fn describe(scope: &Scope<'_>, value: Value<'_>, by_value: bool) -> C
             })
         }
         JsType::Symbol | JsType::Object => {
+            if !by_value {
+                // Native fast path for the handle-returning cases Playwright hits
+                // most: DOM wrappers and ordinary objects. Everything else (arrays,
+                // errors, promises, collections, functions) takes the JS helper.
+                if let Some(name) = scope.host_class_name(value) {
+                    let node = lp_webapi::node_from_value(scope, value)
+                        .and_then(|(page, id)| page.dom.borrow().node_name(id).ok())
+                        .map(|n| n.to_ascii_lowercase());
+                    return Ok(Described {
+                        remote: RemoteObject {
+                            kind: "object",
+                            subtype: node.is_some().then_some("node"),
+                            class_name: Some(name.to_owned()),
+                            description: Some(node.unwrap_or_else(|| name.to_owned())),
+                            ..RemoteObject::default()
+                        },
+                        keep: Some(Persistent::new(scope, value)),
+                    });
+                }
+                if scope.is_plain_object(value) {
+                    return Ok(Described {
+                        remote: RemoteObject {
+                            kind: "object",
+                            class_name: Some("Object".to_owned()),
+                            description: Some("Object".to_owned()),
+                            ..RemoteObject::default()
+                        },
+                        keep: Some(Persistent::new(scope, value)),
+                    });
+                }
+            }
             let d = scope.describe(value).map_err(js_to_cdp)?;
             let kind = static_str(&d.ty);
             let subtype = d.subtype.as_deref().map(static_str);

@@ -175,7 +175,7 @@ impl JsClass for Window {
                 _ => 0.0,
             }))
         });
-        def.getter("origin", |s, _| Ok(s.string(s.realm().origin().unwrap_or("null"))));
+        def.getter("origin", |s, _| Ok(s.string(s.realm().origin().as_deref().unwrap_or("null"))));
         def.indexed(|s, w, index| match (w.frames.upgrade(), w.frame) {
             (Some(host), Some(key)) => {
                 host.child_keys(key).get(index as usize).map(|target| host.window_value(s, key, *target)).transpose()

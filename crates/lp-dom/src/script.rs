@@ -94,6 +94,11 @@ impl Dom {
         }
     }
 
+    /// Whether `take_resource_events` would return anything.
+    pub fn has_resource_events(&self) -> bool {
+        !self.resources.events.is_empty()
+    }
+
     /// Drains pending resource events. Node ids stay valid until the next
     /// `collect_garbage`.
     pub fn take_resource_events(&mut self) -> Vec<ResourceEvent> {

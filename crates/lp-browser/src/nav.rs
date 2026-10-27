@@ -220,6 +220,9 @@ impl PageNav {
         crate::emit_to(&self.observer, self.page, &event);
     }
 
+    pub(crate) fn has_pending_frame_url(&self) -> bool {
+        self.pending_frame_url.borrow().is_some()
+    }
     pub(crate) fn take_pending_frame_url(&self) -> Option<String> {
         self.pending_frame_url.borrow_mut().take()
     }
@@ -354,13 +357,14 @@ impl PageNav {
 impl Browser {
     /// Copies a synchronous same-document commit's URL to the frame.
     pub(crate) fn apply_same_document_url(&mut self, page: PageId) {
+        // Runs at every checkpoint: take through the shared handle first so a
+        // page with nothing pending is not marked dirty (`page_mut`).
+        let Some(url) = self.page(page).and_then(|p| p.nav.take_pending_frame_url()) else { return };
         let Some(p) = self.page_mut(page) else { return };
-        if let Some(url) = p.nav.take_pending_frame_url() {
-            if !matches!(p.main_frame.url.as_str(), "about:blank" | "about:srcdoc") {
-                p.main_frame.base_url = url.clone();
-            }
-            p.main_frame.url = url;
+        if !matches!(p.main_frame.url.as_str(), "about:blank" | "about:srcdoc") {
+            p.main_frame.base_url = url.clone();
         }
+        p.main_frame.url = url;
     }
 
     pub(crate) fn same_document_committed(

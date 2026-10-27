@@ -283,6 +283,10 @@ impl Dom {
     pub fn removal_count(&self) -> u64 {
         self.removals
     }
+    /// Whether `collect_garbage` has anything to examine.
+    pub fn has_gc_candidates(&self) -> bool {
+        !self.candidates.is_empty()
+    }
     /// Number of live nodes in the store (all documents).
     pub fn live_nodes(&self) -> usize {
         self.live as usize

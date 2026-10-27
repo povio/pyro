@@ -286,6 +286,35 @@ pub struct Frame {
 }
 
 impl Frame {
+    /// Field-wise equality by identity (realm ids, shared `Rc`s), without cloning.
+    pub(crate) fn same_as(&self, other: &Frame) -> bool {
+        self.id == other.id
+            && self.parent == other.parent
+            && self.owner == other.owner
+            && self.name == other.name
+            && self.base_url == other.base_url
+            && self.sandbox == other.sandbox
+            && self.url == other.url
+            && self.loader_id == other.loader_id
+            && self.realms.len() == other.realms.len()
+            && self.realms.iter().zip(&other.realms).all(|(a, b)| a.world == b.world && a.realm.id() == b.realm.id())
+            && match (&self.dom, &other.dom) {
+                (Some(a), Some(b)) => Rc::ptr_eq(a, b),
+                (None, None) => true,
+                _ => false,
+            }
+            && self.document == other.document
+            && match (&self.page_dom, &other.page_dom) {
+                (Some(a), Some(b)) => Rc::ptr_eq(a, b),
+                (None, None) => true,
+                _ => false,
+            }
+            && self.network_idle == other.network_idle
+            && self.origin == other.origin
+            && self.opaque_origin == other.opaque_origin
+            && self.dom_content_loaded == other.dom_content_loaded
+            && self.loaded == other.loaded
+    }
     pub fn main_realm(&self) -> Option<&Realm> {
         self.realms.iter().find(|r| r.world.is_none()).map(|r| &r.realm)
     }
@@ -309,6 +338,8 @@ pub struct DocumentState {
 
 pub struct Page {
     pub id: PageId,
+    /// Set by every mutable access; `sync_root` compares only when set.
+    pub(crate) root_dirty: Cell<bool>,
     pub context: ContextId,
     pub init_scripts: Vec<InitScript>,
     document: DocumentState,
@@ -373,19 +404,41 @@ impl LoopState for Browser {
 }
 
 impl Browser {
+    /// A loaded single-frame page with nothing queued: every step of the
+    /// checkpoint below would be a no-op. Checked first because the
+    /// checkpoint runs after every CDP command.
+    fn page_idle(p: &Page) -> bool {
+        if p.root_dirty.get()
+            || !p.main_frame.loaded
+            || p.nav.has_pending_frame_url()
+            || p.frames.has_children()
+            || p.frames.has_retired()
+        {
+            return false;
+        }
+        {
+            let Ok(dom) = p.frames.dom.try_borrow() else { return false };
+            if dom.has_iframe_events() || dom.has_resource_events() {
+                return false;
+            }
+        }
+        p.main_frame.page_dom.as_ref().is_none_or(|d| d.quiet_since_last_task())
+    }
+
     /// Owner-thread safe point after synchronous host/inspector JavaScript.
     /// Call only after releasing DOM borrows. Event-loop tasks invoke it automatically.
     pub fn checkpoint(&mut self) {
         let n = self.engine.drain_finalized();
         *self.released_payloads.borrow_mut() += n as u64;
-        let pages: Vec<_> = self.pages.iter().map(|p| p.id).collect();
+        let pages: Vec<_> = self.pages.iter().filter(|p| !Self::page_idle(p)).map(|p| p.id).collect();
         for id in pages {
             let Some(host) = self.page(id).map(|p| p.frames.clone()) else { continue };
             self.apply_same_document_url(id);
             self.sync_root(id);
+            // Resource events are queued per page; one drain covers every frame.
+            self.drain_dom_resources(id.into());
             for key in host.keys() {
-                self.drain_dom_resources(key);
-                if let Some(bindings) = self.doc(key).and_then(|p| p.main_frame.page_dom.clone()) {
+                if let Some(bindings) = host.page_dom(key) {
                     bindings.after_task();
                 }
                 if key.child.is_some() {
@@ -401,7 +454,7 @@ impl Browser {
             }
             host.drain_retired();
             for key in host.keys() {
-                self.maybe_fire_load(key);
+                self.fire_load_if_ready(key);
             }
         }
     }
@@ -590,6 +643,7 @@ impl Browser {
         self.pages.push(Page {
             id,
             context,
+            root_dirty: Cell::new(true),
             init_scripts: Vec::new(),
             frames,
             document: DocumentState {
@@ -627,7 +681,9 @@ impl Browser {
     }
 
     pub(crate) fn page_mut(&mut self, id: PageId) -> Option<&mut Page> {
-        self.pages.iter_mut().find(|p| p.id == id)
+        let page = self.pages.iter_mut().find(|p| p.id == id)?;
+        page.root_dirty.set(true);
+        Some(page)
     }
 
     /// Changes this page's navigator and native request defaults atomically.
@@ -756,6 +812,9 @@ impl Browser {
         );
         if opts.url != "about:blank" && self.loader_for(page).is_some() {
             self.start_document_fetch(page, opts, loader_id.clone(), history)?;
+            // The response arrives on a later task: build the realm the commit
+            // will need while this thread would otherwise wait for it.
+            let _ = self.prepare_spare_realm();
             return Ok(loader_id);
         }
         if opts.url != "about:blank" {
@@ -918,6 +977,7 @@ impl Browser {
         let loader = self.pages[pos].main_frame.loader_id.clone();
         self.forget_network_activity(page.into(), &loader);
         self.pages[pos].main_frame.realms = host.root.borrow().realms.clone();
+        self.pages[pos].root_dirty.set(true);
         let p = self.pages.remove(pos);
         if let Some(dom) = &p.main_frame.page_dom {
             dom.dispose();
@@ -941,7 +1001,15 @@ impl Browser {
         for id in ids {
             self.close_page(id);
         }
+        frames::drop_spare_realm();
         self.engine.drain_finalized();
+    }
+
+    /// Builds a main-world realm now for this thread's next page, so page
+    /// creation skips interface installation. Call while idle (before the
+    /// connection that will use this thread exists).
+    pub fn prepare_spare_realm(&self) -> Result<(), JsError> {
+        frames::prepare_spare_realm(self.engine.register::<Window>())
     }
 }
 
@@ -950,6 +1018,7 @@ mod tests;
 
 impl Drop for Browser {
     fn drop(&mut self) {
+        frames::drop_spare_realm();
         self.close_all();
     }
 }

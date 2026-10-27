@@ -32,6 +32,11 @@ pub(crate) struct BindingState {
     rooted: Cell<usize>,
     version: Cell<Option<u64>>,
 }
+impl BindingState {
+    pub(crate) fn pending_drops_is_empty(&self) -> bool {
+        self.pending_drops.borrow().is_empty()
+    }
+}
 pub struct Observer {
     page: Weak<PageDom>,
     realm: WeakRealm,
