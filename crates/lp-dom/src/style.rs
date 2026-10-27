@@ -1098,14 +1098,11 @@ fn style_item(selector_text: &str, block: &str) -> Option<Item> {
 // Rule set (the flattened cascade input)
 // ---------------------------------------------------------------------------
 
+/// A selector with typed declarations, kept bucketed for the added-sheet
+/// subject scan (`added_rule_subjects`) and the revalidation list; the
+/// typed cascade itself runs in `declared_map_in` off `generic_rules`.
 struct Rule {
     selector: Selectors,
-    decl: Rc<Declared>,
-    mask: u32,
-    priority: u64,
-    /// Ancestor-compound hashes (`ancestor_hashes`): skips the selector on
-    /// elements whose ancestors lack one (`AncestorBits`).
-    ancestors: [u32; 4],
 }
 
 struct CustomRule {
@@ -1121,6 +1118,7 @@ struct RuleSet {
     by_class: FxHashMap<String, Vec<u32>>,
     by_tag: FxHashMap<String, Vec<u32>>,
     by_attr: FxHashMap<String, Vec<u32>>,
+    by_attr_value: FxHashMap<(String, String), Vec<u32>>,
     other: Vec<u32>,
     customs: FxHashMap<String, Vec<CustomRule>>,
     /// `@property` registrations: (inherits, initial value). The last valid
@@ -1172,7 +1170,15 @@ struct RuleSet {
     generic_by_class: FxHashMap<String, Vec<u32>>,
     generic_by_tag: FxHashMap<String, Vec<u32>>,
     generic_by_attr: FxHashMap<String, Vec<u32>>,
+    generic_by_attr_value: FxHashMap<(String, String), Vec<u32>>,
     generic_other: Vec<u32>,
+    /// Tag- and class-keyed generic rules that also need an ancestor with a
+    /// given class (`.a span`, `.a .b`), by (bucket key, that class): checked
+    /// only on elements with such an ancestor. Stylesheets keyed on a few
+    /// tags with hundreds of `.ctx tag` rules otherwise probe the Bloom
+    /// filter for every one of them on every such element.
+    generic_by_tag_anc: FxHashMap<(String, String), Vec<u32>>,
+    generic_by_class_anc: FxHashMap<(String, String), Vec<u32>>,
     /// `::before` / `::after` rules, by their originating element's selector
     /// (`StyleEngine::generated_content`).
     generated_rules: Vec<GeneratedRule>,
@@ -1384,6 +1390,10 @@ struct GeneratedRule {
 }
 
 struct GenericRule {
+    /// Typed declarations of the same block (see `PendingGeneric::typed`),
+    /// applied at `normal` / `important` priority by the one matching pass.
+    typed_decl: Option<(Rc<Declared>, u32)>,
+    typed_important: Option<(Rc<Declared>, u32)>,
     selector: Selectors,
     decls: Rc<[(String, Rc<str>, bool)]>,
     /// For each of `decls`: its flow slot and typed value, parsed once.
@@ -1400,6 +1410,27 @@ fn ancestor_hashes(sel: &Selector<Impl>) -> [u32; 4] {
     let h = selectors::parser::AncestorHashes::new(sel, selectors::context::QuirksMode::NoQuirks);
     let mask = selectors::bloom::BLOOM_HASH_MASK;
     [h.packed_hashes[0] & mask, h.packed_hashes[1] & mask, h.packed_hashes[2] & mask, h.fourth_hash()]
+}
+
+/// The class tested by the nearest non-subject compound reached through a
+/// descendant or child combinator, if any: `.a .b > span` → `b`. Only plain
+/// classes count; `:is()`/`:where()` compounds and sibling combinators stop
+/// the search (a sibling's class is not an ancestor's).
+fn nearest_ancestor_class(sel: &Selector<Impl>) -> Option<String> {
+    use selectors::parser::Combinator;
+    let mut it = sel.iter();
+    for _ in &mut it {} // skip the subject compound
+    loop {
+        match it.next_sequence() {
+            Some(Combinator::Descendant | Combinator::Child) => {}
+            _ => return None,
+        }
+        for c in &mut it {
+            if let Component::Class(class) = c {
+                return Some(class.0.to_string());
+            }
+        }
+    }
 }
 
 /// A 2048-bit, two-probe Bloom filter of the ancestor filter hashes of an
@@ -1494,6 +1525,10 @@ fn ancestor_bits_in(
 }
 
 struct PendingGeneric {
+    /// The block's typed (`Cascaded`) declarations and field masks, normal
+    /// and `!important`: matched once with the generic ones.
+    typed: Option<(Rc<Declared>, u32)>,
+    typed_important: Option<(Rc<Declared>, u32)>,
     selector: Selector<Impl>,
     decls: Rc<[(String, Rc<str>, bool)]>,
     layer: u16,
@@ -1508,6 +1543,9 @@ enum BucketKey {
     /// Rightmost compound tests an attribute (lower-cased local name) and
     /// nothing cheaper: checked only on elements that carry it.
     Attr(String),
+    /// `[name="value"]` (case-sensitive): checked only on elements whose
+    /// attribute has that exact value (Radix/Tailwind `data-state` variants).
+    AttrValue(String, String),
     Other,
 }
 
@@ -1537,9 +1575,15 @@ fn bucket_key(sel: &Selector<Impl>) -> Option<BucketKey> {
                     best = BucketKey::Attr(local_name_lower.0.to_string());
                 }
             }
-            Component::AttributeInNoNamespace { local_name, .. } => {
+            Component::AttributeInNoNamespace { local_name, operator, value, case_sensitivity } => {
+                use selectors::attr::{AttrSelectorOperator, ParsedCaseSensitivity};
+                let exact = matches!(operator, AttrSelectorOperator::Equal)
+                    && matches!(case_sensitivity, ParsedCaseSensitivity::CaseSensitive | ParsedCaseSensitivity::AsciiCaseInsensitiveIfInHtmlElementInHtmlDocument);
                 if matches!(best, BucketKey::Other) {
                     best = BucketKey::Attr((*local_name.0).to_ascii_lowercase());
+                }
+                if exact && matches!(best, BucketKey::Attr(_)) {
+                    best = BucketKey::AttrValue((*local_name.0).to_ascii_lowercase(), value.0.to_string());
                 }
             }
             Component::NonTSPseudoClass(pc) => {
@@ -1774,6 +1818,8 @@ impl<'v> Builder<'v> {
                             for sel in list.slice() {
                                 let Some(bucket) = bucket_key(sel) else { continue };
                                 self.generics.push(PendingGeneric {
+                                    typed: (*normal_mask != 0).then(|| (normal.clone(), *normal_mask)),
+                                    typed_important: (*important_mask != 0).then(|| (important.clone(), *important_mask)),
                                     selector: sel.clone(),
                                     decls: generics.clone(),
                                     layer,
@@ -1949,19 +1995,14 @@ impl<'v> Builder<'v> {
                 priority |= IMPORTANT_BIT;
             }
             let idx = rs.rules.len() as u32;
-            let ancestors = ancestor_hashes(&p.selector);
-            rs.rules.push(Rule {
-                selector: SelectorList::from_one(p.selector),
-                decl: p.decl,
-                mask: p.mask,
-                priority,
-                ancestors,
-            });
+            let _ = (p.decl, p.mask, priority);
+            rs.rules.push(Rule { selector: SelectorList::from_one(p.selector) });
             match p.bucket {
                 BucketKey::Id(k) => rs.by_id.entry(k).or_default().push(idx),
                 BucketKey::Class(k) => rs.by_class.entry(k).or_default().push(idx),
                 BucketKey::Tag(k) => rs.by_tag.entry(k).or_default().push(idx),
                 BucketKey::Attr(k) => rs.by_attr.entry(k).or_default().push(idx),
+                BucketKey::AttrValue(k, v) => rs.by_attr_value.entry((k, v)).or_default().push(idx),
                 BucketKey::Other => rs.other.push(idx),
             }
         }
@@ -2006,18 +2047,27 @@ impl<'v> Builder<'v> {
                 .collect();
             rs.generic_rules.push(GenericRule {
                 ancestors,
+                typed_decl: g.typed,
+                typed_important: g.typed_important,
                 selector: SelectorList::from_one(g.selector),
                 decls: g.decls,
                 typed,
                 normal,
                 important,
             });
-            match g.bucket {
-                BucketKey::Id(k) => rs.generic_by_id.entry(k).or_default().push(idx),
-                BucketKey::Class(k) => rs.generic_by_class.entry(k).or_default().push(idx),
-                BucketKey::Tag(k) => rs.generic_by_tag.entry(k).or_default().push(idx),
-                BucketKey::Attr(k) => rs.generic_by_attr.entry(k).or_default().push(idx),
-                BucketKey::Other => rs.generic_other.push(idx),
+            let anc = match &g.bucket {
+                BucketKey::Class(_) | BucketKey::Tag(_) => nearest_ancestor_class(&rs.generic_rules[idx as usize].selector.slice()[0]),
+                _ => None,
+            };
+            match (g.bucket, anc) {
+                (BucketKey::Id(k), _) => rs.generic_by_id.entry(k).or_default().push(idx),
+                (BucketKey::Class(k), Some(a)) => rs.generic_by_class_anc.entry((k, a)).or_default().push(idx),
+                (BucketKey::Class(k), None) => rs.generic_by_class.entry(k).or_default().push(idx),
+                (BucketKey::Tag(k), Some(a)) => rs.generic_by_tag_anc.entry((k, a)).or_default().push(idx),
+                (BucketKey::Tag(k), None) => rs.generic_by_tag.entry(k).or_default().push(idx),
+                (BucketKey::Attr(k), _) => rs.generic_by_attr.entry(k).or_default().push(idx),
+                (BucketKey::AttrValue(k, v), _) => rs.generic_by_attr_value.entry((k, v)).or_default().push(idx),
+                (BucketKey::Other, _) => rs.generic_other.push(idx),
             }
         }
         for g in self.generated {
@@ -2041,6 +2091,7 @@ fn clone_bucket(b: &BucketKey) -> BucketKey {
         BucketKey::Class(s) => BucketKey::Class(s.clone()),
         BucketKey::Tag(s) => BucketKey::Tag(s.clone()),
         BucketKey::Attr(s) => BucketKey::Attr(s.clone()),
+        BucketKey::AttrValue(s, v) => BucketKey::AttrValue(s.clone(), v.clone()),
         BucketKey::Other => BucketKey::Other,
     }
 }
@@ -2173,6 +2224,9 @@ fn shares_cascade(dom: &Dom, rules: &RuleSet, a: u32, c: u32) -> bool {
             BucketKey::Class(k) => classes.contains(&k.as_str()),
             BucketKey::Tag(t) => (*ea.name.local).eq_ignore_ascii_case(t),
             BucketKey::Attr(n) => ea.attrs.iter().any(|a| (*a.name.local).eq_ignore_ascii_case(n)),
+            BucketKey::AttrValue(n, v) => {
+                ea.attrs.iter().any(|a| (*a.name.local).eq_ignore_ascii_case(n) && &*a.value == v.as_str())
+            }
             BucketKey::Other => true,
         };
         if applies
@@ -2365,8 +2419,11 @@ fn added_rule_subjects(dom: &Dom, doc: NodeId, added: &RuleSet) -> Option<Vec<u3
         if !hit {
             hit = e.attrs.iter().any(|a| {
                 let n = a.name.local.to_ascii_lowercase();
+                let key = (n.to_string(), a.value.to_string());
                 added.by_attr.get(n.as_str()).is_some_and(|l| rule(l))
                     || added.generic_by_attr.get(n.as_str()).is_some_and(|l| generic(l))
+                    || added.by_attr_value.get(&key).is_some_and(|l| rule(l))
+                    || added.generic_by_attr_value.get(&key).is_some_and(|l| generic(l))
             });
         }
         hit = hit
@@ -3771,6 +3828,13 @@ struct Cache {
     /// (`getComputedStyle` outside layout).
     bits: FxHashMap<(usize, u32), Option<Rc<AncestorBits>>>,
     bits_version: Option<(u64, u64)>,
+    /// Typed cascade result per element, produced by the same pass as
+    /// `declared` (`declared_map_in`); `computed_idx` reads it. Dropped
+    /// with `memo`.
+    cascaded: FxHashMap<NodeId, (Cascaded, [u64; NF])>,
+    /// Shared entry for elements no rule or inline declaration applies to
+    /// (most elements of a page under a class-keyed sheet).
+    empty_entry: Option<Rc<DeclaredEntry>>,
     extent: Option<(f64, f64)>,
     /// The focused and hovered elements of `stamp` (indices there), to tell
     /// a freed one from a live one.
@@ -4102,6 +4166,7 @@ impl StyleEngine {
                 }
                 for n in stale {
                     cache.memo.remove(&n);
+                    cache.cascaded.remove(&n);
                     cache.declared.remove(&n);
                     cache.generated.remove(&(n, false));
                     cache.generated.remove(&(n, true));
@@ -4110,6 +4175,7 @@ impl StyleEngine {
             }
             None => {
                 cache.memo.clear();
+                cache.cascaded.clear();
                 cache.declared.clear();
                 cache.generated.clear();
                 cache.flow.clear();
@@ -4244,36 +4310,29 @@ impl StyleEngine {
         let idx = self.owns(dom, el)?;
         self.ensure(dom);
         let mut cache = self.cache.borrow_mut();
-        let Cache { rules, memo, bits, .. } = &mut *cache;
-        Some(self.computed_idx(dom, rules, memo, bits, idx))
+        let rules = cache.rules.clone();
+        Some(self.computed_idx(dom, &rules, &mut cache, idx))
     }
 
     /// inheritedProps (StyleManager.zig:927-952): resolves the flat-tree path
     /// up to the first memoized ancestor.
-    fn computed_idx(
-        &self,
-        dom: &Dom,
-        rules: &RuleSet,
-        memo: &mut FxHashMap<NodeId, ComputedStyle>,
-        bits: &mut FxHashMap<(usize, u32), Option<Rc<AncestorBits>>>,
-        idx: u32,
-    ) -> ComputedStyle {
+    fn computed_idx(&self, dom: &Dom, rules: &RuleSet, cache: &mut Cache, idx: u32) -> ComputedStyle {
         let mut path: Vec<(u32, Cascaded, u32)> = Vec::new();
         let mut above = ComputedStyle::default();
         let mut cur = Some(idx);
         while let Some(e) = cur {
-            if let Some(m) = memo.get(&dom.id_of(e)) {
+            if let Some(m) = cache.memo.get(&dom.id_of(e)) {
                 above = *m;
                 break;
             }
-            let (own, mask) = self.cascade_own(dom, rules, bits, e);
+            let (own, mask) = self.cascade_own(dom, rules, cache, e);
             path.push((e, own, mask));
             cur = flat_tree_parent_element(dom, e);
         }
         for (e, own, mask) in path.into_iter().rev() {
             above = ComputedStyle::resolve(&own, mask, &above);
             above.inert |= dom.n(e).element().is_some_and(|x| x.is_html() && x.attr("inert").is_some());
-            memo.insert(dom.id_of(e), above);
+            cache.memo.insert(dom.id_of(e), above);
         }
         above
     }
@@ -4281,84 +4340,15 @@ impl StyleEngine {
     /// compute (StyleManager.zig:963-1057) for every group at once. The
     /// returned mask carries the important-rule fields, and bit 31 when an
     /// author declaration set `display`.
-    fn cascade_own(
-        &self,
-        dom: &Dom,
-        rules: &RuleSet,
-        bits_memo: &mut FxHashMap<(usize, u32), Option<Rc<AncestorBits>>>,
-        idx: u32,
-    ) -> (Cascaded, u32) {
-        let mut c = Cascaded::default();
-        let mut pri = [0u64; NF];
-        let e = dom.n(idx).element().expect("element");
-
-        if let Some(style) = e.attr("style") {
-            let decls = parse_declarations(style);
-            let mut slots = Slots::default();
-            for d in &decls {
-                if !is_custom_property(&d.name) {
-                    slots.apply(&d.name, &d.value, d.important);
-                }
-            }
-            apply_declared(&mut c, &mut pri, &slots.props(Importance::Normal), INLINE_PRIORITY);
-            apply_declared(&mut c, &mut pri, &slots.props(Importance::Important), INLINE_IMPORTANT_PRIORITY);
-        }
-
+    /// The typed cascade of `idx` (StyleManager.zig:963-1057): the matching
+    /// pass is `declared_map_in`, shared with the generic cascade; this adds
+    /// the dimension variables, the `!important` mask and the UA hidden rule.
+    fn cascade_own(&self, dom: &Dom, rules: &RuleSet, cache: &mut Cache, idx: u32) -> (Cascaded, u32) {
         let id = dom.id_of(idx);
-        // Rules whose ancestor compounds need a tag, id or class no ancestor
-        // has cannot match (`.a *`-style rules, bucketed on every element).
-        let mut bits: Option<Option<Rc<AncestorBits>>> = None;
-        let mut check = |list: &[u32]| {
-            for &ri in list {
-                let r = &rules.rules[ri as usize];
-                if r.ancestors[0] != 0 {
-                    let b = bits.get_or_insert_with(|| ancestor_bits(dom, idx, bits_memo));
-                    if b.as_ref().is_some_and(|b| r.ancestors.iter().any(|&h| h != 0 && !b.might_contain(h))) {
-                        continue;
-                    }
-                }
-                let mut relevant = false;
-                let mut m = r.mask;
-                while m != 0 {
-                    let f = m.trailing_zeros() as usize;
-                    if r.priority > pri[f] {
-                        relevant = true;
-                        break;
-                    }
-                    m &= m - 1;
-                }
-                if !relevant || !dom.matches(id, &r.selector).unwrap_or(false) {
-                    continue;
-                }
-                apply_declared(&mut c, &mut pri, &r.decl, r.priority);
-            }
-        };
-        if let Some(i) = e.attr("id") {
-            if let Some(list) = rules.by_id.get(i) {
-                check(list);
-            }
+        if !cache.cascaded.contains_key(&id) {
+            Self::declared_map_in(dom, rules, id, cache);
         }
-        if let Some(class) = e.attr("class") {
-            for token in class.split(is_ascii_ws_char).filter(|s| !s.is_empty()) {
-                if let Some(list) = rules.by_class.get(token) {
-                    check(list);
-                }
-            }
-        }
-        if !rules.by_tag.is_empty() {
-            let local = e.name.local.to_ascii_lowercase();
-            if let Some(list) = rules.by_tag.get(local.as_str()) {
-                check(list);
-            }
-        }
-        if !rules.by_attr.is_empty() {
-            for a in &e.attrs {
-                if let Some(list) = rules.by_attr.get(a.name.local.to_ascii_lowercase().as_str()) {
-                    check(list);
-                }
-            }
-        }
-        check(&rules.other);
+        let (mut c, pri) = cache.cascaded.get(&id).cloned().unwrap_or_default();
         if let Some(raw) = &c.width_variable {
             c.width = resolve_dimension_variable(dom, rules, id, raw);
         }
@@ -4667,8 +4657,14 @@ impl StyleEngine {
     fn value_with(&self, dom: &Dom, el: NodeId, name: &str, precise: bool) -> Option<String> {
         let idx = self.owns(dom, el)?;
         self.ensure(dom);
-        let rules = self.cache.borrow().rules.clone();
-        self.computed_value_at(dom, &rules, idx, name, 0, precise)
+        // The rule set is replaced only by `ensure`, which ran above: the
+        // pointer stays valid for this read without a refcount round trip.
+        let rules: *const RuleSet = Rc::as_ptr(&self.cache.borrow().rules);
+        // SAFETY: `cache.rules` is an `Rc` that only `ensure` replaces, and
+        // nothing below calls `ensure` (it would early-return anyway: the
+        // stamp is unchanged while `dom` is borrowed).
+        let rules = unsafe { &*rules };
+        self.computed_value_at(dom, rules, idx, name, 0, precise)
     }
 
     /// Computed font-weight as a number (Blink's FontSelectionValue): keywords
@@ -4854,6 +4850,19 @@ impl StyleEngine {
         if let Some(map) = self.cache.borrow().declared.get(&el) {
             return map.clone();
         }
+        let mut cache = self.cache.borrow_mut();
+        Self::declared_map_in(dom, rules, el, &mut cache)
+    }
+
+    /// One pass over the bucketed candidate rules of `el`, producing both its
+    /// winning generic declarations (`cache.declared`) and its typed cascade
+    /// (`cache.cascaded`): the same selectors are matched once for both.
+    fn declared_map_in(dom: &Dom, rules: &RuleSet, el: NodeId, cache: &mut Cache) -> Rc<DeclaredEntry> {
+        if let Some(map) = cache.declared.get(&el) {
+            return map.clone();
+        }
+        let mut c = Cascaded::default();
+        let mut pri = [0u64; NF];
         let mut winners: FxHashMap<String, (String, u64)> = FxHashMap::default();
         let mut flow: [Option<(TypedValue, u64)>; FlowProp::COUNT] = std::array::from_fn(|_| None);
         let mut offer = |name: &str, value: &str, priority: u64| match winners.get_mut(name) {
@@ -4870,10 +4879,13 @@ impl StyleEngine {
         };
         let Ok(e) = dom.element(el) else { return Rc::new(DeclaredEntry { map: FxHashMap::default(), flow }) };
         if let Some(style) = e.attr("style") {
-            for d in parse_declarations(style) {
+            let decls = parse_declarations(style);
+            let mut slots = Slots::default();
+            for d in &decls {
                 if is_custom_property(&d.name) {
                     continue;
                 }
+                slots.apply(&d.name, &d.value, d.important);
                 let p = if d.important { INLINE_IMPORTANT_PRIORITY } else { INLINE_PRIORITY };
                 for (longhand, v) in computed::expand(&d.name, &d.value) {
                     offer(&longhand, &v, p);
@@ -4882,9 +4894,12 @@ impl StyleEngine {
                     }
                 }
             }
+            apply_declared(&mut c, &mut pri, &slots.props(Importance::Normal), INLINE_PRIORITY);
+            apply_declared(&mut c, &mut pri, &slots.props(Importance::Important), INLINE_IMPORTANT_PRIORITY);
         }
         // Rules whose ancestor compounds need a tag, id or class no ancestor
         // has cannot match (most `.a *`-style rules, tested on every element).
+        let bits_memo = &mut cache.bits;
         let mut bits: Option<Option<Rc<AncestorBits>>> = None;
         let mut check = |list: &[u32]| {
             for &ri in list {
@@ -4892,7 +4907,7 @@ impl StyleEngine {
                 if r.ancestors[0] != 0 {
                     let b = bits.get_or_insert_with(|| {
                         let idx = dom.check(el).ok()?;
-                        ancestor_bits(dom, idx, &mut self.cache.borrow_mut().bits)
+                        ancestor_bits(dom, idx, bits_memo)
                     });
                     if b.as_ref().is_some_and(|b| r.ancestors.iter().any(|&h| h != 0 && !b.might_contain(h))) {
                         continue;
@@ -4900,6 +4915,12 @@ impl StyleEngine {
                 }
                 if !dom.matches(el, &r.selector).unwrap_or(false) {
                     continue;
+                }
+                if let Some((d, _)) = &r.typed_decl {
+                    apply_declared(&mut c, &mut pri, d, r.normal);
+                }
+                if let Some((d, _)) = &r.typed_important {
+                    apply_declared(&mut c, &mut pri, d, r.important);
                 }
                 for ((name, value, important), typed) in r.decls.iter().zip(r.typed.iter()) {
                     let priority = if *important { r.important } else { r.normal };
@@ -4915,29 +4936,91 @@ impl StyleEngine {
                 check(list);
             }
         }
+        // Classes of the element's ancestors (flat tree), for the
+        // ancestor-class secondary indexes.
+        let anc_classes: Vec<&str> = if rules.generic_by_tag_anc.is_empty() && rules.generic_by_class_anc.is_empty() {
+            Vec::new()
+        } else {
+            let mut out = Vec::new();
+            let mut cur = dom.check(el).ok().and_then(|idx| flat_tree_parent_element(dom, idx));
+            while let Some(p) = cur {
+                if let Some(class) = dom.n(p).element().and_then(|pe| pe.attr("class")) {
+                    for token in class.split(is_ascii_ws_char).filter(|s| !s.is_empty()) {
+                        if !out.contains(&token) {
+                            out.push(token);
+                        }
+                    }
+                }
+                cur = flat_tree_parent_element(dom, p);
+            }
+            out
+        };
         if let Some(class) = e.attr("class") {
             for token in class.split(is_ascii_ws_char).filter(|s| !s.is_empty()) {
                 if let Some(list) = rules.generic_by_class.get(token) {
                     check(list);
                 }
+                if !rules.generic_by_class_anc.is_empty() {
+                    for a in &anc_classes {
+                        if let Some(list) = rules.generic_by_class_anc.get(&(token.to_owned(), (*a).to_owned())) {
+                            check(list);
+                        }
+                    }
+                }
             }
         }
-        if !rules.generic_by_tag.is_empty() {
-            let local = e.name.local.to_ascii_lowercase();
-            if let Some(list) = rules.generic_by_tag.get(local.as_str()) {
+        if !rules.generic_by_tag.is_empty() || !rules.generic_by_tag_anc.is_empty() {
+            // HTML local names are lower-case already; only foreign content
+            // (SVG `foreignObject`, `linearGradient`) needs the conversion.
+            let lowered;
+            let local: &str = if e.is_html() {
+                &e.name.local
+            } else {
+                lowered = e.name.local.to_ascii_lowercase();
+                &lowered
+            };
+            if let Some(list) = rules.generic_by_tag.get(local) {
                 check(list);
             }
-        }
-        if !rules.generic_by_attr.is_empty() {
-            for a in &e.attrs {
-                if let Some(list) = rules.generic_by_attr.get(a.name.local.to_ascii_lowercase().as_str()) {
+            for a in &anc_classes {
+                if let Some(list) = rules.generic_by_tag_anc.get(&(local.to_owned(), (*a).to_owned())) {
                     check(list);
                 }
             }
         }
+        if !rules.generic_by_attr.is_empty() || !rules.generic_by_attr_value.is_empty() {
+            for a in &e.attrs {
+                // Attribute names are lower-cased by the HTML parser; only
+                // foreign-content names (`viewBox`) can carry upper case.
+                let lowered;
+                let name: &str = if e.is_html() {
+                    &a.name.local
+                } else {
+                    lowered = a.name.local.to_ascii_lowercase();
+                    &lowered
+                };
+                if let Some(list) = rules.generic_by_attr.get(name) {
+                    check(list);
+                }
+                if !rules.generic_by_attr_value.is_empty() {
+                    if let Some(list) = rules.generic_by_attr_value.get(&(name.to_owned(), a.value.to_string())) {
+                        check(list);
+                    }
+                }
+            }
+        }
         check(&rules.generic_other);
-        let map = Rc::new(DeclaredEntry { map: winners.into_iter().map(|(k, (v, _))| (k, v)).collect(), flow });
-        self.cache.borrow_mut().declared.insert(el, map.clone());
+        drop(check);
+        let map = if winners.is_empty() && flow.iter().all(Option::is_none) {
+            cache
+                .empty_entry
+                .get_or_insert_with(|| Rc::new(DeclaredEntry { map: FxHashMap::default(), flow }))
+                .clone()
+        } else {
+            Rc::new(DeclaredEntry { map: winners.into_iter().map(|(k, (v, _))| (k, v)).collect(), flow })
+        };
+        cache.declared.insert(el, map.clone());
+        cache.cascaded.insert(el, (c, pri));
         map
     }
 
