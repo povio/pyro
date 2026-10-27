@@ -1107,6 +1107,7 @@ pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResul
     engine.realms.borrow_mut().push((ctx, Rc::downgrade(&inner)));
     let realm = Realm { inner };
     {
+        let _watchdog = crate::engine::WatchdogPause::new(engine);
         let scope = realm.scope()?;
         let helpers = scope.eval(HELPERS_JS, Some("lightpanda://internal/helpers.js"), 1)?;
         *realm.inner.helpers.borrow_mut() = Some(Persistent::new(&scope, helpers));
@@ -1140,49 +1141,41 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
     let reg = realm.engine.classes.borrow();
     let global = scope.global();
     let object_proto = global.get("Object")?.as_object().expect("Object").get("prototype")?;
-    let make_interface = realm.helper(scope, "makeInterface")?;
-    let lazy_interface = realm.helper(scope, "lazyInterface")?;
+    let install = realm.helper(scope, "installInterfaces")?;
     let populate = make_native_fn(scope, "populate", populate_tramp);
     let keys = MemberKeys::new();
     let n = reg.classes.len();
-    let mut protos: Vec<Option<Persistent>> = Vec::with_capacity(n);
-    let mut ctors: Vec<Option<Persistent>> = Vec::with_capacity(n);
-    let mut targets: Vec<Option<Persistent>> = Vec::with_capacity(n);
-    for (id, info) in reg.classes.iter().enumerate() {
-        let proto = scope.object();
-        let parent_proto = match info.parent {
-            Some(p) => protos[p as usize].as_ref().expect("parent proto").get(scope),
-            None => object_proto,
-        };
-        proto.set_prototype(parent_proto);
+    // One call into JavaScript for all classes: per-class calls cost a VM
+    // entry each, which dominated realm creation.
+    let mut spec = String::from("[");
+    let mut natives = crate::RootedVec::new();
+    for (i, info) in reg.classes.iter().enumerate() {
+        if i > 0 {
+            spec.push(',');
+        }
+        let name = serde_json::to_string(info.name).expect("class name serializes");
+        let parent = info.parent.map_or(-1, i64::from);
+        spec.push_str(&format!("[{name},{parent},{},{}]", info.def.ctor_length, info.def.exposed));
         let native = match info.def.constructor {
             Some(c) => make_member_fn(scope.ctx, reg.member, c, info.name, info.def.ctor_length, &keys)?.value(),
             None => scope.null(),
         };
-        let parent_ctor = match info.parent {
-            Some(p) => ctors[p as usize].as_ref().expect("parent ctor").get(scope),
-            None => scope.null(),
-        };
-        let target = make_interface.call(
-            None,
-            &[
-                scope.string(info.name),
-                native,
-                proto.value(),
-                parent_ctor,
-                scope.number(info.def.ctor_length as f64),
-                scope.null(),
-            ],
-        )?;
-        let expose_on = if info.def.exposed { global.value() } else { scope.null() };
-        let ctor = lazy_interface.call(
-            None,
-            &[target, proto.value(), expose_on, scope.string(info.name), scope.number(id as f64), populate.value()],
-        )?;
-        protos.push(Some(Persistent::new(scope, proto.value())));
-        ctors.push(Some(Persistent::new(scope, ctor)));
-        targets.push(Some(Persistent::new(scope, target)));
+        natives.push(scope, native);
     }
+    spec.push(']');
+    let spec = scope.parse_json(&spec).expect("class spec is JSON");
+    let natives: Vec<Value<'_>> = natives.iter(scope).collect();
+    let natives = scope.array(&natives)?;
+    let result = install.call(None, &[spec, natives.value(), object_proto, global.value(), populate.value()])?;
+    let result = result.as_object().expect("installInterfaces result");
+    let lists: Vec<Object<'_>> =
+        (0..3).map(|k| result.get_index(k).map(|v| v.as_object().expect("installInterfaces list"))).collect::<JsResult<_>>()?;
+    let column = |list: &Object<'_>| -> JsResult<Vec<Option<Persistent>>> {
+        (0..n as u32).map(|i| Ok(Some(Persistent::new(scope, list.get_index(i)?)))).collect()
+    };
+    let protos = column(&lists[0])?;
+    let targets = column(&lists[1])?;
+    let ctors = column(&lists[2])?;
     let global_chain = realm.global_class.map(|gid| {
         let mut chain = vec![gid];
         while let Some(p) = reg.classes[*chain.last().expect("non-empty") as usize].parent {
