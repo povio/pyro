@@ -22,6 +22,11 @@ source is `src/steps.ts` (builders) and `src/index.ts` (pages and runs).
 
 ## Skeleton
 
+The client comes with each Lightningpanda release: install
+`lightningpanda-test-<version>.tgz` from the release with `bun add`, or import
+`lightningpanda-test/` from the unpacked archive. `Lightningpanda.launch()`
+finds the archive's binary on its own; set `LIGHTNINGPANDA_BIN` otherwise.
+
 ```ts
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { Lightningpanda, button, check, dialog, text, label } from 'lightningpanda-test';

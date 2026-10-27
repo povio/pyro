@@ -53,6 +53,21 @@ test.concurrent('closes a position', async () => {
   request the page made during the run) and `ms`. A failure throws `RunError`
   naming the step and why it was still waiting.
 
+## Install
+
+Each release ships the client with the browser:
+
+- **Release archive.** `lightningpanda-test/` sits beside the `lightningpanda`
+  binary, and `Lightningpanda.launch()` starts that binary when nothing else is
+  given (`bin`, then `$LIGHTNINGPANDA_BIN`, then the archive's binary, then
+  `lightningpanda` on PATH).
+- **Release asset.** `lightningpanda-test-<version>.tgz` installs into a test
+  project: `bun add ./lightningpanda-test-0.0.4.tgz` (or its download URL).
+  Bun loads the TypeScript sources; Node gets `dist/index.js` and types.
+
+`scripts/pack-test-client.sh OUT_DIR [ARCHIVE_DIR]` builds both, versioned
+from `Cargo.toml`.
+
 Coding agents: read [LLM.md](LLM.md) before writing tests.
 
 `examples/positions-close.test.ts` is TOS's `positions-close.e2e.ts` ported.
