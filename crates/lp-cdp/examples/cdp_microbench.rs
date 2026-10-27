@@ -98,6 +98,17 @@ fn main() {
     for _ in 0..500 {
         let t = Instant::now();
         h.call(Some(&session), "Runtime.evaluate", json!({"expression":"1+1","returnByValue":true}));
+        if let Some(secs) = std::env::var("LP_SPIN_NOOP_SECS").ok().and_then(|v| v.parse::<u64>().ok()) {
+            // Pure message cost: releaseObject of an unknown id runs no JavaScript.
+            let end = Instant::now() + Duration::from_secs(secs);
+            let mut n = 0u64;
+            while Instant::now() < end {
+                h.call(Some(&session), "Runtime.releaseObject", json!({"objectId": "1.999999999"}));
+                n += 1;
+            }
+            eprintln!("spin: {n} no-op messages in {secs}s = {:.1}us each", secs as f64 * 1e6 / n as f64);
+            std::process::exit(0);
+        }
         if let Some(secs) = std::env::var("LP_SPIN_HANDLE_SECS").ok().and_then(|v| v.parse::<u64>().ok()) {
             let end = Instant::now() + Duration::from_secs(secs);
             let mut n = 0u64;
@@ -113,7 +124,10 @@ fn main() {
         if let Some(secs) = std::env::var("LP_SPIN_SECS").ok().and_then(|v| v.parse::<u64>().ok()) {
             let end = Instant::now() + Duration::from_secs(secs);
             let mut n = 0u64;
-            while Instant::now() < end { h.call(Some(&session), "Runtime.evaluate", json!({"expression":"1+1","returnByValue":true})); n += 1; }
+            while Instant::now() < end {
+                h.call(Some(&session), "Runtime.evaluate", json!({"expression":"1+1","returnByValue":true}));
+                n += 1;
+            }
             eprintln!("spin: {n} evaluates in {secs}s = {:.1}us each", secs as f64 * 1e6 / n as f64);
             std::process::exit(0);
         }

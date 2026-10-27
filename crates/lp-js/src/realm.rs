@@ -147,6 +147,8 @@ pub(crate) struct RealmInner {
     identity: RefCell<HashMap<IdentityKey, sys::JSWeakRef>>,
     helpers: RefCell<Option<Persistent>>,
     helper_cache: RefCell<HashMap<&'static str, Persistent>>,
+    /// The realm's `Object.prototype`, for the plain-object fast path of `is_plain_object`.
+    object_proto: RefCell<Option<Persistent>>,
     dom_exception: RefCell<Option<Persistent>>,
     module_loader: Cell<*mut c_void>,
     module_fetcher: RefCell<Option<Rc<dyn ModuleFetcher>>>,
@@ -245,6 +247,7 @@ impl RealmInner {
         self.populated.borrow_mut().clear();
         self.helpers.borrow_mut().take();
         self.helper_cache.borrow_mut().clear();
+        self.object_proto.borrow_mut().take();
         self.dom_exception.borrow_mut().take();
         if let Some((_, release, _)) = sys::spi::get().weak() {
             for (_, w) in self.identity.borrow_mut().drain() {
@@ -737,6 +740,44 @@ impl<'s> Scope<'s> {
         }
     }
 
+    /// Interface name of a native wrapper instance of this engine (not a
+    /// global object), without running JavaScript. `None` for other values.
+    pub fn host_class_name(&self, value: Value<'_>) -> Option<&'static str> {
+        let o = value.as_object()?;
+        if unsafe { sys::JSContextGetGroup(value.ctx) } != self.realm.engine.group() {
+            return None;
+        }
+        let h = unsafe { self.header_of_object(o.raw) }?;
+        if h == self.realm.global_payload.get() {
+            return None;
+        }
+        unsafe {
+            if (*h).kind != Kind::Instance {
+                return None;
+            }
+            self.realm.engine.classes.borrow().classes.get((*h).class as usize).map(|c| c.name)
+        }
+    }
+
+    /// An ordinary object whose prototype is this realm's `Object.prototype`:
+    /// not callable, not an array or date, not a native wrapper. Decided
+    /// natively, without invoking getters or proxy traps.
+    pub fn is_plain_object(&self, value: Value<'_>) -> bool {
+        let Some(o) = value.as_object() else { return false };
+        if unsafe { sys::JSContextGetGroup(value.ctx) } != self.realm.engine.group() {
+            return false;
+        }
+        if value.is_function() || value.is_array() || value.is_date() {
+            return false;
+        }
+        if unsafe { self.header_of_object(o.raw) }.is_some() {
+            return false;
+        }
+        let proto = self.realm.object_proto.borrow();
+        let Some(proto) = proto.as_ref() else { return false };
+        unsafe { sys::JSObjectGetPrototype(self.ctx, o.raw) == proto.get(self).raw }
+    }
+
     /// Tests for one of this engine's native wrappers/closures or a same-VM
     /// global object, without invoking getters, proxy traps, or other JS.
     /// Includes globals retained by another realm after their owner is disposed.
@@ -977,6 +1018,7 @@ pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResul
         identity: RefCell::new(HashMap::new()),
         helpers: RefCell::new(None),
         helper_cache: RefCell::new(HashMap::new()),
+        object_proto: RefCell::new(None),
         dom_exception: RefCell::new(None),
         module_loader: Cell::new(ptr::null_mut()),
         module_fetcher: RefCell::new(None),
@@ -996,6 +1038,8 @@ pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResul
         let dom_exc = helpers.as_object().expect("helpers").get("DOMException")?;
         *realm.inner.dom_exception.borrow_mut() = Some(Persistent::new(&scope, dom_exc));
         install_classes(&scope)?;
+        let object_proto = scope.global().get("Object")?.as_object().expect("Object").get("prototype")?;
+        *realm.inner.object_proto.borrow_mut() = Some(Persistent::new(&scope, object_proto));
         install_console(&scope)?;
         install_rejection_tracking(&scope)?;
         if engine.caps.modules {

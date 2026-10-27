@@ -742,7 +742,10 @@ impl Host for EngineHost {
         let result = self.page_command_result(&cmd);
         // Synchronous inspector JS runs outside loop tasks. Release command
         // borrows before starting DOM resources and dispatching native events.
-        self.thread.browser.checkpoint();
+        // Handle releases run no JavaScript; skip the checkpoint for them.
+        if !matches!(cmd.command.method.as_ref(), "Runtime.releaseObject" | "Runtime.releaseObjectGroup") {
+            self.thread.browser.checkpoint();
+        }
         // Events produced while handling precede the response (Chrome order).
         self.flush();
         match result {
