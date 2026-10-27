@@ -563,6 +563,7 @@ dependencies = [
  "lp-runtime",
  "lp-webapi",
  "percent-encoding",
+ "smallvec",
  "url",
 ]
 

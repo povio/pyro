@@ -338,6 +338,8 @@ pub struct DocumentState {
 
 pub struct Page {
     pub id: PageId,
+    /// Set by every mutable access; `sync_root` compares only when set.
+    pub(crate) root_dirty: Cell<bool>,
     pub context: ContextId,
     pub init_scripts: Vec<InitScript>,
     document: DocumentState,
@@ -620,6 +622,7 @@ impl Browser {
         self.pages.push(Page {
             id,
             context,
+            root_dirty: Cell::new(true),
             init_scripts: Vec::new(),
             frames,
             document: DocumentState {
@@ -657,7 +660,9 @@ impl Browser {
     }
 
     pub(crate) fn page_mut(&mut self, id: PageId) -> Option<&mut Page> {
-        self.pages.iter_mut().find(|p| p.id == id)
+        let page = self.pages.iter_mut().find(|p| p.id == id)?;
+        page.root_dirty.set(true);
+        Some(page)
     }
 
     /// Changes this page's navigator and native request defaults atomically.
@@ -948,6 +953,7 @@ impl Browser {
         let loader = self.pages[pos].main_frame.loader_id.clone();
         self.forget_network_activity(page.into(), &loader);
         self.pages[pos].main_frame.realms = host.root.borrow().realms.clone();
+        self.pages[pos].root_dirty.set(true);
         let p = self.pages.remove(pos);
         if let Some(dom) = &p.main_frame.page_dom {
             dom.dispose();

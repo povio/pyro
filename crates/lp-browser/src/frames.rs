@@ -101,6 +101,9 @@ pub(crate) struct Settings {
     pub scripts: Vec<InitScript>,
 }
 
+/// Frame keys of one page without a heap allocation for up to four frames.
+pub type FrameKeys = smallvec::SmallVec<[FrameKey; 4]>;
+
 pub(crate) struct FrameHost {
     pub children: RefCell<BTreeMap<u64, DocumentState>>,
     pub root: RefCell<Frame>,
@@ -181,7 +184,9 @@ impl FrameHost {
             .find(|(_, d)| d.main_frame.id == *id)
             .map(|(id, _)| FrameKey { page: self.page, child: Some(*id) })
     }
-    pub fn keys(&self) -> Vec<FrameKey> {
+    /// Root first, then child frames. Inline for the common single-frame
+    /// page: this runs several times per checkpoint.
+    pub fn keys(&self) -> FrameKeys {
         std::iter::once(self.page.into())
             .chain(self.children.borrow().keys().map(|id| FrameKey { page: self.page, child: Some(*id) }))
             .collect()
@@ -478,11 +483,11 @@ impl FrameHost {
     fn parent_key(&self, key: FrameKey) -> FrameKey {
         self.frame(key).and_then(|f| f.parent).and_then(|id| self.key(&id)).unwrap_or(key)
     }
-    pub fn child_keys(&self, key: FrameKey) -> Vec<FrameKey> {
+    pub fn child_keys(&self, key: FrameKey) -> FrameKeys {
         if !self.has_children() {
-            return Vec::new();
+            return FrameKeys::new();
         }
-        let Some(id) = self.with_frame(key, |f| f.id.clone()) else { return Vec::new() };
+        let Some(id) = self.with_frame(key, |f| f.id.clone()) else { return FrameKeys::new() };
         self.children
             .borrow()
             .iter()
@@ -617,8 +622,9 @@ impl lp_js::JsClass for CrossWindow {
 impl Browser {
     pub(crate) fn sync_root(&self, page: PageId) {
         if let Some(p) = self.page(page) {
-            // Runs at every checkpoint: skip the clone when nothing changed.
-            if p.frames.root.borrow().same_as(&p.main_frame) {
+            // Runs at every checkpoint: compare only after a mutable access,
+            // and clone only when the frames differ.
+            if !p.root_dirty.replace(false) || p.frames.root.borrow().same_as(&p.main_frame) {
                 return;
             }
             let mut frame = p.main_frame.clone();
@@ -653,6 +659,16 @@ impl Browser {
                 loaded: f.loaded,
             })
             .collect()
+    }
+    /// The page's realm with this id, searching the root frame first. A
+    /// handle clone only; no frame is cloned (hot: every `Runtime.*` command).
+    pub fn realm_in_page(&self, page: PageId, realm: RealmId) -> Option<Realm> {
+        let p = self.page(page)?;
+        let find = |f: &Frame| f.realms.iter().find(|r| r.realm.id() == realm).map(|r| r.realm.clone());
+        if let Some(r) = find(&p.main_frame) {
+            return Some(r);
+        }
+        p.frames.children.borrow().values().find_map(|d| find(&d.main_frame))
     }
     /// Owned snapshot with cloned realm and PageDom handles; never a live registry borrow.
     pub fn frame(&self, page: PageId, id: &FrameId) -> Option<Frame> {

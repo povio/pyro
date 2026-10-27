@@ -396,7 +396,8 @@ impl EngineHost {
     }
 
     pub(crate) fn realm(&self, page: PageKey, realm: RealmId) -> Option<Realm> {
-        self.frame_for_realm(page, realm)?.realms.iter().find(|r| r.realm.id() == realm).map(|r| r.realm.clone())
+        let id = self.pages.get(&page)?.id;
+        self.thread.browser.realm_in_page(id, realm)
     }
 
     fn frame_for_realm(&self, page: PageKey, realm: RealmId) -> Option<Frame> {
