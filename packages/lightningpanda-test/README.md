@@ -29,6 +29,10 @@ test.concurrent('closes a position', async () => {
   (`pushState` + `popstate`) run as the first step of the first `run`, so the
   app does not boot again. `url` navigates instead. With no page waiting, one
   is booted for the test.
+- **Connections.** `connect(ws, { connections: 4 })` opens one browser thread
+  per connection, each with its own pools. A test takes a page from the
+  connection with the fewest open pages, and a connection boots replacements
+  as soon as it has no open page, in parallel with tests on the others.
 - **Locators** are data: `css`, `testId`, `text`, `label`, `placeholder`,
   `role` (and `button`, `dialog`, `link`, …), chained inside one another
   (`dialog().button('OK')`), filtered (`.visible()`, `.hasText()`,

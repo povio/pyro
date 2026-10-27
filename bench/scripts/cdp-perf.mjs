@@ -909,9 +909,18 @@ const SCENARIOS = [
   {
     name: 'tos.close.run.busy',
     group: 'tos',
-    what: 'tos.close.run back to back: the pool refills only after 15 ms without commands, so most pages boot on demand',
+    what: 'tos.close.run back to back on one connection: its pool refills when the test closes its page, next to the next test',
     iterations: 15,
     setup: tosSetup(true),
+    run: async (s, i, env) => tosClose(s, env, 'run'),
+    teardown: tosTeardown,
+  },
+  {
+    name: 'tos.close.run.conn4',
+    group: 'tos',
+    what: 'tos.close.run.busy over 4 connections (browser threads): each refills while the others run tests',
+    iterations: 15,
+    setup: tosSetup(true, 4),
     run: async (s, i, env) => tosClose(s, env, 'run'),
     teardown: tosTeardown,
   },
@@ -1203,11 +1212,11 @@ function tosCloseSteps(t, p) {
     check(button('Reopen Position')).count(1),
   ];
 }
-function tosSetup(prepared) {
+function tosSetup(prepared, connections = 1) {
   return async (env) => {
     if (!globalThis.Bun) throw new Error('needs bun (the lightningpanda-test client is TypeScript)');
     const t = await import('../../packages/lightningpanda-test/src/index.ts');
-    const lp = await t.Lightningpanda.connect(env.wsUrl);
+    const lp = await t.Lightningpanda.connect(env.wsUrl, { connections });
     await lp.profile('employee', {
       url: `${env.site}/tos/platform`,
       localStorage: { 'auth-token': 'e2e-token' },
