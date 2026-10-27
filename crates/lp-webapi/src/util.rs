@@ -8,6 +8,7 @@ use lp_js::{Args, IdentityKey, JsError, JsResult, Object, Scope, Value, WeakReal
 /// which the GC traces, rather than in a `Persistent`, which is a root the GC
 /// cannot see through: a protected value that reaches back to the wrapper
 /// would keep both, its realm and its page alive after the page closes.
+#[derive(Clone)]
 pub(crate) struct WrapperRef {
     realm: WeakRealm,
     identity: IdentityKey,

@@ -366,3 +366,133 @@ fn drag_in_flight_at_dispose_does_not_retain_the_realm() {
     lab.settle(|| drops.get() == 1);
     assert_eq!(drops.get(), 1, "a drag in flight at dispose retained the closed realm");
 }
+
+// ---- AbortSignal.reason ----
+
+/// A signal aborted with a reason that reaches back to the signal, kept on the global: the shape
+/// that rooted the realm when the reason was a `Persistent` in the signal's payload.
+const KEEP_ABORTED_SIGNAL: &str = "(function () { const c = new AbortController(); const reason = { signal: c.signal, deep: { n: 1 } }; \
+    c.abort(reason); globalThis.__reason = reason; globalThis.__sig = c.signal; })()";
+
+/// The same through `AbortSignal.any`, whose abort step reads the source's reason.
+const KEEP_ANY_SIGNAL: &str = "(function () { const c = new AbortController(); const any = AbortSignal.any([c.signal]); \
+    const reason = { signal: any }; c.abort(reason); globalThis.__any = any; globalThis.__src = c; })()";
+
+#[test]
+fn abortsignal_semantics_are_unchanged() {
+    let lab = Lab::new();
+    let (_page, realm) = lab.open("<body>");
+    let out = eval(
+        &realm,
+        r#"(() => {
+            const out = [];
+            const c = new AbortController(); const s = c.signal;
+            out.push(s.aborted, s.reason === undefined);
+            s.throwIfAborted();
+            let seen; s.addEventListener('abort', e => { seen = e.target.reason; });
+            c.abort();
+            const r = s.reason;
+            out.push(s.aborted, r instanceof DOMException, r.name, s.reason === r, seen === r);
+            let thrown; try { s.throwIfAborted(); } catch (e) { thrown = e; }
+            out.push(thrown === r);
+            c.abort('later');
+            out.push(s.reason === r);
+            const custom = { a: 1 }; const c2 = new AbortController(); c2.abort(custom);
+            out.push(c2.signal.reason === custom, c2.signal.reason.a);
+            out.push(AbortSignal.abort('str').reason, AbortSignal.abort(null).reason === null, AbortSignal.abort(0).reason);
+            out.push(AbortSignal.abort().reason.name);
+            const c3 = new AbortController(); const anyLater = AbortSignal.any([c3.signal]);
+            const tag = { t: 1 }; c3.abort(tag);
+            out.push(anyLater.aborted, anyLater.reason === tag);
+            const anyNow = AbortSignal.any([c2.signal]);
+            out.push(anyNow.aborted, anyNow.reason === custom);
+            out.push(AbortSignal.any([new AbortController().signal]).reason === undefined);
+            return out.join('|');
+        })()"#,
+    );
+    assert_eq!(
+        out,
+        "false|true|true|true|AbortError|true|true|true|true|true|1|str|true|0|AbortError|true|true|true|true|true"
+    );
+}
+
+#[test]
+fn abortsignal_reason_survives_gc_through_the_hidden_slot_only() {
+    let lab = Lab::new();
+    let (_page, realm) = lab.open("<body>");
+    // The reason is reachable only from the signal's hidden slot: the controller and every other
+    // reference are gone once the function returns.
+    run(
+        &realm,
+        "globalThis.__sig = (function () { const c = new AbortController(); c.abort({ marker: { deep: 42 } }); return c.signal; })();\
+         globalThis.__any = (function () { const c = new AbortController(); const a = AbortSignal.any([c.signal]); c.abort({ via: 'any' }); return a; })();",
+    );
+    lab.gc_live();
+    assert_eq!(eval(&realm, "[__sig.reason.marker.deep, __any.reason.via].join()"), "42,any");
+    lab.gc_live();
+    assert_eq!(eval(&realm, "[__sig.reason.marker.deep, __any.reason.via, __sig.reason === __sig.reason].join()"), "42,any,true");
+}
+
+#[test]
+fn abortsignal_hidden_keys_are_invisible() {
+    let lab = Lab::new();
+    let (_page, realm) = lab.open("<body>");
+    let out = eval(
+        &realm,
+        r#"(() => {
+            const c = new AbortController(); c.abort({ visible: true });
+            const probe = o => { const forIn = []; for (const k in o) forIn.push(k);
+                return [Object.getOwnPropertyNames(o).some(k => k.startsWith('__lp')),
+                        Reflect.ownKeys(o).some(k => String(k).startsWith('__lp')),
+                        JSON.stringify(o).includes('__lp'), forIn.some(k => k.startsWith('__lp'))].join(); };
+            return [probe(c.signal), probe(c)].join('/');
+        })()"#,
+    );
+    assert_eq!(out, "false,false,false,false/false,false,false,false");
+}
+
+#[test]
+fn abortsignal_cross_realm_any_and_reason() {
+    let lab = Lab::new();
+    let (page, a) = lab.open("<body>");
+    let b = new_realm(&lab.engine, lab.window_class, &page, "other");
+    run(&a, "globalThis.__ctrl = new AbortController(); globalThis.__pre = AbortSignal.abort({ pre: 1 });");
+    {
+        let sa = a.scope().unwrap();
+        let (sig, pre) = (sa.global().get("__ctrl").unwrap(), sa.global().get("__pre").unwrap());
+        let sb = b.scope().unwrap();
+        sb.global().set("__ctrlA", sig).unwrap();
+        sb.global().set("__preA", pre).unwrap();
+    }
+    // `any` in realm B over a signal of realm A: aborted now, and aborted later.
+    run(&b, "globalThis.__anyNow = AbortSignal.any([__preA]); globalThis.__anyLater = AbortSignal.any([__ctrlA.signal]);");
+    lab.gc_live();
+    run(&a, "__ctrl.abort({ late: 2 });");
+    lab.gc_live();
+    assert_eq!(
+        eval(
+            &b,
+            "[__anyNow.reason === __preA.reason, __anyNow.reason.pre, __anyLater.aborted, \
+              __anyLater.reason === __ctrlA.signal.reason, __anyLater.reason.late].join()"
+        ),
+        "true,1,true,true,2"
+    );
+}
+
+#[test]
+fn abortsignal_kept_in_a_closed_page_does_not_retain_the_realm() {
+    assert_eq!(
+        closed_realm_drops(KEEP_ABORTED_SIGNAL),
+        1,
+        "closed realm survived the bounded collection rounds (AbortSignal.reason cycle)"
+    );
+}
+
+#[test]
+fn abortsignal_any_kept_in_a_closed_page_does_not_retain_the_realm() {
+    assert_eq!(
+        closed_realm_drops(KEEP_ANY_SIGNAL),
+        1,
+        "closed realm survived the bounded collection rounds (AbortSignal.any reason cycle)"
+    );
+}

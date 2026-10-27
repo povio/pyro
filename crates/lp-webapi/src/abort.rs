@@ -13,6 +13,9 @@ use crate::target::{fire, page_of, EventTarget, EventTargetData};
 
 type AbortHook = Box<dyn FnOnce(&PageDom)>;
 
+/// The abort reason, a hidden property of the signal's wrapper.
+const REASON: &str = "__lpAbortReason";
+
 /// Identity of a native abort step; never reused within one signal.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct AbortHookId(u64);
@@ -20,7 +23,11 @@ pub struct AbortHookId(u64);
 pub struct AbortSignalData {
     pub target: EventTargetData,
     aborted: Cell<bool>,
-    reason: Rc<RefCell<Option<Persistent>>>,
+    /// The signal's own wrapper, found again through its realm's identity map.
+    /// The abort reason is a hidden property of that wrapper, which the GC
+    /// traces: a `Persistent` here could be rooted through the reason (an
+    /// object that reaches the signal) and keep the realm alive after close.
+    pub(crate) wrapper: WrapperRef,
     /// Listener registrations to drop on abort (`{signal}` option).
     remove_on_abort: RefCell<Vec<(TargetKey, u32)>>,
     /// Native abort steps (fetch/XHR cancellation).
@@ -45,8 +52,10 @@ impl Drop for AbortRegistration {
 }
 
 impl AbortSignalData {
-    pub(crate) fn reason_weak(&self) -> std::rc::Weak<RefCell<Option<Persistent>>> {
-        Rc::downgrade(&self.reason)
+    /// The reason stored on the signal wrapper behind `wrapper`, if the wrapper is
+    /// still alive and the signal has aborted.
+    pub(crate) fn stored_reason<'s>(wrapper: &WrapperRef, s: &Scope<'s>) -> Option<Value<'s>> {
+        wrapper.hidden(s, REASON).ok().flatten()
     }
     pub(crate) fn register_native(&self, hook: AbortHook) -> Option<AbortRegistration> {
         self.add_abort_hook(hook).map(|id| AbortRegistration { hooks: Rc::downgrade(&self.hooks), id })
@@ -55,7 +64,7 @@ impl AbortSignalData {
         self.aborted.get()
     }
     pub fn reason<'s>(&self, s: &Scope<'s>) -> Value<'s> {
-        self.reason.borrow().as_ref().map_or(s.undefined(), |p| p.get(s))
+        Self::stored_reason(&self.wrapper, s).unwrap_or(s.undefined())
     }
     pub(crate) fn on_abort_remove(&self, key: TargetKey, registration: u32) {
         self.remove_on_abort.borrow_mut().push((key, registration));
@@ -93,7 +102,11 @@ impl AbortSignalData {
         } else {
             reason
         };
-        *self.reason.borrow_mut() = Some(Persistent::new(s, reason));
+        // Written before any hook or listener runs, so they all observe it. A failed write (the
+        // wrapper is already gone) leaves the reason undefined; the hooks still run.
+        if let Ok(wrapper) = self.wrapper.get(s) {
+            let _ = s.set_hidden(wrapper, REASON, reason);
+        }
         let page = self.target.page.clone();
         for (key, registration) in self.remove_on_abort.take() {
             page.dom.borrow_mut().abort_listener(key, registration);
@@ -163,18 +176,13 @@ impl JsClass for AbortSignal {
                 }
                 let target = Persistent::new(s, sig.value());
                 let realm = s.realm().downgrade();
-                let source_reason = Rc::downgrade(&src.reason);
+                let source = src.wrapper.clone();
                 src.add_abort_hook(Box::new(move |_page| {
                     let Some(realm) = realm.upgrade() else { return };
                     let Ok(s) = realm.scope() else { return };
-                    // The caller keeps native source data alive while abort
-                    // steps run, including when the source is from another realm.
-                    // A weak native reference avoids rooting our own JS wrapper.
-                    let source_reason = source_reason.upgrade();
-                    let reason = source_reason
-                        .as_ref()
-                        .and_then(|r| r.borrow().as_ref().map(|r| r.get(&s)))
-                        .unwrap_or(s.undefined());
+                    // The source is aborting, so its wrapper is alive and holds the
+                    // reason; this also works when the source is from another realm.
+                    let reason = AbortSignalData::stored_reason(&source, &s).unwrap_or(s.undefined());
                     let target_signal = s.unwrap::<AbortSignal>(target.get(&s));
                     if let Some(d) = target_signal {
                         d.abort(&s, reason);
@@ -194,7 +202,7 @@ pub fn new_signal<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
     let data = AbortSignalData {
         target,
         aborted: Cell::new(false),
-        reason: Rc::new(RefCell::new(None)),
+        wrapper: WrapperRef::new(s, key),
         remove_on_abort: RefCell::new(Vec::new()),
         hooks: Rc::new(RefCell::new(Vec::new())),
         next_hook: Cell::new(1),
