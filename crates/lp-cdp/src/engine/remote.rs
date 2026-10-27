@@ -13,7 +13,7 @@ use serde_json::Value as Json;
 use crate::msg::{CdpError, CdpResult};
 use crate::runtime_protocol::{
     parse_jsc_stack, v8_style_description, Argument, CallArgument, ExceptionDetails, ExecutionContextId, HandleTable,
-    RemoteObject, StackTrace,
+    RemoteObject, RemoteValue, StackTrace,
 };
 
 /// A converted value plus the engine reference to store if the client should
@@ -66,16 +66,16 @@ pub(crate) fn describe(scope: &Scope<'_>, value: Value<'_>, by_value: bool) -> C
         JsType::Null => plain(RemoteObject {
             kind: "object",
             subtype: Some("null"),
-            value: Some(Json::Null),
+            value: Some(Json::Null.into()),
             ..RemoteObject::default()
         }),
         JsType::Boolean => {
-            plain(RemoteObject { kind: "boolean", value: Some(Json::Bool(value.to_bool())), ..RemoteObject::default() })
+            plain(RemoteObject { kind: "boolean", value: Some(Json::Bool(value.to_bool()).into()), ..RemoteObject::default() })
         }
         JsType::Number => plain(RemoteObject::number(value.to_number().map_err(js_to_cdp)?)),
         JsType::String => plain(RemoteObject {
             kind: "string",
-            value: Some(Json::String(value.to_string().map_err(js_to_cdp)?)),
+            value: Some(Json::String(value.to_string().map_err(js_to_cdp)?).into()),
             ..RemoteObject::default()
         }),
         JsType::BigInt => {
@@ -125,13 +125,20 @@ pub(crate) fn describe(scope: &Scope<'_>, value: Value<'_>, by_value: bool) -> C
             if by_value && kind != "symbol" {
                 // JSON.stringify semantics; unserializable results (functions,
                 // cycles) become undefined as Playwright expects from Chrome's
-                // "Object couldn't be returned by value" handling.
+                // "Object couldn't be returned by value" handling. The engine's
+                // JSON text goes to the wire as is (key order kept, like Chrome);
+                // the check only enforces what parsing it used to (depth limit).
                 let json = match value.to_json(0) {
-                    Ok(Some(text)) => serde_json::from_str(&text).ok(),
+                    Ok(Some(text)) => serde_json::value::RawValue::from_string(text).ok(),
                     _ => None,
                 };
                 return match json {
-                    Some(json) => plain(RemoteObject { kind, subtype, value: Some(json), ..RemoteObject::default() }),
+                    Some(json) => plain(RemoteObject {
+                        kind,
+                        subtype,
+                        value: Some(RemoteValue::Raw(json)),
+                        ..RemoteObject::default()
+                    }),
                     None => Err(CdpError::server("Object couldn't be returned by value")),
                 };
             }

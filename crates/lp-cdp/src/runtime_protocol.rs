@@ -28,13 +28,46 @@ pub struct RemoteObject {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub class_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub value: Option<Value>,
+    pub value: Option<RemoteValue>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unserializable_value: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub object_id: Option<String>,
+}
+
+/// `RemoteObject.value`: a JSON value, or JSON text already produced by the
+/// engine (by-value results), written to the wire as is.
+#[derive(Debug, Clone)]
+pub enum RemoteValue {
+    Json(Value),
+    Raw(Box<serde_json::value::RawValue>),
+}
+
+impl From<Value> for RemoteValue {
+    fn from(v: Value) -> Self {
+        RemoteValue::Json(v)
+    }
+}
+
+impl PartialEq for RemoteValue {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (RemoteValue::Json(a), RemoteValue::Json(b)) => a == b,
+            (RemoteValue::Raw(a), RemoteValue::Raw(b)) => a.get() == b.get(),
+            _ => false,
+        }
+    }
+}
+
+impl Serialize for RemoteValue {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        match self {
+            RemoteValue::Json(v) => v.serialize(s),
+            RemoteValue::Raw(r) => r.serialize(s),
+        }
+    }
 }
 
 impl RemoteObject {
@@ -62,7 +95,7 @@ impl RemoteObject {
         };
         Self {
             kind: "number",
-            value: unserializable.is_none().then(|| number_value(n)),
+            value: unserializable.is_none().then(|| number_value(n).into()),
             unserializable_value: unserializable.map(str::to_owned),
             description: Some(description),
             ..Self::default()
