@@ -798,13 +798,21 @@ const SCENARIOS = [
     webview: true,
     run: async (s, i, env) => lpFlow(env, i, false, false),
   },
+  // Bun.WebView's view.cdp() allows one call in flight ("a cdp() is already pending"),
+  // so the pipelined flow runs on the raw CDP client, next to a sequential twin.
   {
-    name: 'wv.lp.flow.pipelined',
+    name: 'lp.flow.e2e',
     group: 'webview',
-    what: 'wv.lp.flow.e2e with fill and click sent without awaiting (one wait for the expect)',
+    what: 'wv.lp.flow.e2e on the raw CDP client: new page, navigate form, LP.act fill + click, LP.expect, close',
     iterations: 15,
-    webview: true,
-    run: async (s, i, env) => lpFlow(env, i, true, false),
+    run: async (s, i, env) => cdpLpFlow(env, i, false),
+  },
+  {
+    name: 'lp.flow.pipelined',
+    group: 'webview',
+    what: 'lp.flow.e2e with fill, click and expect sent at once (one wait for all three)',
+    iterations: 15,
+    run: async (s, i, env) => cdpLpFlow(env, i, true),
   },
   {
     name: 'wv.lp.flow.role',
@@ -1024,6 +1032,33 @@ async function lpFlow(env, i, pipelined, semantic) {
     lap('result');
   } finally {
     await view.close();
+  }
+  lap('close');
+  return phases;
+}
+// lpFlow on the raw CDP client, where commands can be in flight together.
+async function cdpLpFlow(env, i, pipelined) {
+  const t0 = now();
+  const phases = {};
+  const lap = (k) => {
+    phases[k] = now() - t0;
+  };
+  const c = env.cdp;
+  const page = await newPage(c);
+  try {
+    await navigate(c, page.sessionId, `${env.site}/form`);
+    lap('navigate');
+    const send = (method, params) => c.send(method, params, page.sessionId);
+    const fill = send('LP.act', { locator: { css: '#name' }, action: 'fill', value: `w${i}` });
+    if (!pipelined) await fill;
+    const click = send('LP.act', { locator: { css: '#submit' }, action: 'click' });
+    if (!pipelined) await click;
+    lap('input');
+    const expect = send('LP.expect', { locator: { css: '#out' }, assert: 'text', expected: `Hello, w${i}` });
+    await Promise.all([fill, click, expect]);
+    lap('result');
+  } finally {
+    await closePage(c, page);
   }
   lap('close');
   return phases;
