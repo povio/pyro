@@ -10,7 +10,7 @@ use serde_json::json;
 use super::remote::{self, Described};
 use super::{EngineHost, Queued};
 use crate::msg::{self, CdpError, CdpResult};
-use crate::runtime_protocol::{CallArgument, ExecutionContextId, HandleTable, RemoteObject};
+use crate::runtime_protocol::{CallArgument, ExceptionDetails, ExecutionContextId, HandleTable, RemoteObject};
 use crate::target::{PageCommand, PageKey};
 
 pub(crate) fn context_id(realm: RealmId) -> ExecutionContextId {
@@ -61,18 +61,31 @@ pub(crate) struct Reply {
     done: Cell<bool>,
 }
 
+/// `{"result": .., "exceptionDetails": ..}` serialized straight into the
+/// frame: going through `json!` would copy a by-value result into a tree.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ResultBody<'a> {
+    result: &'a RemoteObject,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    exception_details: Option<&'a ExceptionDetails>,
+}
+
 impl Reply {
     fn value(&self, scope: &Scope<'_>, value: Value<'_>) {
         if self.done.get() {
             return;
         }
         let Some(handles) = self.handles.upgrade() else { return self.done.set(true) };
+        let describe = crate::perf::span("remote.describe");
         let result = remote::describe(scope, value, self.by_value);
+        drop(describe);
         if self.done.get() {
             return; // describe ran JavaScript, which may have cancelled us
         }
+        let _t = crate::perf::span("remote.register+reply");
         match result.and_then(|d| remote::register(d, &handles, self.context, self.group.as_deref())) {
-            Ok(remote) => self.send(&json!({ "result": remote })),
+            Ok(remote) => self.send(&ResultBody { result: &remote, exception_details: None }),
             Err(e) => self.error(&e),
         }
     }
@@ -83,10 +96,10 @@ impl Reply {
         }
         let details = remote::exception_details(scope, exception, exception_id, Some(self.context));
         let result = details.exception.clone().unwrap_or_else(RemoteObject::undefined);
-        self.send(&json!({ "result": result, "exceptionDetails": details }));
+        self.send(&ResultBody { result: &result, exception_details: Some(&details) });
     }
 
-    fn send(&self, result: &serde_json::Value) {
+    fn send<T: serde::Serialize>(&self, result: &T) {
         if !self.done.replace(true) {
             self.collector.push(Queued::Frame(msg::result_frame(self.id, result, Some(&self.session_id))));
         }
@@ -382,7 +395,10 @@ impl EngineHost {
         let reply = self.reply_for(cmd, p.return_by_value, p.object_group, &realm)?;
         let exception_id = self.next_exception_id();
         let scope = realm.scope().map_err(remote::js_to_cdp)?;
-        match scope.eval(&p.expression, None, 1) {
+        let eval = crate::perf::span("js.eval");
+        let evaluated = scope.eval(&p.expression, None, 1);
+        drop(eval);
+        match evaluated {
             Ok(value) => reply.settle(&self.pending, &scope, value, p.await_promise, exception_id),
             Err(error) => reply.exception(&scope, &error.details(&scope), exception_id),
         }
@@ -421,7 +437,10 @@ impl EngineHost {
             let value = remote::argument(&scope, arg, &handles, context)?;
             args.push(&scope, value);
         }
-        match scope.call_function_rooted(&p.function_declaration, this.as_ref(), &args) {
+        let call = crate::perf::span("js.call_function");
+        let called = scope.call_function_rooted(&p.function_declaration, this.as_ref(), &args);
+        drop(call);
+        match called {
             Ok(value) => reply.settle(&self.pending, &scope, value, p.await_promise, exception_id),
             Err(error) => reply.exception(&scope, &error.details(&scope), exception_id),
         }

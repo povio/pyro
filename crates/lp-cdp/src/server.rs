@@ -85,6 +85,26 @@ pub struct SessionChannels {
 /// Starts a browser session for a newly upgraded connection.
 pub trait SessionFactory: Send + Sync + 'static {
     fn start(&self, peer: SocketAddr) -> std::io::Result<SessionChannels>;
+
+    /// Takes over the upgraded socket instead: the session does its own
+    /// WebSocket I/O (bytes in `buffered` were read past the upgrade request).
+    /// Returns `None` to use [`SessionFactory::start`]'s channels; otherwise a
+    /// receiver that resolves once the session has fully stopped (the
+    /// connection slot is held until then).
+    fn start_owned(
+        &self,
+        _peer: SocketAddr,
+        _socket: std::net::TcpStream,
+        _buffered: Vec<u8>,
+        _config: &ServerConfig,
+    ) -> Option<std::io::Result<tokio::sync::oneshot::Receiver<()>>> {
+        None
+    }
+
+    /// Whether [`SessionFactory::start_owned`] is used for upgraded sockets.
+    fn owns_sockets(&self) -> bool {
+        false
+    }
 }
 
 pub struct Server<F> {
@@ -162,6 +182,16 @@ async fn serve_connection<F: SessionFactory>(
         Routed::Upgrade(handshake) => handshake,
     };
     stream.write_all(&handshake).await?;
+
+    if factory.owns_sockets() {
+        let socket = stream.into_std()?;
+        if let Some(started) = factory.start_owned(peer, socket, buf[head_len..].to_vec(), config) {
+            // The slot is held until the session's thread has finished.
+            let _ = started?.await;
+            return Ok(());
+        }
+        return Ok(());
+    }
 
     let SessionChannels { inbound, outbound, finished, on_close } = factory.start(peer)?;
     let (reader, writer) = stream.into_split();
@@ -254,7 +284,12 @@ async fn read_loop(
     let mut message_deadline: Option<tokio::time::Instant> = None;
     loop {
         loop {
-            let close = match side.decoder.next_message() {
+            let decode = crate::perf::now();
+            let next = side.decoder.next_message();
+            if matches!(next, Ok(Some(Message::Text(_)))) {
+                crate::perf::record_since("io.ws_decode", decode);
+            }
+            let close = match next {
                 Ok(Some(Message::Text(text))) => match deliver(&mut side, inbound, Inbound::Text(text)).await {
                     Delivery::Sent => None,
                     // Session ended on its own; close politely.
@@ -384,7 +419,13 @@ async fn write_loop(
                 None => return writer.shutdown().await,
             },
             frame = outbound.recv() => match frame {
-                Some(Outbound::Frame(frame)) => write_all(&mut writer, frame.as_ref(), timeout).await?,
+                Some(Outbound::Frame(frame)) => {
+                    #[cfg(feature = "perf-trace")]
+                    crate::perf::record_since("io.outbound_queue", frame.queued_at);
+                    let write = crate::perf::now();
+                    write_all(&mut writer, frame.as_ref(), timeout).await?;
+                    crate::perf::record_since("io.ws_write", write);
+                }
                 Some(Outbound::Exceeded) => {
                     let close = ws::control_frame(Control::Close(1008, "outbound buffer limit exceeded"));
                     write_all(&mut writer, &close, timeout).await?;

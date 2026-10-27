@@ -6,6 +6,7 @@
   const O = Object;
   const defineProperty = O.defineProperty;
   const getPrototypeOf = O.getPrototypeOf;
+  const objectCreate = O.create;
   const setPrototypeOf = O.setPrototypeOf;
   const getOwnPropertyNames = O.getOwnPropertyNames;
   const getOwnPropertySymbols = O.getOwnPropertySymbols;
@@ -159,6 +160,21 @@
       if (parentCtor) setPrototypeOf(C, parentCtor);
       if (global) defineProperty(global, name, { value: C, writable: true, enumerable: false, configurable: true });
       return C;
+    },
+    // Every interface of a new realm in one call (realm.rs install_classes):
+    // `spec[i]` is [name, parent index or -1, constructor length, exposed].
+    // Returns [protos, targets, ctors], indexed like `spec`.
+    installInterfaces(spec, natives, objectProto, global, populate) {
+      const protos = [], targets = [], ctors = [];
+      for (let i = 0; i < spec.length; i++) {
+        const [name, parent, length, exposed] = spec[i];
+        const proto = objectCreate(parent < 0 ? objectProto : protos[parent]);
+        const C = H.makeInterface(name, natives[i], proto, parent < 0 ? null : ctors[parent], length, null);
+        protos[i] = proto;
+        targets[i] = C;
+        ctors[i] = H.lazyInterface(C, proto, exposed ? global : null, name, i, populate);
+      }
+      return [protos, targets, ctors];
     },
     // Interface object as seen by script: a Proxy over the constructor whose
     // property traps first install the class members natively (once), then
