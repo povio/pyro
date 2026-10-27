@@ -358,6 +358,9 @@ impl<H: Host> Browser<H> {
                 struct P {
                     url: Option<String>,
                     profile_id: Option<usize>,
+                    /// Attach a flat session in the same call (as `attachToTarget`).
+                    #[serde(default)]
+                    attach: bool,
                 }
                 let p: P = cmd.params()?;
                 let matches = |b: &Self, e: &PreparedEntry| {
@@ -396,7 +399,13 @@ impl<H: Host> Browser<H> {
                 if self.discover {
                     self.send_target_created(self.targets.len() - 1, out);
                 }
-                let session_id = if self.auto_attach { Some(self.attach(&target_id, None, true, out)?) } else { None };
+                let session_id = if self.auto_attach {
+                    Some(self.attach(&target_id, None, true, out)?)
+                } else if p.attach {
+                    Some(self.attach(&target_id, cmd.session_id(), false, out)?)
+                } else {
+                    None
+                };
                 out.send(msg::result_frame(
                     id,
                     &serde_json::json!({

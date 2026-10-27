@@ -1,7 +1,9 @@
 //! `LP.*`: a native test driver.
 //!
-//! `LP.run` takes a whole scenario, a list of steps (`goto`, `act`, `check`,
-//! `read`), and replies once, when the last step holds or the first one fails.
+//! `LP.run` takes a whole scenario, a list of steps (`goto`, `route`, `act`,
+//! `check`, `read`, `eval`, `request`), and replies once, when the last step
+//! holds or the first one fails, with the values read and the requests the
+//! page made meanwhile (`request` steps check that log).
 //! `LP.act` and `LP.expect` are one-step runs. Locators (with `within` and
 //! `filter` chains) are resolved against the arena DOM in Rust and the
 //! actionability checks (unique, visible, enabled, editable, not covered) run
@@ -58,15 +60,15 @@ pub(super) struct Locator {
     test_id: Option<String>,
     /// Attribute `testId` matches (default `data-testid`).
     test_id_attribute: Option<String>,
-    text: Option<String>,
+    text: Option<Pattern>,
     role: Option<String>,
     /// Accessible name for `role`.
-    name: Option<String>,
-    label: Option<String>,
-    placeholder: Option<String>,
+    name: Option<Pattern>,
+    label: Option<Pattern>,
+    placeholder: Option<Pattern>,
     /// Whole-string, case-sensitive match for text, name, label and
     /// placeholder (after whitespace normalization); otherwise a
-    /// case-insensitive substring.
+    /// case-insensitive substring. A `{"regex"}` pattern ignores it.
     #[serde(default)]
     exact: bool,
     within: Option<Box<Locator>>,
@@ -81,8 +83,8 @@ pub(super) struct Locator {
 struct Filter {
     visible: Option<bool>,
     /// Case-insensitive substring of the element's text.
-    has_text: Option<String>,
-    has_not_text: Option<String>,
+    has_text: Option<Pattern>,
+    has_not_text: Option<Pattern>,
     /// Matches at least one element inside.
     has: Option<Box<Locator>>,
     has_not: Option<Box<Locator>>,
@@ -95,6 +97,9 @@ enum Action {
     Focus,
     Check,
     Uncheck,
+    /// Focus, then a key press (`value`: a key name such as `Enter`, or a
+    /// chord such as `Shift+Tab`).
+    Press,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -117,18 +122,66 @@ enum Read {
     Box,
 }
 
+/// Which requests a `request` step looks for in the run's log.
+#[derive(Deserialize, Serialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RequestMatch {
+    method: Option<String>,
+    /// Exact path (no query).
+    path: Option<String>,
+    /// Substring of (or regex on) the full URL.
+    url: Option<Pattern>,
+    status: Option<u16>,
+    /// Exactly this many finished matches (default: at least one).
+    count: Option<usize>,
+}
+
 #[derive(Clone, Debug)]
 enum Step {
-    Goto { url: String, dom_ready: bool },
-    Act { locator: Locator, action: Action, value: String, settle: bool },
-    Check { locator: Locator, assert: Assert, expected: Value, not: bool },
-    Read { locator: Locator, read: Read, key: Option<String> },
+    /// Waits for the current document's `load` (a prepared page taken while
+    /// it was still booting).
+    Loaded,
+    Goto {
+        url: String,
+        dom_ready: bool,
+    },
+    /// Same-document navigation: `history.pushState` and a `popstate` event,
+    /// as a client-side router reacts to; settles like an action.
+    Route {
+        url: String,
+    },
+    Eval {
+        expression: String,
+        key: Option<String>,
+    },
+    Request(RequestMatch),
+    Act {
+        locator: Locator,
+        action: Action,
+        value: String,
+        settle: bool,
+    },
+    Check {
+        locator: Locator,
+        assert: Assert,
+        expected: Value,
+        not: bool,
+    },
+    Read {
+        locator: Locator,
+        read: Read,
+        key: Option<String>,
+    },
 }
 
 impl Step {
     fn describe(&self) -> String {
         match self {
             Step::Goto { url, .. } => format!("goto {url}"),
+            Step::Loaded => "loaded".into(),
+            Step::Route { url } => format!("route {url}"),
+            Step::Eval { .. } => "eval".into(),
+            Step::Request(m) => format!("request {}", serde_json::to_value(m).map(prune).unwrap_or_default()),
             Step::Act { locator, action, .. } => format!("{action:?} {}", locator.describe()),
             Step::Check { locator, assert, .. } => format!("expect {assert:?} {}", locator.describe()),
             Step::Read { locator, read, .. } => format!("read {read:?} {}", locator.describe()),
@@ -156,16 +209,19 @@ struct Job {
     /// `LP.act` / `LP.expect`: reply with the step's own result.
     single: bool,
     started: Instant,
+    /// Request log sequence when the run started (`LP.run` only).
+    log_from: Option<usize>,
 }
 
 impl Job {
-    fn reply(mut self) -> Value {
+    fn reply(mut self, requests: Vec<Value>) -> Value {
         if self.single {
             return self.results.pop().unwrap_or_else(|| json!({}));
         }
         json!({
             "results": self.results,
             "reads": self.reads,
+            "requests": requests,
             "ms": self.started.elapsed().as_secs_f64() * 1e3,
         })
     }
@@ -207,12 +263,18 @@ impl Waiter {
         }
     }
 
+    /// A `request` step: tried again when the request log grows.
+    fn waits_on_log(&self) -> bool {
+        matches!(self.phase, Phase::Try) && matches!(self.job.steps.get(self.job.index), Some((Step::Request(_), _)))
+    }
+
     /// Whether driving it can make progress.
     fn ready(&self, browser: &Browser, now: Instant) -> bool {
         if now >= self.deadline() {
             return true;
         }
         match &self.phase {
+            Phase::Try if self.waits_on_log() => false,
             Phase::Try => match self.doc.upgrade() {
                 Some(doc) => doc.is_disposed() || doc.dom.borrow().version() != self.seen,
                 None => true,
@@ -230,6 +292,8 @@ impl Waiter {
 pub(crate) struct Waiters {
     list: Vec<Waiter>,
     selectors: RefCell<SelectorCache>,
+    /// A page's request log grew since the waiters were last serviced.
+    pub(super) log_changed: bool,
 }
 
 impl Waiters {
@@ -300,6 +364,63 @@ fn text_matches(have: &str, want: &str, exact: bool) -> bool {
         have == normalize(want)
     } else {
         have.to_lowercase().contains(&normalize(want).to_lowercase())
+    }
+}
+
+/// A string to match (see `Locator::exact`), or `{"regex": "...", "flags": "i"}`
+/// tested against the whitespace-normalized text.
+#[derive(Clone, Debug)]
+pub(super) struct Pattern {
+    text: String,
+    regex: Option<regex_lite::Regex>,
+}
+
+impl<'de> Deserialize<'de> for Pattern {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Raw {
+            Text(String),
+            Regex {
+                regex: String,
+                #[serde(default)]
+                flags: String,
+            },
+        }
+        Ok(match Raw::deserialize(d)? {
+            Raw::Text(text) => Pattern { text, regex: None },
+            Raw::Regex { regex, flags } => {
+                let mut b = regex_lite::RegexBuilder::new(&regex);
+                for f in flags.chars() {
+                    match f {
+                        'i' => b.case_insensitive(true),
+                        'm' => b.multi_line(true),
+                        's' => b.dot_matches_new_line(true),
+                        _ => return Err(serde::de::Error::custom(format!("unsupported regex flag {f:?}"))),
+                    };
+                }
+                let re = b.build().map_err(serde::de::Error::custom)?;
+                Pattern { text: regex, regex: Some(re) }
+            }
+        })
+    }
+}
+
+impl Serialize for Pattern {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        match &self.regex {
+            Some(_) => json!({ "regex": self.text }).serialize(s),
+            None => self.text.serialize(s),
+        }
+    }
+}
+
+impl Pattern {
+    fn matches(&self, have: &str, exact: bool) -> bool {
+        match &self.regex {
+            Some(re) => re.is_match(&normalize(have)),
+            None => text_matches(have, &self.text, exact),
+        }
     }
 }
 
@@ -484,17 +605,17 @@ fn skipped_for_text(dom: &Dom, id: NodeId) -> bool {
 
 /// The smallest elements whose text matches: an element whose text matches
 /// and none of whose child elements' text does.
-fn by_text(dom: &Dom, root: NodeId, want: &str, exact: bool, out: &mut Vec<NodeId>) -> bool {
+fn by_text(dom: &Dom, root: NodeId, want: &Pattern, exact: bool, out: &mut Vec<NodeId>) -> bool {
     let children: Vec<NodeId> = dom
         .children(root)
         .into_iter()
         .flatten()
         .filter(|c| dom.element(*c).is_ok() && !skipped_for_text(dom, *c))
         .collect();
-    let here = text_matches(&text_of(dom, root), want, exact);
+    let here = want.matches(&text_of(dom, root), exact);
     // A substring match in a child implies one here: prune subtrees that
-    // cannot match. Exact matches need the whole walk.
-    if !here && !exact {
+    // cannot match. Exact and regex matches need the whole walk.
+    if !here && !exact && want.regex.is_none() {
         return false;
     }
     let before = out.len();
@@ -620,15 +741,15 @@ impl Locator {
                 .filter(|n| role_of(&dom, *n).as_deref() == Some(role.as_str()))
                 .filter(|n| attr(&dom, *n, "aria-hidden") != Some("true") && layout.is_visible(&dom, *n))
                 .filter(|n| match &self.name {
-                    Some(want) => text_matches(&accessible_name(&dom, doc, *n, &role), want, self.exact),
+                    Some(want) => want.matches(&accessible_name(&dom, doc, *n, &role), self.exact),
                     None => true,
                 })
                 .collect();
         } else if let Some(want) = &self.label {
             for n in elements(&dom, root).filter(inside) {
                 let control = matches!(local(&dom, n), Some("input" | "textarea" | "select" | "button"));
-                let labelled = attr(&dom, n, "aria-label").is_some_and(|l| text_matches(l, want, self.exact))
-                    || (control && label_text(&dom, doc, n).is_some_and(|l| text_matches(&l, want, self.exact)));
+                let labelled = attr(&dom, n, "aria-label").is_some_and(|l| want.matches(l, self.exact))
+                    || (control && label_text(&dom, doc, n).is_some_and(|l| want.matches(&l, self.exact)));
                 if labelled {
                     found.push(n);
                 }
@@ -637,7 +758,7 @@ impl Locator {
             found = elements(&dom, root)
                 .filter(inside)
                 .filter(|n| matches!(local(&dom, *n), Some("input" | "textarea")))
-                .filter(|n| attr(&dom, *n, "placeholder").is_some_and(|p| text_matches(p, want, self.exact)))
+                .filter(|n| attr(&dom, *n, "placeholder").is_some_and(|p| want.matches(p, self.exact)))
                 .collect();
         }
         Ok(found)
@@ -653,8 +774,8 @@ impl Filter {
         }
         if self.has_text.is_some() || self.has_not_text.is_some() {
             let text = text_of(&page.dom.borrow(), n);
-            if self.has_text.as_ref().is_some_and(|t| !text_matches(&text, t, false))
-                || self.has_not_text.as_ref().is_some_and(|t| text_matches(&text, t, false))
+            if self.has_text.as_ref().is_some_and(|t| !t.matches(&text, false))
+                || self.has_not_text.as_ref().is_some_and(|t| t.matches(&text, false))
             {
                 return Ok(false);
             }
@@ -752,6 +873,18 @@ fn act(page: &Rc<PageDom>, id: NodeId, action: Action, value: &str) -> Attempt {
             click(page, id)
         }
         Action::Click => click(page, id),
+        Action::Press => {
+            let Some(keys) = key_chord(value) else {
+                return Attempt::Retry(format!("unknown key {value:?}"));
+            };
+            if input::key_target(page) != Some(id) {
+                input::focus_element(page, id);
+            }
+            for (kind, k) in keys {
+                input::dispatch_key(page, kind, &k);
+            }
+            Attempt::Done(json!({}))
+        }
         Action::Focus => {
             input::focus_element(page, id);
             Attempt::Done(json!({}))
@@ -775,6 +908,91 @@ fn act(page: &Rc<PageDom>, id: NodeId, action: Action, value: &str) -> Attempt {
             Attempt::Done(json!({}))
         }
     }
+}
+
+/// `key`, `code` and Windows key code of a key name (`Enter`, `ArrowDown`,
+/// `F5`, `a`, ...).
+fn key_def(name: &str) -> Option<(String, String, u32)> {
+    let named = |code: &str, kc: u32| Some((name.to_owned(), code.to_owned(), kc));
+    match name {
+        "Enter" => named("Enter", 13),
+        "Tab" => named("Tab", 9),
+        "Escape" => named("Escape", 27),
+        "Backspace" => named("Backspace", 8),
+        "Delete" => named("Delete", 46),
+        "Space" | " " => Some((" ".into(), "Space".into(), 32)),
+        "ArrowLeft" => named("ArrowLeft", 37),
+        "ArrowUp" => named("ArrowUp", 38),
+        "ArrowRight" => named("ArrowRight", 39),
+        "ArrowDown" => named("ArrowDown", 40),
+        "Home" => named("Home", 36),
+        "End" => named("End", 35),
+        "PageUp" => named("PageUp", 33),
+        "PageDown" => named("PageDown", 34),
+        "Shift" => named("ShiftLeft", 16),
+        "Control" => named("ControlLeft", 17),
+        "Alt" => named("AltLeft", 18),
+        "Meta" => named("MetaLeft", 91),
+        _ => {
+            if let Some(n) = name.strip_prefix('F').and_then(|n| n.parse::<u32>().ok()).filter(|n| (1..=12).contains(n))
+            {
+                return named(name, 111 + n);
+            }
+            let mut chars = name.chars();
+            let (Some(c), None) = (chars.next(), chars.next()) else { return None };
+            let upper = c.to_ascii_uppercase();
+            let (code, kc) = if c.is_ascii_alphabetic() {
+                (format!("Key{upper}"), upper as u32)
+            } else if c.is_ascii_digit() {
+                (format!("Digit{c}"), c as u32)
+            } else {
+                (String::new(), 0)
+            };
+            Some((name.to_owned(), code, kc))
+        }
+    }
+}
+
+/// The key events of a press: modifiers down, the key down and up,
+/// modifiers up. `ControlOrMeta` is Meta on macOS.
+fn key_chord(chord: &str) -> Option<Vec<(input::KeyKind, input::KeyInput)>> {
+    let parts: Vec<&str> = if chord == "+" { vec!["+"] } else { chord.split('+').collect() };
+    let (key, mods) = parts.split_last()?;
+    let mut modifiers = input::Modifiers::default();
+    let mut held = Vec::new();
+    for m in mods {
+        let m = match *m {
+            "ControlOrMeta" if cfg!(target_os = "macos") => "Meta",
+            "ControlOrMeta" => "Control",
+            m => m,
+        };
+        match m {
+            "Shift" => modifiers.shift = true,
+            "Control" => modifiers.ctrl = true,
+            "Alt" => modifiers.alt = true,
+            "Meta" => modifiers.meta = true,
+            _ => return None,
+        }
+        let (k, code, key_code) = key_def(m)?;
+        held.push(input::KeyInput { key: k, code, modifiers, key_code, ..Default::default() });
+    }
+    let (mut k, code, key_code) = key_def(key)?;
+    if modifiers.shift && k.chars().count() == 1 {
+        k = k.to_uppercase();
+    }
+    let text = match k.as_str() {
+        _ if modifiers.ctrl || modifiers.meta || modifiers.alt => String::new(),
+        "Enter" => "\r".into(),
+        _ if k.chars().count() == 1 => k.clone(),
+        _ => String::new(),
+    };
+    let main = input::KeyInput { key: k, code, text, modifiers, key_code, ..Default::default() };
+    let mut events: Vec<_> = held.iter().map(|k| (input::KeyKind::RawKeyDown, k.clone())).collect();
+    let down = if main.text.is_empty() { input::KeyKind::RawKeyDown } else { input::KeyKind::KeyDown };
+    events.push((down, main.clone()));
+    events.push((input::KeyKind::KeyUp, main));
+    events.extend(held.into_iter().rev().map(|k| (input::KeyKind::KeyUp, k)));
+    Some(events)
 }
 
 /// Scrolls the element into view, checks that its center receives pointer
@@ -913,14 +1131,48 @@ struct QueryParams {
 }
 
 /// One `LP.run` step: `{"goto": {...}}`, `{"act": {...}}`, `{"check": {...}}`
-/// or `{"read": {...}}`.
+/// `{"read": {...}}`, `{"route": {...}}`, `{"eval": {...}}` or
+/// `{"request": {...}}`.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 enum StepParams {
     Goto(GotoParams),
+    Loaded(LoadedParams),
+    Route(RouteParams),
     Act(ActParams),
     Check(ExpectParams),
     Read(QueryParams),
+    Eval(EvalParams),
+    Request(RequestParams),
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct LoadedParams {
+    timeout: Option<u64>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RouteParams {
+    url: String,
+    timeout: Option<u64>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct EvalParams {
+    expression: String,
+    #[serde(rename = "as")]
+    key: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RequestParams {
+    #[serde(flatten)]
+    matcher: RequestMatch,
+    timeout: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -945,7 +1197,8 @@ impl ActParams {
             "focus" => Action::Focus,
             "check" => Action::Check,
             "uncheck" => Action::Uncheck,
-            _ => return Err(CdpError::invalid_params("action must be click, fill, focus, check or uncheck")),
+            "press" => Action::Press,
+            _ => return Err(CdpError::invalid_params("action must be click, fill, focus, check, uncheck or press")),
         };
         let settle = self.settle.unwrap_or(settle_default);
         Ok((Step::Act { locator: self.locator, action, value: self.value, settle }, self.timeout))
@@ -998,6 +1251,10 @@ impl StepParams {
                 };
                 Ok((Step::Goto { url: p.url, dom_ready }, p.timeout))
             }
+            StepParams::Loaded(p) => Ok((Step::Loaded, p.timeout)),
+            StepParams::Route(p) => Ok((Step::Route { url: p.url }, p.timeout)),
+            StepParams::Eval(p) => Ok((Step::Eval { expression: p.expression, key: p.key }, None)),
+            StepParams::Request(p) => Ok((Step::Request(p.matcher), p.timeout)),
             StepParams::Act(p) => p.step(true),
             StepParams::Check(p) => p.step(),
             StepParams::Read(p) => {
@@ -1041,7 +1298,9 @@ impl EngineHost {
     fn attempt(&mut self, page: &Rc<PageDom>, step: &Step) -> CdpResult<Attempt> {
         let no_match = |locator: &Locator| Attempt::Retry(format!("{} matched no element", locator.describe()));
         match step {
-            Step::Goto { .. } => unreachable!("goto is not a locator step"),
+            Step::Goto { .. } | Step::Loaded | Step::Route { .. } | Step::Eval { .. } | Step::Request(_) => {
+                unreachable!("not a locator step")
+            }
             Step::Act { locator, action, value, .. } => {
                 let found = locator.resolve(page, &self.waiters.selectors)?;
                 let Some(el) = single(&found, &page.dom.borrow(), locator)? else { return Ok(no_match(locator)) };
@@ -1094,7 +1353,18 @@ impl EngineHost {
             "query" => return self.driver_query(cmd).map(Some),
             _ => return Err(CdpError::unsupported(&cmd.command.method)),
         };
-        let pid = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?.id;
+        let state = self.pages.get_mut(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?;
+        let pid = state.id;
+        // A run records the page's requests from here on (`request` steps, reply).
+        let log_from = if single {
+            None
+        } else if let Some(log) = &state.network.log {
+            Some(log.seq())
+        } else {
+            state.network.log = Some(Default::default());
+            self.update_network_subscriptions();
+            Some(0)
+        };
         let now = Instant::now();
         let first = steps.first().map_or(Duration::ZERO, |(_, t)| *t);
         let job = Job {
@@ -1108,6 +1378,7 @@ impl EngineHost {
             reads: Default::default(),
             single,
             started: now,
+            log_from,
         };
         let waiter = Waiter {
             job,
@@ -1183,7 +1454,8 @@ impl EngineHost {
                 }
                 Phase::Try => {
                     let Some((step, timeout)) = w.job.steps.get(w.job.index) else {
-                        return Ok(Drive::Done(w.job.reply()));
+                        let requests = self.logged_requests(&w.job);
+                        return Ok(Drive::Done(w.job.reply(requests)));
                     };
                     let (step, timeout) = (step.clone(), *timeout);
                     if let Step::Goto { url, dom_ready } = &step {
@@ -1196,12 +1468,36 @@ impl EngineHost {
                         w.phase = Phase::Load { loader: loader.0, dom_ready: *dom_ready };
                         continue;
                     }
-                    let page = self.main_document(w.job.page).map_err(|e| w.job.fail(e))?;
-                    let before =
-                        matches!(step, Step::Act { settle: true, .. }).then(|| net_state(&self.thread.browser, pid));
-                    match self.attempt(&page, &step).map_err(|e| w.job.fail(e))? {
+                    if let Step::Loaded = step {
+                        let (loader, _) = net_state(&self.thread.browser, pid);
+                        w.phase = Phase::Load { loader, dom_ready: false };
+                        continue;
+                    }
+                    let before = matches!(step, Step::Act { settle: true, .. } | Step::Route { .. })
+                        .then(|| net_state(&self.thread.browser, pid));
+                    let (attempt, page) = match &step {
+                        Step::Request(m) => (self.match_request(&w.job, m), None),
+                        Step::Eval { expression, .. } => {
+                            let value = self.eval_step(pid, expression).map_err(|e| w.job.fail(e))?;
+                            (Attempt::Done(value), None)
+                        }
+                        Step::Route { url } => {
+                            let url = serde_json::to_string(url).unwrap_or_default();
+                            let src = format!(
+                                "history.pushState(null, '', {url}); \
+                                 dispatchEvent(new PopStateEvent('popstate', {{ state: history.state }})); null"
+                            );
+                            self.eval_step(pid, &src).map_err(|e| w.job.fail(e))?;
+                            (Attempt::Done(json!({})), None)
+                        }
+                        _ => {
+                            let page = self.main_document(w.job.page).map_err(|e| w.job.fail(e))?;
+                            (self.attempt(&page, &step).map_err(|e| w.job.fail(e))?, Some(page))
+                        }
+                    };
+                    match attempt {
                         Attempt::Done(value) => {
-                            if let Step::Read { key: Some(key), .. } = &step {
+                            if let Step::Read { key: Some(key), .. } | Step::Eval { key: Some(key), .. } = &step {
                                 w.job.reads.insert(key.clone(), value.clone());
                             }
                             w.job.results.push(value);
@@ -1228,14 +1524,75 @@ impl EngineHost {
                                 ));
                                 return Err(w.job.fail(error));
                             }
-                            w.seen = page.dom.borrow().version();
-                            w.doc = Rc::downgrade(&page);
+                            if let Some(page) = page {
+                                w.seen = page.dom.borrow().version();
+                                w.doc = Rc::downgrade(&page);
+                            }
                             w.reason = reason;
                             return Ok(Drive::Park(Box::new(w)));
                         }
                     }
                 }
             }
+        }
+    }
+
+    /// Evaluates `src` in the page's main world; its JSON value.
+    fn eval_step(&mut self, pid: PageId, src: &str) -> CdpResult<Value> {
+        let realm = self
+            .thread
+            .browser
+            .page(pid)
+            .and_then(|p| p.main_frame.main_realm().cloned())
+            .ok_or_else(|| CdpError::server("page has no realm"))?;
+        let value = {
+            let scope = realm.scope().map_err(super::remote::js_to_cdp)?;
+            match scope.eval(src, Some("lp-run"), 1) {
+                Ok(v) => v.to_json(0).ok().flatten().and_then(|j| serde_json::from_str(&j).ok()).unwrap_or(Value::Null),
+                Err(e) => return Err(CdpError::server(format!("threw: {}", e.details(&scope).message))),
+            }
+        };
+        self.thread.browser.checkpoint();
+        Ok(value)
+    }
+
+    /// A `request` step against the requests the run saw so far.
+    fn match_request(&self, job: &Job, m: &RequestMatch) -> Attempt {
+        let log = self.pages.get(&job.page).and_then(|p| p.network.log.as_ref());
+        let (Some(log), Some(from)) = (log, job.log_from) else {
+            return Attempt::Retry("the page has no request log".into());
+        };
+        let matching: Vec<_> = log
+            .since(from)
+            .iter()
+            .filter(|r| m.method.as_ref().is_none_or(|x| r.method.eq_ignore_ascii_case(x)))
+            .filter(|r| m.path.as_ref().is_none_or(|p| r.path() == p))
+            .filter(|r| m.url.as_ref().is_none_or(|u| u.matches(&r.url, false)))
+            .collect();
+        let finished: Vec<_> = matching.iter().filter(|r| r.done).collect();
+        if let Some(n) = m.count {
+            return if matching.len() == n && finished.len() == n {
+                Attempt::Done(json!({ "count": n }))
+            } else {
+                Attempt::Retry(format!("{} matching requests ({} finished), want {n}", matching.len(), finished.len()))
+            };
+        }
+        match finished.iter().rev().find(|r| m.status.is_none_or(|s| r.status == Some(s))) {
+            Some(r) => Attempt::Done(r.to_json()),
+            None => Attempt::Retry(match finished.last() {
+                Some(r) => format!("last match was {}", r.to_json()),
+                None if matching.is_empty() => "no matching request yet".into(),
+                None => "the matching request is still in flight".into(),
+            }),
+        }
+    }
+
+    /// The requests a run saw, for its reply.
+    fn logged_requests(&self, job: &Job) -> Vec<Value> {
+        let log = self.pages.get(&job.page).and_then(|p| p.network.log.as_ref());
+        match (log, job.log_from) {
+            (Some(log), Some(from)) => log.since(from).iter().map(|r| r.to_json()).collect(),
+            _ => Vec::new(),
         }
     }
 
@@ -1265,14 +1622,17 @@ impl EngineHost {
     /// produced.
     pub(super) fn service_waiters(&mut self) {
         if self.waiters.list.is_empty() {
+            self.waiters.log_changed = false;
             return;
         }
         let now = Instant::now();
         let sessions = &self.sessions;
         self.waiters.list.retain(|w| sessions.contains_key(&w.job.session));
         let browser = &self.thread.browser;
-        let (ready, waiting): (Vec<_>, Vec<_>) =
-            std::mem::take(&mut self.waiters.list).into_iter().partition(|w| w.ready(browser, now));
+        let log_changed = std::mem::take(&mut self.waiters.log_changed);
+        let (ready, waiting): (Vec<_>, Vec<_>) = std::mem::take(&mut self.waiters.list)
+            .into_iter()
+            .partition(|w| w.ready(browser, now) || (log_changed && w.waits_on_log()));
         self.waiters.list = waiting;
         for w in ready {
             let (id, session) = (w.job.id, w.job.session.clone());

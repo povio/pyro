@@ -69,7 +69,7 @@ see these requests.
 --prepare: every connection boots a page at URL in its own browser context
 (with the --local-storage seed) before any command arrives, and boots the next
 one each time a test takes it. A client takes one with the browser-level
-command Lightningpanda.acquirePreparedPage {url?} -> {targetId,
+command Lightningpanda.acquirePreparedPage {url?, profileId?, attach?} -> {targetId,
 browserContextId, sessionId?, ready}; the page is announced like a new target
 (Target.targetCreated / attachedToTarget), so Playwright sees it as a page of
 its default context. Lightningpanda.registerPreparedPage {url, initScripts?,

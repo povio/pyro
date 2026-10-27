@@ -4004,8 +4004,18 @@ const DRIVER_SITE_FORM: &str = r#"<!doctype html><body>
 <input id="name" aria-label="Name"> <input id="city" placeholder="City">
 <button id="go">Send</button> <div id="out"></div>
 <ul><li>Alpha <button>Edit</button></li><li>Beta <button>Edit</button></li></ul>
-<div id="picked"></div>
+<div id="picked"></div> <div id="path"></div>
+<button id="settings">Settings</button>
+<div id="menu" style="display:none"><button>Close Position</button></div>
 <script>
+  window.addEventListener('popstate', async () => {
+    document.getElementById('path').textContent = location.pathname;
+    const r = await fetch('/api?name=' + location.pathname.slice(1));
+    document.getElementById('out').textContent = (await r.json()).greeting;
+  });
+  document.getElementById('settings').addEventListener('click', () => {
+    document.getElementById('menu').style.display = 'block';
+  });
   document.getElementById('go').addEventListener('click', async () => {
     const name = document.getElementById('name').value;
     const r = await fetch('/api?name=' + encodeURIComponent(name));
@@ -4071,4 +4081,45 @@ fn driver_run_does_a_whole_scenario_in_one_reply() {
     assert!(message.starts_with("step 0 (Click") && message.contains("timed out after 50 ms"), "{r}");
     let r = h.page("LP.run", json!({"steps": [{"jump": {}}]}));
     assert!(r["error"]["message"].as_str().unwrap_or_default().starts_with("step 0"), "{r}");
+}
+
+/// `LP.run`'s same-document `route` settles on the fetch the app starts for
+/// it; `press` activates a focused button; `eval` and regex locators read
+/// values; `request` steps check the run's request log, which the reply
+/// carries too.
+#[test]
+fn driver_run_routes_presses_and_checks_requests() {
+    let address = driver_site();
+    let mut h = Harness::new();
+    let steps = json!([
+        {"goto": {"url": format!("http://{address}/form")}},
+        {"route": {"url": "/positions"}},
+        {"read": {"locator": {"css": "#out"}, "read": "text", "as": "out"}},
+        {"check": {"locator": {"css": "#path"}, "assert": "text", "expected": "/positions"}},
+        {"request": {"method": "GET", "path": "/api", "status": 200}},
+        {"act": {"locator": {"role": "button", "name": "Settings", "exact": true}, "action": "press", "value": "Enter"}},
+        {"check": {"locator": {"role": "button", "name": "Close Position"}, "assert": "visible"}},
+        {"eval": {"expression": "location.pathname", "as": "where"}},
+        {"read": {"locator": {"text": {"regex": "^hello, pos.*$", "flags": "i"}}, "read": "text", "as": "re"}},
+        {"request": {"path": "/api", "count": 1}},
+        {"request": {"path": "/nothing", "count": 0}},
+    ]);
+    let r = h.page("LP.run", json!({ "steps": steps }));
+    let result = &r["result"];
+    assert_eq!(result["reads"]["out"], "Hello, positions", "{r}");
+    assert_eq!(result["reads"]["where"], "/positions", "{r}");
+    assert_eq!(result["reads"]["re"], "Hello, positions", "{r}");
+    assert_eq!(result["results"][4]["status"], 200, "{r}");
+    let requests = result["requests"].as_array().unwrap_or_else(|| panic!("{r}"));
+    let urls: Vec<&str> = requests.iter().filter_map(|q| q["url"].as_str()).collect();
+    assert!(
+        urls.iter().any(|u| u.ends_with("/form")) && urls.iter().any(|u| u.ends_with("/api?name=positions")),
+        "{r}"
+    );
+
+    let r = h.page("LP.run", json!({"timeout": 50, "steps": [{"request": {"method": "POST", "path": "/api"}}]}));
+    let message = r["error"]["message"].as_str().unwrap_or_default();
+    assert!(message.starts_with("step 0 (request") && message.contains("no matching request yet"), "{r}");
+    let r = h.page("LP.run", json!({"steps": [{"eval": {"expression": "missing.call()"}}]}));
+    assert!(r["error"]["message"].as_str().unwrap_or_default().contains("threw"), "{r}");
 }

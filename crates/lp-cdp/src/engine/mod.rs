@@ -573,6 +573,17 @@ impl EngineHost {
     /// Translates queued engine notifications into CDP events, in order.
     pub fn flush(&mut self) {
         self.service_waiters();
+        self.drain_collector();
+        self.flush_network();
+        self.flush_fetch();
+        // `LP.run` request steps wait on the log these observations fill.
+        if self.waiters.log_changed {
+            self.service_waiters();
+            self.drain_collector();
+        }
+    }
+
+    fn drain_collector(&mut self) {
         while let Some(item) = self.collector.pop() {
             match item {
                 // Owner-delivered network observations stay in order with
@@ -588,8 +599,6 @@ impl EngineHost {
                 Queued::Exception { realm, exception, timestamp } => self.on_exception(realm, exception, timestamp),
             }
         }
-        self.flush_network();
-        self.flush_fetch();
     }
 
     /// Page owning `realm`, if any.
