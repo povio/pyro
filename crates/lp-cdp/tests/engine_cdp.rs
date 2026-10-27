@@ -3821,3 +3821,19 @@ fn reported_geometry_is_in_layout_units_like_chromium() {
         );
     }
 }
+
+/// Host lifetime on one thread: create, use, close everything, drop, repeat
+/// (each host's loop services the thread's run loop while its VM exists and
+/// stops with it); deterministic, no GC timing involved.
+#[test]
+fn host_create_close_all_drop_repeats_on_one_thread() {
+    for round in 0..10 {
+        let mut h = Harness::new();
+        let session = h.session.clone();
+        let r = h.call(Some(&session), "Runtime.evaluate", json!({"expression": format!("{round} + 1"), "returnByValue": true}));
+        assert_eq!(r["result"]["result"]["value"], json!(round + 1), "{r}");
+        h.browser.host_mut().run_until_work(Some(Instant::now() + Duration::from_millis(20)), || false);
+        h.browser.host_mut().close_all();
+        drop(h);
+    }
+}
