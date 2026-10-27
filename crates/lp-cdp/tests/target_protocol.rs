@@ -12,9 +12,23 @@ struct Recorder {
     calls: Vec<String>,
     next: u64,
     fail_navigation: bool,
+    /// What `page_loaded` reports.
+    loaded: bool,
+}
+
+impl Recorder {
+    fn loaded() -> Self {
+        Recorder { loaded: true, ..Default::default() }
+    }
 }
 
 impl Host for Recorder {
+    fn page_loaded(&self, _page: PageKey) -> bool {
+        self.loaded
+    }
+    fn settle_page(&mut self, page: PageKey) {
+        self.calls.push(format!("settle_page {page}"));
+    }
     fn create_context(&mut self) -> CdpResult<ContextKey> {
         self.next += 1;
         self.calls.push(format!("create_context -> {}", self.next));
@@ -563,4 +577,36 @@ fn acquiring_a_prepared_page_can_attach_in_the_same_call() {
     send(&mut b, json!({"id":2,"method":"Target.closeTarget","params":{"targetId": target_id}}));
     assert!(b.no_open_pages());
     b.shutdown();
+}
+
+/// `refillAfterClose`: no replacement while the acquired page is open;
+/// closing its target lets the pool refill. Loaded pages are settled once.
+#[test]
+fn prepared_pages_refill_after_close_and_settle_once() {
+    let profile: lp_cdp::target::PreparedProfile =
+        serde_json::from_value(json!({"url": "http://app.test/", "refillAfterClose": true})).unwrap();
+    let mut b = Browser::with_prepared(Recorder::loaded(), vec![profile]);
+    assert!(b.needs_settle());
+    b.settle_prepared();
+    assert!(!b.needs_settle());
+    assert_eq!(b.host().calls.last().unwrap(), "settle_page 2");
+    b.settle_prepared();
+    assert_eq!(b.host().calls.iter().filter(|c| c.starts_with("settle_page")).count(), 1, "settled once");
+
+    send(&mut b, json!({"id":1,"method":"Target.setAutoAttach","params":{"autoAttach":true,"flatten":true}}));
+    let r = send(&mut b, json!({"id":2,"method":"Lightningpanda.acquirePreparedPage","params":{}}));
+    assert_eq!(r[1]["result"]["ready"], true);
+    let target_id = r[1]["result"]["targetId"].as_str().unwrap().to_owned();
+    assert!(!b.needs_refill(), "the acquired page counts against the pool");
+    b.refill_prepared();
+    assert!(!b.host().calls.iter().any(|c| c == "create_context -> 3"), "no boot while the page is in use");
+    let r = send(&mut b, json!({"id":3,"method":"Lightningpanda.preparedPages"}));
+    assert_eq!(r[0]["result"]["pages"].as_array().unwrap().len(), 0);
+
+    send(&mut b, json!({"id":4,"method":"Target.closeTarget","params":{"targetId":target_id}}));
+    assert!(b.needs_refill(), "closing the acquired page frees a pool slot");
+    b.refill_prepared();
+    assert!(b.host().calls.iter().any(|c| c == "create_context -> 3"), "{:?}", b.host().calls);
+    let r = send(&mut b, json!({"id":5,"method":"Lightningpanda.preparedPages"}));
+    assert_eq!(r[0]["result"]["pages"].as_array().unwrap().len(), 1);
 }
