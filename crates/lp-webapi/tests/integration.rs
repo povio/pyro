@@ -5,6 +5,7 @@
 mod dom_js;
 mod fetch_js;
 mod identity_js;
+mod payload_cycles;
 mod support;
 mod url_params_js;
 mod xhr_js;

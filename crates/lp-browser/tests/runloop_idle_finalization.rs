@@ -4,7 +4,7 @@
 //! a closed page are finalized while lp-runtime has nothing else to do.
 //! Timing depends on JavaScriptCore's natural GC scheduling, so the test is
 //! ignored in ordinary runs and executed explicitly:
-//! `cargo test -p lp-browser --test runloop_idle_finalization -- --ignored --nocapture`.
+//! `cargo test -p lp-browser --test integration -- runloop_idle_finalization:: --ignored --nocapture`.
 //! On the baseline (no service) it times out: that is the discriminator.
 #![cfg(target_os = "macos")]
 use lp_browser::{BrowserThread, PageId};

@@ -1,7 +1,7 @@
 //! In-crate benchmark for the text scroll-size scan in `Ctx::record` (ignored
 //! by default). Prints per-pass elapsed time and, in debug builds, the work
 //! counters (walk steps of the reference form vs fact resolutions and pairs).
-//! Run: cargo test -p lp-dom --test record_scan_bench -- --ignored --nocapture
+//! Run: cargo test -p lp-dom --test integration -- record_scan_bench:: --ignored --nocapture
 //! Shapes: deep (single page clipper, 25-deep nested flex), near (every text's
 //! parent clips), shallow (5-deep, wide). No speed assertion.
 use lp_dom::layout::{Geometry, Layout};
