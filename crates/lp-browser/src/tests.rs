@@ -72,6 +72,27 @@ fn initial_navigation_event_order() {
 }
 
 #[test]
+fn animation_frame_callbacks_share_a_frame_and_timestamp() {
+    let (mut t, rec, page) = setup();
+    eval(
+        &t,
+        page,
+        "const seen = [];
+         requestAnimationFrame(ts => seen.push(['a', ts]));
+         const b = requestAnimationFrame(() => seen.push(['b']));
+         requestAnimationFrame(ts => { seen.push(['c', ts]); cancelAnimationFrame(d);
+           requestAnimationFrame(ts2 => { seen.push(['next', ts2 > ts]);
+             console.log(JSON.stringify(seen.map(e => e[0])), seen[0][1] === seen[1][1], seen[2][1]); }); });
+         const d = requestAnimationFrame(() => seen.push(['d']));
+         cancelAnimationFrame(b);
+         clearTimeout(requestAnimationFrame(() => seen.push(['cleared'])));",
+    );
+    let r = t.run_until_idle(Some(Instant::now() + Duration::from_secs(5)));
+    assert_eq!(r, RunOutcome::Idle);
+    assert!(rec.console.borrow().contains(&r#"log:["a","c","next"] true true"#.to_string()), "{:?}", rec.console.borrow());
+}
+
+#[test]
 fn timers_run_in_order_and_clear() {
     let (mut t, rec, page) = setup();
     eval(

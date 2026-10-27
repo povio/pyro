@@ -12,12 +12,25 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::Duration;
 
+/// Frame interval without rendering. Upstream Lightpanda schedules each
+/// animation frame callback 5 ms out (`Window.requestAnimationFrame`).
+const FRAME_MS: u64 = 5;
+
+#[derive(Default)]
+struct AnimationFrame {
+    callbacks: Vec<(u32, Persistent)>,
+    timer: Option<TimerId>,
+}
+
 pub struct WindowData {
     sched: Scheduler<Browser>,
     nav: Rc<PageNav>,
     target: lp_webapi::EventTargetData,
     /// JS timer handle -> loop timer.
     timers: RefCell<HashMap<u32, TimerId>>,
+    /// Pending `requestAnimationFrame` callbacks, in registration order, and
+    /// the loop timer of the frame that will run them.
+    animation: RefCell<AnimationFrame>,
     next_handle: Cell<u32>,
     frames: std::rc::Weak<crate::frames::FrameHost>,
     frame: Option<crate::frames::FrameKey>,
@@ -38,6 +51,7 @@ impl WindowData {
             nav,
             target: lp_webapi::EventTargetData::window(page, key),
             timers: RefCell::new(HashMap::new()),
+            animation: RefCell::new(AnimationFrame::default()),
             next_handle: Cell::new(1),
             frames: std::rc::Weak::new(),
             frame: None,
@@ -97,14 +111,13 @@ impl JsClass for Window {
         def.method("clearTimeout", 0, clear_timer);
         def.method("clearInterval", 0, clear_timer);
         def.method("requestAnimationFrame", 1, |s, w, a| {
-            // No rendering: frames tick at 60 Hz with the high-resolution time.
             let cb = a.get(0).as_object().filter(|f| f.is_function()).ok_or_else(|| {
                 JsError::Type(
                     "Failed to execute 'requestAnimationFrame' on 'Window': parameter 1 is not of type 'Function'."
                         .into(),
                 )
             })?;
-            schedule(s, w, Persistent::new(s, cb.value()), Vec::new(), 16, false, true)
+            request_animation_frame(s, w, Persistent::new(s, cb.value()))
         });
         def.method("cancelAnimationFrame", 1, clear_timer);
         def.method("queueMicrotask", 1, |s, _w, a| {
@@ -202,7 +215,7 @@ fn set_timer<'s>(s: &Scope<'s>, w: &WindowData, a: Args<'s>, repeat: bool) -> Js
         Persistent::new(s, f)
     };
     let args: Vec<Persistent> = a.iter().skip(2).map(|v| Persistent::new(s, v)).collect();
-    schedule(s, w, cb, args, delay, repeat, false)
+    schedule(s, w, cb, args, delay, repeat)
 }
 
 fn schedule<'s>(
@@ -212,7 +225,6 @@ fn schedule<'s>(
     args: Vec<Persistent>,
     delay_ms: u64,
     repeat: bool,
-    pass_time: bool,
 ) -> JsResult<Value<'s>> {
     if w.target.page.scripting_disabled() {
         return Ok(s.number(0.0));
@@ -230,15 +242,9 @@ fn schedule<'s>(
             }
         }
         let Some(f) = cb.get(&scope).as_object() else { return };
-        let result = if pass_time {
-            let now = scope.global_data::<Window>().map(|w| w.now_ms()).unwrap_or(0.0);
-            f.call(None, &[scope.number(now)])
-        } else {
-            // Arguments are rooted by `args` (Persistent) while this call runs.
-            let vals: Vec<Value<'_>> = args.iter().map(|p| p.get(&scope)).collect();
-            f.call(None, &vals)
-        };
-        if let Err(e) = result {
+        // Arguments are rooted by `args` (Persistent) while this call runs.
+        let vals: Vec<Value<'_>> = args.iter().map(|p| p.get(&scope)).collect();
+        if let Err(e) = f.call(None, &vals) {
             scope.report_exception(&e);
         }
     });
@@ -246,11 +252,69 @@ fn schedule<'s>(
     Ok(s.number(handle as f64))
 }
 
+/// Queues `cb` for the next animation frame. Every callback queued before a
+/// frame runs in it, in order, with the same timestamp; callbacks queued while
+/// a frame runs wait for the next one.
+fn request_animation_frame<'s>(s: &Scope<'s>, w: &WindowData, cb: Persistent) -> JsResult<Value<'s>> {
+    if w.target.page.scripting_disabled() {
+        return Ok(s.number(0.0));
+    }
+    let handle = w.next_handle.get();
+    w.next_handle.set(handle.wrapping_add(1).max(1));
+    let mut frame = w.animation.borrow_mut();
+    frame.callbacks.push((handle, cb));
+    if frame.timer.is_none() {
+        // Timers must not keep a disposed realm alive: hold it weakly.
+        let realm_weak = s.realm().downgrade();
+        frame.timer = Some(w.sched.set_timer(Duration::from_millis(FRAME_MS), false, true, move |_browser| {
+            let Some(realm) = realm_weak.upgrade() else { return };
+            let Ok(scope) = realm.scope() else { return };
+            run_animation_frame(&scope);
+        }));
+    }
+    Ok(s.number(handle as f64))
+}
+
+fn run_animation_frame(scope: &Scope<'_>) {
+    let Some(w) = scope.global_data::<Window>() else { return };
+    let handles: Vec<u32> = {
+        let mut frame = w.animation.borrow_mut();
+        frame.timer = None;
+        frame.callbacks.iter().map(|(h, _)| *h).collect()
+    };
+    let now = scope.number(w.now_ms());
+    for handle in handles {
+        // A callback may cancel a later one of the same frame.
+        let cb = {
+            let mut frame = w.animation.borrow_mut();
+            let Some(i) = frame.callbacks.iter().position(|(h, _)| *h == handle) else { continue };
+            frame.callbacks.remove(i).1
+        };
+        let Some(f) = cb.get(scope).as_object() else { continue };
+        if let Err(e) = f.call(None, &[now]) {
+            scope.report_exception(&e);
+        }
+    }
+}
+
 fn clear_timer<'s>(s: &Scope<'s>, w: &WindowData, a: Args<'s>) -> JsResult<Value<'s>> {
     let n = a.get(0).to_number()?;
     if n.is_finite() && n >= 1.0 && n <= u32::MAX as f64 {
-        if let Some(id) = w.timers.borrow_mut().remove(&(n as u32)) {
+        let handle = n as u32;
+        if let Some(id) = w.timers.borrow_mut().remove(&handle) {
             w.sched.clear_timer(id);
+        } else {
+            // Timer and animation frame handles share one sequence, so either
+            // clear function cancels either kind (as before).
+            let mut frame = w.animation.borrow_mut();
+            if let Some(i) = frame.callbacks.iter().position(|(h, _)| *h == handle) {
+                frame.callbacks.remove(i);
+                if frame.callbacks.is_empty() {
+                    if let Some(id) = frame.timer.take() {
+                        w.sched.clear_timer(id);
+                    }
+                }
+            }
         }
     }
     Ok(s.undefined())
@@ -261,6 +325,11 @@ pub(crate) fn cancel_timers(realm: &Realm) {
     let Ok(scope) = realm.scope() else { return };
     if let Some(w) = scope.global_data::<Window>() {
         for (_, id) in w.timers.borrow_mut().drain() {
+            w.sched.clear_timer(id);
+        }
+        let mut frame = w.animation.borrow_mut();
+        frame.callbacks.clear();
+        if let Some(id) = frame.timer.take() {
             w.sched.clear_timer(id);
         }
     }
