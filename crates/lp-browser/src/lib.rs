@@ -1021,6 +1021,8 @@ impl Browser {
             self.emit(page, PageEvent::RealmDestroyed { frame_id: p.main_frame.id.clone(), realm: id });
         }
         self.emit(page, PageEvent::FrameDestroyed { frame_id: p.main_frame.id.clone() });
+        drop(p);
+        self.engine.release_closed();
         true
     }
 

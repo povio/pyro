@@ -852,6 +852,12 @@ impl Host for EngineHost {
             .add_init_script(page_id, lp_browser::InitScript { id, source: source.to_owned(), world: None });
     }
 
+    fn settle_page(&mut self, page: PageKey) {
+        if self.pages.contains_key(&page) {
+            self.thread.browser.engine.settle();
+        }
+    }
+
     fn set_viewport(&mut self, page: PageKey, width: u32, height: u32) {
         let Some(state) = self.pages.get(&page) else { return };
         let Some(p) = self.thread.browser.page(state.id) else { return };

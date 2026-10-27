@@ -132,6 +132,18 @@ await check('registerPreparedPage: init scripts and viewport apply before boot',
   assert.deepEqual(await page.evaluate(() => globalThis.__features), ['a', 'b']);
   assert.equal(await page.textContent('#app'), 'token=preloaded path=/settings w=1440');
 });
+await check('refillAfterClose: no replacement until the acquired page closes', async () => {
+  const url = `${origin}/after-close`;
+  const { profileId } = await cdp.send('Lightningpanda.registerPreparedPage', { url, refillAfterClose: true });
+  await waitReady(url);
+  const { page } = await acquire({ profileId });
+  await page.waitForLoadState('load');
+  await new Promise((r) => setTimeout(r, 80));
+  let { pages } = await cdp.send('Lightningpanda.preparedPages');
+  assert.equal(pages.filter((p) => p.url === url).length, 0, 'nothing boots while the page is in use');
+  await page.close();
+  await waitReady(url, 5000);
+});
 await check('unknown url is an error; ordinary pages still work', async () => {
   await assert.rejects(cdp.send('Lightningpanda.acquirePreparedPage', { url: `${origin}/nope` }), /No prepared page/);
   const context = await browser.newContext();
@@ -146,8 +158,9 @@ await check('Target.getTargets lists only acquired pages', async () => {
   assert.deepEqual(urls, [`${origin}/dashboard`, `${origin}/dashboard`, `${origin}/settings`], JSON.stringify(targetInfos));
   // Replacements boot once the thread has been quiet for a moment.
   await waitReady(`${origin}/dashboard`);
-  const pages = await waitReady(`${origin}/settings`);
-  assert.deepEqual(pages.map((p) => p.url).sort(), [`${origin}/dashboard`, `${origin}/settings`], 'one waiting per profile');
+  await waitReady(`${origin}/settings`);
+  const pages = await waitReady(`${origin}/after-close`);
+  assert.deepEqual(pages.map((p) => p.url).sort(), [`${origin}/after-close`, `${origin}/dashboard`, `${origin}/settings`], 'one waiting per profile');
 });
 
 await browser.close();

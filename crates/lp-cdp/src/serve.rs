@@ -48,6 +48,10 @@ options:
   --prepare <URL>                       keep one page booted at URL per connection, ready
                                         for Lightningpanda.acquirePreparedPage (repeatable;
                                         env LIGHTNINGPANDA_PREPARE, ';'-separated)
+  --prepare-refill <quiet|after-close>  when the replacement boots: when the thread is
+                                        quiet (default, one extra booted app) or once the
+                                        acquired page's context closes (no extra app;
+                                        env LIGHTNINGPANDA_PREPARE_REFILL)
 
 HTTP and data: document loading are supported; browser API coverage is partial.
 --experimental-features and --load-resources are accepted for CLI compatibility;
@@ -100,6 +104,9 @@ pub struct ServeOptions {
     pub static_roots: Vec<(String, PathBuf)>,
     /// `--prepare URL` (or `LIGHTNINGPANDA_PREPARE`): pages booted ahead.
     pub prepare: Vec<String>,
+    /// `--prepare-refill after-close`: replacements wait for the acquired
+    /// page's context to close.
+    pub prepare_refill_after_close: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -131,9 +138,13 @@ impl Default for ServeOptions {
                 .ok()
                 .map(|v| v.split(';').map(str::trim).filter(|e| !e.is_empty()).map(str::to_owned).collect())
                 .unwrap_or_default(),
+            prepare_refill_after_close: std::env::var(PREPARE_REFILL_ENV).is_ok_and(|v| v.trim() == "after-close"),
         }
     }
 }
+
+/// Environment equivalent of `--prepare-refill`.
+pub const PREPARE_REFILL_ENV: &str = "LIGHTNINGPANDA_PREPARE_REFILL";
 
 /// Environment equivalent of `--prepare` entries, separated by `;` (flags add to it).
 pub const PREPARE_ENV: &str = "LIGHTNINGPANDA_PREPARE";
@@ -201,6 +212,11 @@ pub fn parse_args(args: &[String]) -> Result<ServeOptions, String> {
             "--local-storage" => o.local_storage = Some(PathBuf::from(value()?)),
             "--static" => o.static_roots.push(parse_static_root(&value()?)?),
             "--prepare" => o.prepare.push(value()?),
+            "--prepare-refill" => match value()?.as_str() {
+                "quiet" => o.prepare_refill_after_close = false,
+                "after-close" => o.prepare_refill_after_close = true,
+                other => return Err(format!("--prepare-refill: '{other}' is not quiet or after-close")),
+            },
             other => return Err(format!("unknown option '{other}'")),
         }
     }
@@ -255,6 +271,7 @@ pub fn browser_profile(options: &ServeOptions) -> Result<BrowserProfile, String>
             init_scripts: Vec::new(),
             viewport: None,
             pool: 1,
+            refill_after_close: options.prepare_refill_after_close,
         });
     }
     Ok(profile)
@@ -363,7 +380,7 @@ impl ThreadPerConnection {
             if let Ok((thread, prebooted)) = &mut prepared {
                 if !prebooted.is_empty() {
                     let deadline = std::time::Instant::now() + PREBOOT_LIMIT;
-                    thread.run_until(Some(deadline), |_| {
+                    let outcome = thread.run_until(Some(deadline), |_| {
                         if claimed.borrow().is_none() {
                             if let Ok(a) = rx.try_recv() {
                                 *claimed.borrow_mut() = Some(a);
@@ -371,6 +388,10 @@ impl ThreadPerConnection {
                         }
                         claimed.borrow().is_some()
                     });
+                    // Booted with nobody waiting: shrink to the live size now.
+                    if matches!(outcome, RunOutcome::Idle | RunOutcome::TimedOut) {
+                        thread.browser.engine.settle();
+                    }
                 }
             }
             // No connection ever claims this thread when the sender is dropped.
@@ -493,8 +514,9 @@ fn run_browser_thread(
     'serve: loop {
         // A prepared page was taken: boot its replacement only after a quiet
         // moment with no command, so the test is not delayed.
-        let quiet_at = browser.needs_refill().then(|| quiet_since + REFILL_QUIET);
+        let quiet_at = (browser.needs_refill() || browser.needs_settle()).then(|| quiet_since + REFILL_QUIET);
         if quiet_at.is_some_and(|at| std::time::Instant::now() >= at) && inbox.is_empty() {
+            browser.settle_prepared();
             browser.refill_prepared();
             continue;
         }
@@ -591,6 +613,25 @@ mod tests {
             .unwrap()
             .local_storage
             .is_empty());
+    }
+
+    #[test]
+    fn prepare_refill_flag() {
+        let o = parse_args(&["--prepare".to_owned(), "http://a.test/".to_owned()]).unwrap();
+        assert!(!o.prepare_refill_after_close);
+        let profile = browser_profile(&o).unwrap();
+        assert!(!profile.prepared[0].refill_after_close);
+        let o = parse_args(&[
+            "--prepare-refill".to_owned(),
+            "after-close".to_owned(),
+            "--prepare".to_owned(),
+            "http://a.test/".to_owned(),
+        ])
+        .unwrap();
+        assert!(browser_profile(&o).unwrap().prepared[0].refill_after_close);
+        assert!(parse_args(&["--prepare-refill".to_owned(), "later".to_owned()]).is_err());
+        assert!(parse_args(&["--prepare".to_owned(), "/relative".to_owned()]).is_ok());
+        assert!(browser_profile(&parse_args(&["--prepare".to_owned(), "/relative".to_owned()]).unwrap()).is_err());
     }
 
     #[test]
