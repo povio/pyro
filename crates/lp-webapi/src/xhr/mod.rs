@@ -487,7 +487,7 @@ impl Xhr {
         let generation = self.generation.get();
         let mut request = self.request.borrow().as_ref().unwrap().clone();
         if !matches!(request.method, Method::GET | Method::HEAD) && !body.is_null() && !body.is_undefined() {
-            let (bytes, mime) = if let Some(form) = crate::form_data::multipart_body(s, body) {
+            let (bytes, mime) = if let Some(form) = crate::form_data::multipart_body(s, body)? {
                 form
             } else if let Some(blob) = s.unwrap::<crate::file::Blob>(body) {
                 (blob.bytes.clone(), blob.mime.clone())
