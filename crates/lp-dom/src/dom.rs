@@ -63,7 +63,27 @@ impl Change {
 }
 
 /// Per root (slot index), the first element in tree order for each id.
-type IdIndex = rustc_hash::FxHashMap<u32, rustc_hash::FxHashMap<String, u32>>;
+type IdIndex = rustc_hash::FxHashMap<u32, RootIds>;
+
+/// One root's id map and what it is valid for.
+struct RootIds {
+    /// Slot generation of the root it was built for.
+    gen: u32,
+    /// `Dom::version` it is known valid at.
+    version: u64,
+    /// Nodes the build walked: the most journal entries worth scanning
+    /// instead of rebuilding.
+    walked: usize,
+    ids: rustc_hash::FxHashMap<String, u32>,
+}
+
+enum IdIndexCheck {
+    Valid,
+    /// More changes than the root's walk: cheaper to rebuild just this root.
+    TooLong,
+    /// An id-affecting change or a journal gap since then.
+    Changed,
+}
 
 pub struct Dom {
     /// Process-unique id (caches keyed by DOM identity and `version`).
@@ -94,9 +114,10 @@ pub struct Dom {
     pub(crate) iframes: crate::iframe::IframeQueue,
     /// Natural sizes of loaded `<img>` elements, set by the embedder.
     natural_sizes: rustc_hash::FxHashMap<NodeId, (f64, f64)>,
-    /// `getElementById` index: per root, the first element in tree order
-    /// for each id, valid for one `version`.
-    id_index: std::cell::RefCell<(u64, IdIndex)>,
+    /// `getElementById` index (see `get_element_by_id`).
+    id_index: std::cell::RefCell<IdIndex>,
+    #[cfg(test)]
+    id_index_builds: std::cell::Cell<u64>,
 }
 
 impl Default for Dom {
@@ -136,6 +157,8 @@ impl Dom {
             iframes: Default::default(),
             natural_sizes: Default::default(),
             id_index: Default::default(),
+            #[cfg(test)]
+            id_index_builds: Default::default(),
         }
     }
 
@@ -1709,25 +1732,81 @@ impl Dom {
         let r = self.check(root)?;
         // Chromium keeps an id map; a tree walk per call made accessible-name
         // computation (aria-labelledby/-describedby lookups) quadratic on
-        // large pages. The index is rebuilt lazily after any mutation.
+        // large pages. The index is rebuilt lazily after a mutation that can
+        // change it.
         let mut index = self.id_index.borrow_mut();
-        if index.0 != self.version {
-            *index = (self.version, Default::default());
-        }
-        let ids = index.1.entry(r).or_insert_with(|| {
-            let mut ids = rustc_hash::FxHashMap::default();
-            let mut cur = self.n(r).first_child;
-            while cur != NIL {
-                if let Some(v) = self.n(cur).element().and_then(|e| e.id()) {
-                    if !v.is_empty() {
-                        ids.entry(v.to_owned()).or_insert(cur);
-                    }
+        // A freed root's slot can be reused by a new node without a mutation
+        // being journaled: maps are only valid for the generation they were
+        // built for. (A live root keeps its whole subtree, and every node that
+        // leaves it is journaled as removed.)
+        let gen = self.slots[r as usize].gen;
+        let stale = match index.get(&r) {
+            None => false,
+            Some(e) if e.gen != gen => true,
+            Some(e) if e.version == self.version => false,
+            Some(e) => match self.id_index_check(e.version, e.walked) {
+                IdIndexCheck::Valid => false,
+                IdIndexCheck::TooLong => true,
+                IdIndexCheck::Changed => {
+                    // Every map validated at or before this one spans the same
+                    // id-affecting change: drop them all, which also bounds
+                    // maps of roots that are never looked up again.
+                    let since = e.version;
+                    index.retain(|_, o| o.version > since);
+                    true
                 }
-                cur = self.following_in(cur, r);
+            },
+        };
+        if stale {
+            index.remove(&r);
+        }
+        let entry = index.entry(r).or_insert_with(|| self.build_id_map(r, gen));
+        entry.version = self.version;
+        Ok(entry.ids.get(id).map(|&i| self.id_of(i)))
+    }
+
+    fn build_id_map(&self, r: u32, gen: u32) -> RootIds {
+        #[cfg(test)]
+        self.id_index_builds.set(self.id_index_builds.get() + 1);
+        let mut ids = rustc_hash::FxHashMap::default();
+        let mut walked = 0;
+        let mut cur = self.n(r).first_child;
+        while cur != NIL {
+            walked += 1;
+            if let Some(v) = self.n(cur).element().and_then(|e| e.id()) {
+                if !v.is_empty() {
+                    ids.entry(v.to_owned()).or_insert(cur);
+                }
             }
-            ids
+            cur = self.following_in(cur, r);
+        }
+        RootIds { gen, version: self.version, walked, ids }
+    }
+
+    /// Whether an id map validated at `since` is still valid. The journal must
+    /// cover every change since then, and none of them can add, remove or
+    /// reorder an id: text, form-control state, focus/hover and attributes
+    /// other than `id` keep it. Insertions, removals, `id` changes, unknown
+    /// changes and journal gaps invalidate it. More changes than the nodes
+    /// its build walked (`walked`) rebuild it too, so a scan never costs
+    /// more than walking that root again.
+    fn id_index_check(&self, since: u64, walked: usize) -> IdIndexCheck {
+        let Some(changes) = self.changes_since(since) else { return IdIndexCheck::Changed };
+        if changes.size_hint().1.is_none_or(|n| n > walked) {
+            return IdIndexCheck::TooLong;
+        }
+        let id_hash = local_name!("id").get_hash();
+        let mut changes = changes;
+        let valid = changes.all(|c| match c {
+            Change::Text(_) | Change::State(_) | Change::Pseudo => true,
+            Change::Attr(_, hash, _) => hash != id_hash,
+            Change::Inserted(..) | Change::Removed(..) | Change::Unknown(_) => false,
         });
-        Ok(ids.get(id).map(|&i| self.id_of(i)))
+        if valid {
+            IdIndexCheck::Valid
+        } else {
+            IdIndexCheck::Changed
+        }
     }
 
     /// `document.documentElement`.
@@ -2016,4 +2095,139 @@ pub fn validate_and_extract(namespace: Option<&str>, qualified: &str) -> DomResu
         return Err(nserr());
     }
     Ok(QualName::new(prefix.map(Prefix::from), Namespace::from(ns), LocalName::from(local)))
+}
+
+#[cfg(test)]
+mod id_index_tests {
+    //! Reuse of the `getElementById` index, observed through the test-only
+    //! build counter. Behaviour is covered differentially in
+    //! tests/id_index.rs.
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use super::*;
+    use crate::parse::{parse_document, DomRef};
+
+    fn doc(html: &str) -> (DomRef, NodeId) {
+        let dom: DomRef = Rc::new(RefCell::new(Dom::new()));
+        let d = parse_document(&dom, "http://test/", html);
+        dom.borrow_mut().set_document_active(d, true).unwrap();
+        (dom, d)
+    }
+
+    /// Full-walk reference for one lookup.
+    fn walk(dom: &Dom, root: NodeId, id: &str) -> Option<NodeId> {
+        dom.descendants(root).unwrap().skip(1).find(|&k| {
+            dom.node_type(k).unwrap() == NodeType::Element && dom.get_attribute_ns(k, None, "id").unwrap() == Some(id)
+        })
+    }
+
+    #[test]
+    fn the_index_is_reused_across_irrelevant_changes_and_rebuilt_otherwise() {
+        let mut html = String::from("<body><input id=field>");
+        for i in 0..200 {
+            html.push_str(&format!("<div id=n{i}>x</div>"));
+        }
+        let (dom, d) = doc(&html);
+        let mut dom = dom.borrow_mut();
+        let field = dom.get_element_by_id(d, "field").unwrap().unwrap();
+        let mid = dom.get_element_by_id(d, "n100").unwrap().unwrap();
+        let text = dom.first_child(mid).unwrap().unwrap();
+        let builds = dom.id_index_builds.get();
+        let lookup = |dom: &Dom| assert_eq!(dom.get_element_by_id(d, "n199").unwrap(), walk(dom, d, "n199"));
+
+        // One irrelevant change of each kind between lookups: no rebuild.
+        for i in 0..50 {
+            dom.set_attribute(mid, "data-x", &i.to_string()).unwrap();
+            lookup(&dom);
+            dom.set_char_data(text, &format!("y{i}")).unwrap();
+            lookup(&dom);
+            dom.set_value(field, &format!("v{i}")).unwrap();
+            lookup(&dom);
+            dom.set_focused(d, Some(if i % 2 == 0 { field } else { mid })).unwrap();
+            lookup(&dom);
+        }
+        // Many irrelevant changes between two lookups, within the document's walk.
+        for i in 0..150 {
+            dom.set_attribute(mid, "class", &format!("k{i}")).unwrap();
+        }
+        lookup(&dom);
+        assert_eq!(dom.id_index_builds.get(), builds, "irrelevant changes rebuilt the index");
+
+        // Each id-affecting change rebuilds once.
+        let mut expect = builds;
+        let mut step = |dom: &mut Dom, f: &dyn Fn(&mut Dom)| {
+            f(dom);
+            lookup(dom);
+            lookup(dom);
+            expect += 1;
+            assert_eq!(dom.id_index_builds.get(), expect);
+        };
+        step(&mut dom, &|dom| dom.set_attribute(mid, "id", "renamed").unwrap());
+        step(&mut dom, &|dom| {
+            dom.remove_attribute(mid, "id").unwrap();
+        });
+        step(&mut dom, &|dom| {
+            let e = dom.create_element(d, "p").unwrap();
+            let body = dom.body(d).unwrap().unwrap();
+            dom.append_child(body, e).unwrap();
+        });
+        step(&mut dom, &|dom| dom.remove_node(mid).unwrap());
+        // More changes than the document walk visited: rebuilt rather than scanned.
+        step(&mut dom, &|dom| {
+            for i in 0..2000 {
+                dom.set_attribute(field, "data-y", &i.to_string()).unwrap();
+            }
+        });
+        // Journal overflow hides an id change: rebuilt.
+        step(&mut dom, &|dom| {
+            dom.set_attribute(field, "id", "field2").unwrap();
+            for i in 0..(JOURNAL_CAPACITY * 2) {
+                dom.set_attribute(field, "data-z", &i.to_string()).unwrap();
+            }
+        });
+        assert_eq!(dom.get_element_by_id(d, "field").unwrap(), None);
+        assert_eq!(dom.get_element_by_id(d, "field2").unwrap(), Some(field));
+    }
+
+    #[test]
+    fn a_tiny_root_rebuilds_instead_of_scanning_a_long_journal() {
+        let mut html = String::from("<body>");
+        for i in 0..200 {
+            html.push_str(&format!("<div id=n{i}>x</div>"));
+        }
+        let (dom, d) = doc(&html);
+        let mut dom = dom.borrow_mut();
+        let mid = dom.get_element_by_id(d, "n100").unwrap().unwrap();
+        let frag = dom.create_fragment(d).unwrap();
+        let t = dom.create_element(d, "i").unwrap();
+        dom.set_attribute(t, "id", "t").unwrap();
+        dom.append_child(frag, t).unwrap();
+        assert_eq!(dom.get_element_by_id(frag, "t").unwrap(), Some(t));
+        assert_eq!(dom.get_element_by_id(d, "n199").unwrap(), walk(&dom, d, "n199"));
+        let builds = dom.id_index_builds.get();
+        // One irrelevant change: within both roots' bounds, both reused.
+        dom.set_attribute(mid, "data-x", "0").unwrap();
+        assert_eq!(dom.get_element_by_id(frag, "t").unwrap(), Some(t));
+        assert_eq!(dom.get_element_by_id(d, "n199").unwrap(), walk(&dom, d, "n199"));
+        assert_eq!(dom.id_index_builds.get(), builds);
+        // More irrelevant changes than the fragment's walk (1 node) but fewer
+        // than the document's: only the fragment rebuilds.
+        for i in 0..50 {
+            dom.set_attribute(mid, "data-x", &i.to_string()).unwrap();
+        }
+        assert_eq!(dom.get_element_by_id(frag, "t").unwrap(), Some(t));
+        assert_eq!(dom.id_index_builds.get(), builds + 1);
+        assert_eq!(dom.get_element_by_id(d, "n199").unwrap(), walk(&dom, d, "n199"));
+        assert_eq!(dom.id_index_builds.get(), builds + 1);
+        // An insertion invalidates both; the first lookup drops every map
+        // validated at or before its own.
+        let body = dom.body(d).unwrap().unwrap();
+        let p = dom.create_element(d, "p").unwrap();
+        dom.append_child(body, p).unwrap();
+        assert_eq!(dom.get_element_by_id(d, "n199").unwrap(), walk(&dom, d, "n199"));
+        assert!(!dom.id_index.borrow().contains_key(&frag.idx), "the fragment's map spans the insertion");
+        assert_eq!(dom.get_element_by_id(frag, "t").unwrap(), Some(t));
+        assert_eq!(dom.id_index_builds.get(), builds + 3);
+    }
 }
