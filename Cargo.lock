@@ -521,7 +521,7 @@ checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
 
 [[package]]
 name = "lightningpanda"
-version = "0.0.9"
+version = "0.0.10"
 dependencies = [
  "lp-browser",
  "lp-cdp",
@@ -553,7 +553,7 @@ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
 name = "lp-browser"
-version = "0.0.9"
+version = "0.0.10"
 dependencies = [
  "bytes",
  "http",
@@ -569,7 +569,7 @@ dependencies = [
 
 [[package]]
 name = "lp-cdp"
-version = "0.0.9"
+version = "0.0.10"
 dependencies = [
  "bytes",
  "getrandom",
@@ -589,7 +589,7 @@ dependencies = [
 
 [[package]]
 name = "lp-dom"
-version = "0.0.9"
+version = "0.0.10"
 dependencies = [
  "cssparser",
  "encoding_rs",
@@ -603,7 +603,7 @@ dependencies = [
 
 [[package]]
 name = "lp-js"
-version = "0.0.9"
+version = "0.0.10"
 dependencies = [
  "lp-jsc-sys",
  "rustc-hash",
@@ -612,14 +612,14 @@ dependencies = [
 
 [[package]]
 name = "lp-jsc-sys"
-version = "0.0.9"
+version = "0.0.10"
 dependencies = [
  "cc",
 ]
 
 [[package]]
 name = "lp-net"
-version = "0.0.9"
+version = "0.0.10"
 dependencies = [
  "base64",
  "brotli-decompressor",
@@ -640,21 +640,21 @@ dependencies = [
 
 [[package]]
 name = "lp-psl"
-version = "0.0.9"
+version = "0.0.10"
 dependencies = [
  "psl",
 ]
 
 [[package]]
 name = "lp-runtime"
-version = "0.0.9"
+version = "0.0.10"
 dependencies = [
  "libc",
 ]
 
 [[package]]
 name = "lp-webapi"
-version = "0.0.9"
+version = "0.0.10"
 dependencies = [
  "base64",
  "bytes",
