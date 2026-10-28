@@ -67,7 +67,18 @@ pub fn clear_selection(page: &Rc<PageDom>) {
 }
 
 /// `selectionchange` at the document, coalesced into one pending task.
-fn queue_selectionchange(page: &Rc<PageDom>) {
+pub(crate) fn queue_selectionchange(page: &Rc<PageDom>) {
+    queue_selectionchange_at(page, None);
+}
+
+/// A text control's own selection changed (focus, caret moves, select(),
+/// typing): Chromium fires `selectionchange` on the control itself (not
+/// bubbling), so document capture listeners see it with the input as target.
+pub(crate) fn queue_control_selectionchange(page: &Rc<PageDom>, control: NodeId) {
+    queue_selectionchange_at(page, Some(control));
+}
+
+fn queue_selectionchange_at(page: &Rc<PageDom>, target: Option<NodeId>) {
     if page.selectionchange_pending.replace(true) {
         return;
     }
@@ -78,7 +89,11 @@ fn queue_selectionchange(page: &Rc<PageDom>) {
         if p.is_disposed() || p.document() != doc {
             return;
         }
-        crate::input::fire_simple(&p, doc, "selectionchange", false, false);
+        let at = match target {
+            Some(t) if p.dom.borrow().is_connected(t).unwrap_or(false) => t,
+            _ => doc,
+        };
+        crate::input::fire_simple(&p, at, "selectionchange", false, false);
     }));
 }
 
