@@ -371,8 +371,8 @@ impl FlowStyleSource for InlineFlex<'_> {
             s.grid_auto_rows = t;
         }
         let (gc, gr) = (decl("grid-column"), decl("grid-row"));
-        s.grid_column = flow::parse_grid_placement(gc.as_deref(), None, None);
-        s.grid_row = flow::parse_grid_placement(gr.as_deref(), None, None);
+        s.grid_column = flow::parse_grid_placement(gc.as_deref(), None, None, (None, None));
+        s.grid_row = flow::parse_grid_placement(gr.as_deref(), None, None, (None, None));
         if let Some(g) = decl("column-gap").and_then(|v| flex_len(&v)) {
             s.column_gap = g;
         }
@@ -4526,6 +4526,40 @@ fn table_rowspan_like_chromium() {
             ("w1", [0.0, 201.0, 10.0, 0.0]),
             ("w2", [0.0, 201.0, 10.0, 90.0]),
             ("w", [0.0, 201.0, 10.0, 90.0]),
+        ],
+    );
+}
+
+#[test]
+fn grid_template_areas_and_named_lines_like_chromium() {
+    // Chromium (800x600): items placed by area name (`grid-area`), by
+    // `[name]` lines (also the nth one and from the end, inside repeat()),
+    // by an area's implicit `-start` / `-end` lines; a name no line has is
+    // the first implicit line. Areas extend the explicit grid.
+    let html = "<!doctype html><html><head><style>body{margin:0;font-family:sans-serif;font-size:16px;line-height:20px}#g{display:grid;width:600px;grid-template-columns:200px 1fr 100px;grid-template-rows:50px auto 40px;grid-template-areas:\"head head head\" \"side main main\" \"foot foot foot\";gap:10px}#h{grid-area:head}#s{grid-area:side}#m{grid-area:main;height:80px}#f{grid-area:foot}#g2{display:grid;width:500px;grid-auto-columns:20px;grid-template-columns:[a] 100px [b c] 1fr [d] 50px [e];grid-auto-rows:30px}#x1{grid-column:b / d}#x2{grid-column:a / e;grid-row:2}#x3{grid-column:c}#x4{grid-column:2 a / span 1}#g3{display:grid;width:400px;grid-template-columns:80px 150px;grid-auto-columns:40px;grid-template-areas:\"x . y\" \"x z z\";grid-auto-rows:25px}#y1{grid-area:y}#z1{grid-area:z}#x5{grid-area:x}#q{grid-column:nope}#q2{grid-row:x-start / x-end}#g4{display:grid;width:300px;grid-template-columns:repeat(2,[l] 50px) [r];grid-auto-rows:20px}#w1{grid-column:l 2 / r}#w2{grid-column:l -1}</style></head><body><div id=g><div id=h>H</div><div id=m>M</div><div id=s>S</div><div id=f>F</div></div><div id=g2><div id=x1>1</div><div id=x2>2</div><div id=x3>3</div><div id=x4>4</div></div><div id=g3><div id=q>q</div><div id=y1>y</div><div id=z1>z</div><div id=x5>x</div><div id=q2>q2</div></div><div id=g4><div id=w1>w1</div><div id=w2>w2</div></div></body></html>";
+    check_rects(
+        "grid areas",
+        html,
+        &[
+            ("g", [0.0, 0.0, 600.0, 190.0]),
+            ("h", [0.0, 0.0, 600.0, 50.0]),
+            ("m", [210.0, 60.0, 390.0, 80.0]),
+            ("s", [0.0, 60.0, 200.0, 80.0]),
+            ("f", [0.0, 150.0, 600.0, 40.0]),
+            ("g2", [0.0, 190.0, 500.0, 90.0]),
+            ("x1", [100.0, 190.0, 310.0, 30.0]),
+            ("x2", [0.0, 220.0, 460.0, 30.0]),
+            ("x3", [100.0, 250.0, 310.0, 30.0]),
+            ("x4", [480.0, 250.0, 20.0, 30.0]),
+            ("g3", [0.0, 280.0, 400.0, 50.0]),
+            ("q", [310.0, 280.0, 40.0, 25.0]),
+            ("y1", [230.0, 280.0, 40.0, 25.0]),
+            ("z1", [80.0, 305.0, 190.0, 25.0]),
+            ("x5", [0.0, 280.0, 80.0, 50.0]),
+            ("q2", [270.0, 280.0, 40.0, 50.0]),
+            ("g4", [0.0, 330.0, 300.0, 40.0]),
+            ("w1", [50.0, 330.0, 50.0, 20.0]),
+            ("w2", [50.0, 350.0, 50.0, 20.0]),
         ],
     );
 }

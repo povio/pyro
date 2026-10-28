@@ -357,6 +357,7 @@ impl StyleEngine {
             (_, "break-word") => crate::flow::WrapMode::BreakWord,
             _ => crate::flow::WrapMode::Normal,
         };
+        let grid_area = crate::flow::split_grid_area(value("grid-area").as_deref());
         Some(FlowStyle {
             outer,
             inner,
@@ -452,6 +453,7 @@ impl StyleEngine {
             grid_template_rows: value("grid-template-rows")
                 .map(|v| crate::flow::parse_track_list(&v, &|t| computed::resolve_len(t, &cx).map(to_len)))
                 .unwrap_or_default(),
+            grid_template_areas: value("grid-template-areas").and_then(|v| crate::flow::parse_grid_areas(&v)),
             grid_auto_columns: value("grid-auto-columns")
                 .and_then(|v| crate::flow::parse_track(&v, &|t| computed::resolve_len(t, &cx).map(to_len)))
                 .unwrap_or_default(),
@@ -468,11 +470,13 @@ impl StyleEngine {
                 value("grid-column").as_deref(),
                 value("grid-column-start").as_deref(),
                 value("grid-column-end").as_deref(),
+                (grid_area[1].0.as_deref(), grid_area[1].1.as_deref()),
             ),
             grid_row: crate::flow::parse_grid_placement(
                 value("grid-row").as_deref(),
                 value("grid-row-start").as_deref(),
                 value("grid-row-end").as_deref(),
+                (grid_area[0].0.as_deref(), grid_area[0].1.as_deref()),
             ),
             // text-align inherits; LTR maps start/left/justify to Start.
             text_align: match reads.keyword(FlowProp::TextAlign).as_deref() {

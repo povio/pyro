@@ -34,8 +34,8 @@ tr:hover{background:#f3f4f6}.btn:hover{background:#e5e7eb}.row-actions button:fo
 ";
 
 fn row(i: usize) -> String {
-    let side = if i % 3 == 0 { "Buy" } else { "Sell" };
-    let badge = if i % 3 == 0 { "bg-green-50 text-green-700" } else { "bg-red-50 text-red-700" };
+    let side = if i.is_multiple_of(3) { "Buy" } else { "Sell" };
+    let badge = if i.is_multiple_of(3) { "bg-green-50 text-green-700" } else { "bg-red-50 text-red-700" };
     format!(
         "<tr class=border-b id=r{i}>\
 <td><input type=checkbox aria-label=\"select {i}\"></td>\

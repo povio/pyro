@@ -13,6 +13,7 @@
 //! widths are approximate; boxes with explicit sizes match Chromium.
 
 use std::cell::RefCell;
+use std::rc::Rc;
 
 use rustc_hash::FxHashMap;
 
@@ -232,15 +233,98 @@ pub struct AutoRepeat {
 pub struct TrackList {
     pub tracks: Vec<Track>,
     pub auto_repeat: Option<AutoRepeat>,
+    /// `[name]` line names: (line index among `tracks`, after the auto
+    /// repeat, name). Names inside an auto repeat are ignored.
+    pub names: Vec<(usize, bool, Rc<str>)>,
 }
 
-/// `grid-column` / `grid-row` of an item: 1-based lines (negative from the
-/// end of the explicit grid), `None` = auto; `span` applies when an end is
-/// auto.
-#[derive(Copy, Clone, Debug, PartialEq)]
+/// `grid-template-areas`: the explicit grid it implies and each named
+/// area's 0-based lines (row start, row end, column start, column end).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct GridAreas {
+    pub rows: usize,
+    pub cols: usize,
+    pub areas: Vec<(Rc<str>, [usize; 4])>,
+}
+
+/// Parses `grid-template-areas` (`none`, or one string per row). Rows of
+/// different lengths or non-rectangular areas make the value invalid (`None`).
+pub fn parse_grid_areas(v: &str) -> Option<Rc<GridAreas>> {
+    let v = v.trim();
+    if v.eq_ignore_ascii_case("none") || v.is_empty() {
+        return None;
+    }
+    let mut rows: Vec<Vec<Option<&str>>> = Vec::new();
+    let mut rest = v;
+    loop {
+        rest = rest.trim_start();
+        let Some(q) = rest.chars().next() else { break };
+        if q != '"' && q != '\'' {
+            return None;
+        }
+        let end = rest[1..].find(q)? + 1;
+        let row = &rest[1..end];
+        rest = &rest[end + 1..];
+        // Runs of `.` are null cells, so `a...b` is three tokens.
+        let mut cells = Vec::new();
+        for tok in row.split_whitespace() {
+            let mut t = tok;
+            while !t.is_empty() {
+                let dots = t.len() - t.trim_start_matches('.').len();
+                if dots > 0 {
+                    cells.push(None);
+                    t = &t[dots..];
+                } else {
+                    let n = t.find('.').unwrap_or(t.len());
+                    cells.push(Some(&t[..n]));
+                    t = &t[n..];
+                }
+            }
+        }
+        if cells.is_empty() || rows.first().is_some_and(|r| r.len() != cells.len()) {
+            return None;
+        }
+        rows.push(cells);
+    }
+    let mut out = GridAreas { rows: rows.len(), cols: rows.first()?.len(), areas: Vec::new() };
+    for (r, row) in rows.iter().enumerate() {
+        for (c, cell) in row.iter().enumerate() {
+            let Some(name) = cell else { continue };
+            match out.areas.iter_mut().find(|(n, _)| &**n == *name) {
+                Some((_, a)) => {
+                    a[1] = a[1].max(r + 1);
+                    a[3] = a[3].max(c + 1);
+                    a[2] = a[2].min(c);
+                }
+                None => out.areas.push((Rc::from(*name), [r, r + 1, c, c + 1])),
+            }
+        }
+    }
+    // Each area must fill its bounding rectangle exactly.
+    for (name, [r0, r1, c0, c1]) in &out.areas {
+        let cells = rows.iter().flatten().filter(|c| **c == Some(&**name)).count();
+        if cells != (r1 - r0) * (c1 - c0) || !(*r0..*r1).all(|r| (*c0..*c1).all(|c| rows[r][c] == Some(&**name))) {
+            return None;
+        }
+    }
+    Some(Rc::new(out))
+}
+
+/// One side of `grid-column` / `grid-row`: a 1-based line (negative from
+/// the end), or the nth line named `name` (0 = no count given: the
+/// `name-start` / `name-end` line when there is one, else the first `name`).
+#[derive(Clone, Debug, PartialEq)]
+pub enum GridLine {
+    Number(i32),
+    Named(Rc<str>, i32),
+}
+
+/// `grid-column` / `grid-row` of an item: `None` = auto; `span` applies
+/// when an end is auto.
+#[derive(Clone, Debug, PartialEq)]
 pub struct GridPlacement {
-    pub start: Option<i32>,
-    pub end: Option<i32>,
+    pub start: Option<GridLine>,
+    pub end: Option<GridLine>,
     pub span: u32,
 }
 
@@ -358,7 +442,10 @@ pub fn parse_track_list(v: &str, len: &dyn Fn(&str) -> Option<Len>) -> TrackList
         return list;
     }
     for tok in grid_tokens(v) {
-        if tok.starts_with('[') {
+        if let Some(names) = tok.strip_prefix('[') {
+            for name in names.trim_end_matches(']').split_whitespace() {
+                list.names.push((list.tracks.len(), list.auto_repeat.is_some(), Rc::from(name)));
+            }
             continue;
         }
         if tok.to_ascii_lowercase().starts_with("repeat(") {
@@ -367,8 +454,11 @@ pub fn parse_track_list(v: &str, len: &dyn Fn(&str) -> Option<Len>) -> TrackList
                 return TrackList::default();
             }
             let mut tracks = Vec::new();
+            let mut names = Vec::new();
             for t in grid_tokens(&args[1]) {
-                if t.starts_with('[') {
+                if let Some(n) = t.strip_prefix('[') {
+                    names
+                        .extend(n.trim_end_matches(']').split_whitespace().map(|n| (tracks.len(), Rc::<str>::from(n))));
                     continue;
                 }
                 match parse_track(&t, len) {
@@ -383,7 +473,10 @@ pub fn parse_track_list(v: &str, len: &dyn Fn(&str) -> Option<Len>) -> TrackList
                 }
                 n => {
                     let Ok(n) = n.parse::<usize>() else { return TrackList::default() };
+                    let after = list.auto_repeat.is_some();
                     for _ in 0..n.min(1000) {
+                        let at = list.tracks.len();
+                        list.names.extend(names.iter().map(|(i, n)| (at + i, after, n.clone())));
                         list.tracks.extend_from_slice(&tracks);
                     }
                 }
@@ -399,13 +492,23 @@ pub fn parse_track_list(v: &str, len: &dyn Fn(&str) -> Option<Len>) -> TrackList
 }
 
 /// Parses `grid-column` / `grid-row` from the shorthand (`span 2 / span 2`,
-/// `1 / -1`, `2`) or the `-start` / `-end` longhands (which win).
-pub fn parse_grid_placement(shorthand: Option<&str>, start: Option<&str>, end: Option<&str>) -> GridPlacement {
-    let (mut s, mut e) = (None::<String>, None::<String>);
+/// `1 / -1`, `2`, `main`) or the `-start` / `-end` longhands (which win).
+/// `area` is the side pair `grid-area` gave this axis.
+pub fn parse_grid_placement(
+    shorthand: Option<&str>,
+    start: Option<&str>,
+    end: Option<&str>,
+    area: (Option<&str>, Option<&str>),
+) -> GridPlacement {
+    let (mut s, mut e) = (area.0.map(str::to_owned), area.1.map(str::to_owned));
     if let Some(v) = shorthand {
         let mut parts = v.splitn(2, '/');
         s = parts.next().map(|p| p.trim().to_owned());
         e = parts.next().map(|p| p.trim().to_owned());
+        // A lone name applies to both sides (`grid-column: main`).
+        if e.is_none() && s.as_deref().is_some_and(is_grid_ident) {
+            e = s.clone();
+        }
     }
     if let Some(v) = start {
         s = Some(v.trim().to_owned());
@@ -414,15 +517,33 @@ pub fn parse_grid_placement(shorthand: Option<&str>, start: Option<&str>, end: O
         e = Some(v.trim().to_owned());
     }
     let mut p = GridPlacement::default();
-    // Each side is a line number or `span <n>`; a span on the start side
-    // wins over one on the end side.
-    let side = |v: Option<&str>| -> (Option<i32>, Option<u32>) {
+    // Each side is `auto`, `span <n>`, `<n>`, `<name>` or `<n> <name>`; a
+    // span on the start side wins over one on the end side.
+    let side = |v: Option<&str>| -> (Option<GridLine>, Option<u32>) {
         let Some(v) = v else { return (None, None) };
-        let v = v.trim().to_ascii_lowercase();
-        if let Some(n) = v.strip_prefix("span") {
-            return (None, Some(n.trim().parse::<u32>().ok().filter(|n| *n > 0).unwrap_or(1)));
+        let lower = v.trim().to_ascii_lowercase();
+        let mut n = None::<i32>;
+        let mut name = None::<&str>;
+        let mut span = false;
+        for tok in v.split_whitespace().zip(lower.split_whitespace()) {
+            match tok {
+                (_, "span") => span = true,
+                (_, "auto") => return (None, None),
+                (_, l) if l.parse::<i32>().is_ok() => n = l.parse().ok(),
+                (t, _) if is_grid_ident(t) => name = Some(t),
+                _ => return (None, None),
+            }
         }
-        (v.parse::<i32>().ok().filter(|n| *n != 0), None)
+        if span {
+            // `span <name>` is approximated as `span <n>`.
+            return (None, Some(n.filter(|n| *n > 0).unwrap_or(1) as u32));
+        }
+        match (n, name) {
+            (Some(0), _) => (None, None),
+            (n, Some(name)) => (Some(GridLine::Named(Rc::from(name), n.unwrap_or(0))), None),
+            (Some(n), None) => (Some(GridLine::Number(n)), None),
+            (None, None) => (None, None),
+        }
     };
     let (start_line, start_span) = side(s.as_deref());
     let (end_line, end_span) = side(e.as_deref());
@@ -432,6 +553,29 @@ pub fn parse_grid_placement(shorthand: Option<&str>, start: Option<&str>, end: O
         p.span = n;
     }
     p
+}
+
+fn is_grid_ident(v: &str) -> bool {
+    let v = v.trim();
+    !v.is_empty()
+        && !v.contains(char::is_whitespace)
+        && !v.starts_with(|c: char| c.is_ascii_digit() || c == '-' && v[1..].starts_with(|c: char| c.is_ascii_digit()))
+        && !matches!(v.to_ascii_lowercase().as_str(), "auto" | "span")
+}
+
+/// Splits `grid-area` (`row-start / column-start / row-end / column-end`)
+/// into the (row, column) side pairs. Omitted sides copy the opposite side
+/// when it is a name, else are auto.
+pub fn split_grid_area(v: Option<&str>) -> [(Option<String>, Option<String>); 2] {
+    let Some(v) = v else { return Default::default() };
+    let parts: Vec<String> = v.split('/').map(|p| p.trim().to_owned()).collect();
+    let get = |i: usize| parts.get(i).cloned();
+    let copy = |i: usize, from: usize| get(i).or_else(|| parts.get(from).filter(|p| is_grid_ident(p)).cloned());
+    let row_start = get(0);
+    let col_start = get(1).or_else(|| row_start.clone().filter(|p| is_grid_ident(p)));
+    let row_end = copy(2, 0);
+    let col_end = get(3).or_else(|| col_start.clone().filter(|p| is_grid_ident(p)));
+    [(row_start, row_end), (col_start, col_end)]
 }
 
 /// top, right, bottom, left.
@@ -506,6 +650,7 @@ pub struct FlowStyle {
     // Grid container (Stage 4). Gaps reuse `row_gap` / `column_gap`.
     pub grid_template_columns: TrackList,
     pub grid_template_rows: TrackList,
+    pub grid_template_areas: Option<Rc<GridAreas>>,
     pub grid_auto_columns: Track,
     pub grid_auto_rows: Track,
     /// `grid-auto-flow: column` (else row; `dense` is not supported).
@@ -564,6 +709,7 @@ impl Default for FlowStyle {
             table_layout_fixed: false,
             grid_template_columns: TrackList::default(),
             grid_template_rows: TrackList::default(),
+            grid_template_areas: None,
             grid_auto_columns: Track::AUTO,
             grid_auto_rows: Track::AUTO,
             grid_auto_flow_column: false,
@@ -790,7 +936,7 @@ pub struct MeasureCache {
     /// The flow styles the last pass used, which seed the next pass (minus
     /// those of restyled elements: `layout_style_unchanged`).
     styles: FxHashMap<NodeId, Option<StyleRef>>,
-    generated: FxHashMap<(NodeId, bool), Option<std::rc::Rc<Generated>>>,
+    generated: GeneratedMap,
 }
 
 /// Attributes the flow layout reads itself (form control and replaced sizes,
@@ -1047,11 +1193,11 @@ struct Memo {
     clip_path: RefCell<Vec<NodeId>>,
     /// Generated content per (element, after), kept across passes like
     /// `styles`.
-    generated: RefCell<FxHashMap<(NodeId, bool), Option<std::rc::Rc<Generated>>>>,
+    generated: RefCell<GeneratedMap>,
     /// `leading_margin` per (element, containing block width).
     leading: RefCell<FxHashMap<(NodeId, u64), Margin>>,
     /// `table_rows` per table.
-    tables: RefCell<FxHashMap<NodeId, std::rc::Rc<(Vec<TableRow>, usize)>>>,
+    tables: RefCell<FxHashMap<NodeId, Rc<TableRows>>>,
     /// Subtrees of the previous pass and of this one (`reuse`).
     reuse: RefCell<reuse::Reuse>,
     /// The pass recorded some element twice: its order ranges are not
@@ -2149,7 +2295,17 @@ impl<'a> Ctx<'a> {
                 }
                 _ => None,
             });
-            let content_h = self.contents(p.el, s, content_x, content_y, content_w, definite_h, fixed, (0.0, 0.0), Collapse::default());
+            let content_h = self.contents(
+                p.el,
+                s,
+                content_x,
+                content_y,
+                content_w,
+                definite_h,
+                fixed,
+                (0.0, 0.0),
+                Collapse::default(),
+            );
             // min/max-height are border-box sizes under box-sizing: border-box.
             let to_content_h = |h: f64| if s.border_box { (h - e.vertical()).max(0.0) } else { h };
             let min_h = s.min_height.resolve(Some(cb.height)).map(to_content_h);
@@ -2676,9 +2832,10 @@ impl<'a> Ctx<'a> {
         // So does one holding only empty inline boxes without inline-axis
         // margins, borders or padding (CSS 2.1 9.4.2): they are 0x0 at its
         // start.
-        let blank = line.items.iter().all(|it| {
-            it.atomic.is_none() && !it.generated && it.width == 0.0 && (it.owners.is_empty() || it.phantom)
-        });
+        let blank = line
+            .items
+            .iter()
+            .all(|it| it.atomic.is_none() && !it.generated && it.width == 0.0 && (it.owners.is_empty() || it.phantom));
         if blank {
             for it in line.items.drain(..).filter(|it| it.phantom) {
                 let r = Rect { x: x + it.x + shift.0, y: line_y + shift.1, width: 0.0, height: 0.0 };
@@ -3807,6 +3964,12 @@ struct TableRow {
     cells: Vec<TableCell>,
 }
 
+/// A table's rows in display order and its column count.
+type TableRows = (Vec<TableRow>, usize);
+
+/// Generated content per (element, after).
+type GeneratedMap = FxHashMap<(NodeId, bool), Option<Rc<Generated>>>;
+
 impl<'a> Ctx<'a> {
     /// Rows in display order (header groups, then bodies/bare rows, then
     /// footers), each with its cells' column positions.
@@ -3855,9 +4018,9 @@ impl<'a> Ctx<'a> {
         while start < rows.len() {
             let end = start + rows[start..].iter().take_while(|r| r.group == rows[start].group).count();
             let mut taken: Vec<usize> = Vec::new();
-            for r in start..end {
+            for (r, row) in rows.iter_mut().enumerate().take(end).skip(start) {
                 let mut col = 0;
-                for c in rows[r].cells.iter_mut() {
+                for c in row.cells.iter_mut() {
                     while taken.get(col).is_some_and(|&n| n > 0) {
                         col += 1;
                     }
@@ -4008,9 +4171,9 @@ impl<'a> Ctx<'a> {
         let memo_rows = self.table_rows(table);
         let (rows, cols) = (memo_rows.0.as_slice(), memo_rows.1);
         let (sx, _) = Self::spacing(style);
-        let content = self.table_columns(table, style, &rows, cols, None).iter().sum::<f64>();
+        let content = self.table_columns(table, style, rows, cols, None).iter().sum::<f64>();
         // A fixed-layout table is at least its declared columns.
-        let fixed = if style.table_layout_fixed { self.fixed_columns_sum(table, &rows, cols) } else { 0.0 };
+        let fixed = if style.table_layout_fixed { self.fixed_columns_sum(table, rows, cols) } else { 0.0 };
         content.max(fixed) + sx * (cols as f64 + 1.0)
     }
 
@@ -4088,7 +4251,7 @@ impl<'a> Ctx<'a> {
         let (sx, _) = Self::spacing(style);
         if style.table_layout_fixed {
             // Fixed layout ignores cell contents: the declared columns.
-            return self.fixed_columns_sum(table, &rows, cols) + sx * (cols as f64 + 1.0);
+            return self.fixed_columns_sum(table, rows, cols) + sx * (cols as f64 + 1.0);
         }
         let mut widths = vec![0.0f64; cols];
         for row in rows {
@@ -4121,7 +4284,7 @@ impl<'a> Ctx<'a> {
             return 0.0;
         }
         let (sx, sy) = Self::spacing(style);
-        let widths = self.table_columns(el, style, &rows, cols, Some(width));
+        let widths = self.table_columns(el, style, rows, cols, Some(width));
         let mut starts = Vec::with_capacity(cols + 1);
         let mut cx = x + sx;
         for w in &widths {
@@ -4377,20 +4540,74 @@ fn expand_tracks(list: &TrackList, available: Option<f64>, gap: f64) -> (Vec<Tra
     (out, rep.fit.then_some(from..to))
 }
 
-/// Resolves a placement against `lines` explicit lines: (start index or
-/// auto, span).
-fn resolve_lines(p: GridPlacement, lines: usize) -> (Option<usize>, usize) {
+/// The explicit grid of one axis: the tracks (auto repeat expanded, padded
+/// to the template areas with auto tracks), the `auto-fit` range and the
+/// line names by 0-based line index (areas name their edges
+/// `<area>-start` / `<area>-end`).
+struct ExplicitAxis {
+    tracks: Vec<Track>,
+    fit: Option<std::ops::Range<usize>>,
+    names: Vec<(usize, Rc<str>)>,
+}
+
+fn explicit_axis(style: &FlowStyle, rows: bool, available: Option<f64>, gap: f64) -> ExplicitAxis {
+    let (list, auto) = if rows {
+        (&style.grid_template_rows, style.grid_auto_rows)
+    } else {
+        (&style.grid_template_columns, style.grid_auto_columns)
+    };
+    let (mut tracks, fit) = expand_tracks(list, available, gap);
+    let inserted = tracks.len() - list.tracks.len();
+    let mut names: Vec<(usize, Rc<str>)> =
+        list.names.iter().map(|(i, after, n)| (if *after { i + inserted } else { *i }, n.clone())).collect();
+    if let Some(areas) = &style.grid_template_areas {
+        let count = if rows { areas.rows } else { areas.cols };
+        tracks.resize(tracks.len().max(count), auto);
+        for (name, l) in &areas.areas {
+            let (start, end) = if rows { (l[0], l[1]) } else { (l[2], l[3]) };
+            names.push((start, Rc::from(format!("{name}-start"))));
+            names.push((end, Rc::from(format!("{name}-end"))));
+        }
+    }
+    names.sort();
+    ExplicitAxis { tracks, fit, names }
+}
+
+/// Resolves a placement against `lines` explicit lines and their `names`:
+/// (start index or auto, span). A name no line has stands for the first
+/// implicit line after the explicit grid.
+fn resolve_lines(p: &GridPlacement, lines: usize, names: &[(usize, Rc<str>)]) -> (Option<usize>, usize) {
     let lines = lines as i32;
-    let index = |n: i32| if n > 0 { n - 1 } else { (lines + n).max(0) };
+    let nth = |name: &str, n: i32| -> i32 {
+        let found: Vec<i32> = names.iter().filter(|(_, m)| &**m == name).map(|(i, _)| *i as i32).collect();
+        if n > 0 {
+            found.get(n as usize - 1).copied().unwrap_or(lines - 1 + n - found.len() as i32)
+        } else {
+            found.len().checked_sub(n.unsigned_abs() as usize).map_or(0, |k| found[k])
+        }
+    };
+    let index = |l: &GridLine, end: bool| match l {
+        GridLine::Number(n) if *n > 0 => n - 1,
+        GridLine::Number(n) => (lines + n).max(0),
+        GridLine::Named(name, 0) => {
+            let edge = format!("{name}-{}", if end { "end" } else { "start" });
+            if names.iter().any(|(_, m)| **m == *edge) {
+                nth(&edge, 1)
+            } else {
+                nth(name, 1)
+            }
+        }
+        GridLine::Named(name, n) => nth(name, *n),
+    };
     let span = p.span.max(1) as usize;
-    match (p.start, p.end) {
+    match (&p.start, &p.end) {
         (Some(s), Some(e)) => {
-            let (a, b) = (index(s), index(e));
+            let (a, b) = (index(s, false), index(e, true));
             let (a, b) = if b < a { (b, a) } else { (a, b) };
             (Some(a as usize), ((b - a).max(1)) as usize)
         }
-        (Some(s), None) => (Some(index(s) as usize), span),
-        (None, Some(e)) => (Some((index(e) - span as i32).max(0) as usize), span),
+        (Some(s), None) => (Some(index(s, false) as usize), span),
+        (None, Some(e)) => (Some((index(e, true) - span as i32).max(0) as usize), span),
         (None, None) => (None, span),
     }
 }
@@ -4402,16 +4619,17 @@ type Lines = (Option<usize>, usize);
 /// and row counts including implicit tracks.
 fn place_grid_items(
     items: &mut [GridItem],
-    explicit_cols: usize,
-    explicit_rows: usize,
+    cols: &ExplicitAxis,
+    rows: &ExplicitAxis,
     column_flow: bool,
 ) -> (usize, usize) {
+    let (explicit_cols, explicit_rows) = (cols.tracks.len(), rows.tracks.len());
     // Work in (major, minor) = (rows, cols) for row flow, swapped for column flow.
     let resolved: Vec<(Lines, Lines)> = items
         .iter()
         .map(|it| {
-            let c = resolve_lines(it.style.grid_column, explicit_cols + 1);
-            let r = resolve_lines(it.style.grid_row, explicit_rows + 1);
+            let c = resolve_lines(&it.style.grid_column, explicit_cols + 1, &cols.names);
+            let r = resolve_lines(&it.style.grid_row, explicit_rows + 1, &rows.names);
             if column_flow {
                 (c, r)
             } else {
@@ -4843,9 +5061,10 @@ impl<'a> Ctx<'a> {
         }
         let col_gap = style.column_gap.resolve(width);
         let row_gap = style.row_gap.resolve(height.unwrap_or(0.0));
-        let (cols, col_fit) = expand_tracks(&style.grid_template_columns, Some(width), col_gap);
-        let (rows, row_fit) = expand_tracks(&style.grid_template_rows, height, row_gap);
-        let (ncols, nrows) = place_grid_items(&mut items, cols.len(), rows.len(), style.grid_auto_flow_column);
+        let cols_axis = explicit_axis(style, false, Some(width), col_gap);
+        let rows_axis = explicit_axis(style, true, height, row_gap);
+        let (ncols, nrows) = place_grid_items(&mut items, &cols_axis, &rows_axis, style.grid_auto_flow_column);
+        let (cols, col_fit, rows, row_fit) = (cols_axis.tracks, cols_axis.fit, rows_axis.tracks, rows_axis.fit);
         let col_tracks: Vec<Track> =
             (0..ncols).map(|i| cols.get(i).copied().unwrap_or(style.grid_auto_columns)).collect();
         let row_tracks: Vec<Track> = (0..nrows).map(|i| rows.get(i).copied().unwrap_or(style.grid_auto_rows)).collect();
@@ -4959,9 +5178,10 @@ impl<'a> Ctx<'a> {
     fn grid_content_width(&self, el: NodeId, style: &FlowStyle, min: bool) -> f64 {
         let (mut items, _) = self.grid_children(el, style);
         let gap = style.column_gap.resolve(0.0);
-        let (cols, _) = expand_tracks(&style.grid_template_columns, None, gap);
-        let (rows, _) = expand_tracks(&style.grid_template_rows, None, 0.0);
-        let (ncols, _) = place_grid_items(&mut items, cols.len(), rows.len(), style.grid_auto_flow_column);
+        let cols_axis = explicit_axis(style, false, None, gap);
+        let rows_axis = explicit_axis(style, true, None, 0.0);
+        let (ncols, _) = place_grid_items(&mut items, &cols_axis, &rows_axis, style.grid_auto_flow_column);
+        let cols = cols_axis.tracks;
         let tracks: Vec<Track> = (0..ncols).map(|i| cols.get(i).copied().unwrap_or(style.grid_auto_columns)).collect();
         let collapsed = vec![false; ncols];
         let sizes = size_tracks(
