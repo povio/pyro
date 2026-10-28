@@ -108,6 +108,10 @@ pub struct PageDom {
     /// scheduled (`crate::input::update_hover_after_task`).
     pub(crate) hover_update_queued: Cell<bool>,
     press_target: Cell<Option<NodeId>>,
+    /// The `pointerdown` of the press in progress was canceled: its
+    /// compatibility mouse events (moves while down, `mouseup`) are not
+    /// sent, as in Chromium; a canceled `pointerup` suppresses nothing.
+    pub(crate) compat_mouse_suppressed: Cell<bool>,
     /// Native drag source under a left press that has not moved past the
     /// drag threshold yet, with the press position.
     pub(crate) drag_candidate: Cell<Option<(NodeId, f64, f64)>>,
@@ -337,6 +341,7 @@ impl PageDom {
             pointer: RefCell::new(None),
             hover_update_queued: Cell::new(false),
             press_target: Cell::new(None),
+            compat_mouse_suppressed: Cell::new(false),
             drag_candidate: Cell::new(None),
             text_drag: Cell::new(None),
             drag: RefCell::new(None),

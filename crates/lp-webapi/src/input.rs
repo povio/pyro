@@ -208,6 +208,29 @@ pub(crate) fn blur_if_focus_disabled(page: &Rc<PageDom>, owner: NodeId, attribut
     }
 }
 
+/// Before a script removes `node` (or, with `children_only`, its children):
+/// when the focused element is inside what goes, it loses focus first, as in
+/// Chromium (`Document::RemoveFocusedElementOfSubtree`): trusted `blur` and
+/// `focusout` with no related target while it is still connected, so a
+/// root-delegated listener (React's `onBlur`) sees them, and the body is
+/// active. A handler that moves the node makes the removal fail as usual.
+/// Firefox and the spec's focus fixup rule fire nothing; Chromium-based
+/// browsers do (MDN, "Element: blur event").
+pub fn blur_before_removal(page: &Rc<PageDom>, node: NodeId, children_only: bool) {
+    let focused = {
+        let dom = page.dom.borrow();
+        let Some(f) = dom.focused(page.document()).ok().flatten() else { return };
+        let inside = dom.is_connected(node).unwrap_or(false)
+            && dom.contains(node, f).unwrap_or(false)
+            && !(children_only && f == node);
+        if !inside {
+            return;
+        }
+        f
+    };
+    blur_element(page, focused);
+}
+
 /// Explicit blur keeps the owner's selected frame and remembered edit target.
 pub fn blur_element(page: &Rc<PageDom>, el: NodeId) {
     if page.dom.borrow().focused(page.document()).ok().flatten() != Some(el) {
@@ -1507,7 +1530,9 @@ pub fn dispatch_mouse_intercepting_drags(
                 dispatch_boundary_events(page, prev, target, tkey, m);
             }
             fire(page, tkey, &mouse_event(page, EventInterface::PointerEvent, "pointermove", m, true));
-            fire(page, tkey, &mouse_event(page, EventInterface::MouseEvent, "mousemove", m, true));
+            if !(page.compat_mouse_suppressed.get() && m.buttons != 0) {
+                fire(page, tkey, &mouse_event(page, EventInterface::MouseEvent, "mousemove", m, true));
+            }
             if m.buttons & 1 != 0 {
                 text_select_move(page, target, m);
             }
@@ -1518,6 +1543,7 @@ pub fn dispatch_mouse_intercepting_drags(
         MouseKind::Pressed => {
             let pd = fire(page, tkey, &mouse_event(page, EventInterface::PointerEvent, "pointerdown", m, true));
             let md = !pd || fire(page, tkey, &mouse_event(page, EventInterface::MouseEvent, "mousedown", m, true));
+            page.compat_mouse_suppressed.set(!pd);
             page.set_press_target(Some(target));
             note_buttons(page, m);
             // Chromium on Linux and macOS opens the context menu on the
@@ -1576,8 +1602,10 @@ pub fn dispatch_mouse_intercepting_drags(
             note_buttons(page, m);
             page.drag_candidate.set(None);
             page.text_drag.set(None);
-            let pu = fire(page, tkey, &mouse_event(page, EventInterface::PointerEvent, "pointerup", m, true));
-            if pu {
+            fire(page, tkey, &mouse_event(page, EventInterface::PointerEvent, "pointerup", m, true));
+            // Only a canceled pointerdown holds back the mouseup (an app's
+            // pointerup handler that calls preventDefault does not).
+            if !page.compat_mouse_suppressed.replace(false) {
                 fire(page, tkey, &mouse_event(page, EventInterface::MouseEvent, "mouseup", m, true));
             }
             let pressed = page.take_press_target();

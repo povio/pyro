@@ -5316,16 +5316,17 @@ fn abort_controllers_and_traversal_filters_do_not_keep_a_disposed_page_alive() {
     assert!(weak.upgrade().is_none(), "an AbortController or traversal filter kept its disposed PageDom alive");
 }
 
-/// HTML's focus fixup rule: removing (or replacing) the focused element makes
-/// `activeElement` the body, with no blur event; keys then go nowhere
-/// instead of to a detached node, and the replacement can take focus.
+/// Removing (or replacing) the focused element makes `activeElement` the
+/// body; keys then go nowhere instead of to a detached node, and the
+/// replacement can take focus. Chromium fires `blur` first (see
+/// `removing_the_focused_element_fires_blur_and_focusout_first`).
 #[test]
 fn removed_focused_element_is_no_longer_active() {
     let e = env("<body><div id=cell><input id=a value=x></div></body>");
     let r = &e.main;
     assert_eq!(
         eval(r, "const a = document.getElementById('a'); let blurs = 0; a.addEventListener('blur', () => blurs++); a.focus(); const before = document.activeElement.id; a.remove(); [before, document.activeElement.tagName, document.activeElement.isConnected, blurs, a.isConnected, a.parentNode === null].join(':')"),
-        "a:BODY:true:0:false:true"
+        "a:BODY:true:1:false:true"
     );
     assert_eq!(
         eval(r, "const b = document.createElement('input'); b.id = 'b'; document.getElementById('cell').appendChild(b); b.focus(); const c = document.createElement('input'); c.id = 'c'; b.replaceWith(c); const mid = document.activeElement.tagName; c.focus(); [mid, document.activeElement.id].join(':')"),
@@ -5336,6 +5337,77 @@ fn removed_focused_element_is_no_longer_active() {
         eval(r, "const c2 = document.getElementById('c'); c2.remove(); document.getElementById('cell').appendChild(c2); document.activeElement.tagName"),
         "BODY"
     );
+}
+
+/// Chromium (`Document::RemoveFocusedElementOfSubtree`) blurs the focused
+/// element before a script removes it or an ancestor, while it is still
+/// connected: `blur` then `focusout` (no related target), seen by a listener
+/// on the document as React's root-delegated `onBlur` is. That holds for
+/// `removeChild`, `replaceChild`, `replaceWith`, `innerHTML`, `textContent`
+/// and a move by `appendChild`; a blur handler that moves the node makes the
+/// removal throw `NotFoundError`.
+#[test]
+fn removing_the_focused_element_fires_blur_and_focusout_first() {
+    let e = env("<body><div id=cell></div><div id=other></div></body>");
+    let r = &e.main;
+    eval(r, "window.log = []; for (const t of ['blur', 'focusout']) document.addEventListener(t, (e) => log.push(t + ':' + e.target.id + ':' + e.target.isConnected + ':' + (e.relatedTarget === null) + ':' + document.activeElement.tagName), true); window.make = (id) => { const i = document.createElement('input'); i.id = id; document.getElementById('cell').appendChild(i); i.focus(); return i; };");
+    let cases = [
+        ("const a = make('a'); a.parentNode.removeChild(a);", "a"),
+        ("const b = make('b'); b.parentNode.replaceChild(document.createElement('span'), b);", "b"),
+        ("make('c').replaceWith('x');", "c"),
+        ("make('d'); document.getElementById('cell').innerHTML = '';", "d"),
+        ("make('e'); document.getElementById('cell').textContent = '';", "e"),
+        ("document.getElementById('other').appendChild(make('f'));", "f"),
+    ];
+    for (script, id) in cases {
+        eval(r, &format!("log.length = 0; {script}"));
+        assert_eq!(
+            eval(r, "log.join(',') + '|' + document.activeElement.tagName"),
+            format!("blur:{id}:true:true:BODY,focusout:{id}:true:true:BODY|BODY"),
+            "{script}"
+        );
+    }
+    // Removing a sibling of the focused element, or a detached one, blurs nothing.
+    assert_eq!(
+        eval(r, "log.length = 0; const g = make('g'); const s = document.createElement('span'); g.after(s); s.remove(); [log.length, document.activeElement.id].join(':')"),
+        "0:g"
+    );
+    assert_eq!(
+        eval(r, "const h = make('h'); h.addEventListener('blur', () => document.getElementById('other').appendChild(h), { once: true }); let err = ''; try { h.parentNode.removeChild(h); } catch (x) { err = x.name; } [err, h.parentNode.id].join(':')"),
+        "NotFoundError:other"
+    );
+}
+
+/// Chromium's compatibility mouse events: a canceled `pointerdown` holds
+/// back `mousedown` and the `mouseup` of that press (not `click`); a
+/// canceled `pointerup` holds back nothing (React Aria's press handlers
+/// cancel it on links, which then still get `mouseup` and `click`).
+#[test]
+fn only_a_canceled_pointerdown_suppresses_the_mouseup() {
+    let e = env("<body style=margin:0><a id=l href=#x style=display:block;width:100px;height:40px>link</a></body>");
+    let r = &e.main;
+    eval(r, "window.log = []; window.cancel = ''; const l = document.getElementById('l'); for (const t of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) l.addEventListener(t, (e) => { log.push(t); if (t === cancel || t === 'click') e.preventDefault(); });");
+    let press = || {
+        let m = input::MouseInput {
+            x: 20.0,
+            y: 20.0,
+            button: input::MouseButton::Left,
+            buttons: 1,
+            click_count: 1,
+            ..Default::default()
+        };
+        input::dispatch_mouse(&e.page, input::MouseKind::Pressed, &m).unwrap();
+        input::dispatch_mouse(&e.page, input::MouseKind::Released, &input::MouseInput { buttons: 0, ..m }).unwrap();
+    };
+    for (cancel, want) in [
+        ("pointerup", "pointerdown,mousedown,pointerup,mouseup,click"),
+        ("pointerdown", "pointerdown,pointerup,click"),
+        ("", "pointerdown,mousedown,pointerup,mouseup,click"),
+    ] {
+        eval(r, &format!("log.length = 0; cancel = '{cancel}';"));
+        press();
+        assert_eq!(eval(r, "log.join()"), want, "pointer{cancel} canceled");
+    }
 }
 
 /// `selectionchange` on the document for text controls too: focus, a
