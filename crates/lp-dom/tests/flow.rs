@@ -246,6 +246,37 @@ fn flow_hit_test_picks_the_option_under_the_point() {
 }
 
 #[test]
+fn fixed_and_absolute_boxes_escape_overflow_clips_outside_their_containing_block() {
+    // Gap 30: a fixed element's containing block is the viewport, so an
+    // `overflow: hidden` ancestor between it and the viewport does not clip
+    // it (Chromium: elementFromPoint(20, 20) is the BUTTON; the engine hit
+    // the content underneath). The same holds for an absolutely positioned
+    // box and non-positioned clipping ancestors below its containing block.
+    let html = "<!doctype html><body style=\"margin:0\">\
+        <div id=under style=\"width:400px;height:400px\"></div>\
+        <section style=\"position:fixed;left:500px;top:0\"><div style=\"overflow:hidden;width:300px;height:300px\">\
+        <div style=\"position:fixed;left:0;top:0;z-index:9999\"><button id=b style=\"width:60px;height:40px;padding:0;border:0\">B</button></div>\
+        <div id=stay style=\"position:fixed;left:700px;top:350px;width:50px;height:50px\"></div>\
+        </div></section>\
+        <div style=\"position:relative;top:0;left:0\"><div style=\"overflow:hidden;width:50px;height:50px\">\
+        <div id=abs style=\"position:absolute;left:100px;top:0;width:50px;height:50px\"></div>\
+        <div id=clipped style=\"position:relative;left:0;top:0;width:200px;height:20px\"></div>\
+        </div></div>\
+        <div style=\"position:fixed;left:0;top:500px\"><div style=\"overflow:hidden;width:10px;height:10px\">\
+        <div id=inner style=\"width:100px;height:100px\"></div></div></div>\
+        </body>";
+    let p = page(html, Geometry::Flow);
+    let r = p.layout.bounding_client_rect(&p.dom, p.id("b"));
+    assert_eq!([r.x, r.y, r.width, r.height], [0.0, 0.0, 60.0, 40.0], "the fixed button sits at the viewport origin");
+    let at = |x: f64, y: f64| p.layout.element_from_point(&p.dom, x, y);
+    assert_eq!(at(20.0, 20.0), Some(p.id("b")), "Chromium hits the BUTTON through the overflow:hidden ancestor");
+    assert_eq!(at(720.0, 370.0), Some(p.id("stay")), "a fixed box outside its clipping ancestor's rect");
+    assert_eq!(at(120.0, 410.0), Some(p.id("abs")), "an absolute box escapes a non-positioned clip");
+    assert_ne!(at(100.0, 410.0), Some(p.id("clipped")), "a relative box inside the clip stays clipped");
+    assert_ne!(at(50.0, 550.0), Some(p.id("inner")), "a clip inside the fixed containing block still applies");
+}
+
+#[test]
 fn default_geometry_is_unchanged_by_the_flow_switch() {
     // The approximate layout stays the default, and switching to flow and back
     // reports exactly the approximate geometry again.

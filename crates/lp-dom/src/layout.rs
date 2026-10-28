@@ -74,7 +74,19 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::dom::Dom;
-use crate::flow::{FlowBox, FlowResult};
+use crate::flow::{FlowBox, FlowResult, FlowStyleSource, Position};
+
+/// Overflow clips an out-of-flow box escapes while walking up to its
+/// containing block (`Layout::clip_escape`).
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum ClipEscape {
+    None,
+    /// `position: fixed`: no ancestor clips (the viewport contains it).
+    Viewport,
+    /// `position: absolute`: non-positioned ancestors do not clip, up to the
+    /// nearest positioned one.
+    Positioned,
+}
 use crate::media::Viewport;
 use crate::node::{DocumentKind, NodeId, NodeKind, NIL};
 use crate::style::{CheckVisibilityOptions, ScrollAxes, StyleEngine};
@@ -1100,23 +1112,57 @@ impl Layout {
     /// Whether a text box (viewport coordinates) lies entirely outside the
     /// visible area of an overflow-clipping ancestor of `node`.
     fn text_clipped(&self, dom: &Dom, node: NodeId, x: f64, y: f64, w: f64, h: f64) -> bool {
+        self.clipped_by_ancestor(dom, node, |a, clips| {
+            let r = self.bounding_client_rect_for_visible(dom, a);
+            (clips.x && (x + w <= r.x || x >= r.x + r.width)) || (clips.y && (y + h <= r.y || y >= r.y + r.height))
+        })
+    }
+
+    /// Whether an overflow-clipping ancestor of `node` clips it, as `out`
+    /// decides for each one that applies (its clipped axes given). An
+    /// out-of-flow box escapes the clips between it and its containing
+    /// block (CSS 2.1 10.1): every ancestor for `position: fixed` (the
+    /// viewport; transforms are not laid out), the non-positioned ones below
+    /// the nearest positioned ancestor for `position: absolute`. In-flow
+    /// content escapes with its out-of-flow ancestors.
+    fn clipped_by_ancestor(&self, dom: &Dom, node: NodeId, out: impl Fn(NodeId, ScrollAxes) -> bool) -> bool {
+        let mut escape = self.clip_escape(dom, node);
         let mut cur = dom.parent_element(node).ok().flatten();
         while let Some(a) = cur {
             if self.is_root_container(dom, a) {
                 break;
             }
-            let clips = self.style.overflow_clip_axes(dom, a);
-            if clips.x || clips.y {
-                let r = self.bounding_client_rect_for_visible(dom, a);
-                if (clips.x && (x + w <= r.x || x >= r.x + r.width))
-                    || (clips.y && (y + h <= r.y || y >= r.y + r.height))
-                {
+            let positioned = self.style.flow_style(dom, a).is_some_and(|s| s.position != Position::Static);
+            let applies = match escape {
+                ClipEscape::None => true,
+                ClipEscape::Viewport => false,
+                ClipEscape::Positioned => positioned,
+            };
+            if applies {
+                let clips = self.style.overflow_clip_axes(dom, a);
+                if (clips.x || clips.y) && out(a, clips) {
                     return true;
                 }
+            }
+            if escape == ClipEscape::None || (escape == ClipEscape::Positioned && positioned) {
+                escape = self.clip_escape(dom, a);
             }
             cur = dom.parent_element(a).ok().flatten();
         }
         false
+    }
+
+    /// Which overflow clips above `el` do not apply to it, from its
+    /// `position`.
+    fn clip_escape(&self, dom: &Dom, el: NodeId) -> ClipEscape {
+        if dom.node_type(el).ok() != Some(crate::node::NodeType::Element) {
+            return ClipEscape::None;
+        }
+        match self.style.flow_style(dom, el).map(|s| s.position) {
+            Some(Position::Fixed) => ClipEscape::Viewport,
+            Some(Position::Absolute) => ClipEscape::Positioned,
+            _ => ClipEscape::None,
+        }
     }
 
     /// Whether `node` (or a text node's parent) cannot be selected: the
@@ -1419,29 +1465,16 @@ impl Layout {
             if !inside(&r) || !self.is_visible(dom, el) || !self.style.is_hit_testable(dom, el) {
                 continue;
             }
-            // Clipped by an overflow ancestor (fixed boxes escape non-fixed clips).
-            let mut clipped = false;
-            let mut cur = dom.parent_element(el).ok().flatten();
-            while let Some(a) = cur {
-                if self.is_root_container(dom, a) {
-                    break;
+            // Clipped by an overflow ancestor of its containing block chain.
+            let clipped = self.clipped_by_ancestor(dom, el, |a, clips| {
+                if flow.get(a).is_none() {
+                    return false;
                 }
-                let clips = self.style.overflow_clip_axes(dom, a);
-                if clips.x || clips.y {
-                    if let Some(ab) = flow.get(a) {
-                        if !(b.fixed && !ab.fixed) {
-                            let ar = self.bounding_client_rect_for_visible(dom, a);
-                            let out_x = clips.x && !ignore_x && (x < ar.x || x > ar.x + ar.width);
-                            let out_y = clips.y && (y < ar.y || y > ar.y + ar.height);
-                            if out_x || out_y {
-                                clipped = true;
-                                break;
-                            }
-                        }
-                    }
-                }
-                cur = dom.parent_element(a).ok().flatten();
-            }
+                let ar = self.bounding_client_rect_for_visible(dom, a);
+                let out_x = clips.x && !ignore_x && (x < ar.x || x > ar.x + ar.width);
+                let out_y = clips.y && (y < ar.y || y > ar.y + ar.height);
+                out_x || out_y
+            });
             if !clipped {
                 best = Some((b.positioned, b.order, el));
             }
