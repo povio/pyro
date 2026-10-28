@@ -91,6 +91,27 @@ promise. Releases ship it in the archive
 3 ms per test this way, against about 34 ms in Playwright
 (`bench/results/lp-tos-e501cef`).
 
+Network steps on the wire (engine side; the client builds them):
+
+```json
+{"mock": {"url": "/api/orders", "passthrough": true,
+          "patch": {"status": 201, "headers": {"x-a": "1"}, "json": {"total": 0, "items": null}}}}
+{"mock": {"url": {"regex": "/api/orders(?!/draft)"}, "hold": "save", "json": {"ok": true}}}
+{"release": {"hold": "save"}}
+{"request": {"method": "PATCH", "path": "/api/orders", "state": "started", "count": 1,
+             "body": {"regex": "\"remarks\""}, "bodyKeys": ["remarks"],
+             "headers": {"x-idempotency-key": {"regex": "^k\\d$"}}}}
+```
+
+`patch` implies `passthrough` (the real response is rewritten; `json` is a
+JSON merge patch onto a JSON object body); `hold` parks the request, or with
+`passthrough` its real response, until `release` (which waits for something
+to be held and returns `{"released": n}`); there is no clock control. A
+`request` step (default `state: "finished"`) and the run's `requests` carry
+`requestHeaders`, `postData` (`postDataBase64` / `postDataTruncated` past
+1 MiB) and `responseHeaders`. `{"regex", "flags"}` patterns have ECMAScript
+semantics (look-around, backreferences; flags `i`, `m`, `s`).
+
 After each action a step waits until the page is quiet: no queued task, no
 request the action started, no `setTimeout` due within 50 ms, no pending
 animation frame (animation loops excepted) and no navigation short of
