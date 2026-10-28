@@ -1,7 +1,9 @@
 # Flow layout (staged)
 
-Status: Stages 1-4 (block/inline, flex, tables, grid), opt-in only. The default geometry is still the
-upstream "faux layout" (`crates/lp-dom/src/layout.rs`).
+Status: Stages 1-4 (block/inline, flex, tables, grid). The flow layout is the default geometry of
+new documents; `LIGHTNINGPANDA_GEOMETRY=approximate` selects the upstream "faux layout"
+(`crates/lp-dom/src/layout.rs`) for comparisons. A `Layout` built directly still defaults to
+`Geometry::Approximate`, so lp-dom's own tests name the geometry they exercise.
 
 ## Why
 
@@ -21,7 +23,7 @@ the popover at its `top/left`.
   coordinates) for every rendered element and scroll extents per box, from a
   [`FlowStyleSource`] and the viewport. One pass, cached on the layout
   observation stamp (DOM version, style generation, focus/hover) and viewport.
-- `Layout::set_geometry(Geometry::Flow)` (default `Geometry::Approximate`)
+- `Layout::set_geometry(Geometry::Flow)` (pages take `Geometry::from_env()`, flow by default)
   routes the geometry getters through the flow result. Nothing changes unless
   a caller opts in. The browser exposes the selector as an internal flag only
   after Stage 1 parity is reviewed.

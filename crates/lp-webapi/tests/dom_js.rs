@@ -2038,6 +2038,8 @@ fn intersection_observer_options_conversion_and_explicit_limits() {
 #[test]
 fn intersection_observer_clips_ancestors_and_tracks_scroll_styles() {
     let e=env("<style>#clip {overflow:hidden;width:50px;height:50px}</style><body><div id=clip><div id=t style='width:100px;height:100px'></div></div><div style='height:2000px'></div></body>");
+    // The expected ratios below are the approximate (faux) layout's.
+    e.page.layout.borrow_mut().set_geometry(lp_dom::layout::Geometry::Approximate);
     let tasks = Rc::new(ObserverTasks::default());
     e.page.set_hooks(Some(tasks.clone()));
     assert_eq!(

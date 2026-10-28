@@ -210,12 +210,14 @@ pub enum Geometry {
 }
 
 impl Geometry {
-    /// The process-wide opt-in: `LIGHTNINGPANDA_GEOMETRY=flow` selects the flow
-    /// layout for new documents; anything else keeps the approximate one.
+    /// The geometry of new documents: the flow layout, unless
+    /// `LIGHTNINGPANDA_GEOMETRY=approximate` selects upstream's faux layout
+    /// (kept for comparisons). A `Layout` built directly still defaults to
+    /// `Approximate`; pages take this value.
     pub fn from_env() -> Geometry {
         match std::env::var("LIGHTNINGPANDA_GEOMETRY") {
-            Ok(v) if v.eq_ignore_ascii_case("flow") => Geometry::Flow,
-            _ => Geometry::Approximate,
+            Ok(v) if v.trim().eq_ignore_ascii_case("approximate") => Geometry::Approximate,
+            _ => Geometry::Flow,
         }
     }
 }
