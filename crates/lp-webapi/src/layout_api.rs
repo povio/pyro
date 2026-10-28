@@ -426,31 +426,97 @@ pub fn get_computed_style<'s>(s: &Scope<'s>, page: &Rc<PageDom>, el: NodeId) -> 
     s.wrap::<ComputedStyle>(ComputedData { el: crate::collections::NodeHold::new(page, el)? }, None)
 }
 
-/// `MediaQueryList` (static: `change` events are not dispatched).
+/// A live `MediaQueryList` (`PageDom::media_queries`): its target, query
+/// text and the `matches` it last reported, so an emulation change fires
+/// `change` only on the lists it flipped.
+pub struct MediaQueryEntry {
+    pub(crate) target: lp_dom::events::TargetKey,
+    pub(crate) query: String,
+    pub(crate) last: std::cell::Cell<bool>,
+}
+
+/// `MediaQueryList`: an EventTarget whose `change` fires when the embedder's
+/// viewport or media emulation flips `matches`. `matchMedia` returns one
+/// object per realm and query text, kept alive with the realm (as a Window
+/// [SameObject]) so a listener added without keeping a reference still runs,
+/// as in Chromium, where a list with listeners is not collected.
 pub struct MqlData {
-    page: Rc<PageDom>,
+    target: crate::target::EventTargetData,
     query: String,
+}
+
+impl Drop for MqlData {
+    fn drop(&mut self) {
+        let key = self.target.key;
+        if let Ok(mut lists) = self.target.page.media_queries.try_borrow_mut() {
+            lists.retain(|e| e.target != key);
+        }
+    }
 }
 
 pub struct MediaQueryList;
 impl JsClass for MediaQueryList {
     const NAME: &'static str = "MediaQueryList";
     type Data = MqlData;
-    type Parent = NoParent;
+    type Parent = crate::target::EventTarget;
     fn define(def: &mut ClassDef<Self>) {
+        def.upcast(|d: &MqlData| &d.target);
         def.getter("media", |s, m| Ok(s.string(&m.query)));
-        def.getter("matches", |s, m| Ok(s.boolean(m.page.layout.borrow().style().match_media(&m.query))));
-        def.method("addListener", 1, |s, _m, _a| Ok(s.undefined()));
-        def.method("removeListener", 1, |s, _m, _a| Ok(s.undefined()));
-        def.method("addEventListener", 2, |s, _m, _a| Ok(s.undefined()));
-        def.method("removeEventListener", 2, |s, _m, _a| Ok(s.undefined()));
-        def.method("dispatchEvent", 1, |s, _m, _a| Ok(s.boolean(true)));
-        def.accessor("onchange", |s, _m| Ok(s.null()), |_s, _m, _v| Ok(()));
+        def.getter("matches", |s, m| Ok(s.boolean(m.target.page.layout.borrow().style().match_media(&m.query))));
+        // Legacy aliases of addEventListener/removeEventListener('change').
+        def.method("addListener", 1, |s, m, a| mql_listener(s, m, "addEventListener", a.get(0)));
+        def.method("removeListener", 1, |s, m, a| mql_listener(s, m, "removeEventListener", a.get(0)));
+        def.accessor(
+            "onchange",
+            |s, m| crate::target::event_handler(s, &m.target, "change"),
+            |s, m, v| crate::target::set_event_handler(s, &m.target, "change", v),
+        );
     }
 }
 
+fn mql_listener<'s>(s: &Scope<'s>, m: &MqlData, method: &str, listener: Value<'s>) -> JsResult<Value<'s>> {
+    let object = crate::target::target_object(s, &m.target.page, m.target.key)?
+        .ok_or_else(|| lp_js::JsError::Type("Illegal invocation".into()))?;
+    let f = object.get(method)?.as_object().filter(|f| f.is_function());
+    if let Some(f) = f {
+        f.call(Some(object), &[s.string("change"), listener])?;
+    }
+    Ok(s.undefined())
+}
+
+fn media_query_identity(page: &PageDom, query: &str) -> lp_js::IdentityKey {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = rustc_hash::FxHasher::default();
+    query.hash(&mut hasher);
+    lp_js::IdentityKey(page.id() | (1 << 54), hasher.finish())
+}
+
+/// `window.matchMedia(query)`.
 pub fn match_media<'s>(s: &Scope<'s>, page: &Rc<PageDom>, query: String) -> JsResult<Object<'s>> {
-    s.wrap::<MediaQueryList>(MqlData { page: page.clone(), query }, None)
+    let key = media_query_identity(page, &query);
+    let value = crate::window::same_object(s, page, key, || {
+        let target = crate::target::EventTargetData::new(page);
+        let last = page.layout.borrow().style().match_media(&query);
+        page.media_queries.borrow_mut().push(MediaQueryEntry {
+            target: target.key,
+            query: query.clone(),
+            last: std::cell::Cell::new(last),
+        });
+        s.wrap::<MediaQueryList>(MqlData { target, query: query.clone() }, Some(key))
+    })?;
+    Ok(value.as_object().expect("a MediaQueryList wrapper"))
+}
+
+/// This realm's `MediaQueryList` owning target `key`, if it is one.
+pub(crate) fn media_query_object<'s>(
+    s: &Scope<'s>,
+    page: &PageDom,
+    key: lp_dom::events::TargetKey,
+) -> Option<Object<'s>> {
+    let query = page.media_queries.borrow().iter().find(|e| e.target == key).map(|e| e.query.clone())?;
+    let object = s.lookup_identity(media_query_identity(page, &query))?;
+    let owns = s.unwrap::<MediaQueryList>(object.value()).map(|d| d.target.key);
+    (owns == Some(key)).then_some(object)
 }
 
 pub(crate) fn register(engine: &lp_js::Engine) {

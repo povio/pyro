@@ -65,6 +65,11 @@ impl Browser {
                     lp_webapi::target::fire(&bindings, target, &event);
                 }
             }
+            // Media query lists whose `matches` flipped (size, color scheme,
+            // reduced motion, print) get `change`.
+            for (target, query, matches) in bindings.media_query_changes() {
+                bindings.fire_media_query_change(target, &query, matches);
+            }
             // Media matching can stop a pending sheet from blocking a parser
             // script even when CSS width/height did not change.
             browser.stylesheets_changed(page.into());

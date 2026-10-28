@@ -33,6 +33,7 @@ pub enum EventInterface {
     PageTransitionEvent,
     MessageEvent,
     StorageEvent,
+    MediaQueryListEvent,
 }
 
 /// `StorageEvent.storageArea`: the receiving window's own `Storage` (resolved
@@ -101,6 +102,9 @@ pub struct EventFields {
     pub storage_new: Option<String>,
     pub storage_url: String,
     pub storage_area: Option<StorageAreaRef>,
+    /// `MediaQueryListEvent.media` / `.matches`.
+    pub media_query: String,
+    pub media_matches: bool,
 }
 
 pub struct EventCore {
@@ -249,6 +253,7 @@ pub fn wrap_event<'s>(s: &Scope<'s>, core: &EventData) -> JsResult<Object<'s>> {
         EventInterface::PageTransitionEvent => s.wrap::<PageTransitionEvent>(d, Some(key)),
         EventInterface::MessageEvent => s.wrap::<MessageEvent>(d, Some(key)),
         EventInterface::StorageEvent => s.wrap::<StorageEvent>(d, Some(key)),
+        EventInterface::MediaQueryListEvent => s.wrap::<MediaQueryListEvent>(d, Some(key)),
     }?;
     core.trace_targets(s, wrapper)?;
     Ok(wrapper)
@@ -468,6 +473,12 @@ fn fill_popstate<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>
 fn fill_hashchange<'s>(_: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
     f.old_url = get_str(init, "oldURL")?;
     f.new_url = get_str(init, "newURL")?;
+    Ok(())
+}
+
+fn fill_media_query<'s>(_: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
+    f.media_query = get_str(init, "media")?;
+    f.media_matches = get_bool(init, "matches")?;
     Ok(())
 }
 
@@ -934,6 +945,22 @@ impl JsClass for HashChangeEvent {
     }
 }
 
+/// `change` events of a `MediaQueryList` (its query and whether it matches
+/// now; the embedder fires them when an emulation change flips a query).
+pub struct MediaQueryListEvent;
+impl JsClass for MediaQueryListEvent {
+    const NAME: &'static str = "MediaQueryListEvent";
+    type Data = EventData;
+    type Parent = Event;
+    fn define(def: &mut ClassDef<Self>) {
+        def.constructor(1, |s, nt, a| {
+            construct::<MediaQueryListEvent>(s, nt, a, EventInterface::MediaQueryListEvent, fill_media_query)
+        });
+        def.getter("media", |s, e| Ok(s.string(&e.fields.borrow().media_query)));
+        def.getter("matches", |s, e| Ok(s.boolean(e.fields.borrow().media_matches)));
+    }
+}
+
 pub struct PageTransitionEvent;
 impl JsClass for PageTransitionEvent {
     const NAME: &'static str = "PageTransitionEvent";
@@ -986,4 +1013,5 @@ pub(crate) fn register(engine: &lp_js::Engine) {
     engine.register::<PageTransitionEvent>();
     engine.register::<MessageEvent>();
     engine.register::<StorageEvent>();
+    engine.register::<MediaQueryListEvent>();
 }

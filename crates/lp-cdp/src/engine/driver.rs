@@ -398,6 +398,14 @@ enum Step {
         expression: String,
         key: Option<String>,
     },
+    /// Resizes the viewport mid-run (`innerWidth`, `resize`, media queries,
+    /// layout); settles like an action so listeners have run.
+    Viewport {
+        width: u32,
+        height: u32,
+    },
+    /// Replaces the page's media emulation (`prefers-color-scheme`, ...).
+    Media(super::metrics::MediaEmulation),
     Request(RequestMatch),
     Act {
         locator: Locator,
@@ -455,6 +463,8 @@ impl Step {
             Step::Popup { .. } => "popup".into(),
             Step::Route { url, .. } => format!("route {url}"),
             Step::Eval { .. } => "eval".into(),
+            Step::Viewport { width, height } => format!("viewport {width}x{height}"),
+            Step::Media(m) => format!("media {m:?}"),
             Step::Request(m) => format!("request {}", serde_json::to_value(m).map(prune).unwrap_or_default()),
             Step::Act { locator, action, .. } => format!("{action:?} {}", locator.describe()),
             Step::Mouse { action, x, y, .. } => match (x, y) {
@@ -2622,6 +2632,50 @@ enum StepParams {
     Read(QueryParams),
     Eval(EvalParams),
     Request(RequestParams),
+    Viewport(ViewportParams),
+    Media(MediaParams),
+}
+
+/// `{"viewport": {"width": 390, "height": 844}}`: CSS px.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ViewportParams {
+    width: u32,
+    height: u32,
+}
+
+/// `{"media": {"colorScheme": "dark"}}`: `colorScheme` (`dark`, `light`,
+/// `no-preference`), `reducedMotion` (`reduce`, `no-preference`), `media`
+/// (`screen`, `print`). Replaces the page's media emulation: an omitted
+/// field resets to the default (light, no-preference, screen).
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct MediaParams {
+    color_scheme: Option<String>,
+    reduced_motion: Option<String>,
+    media: Option<String>,
+}
+
+impl MediaParams {
+    fn step(self) -> CdpResult<(Step, Option<u64>)> {
+        let mut m = super::metrics::MediaEmulation::default();
+        match self.color_scheme.as_deref() {
+            None | Some("light" | "no-preference") => {}
+            Some("dark") => m.color_scheme = lp_dom::media::ColorScheme::Dark,
+            Some(other) => return Err(CdpError::invalid_params(format!("media: unknown colorScheme '{other}'"))),
+        }
+        match self.reduced_motion.as_deref() {
+            None | Some("no-preference") => {}
+            Some("reduce") => m.reduced_motion = true,
+            Some(other) => return Err(CdpError::invalid_params(format!("media: unknown reducedMotion '{other}'"))),
+        }
+        match self.media.as_deref() {
+            None | Some("screen") => {}
+            Some("print") => m.print = true,
+            Some(other) => return Err(CdpError::invalid_params(format!("media: unknown media '{other}'"))),
+        }
+        Ok((Step::Media(m), None))
+    }
 }
 
 #[derive(Deserialize)]
@@ -2930,6 +2984,8 @@ impl StepParams {
             StepParams::Route(p) => Ok((Step::Route { url: p.url, settle: p.settle.unwrap_or(true) }, p.timeout)),
             StepParams::Eval(p) => Ok((Step::Eval { expression: p.expression, key: p.key }, p.timeout)),
             StepParams::Request(p) => Ok((Step::Request(p.matcher), p.timeout)),
+            StepParams::Viewport(p) => Ok((Step::Viewport { width: p.width, height: p.height }, None)),
+            StepParams::Media(p) => p.step(),
             StepParams::Act(p) => p.step(true),
             StepParams::Mouse(p) => p.step(),
             StepParams::Check(p) => p.step(),
@@ -3043,6 +3099,8 @@ impl EngineHost {
             | Step::Popup { .. }
             | Step::Route { .. }
             | Step::Eval { .. }
+            | Step::Viewport { .. }
+            | Step::Media(_)
             | Step::Request(_)
             | Step::Mouse { .. } => {
                 unreachable!("not a locator step")
@@ -3325,6 +3383,8 @@ impl EngineHost {
                         Step::Act { settle: true, .. }
                             | Step::Mouse { settle: true, .. }
                             | Step::Route { settle: true, .. }
+                            | Step::Viewport { .. }
+                            | Step::Media(_)
                     )
                     .then(|| requests_of(&self.thread.browser, pid));
                     let (attempt, page) = match &step {
@@ -3341,6 +3401,14 @@ impl EngineHost {
                         }
                         Step::Download { save_to, .. } => (self.next_download(&mut w.job, save_to.as_deref()), None),
                         Step::Popup { .. } => (self.next_popup(&mut w.job), None),
+                        Step::Viewport { width, height } => {
+                            self.resize_viewport(w.job.page, *width, *height).map_err(|e| w.job.fail(e))?;
+                            (Attempt::Done(json!({ "width": width, "height": height })), None)
+                        }
+                        Step::Media(emulation) => {
+                            self.apply_media_emulation(w.job.page, *emulation).map_err(|e| w.job.fail(e))?;
+                            (Attempt::Done(json!({})), None)
+                        }
                         Step::Mock(spec) => (self.register_mock(w.job.page, spec).map_err(|e| w.job.fail(e))?, None),
                         Step::Unmock(pattern) => {
                             let removed = self.remove_mocks(w.job.page, pattern.as_ref()).map_err(|e| w.job.fail(e))?;

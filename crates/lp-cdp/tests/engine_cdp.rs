@@ -2532,6 +2532,42 @@ fn layout_metrics_report_viewport_scroll_and_document_size() {
     assert_eq!(r["error"]["code"], -32602, "{r}");
 }
 
+/// `Emulation.setEmulatedMedia` drives `prefers-color-scheme`,
+/// `prefers-reduced-motion` and the `print` media type: `matchMedia` and
+/// `@media` rules follow at once, `change` fires (at the next safe point) on
+/// the lists it flipped, and
+/// each call replaces the previous emulation (as Chrome). A size change from
+/// `setDeviceMetricsOverride` after load fires `resize` and relayouts.
+#[test]
+fn emulated_media_flips_match_media_and_fires_change() {
+    let mut h = Harness::new();
+    load_html(&mut h, "<style>p{color:red}@media (prefers-color-scheme: dark){p{color:blue}}</style><p id=p>x</p>");
+    eval_value(
+        &mut h,
+        "globalThis.log = []; globalThis.p = document.getElementById('p'); matchMedia('(prefers-color-scheme: dark)').addEventListener('change', e => log.push('dark:' + e.matches)); \
+         addEventListener('resize', () => log.push('resize:' + innerWidth + ':' + p.getBoundingClientRect().width)); 0",
+    );
+    let probe =
+        "[matchMedia('(prefers-color-scheme: dark)').matches, matchMedia('(prefers-reduced-motion: reduce)').matches, \
+        matchMedia('print').matches, getComputedStyle(p).color]";
+    let features =
+        json!([{"name":"prefers-color-scheme","value":"dark"},{"name":"prefers-reduced-motion","value":"reduce"}]);
+    assert_eq!(h.page("Emulation.setEmulatedMedia", json!({"features": features}))["result"], json!({}));
+    assert_eq!(eval_value(&mut h, probe), json!([true, true, false, "rgb(0, 0, 255)"]));
+    // `change` fires at the next safe point, after `matches` already flipped.
+    h.run_for(50);
+    assert_eq!(h.page("Emulation.setEmulatedMedia", json!({"media": "print"}))["result"], json!({}));
+    assert_eq!(eval_value(&mut h, probe), json!([false, false, true, "rgb(255, 0, 0)"]));
+    let metrics = json!({"width":400,"height":300,"deviceScaleFactor":1,"mobile":false});
+    assert_eq!(h.page("Emulation.setDeviceMetricsOverride", metrics)["result"], json!({}));
+    h.run_for(50);
+    // Both changes are delivered at one safe point, `resize` before media
+    // query `change` (the HTML "update the rendering" order).
+    assert_eq!(eval_value(&mut h, "log.join()"), json!("dark:true,resize:400:384,dark:false"));
+    let r = h.page("Emulation.setEmulatedMedia", json!({"media": "tv"}));
+    assert_eq!(r["error"]["code"], -32602, "{r}");
+}
+
 fn eval_value(h: &mut Harness, expression: &str) -> Value {
     let r = h.page("Runtime.evaluate", json!({"expression": expression, "returnByValue": true}));
     assert!(r["result"].get("exceptionDetails").is_none(), "{r}");
@@ -4223,6 +4259,63 @@ const DRIVER_STEPS_PAGE: &str = r#"<!doctype html><body>
     } catch (e) { status.textContent = 'failed'; }
   });
 </script>"#;
+
+/// `LP.run`'s `viewport` step resizes mid-run (`innerWidth`, relayout of the
+/// body inside its 8px margins, a `resize` listener, a width media query)
+/// and `media` emulates
+/// `prefers-color-scheme` / `prefers-reduced-motion` / `print`: `matchMedia`
+/// flips and its `change` listeners fire (also one added without keeping
+/// the list), before the next step runs. A query without a media type is
+/// `all`: `print` flips `screen and (max-width)`, not `(max-width)`. Invalid
+/// values are step errors.
+#[test]
+fn driver_run_resizes_the_viewport_and_emulates_media() {
+    let address = driver_site();
+    let mut h = Harness::new();
+    let setup = "globalThis.log = []; \
+        addEventListener('resize', () => log.push('resize:' + innerWidth + 'x' + innerHeight + ':' + document.body.getBoundingClientRect().width)); \
+        globalThis.dark = matchMedia('(prefers-color-scheme: dark)'); \
+        dark.addEventListener('change', e => log.push('dark:' + e.matches + ':' + (e instanceof MediaQueryListEvent) + ':' + e.media)); \
+        matchMedia('(prefers-reduced-motion: reduce)').addListener(e => log.push('motion:' + e.matches)); \
+        matchMedia('print').onchange = e => log.push('print:' + e.matches); \
+        matchMedia('(max-width: 500px)').addEventListener('change', e => log.push('narrow:' + e.matches)); \
+        null";
+    let probe = "[innerWidth, innerHeight, dark.matches, matchMedia('(prefers-color-scheme: light)').matches, \
+        matchMedia('(prefers-reduced-motion: reduce)').matches, matchMedia('print').matches, \
+        matchMedia('screen and (max-width: 500px)').matches].join()";
+    let steps = json!([
+        {"goto": {"url": format!("http://{address}/form")}},
+        {"eval": {"expression": setup}},
+        {"viewport": {"width": 390, "height": 844}},
+        {"eval": {"expression": probe, "as": "narrow"}},
+        {"media": {"colorScheme": "dark", "reducedMotion": "reduce"}},
+        {"eval": {"expression": probe, "as": "dark"}},
+        {"media": {"media": "print"}},
+        {"eval": {"expression": probe, "as": "print"}},
+        {"media": {}},
+        {"eval": {"expression": probe, "as": "reset"}},
+        {"viewport": {"width": 1280, "height": 720}},
+        {"eval": {"expression": "log.join()", "as": "log"}},
+    ]);
+    let r = h.page("LP.run", json!({ "steps": steps }));
+    let reads = &r["result"]["reads"];
+    assert_eq!(reads["narrow"], "390,844,false,true,false,false,true", "{r}");
+    assert_eq!(reads["dark"], "390,844,true,false,true,false,true", "{r}");
+    assert_eq!(reads["print"], "390,844,false,true,false,true,false", "{r}");
+    assert_eq!(reads["reset"], "390,844,false,true,false,false,true", "{r}");
+    assert_eq!(
+        reads["log"],
+        "resize:390x844:374,narrow:true,dark:true:true:(prefers-color-scheme: dark),motion:true,dark:false:true:(prefers-color-scheme: dark),motion:false,print:true,print:false,resize:1280x720:1264,narrow:false",
+        "{r}"
+    );
+    // The step settles (listeners ran) and reports the size.
+    assert_eq!(r["result"]["results"][2]["width"], 390, "{r}");
+    assert!(r["result"]["results"][2]["settleMs"].is_number(), "{r}");
+    for bad in [json!({"viewport": {"width": 0, "height": 10}}), json!({"media": {"colorScheme": "sepia"}})] {
+        let r = h.page("LP.run", json!({ "steps": [bad] }));
+        assert!(r["error"]["message"].as_str().unwrap_or_default().starts_with("step 0"), "{r}");
+    }
+}
 
 /// `LP.run`: mocks answer requests from the context (json/body, delay for a
 /// loading state, abort for a failure, `times`), `url` waits for a route,
