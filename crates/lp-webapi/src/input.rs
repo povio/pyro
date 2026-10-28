@@ -208,6 +208,29 @@ pub(crate) fn blur_if_focus_disabled(page: &Rc<PageDom>, owner: NodeId, attribut
     }
 }
 
+/// Before a script removes `node` (or, with `children_only`, its children):
+/// when the focused element is inside what goes, it loses focus first, as in
+/// Chromium (`Document::RemoveFocusedElementOfSubtree`): trusted `blur` and
+/// `focusout` with no related target while it is still connected, so a
+/// root-delegated listener (React's `onBlur`) sees them, and the body is
+/// active. A handler that moves the node makes the removal fail as usual.
+/// Firefox and the spec's focus fixup rule fire nothing; Chromium-based
+/// browsers do (MDN, "Element: blur event").
+pub fn blur_before_removal(page: &Rc<PageDom>, node: NodeId, children_only: bool) {
+    let focused = {
+        let dom = page.dom.borrow();
+        let Some(f) = dom.focused(page.document()).ok().flatten() else { return };
+        let inside = dom.is_connected(node).unwrap_or(false)
+            && dom.contains(node, f).unwrap_or(false)
+            && !(children_only && f == node);
+        if !inside {
+            return;
+        }
+        f
+    };
+    blur_element(page, focused);
+}
+
 /// Explicit blur keeps the owner's selected frame and remembered edit target.
 pub fn blur_element(page: &Rc<PageDom>, el: NodeId) {
     if page.dom.borrow().focused(page.document()).ok().flatten() != Some(el) {

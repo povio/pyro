@@ -5110,3 +5110,42 @@ fn driver_run_turns_the_event_loop_between_input_events_and_steps() {
     assert_eq!(events.iter().filter(|e| **e == "mousemove").count(), 4, "{log}");
     assert_eq!(r["result"]["reads"]["saves"], "a=1,b=2", "{r}");
 }
+
+const DRIVER_BLUR_PAGE: &str = r#"<!doctype html><body>
+<input id="f"><input id="g">
+<script>
+  const log = [];
+  const f = document.getElementById('f');
+  for (const t of ['focus', 'blur', 'focusout']) f.addEventListener(t, (e) => log.push(t + ':' + (e.relatedTarget ? e.relatedTarget.id : 'null')));
+  const gone = [];
+  document.addEventListener('focusout', (e) => { if (e.target.id === 'g') gone.push('focusout:' + e.target.isConnected); });
+  window.getLog = () => log.join(',');
+  window.getGone = () => gone.join(',');
+</script>"#;
+
+/// The `blur` action fires `blur` and `focusout` (no related target) on the
+/// element and leaves the body active. Removing the focused element fires
+/// `focusout` first, while it is connected, as Chromium does: a listener on
+/// the document (React's `onBlur`) sees it.
+#[test]
+fn driver_run_blur_and_removal_fire_blur_and_focusout() {
+    let mut h = Harness::new();
+    load_html(&mut h, DRIVER_BLUR_PAGE);
+    let r = h.page(
+        "LP.run",
+        json!({"timeout": 1000, "steps": [
+            {"act": {"locator": {"css": "#f"}, "action": "focus"}},
+            {"check": {"locator": {"css": "#f"}, "assert": "focused"}},
+            {"act": {"locator": {"css": "#f"}, "action": "blur"}},
+            {"check": {"locator": {"css": "#f"}, "assert": "focused", "expected": false}},
+            {"eval": {"expression": "document.activeElement.tagName", "as": "active"}},
+            {"eval": {"expression": "getLog()", "as": "log"}},
+            {"act": {"locator": {"css": "#g"}, "action": "click"}},
+            {"eval": {"expression": "document.getElementById('g').remove(); getGone() + ':' + document.activeElement.tagName", "as": "gone"}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(r["result"]["reads"]["active"], "BODY", "{r}");
+    assert_eq!(r["result"]["reads"]["gone"], "focusout:true:BODY", "{r}");
+    assert_eq!(r["result"]["reads"]["log"], "focus:null,blur:null,focusout:null", "{r}");
+}

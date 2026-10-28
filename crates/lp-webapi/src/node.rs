@@ -234,6 +234,7 @@ impl JsClass for Node {
             },
             |_s, n, v| {
                 let text = null_to_empty(v)?;
+                crate::input::blur_before_removal(n.page(), n.id, true);
                 n.page().dom.borrow_mut().set_text_content(n.id, &text).js()
             },
         );
@@ -284,6 +285,7 @@ impl JsClass for Node {
         def.method("appendChild", 1, |s, n, a| {
             a.require(1, "Node.appendChild")?;
             let c = node_arg(s, a.get(0), "appendChild")?;
+            blur_moved(n.page(), c);
             n.page().dom.borrow_mut().append_child(n.id, c).js()?;
             Ok(a.get(0))
         });
@@ -291,12 +293,14 @@ impl JsClass for Node {
             a.require(2, "Node.insertBefore")?;
             let c = node_arg(s, a.get(0), "insertBefore")?;
             let r = opt_node_arg(s, a.get(1), "insertBefore")?;
+            blur_moved(n.page(), c);
             n.page().dom.borrow_mut().insert_before(n.id, c, r).js()?;
             Ok(a.get(0))
         });
         def.method("removeChild", 1, |s, n, a| {
             a.require(1, "Node.removeChild")?;
             let c = node_arg(s, a.get(0), "removeChild")?;
+            blur_removed_child(n.page(), n.id, c);
             n.page().dom.borrow_mut().remove_child(n.id, c).js()?;
             Ok(a.get(0))
         });
@@ -304,6 +308,7 @@ impl JsClass for Node {
             a.require(2, "Node.replaceChild")?;
             let new = node_arg(s, a.get(0), "replaceChild")?;
             let old = node_arg(s, a.get(1), "replaceChild")?;
+            blur_removed_child(n.page(), n.id, old);
             n.page().dom.borrow_mut().replace_child(n.id, new, old).js()?;
             Ok(a.get(1))
         });
@@ -353,6 +358,23 @@ impl JsClass for Node {
     }
 }
 
+/// Chromium's blur before `parent` loses `child` (`removeChild`,
+/// `replaceChild`, `remove`, `replaceWith`): only when it is a child, as a
+/// non-child throws before anything happens.
+fn blur_removed_child(page: &Rc<PageDom>, parent: NodeId, child: NodeId) {
+    if page.dom.borrow().parent(child).ok().flatten() == Some(parent) {
+        crate::input::blur_before_removal(page, child, false);
+    }
+}
+
+/// Inserting a node that has a parent removes it from there first.
+fn blur_moved(page: &Rc<PageDom>, node: NodeId) {
+    let has_parent = page.dom.borrow().parent(node).ok().flatten().is_some();
+    if has_parent {
+        crate::input::blur_before_removal(page, node, false);
+    }
+}
+
 // ----- mixins -------------------------------------------------------------
 
 fn define_parent_node<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
@@ -384,6 +406,7 @@ fn define_parent_node<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
     });
     def.method("replaceChildren", 0, |s, n, a| {
         let c = convert_nodes(s, n, &a)?;
+        crate::input::blur_before_removal(n.page(), n.id, true);
         n.page().dom.borrow_mut().replace_all(n.id, c).js()?;
         Ok(s.undefined())
     });
@@ -405,6 +428,7 @@ fn define_parent_node<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
 
 fn define_child_node<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
     def.method("remove", 0, |s, n, _a| {
+        crate::input::blur_before_removal(n.page(), n.id, false);
         n.page().dom.borrow_mut().remove_node(n.id).js()?;
         Ok(s.undefined())
     });
@@ -449,6 +473,9 @@ fn define_child_node<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
             (parent, args.viable_sibling(&dom, n.id, true)?)
         };
         let c = args.into_node(n)?;
+        if c != Some(n.id) {
+            blur_removed_child(n.page(), parent, n.id);
+        }
         let mut dom = n.page().dom.borrow_mut();
         // The context node itself may have moved into the fragment.
         let still_child = dom.parent(n.id).js()? == Some(parent);
@@ -873,6 +900,7 @@ impl JsClass for Element {
             |s, n| Ok(s.string(&n.page().dom.borrow().inner_html(n.id).js()?)),
             |_s, n, v| {
                 let html = null_to_empty(v)?;
+                crate::input::blur_before_removal(n.page(), n.id, true);
                 lp_dom::parse::set_inner_html(&mut n.page().dom.borrow_mut(), n.id, &html).js()
             },
         );
@@ -881,6 +909,10 @@ impl JsClass for Element {
             |s, n| Ok(s.string(&n.page().dom.borrow().outer_html(n.id).js()?)),
             |_s, n, v| {
                 let html = null_to_empty(v)?;
+                let has_parent = n.page().dom.borrow().parent(n.id).js()?.is_some();
+                if has_parent {
+                    crate::input::blur_before_removal(n.page(), n.id, false);
+                }
                 let mut dom = n.page().dom.borrow_mut();
                 let Some(parent) = dom.parent(n.id).js()? else { return Ok(()) };
                 if dom.node_type(parent).js()? == NodeType::Document {
