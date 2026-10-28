@@ -101,7 +101,7 @@ Pointer actions follow Playwright: a locator `act` with `click`, `dblclick`,
 `hover` or `wheel` aims at the center of the element's visible part (clipped
 to the viewport and its overflow containers) after scrolling it into view;
 `button: "right" | "middle"` (click, dblclick; a right click fires
-`contextmenu`, a middle one `auxclick`), `position: {x, y}` (an offset from
+`contextmenu` after the press, both fire `auxclick` after the release), `position: {x, y}` (an offset from
 the element's top-left) and `force: true` (no hit test or enabled check)
 adjust that, and `wheel` takes `deltaX`/`deltaY`. Only click, dblclick, fill,
 check, uncheck, press and type need an enabled element; hover does not. The

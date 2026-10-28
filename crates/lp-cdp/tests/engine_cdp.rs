@@ -4833,20 +4833,22 @@ const DRIVER_POINTER_PAGE: &str = r#"<!doctype html><body>
     t.addEventListener(n, (e) => { seen.push(n + ':' + e.button); document.getElementById('target-out').textContent = seen.join(','); });
   }
   t.addEventListener('contextmenu', (e) => e.preventDefault());
+  document.addEventListener('contextmenu', (e) => { document.body.dataset.cm = [e.cancelable, e.bubbles, e.composed, e.buttons, e instanceof PointerEvent, e.defaultPrevented].join(); });
   document.getElementById('dis').addEventListener('mouseover', () => { document.getElementById('dis-out').textContent = 'hovered'; });
   document.getElementById('mi').addEventListener('mouseover', () => { document.getElementById('mi').dataset.hovered = '1'; });
   const pad = document.getElementById('pad');
   pad.addEventListener('click', (e) => { const r = pad.getBoundingClientRect(); document.getElementById('pad-out').textContent = Math.round(e.clientX - r.left) + ',' + Math.round(e.clientY - r.top); });
   document.getElementById('over').addEventListener('click', () => { document.getElementById('over-out').textContent = 'over'; });
   document.getElementById('tall').addEventListener('wheel', (e) => { document.getElementById('wheel-out').textContent = 'wheel:' + e.deltaX + ',' + e.deltaY + ':' + e.target.id; });
-  let moves = 0; document.addEventListener('mousemove', (e) => { moves += 1; document.getElementById('moves-out').textContent = moves + '@' + e.clientX + ',' + e.clientY; });
+  let moves = 0; document.addEventListener('mousemove', (e) => { moves += 1; document.body.dataset.mb = e.buttons; document.getElementById('moves-out').textContent = moves + '@' + e.clientX + ',' + e.clientY; });
   document.addEventListener('dblclick', (e) => { document.getElementById('wide-out').textContent = e.target.id + '@' + e.clientX; });
   document.getElementById('wide').addEventListener('dblclick', function () { this.textContent = 'ok'; });
 </script>"#;
 
-/// Gap 1: `click` with `button: "right"` presses and releases button 2 and
-/// fires `contextmenu` (no `click`); `middle` fires `auxclick`; `dblclick`
-/// takes the button too.
+/// Gap 1: `click` with `button: "right"` presses and releases button 2,
+/// fires `contextmenu` after the press (Chromium on Linux and macOS) and
+/// `auxclick` after the release, never `click`; `middle` fires `auxclick`;
+/// `dblclick` takes the button too.
 #[test]
 fn driver_run_right_click_fires_contextmenu() {
     let mut h = Harness::new();
@@ -4856,16 +4858,20 @@ fn driver_run_right_click_fires_contextmenu() {
         json!({"steps": [
             {"act": {"locator": {"css": "#target"}, "action": "click", "button": "right"}},
             {"check": {"locator": {"css": "#target-out"}, "assert": "text",
-                       "expected": "pointerdown:2,mousedown:2,pointerup:2,mouseup:2,contextmenu:2"}},
+                       "expected": "pointerdown:2,mousedown:2,contextmenu:2,pointerup:2,mouseup:2,auxclick:2"}},
+            {"eval": {"expression": "document.body.dataset.cm", "as": "cm"}},
             {"act": {"locator": {"css": "#target"}, "action": "click", "button": "middle"}},
             {"check": {"locator": {"css": "#target-out"}, "assert": "containsText",
-                       "expected": "contextmenu:2,pointerdown:1,mousedown:1,pointerup:1,mouseup:1,auxclick:1"}},
+                       "expected": "auxclick:2,pointerdown:1,mousedown:1,pointerup:1,mouseup:1,auxclick:1"}},
             {"act": {"locator": {"css": "#target"}, "action": "dblclick", "button": "right"}},
             {"check": {"locator": {"css": "#target-out"}, "assert": "containsText",
-                       "expected": "auxclick:1,pointerdown:2,mousedown:2,pointerup:2,mouseup:2,contextmenu:2,pointerdown:2,mousedown:2,pointerup:2,mouseup:2,contextmenu:2"}},
+                       "expected": "auxclick:1,pointerdown:2,mousedown:2,contextmenu:2,pointerup:2,mouseup:2,auxclick:2,pointerdown:2,mousedown:2,contextmenu:2,pointerup:2,mouseup:2,auxclick:2"}},
         ]}),
     );
     assert!(r.get("error").is_none(), "{r}");
+    // Cancelable, bubbling, composed, button 2 held, a PointerEvent; the
+    // target's handler canceled it.
+    assert_eq!(r["result"]["reads"]["cm"], "true,true,true,2,true,true", "{r}");
     let r = h
         .page("LP.run", json!({"steps": [{"act": {"locator": {"css": "#target"}, "action": "click", "button": "x"}}]}));
     assert!(r["error"]["message"].as_str().unwrap_or_default().contains("button must be"), "{r}");
@@ -4912,6 +4918,8 @@ fn driver_run_mouse_step_at_coordinates_position_and_force() {
             {"check": {"locator": {"css": "#pad-out"}, "assert": "text", "expected": "5,7"}},
             {"mouse": {"action": "move", "x": x + 30.0, "y": y + 30.0, "steps": 4}},
             {"mouse": {"action": "down"}},
+            {"mouse": {"action": "move", "x": x + 30.0, "y": y + 30.0}},
+            {"eval": {"expression": "document.body.dataset.mb", "as": "held"}},
             {"mouse": {"action": "up"}},
             {"check": {"locator": {"css": "#pad-out"}, "assert": "text", "expected": "30,30"}},
             {"read": {"locator": {"css": "#moves-out"}, "read": "text", "as": "moves"}},
@@ -4922,8 +4930,11 @@ fn driver_run_mouse_step_at_coordinates_position_and_force() {
     );
     assert!(r.get("error").is_none(), "{r}");
     let moves = r["result"]["reads"]["moves"].as_str().unwrap_or_default();
-    // One move per click so far (2), then the 4 steps, ending at the target.
-    assert_eq!(moves, format!("6@{},{}", x + 30.0, y + 30.0), "{r}");
+    // One move per click so far (2), the 4 steps, then the move with the
+    // button held, ending at the target.
+    assert_eq!(moves, format!("7@{},{}", x + 30.0, y + 30.0), "{r}");
+    // A move between `down` and `up` reports the held left button.
+    assert_eq!(r["result"]["reads"]["held"], "1", "{r}");
     let r =
         h.page("LP.run", json!({"timeout": 50, "steps": [{"act": {"locator": {"css": "#under"}, "action": "click"}}]}));
     assert!(r["error"]["message"].as_str().unwrap_or_default().contains("intercepts pointer events"), "{r}");

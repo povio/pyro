@@ -131,7 +131,8 @@ reuse them.
 
 Pointer options (wire shape; the builders take the same names): `click` and
 `dblclick` accept `button: 'right' | 'middle'` (a right click fires
-`contextmenu` and no `click`, as in Playwright); `click`, `dblclick`, `hover`
+`contextmenu` after the press and `auxclick` after the release, never
+`click`, as Chromium does); `click`, `dblclick`, `hover`
 and `wheel` accept `position: { x, y }` (an offset from the element's
 top-left instead of its center) and `force: true` (skip the covered and
 enabled checks). `hover` never needs an enabled element: hovering a disabled
@@ -143,7 +144,7 @@ does.
 |---|---|
 | `{ act: { locator, action: 'wheel', deltaX, deltaY } }` | hovers the element, fires `wheel` there and scrolls the nearest scrollable container unless canceled |
 | `{ mouse: { action: 'click' \| 'dblclick' \| 'move', x, y, button?, steps? } }` | `page.mouse.*` at viewport coordinates; `move` with `steps` sends intermediate moves |
-| `{ mouse: { action: 'down' \| 'up', button?, x?, y? } }` | at the current pointer position unless `x`/`y` are given |
+| `{ mouse: { action: 'down' \| 'up', button?, x?, y? } }` | at the current pointer position unless `x`/`y` are given; buttons stay held across `move` steps until `up` |
 | `{ mouse: { action: 'wheel', deltaX, deltaY, x?, y? } }` | wheel at the current pointer position (or `x`/`y`) |
 
 Every action and check takes `{ timeout }` (ms); `page.run(steps, { timeout })`

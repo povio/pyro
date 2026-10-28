@@ -1209,6 +1209,19 @@ pub fn pointer_position(page: &PageDom) -> Option<(f64, f64)> {
     page.pointer.borrow().as_ref().map(|m| (m.x, m.y))
 }
 
+/// The buttons held as of the last mouse input (`MouseEvent.buttons`), 0
+/// before the pointer has moved.
+pub fn pointer_buttons(page: &PageDom) -> u16 {
+    page.pointer.borrow().as_ref().map_or(0, |m| m.buttons)
+}
+
+/// Records a press or release's `buttons` on the tracked pointer.
+fn note_buttons(page: &PageDom, m: &MouseInput) {
+    if let Some(p) = page.pointer.borrow_mut().as_mut() {
+        p.buttons = m.buttons;
+    }
+}
+
 /// Inclusive ancestors of `node` up to and including its document, innermost
 /// first; empty when it is no longer in the page's document.
 fn hover_chain(page: &PageDom, node: NodeId) -> Vec<NodeId> {
@@ -1506,6 +1519,17 @@ pub fn dispatch_mouse_intercepting_drags(
             let pd = fire(page, tkey, &mouse_event(page, EventInterface::PointerEvent, "pointerdown", m, true));
             let md = !pd || fire(page, tkey, &mouse_event(page, EventInterface::MouseEvent, "mousedown", m, true));
             page.set_press_target(Some(target));
+            note_buttons(page, m);
+            // Chromium on Linux and macOS opens the context menu on the
+            // press, whether or not the page canceled it (Windows waits for
+            // the release); the release still fires `mouseup` and `auxclick`.
+            if m.button == MouseButton::Right && !page.is_disposed() {
+                if let Some(k) = key_of(page, target) {
+                    let ev = mouse_event(page, EventInterface::PointerEvent, "contextmenu", m, true);
+                    ev.state.borrow_mut().composed = true;
+                    fire(page, k, &ev);
+                }
+            }
             let place_caret = m.button == MouseButton::Left && pd && md;
             // A canceled mousedown prevents dragging, as in Chrome.
             let source =
@@ -1549,6 +1573,7 @@ pub fn dispatch_mouse_intercepting_drags(
             }
         }
         MouseKind::Released => {
+            note_buttons(page, m);
             page.drag_candidate.set(None);
             page.text_drag.set(None);
             let pu = fire(page, tkey, &mouse_event(page, EventInterface::PointerEvent, "pointerup", m, true));
@@ -1565,7 +1590,6 @@ pub fn dispatch_mouse_intercepting_drags(
             if let Some(ct) = click_target {
                 let name = match m.button {
                     MouseButton::Left | MouseButton::None => "click",
-                    MouseButton::Right => "contextmenu",
                     _ => "auxclick",
                 };
                 let ev = mouse_event(page, EventInterface::PointerEvent, name, m, true);

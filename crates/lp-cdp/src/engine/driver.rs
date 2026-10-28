@@ -1973,6 +1973,8 @@ fn mouse_step(
     let (x0, y0) = input::pointer_position(page).unwrap_or((0.0, 0.0));
     let (x, y) = (x.unwrap_or(x0), y.unwrap_or(y0));
     let mut m = MouseInput { x, y, delta_x: opts.delta.0, delta_y: opts.delta.1, ..MouseInput::default() };
+    // Buttons stay held between steps (`down`, `move`, `up` drags).
+    m.buttons = input::pointer_buttons(page);
     let send = |m: &MouseInput, kind: MouseKind| input::dispatch_mouse(page, kind, m).map_err(Attempt::Retry);
     let events = match action {
         MouseAction::Move => {
@@ -1995,7 +1997,11 @@ fn mouse_step(
     };
     for (kind, button, count) in events {
         m.button = button;
-        m.buttons = if kind == MouseKind::Pressed { buttons_mask(button) } else { 0 };
+        match kind {
+            MouseKind::Pressed => m.buttons |= buttons_mask(button),
+            MouseKind::Released => m.buttons &= !buttons_mask(button),
+            _ => {}
+        }
         m.click_count = count;
         if let Err(retry) = send(&m, kind) {
             return retry;
