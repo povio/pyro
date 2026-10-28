@@ -962,6 +962,9 @@ pub struct MeasureCache {
     /// those of restyled elements: `layout_style_unchanged`).
     styles: FxHashMap<NodeId, Option<StyleRef>>,
     generated: GeneratedMap,
+    /// Table structures (rows, cells, spans) the last pass used; dropped by
+    /// `invalidate_tables`.
+    tables: FxHashMap<NodeId, Rc<TableRows>>,
 }
 
 /// Attributes the flow layout reads itself (form control and replaced sizes,
@@ -1003,6 +1006,31 @@ impl MeasureCache {
         self.reuse.clear();
         self.styles.clear();
         self.generated.clear();
+        self.tables.clear();
+    }
+
+    /// Drops the table structures a change at `touched` (the nodes changed
+    /// themselves: attributes, children, text, styles) can alter: those of
+    /// the tables it is in, up to the first cell above it (what is inside a
+    /// cell is not structure).
+    pub fn invalidate_tables(&mut self, dom: &Dom, touched: &[NodeId]) {
+        if self.tables.is_empty() {
+            return;
+        }
+        for &n in touched {
+            let mut cur = Some(n);
+            let mut first = true;
+            while let Some(c) = cur {
+                if !first
+                    && self.styles.get(&c).is_some_and(|s| s.as_ref().is_some_and(|s| s.table_part == TablePart::Cell))
+                {
+                    break;
+                }
+                first = false;
+                self.tables.remove(&c);
+                cur = dom.parent(c).ok().flatten();
+            }
+        }
     }
 
     /// Whether a restyled node lays out as the last pass laid it out: it is
@@ -1092,6 +1120,7 @@ pub fn layout_cached(
         reuse: RefCell::new(std::mem::take(&mut cache.reuse)),
         styles: RefCell::new(std::mem::take(&mut cache.styles)),
         generated: RefCell::new(std::mem::take(&mut cache.generated)),
+        tables: RefCell::new(std::mem::take(&mut cache.tables)),
         ..Memo::default()
     };
     memo.reuse.borrow_mut().begin_pass();
@@ -1103,6 +1132,7 @@ pub fn layout_cached(
     cache.reuse = memo.reuse.into_inner();
     cache.styles = memo.styles.into_inner();
     cache.generated = memo.generated.into_inner();
+    cache.tables = memo.tables.into_inner();
     cache.reuse.end_pass(memo.relaid.get());
     out
 }
@@ -1177,6 +1207,8 @@ struct Ctx<'a> {
     last_trailing: Margin,
     /// Floats placed so far in the current block formatting context.
     floats: Vec<FloatArea>,
+    /// One per box whose contents are being laid out (innermost last).
+    extents: Vec<Extent>,
 }
 
 impl Drop for Ctx<'_> {
@@ -1241,6 +1273,45 @@ struct ClipFact {
 }
 
 const NO_CLIP: u32 = 0;
+
+/// The farthest right and bottom edges of boxes and right edge of texts in
+/// some laid-out content (-inf when there is none).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Reach {
+    right: f64,
+    bottom: f64,
+    text_right: f64,
+}
+
+impl Reach {
+    const NONE: Reach = Reach { right: f64::NEG_INFINITY, bottom: f64::NEG_INFINITY, text_right: f64::NEG_INFINITY };
+
+    fn merge(&mut self, o: &Reach) {
+        self.right = self.right.max(o.right);
+        self.bottom = self.bottom.max(o.bottom);
+        self.text_right = self.text_right.max(o.text_right);
+    }
+}
+
+/// What a box's contents reach while they are laid out, for its scroll size
+/// (`record`): each box's own content folds into its parent's when it is
+/// recorded, so a box reads its descendants' reach without walking them.
+/// Split into [not fixed, fixed] content.
+struct Extent {
+    /// The owner box's order and DOM depth.
+    order: u32,
+    depth: u32,
+    /// Boxes and texts added directly (not inside a recorded child).
+    direct: [Reach; 2],
+    /// Orders of the boxes added directly.
+    box_orders: (u32, u32),
+    /// Recorded children: their order and the reach of their contents that
+    /// is not clipped inside them, [boxes and texts] apart because texts
+    /// also stop at clipping inline elements.
+    children: Vec<(u32, [Reach; 2])>,
+    /// False after a shift the reach could not follow: `record` scans.
+    exact: bool,
+}
 
 /// Work counters for the text scroll-size scan (debug builds only; read by
 /// the in-crate benchmark). Not compiled into release binaries.
@@ -1446,6 +1517,7 @@ impl<'a> Ctx<'a> {
             trailing: Margin::ZERO,
             last_trailing: Margin::ZERO,
             floats: Vec::new(),
+            extents: Vec::new(),
         }
     }
 
@@ -1647,6 +1719,18 @@ impl<'a> Ctx<'a> {
 
     /// Records `b` under its order without looking at styles.
     fn put_box(&mut self, el: NodeId, b: FlowBox, slot: Slot) {
+        self.put_box_quiet(el, b, slot);
+        if let Some(top) = self.extents.last_mut() {
+            let r = &mut top.direct[b.fixed as usize];
+            r.right = r.right.max(b.rect.x + b.rect.width);
+            r.bottom = r.bottom.max(b.rect.y + b.rect.height);
+            top.box_orders = (top.box_orders.0.min(b.order), top.box_orders.1.max(b.order));
+        }
+    }
+
+    /// `put_box` without adding to the extent (a replay adds its subtree's
+    /// reach at once).
+    fn put_box_quiet(&mut self, el: NodeId, b: FlowBox, slot: Slot) {
         let i = b.order as usize - 1;
         if self.out.slots.len() <= i {
             self.out.slots.resize(i + 1, Slot::default());
@@ -1655,6 +1739,167 @@ impl<'a> Ctx<'a> {
         if self.out.boxes.insert(el, b).is_some() && !self.probe {
             self.memo.relaid.set(true);
         }
+    }
+
+    /// Opens the extent of box `el` (order `order`) before its contents.
+    fn open_extent(&mut self, el: NodeId, order: u32) {
+        let depth = self.clip_fact(el).depth;
+        self.extents.push(Extent {
+            order,
+            depth,
+            direct: [Reach::NONE; 2],
+            box_orders: (u32::MAX, 0),
+            children: Vec::new(),
+            exact: true,
+        });
+    }
+
+    /// Adds a text node's box to the innermost extent unless a clipping
+    /// element inside its owner holds it.
+    fn extent_text(&mut self, t: NodeId, r: Rect, fixed: bool) {
+        let Some(depth) = self.extents.last().map(|e| e.depth) else { return };
+        let clipped_inside = match self.dom.parent_element(t).ok().flatten() {
+            Some(p) => self.clip_fact(p).clip_depth > depth,
+            None => false,
+        };
+        if let Some(top) = self.extents.last_mut().filter(|_| !clipped_inside) {
+            let tr = &mut top.direct[fixed as usize].text_right;
+            *tr = tr.max(r.x + r.width);
+        }
+    }
+
+    /// Follows `boxes_after(order, y += dy)` in the innermost extent.
+    fn shift_extent(&mut self, order: u32, dy: f64) {
+        let Some(top) = self.extents.last_mut() else { return };
+        for (o, reach) in top.children.iter_mut() {
+            if *o >= order {
+                for r in reach.iter_mut() {
+                    r.bottom += dy;
+                }
+            }
+        }
+        let (lo, hi) = top.box_orders;
+        if lo > order {
+            for r in top.direct.iter_mut() {
+                r.bottom += dy;
+            }
+        } else if hi > order {
+            top.exact = false;
+        }
+    }
+
+    /// Opens an extent for part of the innermost one's contents (a reused
+    /// subtree), to read what that part reaches.
+    fn open_part_extent(&mut self) {
+        let (order, depth) = self.extents.last().map_or((self.order, 0), |e| (e.order, e.depth));
+        self.extents.push(Extent {
+            order,
+            depth,
+            direct: [Reach::NONE; 2],
+            box_orders: (u32::MAX, 0),
+            children: Vec::new(),
+            exact: true,
+        });
+    }
+
+    /// Closes a part extent into the enclosing one as if it never was;
+    /// returns the part's reach (None when it cannot tell).
+    fn close_part_extent(&mut self) -> Option<[Reach; 2]> {
+        let part = self.extents.pop().expect("an open part extent");
+        let reach = part.exact.then(|| Self::extent_reach(&part));
+        if let Some(top) = self.extents.last_mut() {
+            top.direct[0].merge(&part.direct[0]);
+            top.direct[1].merge(&part.direct[1]);
+            top.box_orders = (top.box_orders.0.min(part.box_orders.0), top.box_orders.1.max(part.box_orders.1));
+            top.children.extend(part.children);
+            top.exact &= part.exact;
+        }
+        reach
+    }
+
+    /// Adds a replayed part's reach (boxes with orders `orders`) to the
+    /// innermost extent.
+    fn extent_part(&mut self, reach: &[Reach; 2], orders: (u32, u32)) {
+        if let Some(top) = self.extents.last_mut() {
+            top.direct[0].merge(&reach[0]);
+            top.direct[1].merge(&reach[1]);
+            if orders.0 <= orders.1 {
+                top.box_orders = (top.box_orders.0.min(orders.0), top.box_orders.1.max(orders.1));
+            }
+        }
+    }
+
+    /// Closes the extent `open_extent` opened for `el` and folds it into
+    /// the enclosing one.
+    fn close_extent(&mut self, el: NodeId, clips: bool) {
+        let ext = self.extents.pop().expect("an open extent");
+        debug_assert!(ext.exact, "no shift reaches this extent");
+        self.fold_extent(el, ext.order, clips, Self::extent_reach(&ext));
+    }
+
+    /// Adds what a recorded box's contents reach to its parent's extent:
+    /// none of its boxes when it clips them, none of its texts when it or
+    /// an element between it and the parent clips.
+    fn fold_extent(&mut self, el: NodeId, order: u32, clips: bool, mut reach: [Reach; 2]) {
+        let Some(parent_depth) = self.extents.last().map(|e| e.depth) else { return };
+        let texts_out = self.clip_fact(el).clip_depth > parent_depth;
+        for r in reach.iter_mut() {
+            if clips {
+                r.right = f64::NEG_INFINITY;
+                r.bottom = f64::NEG_INFINITY;
+            }
+            if texts_out {
+                r.text_right = f64::NEG_INFINITY;
+            }
+        }
+        if let Some(top) = self.extents.last_mut() {
+            top.children.push((order, reach));
+        }
+    }
+
+    /// An extent's reach: its direct content and its children's.
+    fn extent_reach(ext: &Extent) -> [Reach; 2] {
+        let mut out = ext.direct;
+        for (_, c) in &ext.children {
+            out[0].merge(&c[0]);
+            out[1].merge(&c[1]);
+        }
+        out
+    }
+
+    /// The reach of everything laid out since box `el` (order `order`)
+    /// began, found by walking it: texts not clipped by an element inside
+    /// `el`, boxes not clipped by a box inside it.
+    fn scan_reach(&self, el: NodeId, order: u32) -> [Reach; 2] {
+        let mut out = [Reach::NONE; 2];
+        let first = self.out.text_orders.partition_point(|(o, _)| *o < order);
+        let el_depth = self.clip_fact(el).depth;
+        for &(_, t) in &self.out.text_orders[first..] {
+            let Some(&(r, text_fixed)) = self.out.texts.get(&t) else { continue };
+            let clipped_inside = match self.dom.parent_element(t).ok().flatten() {
+                Some(p) => self.clip_fact(p).clip_depth > el_depth,
+                None => false,
+            };
+            #[cfg(debug_assertions)]
+            {
+                record_scan_stats::PAIRS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                debug_assert_eq!(clipped_inside, self.clipped_inside_walk(t, el), "clip fact differs from the walk");
+            }
+            if !clipped_inside {
+                let tr = &mut out[text_fixed as usize].text_right;
+                *tr = tr.max(r.x + r.width);
+            }
+        }
+        for i in order as usize..self.out.slots.len() {
+            let Some(d) = self.out.slots[i].el else { continue };
+            let Some(b) = self.out.boxes.get(&d).filter(|b| b.order as usize == i + 1) else { continue };
+            if b.clipped_by <= order {
+                let r = &mut out[b.fixed as usize];
+                r.right = r.right.max(b.rect.x + b.rect.width);
+                r.bottom = r.bottom.max(b.rect.y + b.rect.height);
+            }
+        }
+        out
     }
 
     /// Moves text entries recorded after `order` down by `dy`.
@@ -1777,6 +2022,7 @@ impl<'a> Ctx<'a> {
         let content_x = bx + e.border[LEFT] + e.padding[LEFT];
         let content_y = by + e.border[TOP] + e.padding[TOP];
         let order = self.next_order();
+        self.open_extent(el, order);
         let positioned = style.position != Position::Static;
         if positioned {
             self.pending.push(Vec::new());
@@ -1994,49 +2240,40 @@ impl<'a> Ctx<'a> {
         if let Some(w) = self.text_control_text_width(el) {
             sw = sw.max(w + e.padding[LEFT] + e.padding[RIGHT]);
         }
-        // Overflowing text extends the scroll width too (Chromium: through
-        // the inline-end padding), unless a clipping element inside this one
-        // holds it.
-        // Every text recorded after this box's order lies inside it (orders
-        // are assigned at box start and texts take the current order while the
-        // box's contents, including its own absolutely positioned descendants,
-        // are laid out), so "clipped by an element inside this box" is: the
-        // text's nearest clipping ancestor is deeper than this box.
-        let first = self.out.text_orders.partition_point(|(o, _)| *o < order);
-        let el_depth = self.clip_fact(el).depth;
-        for &(_, t) in &self.out.text_orders[first..] {
-            let Some(&(r, text_fixed)) = self.out.texts.get(&t) else { continue };
-            if text_fixed && !fixed {
-                continue;
-            }
-            let clipped_inside = match self.dom.parent_element(t).ok().flatten() {
-                Some(p) => self.clip_fact(p).clip_depth > el_depth,
-                None => false,
-            };
-            #[cfg(debug_assertions)]
-            {
-                record_scan_stats::PAIRS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                debug_assert!(self.dom.contains(el, t).unwrap_or(false), "text run outside the recorded box");
-                debug_assert_eq!(clipped_inside, self.clipped_inside_walk(t, el), "clip fact differs from the walk");
-            }
-            if !clipped_inside {
-                sw = sw.max(r.x + r.width - inner_x + e.padding[RIGHT]);
+        // Overflowing descendants (texts through the inline-end padding, as
+        // in Chromium) extend the scroll size, except those clipped by a box
+        // inside this one and fixed ones escaping a non-fixed box.
+        let ext = self.extents.pop().expect("record closes the extent block_child opened");
+        debug_assert_eq!(ext.order, order, "extent of another box");
+        let reach = if ext.exact { Self::extent_reach(&ext) } else { self.scan_reach(el, order) };
+        #[cfg(debug_assertions)]
+        if ext.exact {
+            let scan = self.scan_reach(el, order);
+            let near = |a: f64, b: f64| a == b || (a - b).abs() <= 1e-9 * a.abs().max(1.0);
+            for (a, b) in reach.iter().zip(&scan) {
+                debug_assert!(
+                    near(a.right, b.right) && near(a.bottom, b.bottom) && near(a.text_right, b.text_right),
+                    "extent {reach:?} differs from the scan {scan:?}"
+                );
             }
         }
-        self.boxes_after(order, |b| {
-            let clipped_inside = b.clipped_by > order;
-            if !clipped_inside && (fixed || !b.fixed) {
-                sw = sw.max(b.rect.x + b.rect.width - inner_x);
-                sh = sh.max(b.rect.y + b.rect.height - inner_y);
-            }
-            if clips && b.clipped_by == 0 {
-                b.clipped_by = order;
-            }
-            // Descendants of a positioned box paint in its layer.
-            if positioned {
-                b.positioned = true;
-            }
-        });
+        let mut r = reach[0];
+        if fixed {
+            r.merge(&reach[1]);
+        }
+        sw = sw.max(r.right - inner_x).max(r.text_right - inner_x + e.padding[RIGHT]);
+        sh = sh.max(r.bottom - inner_y);
+        if clips || positioned {
+            self.boxes_after(order, |b| {
+                if clips && b.clipped_by == 0 {
+                    b.clipped_by = order;
+                }
+                // Descendants of a positioned box paint in its layer.
+                if positioned {
+                    b.positioned = true;
+                }
+            });
+        }
         if positioned {
             for slot in self.out.slots.iter_mut().skip(order as usize) {
                 if slot.positioned_by == 0 {
@@ -2058,6 +2295,7 @@ impl<'a> Ctx<'a> {
                 clipped_by: 0,
             },
         );
+        self.fold_extent(el, order, clips, reach);
     }
 
     /// Lays out the children of a block container in its content box and
@@ -2319,7 +2557,12 @@ impl<'a> Ctx<'a> {
     /// size over them and, if it clips, marks them clipped by it.
     fn place_absolute_into(&mut self, el: NodeId, pending: Vec<Pending>, padding_box: Rect, fixed: bool, clips: bool) {
         let before = self.order;
+        // The boxes are this box's content: they reach its parent unless it
+        // clips them.
+        let own_order = self.out.boxes.get(&el).map_or(0, |b| b.order);
+        self.open_extent(el, own_order);
         self.place_absolute(pending, padding_box, fixed);
+        self.close_extent(el, clips);
         let Some(own) = self.out.boxes.get(&el).copied() else { return };
         let (mut sw, mut sh) = (own.scroll_width, own.scroll_height);
         self.boxes_after(before, |b| {
@@ -2379,6 +2622,7 @@ impl<'a> Ctx<'a> {
             let declared_h =
                 s.height.resolve(Some(cb.height)).map(|h| if s.border_box { (h - e.vertical()).max(0.0) } else { h });
             let order = self.next_order();
+            self.open_extent(p.el, order);
             self.pending.push(Vec::new());
             // Lay out content at a provisional y, then move once the height is known.
             let provisional_y = match top {
@@ -2430,6 +2674,7 @@ impl<'a> Ctx<'a> {
             if delta != 0.0 {
                 self.boxes_after(first_new, |b| b.rect.y += delta);
                 self.shift_texts_after(first_new, delta);
+                self.shift_extent(first_new, delta);
             }
             let rect = Rect { x: bx, y: by, width: border_w, height: border_h };
             self.record(p.el, rect, &e, fixed, true, s.clips_x || s.clips_y, order, content_w, height, content_h);
@@ -2876,6 +3121,7 @@ impl<'a> Ctx<'a> {
                 if self.dom.node_type(el).ok() == Some(NodeType::Text) {
                     self.out.texts.insert(el, (r, fixed));
                     self.out.text_orders.push((self.order, el));
+                    self.extent_text(el, r, fixed);
                     continue;
                 }
                 let order = self.next_order();
@@ -4590,6 +4836,7 @@ impl<'a> Ctx<'a> {
                         let cell_order = before + 1;
                         cx.boxes_after(cell_order, |b| b.rect.y += dy);
                         cx.shift_texts_after(cell_order, dy);
+                        cx.shift_extent(cell_order, dy);
                     }
                 }
             };

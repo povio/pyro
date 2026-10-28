@@ -349,7 +349,12 @@ impl Layout {
             return false;
         };
         let mut dirty = rustc_hash::FxHashSet::default();
+        // The nodes changed themselves (`dirty` adds their ancestors).
+        let mut touched: Vec<NodeId> = Vec::new();
         let mut mark = |idx: u32| {
+            if dom.slot_live(idx) {
+                touched.push(dom.id_of(idx));
+            }
             let mut cur = idx;
             while cur != crate::node::NIL && dom.slot_live(cur) {
                 if !dirty.insert(dom.id_of(cur)) {
@@ -395,6 +400,7 @@ impl Layout {
             }
         }
         m.cache.invalidate(&dirty);
+        m.cache.invalidate_tables(dom, &touched);
         dirty.is_empty()
     }
 

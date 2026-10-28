@@ -179,17 +179,26 @@ reuse in `flow_reuse.rs`, invalidation in `Layout::flow`):
   clean and whose constraints (width, definite height, containing-block
   height, fixed, relative shift, margin collapsing) are unchanged replays
   its previous boxes, texts and text runs translated to its new position
-  instead of being laid out again. Subtrees that share a formatting context
-  with floats are always laid out afresh.
+  instead of being laid out again. Table rows are reuse units too (a clean
+  row at the same column widths and height), and a table's row/cell
+  structure is kept until a change reaches it (not one inside a cell).
+  Subtrees that share a formatting context with floats are always laid out
+  afresh.
+- Scroll sizes come from extents folded upward as boxes finish (each box
+  adds what its unclipped contents reach to its parent), not from walking
+  every descendant at every ancestor; debug builds check each against the
+  walk. A stretched item in a single-line flex container of definite cross
+  size is not measured (the line decides its size).
 - `LIGHTNINGPANDA_FLOW_VERIFY=1` compares every incremental result with a
   fresh layout and panics on the first difference (for test runs).
 - `tests/flow_bench.rs` (ignored) times the first pass and the relayout
   after typical single-element changes on an app-shaped page (sticky header,
   sidebar, a table of N rows). At 1,000 rows (20k boxes) a class toggle,
   hover or focus change takes about 1 ms or less, a text or value edit or a
-  row insert about 40-60 ms, where every change cost a full pass (about
-  340 ms) before; the first pass (about 500 ms) is dominated by the style
-  cascade.
+  row insert about 13-20 ms (about 17M instructions, mostly copying the
+  20k unchanged boxes into the new result), where every change cost a full
+  pass (about 340 ms) before; the first pass (about 500 ms) is dominated by
+  the style cascade.
 
 ## Consumers switched in Stage 1 (Flow mode only)
 

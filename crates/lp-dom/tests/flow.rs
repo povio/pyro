@@ -4646,3 +4646,35 @@ fn float_changes_relayout_their_neighbours() {
     p.dom.set_attribute(c, "style", "width:300px;overflow:hidden").unwrap();
     assert_matches_fresh(&p, "container contains its float");
 }
+
+#[test]
+fn table_structure_changes_relayout_like_a_fresh_pass() {
+    // Table rows, cells and spans are kept across passes until a change
+    // reaches the table's structure; edits inside cells keep it, row
+    // inserts, span and display changes do not.
+    let html = "<!doctype html><body style=\"margin:0;line-height:20px\"><table id=t style=\"border-spacing:0\"><tbody id=b><tr id=r1><td id=a style=\"padding:0\"><span id=s>one</span></td><td id=c style=\"padding:0\">two</td></tr><tr id=r2><td id=d style=\"padding:0\">three</td><td id=e style=\"padding:0\">four</td></tr></tbody></table><div id=after style=\"height:10px\"></div></body>";
+    let mut p = page(html, Geometry::Flow);
+    assert_matches_fresh(&p, "first");
+    let span = p.id("s");
+    p.dom.set_text_content(span, "a much longer first cell").unwrap();
+    assert_matches_fresh(&p, "text inside a cell");
+    let a = p.id("a");
+    p.dom.set_attribute(a, "colspan", "2").unwrap();
+    assert_matches_fresh(&p, "colspan");
+    p.dom.set_attribute(p.id("d"), "rowspan", "2").unwrap();
+    assert_matches_fresh(&p, "rowspan");
+    let (b, r1) = (p.id("b"), p.id("r1"));
+    let clone = p.dom.clone_node(r1, true, None).unwrap();
+    p.dom.append_child(b, clone).unwrap();
+    assert_matches_fresh(&p, "row appended");
+    p.dom.set_attribute(p.id("c"), "style", "padding:0;display:none").unwrap();
+    assert_matches_fresh(&p, "cell hidden");
+    let r2 = p.id("r2");
+    p.dom.set_attribute(r2, "style", "height:50px").unwrap();
+    assert_matches_fresh(&p, "row height");
+    let e = p.id("e");
+    p.dom.remove_child(r2, e).unwrap();
+    assert_matches_fresh(&p, "cell removed");
+    p.dom.set_text_content(span, "x").unwrap();
+    assert_matches_fresh(&p, "text again");
+}

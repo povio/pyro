@@ -21,7 +21,7 @@ use std::rc::Rc;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use super::{Collapse, Ctx, FlowResult, FlowStyle, Margin, NodeId, Pending, Rect, Slot, StyleRef};
+use super::{Collapse, Ctx, FlowResult, FlowStyle, Margin, NodeId, Pending, Reach, Rect, Slot, StyleRef};
 
 /// The entries of the last pass (generation `gen - 1`, read from `prev`)
 /// and of the pass in progress (generation `gen`).
@@ -82,6 +82,18 @@ impl Reuse {
     }
 }
 
+/// Where a pass's output stood before a subtree was laid out
+/// (`reuse_begin`).
+struct Start {
+    order_lo: u32,
+    text_lo: usize,
+    run_lo: usize,
+    depth: usize,
+    first_lo: usize,
+    last_lo: usize,
+    baselines: (Option<f64>, Option<f64>),
+}
+
 /// The constraints an element's contents were laid out under.
 #[derive(Clone, Copy, PartialEq)]
 struct Key {
@@ -135,6 +147,9 @@ struct Entry {
     /// The margin left below the last child (`Ctx::trailing`).
     trailing: Margin,
     escaped: Rc<[Escaped]>,
+    /// What the boxes and texts reach (`Ctx::extents`), relative to the
+    /// contents' (x, y); None when unknown (not reused then).
+    reach: Option<[Reach; 2]>,
 }
 
 impl<'a> Ctx<'a> {
@@ -170,9 +185,14 @@ impl<'a> Ctx<'a> {
         if shared_floats && !self.floats.is_empty() {
             return self.contents_in(el, style, x, y, width, height, fixed, shift, collapse);
         }
-        self.reused(el, style, key, x, y, shared_floats, |cx| {
-            cx.contents_in(el, style, x, y, width, height, fixed, shift, collapse)
-        })
+        // Begin, lay out and end inline (no closure frame: deeply nested
+        // blocks recurse through here).
+        let start = match self.reuse_begin(el, style, key, x, y) {
+            Ok(h) => return h,
+            Err(start) => start,
+        };
+        let h = self.contents_in(el, style, x, y, width, height, fixed, shift, collapse);
+        self.reuse_end(el, style, key, x, y, shared_floats, start, h)
     }
 
     /// The boxes of one table row's cells at (x, y), the row's own order
@@ -199,19 +219,40 @@ impl<'a> Ctx<'a> {
             shift: (shift.0.to_bits(), shift.1.to_bits()),
             collapse: Collapse::default(),
         };
-        self.reused(row, style, key, x, y, false, |cx| {
-            lay(cx);
-            height
-        });
+        if let Err(start) = self.reuse_begin(row, style, key, x, y) {
+            lay(self);
+            self.reuse_end(row, style, key, x, y, false, start, height);
+        }
     }
 
-    /// Replays `el`'s entry for `key`, else runs `lay` (which lays out what
-    /// follows `el`'s own order at (x, y) and returns the height) and, in
-    /// the pass itself, remembers what it produced. `shared_floats`: `el`
-    /// shares its formatting context's floats (not remembered when any are
-    /// left).
+    /// Replays `el`'s entry for `key` (Ok: the height), else returns what
+    /// `reuse_end` needs once the caller has laid the contents out at (x, y)
+    /// (None in a probe, which remembers nothing).
+    fn reuse_begin(&mut self, el: NodeId, style: &FlowStyle, key: Key, x: f64, y: f64) -> Result<f64, Option<Start>> {
+        if let Some(h) = self.replay(el, style, key, x, y) {
+            return Ok(h);
+        }
+        if self.probe {
+            return Err(None);
+        }
+        let start = Start {
+            order_lo: self.order,
+            text_lo: self.out.text_orders.len(),
+            run_lo: self.out.text_runs.len(),
+            depth: self.pending.len(),
+            first_lo: self.pending.first().map_or(0, Vec::len),
+            last_lo: self.pending.last().map_or(0, Vec::len),
+            baselines: (self.first_baseline.take(), self.last_baseline.take()),
+        };
+        self.open_part_extent();
+        Err(Some(start))
+    }
+
+    /// Remembers what the contents laid out since `reuse_begin` produced.
+    /// `shared_floats`: `el` shares its formatting context's floats (not
+    /// remembered when any are left). Returns `h`.
     #[allow(clippy::too_many_arguments)]
-    fn reused(
+    fn reuse_end(
         &mut self,
         el: NodeId,
         style: &FlowStyle,
@@ -219,21 +260,15 @@ impl<'a> Ctx<'a> {
         x: f64,
         y: f64,
         shared_floats: bool,
-        lay: impl FnOnce(&mut Self) -> f64,
+        start: Option<Start>,
+        h: f64,
     ) -> f64 {
-        if let Some(h) = self.replay(el, style, key, x, y) {
+        let Some(Start { order_lo, text_lo, run_lo, depth, first_lo, last_lo, baselines: (fb, lb) }) = start else {
             return h;
-        }
-        if self.probe {
-            return lay(self);
-        }
-        let order_lo = self.order;
-        let (text_lo, run_lo) = (self.out.text_orders.len(), self.out.text_runs.len());
-        let depth = self.pending.len();
-        let first_lo = self.pending.first().map_or(0, Vec::len);
-        let last_lo = self.pending.last().map_or(0, Vec::len);
-        let (fb, lb) = (self.first_baseline.take(), self.last_baseline.take());
-        let h = lay(self);
+        };
+        let reach = self
+            .close_part_extent()
+            .map(|r| r.map(|r| Reach { right: r.right - x, bottom: r.bottom - y, text_right: r.text_right - x }));
         if shared_floats && !self.floats.is_empty() {
             self.first_baseline = fb.or(self.first_baseline);
             self.last_baseline = self.last_baseline.or(lb);
@@ -268,8 +303,11 @@ impl<'a> Ctx<'a> {
             last_baseline: last_baseline.map(|b| b - y),
             trailing,
             escaped,
+            reach,
         };
-        self.remember(el, entry);
+        if entry.reach.is_some() {
+            self.remember(el, entry);
+        }
         h
     }
 
@@ -338,7 +376,7 @@ impl<'a> Ctx<'a> {
         let (prev, e) = {
             let reuse = self.memo.reuse.borrow();
             let (prev, e) = reuse.usable(el)?;
-            if e.key != key || !(std::ptr::eq(e.style.as_ref(), style) || *e.style == *style) {
+            if e.key != key || !(std::ptr::eq(e.style.as_ref(), style) || *e.style == *style) || e.reach.is_none() {
                 return None;
             }
             (prev.clone(), e.clone())
@@ -366,7 +404,7 @@ impl<'a> Ctx<'a> {
                     positioned: slot.own_positioned || positioned_by != 0,
                     ..*b
                 };
-                self.put_box(d, nb, Slot { el: Some(d), own_positioned: slot.own_positioned, positioned_by });
+                self.put_box_quiet(d, nb, Slot { el: Some(d), own_positioned: slot.own_positioned, positioned_by });
                 if prev.sticky.contains(&d) {
                     self.out.sticky.insert(d);
                 }
@@ -383,6 +421,10 @@ impl<'a> Ctx<'a> {
                 run.order = renumber(run.order);
                 self.out.text_runs.push(run);
             }
+        }
+        if let Some(reach) = &e.reach {
+            let at = reach.map(|r| Reach { right: r.right + x, bottom: r.bottom + y, text_right: r.text_right + x });
+            self.extent_part(&at, (order_lo + 1, renumber(e.order_hi)));
         }
         self.order = renumber(e.order_hi);
         if let Some(b) = e.first_baseline {
