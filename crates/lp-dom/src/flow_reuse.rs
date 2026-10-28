@@ -519,8 +519,16 @@ impl<'a> Ctx<'a> {
         let (text_lo, run_lo) = (self.out.texts.list.len(), self.out.text_runs.len());
         if !self.measure_only {
             let FlowResult { boxes, texts, text_runs, sticky, .. } = &mut self.out;
+            // Unmoved (the common case): the copies are the boxes as they were.
+            let unmoved = delta == 0 && tx == 0.0 && ty == 0.0;
             let relaid =
                 boxes.copy_range(&prev.boxes, e.order_lo as usize, e.order_hi as usize, order_lo as usize, |s| {
+                    if unmoved {
+                        if s.sticky {
+                            sticky.extend(s.el);
+                        }
+                        return;
+                    }
                     s.positioned_by = inner(s.positioned_by);
                     s.b = super::FlowBox {
                         rect: moved(s.b.rect),
@@ -537,15 +545,22 @@ impl<'a> Ctx<'a> {
                 self.memo.relaid.set(true);
             }
             texts.copy_range(&prev.texts, e.texts.0, e.texts.1, |t| {
-                t.at.0 = moved(t.at.0);
-                t.order = renumber(t.order);
+                if !unmoved {
+                    t.at.0 = moved(t.at.0);
+                    t.order = renumber(t.order);
+                }
             });
-            text_runs.extend(prev.text_runs[e.runs.0..e.runs.1].iter().map(|run| {
-                let mut run = run.clone();
-                run.rect = moved(run.rect);
-                run.order = renumber(run.order);
-                run
-            }));
+            let runs = &prev.text_runs[e.runs.0..e.runs.1];
+            if unmoved {
+                text_runs.extend_from_slice(runs);
+            } else {
+                text_runs.extend(runs.iter().map(|run| {
+                    let mut run = run.clone();
+                    run.rect = moved(run.rect);
+                    run.order = renumber(run.order);
+                    run
+                }));
+            }
         }
         if let Some(reach) = &e.reach {
             let at = reach.map(|r| Reach { right: r.right + x, bottom: r.bottom + y, text_right: r.text_right + x });
