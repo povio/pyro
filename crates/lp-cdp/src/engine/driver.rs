@@ -168,6 +168,36 @@ struct RequestMatch {
     status: Option<StatusSet>,
     /// Exactly this many finished matches (default: at least one).
     count: Option<usize>,
+    /// Substring of (or regex on) the request body (as sent, UTF-8).
+    body: Option<Pattern>,
+    /// The request body, parsed as JSON, equals this value.
+    body_json: Option<Value>,
+    /// The request body is a JSON object with exactly these top-level keys.
+    body_keys: Option<Vec<String>>,
+    /// Request headers that must be present (names case-insensitive), each
+    /// value a substring of (or regex on) the sent value.
+    headers: Option<std::collections::BTreeMap<String, Pattern>>,
+}
+
+impl RequestMatch {
+    /// Whether a logged request's method, URL, body and headers fit.
+    fn accepts(&self, r: &super::network::LoggedRequest) -> bool {
+        self.method.as_ref().is_none_or(|x| r.method.eq_ignore_ascii_case(x))
+            && self.path.as_ref().is_none_or(|p| r.path() == p)
+            && self.url.as_ref().is_none_or(|u| u.matches(&r.url, false))
+            && self.body.as_ref().is_none_or(|p| r.post_data_text().is_some_and(|t| p.matches_raw(t)))
+            && self.body_json.as_ref().is_none_or(|j| r.post_data_json().as_ref() == Some(j))
+            && self.body_keys.as_ref().is_none_or(|keys| {
+                r.post_data_json()
+                    .as_ref()
+                    .and_then(Value::as_object)
+                    .is_some_and(|o| o.len() == keys.len() && keys.iter().all(|k| o.contains_key(k)))
+            })
+            && self
+                .headers
+                .as_ref()
+                .is_none_or(|h| h.iter().all(|(name, p)| r.request_header_values(name).any(|v| p.matches_raw(v))))
+    }
 }
 
 /// `status: 200` or `status: [200, 304]`.
@@ -597,6 +627,15 @@ impl Pattern {
         match &self.regex {
             Some(re) => re.is_match(&normalize(have)),
             None => text_matches(have, &self.text, exact),
+        }
+    }
+
+    /// Against `have` as is: a case-sensitive substring, or the regex on the
+    /// raw text (request bodies and header values).
+    pub(super) fn matches_raw(&self, have: &str) -> bool {
+        match &self.regex {
+            Some(re) => re.is_match(have),
+            None => have.contains(&self.text),
         }
     }
 }
@@ -2995,13 +3034,7 @@ impl EngineHost {
         let (Some(log), Some(from)) = (log, job.log_from) else {
             return Attempt::Retry("the page has no request log".into());
         };
-        let matching: Vec<_> = log
-            .since(from)
-            .iter()
-            .filter(|r| m.method.as_ref().is_none_or(|x| r.method.eq_ignore_ascii_case(x)))
-            .filter(|r| m.path.as_ref().is_none_or(|p| r.path() == p))
-            .filter(|r| m.url.as_ref().is_none_or(|u| u.matches(&r.url, false)))
-            .collect();
+        let matching: Vec<_> = log.since(from).iter().filter(|r| m.accepts(r)).collect();
         let finished: Vec<_> = matching.iter().filter(|r| r.done).collect();
         if let Some(n) = m.count {
             return if matching.len() == n && finished.len() == n {

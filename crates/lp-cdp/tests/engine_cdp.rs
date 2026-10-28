@@ -4329,6 +4329,133 @@ fn driver_run_mocks_requests_and_covers_the_new_element_steps() {
     assert!(r["error"]["message"].as_str().unwrap_or_default().contains("body or json"), "{r}");
 }
 
+/// Serves `/` (a page whose `call(url, init)` fetches and shows the response
+/// text) and `/api` (any method: a JSON reply echoing the method, the
+/// request body and the `x-idempotency-key` header; `?slow` answers after
+/// 300 ms) until the test ends.
+fn driver_api_site() -> std::net::SocketAddr {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { return };
+            std::thread::spawn(move || {
+                let mut request = Vec::new();
+                let mut chunk = [0; 1024];
+                let head_end = loop {
+                    if let Some(i) = request.windows(4).position(|w| w == b"\r\n\r\n") {
+                        break i + 4;
+                    }
+                    match stream.read(&mut chunk) {
+                        Ok(0) | Err(_) => return,
+                        Ok(n) => request.extend_from_slice(&chunk[..n]),
+                    }
+                };
+                let head = String::from_utf8_lossy(&request[..head_end]).into_owned();
+                let mut lines = head.lines();
+                let line = lines.next().unwrap_or_default().to_owned();
+                let header = |name: &str| {
+                    lines.clone().find_map(|l| {
+                        let (n, v) = l.split_once(':')?;
+                        n.trim().eq_ignore_ascii_case(name).then(|| v.trim().to_owned())
+                    })
+                };
+                let length: usize = header("content-length").and_then(|v| v.parse().ok()).unwrap_or(0);
+                while request.len() < head_end + length {
+                    match stream.read(&mut chunk) {
+                        Ok(0) | Err(_) => return,
+                        Ok(n) => request.extend_from_slice(&chunk[..n]),
+                    }
+                }
+                let body = String::from_utf8_lossy(&request[head_end..head_end + length]).into_owned();
+                let mut parts = line.split(' ');
+                let method = parts.next().unwrap_or("GET").to_owned();
+                let path = parts.next().unwrap_or("/").to_owned();
+                let key = header("x-idempotency-key").unwrap_or_default();
+                let (ty, reply) = if path.starts_with("/api") {
+                    if path.contains("slow") {
+                        std::thread::sleep(Duration::from_millis(300));
+                    }
+                    (
+                        "application/json",
+                        json!({"total": 1, "items": ["a"], "method": method, "body": body}).to_string(),
+                    )
+                } else {
+                    ("text/html", DRIVER_API_PAGE.to_owned())
+                };
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: {ty}\r\nContent-Length: {}\r\nX-Echo-Key: {key}\r\nConnection: close\r\n\r\n",
+                    reply.len()
+                );
+                let _ = stream.write_all(head.as_bytes());
+                let _ = stream.write_all(reply.as_bytes());
+            });
+        }
+    });
+    address
+}
+
+const DRIVER_API_PAGE: &str = r#"<!doctype html><body><p id="out"></p>
+<script>
+  window.call = (url, init) => fetch(url, init).then((r) => r.text()).then((t) => {
+    document.getElementById('out').textContent = t;
+    return t;
+  }).catch((e) => { document.getElementById('out').textContent = 'failed: ' + e; });
+</script>"#;
+
+const PATCH_CALL: &str = "call('/api', {method: 'PATCH', headers: {'x-idempotency-key': 'k1', \
+                          'content-type': 'application/json'}, body: JSON.stringify({remarks: 'x'})}); 1";
+
+/// `LP.run`'s request log carries each request's headers and body, and
+/// `request` steps match on them (`body` pattern, `bodyJson`, `bodyKeys`,
+/// `headers`).
+#[test]
+fn driver_run_requests_carry_headers_and_bodies() {
+    let address = driver_api_site();
+    let mut h = Harness::new();
+    let r = h.page(
+        "LP.run",
+        json!({"steps": [
+            {"goto": {"url": format!("http://{address}/")}},
+            {"eval": {"expression": PATCH_CALL}},
+            {"request": {"method": "PATCH", "path": "/api", "bodyKeys": ["remarks"]}},
+            {"request": {"method": "PATCH", "path": "/api", "body": {"regex": "\"remarks\""}}},
+            {"request": {"method": "PATCH", "path": "/api", "body": "remarks"}},
+            {"request": {"method": "PATCH", "path": "/api", "bodyJson": {"remarks": "x"}}},
+            {"request": {"method": "PATCH", "path": "/api", "headers": {"X-Idempotency-Key": "k1"}}},
+            {"request": {"method": "PATCH", "path": "/api", "headers": {"x-idempotency-key": {"regex": "^k\\d$"}}}},
+            {"request": {"path": "/api", "bodyKeys": ["other"], "count": 0}},
+            {"request": {"path": "/api", "bodyJson": {"remarks": "y"}, "count": 0}},
+            {"request": {"path": "/api", "headers": {"x-idempotency-key": "k2"}, "count": 0}},
+            {"request": {"path": "/api", "body": "nowhere", "count": 0}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    let results = r["result"]["results"].as_array().unwrap_or_else(|| panic!("{r}"));
+    let req = &results[2];
+    assert_eq!(req["status"], 200, "{r}");
+    assert_eq!(req["postData"], "{\"remarks\":\"x\"}", "{r}");
+    assert_eq!(req["requestHeaders"]["x-idempotency-key"], "k1", "{r}");
+    assert_eq!(req["requestHeaders"]["content-type"], "application/json", "{r}");
+    assert_eq!(req["responseHeaders"]["x-echo-key"], "k1", "{r}");
+    assert_eq!(req["responseHeaders"]["content-type"], "application/json", "{r}");
+    assert!(req.get("postDataBase64").is_none() && req.get("postDataTruncated").is_none(), "{r}");
+    let requests = r["result"]["requests"].as_array().unwrap_or_else(|| panic!("{r}"));
+    let api = requests.iter().find(|q| q["method"] == "PATCH").unwrap_or_else(|| panic!("{r}"));
+    assert_eq!(api["postData"], "{\"remarks\":\"x\"}", "{r}");
+    assert_eq!(api["requestHeaders"]["x-idempotency-key"], "k1", "{r}");
+    let document = requests.iter().find(|q| q["method"] == "GET").unwrap_or_else(|| panic!("{r}"));
+    assert!(document.get("postData").is_none(), "{r}");
+    assert!(document["requestHeaders"]["user-agent"].is_string(), "{r}");
+
+    let r = h.page(
+        "LP.run",
+        json!({"timeout": 100, "steps": [{"request": {"method": "PATCH", "path": "/api", "bodyKeys": ["other"]}}]}),
+    );
+    assert!(r["error"]["message"].as_str().unwrap_or_default().contains("no matching request yet"), "{r}");
+}
+
 const DRIVER_BATCH2_PAGE: &str = r#"<!doctype html><body>
 <iframe id="fr" srcdoc="<button id='inner'>Inner</button><p id='inner-out'></p><script>document.getElementById('inner').addEventListener('click', () => { document.getElementById('inner-out').textContent = 'inner clicked'; });</script>"></iframe>
 <input id="file" type="file" multiple><p id="file-out"></p>

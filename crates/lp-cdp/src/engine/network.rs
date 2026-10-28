@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use bytes::Bytes;
 use lp_browser::ContextId;
 use lp_net::{NetEvent, RequestId};
 use serde::Deserialize;
@@ -11,7 +12,7 @@ use serde_json::{json, Value};
 
 use super::EngineHost;
 use crate::msg::{CdpError, CdpResult};
-use crate::network_protocol::{BodyBudget, BodyStore, NetworkTranslator, MAX_INFLIGHT};
+use crate::network_protocol::{base64_encode, headers_json, BodyBudget, BodyStore, NetworkTranslator, MAX_INFLIGHT};
 use crate::target::{ContextKey, PageCommand, PageKey};
 
 #[derive(Default)]
@@ -90,6 +91,9 @@ pub(super) struct RequestLog {
     dropped: usize,
 }
 
+/// Longest request body a logged request keeps (`postDataTruncated` past it).
+const MAX_LOGGED_POST_DATA: usize = 1024 * 1024;
+
 #[derive(Clone, Debug)]
 pub(super) struct LoggedRequest {
     pub(super) method: String,
@@ -100,6 +104,13 @@ pub(super) struct LoggedRequest {
     pub(super) done: bool,
     start: f64,
     end: Option<f64>,
+    /// The headers as sent (after cookies and extra headers).
+    pub(super) request_headers: http::HeaderMap,
+    /// The request body, at most `MAX_LOGGED_POST_DATA` bytes of it.
+    pub(super) post_data: Option<Bytes>,
+    post_data_truncated: bool,
+    /// The response headers once the head arrived.
+    pub(super) response_headers: Option<http::HeaderMap>,
 }
 
 impl LoggedRequest {
@@ -109,14 +120,45 @@ impl LoggedRequest {
         path.split(['?', '#']).next().unwrap_or(path)
     }
 
+    /// The request body as text (`None` when absent or not UTF-8).
+    pub(super) fn post_data_text(&self) -> Option<&str> {
+        self.post_data.as_deref().and_then(|b| std::str::from_utf8(b).ok())
+    }
+
+    /// The request body parsed as JSON.
+    pub(super) fn post_data_json(&self) -> Option<Value> {
+        let body = self.post_data.as_deref().filter(|_| !self.post_data_truncated)?;
+        serde_json::from_slice(body).ok()
+    }
+
+    /// The values of a request header (names are case-insensitive).
+    pub(super) fn request_header_values(&self, name: &str) -> impl Iterator<Item = &str> {
+        self.request_headers.get_all(name.to_ascii_lowercase()).iter().filter_map(|v| v.to_str().ok())
+    }
+
     pub(super) fn to_json(&self) -> Value {
-        json!({
+        let mut v = json!({
             "method": self.method,
             "url": self.url,
             "status": self.status,
             "error": self.error,
             "ms": self.end.map(|e| (e - self.start) * 1e3),
-        })
+            "requestHeaders": headers_json(&self.request_headers),
+            "responseHeaders": self.response_headers.as_ref().map(headers_json),
+        });
+        if let Some(body) = &self.post_data {
+            match std::str::from_utf8(body) {
+                Ok(text) => v["postData"] = json!(text),
+                Err(_) => {
+                    v["postData"] = json!(base64_encode(body));
+                    v["postDataBase64"] = json!(true);
+                }
+            }
+            if self.post_data_truncated {
+                v["postDataTruncated"] = json!(true);
+            }
+        }
+        v
     }
 }
 
@@ -148,8 +190,11 @@ impl RequestLog {
                         keep
                     });
                 }
-                self.open.insert(*id, self.entries.len());
-                self.entries.push(LoggedRequest {
+                let (post_data, post_data_truncated) = match &request.post_data {
+                    Some(b) if b.len() > MAX_LOGGED_POST_DATA => (Some(b.slice(..MAX_LOGGED_POST_DATA)), true),
+                    other => (other.clone(), false),
+                };
+                let entry = LoggedRequest {
                     method: request.method.to_string(),
                     url: request.url.to_string(),
                     status: None,
@@ -157,11 +202,24 @@ impl RequestLog {
                     done: false,
                     start: *timestamp,
                     end: None,
-                });
+                    request_headers: request.headers.clone(),
+                    post_data,
+                    post_data_truncated,
+                    response_headers: None,
+                };
+                // The same hop sent again without a redirect (a cache
+                // revalidation that had to refetch) is still one request.
+                if let Some(&i) = self.open.get(id) {
+                    self.entries[i] = entry;
+                    return;
+                }
+                self.open.insert(*id, self.entries.len());
+                self.entries.push(entry);
             }
             NetEvent::ResponseReceived { id, head, .. } => {
                 if let Some(&i) = self.open.get(id) {
                     self.entries[i].status = Some(head.status.as_u16());
+                    self.entries[i].response_headers = Some(head.headers.clone());
                 }
             }
             NetEvent::DataReceived { .. } => {}
