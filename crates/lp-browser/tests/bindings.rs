@@ -228,9 +228,63 @@ fn preload_links_fire_load_and_error() {
     settle(&mut thread);
     assert_eq!(eval(&thread, page, "seen.sort().join()"), "m:load,p:load,x:error");
     assert!(loader.log.borrow().iter().any(|u| u == "http://site.test/chunk.js"), "{:?}", loader.log.borrow());
-    // A link inserted later fetches too, and the same href is not refetched.
+    // A modulepreload link inserted later for the same module gets `load`
+    // from the document's preloaded module; a preload link refetches.
     eval(&thread, page, "const l = document.createElement('link'); l.rel = 'modulepreload'; l.href = '/chunk.js'; l.addEventListener('load', () => seen.push('late:load')); document.head.appendChild(l);");
+    eval(&thread, page, "const p = document.createElement('link'); p.rel = 'preload'; p.as = 'script'; p.href = '/lib.js'; p.addEventListener('load', () => seen.push('latep:load')); document.head.appendChild(p);");
     settle(&mut thread);
-    assert!(eval(&thread, page, "seen.includes('late:load')") == "true");
+    assert!(eval(&thread, page, "seen.includes('late:load') && seen.includes('latep:load')") == "true");
+    assert_eq!(loader.log.borrow().iter().filter(|u| *u == "http://site.test/chunk.js").count(), 1);
+    assert_eq!(loader.log.borrow().iter().filter(|u| *u == "http://site.test/lib.js").count(), 2);
+}
+
+/// `import()` of a module a `<link rel=modulepreload>` fetched takes the
+/// preloaded source (Chromium's module map): one request, one evaluation,
+/// even when the import runs while the preload is still in flight. A failed
+/// preload rejects the import.
+#[test]
+fn modulepreload_source_is_reused_by_import() {
+    let mut thread = BrowserThread::new().unwrap();
+    let page = thread.browser.create_page().unwrap();
+    let loader = Rc::new(StaticLoader::default());
+    loader.insert(
+        "http://site.test/",
+        "text/html",
+        r#"<!doctype html><html><head>
+<link id="m" rel="modulepreload" href="/chunk.js">
+<link id="x" rel="modulepreload" href="/missing.js">
+<script>
+globalThis.evals = 0; globalThis.out = [];
+import('/chunk.js').then(m => out.push('first:' + m.a + ':' + evals));
+import('/missing.js').then(() => out.push('missing:ok'), () => out.push('missing:rejected'));
+</script>
+</head><body></body></html>"#,
+        Duration::ZERO,
+    );
+    loader.insert(
+        "http://site.test/chunk.js",
+        "text/javascript",
+        "globalThis.evals++; export const a = 1;",
+        Duration::from_millis(50),
+    );
+    thread.browser.set_loader(Some(loader.clone()));
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut thread);
+    assert_eq!(eval(&thread, page, "out.sort().join()"), "first:1:1,missing:rejected");
+    assert_eq!(
+        loader.log.borrow().iter().filter(|u| *u == "http://site.test/chunk.js").count(),
+        1,
+        "{:?}",
+        loader.log.borrow()
+    );
+    // A later import gets the same module instance.
+    eval(&thread, page, "import('/chunk.js').then(m => out.push('second:' + m.a + ':' + evals));");
+    settle(&mut thread);
+    assert_eq!(eval(&thread, page, "out.sort().join()"), "first:1:1,missing:rejected,second:1:1");
+    assert_eq!(loader.log.borrow().iter().filter(|u| *u == "http://site.test/chunk.js").count(), 1);
+    // The next document starts without the cache.
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut thread);
+    assert_eq!(eval(&thread, page, "out.sort().join()"), "first:1:1,missing:rejected");
     assert_eq!(loader.log.borrow().iter().filter(|u| *u == "http://site.test/chunk.js").count(), 2);
 }

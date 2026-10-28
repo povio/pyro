@@ -56,6 +56,9 @@ pub struct PageDom {
     /// (registered by their wrappers, removed when those are collected), for
     /// the embedder's resize and orientation change events.
     pub(crate) viewport_targets: RefCell<Vec<(crate::window::ViewportTarget, TargetKey)>>,
+    /// Live `MediaQueryList` targets (one per realm and query text) with the
+    /// last `matches` each reported, for the embedder's `change` events.
+    pub(crate) media_queries: RefCell<Vec<crate::layout_api::MediaQueryEntry>>,
     /// Each realm's original `structuredClone` (MessagePort cloning).
     pub(crate) structured_clones: RefCell<FxHashMap<RealmId, Persistent>>,
     /// Each realm's original `Object.defineProperty` ([Replaceable] setters).
@@ -309,6 +312,7 @@ impl PageDom {
             window_holders: RefCell::new(FxHashMap::default()),
             same_objects: RefCell::new(FxHashMap::default()),
             viewport_targets: RefCell::new(Vec::new()),
+            media_queries: RefCell::new(Vec::new()),
             structured_clones: RefCell::new(FxHashMap::default()),
             define_properties: RefCell::new(FxHashMap::default()),
             pending_port_reconcile: RefCell::new(Vec::new()),
@@ -584,6 +588,39 @@ impl PageDom {
     /// realm that has used it: the embedder fires `resize` (`change`) on each.
     pub fn viewport_targets(&self, kind: crate::window::ViewportTarget) -> Vec<TargetKey> {
         self.viewport_targets.borrow().iter().filter(|(k, _)| *k == kind).map(|(_, t)| *t).collect()
+    }
+
+    /// Re-evaluates every live `MediaQueryList` against the current viewport:
+    /// the targets whose `matches` flipped, with the query text and the new
+    /// value, for the embedder to fire `change` at (`fire_media_query_change`).
+    pub fn media_query_changes(&self) -> Vec<(TargetKey, String, bool)> {
+        let layout = self.layout.borrow();
+        let mut out = Vec::new();
+        for entry in self.media_queries.borrow().iter() {
+            let now = layout.style().match_media(&entry.query);
+            if entry.last.replace(now) != now {
+                out.push((entry.target, entry.query.clone(), now));
+            }
+        }
+        out
+    }
+
+    /// Fires a trusted `change` (MediaQueryListEvent) at a `MediaQueryList`
+    /// target from `media_query_changes`. Call outside DOM/layout borrows.
+    pub fn fire_media_query_change(self: &Rc<Self>, target: TargetKey, query: &str, matches: bool) {
+        let event = crate::event::EventCore::trusted(
+            self,
+            crate::event::EventInterface::MediaQueryListEvent,
+            "change",
+            false,
+            false,
+        );
+        {
+            let mut fields = event.fields.borrow_mut();
+            fields.media_query = query.to_owned();
+            fields.media_matches = matches;
+        }
+        crate::target::fire(self, target, &event);
     }
 
     pub fn window_target(&self) -> Option<TargetKey> {

@@ -93,6 +93,9 @@ pub struct Viewport {
     /// and its angle is 0. The CSS `(orientation)` feature always follows the
     /// viewport and ignores this.
     pub orientation: Option<ScreenOrientation>,
+    /// Emulated `print` media type (CDP `Emulation.setEmulatedMedia`
+    /// `media: "print"`): `print` queries match and `screen` ones do not.
+    pub print: bool,
 }
 
 impl Default for Viewport {
@@ -109,6 +112,7 @@ impl Default for Viewport {
             hover: true,
             pointer: Pointer::Fine,
             orientation: None,
+            print: false,
         }
     }
 }
@@ -343,8 +347,10 @@ fn matches_single(query: &[u8], viewport: &Viewport) -> bool {
         return false;
     }
     let type_matches = match type_set {
-        Some(MediaType::All | MediaType::Screen) | None => true,
-        Some(MediaType::Print | MediaType::Speech | MediaType::Tv) => false,
+        Some(MediaType::All) | None => true,
+        Some(MediaType::Screen) => !viewport.print,
+        Some(MediaType::Print) => viewport.print,
+        Some(MediaType::Speech | MediaType::Tv) => false,
     };
     let result = type_matches && features_match;
     if negate {

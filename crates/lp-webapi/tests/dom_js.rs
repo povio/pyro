@@ -786,6 +786,32 @@ fn storage_quota_failure_is_atomic_and_replacement_reuses_budget() {
     assert_eq!(eval(&r, "localStorage.clear(); localStorage.setItem('x','😀😀'); localStorage.x"), "😀😀");
 }
 
+/// The default quota is Chromium's: 10 MiB per origin of keys and values
+/// counted as UTF-16 (about 5.2 M characters), for local and session storage.
+#[test]
+fn storage_default_quota_matches_chromium() {
+    let engine = Engine::new().unwrap();
+    register(&engine);
+    let (_p, r) =
+        storage_page(&engine, "http://example.test/", StorageNamespace::default(), StorageNamespace::default());
+    for area in ["localStorage", "sessionStorage"] {
+        assert_eq!(
+            eval(
+                &r,
+                &format!(
+                    r#"
+            {area}.setItem('k', 'x'.repeat(5e6));
+            var failure = 'none';
+            try {{ {area}.setItem('k', 'x'.repeat(5.3e6)) }} catch (e) {{ failure = e.name }}
+            failure + ':' + {area}.getItem('k').length + ':' + {area}.length
+        "#
+                )
+            ),
+            "QuotaExceededError:5000000:1"
+        );
+    }
+}
+
 #[test]
 fn storage_is_shared_across_worlds_and_inherited_blank_origin() {
     let e = env("<body>");

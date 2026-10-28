@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 
 use super::{remote, EngineHost};
 use crate::msg::{CdpError, CdpResult};
-use crate::target::PageCommand;
+use crate::target::{PageCommand, PageKey};
 
 const MAX_DIMENSION: u32 = 10_000_000;
 
@@ -59,7 +59,45 @@ struct Metrics {
     unsupported: BTreeMap<String, Value>,
 }
 
+/// The media emulation of a page (`Emulation.setEmulatedMedia`, the
+/// `media` run step): what replaces the viewport's media preferences.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct MediaEmulation {
+    pub(super) color_scheme: media::ColorScheme,
+    pub(super) reduced_motion: bool,
+    pub(super) print: bool,
+}
+
 impl EngineHost {
+    /// Applies `emulation` to the page's viewport: `matchMedia` and `@media`
+    /// follow at once, and lists whose `matches` flipped get `change` at the
+    /// next safe point.
+    pub(super) fn apply_media_emulation(&mut self, page: PageKey, emulation: MediaEmulation) -> CdpResult<()> {
+        let id = self.pages.get(&page).ok_or_else(|| CdpError::server("page is gone"))?.id;
+        let mut viewport =
+            self.thread.browser.page(id).ok_or_else(|| CdpError::server("page is gone"))?.viewport().clone();
+        viewport.color_scheme = emulation.color_scheme;
+        viewport.reduced_motion = emulation.reduced_motion;
+        viewport.print = emulation.print;
+        self.thread.browser.set_viewport(id, viewport).map_err(remote::js_to_cdp)?;
+        Ok(())
+    }
+
+    /// Resizes the page's viewport (the `viewport` run step): `innerWidth`
+    /// and `innerHeight` change at once, `resize` fires at the next safe point.
+    pub(super) fn resize_viewport(&mut self, page: PageKey, width: u32, height: u32) -> CdpResult<()> {
+        if width == 0 || height == 0 || width > MAX_DIMENSION || height > MAX_DIMENSION {
+            return Err(CdpError::invalid_params("Invalid viewport dimensions"));
+        }
+        let id = self.pages.get(&page).ok_or_else(|| CdpError::server("page is gone"))?.id;
+        let mut viewport =
+            self.thread.browser.page(id).ok_or_else(|| CdpError::server("page is gone"))?.viewport().clone();
+        viewport.width = width;
+        viewport.height = height;
+        self.thread.browser.set_viewport(id, viewport).map_err(remote::js_to_cdp)?;
+        Ok(())
+    }
+
     pub(super) fn device_metrics(&mut self, action: &str, cmd: &PageCommand<'_, '_>) -> CdpResult<Option<Value>> {
         let id = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?.id;
         let mut viewport =

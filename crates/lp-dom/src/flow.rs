@@ -2264,9 +2264,11 @@ impl<'a> Ctx<'a> {
         let mut sw = client_width;
         let mut sh = client_height.max(flow_h + e.padding[TOP] + e.padding[BOTTOM]);
         // A textarea's value is not laid out as children, yet its lines are
-        // what `scrollHeight` reports (autosizing sets height 0 and reads it).
+        // what `scrollHeight` reports (autosizing sets height 0 and reads it):
+        // the box or the text, never the intrinsic `rows` height (an empty
+        // textarea without `rows` at height 0 is one line, not two).
         if let Some(h) = self.textarea_text_height(el, content_w) {
-            sh = sh.max(h + e.padding[TOP] + e.padding[BOTTOM]);
+            sh = client_height.max(h + e.padding[TOP] + e.padding[BOTTOM]);
         }
         if let Some(w) = self.text_control_text_width(el) {
             sw = sw.max(w + e.padding[LEFT] + e.padding[RIGHT]);

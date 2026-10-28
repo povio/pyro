@@ -949,6 +949,7 @@ impl Browser {
             p.load = None;
             p.stylesheets = Default::default();
             p.images = Default::default();
+            p.preloads = Default::default();
             let old_dom = p.main_frame.page_dom.replace(page_dom.clone());
             p.main_frame.dom = Some(page_dom.dom.clone());
             p.main_frame.document = Some(page_dom.document());

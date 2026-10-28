@@ -127,7 +127,9 @@ pub(crate) fn target_object<'s>(s: &Scope<'s>, page: &PageDom, key: TargetKey) -
             Some(o) => Ok(Some(o)),
             // `visualViewport` / `screen.orientation` keep a per-window
             // identity ([SameObject]); this realm's wrapper must own `key`.
-            None => Ok(crate::window::viewport_target_object(s, page, key)),
+            // `MediaQueryList`s are kept per realm and query text.
+            None => Ok(crate::window::viewport_target_object(s, page, key)
+                .or_else(|| crate::layout_api::media_query_object(s, page, key))),
         },
     }
 }

@@ -398,6 +398,19 @@ enum Step {
         expression: String,
         key: Option<String>,
     },
+    /// Resizes the viewport mid-run (`innerWidth`, `resize`, media queries,
+    /// layout); settles like an action so listeners have run.
+    Viewport {
+        width: u32,
+        height: u32,
+    },
+    /// Replaces the page's media emulation (`prefers-color-scheme`, ...).
+    Media(super::metrics::MediaEmulation),
+    /// The following steps drive another page of the context: a popup's
+    /// `as` key, a target id, or `main` (the page the run started on).
+    Page {
+        target: String,
+    },
     Request(RequestMatch),
     Act {
         locator: Locator,
@@ -455,6 +468,9 @@ impl Step {
             Step::Popup { .. } => "popup".into(),
             Step::Route { url, .. } => format!("route {url}"),
             Step::Eval { .. } => "eval".into(),
+            Step::Viewport { width, height } => format!("viewport {width}x{height}"),
+            Step::Media(m) => format!("media {m:?}"),
+            Step::Page { target } => format!("page {target}"),
             Step::Request(m) => format!("request {}", serde_json::to_value(m).map(prune).unwrap_or_default()),
             Step::Act { locator, action, .. } => format!("{action:?} {}", locator.describe()),
             Step::Mouse { action, x, y, .. } => match (x, y) {
@@ -495,6 +511,18 @@ struct Job {
     /// Downloads and popups recorded before the run started are not its.
     downloads_from: usize,
     popups_from: usize,
+    /// The page the run started on (`page: "main"`, the reply's requests).
+    home: PageKey,
+    /// Where the run left the other pages it drove (`page` steps).
+    parked: Vec<PageCursor>,
+}
+
+/// A page's run state while a `page` step drives another one.
+struct PageCursor {
+    page: PageKey,
+    pid: PageId,
+    log_from: Option<usize>,
+    downloads_from: usize,
 }
 
 impl Job {
@@ -2622,6 +2650,59 @@ enum StepParams {
     Read(QueryParams),
     Eval(EvalParams),
     Request(RequestParams),
+    Viewport(ViewportParams),
+    Media(MediaParams),
+    Page(PageParams),
+}
+
+/// `{"page": {"target": "popup"}}`: the `as` key of an earlier `popup`
+/// step, a target id, or `main`.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PageParams {
+    target: String,
+}
+
+/// `{"viewport": {"width": 390, "height": 844}}`: CSS px.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ViewportParams {
+    width: u32,
+    height: u32,
+}
+
+/// `{"media": {"colorScheme": "dark"}}`: `colorScheme` (`dark`, `light`,
+/// `no-preference`), `reducedMotion` (`reduce`, `no-preference`), `media`
+/// (`screen`, `print`). Replaces the page's media emulation: an omitted
+/// field resets to the default (light, no-preference, screen).
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct MediaParams {
+    color_scheme: Option<String>,
+    reduced_motion: Option<String>,
+    media: Option<String>,
+}
+
+impl MediaParams {
+    fn step(self) -> CdpResult<(Step, Option<u64>)> {
+        let mut m = super::metrics::MediaEmulation::default();
+        match self.color_scheme.as_deref() {
+            None | Some("light" | "no-preference") => {}
+            Some("dark") => m.color_scheme = lp_dom::media::ColorScheme::Dark,
+            Some(other) => return Err(CdpError::invalid_params(format!("media: unknown colorScheme '{other}'"))),
+        }
+        match self.reduced_motion.as_deref() {
+            None | Some("no-preference") => {}
+            Some("reduce") => m.reduced_motion = true,
+            Some(other) => return Err(CdpError::invalid_params(format!("media: unknown reducedMotion '{other}'"))),
+        }
+        match self.media.as_deref() {
+            None | Some("screen") => {}
+            Some("print") => m.print = true,
+            Some(other) => return Err(CdpError::invalid_params(format!("media: unknown media '{other}'"))),
+        }
+        Ok((Step::Media(m), None))
+    }
 }
 
 #[derive(Deserialize)]
@@ -2930,6 +3011,9 @@ impl StepParams {
             StepParams::Route(p) => Ok((Step::Route { url: p.url, settle: p.settle.unwrap_or(true) }, p.timeout)),
             StepParams::Eval(p) => Ok((Step::Eval { expression: p.expression, key: p.key }, p.timeout)),
             StepParams::Request(p) => Ok((Step::Request(p.matcher), p.timeout)),
+            StepParams::Viewport(p) => Ok((Step::Viewport { width: p.width, height: p.height }, None)),
+            StepParams::Media(p) => p.step(),
+            StepParams::Page(p) => Ok((Step::Page { target: p.target }, None)),
             StepParams::Act(p) => p.step(true),
             StepParams::Mouse(p) => p.step(),
             StepParams::Check(p) => p.step(),
@@ -3043,6 +3127,9 @@ impl EngineHost {
             | Step::Popup { .. }
             | Step::Route { .. }
             | Step::Eval { .. }
+            | Step::Viewport { .. }
+            | Step::Media(_)
+            | Step::Page { .. }
             | Step::Request(_)
             | Step::Mouse { .. } => {
                 unreachable!("not a locator step")
@@ -3147,6 +3234,8 @@ impl EngineHost {
             log_from,
             downloads_from,
             popups_from,
+            home: cmd.page,
+            parked: Vec::new(),
         };
         let waiter = Waiter {
             job,
@@ -3325,6 +3414,8 @@ impl EngineHost {
                         Step::Act { settle: true, .. }
                             | Step::Mouse { settle: true, .. }
                             | Step::Route { settle: true, .. }
+                            | Step::Viewport { .. }
+                            | Step::Media(_)
                     )
                     .then(|| requests_of(&self.thread.browser, pid));
                     let (attempt, page) = match &step {
@@ -3341,6 +3432,15 @@ impl EngineHost {
                         }
                         Step::Download { save_to, .. } => (self.next_download(&mut w.job, save_to.as_deref()), None),
                         Step::Popup { .. } => (self.next_popup(&mut w.job), None),
+                        Step::Viewport { width, height } => {
+                            self.resize_viewport(w.job.page, *width, *height).map_err(|e| w.job.fail(e))?;
+                            (Attempt::Done(json!({ "width": width, "height": height })), None)
+                        }
+                        Step::Media(emulation) => {
+                            self.apply_media_emulation(w.job.page, *emulation).map_err(|e| w.job.fail(e))?;
+                            (Attempt::Done(json!({})), None)
+                        }
+                        Step::Page { target } => (self.switch_page(&mut w.job, target), None),
                         Step::Mock(spec) => (self.register_mock(w.job.page, spec).map_err(|e| w.job.fail(e))?, None),
                         Step::Unmock(pattern) => {
                             let removed = self.remove_mocks(w.job.page, pattern.as_ref()).map_err(|e| w.job.fail(e))?;
@@ -3460,8 +3560,8 @@ impl EngineHost {
             w.seen = page.dom.borrow().version();
             w.doc = Rc::downgrade(page);
         }
-        w.poll_at =
-            matches!(step, Step::Url(_) | Step::Route { .. } | Step::Release { .. }).then(|| Instant::now() + URL_POLL);
+        w.poll_at = matches!(step, Step::Url(_) | Step::Route { .. } | Step::Release { .. } | Step::Page { .. })
+            .then(|| Instant::now() + URL_POLL);
         w.reason = reason;
         w.phase = Phase::Try;
         Ok(Drive::Park(Box::new(w)))
@@ -3657,10 +3757,65 @@ impl EngineHost {
         }
     }
 
-    /// The requests a run saw, for its reply.
+    /// Makes `target` the page the following steps drive, keeping where the
+    /// run left the current one (its request log and downloads).
+    fn switch_page(&mut self, job: &mut Job, target: &str) -> Attempt {
+        let id = match job.reads.get(target) {
+            Some(read) => read["targetId"].as_str().unwrap_or(target).to_owned(),
+            None => target.to_owned(),
+        };
+        let context = self.pages.get(&job.home).map(|s| s.context);
+        let found = if target == "main" {
+            Some(job.home)
+        } else {
+            self.pages.iter().find_map(|(key, state)| {
+                let page = self.thread.browser.page(state.id)?;
+                (Some(state.context) == context && page.main_frame.id.0 == id).then_some(*key)
+            })
+        };
+        let Some(key) = found else { return Attempt::Retry(format!("no page {id} in this context")) };
+        let Some(state) = self.pages.get_mut(&key) else { return Attempt::Retry("page is gone".into()) };
+        let url = self.thread.browser.page(state.id).map(|p| p.main_frame.url.clone());
+        if key != job.page {
+            let cursor = match job.parked.iter().position(|c| c.page == key) {
+                Some(i) => job.parked.swap_remove(i),
+                None => {
+                    // The run records this page's requests from here on.
+                    let log_from = match &state.network.log {
+                        Some(log) => log.seq(),
+                        None => {
+                            state.network.log = Some(Default::default());
+                            0
+                        }
+                    };
+                    PageCursor {
+                        page: key,
+                        pid: state.id,
+                        log_from: Some(log_from),
+                        downloads_from: state.downloads.len(),
+                    }
+                }
+            };
+            let left = PageCursor {
+                page: std::mem::replace(&mut job.page, cursor.page),
+                pid: std::mem::replace(&mut job.pid, cursor.pid),
+                log_from: std::mem::replace(&mut job.log_from, cursor.log_from),
+                downloads_from: std::mem::replace(&mut job.downloads_from, cursor.downloads_from),
+            };
+            job.parked.push(left);
+            self.update_network_subscriptions();
+        }
+        Attempt::Done(json!({ "targetId": id_of(&self.thread.browser, job.pid), "url": url }))
+    }
+
+    /// The requests a run saw on the page it started on, for its reply.
     fn logged_requests(&self, job: &Job) -> Vec<Value> {
-        let log = self.pages.get(&job.page).and_then(|p| p.network.log.as_ref());
-        match (log, job.log_from) {
+        let (page, from) = match job.parked.iter().find(|c| c.page == job.home) {
+            Some(c) => (c.page, c.log_from),
+            None => (job.page, job.log_from),
+        };
+        let log = self.pages.get(&page).and_then(|p| p.network.log.as_ref());
+        match (log, from) {
             (Some(log), Some(from)) => log.since(from).iter().map(|r| r.to_json()).collect(),
             _ => Vec::new(),
         }
@@ -3717,4 +3872,9 @@ impl EngineHost {
             self.collector.push(Queued::Frame(frame));
         }
     }
+}
+
+/// A page's target id (its main frame id).
+fn id_of(browser: &Browser, pid: PageId) -> Option<String> {
+    browser.page(pid).map(|p| p.main_frame.id.0.clone())
 }

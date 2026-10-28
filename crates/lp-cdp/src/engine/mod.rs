@@ -707,12 +707,42 @@ impl EngineHost {
             // Headless pages always behave as focused; there is no window focus to emulate.
             "setFocusEmulationEnabled" => Ok(Some(serde_json::json!({}))),
             "setDeviceMetricsOverride" | "clearDeviceMetricsOverride" => self.device_metrics(action, cmd),
-            // Mapping these overrides to native media preferences remains a
-            // separate gap; this command currently records its parameters.
+            // Each call replaces the whole emulation (as Chrome): the media
+            // type and the `prefers-*` features it lists; the rest reset.
             "setEmulatedMedia" => {
-                let p: serde_json::Value = cmd.command.params()?;
+                #[derive(Deserialize)]
+                struct Feature {
+                    name: String,
+                    value: String,
+                }
+                #[derive(Deserialize)]
+                struct P {
+                    media: Option<String>,
+                    #[serde(default)]
+                    features: Vec<Feature>,
+                }
+                let raw: serde_json::Value = cmd.command.params()?;
+                let p: P = serde_json::from_value(raw.clone()).map_err(|e| CdpError::invalid_params(e.to_string()))?;
+                let mut emulation = metrics::MediaEmulation::default();
+                match p.media.as_deref().map(str::trim) {
+                    None | Some("" | "screen") => {}
+                    Some("print") => emulation.print = true,
+                    Some(other) => return Err(CdpError::invalid_params(format!("Invalid media type '{other}'"))),
+                }
+                for f in &p.features {
+                    match (f.name.as_str(), f.value.trim()) {
+                        ("prefers-color-scheme", "dark") => emulation.color_scheme = lp_dom::media::ColorScheme::Dark,
+                        ("prefers-color-scheme", "light" | "no-preference" | "") => {}
+                        ("prefers-reduced-motion", "reduce") => emulation.reduced_motion = true,
+                        ("prefers-reduced-motion", "no-preference" | "") => {}
+                        // Other features (forced-colors, contrast, ...) are
+                        // not evaluated by the media engine; accept them.
+                        _ => {}
+                    }
+                }
+                self.apply_media_emulation(cmd.page, emulation)?;
                 if let Some(state) = self.pages.get_mut(&cmd.page) {
-                    state.emulated_media = Some(p);
+                    state.emulated_media = Some(raw);
                 }
                 Ok(Some(serde_json::json!({})))
             }
