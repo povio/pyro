@@ -2,8 +2,10 @@
 //! else is being done" signal `LP.run` settles on after an action and
 //! `LP.idle` waits for.
 //!
-//! A page is quiet when the browser thread has no queued task, none of the
-//! page's frames has a request in flight (beyond an allowance the caller
+//! A page is quiet when the browser thread has no queued task (local, or
+//! posted from another thread: a response counts as a request in flight
+//! until its completion is posted, then as a task until that runs), none of
+//! the page's frames has a request in flight (beyond an allowance the caller
 //! sets, e.g. what was already in flight before an action), a `setTimeout`
 //! due within [`TIMER_HORIZON`], an animation frame callback that is not
 //! part of an animation loop, or a navigation that has not reached
@@ -22,7 +24,8 @@ use std::time::Instant;
 /// What can still change a page, counted at one moment.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PageWork {
-    /// Tasks queued on the page's browser thread (any page's).
+    /// Tasks queued on the page's browser thread (any page's), including
+    /// ones posted from other threads that have not run yet.
     pub tasks: usize,
     /// Requests in flight across the page's frames.
     pub requests: usize,
@@ -47,7 +50,9 @@ impl Browser {
         let p = self.page(page)?;
         let net = self.context_net(p.context);
         let now = Instant::now();
-        let mut work = PageWork { tasks: self.scheduler().pending_tasks(), ..Default::default() };
+        let sched = self.scheduler();
+        let tasks = sched.pending_tasks() + sched.pending_remote_tasks();
+        let mut work = PageWork { tasks, ..Default::default() };
         for key in p.frames.keys() {
             let Some(doc) = self.doc(key) else { continue };
             let frame = &doc.main_frame;

@@ -48,7 +48,7 @@ if [[ -n $head_ref ]]; then
   head_name=${head_sha:0:9}
 else
   head_sha=$(git -C "$root" rev-parse HEAD)
-  head_name="${head_sha:0:9}$([[ -n $(git -C "$root" status --porcelain -- crates Cargo.toml Cargo.lock) ]] && echo -dirty)"
+  head_name="${head_sha:0:9}$([[ -n $(git -C "$root" status --porcelain -- crates Cargo.toml Cargo.lock) ]] && echo -dirty || true)"
   (cd "$root" && cargo build --release -p lightningpanda >&2)
   head_bin="$(cd "$root" && cargo metadata --format-version 1 --no-deps | sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p')/release/lightningpanda"
 fi
