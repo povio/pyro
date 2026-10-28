@@ -170,11 +170,62 @@ impl<'a> Ctx<'a> {
         if shared_floats && !self.floats.is_empty() {
             return self.contents_in(el, style, x, y, width, height, fixed, shift, collapse);
         }
+        self.reused(el, style, key, x, y, shared_floats, |cx| {
+            cx.contents_in(el, style, x, y, width, height, fixed, shift, collapse)
+        })
+    }
+
+    /// The boxes of one table row's cells at (x, y), the row's own order
+    /// already taken: replayed when the row is clean and was laid out at the
+    /// same column widths (`columns`, a hash) and height.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn row_reused(
+        &mut self,
+        row: NodeId,
+        style: &FlowStyle,
+        x: f64,
+        y: f64,
+        columns: u64,
+        height: f64,
+        fixed: bool,
+        shift: (f64, f64),
+        lay: impl FnOnce(&mut Self),
+    ) {
+        let key = Key {
+            width: columns,
+            height: Some(height.to_bits()),
+            outer_cb: None,
+            fixed,
+            shift: (shift.0.to_bits(), shift.1.to_bits()),
+            collapse: Collapse::default(),
+        };
+        self.reused(row, style, key, x, y, false, |cx| {
+            lay(cx);
+            height
+        });
+    }
+
+    /// Replays `el`'s entry for `key`, else runs `lay` (which lays out what
+    /// follows `el`'s own order at (x, y) and returns the height) and, in
+    /// the pass itself, remembers what it produced. `shared_floats`: `el`
+    /// shares its formatting context's floats (not remembered when any are
+    /// left).
+    #[allow(clippy::too_many_arguments)]
+    fn reused(
+        &mut self,
+        el: NodeId,
+        style: &FlowStyle,
+        key: Key,
+        x: f64,
+        y: f64,
+        shared_floats: bool,
+        lay: impl FnOnce(&mut Self) -> f64,
+    ) -> f64 {
         if let Some(h) = self.replay(el, style, key, x, y) {
             return h;
         }
         if self.probe {
-            return self.contents_in(el, style, x, y, width, height, fixed, shift, collapse);
+            return lay(self);
         }
         let order_lo = self.order;
         let (text_lo, run_lo) = (self.out.text_orders.len(), self.out.text_runs.len());
@@ -182,13 +233,13 @@ impl<'a> Ctx<'a> {
         let first_lo = self.pending.first().map_or(0, Vec::len);
         let last_lo = self.pending.last().map_or(0, Vec::len);
         let (fb, lb) = (self.first_baseline.take(), self.last_baseline.take());
-        let h = self.contents_in(el, style, x, y, width, height, fixed, shift, collapse);
+        let h = lay(self);
         if shared_floats && !self.floats.is_empty() {
             self.first_baseline = fb.or(self.first_baseline);
             self.last_baseline = self.last_baseline.or(lb);
             return h;
         }
-        let trailing = if collapse.bottom { self.trailing } else { Margin::ZERO };
+        let trailing = if key.collapse.bottom { self.trailing } else { Margin::ZERO };
         let (first_baseline, last_baseline) = (self.first_baseline, self.last_baseline);
         self.first_baseline = fb.or(first_baseline);
         self.last_baseline = last_baseline.or(lb);

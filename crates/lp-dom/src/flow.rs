@@ -3741,12 +3741,19 @@ impl<'a> Ctx<'a> {
                 resolve_flexible_lengths(&mut items[line.clone()], cm, main_gap, row);
             }
         }
-        // Cross sizes from content (for each item at its main size).
+        // Cross sizes from content (for each item at its main size). In a
+        // single line of a definite cross size, a stretched item takes the
+        // line's size whatever its content: it is not measured.
+        let single = lines.len() == 1;
+        let definite_line = single && container_cross.is_some();
         for it in &mut items {
-            it.cross = self.flex_cross_content(it, row, width);
+            it.cross = if definite_line && stretches(it, style, row, width, height) {
+                0.0
+            } else {
+                self.flex_cross_content(it, row, width)
+            };
         }
         // Line cross sizes.
-        let single = lines.len() == 1;
         let mut line_cross: Vec<f64> = lines
             .iter()
             .map(|l| items[l.clone()].iter().map(|it| it.cross + margins_cross(it, row)).fold(0.0, f64::max))
@@ -3762,19 +3769,7 @@ impl<'a> Ctx<'a> {
         // Stretch.
         for (li, line) in lines.iter().enumerate() {
             for it in &mut items[line.clone()] {
-                let align = it.style.align_self.unwrap_or(style.align_items);
-                // Only an `auto` cross size stretches (an intrinsic keyword
-                // width such as fit-content does not).
-                let declared_cross = if row {
-                    it.style.height.resolve(height)
-                } else if let Dim::Content(_) = it.style.width {
-                    Some(0.0)
-                } else {
-                    it.style.width.resolve(Some(width))
-                };
-                // Auto cross-axis margins take precedence over stretching.
-                if align == Align::Stretch && declared_cross.is_none() && auto_margins(it, row, false) == (false, false)
-                {
+                if stretches(it, style, row, width, height) {
                     let stretched = (line_cross[li] - margins_cross(it, row)).max(0.0);
                     it.cross = self.clamp_cross(it, row, width, stretched);
                     it.stretched = true;
@@ -4111,6 +4106,23 @@ fn resolve_flexible_lengths(items: &mut [FlexItem], container_main: f64, gap: f6
     for (it, t) in items.iter_mut().zip(target) {
         it.main = t;
     }
+}
+
+/// Whether a flex item stretches to its line's cross size: `stretch`
+/// alignment, an `auto` cross size (an intrinsic keyword width such as
+/// fit-content does not stretch) and no auto cross-axis margins (which take
+/// precedence).
+fn stretches(it: &FlexItem, container: &FlowStyle, row: bool, width: f64, height: Option<f64>) -> bool {
+    let declared_cross = if row {
+        it.style.height.resolve(height)
+    } else if let Dim::Content(_) = it.style.width {
+        Some(0.0)
+    } else {
+        it.style.width.resolve(Some(width))
+    };
+    it.style.align_self.unwrap_or(container.align_items) == Align::Stretch
+        && declared_cross.is_none()
+        && auto_margins(it, row, false) == (false, false)
 }
 
 /// Whether the item's (start, end) margins on the main (`main`) or cross
@@ -4533,6 +4545,16 @@ impl<'a> Ctx<'a> {
                 }
             }
         }
+        let spans_rows = rows.iter().any(|r| r.cells.iter().any(|c| c.rowspan > 1));
+        let columns = {
+            use std::hash::{Hash, Hasher};
+            let mut h = rustc_hash::FxHasher::default();
+            (width.to_bits(), sx.to_bits()).hash(&mut h);
+            for w in &widths {
+                w.to_bits().hash(&mut h);
+            }
+            h.finish()
+        };
         let mut cursor = y + sy;
         let mut groups: Vec<(NodeId, Rect)> = Vec::new();
         let mut group_orders: Vec<(NodeId, u32)> = Vec::new();
@@ -4546,28 +4568,39 @@ impl<'a> Ctx<'a> {
                 }
             }
             let row_order = self.next_order();
-            for (c, &(content_h, vertical, _)) in row.cells.iter().zip(&cell_heights[r]) {
-                let w = span_width(&widths, c, sx);
-                let cell_h = row_hs[r..r + c.rowspan].iter().sum::<f64>() + sy * (c.rowspan - 1) as f64;
-                let mut s = (*c.style).clone();
-                s.border_box = true;
-                s.width = Dim::px(w);
-                s.height = Dim::px(cell_h);
-                s.margin = [Dim::px(0.0); 4];
-                // The columns already took the cell's min/max width.
-                s.min_width = Dim::Auto;
-                s.max_width = Dim::Auto;
-                s.min_height = Dim::Auto;
-                s.max_height = Dim::Auto;
-                let before = self.order;
-                self.block_child(c.el, &s, starts[c.col], cursor, w, fixed, shift);
-                // Cell content is vertically centred (rows default to middle).
-                let dy = ((cell_h - vertical - content_h) / 2.0).max(0.0);
-                if dy > 0.0 {
-                    let cell_order = before + 1;
-                    self.boxes_after(cell_order, |b| b.rect.y += dy);
-                    self.shift_texts_after(cell_order, dy);
+            let lay_cells = |cx: &mut Self| {
+                for (c, &(content_h, vertical, _)) in row.cells.iter().zip(&cell_heights[r]) {
+                    let w = span_width(&widths, c, sx);
+                    let cell_h = row_hs[r..r + c.rowspan].iter().sum::<f64>() + sy * (c.rowspan - 1) as f64;
+                    let mut s = (*c.style).clone();
+                    s.border_box = true;
+                    s.width = Dim::px(w);
+                    s.height = Dim::px(cell_h);
+                    s.margin = [Dim::px(0.0); 4];
+                    // The columns already took the cell's min/max width.
+                    s.min_width = Dim::Auto;
+                    s.max_width = Dim::Auto;
+                    s.min_height = Dim::Auto;
+                    s.max_height = Dim::Auto;
+                    let before = cx.order;
+                    cx.block_child(c.el, &s, starts[c.col], cursor, w, fixed, shift);
+                    // Cell content is vertically centred (rows default to middle).
+                    let dy = ((cell_h - vertical - content_h) / 2.0).max(0.0);
+                    if dy > 0.0 {
+                        let cell_order = before + 1;
+                        cx.boxes_after(cell_order, |b| b.rect.y += dy);
+                        cx.shift_texts_after(cell_order, dy);
+                    }
                 }
+            };
+            // A clean row at the same column widths and height is copied
+            // from the previous pass (a cell spanning rows depends on the
+            // rows below it: no reuse then).
+            match (row.el, &row.style) {
+                (Some(el), Some(rs)) if !spans_rows => {
+                    self.row_reused(el, rs, starts[0], cursor, columns, row_h, fixed, shift, lay_cells)
+                }
+                _ => lay_cells(self),
             }
             let rect = Rect {
                 x: starts[0] + shift.0,
