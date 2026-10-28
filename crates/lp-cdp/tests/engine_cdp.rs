@@ -3998,6 +3998,8 @@ fn driver_site() -> std::net::SocketAddr {
                 let (ty, body) = if let Some(name) = path.strip_prefix("/api?name=") {
                     std::thread::sleep(Duration::from_millis(100));
                     ("application/json", format!(r#"{{"greeting":"Hello, {name}"}}"#))
+                } else if path == "/quiet" {
+                    ("text/html", DRIVER_SITE_QUIET.to_owned())
                 } else {
                     ("text/html", DRIVER_SITE_FORM.to_owned())
                 };
@@ -4040,6 +4042,66 @@ const DRIVER_SITE_FORM: &str = r#"<!doctype html><body>
     });
   }
 </script>"#;
+
+const DRIVER_SITE_QUIET: &str = r#"<!doctype html><body>
+<button id="go">Go</button> <button id="poll">Poll</button> <div id="out"></div>
+<script>
+  // Background work that is not pending: a perpetual frame loop, an
+  // interval and a far timeout.
+  let spins = 0;
+  const spin = () => { spins++; requestAnimationFrame(spin); };
+  requestAnimationFrame(spin);
+  setInterval(() => {}, 10);
+  setTimeout(() => {}, 5000);
+  // A click's follow-up: a short timeout, two frames, then a fetch.
+  document.getElementById('go').addEventListener('click', () => {
+    setTimeout(() => requestAnimationFrame(() => requestAnimationFrame(async () => {
+      const r = await fetch('/api?name=quiet');
+      document.getElementById('out').textContent = (await r.json()).greeting;
+    })), 30);
+  });
+  // Polling with short timeouts never goes quiet.
+  document.getElementById('poll').addEventListener('click', () => {
+    const tick = () => setTimeout(tick, 20);
+    tick();
+  });
+</script>"#;
+
+/// Settle waits for everything an action set off (a short timeout, frames
+/// chained from it, the fetch they start) but not for the page's background
+/// work (an animation loop, an interval, a far timeout); `idle` waits the
+/// same way and reports what kept the page busy when it gives up.
+#[test]
+fn driver_settles_when_the_page_goes_quiet() {
+    let address = driver_site();
+    let mut h = Harness::new();
+    let steps = json!([
+        {"goto": {"url": format!("http://{address}/quiet")}},
+        {"idle": {}},
+        {"act": {"locator": {"css": "#go"}, "action": "click"}},
+        {"read": {"locator": {"css": "#out"}, "read": "text", "as": "out"}},
+        {"act": {"locator": {"css": "#poll"}, "action": "click", "settle": false}},
+        {"idle": {"timeout": 200}},
+    ]);
+    let r = h.page("LP.run", json!({ "steps": steps }));
+    let result = &r["result"];
+    // Read right after the click: the fetch it set off already landed.
+    assert_eq!(result["reads"]["out"], "Hello, quiet", "{r}");
+    let results = result["results"].as_array().unwrap_or_else(|| panic!("{r}"));
+    assert!(results[1].get("settled").is_none(), "background work kept the page busy: {r}");
+    assert!(results[1]["settleMs"].as_f64().unwrap() < 100.0, "{r}");
+    assert!(results[2].get("settled").is_none(), "{r}");
+    // 30 ms timeout + 100 ms response, well short of the 1 s cap.
+    let settle = results[2]["settleMs"].as_f64().unwrap();
+    assert!((120.0..900.0).contains(&settle), "{r}");
+    assert_eq!(results[5]["settled"], false, "{r}");
+    assert_eq!(results[5]["pending"]["timers"], 1, "{r}");
+
+    // `LP.idle` is the same wait as one command.
+    let r = h.page("LP.idle", json!({ "timeout": 100 }));
+    assert_eq!(r["result"]["settled"], false, "{r}");
+    assert_eq!(r["result"]["pending"]["timers"], 1, "{r}");
+}
 
 /// `LP.run`: navigation, actions, checks and reads in one command. A click's
 /// settle waits for the fetch it started, so the read right after it already

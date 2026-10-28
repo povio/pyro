@@ -137,7 +137,8 @@ mod wake {
                 }
             };
             let watched = watch.and_then(|w| {
-                let events = (if w.read.get() { libc::POLLIN } else { 0 }) | (if w.write.get() { libc::POLLOUT } else { 0 });
+                let events =
+                    (if w.read.get() { libc::POLLIN } else { 0 }) | (if w.write.get() { libc::POLLOUT } else { 0 });
                 (events != 0).then(|| libc::pollfd { fd: w.fd, events, revents: 0 })
             });
             let mut fds = [libc::pollfd { fd: self.0.as_raw_fd(), events: libc::POLLIN, revents: 0 }; 2];
@@ -327,6 +328,9 @@ struct Inner<S> {
     stop: Cell<bool>,
     /// Live timers with `keeps_alive` (kept in sync with `timers`).
     keepalive: Cell<usize>,
+    /// Idle timers ([`Scheduler::set_idle_timer`]) in the order they were
+    /// set; cleared ones stay until they reach the front.
+    idle: RefCell<VecDeque<TimerId>>,
 }
 
 impl<S> Inner<S> {
@@ -406,6 +410,18 @@ impl<S: 'static> Scheduler<S> {
         self.inner.next_timer.set(id.0.wrapping_add(1).max(1));
         self.inner.insert_timer(id, Timer { task: Rc::new(task), interval: repeat.then_some(delay), keeps_alive });
         self.push_deadline(Instant::now() + delay, id);
+        id
+    }
+
+    /// Schedules `task` to run once the loop has nothing else ready: no
+    /// queued task, due timer or posted remote task. Idle timers run in the
+    /// order they were set, one per loop turn; [`Scheduler::clear_timer`]
+    /// cancels one like any timer.
+    pub fn set_idle_timer(&self, keeps_alive: bool, task: impl Fn(&mut S) + 'static) -> TimerId {
+        let id = TimerId(self.inner.next_timer.get());
+        self.inner.next_timer.set(id.0.wrapping_add(1).max(1));
+        self.inner.insert_timer(id, Timer { task: Rc::new(task), interval: None, keeps_alive });
+        self.inner.idle.borrow_mut().push_back(id);
         id
     }
 
@@ -563,6 +579,7 @@ impl<S: LoopState + 'static> EventLoop<S> {
                     seq: Cell::new(0),
                     stop: Cell::new(false),
                     keepalive: Cell::new(0),
+                    idle: RefCell::new(VecDeque::new()),
                 }),
             },
             tx: Some(tx),
@@ -681,7 +698,20 @@ impl<S: LoopState + 'static> EventLoop<S> {
                 return true;
             }
         }
-        self.run_due_timer(state)
+        self.run_due_timer(state) || self.run_idle_timer(state)
+    }
+
+    /// Runs the oldest live idle timer; called only when nothing else is ready.
+    fn run_idle_timer(&mut self, state: &mut S) -> bool {
+        loop {
+            let Some(id) = self.sched.inner.idle.borrow_mut().pop_front() else { return false };
+            let task = self.sched.inner.timers.borrow().get(&id).map(|t| t.task.clone());
+            let Some(task) = task else { continue }; // cleared
+            self.sched.inner.remove_timer(id);
+            task(state);
+            state.after_task();
+            return true;
+        }
     }
 
     /// Moves every remote task already posted into the ordered remote queue.
@@ -928,7 +958,8 @@ mod tests {
                 }
             }
         });
-        let r = lp.run_until(&mut st, Some(Instant::now() + Duration::from_secs(20)), false, |st| st.log.len() == N as usize);
+        let r = lp
+            .run_until(&mut st, Some(Instant::now() + Duration::from_secs(20)), false, |st| st.log.len() == N as usize);
         poster.join().unwrap();
         assert_eq!(r, RunOutcome::Done, "lost a wake-up after {} tasks", st.log.len());
         assert!(st.log.iter().enumerate().all(|(i, v)| v == &i.to_string()));
@@ -1050,6 +1081,28 @@ mod tests {
         }
         lateness.sort();
         assert!(lateness[2] < Duration::from_millis(40), "median lateness {:?} (all {:?})", lateness[2], lateness);
+    }
+
+    /// Idle timers wait for queued tasks (including ones those tasks queue)
+    /// and due timers, run in order, and can be cleared.
+    #[test]
+    fn idle_timers_run_when_nothing_else_is_ready() {
+        let mut lp = EventLoop::<St>::new();
+        let s = lp.scheduler();
+        let mut st = St::default();
+        s.set_idle_timer(true, |st| st.log.push("idle1".into()));
+        let cleared = s.set_idle_timer(true, |st| st.log.push("cleared".into()));
+        s.set_idle_timer(true, |st| st.log.push("idle2".into()));
+        assert!(s.clear_timer(cleared));
+        let inner = s.clone();
+        s.post(TaskSource::DomManipulation, move |st| {
+            st.log.push("task".into());
+            inner.post(TaskSource::DomManipulation, |st| st.log.push("chained".into()));
+        });
+        s.set_timer(Duration::ZERO, false, true, |st| st.log.push("timer".into()));
+        assert_eq!(lp.run_until_idle(&mut st, Some(Instant::now() + Duration::from_secs(2))), RunOutcome::Idle);
+        assert_eq!(st.log, ["task", "timer", "chained", "idle1", "idle2"]);
+        assert_eq!(s.active_timers(), 0);
     }
 
     #[derive(Default)]

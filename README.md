@@ -84,6 +84,12 @@ coding agents writing tests with it. Releases ship it in the archive
 3 ms per test this way, against about 34 ms in Playwright
 (`bench/results/lp-tos-e501cef`).
 
+After each action a step waits until the page is quiet: no queued task, no
+request the action started, no `setTimeout` due within 50 ms, no pending
+animation frame (animation loops excepted) and no navigation short of
+DOMContentLoaded. The same wait is an `idle` step, or `LP.idle {timeout}` on
+its own; when it gives up, the result says what was still `pending`.
+
 ## License
 
 AGPL-3.0-only. This is a derivative of Lightpanda; see [NOTICE](NOTICE).

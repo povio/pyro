@@ -15,45 +15,63 @@ use std::time::{Duration, Instant};
 /// Frame interval without rendering. Upstream Lightpanda schedules each
 /// animation frame callback 5 ms out (`Window.requestAnimationFrame`).
 const FRAME_MS: u64 = 5;
-/// Frame interval while an automation client is driving the page. Nothing
-/// renders, so a frame only paces script; clients that wait for frames (e.g.
-/// Bun.WebView's "stable for two frames" click check) would otherwise wait
-/// on an idle clock.
-const ACTIVE_FRAME_MS: u64 = 1;
-/// How long after a client command frames stay on [`ACTIVE_FRAME_MS`]. Long
-/// enough to cover the frames a command's follow-up work waits for (a few
-/// ms), short enough that a page with a perpetual `requestAnimationFrame`
-/// loop falls back to the 5 ms cadence as soon as the client goes quiet.
-const CLIENT_ACTIVE_WINDOW: Duration = Duration::from_millis(50);
+/// Frames run as soon as the thread has nothing else ready (an idle timer)
+/// this many times after each client command. Nothing renders, so a frame
+/// only paces script: clients that wait for frames (e.g. Bun.WebView's
+/// "stable for two frames" click check) get them as soon as the page's work
+/// is done instead of on a clock, while a page with a perpetual
+/// `requestAnimationFrame` loop falls back to the 5 ms cadence after a few
+/// frames instead of spinning.
+const EAGER_FRAMES: u32 = 4;
 
 thread_local! {
-    /// Until when this browser thread counts its client as active.
-    static CLIENT_ACTIVE_UNTIL: Cell<Option<Instant>> = const { Cell::new(None) };
+    /// Eager frames this browser thread may still run.
+    static EAGER_FRAMES_LEFT: Cell<u32> = const { Cell::new(0) };
 }
 
-/// Notes that an automation client just sent a command to this thread's
-/// browser: animation frames run on the short interval for a little while.
+/// Notes that an automation client just sent a command (or an `LP.run` step
+/// acted) on this thread's browser: the next few animation frames run as
+/// soon as the page is otherwise idle.
 pub fn note_client_activity() {
-    CLIENT_ACTIVE_UNTIL.with(|c| c.set(Some(Instant::now() + CLIENT_ACTIVE_WINDOW)));
+    EAGER_FRAMES_LEFT.with(|c| c.set(EAGER_FRAMES));
 }
 
-fn frame_interval() -> Duration {
-    let active = CLIENT_ACTIVE_UNTIL.with(|c| c.get()).is_some_and(|until| Instant::now() < until);
-    Duration::from_millis(if active { ACTIVE_FRAME_MS } else { FRAME_MS })
+/// Takes one eager frame, if any is left.
+fn take_eager_frame() -> bool {
+    EAGER_FRAMES_LEFT.with(|c| {
+        let left = c.get();
+        c.set(left.saturating_sub(1));
+        left > 0
+    })
 }
+
+/// One-shot timers due within this window count as pending page work
+/// ([`WindowData::pending_work`]); later ones and intervals are a page's
+/// background schedule (polling, debounces, idle timeouts), not the
+/// follow-up of what just happened.
+pub const TIMER_HORIZON: Duration = Duration::from_millis(50);
+/// A callback requested from a frame callback that was itself requested
+/// from one (and so on) this many levels deep belongs to an animation loop,
+/// not pending work; a single frame or the double-frame "after paint" idiom
+/// still counts.
+const LOOP_DEPTH: u32 = 2;
 
 #[derive(Default)]
 struct AnimationFrame {
-    callbacks: Vec<(u32, Persistent)>,
+    /// Handle, callback, and how many frame callbacks it was requested
+    /// from in a chain (0: from outside a frame).
+    callbacks: Vec<(u32, Persistent, u32)>,
     timer: Option<TimerId>,
+    /// Chain depth of the frame callback running now, if any.
+    running: Option<u32>,
 }
 
 pub struct WindowData {
     sched: Scheduler<Browser>,
     nav: Rc<PageNav>,
     target: lp_webapi::EventTargetData,
-    /// JS timer handle -> loop timer.
-    timers: RefCell<HashMap<u32, TimerId>>,
+    /// JS timer handle -> loop timer and, for `setTimeout`, when it is due.
+    timers: RefCell<HashMap<u32, (TimerId, Option<Instant>)>>,
     /// Pending `requestAnimationFrame` callbacks, in registration order, and
     /// the loop timer of the frame that will run them.
     animation: RefCell<AnimationFrame>,
@@ -105,6 +123,16 @@ impl WindowData {
     /// Milliseconds since the document's time origin (`performance.now()`).
     pub fn now_ms(&self) -> f64 {
         self.nav.now_ms()
+    }
+
+    /// Script work this window has scheduled that can still change the page
+    /// soon: `setTimeout`s due by `now + TIMER_HORIZON`, and animation frame
+    /// callbacks unless they belong to an animation loop.
+    pub fn pending_work(&self, now: Instant) -> (usize, usize) {
+        let horizon = now + TIMER_HORIZON;
+        let timers = self.timers.borrow().values().filter(|(_, due)| due.is_some_and(|d| d <= horizon)).count();
+        let frames = self.animation.borrow().callbacks.iter().filter(|(_, _, depth)| *depth < LOOP_DEPTH).count();
+        (timers, frames)
     }
 }
 
@@ -274,7 +302,8 @@ fn schedule<'s>(
             scope.report_exception(&e);
         }
     });
-    w.timers.borrow_mut().insert(handle, id);
+    let due = (!repeat).then(|| Instant::now() + Duration::from_millis(delay_ms));
+    w.timers.borrow_mut().insert(handle, (id, due));
     Ok(s.number(handle as f64))
 }
 
@@ -288,15 +317,21 @@ fn request_animation_frame<'s>(s: &Scope<'s>, w: &WindowData, cb: Persistent) ->
     let handle = w.next_handle.get();
     w.next_handle.set(handle.wrapping_add(1).max(1));
     let mut frame = w.animation.borrow_mut();
-    frame.callbacks.push((handle, cb));
+    let depth = frame.running.map_or(0, |d| d.saturating_add(1));
+    frame.callbacks.push((handle, cb, depth));
     if frame.timer.is_none() {
         // Timers must not keep a disposed realm alive: hold it weakly.
         let realm_weak = s.realm().downgrade();
-        frame.timer = Some(w.sched.set_timer(frame_interval(), false, true, move |_browser| {
+        let run = move |_browser: &mut Browser| {
             let Some(realm) = realm_weak.upgrade() else { return };
             let Ok(scope) = realm.scope() else { return };
             run_animation_frame(&scope);
-        }));
+        };
+        frame.timer = Some(if take_eager_frame() {
+            w.sched.set_idle_timer(true, run)
+        } else {
+            w.sched.set_timer(Duration::from_millis(FRAME_MS), false, true, run)
+        });
     }
     Ok(s.number(handle as f64))
 }
@@ -306,34 +341,37 @@ fn run_animation_frame(scope: &Scope<'_>) {
     let handles: Vec<u32> = {
         let mut frame = w.animation.borrow_mut();
         frame.timer = None;
-        frame.callbacks.iter().map(|(h, _)| *h).collect()
+        frame.callbacks.iter().map(|(h, _, _)| *h).collect()
     };
     let now = scope.number(w.now_ms());
     for handle in handles {
         // A callback may cancel a later one of the same frame.
         let cb = {
             let mut frame = w.animation.borrow_mut();
-            let Some(i) = frame.callbacks.iter().position(|(h, _)| *h == handle) else { continue };
-            frame.callbacks.remove(i).1
+            let Some(i) = frame.callbacks.iter().position(|(h, _, _)| *h == handle) else { continue };
+            let (_, cb, depth) = frame.callbacks.remove(i);
+            frame.running = Some(depth);
+            cb
         };
         let Some(f) = cb.get(scope).as_object() else { continue };
         if let Err(e) = f.call(None, &[now]) {
             scope.report_exception(&e);
         }
     }
+    w.animation.borrow_mut().running = None;
 }
 
 fn clear_timer<'s>(s: &Scope<'s>, w: &WindowData, a: Args<'s>) -> JsResult<Value<'s>> {
     let n = a.get(0).to_number()?;
     if n.is_finite() && n >= 1.0 && n <= u32::MAX as f64 {
         let handle = n as u32;
-        if let Some(id) = w.timers.borrow_mut().remove(&handle) {
+        if let Some((id, _)) = w.timers.borrow_mut().remove(&handle) {
             w.sched.clear_timer(id);
         } else {
             // Timer and animation frame handles share one sequence, so either
             // clear function cancels either kind (as before).
             let mut frame = w.animation.borrow_mut();
-            if let Some(i) = frame.callbacks.iter().position(|(h, _)| *h == handle) {
+            if let Some(i) = frame.callbacks.iter().position(|(h, _, _)| *h == handle) {
                 frame.callbacks.remove(i);
                 if frame.callbacks.is_empty() {
                     if let Some(id) = frame.timer.take() {
@@ -350,7 +388,7 @@ fn clear_timer<'s>(s: &Scope<'s>, w: &WindowData, a: Args<'s>) -> JsResult<Value
 pub(crate) fn cancel_timers(realm: &Realm) {
     let Ok(scope) = realm.scope() else { return };
     if let Some(w) = scope.global_data::<Window>() {
-        for (_, id) in w.timers.borrow_mut().drain() {
+        for (_, (id, _)) in w.timers.borrow_mut().drain() {
             w.sched.clear_timer(id);
         }
         let mut frame = w.animation.borrow_mut();

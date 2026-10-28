@@ -12,16 +12,20 @@
 //! A run whose current step cannot finish yet becomes a [`Waiter`]. Nothing
 //! polls: a waiting step is tried again only when the page's DOM version moves
 //! (or its document is replaced), a `goto` when its document reaches `load`,
-//! and an action's settle when the requests it started are done.
+//! and an action's settle when the page goes quiet.
 //! `EngineHost::run_until_work` returns to the serve loop when a waiter is
 //! ready, and `EngineHost::flush` drives the ready ones before sending queued
 //! events.
 //!
 //! Settle: after an action (unless `settle: false`), the next step waits until
-//! the page has no more requests in flight than before the action, then for
-//! the tasks already queued to run (a marker task that re-queues itself while
-//! others are pending). It gives up after [`SETTLE_MAX`] and carries on.
-use std::cell::{Cell, RefCell};
+//! the page is quiet (`Browser::page_work`): no queued task, no `setTimeout`
+//! due within `TIMER_HORIZON`, no pending animation frame, no navigation short
+//! of DOMContentLoaded, and no more requests in flight than before the action.
+//! Readiness is checked between loop tasks, so the step goes on right after
+//! the last piece of work. It gives up after [`SETTLE_MAX`], carries on, and
+//! reports what was still pending. An `idle` step (`LP.idle`) waits the same
+//! way with no requests allowed, up to its timeout.
+use std::cell::RefCell;
 use std::collections::HashSet;
 use std::rc::{Rc, Weak};
 use std::time::{Duration, Instant};
@@ -29,7 +33,6 @@ use std::time::{Duration, Instant};
 use lp_browser::{Browser, NavigateOpts, PageId};
 use lp_dom::select::SelectorCache;
 use lp_dom::{Dom, NodeId, NodeKind};
-use lp_runtime::{Scheduler, TaskSource};
 use lp_webapi::input::{self, MouseButton, MouseInput, MouseKind};
 use lp_webapi::PageDom;
 use serde::{Deserialize, Serialize};
@@ -44,10 +47,8 @@ const MAX_TIMEOUT_MS: u64 = 600_000;
 /// Waiting runs per connection (each holds only its parsed steps).
 const MAX_WAITERS: usize = 1024;
 const MAX_STEPS: usize = 10_000;
-/// Longest an action waits for the requests it started.
+/// Longest an action waits for the page to go quiet.
 const SETTLE_MAX: Duration = Duration::from_millis(1_000);
-/// How many times the settle marker lets queued tasks go first.
-const MARKER_HOPS: u32 = 4;
 
 /// What a locator names. Exactly one of `css`, `testId`, `text`, `role`,
 /// `label` or `placeholder`, searched inside each match of `within` (else the
@@ -251,6 +252,9 @@ enum Step {
         url: String,
         dom_ready: bool,
     },
+    /// Waits until the page is quiet (see the module docs), up to the step's
+    /// timeout; never fails, reports what was still pending instead.
+    Idle,
     /// Same-document navigation: `history.pushState` and a `popstate` event,
     /// as a client-side router reacts to; settles like an action.
     Route {
@@ -293,6 +297,7 @@ impl Step {
         match self {
             Step::Goto { url, .. } => format!("goto {url}"),
             Step::Loaded => "loaded".into(),
+            Step::Idle => "idle".into(),
             Step::Reload => "reload".into(),
             Step::Url(p) => format!("url {}", p.text),
             Step::Mock(m) => format!("mock {}", m.url.text),
@@ -365,8 +370,9 @@ enum Phase {
     Try,
     /// `goto` started; waits for the new document's `load` (or DOMContentLoaded).
     Load { loader: String, dom_ready: bool },
-    /// The step's action ran; waits for the requests it started.
-    Settle { loader: String, baseline: usize, marker: Option<Rc<Cell<bool>>>, since: Instant, until: Instant },
+    /// The step's action ran (or an `idle` step started); waits until the
+    /// page is quiet with at most `requests` requests in flight.
+    Settle { requests: usize, since: Instant, until: Instant },
 }
 
 pub(super) struct Waiter {
@@ -420,10 +426,7 @@ impl Waiter {
                 None => true,
             },
             Phase::Load { loader, dom_ready } => load_reached(browser, self.job.pid, loader, *dom_ready),
-            Phase::Settle { loader, baseline, marker, .. } => match marker {
-                Some(done) => done.get(),
-                None => inflight(browser, self.job.pid, loader) <= *baseline,
-            },
+            Phase::Settle { requests, .. } => browser.page_work(self.job.pid).is_none_or(|w| w.quiet(*requests)),
         }
     }
 }
@@ -465,33 +468,25 @@ fn load_reached(browser: &Browser, pid: PageId, loader: &str, dom_ready: bool) -
     }
 }
 
-/// The page's current document loader and its requests in flight.
-fn net_state(browser: &Browser, pid: PageId) -> (String, usize) {
-    let Some(p) = browser.page(pid) else { return (String::new(), 0) };
-    let loader = p.main_frame.loader_id.0.clone();
-    let n = inflight(browser, pid, &loader);
-    (loader, n)
+/// The page's current document loader.
+fn loader_of(browser: &Browser, pid: PageId) -> String {
+    browser.page(pid).map(|p| p.main_frame.loader_id.0.clone()).unwrap_or_default()
 }
 
-fn inflight(browser: &Browser, pid: PageId, loader: &str) -> usize {
-    browser
-        .page(pid)
-        .and_then(|p| browser.context_net(p.context))
-        .and_then(|net| net.activity(loader))
-        .map_or(0, |a| a.inflight)
+fn requests_of(browser: &Browser, pid: PageId) -> usize {
+    browser.page_work(pid).map_or(0, |w| w.requests)
 }
 
-/// Sets `done` from a task that runs after the tasks queued now; while others
-/// are queued behind it, it goes to the back again (up to `hops` times).
-fn post_marker(sched: Scheduler<Browser>, done: Rc<Cell<bool>>, hops: u32) {
-    let next = sched.clone();
-    sched.post(TaskSource::Internal, move |_| {
-        if hops > 0 && next.pending_tasks() > 0 {
-            post_marker(next, done, hops - 1);
-        } else {
-            done.set(true);
-        }
-    });
+/// `{"tasks": 1, "requests": 2, ...}`: the kinds of work still pending.
+fn pending_json(work: &lp_browser::PageWork) -> Value {
+    let all = [
+        ("tasks", work.tasks),
+        ("requests", work.requests),
+        ("timers", work.timers),
+        ("frames", work.frames),
+        ("navigations", work.navigations),
+    ];
+    Value::Object(all.into_iter().filter(|(_, n)| *n > 0).map(|(k, n)| (k.to_owned(), json!(n))).collect())
 }
 
 fn normalize(s: &str) -> String {
@@ -1530,6 +1525,7 @@ struct QueryParams {
 enum StepParams {
     Goto(GotoParams),
     Loaded(LoadedParams),
+    Idle(LoadedParams),
     Reload(LoadedParams),
     Url(UrlParams),
     Mock(MockParams),
@@ -1782,6 +1778,7 @@ impl StepParams {
                 Ok((Step::Goto { url: p.url, dom_ready }, p.timeout))
             }
             StepParams::Loaded(p) => Ok((Step::Loaded, p.timeout)),
+            StepParams::Idle(p) => Ok((Step::Idle, p.timeout)),
             StepParams::Reload(p) => Ok((Step::Reload, p.timeout)),
             StepParams::Url(p) => Ok((Step::Url(p.url), p.timeout)),
             StepParams::Mock(p) => p.step(),
@@ -1894,6 +1891,7 @@ impl EngineHost {
         match step {
             Step::Goto { .. }
             | Step::Loaded
+            | Step::Idle
             | Step::Reload
             | Step::Url(_)
             | Step::Mock(_)
@@ -1952,6 +1950,10 @@ impl EngineHost {
             "expect" => {
                 let (step, timeout) = cmd.command.params::<ExpectParams>()?.step()?;
                 (vec![(step, timeout_of(timeout, None))], true)
+            }
+            "idle" => {
+                let p = cmd.command.params::<Option<LoadedParams>>()?.unwrap_or(LoadedParams { timeout: None });
+                (vec![(Step::Idle, timeout_of(p.timeout, None))], true)
             }
             "run" => {
                 let p: RunParams = cmd.command.params()?;
@@ -2030,28 +2032,18 @@ impl EngineHost {
             let now = Instant::now();
             let pid = w.job.pid;
             match std::mem::replace(&mut w.phase, Phase::Try) {
-                Phase::Settle { loader, baseline, mut marker, since, until } => {
-                    let gave_up = now >= until;
-                    if !gave_up {
-                        if inflight(&self.thread.browser, pid, &loader) > baseline {
-                            // A request is (again) in flight: the marker restarts after it.
-                            w.phase = Phase::Settle { loader, baseline, marker: None, since, until };
-                            return Ok(Drive::Park(Box::new(w)));
-                        }
-                        let done = marker.get_or_insert_with(|| {
-                            let done = Rc::new(Cell::new(false));
-                            post_marker(self.thread.browser.scheduler(), done.clone(), MARKER_HOPS);
-                            done
-                        });
-                        if !done.get() {
-                            w.phase = Phase::Settle { loader, baseline, marker, since, until };
-                            return Ok(Drive::Park(Box::new(w)));
-                        }
+                Phase::Settle { requests, since, until } => {
+                    let work = self.thread.browser.page_work(pid);
+                    let quiet = work.is_none_or(|w| w.quiet(requests));
+                    if !quiet && now < until {
+                        w.phase = Phase::Settle { requests, since, until };
+                        return Ok(Drive::Park(Box::new(w)));
                     }
                     if let Some(Value::Object(r)) = w.job.results.last_mut() {
                         r.insert("settleMs".into(), json!(since.elapsed().as_secs_f64() * 1e3));
-                        if gave_up {
+                        if let (false, Some(work)) = (quiet, work) {
                             r.insert("settled".into(), json!(false));
+                            r.insert("pending".into(), pending_json(&work));
                         }
                     }
                     self.next_step(&mut w);
@@ -2092,8 +2084,13 @@ impl EngineHost {
                         continue;
                     }
                     if let Step::Loaded = step {
-                        let (loader, _) = net_state(&self.thread.browser, pid);
+                        let loader = loader_of(&self.thread.browser, pid);
                         w.phase = Phase::Load { loader, dom_ready: false };
+                        continue;
+                    }
+                    if let Step::Idle = step {
+                        w.job.results.push(json!({}));
+                        w.phase = Phase::Settle { requests: 0, since: now, until: w.step_deadline };
                         continue;
                     }
                     if let Step::Reload = step {
@@ -2113,7 +2110,7 @@ impl EngineHost {
                         continue;
                     }
                     let before = matches!(step, Step::Act { settle: true, .. } | Step::Route { .. })
-                        .then(|| net_state(&self.thread.browser, pid));
+                        .then(|| requests_of(&self.thread.browser, pid));
                     let (attempt, page) = match &step {
                         Step::Request(m) => (self.match_request(&w.job, m), None),
                         Step::Url(pattern) => {
@@ -2163,15 +2160,11 @@ impl EngineHost {
                             }
                             w.job.results.push(value);
                             match before {
-                                Some((loader, baseline)) => {
+                                Some(requests) => {
+                                    // Frames the action's follow-up work asks for run once idle.
+                                    lp_browser::note_client_activity();
                                     let since = Instant::now();
-                                    w.phase = Phase::Settle {
-                                        loader,
-                                        baseline,
-                                        marker: None,
-                                        since,
-                                        until: since + SETTLE_MAX,
-                                    };
+                                    w.phase = Phase::Settle { requests, since, until: since + SETTLE_MAX };
                                 }
                                 None => self.next_step(&mut w),
                             }
