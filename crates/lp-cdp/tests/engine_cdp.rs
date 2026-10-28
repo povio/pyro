@@ -4495,6 +4495,121 @@ fn driver_run_counts_started_requests() {
     assert!(r["error"]["message"].as_str().unwrap_or_default().contains("0 matching requests started"), "{r}");
 }
 
+const OUT_TEXT: &str = "document.getElementById('out').textContent";
+
+/// A `passthrough` mock lets the request reach the real backend and
+/// rewrites its response with `patch` (status, headers, a JSON merge patch;
+/// `patch` alone implies passthrough).
+#[test]
+fn driver_run_passthrough_mock_patches_the_real_response() {
+    let address = driver_api_site();
+    let mut h = Harness::new();
+    let r = h.page(
+        "LP.run",
+        json!({"steps": [
+            {"goto": {"url": format!("http://{address}/")}},
+            {"mock": {"url": "/api", "passthrough": true, "times": 1,
+                      "patch": {"status": 201, "headers": {"x-patched": "yes"}, "json": {"total": 999, "items": null}}}},
+            {"eval": {"expression": "call('/api?a'); 1"}},
+            {"request": {"path": "/api"}},
+            {"check": {"locator": {"css": "#out"}, "assert": "containsText", "expected": "999"}},
+            {"eval": {"expression": OUT_TEXT}},
+            // Used up: the next request gets the real response.
+            {"eval": {"expression": "call('/api?b'); 1"}},
+            {"check": {"locator": {"css": "#out"}, "assert": "containsText", "expected": "\"total\":1"}},
+            {"eval": {"expression": OUT_TEXT}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    let results = r["result"]["results"].as_array().unwrap_or_else(|| panic!("{r}"));
+    assert_eq!(results[3]["status"], 201, "{r}");
+    assert_eq!(results[3]["responseHeaders"]["x-patched"], "yes", "{r}");
+    let patched: Value = serde_json::from_str(results[5].as_str().unwrap_or_else(|| panic!("{r}"))).unwrap();
+    // Merged into the real body: `total` replaced, `items` removed, the rest kept.
+    assert_eq!(patched, json!({"total": 999, "method": "GET", "body": ""}), "{r}");
+    let real: Value = serde_json::from_str(results[8].as_str().unwrap_or_else(|| panic!("{r}"))).unwrap();
+    assert_eq!(real["items"], json!(["a"]), "{r}");
+
+    // A plain passthrough answers like the backend; `patch.body` replaces it.
+    let r = h.page(
+        "LP.run",
+        json!({"steps": [
+            // `patch` implies `passthrough`.
+            {"mock": {"url": "/api", "patch": {"body": "replaced"}}},
+            {"mock": {"url": "/api?plain", "passthrough": true}},
+            {"eval": {"expression": "call('/api?plain'); 1"}},
+            {"check": {"locator": {"css": "#out"}, "assert": "containsText", "expected": "\"total\":1"}},
+            {"eval": {"expression": "call('/api?other'); 1"}},
+            {"check": {"locator": {"css": "#out"}, "assert": "containsText", "expected": "replaced"}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    let r = h.page("LP.run", json!({"steps": [{"mock": {"url": "/api", "json": {}, "patch": {"status": 500}}}]}));
+    assert!(r["error"]["message"].as_str().unwrap_or_default().contains("not a response"), "{r}");
+}
+
+/// `hold` keeps a request (or, with `passthrough`, its real response) until
+/// a `release` step names the hold.
+#[test]
+fn driver_run_held_mock_finishes_only_after_release() {
+    let address = driver_api_site();
+    let mut h = Harness::new();
+    let still_held = |h: &mut Harness, expected: &str| {
+        let r = h.page(
+            "LP.run",
+            json!({"timeout": 300, "steps": [
+                {"check": {"locator": {"css": "#out"}, "assert": "containsText", "expected": expected}},
+            ]}),
+        );
+        assert!(r.get("error").is_some(), "should still be held: {r}");
+    };
+    let r = h.page(
+        "LP.run",
+        json!({"steps": [
+            {"goto": {"url": format!("http://{address}/")}},
+            {"mock": {"url": "/api", "json": {"total": 7}, "hold": "save"}},
+            {"eval": {"expression": "call('/api?held'); 1"}},
+            {"request": {"path": "/api", "count": 1, "state": "started"}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    still_held(&mut h, "7");
+    let r = h.page(
+        "LP.run",
+        json!({"steps": [
+            {"release": {"hold": "save"}},
+            {"check": {"locator": {"css": "#out"}, "assert": "containsText", "expected": "7"}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(r["result"]["results"][0]["released"], 1, "{r}");
+
+    // A held real response: the page gets the backend's answer on release.
+    let r = h.page(
+        "LP.run",
+        json!({"steps": [
+            {"unmock": {}},
+            {"mock": {"url": "/api", "passthrough": true, "hold": "resp"}},
+            {"eval": {"expression": "call('/api?real'); 1"}},
+            {"request": {"path": "/api", "count": 1, "state": "started"}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    still_held(&mut h, "\"total\":1");
+    let r = h.page(
+        "LP.run",
+        json!({"steps": [
+            {"release": {"hold": "resp"}},
+            {"check": {"locator": {"css": "#out"}, "assert": "containsText", "expected": "\"total\":1"}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+
+    // Nothing held: release waits, then times out.
+    let r = h.page("LP.run", json!({"timeout": 100, "steps": [{"release": {"hold": "none"}}]}));
+    assert!(r["error"]["message"].as_str().unwrap_or_default().contains("nothing is held"), "{r}");
+}
+
 const DRIVER_BATCH2_PAGE: &str = r#"<!doctype html><body>
 <iframe id="fr" srcdoc="<button id='inner'>Inner</button><p id='inner-out'></p><script>document.getElementById('inner').addEventListener('click', () => { document.getElementById('inner-out').textContent = 'inner clicked'; });</script>"></iframe>
 <input id="file" type="file" multiple><p id="file-out"></p>
