@@ -4610,6 +4610,33 @@ fn driver_run_held_mock_finishes_only_after_release() {
     assert!(r["error"]["message"].as_str().unwrap_or_default().contains("nothing is held"), "{r}");
 }
 
+/// URL and request patterns are ECMAScript regexes: look-ahead, negative
+/// look-ahead and backreferences work as in a JS `RegExp`.
+#[test]
+fn driver_run_patterns_are_javascript_regexes() {
+    let address = driver_api_site();
+    let mut h = Harness::new();
+    let r = h.page(
+        "LP.run",
+        json!({"steps": [
+            {"goto": {"url": format!("http://{address}/")}},
+            {"mock": {"url": {"regex": "/api(?!\\?real)"}, "json": {"total": 42}}},
+            {"eval": {"expression": "call('/api?mocked'); 1"}},
+            {"check": {"locator": {"css": "#out"}, "assert": "containsText", "expected": "42"}},
+            {"eval": {"expression": "call('/api?real'); 1"}},
+            {"check": {"locator": {"css": "#out"}, "assert": "containsText", "expected": "\"total\":1"}},
+            {"eval": {"expression": "call('/api', {method: 'POST', body: 'ab-ab'}); 1"}},
+            {"request": {"url": {"regex": "/api(?=\\?real$)"}, "count": 1}},
+            {"request": {"url": {"regex": "/API(?!\\?)", "flags": "i"}, "count": 1}},
+            {"request": {"body": {"regex": "^(\\w+)-\\1$"}, "count": 1}},
+            {"url": {"url": {"regex": "^http://(?<host>[^/]+)/$"}}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    let r = h.page("LP.run", json!({"steps": [{"request": {"url": {"regex": "a(?<=", "flags": ""}}}]}));
+    assert!(r["error"]["message"].as_str().unwrap_or_default().contains("invalid regex"), "{r}");
+}
+
 const DRIVER_BATCH2_PAGE: &str = r#"<!doctype html><body>
 <iframe id="fr" srcdoc="<button id='inner'>Inner</button><p id='inner-out'></p><script>document.getElementById('inner').addEventListener('click', () => { document.getElementById('inner-out').textContent = 'inner clicked'; });</script>"></iframe>
 <input id="file" type="file" multiple><p id="file-out"></p>

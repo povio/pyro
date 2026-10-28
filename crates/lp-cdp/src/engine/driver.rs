@@ -616,7 +616,8 @@ fn text_matches(have: &str, want: &str, exact: bool) -> bool {
 #[derive(Clone, Debug)]
 pub(super) struct Pattern {
     pub(super) text: String,
-    regex: Option<regex_lite::Regex>,
+    /// ECMAScript semantics (look-around, backreferences), like a JS `RegExp`.
+    regex: Option<regress::Regex>,
 }
 
 impl<'de> Deserialize<'de> for Pattern {
@@ -634,16 +635,11 @@ impl<'de> Deserialize<'de> for Pattern {
         Ok(match Raw::deserialize(d)? {
             Raw::Text(text) => Pattern { text, regex: None },
             Raw::Regex { regex, flags } => {
-                let mut b = regex_lite::RegexBuilder::new(&regex);
-                for f in flags.chars() {
-                    match f {
-                        'i' => b.case_insensitive(true),
-                        'm' => b.multi_line(true),
-                        's' => b.dot_matches_new_line(true),
-                        _ => return Err(serde::de::Error::custom(format!("unsupported regex flag {f:?}"))),
-                    };
+                if let Some(f) = flags.chars().find(|f| !matches!(f, 'i' | 'm' | 's')) {
+                    return Err(serde::de::Error::custom(format!("unsupported regex flag {f:?}")));
                 }
-                let re = b.build().map_err(serde::de::Error::custom)?;
+                let re = regress::Regex::with_flags(&regex, flags.as_str())
+                    .map_err(|e| serde::de::Error::custom(format!("invalid regex {regex:?}: {e}")))?;
                 Pattern { text: regex, regex: Some(re) }
             }
         })
@@ -662,7 +658,7 @@ impl Serialize for Pattern {
 impl Pattern {
     pub(super) fn matches(&self, have: &str, exact: bool) -> bool {
         match &self.regex {
-            Some(re) => re.is_match(&normalize(have)),
+            Some(re) => re.find(&normalize(have)).is_some(),
             None => text_matches(have, &self.text, exact),
         }
     }
@@ -671,7 +667,7 @@ impl Pattern {
     /// raw text (request bodies and header values).
     pub(super) fn matches_raw(&self, have: &str) -> bool {
         match &self.regex {
-            Some(re) => re.is_match(have),
+            Some(re) => re.find(have).is_some(),
             None => have.contains(&self.text),
         }
     }
