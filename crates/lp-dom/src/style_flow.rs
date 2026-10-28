@@ -13,8 +13,8 @@ use markup5ever::ns;
 use crate::computed::{self, LengthContext};
 use crate::dom::Dom;
 use crate::flow::{
-    Align, Dim, FlexDirection, FlowStyle, FlowStyleSource, InnerDisplay, Justify, Len, OuterDisplay, Position,
-    TablePart, TextAlign,
+    Align, Clear, Dim, FlexDirection, Float, FlowStyle, FlowStyleSource, InnerDisplay, Justify, Len, OuterDisplay,
+    Position, TablePart, TextAlign,
 };
 use crate::node::NodeId;
 use crate::style::{DeclaredEntry, FlowProp, StyleEngine, TypedValue, DEFAULT_FONT_SIZE};
@@ -116,8 +116,22 @@ impl FlowStyleSource for StyleEngine {
         if let Some(cached) = self.cached_flow_style(dom, el) {
             return cached;
         }
+        // Ancestors first (outermost first, iteratively), so this element
+        // can share with one under an equivalent parent.
+        let mut missing = Vec::new();
+        let mut cur = dom.parent_element(el).ok().flatten();
+        while let Some(p) = cur {
+            if self.cached_flow_style(dom, p).is_some() {
+                break;
+            }
+            missing.push(p);
+            cur = dom.parent_element(p).ok().flatten();
+        }
+        for p in missing.into_iter().rev() {
+            <Self as FlowStyleSource>::flow_style(self, dom, p);
+        }
         if let Some((style, from)) = self.shared_flow_style(dom, el) {
-            self.store_flow_style(el, style.clone(), Some(from));
+            self.store_flow_style(dom, el, style.clone(), Some(from));
             return style;
         }
         let started = crate::layout::flow_stats::enabled().then(std::time::Instant::now);
@@ -125,7 +139,7 @@ impl FlowStyleSource for StyleEngine {
         if let Some(t) = started {
             crate::layout::flow_stats::note_style_miss(t.elapsed());
         }
-        self.store_flow_style(el, style.clone(), None);
+        self.store_flow_style(dom, el, style.clone(), None);
         style
     }
 }
@@ -271,7 +285,7 @@ impl StyleEngine {
             "table-column-group" => TablePart::ColumnGroup,
             _ => TablePart::None,
         };
-        let (outer, inner) = match display.as_str() {
+        let (mut outer, mut inner) = match display.as_str() {
             "inline" => (OuterDisplay::Inline, InnerDisplay::Flow),
             "inline-block" => (OuterDisplay::Inline, InnerDisplay::FlowRoot),
             "flex" => (OuterDisplay::Block, InnerDisplay::Flex),
@@ -292,6 +306,25 @@ impl StyleEngine {
             Some("fixed") => Position::Fixed,
             Some("sticky") => Position::Sticky,
             _ => Position::Static,
+        };
+        // Floats are block-level (CSS 2.1 9.7); positioned boxes do not float.
+        let float = match reads.keyword(FlowProp::Float).as_deref() {
+            _ if matches!(position, Position::Absolute | Position::Fixed) => Float::None,
+            Some("left" | "inline-start") => Float::Left,
+            Some("right" | "inline-end") => Float::Right,
+            _ => Float::None,
+        };
+        if float != Float::None && outer == OuterDisplay::Inline {
+            outer = OuterDisplay::Block;
+            if inner == InnerDisplay::FlowRoot {
+                inner = InnerDisplay::Flow;
+            }
+        }
+        let clear = match reads.keyword(FlowProp::Clear).as_deref() {
+            Some("left" | "inline-start") => Clear::Left,
+            Some("right" | "inline-end") => Clear::Right,
+            Some("both") => Clear::Both,
+            _ => Clear::None,
         };
         let ua = ua_box(&tag, font_size, zoom);
         const MARGINS: [FlowProp; 4] =
@@ -357,8 +390,11 @@ impl StyleEngine {
             (_, "break-word") => crate::flow::WrapMode::BreakWord,
             _ => crate::flow::WrapMode::Normal,
         };
+        let grid_area = crate::flow::split_grid_area(value("grid-area").as_deref());
         Some(FlowStyle {
             outer,
+            float,
+            clear,
             inner,
             position,
             inset: [dim(FlowProp::Top), dim(FlowProp::Right), dim(FlowProp::Bottom), dim(FlowProp::Left)],
@@ -452,6 +488,7 @@ impl StyleEngine {
             grid_template_rows: value("grid-template-rows")
                 .map(|v| crate::flow::parse_track_list(&v, &|t| computed::resolve_len(t, &cx).map(to_len)))
                 .unwrap_or_default(),
+            grid_template_areas: value("grid-template-areas").and_then(|v| crate::flow::parse_grid_areas(&v)),
             grid_auto_columns: value("grid-auto-columns")
                 .and_then(|v| crate::flow::parse_track(&v, &|t| computed::resolve_len(t, &cx).map(to_len)))
                 .unwrap_or_default(),
@@ -468,11 +505,13 @@ impl StyleEngine {
                 value("grid-column").as_deref(),
                 value("grid-column-start").as_deref(),
                 value("grid-column-end").as_deref(),
+                (grid_area[1].0.as_deref(), grid_area[1].1.as_deref()),
             ),
             grid_row: crate::flow::parse_grid_placement(
                 value("grid-row").as_deref(),
                 value("grid-row-start").as_deref(),
                 value("grid-row-end").as_deref(),
+                (grid_area[0].0.as_deref(), grid_area[0].1.as_deref()),
             ),
             // text-align inherits; LTR maps start/left/justify to Start.
             text_align: match reads.keyword(FlowProp::TextAlign).as_deref() {

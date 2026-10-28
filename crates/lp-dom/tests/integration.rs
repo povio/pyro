@@ -3,6 +3,7 @@
 //! mostly link time. Add new test files as modules here.
 
 mod flow;
+mod flow_bench;
 mod flow_snapshot;
 mod id_index;
 mod inner_text;

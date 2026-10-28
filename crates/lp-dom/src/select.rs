@@ -496,7 +496,7 @@ impl Dom {
             .is_some_and(|e| e.is_html() && matches!(&*e.name.local, "a" | "area" | "link") && e.attr("href").is_some())
     }
 
-    fn matches_state(&self, idx: u32, pc: PseudoClass) -> bool {
+    pub(crate) fn matches_state(&self, idx: u32, pc: PseudoClass) -> bool {
         use PseudoClass::*;
         let e = self.n(idx).element().expect("element");
         match pc {

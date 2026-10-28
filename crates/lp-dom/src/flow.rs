@@ -1,24 +1,32 @@
-//! Flow layout, Stage 1 (docs/dom/FLOW_LAYOUT.md): CSS block and inline
-//! formatting with relative/absolute/fixed positioning, computed from used
-//! style values supplied by a [`FlowStyleSource`]. Opt-in through
-//! `Layout::set_geometry(Geometry::Flow)`; the default geometry remains the
-//! upstream approximation in `layout.rs`.
+//! Flow layout (docs/dom/FLOW_LAYOUT.md): CSS block and inline formatting
+//! with floats, margin collapsing and relative/absolute/fixed/sticky
+//! positioning, plus flex, grid and table containers, computed from used
+//! style values supplied by a [`FlowStyleSource`]. Pages use it by default
+//! (`Geometry::from_env`; `LIGHTNINGPANDA_GEOMETRY=approximate` selects the
+//! upstream approximation in `layout.rs`).
 //!
 //! Used values come from `StyleEngine`'s [`FlowStyleSource`] implementation
 //! (`style_flow.rs`, owned by the style engine).
 //!
-//! Stage 1 lays out flex, grid and table containers as block containers and
-//! ignores floats, sticky positioning, margin collapsing through parents and
-//! baseline alignment. Text uses the engine's fixed-advance measure, so text
-//! widths are approximate; boxes with explicit sizes match Chromium.
+//! Text uses the engine's fixed-advance measure, so text widths are
+//! approximate; boxes with explicit sizes match Chromium.
 
 use std::cell::RefCell;
+use std::rc::Rc;
 
 use rustc_hash::FxHashMap;
 
 use crate::layout::{text_width as glyph_width, Rect};
 use crate::node::{NodeId, NodeType};
 use crate::Dom;
+
+#[path = "flow_reuse.rs"]
+mod reuse;
+#[path = "flow_store.rs"]
+mod store;
+
+pub use store::{Boxes, Texts};
+use store::{ByNode, NodeMap, Slot};
 
 // ----- style input contract -------------------------------------------------
 
@@ -93,6 +101,25 @@ pub enum InnerDisplay {
     Flex,
     Grid,
     Table,
+}
+
+/// `float` (`inline-start` / `inline-end` map to left / right in LTR).
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum Float {
+    #[default]
+    None,
+    Left,
+    Right,
+}
+
+/// `clear`: which earlier floats a box goes below.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum Clear {
+    #[default]
+    None,
+    Left,
+    Right,
+    Both,
 }
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
@@ -229,15 +256,98 @@ pub struct AutoRepeat {
 pub struct TrackList {
     pub tracks: Vec<Track>,
     pub auto_repeat: Option<AutoRepeat>,
+    /// `[name]` line names: (line index among `tracks`, after the auto
+    /// repeat, name). Names inside an auto repeat are ignored.
+    pub names: Vec<(usize, bool, Rc<str>)>,
 }
 
-/// `grid-column` / `grid-row` of an item: 1-based lines (negative from the
-/// end of the explicit grid), `None` = auto; `span` applies when an end is
-/// auto.
-#[derive(Copy, Clone, Debug, PartialEq)]
+/// `grid-template-areas`: the explicit grid it implies and each named
+/// area's 0-based lines (row start, row end, column start, column end).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct GridAreas {
+    pub rows: usize,
+    pub cols: usize,
+    pub areas: Vec<(Rc<str>, [usize; 4])>,
+}
+
+/// Parses `grid-template-areas` (`none`, or one string per row). Rows of
+/// different lengths or non-rectangular areas make the value invalid (`None`).
+pub fn parse_grid_areas(v: &str) -> Option<Rc<GridAreas>> {
+    let v = v.trim();
+    if v.eq_ignore_ascii_case("none") || v.is_empty() {
+        return None;
+    }
+    let mut rows: Vec<Vec<Option<&str>>> = Vec::new();
+    let mut rest = v;
+    loop {
+        rest = rest.trim_start();
+        let Some(q) = rest.chars().next() else { break };
+        if q != '"' && q != '\'' {
+            return None;
+        }
+        let end = rest[1..].find(q)? + 1;
+        let row = &rest[1..end];
+        rest = &rest[end + 1..];
+        // Runs of `.` are null cells, so `a...b` is three tokens.
+        let mut cells = Vec::new();
+        for tok in row.split_whitespace() {
+            let mut t = tok;
+            while !t.is_empty() {
+                let dots = t.len() - t.trim_start_matches('.').len();
+                if dots > 0 {
+                    cells.push(None);
+                    t = &t[dots..];
+                } else {
+                    let n = t.find('.').unwrap_or(t.len());
+                    cells.push(Some(&t[..n]));
+                    t = &t[n..];
+                }
+            }
+        }
+        if cells.is_empty() || rows.first().is_some_and(|r| r.len() != cells.len()) {
+            return None;
+        }
+        rows.push(cells);
+    }
+    let mut out = GridAreas { rows: rows.len(), cols: rows.first()?.len(), areas: Vec::new() };
+    for (r, row) in rows.iter().enumerate() {
+        for (c, cell) in row.iter().enumerate() {
+            let Some(name) = cell else { continue };
+            match out.areas.iter_mut().find(|(n, _)| &**n == *name) {
+                Some((_, a)) => {
+                    a[1] = a[1].max(r + 1);
+                    a[3] = a[3].max(c + 1);
+                    a[2] = a[2].min(c);
+                }
+                None => out.areas.push((Rc::from(*name), [r, r + 1, c, c + 1])),
+            }
+        }
+    }
+    // Each area must fill its bounding rectangle exactly.
+    for (name, [r0, r1, c0, c1]) in &out.areas {
+        let cells = rows.iter().flatten().filter(|c| **c == Some(&**name)).count();
+        if cells != (r1 - r0) * (c1 - c0) || !(*r0..*r1).all(|r| (*c0..*c1).all(|c| rows[r][c] == Some(&**name))) {
+            return None;
+        }
+    }
+    Some(Rc::new(out))
+}
+
+/// One side of `grid-column` / `grid-row`: a 1-based line (negative from
+/// the end), or the nth line named `name` (0 = no count given: the
+/// `name-start` / `name-end` line when there is one, else the first `name`).
+#[derive(Clone, Debug, PartialEq)]
+pub enum GridLine {
+    Number(i32),
+    Named(Rc<str>, i32),
+}
+
+/// `grid-column` / `grid-row` of an item: `None` = auto; `span` applies
+/// when an end is auto.
+#[derive(Clone, Debug, PartialEq)]
 pub struct GridPlacement {
-    pub start: Option<i32>,
-    pub end: Option<i32>,
+    pub start: Option<GridLine>,
+    pub end: Option<GridLine>,
     pub span: u32,
 }
 
@@ -355,7 +465,10 @@ pub fn parse_track_list(v: &str, len: &dyn Fn(&str) -> Option<Len>) -> TrackList
         return list;
     }
     for tok in grid_tokens(v) {
-        if tok.starts_with('[') {
+        if let Some(names) = tok.strip_prefix('[') {
+            for name in names.trim_end_matches(']').split_whitespace() {
+                list.names.push((list.tracks.len(), list.auto_repeat.is_some(), Rc::from(name)));
+            }
             continue;
         }
         if tok.to_ascii_lowercase().starts_with("repeat(") {
@@ -364,8 +477,11 @@ pub fn parse_track_list(v: &str, len: &dyn Fn(&str) -> Option<Len>) -> TrackList
                 return TrackList::default();
             }
             let mut tracks = Vec::new();
+            let mut names = Vec::new();
             for t in grid_tokens(&args[1]) {
-                if t.starts_with('[') {
+                if let Some(n) = t.strip_prefix('[') {
+                    names
+                        .extend(n.trim_end_matches(']').split_whitespace().map(|n| (tracks.len(), Rc::<str>::from(n))));
                     continue;
                 }
                 match parse_track(&t, len) {
@@ -380,7 +496,10 @@ pub fn parse_track_list(v: &str, len: &dyn Fn(&str) -> Option<Len>) -> TrackList
                 }
                 n => {
                     let Ok(n) = n.parse::<usize>() else { return TrackList::default() };
+                    let after = list.auto_repeat.is_some();
                     for _ in 0..n.min(1000) {
+                        let at = list.tracks.len();
+                        list.names.extend(names.iter().map(|(i, n)| (at + i, after, n.clone())));
                         list.tracks.extend_from_slice(&tracks);
                     }
                 }
@@ -396,13 +515,23 @@ pub fn parse_track_list(v: &str, len: &dyn Fn(&str) -> Option<Len>) -> TrackList
 }
 
 /// Parses `grid-column` / `grid-row` from the shorthand (`span 2 / span 2`,
-/// `1 / -1`, `2`) or the `-start` / `-end` longhands (which win).
-pub fn parse_grid_placement(shorthand: Option<&str>, start: Option<&str>, end: Option<&str>) -> GridPlacement {
-    let (mut s, mut e) = (None::<String>, None::<String>);
+/// `1 / -1`, `2`, `main`) or the `-start` / `-end` longhands (which win).
+/// `area` is the side pair `grid-area` gave this axis.
+pub fn parse_grid_placement(
+    shorthand: Option<&str>,
+    start: Option<&str>,
+    end: Option<&str>,
+    area: (Option<&str>, Option<&str>),
+) -> GridPlacement {
+    let (mut s, mut e) = (area.0.map(str::to_owned), area.1.map(str::to_owned));
     if let Some(v) = shorthand {
         let mut parts = v.splitn(2, '/');
         s = parts.next().map(|p| p.trim().to_owned());
         e = parts.next().map(|p| p.trim().to_owned());
+        // A lone name applies to both sides (`grid-column: main`).
+        if e.is_none() && s.as_deref().is_some_and(is_grid_ident) {
+            e = s.clone();
+        }
     }
     if let Some(v) = start {
         s = Some(v.trim().to_owned());
@@ -411,15 +540,33 @@ pub fn parse_grid_placement(shorthand: Option<&str>, start: Option<&str>, end: O
         e = Some(v.trim().to_owned());
     }
     let mut p = GridPlacement::default();
-    // Each side is a line number or `span <n>`; a span on the start side
-    // wins over one on the end side.
-    let side = |v: Option<&str>| -> (Option<i32>, Option<u32>) {
+    // Each side is `auto`, `span <n>`, `<n>`, `<name>` or `<n> <name>`; a
+    // span on the start side wins over one on the end side.
+    let side = |v: Option<&str>| -> (Option<GridLine>, Option<u32>) {
         let Some(v) = v else { return (None, None) };
-        let v = v.trim().to_ascii_lowercase();
-        if let Some(n) = v.strip_prefix("span") {
-            return (None, Some(n.trim().parse::<u32>().ok().filter(|n| *n > 0).unwrap_or(1)));
+        let lower = v.trim().to_ascii_lowercase();
+        let mut n = None::<i32>;
+        let mut name = None::<&str>;
+        let mut span = false;
+        for tok in v.split_whitespace().zip(lower.split_whitespace()) {
+            match tok {
+                (_, "span") => span = true,
+                (_, "auto") => return (None, None),
+                (_, l) if l.parse::<i32>().is_ok() => n = l.parse().ok(),
+                (t, _) if is_grid_ident(t) => name = Some(t),
+                _ => return (None, None),
+            }
         }
-        (v.parse::<i32>().ok().filter(|n| *n != 0), None)
+        if span {
+            // `span <name>` is approximated as `span <n>`.
+            return (None, Some(n.filter(|n| *n > 0).unwrap_or(1) as u32));
+        }
+        match (n, name) {
+            (Some(0), _) => (None, None),
+            (n, Some(name)) => (Some(GridLine::Named(Rc::from(name), n.unwrap_or(0))), None),
+            (Some(n), None) => (Some(GridLine::Number(n)), None),
+            (None, None) => (None, None),
+        }
     };
     let (start_line, start_span) = side(s.as_deref());
     let (end_line, end_span) = side(e.as_deref());
@@ -429,6 +576,29 @@ pub fn parse_grid_placement(shorthand: Option<&str>, start: Option<&str>, end: O
         p.span = n;
     }
     p
+}
+
+fn is_grid_ident(v: &str) -> bool {
+    let v = v.trim();
+    !v.is_empty()
+        && !v.contains(char::is_whitespace)
+        && !v.starts_with(|c: char| c.is_ascii_digit() || c == '-' && v[1..].starts_with(|c: char| c.is_ascii_digit()))
+        && !matches!(v.to_ascii_lowercase().as_str(), "auto" | "span")
+}
+
+/// Splits `grid-area` (`row-start / column-start / row-end / column-end`)
+/// into the (row, column) side pairs. Omitted sides copy the opposite side
+/// when it is a name, else are auto.
+pub fn split_grid_area(v: Option<&str>) -> [(Option<String>, Option<String>); 2] {
+    let Some(v) = v else { return Default::default() };
+    let parts: Vec<String> = v.split('/').map(|p| p.trim().to_owned()).collect();
+    let get = |i: usize| parts.get(i).cloned();
+    let copy = |i: usize, from: usize| get(i).or_else(|| parts.get(from).filter(|p| is_grid_ident(p)).cloned());
+    let row_start = get(0);
+    let col_start = get(1).or_else(|| row_start.clone().filter(|p| is_grid_ident(p)));
+    let row_end = copy(2, 0);
+    let col_end = get(3).or_else(|| col_start.clone().filter(|p| is_grid_ident(p)));
+    [(row_start, row_end), (col_start, col_end)]
 }
 
 /// top, right, bottom, left.
@@ -444,6 +614,9 @@ pub struct FlowStyle {
     pub outer: OuterDisplay,
     pub inner: InnerDisplay,
     pub position: Position,
+    /// None for absolutely positioned boxes; a floated box is block-level.
+    pub float: Float,
+    pub clear: Clear,
     pub inset: Sides<Dim>,
     pub width: Dim,
     pub height: Dim,
@@ -503,6 +676,7 @@ pub struct FlowStyle {
     // Grid container (Stage 4). Gaps reuse `row_gap` / `column_gap`.
     pub grid_template_columns: TrackList,
     pub grid_template_rows: TrackList,
+    pub grid_template_areas: Option<Rc<GridAreas>>,
     pub grid_auto_columns: Track,
     pub grid_auto_rows: Track,
     /// `grid-auto-flow: column` (else row; `dense` is not supported).
@@ -522,6 +696,8 @@ impl Default for FlowStyle {
             outer: OuterDisplay::Block,
             inner: InnerDisplay::Flow,
             position: Position::Static,
+            float: Float::None,
+            clear: Clear::None,
             inset: [Dim::Auto; 4],
             width: Dim::Auto,
             height: Dim::Auto,
@@ -561,6 +737,7 @@ impl Default for FlowStyle {
             table_layout_fixed: false,
             grid_template_columns: TrackList::default(),
             grid_template_rows: TrackList::default(),
+            grid_template_areas: None,
             grid_auto_columns: Track::AUTO,
             grid_auto_rows: Track::AUTO,
             grid_auto_flow_column: false,
@@ -588,6 +765,8 @@ pub trait FlowStyleSource {
 pub struct Generated {
     pub text: std::rc::Rc<str>,
     pub display: GeneratedDisplay,
+    /// `clear` of a block-level one (clearfix).
+    pub clear: Clear,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -670,14 +849,14 @@ struct WordSource {
 
 #[derive(Default, Debug)]
 pub struct FlowResult {
-    pub boxes: FxHashMap<NodeId, FlowBox>,
+    pub boxes: Boxes,
     /// Text nodes laid out in line boxes: the union of their fragments
     /// (document coordinates, or viewport ones inside `position: fixed`),
     /// and whether they are inside a fixed box. Range geometry uses it.
-    pub texts: FxHashMap<NodeId, (Rect, bool)>,
-    /// Order stamp of each text entry, so later shifts of the boxes laid out
-    /// after an order (cell centring, bottom-anchored abs boxes) move them.
-    text_orders: Vec<(u32, NodeId)>,
+    /// Each entry keeps its order stamp, so later shifts of the boxes laid
+    /// out after an order (cell centring, bottom-anchored abs boxes) move
+    /// them.
+    pub texts: Texts,
     /// Each laid-out word of a text node, for positions within text (the
     /// caret under a point). Same coordinates as `texts`.
     pub text_runs: Vec<TextRun>,
@@ -694,6 +873,82 @@ impl FlowResult {
     pub fn get(&self, el: NodeId) -> Option<&FlowBox> {
         self.boxes.get(&el)
     }
+
+    /// Room for as many boxes, texts and runs as `like` has.
+    fn reserve_like(&mut self, like: &FlowResult) {
+        self.boxes.reserve_like(&like.boxes);
+        self.texts.reserve_like(&like.texts);
+        self.text_runs.reserve(like.text_runs.len());
+    }
+
+    /// Empties the result, keeping its buffers.
+    fn clear(&mut self) {
+        self.boxes.clear();
+        self.texts.clear();
+        self.text_runs.clear();
+        self.sticky.clear();
+        self.document_width = 0.0;
+        self.document_height = 0.0;
+    }
+}
+
+/// The first difference between two layouts of the same document (boxes,
+/// texts, text runs, sticky boxes, document size), positions compared to
+/// 1e-6 px; None when they agree.
+pub fn difference(want: &FlowResult, got: &FlowResult) -> Option<String> {
+    let near = |a: f64, b: f64| (a - b).abs() <= 1e-6 * a.abs().max(1.0);
+    let same_rect =
+        |a: &Rect, b: &Rect| near(a.x, b.x) && near(a.y, b.y) && near(a.width, b.width) && near(a.height, b.height);
+    if want.boxes.len() != got.boxes.len() {
+        return Some(format!("{} boxes, want {}", got.boxes.len(), want.boxes.len()));
+    }
+    for (el, w) in &want.boxes {
+        let Some(g) = got.boxes.get(el) else { return Some(format!("{el:?}: no box")) };
+        let same = same_rect(&w.rect, &g.rect)
+            && w.fixed == g.fixed
+            && near(w.client_width, g.client_width)
+            && near(w.client_height, g.client_height)
+            && near(w.scroll_width, g.scroll_width)
+            && near(w.scroll_height, g.scroll_height)
+            && w.positioned == g.positioned
+            && w.order == g.order
+            && w.clipped_by == g.clipped_by;
+        if !same {
+            return Some(format!("{el:?}: got {g:?}, want {w:?}"));
+        }
+    }
+    if want.texts.len() != got.texts.len() {
+        return Some(format!("{} texts, want {}", got.texts.len(), want.texts.len()));
+    }
+    for (t, (w, wf)) in &want.texts {
+        match got.texts.get(t) {
+            Some((g, gf)) if same_rect(w, g) && wf == gf => {}
+            other => return Some(format!("text {t:?}: got {other:?}, want {:?}", (w, wf))),
+        }
+    }
+    if want.text_runs.len() != got.text_runs.len() {
+        return Some(format!("{} text runs, want {}", got.text_runs.len(), want.text_runs.len()));
+    }
+    for (w, g) in want.text_runs.iter().zip(&got.text_runs) {
+        if w.node != g.node
+            || w.start != g.start
+            || w.end != g.end
+            || !same_rect(&w.rect, &g.rect)
+            || w.order != g.order
+        {
+            return Some(format!("text run: got {g:?}, want {w:?}"));
+        }
+    }
+    if want.sticky != got.sticky {
+        return Some("sticky boxes differ".into());
+    }
+    if !near(want.document_width, got.document_width) || !near(want.document_height, got.document_height) {
+        return Some(format!(
+            "document {}x{}, want {}x{}",
+            got.document_width, got.document_height, want.document_width, want.document_height
+        ));
+    }
+    None
 }
 
 // ----- layout ---------------------------------------------------------------
@@ -706,10 +961,53 @@ impl FlowResult {
 /// (`invalidate`), or all of them (`clear`).
 #[derive(Default)]
 pub struct MeasureCache {
-    max_content: FxHashMap<NodeId, f64>,
-    min_content: FxHashMap<NodeId, f64>,
-    heights: FxHashMap<(NodeId, u64), f64>,
-    baselines: FxHashMap<(NodeId, u64, u64), Option<f64>>,
+    max_content: NodeMap<f64>,
+    min_content: NodeMap<f64>,
+    heights: ByNode<u64, f64>,
+    baselines: ByNode<(u64, u64), Option<f64>>,
+    /// Laid-out subtrees of the last pass, replayed by the next one.
+    reuse: reuse::Reuse,
+    /// The flow styles the last pass used, which seed the next pass (minus
+    /// those of restyled elements: `layout_style_unchanged`).
+    styles: NodeMap<Option<StyleRef>>,
+    generated: GeneratedMap,
+    /// Table structures (rows, cells, spans) the last pass used; dropped by
+    /// `invalidate_tables`.
+    tables: FxHashMap<NodeId, Rc<TableRows>>,
+    /// Each table row's cells, before column placement; dropped with the
+    /// tables (`invalidate_tables`), so a row insert rebuilds a table's
+    /// rows from those of its clean rows.
+    row_cells: FxHashMap<NodeId, Rc<[TableCell]>>,
+}
+
+/// Attributes the flow layout reads itself (form control and replaced sizes,
+/// table spans); other attributes reach it only through restyles. Hashes of
+/// their local names, as `Change::Attr` carries them.
+pub fn layout_attribute(hash: u64) -> bool {
+    static NAMES: std::sync::OnceLock<Vec<u64>> = std::sync::OnceLock::new();
+    // 0: state no attribute names, such as an image's natural size.
+    hash == 0
+        || NAMES
+            .get_or_init(|| {
+                [
+                    "type",
+                    "value",
+                    "size",
+                    "cols",
+                    "rows",
+                    "width",
+                    "height",
+                    "multiple",
+                    "colspan",
+                    "rowspan",
+                    "span",
+                    "placeholder",
+                ]
+                .iter()
+                .map(|n| crate::dom::attr_name_hash(n))
+                .collect()
+            })
+            .contains(&hash)
 }
 
 impl MeasureCache {
@@ -718,20 +1016,101 @@ impl MeasureCache {
         self.min_content.clear();
         self.heights.clear();
         self.baselines.clear();
+        self.reuse.clear();
+        self.styles.clear();
+        self.generated.clear();
+        self.tables.clear();
+        self.row_cells.clear();
+    }
+
+    /// Drops the table structures a change at `touched` (the nodes changed
+    /// themselves: attributes, children, text, styles) can alter: those of
+    /// the tables it is in, up to the first cell above it (what is inside a
+    /// cell is not structure).
+    pub fn invalidate_tables(&mut self, dom: &Dom, touched: &[NodeId]) {
+        if self.tables.is_empty() && self.row_cells.is_empty() {
+            return;
+        }
+        for &n in touched {
+            let mut cur = Some(n);
+            let mut first = true;
+            while let Some(c) = cur {
+                if !first
+                    && self.styles.get(&c).is_some_and(|s| s.as_ref().is_some_and(|s| s.table_part == TablePart::Cell))
+                {
+                    break;
+                }
+                first = false;
+                self.tables.remove(&c);
+                self.row_cells.remove(&c);
+                cur = dom.parent(c).ok().flatten();
+            }
+        }
+    }
+
+    /// Whether a restyled node lays out as the last pass laid it out: it is
+    /// not an element, the last pass did not lay it out (it could only
+    /// start to through a change of an ancestor or of the tree), or its
+    /// flow style and generated content are those that pass used. Otherwise
+    /// forgets them so the next pass asks again.
+    pub fn layout_style_unchanged(&mut self, dom: &Dom, src: &dyn FlowStyleSource, el: NodeId) -> bool {
+        if dom.node_type(el).ok() != Some(NodeType::Element) {
+            return true;
+        }
+        if !self.reuse.has_previous() {
+            return false;
+        }
+        let Some(old) = self.styles.get(&el) else { return true };
+        let same_generated = |after: bool| match self.generated.get(&(el, after)) {
+            // Not asked: the last pass did not lay out its contents.
+            None => true,
+            Some(old) => *old == src.generated(dom, el, after),
+        };
+        let unchanged = match (old, used_flow_style(dom, src, el)) {
+            (None, None) => true,
+            (Some(old), Some(new)) => **old == new,
+            _ => false,
+        } && same_generated(false)
+            && same_generated(true);
+        if !unchanged {
+            self.forget_style(el);
+        }
+        unchanged
+    }
+
+    /// Forgets the flow style of an element whose layout attributes changed.
+    pub fn forget_style(&mut self, el: NodeId) {
+        self.styles.remove(&el);
+        self.generated.remove(&(el, false));
+        self.generated.remove(&(el, true));
+    }
+
+    /// Keeps the result of the pass just run, so the next pass can copy the
+    /// subtrees it would lay out the same way from it instead. Without this
+    /// call, the next pass lays every subtree out again.
+    pub fn keep_result(&mut self, result: std::rc::Rc<FlowResult>) {
+        self.reuse.keep(result);
     }
 
     pub fn invalidate(&mut self, dirty: &rustc_hash::FxHashSet<NodeId>) {
         if dirty.is_empty() {
             return;
         }
-        self.max_content.retain(|k, _| !dirty.contains(k));
-        self.min_content.retain(|k, _| !dirty.contains(k));
-        self.heights.retain(|k, _| !dirty.contains(&k.0));
-        self.baselines.retain(|k, _| !dirty.contains(&k.0));
+        for el in dirty {
+            self.max_content.remove(el);
+            self.min_content.remove(el);
+            self.heights.remove(el);
+            self.baselines.remove(el);
+        }
+        self.reuse.invalidate(dirty);
     }
 
     pub fn len(&self) -> usize {
-        self.max_content.len() + self.min_content.len() + self.heights.len() + self.baselines.len()
+        self.max_content.len()
+            + self.min_content.len()
+            + self.heights.len()
+            + self.baselines.len()
+            + self.row_cells.len()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -759,18 +1138,31 @@ pub fn layout_cached(
         min_content: RefCell::new(std::mem::take(&mut cache.min_content)),
         heights: RefCell::new(std::mem::take(&mut cache.heights)),
         baselines: RefCell::new(std::mem::take(&mut cache.baselines)),
+        reuse: RefCell::new(std::mem::take(&mut cache.reuse)),
+        styles: RefCell::new(std::mem::take(&mut cache.styles)),
+        generated: RefCell::new(std::mem::take(&mut cache.generated)),
+        tables: RefCell::new(std::mem::take(&mut cache.tables)),
+        row_cells: RefCell::new(std::mem::take(&mut cache.row_cells)),
         ..Memo::default()
     };
+    memo.reuse.borrow_mut().begin_pass();
     let out = layout_with_memo(dom, doc, src, vw, vh, &memo);
     cache.max_content = memo.max_content.into_inner();
     cache.min_content = memo.min_content.into_inner();
     cache.heights = memo.heights.into_inner();
     cache.baselines = memo.baselines.into_inner();
+    cache.reuse = memo.reuse.into_inner();
+    cache.styles = memo.styles.into_inner();
+    cache.generated = memo.generated.into_inner();
+    cache.tables = memo.tables.into_inner();
+    cache.row_cells = memo.row_cells.into_inner();
+    cache.reuse.end_pass(memo.relaid.get());
     out
 }
 
 fn layout_with_memo(dom: &Dom, doc: NodeId, src: &dyn FlowStyleSource, vw: f64, vh: f64, memo: &Memo) -> FlowResult {
     let mut cx = Ctx::new(dom, src, vw, vh, memo);
+    cx.out = memo.reuse.borrow_mut().output();
     cx.cb_height = Some(vh);
     let icb = Rect { x: 0.0, y: 0.0, width: vw, height: vh };
     cx.pending.push(Vec::new());
@@ -805,9 +1197,6 @@ struct Ctx<'a> {
     vh: f64,
     out: FlowResult,
     order: u32,
-    /// Element recorded under each order (index = order - 1), so the boxes
-    /// laid out since an order was assigned (its descendants) are a slice.
-    by_order: Vec<Option<NodeId>>,
     /// Shared by the pass and its measuring probes.
     memo: &'a Memo,
     /// Definite content-box height of the containing block, against which
@@ -826,16 +1215,34 @@ struct Ctx<'a> {
     pending: Vec<Vec<Pending>>,
     /// A measuring probe: its buffers go back to the memo when dropped.
     probe: bool,
+    /// A probe whose boxes nobody reads (only the height it returns):
+    /// replayed subtrees advance the order without copying their boxes.
+    measure_only: bool,
+    /// Set by a block container right before laying out a block-level
+    /// child in its flow (taken by `block_child`): the child's margins may
+    /// collapse with its own children's.
+    block_flow_child: bool,
+    /// The margin a block container's contents leave below their last
+    /// in-flow child when it collapses with the container's bottom margin
+    /// (set by `contents`).
+    trailing: Margin,
+    /// The bottom margin `block_child` leaves for the next sibling: its own,
+    /// collapsed with its contents' `trailing`.
+    last_trailing: Margin,
+    /// The height `contents` returned for the last box `block_child` laid
+    /// out (its content height when its own height is auto).
+    last_content_h: f64,
+    /// Floats placed so far in the current block formatting context.
+    floats: Vec<FloatArea>,
+    /// One per box whose contents are being laid out (innermost last).
+    extents: Vec<Extent>,
 }
 
 impl Drop for Ctx<'_> {
     fn drop(&mut self) {
         if self.probe {
-            let buffers = ProbeBuffers {
-                out: std::mem::take(&mut self.out),
-                by_order: std::mem::take(&mut self.by_order),
-                pending: std::mem::take(&mut self.pending),
-            };
+            let buffers =
+                ProbeBuffers { out: std::mem::take(&mut self.out), pending: std::mem::take(&mut self.pending) };
             self.memo.probe_buffers.borrow_mut().push(buffers);
         }
     }
@@ -854,22 +1261,36 @@ type Owners = std::rc::Rc<[NodeId]>;
 
 #[derive(Default)]
 struct Memo {
-    styles: RefCell<FxHashMap<NodeId, Option<StyleRef>>>,
-    max_content: RefCell<FxHashMap<NodeId, f64>>,
-    min_content: RefCell<FxHashMap<NodeId, f64>>,
+    styles: RefCell<NodeMap<Option<StyleRef>>>,
+    max_content: RefCell<NodeMap<f64>>,
+    min_content: RefCell<NodeMap<f64>>,
     /// Content height by (element, content width bits).
-    heights: RefCell<FxHashMap<(NodeId, u64), f64>>,
+    heights: RefCell<ByNode<u64, f64>>,
     /// Atomic inline baseline by (element, content width bits, height bits).
-    baselines: RefCell<FxHashMap<(NodeId, u64, u64), Option<f64>>>,
+    baselines: RefCell<ByNode<(u64, u64), Option<f64>>>,
     /// Buffers of finished measuring probes, reused (cleared, capacity kept)
     /// by the next probe: probes lay whole subtrees out and are discarded.
     probe_buffers: RefCell<Vec<ProbeBuffers>>,
     /// Per element: its DOM depth and the depth of its nearest (inclusive)
     /// ancestor whose style clips overflow. Per pass only (the DOM and the
     /// memoized `style_of` answers are fixed for the pass and its probes).
-    clip_facts: RefCell<FxHashMap<NodeId, ClipFact>>,
+    clip_facts: RefCell<NodeMap<ClipFact>>,
     /// Scratch path for `clip_fact` (reused, so a miss allocates nothing).
     clip_path: RefCell<Vec<NodeId>>,
+    /// Generated content per (element, after), kept across passes like
+    /// `styles`.
+    generated: RefCell<GeneratedMap>,
+    /// `leading_margin` per (element, containing block width).
+    leading: RefCell<FxHashMap<(NodeId, u64), Margin>>,
+    /// `table_rows` per table.
+    tables: RefCell<FxHashMap<NodeId, Rc<TableRows>>>,
+    /// `MeasureCache::row_cells`.
+    row_cells: RefCell<FxHashMap<NodeId, Rc<[TableCell]>>>,
+    /// Subtrees of the previous pass and of this one (`reuse`).
+    reuse: RefCell<reuse::Reuse>,
+    /// The pass recorded some element twice: its order ranges are not
+    /// subtrees, so none of them is kept for the next pass.
+    relaid: std::cell::Cell<bool>,
 }
 
 /// DOM depth of an element (document element = 1) and the depth of its
@@ -881,6 +1302,45 @@ struct ClipFact {
 }
 
 const NO_CLIP: u32 = 0;
+
+/// The farthest right and bottom edges of boxes and right edge of texts in
+/// some laid-out content (-inf when there is none).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Reach {
+    right: f64,
+    bottom: f64,
+    text_right: f64,
+}
+
+impl Reach {
+    const NONE: Reach = Reach { right: f64::NEG_INFINITY, bottom: f64::NEG_INFINITY, text_right: f64::NEG_INFINITY };
+
+    fn merge(&mut self, o: &Reach) {
+        self.right = self.right.max(o.right);
+        self.bottom = self.bottom.max(o.bottom);
+        self.text_right = self.text_right.max(o.text_right);
+    }
+}
+
+/// What a box's contents reach while they are laid out, for its scroll size
+/// (`record`): each box's own content folds into its parent's when it is
+/// recorded, so a box reads its descendants' reach without walking them.
+/// Split into [not fixed, fixed] content.
+struct Extent {
+    /// The owner box's order and DOM depth.
+    order: u32,
+    depth: u32,
+    /// Boxes and texts added directly (not inside a recorded child).
+    direct: [Reach; 2],
+    /// Orders of the boxes added directly.
+    box_orders: (u32, u32),
+    /// Recorded children: their order and the reach of their contents that
+    /// is not clipped inside them, [boxes and texts] apart because texts
+    /// also stop at clipping inline elements.
+    children: Vec<(u32, [Reach; 2])>,
+    /// False after a shift the reach could not follow: `record` scans.
+    exact: bool,
+}
 
 /// Work counters for the text scroll-size scan (debug builds only; read by
 /// the in-crate benchmark). Not compiled into release binaries.
@@ -898,7 +1358,6 @@ pub mod record_scan_stats {
 #[derive(Default)]
 struct ProbeBuffers {
     out: FlowResult,
-    by_order: Vec<Option<NodeId>>,
     pending: Vec<Vec<Pending>>,
 }
 
@@ -907,6 +1366,68 @@ struct Pending {
     style: StyleRef,
     static_x: f64,
     static_y: f64,
+}
+
+/// Adjoining vertical margins (CSS 2.1 8.3.1): the largest positive and
+/// the most negative of them; they collapse to the sum of the two.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct Margin {
+    pos: f64,
+    neg: f64,
+}
+
+impl Margin {
+    const ZERO: Margin = Margin { pos: 0.0, neg: 0.0 };
+
+    fn of(m: f64) -> Margin {
+        Margin { pos: m.max(0.0), neg: m.min(0.0) }
+    }
+
+    fn with(self, o: Margin) -> Margin {
+        Margin { pos: self.pos.max(o.pos), neg: self.neg.min(o.neg) }
+    }
+
+    fn value(self) -> f64 {
+        self.pos + self.neg
+    }
+}
+
+/// Whether a block container's margins collapse with those of its first
+/// (top) and last (bottom) in-flow children.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Collapse {
+    top: bool,
+    bottom: bool,
+}
+
+/// A box that lays its contents out in their own block formatting context:
+/// its margins never collapse with its children's.
+fn establishes_bfc(style: &FlowStyle) -> bool {
+    style.inner != InnerDisplay::Flow
+        || style.outer != OuterDisplay::Block
+        || style.clips_x
+        || style.clips_y
+        || style.replaced
+        || matches!(style.position, Position::Absolute | Position::Fixed)
+        || style.float != Float::None
+}
+
+/// A float's margin box in its block formatting context (layout
+/// coordinates, before relative shifts).
+#[derive(Copy, Clone, Debug)]
+struct FloatArea {
+    left: bool,
+    x0: f64,
+    x1: f64,
+    y0: f64,
+    y1: f64,
+}
+
+impl FloatArea {
+    /// Overlaps the band [y, y + h) (a point when `h` is 0).
+    fn overlaps(&self, y: f64, h: f64) -> bool {
+        self.y1 > y && self.y0 < y + h.max(FIT_EPSILON)
+    }
 }
 
 /// A laid-out box's used edges.
@@ -980,6 +1501,12 @@ enum InlineItem {
         el: NodeId,
         style: StyleRef,
     },
+    /// A floated box: placed at the current line's top when it fits beside
+    /// the line's content, else below the line.
+    Float {
+        el: NodeId,
+        style: StyleRef,
+    },
     /// A generated `::before` / `::after` inline-block box (no element).
     Generated {
         width: f64,
@@ -992,6 +1519,9 @@ enum InlineItem {
         owners: Owners,
         height: f64,
         ascent: f64,
+        /// No inline-axis margin, border or padding: alone on a line it
+        /// makes no line box (CSS 2.1 9.4.2).
+        phantom: bool,
     },
 }
 
@@ -1005,13 +1535,19 @@ impl<'a> Ctx<'a> {
             out: FlowResult::default(),
             order: 0,
             pending: Vec::new(),
-            by_order: Vec::new(),
             memo,
             cb_height: None,
             own_cb_height: None,
             first_baseline: None,
             last_baseline: None,
             probe: false,
+            measure_only: false,
+            block_flow_child: false,
+            trailing: Margin::ZERO,
+            last_trailing: Margin::ZERO,
+            last_content_h: 0.0,
+            floats: Vec::new(),
+            extents: Vec::new(),
         }
     }
 
@@ -1021,17 +1557,9 @@ impl<'a> Ctx<'a> {
         let mut cx = Ctx::new(self.dom, self.src, self.vw, self.vh, self.memo);
         cx.probe = true;
         if let Some(mut b) = self.memo.probe_buffers.borrow_mut().pop() {
-            b.out.boxes.clear();
-            b.out.texts.clear();
-            b.out.sticky.clear();
-            b.out.text_orders.clear();
-            b.out.text_runs.clear();
-            b.out.document_width = 0.0;
-            b.out.document_height = 0.0;
-            b.by_order.clear();
+            b.out.clear();
             b.pending.clear();
             cx.out = b.out;
-            cx.by_order = b.by_order;
             cx.pending = b.pending;
         }
         cx
@@ -1041,15 +1569,7 @@ impl<'a> Ctx<'a> {
         if let Some(s) = self.memo.styles.borrow().get(&el) {
             return s.clone();
         }
-        let mut s = self.src.flow_style(self.dom, el);
-        // Form controls are atomic boxes sized by their own intrinsic size;
-        // their DOM children (textarea text, options) are not laid out.
-        if let Some(st) = s.as_mut() {
-            if control_kind(self.dom, el).is_some() {
-                st.replaced = true;
-            }
-        }
-        let s = s.map(StyleRef::new);
+        let s = used_flow_style(self.dom, self.src, el).map(StyleRef::new);
         self.memo.styles.borrow_mut().insert(el, s.clone());
         s
     }
@@ -1125,7 +1645,7 @@ impl<'a> Ctx<'a> {
                     .descendants(el)
                     .into_iter()
                     .flatten()
-                    .filter(|&n| self.dom.tag_name(n).is_ok_and(|t| t.eq_ignore_ascii_case("option")))
+                    .filter(|&n| local_tag(self.dom, n).is_some_and(|t| t.eq_ignore_ascii_case("option")))
                     .map(|n| {
                         collapsed_width(
                             &self.dom.text_content(n).ok().flatten().unwrap_or_default(),
@@ -1147,12 +1667,15 @@ impl<'a> Ctx<'a> {
     /// CSS default object size (300x150) for svg/canvas/video/iframe/embed/
     /// object; images without attributes have no known natural size.
     fn replaced_intrinsic(&self, el: NodeId, style: &FlowStyle) -> Option<(f64, f64)> {
-        let tag = self.dom.tag_name(el).ok()?.to_ascii_lowercase();
-        let default = match tag.as_str() {
-            "svg" | "canvas" | "video" | "iframe" | "embed" | "object" => (300.0, 150.0),
+        let tag = local_tag(self.dom, el)?;
+        let is = |name: &str| tag.eq_ignore_ascii_case(name);
+        let default = if ["svg", "canvas", "video", "iframe", "embed", "object"].into_iter().any(is) {
+            (300.0, 150.0)
+        } else if is("img") {
             // A loaded image's natural size, else nothing known.
-            "img" => style.intrinsic.unwrap_or((0.0, 0.0)),
-            _ => return None,
+            style.intrinsic.unwrap_or((0.0, 0.0))
+        } else {
+            return None;
         };
         let attr = |name: &str| {
             self.dom
@@ -1213,33 +1736,219 @@ impl<'a> Ctx<'a> {
         if sticky {
             self.out.sticky.insert(el);
         }
-        let i = b.order as usize - 1;
-        if self.by_order.len() <= i {
-            self.by_order.resize(i + 1, None);
-        }
-        self.by_order[i] = Some(el);
-        self.out.boxes.insert(el, b);
+        self.put_box(el, Slot { el: Some(el), own_positioned: b.positioned, positioned_by: 0, sticky, b });
     }
 
-    /// Moves text entries recorded after `order` down by `dy`.
-    fn shift_texts_after(&mut self, order: u32, dy: f64) {
-        for (o, t) in &self.out.text_orders {
+    /// Records `slot` under its box's order without looking at styles.
+    fn put_box(&mut self, el: NodeId, slot: Slot) {
+        let b = slot.b;
+        self.put_box_quiet(el, slot);
+        if let Some(top) = self.extents.last_mut() {
+            let r = &mut top.direct[b.fixed as usize];
+            r.right = r.right.max(b.rect.x + b.rect.width);
+            r.bottom = r.bottom.max(b.rect.y + b.rect.height);
+            top.box_orders = (top.box_orders.0.min(b.order), top.box_orders.1.max(b.order));
+        }
+    }
+
+    /// `put_box` without adding to the extent.
+    fn put_box_quiet(&mut self, el: NodeId, slot: Slot) {
+        if self.out.boxes.put(el, slot) && !self.probe {
+            self.memo.relaid.set(true);
+        }
+    }
+
+    /// Opens the extent of box `el` (order `order`) before its contents.
+    fn open_extent(&mut self, el: NodeId, order: u32) {
+        let depth = self.clip_fact(el).depth;
+        self.extents.push(Extent {
+            order,
+            depth,
+            direct: [Reach::NONE; 2],
+            box_orders: (u32::MAX, 0),
+            children: Vec::new(),
+            exact: true,
+        });
+    }
+
+    /// Adds a text node's box to the innermost extent unless a clipping
+    /// element inside its owner holds it.
+    fn extent_text(&mut self, t: NodeId, r: Rect, fixed: bool) {
+        let Some(depth) = self.extents.last().map(|e| e.depth) else { return };
+        let clipped_inside = match self.dom.parent_element(t).ok().flatten() {
+            Some(p) => self.clip_fact(p).clip_depth > depth,
+            None => false,
+        };
+        if let Some(top) = self.extents.last_mut().filter(|_| !clipped_inside) {
+            let tr = &mut top.direct[fixed as usize].text_right;
+            *tr = tr.max(r.x + r.width);
+        }
+    }
+
+    /// Follows `boxes_after(order, y += dy)` in the innermost extent.
+    fn shift_extent(&mut self, order: u32, dy: f64) {
+        let Some(top) = self.extents.last_mut() else { return };
+        for (o, reach) in top.children.iter_mut() {
             if *o >= order {
-                if let Some((r, _)) = self.out.texts.get_mut(t) {
-                    r.y += dy;
+                for r in reach.iter_mut() {
+                    r.bottom += dy;
                 }
             }
         }
-        for run in self.out.text_runs.iter_mut().filter(|r| r.order >= order) {
+        let (lo, hi) = top.box_orders;
+        if lo > order {
+            for r in top.direct.iter_mut() {
+                r.bottom += dy;
+            }
+        } else if hi > order {
+            top.exact = false;
+        }
+    }
+
+    /// Opens an extent for part of the innermost one's contents (a reused
+    /// subtree), to read what that part reaches.
+    fn open_part_extent(&mut self) {
+        let (order, depth) = self.extents.last().map_or((self.order, 0), |e| (e.order, e.depth));
+        self.extents.push(Extent {
+            order,
+            depth,
+            direct: [Reach::NONE; 2],
+            box_orders: (u32::MAX, 0),
+            children: Vec::new(),
+            exact: true,
+        });
+    }
+
+    /// Closes a part extent into the enclosing one as if it never was;
+    /// returns the part's reach (None when it cannot tell).
+    fn close_part_extent(&mut self) -> Option<[Reach; 2]> {
+        let part = self.extents.pop().expect("an open part extent");
+        let reach = part.exact.then(|| Self::extent_reach(&part));
+        if let Some(top) = self.extents.last_mut() {
+            top.direct[0].merge(&part.direct[0]);
+            top.direct[1].merge(&part.direct[1]);
+            top.box_orders = (top.box_orders.0.min(part.box_orders.0), top.box_orders.1.max(part.box_orders.1));
+            top.children.extend(part.children);
+            top.exact &= part.exact;
+        }
+        reach
+    }
+
+    /// Adds a replayed part's reach (boxes with orders `orders`) to the
+    /// innermost extent.
+    fn extent_part(&mut self, reach: &[Reach; 2], orders: (u32, u32)) {
+        if let Some(top) = self.extents.last_mut() {
+            top.direct[0].merge(&reach[0]);
+            top.direct[1].merge(&reach[1]);
+            if orders.0 <= orders.1 {
+                top.box_orders = (top.box_orders.0.min(orders.0), top.box_orders.1.max(orders.1));
+            }
+        }
+    }
+
+    /// Closes the extent `open_extent` opened for `el` and folds it into
+    /// the enclosing one.
+    fn close_extent(&mut self, el: NodeId, clips: bool) {
+        let ext = self.extents.pop().expect("an open extent");
+        debug_assert!(ext.exact, "no shift reaches this extent");
+        self.fold_extent(el, ext.order, clips, Self::extent_reach(&ext));
+    }
+
+    /// Adds what a recorded box's contents reach to its parent's extent:
+    /// none of its boxes when it clips them, none of its texts when it or
+    /// an element between it and the parent clips.
+    fn fold_extent(&mut self, el: NodeId, order: u32, clips: bool, mut reach: [Reach; 2]) {
+        let Some(parent_depth) = self.extents.last().map(|e| e.depth) else { return };
+        let texts_out = self.clip_fact(el).clip_depth > parent_depth;
+        for r in reach.iter_mut() {
+            if clips {
+                r.right = f64::NEG_INFINITY;
+                r.bottom = f64::NEG_INFINITY;
+            }
+            if texts_out {
+                r.text_right = f64::NEG_INFINITY;
+            }
+        }
+        if let Some(top) = self.extents.last_mut() {
+            top.children.push((order, reach));
+        }
+    }
+
+    /// An extent's reach: its direct content and its children's.
+    fn extent_reach(ext: &Extent) -> [Reach; 2] {
+        let mut out = ext.direct;
+        for (_, c) in &ext.children {
+            out[0].merge(&c[0]);
+            out[1].merge(&c[1]);
+        }
+        out
+    }
+
+    /// The reach of everything laid out since box `el` (order `order`)
+    /// began, found by walking it: texts not clipped by an element inside
+    /// `el`, boxes not clipped by a box inside it.
+    fn scan_reach(&self, el: NodeId, order: u32) -> [Reach; 2] {
+        let mut out = [Reach::NONE; 2];
+        let first = self.out.texts.first_from(order);
+        let el_depth = self.clip_fact(el).depth;
+        for p in first..self.out.texts.list.len() {
+            let Some(&store::TextEntry { node: t, at: (r, text_fixed), .. }) = self.out.texts.live_at(p) else {
+                continue;
+            };
+            let clipped_inside = match self.dom.parent_element(t).ok().flatten() {
+                Some(p) => self.clip_fact(p).clip_depth > el_depth,
+                None => false,
+            };
+            #[cfg(debug_assertions)]
+            {
+                record_scan_stats::PAIRS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                debug_assert_eq!(clipped_inside, self.clipped_inside_walk(t, el), "clip fact differs from the walk");
+            }
+            if !clipped_inside {
+                let tr = &mut out[text_fixed as usize].text_right;
+                *tr = tr.max(r.x + r.width);
+            }
+        }
+        for i in order as usize..self.out.boxes.slots.len() {
+            if self.out.boxes.live(i).is_none() {
+                continue;
+            }
+            let b = &self.out.boxes.slots[i].b;
+            if b.clipped_by <= order {
+                let r = &mut out[b.fixed as usize];
+                r.right = r.right.max(b.rect.x + b.rect.width);
+                r.bottom = r.bottom.max(b.rect.y + b.rect.height);
+            }
+        }
+        out
+    }
+
+    /// Moves text entries recorded after `order` down by `dy`.
+    /// Both lists are in order (orders only grow while they are appended),
+    /// so the entries after `order` are a tail: shifting every table cell
+    /// stays linear in the cell's own text, not the document's.
+    fn shift_texts_after(&mut self, order: u32, dy: f64) {
+        self.shift_texts_between(order, u32::MAX, dy);
+    }
+
+    /// Moves the texts and text runs recorded at orders `order..end` down
+    /// by `dy`.
+    fn shift_texts_between(&mut self, order: u32, end: u32, dy: f64) {
+        let (first, last) = (self.out.texts.first_from(order), self.out.texts.first_from(end));
+        for e in &mut self.out.texts.list[first..last] {
+            e.at.0.y += dy;
+        }
+        let first = self.out.text_runs.partition_point(|r| r.order < order);
+        let last = self.out.text_runs.partition_point(|r| r.order < end);
+        for run in &mut self.out.text_runs[first..last] {
             run.rect.y += dy;
         }
     }
 
     /// Calls `f` on every box recorded with an order above `order`.
     fn boxes_after(&mut self, order: u32, mut f: impl FnMut(&mut FlowBox)) {
-        for i in order as usize..self.by_order.len() {
-            let Some(el) = self.by_order[i] else { continue };
-            if let Some(b) = self.out.boxes.get_mut(&el).filter(|b| b.order as usize == i + 1) {
+        for i in order as usize..self.out.boxes.slots.len() {
+            if let Some(b) = self.out.boxes.at_mut(i) {
                 f(b);
             }
         }
@@ -1338,18 +2047,41 @@ impl<'a> Ctx<'a> {
         let content_x = bx + e.border[LEFT] + e.padding[LEFT];
         let content_y = by + e.border[TOP] + e.padding[TOP];
         let order = self.next_order();
+        self.open_extent(el, order);
         let positioned = style.position != Position::Static;
         if positioned {
             self.pending.push(Vec::new());
         }
+        let in_block_flow = std::mem::take(&mut self.block_flow_child);
         let declared_h =
             style
                 .height
                 .resolve(self.cb_height)
                 .map(|h| if style.border_box { (h - e.vertical()).max(0.0) } else { h });
-        let content_h = self.contents(el, style, content_x, content_y, content_w, declared_h, fixed, shift);
         let min_h =
             style.min_height.resolve(self.cb_height).map(|h| if style.border_box { h - e.vertical() } else { h });
+        let collapse = if in_block_flow && !establishes_bfc(style) {
+            Collapse {
+                top: e.border[TOP] == 0.0 && e.padding[TOP] == 0.0,
+                bottom: e.border[BOTTOM] == 0.0
+                    && e.padding[BOTTOM] == 0.0
+                    && declared_h.is_none()
+                    && min_h.is_none_or(|m| m <= 0.0),
+            }
+        } else {
+            Collapse::default()
+        };
+        // A box with a definite height is that tall whatever its contents:
+        // a probe that only reads heights does not lay them out (table
+        // cells at their row height, flexed items).
+        let content_h = if self.measure_only && declared_h.is_some() {
+            self.trailing = Margin::ZERO;
+            0.0
+        } else {
+            self.contents(el, style, content_x, content_y, content_w, declared_h, fixed, shift, collapse)
+        };
+        self.last_content_h = content_h;
+        let inner_trailing = std::mem::take(&mut self.trailing);
         let max_h =
             style.max_height.resolve(self.cb_height).map(|h| if style.border_box { h - e.vertical() } else { h });
         let height = Self::clamp(declared_h.unwrap_or(content_h), min_h, max_h);
@@ -1377,7 +2109,77 @@ impl<'a> Ctx<'a> {
             };
             self.place_absolute_into(el, pending, padding_box, fixed, style.clips_x || style.clips_y);
         }
+        self.last_trailing = Margin::of(e.margin[BOTTOM]).with(inner_trailing);
         e.margin[TOP] + rect.height + e.margin[BOTTOM]
+    }
+
+    /// The top margin of a block-level box in a block flow, collapsed with
+    /// the leading margins of its first in-flow children when they adjoin
+    /// (no border, padding or line content between them), and through
+    /// empty blocks before them.
+    fn leading_margin(&self, el: NodeId, style: &FlowStyle, width: f64) -> Margin {
+        let key = (el, width.to_bits());
+        if let Some(&m) = self.memo.leading.borrow().get(&key) {
+            return m;
+        }
+        let e = self.edges(style, width);
+        let mut m = Margin::of(e.margin[TOP]);
+        if !establishes_bfc(style)
+            && e.border[TOP] == 0.0
+            && e.padding[TOP] == 0.0
+            && self.generated(el, false).is_none()
+        {
+            for (c, cs) in self.flatten_children(el) {
+                let Some(cs) = cs else {
+                    if self.dom.char_data(c).is_ok_and(is_blank) {
+                        continue;
+                    }
+                    break;
+                };
+                if matches!(cs.position, Position::Absolute | Position::Fixed) || cs.float != Float::None {
+                    continue;
+                }
+                if cs.outer != OuterDisplay::Block {
+                    break;
+                }
+                m = m.with(self.leading_margin(c, &cs, width));
+                if !self.collapses_through(c, &cs, width) {
+                    break;
+                }
+                m = m.with(Margin::of(self.edges(&cs, width).margin[BOTTOM]));
+            }
+        }
+        self.memo.leading.borrow_mut().insert(key, m);
+        m
+    }
+
+    /// An empty block whose top and bottom margins collapse together (CSS
+    /// 2.1 8.3.1): no height, padding, border or in-flow content (decided
+    /// from the tree, before layout).
+    fn collapses_through(&self, el: NodeId, style: &FlowStyle, width: f64) -> bool {
+        let zero = |d: Dim| match d {
+            Dim::Auto => true,
+            Dim::Len(l) => l.resolve(width) == 0.0,
+            Dim::Content(_) => false,
+        };
+        let e = self.edges(style, width);
+        if establishes_bfc(style)
+            || !zero(style.height)
+            || !zero(style.min_height)
+            || e.vertical() != 0.0
+            || self.generated(el, false).is_some()
+            || self.generated(el, true).is_some()
+        {
+            return false;
+        }
+        self.flatten_children(el).into_iter().all(|(c, cs)| match cs {
+            None => self.dom.char_data(c).is_ok_and(is_blank),
+            Some(cs) => {
+                matches!(cs.position, Position::Absolute | Position::Fixed)
+                    || cs.float != Float::None
+                    || (cs.outer == OuterDisplay::Block && self.collapses_through(c, &cs, width))
+            }
+        })
     }
 
     fn next_order(&mut self) -> u32 {
@@ -1464,49 +2266,47 @@ impl<'a> Ctx<'a> {
         if let Some(w) = self.text_control_text_width(el) {
             sw = sw.max(w + e.padding[LEFT] + e.padding[RIGHT]);
         }
-        // Overflowing text extends the scroll width too (Chromium: through
-        // the inline-end padding), unless a clipping element inside this one
-        // holds it.
-        // Every text recorded after this box's order lies inside it (orders
-        // are assigned at box start and texts take the current order while the
-        // box's contents, including its own absolutely positioned descendants,
-        // are laid out), so "clipped by an element inside this box" is: the
-        // text's nearest clipping ancestor is deeper than this box.
-        let first = self.out.text_orders.partition_point(|(o, _)| *o < order);
-        let el_depth = self.clip_fact(el).depth;
-        for &(_, t) in &self.out.text_orders[first..] {
-            let Some(&(r, text_fixed)) = self.out.texts.get(&t) else { continue };
-            if text_fixed && !fixed {
-                continue;
-            }
-            let clipped_inside = match self.dom.parent_element(t).ok().flatten() {
-                Some(p) => self.clip_fact(p).clip_depth > el_depth,
-                None => false,
-            };
-            #[cfg(debug_assertions)]
-            {
-                record_scan_stats::PAIRS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                debug_assert!(self.dom.contains(el, t).unwrap_or(false), "text run outside the recorded box");
-                debug_assert_eq!(clipped_inside, self.clipped_inside_walk(t, el), "clip fact differs from the walk");
-            }
-            if !clipped_inside {
-                sw = sw.max(r.x + r.width - inner_x + e.padding[RIGHT]);
+        // Overflowing descendants (texts through the inline-end padding, as
+        // in Chromium) extend the scroll size, except those clipped by a box
+        // inside this one and fixed ones escaping a non-fixed box.
+        let ext = self.extents.pop().expect("record closes the extent block_child opened");
+        debug_assert_eq!(ext.order, order, "extent of another box");
+        let reach = if ext.exact { Self::extent_reach(&ext) } else { self.scan_reach(el, order) };
+        #[cfg(debug_assertions)]
+        if ext.exact {
+            let scan = self.scan_reach(el, order);
+            let near = |a: f64, b: f64| a == b || (a - b).abs() <= 1e-9 * a.abs().max(1.0);
+            for (a, b) in reach.iter().zip(&scan) {
+                debug_assert!(
+                    near(a.right, b.right) && near(a.bottom, b.bottom) && near(a.text_right, b.text_right),
+                    "extent {reach:?} differs from the scan {scan:?}"
+                );
             }
         }
-        self.boxes_after(order, |b| {
-            let clipped_inside = b.clipped_by > order;
-            if !clipped_inside && (fixed || !b.fixed) {
-                sw = sw.max(b.rect.x + b.rect.width - inner_x);
-                sh = sh.max(b.rect.y + b.rect.height - inner_y);
+        let mut r = reach[0];
+        if fixed {
+            r.merge(&reach[1]);
+        }
+        sw = sw.max(r.right - inner_x).max(r.text_right - inner_x + e.padding[RIGHT]);
+        sh = sh.max(r.bottom - inner_y);
+        if clips || positioned {
+            self.boxes_after(order, |b| {
+                if clips && b.clipped_by == 0 {
+                    b.clipped_by = order;
+                }
+                // Descendants of a positioned box paint in its layer.
+                if positioned {
+                    b.positioned = true;
+                }
+            });
+        }
+        if positioned {
+            for slot in self.out.boxes.slots.iter_mut().skip(order as usize) {
+                if slot.positioned_by == 0 {
+                    slot.positioned_by = order;
+                }
             }
-            if clips && b.clipped_by == 0 {
-                b.clipped_by = order;
-            }
-            // Descendants of a positioned box paint in its layer.
-            if positioned {
-                b.positioned = true;
-            }
-        });
+        }
         self.insert_box(
             el,
             FlowBox {
@@ -1521,6 +2321,7 @@ impl<'a> Ctx<'a> {
                 clipped_by: 0,
             },
         );
+        self.fold_extent(el, order, clips, reach);
     }
 
     /// Lays out the children of a block container in its content box and
@@ -1536,10 +2337,20 @@ impl<'a> Ctx<'a> {
         height: Option<f64>,
         fixed: bool,
         shift: (f64, f64),
+        collapse: Collapse,
     ) -> f64 {
         let outer = std::mem::replace(&mut self.cb_height, height);
         let outer_own = std::mem::replace(&mut self.own_cb_height, outer);
-        let h = self.contents_in(el, style, x, y, width, height, fixed, shift);
+        // A new block formatting context: outside floats do not reach in,
+        // its own do not leak out.
+        let outer_floats = self.is_bfc_root(el, style).then(|| std::mem::take(&mut self.floats));
+        let h = self.contents_reused(el, style, x, y, width, height, fixed, shift, outer, collapse);
+        if let Some(f) = outer_floats {
+            self.floats = f;
+        }
+        if !collapse.bottom {
+            self.trailing = Margin::ZERO;
+        }
         self.cb_height = outer;
         self.own_cb_height = outer_own;
         h
@@ -1556,6 +2367,7 @@ impl<'a> Ctx<'a> {
         height: Option<f64>,
         fixed: bool,
         shift: (f64, f64),
+        collapse: Collapse,
     ) -> f64 {
         if style.replaced {
             // With a ratio the height follows the used width (CSS 2.1 10.6.2).
@@ -1575,17 +2387,24 @@ impl<'a> Ctx<'a> {
         }
         let kids = self.flatten_children(el);
         let mut cursor = y;
-        let mut prev_margin_bottom: Option<f64> = None;
+        // The margin below the last in-flow content, collapsing with the
+        // next block's leading margin (CSS 2.1 8.3.1).
+        let mut pending = Margin::ZERO;
+        // The container's top margin took the leading margins of its first
+        // in-flow blocks (`leading_margin`): they start at the content top.
+        let mut absorbed = collapse.top;
         // The current run of inline-level content (children and generated
         // content), as items; `run_open`: it has begun.
         let mut items: Vec<InlineItem> = Vec::new();
         let mut run_open = false;
         let none = Owners::from([]);
         if let Some(g) = self.generated(el, false) {
+            absorbed = false;
             generated_items(&g, style, &none, &mut items);
             run_open = true;
             if g.display == GeneratedDisplay::Block {
-                cursor += self.inline_items(std::mem::take(&mut items), style, x, cursor, width, fixed, shift);
+                let run = std::mem::take(&mut items);
+                self.flow_run(run, style, x, width, fixed, shift, &mut cursor, &mut pending, &mut absorbed);
                 run_open = false;
             }
         }
@@ -1595,37 +2414,60 @@ impl<'a> Ctx<'a> {
                 child_style.as_ref().is_some_and(|s| matches!(s.position, Position::Absolute | Position::Fixed));
             if out_of_flow {
                 let s = child_style.expect("styled");
-                let static_y = cursor + prev_margin_bottom.unwrap_or(0.0).min(0.0);
+                let static_y = cursor + pending.value().min(0.0);
                 self.defer_absolute(child, s, x - shift.0, static_y);
                 continue;
             }
-            let inline = is_text || child_style.as_ref().is_some_and(|s| s.outer == OuterDisplay::Inline);
+            let inline = is_text
+                || child_style.as_ref().is_some_and(|s| s.outer == OuterDisplay::Inline || s.float != Float::None);
             if inline {
                 self.collect_inline(child, style, &none, &mut items);
                 run_open = true;
                 continue;
             }
             if run_open {
-                let h = self.inline_items(
-                    std::mem::take(&mut items),
-                    style,
-                    x,
-                    cursor + prev_margin_bottom.take().unwrap_or(0.0),
-                    width,
-                    fixed,
-                    shift,
-                );
-                cursor += h;
+                let run = std::mem::take(&mut items);
+                self.flow_run(run, style, x, width, fixed, shift, &mut cursor, &mut pending, &mut absorbed);
                 run_open = false;
             }
             let s = child_style.expect("styled");
             let e = self.edges(&s, width);
-            // Adjacent sibling margins collapse to the larger one.
-            let collapse = prev_margin_bottom.map_or(0.0, |prev| prev.max(e.margin[TOP]) - e.margin[TOP]);
-            let top = cursor + collapse;
-            let taken = self.block_child(child, &s, x, top, width, fixed, shift);
-            cursor = top + taken - e.margin[BOTTOM];
-            prev_margin_bottom = Some(e.margin[BOTTOM]);
+            let lead = self.leading_margin(child, &s, width);
+            let through = self.collapses_through(child, &s, width);
+            let mut border_top = if absorbed { cursor } else { cursor + pending.with(lead).value() };
+            if s.clear != Clear::None {
+                // Clearance: the border edge goes below the cleared floats.
+                border_top = border_top.max(self.clearance(s.clear));
+            }
+            // A formatting context root goes beside the floats (CSS 2.1 9.5).
+            let (bx, bw) = if establishes_bfc(&s) && !self.floats.is_empty() {
+                let need = s.width.resolve(Some(width)).map(|w| {
+                    let w = if s.border_box { w } else { w + e.horizontal() };
+                    w + e.margin[LEFT] + e.margin[RIGHT]
+                });
+                loop {
+                    let (l, w) = self.line_space(x, width, border_top, 0.0);
+                    match self.next_float_bottom(border_top, 0.0) {
+                        Some(b) if w < width && need.is_some_and(|n| n > w + FIT_EPSILON) => border_top = b,
+                        _ => break (l, w),
+                    }
+                }
+            } else {
+                (x, width)
+            };
+            self.block_flow_child = true;
+            let taken = self.block_child(child, &s, bx, border_top - e.margin[TOP], bw, fixed, shift);
+            let trailing = std::mem::take(&mut self.last_trailing);
+            if through {
+                // An empty block: its margins join those around it.
+                if !absorbed {
+                    pending = pending.with(lead).with(trailing);
+                }
+            } else {
+                cursor = border_top + taken - e.margin[TOP] - e.margin[BOTTOM];
+                pending = trailing;
+                absorbed = false;
+            }
         }
         let after = self.generated(el, true);
         if let Some(g) = after.as_ref().filter(|g| g.display != GeneratedDisplay::Block) {
@@ -1633,32 +2475,69 @@ impl<'a> Ctx<'a> {
             run_open = true;
         }
         if run_open {
-            let h = self.inline_items(
-                std::mem::take(&mut items),
-                style,
-                x,
-                cursor + prev_margin_bottom.take().unwrap_or(0.0),
-                width,
-                fixed,
-                shift,
-            );
-            cursor += h;
+            let run = std::mem::take(&mut items);
+            self.flow_run(run, style, x, width, fixed, shift, &mut cursor, &mut pending, &mut absorbed);
         }
         if let Some(g) = after.filter(|g| g.display == GeneratedDisplay::Block) {
+            if g.clear != Clear::None {
+                // `::after { clear: both }` (clearfix).
+                let c = self.clearance(g.clear);
+                if c > cursor + pending.value() {
+                    cursor = c;
+                    pending = Margin::ZERO;
+                    absorbed = false;
+                }
+            }
             generated_items(&g, style, &none, &mut items);
-            let h = self.inline_items(
-                std::mem::take(&mut items),
-                style,
-                x,
-                cursor + prev_margin_bottom.take().unwrap_or(0.0),
-                width,
-                fixed,
-                shift,
-            );
-            cursor += h;
+            let run = std::mem::take(&mut items);
+            self.flow_run(run, style, x, width, fixed, shift, &mut cursor, &mut pending, &mut absorbed);
         }
-        cursor += prev_margin_bottom.unwrap_or(0.0);
+        if self.is_bfc_root(el, style) && height.is_none() {
+            // A formatting context root's auto height contains its floats
+            // (CSS 2.1 10.6.7).
+            let bottom = self.floats.iter().map(|f| f.y1).fold(f64::NEG_INFINITY, f64::max);
+            if bottom > cursor + pending.value() {
+                cursor = bottom;
+                pending = Margin::ZERO;
+            }
+        }
+        if collapse.bottom {
+            // The last margin collapses with the container's bottom margin.
+            self.trailing = pending;
+        } else {
+            cursor += pending.value();
+        }
         cursor - y
+    }
+
+    /// Lays out a run of inline content as line boxes below `cursor` (and
+    /// the pending margin). A run of collapsible white space only makes no
+    /// line: margins collapse across it.
+    #[allow(clippy::too_many_arguments)]
+    fn flow_run(
+        &mut self,
+        items: Vec<InlineItem>,
+        style: &FlowStyle,
+        x: f64,
+        width: f64,
+        fixed: bool,
+        shift: (f64, f64),
+        cursor: &mut f64,
+        pending: &mut Margin,
+        absorbed: &mut bool,
+    ) {
+        let content = items.iter().any(|it| match it {
+            InlineItem::Word { height, .. } => *height > 0.0,
+            InlineItem::OutOfFlow { .. } | InlineItem::Float { .. } => false,
+            _ => true,
+        });
+        let top = *cursor + pending.value();
+        let h = self.inline_items(items, style, x, top, width, fixed, shift);
+        if content || h > 0.0 {
+            *cursor = top + h;
+            *pending = Margin::ZERO;
+            *absorbed = false;
+        }
     }
 
     /// Children of `el` with their styles (None for text), with
@@ -1704,7 +2583,12 @@ impl<'a> Ctx<'a> {
     /// size over them and, if it clips, marks them clipped by it.
     fn place_absolute_into(&mut self, el: NodeId, pending: Vec<Pending>, padding_box: Rect, fixed: bool, clips: bool) {
         let before = self.order;
+        // The boxes are this box's content: they reach its parent unless it
+        // clips them.
+        let own_order = self.out.boxes.get(&el).map_or(0, |b| b.order);
+        self.open_extent(el, own_order);
         self.place_absolute(pending, padding_box, fixed);
+        self.close_extent(el, clips);
         let Some(own) = self.out.boxes.get(&el).copied() else { return };
         let (mut sw, mut sh) = (own.scroll_width, own.scroll_height);
         self.boxes_after(before, |b| {
@@ -1764,6 +2648,7 @@ impl<'a> Ctx<'a> {
             let declared_h =
                 s.height.resolve(Some(cb.height)).map(|h| if s.border_box { (h - e.vertical()).max(0.0) } else { h });
             let order = self.next_order();
+            self.open_extent(p.el, order);
             self.pending.push(Vec::new());
             // Lay out content at a provisional y, then move once the height is known.
             let provisional_y = match top {
@@ -1779,7 +2664,17 @@ impl<'a> Ctx<'a> {
                 }
                 _ => None,
             });
-            let content_h = self.contents(p.el, s, content_x, content_y, content_w, definite_h, fixed, (0.0, 0.0));
+            let content_h = self.contents(
+                p.el,
+                s,
+                content_x,
+                content_y,
+                content_w,
+                definite_h,
+                fixed,
+                (0.0, 0.0),
+                Collapse::default(),
+            );
             // min/max-height are border-box sizes under box-sizing: border-box.
             let to_content_h = |h: f64| if s.border_box { (h - e.vertical()).max(0.0) } else { h };
             let min_h = s.min_height.resolve(Some(cb.height)).map(to_content_h);
@@ -1805,6 +2700,7 @@ impl<'a> Ctx<'a> {
             if delta != 0.0 {
                 self.boxes_after(first_new, |b| b.rect.y += delta);
                 self.shift_texts_after(first_new, delta);
+                self.shift_extent(first_new, delta);
             }
             let rect = Rect { x: bx, y: by, width: border_w, height: border_h };
             self.record(p.el, rect, &e, fixed, true, s.clips_x || s.clips_y, order, content_w, height, content_h);
@@ -1973,7 +2869,8 @@ impl<'a> Ctx<'a> {
                         s.min_width.resolve(None).map(to_content),
                         s.max_width.resolve(None).map(to_content),
                     );
-                    (inner + e.horizontal() + e.margin[LEFT] + e.margin[RIGHT], s.outer)
+                    let outer = if s.float != Float::None && !flex { OuterDisplay::Inline } else { s.outer };
+                    (inner + e.horizontal() + e.margin[LEFT] + e.margin[RIGHT], outer)
                 }
             };
             text_item = false;
@@ -2053,7 +2950,7 @@ impl<'a> Ctx<'a> {
 
     /// Lays out inline items (`inline_run`) as line boxes in [x, x+width);
     /// returns their height.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments, unused_assignments)]
     fn inline_items(
         &mut self,
         items: Vec<InlineItem>,
@@ -2065,31 +2962,57 @@ impl<'a> Ctx<'a> {
         shift: (f64, f64),
     ) -> f64 {
         let strut = text_extents(parent);
+        let strut_h = strut.0 + strut.1;
         let mut frags: FxHashMap<NodeId, Rect> = FxHashMap::default();
         let mut order_of: Vec<NodeId> = Vec::new();
         let mut line = Line::default();
         let mut line_y = y;
+        // The current line's left edge and width beside the floats, and
+        // floats waiting for the line to end.
+        let (mut lx, mut lw) = self.line_space(x, width, line_y, strut_h);
+        let mut deferred: Vec<(NodeId, StyleRef)> = Vec::new();
+        macro_rules! flush {
+            () => {{
+                line_y += self.flush_line(
+                    &mut line,
+                    lx,
+                    line_y,
+                    lw,
+                    fixed,
+                    shift,
+                    &mut frags,
+                    &mut order_of,
+                    parent.text_align,
+                );
+                for (el, style) in std::mem::take(&mut deferred) {
+                    self.place_float(el, &style, x, width, line_y, fixed, shift);
+                }
+                (lx, lw) = self.line_space(x, width, line_y, strut_h);
+            }};
+        }
+        // On an empty line too narrow beside floats for `need`, moves the
+        // line below the next float that ends.
+        macro_rules! fit_beside_floats {
+            ($need:expr) => {{
+                while line.x == 0.0 && $need > lw + FIT_EPSILON && lw < width {
+                    let Some(b) = self.next_float_bottom(line_y, strut_h) else { break };
+                    line_y = b;
+                    (lx, lw) = self.line_space(x, width, line_y, strut_h);
+                }
+            }};
+        }
         for item in items {
             match item {
                 InlineItem::Break if line.items.is_empty() => {
                     // A forced break on an empty line still makes a line box
                     // of the strut's height (`<p><br></p>`, consecutive brs).
-                    line_y += strut.0 + strut.1;
+                    line_y += strut_h;
                     line = Line::default();
+                    (lx, lw) = self.line_space(x, width, line_y, strut_h);
                 }
                 InlineItem::Break => {
                     line.extents(strut);
-                    line_y += self.flush_line(
-                        &mut line,
-                        x,
-                        line_y,
-                        width,
-                        fixed,
-                        shift,
-                        &mut frags,
-                        &mut order_of,
-                        parent.text_align,
-                    );
+                    flush!();
                 }
                 InlineItem::Word {
                     width: w,
@@ -2104,28 +3027,19 @@ impl<'a> Ctx<'a> {
                 } => {
                     let mut source = source;
                     let gap = if line.x > 0.0 { space_before } else { 0.0 };
-                    if line.x > 0.0 && line.x + gap + w > width + FIT_EPSILON && !nowrap {
-                        line_y += self.flush_line(
-                            &mut line,
-                            x,
-                            line_y,
-                            width,
-                            fixed,
-                            shift,
-                            &mut frags,
-                            &mut order_of,
-                            parent.text_align,
-                        );
+                    if line.x > 0.0 && line.x + gap + w > lw + FIT_EPSILON && !nowrap {
+                        flush!();
                     }
+                    fit_beside_floats!(w);
                     // A word wider than an empty line breaks where overflow-wrap
                     // or word-break allows: the longest prefixes that fit, one
                     // per line; the rest continues the last line.
                     let mut w = w;
-                    if line.x == 0.0 && w > width + FIT_EPSILON {
+                    if line.x == 0.0 && w > lw + FIT_EPSILON {
                         if let Some((text, fs, weight)) = &breakable {
                             // A word broken over lines has no text run.
                             source = None;
-                            let pieces = break_word(text, *fs, *weight, width);
+                            let pieces = break_word(text, *fs, *weight, lw);
                             let (last, full) = pieces.split_last().expect("a word has a piece");
                             for &piece in full {
                                 line.push(0.0, piece, h, ascent, owners.clone(), None);
@@ -2133,17 +3047,7 @@ impl<'a> Ctx<'a> {
                                     it.content = Some(content);
                                 }
                                 line.extents(strut);
-                                line_y += self.flush_line(
-                                    &mut line,
-                                    x,
-                                    line_y,
-                                    width,
-                                    fixed,
-                                    shift,
-                                    &mut frags,
-                                    &mut order_of,
-                                    parent.text_align,
-                                );
+                                flush!();
                             }
                             w = *last;
                         }
@@ -2164,19 +3068,10 @@ impl<'a> Ctx<'a> {
                     };
                     let outer_w = content_w + e.horizontal() + e.margin[LEFT] + e.margin[RIGHT];
                     let outer_h = self.atomic_height(el, &style, content_w, width) + e.margin[TOP] + e.margin[BOTTOM];
-                    if line.x > 0.0 && line.x + outer_w > width + FIT_EPSILON && !parent.nowrap {
-                        line_y += self.flush_line(
-                            &mut line,
-                            x,
-                            line_y,
-                            width,
-                            fixed,
-                            shift,
-                            &mut frags,
-                            &mut order_of,
-                            parent.text_align,
-                        );
+                    if line.x > 0.0 && line.x + outer_w > lw + FIT_EPSILON && !parent.nowrap {
+                        flush!();
                     }
+                    fit_beside_floats!(outer_w);
                     // Text-bearing controls sit on their text baseline; other
                     // atomic boxes on their CSS baseline (atomic_baseline) or
                     // their bottom margin edge.
@@ -2202,18 +3097,8 @@ impl<'a> Ctx<'a> {
                     line.extents(strut);
                 }
                 InlineItem::Generated { width: w, height: h, ascent, owners } => {
-                    if line.x > 0.0 && line.x + w > width + FIT_EPSILON && !parent.nowrap {
-                        line_y += self.flush_line(
-                            &mut line,
-                            x,
-                            line_y,
-                            width,
-                            fixed,
-                            shift,
-                            &mut frags,
-                            &mut order_of,
-                            parent.text_align,
-                        );
+                    if line.x > 0.0 && line.x + w > lw + FIT_EPSILON && !parent.nowrap {
+                        flush!();
                     }
                     let at = line.x;
                     line.push(at, w, h, ascent, owners, None);
@@ -2222,24 +3107,18 @@ impl<'a> Ctx<'a> {
                     }
                     line.extents(strut);
                 }
-                InlineItem::Empty { owners, height, ascent } => {
+                InlineItem::Empty { owners, height, ascent, phantom } => {
                     let at = line.x;
                     line.push(at, 0.0, height, ascent, owners, None);
+                    if let Some(it) = line.items.last_mut() {
+                        it.phantom = phantom;
+                    }
                     line.extents(strut);
                 }
                 InlineItem::Block { el, style, owners } => {
-                    line_y += self.flush_line(
-                        &mut line,
-                        x,
-                        line_y,
-                        width,
-                        fixed,
-                        shift,
-                        &mut frags,
-                        &mut order_of,
-                        parent.text_align,
-                    );
+                    flush!();
                     line_y += self.block_child(el, &style, x, line_y, width, fixed, shift);
+                    (lx, lw) = self.line_space(x, width, line_y, strut_h);
                     if let Some(r) = self.out.boxes.get(&el).map(|b| b.rect) {
                         for o in owners.iter() {
                             union(&mut frags, &mut order_of, *o, r);
@@ -2248,18 +3127,26 @@ impl<'a> Ctx<'a> {
                 }
                 InlineItem::OutOfFlow { el, style } => {
                     // Static position: where the next inline content would go.
-                    self.defer_absolute(el, style.clone(), x - shift.0 + line.x, line_y);
+                    self.defer_absolute(el, style.clone(), lx - shift.0 + line.x, line_y);
+                }
+                InlineItem::Float { el, style } => {
+                    let ((w, _), _) = self.float_size(el, &style, width);
+                    if line.x == 0.0 || line.x + w <= lw + FIT_EPSILON {
+                        self.place_float(el, &style, x, width, line_y, fixed, shift);
+                        (lx, lw) = self.line_space(x, width, line_y, strut_h);
+                    } else {
+                        deferred.push((el, style));
+                    }
                 }
             }
         }
-        line_y +=
-            self.flush_line(&mut line, x, line_y, width, fixed, shift, &mut frags, &mut order_of, parent.text_align);
+        flush!();
         // Inline element boxes: union of their fragments.
         for el in order_of {
             if let Some(r) = frags.get(&el).copied() {
                 if self.dom.node_type(el).ok() == Some(NodeType::Text) {
-                    self.out.texts.insert(el, (r, fixed));
-                    self.out.text_orders.push((self.order, el));
+                    self.out.texts.push(self.order, el, (r, fixed));
+                    self.extent_text(el, r, fixed);
                     continue;
                 }
                 let order = self.next_order();
@@ -2283,6 +3170,108 @@ impl<'a> Ctx<'a> {
         line_y - y
     }
 
+    /// The left edge and width of [x, x + width) left free by the floats
+    /// overlapping [y, y + h).
+    fn line_space(&self, x: f64, width: f64, y: f64, h: f64) -> (f64, f64) {
+        let (mut l, mut r) = (x, x + width);
+        for f in self.floats.iter().filter(|f| f.overlaps(y, h)) {
+            if f.left {
+                l = l.max(f.x1);
+            } else {
+                r = r.min(f.x0);
+            }
+        }
+        (l, (r - l).max(0.0))
+    }
+
+    /// The highest bottom among the floats overlapping [y, y + h).
+    fn next_float_bottom(&self, y: f64, h: f64) -> Option<f64> {
+        self.floats.iter().filter(|f| f.overlaps(y, h)).map(|f| f.y1).reduce(f64::min)
+    }
+
+    /// The lowest bottom of the floats `clear` goes below (-inf: none).
+    fn clearance(&self, clear: Clear) -> f64 {
+        self.floats
+            .iter()
+            .filter(|f| match clear {
+                Clear::None => false,
+                Clear::Left => f.left,
+                Clear::Right => !f.left,
+                Clear::Both => true,
+            })
+            .map(|f| f.y1)
+            .fold(f64::NEG_INFINITY, f64::max)
+    }
+
+    /// A float's margin-box size and content width in a containing block
+    /// `cb_width` wide (auto widths shrink to fit).
+    fn float_size(&self, el: NodeId, style: &FlowStyle, cb_width: f64) -> ((f64, f64), f64) {
+        let e = self.edges(style, cb_width);
+        let content_w = match style.width.resolve(Some(cb_width)) {
+            Some(w) => Self::declared_content(style, w, e.horizontal()),
+            None => {
+                self.intrinsic_width(el, style, (cb_width - e.horizontal() - e.margin[LEFT] - e.margin[RIGHT]).max(0.0))
+            }
+        };
+        let to_content = |w: f64| Self::declared_content(style, w, e.horizontal());
+        let content_w = Self::clamp(
+            content_w,
+            style.min_width.resolve(Some(cb_width)).map(to_content),
+            style.max_width.resolve(Some(cb_width)).map(to_content),
+        );
+        let w = content_w + e.horizontal() + e.margin[LEFT] + e.margin[RIGHT];
+        let h = self.atomic_height(el, style, content_w, cb_width) + e.margin[TOP] + e.margin[BOTTOM];
+        ((w, h), content_w)
+    }
+
+    /// Lays out a float in the containing block [x, x + width) at or below
+    /// `y` (CSS 2.1 9.5.1: not above earlier floats, below cleared ones,
+    /// as high and then as far left/right as it fits) and adds it to the
+    /// formatting context's floats.
+    #[allow(clippy::too_many_arguments)]
+    fn place_float(
+        &mut self,
+        el: NodeId,
+        style: &FlowStyle,
+        x: f64,
+        width: f64,
+        y: f64,
+        fixed: bool,
+        shift: (f64, f64),
+    ) {
+        let ((w, h), content_w) = self.float_size(el, style, width);
+        let left = style.float != Float::Right;
+        let mut top = self.floats.iter().map(|f| f.y0).fold(y, f64::max).max(self.clearance(style.clear));
+        let fx = loop {
+            let (l, free) = self.line_space(x, width, top, h);
+            match self.next_float_bottom(top, h) {
+                Some(b) if free + FIT_EPSILON < w => top = b,
+                _ => break if left { l } else { l + free - w },
+            }
+        };
+        let e = self.edges(style, width);
+        let mut s = style.clone();
+        s.width = Dim::px(if style.border_box { content_w + e.horizontal() } else { content_w });
+        s.min_width = Dim::Auto;
+        s.max_width = Dim::Auto;
+        s.margin[LEFT] = Dim::px(e.margin[LEFT]);
+        s.margin[RIGHT] = Dim::px(e.margin[RIGHT]);
+        self.block_child(el, &s, fx, top, w, fixed, shift);
+        self.floats.push(FloatArea { left, x0: fx, x1: fx + w, y0: top, y1: top + h });
+    }
+
+    /// The root element and boxes that establish a block formatting context
+    /// (floats, overflow clips, flex/grid/table, flow-root, out of flow).
+    fn is_bfc_root(&self, el: NodeId, style: &FlowStyle) -> bool {
+        establishes_bfc(style)
+            || self
+                .dom
+                .parent(el)
+                .ok()
+                .flatten()
+                .is_some_and(|p| self.dom.node_type(p).ok() == Some(NodeType::Document))
+    }
+
     /// Places a finished line's items at `line_y` and returns its height
     /// (0 for an empty line).
     #[allow(clippy::too_many_arguments)]
@@ -2300,11 +3289,26 @@ impl<'a> Ctx<'a> {
     ) -> f64 {
         // A line holding only collapsible whitespace (zero-width spacers
         // with no owner) has no line box.
-        let blank =
-            line.items.iter().all(|it| it.atomic.is_none() && !it.generated && it.owners.is_empty() && it.width == 0.0);
+        // So does one holding only empty inline boxes without inline-axis
+        // margins, borders or padding (CSS 2.1 9.4.2): they are 0x0 at its
+        // start.
+        let blank = line
+            .items
+            .iter()
+            .all(|it| it.atomic.is_none() && !it.generated && it.width == 0.0 && (it.owners.is_empty() || it.phantom));
         if blank {
+            for it in line.items.drain(..).filter(|it| it.phantom) {
+                let r = Rect { x: x + it.x + shift.0, y: line_y + shift.1, width: 0.0, height: 0.0 };
+                for o in it.owners.iter() {
+                    union(frags, order_of, *o, r);
+                }
+            }
             *line = Line::default();
             return 0.0;
+        }
+        if !line.ascent.is_finite() || !line.descent.is_finite() {
+            line.ascent = line.ascent.max(0.0);
+            line.descent = line.descent.max(0.0);
         }
         let baseline = line_y + line.ascent;
         self.first_baseline.get_or_insert(baseline);
@@ -2386,14 +3390,15 @@ impl<'a> Ctx<'a> {
 
     /// Content height of `el` laid out at `content_w`, without recording.
     fn measure_height(&self, el: NodeId, style: &FlowStyle, content_w: f64) -> f64 {
-        let key = (el, content_w.to_bits());
-        if let Some(&h) = self.memo.heights.borrow().get(&key) {
+        let key = content_w.to_bits();
+        if let Some(&h) = self.memo.heights.borrow().get(el, &key) {
             return h;
         }
         let mut probe = self.probe();
+        probe.measure_only = true;
         probe.pending.push(Vec::new());
-        let h = probe.contents(el, style, 0.0, 0.0, content_w, None, false, (0.0, 0.0));
-        self.memo.heights.borrow_mut().insert(key, h);
+        let h = probe.contents(el, style, 0.0, 0.0, content_w, None, false, (0.0, 0.0), Collapse::default());
+        self.memo.heights.borrow_mut().insert(el, key, h);
         h
     }
 
@@ -2410,13 +3415,13 @@ impl<'a> Ctx<'a> {
         if flowroot && (style.clips_x || style.clips_y) {
             return None;
         }
-        let key = (el, content_w.to_bits(), content_h.to_bits());
-        if let Some(&b) = self.memo.baselines.borrow().get(&key) {
+        let key = (content_w.to_bits(), content_h.to_bits());
+        if let Some(&b) = self.memo.baselines.borrow().get(el, &key) {
             return b;
         }
         let mut probe = self.probe();
         probe.pending.push(Vec::new());
-        probe.contents(el, style, 0.0, 0.0, content_w, Some(content_h), false, (0.0, 0.0));
+        probe.contents(el, style, 0.0, 0.0, content_w, Some(content_h), false, (0.0, 0.0), Collapse::default());
         let baseline = if flowroot {
             probe.last_baseline
         } else {
@@ -2436,7 +3441,7 @@ impl<'a> Ctx<'a> {
                     item.pending.push(Vec::new());
                     let cw = (b.rect.width - e.horizontal()).max(0.0);
                     let ch = (b.rect.height - e.vertical()).max(0.0);
-                    item.contents(c, &cs, 0.0, 0.0, cw, Some(ch), false, (0.0, 0.0));
+                    item.contents(c, &cs, 0.0, 0.0, cw, Some(ch), false, (0.0, 0.0), Collapse::default());
                     match item.first_baseline {
                         Some(fb) => b.rect.y + e.border[TOP] + e.padding[TOP] + fb,
                         None => b.rect.y + b.rect.height,
@@ -2445,7 +3450,7 @@ impl<'a> Ctx<'a> {
                 None => None,
             }
         };
-        self.memo.baselines.borrow_mut().insert(key, baseline);
+        self.memo.baselines.borrow_mut().insert(el, key, baseline);
         baseline
     }
 
@@ -2467,7 +3472,12 @@ impl<'a> Ctx<'a> {
 
     /// `el`'s generated `::before` (`after`: `::after`) content.
     fn generated(&self, el: NodeId, after: bool) -> Option<std::rc::Rc<Generated>> {
-        self.src.generated(self.dom, el, after)
+        if let Some(g) = self.memo.generated.borrow().get(&(el, after)) {
+            return g.clone();
+        }
+        let g = self.src.generated(self.dom, el, after);
+        self.memo.generated.borrow_mut().insert((el, after), g.clone());
+        g
     }
 
     /// Flattens an inline-level node into items. `owners`: enclosing inline
@@ -2489,6 +3499,10 @@ impl<'a> Ctx<'a> {
                 }
                 if matches!(style.position, Position::Absolute | Position::Fixed) {
                     items.push(InlineItem::OutOfFlow { el: n, style });
+                    return;
+                }
+                if style.float != Float::None {
+                    items.push(InlineItem::Float { el: n, style });
                     return;
                 }
                 if style.outer == OuterDisplay::Block {
@@ -2514,7 +3528,14 @@ impl<'a> Ctx<'a> {
                 }
                 if items.len() == before {
                     let (ascent, descent) = text_extents(&style);
-                    items.push(InlineItem::Empty { owners: with, height: ascent + descent, ascent });
+                    let zero = |d: Dim| matches!(d, Dim::Auto) || d.resolve(Some(0.0)) == Some(0.0);
+                    let phantom = zero(style.margin[LEFT])
+                        && zero(style.margin[RIGHT])
+                        && style.padding[LEFT].resolve(0.0) == 0.0
+                        && style.padding[RIGHT].resolve(0.0) == 0.0
+                        && style.border[LEFT] <= 0.0
+                        && style.border[RIGHT] <= 0.0;
+                    items.push(InlineItem::Empty { owners: with, height: ascent + descent, ascent, phantom });
                 }
             }
             _ => {}
@@ -2615,8 +3636,31 @@ enum Control {
     },
 }
 
+/// The flow style the layout uses for `el`: the source's, with form
+/// controls made atomic boxes sized by their own intrinsic size (their DOM
+/// children, textarea text and options, are not laid out).
+fn used_flow_style(dom: &Dom, src: &dyn FlowStyleSource, el: NodeId) -> Option<FlowStyle> {
+    let mut s = src.flow_style(dom, el);
+    if let Some(st) = s.as_mut() {
+        if control_kind(dom, el).is_some() {
+            st.replaced = true;
+        }
+    }
+    s
+}
+
+/// An element's local name when it has no prefix (what `tagName` compares
+/// against for these HTML tags), without building the `tagName` string.
+fn local_tag(dom: &Dom, el: NodeId) -> Option<&str> {
+    let e = dom.element(el).ok()?;
+    if e.name.prefix.as_ref().is_some_and(|p| !p.is_empty()) {
+        return None;
+    }
+    Some(&e.name.local)
+}
+
 fn control_kind(dom: &Dom, el: NodeId) -> Option<Control> {
-    let tag = dom.tag_name(el).ok()?;
+    let tag = local_tag(dom, el)?;
     let attr = |name: &str| dom.get_attribute(el, name).ok().flatten();
     if tag.eq_ignore_ascii_case("input") {
         let ty = attr("type").unwrap_or("text").trim().to_ascii_lowercase();
@@ -2672,18 +3716,27 @@ fn text_extents(style: &FlowStyle) -> (f64, f64) {
 }
 
 /// A line box being filled.
-#[derive(Default)]
 struct Line {
     x: f64,
+    /// Extents above and below the baseline. Either can be negative (a
+    /// line height below the font's content area): they start unset.
     ascent: f64,
     descent: f64,
     items: Vec<LineItem>,
+}
+
+impl Default for Line {
+    fn default() -> Self {
+        Line { x: 0.0, ascent: f64::NEG_INFINITY, descent: f64::NEG_INFINITY, items: Vec::new() }
+    }
 }
 
 struct LineItem {
     x: f64,
     width: f64,
     height: f64,
+    /// An empty inline box that does not make a line box by itself.
+    phantom: bool,
     ascent: f64,
     owners: Owners,
     atomic: Option<(NodeId, StyleRef)>,
@@ -2713,6 +3766,7 @@ impl Line {
             x,
             width,
             height,
+            phantom: false,
             ascent,
             owners,
             atomic,
@@ -2958,12 +4012,19 @@ impl<'a> Ctx<'a> {
                 resolve_flexible_lengths(&mut items[line.clone()], cm, main_gap, row);
             }
         }
-        // Cross sizes from content (for each item at its main size).
+        // Cross sizes from content (for each item at its main size). In a
+        // single line of a definite cross size, a stretched item takes the
+        // line's size whatever its content: it is not measured.
+        let single = lines.len() == 1;
+        let definite_line = single && container_cross.is_some();
         for it in &mut items {
-            it.cross = self.flex_cross_content(it, row, width);
+            it.cross = if definite_line && stretches(it, style, row, width, height) {
+                0.0
+            } else {
+                self.flex_cross_content(it, row, width)
+            };
         }
         // Line cross sizes.
-        let single = lines.len() == 1;
         let mut line_cross: Vec<f64> = lines
             .iter()
             .map(|l| items[l.clone()].iter().map(|it| it.cross + margins_cross(it, row)).fold(0.0, f64::max))
@@ -2979,19 +4040,7 @@ impl<'a> Ctx<'a> {
         // Stretch.
         for (li, line) in lines.iter().enumerate() {
             for it in &mut items[line.clone()] {
-                let align = it.style.align_self.unwrap_or(style.align_items);
-                // Only an `auto` cross size stretches (an intrinsic keyword
-                // width such as fit-content does not).
-                let declared_cross = if row {
-                    it.style.height.resolve(height)
-                } else if let Dim::Content(_) = it.style.width {
-                    Some(0.0)
-                } else {
-                    it.style.width.resolve(Some(width))
-                };
-                // Auto cross-axis margins take precedence over stretching.
-                if align == Align::Stretch && declared_cross.is_none() && auto_margins(it, row, false) == (false, false)
-                {
+                if stretches(it, style, row, width, height) {
                     let stretched = (line_cross[li] - margins_cross(it, row)).max(0.0);
                     it.cross = self.clamp_cross(it, row, width, stretched);
                     it.stretched = true;
@@ -3330,6 +4379,23 @@ fn resolve_flexible_lengths(items: &mut [FlexItem], container_main: f64, gap: f6
     }
 }
 
+/// Whether a flex item stretches to its line's cross size: `stretch`
+/// alignment, an `auto` cross size (an intrinsic keyword width such as
+/// fit-content does not stretch) and no auto cross-axis margins (which take
+/// precedence).
+fn stretches(it: &FlexItem, container: &FlowStyle, row: bool, width: f64, height: Option<f64>) -> bool {
+    let declared_cross = if row {
+        it.style.height.resolve(height)
+    } else if let Dim::Content(_) = it.style.width {
+        Some(0.0)
+    } else {
+        it.style.width.resolve(Some(width))
+    };
+    it.style.align_self.unwrap_or(container.align_items) == Align::Stretch
+        && declared_cross.is_none()
+        && auto_margins(it, row, false) == (false, false)
+}
+
 /// Whether the item's (start, end) margins on the main (`main`) or cross
 /// axis are `auto`. Text items have none.
 fn auto_margins(it: &FlexItem, row: bool, main: bool) -> (bool, bool) {
@@ -3358,11 +4424,14 @@ fn margins_cross(it: &FlexItem, row: bool) -> f64 {
 
 // ----- table layout (Stage 3) -------------------------------------------------------
 
+#[derive(Clone)]
 struct TableCell {
     el: NodeId,
     style: StyleRef,
     col: usize,
     span: usize,
+    /// Rows the cell spans (at least 1, at most the rest of its row group).
+    rowspan: usize,
 }
 
 struct TableRow {
@@ -3372,10 +4441,27 @@ struct TableRow {
     cells: Vec<TableCell>,
 }
 
+/// A table's rows in display order and its column count.
+type TableRows = (Vec<TableRow>, usize);
+
+/// Generated content per (element, after).
+type GeneratedMap = FxHashMap<(NodeId, bool), Option<Rc<Generated>>>;
+
 impl<'a> Ctx<'a> {
     /// Rows in display order (header groups, then bodies/bare rows, then
     /// footers), each with its cells' column positions.
-    fn table_rows(&self, table: NodeId) -> (Vec<TableRow>, usize) {
+    /// The table's rows in display order and its column count, memoized
+    /// for the pass (the table and its measurements ask several times).
+    fn table_rows(&self, table: NodeId) -> std::rc::Rc<(Vec<TableRow>, usize)> {
+        if let Some(t) = self.memo.tables.borrow().get(&table) {
+            return t.clone();
+        }
+        let t = std::rc::Rc::new(self.table_rows_uncached(table));
+        self.memo.tables.borrow_mut().insert(table, t.clone());
+        t
+    }
+
+    fn table_rows_uncached(&self, table: NodeId) -> (Vec<TableRow>, usize) {
         let mut head = Vec::new();
         let mut body = Vec::new();
         let mut foot = Vec::new();
@@ -3401,12 +4487,51 @@ impl<'a> Ctx<'a> {
                 _ => {}
             }
         }
-        let rows: Vec<TableRow> = head.into_iter().chain(body).chain(foot).collect();
+        let mut rows: Vec<TableRow> = head.into_iter().chain(body).chain(foot).collect();
+        // Slots: each row group (consecutive rows directly in the table form
+        // one) places its cells in the first columns not taken by a cell
+        // spanning down from a row above (HTML table processing model).
+        let mut start = 0;
+        while start < rows.len() {
+            let end = start + rows[start..].iter().take_while(|r| r.group == rows[start].group).count();
+            let mut taken: Vec<usize> = Vec::new();
+            for (r, row) in rows.iter_mut().enumerate().take(end).skip(start) {
+                let mut col = 0;
+                for c in row.cells.iter_mut() {
+                    while taken.get(col).is_some_and(|&n| n > 0) {
+                        col += 1;
+                    }
+                    c.col = col;
+                    c.rowspan = c.rowspan.min(end - r);
+                    if taken.len() < col + c.span {
+                        taken.resize(col + c.span, 0);
+                    }
+                    for t in &mut taken[col..col + c.span] {
+                        *t = (*t).max(c.rowspan);
+                    }
+                    col += c.span;
+                }
+                for t in &mut taken {
+                    *t = t.saturating_sub(1);
+                }
+            }
+            start = end;
+        }
         let cols = rows.iter().map(|r| r.cells.iter().map(|c| c.col + c.span).max().unwrap_or(0)).max().unwrap_or(0);
         (rows, cols)
     }
 
     fn table_row(&self, row: NodeId, style: StyleRef, group: Option<NodeId>) -> TableRow {
+        let cached = self.memo.row_cells.borrow().get(&row).cloned();
+        let cells = cached.unwrap_or_else(|| {
+            let cells = self.row_cells(row);
+            self.memo.row_cells.borrow_mut().insert(row, cells.clone());
+            cells
+        });
+        TableRow { el: Some(row), style: Some(style), group, cells: cells.to_vec() }
+    }
+
+    fn row_cells(&self, row: NodeId) -> Rc<[TableCell]> {
         let mut col = 0;
         let mut cells = Vec::new();
         for (c, cs) in self.flatten_children(row) {
@@ -3423,10 +4548,18 @@ impl<'a> Ctx<'a> {
                 .filter(|&n| n >= 1)
                 .unwrap_or(1)
                 .min(1000);
-            cells.push(TableCell { el: c, style: cs, col, span });
+            // rowspan=0: to the end of the row group.
+            let rowspan = self
+                .dom
+                .get_attribute(c, "rowspan")
+                .ok()
+                .flatten()
+                .and_then(|v| v.trim().parse::<usize>().ok())
+                .map_or(1, |n| if n == 0 { usize::MAX } else { n.min(65534) });
+            cells.push(TableCell { el: c, style: cs, col, span, rowspan });
             col += span;
         }
-        TableRow { el: Some(row), style: Some(style), group, cells }
+        cells.into()
     }
 
     fn spacing(style: &FlowStyle) -> (f64, f64) {
@@ -3522,11 +4655,12 @@ impl<'a> Ctx<'a> {
 
     /// Max-content width of a table's content box.
     fn table_max_content(&self, table: NodeId, style: &FlowStyle) -> f64 {
-        let (rows, cols) = self.table_rows(table);
+        let memo_rows = self.table_rows(table);
+        let (rows, cols) = (memo_rows.0.as_slice(), memo_rows.1);
         let (sx, _) = Self::spacing(style);
-        let content = self.table_columns(table, style, &rows, cols, None).iter().sum::<f64>();
+        let content = self.table_columns(table, style, rows, cols, None).iter().sum::<f64>();
         // A fixed-layout table is at least its declared columns.
-        let fixed = if style.table_layout_fixed { self.fixed_columns_sum(table, &rows, cols) } else { 0.0 };
+        let fixed = if style.table_layout_fixed { self.fixed_columns_sum(table, rows, cols) } else { 0.0 };
         content.max(fixed) + sx * (cols as f64 + 1.0)
     }
 
@@ -3599,14 +4733,15 @@ impl<'a> Ctx<'a> {
     /// shrinks to this when its container is narrower (TOS finance tables:
     /// columns sized by their headers, wider text cells wrapping).
     fn table_min_content(&self, table: NodeId, style: &FlowStyle) -> f64 {
-        let (rows, cols) = self.table_rows(table);
+        let memo_rows = self.table_rows(table);
+        let (rows, cols) = (memo_rows.0.as_slice(), memo_rows.1);
         let (sx, _) = Self::spacing(style);
         if style.table_layout_fixed {
             // Fixed layout ignores cell contents: the declared columns.
-            return self.fixed_columns_sum(table, &rows, cols) + sx * (cols as f64 + 1.0);
+            return self.fixed_columns_sum(table, rows, cols) + sx * (cols as f64 + 1.0);
         }
         let mut widths = vec![0.0f64; cols];
-        for row in &rows {
+        for row in rows {
             for c in row.cells.iter().filter(|c| c.span == 1) {
                 let e = self.edges(&c.style, 0.0);
                 let content = self.clamp_cell_width(c, 0.0, self.min_content(c.el, &c.style) + e.horizontal());
@@ -3630,12 +4765,13 @@ impl<'a> Ctx<'a> {
         fixed: bool,
         shift: (f64, f64),
     ) -> f64 {
-        let (rows, cols) = self.table_rows(el);
+        let memo_rows = self.table_rows(el);
+        let (rows, cols) = (memo_rows.0.as_slice(), memo_rows.1);
         if cols == 0 {
             return 0.0;
         }
         let (sx, sy) = Self::spacing(style);
-        let widths = self.table_columns(el, style, &rows, cols, Some(width));
+        let widths = self.table_columns(el, style, rows, cols, Some(width));
         let mut starts = Vec::with_capacity(cols + 1);
         let mut cx = x + sx;
         for w in &widths {
@@ -3643,27 +4779,91 @@ impl<'a> Ctx<'a> {
             cx += w + sx;
         }
         starts.push(cx);
-        let mut cursor = y + sy;
-        let mut groups: Vec<(NodeId, Rect)> = Vec::new();
-        let mut group_orders: Vec<(NodeId, u32)> = Vec::new();
-        for row in &rows {
-            // Row height: the tallest cell (and the row's own height).
+        // Row heights: the tallest single-row cell (and the row's own
+        // height); a spanning cell taller than its rows grows them in
+        // proportion to their heights (all into the last when they are
+        // empty), as Chromium does.
+        //
+        // A row whose cells lay out alike at any height (`cell_height_free`)
+        // and were not measured at these widths before is laid out once,
+        // its cells at their content heights, then sized to the row
+        // (`lay_row_once`): measuring first would lay every cell out twice.
+        let spans_rows = rows.iter().any(|r| r.cells.iter().any(|c| c.rowspan > 1));
+        let mut once = vec![false; rows.len()];
+        let mut cell_heights: Vec<Vec<(f64, f64, f64)>> = Vec::with_capacity(rows.len());
+        let mut row_hs: Vec<f64> = Vec::with_capacity(rows.len());
+        let rows_once = !spans_rows && ROWS_ONCE.with(|o| o.get());
+        for (r, row) in rows.iter().enumerate() {
             let mut row_h = row.style.as_ref().and_then(|s| s.height.resolve(None)).unwrap_or(0.0);
-            let mut cell_heights = Vec::new();
+            let mut hs = Vec::with_capacity(row.cells.len());
+            let mut free: Option<bool> = None;
             for c in &row.cells {
                 let w = span_width(&widths, c, sx);
                 let e = self.edges(&c.style, width);
                 let content_w = (w - e.horizontal()).max(0.0);
-                let content_h = self.measure_height(c.el, &c.style, content_w);
+                let known = self.memo.heights.borrow().get(c.el, &content_w.to_bits()).copied();
+                if known.is_none()
+                    && rows_once
+                    && *free.get_or_insert_with(|| {
+                        row.cells.iter().all(|c| self.cell_height_free(c, span_width(&widths, c, sx), width))
+                    })
+                {
+                    once[r] = true;
+                    break;
+                }
+                let content_h = known.unwrap_or_else(|| self.measure_height(c.el, &c.style, content_w));
                 let declared =
                     c.style
                         .height
                         .resolve(None)
                         .map(|h| if c.style.border_box { (h - e.vertical()).max(0.0) } else { h });
                 let h = declared.unwrap_or(0.0).max(content_h) + e.vertical();
-                cell_heights.push((content_h, e.vertical()));
-                row_h = row_h.max(h);
+                hs.push((content_h, e.vertical(), h));
+                if c.rowspan == 1 {
+                    row_h = row_h.max(h);
+                }
             }
+            if once[r] {
+                hs.clear();
+                row_h = row.style.as_ref().and_then(|s| s.height.resolve(None)).unwrap_or(0.0);
+            }
+            cell_heights.push(hs);
+            row_hs.push(row_h);
+        }
+        for (r, row) in rows.iter().enumerate() {
+            for (c, &(_, _, h)) in row.cells.iter().zip(&cell_heights[r]) {
+                if c.rowspan < 2 {
+                    continue;
+                }
+                let spanned = &mut row_hs[r..r + c.rowspan];
+                let have: f64 = spanned.iter().sum();
+                let extra = h - have - sy * (c.rowspan - 1) as f64;
+                if extra <= 0.0 {
+                    continue;
+                }
+                if have > 0.0 {
+                    for rh in spanned.iter_mut() {
+                        *rh += extra * *rh / have;
+                    }
+                } else if let Some(last) = spanned.last_mut() {
+                    *last += extra;
+                }
+            }
+        }
+        let columns = {
+            use std::hash::{Hash, Hasher};
+            let mut h = rustc_hash::FxHasher::default();
+            (width.to_bits(), sx.to_bits()).hash(&mut h);
+            for w in &widths {
+                w.to_bits().hash(&mut h);
+            }
+            h.finish()
+        };
+        let mut cursor = y + sy;
+        let mut groups: Vec<(NodeId, Rect)> = Vec::new();
+        let mut group_orders: Vec<(NodeId, u32)> = Vec::new();
+        for (r, row) in rows.iter().enumerate() {
+            let mut row_h = row_hs[r];
             // A row group precedes its rows (and cells) in paint order.
             if let Some(g) = row.group {
                 if !group_orders.iter().any(|(n, _)| *n == g) {
@@ -3672,26 +4872,48 @@ impl<'a> Ctx<'a> {
                 }
             }
             let row_order = self.next_order();
-            for (c, (content_h, vertical)) in row.cells.iter().zip(cell_heights) {
-                let w = span_width(&widths, c, sx);
-                let mut s = (*c.style).clone();
-                s.border_box = true;
-                s.width = Dim::px(w);
-                s.height = Dim::px(row_h);
-                s.margin = [Dim::px(0.0); 4];
-                // The columns already took the cell's min/max width.
-                s.min_width = Dim::Auto;
-                s.max_width = Dim::Auto;
-                s.min_height = Dim::Auto;
-                s.max_height = Dim::Auto;
-                let before = self.order;
-                self.block_child(c.el, &s, starts[c.col], cursor, w, fixed, shift);
-                // Cell content is vertically centred (rows default to middle).
-                let dy = ((row_h - vertical - content_h) / 2.0).max(0.0);
-                if dy > 0.0 {
-                    let cell_order = before + 1;
-                    self.boxes_after(cell_order, |b| b.rect.y += dy);
-                    self.shift_texts_after(cell_order, dy);
+            let lay_cells = |cx: &mut Self| {
+                for (c, &(content_h, vertical, _)) in row.cells.iter().zip(&cell_heights[r]) {
+                    let w = span_width(&widths, c, sx);
+                    let cell_h = row_hs[r..r + c.rowspan].iter().sum::<f64>() + sy * (c.rowspan - 1) as f64;
+                    let mut s = (*c.style).clone();
+                    s.border_box = true;
+                    s.width = Dim::px(w);
+                    s.height = Dim::px(cell_h);
+                    s.margin = [Dim::px(0.0); 4];
+                    // The columns already took the cell's min/max width.
+                    s.min_width = Dim::Auto;
+                    s.max_width = Dim::Auto;
+                    s.min_height = Dim::Auto;
+                    s.max_height = Dim::Auto;
+                    let before = cx.order;
+                    cx.block_child(c.el, &s, starts[c.col], cursor, w, fixed, shift);
+                    // Cell content is vertically centred (rows default to middle).
+                    let dy = ((cell_h - vertical - content_h) / 2.0).max(0.0);
+                    if dy > 0.0 {
+                        let cell_order = before + 1;
+                        cx.boxes_after(cell_order, |b| b.rect.y += dy);
+                        cx.shift_texts_after(cell_order, dy);
+                        cx.shift_extent(cell_order, dy);
+                    }
+                }
+            };
+            // A clean row at the same column widths and height is copied
+            // from the previous pass (a cell spanning rows depends on the
+            // rows below it: no reuse then).
+            if once[r] {
+                let lay_once =
+                    |cx: &mut Self| cx.lay_row_once(row, &widths, &starts, sx, width, cursor, row_h, fixed, shift);
+                row_h = match (row.el, &row.style) {
+                    (Some(el), Some(rs)) => self.row_laid(el, rs, starts[0], cursor, columns, fixed, shift, lay_once),
+                    _ => lay_once(self),
+                };
+            } else {
+                match (row.el, &row.style) {
+                    (Some(el), Some(rs)) if !spans_rows => {
+                        self.row_reused(el, rs, starts[0], cursor, columns, row_h, fixed, shift, lay_cells)
+                    }
+                    _ => lay_cells(self),
                 }
             }
             let rect = Rect {
@@ -3720,6 +4942,163 @@ impl<'a> Ctx<'a> {
         }
         cursor - y
     }
+}
+
+impl Ctx<'_> {
+    /// Whether cell `c`, `w` wide in a table `table_width` wide, lays its
+    /// contents out the same at its content height and at a taller row's:
+    /// nothing inside resolves a percentage against its height or floats
+    /// (an auto-height formatting context grows to its floats), it is not
+    /// a containing block for absolute boxes, and its padding resolves the
+    /// same against the table and the cell width (rows measure against the
+    /// table, cells lay out against their own width).
+    fn cell_height_free(&self, c: &TableCell, w: f64, table_width: f64) -> bool {
+        let s = &c.style;
+        if c.rowspan != 1
+            || s.replaced
+            || s.position != Position::Static
+            || s.float != Float::None
+            || !matches!(s.inner, InnerDisplay::Flow | InnerDisplay::FlowRoot)
+        {
+            return false;
+        }
+        let (a, b) = (self.edges(s, table_width), self.edges(s, w));
+        if a.horizontal() != b.horizontal() || a.vertical() != b.vertical() {
+            return false;
+        }
+        let pct = |d: Dim| matches!(d, Dim::Len(l) if l.percent != 0.0);
+        let mut stack = vec![c.el];
+        while let Some(n) = stack.pop() {
+            let Ok(children) = self.dom.children(n) else { continue };
+            for k in children {
+                if self.dom.node_type(k).ok() != Some(NodeType::Element) {
+                    continue;
+                }
+                let Some(ks) = self.style_of(k) else { continue };
+                if ks.float != Float::None
+                    || [ks.height, ks.min_height, ks.max_height, ks.inset[TOP], ks.inset[BOTTOM]].into_iter().any(pct)
+                {
+                    return false;
+                }
+                stack.push(k);
+            }
+        }
+        true
+    }
+
+    /// Lays out the cells of `row` (none spanning rows, all
+    /// `cell_height_free`) at `y`, each at its content height, then sizes
+    /// them to the row and centres their contents as `table` does after
+    /// measuring. Records each cell's content height as `measure_height`
+    /// would. Returns the row height (at least `min_h`, the row's own).
+    #[allow(clippy::too_many_arguments)]
+    fn lay_row_once(
+        &mut self,
+        row: &TableRow,
+        widths: &[f64],
+        starts: &[f64],
+        sx: f64,
+        table_width: f64,
+        y: f64,
+        min_h: f64,
+        fixed: bool,
+        shift: (f64, f64),
+    ) -> f64 {
+        let mut laid: Vec<(u32, f64, Edges, Edges)> = Vec::with_capacity(row.cells.len());
+        let mut row_h = min_h;
+        for c in &row.cells {
+            let w = span_width(widths, c, sx);
+            let e = self.edges(&c.style, table_width);
+            let mut s = (*c.style).clone();
+            s.border_box = true;
+            s.width = Dim::px(w);
+            s.height = Dim::Auto;
+            s.margin = [Dim::px(0.0); 4];
+            s.min_width = Dim::Auto;
+            s.max_width = Dim::Auto;
+            s.min_height = Dim::Auto;
+            s.max_height = Dim::Auto;
+            let order = self.order + 1;
+            self.block_child(c.el, &s, starts[c.col], y, w, fixed, shift);
+            let content_h = self.last_content_h;
+            let content_w = (w - e.horizontal()).max(0.0);
+            self.memo.heights.borrow_mut().insert(c.el, content_w.to_bits(), content_h);
+            let declared =
+                c.style.height.resolve(None).map(|h| if c.style.border_box { (h - e.vertical()).max(0.0) } else { h });
+            row_h = row_h.max(declared.unwrap_or(0.0).max(content_h) + e.vertical());
+            laid.push((order, content_h, e, self.edges(&s, w)));
+        }
+        for (k, (order, content_h, e, own)) in laid.iter().enumerate() {
+            let (order, content_h) = (*order, *content_h);
+            let end = laid.get(k + 1).map_or(self.order + 1, |l| l.0);
+            self.grow_cell(order, row_h, own);
+            // Cell content is vertically centred (rows default to middle).
+            let dy = ((row_h - e.vertical() - content_h) / 2.0).max(0.0);
+            if dy > 0.0 {
+                self.boxes_between(order, end, |b| b.rect.y += dy);
+                self.shift_texts_between(order, end, dy);
+                self.shift_extent_between(order, end, dy);
+            }
+        }
+        row_h
+    }
+
+    /// Gives the cell box of order `order`, laid out at its content height,
+    /// the border-box height `height` (sizes as `block_child` gives a cell
+    /// that tall: its contents and their reach are the same). `e`: its
+    /// edges as `block_child` resolved them.
+    fn grow_cell(&mut self, order: u32, height: f64, e: &Edges) {
+        let Some(b) = self.out.boxes.at_mut(order as usize - 1) else { return };
+        let content_h = (height - e.vertical()).max(0.0);
+        let client_height = content_h + e.padding[TOP] + e.padding[BOTTOM];
+        if client_height <= b.client_height {
+            return;
+        }
+        b.rect.height = content_h + e.vertical();
+        b.client_height = client_height;
+        b.scroll_height = b.scroll_height.max(client_height);
+        let (bottom, fixed) = (b.rect.y + b.rect.height, b.fixed);
+        if let Some(top) = self.extents.last_mut() {
+            let r = &mut top.direct[fixed as usize];
+            r.bottom = r.bottom.max(bottom);
+        }
+    }
+
+    /// Calls `f` on every box recorded at an order strictly between
+    /// `order` and `end`.
+    fn boxes_between(&mut self, order: u32, end: u32, mut f: impl FnMut(&mut FlowBox)) {
+        let end = (end as usize).saturating_sub(1).min(self.out.boxes.slots.len());
+        for i in order as usize..end {
+            if let Some(b) = self.out.boxes.at_mut(i) {
+                f(b);
+            }
+        }
+    }
+
+    /// Follows `boxes_between(order, end, y += dy)` in the innermost
+    /// extent, where the boxes from `order` to `end` are one recorded
+    /// child (a cell) and its contents.
+    fn shift_extent_between(&mut self, order: u32, end: u32, dy: f64) {
+        let Some(top) = self.extents.last_mut() else { return };
+        for (o, reach) in top.children.iter_mut() {
+            if (order..end).contains(o) {
+                for r in reach.iter_mut() {
+                    r.bottom += dy;
+                }
+            }
+        }
+    }
+}
+
+thread_local! {
+    static ROWS_ONCE: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+}
+
+/// Turns laying table rows out once (`Ctx::lay_row_once`) off (or back on)
+/// on this thread, so tests can compare it with measuring every cell first.
+#[doc(hidden)]
+pub fn set_table_rows_once(on: bool) {
+    ROWS_ONCE.with(|o| o.set(on));
 }
 
 /// A cell's border-box width: its columns' widths and the spacing between
@@ -3858,20 +5237,74 @@ fn expand_tracks(list: &TrackList, available: Option<f64>, gap: f64) -> (Vec<Tra
     (out, rep.fit.then_some(from..to))
 }
 
-/// Resolves a placement against `lines` explicit lines: (start index or
-/// auto, span).
-fn resolve_lines(p: GridPlacement, lines: usize) -> (Option<usize>, usize) {
+/// The explicit grid of one axis: the tracks (auto repeat expanded, padded
+/// to the template areas with auto tracks), the `auto-fit` range and the
+/// line names by 0-based line index (areas name their edges
+/// `<area>-start` / `<area>-end`).
+struct ExplicitAxis {
+    tracks: Vec<Track>,
+    fit: Option<std::ops::Range<usize>>,
+    names: Vec<(usize, Rc<str>)>,
+}
+
+fn explicit_axis(style: &FlowStyle, rows: bool, available: Option<f64>, gap: f64) -> ExplicitAxis {
+    let (list, auto) = if rows {
+        (&style.grid_template_rows, style.grid_auto_rows)
+    } else {
+        (&style.grid_template_columns, style.grid_auto_columns)
+    };
+    let (mut tracks, fit) = expand_tracks(list, available, gap);
+    let inserted = tracks.len() - list.tracks.len();
+    let mut names: Vec<(usize, Rc<str>)> =
+        list.names.iter().map(|(i, after, n)| (if *after { i + inserted } else { *i }, n.clone())).collect();
+    if let Some(areas) = &style.grid_template_areas {
+        let count = if rows { areas.rows } else { areas.cols };
+        tracks.resize(tracks.len().max(count), auto);
+        for (name, l) in &areas.areas {
+            let (start, end) = if rows { (l[0], l[1]) } else { (l[2], l[3]) };
+            names.push((start, Rc::from(format!("{name}-start"))));
+            names.push((end, Rc::from(format!("{name}-end"))));
+        }
+    }
+    names.sort();
+    ExplicitAxis { tracks, fit, names }
+}
+
+/// Resolves a placement against `lines` explicit lines and their `names`:
+/// (start index or auto, span). A name no line has stands for the first
+/// implicit line after the explicit grid.
+fn resolve_lines(p: &GridPlacement, lines: usize, names: &[(usize, Rc<str>)]) -> (Option<usize>, usize) {
     let lines = lines as i32;
-    let index = |n: i32| if n > 0 { n - 1 } else { (lines + n).max(0) };
+    let nth = |name: &str, n: i32| -> i32 {
+        let found: Vec<i32> = names.iter().filter(|(_, m)| &**m == name).map(|(i, _)| *i as i32).collect();
+        if n > 0 {
+            found.get(n as usize - 1).copied().unwrap_or(lines - 1 + n - found.len() as i32)
+        } else {
+            found.len().checked_sub(n.unsigned_abs() as usize).map_or(0, |k| found[k])
+        }
+    };
+    let index = |l: &GridLine, end: bool| match l {
+        GridLine::Number(n) if *n > 0 => n - 1,
+        GridLine::Number(n) => (lines + n).max(0),
+        GridLine::Named(name, 0) => {
+            let edge = format!("{name}-{}", if end { "end" } else { "start" });
+            if names.iter().any(|(_, m)| **m == *edge) {
+                nth(&edge, 1)
+            } else {
+                nth(name, 1)
+            }
+        }
+        GridLine::Named(name, n) => nth(name, *n),
+    };
     let span = p.span.max(1) as usize;
-    match (p.start, p.end) {
+    match (&p.start, &p.end) {
         (Some(s), Some(e)) => {
-            let (a, b) = (index(s), index(e));
+            let (a, b) = (index(s, false), index(e, true));
             let (a, b) = if b < a { (b, a) } else { (a, b) };
             (Some(a as usize), ((b - a).max(1)) as usize)
         }
-        (Some(s), None) => (Some(index(s) as usize), span),
-        (None, Some(e)) => (Some((index(e) - span as i32).max(0) as usize), span),
+        (Some(s), None) => (Some(index(s, false) as usize), span),
+        (None, Some(e)) => (Some((index(e, true) - span as i32).max(0) as usize), span),
         (None, None) => (None, span),
     }
 }
@@ -3883,16 +5316,17 @@ type Lines = (Option<usize>, usize);
 /// and row counts including implicit tracks.
 fn place_grid_items(
     items: &mut [GridItem],
-    explicit_cols: usize,
-    explicit_rows: usize,
+    cols: &ExplicitAxis,
+    rows: &ExplicitAxis,
     column_flow: bool,
 ) -> (usize, usize) {
+    let (explicit_cols, explicit_rows) = (cols.tracks.len(), rows.tracks.len());
     // Work in (major, minor) = (rows, cols) for row flow, swapped for column flow.
     let resolved: Vec<(Lines, Lines)> = items
         .iter()
         .map(|it| {
-            let c = resolve_lines(it.style.grid_column, explicit_cols + 1);
-            let r = resolve_lines(it.style.grid_row, explicit_rows + 1);
+            let c = resolve_lines(&it.style.grid_column, explicit_cols + 1, &cols.names);
+            let r = resolve_lines(&it.style.grid_row, explicit_rows + 1, &rows.names);
             if column_flow {
                 (c, r)
             } else {
@@ -4324,9 +5758,10 @@ impl<'a> Ctx<'a> {
         }
         let col_gap = style.column_gap.resolve(width);
         let row_gap = style.row_gap.resolve(height.unwrap_or(0.0));
-        let (cols, col_fit) = expand_tracks(&style.grid_template_columns, Some(width), col_gap);
-        let (rows, row_fit) = expand_tracks(&style.grid_template_rows, height, row_gap);
-        let (ncols, nrows) = place_grid_items(&mut items, cols.len(), rows.len(), style.grid_auto_flow_column);
+        let cols_axis = explicit_axis(style, false, Some(width), col_gap);
+        let rows_axis = explicit_axis(style, true, height, row_gap);
+        let (ncols, nrows) = place_grid_items(&mut items, &cols_axis, &rows_axis, style.grid_auto_flow_column);
+        let (cols, col_fit, rows, row_fit) = (cols_axis.tracks, cols_axis.fit, rows_axis.tracks, rows_axis.fit);
         let col_tracks: Vec<Track> =
             (0..ncols).map(|i| cols.get(i).copied().unwrap_or(style.grid_auto_columns)).collect();
         let row_tracks: Vec<Track> = (0..nrows).map(|i| rows.get(i).copied().unwrap_or(style.grid_auto_rows)).collect();
@@ -4440,9 +5875,10 @@ impl<'a> Ctx<'a> {
     fn grid_content_width(&self, el: NodeId, style: &FlowStyle, min: bool) -> f64 {
         let (mut items, _) = self.grid_children(el, style);
         let gap = style.column_gap.resolve(0.0);
-        let (cols, _) = expand_tracks(&style.grid_template_columns, None, gap);
-        let (rows, _) = expand_tracks(&style.grid_template_rows, None, 0.0);
-        let (ncols, _) = place_grid_items(&mut items, cols.len(), rows.len(), style.grid_auto_flow_column);
+        let cols_axis = explicit_axis(style, false, None, gap);
+        let rows_axis = explicit_axis(style, true, None, 0.0);
+        let (ncols, _) = place_grid_items(&mut items, &cols_axis, &rows_axis, style.grid_auto_flow_column);
+        let cols = cols_axis.tracks;
         let tracks: Vec<Track> = (0..ncols).map(|i| cols.get(i).copied().unwrap_or(style.grid_auto_columns)).collect();
         let collapsed = vec![false; ncols];
         let sizes = size_tracks(

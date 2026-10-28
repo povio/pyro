@@ -327,3 +327,43 @@ fn dump_flow_snapshot() {
     }
     print!("{out}");
 }
+
+/// Diagnostic: `FLOW_IDS=page.html` prints `id-or-tag x y w h` for every body
+/// element in tree order, in the format of a Chromium dump of
+/// getBoundingClientRect (numbers rounded to 2 decimals, trailing zeros
+/// dropped), to diff the two line by line. Viewport: FLOW_VIEWPORT (800x600).
+#[test]
+#[ignore]
+fn dump_flow_ids() {
+    let Ok(path) = std::env::var("FLOW_IDS") else { return };
+    let (vw, vh) = std::env::var("FLOW_VIEWPORT")
+        .ok()
+        .and_then(|v| v.split_once('x').map(|(w, h)| (w.parse().unwrap(), h.parse().unwrap())))
+        .unwrap_or((800, 600));
+    let html = std::fs::read_to_string(&path).expect("page");
+    let dom_ref: DomRef = Rc::new(RefCell::new(Dom::new()));
+    let doc = parse_document(&dom_ref, "http://snapshot/", &html);
+    let dom = Rc::try_unwrap(dom_ref).ok().expect("sole owner").into_inner();
+    let mut layout = Layout::with_viewport(doc, Viewport::new(vw, vh));
+    layout.style_mut().discover_style_elements(&dom);
+    layout.set_geometry(Geometry::Flow);
+    let body = dom.body(doc).unwrap().unwrap();
+    let num = |v: f64| {
+        let s = format!("{:.2}", v);
+        let s = s.trim_end_matches('0').trim_end_matches('.');
+        if s == "-0" { "0".to_string() } else { s.to_string() }
+    };
+    let mut out = String::new();
+    for n in dom.descendants(body).unwrap() {
+        if n == body || dom.node_type(n).ok() != Some(NodeType::Element) {
+            continue;
+        }
+        let name = match dom.get_attribute(n, "id").unwrap() {
+            Some(id) if !id.is_empty() => id.to_string(),
+            _ => dom.tag_name(n).unwrap().to_ascii_lowercase(),
+        };
+        let r = layout.bounding_client_rect(&dom, n);
+        out.push_str(&format!("{name} {} {} {} {}\n", num(r.x), num(r.y), num(r.width), num(r.height)));
+    }
+    print!("{out}");
+}

@@ -371,8 +371,8 @@ impl FlowStyleSource for InlineFlex<'_> {
             s.grid_auto_rows = t;
         }
         let (gc, gr) = (decl("grid-column"), decl("grid-row"));
-        s.grid_column = flow::parse_grid_placement(gc.as_deref(), None, None);
-        s.grid_row = flow::parse_grid_placement(gr.as_deref(), None, None);
+        s.grid_column = flow::parse_grid_placement(gc.as_deref(), None, None, (None, None));
+        s.grid_row = flow::parse_grid_placement(gr.as_deref(), None, None, (None, None));
         if let Some(g) = decl("column-gap").and_then(|v| flex_len(&v)) {
             s.column_gap = g;
         }
@@ -2839,6 +2839,8 @@ fn style_sharing_serves_each_elements_own_cascade() {
         .t3 .group:hover b{width:55px} .t3 .group:focus-within span{width:66px}\
         .t4 tr[data-hot] td{height:30px}\
         .t5 td:has(.flag){height:21px} .t5 .a+.b{width:31px} .t5 .a~.c{width:41px}\
+        .t6 input,.t6 button{display:block;height:3px} .t6 :checked{width:13px} .t6 :disabled{width:17px}\
+        .t6 :placeholder-shown{width:19px} .t6 :checked+span{height:7px} .t6 :disabled svg{height:9px}\
         </style>";
     let table = |class: &str, rows: &dyn Fn(usize) -> String| {
         let body: String = (0..8).map(rows).collect();
@@ -2863,7 +2865,20 @@ fn style_sharing_serves_each_elements_own_cascade() {
         let flag = if i == 3 { "<i class=flag></i>" } else { "" };
         format!("<tr class=group><td>{flag}<span>v</span></td><td><span class=a></span><span class=b></span><span class=c></span></td></tr>")
     });
-    let html = format!("<!doctype html>{css}<body style=\"margin:0\">{t1}{t2}{t3}{t4}{t5}</body>");
+    // Inputs and buttons share only when their states agree.
+    let t6 = table("t6", &|i| {
+        let (checked, fieldset) = (if i == 2 { " checked" } else { "" }, i == 5);
+        let cell = format!(
+            "<td><input type=checkbox{checked}><span></span></td><td><input placeholder=q></td>\
+             <td><button><svg></svg></button></td>"
+        );
+        if fieldset {
+            format!("<tr><td><fieldset disabled><table><tr>{cell}</tr></table></fieldset></td></tr>")
+        } else {
+            format!("<tr>{cell}</tr>")
+        }
+    });
+    let html = format!("<!doctype html>{css}<body style=\"margin:0\">{t1}{t2}{t3}{t4}{t5}{t6}</body>");
     let mut p = page(&html, Geometry::Flow);
     let elements = |p: &Page, root: NodeId| -> Vec<NodeId> {
         p.dom
@@ -2880,6 +2895,23 @@ fn style_sharing_serves_each_elements_own_cascade() {
             let own = p.layout.style().flow_style_unshared(&p.dom, e);
             assert_eq!(served, own, "{step}: <{}> served a style not its own", p.dom.tag_name(e).unwrap());
         }
+        // The declared level shares too: compare with a cascade that never
+        // shares.
+        lp_dom::style::set_style_sharing(false);
+        let mut fresh = Layout::with_viewport(p.doc, p.layout.viewport().clone());
+        fresh.style_mut().discover_style_elements(&p.dom);
+        fresh.set_geometry(Geometry::Flow);
+        let _ = fresh.flow(&p.dom);
+        for e in elements(p, p.doc) {
+            let served = p.layout.style().flow_style(&p.dom, e);
+            assert_eq!(
+                served,
+                fresh.style().flow_style(&p.dom, e),
+                "{step}: <{}> differs from an unshared cascade",
+                p.dom.tag_name(e).unwrap()
+            );
+        }
+        lp_dom::style::set_style_sharing(true);
         assert_matches_fresh(p, step);
     };
     check(&p, "initial");
@@ -2910,6 +2942,14 @@ fn style_sharing_serves_each_elements_own_cascade() {
     let _ = p.layout.flow(&p.dom);
     p.dom.remove_attribute(cell, "title").unwrap();
     check(&p, "cell of a sharing row restyled alone");
+    // t6: checkedness and a dirty value change without an attribute.
+    let boxes: Vec<NodeId> =
+        elements(&p, tables[5]).into_iter().filter(|&n| p.dom.tag_name(n).ok().as_deref() == Some("INPUT")).collect();
+    p.dom.set_checked(boxes[0], true).unwrap();
+    p.dom.set_value(boxes[3], "typed").unwrap();
+    check(&p, "checked and typed");
+    p.dom.set_checked(boxes[0], false).unwrap();
+    check(&p, "unchecked");
     // New rows appended to t1 (React commit) share with existing ones.
     let tb1 = p.dom.parent_element(rows(&p, tables[0])[0]).unwrap().unwrap();
     for _ in 0..3 {
@@ -2919,6 +2959,69 @@ fn style_sharing_serves_each_elements_own_cascade() {
         p.dom.append_child(tb1, tr).unwrap();
     }
     check(&p, "rows appended");
+}
+
+#[test]
+fn table_rows_laid_out_once_match_measured_rows() {
+    // Rows whose cells lay out alike at any height are laid out once, at
+    // their content heights, then sized to the row; the others measure
+    // every cell first. Both must give the same result on a first pass and
+    // after changes inside rows.
+    let css = "<style>\
+        body{margin:0;font:14px/20px sans-serif} table{border-collapse:collapse;width:600px}\
+        td,th{padding:6px 10px;border:1px solid}.sep{border-collapse:separate;border-spacing:3px 5px}\
+        .tall{height:60px} .ch{height:44px} .clip{overflow:hidden;white-space:nowrap;max-width:80px}\
+        .ib{display:inline-block;width:30px;height:12px;vertical-align:middle} .fx{display:inline-flex;gap:4px;align-items:center}\
+        .pp{padding:2%} .full{height:100%} .fl{float:left;width:20px;height:9px} .rel{position:relative}\
+        .box{position:relative;height:30px} .abs{position:absolute;bottom:0;right:0;width:5px;height:5px}\
+        .t{display:table;width:300px} .c{display:table-cell;padding:4px}\
+        </style>";
+    let html = format!(
+        "<!doctype html>{css}<body>\
+         <table><thead><tr><th>Name</th><th>Qty</th><th>Note</th></tr></thead><tbody>\
+         <tr><td id=w>alpha beta gamma delta epsilon zeta eta theta</td><td>1</td><td><input><button>Go</button></td></tr>\
+         <tr class=tall><td>short</td><td><span class=ib></span><span class=fx><b>x</b><i>y</i></span></td><td></td></tr>\
+         <tr><td class=ch>declared</td><td class=clip>a long unbreakable cell that overflows its width</td><td><div class=box><span class=abs></span>abs</div></td></tr>\
+         <tr><td class=pp>percent padding</td><td><div class=full>full</div></td><td>x</td></tr>\
+         <tr><td><div class=fl></div>float</td><td class=rel>relative</td><td><table><tr><td>in</td><td>ner<br>two</td></tr></table></td></tr>\
+         </tbody><tfoot><tr><td colspan=2>foot spanning</td><td id=f>end</td></tr></tfoot></table>\
+         <div style=\"overflow:auto;height:120px\" id=scroller><table><tr class=tall><td><div style=\"position:relative;top:90px\">down</div></td><td>x</td></tr></table></div>\
+         <table class=sep><tr><td>sep</td><td style=\"height:50px\">tall cell</td></tr><tr><td></td><td>after</td></tr></table>\
+         <div class=t><div class=c>anonymous</div><div class=c>row<br>of cells</div></div>\
+         </body>"
+    );
+    let mut p = page(&html, Geometry::Flow);
+    let check = |p: &Page, step: &str| {
+        let got = p.layout.flow(&p.dom);
+        lp_dom::flow::set_table_rows_once(false);
+        let mut measured = Layout::with_viewport(p.doc, Viewport::new(800, 600));
+        measured.style_mut().discover_style_elements(&p.dom);
+        measured.set_geometry(Geometry::Flow);
+        let want = measured.flow(&p.dom);
+        lp_dom::flow::set_table_rows_once(true);
+        let sc = p.id("scroller");
+        assert!(got.boxes.get(&sc).unwrap().scroll_height > 120.0, "{step}: the shifted cell content overflows");
+        if let Some(d) = lp_dom::flow::difference(&want, &got) {
+            panic!("{step}: {d}");
+        }
+        // Exactly on a first pass (later passes translate replayed
+        // subtrees, which can move a value by a rounding step).
+        if step == "first pass" {
+            for (k, b) in &want.boxes {
+                assert_eq!(Some(b), got.boxes.get(k), "{step}: box {k:?}");
+            }
+        }
+    };
+    check(&p, "first pass");
+    let w = p.id("w");
+    p.dom.set_text_content(w, "now a much longer text that wraps onto several more lines in its column").unwrap();
+    check(&p, "cell text grows");
+    let f = p.id("f");
+    p.dom.set_text_content(f, "x").unwrap();
+    check(&p, "footer cell text");
+    let tr = p.dom.parent_element(w).unwrap().unwrap();
+    p.dom.set_attribute(tr, "class", "tall").unwrap();
+    check(&p, "row restyled");
 }
 
 #[test]
@@ -4380,5 +4483,379 @@ fn text_input_scroll_width_follows_its_value() {
         p.dom.set_value(ta, "a\nE2E-ISO-DEBTOR-9C70E3E9D4\nb").unwrap();
         let w = p.layout.scroll_width(&p.dom, ta);
         assert!(w > 150.0, "{geometry:?}: the longest textarea line, got {w}");
+    }
+}
+
+/// Border boxes [x, y, width, height] of the elements with these ids, all
+/// compared to Chromium's (within 0.01px).
+fn check_rects(name: &str, html: &str, expected: &[(&str, [f64; 4])]) {
+    let p = page(html, Geometry::Flow);
+    let mut diffs = Vec::new();
+    for (id, want) in expected {
+        let r = p.layout.bounding_client_rect(&p.dom, p.id(id));
+        let got = [r.x, r.y, r.width, r.height];
+        if got.iter().zip(want).any(|(g, w)| (g - w).abs() > 0.01) {
+            diffs.push(format!("#{id}: got {got:?}, Chromium {want:?}"));
+        }
+    }
+    assert!(diffs.is_empty(), "{name}:\n{}", diffs.join("\n"));
+}
+
+#[test]
+fn margins_collapse_through_parents_and_empty_blocks_like_chromium() {
+    // CSS 2.1 8.3.1, measured in Chromium (800x600): a first child's top
+    // margin collapses with its parent's (and body's) unless padding or a
+    // border separates them or the parent is a new formatting context; a
+    // last child's bottom margin collapses with an auto-height parent's;
+    // an empty block's margins collapse through it; negative margins add to
+    // the largest positive one.
+    let html = "<!doctype html><body><div id=a><h1 id=h style=\"height:30px;margin:20px 0\">x</h1><p id=p1 style=\"height:10px\">x</p></div>\
+        <div id=b style=\"margin-top:5px\"><div id=b1 style=\"margin-top:40px;height:10px\"></div></div><div id=e style=\"margin:15px 0\"></div>\
+        <div id=c style=\"margin-top:10px;padding-top:1px\"><div id=c1 style=\"margin-top:30px;height:10px;margin-bottom:25px\"></div></div>\
+        <div id=d style=\"height:5px;margin-top:-10px\"></div>\n<section id=s style=\"overflow:hidden\"><p id=s1 style=\"margin:12px 0;height:4px\"></p></section>\
+        <div id=f style=\"margin-bottom:7px\"><div id=f1 style=\"height:3px;margin-bottom:33px\"></div></div><div id=g style=\"height:2px\"></div></body>";
+    check_rects(
+        "margins",
+        html,
+        &[
+            ("a", [8.0, 20.0, 784.0, 60.0]),
+            ("h", [8.0, 20.0, 784.0, 30.0]),
+            ("p1", [8.0, 70.0, 784.0, 10.0]),
+            ("b", [8.0, 120.0, 784.0, 10.0]),
+            ("b1", [8.0, 120.0, 784.0, 10.0]),
+            ("e", [8.0, 145.0, 784.0, 0.0]),
+            ("c", [8.0, 145.0, 784.0, 41.0]),
+            ("c1", [8.0, 176.0, 784.0, 10.0]),
+            ("d", [8.0, 201.0, 784.0, 5.0]),
+            ("s", [8.0, 206.0, 784.0, 28.0]),
+            ("s1", [8.0, 218.0, 784.0, 4.0]),
+            ("f", [8.0, 234.0, 784.0, 3.0]),
+            ("f1", [8.0, 234.0, 784.0, 3.0]),
+            ("g", [8.0, 270.0, 784.0, 2.0]),
+        ],
+    );
+    // UA heading sizes and margins, line content between blocks, chains of
+    // first children, an empty span (no line box), an empty block before
+    // its sibling, a flex item (no collapsing with its children) and an
+    // absolutely positioned first child (skipped).
+    let html = "<!doctype html><body style=\"font-size:16px;line-height:20px;font-family:sans-serif\"><h1 id=h1>Title</h1><p id=p1>para one</p>\n\
+        <p id=p2 style=\"margin-bottom:30px\">two</p>text after<div id=d1 style=\"margin-top:12px;height:5px\"></div>\n\
+        <ul id=ul><li id=li1>a</li><li id=li2>b</li></ul>\n\
+        <div id=n1 style=\"margin-top:-20px\"><div id=n2 style=\"margin-top:10px\"><div id=n3 style=\"margin-top:25px;height:8px;margin-bottom:-5px\"></div></div></div>\n\
+        <div id=x1 style=\"margin-bottom:10px\">  <span id=sp></span>  </div><div id=x2 style=\"margin-top:20px;height:4px\"></div>\n\
+        <div id=y1><div id=y2 style=\"margin:10px 0\"></div><div id=y3 style=\"margin-top:30px;height:6px\"></div></div>\n\
+        <div id=z1 style=\"display:flex\"><div id=z2 style=\"margin-top:9px\"><p id=z3 style=\"margin:14px 0\">in flex</p></div></div>\n\
+        <div id=w1 style=\"position:relative\"><div id=w2 style=\"position:absolute;top:0\"></div><p id=w3 style=\"margin-top:17px;height:3px\"></p></div>\n\
+        <div id=last style=\"margin-bottom:50px\"><p id=lp style=\"margin-bottom:60px;height:2px\"></p></div></body>";
+    let y = |id: &'static str, x: f64, y: f64, w: f64, h: f64| (id, [x, y, w, h]);
+    check_rects(
+        "margins in text",
+        html,
+        &[
+            y("h1", 8.0, 21.44, 784.0, 20.0),
+            y("p1", 8.0, 62.88, 784.0, 20.0),
+            y("p2", 8.0, 98.88, 784.0, 20.0),
+            y("d1", 8.0, 180.88, 784.0, 5.0),
+            y("ul", 8.0, 201.88, 784.0, 40.0),
+            y("li1", 48.0, 201.88, 744.0, 20.0),
+            y("li2", 48.0, 221.88, 744.0, 20.0),
+            y("n1", 8.0, 246.88, 784.0, 8.0),
+            y("n2", 8.0, 246.88, 784.0, 8.0),
+            y("n3", 8.0, 246.88, 784.0, 8.0),
+            y("x1", 8.0, 249.88, 784.0, 0.0),
+            y("sp", 8.0, 249.88, 0.0, 0.0),
+            y("x2", 8.0, 269.88, 784.0, 4.0),
+            y("y1", 8.0, 303.88, 784.0, 6.0),
+            y("y2", 8.0, 303.88, 784.0, 0.0),
+            y("y3", 8.0, 303.88, 784.0, 6.0),
+            y("z1", 8.0, 309.88, 784.0, 57.0),
+            y("w1", 8.0, 383.88, 784.0, 3.0),
+            y("w2", 8.0, 383.88, 0.0, 0.0),
+            y("w3", 8.0, 383.88, 784.0, 3.0),
+            y("last", 8.0, 402.88, 784.0, 2.0),
+            y("lp", 8.0, 402.88, 784.0, 2.0),
+        ],
+    );
+}
+
+#[test]
+fn line_height_below_the_content_area_like_chromium() {
+    // A 32px font in 20px lines: the half-leading is negative on both sides
+    // and the line box stays 20px (it was 22: the descent was floored at 0).
+    let html = "<!doctype html><body style=\"margin:0;font-family:sans-serif\"><div id=a style=\"font-size:32px;line-height:20px\">Title</div>\
+        <div id=b style=\"font-size:16px;line-height:20px\"><div id=c style=\"font-size:32px\">Title</div></div>\
+        <div id=d style=\"font-size:16px;line-height:20px\"><h1 id=e style=\"margin:0\">Title</h1></div></body>";
+    check_rects(
+        "tight lines",
+        html,
+        &[
+            ("a", [0.0, 0.0, 800.0, 20.0]),
+            ("b", [0.0, 20.0, 800.0, 20.0]),
+            ("c", [0.0, 20.0, 800.0, 20.0]),
+            ("d", [0.0, 40.0, 800.0, 20.0]),
+            ("e", [0.0, 40.0, 800.0, 20.0]),
+        ],
+    );
+}
+
+#[test]
+fn table_rowspan_like_chromium() {
+    // Chromium (800x600): a spanning cell takes the first free column of
+    // later rows; when it is taller than its rows, they grow in proportion
+    // to their heights (all into the last when they are empty); a rowspan
+    // past the group's end stops there; a row without cells still counts.
+    let html = "<!doctype html><body style=\"margin:0\"><table id=t style=\"border-spacing:2px\"><tr id=r1><td id=a rowspan=2 style=\"height:100px;width:30px;padding:0\"></td><td id=b style=\"height:10px;width:20px;padding:0\"></td></tr><tr id=r2><td id=c style=\"height:30px;padding:0\"></td></tr><tr id=r3><td id=d style=\"padding:0;height:5px\"></td><td id=e style=\"padding:0;height:5px\"></td></tr></table>\
+        <table id=t2 style=\"border-spacing:0\"><tr id=q1><td id=f rowspan=3 style=\"height:90px;padding:0;width:10px\"></td><td id=g style=\"padding:0;width:10px\"></td></tr><tr id=q2><td id=h style=\"padding:0\"></td></tr><tr id=q3><td id=i style=\"padding:0;height:20px\"></td></tr></table>\
+        <table style=\"border-spacing:0\"><tr id=w1><td id=w rowspan=5 style=\"height:90px;padding:0;width:10px\"></td></tr><tr id=w2></tr></table></body>";
+    check_rects(
+        "rowspan",
+        html,
+        &[
+            ("t", [0.0, 0.0, 56.0, 111.0]),
+            ("r1", [2.0, 2.0, 52.0, 24.5]),
+            ("a", [2.0, 2.0, 30.0, 100.0]),
+            ("b", [34.0, 2.0, 20.0, 24.5]),
+            ("r2", [2.0, 28.5, 52.0, 73.5]),
+            ("c", [34.0, 28.5, 20.0, 73.5]),
+            ("r3", [2.0, 104.0, 52.0, 5.0]),
+            ("d", [2.0, 104.0, 30.0, 5.0]),
+            ("e", [34.0, 104.0, 20.0, 5.0]),
+            ("t2", [0.0, 111.0, 20.0, 90.0]),
+            ("q1", [0.0, 111.0, 20.0, 0.0]),
+            ("f", [0.0, 111.0, 10.0, 90.0]),
+            ("h", [10.0, 111.0, 10.0, 0.0]),
+            ("q3", [0.0, 111.0, 20.0, 90.0]),
+            ("i", [10.0, 111.0, 10.0, 90.0]),
+            ("w1", [0.0, 201.0, 10.0, 0.0]),
+            ("w2", [0.0, 201.0, 10.0, 90.0]),
+            ("w", [0.0, 201.0, 10.0, 90.0]),
+        ],
+    );
+}
+
+#[test]
+fn grid_template_areas_and_named_lines_like_chromium() {
+    // Chromium (800x600): items placed by area name (`grid-area`), by
+    // `[name]` lines (also the nth one and from the end, inside repeat()),
+    // by an area's implicit `-start` / `-end` lines; a name no line has is
+    // the first implicit line. Areas extend the explicit grid.
+    let html = "<!doctype html><html><head><style>body{margin:0;font-family:sans-serif;font-size:16px;line-height:20px}#g{display:grid;width:600px;grid-template-columns:200px 1fr 100px;grid-template-rows:50px auto 40px;grid-template-areas:\"head head head\" \"side main main\" \"foot foot foot\";gap:10px}#h{grid-area:head}#s{grid-area:side}#m{grid-area:main;height:80px}#f{grid-area:foot}#g2{display:grid;width:500px;grid-auto-columns:20px;grid-template-columns:[a] 100px [b c] 1fr [d] 50px [e];grid-auto-rows:30px}#x1{grid-column:b / d}#x2{grid-column:a / e;grid-row:2}#x3{grid-column:c}#x4{grid-column:2 a / span 1}#g3{display:grid;width:400px;grid-template-columns:80px 150px;grid-auto-columns:40px;grid-template-areas:\"x . y\" \"x z z\";grid-auto-rows:25px}#y1{grid-area:y}#z1{grid-area:z}#x5{grid-area:x}#q{grid-column:nope}#q2{grid-row:x-start / x-end}#g4{display:grid;width:300px;grid-template-columns:repeat(2,[l] 50px) [r];grid-auto-rows:20px}#w1{grid-column:l 2 / r}#w2{grid-column:l -1}</style></head><body><div id=g><div id=h>H</div><div id=m>M</div><div id=s>S</div><div id=f>F</div></div><div id=g2><div id=x1>1</div><div id=x2>2</div><div id=x3>3</div><div id=x4>4</div></div><div id=g3><div id=q>q</div><div id=y1>y</div><div id=z1>z</div><div id=x5>x</div><div id=q2>q2</div></div><div id=g4><div id=w1>w1</div><div id=w2>w2</div></div></body></html>";
+    check_rects(
+        "grid areas",
+        html,
+        &[
+            ("g", [0.0, 0.0, 600.0, 190.0]),
+            ("h", [0.0, 0.0, 600.0, 50.0]),
+            ("m", [210.0, 60.0, 390.0, 80.0]),
+            ("s", [0.0, 60.0, 200.0, 80.0]),
+            ("f", [0.0, 150.0, 600.0, 40.0]),
+            ("g2", [0.0, 190.0, 500.0, 90.0]),
+            ("x1", [100.0, 190.0, 310.0, 30.0]),
+            ("x2", [0.0, 220.0, 460.0, 30.0]),
+            ("x3", [100.0, 250.0, 310.0, 30.0]),
+            ("x4", [480.0, 250.0, 20.0, 30.0]),
+            ("g3", [0.0, 280.0, 400.0, 50.0]),
+            ("q", [310.0, 280.0, 40.0, 25.0]),
+            ("y1", [230.0, 280.0, 40.0, 25.0]),
+            ("z1", [80.0, 305.0, 190.0, 25.0]),
+            ("x5", [0.0, 280.0, 80.0, 50.0]),
+            ("q2", [270.0, 280.0, 40.0, 50.0]),
+            ("g4", [0.0, 330.0, 300.0, 40.0]),
+            ("w1", [50.0, 330.0, 50.0, 20.0]),
+            ("w2", [50.0, 350.0, 50.0, 20.0]),
+        ],
+    );
+}
+
+#[test]
+fn floats_like_chromium() {
+    // Chromium (800x600): left/right floats with margins; lines shortened
+    // beside them; floats stacking and dropping below when the line is
+    // full; formatting context roots (overflow, flex) beside floats or
+    // below when too wide, containing their floats; clear and a clearfix
+    // ::after; a float in the middle of a line; floats leaving a block
+    // into its parent's context.
+    check_rects(
+        "floats",
+        "<!doctype html><html><head><style>body{margin:0;font-family:sans-serif;font-size:16px;line-height:20px}.box{background:#ccc}#c1{width:400px}#a{float:left;width:100px;height:50px;margin:5px}#b{float:right;width:80px;height:30px}#p1{margin:0}#c2{width:300px;overflow:hidden}#d{float:left;width:120px;height:40px}#e{float:left;width:120px;height:60px}#f{float:left;width:120px;height:20px}#c3{width:300px}#g{float:left;width:50px;height:50px}#h{overflow:hidden;height:30px}#i{clear:both;height:10px}#c4{width:300px}#j{float:right;width:100px;height:20px;margin-left:10px}.cf::after{content:\"\";display:table;clear:both}#k{float:left;width:60px;height:45px}#c5{width:200px}#l{float:left;padding:4px;border:1px solid}</style></head><body><div id=c1><div id=a></div><div id=b></div><p id=p1><span id=s1>Some text that wraps around the floated boxes on both sides of the container, long enough to go below them all.</span></p></div><div id=c2><div id=d></div><div id=e></div><div id=f></div></div><div id=c3><div id=g></div><div id=h>bfc</div><div id=i></div></div><div id=c4 class=cf><span id=s2>Lead text </span><div id=j></div><div id=k></div></div><div id=c5><div id=l>shrink</div><span id=s3>after</span></div><div id=end style=\"height:5px\"></div></body></html>",
+        &[
+            ("c1", [0.0, 0.0, 400.0, 80.0]),
+            ("a", [5.0, 5.0, 100.0, 50.0]),
+            ("b", [320.0, 0.0, 80.0, 30.0]),
+            ("p1", [0.0, 0.0, 400.0, 80.0]),
+            ("c2", [0.0, 80.0, 300.0, 80.0]),
+            ("d", [0.0, 80.0, 120.0, 40.0]),
+            ("e", [120.0, 80.0, 120.0, 60.0]),
+            ("f", [0.0, 140.0, 120.0, 20.0]),
+            ("c3", [0.0, 160.0, 300.0, 60.0]),
+            ("g", [0.0, 160.0, 50.0, 50.0]),
+            ("h", [50.0, 160.0, 250.0, 30.0]),
+            ("i", [0.0, 210.0, 300.0, 10.0]),
+            ("c4", [0.0, 220.0, 300.0, 45.0]),
+            ("j", [200.0, 220.0, 100.0, 20.0]),
+            ("k", [0.0, 220.0, 60.0, 45.0]),
+            ("c5", [0.0, 265.0, 200.0, 20.0]),
+            ("end", [0.0, 285.0, 800.0, 5.0]),
+        ],
+    );
+    check_rects(
+        "floats 2",
+        "<!doctype html><html><head><style>body{margin:0;font-family:monospace;font-size:10px;line-height:20px}div{box-sizing:border-box}#c1{width:200px}#a{display:inline-block;width:150px;height:10px}#b{float:left;width:100px;height:30px}#c2{width:200px}#m1{margin-bottom:20px;height:10px}#fl{float:left;width:50px;height:15px}#m2{margin-top:30px;height:10px}#c3{width:200px}#g{float:left;width:120px;height:40px}#h{overflow:hidden;width:100px;height:10px}#h2{display:flex;height:10px}#c4{width:200px}#inner{margin:0}#n1{float:right;width:60px;height:50px}#after{height:10px}#after2{overflow:hidden;height:10px}#c5{width:200px}#sp{}#n2{float:left;width:40px;height:40px}#c6{width:200px}#r1{float:right;width:90px;height:20px}#r2{float:right;width:90px;height:20px}#r3{float:right;width:90px;height:20px}#l1{float:left;width:30px;height:70px;clear:right}</style></head><body><div id=c1><div id=a></div><div id=b></div></div><div id=c2><div id=m1></div><div id=fl></div><div id=m2></div></div><div id=c3><div id=g></div><div id=h></div><div id=h2>x</div></div><div id=c4><div id=inner><div id=n1></div></div><div id=after></div><div id=after2></div></div><div id=c5><span id=sp>aa <div id=n2></div>bb</span></div><div id=c6 style=\"overflow:hidden\"><div id=r1></div><div id=r2></div><div id=r3></div><div id=l1></div></div><div id=end style=\"height:5px\"></div></body></html>",
+        &[
+            ("c1", [0.0, 0.0, 200.0, 20.0]),
+            ("b", [0.0, 20.0, 100.0, 30.0]),
+            ("c2", [0.0, 20.0, 200.0, 50.0]),
+            ("m1", [0.0, 20.0, 200.0, 10.0]),
+            ("fl", [0.0, 50.0, 50.0, 15.0]),
+            ("m2", [0.0, 60.0, 200.0, 10.0]),
+            ("c3", [0.0, 70.0, 200.0, 60.0]),
+            ("g", [0.0, 70.0, 120.0, 40.0]),
+            ("h", [0.0, 110.0, 100.0, 10.0]),
+            ("h2", [0.0, 120.0, 200.0, 10.0]),
+            ("c4", [0.0, 130.0, 200.0, 20.0]),
+            ("inner", [0.0, 130.0, 200.0, 0.0]),
+            ("n1", [140.0, 130.0, 60.0, 50.0]),
+            ("after", [0.0, 130.0, 200.0, 10.0]),
+            ("after2", [0.0, 140.0, 140.0, 10.0]),
+            ("c5", [0.0, 150.0, 200.0, 20.0]),
+            ("n2", [0.0, 150.0, 40.0, 40.0]),
+            ("c6", [40.0, 180.0, 200.0, 110.0]),
+            ("r1", [150.0, 180.0, 90.0, 20.0]),
+            ("r2", [60.0, 180.0, 90.0, 20.0]),
+            ("r3", [150.0, 200.0, 90.0, 20.0]),
+            ("l1", [40.0, 220.0, 30.0, 70.0]),
+            ("end", [0.0, 290.0, 800.0, 5.0]),
+        ],
+    );
+}
+
+#[test]
+fn float_changes_relayout_their_neighbours() {
+    // Subtrees beside floats are not replayed from an earlier pass: a float
+    // that grows, appears or goes away moves the text and boxes around it.
+    let html = "<!doctype html><body style=\"margin:0;line-height:20px\"><div id=c style=\"width:300px\"><div id=f style=\"float:left;width:50px;height:40px\"></div><p id=p style=\"margin:0\">Some words that wrap beside the float and continue below it for a while.</p><div id=b style=\"overflow:hidden;height:10px\"></div></div><div id=after style=\"height:10px\"></div></body>";
+    let mut p = page(html, Geometry::Flow);
+    let f = p.id("f");
+    assert_matches_fresh(&p, "first");
+    p.dom.set_attribute(f, "style", "float:left;width:150px;height:90px").unwrap();
+    assert_matches_fresh(&p, "wider float");
+    p.dom.set_attribute(f, "style", "float:right;width:150px;height:90px").unwrap();
+    assert_matches_fresh(&p, "right float");
+    p.dom.set_attribute(f, "style", "width:150px;height:90px").unwrap();
+    assert_matches_fresh(&p, "no float");
+    p.dom.set_attribute(f, "style", "float:left;width:20px;height:20px").unwrap();
+    assert_matches_fresh(&p, "float again");
+    let c = p.id("c");
+    p.dom.set_attribute(c, "style", "width:300px;overflow:hidden").unwrap();
+    assert_matches_fresh(&p, "container contains its float");
+}
+
+#[test]
+fn table_structure_changes_relayout_like_a_fresh_pass() {
+    // Table rows, cells and spans are kept across passes until a change
+    // reaches the table's structure; edits inside cells keep it, row
+    // inserts, span and display changes do not.
+    let html = "<!doctype html><body style=\"margin:0;line-height:20px\"><table id=t style=\"border-spacing:0\"><tbody id=b><tr id=r1><td id=a style=\"padding:0\"><span id=s>one</span></td><td id=c style=\"padding:0\">two</td></tr><tr id=r2><td id=d style=\"padding:0\">three</td><td id=e style=\"padding:0\">four</td></tr></tbody></table><div id=after style=\"height:10px\"></div></body>";
+    let mut p = page(html, Geometry::Flow);
+    assert_matches_fresh(&p, "first");
+    let span = p.id("s");
+    p.dom.set_text_content(span, "a much longer first cell").unwrap();
+    assert_matches_fresh(&p, "text inside a cell");
+    let a = p.id("a");
+    p.dom.set_attribute(a, "colspan", "2").unwrap();
+    assert_matches_fresh(&p, "colspan");
+    p.dom.set_attribute(p.id("d"), "rowspan", "2").unwrap();
+    assert_matches_fresh(&p, "rowspan");
+    let (b, r1) = (p.id("b"), p.id("r1"));
+    let clone = p.dom.clone_node(r1, true, None).unwrap();
+    p.dom.append_child(b, clone).unwrap();
+    assert_matches_fresh(&p, "row appended");
+    p.dom.set_attribute(p.id("c"), "style", "padding:0;display:none").unwrap();
+    assert_matches_fresh(&p, "cell hidden");
+    let r2 = p.id("r2");
+    p.dom.set_attribute(r2, "style", "height:50px").unwrap();
+    assert_matches_fresh(&p, "row height");
+    let e = p.id("e");
+    p.dom.remove_child(r2, e).unwrap();
+    assert_matches_fresh(&p, "cell removed");
+    p.dom.set_text_content(span, "x").unwrap();
+    assert_matches_fresh(&p, "text again");
+}
+
+#[test]
+fn long_mutation_sequences_relayout_like_a_fresh_pass() {
+    // Subtrees replayed pass after pass keep their inner reuse entries
+    // without renumbering them; an entry carried through many passes (rows
+    // moved by inserts above them, texts renumbered by edits before them)
+    // must still describe exactly what a fresh pass lays out.
+    let mut rows = String::new();
+    for i in 0..12 {
+        rows.push_str(&format!(
+            "<tr id=r{i}><td><span id=s{i}>row {i}</span></td><td><div class=box><b id=b{i}>bold {i}</b> tail</div></td></tr>"
+        ));
+    }
+    let html = format!(
+        "<!doctype html><style>body{{margin:0;font-size:16px}} td{{padding:2px}} .box{{position:relative;overflow:hidden;width:120px}} .big{{padding:9px}} .abs{{position:absolute;left:3px;top:4px;width:10px;height:10px}}</style><body><div id=top>top text</div><table id=t><tbody id=tb>{rows}</tbody></table><div id=list></div><p id=end>end</p></body>"
+    );
+    let mut p = page(&html, Geometry::Flow);
+    let mut seed: u64 = 0x2545_f491_4f6c_dd1d;
+    let mut next = move |n: u64| {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        seed % n
+    };
+    let check = |p: &Page, step: &str| {
+        let cached = p.layout.flow(&p.dom);
+        let mut fresh = Layout::with_viewport(p.doc, Viewport::new(800, 600));
+        fresh.style_mut().discover_style_elements(&p.dom);
+        fresh.set_geometry(Geometry::Flow);
+        if let Some(d) = lp_dom::flow::difference(&fresh.flow(&p.dom), &cached) {
+            panic!("{step}: {d}");
+        }
+    };
+    check(&p, "first");
+    let mut extra = 0;
+    for step in 0..160 {
+        let tb = p.id("tb");
+        let rows: Vec<NodeId> = p.dom.children(tb).unwrap().collect();
+        let row = rows[next(rows.len() as u64) as usize];
+        let what = next(7);
+        let label = format!("step {step} ({what})");
+        match what {
+            0 | 1 => {
+                // Text of different lengths: runs and line counts change.
+                let words = "word ".repeat(next(9) as usize + 1);
+                let span = p.dom.first_child(p.dom.first_child(row).unwrap().unwrap()).unwrap().unwrap();
+                p.dom.set_text_content(span, &words).unwrap();
+            }
+            2 => {
+                let clone = p.dom.clone_node(row, true, None).unwrap();
+                p.dom.set_attribute(clone, "id", &format!("x{extra}")).unwrap();
+                extra += 1;
+                p.dom.insert_before(tb, clone, Some(rows[next(rows.len() as u64) as usize])).unwrap();
+            }
+            3 if rows.len() > 4 => {
+                p.dom.remove_child(tb, row).unwrap();
+            }
+            4 => {
+                let cls = if next(2) == 0 { "big" } else { "" };
+                p.dom.set_attribute(row, "class", cls).unwrap();
+            }
+            5 => {
+                let top = p.id("top");
+                p.dom.set_text_content(top, &"top ".repeat(next(30) as usize + 1)).unwrap();
+            }
+            _ => {
+                let list = p.id("list");
+                let d = p.dom.create_element(p.doc, "div").unwrap();
+                let cls = if next(3) == 0 { "abs" } else { "box" };
+                p.dom.set_attribute(d, "class", cls).unwrap();
+                let t = p.dom.create_text(p.doc, "item").unwrap();
+                p.dom.append_child(d, t).unwrap();
+                p.dom.append_child(list, d).unwrap();
+            }
+        }
+        check(&p, &label);
     }
 }
