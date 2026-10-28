@@ -46,7 +46,8 @@ test.concurrent('closes a position', async () => {
   `.count(n)`; `goto(url)`, `route(url)`, `evaluate(expr, as)`.
 - **Waiting** happens in the browser. A step that does not hold yet is tried
   again when the DOM changes; an action settles before the next step (the
-  requests it started finish, then the tasks already queued run); a request
+  page goes quiet: no queued task, no request the action started, no timeout
+  due within 50 ms, no pending animation frame or navigation); a request
   check waits for the request log. Each step has its own timeout (5 s default,
   `page.run(steps, { timeout })` or per step).
 - **The reply** has `values` (reads), `results` (per step), `requests` (every

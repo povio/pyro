@@ -13,8 +13,10 @@ source is `src/steps.ts` (builders) and `src/index.ts` (pages and runs).
   holds (default 5 s per step). Never write `sleep`, retry loops,
   `expect.poll`, `waitForTimeout` or `waitForResponse`.
 - **Actions settle.** After `click`, `fill`, `press`, `check`, `uncheck` and
-  `route`, the next step starts only when the requests the action started have
-  finished and the tasks already queued have run. Assert the outcome with the
+  `route`, the next step starts only when the page is quiet: the requests the
+  action started have finished, no task is queued, no timeout is due within
+  50 ms, no animation frame is pending and no navigation is half done. Intervals,
+  later timeouts and animation loops do not count. Assert the outcome with the
   next `check`; do not wait for the request.
 - **Requests are recorded, not awaited.** `check.request(method, path)` looks
   at the requests made during *this* run (it waits for one to appear and
@@ -107,6 +109,7 @@ reuse them.
 | `check(loc).text('…')` / `.containsText('…')` / `.value('…')` / `.count(n)` / `.checked()` | `check(loc).not.visible()` negates |
 | `check.request('POST', '/exact/path').status(200)` | path is exact (no query); a `RegExp` tests the full URL; `.count(n)` for exactly n |
 | `goto(url)` / `route(path)` | full navigation / same-document route change |
+| `idle({ timeout })` | wait until the page is quiet, as after an action; never fails |
 | `evaluate('expression', 'name')` | escape hatch: JSON value of a page expression into `r.values.name` |
 
 Every action and check takes `{ timeout }` (ms); `page.run(steps, { timeout })`

@@ -250,3 +250,11 @@ export const evaluate = (expression: string, as?: string): StepLike => ({
   toStep: () => ({ eval: as ? { expression, as } : { expression } }),
 });
 export const loaded = (): StepLike => ({ toStep: () => ({ loaded: {} }) });
+/**
+ * Waits until the page is quiet: no queued task, request in flight, timeout due
+ * within 50 ms, pending animation frame or unfinished navigation. Never fails;
+ * when `timeout` passes first its result has `settled: false` and `pending`.
+ */
+export const idle = (opts: { timeout?: number } = {}): StepLike => ({
+  toStep: () => ({ idle: opts.timeout === undefined ? {} : { timeout: opts.timeout } }),
+});
