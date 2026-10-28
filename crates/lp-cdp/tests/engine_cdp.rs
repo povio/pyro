@@ -4123,3 +4123,238 @@ fn driver_run_routes_presses_and_checks_requests() {
     let r = h.page("LP.run", json!({"steps": [{"eval": {"expression": "missing.call()"}}]}));
     assert!(r["error"]["message"].as_str().unwrap_or_default().contains("threw"), "{r}");
 }
+
+const DRIVER_STEPS_PAGE: &str = r#"<!doctype html><body>
+<style>#tip{display:none} #cell:hover + #tip{display:block} #box{color:rgb(1, 2, 3);width:120px;height:40px}</style>
+<div id="cell">Cell</div><div id="tip">Tooltip</div>
+<div id="box"></div>
+<input id="t" aria-label="Title">
+<button id="dbl">Twice</button> <div id="dbl-out"></div>
+<div id="blur-out"></div>
+<button id="load" aria-label="Load items">Load</button> <div id="status"></div> <ul id="items"></ul>
+<script>
+  const t = document.getElementById('t');
+  t.addEventListener('blur', () => { document.getElementById('blur-out').textContent = 'blurred:' + t.value; });
+  document.getElementById('dbl').addEventListener('dblclick', (e) => { document.getElementById('dbl-out').textContent = 'dbl:' + e.detail; });
+  document.getElementById('cell').addEventListener('mouseover', () => { document.getElementById('cell').dataset.hovered = '1'; });
+  document.getElementById('load').addEventListener('click', async () => {
+    const status = document.getElementById('status'); status.textContent = 'loading';
+    try {
+      const r = await fetch('/api/items?page=1');
+      if (!r.ok) { status.textContent = 'error ' + r.status; return; }
+      const items = await r.json();
+      document.getElementById('items').innerHTML = items.map((i) => '<li>' + i.name + '</li>').join('');
+      status.textContent = 'done';
+    } catch (e) { status.textContent = 'failed'; }
+  });
+</script>"#;
+
+/// `LP.run`: mocks answer requests from the context (json/body, delay for a
+/// loading state, abort for a failure, `times`), `url` waits for a route,
+/// `reload` reloads, and the element steps hover, dblclick, blur, type,
+/// css/focused/name checks and reads.
+#[test]
+fn driver_run_mocks_requests_and_covers_the_new_element_steps() {
+    let address = driver_site();
+    let mut h = Harness::new();
+    // Element steps on a data: document.
+    load_html(&mut h, DRIVER_STEPS_PAGE);
+    let r = h.page(
+        "LP.run",
+        json!({"steps": [
+            {"act": {"locator": {"css": "#cell"}, "action": "hover"}},
+            {"check": {"locator": {"css": "#tip"}, "assert": "visible"}},
+            {"read": {"locator": {"css": "#cell"}, "read": "css", "property": "display", "as": "display"}},
+            {"check": {"locator": {"css": "#box"}, "assert": "css", "property": "color", "expected": "rgb(1, 2, 3)"}},
+            {"check": {"locator": {"css": "#box"}, "assert": "css", "property": "width", "expected": "120px"}},
+            {"act": {"locator": {"label": "Title"}, "action": "type", "value": "Hi 2"}},
+            {"check": {"locator": {"label": "Title"}, "assert": "focused"}},
+            {"check": {"locator": {"label": "Title"}, "assert": "value", "expected": "Hi 2"}},
+            {"check": {"locator": {"label": "Title"}, "assert": "name", "expected": "Title"}},
+            {"read": {"locator": {"role": "button", "name": "Load items"}, "read": "name", "as": "name"}},
+            {"act": {"locator": {"label": "Title"}, "action": "blur"}},
+            {"check": {"locator": {"label": "Title"}, "assert": "focused", "expected": false}},
+            {"check": {"locator": {"css": "#blur-out"}, "assert": "text", "expected": "blurred:Hi 2"}},
+            {"act": {"locator": {"css": "#dbl"}, "action": "dblclick"}},
+            {"check": {"locator": {"css": "#dbl-out"}, "assert": "text", "expected": "dbl:2"}},
+            {"read": {"locator": {"css": "#cell"}, "read": "focused"}},
+        ]}),
+    );
+    let result = &r["result"];
+    assert_eq!(result["reads"]["display"], "block", "{r}");
+    assert_eq!(result["reads"]["name"], "Load items", "{r}");
+    let results = result["results"].as_array().unwrap_or_else(|| panic!("{r}"));
+    assert_eq!(results.len(), 16, "{r}");
+    assert_eq!(results[15], false, "{r}");
+    let r = h.page("LP.query", json!({"locator": {"css": "#cell"}, "read": "css", "property": "display"}));
+    assert_eq!(r["result"]["value"], "block", "{r}");
+    let r =
+        h.page("LP.run", json!({"steps": [{"check": {"locator": {"css": "#box"}, "assert": "css", "expected": "x"}}]}));
+    assert!(r["error"]["message"].as_str().unwrap_or_default().contains("css needs a property"), "{r}");
+
+    // Mocks on the site: a json mock, then a delayed one (loading state
+    // visible), then an abort (error state), then `times` and `unmock`.
+    let r = h.page(
+        "LP.run",
+        json!({"steps": [
+            {"goto": {"url": format!("http://{address}/form")}},
+            {"url": {"url": "/form"}},
+            {"route": {"url": "/positions/7"}},
+            {"url": {"url": {"regex": "/positions/\\d+$"}}},
+            {"reload": {}},
+            {"check": {"locator": {"css": "#path"}, "assert": "text", "expected": ""}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    let results = r["result"]["results"].as_array().unwrap_or_else(|| panic!("{r}"));
+    assert!(results[3]["url"].as_str().unwrap().ends_with("/positions/7"), "{r}");
+    let r = h.page("LP.run", json!({"timeout": 100, "steps": [{"url": {"url": "/nowhere"}}]}));
+    assert!(r["error"]["message"].as_str().unwrap_or_default().contains("url is"), "{r}");
+
+    let r = h.page(
+        "LP.run",
+        json!({"steps": [
+            {"mock": {"url": "/api?name=", "json": {"greeting": "Mocked"}, "headers": {"x-mock": "1"}}},
+            {"act": {"locator": {"label": "Name"}, "action": "fill", "value": "Ada"}},
+            {"act": {"locator": {"role": "button", "name": "Send"}, "action": "click"}},
+            {"check": {"locator": {"css": "#out"}, "assert": "text", "expected": "Mocked"}},
+            {"request": {"path": "/api", "status": [200, 304]}},
+            {"unmock": {"url": "/api?name="}},
+            {"mock": {"url": "/api?name=", "status": 503, "body": "down", "times": 1}},
+            {"act": {"locator": {"role": "button", "name": "Send"}, "action": "click"}},
+            {"request": {"path": "/api", "status": 503}},
+            {"act": {"locator": {"role": "button", "name": "Send"}, "action": "click"}},
+            {"request": {"path": "/api", "count": 3}},
+            {"mock": {"url": "/api?name=", "abort": "ConnectionRefused"}},
+            {"act": {"locator": {"role": "button", "name": "Send"}, "action": "click"}},
+            {"mock": {"url": "/api?name=", "json": {"greeting": "Slow"}, "delay": 300}},
+            {"act": {"locator": {"role": "button", "name": "Send"}, "action": "click", "settle": false}},
+            {"check": {"locator": {"css": "#out"}, "assert": "text", "expected": "Slow"}},
+            {"unmock": {}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    let results = r["result"]["results"].as_array().unwrap_or_else(|| panic!("{r}"));
+    assert_eq!(results[0]["mocks"], 1, "{r}");
+    assert_eq!(results[4]["status"], 200, "{r}");
+    assert_eq!(results[5]["removed"], 1, "{r}");
+    assert_eq!(results[8]["status"], 503, "{r}");
+    assert_eq!(results[10]["count"], 3, "{r}");
+    assert!(results[15]["actual"] == "Slow", "{r}");
+    let requests = r["result"]["requests"].as_array().unwrap_or_else(|| panic!("{r}"));
+    let api: Vec<_> = requests.iter().filter(|q| q["url"].as_str().is_some_and(|u| u.contains("/api?name="))).collect();
+    assert!(api.len() >= 5, "{r}");
+    assert!(
+        api.iter()
+            .any(|q| q["error"].as_str().is_some_and(|e| e.contains("CONNECTION_REFUSED")) || q["failed"] == true),
+        "{r}"
+    );
+    assert_eq!(results[16]["removed"], 2, "{r}");
+    let r = h.page("LP.run", json!({"steps": [{"mock": {"url": "/x", "body": "a", "json": 1}}]}));
+    assert!(r["error"]["message"].as_str().unwrap_or_default().contains("body or json"), "{r}");
+}
+
+const DRIVER_BATCH2_PAGE: &str = r#"<!doctype html><body>
+<iframe id="fr" srcdoc="<button id='inner'>Inner</button><p id='inner-out'></p><script>document.getElementById('inner').addEventListener('click', () => { document.getElementById('inner-out').textContent = 'inner clicked'; });</script>"></iframe>
+<input id="file" type="file" multiple><p id="file-out"></p>
+<div id="src" draggable="true">Drag me</div><div id="dst">Drop here</div><p id="drag-out"></p>
+<div id="psrc">Pointer</div><div id="pdst">Pointer target</div><p id="pointer-out"></p>
+<a id="dl" href="/export.csv" download="report.csv">Export</a>
+<button id="open">Open</button>
+<script>
+  const f = document.getElementById('file');
+  f.addEventListener('change', () => { document.getElementById('file-out').textContent = [...f.files].map((x) => x.name + ':' + x.type + ':' + x.size).join(','); });
+  const src = document.getElementById('src'), dst = document.getElementById('dst');
+  src.addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/plain', 'payload'); });
+  dst.addEventListener('dragover', (e) => e.preventDefault());
+  dst.addEventListener('drop', (e) => { e.preventDefault(); document.getElementById('drag-out').textContent = 'dropped:' + e.dataTransfer.getData('text/plain'); });
+  const psrc = document.getElementById('psrc'); let down = false;
+  psrc.addEventListener('mousedown', () => { down = true; });
+  document.addEventListener('mouseup', (e) => { if (down) { down = false; document.getElementById('pointer-out').textContent = 'released on ' + e.target.id; } });
+  document.getElementById('open').addEventListener('click', () => { window.open('/popup', '_blank', 'noopener'); });
+</script>"#;
+
+/// `LP.run` batch 2: locators scoped to an iframe's document, `upload`
+/// (inline files and a path), `drag` (native drag and drop, and pointer
+/// based), `download` (the `<a download>` body, saved on request), and
+/// `popup` (the target id of a window the page opened).
+#[test]
+fn driver_run_frames_upload_drag_download_and_popup() {
+    let address = driver_site();
+    let mut h = Harness::new();
+    let dir = std::env::temp_dir().join(format!("lp-driver-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("notes.txt"), "hello").unwrap();
+    load_html(&mut h, DRIVER_BATCH2_PAGE);
+    let r = h.page(
+        "LP.run",
+        json!({"steps": [
+            {"act": {"locator": {"css": "#inner", "frame": {"css": "#fr"}}, "action": "click"}},
+            {"check": {"locator": {"css": "#inner-out", "frame": {"css": "#fr"}}, "assert": "text", "expected": "inner clicked"}},
+            {"read": {"locator": {"role": "button", "frame": {"css": "#fr"}}, "read": "count", "as": "innerButtons"}},
+            {"act": {"locator": {"css": "#file"}, "action": "upload",
+                     "files": [{"name": "a.csv", "text": "x,y"}, {"name": "b.bin", "base64": "AAEC", "mimeType": "application/octet-stream"}]}},
+            {"check": {"locator": {"css": "#file-out"}, "assert": "text", "expected": "a.csv:text/csv:3,b.bin:application/octet-stream:3"}},
+            {"act": {"locator": {"css": "#file"}, "action": "upload", "value": dir.join("notes.txt").to_string_lossy()}},
+            {"check": {"locator": {"css": "#file-out"}, "assert": "text", "expected": "notes.txt:text/plain:5"}},
+            {"act": {"locator": {"css": "#src"}, "action": "drag", "to": {"css": "#dst"}}},
+            {"check": {"locator": {"css": "#drag-out"}, "assert": "text", "expected": "dropped:payload"}},
+            {"act": {"locator": {"css": "#psrc"}, "action": "drag", "to": {"css": "#pdst"}}},
+            {"check": {"locator": {"css": "#pointer-out"}, "assert": "text", "expected": "released on pdst"}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    let results = r["result"]["results"].as_array().unwrap_or_else(|| panic!("{r}"));
+    assert_eq!(r["result"]["reads"]["innerButtons"], 1, "{r}");
+    assert_eq!(results[3]["files"], 2, "{r}");
+    assert_eq!(results[7]["native"], true, "{r}");
+    assert_eq!(results[9]["native"], false, "{r}");
+    let r = h.page("LP.run", json!({"steps": [{"act": {"locator": {"css": "#file"}, "action": "upload"}}]}));
+    assert!(r["error"]["message"].as_str().unwrap_or_default().contains("upload needs"), "{r}");
+    let r = h.page("LP.run", json!({"timeout": 100, "steps": [{"act": {"locator": {"css": "#inner", "frame": {"css": "#missing"}}, "action": "click"}}]}));
+    assert!(r["error"]["message"].as_str().unwrap_or_default().contains("matched no frame"), "{r}");
+
+    // Download and popup on the site (http URLs).
+    let r = h.page("LP.run", json!({"steps": [{"goto": {"url": format!("http://{address}/batch2")}}]}));
+    assert!(r.get("error").is_none(), "{r}");
+    let r = h.page("Page.navigate", json!({"url": html_url(DRIVER_BATCH2_PAGE)}));
+    assert!(r.get("error").is_none(), "{r}");
+    let _ = h.page("LP.run", json!({"steps": [{"loaded": {}}]}));
+    let r = h.page(
+        "LP.run",
+        json!({"steps": [
+            {"act": {"locator": {"role": "link", "name": "Export"}, "action": "click", "settle": false}},
+            {"download": {"saveTo": dir.to_string_lossy(), "as": "file"}},
+            {"act": {"locator": {"role": "button", "name": "Open"}, "action": "click", "settle": false}},
+            {"popup": {"as": "popup"}},
+        ]}),
+    );
+    // A data: document cannot download from a relative URL; the site can.
+    let message = r["error"]["message"].as_str().unwrap_or_default().to_owned();
+    if !message.is_empty() {
+        assert!(message.contains("download"), "{r}");
+    }
+    let r = h.page(
+        "LP.run",
+        json!({"steps": [
+            {"goto": {"url": format!("http://{address}/batch2")}},
+            {"eval": {"expression": "document.body.innerHTML = `<a id=dl href='/export.csv' download='report.csv'>Export</a><button id=open>Open</button>`; document.getElementById('open').addEventListener('click', () => { window.open('/popup', '_blank', 'noopener'); }); null"}},
+            {"act": {"locator": {"role": "link", "name": "Export"}, "action": "click", "settle": false}},
+            {"download": {"saveTo": dir.to_string_lossy(), "as": "file"}},
+            {"act": {"locator": {"role": "button", "name": "Open"}, "action": "click", "settle": false}},
+            {"popup": {"as": "popup"}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    let file = &r["result"]["reads"]["file"];
+    assert_eq!(file["filename"], "report.csv", "{r}");
+    assert!(file["url"].as_str().unwrap().ends_with("/export.csv"), "{r}");
+    assert_eq!(file["path"], dir.join("report.csv").to_string_lossy().as_ref(), "{r}");
+    assert!(std::fs::read_to_string(dir.join("report.csv")).unwrap().contains("<!doctype html>"), "{r}");
+    let popup = &r["result"]["reads"]["popup"];
+    assert!(popup["targetId"].as_str().is_some_and(|t| t.len() == 32), "{r}");
+    let r = h.page("LP.run", json!({"timeout": 100, "steps": [{"popup": {}}]}));
+    assert!(r["error"]["message"].as_str().unwrap_or_default().contains("no popup yet"), "{r}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
