@@ -4553,3 +4553,41 @@ fn driver_run_eval_awaits_promises_and_route_can_skip_settling() {
     );
     assert!(r["error"]["message"].as_str().unwrap_or_default().contains("expected Enabled false, got true"), "{r}");
 }
+
+/// `text` locators follow Playwright's text engine: the scope element
+/// itself is a candidate (`css('td').text('Domestic', exact)` matches
+/// `<td>Domestic</td>`), and an exact string also matches an element one of
+/// whose own text-node runs equals it, child elements aside
+/// (`<span><span>|</span>TS-106-POSITION</span>`).
+#[test]
+fn driver_text_locators_match_the_scope_root_and_own_text_nodes() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><body>
+<table><tr><td>Domestic</td><td>Domestic flights</td></tr></table>
+<span id="pos"><span>|</span>TS-106-POSITION</span>
+<p><b>bold</b> and plain</p>
+<div id="enabled"><button>Go</button><button disabled>Stop</button></div>"#,
+    );
+    let q = |h: &mut Harness, locator: Value| h.page("LP.query", json!({"locator": locator, "read": "text"}));
+    let r = q(&mut h, json!({"text": "Domestic", "exact": true, "within": {"css": "td"}}));
+    assert_eq!(r["result"]["value"], "Domestic", "{r}");
+    let r = q(&mut h, json!({"text": "Domestic", "exact": true}));
+    assert_eq!(r["result"]["value"], "Domestic", "{r}");
+    let r = h.page("LP.query", json!({"locator": {"text": "Domestic"}, "read": "count"}));
+    assert_eq!(r["result"]["value"], 2, "{r}");
+    let r = q(&mut h, json!({"text": "TS-106-POSITION", "exact": true}));
+    assert_eq!(r["result"]["value"], "|TS-106-POSITION", "{r}");
+    let r = q(&mut h, json!({"text": "TS-106-POSITION", "exact": true, "within": {"css": "#pos"}}));
+    assert_eq!(r["result"]["value"], "|TS-106-POSITION", "{r}");
+    // The whole text still wins, and own text nodes do not match substrings.
+    let r = q(&mut h, json!({"text": "bold and plain", "exact": true}));
+    assert_eq!(r["result"]["value"], "bold and plain", "{r}");
+    let r = h.page("LP.query", json!({"locator": {"text": "and", "exact": true}, "read": "count"}));
+    assert_eq!(r["result"]["value"], 0, "{r}");
+    let r = h.page("LP.query", json!({"locator": {"role": "button", "name": "Stop"}, "read": "enabled"}));
+    assert_eq!(r["result"]["value"], false, "{r}");
+    let r = h.page("LP.expect", json!({"locator": {"role": "button", "name": "Go"}, "assert": "enabled"}));
+    assert_eq!(r["result"]["actual"], true, "{r}");
+}

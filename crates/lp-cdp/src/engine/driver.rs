@@ -784,8 +784,40 @@ fn skipped_for_text(dom: &Dom, id: NodeId) -> bool {
     matches!(local(dom, id), Some("script" | "style" | "noscript" | "template" | "head" | "title"))
 }
 
+/// Runs of the element's own text nodes (Playwright's `immediate` text):
+/// `<span><span>|</span>TS-1</span>` has `["TS-1"]`.
+fn immediate_texts(dom: &Dom, id: NodeId) -> Vec<String> {
+    let mut runs = Vec::new();
+    let mut run = String::new();
+    for c in dom.children(id).into_iter().flatten() {
+        match dom.node(c).map(|n| &n.kind) {
+            Ok(NodeKind::Text(t) | NodeKind::CData(t)) => run.push_str(t),
+            Ok(NodeKind::Comment(_)) => {}
+            _ => {
+                if !run.is_empty() {
+                    runs.push(std::mem::take(&mut run));
+                }
+            }
+        }
+    }
+    if !run.is_empty() {
+        runs.push(run);
+    }
+    runs
+}
+
+/// Whether an element's text matches: its whole text, or, for an exact
+/// string, one run of its own text nodes (Playwright's `text="..."`, so
+/// exact `TS-1` matches `<span><span>|</span>TS-1</span>`).
+fn element_text_matches(dom: &Dom, id: NodeId, want: &Pattern, exact: bool) -> bool {
+    if want.matches(&text_of(dom, id), exact) {
+        return true;
+    }
+    exact && want.regex.is_none() && immediate_texts(dom, id).iter().any(|run| normalize(run) == normalize(&want.text))
+}
+
 /// The smallest elements whose text matches: an element whose text matches
-/// and none of whose child elements' text does.
+/// and none of whose child elements' text does. `root` itself is a candidate.
 fn by_text(dom: &Dom, root: NodeId, want: &Pattern, exact: bool, out: &mut Vec<NodeId>) -> bool {
     let children: Vec<NodeId> = dom
         .children(root)
@@ -793,7 +825,7 @@ fn by_text(dom: &Dom, root: NodeId, want: &Pattern, exact: bool, out: &mut Vec<N
         .flatten()
         .filter(|c| dom.element(*c).is_ok() && !skipped_for_text(dom, *c))
         .collect();
-    let here = want.matches(&text_of(dom, root), exact);
+    let here = element_text_matches(dom, root, want, exact);
     // A substring match in a child implies one here: prune subtrees that
     // cannot match. Exact and regex matches need the whole walk.
     if !here && !exact && want.regex.is_none() {
@@ -903,16 +935,14 @@ impl Locator {
             let name = self.test_id_attribute.as_deref().unwrap_or("data-testid");
             found = elements(&dom, root).filter(inside).filter(|n| attr(&dom, *n, name) == Some(id.as_str())).collect();
         } else if let Some(text) = &self.text {
+            // As Playwright's text engine, the scope element itself is a
+            // candidate: `css('td').text('Domestic', exact)` matches the cell.
             if root == doc {
                 if let Ok(Some(html)) = dom.document_element(doc) {
                     by_text(&dom, html, text, self.exact, &mut found);
                 }
-            } else {
-                for c in dom.children(root).into_iter().flatten() {
-                    if dom.element(c).is_ok() && !skipped_for_text(&dom, c) {
-                        by_text(&dom, c, text, self.exact, &mut found);
-                    }
-                }
+            } else if dom.element(root).is_ok() && !skipped_for_text(&dom, root) {
+                by_text(&dom, root, text, self.exact, &mut found);
             }
         } else if let Some(role) = &self.role {
             let role = role.to_ascii_lowercase();
