@@ -81,6 +81,7 @@ reuse them.
 | By test id | `testId('row-42')` (`testId(id, 'data-test')` for another attribute) |
 | CSS as a last resort | `css('#out')` |
 | Inside another locator | `dialog().button('OK')`, `row('EXP-1001').button('Edit')`, `css('.card').text('Total')` |
+| Inside an iframe | `css('#editor').frame().button('Bold')`, `inFrame(css('#editor')).text('Hi')` |
 | Narrow the matches | `.visible()`, `.hasText('beta')`, `.hasNotText('alpha')`, `.has(button('Edit'))`, `.hasNot(…)` |
 | Pick one of several | `.first()`, `.last()`, `.nth(i)` (after the filters) |
 
@@ -90,6 +91,10 @@ reuse them.
 - **Strict mode:** an action on a locator that matches several elements fails
   at once and lists them. Fix the locator (scope it, filter it, `exact`), and
   use `.first()` only when any match will do.
+- `text()` follows Playwright's `getByText`: the scope element itself can match
+  (`css('td').text('Domestic', { exact: true })` finds the cell), and an exact
+  string also matches an element one of whose own text runs equals it
+  (`<span><span>|</span>TS-1</span>` for `text('TS-1', { exact: true })`).
 - Prefer role + name, then label / placeholder / text, then test id, then CSS.
 - Hidden elements (`display: none`, `aria-hidden`) have no role: `button('X')`
   does not match a hidden button. Add `.visible()` to `text()` / `css()`
@@ -99,18 +104,30 @@ reuse them.
 
 | Step | Notes |
 |---|---|
-| `loc.click()` | visible, enabled, not covered, scrolled into view, then a real mouse click |
+| `loc.click()` | visible, enabled, not covered, scrolled into view, then a real mouse click; `{ button: 'right', position: { x, y }, force: true }` |
+| `loc.dblclick()` / `loc.hover()` | same pointer options as `click` |
+| `loc.type('text')` | focuses, then one key press per character (`pressSequentially`) |
+| `loc.blur()` | moves focus away (`blur` / `focusout`) |
+| `loc.upload([{ name, text \| base64, mimeType? }])` | sets the files of an `<input type=file>`; a string is a path on the browser's machine |
+| `loc.drag(target)` | native drag and drop onto `target`, else a pointer drag |
+| `loc.wheel(deltaX, deltaY)` / `mouse('click', { x, y })` | mouse wheel over the element / raw mouse at viewport coordinates (`click`, `dblclick`, `move`, `down`, `up`, `wheel`) |
 | `loc.fill('text')` | replaces the value of an input, textarea or contenteditable |
 | `loc.press('Enter')` | focuses, then a key or chord: `Escape`, `Tab`, `ArrowDown`, `Shift+Tab`, `ControlOrMeta+A`, `a` |
 | `loc.check()` / `loc.uncheck()` | checkbox or radio; no-op when already in that state |
 | `loc.focus()` | |
-| `loc.read('name', 'text' \| 'value' \| 'count' \| 'visible' \| 'box')` | value lands in `r.values.name` |
+| `loc.read('name', 'text' \| 'value' \| 'count' \| 'visible' \| 'box' \| 'name' \| 'focused' \| 'enabled')` | value lands in `r.values.name`; `loc.read('c', 'css', 'color')` for a computed style |
 | `check(loc).visible()` / `.hidden()` | |
 | `check(loc).text('…')` / `.containsText('…')` / `.value('…')` / `.count(n)` / `.checked()` | `check(loc).not.visible()` negates |
-| `check.request('POST', '/exact/path').status(200)` | path is exact (no query); a `RegExp` tests the full URL; `.count(n)` for exactly n |
-| `goto(url)` / `route(path)` | full navigation / same-document route change |
+| `check(loc).css('color', 'rgb(0, 0, 0)')` / `.focused()` / `.name('…')` / `.enabled()` / `.disabled()` | computed style, focus, accessible name, disabled state |
+| `check.request('POST', '/exact/path').status(200)` | path is exact (no query); a `RegExp` tests the full URL; `.status([200, 304])` for any of several; `.count(n)` for exactly n; `.body(…)`, `.bodyKeys([…])`, `.headers({ … })`; `.state('started')` also counts requests in flight |
+| `goto(url)` / `route(path)` | full navigation / same-document route change; `route(path, { settle: false })` does not wait for its requests |
+| `reload()` / `waitForUrl('/positions/')` | reload and wait for `load` / wait until the URL contains (or matches) it |
+| `loaded()` | wait for the page's document to load (added for you on a page still booting) |
 | `idle({ timeout })` | wait until the page is quiet, as after an action; never fails |
-| `evaluate('expression', 'name')` | escape hatch: JSON value of a page expression into `r.values.name` |
+| `mock('/api/items', { json: [] })` / `unmock(url?)` | answer matching requests (`status`, `body`, `headers`, `delay`, `abort`, `times`); `{ passthrough: true }` lets them through, `{ patch: { … } }` rewrites the real response, `{ hold: 'name' }` holds them until `release('name')` |
+| `download({ as, saveTo })` / `popup('name')` | wait for the next download / popup of the run |
+| `viewport(w, h)` / `media({ colorScheme: 'dark' })` | resize the viewport / emulate media features mid-test |
+| `evaluate('expression', 'name')` | escape hatch: JSON value of a page expression into `r.values.name`; a returned promise is awaited (within the step timeout) and a rejection fails the step |
 
 Every action and check takes `{ timeout }` (ms); `page.run(steps, { timeout })`
 sets the default for the run. Pass `{ settle: false }` to an action whose
@@ -127,7 +144,11 @@ requests never finish (polling, streaming) or that you do not want to wait for.
 | `await expect.poll(() => loc.count()).toBe(1)` | `check(loc).count(1)` |
 | `Promise.all([page.waitForResponse(…), loc.click()])` | `loc.click()` then `check.request(method, path).status(200)` |
 | `browser.newContext({ storageState }) + newPage + goto` | `lp.profile(...)` once, then `lp.page({ as, route })` |
-| `page.evaluate(fn)` | `evaluate('expression', 'name')` (an expression string, no closures) |
+| `page.evaluate(fn)` | `evaluate('expression', 'name')` (an expression string, no closures; promises are awaited) |
+| `page.addInitScript(src)` | `lp.page({ as, initScripts: [src] })`, or `await page.addInitScript(src)` before a `goto` / `reload` |
+| `page.waitForURL(url)` | `waitForUrl(url)` |
+| `page.route(url, r => r.fulfill(…))` | `mock(url, { … })` as a step |
+| `frameLocator('#editor').getByRole(…)` | `css('#editor').frame().role(…)` |
 | helpers that retry clicks or re-open dropdowns | delete them: actions wait for actionability and settle |
 
 ## When a run fails

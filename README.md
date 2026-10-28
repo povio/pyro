@@ -77,7 +77,14 @@ runs on the browser thread and replies once, waiting in place instead of
 polling from the client. [`packages/lightningpanda-test`](packages/lightningpanda-test)
 is the `bun test` client for it, with Playwright-shaped locators and signed-in
 page pools; its [LLM.md](packages/lightningpanda-test/LLM.md) is the guide for
-coding agents writing tests with it. Releases ship it in the archive
+coding agents writing tests with it. It has a builder for every step the
+engine runs: pointer actions (click, dblclick, hover with button, position and
+force; wheel; raw mouse), typing, blur, uploads, drag, iframe-scoped locators,
+style, focus, accessible-name and enabled checks, network mocks (fulfil,
+abort, passthrough, patch, hold and release), URL waits, reloads, request
+checks on status, body and headers, downloads, popups, viewport and media
+emulation, per-page init scripts, and `evaluate`, which awaits a returned
+promise. Releases ship it in the archive
 (`lightningpanda-test/`, beside the binary) and as
 `lightningpanda-test-<version>.tgz` for `bun add`;
 `scripts/pack-test-client.sh` builds both. TOS's positions-close test runs in about
