@@ -872,7 +872,7 @@ impl PageDom {
 }
 
 /// A document layout with the process's geometry selection
-/// (`LIGHTNINGPANDA_GEOMETRY=flow` opts into the flow layout).
+/// (the flow layout; `LIGHTNINGPANDA_GEOMETRY=approximate` selects the faux one).
 fn new_layout(mut layout: lp_dom::layout::Layout) -> lp_dom::layout::Layout {
     layout.set_geometry(lp_dom::layout::Geometry::from_env());
     layout

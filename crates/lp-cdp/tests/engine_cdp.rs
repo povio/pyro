@@ -1217,6 +1217,7 @@ fn input_mouse_wheel_scrolls_container_then_viewport_unless_canceled() {
 #[test]
 fn input_mouse_wheel_over_empty_viewport_space_scrolls_the_viewport() {
     let mut h = Harness::new();
+    approximate_geometry(&h);
     eval_value(&mut h, "document.body.innerHTML='<div style=\"height:10000px\"></div>'; 1");
     // Playwright's initial mouse position; the synthetic layout has no
     // element there, where Chrome would hit the root element.
@@ -1450,6 +1451,17 @@ fn set_content_document_write_reports_fresh_lifecycle_after_console_tag() {
     );
 }
 
+/// Runs the harness's pages in the approximate (faux) geometry: the tests
+/// that call it describe that layout's empty gaps, which the default flow
+/// layout does not have (it hit-tests empty viewport space as the root).
+fn approximate_geometry(h: &Harness) {
+    for page in &h.browser.host().thread.browser.pages {
+        if let Some(dom) = &page.main_frame.page_dom {
+            dom.layout.borrow_mut().set_geometry(lp_dom::layout::Geometry::Approximate);
+        }
+    }
+}
+
 #[test]
 fn input_mouse_move_to_empty_viewport_space_leaves_hovered_element_as_chromium() {
     // TOS TS-100 dismisses a hover tooltip with page.mouse.move(0, 0). Chrome
@@ -1457,6 +1469,7 @@ fn input_mouse_move_to_empty_viewport_space_leaves_hovered_element_as_chromium()
     // layout has no element there. Expected sequences recorded from headless
     // Chromium (Playwright 1.59.1) for the same page.
     let mut h = Harness::new();
+    approximate_geometry(&h);
     eval_value(
         &mut h,
         r#"
