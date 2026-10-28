@@ -2839,6 +2839,8 @@ fn style_sharing_serves_each_elements_own_cascade() {
         .t3 .group:hover b{width:55px} .t3 .group:focus-within span{width:66px}\
         .t4 tr[data-hot] td{height:30px}\
         .t5 td:has(.flag){height:21px} .t5 .a+.b{width:31px} .t5 .a~.c{width:41px}\
+        .t6 input,.t6 button{display:block;height:3px} .t6 :checked{width:13px} .t6 :disabled{width:17px}\
+        .t6 :placeholder-shown{width:19px} .t6 :checked+span{height:7px} .t6 :disabled svg{height:9px}\
         </style>";
     let table = |class: &str, rows: &dyn Fn(usize) -> String| {
         let body: String = (0..8).map(rows).collect();
@@ -2863,7 +2865,20 @@ fn style_sharing_serves_each_elements_own_cascade() {
         let flag = if i == 3 { "<i class=flag></i>" } else { "" };
         format!("<tr class=group><td>{flag}<span>v</span></td><td><span class=a></span><span class=b></span><span class=c></span></td></tr>")
     });
-    let html = format!("<!doctype html>{css}<body style=\"margin:0\">{t1}{t2}{t3}{t4}{t5}</body>");
+    // Inputs and buttons share only when their states agree.
+    let t6 = table("t6", &|i| {
+        let (checked, fieldset) = (if i == 2 { " checked" } else { "" }, i == 5);
+        let cell = format!(
+            "<td><input type=checkbox{checked}><span></span></td><td><input placeholder=q></td>\
+             <td><button><svg></svg></button></td>"
+        );
+        if fieldset {
+            format!("<tr><td><fieldset disabled><table><tr>{cell}</tr></table></fieldset></td></tr>")
+        } else {
+            format!("<tr>{cell}</tr>")
+        }
+    });
+    let html = format!("<!doctype html>{css}<body style=\"margin:0\">{t1}{t2}{t3}{t4}{t5}{t6}</body>");
     let mut p = page(&html, Geometry::Flow);
     let elements = |p: &Page, root: NodeId| -> Vec<NodeId> {
         p.dom
@@ -2880,6 +2895,23 @@ fn style_sharing_serves_each_elements_own_cascade() {
             let own = p.layout.style().flow_style_unshared(&p.dom, e);
             assert_eq!(served, own, "{step}: <{}> served a style not its own", p.dom.tag_name(e).unwrap());
         }
+        // The declared level shares too: compare with a cascade that never
+        // shares.
+        lp_dom::style::set_style_sharing(false);
+        let mut fresh = Layout::with_viewport(p.doc, p.layout.viewport().clone());
+        fresh.style_mut().discover_style_elements(&p.dom);
+        fresh.set_geometry(Geometry::Flow);
+        let _ = fresh.flow(&p.dom);
+        for e in elements(p, p.doc) {
+            let served = p.layout.style().flow_style(&p.dom, e);
+            assert_eq!(
+                served,
+                fresh.style().flow_style(&p.dom, e),
+                "{step}: <{}> differs from an unshared cascade",
+                p.dom.tag_name(e).unwrap()
+            );
+        }
+        lp_dom::style::set_style_sharing(true);
         assert_matches_fresh(p, step);
     };
     check(&p, "initial");
@@ -2910,6 +2942,14 @@ fn style_sharing_serves_each_elements_own_cascade() {
     let _ = p.layout.flow(&p.dom);
     p.dom.remove_attribute(cell, "title").unwrap();
     check(&p, "cell of a sharing row restyled alone");
+    // t6: checkedness and a dirty value change without an attribute.
+    let boxes: Vec<NodeId> =
+        elements(&p, tables[5]).into_iter().filter(|&n| p.dom.tag_name(n).ok().as_deref() == Some("INPUT")).collect();
+    p.dom.set_checked(boxes[0], true).unwrap();
+    p.dom.set_value(boxes[3], "typed").unwrap();
+    check(&p, "checked and typed");
+    p.dom.set_checked(boxes[0], false).unwrap();
+    check(&p, "unchecked");
     // New rows appended to t1 (React commit) share with existing ones.
     let tb1 = p.dom.parent_element(rows(&p, tables[0])[0]).unwrap().unwrap();
     for _ in 0..3 {

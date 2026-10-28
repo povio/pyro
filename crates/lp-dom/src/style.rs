@@ -2219,7 +2219,21 @@ pub fn with_pass_memo<R>(f: impl FnOnce() -> R) -> R {
 /// `StyleEngine::shared_flow_style`. `c` is `a`'s previous element sibling
 /// or a cousin at the same depth whose ancestors up to the common one share
 /// their cascade pairwise (recorded when they shared).
+thread_local! {
+    static STYLE_SHARING: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+}
+
+/// Turns style sharing off (or back on) on this thread, so tests can
+/// compare shared styles with each element's unshared cascade.
+#[doc(hidden)]
+pub fn set_style_sharing(on: bool) {
+    STYLE_SHARING.with(|s| s.set(on));
+}
+
 fn shares_cascade(dom: &Dom, rules: &RuleSet, a: u32, c: u32, reval: &RefCell<FxHashMap<(u32, u32), bool>>) -> bool {
+    if !STYLE_SHARING.with(|s| s.get()) {
+        return false;
+    }
     let (Some(ea), Some(ec)) = (dom.n(a).element(), dom.n(c).element()) else { return false };
     let svg = ea.name.ns == ns!(svg);
     if a == c || ea.name != ec.name || !(ea.is_html() || svg) || (!svg && !shareable_tag(&ea.name.local)) {
@@ -2260,6 +2274,27 @@ fn shares_cascade(dom: &Dom, rules: &RuleSet, a: u32, c: u32, reval: &RefCell<Fx
     match (attrs(ea, &ignorable, &unused_id), attrs(ec, &ignorable, &unused_id)) {
         (Some(x), Some(y)) if x == y => {}
         _ => return false,
+    }
+    // Inputs and buttons also carry state no attribute shows (checkedness,
+    // a dirty value, a disabled fieldset): every state pseudo-class must
+    // agree. Hover and focus are checked below, validity by revalidation.
+    if !svg && matches!(&*ea.name.local, "input" | "button") {
+        use crate::select::PseudoClass::*;
+        let states = [
+            Checked,
+            Indeterminate,
+            Disabled,
+            Enabled,
+            Required,
+            Optional,
+            ReadWrite,
+            ReadOnly,
+            PlaceholderShown,
+            Default,
+        ];
+        if states.iter().any(|&pc| dom.matches_state(a, pc) != dom.matches_state(c, pc)) {
+            return false;
+        }
     }
     // Selectors that can tell them apart (position among siblings, earlier
     // siblings, contents via :has(), validity): those that can apply (same
@@ -2326,8 +2361,6 @@ fn shares_cascade(dom: &Dom, rules: &RuleSet, a: u32, c: u32, reval: &RefCell<Fx
     true
 }
 
-/// Tags whose style can depend on state no attribute shows (form controls,
-/// links, media, open/closed widgets): never shared.
 /// `el`'s declared-entry share class while its start still has the entry
 /// it had.
 fn declared_class(cache: &Cache, el: NodeId) -> Option<(NodeId, u64)> {
@@ -2356,13 +2389,14 @@ fn recent_key(dom: &Dom, el: NodeId, class: impl Fn(NodeId) -> Option<(NodeId, u
     Some((root, stamp, h.finish()))
 }
 
+/// Tags whose style can depend on state no attribute shows (form controls,
+/// links, media, open/closed widgets): never shared. Inputs and buttons
+/// share when `shares_cascade` finds their states equal.
 fn shareable_tag(tag: &str) -> bool {
     !matches!(
         tag,
-        "input"
-            | "select"
+        "select"
             | "textarea"
-            | "button"
             | "option"
             | "optgroup"
             | "label"
