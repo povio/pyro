@@ -1229,6 +1229,9 @@ struct Ctx<'a> {
     /// The bottom margin `block_child` leaves for the next sibling: its own,
     /// collapsed with its contents' `trailing`.
     last_trailing: Margin,
+    /// The height `contents` returned for the last box `block_child` laid
+    /// out (its content height when its own height is auto).
+    last_content_h: f64,
     /// Floats placed so far in the current block formatting context.
     floats: Vec<FloatArea>,
     /// One per box whose contents are being laid out (innermost last).
@@ -1542,6 +1545,7 @@ impl<'a> Ctx<'a> {
             block_flow_child: false,
             trailing: Margin::ZERO,
             last_trailing: Margin::ZERO,
+            last_content_h: 0.0,
             floats: Vec::new(),
             extents: Vec::new(),
         }
@@ -1924,12 +1928,19 @@ impl<'a> Ctx<'a> {
     /// so the entries after `order` are a tail: shifting every table cell
     /// stays linear in the cell's own text, not the document's.
     fn shift_texts_after(&mut self, order: u32, dy: f64) {
-        let first = self.out.texts.first_from(order);
-        for e in &mut self.out.texts.list[first..] {
+        self.shift_texts_between(order, u32::MAX, dy);
+    }
+
+    /// Moves the texts and text runs recorded at orders `order..end` down
+    /// by `dy`.
+    fn shift_texts_between(&mut self, order: u32, end: u32, dy: f64) {
+        let (first, last) = (self.out.texts.first_from(order), self.out.texts.first_from(end));
+        for e in &mut self.out.texts.list[first..last] {
             e.at.0.y += dy;
         }
         let first = self.out.text_runs.partition_point(|r| r.order < order);
-        for run in &mut self.out.text_runs[first..] {
+        let last = self.out.text_runs.partition_point(|r| r.order < end);
+        for run in &mut self.out.text_runs[first..last] {
             run.rect.y += dy;
         }
     }
@@ -2069,6 +2080,7 @@ impl<'a> Ctx<'a> {
         } else {
             self.contents(el, style, content_x, content_y, content_w, declared_h, fixed, shift, collapse)
         };
+        self.last_content_h = content_h;
         let inner_trailing = std::mem::take(&mut self.trailing);
         let max_h =
             style.max_height.resolve(self.cb_height).map(|h| if style.border_box { h - e.vertical() } else { h });
@@ -4771,16 +4783,35 @@ impl<'a> Ctx<'a> {
         // height); a spanning cell taller than its rows grows them in
         // proportion to their heights (all into the last when they are
         // empty), as Chromium does.
+        //
+        // A row whose cells lay out alike at any height (`cell_height_free`)
+        // and were not measured at these widths before is laid out once,
+        // its cells at their content heights, then sized to the row
+        // (`lay_row_once`): measuring first would lay every cell out twice.
+        let spans_rows = rows.iter().any(|r| r.cells.iter().any(|c| c.rowspan > 1));
+        let mut once = vec![false; rows.len()];
         let mut cell_heights: Vec<Vec<(f64, f64, f64)>> = Vec::with_capacity(rows.len());
         let mut row_hs: Vec<f64> = Vec::with_capacity(rows.len());
-        for row in rows {
+        let rows_once = !spans_rows && ROWS_ONCE.with(|o| o.get());
+        for (r, row) in rows.iter().enumerate() {
             let mut row_h = row.style.as_ref().and_then(|s| s.height.resolve(None)).unwrap_or(0.0);
             let mut hs = Vec::with_capacity(row.cells.len());
+            let mut free: Option<bool> = None;
             for c in &row.cells {
                 let w = span_width(&widths, c, sx);
                 let e = self.edges(&c.style, width);
                 let content_w = (w - e.horizontal()).max(0.0);
-                let content_h = self.measure_height(c.el, &c.style, content_w);
+                let known = self.memo.heights.borrow().get(c.el, &content_w.to_bits()).copied();
+                if known.is_none()
+                    && rows_once
+                    && *free.get_or_insert_with(|| {
+                        row.cells.iter().all(|c| self.cell_height_free(c, span_width(&widths, c, sx), width))
+                    })
+                {
+                    once[r] = true;
+                    break;
+                }
+                let content_h = known.unwrap_or_else(|| self.measure_height(c.el, &c.style, content_w));
                 let declared =
                     c.style
                         .height
@@ -4791,6 +4822,10 @@ impl<'a> Ctx<'a> {
                 if c.rowspan == 1 {
                     row_h = row_h.max(h);
                 }
+            }
+            if once[r] {
+                hs.clear();
+                row_h = row.style.as_ref().and_then(|s| s.height.resolve(None)).unwrap_or(0.0);
             }
             cell_heights.push(hs);
             row_hs.push(row_h);
@@ -4815,7 +4850,6 @@ impl<'a> Ctx<'a> {
                 }
             }
         }
-        let spans_rows = rows.iter().any(|r| r.cells.iter().any(|c| c.rowspan > 1));
         let columns = {
             use std::hash::{Hash, Hasher};
             let mut h = rustc_hash::FxHasher::default();
@@ -4829,7 +4863,7 @@ impl<'a> Ctx<'a> {
         let mut groups: Vec<(NodeId, Rect)> = Vec::new();
         let mut group_orders: Vec<(NodeId, u32)> = Vec::new();
         for (r, row) in rows.iter().enumerate() {
-            let row_h = row_hs[r];
+            let mut row_h = row_hs[r];
             // A row group precedes its rows (and cells) in paint order.
             if let Some(g) = row.group {
                 if !group_orders.iter().any(|(n, _)| *n == g) {
@@ -4867,11 +4901,20 @@ impl<'a> Ctx<'a> {
             // A clean row at the same column widths and height is copied
             // from the previous pass (a cell spanning rows depends on the
             // rows below it: no reuse then).
-            match (row.el, &row.style) {
-                (Some(el), Some(rs)) if !spans_rows => {
-                    self.row_reused(el, rs, starts[0], cursor, columns, row_h, fixed, shift, lay_cells)
+            if once[r] {
+                let lay_once =
+                    |cx: &mut Self| cx.lay_row_once(row, &widths, &starts, sx, width, cursor, row_h, fixed, shift);
+                row_h = match (row.el, &row.style) {
+                    (Some(el), Some(rs)) => self.row_laid(el, rs, starts[0], cursor, columns, fixed, shift, lay_once),
+                    _ => lay_once(self),
+                };
+            } else {
+                match (row.el, &row.style) {
+                    (Some(el), Some(rs)) if !spans_rows => {
+                        self.row_reused(el, rs, starts[0], cursor, columns, row_h, fixed, shift, lay_cells)
+                    }
+                    _ => lay_cells(self),
                 }
-                _ => lay_cells(self),
             }
             let rect = Rect {
                 x: starts[0] + shift.0,
@@ -4899,6 +4942,163 @@ impl<'a> Ctx<'a> {
         }
         cursor - y
     }
+}
+
+impl Ctx<'_> {
+    /// Whether cell `c`, `w` wide in a table `table_width` wide, lays its
+    /// contents out the same at its content height and at a taller row's:
+    /// nothing inside resolves a percentage against its height or floats
+    /// (an auto-height formatting context grows to its floats), it is not
+    /// a containing block for absolute boxes, and its padding resolves the
+    /// same against the table and the cell width (rows measure against the
+    /// table, cells lay out against their own width).
+    fn cell_height_free(&self, c: &TableCell, w: f64, table_width: f64) -> bool {
+        let s = &c.style;
+        if c.rowspan != 1
+            || s.replaced
+            || s.position != Position::Static
+            || s.float != Float::None
+            || !matches!(s.inner, InnerDisplay::Flow | InnerDisplay::FlowRoot)
+        {
+            return false;
+        }
+        let (a, b) = (self.edges(s, table_width), self.edges(s, w));
+        if a.horizontal() != b.horizontal() || a.vertical() != b.vertical() {
+            return false;
+        }
+        let pct = |d: Dim| matches!(d, Dim::Len(l) if l.percent != 0.0);
+        let mut stack = vec![c.el];
+        while let Some(n) = stack.pop() {
+            let Ok(children) = self.dom.children(n) else { continue };
+            for k in children {
+                if self.dom.node_type(k).ok() != Some(NodeType::Element) {
+                    continue;
+                }
+                let Some(ks) = self.style_of(k) else { continue };
+                if ks.float != Float::None
+                    || [ks.height, ks.min_height, ks.max_height, ks.inset[TOP], ks.inset[BOTTOM]].into_iter().any(pct)
+                {
+                    return false;
+                }
+                stack.push(k);
+            }
+        }
+        true
+    }
+
+    /// Lays out the cells of `row` (none spanning rows, all
+    /// `cell_height_free`) at `y`, each at its content height, then sizes
+    /// them to the row and centres their contents as `table` does after
+    /// measuring. Records each cell's content height as `measure_height`
+    /// would. Returns the row height (at least `min_h`, the row's own).
+    #[allow(clippy::too_many_arguments)]
+    fn lay_row_once(
+        &mut self,
+        row: &TableRow,
+        widths: &[f64],
+        starts: &[f64],
+        sx: f64,
+        table_width: f64,
+        y: f64,
+        min_h: f64,
+        fixed: bool,
+        shift: (f64, f64),
+    ) -> f64 {
+        let mut laid: Vec<(u32, f64, Edges, Edges)> = Vec::with_capacity(row.cells.len());
+        let mut row_h = min_h;
+        for c in &row.cells {
+            let w = span_width(widths, c, sx);
+            let e = self.edges(&c.style, table_width);
+            let mut s = (*c.style).clone();
+            s.border_box = true;
+            s.width = Dim::px(w);
+            s.height = Dim::Auto;
+            s.margin = [Dim::px(0.0); 4];
+            s.min_width = Dim::Auto;
+            s.max_width = Dim::Auto;
+            s.min_height = Dim::Auto;
+            s.max_height = Dim::Auto;
+            let order = self.order + 1;
+            self.block_child(c.el, &s, starts[c.col], y, w, fixed, shift);
+            let content_h = self.last_content_h;
+            let content_w = (w - e.horizontal()).max(0.0);
+            self.memo.heights.borrow_mut().insert(c.el, content_w.to_bits(), content_h);
+            let declared =
+                c.style.height.resolve(None).map(|h| if c.style.border_box { (h - e.vertical()).max(0.0) } else { h });
+            row_h = row_h.max(declared.unwrap_or(0.0).max(content_h) + e.vertical());
+            laid.push((order, content_h, e, self.edges(&s, w)));
+        }
+        for (k, (order, content_h, e, own)) in laid.iter().enumerate() {
+            let (order, content_h) = (*order, *content_h);
+            let end = laid.get(k + 1).map_or(self.order + 1, |l| l.0);
+            self.grow_cell(order, row_h, own);
+            // Cell content is vertically centred (rows default to middle).
+            let dy = ((row_h - e.vertical() - content_h) / 2.0).max(0.0);
+            if dy > 0.0 {
+                self.boxes_between(order, end, |b| b.rect.y += dy);
+                self.shift_texts_between(order, end, dy);
+                self.shift_extent_between(order, end, dy);
+            }
+        }
+        row_h
+    }
+
+    /// Gives the cell box of order `order`, laid out at its content height,
+    /// the border-box height `height` (sizes as `block_child` gives a cell
+    /// that tall: its contents and their reach are the same). `e`: its
+    /// edges as `block_child` resolved them.
+    fn grow_cell(&mut self, order: u32, height: f64, e: &Edges) {
+        let Some(b) = self.out.boxes.at_mut(order as usize - 1) else { return };
+        let content_h = (height - e.vertical()).max(0.0);
+        let client_height = content_h + e.padding[TOP] + e.padding[BOTTOM];
+        if client_height <= b.client_height {
+            return;
+        }
+        b.rect.height = content_h + e.vertical();
+        b.client_height = client_height;
+        b.scroll_height = b.scroll_height.max(client_height);
+        let (bottom, fixed) = (b.rect.y + b.rect.height, b.fixed);
+        if let Some(top) = self.extents.last_mut() {
+            let r = &mut top.direct[fixed as usize];
+            r.bottom = r.bottom.max(bottom);
+        }
+    }
+
+    /// Calls `f` on every box recorded at an order strictly between
+    /// `order` and `end`.
+    fn boxes_between(&mut self, order: u32, end: u32, mut f: impl FnMut(&mut FlowBox)) {
+        let end = (end as usize).saturating_sub(1).min(self.out.boxes.slots.len());
+        for i in order as usize..end {
+            if let Some(b) = self.out.boxes.at_mut(i) {
+                f(b);
+            }
+        }
+    }
+
+    /// Follows `boxes_between(order, end, y += dy)` in the innermost
+    /// extent, where the boxes from `order` to `end` are one recorded
+    /// child (a cell) and its contents.
+    fn shift_extent_between(&mut self, order: u32, end: u32, dy: f64) {
+        let Some(top) = self.extents.last_mut() else { return };
+        for (o, reach) in top.children.iter_mut() {
+            if (order..end).contains(o) {
+                for r in reach.iter_mut() {
+                    r.bottom += dy;
+                }
+            }
+        }
+    }
+}
+
+thread_local! {
+    static ROWS_ONCE: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+}
+
+/// Turns laying table rows out once (`Ctx::lay_row_once`) off (or back on)
+/// on this thread, so tests can compare it with measuring every cell first.
+#[doc(hidden)]
+pub fn set_table_rows_once(on: bool) {
+    ROWS_ONCE.with(|o| o.set(on));
 }
 
 /// A cell's border-box width: its columns' widths and the spacing between

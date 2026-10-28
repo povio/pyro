@@ -2962,6 +2962,69 @@ fn style_sharing_serves_each_elements_own_cascade() {
 }
 
 #[test]
+fn table_rows_laid_out_once_match_measured_rows() {
+    // Rows whose cells lay out alike at any height are laid out once, at
+    // their content heights, then sized to the row; the others measure
+    // every cell first. Both must give the same result on a first pass and
+    // after changes inside rows.
+    let css = "<style>\
+        body{margin:0;font:14px/20px sans-serif} table{border-collapse:collapse;width:600px}\
+        td,th{padding:6px 10px;border:1px solid}.sep{border-collapse:separate;border-spacing:3px 5px}\
+        .tall{height:60px} .ch{height:44px} .clip{overflow:hidden;white-space:nowrap;max-width:80px}\
+        .ib{display:inline-block;width:30px;height:12px;vertical-align:middle} .fx{display:inline-flex;gap:4px;align-items:center}\
+        .pp{padding:2%} .full{height:100%} .fl{float:left;width:20px;height:9px} .rel{position:relative}\
+        .box{position:relative;height:30px} .abs{position:absolute;bottom:0;right:0;width:5px;height:5px}\
+        .t{display:table;width:300px} .c{display:table-cell;padding:4px}\
+        </style>";
+    let html = format!(
+        "<!doctype html>{css}<body>\
+         <table><thead><tr><th>Name</th><th>Qty</th><th>Note</th></tr></thead><tbody>\
+         <tr><td id=w>alpha beta gamma delta epsilon zeta eta theta</td><td>1</td><td><input><button>Go</button></td></tr>\
+         <tr class=tall><td>short</td><td><span class=ib></span><span class=fx><b>x</b><i>y</i></span></td><td></td></tr>\
+         <tr><td class=ch>declared</td><td class=clip>a long unbreakable cell that overflows its width</td><td><div class=box><span class=abs></span>abs</div></td></tr>\
+         <tr><td class=pp>percent padding</td><td><div class=full>full</div></td><td>x</td></tr>\
+         <tr><td><div class=fl></div>float</td><td class=rel>relative</td><td><table><tr><td>in</td><td>ner<br>two</td></tr></table></td></tr>\
+         </tbody><tfoot><tr><td colspan=2>foot spanning</td><td id=f>end</td></tr></tfoot></table>\
+         <div style=\"overflow:auto;height:120px\" id=scroller><table><tr class=tall><td><div style=\"position:relative;top:90px\">down</div></td><td>x</td></tr></table></div>\
+         <table class=sep><tr><td>sep</td><td style=\"height:50px\">tall cell</td></tr><tr><td></td><td>after</td></tr></table>\
+         <div class=t><div class=c>anonymous</div><div class=c>row<br>of cells</div></div>\
+         </body>"
+    );
+    let mut p = page(&html, Geometry::Flow);
+    let check = |p: &Page, step: &str| {
+        let got = p.layout.flow(&p.dom);
+        lp_dom::flow::set_table_rows_once(false);
+        let mut measured = Layout::with_viewport(p.doc, Viewport::new(800, 600));
+        measured.style_mut().discover_style_elements(&p.dom);
+        measured.set_geometry(Geometry::Flow);
+        let want = measured.flow(&p.dom);
+        lp_dom::flow::set_table_rows_once(true);
+        let sc = p.id("scroller");
+        assert!(got.boxes.get(&sc).unwrap().scroll_height > 120.0, "{step}: the shifted cell content overflows");
+        if let Some(d) = lp_dom::flow::difference(&want, &got) {
+            panic!("{step}: {d}");
+        }
+        // Exactly on a first pass (later passes translate replayed
+        // subtrees, which can move a value by a rounding step).
+        if step == "first pass" {
+            for (k, b) in &want.boxes {
+                assert_eq!(Some(b), got.boxes.get(k), "{step}: box {k:?}");
+            }
+        }
+    };
+    check(&p, "first pass");
+    let w = p.id("w");
+    p.dom.set_text_content(w, "now a much longer text that wraps onto several more lines in its column").unwrap();
+    check(&p, "cell text grows");
+    let f = p.id("f");
+    p.dom.set_text_content(f, "x").unwrap();
+    check(&p, "footer cell text");
+    let tr = p.dom.parent_element(w).unwrap().unwrap();
+    p.dom.set_attribute(tr, "class", "tall").unwrap();
+    check(&p, "row restyled");
+}
+
+#[test]
 fn cross_pass_measurements_never_serve_stale_geometry() {
     // Layout keeps subtree measurements (content heights, intrinsic widths,
     // baselines) across passes and drops those of changed elements and

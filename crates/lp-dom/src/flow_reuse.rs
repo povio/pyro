@@ -352,6 +352,35 @@ impl<'a> Ctx<'a> {
         }
     }
 
+    /// `row_reused` for a row whose height is known only once `lay` has
+    /// laid its cells out (and returned it): nothing measured it before,
+    /// so nothing of it is replayed. Remembered for the next pass under
+    /// that height.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn row_laid(
+        &mut self,
+        row: NodeId,
+        style: &FlowStyle,
+        x: f64,
+        y: f64,
+        columns: u64,
+        fixed: bool,
+        shift: (f64, f64),
+        lay: impl FnOnce(&mut Self) -> f64,
+    ) -> f64 {
+        let start = self.reuse_start();
+        let height = lay(self);
+        let key = Key {
+            width: columns,
+            height: Some(height.to_bits()),
+            outer_cb: None,
+            fixed,
+            shift: (shift.0.to_bits(), shift.1.to_bits()),
+            collapse: Collapse::default(),
+        };
+        self.reuse_end(row, style, key, x, y, false, start, height)
+    }
+
     /// Replays `el`'s entry for `key` (Ok: the height), else returns what
     /// `reuse_end` needs once the caller has laid the contents out at (x, y)
     /// (None in a probe, which remembers nothing).
@@ -359,8 +388,14 @@ impl<'a> Ctx<'a> {
         if let Some(h) = self.replay(el, style, key, x, y) {
             return Ok(h);
         }
+        Err(self.reuse_start())
+    }
+
+    /// Where the output stands before a subtree is laid out (None in a
+    /// probe, which remembers nothing).
+    fn reuse_start(&mut self) -> Option<Start> {
         if self.probe {
-            return Err(None);
+            return None;
         }
         let start = Start {
             order_lo: self.order,
@@ -372,7 +407,7 @@ impl<'a> Ctx<'a> {
             baselines: (self.first_baseline.take(), self.last_baseline.take()),
         };
         self.open_part_extent();
-        Err(Some(start))
+        Some(start)
     }
 
     /// Remembers what the contents laid out since `reuse_begin` produced.
