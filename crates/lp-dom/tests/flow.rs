@@ -3657,6 +3657,50 @@ fn table_columns_keep_their_exact_width_after_fractional_ones_like_chromium() {
     assert_eq!(r.width, 150.0, "Chromium keeps the 150px column exact");
 }
 
+#[test]
+fn table_columns_keep_their_cells_min_content_width_like_chromium() {
+    // Gap 20: a cell's explicit `width` clamped its column, so
+    // `<td style="width:1px;white-space:pre">E2ESE261200655</td>` was 1px
+    // wide (Chromium: 120px, the unbreakable text) and a `width:100%` table
+    // of nowrap cells stayed at its 200px container (Chromium: 514px).
+    // Chromium's automatic layout gives a column at least its cells'
+    // min-content width, explicit widths being preferred widths, and the
+    // table grows past its container to the sum of its columns. Glyph
+    // advances differ per font, so the assertions compare with the same text
+    // measured outside the table.
+    let html = "<!doctype html><body style=\"margin:0\">\
+        <div><span id=m1 style=\"white-space:pre\">E2ESE261200655</span></div>\
+        <div><span id=m2 style=\"white-space:nowrap\">Shipment Body 655A</span></div>\
+        <div><span id=m3 style=\"white-space:nowrap\">abcdefghijklmnopqrstuvwxy</span></div>\
+        <table id=t1 style=\"border-spacing:0\"><tr>\
+        <td id=a style=\"padding:0;width:1px;white-space:pre\"><a href=#>E2ESE261200655</a></td>\
+        <td id=b style=\"padding:0;width:1px\">Shipment Body 655A</td></tr></table>\
+        <div id=w style=\"width:200px\"><table id=t2 style=\"width:100%;border-spacing:0\"><tr>\
+        <td id=c style=\"padding:0;white-space:nowrap\">abcdefghijklmnopqrstuvwxy</td>\
+        <td id=d style=\"padding:0;white-space:nowrap\">abcdefghijklmnopqrstuvwxy</td></tr></table></div>\
+        <table id=t3 style=\"border-spacing:0\"><tr>\
+        <td id=e style=\"padding:0;width:1px\"><a style=\"display:inline-flex\"><span style=\"overflow:hidden;text-overflow:ellipsis;white-space:nowrap\">E2ESE261200655</span></a></td>\
+        <td id=f style=\"padding:0;width:1px\">x</td></tr></table>\
+        </body>";
+    let p = page(html, Geometry::Flow);
+    let w = |id: &str| p.layout.bounding_client_rect(&p.dom, p.id(id)).width;
+    let (m1, m2, m3) = (w("m1"), w("m2"), w("m3"));
+    assert!(m1 > 50.0 && m3 > 150.0, "measured text widths {m1} {m3}");
+    // The pre cell holds its whole text; the breakable one at least its
+    // longest word ("Shipment"), and both columns of the table are wide
+    // enough for them.
+    assert!((w("a") - m1).abs() < 0.5, "#a {} vs text {m1}", w("a"));
+    assert!(w("b") >= m2 / 3.0 && w("b") < m2, "#b {} vs text {m2}", w("b"));
+    assert!((w("t1") - (w("a") + w("b"))).abs() < 0.5, "#t1 {} = #a + #b", w("t1"));
+    // The 100% table grows past its 200px container to the two nowrap cells.
+    assert!((w("c") - m3).abs() < 0.5 && (w("d") - m3).abs() < 0.5, "#c {} #d {} vs text {m3}", w("c"), w("d"));
+    assert!((w("t2") - 2.0 * m3).abs() < 0.5, "#t2 {} = 2 x {m3}", w("t2"));
+    assert_eq!(w("w"), 200.0, "the container keeps its width");
+    // An inline-flex link around a truncating nowrap span still contributes
+    // the text's min-content width.
+    assert!((w("e") - m1).abs() < 0.5, "#e {} vs text {m1}", w("e"));
+}
+
 /// Styles for the generated-content regressions (16px/20px text).
 const GENERATED_STYLES: &str = "<style>body{margin:0;font-family:sans-serif;font-size:16px;line-height:20px}\
     .e:empty::before{content:'';display:inline-block}\
