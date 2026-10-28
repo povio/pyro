@@ -4359,3 +4359,26 @@ fn textarea_scroll_height_follows_its_value() {
         assert!(wrapped > 3.0 * 19.0, "{geometry:?}: wrapped lines, got {wrapped}");
     }
 }
+
+/// A text input's `scrollWidth` is its value's width when the value is
+/// longer than the box (truncation detectors compare it with offsetWidth).
+#[test]
+fn text_input_scroll_width_follows_its_value() {
+    for geometry in [Geometry::Flow, Geometry::Approximate] {
+        let mut p = page(
+            "<!doctype html><body><input id=i style=\"width:80px;padding:0;border:0;font-size:14px\" value=short><textarea id=ta style=\"width:80px;padding:0;border:0;font-size:14px\"></textarea></body>",
+            geometry,
+        );
+        let i = p.id("i");
+        let short = p.layout.scroll_width(&p.dom, i);
+        assert!((79.0..=81.0).contains(&short), "{geometry:?}: a short value fills the box, got {short}");
+        p.dom.set_value(i, "E2E-ISO-DEBTOR-9C70E3E9D4").unwrap();
+        let long = p.layout.scroll_width(&p.dom, i);
+        assert!(long > 150.0, "{geometry:?}: the long value's width, got {long}");
+        assert!(p.layout.client_width(&p.dom, i) <= 81.0, "{geometry:?}: the box stays 80px");
+        let ta = p.id("ta");
+        p.dom.set_value(ta, "a\nE2E-ISO-DEBTOR-9C70E3E9D4\nb").unwrap();
+        let w = p.layout.scroll_width(&p.dom, ta);
+        assert!(w > 150.0, "{geometry:?}: the longest textarea line, got {w}");
+    }
+}
