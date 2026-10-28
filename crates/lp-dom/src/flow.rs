@@ -20,6 +20,9 @@ use crate::layout::{text_width as glyph_width, Rect};
 use crate::node::{NodeId, NodeType};
 use crate::Dom;
 
+#[path = "flow_reuse.rs"]
+mod reuse;
+
 // ----- style input contract -------------------------------------------------
 
 /// A length: `px` plus `percent` of the containing block's matching axis
@@ -688,12 +691,84 @@ pub struct FlowResult {
     /// scroll-dependent offset is applied when geometry is read
     /// (`Layout::sticky_shift`).
     pub sticky: rustc_hash::FxHashSet<NodeId>,
+    /// Per order (index = order - 1): the element recorded under it and its
+    /// positioning facts, so a later pass can replay a subtree (`reuse`).
+    slots: Vec<Slot>,
+}
+
+/// What a layout order was recorded for.
+#[derive(Clone, Copy, Debug, Default)]
+struct Slot {
+    el: Option<NodeId>,
+    /// The box is positioned itself (not only inside a positioned box).
+    own_positioned: bool,
+    /// `order` of the nearest positioned ancestor box (0: none).
+    positioned_by: u32,
 }
 
 impl FlowResult {
     pub fn get(&self, el: NodeId) -> Option<&FlowBox> {
         self.boxes.get(&el)
     }
+}
+
+/// The first difference between two layouts of the same document (boxes,
+/// texts, text runs, sticky boxes, document size), positions compared to
+/// 1e-6 px; None when they agree.
+pub fn difference(want: &FlowResult, got: &FlowResult) -> Option<String> {
+    let near = |a: f64, b: f64| (a - b).abs() <= 1e-6 * a.abs().max(1.0);
+    let same_rect =
+        |a: &Rect, b: &Rect| near(a.x, b.x) && near(a.y, b.y) && near(a.width, b.width) && near(a.height, b.height);
+    if want.boxes.len() != got.boxes.len() {
+        return Some(format!("{} boxes, want {}", got.boxes.len(), want.boxes.len()));
+    }
+    for (el, w) in &want.boxes {
+        let Some(g) = got.boxes.get(el) else { return Some(format!("{el:?}: no box")) };
+        let same = same_rect(&w.rect, &g.rect)
+            && w.fixed == g.fixed
+            && near(w.client_width, g.client_width)
+            && near(w.client_height, g.client_height)
+            && near(w.scroll_width, g.scroll_width)
+            && near(w.scroll_height, g.scroll_height)
+            && w.positioned == g.positioned
+            && w.order == g.order
+            && w.clipped_by == g.clipped_by;
+        if !same {
+            return Some(format!("{el:?}: got {g:?}, want {w:?}"));
+        }
+    }
+    if want.texts.len() != got.texts.len() {
+        return Some(format!("{} texts, want {}", got.texts.len(), want.texts.len()));
+    }
+    for (t, (w, wf)) in &want.texts {
+        match got.texts.get(t) {
+            Some((g, gf)) if same_rect(w, g) && wf == gf => {}
+            other => return Some(format!("text {t:?}: got {other:?}, want {:?}", (w, wf))),
+        }
+    }
+    if want.text_runs.len() != got.text_runs.len() {
+        return Some(format!("{} text runs, want {}", got.text_runs.len(), want.text_runs.len()));
+    }
+    for (w, g) in want.text_runs.iter().zip(&got.text_runs) {
+        if w.node != g.node
+            || w.start != g.start
+            || w.end != g.end
+            || !same_rect(&w.rect, &g.rect)
+            || w.order != g.order
+        {
+            return Some(format!("text run: got {g:?}, want {w:?}"));
+        }
+    }
+    if want.sticky != got.sticky {
+        return Some("sticky boxes differ".into());
+    }
+    if !near(want.document_width, got.document_width) || !near(want.document_height, got.document_height) {
+        return Some(format!(
+            "document {}x{}, want {}x{}",
+            got.document_width, got.document_height, want.document_width, want.document_height
+        ));
+    }
+    None
 }
 
 // ----- layout ---------------------------------------------------------------
@@ -710,6 +785,42 @@ pub struct MeasureCache {
     min_content: FxHashMap<NodeId, f64>,
     heights: FxHashMap<(NodeId, u64), f64>,
     baselines: FxHashMap<(NodeId, u64, u64), Option<f64>>,
+    /// Laid-out subtrees of the last pass, replayed by the next one.
+    reuse: reuse::Reuse,
+    /// The flow styles the last pass used, which seed the next pass (minus
+    /// those of restyled elements: `layout_style_unchanged`).
+    styles: FxHashMap<NodeId, Option<StyleRef>>,
+    generated: FxHashMap<(NodeId, bool), Option<std::rc::Rc<Generated>>>,
+}
+
+/// Attributes the flow layout reads itself (form control and replaced sizes,
+/// table spans); other attributes reach it only through restyles. Hashes of
+/// their local names, as `Change::Attr` carries them.
+pub fn layout_attribute(hash: u64) -> bool {
+    static NAMES: std::sync::OnceLock<Vec<u64>> = std::sync::OnceLock::new();
+    // 0: state no attribute names, such as an image's natural size.
+    hash == 0
+        || NAMES
+            .get_or_init(|| {
+                [
+                    "type",
+                    "value",
+                    "size",
+                    "cols",
+                    "rows",
+                    "width",
+                    "height",
+                    "multiple",
+                    "colspan",
+                    "rowspan",
+                    "span",
+                    "placeholder",
+                ]
+                .iter()
+                .map(|n| crate::dom::attr_name_hash(n))
+                .collect()
+            })
+            .contains(&hash)
 }
 
 impl MeasureCache {
@@ -718,6 +829,53 @@ impl MeasureCache {
         self.min_content.clear();
         self.heights.clear();
         self.baselines.clear();
+        self.reuse.clear();
+        self.styles.clear();
+        self.generated.clear();
+    }
+
+    /// Whether a restyled node lays out as the last pass laid it out: it is
+    /// not an element, the last pass did not lay it out (it could only
+    /// start to through a change of an ancestor or of the tree), or its
+    /// flow style and generated content are those that pass used. Otherwise
+    /// forgets them so the next pass asks again.
+    pub fn layout_style_unchanged(&mut self, dom: &Dom, src: &dyn FlowStyleSource, el: NodeId) -> bool {
+        if dom.node_type(el).ok() != Some(NodeType::Element) {
+            return true;
+        }
+        if !self.reuse.has_previous() {
+            return false;
+        }
+        let Some(old) = self.styles.get(&el) else { return true };
+        let same_generated = |after: bool| match self.generated.get(&(el, after)) {
+            // Not asked: the last pass did not lay out its contents.
+            None => true,
+            Some(old) => *old == src.generated(dom, el, after),
+        };
+        let unchanged = match (old, used_flow_style(dom, src, el)) {
+            (None, None) => true,
+            (Some(old), Some(new)) => **old == new,
+            _ => false,
+        } && same_generated(false)
+            && same_generated(true);
+        if !unchanged {
+            self.forget_style(el);
+        }
+        unchanged
+    }
+
+    /// Forgets the flow style of an element whose layout attributes changed.
+    pub fn forget_style(&mut self, el: NodeId) {
+        self.styles.remove(&el);
+        self.generated.remove(&(el, false));
+        self.generated.remove(&(el, true));
+    }
+
+    /// Keeps the result of the pass just run, so the next pass can copy the
+    /// subtrees it would lay out the same way from it instead. Without this
+    /// call, the next pass lays every subtree out again.
+    pub fn keep_result(&mut self, result: std::rc::Rc<FlowResult>) {
+        self.reuse.keep(result);
     }
 
     pub fn invalidate(&mut self, dirty: &rustc_hash::FxHashSet<NodeId>) {
@@ -728,6 +886,7 @@ impl MeasureCache {
         self.min_content.retain(|k, _| !dirty.contains(k));
         self.heights.retain(|k, _| !dirty.contains(&k.0));
         self.baselines.retain(|k, _| !dirty.contains(&k.0));
+        self.reuse.invalidate(dirty);
     }
 
     pub fn len(&self) -> usize {
@@ -759,13 +918,21 @@ pub fn layout_cached(
         min_content: RefCell::new(std::mem::take(&mut cache.min_content)),
         heights: RefCell::new(std::mem::take(&mut cache.heights)),
         baselines: RefCell::new(std::mem::take(&mut cache.baselines)),
+        reuse: RefCell::new(std::mem::take(&mut cache.reuse)),
+        styles: RefCell::new(std::mem::take(&mut cache.styles)),
+        generated: RefCell::new(std::mem::take(&mut cache.generated)),
         ..Memo::default()
     };
+    memo.reuse.borrow_mut().begin_pass();
     let out = layout_with_memo(dom, doc, src, vw, vh, &memo);
     cache.max_content = memo.max_content.into_inner();
     cache.min_content = memo.min_content.into_inner();
     cache.heights = memo.heights.into_inner();
     cache.baselines = memo.baselines.into_inner();
+    cache.reuse = memo.reuse.into_inner();
+    cache.styles = memo.styles.into_inner();
+    cache.generated = memo.generated.into_inner();
+    cache.reuse.end_pass(memo.relaid.get());
     out
 }
 
@@ -805,9 +972,6 @@ struct Ctx<'a> {
     vh: f64,
     out: FlowResult,
     order: u32,
-    /// Element recorded under each order (index = order - 1), so the boxes
-    /// laid out since an order was assigned (its descendants) are a slice.
-    by_order: Vec<Option<NodeId>>,
     /// Shared by the pass and its measuring probes.
     memo: &'a Memo,
     /// Definite content-box height of the containing block, against which
@@ -826,16 +990,16 @@ struct Ctx<'a> {
     pending: Vec<Vec<Pending>>,
     /// A measuring probe: its buffers go back to the memo when dropped.
     probe: bool,
+    /// A probe whose boxes nobody reads (only the height it returns):
+    /// replayed subtrees advance the order without copying their boxes.
+    measure_only: bool,
 }
 
 impl Drop for Ctx<'_> {
     fn drop(&mut self) {
         if self.probe {
-            let buffers = ProbeBuffers {
-                out: std::mem::take(&mut self.out),
-                by_order: std::mem::take(&mut self.by_order),
-                pending: std::mem::take(&mut self.pending),
-            };
+            let buffers =
+                ProbeBuffers { out: std::mem::take(&mut self.out), pending: std::mem::take(&mut self.pending) };
             self.memo.probe_buffers.borrow_mut().push(buffers);
         }
     }
@@ -870,6 +1034,16 @@ struct Memo {
     clip_facts: RefCell<FxHashMap<NodeId, ClipFact>>,
     /// Scratch path for `clip_fact` (reused, so a miss allocates nothing).
     clip_path: RefCell<Vec<NodeId>>,
+    /// Generated content per (element, after), kept across passes like
+    /// `styles`.
+    generated: RefCell<FxHashMap<(NodeId, bool), Option<std::rc::Rc<Generated>>>>,
+    /// `table_rows` per table.
+    tables: RefCell<FxHashMap<NodeId, std::rc::Rc<(Vec<TableRow>, usize)>>>,
+    /// Subtrees of the previous pass and of this one (`reuse`).
+    reuse: RefCell<reuse::Reuse>,
+    /// The pass recorded some element twice: its order ranges are not
+    /// subtrees, so none of them is kept for the next pass.
+    relaid: std::cell::Cell<bool>,
 }
 
 /// DOM depth of an element (document element = 1) and the depth of its
@@ -898,7 +1072,6 @@ pub mod record_scan_stats {
 #[derive(Default)]
 struct ProbeBuffers {
     out: FlowResult,
-    by_order: Vec<Option<NodeId>>,
     pending: Vec<Vec<Pending>>,
 }
 
@@ -1005,13 +1178,13 @@ impl<'a> Ctx<'a> {
             out: FlowResult::default(),
             order: 0,
             pending: Vec::new(),
-            by_order: Vec::new(),
             memo,
             cb_height: None,
             own_cb_height: None,
             first_baseline: None,
             last_baseline: None,
             probe: false,
+            measure_only: false,
         }
     }
 
@@ -1026,12 +1199,11 @@ impl<'a> Ctx<'a> {
             b.out.sticky.clear();
             b.out.text_orders.clear();
             b.out.text_runs.clear();
+            b.out.slots.clear();
             b.out.document_width = 0.0;
             b.out.document_height = 0.0;
-            b.by_order.clear();
             b.pending.clear();
             cx.out = b.out;
-            cx.by_order = b.by_order;
             cx.pending = b.pending;
         }
         cx
@@ -1041,15 +1213,7 @@ impl<'a> Ctx<'a> {
         if let Some(s) = self.memo.styles.borrow().get(&el) {
             return s.clone();
         }
-        let mut s = self.src.flow_style(self.dom, el);
-        // Form controls are atomic boxes sized by their own intrinsic size;
-        // their DOM children (textarea text, options) are not laid out.
-        if let Some(st) = s.as_mut() {
-            if control_kind(self.dom, el).is_some() {
-                st.replaced = true;
-            }
-        }
-        let s = s.map(StyleRef::new);
+        let s = used_flow_style(self.dom, self.src, el).map(StyleRef::new);
         self.memo.styles.borrow_mut().insert(el, s.clone());
         s
     }
@@ -1125,7 +1289,7 @@ impl<'a> Ctx<'a> {
                     .descendants(el)
                     .into_iter()
                     .flatten()
-                    .filter(|&n| self.dom.tag_name(n).is_ok_and(|t| t.eq_ignore_ascii_case("option")))
+                    .filter(|&n| local_tag(self.dom, n).is_some_and(|t| t.eq_ignore_ascii_case("option")))
                     .map(|n| {
                         collapsed_width(
                             &self.dom.text_content(n).ok().flatten().unwrap_or_default(),
@@ -1147,12 +1311,15 @@ impl<'a> Ctx<'a> {
     /// CSS default object size (300x150) for svg/canvas/video/iframe/embed/
     /// object; images without attributes have no known natural size.
     fn replaced_intrinsic(&self, el: NodeId, style: &FlowStyle) -> Option<(f64, f64)> {
-        let tag = self.dom.tag_name(el).ok()?.to_ascii_lowercase();
-        let default = match tag.as_str() {
-            "svg" | "canvas" | "video" | "iframe" | "embed" | "object" => (300.0, 150.0),
+        let tag = local_tag(self.dom, el)?;
+        let is = |name: &str| tag.eq_ignore_ascii_case(name);
+        let default = if ["svg", "canvas", "video", "iframe", "embed", "object"].into_iter().any(is) {
+            (300.0, 150.0)
+        } else if is("img") {
             // A loaded image's natural size, else nothing known.
-            "img" => style.intrinsic.unwrap_or((0.0, 0.0)),
-            _ => return None,
+            style.intrinsic.unwrap_or((0.0, 0.0))
+        } else {
+            return None;
         };
         let attr = |name: &str| {
             self.dom
@@ -1213,32 +1380,43 @@ impl<'a> Ctx<'a> {
         if sticky {
             self.out.sticky.insert(el);
         }
+        let slot = Slot { el: Some(el), own_positioned: b.positioned, positioned_by: 0 };
+        self.put_box(el, b, slot);
+    }
+
+    /// Records `b` under its order without looking at styles.
+    fn put_box(&mut self, el: NodeId, b: FlowBox, slot: Slot) {
         let i = b.order as usize - 1;
-        if self.by_order.len() <= i {
-            self.by_order.resize(i + 1, None);
+        if self.out.slots.len() <= i {
+            self.out.slots.resize(i + 1, Slot::default());
         }
-        self.by_order[i] = Some(el);
-        self.out.boxes.insert(el, b);
+        self.out.slots[i] = slot;
+        if self.out.boxes.insert(el, b).is_some() && !self.probe {
+            self.memo.relaid.set(true);
+        }
     }
 
     /// Moves text entries recorded after `order` down by `dy`.
+    /// Both lists are in order (orders only grow while they are appended),
+    /// so the entries after `order` are a tail: shifting every table cell
+    /// stays linear in the cell's own text, not the document's.
     fn shift_texts_after(&mut self, order: u32, dy: f64) {
-        for (o, t) in &self.out.text_orders {
-            if *o >= order {
-                if let Some((r, _)) = self.out.texts.get_mut(t) {
-                    r.y += dy;
-                }
+        let first = self.out.text_orders.partition_point(|(o, _)| *o < order);
+        for (_, t) in &self.out.text_orders[first..] {
+            if let Some((r, _)) = self.out.texts.get_mut(t) {
+                r.y += dy;
             }
         }
-        for run in self.out.text_runs.iter_mut().filter(|r| r.order >= order) {
+        let first = self.out.text_runs.partition_point(|r| r.order < order);
+        for run in &mut self.out.text_runs[first..] {
             run.rect.y += dy;
         }
     }
 
     /// Calls `f` on every box recorded with an order above `order`.
     fn boxes_after(&mut self, order: u32, mut f: impl FnMut(&mut FlowBox)) {
-        for i in order as usize..self.by_order.len() {
-            let Some(el) = self.by_order[i] else { continue };
+        for i in order as usize..self.out.slots.len() {
+            let Some(el) = self.out.slots[i].el else { continue };
             if let Some(b) = self.out.boxes.get_mut(&el).filter(|b| b.order as usize == i + 1) {
                 f(b);
             }
@@ -1347,7 +1525,14 @@ impl<'a> Ctx<'a> {
                 .height
                 .resolve(self.cb_height)
                 .map(|h| if style.border_box { (h - e.vertical()).max(0.0) } else { h });
-        let content_h = self.contents(el, style, content_x, content_y, content_w, declared_h, fixed, shift);
+        // A box with a definite height is that tall whatever its contents:
+        // a probe that only reads heights does not lay them out (table
+        // cells at their row height, flexed items).
+        let content_h = if self.measure_only && declared_h.is_some() {
+            0.0
+        } else {
+            self.contents(el, style, content_x, content_y, content_w, declared_h, fixed, shift)
+        };
         let min_h =
             style.min_height.resolve(self.cb_height).map(|h| if style.border_box { h - e.vertical() } else { h });
         let max_h =
@@ -1507,6 +1692,13 @@ impl<'a> Ctx<'a> {
                 b.positioned = true;
             }
         });
+        if positioned {
+            for slot in self.out.slots.iter_mut().skip(order as usize) {
+                if slot.positioned_by == 0 {
+                    slot.positioned_by = order;
+                }
+            }
+        }
         self.insert_box(
             el,
             FlowBox {
@@ -1539,7 +1731,7 @@ impl<'a> Ctx<'a> {
     ) -> f64 {
         let outer = std::mem::replace(&mut self.cb_height, height);
         let outer_own = std::mem::replace(&mut self.own_cb_height, outer);
-        let h = self.contents_in(el, style, x, y, width, height, fixed, shift);
+        let h = self.contents_reused(el, style, x, y, width, height, fixed, shift, outer);
         self.cb_height = outer;
         self.own_cb_height = outer_own;
         h
@@ -2391,6 +2583,7 @@ impl<'a> Ctx<'a> {
             return h;
         }
         let mut probe = self.probe();
+        probe.measure_only = true;
         probe.pending.push(Vec::new());
         let h = probe.contents(el, style, 0.0, 0.0, content_w, None, false, (0.0, 0.0));
         self.memo.heights.borrow_mut().insert(key, h);
@@ -2467,7 +2660,12 @@ impl<'a> Ctx<'a> {
 
     /// `el`'s generated `::before` (`after`: `::after`) content.
     fn generated(&self, el: NodeId, after: bool) -> Option<std::rc::Rc<Generated>> {
-        self.src.generated(self.dom, el, after)
+        if let Some(g) = self.memo.generated.borrow().get(&(el, after)) {
+            return g.clone();
+        }
+        let g = self.src.generated(self.dom, el, after);
+        self.memo.generated.borrow_mut().insert((el, after), g.clone());
+        g
     }
 
     /// Flattens an inline-level node into items. `owners`: enclosing inline
@@ -2615,8 +2813,31 @@ enum Control {
     },
 }
 
+/// The flow style the layout uses for `el`: the source's, with form
+/// controls made atomic boxes sized by their own intrinsic size (their DOM
+/// children, textarea text and options, are not laid out).
+fn used_flow_style(dom: &Dom, src: &dyn FlowStyleSource, el: NodeId) -> Option<FlowStyle> {
+    let mut s = src.flow_style(dom, el);
+    if let Some(st) = s.as_mut() {
+        if control_kind(dom, el).is_some() {
+            st.replaced = true;
+        }
+    }
+    s
+}
+
+/// An element's local name when it has no prefix (what `tagName` compares
+/// against for these HTML tags), without building the `tagName` string.
+fn local_tag(dom: &Dom, el: NodeId) -> Option<&str> {
+    let e = dom.element(el).ok()?;
+    if e.name.prefix.as_ref().is_some_and(|p| !p.is_empty()) {
+        return None;
+    }
+    Some(&e.name.local)
+}
+
 fn control_kind(dom: &Dom, el: NodeId) -> Option<Control> {
-    let tag = dom.tag_name(el).ok()?;
+    let tag = local_tag(dom, el)?;
     let attr = |name: &str| dom.get_attribute(el, name).ok().flatten();
     if tag.eq_ignore_ascii_case("input") {
         let ty = attr("type").unwrap_or("text").trim().to_ascii_lowercase();
@@ -3375,7 +3596,18 @@ struct TableRow {
 impl<'a> Ctx<'a> {
     /// Rows in display order (header groups, then bodies/bare rows, then
     /// footers), each with its cells' column positions.
-    fn table_rows(&self, table: NodeId) -> (Vec<TableRow>, usize) {
+    /// The table's rows in display order and its column count, memoized
+    /// for the pass (the table and its measurements ask several times).
+    fn table_rows(&self, table: NodeId) -> std::rc::Rc<(Vec<TableRow>, usize)> {
+        if let Some(t) = self.memo.tables.borrow().get(&table) {
+            return t.clone();
+        }
+        let t = std::rc::Rc::new(self.table_rows_uncached(table));
+        self.memo.tables.borrow_mut().insert(table, t.clone());
+        t
+    }
+
+    fn table_rows_uncached(&self, table: NodeId) -> (Vec<TableRow>, usize) {
         let mut head = Vec::new();
         let mut body = Vec::new();
         let mut foot = Vec::new();
@@ -3522,7 +3754,8 @@ impl<'a> Ctx<'a> {
 
     /// Max-content width of a table's content box.
     fn table_max_content(&self, table: NodeId, style: &FlowStyle) -> f64 {
-        let (rows, cols) = self.table_rows(table);
+        let memo_rows = self.table_rows(table);
+        let (rows, cols) = (memo_rows.0.as_slice(), memo_rows.1);
         let (sx, _) = Self::spacing(style);
         let content = self.table_columns(table, style, &rows, cols, None).iter().sum::<f64>();
         // A fixed-layout table is at least its declared columns.
@@ -3599,14 +3832,15 @@ impl<'a> Ctx<'a> {
     /// shrinks to this when its container is narrower (TOS finance tables:
     /// columns sized by their headers, wider text cells wrapping).
     fn table_min_content(&self, table: NodeId, style: &FlowStyle) -> f64 {
-        let (rows, cols) = self.table_rows(table);
+        let memo_rows = self.table_rows(table);
+        let (rows, cols) = (memo_rows.0.as_slice(), memo_rows.1);
         let (sx, _) = Self::spacing(style);
         if style.table_layout_fixed {
             // Fixed layout ignores cell contents: the declared columns.
             return self.fixed_columns_sum(table, &rows, cols) + sx * (cols as f64 + 1.0);
         }
         let mut widths = vec![0.0f64; cols];
-        for row in &rows {
+        for row in rows {
             for c in row.cells.iter().filter(|c| c.span == 1) {
                 let e = self.edges(&c.style, 0.0);
                 let content = self.clamp_cell_width(c, 0.0, self.min_content(c.el, &c.style) + e.horizontal());
@@ -3630,7 +3864,8 @@ impl<'a> Ctx<'a> {
         fixed: bool,
         shift: (f64, f64),
     ) -> f64 {
-        let (rows, cols) = self.table_rows(el);
+        let memo_rows = self.table_rows(el);
+        let (rows, cols) = (memo_rows.0.as_slice(), memo_rows.1);
         if cols == 0 {
             return 0.0;
         }
@@ -3646,7 +3881,7 @@ impl<'a> Ctx<'a> {
         let mut cursor = y + sy;
         let mut groups: Vec<(NodeId, Rect)> = Vec::new();
         let mut group_orders: Vec<(NodeId, u32)> = Vec::new();
-        for row in &rows {
+        for row in rows {
             // Row height: the tallest cell (and the row's own height).
             let mut row_h = row.style.as_ref().and_then(|s| s.height.resolve(None)).unwrap_or(0.0);
             let mut cell_heights = Vec::new();

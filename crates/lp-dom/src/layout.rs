@@ -283,31 +283,44 @@ impl Layout {
         let viewport = (v.width, v.height);
         let previous = match self.flow_cache.borrow().as_ref() {
             Some(c) if c.stamp == stamp && c.viewport == viewport => return c.result.clone(),
-            Some(c) => Some((c.stamp, c.viewport)),
+            Some(c) => Some((c.stamp, c.viewport, c.result.clone())),
             None => None,
         };
         let started = flow_stats::enabled().then(std::time::Instant::now);
         let mut measures = self.measures.borrow_mut();
-        self.invalidate_measures(dom, &mut measures, viewport);
-        let result = Rc::new(crate::style::with_pass_memo(|| {
-            crate::flow::layout_cached(
-                dom,
-                self.document(),
-                &self.style,
-                v.width as f64,
-                v.height as f64,
-                &mut measures.cache,
-            )
-        }));
+        let unchanged = self.invalidate_measures(dom, &mut measures, viewport);
+        let result = match previous.as_ref() {
+            // Nothing that could move a box changed (hover, focus, a class
+            // that only changes colours): the last layout still holds.
+            Some((_, old_viewport, old)) if unchanged && *old_viewport == viewport => old.clone(),
+            _ => {
+                let result = Rc::new(crate::style::with_pass_memo(|| {
+                    crate::flow::layout_cached(
+                        dom,
+                        self.document(),
+                        &self.style,
+                        v.width as f64,
+                        v.height as f64,
+                        &mut measures.cache,
+                    )
+                }));
+                // Entries of removed elements are never served again; bound them.
+                if measures.cache.len() > 8 * result.boxes.len().max(64) {
+                    measures.cache.clear();
+                } else {
+                    measures.cache.keep_result(result.clone());
+                }
+                result
+            }
+        };
         measures.version = Some(dom.version());
         measures.viewport = viewport;
-        // Entries of removed elements are never served again; bound them.
-        if measures.cache.len() > 8 * result.boxes.len().max(64) {
-            measures.cache.clear();
+        if verify_flow() {
+            verify_against_fresh(dom, self.document(), &self.style, v, &result);
         }
         drop(measures);
         if let Some(t) = started {
-            flow_stats::record(previous, (stamp, viewport), t.elapsed());
+            flow_stats::record(previous.map(|(s, v, _)| (s, v)), (stamp, viewport), t.elapsed());
         }
         *self.flow_cache.borrow_mut() = Some(FlowCache { stamp, viewport, result: result.clone() });
         result
@@ -318,8 +331,11 @@ impl Layout {
     /// form state, image natural sizes, children, text) and of their
     /// ancestors, whose measurements include them; all of them after a full
     /// restyle, a gap in the journal, an unknown change, a viewport change
-    /// or with shadow roots (flat-tree ancestors).
-    fn invalidate_measures(&self, dom: &Dom, m: &mut Measures, viewport: (u32, u32)) {
+    /// or with shadow roots (flat-tree ancestors). Restyled elements whose
+    /// flow style did not change, and attributes the layout does not read
+    /// (their style effects are restyles), drop nothing. Returns whether
+    /// nothing was dropped: the last pass's layout still holds.
+    fn invalidate_measures(&self, dom: &Dom, m: &mut Measures, viewport: (u32, u32)) -> bool {
         use crate::dom::Change;
         let restyled = self.style.take_restyled(dom);
         let changes = match (m.version, restyled.as_ref()) {
@@ -330,7 +346,7 @@ impl Layout {
         };
         let (Some(restyled), Some(changes)) = (restyled, changes) else {
             m.cache.clear();
-            return;
+            return false;
         };
         let mut dirty = rustc_hash::FxHashSet::default();
         let mut mark = |idx: u32| {
@@ -344,12 +360,23 @@ impl Layout {
         };
         for n in restyled {
             if let Ok(idx) = dom.check(n) {
-                mark(idx);
+                if !m.cache.layout_style_unchanged(dom, &self.style, n) {
+                    mark(idx);
+                }
             }
         }
         for c in changes {
             match c {
-                Change::Attr(i, ..) | Change::State(i) => mark(i),
+                // data-*/aria-* attributes and those the layout does not
+                // read reach it only through the restyles above.
+                Change::Attr(_, _, true) => {}
+                Change::Attr(i, name, false) => {
+                    if crate::flow::layout_attribute(name) && dom.slot_live(i) {
+                        m.cache.forget_style(dom.id_of(i));
+                        mark(i);
+                    }
+                }
+                Change::State(i) => mark(i),
                 Change::Inserted(p, n) => {
                     mark(p);
                     mark(n);
@@ -363,11 +390,12 @@ impl Layout {
                 Change::Pseudo => {}
                 Change::Unknown(_) => {
                     m.cache.clear();
-                    return;
+                    return false;
                 }
             }
         }
         m.cache.invalidate(&dirty);
+        dirty.is_empty()
     }
 
     fn flow_box(&self, dom: &Dom, el: NodeId) -> Option<FlowBox> {
@@ -2479,6 +2507,21 @@ mod tests {
 /// printed to stderr every 25 passes, with how the style cache was
 /// invalidated and how many flow styles were recomputed in those 25 passes.
 /// Diagnostic only; off by default.
+/// `LIGHTNINGPANDA_FLOW_VERIFY=1`: every flow pass that reused measurements
+/// or subtrees is compared with a fresh layout of the same document, and a
+/// difference panics (a debugging aid for the reuse invalidation; slow).
+fn verify_flow() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("LIGHTNINGPANDA_FLOW_VERIFY").is_ok_and(|v| v == "1"))
+}
+
+fn verify_against_fresh(dom: &Dom, doc: NodeId, style: &StyleEngine, v: &Viewport, got: &FlowResult) {
+    let fresh = crate::style::with_pass_memo(|| crate::flow::layout(dom, doc, style, v.width as f64, v.height as f64));
+    if let Some(diff) = crate::flow::difference(&fresh, got) {
+        panic!("flow reuse differs from a fresh layout: {diff}");
+    }
+}
+
 pub(crate) mod flow_stats {
     use std::cell::RefCell;
     use std::sync::OnceLock;
