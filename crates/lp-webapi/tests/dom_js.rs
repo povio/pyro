@@ -4907,6 +4907,45 @@ fn focus_scroll_owner_helpers_preserve_options_and_drop_replaced_document_tasks(
 }
 
 #[test]
+fn programmatic_scrolls_queue_scroll_then_scrollend_like_chromium() {
+    // Gap 35: a column-virtualized table renders new columns from its
+    // scroller's `scroll` event, so every programmatic scroll (scrollIntoView,
+    // scrollTo/scrollBy, the scrollLeft/scrollTop setters) must queue one,
+    // and Chromium follows it with `scrollend` once the instant scroll is
+    // done. Neither fires when nothing moved.
+    let e = env(
+        "<body style='margin:0'><div id=s style='overflow:auto;width:200px;height:60px'><div style='display:flex;width:2000px'>\
+         <div style='flex:none;width:100px;height:40px'>a</div><div style='flex:none;width:1500px'></div><div id=far style='flex:none;width:100px;height:40px'>z</div>\
+         </div><div style='height:200px'></div></div><div style='height:2000px'></div></body>",
+    );
+    e.page.layout.borrow_mut().set_geometry(lp_dom::layout::Geometry::Flow);
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    eval(
+        &e.main,
+        "window.seen = []; window.s = document.getElementById('s');
+         for (const type of ['scroll', 'scrollend']) {
+           s.addEventListener(type, ev => seen.push(type + ':' + s.scrollLeft + ',' + s.scrollTop));
+           document.addEventListener(type, ev => { if (ev.target === document) seen.push('document ' + type) });
+         }",
+    );
+    let run = |src: &str| {
+        let r = eval(&e.main, &format!("seen.length = 0; {src}; String(seen.length)"));
+        assert_eq!(r, "0", "{src}: events are queued, not dispatched inline");
+        tasks.drain();
+        eval(&e.main, "seen.join(' ')")
+    };
+    assert_eq!(run("document.getElementById('far').scrollIntoView()"), "scroll:1500,0 scrollend:1500,0");
+    assert_eq!(run("s.scrollLeft = 10"), "scroll:10,0 scrollend:10,0");
+    assert_eq!(run("s.scrollTop = 5"), "scroll:10,5 scrollend:10,5");
+    assert_eq!(run("s.scrollTo(20, 0)"), "scroll:20,0 scrollend:20,0");
+    assert_eq!(run("s.scrollBy({left: 5})"), "scroll:25,0 scrollend:25,0");
+    assert_eq!(run("s.scrollLeft = 25"), "", "no move, no events");
+    assert_eq!(run("window.scrollTo(0, 100)"), "document scroll document scrollend");
+    e.page.dispose();
+}
+
+#[test]
 fn scroll_into_view_delivers_each_changed_ancestor_after_the_call() {
     struct Hooks(RefCell<Vec<Box<dyn FnOnce()>>>);
     impl PageHooks for Hooks {
