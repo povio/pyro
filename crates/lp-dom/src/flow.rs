@@ -26,7 +26,7 @@ mod reuse;
 mod store;
 
 pub use store::{Boxes, Texts};
-use store::{ByNode, Slot};
+use store::{ByNode, NodeMap, Slot};
 
 // ----- style input contract -------------------------------------------------
 
@@ -961,19 +961,23 @@ pub fn difference(want: &FlowResult, got: &FlowResult) -> Option<String> {
 /// (`invalidate`), or all of them (`clear`).
 #[derive(Default)]
 pub struct MeasureCache {
-    max_content: FxHashMap<NodeId, f64>,
-    min_content: FxHashMap<NodeId, f64>,
+    max_content: NodeMap<f64>,
+    min_content: NodeMap<f64>,
     heights: ByNode<u64, f64>,
     baselines: ByNode<(u64, u64), Option<f64>>,
     /// Laid-out subtrees of the last pass, replayed by the next one.
     reuse: reuse::Reuse,
     /// The flow styles the last pass used, which seed the next pass (minus
     /// those of restyled elements: `layout_style_unchanged`).
-    styles: FxHashMap<NodeId, Option<StyleRef>>,
+    styles: NodeMap<Option<StyleRef>>,
     generated: GeneratedMap,
     /// Table structures (rows, cells, spans) the last pass used; dropped by
     /// `invalidate_tables`.
     tables: FxHashMap<NodeId, Rc<TableRows>>,
+    /// Each table row's cells, before column placement; dropped with the
+    /// tables (`invalidate_tables`), so a row insert rebuilds a table's
+    /// rows from those of its clean rows.
+    row_cells: FxHashMap<NodeId, Rc<[TableCell]>>,
 }
 
 /// Attributes the flow layout reads itself (form control and replaced sizes,
@@ -1016,6 +1020,7 @@ impl MeasureCache {
         self.styles.clear();
         self.generated.clear();
         self.tables.clear();
+        self.row_cells.clear();
     }
 
     /// Drops the table structures a change at `touched` (the nodes changed
@@ -1023,7 +1028,7 @@ impl MeasureCache {
     /// the tables it is in, up to the first cell above it (what is inside a
     /// cell is not structure).
     pub fn invalidate_tables(&mut self, dom: &Dom, touched: &[NodeId]) {
-        if self.tables.is_empty() {
+        if self.tables.is_empty() && self.row_cells.is_empty() {
             return;
         }
         for &n in touched {
@@ -1037,6 +1042,7 @@ impl MeasureCache {
                 }
                 first = false;
                 self.tables.remove(&c);
+                self.row_cells.remove(&c);
                 cur = dom.parent(c).ok().flatten();
             }
         }
@@ -1100,7 +1106,11 @@ impl MeasureCache {
     }
 
     pub fn len(&self) -> usize {
-        self.max_content.len() + self.min_content.len() + self.heights.len() + self.baselines.len()
+        self.max_content.len()
+            + self.min_content.len()
+            + self.heights.len()
+            + self.baselines.len()
+            + self.row_cells.len()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -1132,6 +1142,7 @@ pub fn layout_cached(
         styles: RefCell::new(std::mem::take(&mut cache.styles)),
         generated: RefCell::new(std::mem::take(&mut cache.generated)),
         tables: RefCell::new(std::mem::take(&mut cache.tables)),
+        row_cells: RefCell::new(std::mem::take(&mut cache.row_cells)),
         ..Memo::default()
     };
     memo.reuse.borrow_mut().begin_pass();
@@ -1144,6 +1155,7 @@ pub fn layout_cached(
     cache.styles = memo.styles.into_inner();
     cache.generated = memo.generated.into_inner();
     cache.tables = memo.tables.into_inner();
+    cache.row_cells = memo.row_cells.into_inner();
     cache.reuse.end_pass(memo.relaid.get());
     out
 }
@@ -1246,9 +1258,9 @@ type Owners = std::rc::Rc<[NodeId]>;
 
 #[derive(Default)]
 struct Memo {
-    styles: RefCell<FxHashMap<NodeId, Option<StyleRef>>>,
-    max_content: RefCell<FxHashMap<NodeId, f64>>,
-    min_content: RefCell<FxHashMap<NodeId, f64>>,
+    styles: RefCell<NodeMap<Option<StyleRef>>>,
+    max_content: RefCell<NodeMap<f64>>,
+    min_content: RefCell<NodeMap<f64>>,
     /// Content height by (element, content width bits).
     heights: RefCell<ByNode<u64, f64>>,
     /// Atomic inline baseline by (element, content width bits, height bits).
@@ -1259,7 +1271,7 @@ struct Memo {
     /// Per element: its DOM depth and the depth of its nearest (inclusive)
     /// ancestor whose style clips overflow. Per pass only (the DOM and the
     /// memoized `style_of` answers are fixed for the pass and its probes).
-    clip_facts: RefCell<FxHashMap<NodeId, ClipFact>>,
+    clip_facts: RefCell<NodeMap<ClipFact>>,
     /// Scratch path for `clip_fact` (reused, so a miss allocates nothing).
     clip_path: RefCell<Vec<NodeId>>,
     /// Generated content per (element, after), kept across passes like
@@ -1269,6 +1281,8 @@ struct Memo {
     leading: RefCell<FxHashMap<(NodeId, u64), Margin>>,
     /// `table_rows` per table.
     tables: RefCell<FxHashMap<NodeId, Rc<TableRows>>>,
+    /// `MeasureCache::row_cells`.
+    row_cells: RefCell<FxHashMap<NodeId, Rc<[TableCell]>>>,
     /// Subtrees of the previous pass and of this one (`reuse`).
     reuse: RefCell<reuse::Reuse>,
     /// The pass recorded some element twice: its order ranges are not
@@ -4398,6 +4412,7 @@ fn margins_cross(it: &FlexItem, row: bool) -> f64 {
 
 // ----- table layout (Stage 3) -------------------------------------------------------
 
+#[derive(Clone)]
 struct TableCell {
     el: NodeId,
     style: StyleRef,
@@ -4495,6 +4510,16 @@ impl<'a> Ctx<'a> {
     }
 
     fn table_row(&self, row: NodeId, style: StyleRef, group: Option<NodeId>) -> TableRow {
+        let cached = self.memo.row_cells.borrow().get(&row).cloned();
+        let cells = cached.unwrap_or_else(|| {
+            let cells = self.row_cells(row);
+            self.memo.row_cells.borrow_mut().insert(row, cells.clone());
+            cells
+        });
+        TableRow { el: Some(row), style: Some(style), group, cells: cells.to_vec() }
+    }
+
+    fn row_cells(&self, row: NodeId) -> Rc<[TableCell]> {
         let mut col = 0;
         let mut cells = Vec::new();
         for (c, cs) in self.flatten_children(row) {
@@ -4522,7 +4547,7 @@ impl<'a> Ctx<'a> {
             cells.push(TableCell { el: c, style: cs, col, span, rowspan });
             col += span;
         }
-        TableRow { el: Some(row), style: Some(style), group, cells }
+        cells.into()
     }
 
     fn spacing(style: &FlowStyle) -> (f64, f64) {

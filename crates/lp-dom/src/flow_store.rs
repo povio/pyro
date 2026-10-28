@@ -279,7 +279,7 @@ impl<'a> IntoIterator for &'a Texts {
 /// known about a node is one removal (not a scan of every key).
 #[derive(Debug)]
 pub(super) struct ByNode<K, V> {
-    map: rustc_hash::FxHashMap<NodeId, Vec<(K, V)>>,
+    map: NodeMap<Vec<(K, V)>>,
     len: usize,
 }
 
@@ -295,7 +295,7 @@ impl<K: PartialEq, V> ByNode<K, V> {
     }
 
     pub(super) fn insert(&mut self, node: NodeId, key: K, value: V) {
-        let values = self.map.entry(node).or_default();
+        let values = self.map.get_or_default(node);
         match values.iter_mut().find(|(k, _)| *k == key) {
             Some(slot) => slot.1 = value,
             None => {
@@ -342,8 +342,27 @@ impl<V> NodeMap<V> {
         (p != 0 && self.list[p as usize - 1].0 == *node).then(|| p as usize - 1)
     }
 
+    pub(super) fn get(&self, node: &NodeId) -> Option<&V> {
+        self.pos(node).map(|p| &self.list[p].1)
+    }
+
     pub(super) fn get_mut(&mut self, node: &NodeId) -> Option<&mut V> {
         self.pos(node).map(|p| &mut self.list[p].1)
+    }
+
+    pub(super) fn get_or_default(&mut self, node: NodeId) -> &mut V
+    where
+        V: Default,
+    {
+        let p = match self.pos(&node) {
+            Some(p) => p,
+            None => {
+                self.list.push((node, V::default()));
+                set_index(&mut self.index, node, self.list.len() as u32);
+                self.list.len() - 1
+            }
+        };
+        &mut self.list[p].1
     }
 
     /// Returns the value replaced.
