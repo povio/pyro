@@ -340,6 +340,14 @@ pub struct DocumentState {
     pub(crate) _owner_pin: Option<loader::ResourceNode>,
 }
 
+impl DocumentState {
+    /// The loader of a navigation whose document is still being fetched
+    /// (not committed yet): the frame still shows the previous document.
+    pub fn pending_loader(&self) -> Option<&LoaderId> {
+        self.pending_loader.as_ref()
+    }
+}
+
 pub struct Page {
     pub id: PageId,
     /// Set by every mutable access; `sync_root` compares only when set.

@@ -4433,3 +4433,161 @@ fn driver_run_frames_upload_drag_download_and_popup() {
     assert!(r["error"]["message"].as_str().unwrap_or_default().contains("no popup yet"), "{r}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Runs the engine until every response in `ids` arrived; the replies by id.
+fn until_responses(h: &mut Harness, ids: &[u64]) -> Vec<Value> {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut seen = Vec::new();
+    loop {
+        seen.extend(h.drain());
+        if ids.iter().all(|id| seen.iter().any(|m| m["id"] == *id)) {
+            return ids.iter().map(|id| seen.iter().find(|m| m["id"] == *id).unwrap().clone()).collect();
+        }
+        assert!(Instant::now() < deadline, "responses missing; saw {seen:#?}");
+        let host = h.browser.host_mut();
+        host.run_until_work(Some(Instant::now() + Duration::from_millis(20)), || false);
+        host.flush();
+        let mut sink = h.out.clone();
+        h.browser.adopt_popups(&mut sink);
+    }
+}
+
+/// A prepared page taken the moment its profile is registered (`ready:
+/// false`) is still fetching its document: `loaded` waits for that
+/// navigation rather than for the `about:blank` it starts on, so the
+/// `route` after it lands on the profile's origin. Several profiles taken
+/// at once all get there. A `route` on a page that never navigated fails
+/// with a clear message instead of `pushState` throwing.
+#[test]
+fn driver_run_loaded_waits_for_a_prepared_pages_navigation() {
+    let address = driver_site();
+    let mut h = Harness::new();
+    let mut sessions = Vec::new();
+    for i in 0..5 {
+        let r = h.call(
+            None,
+            "Lightningpanda.registerPreparedPage",
+            json!({"url": format!("http://{address}/form?p={i}"), "pool": 1}),
+        );
+        let profile = r["result"]["profileId"].as_u64().unwrap_or_else(|| panic!("{r}"));
+        let r = h.call(None, "Lightningpanda.acquirePreparedPage", json!({"profileId": profile, "attach": true}));
+        assert_eq!(r["result"]["ready"], false, "{r}");
+        sessions.push(r["result"]["sessionId"].as_str().unwrap_or_else(|| panic!("{r}")).to_owned());
+    }
+    let ids: Vec<u64> = sessions
+        .iter()
+        .enumerate()
+        .map(|(i, session)| {
+            h.send(
+                Some(session),
+                "LP.run",
+                json!({"steps": [
+                    {"loaded": {}},
+                    {"route": {"url": format!("/positions/{i}")}},
+                    {"check": {"locator": {"css": "#path"}, "assert": "text", "expected": format!("/positions/{i}")}},
+                    {"url": {"url": format!("/positions/{i}")}},
+                ]}),
+            )
+        })
+        .collect();
+    for (i, r) in until_responses(&mut h, &ids).iter().enumerate() {
+        assert!(r.get("error").is_none(), "{r}");
+        let url = r["result"]["results"][3]["url"].as_str().unwrap_or_else(|| panic!("{r}"));
+        assert_eq!(url, format!("http://{address}/positions/{i}"), "{r}");
+    }
+    // The harness page never navigated: no document to route in.
+    let r = h.page("LP.run", json!({"steps": [{"route": {"url": "/x"}}]}));
+    let message = r["error"]["message"].as_str().unwrap_or_default();
+    assert!(message.starts_with("step 0 (route /x)") && message.contains("about:blank"), "{r}");
+}
+
+/// `eval` awaits a returned promise (as `page.evaluate` does): the settled
+/// value is the step's result and read; a rejection fails the step with
+/// its message; a promise that never settles times out with the step's
+/// own timeout. `route` with `settle: false` returns while the request it
+/// started is still pending; `check` `enabled` reads the disabled state.
+#[test]
+fn driver_run_eval_awaits_promises_and_route_can_skip_settling() {
+    let address = driver_site();
+    let mut h = Harness::new();
+    let start = Instant::now();
+    let r = h.page(
+        "LP.run",
+        json!({"steps": [
+            {"goto": {"url": format!("http://{address}/form")}},
+            {"eval": {"expression": "new Promise(r => setTimeout(() => r({n: 1}), 150))", "as": "x"}},
+            {"eval": {"expression": "Promise.resolve('now')", "as": "y"}},
+            {"eval": {"expression": "7", "as": "z"}},
+            {"check": {"locator": {"role": "button", "name": "Send"}, "assert": "enabled"}},
+            {"mock": {"url": "/api?name=", "json": {"greeting": "Slow"}, "delay": 400}},
+            {"route": {"url": "/positions/9", "settle": false, "timeout": 1000}},
+            {"check": {"locator": {"css": "#path"}, "assert": "text", "expected": "/positions/9"}},
+            {"read": {"locator": {"css": "#out"}, "read": "text", "as": "out"}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    let result = &r["result"];
+    assert_eq!(result["reads"]["x"], json!({"n": 1}), "{r}");
+    assert_eq!(result["reads"]["y"], "now", "{r}");
+    assert_eq!(result["reads"]["z"], 7, "{r}");
+    assert_eq!(result["results"][1], json!({"n": 1}), "{r}");
+    assert_eq!(result["results"][4]["actual"], true, "{r}");
+    assert!(result["results"][6].get("settleMs").is_none(), "route did not settle: {r}");
+    assert_eq!(result["reads"]["out"], "", "the mocked response is still pending: {r}");
+    assert!(start.elapsed() < Duration::from_millis(400), "{:?}", start.elapsed());
+    let r = h.page(
+        "LP.run",
+        json!({"steps": [{"check": {"locator": {"css": "#out"}, "assert": "text", "expected": "Slow"}}]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+
+    let r = h.page("LP.run", json!({"steps": [{"eval": {"expression": "Promise.reject(new Error('nope'))"}}]}));
+    let message = r["error"]["message"].as_str().unwrap_or_default();
+    assert!(message.starts_with("step 0 (eval)") && message.contains("rejected: nope"), "{r}");
+    let r = h.page("LP.run", json!({"steps": [{"eval": {"expression": "new Promise(() => {})", "timeout": 60}}]}));
+    let message = r["error"]["message"].as_str().unwrap_or_default();
+    assert!(message.contains("timed out after 60 ms"), "{r}");
+    let r = h.page(
+        "LP.run",
+        json!({"steps": [{"check": {"locator": {"role": "button", "name": "Send"}, "assert": "enabled", "expected": false, "timeout": 50}}]}),
+    );
+    assert!(r["error"]["message"].as_str().unwrap_or_default().contains("expected Enabled false, got true"), "{r}");
+}
+
+/// `text` locators follow Playwright's text engine: the scope element
+/// itself is a candidate (`css('td').text('Domestic', exact)` matches
+/// `<td>Domestic</td>`), and an exact string also matches an element one of
+/// whose own text-node runs equals it, child elements aside
+/// (`<span><span>|</span>TS-106-POSITION</span>`).
+#[test]
+fn driver_text_locators_match_the_scope_root_and_own_text_nodes() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><body>
+<table><tr><td>Domestic</td><td>Domestic flights</td></tr></table>
+<span id="pos"><span>|</span>TS-106-POSITION</span>
+<p><b>bold</b> and plain</p>
+<div id="enabled"><button>Go</button><button disabled>Stop</button></div>"#,
+    );
+    let q = |h: &mut Harness, locator: Value| h.page("LP.query", json!({"locator": locator, "read": "text"}));
+    let r = q(&mut h, json!({"text": "Domestic", "exact": true, "within": {"css": "td"}}));
+    assert_eq!(r["result"]["value"], "Domestic", "{r}");
+    let r = q(&mut h, json!({"text": "Domestic", "exact": true}));
+    assert_eq!(r["result"]["value"], "Domestic", "{r}");
+    let r = h.page("LP.query", json!({"locator": {"text": "Domestic"}, "read": "count"}));
+    assert_eq!(r["result"]["value"], 2, "{r}");
+    let r = q(&mut h, json!({"text": "TS-106-POSITION", "exact": true}));
+    assert_eq!(r["result"]["value"], "|TS-106-POSITION", "{r}");
+    let r = q(&mut h, json!({"text": "TS-106-POSITION", "exact": true, "within": {"css": "#pos"}}));
+    assert_eq!(r["result"]["value"], "|TS-106-POSITION", "{r}");
+    // The whole text still wins, and own text nodes do not match substrings.
+    let r = q(&mut h, json!({"text": "bold and plain", "exact": true}));
+    assert_eq!(r["result"]["value"], "bold and plain", "{r}");
+    let r = h.page("LP.query", json!({"locator": {"text": "and", "exact": true}, "read": "count"}));
+    assert_eq!(r["result"]["value"], 0, "{r}");
+    let r = h.page("LP.query", json!({"locator": {"role": "button", "name": "Stop"}, "read": "enabled"}));
+    assert_eq!(r["result"]["value"], false, "{r}");
+    let r = h.page("LP.expect", json!({"locator": {"role": "button", "name": "Go"}, "assert": "enabled"}));
+    assert_eq!(r["result"]["actual"], true, "{r}");
+}

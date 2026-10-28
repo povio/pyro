@@ -178,15 +178,19 @@ export class Lightningpanda {
    * A page of profile `as` (signed in, booted ahead when one is waiting),
    * or a blank page in its own context. `route` (same-document) or `url`
    * (a full navigation) runs as the first step of the first `run`.
+   * `initScripts` run in every document of this page before its scripts
+   * (after the profile's); a booted page already ran its document, so the
+   * page then boots fresh instead of coming from the pool.
    */
-  async page(opts: { as?: string; route?: string; url?: string } = {}): Promise<Page> {
+  async page(opts: { as?: string; route?: string; url?: string; initScripts?: string[] } = {}): Promise<Page> {
     const entry = opts.as === undefined ? undefined : this.profiles.get(opts.as);
     if (opts.as !== undefined && !entry) throw new Error(`no profile ${opts.as}: declare it with lp.profile()`);
     const index = this.pick();
     const conn = this.conns[index];
     const first: StepLike[] = [];
     let page: Page | undefined;
-    if (entry?.ids) {
+    const extra = opts.initScripts ?? [];
+    if (entry?.ids && extra.length === 0) {
       try {
         const r = await conn.cdp.send('Lightningpanda.acquirePreparedPage', { profileId: entry.ids[index], attach: true });
         page = new Page(conn, r.sessionId, r.targetId, r.browserContextId);
@@ -200,7 +204,7 @@ export class Lightningpanda {
       }
     }
     if (!page) {
-      page = await freshPage(conn, entry);
+      page = await freshPage(conn, entry, extra);
       this.stats.fresh++;
       if (entry && !opts.url) first.push(goto(entry.profile.url));
     }
@@ -222,12 +226,12 @@ async function openConns(wsUrl: string, opts: ConnectOptions): Promise<Conn[]> {
   return cdps.map((cdp) => ({ cdp, open: 0 }));
 }
 
-async function freshPage(conn: Conn, entry?: ProfileEntry): Promise<Page> {
+async function freshPage(conn: Conn, entry?: ProfileEntry, extra: string[] = []): Promise<Page> {
   const cdp = conn.cdp;
   const { browserContextId } = await cdp.send('Target.createBrowserContext');
   const { targetId } = await cdp.send('Target.createTarget', { url: 'about:blank', browserContextId });
   const { sessionId } = await cdp.send('Target.attachToTarget', { targetId, flatten: true });
-  for (const source of entry?.scripts ?? []) {
+  for (const source of [...(entry?.scripts ?? []), ...extra]) {
     await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source }, sessionId);
   }
   const v = entry?.profile.viewport;
@@ -269,6 +273,15 @@ export class Page {
       const where = index < 0 ? `opening the page (${prefix[Number(m[1])] && JSON.stringify(prefix[Number(m[1])].toStep())})` : `step ${index}`;
       throw new RunError((e as Error).message.replace(/^LP\.run: step \d+/, where), index);
     }
+  }
+
+  /**
+   * Runs `source` in every document this page loads from now on, before its
+   * scripts (Playwright's `page.addInitScript`): follow it with `goto` or
+   * `reload` for the current page to see it.
+   */
+  async addInitScript(source: string): Promise<void> {
+    await this.cdp.send('Page.addScriptToEvaluateOnNewDocument', { source }, this.sessionId);
   }
 
   /** Any other CDP command on this page. */

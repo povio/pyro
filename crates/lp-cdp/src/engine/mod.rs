@@ -892,7 +892,16 @@ impl Host for EngineHost {
         let Some(state) = self.pages.get(&page) else { return false };
         let Some(p) = self.thread.browser.page(state.id) else { return false };
         let navigating = state.frames.get(&p.main_frame.id).is_some_and(|f| f.navigating);
-        p.main_frame.loaded && !navigating
+        // A prepared page always has a URL to go to: on `about:blank` it has
+        // not got there (the navigation failed, or never started).
+        p.main_frame.loaded && !navigating && p.pending_loader().is_none() && p.main_frame.url != "about:blank"
+    }
+
+    fn page_needs_navigation(&self, page: PageKey) -> bool {
+        let Some(state) = self.pages.get(&page) else { return false };
+        let Some(p) = self.thread.browser.page(state.id) else { return false };
+        let navigating = state.frames.get(&p.main_frame.id).is_some_and(|f| f.navigating);
+        p.main_frame.url == "about:blank" && !navigating && p.pending_loader().is_none()
     }
 
     fn add_init_script(&mut self, page: PageKey, source: &str) {

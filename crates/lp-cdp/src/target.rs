@@ -95,6 +95,12 @@ pub trait Host {
     fn page_loaded(&self, _page: PageKey) -> bool {
         false
     }
+    /// Whether a prepared page is still on its initial `about:blank` with no
+    /// navigation under way (the one started at boot failed or never
+    /// took), so it must be started again before the page is handed out.
+    fn page_needs_navigation(&self, _page: PageKey) -> bool {
+        false
+    }
     /// Installs a script that runs in every new document of the page.
     fn add_init_script(&mut self, _page: PageKey, _source: &str) {}
     /// Sets the page's viewport size.
@@ -431,8 +437,18 @@ impl<H: Host> Browser<H> {
                     return Err(CdpError::server("Too many targets"));
                 }
                 let entry = self.prepared.remove(pos);
-                let ready = self.host.page_loaded(entry.page);
                 let url = self.prepared_profiles[entry.profile].url.clone();
+                let ready = self.host.page_loaded(entry.page);
+                // `ready: false` means the page is navigating to the
+                // profile URL: a `loaded` step then waits for that
+                // navigation. Start it (again) when nothing is under way.
+                if !ready && self.host.page_needs_navigation(entry.page) {
+                    if let Err(e) = self.host.navigate(entry.page, &url) {
+                        self.host.close_page(entry.page);
+                        self.dispose_context(&entry.context_id, &mut Discard);
+                        return Err(e);
+                    }
+                }
                 if let Some(c) = self.contexts.iter_mut().find(|c| c.id == entry.context_id) {
                     c.hidden = false;
                 }
