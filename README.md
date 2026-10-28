@@ -77,7 +77,10 @@ runs on the browser thread and replies once, waiting in place instead of
 polling from the client. [`packages/lightningpanda-test`](packages/lightningpanda-test)
 is the `bun test` client for it, with Playwright-shaped locators and signed-in
 page pools; its [LLM.md](packages/lightningpanda-test/LLM.md) is the guide for
-coding agents writing tests with it. TOS's positions-close test runs in about
+coding agents writing tests with it. Releases ship it in the archive
+(`lightningpanda-test/`, beside the binary) and as
+`lightningpanda-test-<version>.tgz` for `bun add`;
+`scripts/pack-test-client.sh` builds both. TOS's positions-close test runs in about
 3 ms per test this way, against about 34 ms in Playwright
 (`bench/results/lp-tos-e501cef`).
 
