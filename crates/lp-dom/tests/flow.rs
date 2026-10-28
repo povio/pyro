@@ -4594,6 +4594,26 @@ fn textarea_scroll_height_follows_its_value() {
     }
 }
 
+/// An atomic inline inside an inline element is hit, not the inline (its box
+/// is recorded after its children's). Chromium: elementFromPoint at an
+/// `<a><svg></svg></a>` icon is the svg.
+#[test]
+fn atomic_inline_in_an_inline_element_is_hit_over_it() {
+    let p = page(
+        "<!doctype html><body style=\"margin:0\"><div><a id=a href=/x><svg id=s width=24 height=24></svg></a></div><div><span id=sp>x<svg id=s2 width=24 height=24></svg></span></div></body>",
+        Geometry::Flow,
+    );
+    for (id, parent) in [("s", "a"), ("s2", "sp")] {
+        let r = p.layout.bounding_client_rect(&p.dom, p.id(id));
+        assert_eq!((r.width, r.height), (24.0, 24.0), "#{id} has its attribute size");
+        let hit = p.layout.element_from_point(&p.dom, r.x + 12.0, r.y + 12.0);
+        assert_eq!(hit, Some(p.id(id)), "Chromium hits #{id}, not its inline parent #{parent}");
+        let chain = p.layout.elements_from_point(&p.dom, r.x + 12.0, r.y + 12.0);
+        assert_eq!(chain.first(), Some(&p.id(id)));
+        assert_eq!(chain.get(1), Some(&p.id(parent)));
+    }
+}
+
 /// A text input's `scrollWidth` is its value's width when the value is
 /// longer than the box (truncation detectors compare it with offsetWidth).
 #[test]

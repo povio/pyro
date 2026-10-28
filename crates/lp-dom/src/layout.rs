@@ -1554,11 +1554,20 @@ impl Layout {
             if b.rect.width <= 0.0 && b.rect.height <= 0.0 {
                 continue;
             }
-            if best.is_some_and(|k| (k.0, k.1) > (b.positioned, b.order)) {
+            // A descendant paints over its ancestor whatever their orders:
+            // an inline element's box is recorded after the atomic inline
+            // children (an `<svg>` in an `<a>`) it was laid out around.
+            let same_level = |k: &(bool, u32, NodeId)| k.0 == b.positioned;
+            if best.is_some_and(|k| (k.0, k.1) > (b.positioned, b.order))
+                && !best.is_some_and(|k| same_level(&k) && dom.contains(k.2, el).unwrap_or(false))
+            {
                 continue;
             }
             let r = self.bounding_client_rect_for_visible(dom, el);
             if !inside(&r) || !self.is_visible(dom, el) || !self.style.is_hit_testable(dom, el) {
+                continue;
+            }
+            if best.is_some_and(|k| same_level(&k) && dom.contains(el, k.2).unwrap_or(false)) {
                 continue;
             }
             // Clipped by an overflow ancestor of its containing block chain.
