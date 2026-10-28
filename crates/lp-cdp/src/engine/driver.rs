@@ -31,6 +31,7 @@ use std::rc::{Rc, Weak};
 use std::time::{Duration, Instant};
 
 use lp_browser::{Browser, NavigateOpts, PageId};
+use lp_dom::layout::Layout;
 use lp_dom::select::SelectorCache;
 use lp_dom::{Dom, NodeId, NodeKind};
 use lp_js::JsException;
@@ -624,160 +625,641 @@ fn elements(dom: &Dom, root: NodeId) -> impl Iterator<Item = NodeId> + '_ {
     dom.descendants(root).into_iter().flatten().filter(|n| dom.element(*n).is_ok())
 }
 
-/// Implicit ARIA role (the common HTML-AAM mappings), or the first token of
-/// an explicit `role`.
+/// `aria-*` boolean attribute: `true` case-insensitively.
+fn aria_true(dom: &Dom, id: NodeId, name: &str) -> bool {
+    attr(dom, id, name).is_some_and(|v| v.trim().eq_ignore_ascii_case("true"))
+}
+
+/// `id` and then its ancestor elements, nearest first (the `closest` order).
+fn self_and_ancestors(dom: &Dom, id: NodeId) -> impl Iterator<Item = NodeId> + '_ {
+    std::iter::successors(Some(id), move |n| dom.parent_element(*n).ok().flatten())
+}
+
+/// Playwright's `hasExplicitAccessibleName`: `<section>`/`<form>` are
+/// landmarks only with an aria name.
+fn has_explicit_name(dom: &Dom, id: NodeId) -> bool {
+    attr(dom, id, "aria-label").is_some() || attr(dom, id, "aria-labelledby").is_some()
+}
+
+/// The elements an IDREF list names, in order, each once (Playwright's
+/// `getIdRefs`), or `None` without the attribute.
+fn id_refs(dom: &Dom, doc: NodeId, id: NodeId, name: &str) -> Option<Vec<NodeId>> {
+    let refs = attr(dom, id, name)?;
+    let mut out = Vec::new();
+    for r in refs.split_ascii_whitespace() {
+        if let Ok(Some(n)) = dom.get_element_by_id(doc, r) {
+            if !out.contains(&n) {
+                out.push(n);
+            }
+        }
+    }
+    Some(out)
+}
+
+/// Implicit ARIA role, by Playwright's `kImplicitRoleByTagName`, or the
+/// first token of an explicit `role`.
 fn role_of(dom: &Dom, id: NodeId) -> Option<String> {
     if let Some(role) = attr(dom, id, "role").and_then(|r| r.split_whitespace().next()) {
         return Some(role.to_ascii_lowercase());
     }
     let ty = || attr(dom, id, "type").unwrap_or("").to_ascii_lowercase();
+    // `<header>`/`<footer>` are landmarks only outside sectioning content.
+    let in_sectioning = || {
+        self_and_ancestors(dom, id).skip(1).any(|a| {
+            (matches!(local(dom, a), Some("article" | "aside" | "main" | "nav" | "section"))
+                && attr(dom, a, "role").is_none())
+                || matches!(
+                    attr(dom, a, "role").map(|r| r.to_ascii_lowercase()).as_deref(),
+                    Some("article" | "complementary" | "main" | "navigation" | "region")
+                )
+        })
+    };
     let role = match local(dom, id)? {
+        "a" | "area" => {
+            if attr(dom, id, "href").is_some() {
+                "link"
+            } else {
+                return None;
+            }
+        }
+        "address" | "hgroup" => "group",
+        "article" => "article",
+        "aside" => "complementary",
+        "blockquote" => "blockquote",
         "button" => "button",
-        "a" | "area" if attr(dom, id, "href").is_some() => "link",
+        "caption" => "caption",
+        "code" => "code",
+        "datalist" => "listbox",
+        "dd" => "definition",
+        "del" => "deletion",
+        "details" => "group",
+        "dfn" | "dt" => "term",
+        "dialog" => "dialog",
+        "em" => "emphasis",
+        "fieldset" => "group",
+        "figure" => "figure",
+        "footer" if in_sectioning() => return None,
+        "footer" => "contentinfo",
+        "form" if has_explicit_name(dom, id) => "form",
+        "form" => return None,
+        "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => "heading",
+        "header" if in_sectioning() => return None,
+        "header" => "banner",
+        "hr" => "separator",
+        "html" => "document",
+        "img" => {
+            let el = dom.element(id).ok()?;
+            let global_aria = el.attrs.iter().any(|a| a.name.local.starts_with("aria-"));
+            if attr(dom, id, "alt") == Some("")
+                && attr(dom, id, "title").is_none()
+                && !global_aria
+                && attr(dom, id, "tabindex").is_none()
+            {
+                "presentation"
+            } else {
+                "img"
+            }
+        }
         "input" => match ty().as_str() {
+            "search" if attr(dom, id, "list").is_some() => "combobox",
+            "search" => "searchbox",
+            "email" | "tel" | "text" | "url" | "" => {
+                let doc = dom.root_node(id, true).unwrap_or(id);
+                let list = id_refs(dom, doc, id, "list").and_then(|l| l.first().copied());
+                if list.is_some_and(|l| local(dom, l) == Some("datalist")) {
+                    "combobox"
+                } else {
+                    "textbox"
+                }
+            }
+            "hidden" => return None,
             "button" | "submit" | "reset" | "image" => "button",
             "checkbox" => "checkbox",
             "radio" => "radio",
             "range" => "slider",
             "number" => "spinbutton",
-            "search" => "searchbox",
-            "hidden" | "file" | "color" | "date" | "datetime-local" | "month" | "time" | "week" => return None,
-            _ if attr(dom, id, "list").is_some() => "combobox",
+            "file" | "color" | "date" | "datetime-local" | "month" | "time" | "week" => return None,
             _ => "textbox",
         },
-        "textarea" => "textbox",
+        "ins" => "insertion",
+        "li" => "listitem",
+        "main" => "main",
+        "mark" => "mark",
+        "math" => "math",
+        "menu" | "ol" | "ul" => "list",
+        "meter" => "meter",
+        "nav" => "navigation",
+        "optgroup" => "group",
+        "option" => "option",
+        "output" => "status",
+        "p" => "paragraph",
+        "progress" => "progressbar",
+        "section" if has_explicit_name(dom, id) => "region",
+        "section" => return None,
+        "search" => "search",
         "select" => {
-            if attr(dom, id, "multiple").is_some() || attr(dom, id, "size").is_some_and(|s| s.trim() > "1") {
+            let sized = attr(dom, id, "size").is_some_and(|s| s.trim().parse::<u32>().is_ok_and(|n| n > 1));
+            if attr(dom, id, "multiple").is_some() || sized {
                 "listbox"
             } else {
                 "combobox"
             }
         }
-        "option" => "option",
-        "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => "heading",
-        "img" if attr(dom, id, "alt") == Some("") => "presentation",
-        "img" => "img",
-        "ul" | "ol" | "menu" => "list",
-        "li" => "listitem",
-        "nav" => "navigation",
-        "main" => "main",
-        "header" => "banner",
-        "footer" => "contentinfo",
-        "aside" => "complementary",
-        "dialog" => "dialog",
-        "article" => "article",
+        "strong" => "strong",
+        "sub" => "subscript",
+        "sup" => "superscript",
         "table" => "table",
+        "tbody" | "tfoot" | "thead" => "rowgroup",
+        "td" => {
+            let table = self_and_ancestors(dom, id).find(|a| local(dom, *a) == Some("table"));
+            let table_role = table.and_then(|t| attr(dom, t, "role")).map(|r| r.to_ascii_lowercase());
+            if matches!(table_role.as_deref(), Some("grid" | "treegrid")) {
+                "gridcell"
+            } else {
+                "cell"
+            }
+        }
+        "textarea" => "textbox",
+        "th" => {
+            if attr(dom, id, "scope")
+                .is_some_and(|s| s.eq_ignore_ascii_case("row") || s.eq_ignore_ascii_case("rowgroup"))
+            {
+                "rowheader"
+            } else {
+                "columnheader"
+            }
+        }
+        "time" => "time",
         "tr" => "row",
-        "td" => "cell",
-        "th" => "columnheader",
-        "progress" => "progressbar",
-        "form" => "form",
         _ => return None,
     };
     Some(role.into())
 }
 
-/// Roles whose accessible name comes from their content.
-fn name_from_content(role: &str) -> bool {
-    matches!(
+/// Playwright's `allowsNameFromContent`: roles always named from content,
+/// and (for descendants of the named element) the generic ones Chromium
+/// reads through.
+fn allows_name_from_content(role: &str, descendant: bool) -> bool {
+    let always = matches!(
         role,
         "button"
-            | "link"
-            | "heading"
-            | "checkbox"
-            | "radio"
-            | "option"
-            | "listitem"
-            | "tab"
-            | "menuitem"
             | "cell"
+            | "checkbox"
             | "columnheader"
+            | "gridcell"
+            | "heading"
+            | "link"
+            | "menuitem"
+            | "menuitemcheckbox"
+            | "menuitemradio"
+            | "option"
+            | "radio"
             | "row"
+            | "rowheader"
             | "switch"
+            | "tab"
             | "tooltip"
             | "treeitem"
-    )
+    );
+    always
+        || (descendant
+            && matches!(
+                role,
+                "" | "caption"
+                    | "code"
+                    | "contentinfo"
+                    | "definition"
+                    | "deletion"
+                    | "emphasis"
+                    | "insertion"
+                    | "list"
+                    | "listitem"
+                    | "mark"
+                    | "none"
+                    | "paragraph"
+                    | "presentation"
+                    | "region"
+                    | "row"
+                    | "rowgroup"
+                    | "section"
+                    | "strong"
+                    | "subscript"
+                    | "superscript"
+                    | "table"
+                    | "term"
+                    | "time"
+            ))
 }
 
-/// Text of the `<label>`s of a form control: `label[for=id]` and an
-/// enclosing label.
-fn label_text(dom: &Dom, doc: NodeId, id: NodeId) -> Option<String> {
-    let mut parts = Vec::new();
+/// Labelable elements (HTML `labels`).
+fn labelable(dom: &Dom, id: NodeId) -> bool {
+    match local(dom, id) {
+        Some("input") => !attr(dom, id, "type").is_some_and(|t| t.eq_ignore_ascii_case("hidden")),
+        Some("button" | "meter" | "output" | "progress" | "select" | "textarea") => true,
+        _ => false,
+    }
+}
+
+/// The `<label>`s of a form control: `label[for=id]` in document order and
+/// the nearest enclosing label without `for`.
+fn labels(dom: &Dom, doc: NodeId, id: NodeId) -> Vec<NodeId> {
+    let mut out = Vec::new();
+    if !labelable(dom, id) {
+        return out;
+    }
     if let Some(own) = attr(dom, id, "id").filter(|v| !v.is_empty()) {
         for label in elements(dom, doc) {
             if local(dom, label) == Some("label") && attr(dom, label, "for") == Some(own) {
-                parts.push(text_of(dom, label));
+                out.push(label);
             }
         }
     }
-    let mut cur = dom.parent(id).ok().flatten();
-    while let Some(p) = cur {
-        if local(dom, p) == Some("label") && attr(dom, p, "for").is_none() {
-            parts.push(text_of(dom, p));
-            break;
+    if let Some(p) = self_and_ancestors(dom, id).skip(1).find(|p| local(dom, *p) == Some("label")) {
+        if attr(dom, p, "for").is_none() && !out.contains(&p) {
+            out.push(p);
         }
-        cur = dom.parent(p).ok().flatten();
     }
+    out
+}
+
+/// Text of the `<label>`s of a form control, for the `label` locator.
+fn label_text(dom: &Dom, doc: NodeId, id: NodeId) -> Option<String> {
+    let parts: Vec<String> = labels(dom, doc, id).into_iter().map(|l| text_of(dom, l)).collect();
     let joined = normalize(&parts.join(" "));
     (!joined.is_empty()).then_some(joined)
 }
 
-/// The accessible name, by the common steps of accname 1.2: labelledby,
-/// aria-label, native labels and alternatives, content, title.
-fn accessible_name(dom: &Dom, doc: NodeId, id: NodeId, role: &str) -> String {
-    if let Some(ids) = attr(dom, id, "aria-labelledby") {
-        let text: Vec<String> = ids
-            .split_whitespace()
-            .filter_map(|r| dom.get_element_by_id(doc, r).ok().flatten())
-            .map(|n| text_of(dom, n))
-            .collect();
-        let text = normalize(&text.join(" "));
-        if !text.is_empty() {
-            return text;
+/// Playwright's `isElementHiddenForAria`: scripts and templates, elements
+/// not rendered (`display:none`, `visibility:hidden`), and anything inside
+/// an `aria-hidden="true"` or `inert` subtree. `ancestors` walks up for the
+/// subtree rules (a descendant traversal has already passed its parents).
+fn hidden_for_aria(dom: &Dom, layout: &Layout, id: NodeId, ancestors: bool) -> bool {
+    if matches!(local(dom, id), Some("style" | "script" | "noscript" | "template")) {
+        return true;
+    }
+    let in_select =
+        || local(dom, id) == Some("option") && self_and_ancestors(dom, id).any(|a| local(dom, a) == Some("select"));
+    let style = layout.style();
+    if ancestors {
+        if !layout.is_visible(dom, id) {
+            return true;
+        }
+    } else if style.has_display_none(dom, id) {
+        return true;
+    }
+    if style.has_visibility_hidden_inherited(dom, id) && !in_select() {
+        return true;
+    }
+    let mut chain = self_and_ancestors(dom, id);
+    let hidden = |n: NodeId| aria_true(dom, n, "aria-hidden") || attr(dom, n, "inert").is_some();
+    if ancestors {
+        chain.any(hidden)
+    } else {
+        chain.next().is_some_and(hidden)
+    }
+}
+
+/// How the element being named relates to the one whose text alternative
+/// is computed (Playwright's `embeddedInTargetElement`).
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+enum Target {
+    #[default]
+    Other,
+    Own,
+    Descendant,
+}
+
+/// Traversal state of accname (Playwright's `AccessibleNameOptions`).
+#[derive(Clone, Copy, Default)]
+struct NameOpts {
+    target: Target,
+    /// Inside an `aria-labelledby` reference (the reference itself).
+    labelledby: Option<NodeId>,
+    /// Inside a `<label>` (the label itself).
+    label: Option<NodeId>,
+    /// Inside a native alternative (`<caption>`, `<legend>`, `<figcaption>`).
+    native: bool,
+    /// The reference being traversed is hidden: still read it (2A).
+    allow_hidden: bool,
+}
+
+impl NameOpts {
+    fn embedded(&self) -> bool {
+        self.labelledby.is_some() || self.label.is_some() || self.native
+    }
+}
+
+/// Accessible name computation (accname 1.2 as Playwright's
+/// `getTextAlternativeInternal` implements it).
+struct Names<'a> {
+    dom: &'a Dom,
+    layout: &'a Layout,
+    doc: NodeId,
+    visited: RefCell<HashSet<NodeId>>,
+}
+
+impl Names<'_> {
+    fn alternative(&self, id: NodeId, opts: NameOpts) -> String {
+        let dom = self.dom;
+        if self.visited.borrow().contains(&id) {
+            return String::new();
+        }
+        let child_opts =
+            NameOpts { target: if opts.target == Target::Own { Target::Descendant } else { opts.target }, ..opts };
+        // 2A: hidden, not referenced.
+        if hidden_for_aria(dom, self.layout, id, opts.target != Target::Descendant && !opts.embedded())
+            && !opts.allow_hidden
+            || matches!(local(dom, id), Some("style" | "script" | "noscript" | "template"))
+        {
+            self.visited.borrow_mut().insert(id);
+            return String::new();
+        }
+        // Playwright's `getAriaLabelledByElements`: no resolvable IDREF is no
+        // labelledby at all.
+        let labelledby = id_refs(dom, self.doc, id, "aria-labelledby").filter(|r| !r.is_empty());
+        // 2B: labelledby.
+        if opts.labelledby.is_none() {
+            if let Some(refs) = &labelledby {
+                let parts: Vec<String> = refs
+                    .iter()
+                    .map(|r| {
+                        let o = NameOpts {
+                            labelledby: Some(*r),
+                            allow_hidden: hidden_for_aria(dom, self.layout, *r, true),
+                            ..NameOpts::default()
+                        };
+                        self.alternative(*r, o)
+                    })
+                    .collect();
+                let name = parts.join(" ");
+                if !name.trim().is_empty() {
+                    return name;
+                }
+            }
+        }
+        let role = role_of(dom, id).unwrap_or_default();
+        let tag = local(dom, id).unwrap_or("");
+        // 2C: an embedded control contributes its value (not the control
+        // whose own label or reference this is).
+        if opts.label.is_some() || opts.labelledby.is_some() || opts.target == Target::Descendant {
+            let own_label = opts.label.is_some_and(|l| labels(dom, self.doc, id).contains(&l));
+            let own_ref = opts.labelledby.is_some_and(|r| labelledby.as_ref().is_some_and(|refs| refs.contains(&r)));
+            if !own_label && !own_ref {
+                match role.as_str() {
+                    "textbox" => {
+                        self.visited.borrow_mut().insert(id);
+                        return match tag {
+                            "input" | "textarea" => dom.value(id).unwrap_or_default(),
+                            _ => text_of(dom, id),
+                        };
+                    }
+                    "combobox" | "listbox" => {
+                        self.visited.borrow_mut().insert(id);
+                        let selected = if tag == "select" {
+                            let mut s = dom.selected_options(id).unwrap_or_default();
+                            if s.is_empty() {
+                                s.extend(elements(dom, id).find(|o| local(dom, *o) == Some("option")));
+                            }
+                            s
+                        } else {
+                            let listbox = if role == "combobox" {
+                                self.aria_owned(id).into_iter().find(|l| role_of(dom, *l).as_deref() == Some("listbox"))
+                            } else {
+                                Some(id)
+                            };
+                            listbox
+                                .map(|l| {
+                                    self.aria_owned(l)
+                                        .into_iter()
+                                        .filter(|o| {
+                                            attr(dom, *o, "aria-selected") == Some("true")
+                                                && role_of(dom, *o).as_deref() == Some("option")
+                                        })
+                                        .collect()
+                                })
+                                .unwrap_or_default()
+                        };
+                        if selected.is_empty() && tag == "input" {
+                            return dom.value(id).unwrap_or_default();
+                        }
+                        let parts: Vec<String> =
+                            selected.into_iter().map(|o| self.alternative(o, child_opts)).collect();
+                        return parts.join(" ");
+                    }
+                    "progressbar" | "scrollbar" | "slider" | "spinbutton" | "meter" => {
+                        self.visited.borrow_mut().insert(id);
+                        return attr(dom, id, "aria-valuetext")
+                            .or_else(|| attr(dom, id, "aria-valuenow"))
+                            .or_else(|| attr(dom, id, "value"))
+                            .unwrap_or_default()
+                            .to_owned();
+                    }
+                    "menu" => {
+                        self.visited.borrow_mut().insert(id);
+                        return String::new();
+                    }
+                    _ => {}
+                }
+            }
+        }
+        // 2D: aria-label.
+        if let Some(label) = attr(dom, id, "aria-label").filter(|l| !l.trim().is_empty()) {
+            self.visited.borrow_mut().insert(id);
+            return label.to_owned();
+        }
+        // 2E: native text alternatives.
+        if !matches!(role.as_str(), "presentation" | "none") {
+            if let Some(name) = self.native_alternative(id, tag, labelledby.is_some(), opts, child_opts) {
+                self.visited.borrow_mut().insert(id);
+                return name;
+            }
+        }
+        // 2F, 2H: content.
+        let summary = tag == "summary" && !matches!(role.as_str(), "presentation" | "none");
+        if allows_name_from_content(&role, opts.target == Target::Descendant) || summary || opts.embedded() {
+            self.visited.borrow_mut().insert(id);
+            let name = self.inner_text(id, child_opts);
+            if !name.trim().is_empty() {
+                return name;
+            }
+        }
+        // 2I: title.
+        self.visited.borrow_mut().insert(id);
+        if !matches!(role.as_str(), "presentation" | "none") || tag == "iframe" {
+            if let Some(title) = attr(dom, id, "title").filter(|t| !t.trim().is_empty()) {
+                return title.to_owned();
+            }
+        }
+        String::new()
+    }
+
+    /// Step 2E for the HTML elements with their own naming rules; `None`
+    /// falls through to content and title.
+    fn native_alternative(
+        &self,
+        id: NodeId,
+        tag: &str,
+        has_labelledby: bool,
+        opts: NameOpts,
+        child_opts: NameOpts,
+    ) -> Option<String> {
+        let dom = self.dom;
+        let attr_text = |name: &str| attr(dom, id, name).filter(|v| !v.trim().is_empty()).map(str::to_owned);
+        let from_labels = || {
+            let parts: Vec<String> = labels(dom, self.doc, id)
+                .into_iter()
+                .map(|l| {
+                    let o = NameOpts {
+                        label: Some(l),
+                        allow_hidden: hidden_for_aria(dom, self.layout, l, true),
+                        ..NameOpts::default()
+                    };
+                    self.alternative(l, o)
+                })
+                .filter(|s| !s.is_empty())
+                .collect();
+            (!parts.is_empty()).then(|| parts.join(" "))
+        };
+        let child_named = |child: &str| {
+            let c = dom.children(id).into_iter().flatten().find(|c| local(dom, *c) == Some(child))?;
+            let o = NameOpts { native: true, allow_hidden: hidden_for_aria(dom, self.layout, c, true), ..child_opts };
+            let name = self.alternative(c, o);
+            (!name.trim().is_empty()).then_some(name)
+        };
+        match tag {
+            "input" => {
+                let ty = attr(dom, id, "type").unwrap_or("").to_ascii_lowercase();
+                match ty.as_str() {
+                    "button" | "submit" | "reset" => {
+                        return Some(attr_text("value").unwrap_or_else(|| match ty.as_str() {
+                            "submit" => "Submit".into(),
+                            "reset" => "Reset".into(),
+                            _ => attr_text("title").unwrap_or_default(),
+                        }));
+                    }
+                    "image" => {
+                        if opts.labelledby.is_none() {
+                            if let Some(name) = from_labels() {
+                                return Some(name);
+                            }
+                        }
+                        return Some(
+                            attr_text("alt").or_else(|| attr_text("title")).unwrap_or_else(|| "Submit".into()),
+                        );
+                    }
+                    _ => {}
+                }
+                if has_labelledby {
+                    return None;
+                }
+                if let Some(name) = from_labels() {
+                    return Some(name);
+                }
+                let placeholder = matches!(ty.as_str(), "text" | "password" | "search" | "tel" | "email" | "url" | "");
+                Some(
+                    attr_text("title")
+                        .or_else(|| placeholder.then(|| attr_text("placeholder")).flatten())
+                        .unwrap_or_default(),
+                )
+            }
+            "button" if !has_labelledby => from_labels(),
+            "output" if !has_labelledby => Some(from_labels().or_else(|| attr_text("title")).unwrap_or_default()),
+            "textarea" if !has_labelledby => Some(
+                from_labels().or_else(|| attr_text("title")).or_else(|| attr_text("placeholder")).unwrap_or_default(),
+            ),
+            "select" | "meter" | "progress" if !has_labelledby => {
+                Some(from_labels().or_else(|| attr_text("title")).unwrap_or_default())
+            }
+            "fieldset" if !has_labelledby => {
+                Some(child_named("legend").or_else(|| attr_text("title")).unwrap_or_default())
+            }
+            "figure" if !has_labelledby => {
+                Some(child_named("figcaption").or_else(|| attr_text("title")).unwrap_or_default())
+            }
+            "img" => attr_text("alt"),
+            "table" => child_named("caption").or_else(|| attr_text("summary")),
+            "area" => Some(attr_text("alt").or_else(|| attr_text("title")).unwrap_or_default()),
+            _ => {
+                let svg = dom.element(id).ok().is_some_and(|e| e.namespace() == "http://www.w3.org/2000/svg");
+                if svg {
+                    let title = dom
+                        .children(id)
+                        .into_iter()
+                        .flatten()
+                        .find(|c| dom.element(*c).ok().is_some_and(|e| &*e.name.local == "title"))?;
+                    return Some(text_of(dom, title));
+                }
+                None
+            }
         }
     }
-    if let Some(label) = attr(dom, id, "aria-label").map(normalize).filter(|l| !l.is_empty()) {
-        return label;
+
+    /// Playwright's `queryInAriaOwned(el, '*')`: the descendants of `id` and
+    /// the elements it `aria-owns` (with theirs).
+    fn aria_owned(&self, id: NodeId) -> Vec<NodeId> {
+        let dom = self.dom;
+        let mut out: Vec<NodeId> = elements(dom, id).skip(1).collect();
+        for owned in id_refs(dom, self.doc, id, "aria-owns").unwrap_or_default() {
+            out.extend(elements(dom, owned));
+        }
+        out
     }
-    match local(dom, id) {
-        Some("input") => {
-            let ty = attr(dom, id, "type").unwrap_or("").to_ascii_lowercase();
-            match ty.as_str() {
-                "submit" | "reset" | "button" => {
-                    let fallback = match ty.as_str() {
-                        "submit" => "Submit",
-                        "reset" => "Reset",
-                        _ => "",
-                    };
-                    return normalize(attr(dom, id, "value").unwrap_or(fallback));
-                }
-                "image" => return normalize(attr(dom, id, "alt").unwrap_or("Submit")),
-                _ => {
-                    if let Some(label) = label_text(dom, doc, id) {
-                        return label;
+
+    /// Playwright's `innerAccumulatedElementText`: child text with a space
+    /// around every child that is not `display:inline` (and `<br>`).
+    fn inner_text(&self, id: NodeId, opts: NameOpts) -> String {
+        let dom = self.dom;
+        let mut out = String::new();
+        for c in dom.children(id).into_iter().flatten() {
+            match dom.node(c).map(|n| &n.kind) {
+                Ok(NodeKind::Text(t)) => out.push_str(t),
+                Ok(NodeKind::Element(_)) => {
+                    let display = self.layout.computed_style_value(dom, c, "display");
+                    let token = self.alternative(c, opts);
+                    if (!display.is_empty() && display != "inline") || local(dom, c) == Some("br") {
+                        out.push(' ');
+                        out.push_str(&token);
+                        out.push(' ');
+                    } else {
+                        out.push_str(&token);
                     }
                 }
+                _ => {}
             }
         }
-        Some("textarea" | "select" | "button" | "meter" | "progress") => {
-            if let Some(label) = label_text(dom, doc, id) {
-                return label;
-            }
-        }
-        Some("img" | "area") => {
-            if let Some(alt) = attr(dom, id, "alt") {
-                return normalize(alt);
-            }
-        }
-        _ => {}
+        out
     }
-    if name_from_content(role) {
-        let text = normalize(&text_of(dom, id));
-        if !text.is_empty() {
-            return text;
-        }
+}
+
+/// The accessible name of an element, whitespace-normalized.
+fn accessible_name(dom: &Dom, layout: &Layout, doc: NodeId, id: NodeId) -> String {
+    // Playwright's `getElementAccessibleName`: these roles prohibit naming.
+    let prohibits = matches!(
+        role_of(dom, id).as_deref(),
+        Some(
+            "caption"
+                | "code"
+                | "definition"
+                | "deletion"
+                | "emphasis"
+                | "generic"
+                | "insertion"
+                | "mark"
+                | "paragraph"
+                | "presentation"
+                | "strong"
+                | "subscript"
+                | "suggestion"
+                | "superscript"
+                | "term"
+                | "time"
+        )
+    );
+    if prohibits {
+        return String::new();
     }
-    normalize(attr(dom, id, "title").unwrap_or(""))
+    let names = Names { dom, layout, doc, visited: RefCell::new(HashSet::new()) };
+    normalize(&names.alternative(id, NameOpts { target: Target::Own, ..NameOpts::default() }))
 }
 
 fn skipped_for_text(dom: &Dom, id: NodeId) -> bool {
@@ -950,9 +1432,9 @@ impl Locator {
             found = elements(&dom, root)
                 .filter(inside)
                 .filter(|n| role_of(&dom, *n).as_deref() == Some(role.as_str()))
-                .filter(|n| attr(&dom, *n, "aria-hidden") != Some("true") && layout.is_visible(&dom, *n))
+                .filter(|n| !hidden_for_aria(&dom, &layout, *n, true))
                 .filter(|n| match &self.name {
-                    Some(want) => want.matches(&accessible_name(&dom, doc, *n, &role), self.exact),
+                    Some(want) => want.matches(&accessible_name(&dom, &layout, doc, *n), self.exact),
                     None => true,
                 })
                 .collect();
@@ -1044,6 +1526,50 @@ fn disabled(dom: &Dom, id: NodeId) -> bool {
     dom.is_disabled(id).unwrap_or(false) || attr(dom, id, "aria-disabled") == Some("true")
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Checked {
+    Yes,
+    No,
+    Mixed,
+}
+
+impl Checked {
+    fn to_json(self) -> Value {
+        match self {
+            Checked::Yes => json!(true),
+            Checked::No => json!(false),
+            Checked::Mixed => json!("mixed"),
+        }
+    }
+}
+
+/// Playwright's `getChecked`: the checkedness of a native checkbox/radio,
+/// else `aria-checked` on the roles that take it (`mixed` only when
+/// `allow_mixed`); `None` for anything else.
+fn checked_state(dom: &Dom, id: NodeId, allow_mixed: bool) -> Option<Checked> {
+    let native = local(dom, id) == Some("input")
+        && attr(dom, id, "type").is_some_and(|t| t.eq_ignore_ascii_case("checkbox") || t.eq_ignore_ascii_case("radio"));
+    let indeterminate = || dom.control_state(id).ok().flatten().is_some_and(|c| c.indeterminate);
+    if allow_mixed && local(dom, id) == Some("input") && indeterminate() {
+        return Some(Checked::Mixed);
+    }
+    if native {
+        return Some(if dom.checked(id).unwrap_or(false) { Checked::Yes } else { Checked::No });
+    }
+    let role = role_of(dom, id)?;
+    if !matches!(
+        role.as_str(),
+        "checkbox" | "menuitemcheckbox" | "option" | "radio" | "switch" | "menuitemradio" | "treeitem"
+    ) {
+        return None;
+    }
+    Some(match attr(dom, id, "aria-checked") {
+        Some("true") => Checked::Yes,
+        Some("mixed") if allow_mixed => Checked::Mixed,
+        _ => Checked::No,
+    })
+}
+
 fn contains(dom: &Dom, ancestor: NodeId, mut node: NodeId) -> bool {
     loop {
         if node == ancestor {
@@ -1077,8 +1603,10 @@ fn act(page: &Rc<PageDom>, id: NodeId, action: Action, value: &str) -> Attempt {
     }
     match action {
         Action::Check | Action::Uncheck => {
-            let checked = page.dom.borrow().checked(id).unwrap_or(false);
-            if checked == (action == Action::Check) {
+            let Some(checked) = checked_state(&page.dom.borrow(), id, false) else {
+                return Attempt::Retry("element is not a checkbox or radio button".into());
+            };
+            if (checked == Checked::Yes) == (action == Action::Check) {
                 return Attempt::Done(json!({}));
             }
             click(page, id)
@@ -1440,8 +1968,7 @@ fn expect(
                 }
                 _ => {
                     let want = expected.as_str().ok_or_else(|| CdpError::invalid_params("name needs a string"))?;
-                    let role = role_of(&dom, el).unwrap_or_default();
-                    let have = normalize(&accessible_name(&dom, page.document(), el, &role));
+                    let have = accessible_name(&dom, &page.layout.borrow(), page.document(), el);
                     (have == normalize(want), json!(have))
                 }
             }
@@ -1462,8 +1989,17 @@ fn expect(
             };
             match assert {
                 Assert::Checked => {
-                    let checked = dom.checked(el).unwrap_or(false);
-                    (checked == expected.as_bool().unwrap_or(true), json!(checked))
+                    let Some(checked) = checked_state(&dom, el, true) else {
+                        return Ok(Attempt::Retry("element is not a checkbox or radio button".into()));
+                    };
+                    let want = match expected {
+                        Value::Null => Checked::Yes,
+                        Value::Bool(true) => Checked::Yes,
+                        Value::Bool(false) => Checked::No,
+                        Value::String(s) if s == "mixed" => Checked::Mixed,
+                        _ => return Err(CdpError::invalid_params("checked expects true, false or \"mixed\"")),
+                    };
+                    (checked == want, checked.to_json())
                 }
                 Assert::Value => {
                     let want = expected.as_str().ok_or_else(|| CdpError::invalid_params("value needs a string"))?;
@@ -1892,9 +2428,7 @@ fn read_value(page: &PageDom, el: NodeId, read: Read, property: Option<&str>) ->
             None => Value::Null,
         },
         Read::Name => {
-            let dom = page.dom.borrow();
-            let role = role_of(&dom, el).unwrap_or_default();
-            json!(normalize(&accessible_name(&dom, page.document(), el, &role)))
+            json!(accessible_name(&page.dom.borrow(), &page.layout.borrow(), page.document(), el))
         }
         Read::Focused => json!(page.dom.borrow().focused(page.document()).ok().flatten() == Some(el)),
         Read::Enabled => json!(!disabled(&page.dom.borrow(), el)),

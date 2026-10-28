@@ -4591,3 +4591,228 @@ fn driver_text_locators_match_the_scope_root_and_own_text_nodes() {
     let r = h.page("LP.expect", json!({"locator": {"role": "button", "name": "Go"}, "assert": "enabled"}));
     assert_eq!(r["result"]["actual"], true, "{r}");
 }
+
+/// Runs one `read` step per `(name, read, locator)` and returns the reads.
+fn run_reads(h: &mut Harness, reads: &[(&str, &str, serde_json::Value)]) -> serde_json::Value {
+    let steps: Vec<serde_json::Value> = reads
+        .iter()
+        .map(|(name, read, locator)| json!({"read": {"locator": locator, "read": read, "as": name}}))
+        .collect();
+    let r = h.page("LP.run", json!({"steps": steps}));
+    assert!(r.get("error").is_none(), "{r}");
+    r["result"]["reads"].clone()
+}
+
+/// Implicit roles follow Playwright's `roleUtils.ts`: `<section>` and
+/// `<form>` need an aria name, `<header>`/`<footer>` are landmarks only
+/// outside sectioning content, `<img alt="">` is presentational unless
+/// titled or aria-attributed, `<th scope>` and `<td>` in a grid pick their
+/// header/cell roles, `<select>` is a listbox when multiple or sized, a
+/// search input with a list is a combobox, and the static tag roles exist.
+#[test]
+fn driver_implicit_roles_follow_playwright() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><body>
+<section aria-label="ProbeA"><p>a</p></section><section><p>plain</p></section>
+<div role="region" aria-label="ProbeB"></div><section aria-labelledby="t"><h2 id="t">Titled</h2></section>
+<header>Top</header><footer>Bottom</footer>
+<article><header>Inner</header><footer>Inner foot</footer></article>
+<form aria-label="Login"></form><form></form>
+<img alt="" src="x"><img alt="" title="Pic" src="y"><img alt="Photo" src="z"><img alt="" aria-label="Icon" src="w">
+<a href="/a">Link</a><a>Not a link</a>
+<table><tr><th>Col</th><th scope="row">Row</th><td>cell</td></tr></table>
+<table role="grid"><tr><td>g</td></tr></table>
+<select><option>a</option></select><select multiple><option>b</option></select><select size="3"><option>c</option></select>
+<input type="search"><input type="search" list="dl"><input list="dl"><datalist id="dl"></datalist>
+<hr><fieldset><legend>Legend</legend></fieldset><p>para</p>
+"#,
+    );
+    let reads = run_reads(
+        &mut h,
+        &[
+            ("regions", "count", json!({"role": "region"})),
+            ("probeA", "count", json!({"role": "region", "name": "ProbeA"})),
+            ("banner", "count", json!({"role": "banner"})),
+            ("contentinfo", "count", json!({"role": "contentinfo"})),
+            ("form", "count", json!({"role": "form"})),
+            ("presentation", "count", json!({"role": "presentation"})),
+            ("img", "count", json!({"role": "img"})),
+            ("link", "count", json!({"role": "link"})),
+            ("columnheader", "count", json!({"role": "columnheader"})),
+            ("rowheader", "count", json!({"role": "rowheader"})),
+            ("cell", "count", json!({"role": "cell"})),
+            ("gridcell", "count", json!({"role": "gridcell"})),
+            ("listbox", "count", json!({"role": "listbox"})),
+            ("combobox", "count", json!({"role": "combobox"})),
+            ("searchbox", "count", json!({"role": "searchbox"})),
+            ("textbox", "count", json!({"role": "textbox"})),
+            ("separator", "count", json!({"role": "separator"})),
+            ("group", "count", json!({"role": "group"})),
+            ("paragraph", "count", json!({"role": "paragraph"})),
+        ],
+    );
+    let want = json!({
+        "regions": 3, "probeA": 1, "banner": 1, "contentinfo": 1, "form": 1, "presentation": 1, "img": 3,
+        "link": 1, "columnheader": 1, "rowheader": 1, "cell": 1, "gridcell": 1, "listbox": 2,
+        "combobox": 3, "searchbox": 1, "textbox": 0, "separator": 1, "group": 1, "paragraph": 3,
+    });
+    assert_eq!(reads, want);
+}
+
+/// Names from content put a space around block-level (and flex-item,
+/// `<br>`) children, as Chromium does, and none around inline ones.
+#[test]
+fn driver_accessible_name_spaces_block_children() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><body>
+<label style="display:flex" for="a">Flex<span>*</span></label><input id="a">
+<label for="b">Block<div>*</div></label><input id="b">
+<label for="c">Inline<span>*</span></label><input id="c">
+<button id="br">Line<br>break</button>
+<button id="deep"><span>Save</span><span style="display:inline-block">now</span></button>
+"#,
+    );
+    let reads = run_reads(
+        &mut h,
+        &[
+            ("flex", "name", json!({"css": "#a"})),
+            ("block", "name", json!({"css": "#b"})),
+            ("inline", "name", json!({"css": "#c"})),
+            ("br", "name", json!({"css": "#br"})),
+            ("deep", "name", json!({"css": "#deep"})),
+            ("byName", "count", json!({"role": "textbox", "name": "Flex *", "exact": true})),
+        ],
+    );
+    let want = json!({"flex": "Flex *", "block": "Block *", "inline": "Inline*", "br": "Line break", "deep": "Save now", "byName": 1});
+    assert_eq!(reads, want);
+}
+
+/// `aria-labelledby`: a referenced node (even the element itself) gives its
+/// `aria-label` before its contents (accname 2C/2D), duplicate IDREFs count
+/// once, an embedded control contributes its value, and hidden references
+/// are still read.
+#[test]
+fn driver_accessible_name_labelledby_uses_aria_label_and_dedupes() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><body>
+<div role="spinbutton" id="a" aria-label="day, " aria-labelledby="a b">15</div><span id="b">X</span>
+<button id="bl" aria-label="Btn label">x</button><section role="dialog" aria-labelledby="bl"></section>
+<span id="l">All Charges</span><div role="radiogroup" aria-labelledby="l l"></div>
+<div id="h" style="display:none">Hidden label</div><div role="group" id="g" aria-labelledby="h"></div>
+<div id="v">Amount <input id="n" value="5"></div><div role="slider" id="s" aria-labelledby="v"></div>
+"#,
+    );
+    let reads = run_reads(
+        &mut h,
+        &[
+            ("spin", "name", json!({"css": "#a"})),
+            ("dialog", "name", json!({"role": "dialog"})),
+            ("radiogroup", "name", json!({"role": "radiogroup"})),
+            ("hidden", "name", json!({"css": "#g"})),
+            ("embedded", "name", json!({"css": "#s"})),
+            ("exact", "count", json!({"role": "radiogroup", "name": "All Charges", "exact": true})),
+        ],
+    );
+    let want = json!({"spin": "day, X", "dialog": "Btn label", "radiogroup": "All Charges", "hidden": "Hidden label", "embedded": "Amount 5", "exact": 1});
+    assert_eq!(reads, want);
+}
+
+/// Elements in an `inert` or `aria-hidden` subtree are hidden for ARIA: role
+/// locators skip them and names from content do not read them.
+#[test]
+fn driver_role_locators_skip_inert_and_aria_hidden_subtrees() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><body>
+<div inert><table><thead><tr><th>Name</th></tr></thead></table><button>Go</button></div>
+<div aria-hidden="true"><button>Go</button></div>
+<div aria-hidden="TRUE"><button>Go</button></div>
+<table><thead><tr><th>Name</th></tr></thead></table><button>Go <span aria-hidden="true">(x)</span><span inert>(y)</span></button>
+"#,
+    );
+    let reads = run_reads(
+        &mut h,
+        &[
+            ("headers", "count", json!({"role": "columnheader", "name": "Name", "exact": true})),
+            ("buttons", "count", json!({"role": "button"})),
+            ("goName", "name", json!({"role": "button"})),
+        ],
+    );
+    assert_eq!(reads, json!({"headers": 1, "buttons": 1, "goName": "Go"}));
+    let r = h.page(
+        "LP.run",
+        json!({"steps": [{"check": {"locator": {"role": "columnheader", "name": "Name", "exact": true}, "assert": "text", "expected": "Name"}}]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+}
+
+/// `checked` honours `aria-checked` on checkbox-like roles (and `mixed`);
+/// `check`/`uncheck` click such elements only when the state differs, and
+/// both refuse elements that are not checkable.
+#[test]
+fn driver_checked_honours_aria_checked_roles() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><body>
+<button id="r1" role="radio" aria-checked="true">With positions</button>
+<button id="r2" role="radio" aria-checked="false">Without</button>
+<div id="sw" role="switch" aria-checked="mixed" tabindex="0">Mixed</div>
+<input id="cb" type="checkbox" checked>
+<input id="ind" type="checkbox">
+<button id="plain">Plain</button>
+<script>
+  document.getElementById('ind').indeterminate = true;
+  for (const b of document.querySelectorAll('[role=radio]')) b.addEventListener('click', () => {
+    for (const o of document.querySelectorAll('[role=radio]')) o.setAttribute('aria-checked', o === b ? 'true' : 'false');
+  });
+</script>
+"#,
+    );
+    let r = h.page(
+        "LP.run",
+        json!({"steps": [
+            {"check": {"locator": {"role": "radio", "name": "With positions"}, "assert": "checked"}},
+            {"check": {"locator": {"role": "radio", "name": "Without"}, "assert": "checked", "expected": false}},
+            {"check": {"locator": {"role": "switch"}, "assert": "checked", "expected": "mixed"}},
+            {"check": {"locator": {"role": "switch"}, "assert": "checked", "expected": true, "not": true}},
+            {"check": {"locator": {"css": "#cb"}, "assert": "checked"}},
+            {"check": {"locator": {"css": "#ind"}, "assert": "checked", "expected": "mixed"}},
+            {"act": {"locator": {"role": "radio", "name": "With positions"}, "action": "check"}},
+            {"act": {"locator": {"role": "radio", "name": "Without"}, "action": "check"}},
+            {"check": {"locator": {"css": "#r2"}, "assert": "checked"}},
+            {"check": {"locator": {"css": "#r1"}, "assert": "checked", "expected": false}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    let r = h.page("LP.run", json!({"timeout": 100, "steps": [{"check": {"locator": {"css": "#plain"}, "assert": "checked", "expected": false}}]}));
+    assert!(r["error"]["message"].as_str().unwrap_or_default().contains("not a checkbox"), "{r}");
+    let r = h
+        .page("LP.run", json!({"timeout": 100, "steps": [{"act": {"locator": {"css": "#plain"}, "action": "check"}}]}));
+    assert!(r["error"]["message"].as_str().unwrap_or_default().contains("not a checkbox"), "{r}");
+}
+
+/// A locator inside a `within` row of an iframe document stays in that row.
+#[test]
+fn driver_within_row_in_frame_scopes_inner_locator() {
+    let mut h = Harness::new();
+    let inner = "<table><tr><td>first<svg id=s1></svg></td></tr><tr><td>second<svg id=s2></svg><svg id=s3></svg></td></tr></table>";
+    load_html(&mut h, &format!(r#"<!doctype html><body><iframe id="fr" srcdoc="{inner}"></iframe>"#));
+    let r = h.page(
+        "LP.run",
+        json!({"steps": [
+            {"read": {"locator": {"css": "svg", "frame": {"css": "#fr"}, "within": {"role": "row", "filter": {"hasText": "second"}}}, "read": "count", "as": "second"}},
+            {"read": {"locator": {"css": "svg", "frame": {"css": "#fr"}, "within": {"role": "row", "filter": {"hasText": "first"}}}, "read": "count", "as": "first"}},
+            {"read": {"locator": {"css": "svg", "frame": {"css": "#fr"}, "within": {"role": "row", "filter": {"has": {"text": "second"}}}}, "read": "count", "as": "has"}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(r["result"]["reads"], json!({"second": 2, "first": 1, "has": 2}), "{r}");
+}
