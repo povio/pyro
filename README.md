@@ -97,6 +97,20 @@ animation frame (animation loops excepted) and no navigation short of
 DOMContentLoaded. The same wait is an `idle` step, or `LP.idle {timeout}` on
 its own; when it gives up, the result says what was still `pending`.
 
+Pointer actions follow Playwright: a locator `act` with `click`, `dblclick`,
+`hover` or `wheel` aims at the center of the element's visible part (clipped
+to the viewport and its overflow containers) after scrolling it into view;
+`button: "right" | "middle"` (click, dblclick; a right click fires
+`contextmenu`, a middle one `auxclick`), `position: {x, y}` (an offset from
+the element's top-left) and `force: true` (no hit test or enabled check)
+adjust that, and `wheel` takes `deltaX`/`deltaY`. Only click, dblclick, fill,
+check, uncheck, press and type need an enabled element; hover does not. The
+`mouse` step is `page.mouse.*` at viewport coordinates:
+`{"mouse": {"action": "click" | "dblclick" | "move" | "down" | "up" | "wheel",
+"x", "y", "button", "deltaX", "deltaY", "steps"}}`, where `move` with `steps`
+sends intermediate moves and `down`, `up` and `wheel` default to the current
+pointer position.
+
 ## License
 
 AGPL-3.0-only. This is a derivative of Lightpanda; see [NOTICE](NOTICE).

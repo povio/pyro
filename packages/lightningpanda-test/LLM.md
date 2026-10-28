@@ -129,6 +129,23 @@ reuse them.
 | `viewport(w, h)` / `media({ colorScheme: 'dark' })` | resize the viewport / emulate media features mid-test |
 | `evaluate('expression', 'name')` | escape hatch: JSON value of a page expression into `r.values.name`; a returned promise is awaited (within the step timeout) and a rejection fails the step |
 
+Pointer options (wire shape; the builders take the same names): `click` and
+`dblclick` accept `button: 'right' | 'middle'` (a right click fires
+`contextmenu` and no `click`, as in Playwright); `click`, `dblclick`, `hover`
+and `wheel` accept `position: { x, y }` (an offset from the element's
+top-left instead of its center) and `force: true` (skip the covered and
+enabled checks). `hover` never needs an enabled element: hovering a disabled
+input or an `aria-disabled` menu item works. An element wider than its
+scroll container is clicked at the center of its visible part, as Playwright
+does.
+
+| Step (wire) | Notes |
+|---|---|
+| `{ act: { locator, action: 'wheel', deltaX, deltaY } }` | hovers the element, fires `wheel` there and scrolls the nearest scrollable container unless canceled |
+| `{ mouse: { action: 'click' \| 'dblclick' \| 'move', x, y, button?, steps? } }` | `page.mouse.*` at viewport coordinates; `move` with `steps` sends intermediate moves |
+| `{ mouse: { action: 'down' \| 'up', button?, x?, y? } }` | at the current pointer position unless `x`/`y` are given |
+| `{ mouse: { action: 'wheel', deltaX, deltaY, x?, y? } }` | wheel at the current pointer position (or `x`/`y`) |
+
 Every action and check takes `{ timeout }` (ms); `page.run(steps, { timeout })`
 sets the default for the run. Pass `{ settle: false }` to an action whose
 requests never finish (polling, streaming) or that you do not want to wait for.
