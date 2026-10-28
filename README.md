@@ -132,6 +132,32 @@ check, uncheck, press and type need an enabled element; hover does not. The
 sends intermediate moves and `down`, `up` and `wheel` default to the current
 pointer position.
 
+Viewport, media and page steps:
+
+```json
+{"viewport": {"width": 390, "height": 844}}
+{"media": {"colorScheme": "dark", "reducedMotion": "reduce", "media": "print"}}
+{"popup": {"as": "tab"}}
+{"page": {"target": "tab"}}
+{"page": {"target": "main"}}
+```
+
+`viewport` resizes the page mid-run: `innerWidth`/`innerHeight` and layout
+follow at once, `resize` and the `change` of every `matchMedia` list it
+flipped fire, and the step settles like an action (its result is
+`{"width", "height", "settleMs"}`). `media` replaces the page's media
+emulation, as `Emulation.setEmulatedMedia` does: `colorScheme` (`light`,
+`dark`, `no-preference`), `reducedMotion` (`reduce`, `no-preference`) and
+`media` (`screen`, `print`); an omitted field resets to its default, and
+`@media` rules, `matchMedia(...).matches` and its `change` listeners
+(`MediaQueryListEvent`) follow. `page` makes the following steps drive
+another page of the run's browser context: the `as` key of an earlier
+`popup` step, a target id, or `main` for the page the run started on;
+`request` and `download` steps then see that page's activity, and the
+reply's `requests` stay the starting page's. A popup paused by
+`Target.setAutoAttach {waitForDebuggerOnStart: true}` navigates only after
+the client's `Runtime.runIfWaitingForDebugger`.
+
 ## License
 
 AGPL-3.0-only. This is a derivative of Lightpanda; see [NOTICE](NOTICE).
