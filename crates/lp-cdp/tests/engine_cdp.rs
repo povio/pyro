@@ -5149,3 +5149,32 @@ fn driver_run_blur_and_removal_fire_blur_and_focusout() {
     assert_eq!(r["result"]["reads"]["gone"], "focusout:true:BODY", "{r}");
     assert_eq!(r["result"]["reads"]["log"], "focus:null,blur:null,focusout:null", "{r}");
 }
+
+/// A client that always has a command waiting (pipelined, or several in
+/// flight) still lets the page's timers run: each pass of the serve loop
+/// runs a ready task before it looks at the inbox, so a `setTimeout(f, 0)`
+/// fires between two commands instead of never.
+#[test]
+fn timers_run_between_commands_of_a_client_that_never_waits() {
+    let mut h = Harness::new();
+    load_html(&mut h, "<!doctype html><body>");
+    let session = h.session.clone();
+    h.send(
+        Some(&session),
+        "Runtime.evaluate",
+        json!({"expression": "window.f = 0; setTimeout(() => { f = 1; }, 0); 0"}),
+    );
+    let mut seen = Vec::new();
+    for _ in 0..20 {
+        // As the serve loop does when the next command is already decoded.
+        h.browser.host_mut().run_until_work(None, || true);
+        h.browser.host_mut().flush();
+        let id = h.send(Some(&session), "Runtime.evaluate", json!({"expression": "String(f)", "returnByValue": true}));
+        let reply = h.drain().into_iter().find(|m| m["id"] == id).expect("evaluate replies at once");
+        seen.push(reply["result"]["result"]["value"].as_str().unwrap_or_default().to_owned());
+        if seen.last().is_some_and(|v| v == "1") {
+            return;
+        }
+    }
+    panic!("the 0 ms timer never ran: {seen:?}");
+}

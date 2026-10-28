@@ -487,6 +487,11 @@ impl EngineHost {
         let network_wake = &self.network_wake;
         let waiters = &self.waiters;
         let deadline = [deadline, waiters.next_deadline()].into_iter().flatten().min();
+        // One ready task or due timer first: `run_until` checks `wake` before
+        // running anything, and with a client that always has a command
+        // waiting (pipelined or concurrent requests) it would return at once
+        // every time, so no timer ever ran between commands.
+        thread.event_loop.run_one(&mut thread.browser);
         thread.event_loop.run_until(&mut thread.browser, deadline, false, |b| {
             wake() || !collector.is_empty() || network_wake.ready() || waiters.ready(b)
         })
