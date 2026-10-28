@@ -493,6 +493,13 @@ export const media = (opts: MediaOptions): StepLike => ({ toStep: () => ({ media
 export const download = (opts: { saveTo?: string; as?: string; timeout?: number } = {}): StepLike => ({
   toStep: () => ({ download: opts }),
 });
+/**
+ * The following steps drive another page of the context (engine 0.0.10):
+ * the `as` name of an earlier `popup(as)`, a target id, or `'main'` for the
+ * page the run started on. Add `loaded()` or `waitForUrl()` after switching
+ * to a fresh popup.
+ */
+export const switchTo = (target: string): StepLike => ({ toStep: () => ({ page: { target } }) });
 /** Waits for the next popup the page opens during the run; its target id lands in `values[as]`. */
 export const popup = (as?: string, opts: CheckOpts = {}): StepLike => ({
   toStep: () => ({ popup: { ...(as ? { as } : {}), ...opts } }),
