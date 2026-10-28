@@ -4494,3 +4494,38 @@ fn line_height_below_the_content_area_like_chromium() {
         ],
     );
 }
+
+#[test]
+fn table_rowspan_like_chromium() {
+    // Chromium (800x600): a spanning cell takes the first free column of
+    // later rows; when it is taller than its rows, they grow in proportion
+    // to their heights (all into the last when they are empty); a rowspan
+    // past the group's end stops there; a row without cells still counts.
+    let html = "<!doctype html><body style=\"margin:0\"><table id=t style=\"border-spacing:2px\"><tr id=r1><td id=a rowspan=2 style=\"height:100px;width:30px;padding:0\"></td><td id=b style=\"height:10px;width:20px;padding:0\"></td></tr><tr id=r2><td id=c style=\"height:30px;padding:0\"></td></tr><tr id=r3><td id=d style=\"padding:0;height:5px\"></td><td id=e style=\"padding:0;height:5px\"></td></tr></table>\
+        <table id=t2 style=\"border-spacing:0\"><tr id=q1><td id=f rowspan=3 style=\"height:90px;padding:0;width:10px\"></td><td id=g style=\"padding:0;width:10px\"></td></tr><tr id=q2><td id=h style=\"padding:0\"></td></tr><tr id=q3><td id=i style=\"padding:0;height:20px\"></td></tr></table>\
+        <table style=\"border-spacing:0\"><tr id=w1><td id=w rowspan=5 style=\"height:90px;padding:0;width:10px\"></td></tr><tr id=w2></tr></table></body>";
+    check_rects(
+        "rowspan",
+        html,
+        &[
+            ("t", [0.0, 0.0, 56.0, 111.0]),
+            ("r1", [2.0, 2.0, 52.0, 24.5]),
+            ("a", [2.0, 2.0, 30.0, 100.0]),
+            ("b", [34.0, 2.0, 20.0, 24.5]),
+            ("r2", [2.0, 28.5, 52.0, 73.5]),
+            ("c", [34.0, 28.5, 20.0, 73.5]),
+            ("r3", [2.0, 104.0, 52.0, 5.0]),
+            ("d", [2.0, 104.0, 30.0, 5.0]),
+            ("e", [34.0, 104.0, 20.0, 5.0]),
+            ("t2", [0.0, 111.0, 20.0, 90.0]),
+            ("q1", [0.0, 111.0, 20.0, 0.0]),
+            ("f", [0.0, 111.0, 10.0, 90.0]),
+            ("h", [10.0, 111.0, 10.0, 0.0]),
+            ("q3", [0.0, 111.0, 20.0, 90.0]),
+            ("i", [10.0, 111.0, 10.0, 90.0]),
+            ("w1", [0.0, 201.0, 10.0, 0.0]),
+            ("w2", [0.0, 201.0, 10.0, 90.0]),
+            ("w", [0.0, 201.0, 10.0, 90.0]),
+        ],
+    );
+}

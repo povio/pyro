@@ -3796,6 +3796,8 @@ struct TableCell {
     style: StyleRef,
     col: usize,
     span: usize,
+    /// Rows the cell spans (at least 1, at most the rest of its row group).
+    rowspan: usize,
 }
 
 struct TableRow {
@@ -3845,7 +3847,36 @@ impl<'a> Ctx<'a> {
                 _ => {}
             }
         }
-        let rows: Vec<TableRow> = head.into_iter().chain(body).chain(foot).collect();
+        let mut rows: Vec<TableRow> = head.into_iter().chain(body).chain(foot).collect();
+        // Slots: each row group (consecutive rows directly in the table form
+        // one) places its cells in the first columns not taken by a cell
+        // spanning down from a row above (HTML table processing model).
+        let mut start = 0;
+        while start < rows.len() {
+            let end = start + rows[start..].iter().take_while(|r| r.group == rows[start].group).count();
+            let mut taken: Vec<usize> = Vec::new();
+            for r in start..end {
+                let mut col = 0;
+                for c in rows[r].cells.iter_mut() {
+                    while taken.get(col).is_some_and(|&n| n > 0) {
+                        col += 1;
+                    }
+                    c.col = col;
+                    c.rowspan = c.rowspan.min(end - r);
+                    if taken.len() < col + c.span {
+                        taken.resize(col + c.span, 0);
+                    }
+                    for t in &mut taken[col..col + c.span] {
+                        *t = (*t).max(c.rowspan);
+                    }
+                    col += c.span;
+                }
+                for t in &mut taken {
+                    *t = t.saturating_sub(1);
+                }
+            }
+            start = end;
+        }
         let cols = rows.iter().map(|r| r.cells.iter().map(|c| c.col + c.span).max().unwrap_or(0)).max().unwrap_or(0);
         (rows, cols)
     }
@@ -3867,7 +3898,15 @@ impl<'a> Ctx<'a> {
                 .filter(|&n| n >= 1)
                 .unwrap_or(1)
                 .min(1000);
-            cells.push(TableCell { el: c, style: cs, col, span });
+            // rowspan=0: to the end of the row group.
+            let rowspan = self
+                .dom
+                .get_attribute(c, "rowspan")
+                .ok()
+                .flatten()
+                .and_then(|v| v.trim().parse::<usize>().ok())
+                .map_or(1, |n| if n == 0 { usize::MAX } else { n.min(65534) });
+            cells.push(TableCell { el: c, style: cs, col, span, rowspan });
             col += span;
         }
         TableRow { el: Some(row), style: Some(style), group, cells }
@@ -4090,13 +4129,15 @@ impl<'a> Ctx<'a> {
             cx += w + sx;
         }
         starts.push(cx);
-        let mut cursor = y + sy;
-        let mut groups: Vec<(NodeId, Rect)> = Vec::new();
-        let mut group_orders: Vec<(NodeId, u32)> = Vec::new();
+        // Row heights: the tallest single-row cell (and the row's own
+        // height); a spanning cell taller than its rows grows them in
+        // proportion to their heights (all into the last when they are
+        // empty), as Chromium does.
+        let mut cell_heights: Vec<Vec<(f64, f64, f64)>> = Vec::with_capacity(rows.len());
+        let mut row_hs: Vec<f64> = Vec::with_capacity(rows.len());
         for row in rows {
-            // Row height: the tallest cell (and the row's own height).
             let mut row_h = row.style.as_ref().and_then(|s| s.height.resolve(None)).unwrap_or(0.0);
-            let mut cell_heights = Vec::new();
+            let mut hs = Vec::with_capacity(row.cells.len());
             for c in &row.cells {
                 let w = span_width(&widths, c, sx);
                 let e = self.edges(&c.style, width);
@@ -4108,9 +4149,39 @@ impl<'a> Ctx<'a> {
                         .resolve(None)
                         .map(|h| if c.style.border_box { (h - e.vertical()).max(0.0) } else { h });
                 let h = declared.unwrap_or(0.0).max(content_h) + e.vertical();
-                cell_heights.push((content_h, e.vertical()));
-                row_h = row_h.max(h);
+                hs.push((content_h, e.vertical(), h));
+                if c.rowspan == 1 {
+                    row_h = row_h.max(h);
+                }
             }
+            cell_heights.push(hs);
+            row_hs.push(row_h);
+        }
+        for (r, row) in rows.iter().enumerate() {
+            for (c, &(_, _, h)) in row.cells.iter().zip(&cell_heights[r]) {
+                if c.rowspan < 2 {
+                    continue;
+                }
+                let spanned = &mut row_hs[r..r + c.rowspan];
+                let have: f64 = spanned.iter().sum();
+                let extra = h - have - sy * (c.rowspan - 1) as f64;
+                if extra <= 0.0 {
+                    continue;
+                }
+                if have > 0.0 {
+                    for rh in spanned.iter_mut() {
+                        *rh += extra * *rh / have;
+                    }
+                } else if let Some(last) = spanned.last_mut() {
+                    *last += extra;
+                }
+            }
+        }
+        let mut cursor = y + sy;
+        let mut groups: Vec<(NodeId, Rect)> = Vec::new();
+        let mut group_orders: Vec<(NodeId, u32)> = Vec::new();
+        for (r, row) in rows.iter().enumerate() {
+            let row_h = row_hs[r];
             // A row group precedes its rows (and cells) in paint order.
             if let Some(g) = row.group {
                 if !group_orders.iter().any(|(n, _)| *n == g) {
@@ -4119,12 +4190,13 @@ impl<'a> Ctx<'a> {
                 }
             }
             let row_order = self.next_order();
-            for (c, (content_h, vertical)) in row.cells.iter().zip(cell_heights) {
+            for (c, &(content_h, vertical, _)) in row.cells.iter().zip(&cell_heights[r]) {
                 let w = span_width(&widths, c, sx);
+                let cell_h = row_hs[r..r + c.rowspan].iter().sum::<f64>() + sy * (c.rowspan - 1) as f64;
                 let mut s = (*c.style).clone();
                 s.border_box = true;
                 s.width = Dim::px(w);
-                s.height = Dim::px(row_h);
+                s.height = Dim::px(cell_h);
                 s.margin = [Dim::px(0.0); 4];
                 // The columns already took the cell's min/max width.
                 s.min_width = Dim::Auto;
@@ -4134,7 +4206,7 @@ impl<'a> Ctx<'a> {
                 let before = self.order;
                 self.block_child(c.el, &s, starts[c.col], cursor, w, fixed, shift);
                 // Cell content is vertically centred (rows default to middle).
-                let dy = ((row_h - vertical - content_h) / 2.0).max(0.0);
+                let dy = ((cell_h - vertical - content_h) / 2.0).max(0.0);
                 if dy > 0.0 {
                     let cell_order = before + 1;
                     self.boxes_after(cell_order, |b| b.rect.y += dy);
