@@ -19,9 +19,10 @@
 
 use std::rc::Rc;
 
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashSet;
 
-use super::{Collapse, Ctx, FlowResult, FlowStyle, Margin, NodeId, Pending, Reach, Rect, Slot, StyleRef};
+use super::store::NodeMap;
+use super::{Collapse, Ctx, FlowResult, FlowStyle, Margin, NodeId, Pending, Reach, Rect, StyleRef};
 
 /// The entries of the last pass (generation `gen - 1`, read from `prev`)
 /// and of the pass in progress (generation `gen`).
@@ -29,12 +30,18 @@ use super::{Collapse, Ctx, FlowResult, FlowStyle, Margin, NodeId, Pending, Reach
 pub(super) struct Reuse {
     gen: u64,
     prev: Option<Rc<FlowResult>>,
-    entries: FxHashMap<NodeId, Entry>,
+    /// The result before `prev`: its buffers hold the next pass's output
+    /// once nobody else holds it.
+    spare: Option<Rc<FlowResult>>,
+    entries: NodeMap<Entry>,
+    /// Entries of generation `gen`.
+    current: usize,
 }
 
 impl Reuse {
     pub(super) fn clear(&mut self) {
         self.prev = None;
+        self.spare = None;
         self.entries.clear();
     }
 
@@ -47,9 +54,25 @@ impl Reuse {
         self.prev = Some(result);
     }
 
+    /// An empty result to lay the pass out into: the spare one's buffers
+    /// when it is free, else new ones sized like the last result.
+    pub(super) fn output(&mut self) -> FlowResult {
+        if let Some(mut out) = self.spare.take().and_then(|r| Rc::try_unwrap(r).ok()) {
+            out.clear();
+            return out;
+        }
+        let mut out = FlowResult::default();
+        if let Some(prev) = &self.prev {
+            out.reserve_like(prev);
+        }
+        out
+    }
+
     /// Drops the entries of changed elements and their ancestors.
     pub(super) fn invalidate(&mut self, dirty: &FxHashSet<NodeId>) {
-        self.entries.retain(|k, _| !dirty.contains(k));
+        for el in dirty {
+            self.entries.remove(el);
+        }
     }
 
     pub(super) fn begin_pass(&mut self) {
@@ -57,15 +80,17 @@ impl Reuse {
             self.entries.clear();
         }
         self.gen += 1;
+        self.current = 0;
     }
 
     /// Keeps the entries recorded (or replayed) by the pass just run; they
     /// describe its result, which the owner hands back with `keep`.
     pub(super) fn end_pass(&mut self, relaid: bool) {
-        self.prev = None;
+        self.spare = self.prev.take();
         if relaid {
             self.entries.clear();
-        } else {
+        } else if self.entries.len() > 2 * self.current + 256 {
+            // Older entries are never served; drop them once they dominate.
             let gen = self.gen;
             self.entries.retain(|_, e| e.gen == gen);
         }
@@ -237,7 +262,7 @@ impl<'a> Ctx<'a> {
         }
         let start = Start {
             order_lo: self.order,
-            text_lo: self.out.text_orders.len(),
+            text_lo: self.out.texts.list.len(),
             run_lo: self.out.text_runs.len(),
             depth: self.pending.len(),
             first_lo: self.pending.first().map_or(0, Vec::len),
@@ -285,7 +310,7 @@ impl<'a> Ctx<'a> {
             1 => self.pending[0][first_lo..].iter().map(rel).collect(),
             d => self.pending[0][first_lo..].iter().chain(&self.pending[d - 1][last_lo..]).map(rel).collect(),
         };
-        let texts = (text_lo, self.out.text_orders.len());
+        let texts = (text_lo, self.out.texts.list.len());
         let runs = (run_lo, self.out.text_runs.len());
         let (anchor, at) = self.anchor_in(&self.out, order_lo, self.order, texts, runs);
         let entry = Entry {
@@ -326,11 +351,10 @@ impl<'a> Ctx<'a> {
     fn remember(&self, el: NodeId, mut entry: Entry) {
         let mut reuse = self.memo.reuse.borrow_mut();
         entry.gen = reuse.gen;
-        if let Some(old) = reuse.entries.insert(el, entry) {
-            if old.gen == reuse.gen {
-                // Laid out twice in one pass: ranges overlap, keep nothing.
-                self.memo.relaid.set(true);
-            }
+        match reuse.entries.insert(el, entry) {
+            // Laid out twice in one pass: ranges overlap, keep nothing.
+            Some(old) if old.gen == reuse.gen => self.memo.relaid.set(true),
+            _ => reuse.current += 1,
         }
     }
 
@@ -343,9 +367,10 @@ impl<'a> Ctx<'a> {
         texts: (usize, usize),
         runs: (usize, usize),
     ) -> (Anchor, Option<(f64, f64)>) {
-        for i in order_lo as usize..(order_hi as usize).min(out.slots.len()) {
-            if let Some(b) = out.slots[i].el.and_then(|el| out.boxes.get(&el)).filter(|b| b.order as usize == i + 1) {
-                return (Anchor::Box(i), Some((b.rect.x, b.rect.y)));
+        for i in order_lo as usize..(order_hi as usize).min(out.boxes.slots.len()) {
+            if out.boxes.live(i).is_some() {
+                let r = out.boxes.slots[i].b.rect;
+                return (Anchor::Box(i), Some((r.x, r.y)));
             }
         }
         if runs.0 < runs.1 {
@@ -353,9 +378,8 @@ impl<'a> Ctx<'a> {
             return (Anchor::Run(runs.0), Some((r.x, r.y)));
         }
         if texts.0 < texts.1 {
-            if let Some((r, _)) = out.texts.get(&out.text_orders[texts.0].1) {
-                return (Anchor::Text(texts.0), Some((r.x, r.y)));
-            }
+            let r = out.texts.list[texts.0].at.0;
+            return (Anchor::Text(texts.0), Some((r.x, r.y)));
         }
         (Anchor::None, None)
     }
@@ -363,9 +387,12 @@ impl<'a> Ctx<'a> {
     fn anchor_at(out: &FlowResult, anchor: Anchor) -> Option<(f64, f64)> {
         let r = match anchor {
             Anchor::None => return None,
-            Anchor::Box(i) => out.boxes.get(&out.slots.get(i)?.el?)?.rect,
+            Anchor::Box(i) => {
+                out.boxes.live(i)?;
+                out.boxes.slots[i].b.rect
+            }
             Anchor::Run(i) => out.text_runs.get(i)?.rect,
-            Anchor::Text(i) => out.texts.get(&out.text_orders.get(i)?.1)?.0,
+            Anchor::Text(i) => out.texts.list.get(i)?.at.0,
         };
         Some((r.x, r.y))
     }
@@ -390,37 +417,36 @@ impl<'a> Ctx<'a> {
         let renumber = |o: u32| (o as i64 + delta) as u32;
         let inner = |o: u32| if o > e.order_lo { renumber(o) } else { 0 };
         let moved = |r: Rect| Rect { x: r.x + tx, y: r.y + ty, ..r };
-        let (text_lo, run_lo) = (self.out.text_orders.len(), self.out.text_runs.len());
+        let (text_lo, run_lo) = (self.out.texts.list.len(), self.out.text_runs.len());
         if !self.measure_only {
-            for i in e.order_lo as usize..e.order_hi as usize {
-                let slot = prev.slots[i];
-                let Some(d) = slot.el else { continue };
-                let Some(b) = prev.boxes.get(&d).filter(|b| b.order as usize == i + 1) else { continue };
-                let positioned_by = inner(slot.positioned_by);
-                let nb = super::FlowBox {
-                    rect: moved(b.rect),
-                    order: renumber(b.order),
-                    clipped_by: inner(b.clipped_by),
-                    positioned: slot.own_positioned || positioned_by != 0,
-                    ..*b
-                };
-                self.put_box_quiet(d, nb, Slot { el: Some(d), own_positioned: slot.own_positioned, positioned_by });
-                if prev.sticky.contains(&d) {
-                    self.out.sticky.insert(d);
-                }
+            let FlowResult { boxes, texts, text_runs, sticky, .. } = &mut self.out;
+            let relaid =
+                boxes.copy_range(&prev.boxes, e.order_lo as usize, e.order_hi as usize, order_lo as usize, |s| {
+                    s.positioned_by = inner(s.positioned_by);
+                    s.b = super::FlowBox {
+                        rect: moved(s.b.rect),
+                        order: renumber(s.b.order),
+                        clipped_by: inner(s.b.clipped_by),
+                        positioned: s.own_positioned || s.positioned_by != 0,
+                        ..s.b
+                    };
+                    if s.sticky {
+                        sticky.extend(s.el);
+                    }
+                });
+            if relaid && !self.probe {
+                self.memo.relaid.set(true);
             }
-            for &(o, t) in &prev.text_orders[e.texts.0..e.texts.1] {
-                if let Some(&(r, f)) = prev.texts.get(&t) {
-                    self.out.texts.insert(t, (moved(r), f));
-                }
-                self.out.text_orders.push((renumber(o), t));
-            }
-            for run in &prev.text_runs[e.runs.0..e.runs.1] {
+            texts.copy_range(&prev.texts, e.texts.0, e.texts.1, |t| {
+                t.at.0 = moved(t.at.0);
+                t.order = renumber(t.order);
+            });
+            text_runs.extend(prev.text_runs[e.runs.0..e.runs.1].iter().map(|run| {
                 let mut run = run.clone();
                 run.rect = moved(run.rect);
                 run.order = renumber(run.order);
-                self.out.text_runs.push(run);
-            }
+                run
+            }));
         }
         if let Some(reach) = &e.reach {
             let at = reach.map(|r| Reach { right: r.right + x, bottom: r.bottom + y, text_right: r.text_right + x });
@@ -448,7 +474,7 @@ impl<'a> Ctx<'a> {
             let entry = Entry {
                 order_lo,
                 order_hi: self.order,
-                texts: (text_lo, self.out.text_orders.len()),
+                texts: (text_lo, self.out.texts.list.len()),
                 runs: (run_lo, self.out.text_runs.len()),
                 anchor: shift_anchor(e.anchor),
                 ..e.clone()
@@ -465,7 +491,8 @@ impl<'a> Ctx<'a> {
         let mut reuse = self.memo.reuse.borrow_mut();
         let gen = reuse.gen;
         let at = |v: usize, d: i64| (v as i64 + d) as usize;
-        for slot in &prev.slots[e.order_lo as usize..e.order_hi as usize] {
+        let mut current = 0;
+        for slot in &prev.boxes.slots[e.order_lo as usize..e.order_hi as usize] {
             let Some(d) = slot.el else { continue };
             let Some(de) = reuse.entries.get_mut(&d) else { continue };
             let inside = de.order_lo >= e.order_lo
@@ -478,6 +505,7 @@ impl<'a> Ctx<'a> {
                 continue;
             }
             de.gen = gen;
+            current += 1;
             de.order_lo = (de.order_lo as i64 + delta) as u32;
             de.order_hi = (de.order_hi as i64 + delta) as u32;
             de.texts = (at(de.texts.0, text_delta), at(de.texts.1, text_delta));
@@ -489,6 +517,7 @@ impl<'a> Ctx<'a> {
                 Anchor::Text(i) => Anchor::Text(at(i, text_delta)),
             };
         }
+        reuse.current += current;
     }
 }
 

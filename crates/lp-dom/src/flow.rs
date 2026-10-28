@@ -22,6 +22,11 @@ use crate::Dom;
 
 #[path = "flow_reuse.rs"]
 mod reuse;
+#[path = "flow_store.rs"]
+mod store;
+
+pub use store::{Boxes, Texts};
+use store::{ByNode, Slot};
 
 // ----- style input contract -------------------------------------------------
 
@@ -844,14 +849,14 @@ struct WordSource {
 
 #[derive(Default, Debug)]
 pub struct FlowResult {
-    pub boxes: FxHashMap<NodeId, FlowBox>,
+    pub boxes: Boxes,
     /// Text nodes laid out in line boxes: the union of their fragments
     /// (document coordinates, or viewport ones inside `position: fixed`),
     /// and whether they are inside a fixed box. Range geometry uses it.
-    pub texts: FxHashMap<NodeId, (Rect, bool)>,
-    /// Order stamp of each text entry, so later shifts of the boxes laid out
-    /// after an order (cell centring, bottom-anchored abs boxes) move them.
-    text_orders: Vec<(u32, NodeId)>,
+    /// Each entry keeps its order stamp, so later shifts of the boxes laid
+    /// out after an order (cell centring, bottom-anchored abs boxes) move
+    /// them.
+    pub texts: Texts,
     /// Each laid-out word of a text node, for positions within text (the
     /// caret under a point). Same coordinates as `texts`.
     pub text_runs: Vec<TextRun>,
@@ -862,24 +867,28 @@ pub struct FlowResult {
     /// scroll-dependent offset is applied when geometry is read
     /// (`Layout::sticky_shift`).
     pub sticky: rustc_hash::FxHashSet<NodeId>,
-    /// Per order (index = order - 1): the element recorded under it and its
-    /// positioning facts, so a later pass can replay a subtree (`reuse`).
-    slots: Vec<Slot>,
-}
-
-/// What a layout order was recorded for.
-#[derive(Clone, Copy, Debug, Default)]
-struct Slot {
-    el: Option<NodeId>,
-    /// The box is positioned itself (not only inside a positioned box).
-    own_positioned: bool,
-    /// `order` of the nearest positioned ancestor box (0: none).
-    positioned_by: u32,
 }
 
 impl FlowResult {
     pub fn get(&self, el: NodeId) -> Option<&FlowBox> {
         self.boxes.get(&el)
+    }
+
+    /// Room for as many boxes, texts and runs as `like` has.
+    fn reserve_like(&mut self, like: &FlowResult) {
+        self.boxes.reserve_like(&like.boxes);
+        self.texts.reserve_like(&like.texts);
+        self.text_runs.reserve(like.text_runs.len());
+    }
+
+    /// Empties the result, keeping its buffers.
+    fn clear(&mut self) {
+        self.boxes.clear();
+        self.texts.clear();
+        self.text_runs.clear();
+        self.sticky.clear();
+        self.document_width = 0.0;
+        self.document_height = 0.0;
     }
 }
 
@@ -954,8 +963,8 @@ pub fn difference(want: &FlowResult, got: &FlowResult) -> Option<String> {
 pub struct MeasureCache {
     max_content: FxHashMap<NodeId, f64>,
     min_content: FxHashMap<NodeId, f64>,
-    heights: FxHashMap<(NodeId, u64), f64>,
-    baselines: FxHashMap<(NodeId, u64, u64), Option<f64>>,
+    heights: ByNode<u64, f64>,
+    baselines: ByNode<(u64, u64), Option<f64>>,
     /// Laid-out subtrees of the last pass, replayed by the next one.
     reuse: reuse::Reuse,
     /// The flow styles the last pass used, which seed the next pass (minus
@@ -1081,10 +1090,12 @@ impl MeasureCache {
         if dirty.is_empty() {
             return;
         }
-        self.max_content.retain(|k, _| !dirty.contains(k));
-        self.min_content.retain(|k, _| !dirty.contains(k));
-        self.heights.retain(|k, _| !dirty.contains(&k.0));
-        self.baselines.retain(|k, _| !dirty.contains(&k.0));
+        for el in dirty {
+            self.max_content.remove(el);
+            self.min_content.remove(el);
+            self.heights.remove(el);
+            self.baselines.remove(el);
+        }
         self.reuse.invalidate(dirty);
     }
 
@@ -1139,6 +1150,7 @@ pub fn layout_cached(
 
 fn layout_with_memo(dom: &Dom, doc: NodeId, src: &dyn FlowStyleSource, vw: f64, vh: f64, memo: &Memo) -> FlowResult {
     let mut cx = Ctx::new(dom, src, vw, vh, memo);
+    cx.out = memo.reuse.borrow_mut().output();
     cx.cb_height = Some(vh);
     let icb = Rect { x: 0.0, y: 0.0, width: vw, height: vh };
     cx.pending.push(Vec::new());
@@ -1238,9 +1250,9 @@ struct Memo {
     max_content: RefCell<FxHashMap<NodeId, f64>>,
     min_content: RefCell<FxHashMap<NodeId, f64>>,
     /// Content height by (element, content width bits).
-    heights: RefCell<FxHashMap<(NodeId, u64), f64>>,
+    heights: RefCell<ByNode<u64, f64>>,
     /// Atomic inline baseline by (element, content width bits, height bits).
-    baselines: RefCell<FxHashMap<(NodeId, u64, u64), Option<f64>>>,
+    baselines: RefCell<ByNode<(u64, u64), Option<f64>>>,
     /// Buffers of finished measuring probes, reused (cleared, capacity kept)
     /// by the next probe: probes lay whole subtrees out and are discarded.
     probe_buffers: RefCell<Vec<ProbeBuffers>>,
@@ -1527,14 +1539,7 @@ impl<'a> Ctx<'a> {
         let mut cx = Ctx::new(self.dom, self.src, self.vw, self.vh, self.memo);
         cx.probe = true;
         if let Some(mut b) = self.memo.probe_buffers.borrow_mut().pop() {
-            b.out.boxes.clear();
-            b.out.texts.clear();
-            b.out.sticky.clear();
-            b.out.text_orders.clear();
-            b.out.text_runs.clear();
-            b.out.slots.clear();
-            b.out.document_width = 0.0;
-            b.out.document_height = 0.0;
+            b.out.clear();
             b.pending.clear();
             cx.out = b.out;
             cx.pending = b.pending;
@@ -1713,13 +1718,13 @@ impl<'a> Ctx<'a> {
         if sticky {
             self.out.sticky.insert(el);
         }
-        let slot = Slot { el: Some(el), own_positioned: b.positioned, positioned_by: 0 };
-        self.put_box(el, b, slot);
+        self.put_box(el, Slot { el: Some(el), own_positioned: b.positioned, positioned_by: 0, sticky, b });
     }
 
-    /// Records `b` under its order without looking at styles.
-    fn put_box(&mut self, el: NodeId, b: FlowBox, slot: Slot) {
-        self.put_box_quiet(el, b, slot);
+    /// Records `slot` under its box's order without looking at styles.
+    fn put_box(&mut self, el: NodeId, slot: Slot) {
+        let b = slot.b;
+        self.put_box_quiet(el, slot);
         if let Some(top) = self.extents.last_mut() {
             let r = &mut top.direct[b.fixed as usize];
             r.right = r.right.max(b.rect.x + b.rect.width);
@@ -1728,15 +1733,9 @@ impl<'a> Ctx<'a> {
         }
     }
 
-    /// `put_box` without adding to the extent (a replay adds its subtree's
-    /// reach at once).
-    fn put_box_quiet(&mut self, el: NodeId, b: FlowBox, slot: Slot) {
-        let i = b.order as usize - 1;
-        if self.out.slots.len() <= i {
-            self.out.slots.resize(i + 1, Slot::default());
-        }
-        self.out.slots[i] = slot;
-        if self.out.boxes.insert(el, b).is_some() && !self.probe {
+    /// `put_box` without adding to the extent.
+    fn put_box_quiet(&mut self, el: NodeId, slot: Slot) {
+        if self.out.boxes.put(el, slot) && !self.probe {
             self.memo.relaid.set(true);
         }
     }
@@ -1872,10 +1871,12 @@ impl<'a> Ctx<'a> {
     /// `el`, boxes not clipped by a box inside it.
     fn scan_reach(&self, el: NodeId, order: u32) -> [Reach; 2] {
         let mut out = [Reach::NONE; 2];
-        let first = self.out.text_orders.partition_point(|(o, _)| *o < order);
+        let first = self.out.texts.first_from(order);
         let el_depth = self.clip_fact(el).depth;
-        for &(_, t) in &self.out.text_orders[first..] {
-            let Some(&(r, text_fixed)) = self.out.texts.get(&t) else { continue };
+        for p in first..self.out.texts.list.len() {
+            let Some(&store::TextEntry { node: t, at: (r, text_fixed), .. }) = self.out.texts.live_at(p) else {
+                continue;
+            };
             let clipped_inside = match self.dom.parent_element(t).ok().flatten() {
                 Some(p) => self.clip_fact(p).clip_depth > el_depth,
                 None => false,
@@ -1890,9 +1891,11 @@ impl<'a> Ctx<'a> {
                 *tr = tr.max(r.x + r.width);
             }
         }
-        for i in order as usize..self.out.slots.len() {
-            let Some(d) = self.out.slots[i].el else { continue };
-            let Some(b) = self.out.boxes.get(&d).filter(|b| b.order as usize == i + 1) else { continue };
+        for i in order as usize..self.out.boxes.slots.len() {
+            if self.out.boxes.live(i).is_none() {
+                continue;
+            }
+            let b = &self.out.boxes.slots[i].b;
             if b.clipped_by <= order {
                 let r = &mut out[b.fixed as usize];
                 r.right = r.right.max(b.rect.x + b.rect.width);
@@ -1907,11 +1910,9 @@ impl<'a> Ctx<'a> {
     /// so the entries after `order` are a tail: shifting every table cell
     /// stays linear in the cell's own text, not the document's.
     fn shift_texts_after(&mut self, order: u32, dy: f64) {
-        let first = self.out.text_orders.partition_point(|(o, _)| *o < order);
-        for (_, t) in &self.out.text_orders[first..] {
-            if let Some((r, _)) = self.out.texts.get_mut(t) {
-                r.y += dy;
-            }
+        let first = self.out.texts.first_from(order);
+        for e in &mut self.out.texts.list[first..] {
+            e.at.0.y += dy;
         }
         let first = self.out.text_runs.partition_point(|r| r.order < order);
         for run in &mut self.out.text_runs[first..] {
@@ -1921,9 +1922,8 @@ impl<'a> Ctx<'a> {
 
     /// Calls `f` on every box recorded with an order above `order`.
     fn boxes_after(&mut self, order: u32, mut f: impl FnMut(&mut FlowBox)) {
-        for i in order as usize..self.out.slots.len() {
-            let Some(el) = self.out.slots[i].el else { continue };
-            if let Some(b) = self.out.boxes.get_mut(&el).filter(|b| b.order as usize == i + 1) {
+        for i in order as usize..self.out.boxes.slots.len() {
+            if let Some(b) = self.out.boxes.at_mut(i) {
                 f(b);
             }
         }
@@ -2275,7 +2275,7 @@ impl<'a> Ctx<'a> {
             });
         }
         if positioned {
-            for slot in self.out.slots.iter_mut().skip(order as usize) {
+            for slot in self.out.boxes.slots.iter_mut().skip(order as usize) {
                 if slot.positioned_by == 0 {
                     slot.positioned_by = order;
                 }
@@ -3119,8 +3119,7 @@ impl<'a> Ctx<'a> {
         for el in order_of {
             if let Some(r) = frags.get(&el).copied() {
                 if self.dom.node_type(el).ok() == Some(NodeType::Text) {
-                    self.out.texts.insert(el, (r, fixed));
-                    self.out.text_orders.push((self.order, el));
+                    self.out.texts.push(self.order, el, (r, fixed));
                     self.extent_text(el, r, fixed);
                     continue;
                 }
@@ -3365,15 +3364,15 @@ impl<'a> Ctx<'a> {
 
     /// Content height of `el` laid out at `content_w`, without recording.
     fn measure_height(&self, el: NodeId, style: &FlowStyle, content_w: f64) -> f64 {
-        let key = (el, content_w.to_bits());
-        if let Some(&h) = self.memo.heights.borrow().get(&key) {
+        let key = content_w.to_bits();
+        if let Some(&h) = self.memo.heights.borrow().get(el, &key) {
             return h;
         }
         let mut probe = self.probe();
         probe.measure_only = true;
         probe.pending.push(Vec::new());
         let h = probe.contents(el, style, 0.0, 0.0, content_w, None, false, (0.0, 0.0), Collapse::default());
-        self.memo.heights.borrow_mut().insert(key, h);
+        self.memo.heights.borrow_mut().insert(el, key, h);
         h
     }
 
@@ -3390,8 +3389,8 @@ impl<'a> Ctx<'a> {
         if flowroot && (style.clips_x || style.clips_y) {
             return None;
         }
-        let key = (el, content_w.to_bits(), content_h.to_bits());
-        if let Some(&b) = self.memo.baselines.borrow().get(&key) {
+        let key = (content_w.to_bits(), content_h.to_bits());
+        if let Some(&b) = self.memo.baselines.borrow().get(el, &key) {
             return b;
         }
         let mut probe = self.probe();
@@ -3425,7 +3424,7 @@ impl<'a> Ctx<'a> {
                 None => None,
             }
         };
-        self.memo.baselines.borrow_mut().insert(key, baseline);
+        self.memo.baselines.borrow_mut().insert(el, key, baseline);
         baseline
     }
 
