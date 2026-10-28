@@ -5208,3 +5208,25 @@ fn abort_controllers_and_traversal_filters_do_not_keep_a_disposed_page_alive() {
     }
     assert!(weak.upgrade().is_none(), "an AbortController or traversal filter kept its disposed PageDom alive");
 }
+
+/// HTML's focus fixup rule: removing (or replacing) the focused element makes
+/// `activeElement` the body, with no blur event; keys then go nowhere
+/// instead of to a detached node, and the replacement can take focus.
+#[test]
+fn removed_focused_element_is_no_longer_active() {
+    let e = env("<body><div id=cell><input id=a value=x></div></body>");
+    let r = &e.main;
+    assert_eq!(
+        eval(r, "const a = document.getElementById('a'); let blurs = 0; a.addEventListener('blur', () => blurs++); a.focus(); const before = document.activeElement.id; a.remove(); [before, document.activeElement.tagName, document.activeElement.isConnected, blurs, a.isConnected, a.parentNode === null].join(':')"),
+        "a:BODY:true:0:false:true"
+    );
+    assert_eq!(
+        eval(r, "const b = document.createElement('input'); b.id = 'b'; document.getElementById('cell').appendChild(b); b.focus(); const c = document.createElement('input'); c.id = 'c'; b.replaceWith(c); const mid = document.activeElement.tagName; c.focus(); [mid, document.activeElement.id].join(':')"),
+        "BODY:c"
+    );
+    // Re-inserting a removed element does not restore its focus.
+    assert_eq!(
+        eval(r, "const c2 = document.getElementById('c'); c2.remove(); document.getElementById('cell').appendChild(c2); document.activeElement.tagName"),
+        "BODY"
+    );
+}

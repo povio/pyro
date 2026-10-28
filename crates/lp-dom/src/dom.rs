@@ -1224,12 +1224,42 @@ impl Dom {
         self.removals = self.removals.wrapping_add(1);
         self.add_transient_observers(parent, node);
         self.unlink(node);
+        self.unfocus_removed(node);
         self.bump_tree();
         self.note(Change::Removed(parent, node, next));
         if !suppress {
             self.queue_child_list(parent, &[], &[node], prev, next);
         }
         self.candidates.push(node);
+    }
+
+    /// HTML's focus fixup rule: when the focused element leaves the
+    /// document (it is `node` or inside it, already unlinked), the document
+    /// has no focused element any more (`activeElement` is the body). No
+    /// blur event; re-inserting the element does not restore its focus.
+    fn unfocus_removed(&mut self, node: u32) {
+        let doc = self.n(node).owner_doc;
+        let focused = match &self.n(doc).kind {
+            NodeKind::Document(d) if d.focused != NIL => d.focused,
+            _ => return,
+        };
+        let mut i = focused;
+        let inside = loop {
+            if i == node {
+                break true;
+            }
+            i = self.n(i).parent;
+            if i == NIL {
+                break false;
+            }
+        };
+        if !inside {
+            return;
+        }
+        if let NodeKind::Document(d) = &mut self.n_mut(doc).kind {
+            d.focused = NIL;
+        }
+        self.note(Change::Pseudo);
     }
 
     /// Changes the node document of `node`'s inclusive descendants (incl.
