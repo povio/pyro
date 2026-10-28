@@ -107,7 +107,7 @@ containing block (em/rem/vw/vh resolved by the style engine).
   out in flow; `Layout::sticky_shift` offsets them against their scroll
   container's scroll position.
 - Stage 2 (flex): row/column, wrap, gaps, grow/shrink/basis (one pass), justify-content, align-items/align-self with stretch; text directly in a flex container is an anonymous item.
-- Stage 3 (tables): rows in display order (header, body, footer groups), colspan, fixed and auto column widths with border-spacing / border-collapse and extra-width distribution, tables without a width shrinking to their columns, row heights from the tallest cell, cells stretched to the row with content vertically centred. `rowspan` takes slots in the following rows of its group (0 = the rest of the group; it stops at the group's end); a spanning cell taller than its rows grows them in proportion to their heights (all into the last when they are empty). No captions or column elements yet.
+- Stage 3 (tables): rows in display order (header, body, footer groups), colspan, fixed and auto column widths with border-spacing / border-collapse and extra-width distribution, tables without a width shrinking to their columns, row heights from the tallest cell, cells stretched to the row with content vertically centred. In automatic layout a cell's explicit width is a preferred width, not a clamp: a column is at least its cells' min-content width, and the table is at least the sum of its columns, past its declared width and its container, as in Chromium. `rowspan` takes slots in the following rows of its group (0 = the rest of the group; it stops at the group's end); a spanning cell taller than its rows grows them in proportion to their heights (all into the last when they are empty). No captions or column elements yet.
 - Form controls (`input` except hidden/image, `textarea`, `select`) are atomic
   replaced boxes with Chromium's intrinsic size when width/height are auto:
   a text input is `size` (20) x 0.525em + 0.4375em wide and one line tall;
@@ -145,7 +145,11 @@ containing block (em/rem/vw/vh resolved by the style engine).
   explicit grid and names each area's edges `<area>-start` / `<area>-end`;
   `[name]` lines in track lists (also inside `repeat(n)`); placement by
   `grid-area`, by name, by the nth name and from the end; a name no line has
-  is the first implicit line. Not yet: dense packing, subgrid, baseline
+  is the first implicit line. Percentage widths of items count as auto in
+  their tracks' intrinsic contributions (a `width:100%` item in `1fr auto`
+  leaves the auto track its content width), and a compressible replaced
+  item (an input with a percentage width) contributes no min-content width.
+  Not yet: dense packing, subgrid, baseline
   alignment, names inside auto repeats, `span <name>`.
 - `text-align` (FlowStyle::text_align, inherited, LTR): each line box of a
   block container is offset by its free space (center: half, end/right:
@@ -222,6 +226,25 @@ reuse in `flow_reuse.rs`, invalidation in `Layout::flow`):
 `scrollWidth/Height` and scroll clamping, `elementFromPoint` (topmost in
 paint order: in-flow by tree order, positioned boxes above), `scrollIntoView`,
 document scroll size.
+
+- Overflow clipping (hit testing and text geometry) follows the containing
+  block chain: a `fixed` box is clipped by no ancestor, an `absolute` box only
+  by the clipping ancestors of its positioned containing block, and content
+  inside an out-of-flow box escapes the clips that box escapes.
+- SVG shapes, text and containers inside an `<svg>` have no CSS box; their
+  client rect is the `getBBox()` geometry with their own and ancestor
+  `transform`s, mapped by the svg's `viewBox`/`preserveAspectRatio` into the
+  svg box's content box.
+- Script-visible `scroll*`, `client*` and `offset*` metrics
+  (`Layout::metric`) are whole pixels like Chromium: offsets round, sizes
+  snap at the box's offset (`round(left + size) - round(left)`, client and
+  scroll sizes at the padding edge). Rects and internal users keep the
+  fractional values.
+- `ResizeObserver` entries carry the content box (`contentRect` at the
+  padding offset), the border box and the device-pixel content box; the
+  observed `box` decides what is a resize, and a disconnected target gets no
+  entry. Every completed scroll queues `scroll` and then `scrollend` for the
+  next rendering update (layout clamps queue `scroll` only).
 
 ## Validation
 
