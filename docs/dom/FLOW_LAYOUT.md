@@ -1,6 +1,6 @@
 # Flow layout (staged)
 
-Status: Stages 1-4 (block/inline, flex, tables, grid). The flow layout is the default geometry of
+Status: Stages 1-4 (block/inline with floats, flex, tables, grid), with incremental relayout. The flow layout is the default geometry of
 new documents; `LIGHTNINGPANDA_GEOMETRY=approximate` selects the upstream "faux layout"
 (`crates/lp-dom/src/layout.rs`) for comparisons. A `Layout` built directly still defaults to
 `Geometry::Approximate`, so lp-dom's own tests name the geometry they exercise.
@@ -70,21 +70,44 @@ containing block (em/rem/vw/vh resolved by the style engine).
   8px unless set.
 - Block formatting: block-level in-flow children stack vertically at the
   content-box x; auto width fills the containing block minus margins; auto
-  margins centre a box with a definite width; adjacent sibling vertical
-  margins collapse (max). Auto height = content height, clamped by min/max;
+  margins centre a box with a definite width. Vertical margins collapse as in
+  CSS 2.1 8.3.1: between siblings, between a box and its first/last in-flow
+  child when no border, padding, line content or clearance separates them,
+  and through empty blocks (largest positive plus most negative). Roots of a
+  block formatting context (floats, overflow other than visible, flex, grid,
+  table, flow-root, inline-block, out of flow) do not collapse with their
+  children. Auto height = content height, clamped by min/max;
   `max-height` with overflow other than visible makes a scroll container
   whose scroll height is its content height.
+- Floats (CSS 2.1 9.5): floated boxes are blockified, shrink-to-fit when
+  their width is auto, and placed in their block formatting context at the
+  current line's top when they fit beside the line's content (else below
+  the line), not above earlier floats, as high and then as far left/right as
+  they fit. Line boxes shorten beside floats (measured at the strut height)
+  and move below a float when a word or atomic box does not fit. `clear` on
+  a block and on a block-level `::after` (clearfix) puts its border edge
+  below the cleared floats. Formatting context roots sit beside floats
+  (lower when their declared width does not fit) and their auto height
+  contains their floats; the root element is one. Floats count as inline
+  boxes for intrinsic widths.
 - Inline formatting: runs of inline-level children and text form line boxes
   at the content width; text uses the existing fixed-advance measure;
   `inline-block` is atomic (shrink-to-fit). Line height = `line-height` or
   `font-size * 1.2`. An inline element's rect is the union of its fragments.
+  Line boxes are as tall as their items need: a line-height below the
+  content area gives negative half-leading, and a line holding only empty
+  inline boxes without inline-axis margin, border or padding makes no line
+  box (CSS 2.1 9.4.2). Headings and `small`/`big`/`sub`/`sup` take their UA
+  font sizes.
 - Positioned: `relative` offsets the box and its subtree after layout;
   `absolute` uses the nearest positioned ancestor's padding box (else the
   initial containing block), auto width shrink-to-fit, auto insets keep the
   static position; `fixed` uses the viewport and does not move with window
-  scroll. Out-of-flow boxes do not advance siblings.
+  scroll. Out-of-flow boxes do not advance siblings. `sticky` boxes are laid
+  out in flow; `Layout::sticky_shift` offsets them against their scroll
+  container's scroll position.
 - Stage 2 (flex): row/column, wrap, gaps, grow/shrink/basis (one pass), justify-content, align-items/align-self with stretch; text directly in a flex container is an anonymous item.
-- Stage 3 (tables): rows in display order (header, body, footer groups), colspan, fixed and auto column widths with border-spacing / border-collapse and extra-width distribution, tables without a width shrinking to their columns, row heights from the tallest cell, cells stretched to the row with content vertically centred. No rowspan, captions or column elements yet.
+- Stage 3 (tables): rows in display order (header, body, footer groups), colspan, fixed and auto column widths with border-spacing / border-collapse and extra-width distribution, tables without a width shrinking to their columns, row heights from the tallest cell, cells stretched to the row with content vertically centred. `rowspan` takes slots in the following rows of its group (0 = the rest of the group; it stops at the group's end); a spanning cell taller than its rows grows them in proportion to their heights (all into the last when they are empty). No captions or column elements yet.
 - Form controls (`input` except hidden/image, `textarea`, `select`) are atomic
   replaced boxes with Chromium's intrinsic size when width/height are auto:
   a text input is `size` (20) x 0.525em + 0.4375em wide and one line tall;
@@ -118,8 +141,12 @@ containing block (em/rem/vw/vh resolved by the style engine).
   gaps, track sizing (fixed, intrinsic from item contributions, maximize,
   fr expansion with inflexible tracks, auto-track stretch), auto-height grids
   clamped by min/max height (fr rows then fill), justify/align-items and
-  -self, justify-content distribution. Not yet: grid-template-areas, named
-  lines, dense packing, subgrid, baseline alignment.
+  -self, justify-content distribution. `grid-template-areas` extends the
+  explicit grid and names each area's edges `<area>-start` / `<area>-end`;
+  `[name]` lines in track lists (also inside `repeat(n)`); placement by
+  `grid-area`, by name, by the nth name and from the end; a name no line has
+  is the first implicit line. Not yet: dense packing, subgrid, baseline
+  alignment, names inside auto repeats, `span <name>`.
 - `text-align` (FlowStyle::text_align, inherited, LTR): each line box of a
   block container is offset by its free space (center: half, end/right:
   all); trailing collapsible spaces do not count and an overflowing line is
@@ -132,8 +159,37 @@ containing block (em/rem/vw/vh resolved by the style engine).
 - Diagnostics: `tests/flow_snapshot.rs` (ignored) prints every body
   element's flow box for a static page snapshot, to diff against Chromium's
   getBoundingClientRect.
-- Not yet (laid out as block containers): floats, sticky, margin collapsing through parents, writing modes,
-  transforms other than inline translateX.
+- Not yet: writing modes and right-to-left, transforms other than inline
+  translateX, `float` line wrapping measured at the line's own height (the
+  strut is used), float placement inside flex/grid items' anonymous text.
+
+## Relayout
+
+A page asks for geometry after almost every script step, so the flow
+result is computed incrementally (`MeasureCache` in `flow.rs`, subtree
+reuse in `flow_reuse.rs`, invalidation in `Layout::flow`):
+
+- Invalidation reads the DOM change journal and the style engine's
+  restyled set. An attribute the layout does not read (class changes that
+  restyle nothing layout-relevant, data-*, aria-*), a focus/hover change
+  that changes no used style, or a restyle whose used `FlowStyle` and
+  generated content are unchanged dirties nothing, and the previous result
+  is returned as is.
+- Otherwise a new pass runs, and each block container whose subtree is
+  clean and whose constraints (width, definite height, containing-block
+  height, fixed, relative shift, margin collapsing) are unchanged replays
+  its previous boxes, texts and text runs translated to its new position
+  instead of being laid out again. Subtrees that share a formatting context
+  with floats are always laid out afresh.
+- `LIGHTNINGPANDA_FLOW_VERIFY=1` compares every incremental result with a
+  fresh layout and panics on the first difference (for test runs).
+- `tests/flow_bench.rs` (ignored) times the first pass and the relayout
+  after typical single-element changes on an app-shaped page (sticky header,
+  sidebar, a table of N rows). At 1,000 rows (20k boxes) a class toggle,
+  hover or focus change takes about 1 ms or less, a text or value edit or a
+  row insert about 40-60 ms, where every change cost a full pass (about
+  340 ms) before; the first pass (about 500 ms) is dominated by the style
+  cascade.
 
 ## Consumers switched in Stage 1 (Flow mode only)
 
