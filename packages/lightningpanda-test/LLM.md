@@ -148,7 +148,7 @@ does.
 | `{ mouse: { action: 'wheel', deltaX, deltaY, x?, y? } }` | wheel at the current pointer position (or `x`/`y`) |
 | `{ viewport: { width, height } }` | same as `viewport(w, h)`: resizes mid-run, fires `resize` and `matchMedia` `change`, settles like an action |
 | `{ media: { colorScheme?, reducedMotion?, media? } }` | same as `media({ … })`: replaces the whole emulation (an omitted field resets: `light`, `no-preference`, `screen`); `media: 'print'` makes `print` queries match; `matchMedia(…)` `change` listeners fire |
-| `{ page: { target: 'tab' \| targetId \| 'main' } }` | the following steps drive another page of the context: the `as` name of an earlier `popup('tab')`, a target id, or `main` (the page the run started on); add `waitForUrl` / `loaded()` after switching to a fresh popup. No builder yet: pass `{ toStep: () => ({ page: { target: 'tab' } }) }` |
+| `{ page: { target: 'tab' \| targetId \| 'main' } }` | the following steps drive another page of the context: the `as` name of an earlier `popup('tab')`, a target id, or `main` (the page the run started on); add `waitForUrl` / `loaded()` after switching to a fresh popup. Builder: `switchTo('tab')`, `switchTo('main')` |
 
 Every action and check takes `{ timeout }` (ms); `page.run(steps, { timeout })`
 sets the default for the run. Pass `{ settle: false }` to an action whose
