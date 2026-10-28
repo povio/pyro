@@ -229,6 +229,46 @@ struct RequestMatch {
     status: Option<StatusSet>,
     /// Exactly this many finished matches (default: at least one).
     count: Option<usize>,
+    /// Substring of (or regex on) the request body (as sent, UTF-8).
+    body: Option<Pattern>,
+    /// The request body, parsed as JSON, equals this value.
+    body_json: Option<Value>,
+    /// The request body is a JSON object with exactly these top-level keys.
+    body_keys: Option<Vec<String>>,
+    /// Request headers that must be present (names case-insensitive), each
+    /// value a substring of (or regex on) the sent value.
+    headers: Option<std::collections::BTreeMap<String, Pattern>>,
+    /// Which requests count: `finished` (the default: finished or failed,
+    /// as `status` needs) or `started` (sent, still in flight or done).
+    state: Option<RequestState>,
+}
+
+#[derive(Deserialize, Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum RequestState {
+    Started,
+    Finished,
+}
+
+impl RequestMatch {
+    /// Whether a logged request's method, URL, body and headers fit.
+    fn accepts(&self, r: &super::network::LoggedRequest) -> bool {
+        self.method.as_ref().is_none_or(|x| r.method.eq_ignore_ascii_case(x))
+            && self.path.as_ref().is_none_or(|p| r.path() == p)
+            && self.url.as_ref().is_none_or(|u| u.matches(&r.url, false))
+            && self.body.as_ref().is_none_or(|p| r.post_data_text().is_some_and(|t| p.matches_raw(t)))
+            && self.body_json.as_ref().is_none_or(|j| r.post_data_json().as_ref() == Some(j))
+            && self.body_keys.as_ref().is_none_or(|keys| {
+                r.post_data_json()
+                    .as_ref()
+                    .and_then(Value::as_object)
+                    .is_some_and(|o| o.len() == keys.len() && keys.iter().all(|k| o.contains_key(k)))
+            })
+            && self
+                .headers
+                .as_ref()
+                .is_none_or(|h| h.iter().all(|(name, p)| r.request_header_values(name).any(|v| p.matches_raw(v))))
+    }
 }
 
 /// `status: 200` or `status: [200, 304]`.
@@ -279,6 +319,27 @@ struct MockSpec {
     delay: Duration,
     abort: Option<String>,
     times: Option<u32>,
+    /// Let the request reach the real backend (then `patch`, `hold`, `delay`
+    /// apply to its response).
+    passthrough: bool,
+    /// Park the request (or its response) under this name until `release`.
+    hold: Option<String>,
+    /// `status`, `body` or `json` were given.
+    responds: bool,
+    patch: Option<PatchSpec>,
+}
+
+/// `mock.patch`: rewrites of a passed-through response. `json` is a JSON
+/// merge patch (RFC 7396) when the real body is a JSON object, else the
+/// new body; `body` replaces the body; `headers` are set.
+#[derive(Deserialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PatchSpec {
+    status: Option<u16>,
+    #[serde(default)]
+    headers: serde_json::Map<String, Value>,
+    json: Option<Value>,
+    body: Option<String>,
 }
 
 /// A file for `upload`.
@@ -304,6 +365,11 @@ enum Step {
     Mock(MockSpec),
     /// Removes mocks by URL pattern (all when `None`).
     Unmock(Option<Pattern>),
+    /// Releases the requests (or responses) a mock holds under this name;
+    /// waits for one to be held.
+    Release {
+        hold: String,
+    },
     /// Waits for the next download the page starts (since the run began).
     Download {
         /// Directory to save it in (as the suggested name).
@@ -384,6 +450,7 @@ impl Step {
             Step::Mock(m) => format!("mock {}", m.url.text),
             Step::Unmock(Some(p)) => format!("unmock {}", p.text),
             Step::Unmock(None) => "unmock".into(),
+            Step::Release { hold } => format!("release {hold}"),
             Step::Download { .. } => "download".into(),
             Step::Popup { .. } => "popup".into(),
             Step::Route { url, .. } => format!("route {url}"),
@@ -799,7 +866,8 @@ fn text_matches(have: &str, want: &str, exact: bool) -> bool {
 #[derive(Clone, Debug)]
 pub(super) struct Pattern {
     pub(super) text: String,
-    regex: Option<regex_lite::Regex>,
+    /// ECMAScript semantics (look-around, backreferences), like a JS `RegExp`.
+    regex: Option<regress::Regex>,
 }
 
 impl<'de> Deserialize<'de> for Pattern {
@@ -817,16 +885,11 @@ impl<'de> Deserialize<'de> for Pattern {
         Ok(match Raw::deserialize(d)? {
             Raw::Text(text) => Pattern { text, regex: None },
             Raw::Regex { regex, flags } => {
-                let mut b = regex_lite::RegexBuilder::new(&regex);
-                for f in flags.chars() {
-                    match f {
-                        'i' => b.case_insensitive(true),
-                        'm' => b.multi_line(true),
-                        's' => b.dot_matches_new_line(true),
-                        _ => return Err(serde::de::Error::custom(format!("unsupported regex flag {f:?}"))),
-                    };
+                if let Some(f) = flags.chars().find(|f| !matches!(f, 'i' | 'm' | 's')) {
+                    return Err(serde::de::Error::custom(format!("unsupported regex flag {f:?}")));
                 }
-                let re = b.build().map_err(serde::de::Error::custom)?;
+                let re = regress::Regex::with_flags(&regex, flags.as_str())
+                    .map_err(|e| serde::de::Error::custom(format!("invalid regex {regex:?}: {e}")))?;
                 Pattern { text: regex, regex: Some(re) }
             }
         })
@@ -845,8 +908,17 @@ impl Serialize for Pattern {
 impl Pattern {
     pub(super) fn matches(&self, have: &str, exact: bool) -> bool {
         match &self.regex {
-            Some(re) => re.is_match(&normalize(have)),
+            Some(re) => re.find(&normalize(have)).is_some(),
             None => text_matches(have, &self.text, exact),
+        }
+    }
+
+    /// Against `have` as is: a case-sensitive substring, or the regex on the
+    /// raw text (request bodies and header values).
+    pub(super) fn matches_raw(&self, have: &str) -> bool {
+        match &self.regex {
+            Some(re) => re.find(have).is_some(),
+            None => have.contains(&self.text),
         }
     }
 }
@@ -2540,6 +2612,7 @@ enum StepParams {
     Url(UrlParams),
     Mock(MockParams),
     Unmock(UnmockParams),
+    Release(ReleaseParams),
     Download(DownloadParams),
     Popup(PopupParams),
     Route(RouteParams),
@@ -2564,6 +2637,15 @@ struct UnmockParams {
     url: Option<Pattern>,
 }
 
+/// `{"release": {"hold": "name"}}`: lets the requests or responses a mock
+/// holds under `hold` go on; waits until one is held.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ReleaseParams {
+    hold: String,
+    timeout: Option<u64>,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct DownloadParams {
@@ -2586,6 +2668,11 @@ struct PopupParams {
 /// `json` (serialized), `status` (200), `contentType`, `headers`, `method`,
 /// `delay` (ms before the response), `abort` (a `Network.ErrorReason` such
 /// as `Failed` or `ConnectionRefused`; no response), `times` (uses).
+/// `passthrough: true` sends the request to the real backend and applies
+/// `patch` (status, headers, json merge patch or body; implies
+/// passthrough), `delay` and `hold` to its response; `hold: "name"` parks
+/// the request (or, with passthrough, its response) until
+/// `{"release": {"hold": "name"}}` or `delay` elapses.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct MockParams {
@@ -2600,6 +2687,9 @@ struct MockParams {
     delay: Option<u64>,
     abort: Option<String>,
     times: Option<u32>,
+    passthrough: Option<bool>,
+    hold: Option<String>,
+    patch: Option<PatchSpec>,
 }
 
 impl MockParams {
@@ -2612,6 +2702,26 @@ impl MockParams {
         }
         if self.times == Some(0) {
             return Err(CdpError::invalid_params("times must be at least 1"));
+        }
+        let responds = self.body.is_some() || self.json.is_some() || self.status.is_some();
+        // `patch` rewrites the real response, so it implies `passthrough`.
+        if self.patch.is_some() && self.passthrough == Some(false) {
+            return Err(CdpError::invalid_params(
+                "patch rewrites the real response: it cannot take passthrough: false",
+            ));
+        }
+        let passthrough = self.passthrough.unwrap_or(false) || self.patch.is_some();
+        if passthrough && (responds || self.abort.is_some() || self.content_type.is_some() || !self.headers.is_empty())
+        {
+            return Err(CdpError::invalid_params("a passthrough mock takes patch, delay and hold, not a response"));
+        }
+        if let Some(patch) = &self.patch {
+            if patch.body.is_some() && patch.json.is_some() {
+                return Err(CdpError::invalid_params("patch takes body or json, not both"));
+            }
+        }
+        if self.hold.as_deref().is_some_and(str::is_empty) {
+            return Err(CdpError::invalid_params("hold must be a name"));
         }
         let (body, default_type) = match (self.body, &self.json) {
             (Some(b), _) => (b, "text/plain; charset=utf-8"),
@@ -2637,6 +2747,10 @@ impl MockParams {
             delay: Duration::from_millis(self.delay.unwrap_or(0).min(MAX_TIMEOUT_MS)),
             abort: self.abort,
             times: self.times,
+            passthrough,
+            hold: self.hold,
+            responds,
+            patch: self.patch,
         };
         Ok((Step::Mock(spec), None))
     }
@@ -2810,6 +2924,7 @@ impl StepParams {
             StepParams::Url(p) => Ok((Step::Url(p.url), p.timeout)),
             StepParams::Mock(p) => p.step(),
             StepParams::Unmock(p) => Ok((Step::Unmock(p.url), None)),
+            StepParams::Release(p) => Ok((Step::Release { hold: p.hold }, p.timeout)),
             StepParams::Download(p) => Ok((Step::Download { save_to: p.save_to, key: p.key }, p.timeout)),
             StepParams::Popup(p) => Ok((Step::Popup { key: p.key }, p.timeout)),
             StepParams::Route(p) => Ok((Step::Route { url: p.url, settle: p.settle.unwrap_or(true) }, p.timeout)),
@@ -2923,6 +3038,7 @@ impl EngineHost {
             | Step::Url(_)
             | Step::Mock(_)
             | Step::Unmock(_)
+            | Step::Release { .. }
             | Step::Download { .. }
             | Step::Popup { .. }
             | Step::Route { .. }
@@ -3230,6 +3346,9 @@ impl EngineHost {
                             let removed = self.remove_mocks(w.job.page, pattern.as_ref()).map_err(|e| w.job.fail(e))?;
                             (Attempt::Done(json!({ "removed": removed })), None)
                         }
+                        Step::Release { hold } => {
+                            (self.release_hold(w.job.page, hold).map_err(|e| w.job.fail(e))?, None)
+                        }
                         Step::Eval { expression, .. } => {
                             match self.eval_step(pid, expression).map_err(|e| w.job.fail(e))? {
                                 Evaluated::Value(value) => (Attempt::Done(value), None),
@@ -3341,7 +3460,8 @@ impl EngineHost {
             w.seen = page.dom.borrow().version();
             w.doc = Rc::downgrade(page);
         }
-        w.poll_at = matches!(step, Step::Url(_) | Step::Route { .. }).then(|| Instant::now() + URL_POLL);
+        w.poll_at = matches!(step, Step::Url(_) | Step::Route { .. } | Step::Release { .. })
+            .then(|| Instant::now() + URL_POLL);
         w.reason = reason;
         w.phase = Phase::Try;
         Ok(Drive::Park(Box::new(w)))
@@ -3413,6 +3533,29 @@ impl EngineHost {
         let context = self.pages.get(&page).ok_or_else(|| CdpError::server("page is gone"))?.context;
         let headers = super::mocks::headers_for(spec.content_type.as_deref(), spec.default_type, &spec.headers)
             .map_err(CdpError::invalid_params)?;
+        let patch = spec
+            .patch
+            .as_ref()
+            .map(|p| {
+                let extra = p
+                    .headers
+                    .iter()
+                    .map(|(k, v)| match v {
+                        Value::String(s) => Ok((k.clone(), s.clone())),
+                        other => Err(format!("patch header {k} must be a string, got {other}")),
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let mut headers = http::HeaderMap::new();
+                super::mocks::extend_headers(&mut headers, &extra)?;
+                Ok::<_, String>(super::mocks::ResponsePatch {
+                    status: p.status,
+                    headers,
+                    json: p.json.clone(),
+                    body: p.body.as_ref().map(|b| bytes::Bytes::from(b.clone())),
+                })
+            })
+            .transpose()
+            .map_err(CdpError::invalid_params)?;
         let rule = super::mocks::MockRule {
             id: 0,
             url: spec.url.clone(),
@@ -3423,11 +3566,26 @@ impl EngineHost {
             delay: spec.delay,
             abort: spec.abort.clone(),
             times: spec.times,
+            passthrough: spec.passthrough,
+            hold: spec.hold.clone(),
+            responds: spec.responds,
+            patch,
         };
         let mocks = self.contexts.get(&context).ok_or_else(|| CdpError::server("context is gone"))?.mocks.clone();
         let id = mocks.add(rule);
         self.update_fetch_interceptors();
         Ok(Attempt::Done(json!({ "mockId": id, "mocks": mocks.len() })))
+    }
+
+    /// Releases what the context's mocks hold under `name`; waits (polling)
+    /// until something is held.
+    fn release_hold(&mut self, page: PageKey, name: &str) -> CdpResult<Attempt> {
+        let context = self.pages.get(&page).ok_or_else(|| CdpError::server("page is gone"))?.context;
+        let mocks = &self.contexts.get(&context).ok_or_else(|| CdpError::server("context is gone"))?.mocks;
+        Ok(match mocks.release(name) {
+            0 => Attempt::Retry(format!("nothing is held under {name:?} yet")),
+            n => Attempt::Done(json!({ "released": n })),
+        })
     }
 
     fn remove_mocks(&mut self, page: PageKey, url: Option<&Pattern>) -> CdpResult<usize> {
@@ -3476,24 +3634,22 @@ impl EngineHost {
         let (Some(log), Some(from)) = (log, job.log_from) else {
             return Attempt::Retry("the page has no request log".into());
         };
-        let matching: Vec<_> = log
-            .since(from)
-            .iter()
-            .filter(|r| m.method.as_ref().is_none_or(|x| r.method.eq_ignore_ascii_case(x)))
-            .filter(|r| m.path.as_ref().is_none_or(|p| r.path() == p))
-            .filter(|r| m.url.as_ref().is_none_or(|u| u.matches(&r.url, false)))
-            .collect();
-        let finished: Vec<_> = matching.iter().filter(|r| r.done).collect();
+        let matching: Vec<_> = log.since(from).iter().filter(|r| m.accepts(r)).collect();
+        let started = m.state == Some(RequestState::Started);
+        let finished: Vec<_> = matching.iter().copied().filter(|r| r.done).collect();
         if let Some(n) = m.count {
-            return if matching.len() == n && finished.len() == n {
+            return if matching.len() == n && (started || finished.len() == n) {
                 Attempt::Done(json!({ "count": n }))
+            } else if started {
+                Attempt::Retry(format!("{} matching requests started, want {n}", matching.len()))
             } else {
                 Attempt::Retry(format!("{} matching requests ({} finished), want {n}", matching.len(), finished.len()))
             };
         }
-        match finished.iter().rev().find(|r| m.status.as_ref().is_none_or(|s| s.accepts(r.status))) {
+        let candidates = if started { &matching } else { &finished };
+        match candidates.iter().rev().find(|r| m.status.as_ref().is_none_or(|s| s.accepts(r.status))) {
             Some(r) => Attempt::Done(r.to_json()),
-            None => Attempt::Retry(match finished.last() {
+            None => Attempt::Retry(match candidates.last() {
                 Some(r) => format!("last match was {}", r.to_json()),
                 None if matching.is_empty() => "no matching request yet".into(),
                 None => "the matching request is still in flight".into(),

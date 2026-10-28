@@ -15,7 +15,7 @@ pub use subscription::{NetSubscription, NetWake, SubscriptionError, Subscription
 pub use cache::{SharedAssetCache, SHARED_ASSET_CACHE_ENV};
 pub use client::{
     AuthChallenge, AuthDecision, InterceptDecision, Interceptor, NetActivity, NetClient, NetConfig, NetEvent,
-    NetSettings, PausedRequest, RequestInfo, ResponseSink,
+    NetSettings, PausedRequest, PausedResponse, RequestInfo, ResponseDecision, ResponseSink,
 };
 pub use cookies::CookieJar;
 pub use static_files::{StaticFile, StaticFiles, StaticHit, StaticMemoryHit};

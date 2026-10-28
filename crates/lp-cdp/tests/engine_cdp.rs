@@ -4329,6 +4329,314 @@ fn driver_run_mocks_requests_and_covers_the_new_element_steps() {
     assert!(r["error"]["message"].as_str().unwrap_or_default().contains("body or json"), "{r}");
 }
 
+/// Serves `/` (a page whose `call(url, init)` fetches and shows the response
+/// text) and `/api` (any method: a JSON reply echoing the method, the
+/// request body and the `x-idempotency-key` header; `?slow` answers after
+/// 300 ms) until the test ends.
+fn driver_api_site() -> std::net::SocketAddr {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { return };
+            std::thread::spawn(move || {
+                let mut request = Vec::new();
+                let mut chunk = [0; 1024];
+                let head_end = loop {
+                    if let Some(i) = request.windows(4).position(|w| w == b"\r\n\r\n") {
+                        break i + 4;
+                    }
+                    match stream.read(&mut chunk) {
+                        Ok(0) | Err(_) => return,
+                        Ok(n) => request.extend_from_slice(&chunk[..n]),
+                    }
+                };
+                let head = String::from_utf8_lossy(&request[..head_end]).into_owned();
+                let mut lines = head.lines();
+                let line = lines.next().unwrap_or_default().to_owned();
+                let header = |name: &str| {
+                    lines.clone().find_map(|l| {
+                        let (n, v) = l.split_once(':')?;
+                        n.trim().eq_ignore_ascii_case(name).then(|| v.trim().to_owned())
+                    })
+                };
+                let length: usize = header("content-length").and_then(|v| v.parse().ok()).unwrap_or(0);
+                while request.len() < head_end + length {
+                    match stream.read(&mut chunk) {
+                        Ok(0) | Err(_) => return,
+                        Ok(n) => request.extend_from_slice(&chunk[..n]),
+                    }
+                }
+                let body = String::from_utf8_lossy(&request[head_end..head_end + length]).into_owned();
+                let mut parts = line.split(' ');
+                let method = parts.next().unwrap_or("GET").to_owned();
+                let path = parts.next().unwrap_or("/").to_owned();
+                let key = header("x-idempotency-key").unwrap_or_default();
+                let (ty, reply) = if path.starts_with("/api") {
+                    if path.contains("slow") {
+                        std::thread::sleep(Duration::from_millis(300));
+                    }
+                    (
+                        "application/json",
+                        json!({"total": 1, "items": ["a"], "method": method, "body": body}).to_string(),
+                    )
+                } else {
+                    ("text/html", DRIVER_API_PAGE.to_owned())
+                };
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: {ty}\r\nContent-Length: {}\r\nX-Echo-Key: {key}\r\nConnection: close\r\n\r\n",
+                    reply.len()
+                );
+                let _ = stream.write_all(head.as_bytes());
+                let _ = stream.write_all(reply.as_bytes());
+            });
+        }
+    });
+    address
+}
+
+const DRIVER_API_PAGE: &str = r#"<!doctype html><body><p id="out"></p>
+<script>
+  window.call = (url, init) => fetch(url, init).then((r) => r.text()).then((t) => {
+    document.getElementById('out').textContent = t;
+    return t;
+  }).catch((e) => { document.getElementById('out').textContent = 'failed: ' + e; });
+</script>"#;
+
+const PATCH_CALL: &str = "call('/api', {method: 'PATCH', headers: {'x-idempotency-key': 'k1', \
+                          'content-type': 'application/json'}, body: JSON.stringify({remarks: 'x'})}); 1";
+
+/// `LP.run`'s request log carries each request's headers and body, and
+/// `request` steps match on them (`body` pattern, `bodyJson`, `bodyKeys`,
+/// `headers`).
+#[test]
+fn driver_run_requests_carry_headers_and_bodies() {
+    let address = driver_api_site();
+    let mut h = Harness::new();
+    let r = h.page(
+        "LP.run",
+        json!({"steps": [
+            {"goto": {"url": format!("http://{address}/")}},
+            {"eval": {"expression": PATCH_CALL}},
+            {"request": {"method": "PATCH", "path": "/api", "bodyKeys": ["remarks"]}},
+            {"request": {"method": "PATCH", "path": "/api", "body": {"regex": "\"remarks\""}}},
+            {"request": {"method": "PATCH", "path": "/api", "body": "remarks"}},
+            {"request": {"method": "PATCH", "path": "/api", "bodyJson": {"remarks": "x"}}},
+            {"request": {"method": "PATCH", "path": "/api", "headers": {"X-Idempotency-Key": "k1"}}},
+            {"request": {"method": "PATCH", "path": "/api", "headers": {"x-idempotency-key": {"regex": "^k\\d$"}}}},
+            {"request": {"path": "/api", "bodyKeys": ["other"], "count": 0}},
+            {"request": {"path": "/api", "bodyJson": {"remarks": "y"}, "count": 0}},
+            {"request": {"path": "/api", "headers": {"x-idempotency-key": "k2"}, "count": 0}},
+            {"request": {"path": "/api", "body": "nowhere", "count": 0}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    let results = r["result"]["results"].as_array().unwrap_or_else(|| panic!("{r}"));
+    let req = &results[2];
+    assert_eq!(req["status"], 200, "{r}");
+    assert_eq!(req["postData"], "{\"remarks\":\"x\"}", "{r}");
+    assert_eq!(req["requestHeaders"]["x-idempotency-key"], "k1", "{r}");
+    assert_eq!(req["requestHeaders"]["content-type"], "application/json", "{r}");
+    assert_eq!(req["responseHeaders"]["x-echo-key"], "k1", "{r}");
+    assert_eq!(req["responseHeaders"]["content-type"], "application/json", "{r}");
+    assert!(req.get("postDataBase64").is_none() && req.get("postDataTruncated").is_none(), "{r}");
+    let requests = r["result"]["requests"].as_array().unwrap_or_else(|| panic!("{r}"));
+    let api = requests.iter().find(|q| q["method"] == "PATCH").unwrap_or_else(|| panic!("{r}"));
+    assert_eq!(api["postData"], "{\"remarks\":\"x\"}", "{r}");
+    assert_eq!(api["requestHeaders"]["x-idempotency-key"], "k1", "{r}");
+    let document = requests.iter().find(|q| q["method"] == "GET").unwrap_or_else(|| panic!("{r}"));
+    assert!(document.get("postData").is_none(), "{r}");
+    assert!(document["requestHeaders"]["user-agent"].is_string(), "{r}");
+
+    let r = h.page(
+        "LP.run",
+        json!({"timeout": 100, "steps": [{"request": {"method": "PATCH", "path": "/api", "bodyKeys": ["other"]}}]}),
+    );
+    assert!(r["error"]["message"].as_str().unwrap_or_default().contains("no matching request yet"), "{r}");
+}
+
+/// `request` with `state: "started"` counts requests as soon as they are
+/// sent: a request a delayed mock holds is counted once (and only once,
+/// before and after it finishes), while the default waits for it to finish.
+#[test]
+fn driver_run_counts_started_requests() {
+    let address = driver_api_site();
+    let mut h = Harness::new();
+    let start = Instant::now();
+    let r = h.page(
+        "LP.run",
+        json!({"steps": [
+            {"goto": {"url": format!("http://{address}/")}},
+            {"mock": {"url": "/api", "json": {"total": 5}, "delay": 400}},
+            {"eval": {"expression": "call('/api?x'); 1"}},
+            {"request": {"path": "/api", "count": 1, "state": "started"}},
+            {"request": {"path": "/api", "state": "started"}},
+            {"request": {"path": "/api", "count": 1}},
+            {"request": {"path": "/api", "count": 1, "state": "started"}},
+            {"request": {"path": "/api", "count": 1, "state": "finished"}},
+            {"check": {"locator": {"css": "#out"}, "assert": "containsText", "expected": "5"}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    assert!(start.elapsed() >= Duration::from_millis(400), "{r}");
+    let results = r["result"]["results"].as_array().unwrap_or_else(|| panic!("{r}"));
+    assert_eq!(results[3]["count"], 1, "{r}");
+    assert!(results[4]["status"].is_null() && results[4]["url"].as_str().unwrap().ends_with("/api?x"), "{r}");
+    assert_eq!(results[5]["count"], 1, "{r}");
+    let requests = r["result"]["requests"].as_array().unwrap_or_else(|| panic!("{r}"));
+    assert_eq!(requests.iter().filter(|q| q["url"].as_str().is_some_and(|u| u.contains("/api"))).count(), 1, "{r}");
+
+    // A started count stays unmet (not over-met) when nothing was sent.
+    let r = h.page(
+        "LP.run",
+        json!({"timeout": 100, "steps": [{"request": {"path": "/api", "count": 1, "state": "started"}}]}),
+    );
+    assert!(r["error"]["message"].as_str().unwrap_or_default().contains("0 matching requests started"), "{r}");
+}
+
+const OUT_TEXT: &str = "document.getElementById('out').textContent";
+
+/// A `passthrough` mock lets the request reach the real backend and
+/// rewrites its response with `patch` (status, headers, a JSON merge patch;
+/// `patch` alone implies passthrough).
+#[test]
+fn driver_run_passthrough_mock_patches_the_real_response() {
+    let address = driver_api_site();
+    let mut h = Harness::new();
+    let r = h.page(
+        "LP.run",
+        json!({"steps": [
+            {"goto": {"url": format!("http://{address}/")}},
+            {"mock": {"url": "/api", "passthrough": true, "times": 1,
+                      "patch": {"status": 201, "headers": {"x-patched": "yes"}, "json": {"total": 999, "items": null}}}},
+            {"eval": {"expression": "call('/api?a'); 1"}},
+            {"request": {"path": "/api"}},
+            {"check": {"locator": {"css": "#out"}, "assert": "containsText", "expected": "999"}},
+            {"eval": {"expression": OUT_TEXT}},
+            // Used up: the next request gets the real response.
+            {"eval": {"expression": "call('/api?b'); 1"}},
+            {"check": {"locator": {"css": "#out"}, "assert": "containsText", "expected": "\"total\":1"}},
+            {"eval": {"expression": OUT_TEXT}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    let results = r["result"]["results"].as_array().unwrap_or_else(|| panic!("{r}"));
+    assert_eq!(results[3]["status"], 201, "{r}");
+    assert_eq!(results[3]["responseHeaders"]["x-patched"], "yes", "{r}");
+    let patched: Value = serde_json::from_str(results[5].as_str().unwrap_or_else(|| panic!("{r}"))).unwrap();
+    // Merged into the real body: `total` replaced, `items` removed, the rest kept.
+    assert_eq!(patched, json!({"total": 999, "method": "GET", "body": ""}), "{r}");
+    let real: Value = serde_json::from_str(results[8].as_str().unwrap_or_else(|| panic!("{r}"))).unwrap();
+    assert_eq!(real["items"], json!(["a"]), "{r}");
+
+    // A plain passthrough answers like the backend; `patch.body` replaces it.
+    let r = h.page(
+        "LP.run",
+        json!({"steps": [
+            // `patch` implies `passthrough`.
+            {"mock": {"url": "/api", "patch": {"body": "replaced"}}},
+            {"mock": {"url": "/api?plain", "passthrough": true}},
+            {"eval": {"expression": "call('/api?plain'); 1"}},
+            {"check": {"locator": {"css": "#out"}, "assert": "containsText", "expected": "\"total\":1"}},
+            {"eval": {"expression": "call('/api?other'); 1"}},
+            {"check": {"locator": {"css": "#out"}, "assert": "containsText", "expected": "replaced"}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    let r = h.page("LP.run", json!({"steps": [{"mock": {"url": "/api", "json": {}, "patch": {"status": 500}}}]}));
+    assert!(r["error"]["message"].as_str().unwrap_or_default().contains("not a response"), "{r}");
+}
+
+/// `hold` keeps a request (or, with `passthrough`, its real response) until
+/// a `release` step names the hold.
+#[test]
+fn driver_run_held_mock_finishes_only_after_release() {
+    let address = driver_api_site();
+    let mut h = Harness::new();
+    let still_held = |h: &mut Harness, expected: &str| {
+        let r = h.page(
+            "LP.run",
+            json!({"timeout": 300, "steps": [
+                {"check": {"locator": {"css": "#out"}, "assert": "containsText", "expected": expected}},
+            ]}),
+        );
+        assert!(r.get("error").is_some(), "should still be held: {r}");
+    };
+    let r = h.page(
+        "LP.run",
+        json!({"steps": [
+            {"goto": {"url": format!("http://{address}/")}},
+            {"mock": {"url": "/api", "json": {"total": 7}, "hold": "save"}},
+            {"eval": {"expression": "call('/api?held'); 1"}},
+            {"request": {"path": "/api", "count": 1, "state": "started"}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    still_held(&mut h, "7");
+    let r = h.page(
+        "LP.run",
+        json!({"steps": [
+            {"release": {"hold": "save"}},
+            {"check": {"locator": {"css": "#out"}, "assert": "containsText", "expected": "7"}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(r["result"]["results"][0]["released"], 1, "{r}");
+
+    // A held real response: the page gets the backend's answer on release.
+    let r = h.page(
+        "LP.run",
+        json!({"steps": [
+            {"unmock": {}},
+            {"mock": {"url": "/api", "passthrough": true, "hold": "resp"}},
+            {"eval": {"expression": "call('/api?real'); 1"}},
+            {"request": {"path": "/api", "count": 1, "state": "started"}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    still_held(&mut h, "\"total\":1");
+    let r = h.page(
+        "LP.run",
+        json!({"steps": [
+            {"release": {"hold": "resp"}},
+            {"check": {"locator": {"css": "#out"}, "assert": "containsText", "expected": "\"total\":1"}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+
+    // Nothing held: release waits, then times out.
+    let r = h.page("LP.run", json!({"timeout": 100, "steps": [{"release": {"hold": "none"}}]}));
+    assert!(r["error"]["message"].as_str().unwrap_or_default().contains("nothing is held"), "{r}");
+}
+
+/// URL and request patterns are ECMAScript regexes: look-ahead, negative
+/// look-ahead and backreferences work as in a JS `RegExp`.
+#[test]
+fn driver_run_patterns_are_javascript_regexes() {
+    let address = driver_api_site();
+    let mut h = Harness::new();
+    let r = h.page(
+        "LP.run",
+        json!({"steps": [
+            {"goto": {"url": format!("http://{address}/")}},
+            {"mock": {"url": {"regex": "/api(?!\\?real)"}, "json": {"total": 42}}},
+            {"eval": {"expression": "call('/api?mocked'); 1"}},
+            {"check": {"locator": {"css": "#out"}, "assert": "containsText", "expected": "42"}},
+            {"eval": {"expression": "call('/api?real'); 1"}},
+            {"check": {"locator": {"css": "#out"}, "assert": "containsText", "expected": "\"total\":1"}},
+            {"eval": {"expression": "call('/api', {method: 'POST', body: 'ab-ab'}); 1"}},
+            {"request": {"url": {"regex": "/api(?=\\?real$)"}, "count": 1}},
+            {"request": {"url": {"regex": "/API(?!\\?)", "flags": "i"}, "count": 1}},
+            {"request": {"body": {"regex": "^(\\w+)-\\1$"}, "count": 1}},
+            {"url": {"url": {"regex": "^http://(?<host>[^/]+)/$"}}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    let r = h.page("LP.run", json!({"steps": [{"request": {"url": {"regex": "a(?<=", "flags": ""}}}]}));
+    assert!(r["error"]["message"].as_str().unwrap_or_default().contains("invalid regex"), "{r}");
+}
+
 const DRIVER_BATCH2_PAGE: &str = r#"<!doctype html><body>
 <iframe id="fr" srcdoc="<button id='inner'>Inner</button><p id='inner-out'></p><script>document.getElementById('inner').addEventListener('click', () => { document.getElementById('inner-out').textContent = 'inner clicked'; });</script>"></iframe>
 <input id="file" type="file" multiple><p id="file-out"></p>
