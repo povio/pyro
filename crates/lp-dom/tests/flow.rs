@@ -277,6 +277,41 @@ fn fixed_and_absolute_boxes_escape_overflow_clips_outside_their_containing_block
 }
 
 #[test]
+fn svg_shapes_have_client_rects_from_their_bbox_like_chromium() {
+    // Gap 34: SVG shapes had no CSS box, so getBoundingClientRect() was
+    // empty while getBBox() was right, and visibility checks failed.
+    // Chromium (800x600): a shape's client rect is its bbox (own and
+    // ancestor transforms applied) mapped by the <svg>'s viewBox into the
+    // svg's content box.
+    let html = "<!doctype html><body style=\"margin:0\"><div style=\"height:50px\"></div>\
+        <div style=\"padding-left:30px\"><svg id=s1 width=200 height=100 style=\"display:block\">\
+        <rect id=r x=10 y=20 width=50 height=30 />\
+        <g transform=\"translate(100,0)\"><circle id=c cx=20 cy=50 r=10 transform=\"translate(5,5)\"/></g>\
+        <line id=l x1=0 y1=0 x2=10 y2=20 /></svg></div>\
+        <svg id=s2 width=200 height=100 viewBox=\"0 0 100 100\" style=\"display:block\"><rect id=v x=10 y=20 width=50 height=30 /></svg>\
+        <svg id=s3 width=300 height=100 viewBox=\"0 0 100 100\" preserveAspectRatio=\"none\" style=\"display:block\"><rect id=n x=10 y=20 width=50 height=30 /></svg>\
+        <svg id=s4 width=200 height=100 style=\"display:block;padding:10px;box-sizing:border-box\"><rect id=p x=0 y=0 width=50 height=30 /></svg>\
+        </body>";
+    let p = page(html, Geometry::Flow);
+    let r = |id: &str| {
+        let r = p.layout.bounding_client_rect(&p.dom, p.id(id));
+        [r.x, r.y, r.width, r.height].map(|v| (v * 1e4).round() / 1e4)
+    };
+    assert_eq!(r("s1"), [30.0, 50.0, 200.0, 100.0]);
+    assert_eq!(r("r"), [40.0, 70.0, 50.0, 30.0], "rect: svg origin + bbox");
+    assert_eq!(r("c"), [145.0, 95.0, 20.0, 20.0], "circle: own and <g> transforms");
+    assert_eq!(r("l"), [30.0, 50.0, 10.0, 20.0], "line");
+    // viewBox 100x100 in a 200x100 box: xMidYMid meet scales by 1 and
+    // centres horizontally (+50).
+    assert_eq!(r("v"), [60.0, 170.0, 50.0, 30.0], "viewBox meet");
+    // preserveAspectRatio none: 3x horizontally, 1x vertically.
+    assert_eq!(r("n"), [30.0, 270.0, 150.0, 30.0], "viewBox none");
+    // Shapes sit in the svg's content box, inside its padding.
+    assert_eq!(r("p"), [10.0, 360.0, 50.0, 30.0], "padding");
+    assert_eq!(p.layout.client_rects(&p.dom, p.id("r")).len(), 1, "getClientRects has the rect");
+}
+
+#[test]
 fn default_geometry_is_unchanged_by_the_flow_switch() {
     // The approximate layout stays the default, and switching to flow and back
     // reports exactly the approximate geometry again.

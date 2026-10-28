@@ -1231,7 +1231,9 @@ impl Layout {
         let (dx, dy) = self.ancestor_scroll_offset(dom, el);
         if self.flow_mode() {
             let flow = self.flow(dom);
-            let Some(b) = flow.get(el).copied() else { return Rect::default() };
+            let Some(b) = flow.get(el).copied() else {
+                return self.svg_client_rect(dom, &flow, el).unwrap_or_default();
+            };
             let (kx, ky) = self.sticky_shift(dom, &flow, el);
             let (sx, sy) =
                 if b.fixed { (0.0, 0.0) } else { (self.window_scroll.0 as f64, self.window_scroll.1 as f64) };
@@ -1248,6 +1250,40 @@ impl Layout {
             width: self.box_axis(dom, el, Axis::Width),
             height: self.box_axis(dom, el, Axis::Height),
         }
+    }
+
+    /// The client rect of an SVG element without a CSS box (a shape, text
+    /// or container inside an `<svg>`): its bbox mapped into the content
+    /// box of the nearest `<svg>` ancestor laid out as a box (Gap 34:
+    /// Chromium reports the painted geometry; visibility checks rely on
+    /// it). None for other elements or without geometry.
+    fn svg_client_rect(&self, dom: &Dom, flow: &FlowResult, el: NodeId) -> Option<Rect> {
+        use crate::flow::{FlowStyleSource, BOTTOM, LEFT, RIGHT, TOP};
+        if dom.element(el).ok()?.name.ns != markup5ever::ns!(svg) {
+            return None;
+        }
+        let mut svg = dom.parent_element(el).ok().flatten()?;
+        while flow.get(svg).is_none() {
+            svg = dom.parent_element(svg).ok().flatten()?;
+        }
+        if dom.element(svg).ok()?.name.ns != markup5ever::ns!(svg) {
+            return None;
+        }
+        let b = flow.get(svg)?;
+        let s = self.style.flow_style(dom, svg)?;
+        let pad = |i: usize| s.padding[i].resolve(b.rect.width);
+        let edges = |i: usize| s.border[i] + pad(i);
+        let (left, top) = (edges(LEFT), edges(TOP));
+        let viewport =
+            ((b.client_width - pad(LEFT) - pad(RIGHT)).max(0.0), (b.client_height - pad(TOP) - pad(BOTTOM)).max(0.0));
+        let inner = crate::svg_geometry::client_bounds(dom, &self.style, el, svg, viewport)?;
+        let origin = self.bounding_client_rect_for_visible(dom, svg);
+        Some(Rect {
+            x: origin.x + left + inner.x,
+            y: origin.y + top + inner.y,
+            width: inner.width,
+            height: inner.height,
+        })
     }
 
     /// The scroll-dependent offset of `node`'s sticky ancestors (and itself):
