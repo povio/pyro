@@ -71,21 +71,22 @@ fn initial_navigation_event_order() {
     assert_eq!(*rec.events.borrow(), ["navigate", "realm:main", "navigated", "dcl", "load", "almost-idle", "idle"]);
 }
 
-/// Elapsed ms of ten chained animation frames.
-fn ten_frames_ms(t: &mut BrowserThread, rec: &Recorder, page: PageId) -> f64 {
+/// Elapsed ms after each of ten chained animation frames.
+fn ten_frames_ms(t: &mut BrowserThread, rec: &Recorder, page: PageId) -> Vec<f64> {
     rec.console.borrow_mut().clear();
     eval(
         t,
         page,
-        "{ const start = performance.now(); let n = 0;
-           const step = () => { if (++n < 10) requestAnimationFrame(step); else console.log('frames ' + (performance.now() - start)); };
+        "{ const start = performance.now(); const at = [];
+           const step = () => { at.push(performance.now() - start);
+             if (at.length < 10) requestAnimationFrame(step); else console.log('frames ' + JSON.stringify(at)); };
            requestAnimationFrame(step); }",
     );
     let r = t.run_until_idle(Some(Instant::now() + Duration::from_secs(5)));
     assert_eq!(r, RunOutcome::Idle);
     let log = rec.console.borrow();
     let line = log.iter().find_map(|l| l.strip_prefix("log:frames ")).expect("frames ran");
-    line.parse().unwrap()
+    line.trim_matches(['[', ']']).split(',').map(|n| n.parse().unwrap()).collect()
 }
 
 #[test]
@@ -93,16 +94,19 @@ fn animation_frames_run_every_5_ms_without_a_client() {
     let (mut t, rec, page) = setup();
     let ms = ten_frames_ms(&mut t, &rec, page);
     // Loop timers never fire early: ten frames take at least 10 x 5 ms.
-    assert!(ms >= 49.0, "idle frames came too fast: {ms} ms");
+    assert!(ms[9] >= 49.0, "idle frames came too fast: {ms:?}");
 }
 
 #[test]
-fn animation_frames_run_every_1_ms_while_a_client_is_active() {
+fn animation_frames_run_once_idle_after_a_client_command_then_on_the_clock() {
     let (mut t, rec, page) = setup();
     crate::note_client_activity();
     let ms = ten_frames_ms(&mut t, &rec, page);
-    // 10 x 1 ms plus loop overhead; the idle cadence would need 50 ms.
-    assert!(ms < 40.0, "active frames too slow: {ms} ms");
+    // The first frames run as soon as nothing else is ready; the 5 ms
+    // cadence would need 20 ms for four.
+    assert!(ms[3] < 10.0, "eager frames too slow: {ms:?}");
+    // A perpetual loop then falls back to the clock: six more 5 ms frames.
+    assert!(ms[9] - ms[3] >= 29.0, "frames kept running eagerly: {ms:?}");
 }
 
 #[test]
@@ -123,7 +127,11 @@ fn animation_frame_callbacks_share_a_frame_and_timestamp() {
     );
     let r = t.run_until_idle(Some(Instant::now() + Duration::from_secs(5)));
     assert_eq!(r, RunOutcome::Idle);
-    assert!(rec.console.borrow().contains(&r#"log:["a","c","next"] true true"#.to_string()), "{:?}", rec.console.borrow());
+    assert!(
+        rec.console.borrow().contains(&r#"log:["a","c","next"] true true"#.to_string()),
+        "{:?}",
+        rec.console.borrow()
+    );
 }
 
 #[test]

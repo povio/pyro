@@ -14,6 +14,7 @@ mod loader;
 mod nav;
 mod network_idle;
 mod preload;
+mod quiet;
 mod stylesheets;
 mod viewport;
 mod window;
@@ -31,6 +32,7 @@ pub use loader::{
 };
 pub use nav::{History, HistoryEntry, Location, PageNav, Performance};
 pub use network_idle::NetworkIdle;
+pub use quiet::{PageWork, TIMER_HORIZON};
 pub use window::{note_client_activity, Window, WindowData};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]

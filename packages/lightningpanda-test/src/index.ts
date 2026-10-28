@@ -15,7 +15,9 @@
 // first step of the first run. `page.run()` is one LP.run command: the browser
 // runs every step, waiting in place, and replies once.
 import { spawn, type ChildProcess } from 'node:child_process';
+import { statSync } from 'node:fs';
 import { createServer } from 'node:net';
+import { fileURLToPath } from 'node:url';
 import { Cdp, CdpError } from './cdp';
 import { loaded, route as routeStep, goto, type Step, type StepLike } from './steps';
 
@@ -94,10 +96,14 @@ export class Lightningpanda {
     return new Lightningpanda(await openConns(wsUrl, opts));
   }
 
-  /** Starts `lightningpanda serve` on a free port and connects to it. */
+  /**
+   * Starts `lightningpanda serve` on a free port and connects to it. The binary
+   * is `bin`, else `$LIGHTNINGPANDA_BIN`, else the one next to this package in a
+   * release archive, else `lightningpanda` on PATH.
+   */
   static async launch(opts: ConnectOptions & { bin?: string; args?: string[] } = {}): Promise<Lightningpanda> {
     const port = await freePort();
-    const child = spawn(opts.bin ?? 'lightningpanda', ['serve', '--host', '127.0.0.1', '--port', String(port), ...(opts.args ?? [])], {
+    const child = spawn(opts.bin ?? defaultBin(), ['serve', '--host', '127.0.0.1', '--port', String(port), ...(opts.args ?? [])], {
       stdio: ['ignore', 'ignore', 'inherit'],
     });
     const deadline = Date.now() + 15_000;
@@ -293,4 +299,11 @@ function freePort(): Promise<number> {
     });
     s.on('error', reject);
   });
+}
+
+/** A release archive unpacks as `lightningpanda` beside `lightningpanda-test/`. */
+function defaultBin(): string {
+  if (process.env.LIGHTNINGPANDA_BIN) return process.env.LIGHTNINGPANDA_BIN;
+  const bin = fileURLToPath(new URL('../../lightningpanda', import.meta.url));
+  return statSync(bin, { throwIfNoEntry: false })?.isFile() ? bin : 'lightningpanda';
 }

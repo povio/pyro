@@ -1585,7 +1585,11 @@ fn bucket_key(sel: &Selector<Impl>) -> Option<BucketKey> {
             Component::AttributeInNoNamespace { local_name, operator, value, case_sensitivity } => {
                 use selectors::attr::{AttrSelectorOperator, ParsedCaseSensitivity};
                 let exact = matches!(operator, AttrSelectorOperator::Equal)
-                    && matches!(case_sensitivity, ParsedCaseSensitivity::CaseSensitive | ParsedCaseSensitivity::AsciiCaseInsensitiveIfInHtmlElementInHtmlDocument);
+                    && matches!(
+                        case_sensitivity,
+                        ParsedCaseSensitivity::CaseSensitive
+                            | ParsedCaseSensitivity::AsciiCaseInsensitiveIfInHtmlElementInHtmlDocument
+                    );
                 if matches!(best, BucketKey::Other) {
                     best = BucketKey::Attr((*local_name.0).to_ascii_lowercase());
                 }
@@ -1826,7 +1830,8 @@ impl<'v> Builder<'v> {
                                 let Some(bucket) = bucket_key(sel) else { continue };
                                 self.generics.push(PendingGeneric {
                                     typed: (*normal_mask != 0).then(|| (normal.clone(), *normal_mask)),
-                                    typed_important: (*important_mask != 0).then(|| (important.clone(), *important_mask)),
+                                    typed_important: (*important_mask != 0)
+                                        .then(|| (important.clone(), *important_mask)),
                                     selector: sel.clone(),
                                     decls: generics.clone(),
                                     layer,
@@ -2075,7 +2080,9 @@ impl<'v> Builder<'v> {
                 important,
             });
             let anc = match &g.bucket {
-                BucketKey::Class(_) | BucketKey::Tag(_) => nearest_ancestor_class(&rs.generic_rules[idx as usize].selector.slice()[0]),
+                BucketKey::Class(_) | BucketKey::Tag(_) => {
+                    nearest_ancestor_class(&rs.generic_rules[idx as usize].selector.slice()[0])
+                }
                 _ => None,
             };
             match (g.bucket, anc) {
@@ -2709,7 +2716,8 @@ fn invalidation_roots(
             }
             if element(child).is_some() {
                 let last = || rules.nth_last_keys.iter().any(|k| child_key_at(k, child, p));
-                let hit = if before { last() } else { rules.nth_keys.iter().any(|k| child_key_at(k, child, p)) || last() };
+                let hit =
+                    if before { last() } else { rules.nth_keys.iter().any(|k| child_key_at(k, child, p)) || last() };
                 if hit {
                     out.push(child);
                 }
@@ -4107,19 +4115,15 @@ impl StyleEngine {
                     } else {
                         only_added = false;
                     }
-                    let items = if active { parse_stylesheet(text) } else { Vec::new() };
-                    cache.parsed[i] = Some(ParsedSheet { active, text: text.to_owned(), items: Rc::new(items) });
+                    let items = if active { shared::parsed(text) } else { Rc::default() };
+                    cache.parsed[i] = Some(ParsedSheet { active, text: text.to_owned(), items });
                     changed = true;
                 }
             }
             if changed {
-                let mut b = Builder::new(&self.viewport);
-                for p in cache.parsed.iter().flatten() {
-                    if p.active {
-                        b.walk(&p.items, 0, NO_LAYER);
-                    }
-                }
-                cache.rules = Rc::new(b.finish());
+                let sheets: Vec<Rc<Vec<Item>>> =
+                    cache.parsed.iter().flatten().filter(|p| p.active).map(|p| p.items.clone()).collect();
+                cache.rules = shared::rules(sheets, &self.viewport);
                 cache.rules_generation = Some(self.generation);
                 rules_rebuilt = true;
             }
@@ -5078,10 +5082,7 @@ impl StyleEngine {
         check(&rules.generic_other);
         drop(check);
         let map = if winners.is_empty() && flow.iter().all(Option::is_none) {
-            cache
-                .empty_entry
-                .get_or_insert_with(|| Rc::new(DeclaredEntry { map: FxHashMap::default(), flow }))
-                .clone()
+            cache.empty_entry.get_or_insert_with(|| Rc::new(DeclaredEntry { map: FxHashMap::default(), flow })).clone()
         } else {
             Rc::new(DeclaredEntry { map: winners.into_iter().map(|(k, (v, _))| (k, v)).collect(), flow })
         };
@@ -5835,5 +5836,139 @@ mod added_sheet_tests {
         layout.style().take_restyled(&dom).expect("selective");
         layout.style_mut().set_viewport(Viewport::new(500, 400));
         assert!(layout.style().take_restyled(&dom).is_none());
+    }
+}
+
+/// Parsed sheets and built rule sets shared by every document of the thread,
+/// by content: a test suite loads the same bundle on every page, and a
+/// 100 KB sheet costs milliseconds to parse and as much again to index.
+/// Both are immutable once built, so sharing them changes nothing else.
+mod shared {
+    use super::*;
+
+    /// Sheet text kept for reuse, in total; past it the cache starts over.
+    const MAX_TEXT_BYTES: usize = 16 << 20;
+    /// Rule sets kept (a document's active sheets and viewport each).
+    const MAX_RULE_SETS: usize = 16;
+
+    type Parsed = Rc<Vec<Item>>;
+
+    #[derive(Default)]
+    struct Cache {
+        /// By text hash: each text and its parse.
+        parsed: FxHashMap<u64, Vec<(Rc<str>, Parsed)>>,
+        text_bytes: usize,
+        /// Most recently used last.
+        rules: Vec<(Vec<Parsed>, Viewport, Rc<RuleSet>)>,
+    }
+
+    thread_local! {
+        static CACHE: RefCell<Cache> = RefCell::default();
+    }
+
+    fn hash(text: &str) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = rustc_hash::FxHasher::default();
+        text.hash(&mut h);
+        h.finish()
+    }
+
+    /// `text` parsed, shared with every sheet of the same text.
+    pub(super) fn parsed(text: &str) -> Rc<Vec<Item>> {
+        let key = hash(text);
+        CACHE.with_borrow_mut(|c| {
+            if let Some((_, items)) = c.parsed.get(&key).and_then(|v| v.iter().find(|(t, _)| &**t == text)) {
+                return items.clone();
+            }
+            let items = Rc::new(parse_stylesheet(text));
+            if c.text_bytes + text.len() > MAX_TEXT_BYTES {
+                c.parsed.clear();
+                c.text_bytes = 0;
+            }
+            c.text_bytes += text.len();
+            c.parsed.entry(key).or_default().push((text.into(), items.clone()));
+            items
+        })
+    }
+
+    /// The rule set of `sheets` (in cascade order) under `viewport`, shared
+    /// with every document whose active sheets are the same parses.
+    pub(super) fn rules(sheets: Vec<Rc<Vec<Item>>>, viewport: &Viewport) -> Rc<RuleSet> {
+        CACHE.with_borrow_mut(|c| {
+            let same = |have: &[Rc<Vec<Item>>]| {
+                have.len() == sheets.len() && have.iter().zip(&sheets).all(|(a, b)| Rc::ptr_eq(a, b))
+            };
+            if let Some(i) = c.rules.iter().position(|(have, v, _)| v == viewport && same(have)) {
+                let hit = c.rules.remove(i);
+                let rules = hit.2.clone();
+                c.rules.push(hit);
+                return rules;
+            }
+            let mut b = Builder::new(viewport);
+            for items in &sheets {
+                b.walk(items, 0, NO_LAYER);
+            }
+            let rules = Rc::new(b.finish());
+            if c.rules.len() >= MAX_RULE_SETS {
+                c.rules.remove(0);
+            }
+            c.rules.push((sheets, viewport.clone(), rules.clone()));
+            rules
+        })
+    }
+}
+
+#[cfg(test)]
+mod shared_sheets {
+    use super::*;
+
+    /// Documents with the same sheets share one parse and one rule set per
+    /// viewport; a different text or viewport gets its own.
+    #[test]
+    fn same_sheets_share_parse_and_rules() {
+        let text = ".a { display: none } @media (max-width: 500px) { .b { display: none } }";
+        let (a, b) = (shared::parsed(text), shared::parsed(text));
+        assert!(Rc::ptr_eq(&a, &b));
+        assert!(!Rc::ptr_eq(&a, &shared::parsed(".c { display: none }")));
+        let wide = Viewport::default();
+        let narrow = Viewport { width: 400, ..Viewport::default() };
+        let r1 = shared::rules(vec![a.clone()], &wide);
+        assert!(Rc::ptr_eq(&r1, &shared::rules(vec![b], &wide)));
+        assert!(!Rc::ptr_eq(&r1, &shared::rules(vec![a], &narrow)));
+    }
+
+    /// Times parsing vs building the rule set for the sheets named in
+    /// `LP_SHEET_COST` (comma-separated paths):
+    /// `LP_SHEET_COST=a.css,b.css cargo test --release -p lp-dom parse_vs_build -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn parse_vs_build() {
+        let Ok(paths) = std::env::var("LP_SHEET_COST") else { return };
+        let viewport = Viewport::default();
+        for path in paths.split(',') {
+            let text = std::fs::read_to_string(path).unwrap();
+            const N: u32 = 50;
+            let start = std::time::Instant::now();
+            let mut items = Vec::new();
+            for _ in 0..N {
+                items = parse_stylesheet(&text);
+            }
+            let parse = start.elapsed() / N;
+            let start = std::time::Instant::now();
+            for _ in 0..N {
+                let mut b = Builder::new(&viewport);
+                b.walk(&items, 0, NO_LAYER);
+                std::hint::black_box(b.finish());
+            }
+            let build = start.elapsed() / N;
+            shared::parsed(&text);
+            let start = std::time::Instant::now();
+            for _ in 0..N {
+                let items = shared::parsed(&text);
+                std::hint::black_box(shared::rules(vec![items], &viewport));
+            }
+            let shared = start.elapsed() / N;
+            println!("{path}: {} KB, parse {parse:?}, build {build:?}, shared {shared:?}", text.len() / 1024);
+        }
     }
 }

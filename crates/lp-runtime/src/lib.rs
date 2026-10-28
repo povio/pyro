@@ -22,6 +22,7 @@ use std::cell::{Cell, RefCell};
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, VecDeque};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -137,7 +138,8 @@ mod wake {
                 }
             };
             let watched = watch.and_then(|w| {
-                let events = (if w.read.get() { libc::POLLIN } else { 0 }) | (if w.write.get() { libc::POLLOUT } else { 0 });
+                let events =
+                    (if w.read.get() { libc::POLLIN } else { 0 }) | (if w.write.get() { libc::POLLOUT } else { 0 });
                 (events != 0).then(|| libc::pollfd { fd: w.fd, events, revents: 0 })
             });
             let mut fds = [libc::pollfd { fd: self.0.as_raw_fd(), events: libc::POLLIN, revents: 0 }; 2];
@@ -327,6 +329,11 @@ struct Inner<S> {
     stop: Cell<bool>,
     /// Live timers with `keeps_alive` (kept in sync with `timers`).
     keepalive: Cell<usize>,
+    /// Idle timers ([`Scheduler::set_idle_timer`]) in the order they were
+    /// set; cleared ones stay until they reach the front.
+    idle: RefCell<VecDeque<TimerId>>,
+    /// Remote tasks posted and not started yet, shared with the handles.
+    remote_pending: Arc<AtomicUsize>,
 }
 
 impl<S> Inner<S> {
@@ -409,6 +416,18 @@ impl<S: 'static> Scheduler<S> {
         id
     }
 
+    /// Schedules `task` to run once the loop has nothing else ready: no
+    /// queued task, due timer or posted remote task. Idle timers run in the
+    /// order they were set, one per loop turn; [`Scheduler::clear_timer`]
+    /// cancels one like any timer.
+    pub fn set_idle_timer(&self, keeps_alive: bool, task: impl Fn(&mut S) + 'static) -> TimerId {
+        let id = TimerId(self.inner.next_timer.get());
+        self.inner.next_timer.set(id.0.wrapping_add(1).max(1));
+        self.inner.insert_timer(id, Timer { task: Rc::new(task), interval: None, keeps_alive });
+        self.inner.idle.borrow_mut().push_back(id);
+        id
+    }
+
     pub fn clear_timer(&self, id: TimerId) -> bool {
         // The heap entry becomes stale: skipped at the top, compacted in bulk.
         let removed = self.inner.remove_timer(id);
@@ -429,6 +448,12 @@ impl<S: 'static> Scheduler<S> {
 
     pub fn pending_tasks(&self) -> usize {
         self.inner.tasks.borrow().len()
+    }
+
+    /// Remote tasks posted (from any thread) that have not started yet, e.g.
+    /// a network completion on its way to the page.
+    pub fn pending_remote_tasks(&self) -> usize {
+        self.inner.remote_pending.load(Ordering::Acquire)
     }
 
     pub fn active_timers(&self) -> usize {
@@ -454,6 +479,8 @@ type Stamped<S> = (Instant, RemoteTask<S>);
 /// Cross-thread posting handle. Tasks are delivered in posting order.
 pub struct LoopHandle<S> {
     tx: mpsc::Sender<Stamped<S>>,
+    /// The loop's count of posted, not yet started remote tasks.
+    pending: Arc<AtomicUsize>,
     #[cfg(unix)]
     wake: Arc<wake::Notifier>,
 }
@@ -462,6 +489,7 @@ impl<S> Clone for LoopHandle<S> {
     fn clone(&self) -> Self {
         LoopHandle {
             tx: self.tx.clone(),
+            pending: self.pending.clone(),
             #[cfg(unix)]
             wake: self.wake.clone(),
         }
@@ -470,7 +498,12 @@ impl<S> Clone for LoopHandle<S> {
 
 impl<S> LoopHandle<S> {
     pub fn post(&self, task: impl FnOnce(&mut S) + Send + 'static) -> Result<(), LoopClosed> {
-        self.tx.send((Instant::now(), Box::new(task))).map_err(|_| LoopClosed)?;
+        // Counted before it can be seen, so the count never runs behind.
+        self.pending.fetch_add(1, Ordering::AcqRel);
+        if self.tx.send((Instant::now(), Box::new(task))).is_err() {
+            self.pending.fetch_sub(1, Ordering::AcqRel);
+            return Err(LoopClosed);
+        }
         #[cfg(unix)]
         self.wake.notify_if_sleeping();
         Ok(())
@@ -563,6 +596,8 @@ impl<S: LoopState + 'static> EventLoop<S> {
                     seq: Cell::new(0),
                     stop: Cell::new(false),
                     keepalive: Cell::new(0),
+                    idle: RefCell::new(VecDeque::new()),
+                    remote_pending: Arc::default(),
                 }),
             },
             tx: Some(tx),
@@ -628,6 +663,7 @@ impl<S: LoopState + 'static> EventLoop<S> {
     pub fn handle(&self) -> LoopHandle<S> {
         LoopHandle {
             tx: self.tx.clone().expect("remote posting closed"),
+            pending: self.sched.inner.remote_pending.clone(),
             #[cfg(unix)]
             wake: self.wake_tx.clone().expect("remote posting closed"),
         }
@@ -663,6 +699,7 @@ impl<S: LoopState + 'static> EventLoop<S> {
         if let Some(r) = remote {
             if earliest_page.is_none_or(|p| r < p) {
                 let (_, task) = self.remote.pop_front().expect("remote front");
+                self.sched.inner.remote_pending.fetch_sub(1, Ordering::AcqRel);
                 task(state);
                 state.after_task();
                 return true;
@@ -681,7 +718,20 @@ impl<S: LoopState + 'static> EventLoop<S> {
                 return true;
             }
         }
-        self.run_due_timer(state)
+        self.run_due_timer(state) || self.run_idle_timer(state)
+    }
+
+    /// Runs the oldest live idle timer; called only when nothing else is ready.
+    fn run_idle_timer(&mut self, state: &mut S) -> bool {
+        loop {
+            let Some(id) = self.sched.inner.idle.borrow_mut().pop_front() else { return false };
+            let task = self.sched.inner.timers.borrow().get(&id).map(|t| t.task.clone());
+            let Some(task) = task else { continue }; // cleared
+            self.sched.inner.remove_timer(id);
+            task(state);
+            state.after_task();
+            return true;
+        }
     }
 
     /// Moves every remote task already posted into the ordered remote queue.
@@ -928,7 +978,8 @@ mod tests {
                 }
             }
         });
-        let r = lp.run_until(&mut st, Some(Instant::now() + Duration::from_secs(20)), false, |st| st.log.len() == N as usize);
+        let r = lp
+            .run_until(&mut st, Some(Instant::now() + Duration::from_secs(20)), false, |st| st.log.len() == N as usize);
         poster.join().unwrap();
         assert_eq!(r, RunOutcome::Done, "lost a wake-up after {} tasks", st.log.len());
         assert!(st.log.iter().enumerate().all(|(i, v)| v == &i.to_string()));
@@ -1050,6 +1101,51 @@ mod tests {
         }
         lateness.sort();
         assert!(lateness[2] < Duration::from_millis(40), "median lateness {:?} (all {:?})", lateness[2], lateness);
+    }
+
+    /// Idle timers wait for queued tasks (including ones those tasks queue)
+    /// and due timers, run in order, and can be cleared.
+    #[test]
+    fn idle_timers_run_when_nothing_else_is_ready() {
+        let mut lp = EventLoop::<St>::new();
+        let s = lp.scheduler();
+        let mut st = St::default();
+        s.set_idle_timer(true, |st| st.log.push("idle1".into()));
+        let cleared = s.set_idle_timer(true, |st| st.log.push("cleared".into()));
+        s.set_idle_timer(true, |st| st.log.push("idle2".into()));
+        assert!(s.clear_timer(cleared));
+        let inner = s.clone();
+        s.post(TaskSource::DomManipulation, move |st| {
+            st.log.push("task".into());
+            inner.post(TaskSource::DomManipulation, |st| st.log.push("chained".into()));
+        });
+        s.set_timer(Duration::ZERO, false, true, |st| st.log.push("timer".into()));
+        assert_eq!(lp.run_until_idle(&mut st, Some(Instant::now() + Duration::from_secs(2))), RunOutcome::Idle);
+        assert_eq!(st.log, ["task", "timer", "chained", "idle1", "idle2"]);
+        assert_eq!(s.active_timers(), 0);
+    }
+
+    /// Remote tasks count as pending from their post until they start.
+    #[test]
+    fn remote_tasks_are_pending_until_they_run() {
+        let mut lp = EventLoop::<St>::new();
+        let s = lp.scheduler();
+        let h = lp.handle();
+        let seen = Rc::new(Cell::new(usize::MAX));
+        let probe = s.clone();
+        h.post(|st| st.log.push("a".into())).unwrap();
+        h.post(|st| st.log.push("b".into())).unwrap();
+        assert_eq!(s.pending_remote_tasks(), 2);
+        let mut first = true;
+        lp.run_until(&mut St::default(), None, false, |st| {
+            if st.log.len() == 1 && first {
+                first = false;
+                seen.set(probe.pending_remote_tasks());
+            }
+            st.log.len() == 2
+        });
+        assert_eq!(seen.get(), 1);
+        assert_eq!(s.pending_remote_tasks(), 0);
     }
 
     #[derive(Default)]
