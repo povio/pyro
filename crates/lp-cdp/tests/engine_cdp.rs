@@ -4990,3 +4990,123 @@ fn driver_run_clicks_the_visible_part_of_a_clipped_element() {
     let x: f64 = at.trim_start_matches("wide@").parse().unwrap_or_else(|_| panic!("{r}"));
     assert!(x > 0.0 && x < 1000.0, "clicked at {x}: {r}");
 }
+
+const DRIVER_SWAP_PAGE: &str = r#"<!doctype html><body>
+<style>.box{width:120px;height:40px;display:block} .box input{width:120px;height:40px;display:block;margin:0;box-sizing:border-box}</style>
+<div id="sync" class="box"><span class="frame">sync</span></div>
+<div id="later" class="box"><span class="frame">later</span></div>
+<div id="micro" class="box"><span class="frame">micro</span></div>
+<div id="gone" class="box"><span class="frame">gone</span></div>
+<div id="reveal" class="box"></div>
+<script>
+  const log = [];
+  const swap = (wrap) => {
+    const input = document.createElement('input');
+    input.id = wrap.id + '-input';
+    for (const t of ['mousedown', 'mouseup', 'click', 'focus']) input.addEventListener(t, () => log.push(wrap.id + ':' + t));
+    wrap.firstElementChild.replaceWith(input);
+  };
+  document.getElementById('sync').addEventListener('mouseenter', (e) => swap(e.currentTarget), { once: true });
+  document.getElementById('later').addEventListener('mouseover', (e) => { const w = e.currentTarget; setTimeout(() => swap(w), 0); }, { once: true });
+  document.getElementById('micro').addEventListener('mouseover', (e) => { const w = e.currentTarget; queueMicrotask(() => swap(w)); }, { once: true });
+  document.getElementById('gone').addEventListener('mouseover', (e) => { const w = e.currentTarget; setTimeout(() => swap(w), 0); }, { once: true });
+  const reveal = document.getElementById('reveal');
+  reveal.addEventListener('mouseenter', () => {
+    reveal.innerHTML = '<a id="ext" href="/ext" target="_blank"><svg width="24" height="24"><path d="M0 0h24v24H0z"/></svg></a>';
+    const a = document.getElementById('ext');
+    for (const t of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) a.addEventListener(t, (e) => { if (t === 'click') e.preventDefault(); log.push('ext:' + t); });
+  }, { once: true });
+  window.getLog = () => log.join(',');
+</script>"#;
+
+/// A click on an element that a hover handler replaces (synchronously, from
+/// a timer, or from a microtask) presses on the control that is there after
+/// the move: it gets mousedown, mouseup and click, and focus. That holds
+/// when the located element itself left the document (`#gone .frame`): the
+/// sequence goes on against the element under the pointer. A link revealed
+/// on hover and hit through its `<svg>` child gets the whole sequence.
+#[test]
+fn driver_run_click_presses_the_element_a_hover_swapped_in() {
+    let mut h = Harness::new();
+    load_html(&mut h, DRIVER_SWAP_PAGE);
+    for id in ["sync", "later", "micro"] {
+        let r = h.page(
+            "LP.run",
+            json!({"timeout": 1000, "steps": [
+                {"act": {"locator": {"css": format!("#{id}")}, "action": "click"}},
+                {"check": {"locator": {"css": format!("#{id}-input")}, "assert": "focused"}},
+            ]}),
+        );
+        assert!(r.get("error").is_none(), "{id}: {r}");
+    }
+    let r = h.page(
+        "LP.run",
+        json!({"timeout": 1000, "steps": [
+            {"act": {"locator": {"css": "#gone .frame"}, "action": "click"}},
+            {"check": {"locator": {"css": "#gone-input"}, "assert": "focused"}},
+            {"act": {"locator": {"css": "#reveal"}, "action": "hover"}},
+            {"act": {"locator": {"css": "#ext svg"}, "action": "click"}},
+            {"eval": {"expression": "getLog()", "as": "log"}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    let log = r["result"]["reads"]["log"].as_str().unwrap_or_default();
+    for id in ["sync", "later", "micro", "gone"] {
+        for t in ["focus", "mousedown", "mouseup", "click"] {
+            assert!(log.contains(&format!("{id}:{t}")), "{id}:{t} missing in {log}");
+        }
+    }
+    assert!(log.ends_with("ext:pointerdown,ext:mousedown,ext:pointerup,ext:mouseup,ext:click"), "{log}");
+}
+
+const DRIVER_TURNS_PAGE: &str = r#"<!doctype html><body>
+<div id="handle" style="width:40px;height:40px">H</div>
+<div style="height:100px"></div>
+<div id="target" style="width:40px;height:40px">T</div>
+<input id="a"><input id="b">
+<script>
+  const log = [];
+  document.addEventListener('mousedown', () => {
+    setTimeout(() => log.push('tick'), 0);
+    requestAnimationFrame(() => log.push('raf'));
+  }, true);
+  for (const t of ['mousedown', 'mousemove', 'mouseup']) document.addEventListener(t, () => log.push(t), true);
+  const saves = [];
+  for (const id of ['a', 'b']) {
+    const el = document.getElementById(id);
+    el.addEventListener('focusout', () => setTimeout(() => saves.push(id + '=' + el.value), 0));
+  }
+  window.getLog = () => log.join(',');
+  window.getSaves = () => saves.join(',');
+</script>"#;
+
+/// Each pointer event of a drag is its own task: a timer and an animation
+/// frame requested by the mousedown handler run before the mouseup, as in
+/// Chromium where every input event is a task. Every step, `settle: false`
+/// ones too, is followed by an event-loop turn: a `setTimeout(save, 0)` from
+/// one field's focusout runs before the next field is filled.
+#[test]
+fn driver_run_turns_the_event_loop_between_input_events_and_steps() {
+    let mut h = Harness::new();
+    load_html(&mut h, DRIVER_TURNS_PAGE);
+    let r = h.page(
+        "LP.run",
+        json!({"timeout": 1000, "steps": [
+            {"act": {"locator": {"css": "#handle"}, "action": "drag", "to": {"css": "#target"}}},
+            {"eval": {"expression": "getLog()", "as": "log"}},
+            {"act": {"locator": {"css": "#a"}, "action": "fill", "value": "1", "settle": false}},
+            {"act": {"locator": {"css": "#a"}, "action": "blur", "settle": false}},
+            {"act": {"locator": {"css": "#b"}, "action": "fill", "value": "2", "settle": false}},
+            {"act": {"locator": {"css": "#b"}, "action": "blur", "settle": false}},
+            {"eval": {"expression": "getSaves()", "as": "saves"}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    let log = r["result"]["reads"]["log"].as_str().unwrap_or_default();
+    let events: Vec<&str> = log.split(',').collect();
+    let at = |what: &str| events.iter().position(|e| *e == what).unwrap_or_else(|| panic!("{what} missing in {log}"));
+    assert!(at("tick") > at("mousedown") && at("tick") < at("mouseup"), "{log}");
+    assert!(at("raf") > at("mousedown") && at("raf") < at("mouseup"), "{log}");
+    assert_eq!(events.iter().filter(|e| **e == "mousemove").count(), 4, "{log}");
+    assert_eq!(r["result"]["reads"]["saves"], "a=1,b=2", "{r}");
+}

@@ -25,7 +25,14 @@
 //! the last piece of work. It gives up after [`SETTLE_MAX`], carries on, and
 //! reports what was still pending. An `idle` step (`LP.idle`) waits the same
 //! way with no requests allowed, up to its timeout.
-use std::cell::RefCell;
+//!
+//! Turns: each input event of a pointer action (`click`, `dblclick`, `hover`,
+//! `drag`) is dispatched in its own task, with an event-loop turn (the frame
+//! interval, then a marker task: queued tasks, due timers, animation frames)
+//! between two of them, as Chromium delivers input events ([`Phase::Act`]). An
+//! action that does not settle, and an `eval`, gets one such turn before the
+//! next step starts.
+use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 use std::rc::{Rc, Weak};
 use std::time::{Duration, Instant};
@@ -35,6 +42,7 @@ use lp_dom::layout::Layout;
 use lp_dom::select::SelectorCache;
 use lp_dom::{Dom, NodeId, NodeKind};
 use lp_js::JsException;
+use lp_runtime::{Scheduler, TaskSource};
 use lp_webapi::input::{self, MouseButton, MouseInput, MouseKind};
 use lp_webapi::PageDom;
 use serde::{Deserialize, Serialize};
@@ -51,6 +59,8 @@ const MAX_WAITERS: usize = 1024;
 const MAX_STEPS: usize = 10_000;
 /// Longest an action waits for the page to go quiet.
 const SETTLE_MAX: Duration = Duration::from_millis(1_000);
+/// How many times a turn's marker task lets queued tasks go first.
+const MARKER_HOPS: u32 = 4;
 
 /// What a locator names. Exactly one of `css`, `testId`, `text`, `role`,
 /// `label` or `placeholder`, searched inside each match of `within` (else the
@@ -395,6 +405,9 @@ enum Attempt {
     Done(Value),
     /// Not yet: the reason is reported if the deadline passes.
     Retry(String),
+    /// The action's first input event went out; the rest follow, one per
+    /// event-loop turn.
+    Continue(Box<Sequence>),
 }
 
 /// A command's steps and what they produced so far.
@@ -450,6 +463,11 @@ enum Phase {
     Settle { requests: usize, since: Instant, until: Instant },
     /// `eval` returned a promise; waits for it to settle.
     Await(Settlement),
+    /// An action's input events still to dispatch (`seq`), one per
+    /// event-loop turn; with none left, the turn after a non-settling step.
+    /// A turn: the frame interval passes (`at`), then a marker task posted
+    /// behind the tasks and timers due by then (`hop`) runs.
+    Act { seq: Option<Box<Sequence>>, before: Option<usize>, hop: Option<Rc<Cell<bool>>>, at: Instant },
 }
 
 /// Where a promise an `eval` step returned lands once it settles: its JSON
@@ -461,6 +479,152 @@ enum Evaluated {
     Value(Value),
     /// A thenable: its settlement arrives later.
     Pending(Settlement),
+}
+
+/// An event-loop turn lasts at least this long: the loop goes idle in it,
+/// so an animation frame the event's handlers requested runs in it (frames
+/// run as soon as the loop is idle while a client acts,
+/// `lp_browser::note_client_activity`).
+const TURN: Duration = Duration::from_millis(1);
+
+/// Where a mouse event of a [`Sequence`] goes.
+#[derive(Clone, Copy)]
+enum At {
+    /// The located element's center, computed when the event is dispatched
+    /// (hover-dependent layout can shift it between events); once the element
+    /// left the document, the last point.
+    Element,
+    /// The last point.
+    Here,
+    Point(f64, f64),
+}
+
+/// One input event of an action.
+#[derive(Clone, Copy)]
+enum Input {
+    Mouse { kind: MouseKind, button: MouseButton, buttons: u16, count: u32, at: At },
+    Drag { kind: input::DragKind, x: f64, y: f64 },
+}
+
+/// A `drag`'s geometry and, once a move started a native drag, its data.
+struct DragSeq {
+    x0: f64,
+    y0: f64,
+    x1: f64,
+    y1: f64,
+    native: Option<input::DragData>,
+}
+
+/// The input events of an action still to dispatch, each in its own task so
+/// that, as in Chromium, the tasks, timers and animation frames one event's
+/// handlers queued run before the next event (a React commit that swaps in a
+/// control on hover lands before the press; dnd-kit's frame between moves).
+pub(super) struct Sequence {
+    page: Rc<PageDom>,
+    /// The located element. When it leaves the document mid-sequence, the
+    /// rest goes to the element under the pointer, as Chromium's does.
+    id: NodeId,
+    opts: PointerOpts,
+    m: MouseInput,
+    events: std::collections::VecDeque<Input>,
+    drag: Option<DragSeq>,
+}
+
+impl Sequence {
+    fn new(
+        page: &Rc<PageDom>,
+        id: NodeId,
+        opts: PointerOpts,
+        m: MouseInput,
+        events: impl IntoIterator<Item = Input>,
+    ) -> Sequence {
+        Sequence { page: page.clone(), id, opts, m, events: events.into_iter().collect(), drag: None }
+    }
+
+    /// Dispatches the next event. `Ok(None)`: more follow; `Ok(Some)`: the
+    /// action's result. `Err`: why the step must be tried again.
+    fn advance(&mut self) -> Result<Option<Value>, String> {
+        let page = self.page.clone();
+        if page.is_disposed() {
+            return Err("document is gone".into());
+        }
+        let Some(next) = self.events.pop_front() else { return Ok(Some(self.result())) };
+        // The driver is the client driving the page: frames stay on the
+        // short interval while a sequence runs.
+        lp_browser::note_client_activity();
+        match next {
+            Input::Mouse { kind, button, buttons, count, at } => {
+                match at {
+                    At::Element => {
+                        let connected = page.dom.borrow().is_connected(self.id).unwrap_or(false);
+                        if connected {
+                            let (x, y) = pointer_target(&page, self.id, self.opts).map_err(|retry| match retry {
+                                Attempt::Retry(reason) => reason,
+                                _ => "element moved".to_owned(),
+                            })?;
+                            self.m.x = x;
+                            self.m.y = y;
+                        }
+                    }
+                    At::Here => {}
+                    At::Point(x, y) => {
+                        self.m.x = x;
+                        self.m.y = y;
+                    }
+                }
+                self.m.button = button;
+                self.m.buttons = buttons;
+                self.m.click_count = count;
+                let intercept = self.drag.is_some() && kind == MouseKind::Moved && buttons & 1 != 0;
+                match input::dispatch_mouse_intercepting_drags(&page, kind, &self.m, intercept) {
+                    Ok(Some(data)) => {
+                        // A native drag source: HTML drag and drop takes over
+                        // from the pointer moves.
+                        let Some(drag) = &mut self.drag else { return Ok(None) };
+                        let (mid_x, mid_y) = ((drag.x0 + drag.x1) / 2.0, (drag.y0 + drag.y1) / 2.0);
+                        let (x1, y1) = (drag.x1, drag.y1);
+                        drag.native = Some(data);
+                        self.events = [
+                            Input::Drag { kind: input::DragKind::Enter, x: mid_x, y: mid_y },
+                            Input::Drag { kind: input::DragKind::Over, x: x1, y: y1 },
+                            Input::Drag { kind: input::DragKind::Drop, x: x1, y: y1 },
+                            Input::Mouse {
+                                kind: MouseKind::Released,
+                                button: MouseButton::Left,
+                                buttons: 0,
+                                count: 0,
+                                at: At::Point(x1, y1),
+                            },
+                        ]
+                        .into_iter()
+                        .collect();
+                    }
+                    Ok(None) => {}
+                    // The release that ends a native drag is best effort.
+                    Err(_) if kind == MouseKind::Released && self.native_drag() => {}
+                    Err(e) => return Err(e),
+                }
+            }
+            Input::Drag { kind, x, y } => {
+                let Some(data) = self.drag.as_ref().and_then(|d| d.native.as_ref()) else {
+                    return Err("drag data is gone".into());
+                };
+                input::dispatch_drag(&page, kind, x, y, data, self.m.modifiers)?;
+            }
+        }
+        Ok(if self.events.is_empty() { Some(self.result()) } else { None })
+    }
+
+    fn native_drag(&self) -> bool {
+        self.drag.as_ref().is_some_and(|d| d.native.is_some())
+    }
+
+    fn result(&self) -> Value {
+        match &self.drag {
+            Some(d) => json!({ "native": d.native.is_some() }),
+            None => json!({}),
+        }
+    }
 }
 
 pub(super) struct Waiter {
@@ -483,6 +647,7 @@ impl Waiter {
     fn deadline(&self) -> Instant {
         let step = match &self.phase {
             Phase::Settle { until, .. } => *until,
+            Phase::Act { hop: None, at, .. } => *at,
             _ => self.step_deadline,
         };
         match self.poll_at {
@@ -516,6 +681,10 @@ impl Waiter {
             Phase::Load { loader, dom_ready } => load_reached(browser, self.job.pid, loader, *dom_ready),
             Phase::Settle { requests, .. } => browser.page_work(self.job.pid).is_none_or(|w| w.quiet(*requests)),
             Phase::Await(settled) => settled.borrow().is_some(),
+            Phase::Act { hop, at, .. } => match hop {
+                Some(done) => done.get(),
+                None => now >= *at,
+            },
         }
     }
 }
@@ -597,6 +766,19 @@ fn pending_json(work: &lp_browser::PageWork) -> Value {
         ("navigations", work.navigations),
     ];
     Value::Object(all.into_iter().filter(|(_, n)| *n > 0).map(|(k, n)| (k.to_owned(), json!(n))).collect())
+}
+
+/// Posts a task that sets `done`, re-posting itself (up to `hops` times)
+/// while other tasks are queued, so the tasks queued meanwhile run first.
+fn post_marker(sched: Scheduler<Browser>, done: Rc<Cell<bool>>, hops: u32) {
+    let next = sched.clone();
+    sched.post(TaskSource::Internal, move |_| {
+        if hops > 0 && next.pending_tasks() > 0 {
+            post_marker(next, done, hops - 1);
+        } else {
+            done.set(true);
+        }
+    });
 }
 
 fn normalize(s: &str) -> String {
@@ -1937,27 +2119,26 @@ fn pointer(page: &Rc<PageDom>, id: NodeId, what: Pointer, opts: PointerOpts) -> 
         Ok(p) => p,
         Err(retry) => return retry,
     };
-    let mut m = MouseInput { x, y, delta_x: opts.delta.0, delta_y: opts.delta.1, ..MouseInput::default() };
-    for (kind, button, count) in pointer_events(what, opts.button) {
-        // Hover-dependent layout (a tooltip the move hid, a menu it opened)
-        // can shift the element between events: press where it is now.
-        if kind == MouseKind::Pressed {
-            match pointer_target(page, id, opts) {
-                Ok((x, y)) => {
-                    m.x = x;
-                    m.y = y;
-                }
-                Err(retry) => return retry,
-            }
-        }
-        m.button = button;
-        m.buttons = if kind == MouseKind::Pressed { buttons_mask(button) } else { 0 };
-        m.click_count = count;
-        if let Err(e) = input::dispatch_mouse(page, kind, &m) {
-            return Attempt::Retry(e);
-        }
+    let m = MouseInput { x, y, delta_x: opts.delta.0, delta_y: opts.delta.1, ..MouseInput::default() };
+    // Hover-dependent layout (a tooltip the move hid, a menu it opened) can
+    // shift the element between events: a move or press goes where it is
+    // then; a release or wheel where the pointer is.
+    let events = pointer_events(what, opts.button).into_iter().map(|(kind, button, count)| {
+        let at = if matches!(kind, MouseKind::Moved | MouseKind::Pressed) { At::Element } else { At::Here };
+        let buttons = if kind == MouseKind::Pressed { buttons_mask(button) } else { 0 };
+        Input::Mouse { kind, button, buttons, count, at }
+    });
+    start(Sequence::new(page, id, opts, m, events))
+}
+
+/// Dispatches a sequence's first event now; the rest follow one per
+/// event-loop turn.
+fn start(mut seq: Sequence) -> Attempt {
+    match seq.advance() {
+        Ok(Some(value)) => Attempt::Done(value),
+        Ok(None) => Attempt::Continue(Box::new(seq)),
+        Err(reason) => Attempt::Retry(reason),
     }
-    Attempt::Done(json!({}))
 }
 
 /// A `mouse` step: the events of `page.mouse.*` at viewport coordinates.
@@ -2053,60 +2234,21 @@ fn drag(page: &Rc<PageDom>, from: NodeId, to: NodeId) -> Attempt {
     super::dom::reveal(page, to);
     let Some(target) = visible_box(page, to) else { return Attempt::Retry("drop target is not visible".into()) };
     let (x1, y1) = (target.x + target.width / 2.0, target.y + target.height / 2.0);
-    let mut m = MouseInput { x: x0, y: y0, ..MouseInput::default() };
-    let send = |m: &MouseInput, kind: MouseKind| input::dispatch_mouse_intercepting_drags(page, kind, m, true);
-    if let Err(e) = send(&m, MouseKind::Moved) {
-        return Attempt::Retry(e);
-    }
-    m.button = MouseButton::Left;
-    m.buttons = 1;
-    m.click_count = 1;
-    if let Err(e) = send(&m, MouseKind::Pressed) {
-        return Attempt::Retry(e);
-    }
-    m.button = MouseButton::None;
-    m.click_count = 0;
-    // A first small move past the drag threshold, then the target.
-    let mut native = None;
-    for (x, y) in [(x0 + 12.0, y0 + 12.0), ((x0 + x1) / 2.0, (y0 + y1) / 2.0), (x1, y1)] {
-        m.x = x;
-        m.y = y;
-        match send(&m, MouseKind::Moved) {
-            Ok(Some(data)) => {
-                native = Some(data);
-                break;
-            }
-            Ok(None) => {}
-            Err(e) => return Attempt::Retry(e),
-        }
-    }
-    if let Some(data) = native {
-        let modifiers = m.modifiers;
-        for (kind, x, y) in [
-            (input::DragKind::Enter, (x0 + x1) / 2.0, (y0 + y1) / 2.0),
-            (input::DragKind::Over, x1, y1),
-            (input::DragKind::Drop, x1, y1),
-        ] {
-            if let Err(e) = input::dispatch_drag(page, kind, x, y, &data, modifiers) {
-                return Attempt::Retry(e);
-            }
-        }
-        m.x = x1;
-        m.y = y1;
-        m.button = MouseButton::Left;
-        m.buttons = 0;
-        let _ = input::dispatch_mouse(page, MouseKind::Released, &m);
-        return Attempt::Done(json!({ "native": true }));
-    }
-    m.x = x1;
-    m.y = y1;
-    m.button = MouseButton::Left;
-    m.buttons = 0;
-    m.click_count = 1;
-    if let Err(e) = input::dispatch_mouse(page, MouseKind::Released, &m) {
-        return Attempt::Retry(e);
-    }
-    Attempt::Done(json!({ "native": false }))
+    let m = MouseInput { x: x0, y: y0, ..MouseInput::default() };
+    let mouse = |kind, button, buttons, count, x, y| Input::Mouse { kind, button, buttons, count, at: At::Point(x, y) };
+    // A first small move past the drag threshold, then the target. A move
+    // that starts a native drag replaces the rest (`Sequence::advance`).
+    let events = [
+        mouse(MouseKind::Moved, MouseButton::None, 0, 0, x0, y0),
+        mouse(MouseKind::Pressed, MouseButton::Left, 1, 1, x0, y0),
+        mouse(MouseKind::Moved, MouseButton::None, 1, 0, x0 + 12.0, y0 + 12.0),
+        mouse(MouseKind::Moved, MouseButton::None, 1, 0, (x0 + x1) / 2.0, (y0 + y1) / 2.0),
+        mouse(MouseKind::Moved, MouseButton::None, 1, 0, x1, y1),
+        mouse(MouseKind::Released, MouseButton::Left, 0, 1, x1, y1),
+    ];
+    let mut seq = Sequence::new(page, from, PointerOpts::default(), m, events);
+    seq.drag = Some(DragSeq { x0, y0, x1, y1, native: None });
+    start(seq)
 }
 
 fn expect(
@@ -2807,7 +2949,7 @@ impl EngineHost {
                     }
                     _ => act(page, el, *action, value, *pointer),
                 };
-                if matches!(result, Attempt::Done(_)) {
+                if matches!(result, Attempt::Done(_) | Attempt::Continue(_)) {
                     self.thread.browser.checkpoint();
                 }
                 Ok(result)
@@ -2938,11 +3080,8 @@ impl EngineHost {
                     let outcome = settled.borrow_mut().take();
                     match outcome {
                         Some(Ok(value)) => {
-                            if let Some((Step::Eval { key: Some(key), .. }, _)) = w.job.steps.get(w.job.index) {
-                                w.job.reads.insert(key.clone(), value.clone());
-                            }
-                            w.job.results.push(value);
-                            self.next_step(&mut w);
+                            let step = w.job.steps[w.job.index].0.clone();
+                            self.finish_step(&mut w, &step, value, None);
                         }
                         Some(Err(message)) => {
                             return Err(w.job.fail(CdpError::server(format!("rejected: {message}"))));
@@ -2957,6 +3096,39 @@ impl EngineHost {
                             }
                             w.phase = Phase::Await(settled);
                             return Ok(Drive::Park(Box::new(w)));
+                        }
+                    }
+                }
+                Phase::Act { seq, before, mut hop, at } => {
+                    if now < at {
+                        w.phase = Phase::Act { seq, before, hop, at };
+                        return Ok(Drive::Park(Box::new(w)));
+                    }
+                    let done = hop.get_or_insert_with(|| self.marker());
+                    // A starved loop cannot hold the step past its deadline.
+                    if !done.get() && now < w.step_deadline {
+                        w.phase = Phase::Act { seq, before, hop, at };
+                        return Ok(Drive::Park(Box::new(w)));
+                    }
+                    let Some(mut seq) = seq else {
+                        // The turn after a step.
+                        self.next_step(&mut w);
+                        continue;
+                    };
+                    let advanced = seq.advance();
+                    self.thread.browser.checkpoint();
+                    match advanced {
+                        Ok(None) => {
+                            w.phase = Phase::Act { seq: Some(seq), before, hop: None, at: Instant::now() + TURN };
+                            return Ok(Drive::Park(Box::new(w)));
+                        }
+                        Ok(Some(value)) => {
+                            let step = w.job.steps[w.job.index].0.clone();
+                            self.finish_step(&mut w, &step, value, before);
+                        }
+                        Err(reason) => {
+                            let (step, timeout) = w.job.steps[w.job.index].clone();
+                            return self.park_retry(w, &step, timeout, Some(&seq.page), reason, now);
                         }
                     }
                 }
@@ -3108,47 +3280,78 @@ impl EngineHost {
                         }
                     };
                     match attempt {
-                        Attempt::Done(value) => {
-                            if let Step::Read { key: Some(key), .. }
-                            | Step::Eval { key: Some(key), .. }
-                            | Step::Download { key: Some(key), .. }
-                            | Step::Popup { key: Some(key) } = &step
-                            {
-                                w.job.reads.insert(key.clone(), value.clone());
-                            }
-                            w.job.results.push(value);
-                            match before {
-                                Some(requests) => {
-                                    // Frames the action's follow-up work asks for run once idle.
-                                    lp_browser::note_client_activity();
-                                    let since = Instant::now();
-                                    w.phase = Phase::Settle { requests, since, until: since + SETTLE_MAX };
-                                }
-                                None => self.next_step(&mut w),
-                            }
+                        Attempt::Done(value) => self.finish_step(&mut w, &step, value, before),
+                        Attempt::Continue(seq) => {
+                            w.phase = Phase::Act { seq: Some(seq), before, hop: None, at: Instant::now() + TURN };
+                            return Ok(Drive::Park(Box::new(w)));
                         }
                         Attempt::Retry(reason) => {
-                            if now >= w.step_deadline {
-                                let error = CdpError::server(format!(
-                                    "timed out after {} ms: {}: {reason}",
-                                    timeout.as_millis(),
-                                    step.describe()
-                                ));
-                                return Err(w.job.fail(error));
-                            }
-                            if let Some(page) = page {
-                                w.seen = page.dom.borrow().version();
-                                w.doc = Rc::downgrade(&page);
-                            }
-                            w.poll_at =
-                                matches!(step, Step::Url(_) | Step::Route { .. }).then(|| Instant::now() + URL_POLL);
-                            w.reason = reason;
-                            return Ok(Drive::Park(Box::new(w)));
+                            return self.park_retry(w, &step, timeout, page.as_ref(), reason, now)
                         }
                     }
                 }
             }
         }
+    }
+
+    /// A step's result is in: settle after an action (and a `route`), or
+    /// give an action or `eval` that does not settle one event-loop turn so
+    /// what it queued (a `setTimeout(save, 0)` from a blur) runs before the
+    /// next step; other steps go straight on.
+    fn finish_step(&mut self, w: &mut Waiter, step: &Step, value: Value, before: Option<usize>) {
+        if let Step::Read { key: Some(key), .. }
+        | Step::Eval { key: Some(key), .. }
+        | Step::Download { key: Some(key), .. }
+        | Step::Popup { key: Some(key) } = step
+        {
+            w.job.reads.insert(key.clone(), value.clone());
+        }
+        w.job.results.push(value);
+        let now = Instant::now();
+        match before {
+            Some(requests) => {
+                // Frames the action's follow-up work asks for run once idle.
+                lp_browser::note_client_activity();
+                w.phase = Phase::Settle { requests, since: now, until: now + SETTLE_MAX };
+            }
+            None if matches!(step, Step::Act { .. } | Step::Eval { .. }) => {
+                w.phase = Phase::Act { seq: None, before: None, hop: None, at: now + TURN };
+            }
+            None => self.next_step(w),
+        }
+    }
+
+    /// A step that cannot finish yet: fails once past its deadline, else
+    /// parks until the document it searched changes.
+    fn park_retry(
+        &self,
+        mut w: Waiter,
+        step: &Step,
+        timeout: Duration,
+        page: Option<&Rc<PageDom>>,
+        reason: String,
+        now: Instant,
+    ) -> CdpResult<Drive> {
+        if now >= w.step_deadline {
+            let error =
+                CdpError::server(format!("timed out after {} ms: {}: {reason}", timeout.as_millis(), step.describe()));
+            return Err(w.job.fail(error));
+        }
+        if let Some(page) = page {
+            w.seen = page.dom.borrow().version();
+            w.doc = Rc::downgrade(page);
+        }
+        w.poll_at = matches!(step, Step::Url(_) | Step::Route { .. }).then(|| Instant::now() + URL_POLL);
+        w.reason = reason;
+        w.phase = Phase::Try;
+        Ok(Drive::Park(Box::new(w)))
+    }
+
+    /// A marker set from a task posted behind the tasks queued now.
+    fn marker(&self) -> Rc<Cell<bool>> {
+        let done = Rc::new(Cell::new(false));
+        post_marker(self.thread.browser.scheduler(), done.clone(), MARKER_HOPS);
+        done
     }
 
     /// The next download of the run not returned yet; saved under its
