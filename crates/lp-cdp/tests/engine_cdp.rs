@@ -4260,6 +4260,58 @@ const DRIVER_STEPS_PAGE: &str = r#"<!doctype html><body>
   });
 </script>"#;
 
+/// `LP.run`'s `page` step drives a popup in the same run: steps after it
+/// act on the popup (its fetch settles, `request` matches its log), `main`
+/// returns to the page the run started on with its state intact, and the
+/// reply's requests are the starting page's. An unknown target is a step
+/// error after its timeout.
+#[test]
+fn driver_run_drives_a_popup_then_returns_to_the_opener() {
+    let address = driver_site();
+    let mut h = Harness::new();
+    // As `lightningpanda-test`: no auto-attach, so a popup navigates at once
+    // (paused popups wait for the client's `Runtime.runIfWaitingForDebugger`).
+    // Turning auto-attach off detaches the page: attach again explicitly.
+    h.call(
+        None,
+        "Target.setAutoAttach",
+        json!({"autoAttach": false, "waitForDebuggerOnStart": false, "flatten": true}),
+    );
+    let targets = h.call(None, "Target.getTargets", json!({}));
+    let target = targets["result"]["targetInfos"][0]["targetId"].clone();
+    let attached = h.call(None, "Target.attachToTarget", json!({"targetId": target, "flatten": true}));
+    h.session = attached["result"]["sessionId"].as_str().unwrap().to_owned();
+    let steps = json!([
+        {"goto": {"url": format!("http://{address}/form")}},
+        {"act": {"locator": {"label": "Name"}, "action": "fill", "value": "Opener"}},
+        {"eval": {"expression": "document.getElementById('settings').onclick = () => window.open('/form?popup', '_blank', 'noopener'); null"}},
+        {"act": {"locator": {"css": "#settings"}, "action": "click", "settle": false}},
+        {"popup": {"as": "tab"}},
+        {"page": {"target": "tab"}},
+        {"url": {"url": "/form?popup"}},
+        {"loaded": {}},
+        {"act": {"locator": {"label": "Name"}, "action": "fill", "value": "Popup"}},
+        {"act": {"locator": {"css": "#go"}, "action": "click"}},
+        {"check": {"locator": {"css": "#out"}, "assert": "text", "expected": "Hello, Popup"}},
+        {"request": {"path": "/api"}},
+        {"eval": {"expression": "[location.search, !!window.opener, document.getElementById('name').value].join()", "as": "popup"}},
+        {"page": {"target": "main"}},
+        {"eval": {"expression": "[location.search, document.getElementById('name').value, document.getElementById('out').textContent].join()", "as": "main"}},
+    ]);
+    let r = h.page("LP.run", json!({ "steps": steps }));
+    assert!(r.get("error").is_none(), "{r}");
+    let reads = &r["result"]["reads"];
+    assert_eq!(reads["popup"], "?popup,false,Popup", "{r}");
+    assert_eq!(reads["main"], ",Opener,", "{r}");
+    let results = r["result"]["results"].as_array().unwrap();
+    assert_eq!(results[5]["targetId"], reads["tab"]["targetId"], "{r}");
+    let requests = r["result"]["requests"].as_array().unwrap();
+    assert!(requests.iter().all(|q| !q["url"].as_str().unwrap_or_default().contains("/api")), "{r}");
+    let r = h.page("LP.run", json!({"timeout": 100, "steps": [{"page": {"target": "nope"}}]}));
+    let message = r["error"]["message"].as_str().unwrap_or_default();
+    assert!(message.starts_with("step 0") && message.contains("no page nope"), "{r}");
+}
+
 /// `LP.run`'s `viewport` step resizes mid-run (`innerWidth`, relayout of the
 /// body inside its 8px margins, a `resize` listener, a width media query)
 /// and `media` emulates
