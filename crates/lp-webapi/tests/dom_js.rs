@@ -2403,6 +2403,45 @@ fn resize_observer_reports_the_flow_content_box() {
 }
 
 #[test]
+fn resize_observer_entries_report_each_box_and_skip_disconnected_targets() {
+    // Gap 47: a 150px content-box div with 4px padding reported
+    // borderBoxSize 142 (Chromium 158), and a detached target that was never
+    // unobserved got an entry with contentRect.width 0.
+    let e = env(
+        "<body style='margin:0'><div id=a style='width:150px;height:20px;padding:4px 4px 2px;border:1px solid'></div><div id=b style='width:30px;height:10px'></div></body>",
+    );
+    e.page.layout.borrow_mut().set_geometry(lp_dom::layout::Geometry::Flow);
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    eval(
+        &e.main,
+        "window.seen=[]; window.a = document.getElementById('a'); window.b = document.getElementById('b'); const box = s => s[0].inlineSize + 'x' + s[0].blockSize;
+         window.ro = new ResizeObserver(l => { for (const en of l) { const r = en.contentRect;
+           seen.push(en.target.id + ':' + [r.x, r.y, r.width, r.height].join(',') + ':' + box(en.contentBoxSize) + ':' + box(en.borderBoxSize) + ':' + box(en.devicePixelContentBoxSize)) } });
+         ro.observe(a); ro.observe(b, {box: 'border-box'}); 'ok'",
+    );
+    e.page.after_task();
+    tasks.drain();
+    assert_eq!(eval(&e.main, "seen.join(' ')"), "a:4,4,150,20:150x20:160x28:150x20 b:0,0,30,10:30x10:30x10:30x10");
+    // Padding grows the border box only: no entry for a content-box observation.
+    assert_eq!(eval(&e.main, "seen.length = 0; a.style.padding = '8px'"), "8px");
+    e.page.after_task();
+    tasks.drain();
+    assert_eq!(eval(&e.main, "seen.join(' ')"), "");
+    // ... but one for a border-box observation.
+    assert_eq!(eval(&e.main, "b.style.padding = '1px'"), "1px");
+    e.page.after_task();
+    tasks.drain();
+    assert_eq!(eval(&e.main, "seen.join(' ')"), "b:1,1,30,10:30x10:32x12:30x10");
+    // A removed target that is still observed delivers nothing.
+    assert_eq!(eval(&e.main, "seen.length = 0; a.style.width = '10px'; a.remove(); a.isConnected"), "false");
+    e.page.after_task();
+    tasks.drain();
+    assert_eq!(eval(&e.main, "seen.length"), "0");
+    e.page.dispose();
+}
+
+#[test]
 fn element_metrics_are_whole_pixels_like_chromium() {
     // Gap 36: a chip label reported scrollWidth 44.7135000001 > clientWidth
     // 44.7135 and was taken for truncated. Chromium's scroll, client and
