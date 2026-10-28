@@ -1159,6 +1159,8 @@ struct RuleSet {
     /// Every id a selector tests (as written and lowercased): an element
     /// whose id is not among them styles like one without it.
     selector_ids: FxHashSet<String>,
+    /// Bit `1 << pc as u32` of every pseudo-class a selector tests.
+    pseudo_classes: u32,
     /// Keys of every compound left of a sibling combinator.
     structural_sibling_keys: Vec<ChildKey>,
     /// Keys of compounds testing structural pseudo-classes (`:nth-*`,
@@ -1703,6 +1705,7 @@ struct Builder<'v> {
     sibling_keys: Vec<AnchorKey>,
     attr_names: FxHashSet<u64>,
     selector_ids: FxHashSet<String>,
+    pseudo_classes: u32,
     structural_sibling_keys: Vec<ChildKey>,
     nth_keys: Vec<ChildKey>,
     nth_last_keys: Vec<ChildKey>,
@@ -1734,6 +1737,7 @@ impl<'v> Builder<'v> {
             sibling_keys: Vec::new(),
             attr_names: FxHashSet::default(),
             selector_ids: FxHashSet::default(),
+            pseudo_classes: 0,
             structural_sibling_keys: Vec::new(),
             nth_keys: Vec::new(),
             nth_last_keys: Vec::new(),
@@ -1786,7 +1790,7 @@ impl<'v> Builder<'v> {
                         }
                         collect_sibling_keys(sel, &mut self.sibling_keys, &mut self.structural_sibling_keys);
                         collect_attr_names(sel, &mut self.attr_names);
-                        collect_ids(sel, &mut self.selector_ids);
+                        collect_ids(sel, &mut self.selector_ids, &mut self.pseudo_classes);
                         let pseudo = |c: &Component<Impl>, wanted: &[PseudoClass]| matches!(c, Component::NonTSPseudoClass(pc) if wanted.contains(pc));
                         collect_nth_keys(sel, &mut self.nth_keys, &mut self.nth_last_keys, false);
                         collect_keys(sel, &|c| matches!(c, Component::Empty), &mut self.empty_keys);
@@ -2059,6 +2063,7 @@ impl<'v> Builder<'v> {
         rs.sibling_keys = std::mem::take(&mut self.sibling_keys);
         rs.attr_names = std::mem::take(&mut self.attr_names);
         rs.selector_ids = std::mem::take(&mut self.selector_ids);
+        rs.pseudo_classes = self.pseudo_classes;
         rs.structural_sibling_keys = std::mem::take(&mut self.structural_sibling_keys);
         rs.nth_keys = std::mem::take(&mut self.nth_keys);
         rs.nth_last_keys = std::mem::take(&mut self.nth_last_keys);
@@ -2277,7 +2282,8 @@ fn shares_cascade(dom: &Dom, rules: &RuleSet, a: u32, c: u32, reval: &RefCell<Fx
     }
     // Inputs and buttons also carry state no attribute shows (checkedness,
     // a dirty value, a disabled fieldset): every state pseudo-class must
-    // agree. Hover and focus are checked below, validity by revalidation.
+    // agree (those some selector tests). Hover and focus are checked below,
+    // validity by revalidation.
     if !svg && matches!(&*ea.name.local, "input" | "button") {
         use crate::select::PseudoClass::*;
         let states = [
@@ -2292,7 +2298,8 @@ fn shares_cascade(dom: &Dom, rules: &RuleSet, a: u32, c: u32, reval: &RefCell<Fx
             PlaceholderShown,
             Default,
         ];
-        if states.iter().any(|&pc| dom.matches_state(a, pc) != dom.matches_state(c, pc)) {
+        let tested = |pc: crate::select::PseudoClass| rules.pseudo_classes & (1 << pc as u32) != 0;
+        if states.iter().any(|&pc| tested(pc) && dom.matches_state(a, pc) != dom.matches_state(c, pc)) {
             return false;
         }
     }
@@ -3126,30 +3133,32 @@ fn collect_nth_keys(sel: &Selector<Impl>, out: &mut Vec<ChildKey>, out_last: &mu
     }
 }
 
-/// Every id `sel` tests, at any nesting (as written and lowercased).
-fn collect_ids(sel: &Selector<Impl>, out: &mut FxHashSet<String>) {
+/// Every id `sel` tests, at any nesting (as written and lowercased), and
+/// the pseudo-classes it tests (`RuleSet::pseudo_classes` bits).
+fn collect_ids(sel: &Selector<Impl>, out: &mut FxHashSet<String>, states: &mut u32) {
     for c in sel.iter_raw_match_order() {
         match c {
             Component::ID(id) => {
                 out.insert(id.0.to_string());
                 out.insert(id.0.to_string().to_ascii_lowercase());
             }
+            Component::NonTSPseudoClass(pc) => *states |= 1 << *pc as u32,
             Component::Is(list) | Component::Where(list) | Component::Negation(list) => {
                 for inner in list.slice() {
-                    collect_ids(inner, out);
+                    collect_ids(inner, out, states);
                 }
             }
             Component::Has(list) => {
                 for rel in list.iter() {
-                    collect_ids(&rel.selector, out);
+                    collect_ids(&rel.selector, out, states);
                 }
             }
             Component::NthOf(data) => {
                 for inner in data.selectors() {
-                    collect_ids(inner, out);
+                    collect_ids(inner, out, states);
                 }
             }
-            Component::Slotted(inner) | Component::Host(Some(inner)) => collect_ids(inner, out),
+            Component::Slotted(inner) | Component::Host(Some(inner)) => collect_ids(inner, out, states),
             _ => {}
         }
     }
