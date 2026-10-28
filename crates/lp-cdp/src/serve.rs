@@ -34,7 +34,7 @@ options:
   --port <INT>                          default 9222
   --advertise-host <HOST>               host advertised in /json/version (default: --host)
   --cdp-max-connections <INT>           default 16
-  --cdp-max-message-size <INT>          default 1048576
+  --cdp-max-message-size <INT>          default 67108864 (64 MiB)
   --cdp-max-http-message-size <INT>     default 1048576
   --log-level <LEVEL>                   debug|info|warn|error|fatal (default info)
   --experimental-features <NAME>        accepted: cors (repeatable)

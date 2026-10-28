@@ -246,29 +246,41 @@ impl EngineHost {
                 .collect();
             let wanted = sessions.iter().any(|s| s.fetch.rules.is_enabled());
             let auth = sessions.iter().any(|s| s.fetch.rules.handle_auth_requests);
+            let mut changed = false;
             if wanted && context.fetch.is_none() {
-                if let Some(net) = self.thread.browser.context_net(context.id) {
-                    let queue = Arc::new(FetchQueue {
-                        state: Mutex::default(),
-                        auth: AtomicBool::new(auth),
-                        wake: self.network_wake.callback(self.thread.handle()),
-                        out: self.out.clone(),
-                    });
-                    net.set_interceptor(Some(queue.clone()));
-                    context.fetch = Some(queue);
-                }
+                let queue = Arc::new(FetchQueue {
+                    state: Mutex::default(),
+                    auth: AtomicBool::new(auth),
+                    wake: self.network_wake.callback(self.thread.handle()),
+                    out: self.out.clone(),
+                });
+                context.fetch = Some(queue);
+                changed = true;
             } else if !wanted {
                 // A network hop retains its interceptor across awaits. Dropping
                 // our Arc alone cannot release its paused decision.
                 if let Some(queue) = context.fetch.take() {
                     queue.stop();
-                }
-                if let Some(net) = self.thread.browser.context_net(context.id) {
-                    net.set_interceptor(None);
+                    changed = true;
                 }
             }
             if let Some(queue) = &context.fetch {
                 queue.auth.store(auth, Ordering::Release);
+            }
+            // The context's interceptor: mocks (`LP.run`) in front of Fetch.
+            let want_mocks = !context.mocks.is_empty();
+            if changed || want_mocks != context.mocks_installed {
+                context.mocks_installed = want_mocks;
+                if let Some(net) = self.thread.browser.context_net(context.id) {
+                    if context.fetch.is_some() || want_mocks {
+                        net.set_interceptor(Some(Arc::new(super::mocks::ContextInterceptor {
+                            mocks: context.mocks.clone(),
+                            fetch: context.fetch.clone(),
+                        })));
+                    } else {
+                        net.set_interceptor(None);
+                    }
+                }
             }
         }
     }

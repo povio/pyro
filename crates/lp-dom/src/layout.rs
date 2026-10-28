@@ -210,12 +210,14 @@ pub enum Geometry {
 }
 
 impl Geometry {
-    /// The process-wide opt-in: `LIGHTNINGPANDA_GEOMETRY=flow` selects the flow
-    /// layout for new documents; anything else keeps the approximate one.
+    /// The geometry of new documents: the flow layout, unless
+    /// `LIGHTNINGPANDA_GEOMETRY=approximate` selects upstream's faux layout
+    /// (kept for comparisons). A `Layout` built directly still defaults to
+    /// `Approximate`; pages take this value.
     pub fn from_env() -> Geometry {
         match std::env::var("LIGHTNINGPANDA_GEOMETRY") {
-            Ok(v) if v.eq_ignore_ascii_case("flow") => Geometry::Flow,
-            _ => Geometry::Approximate,
+            Ok(v) if v.trim().eq_ignore_ascii_case("approximate") => Geometry::Approximate,
+            _ => Geometry::Flow,
         }
     }
 }
@@ -652,6 +654,35 @@ impl Layout {
             if width.explicit {
                 wrap = Some(LineWrap::new(width.value, self.style.computed_font_size(dom, Some(id))));
             }
+        }
+        // A text control's value is its content (set by script, not a child):
+        // its width on one line for `scrollWidth`.
+        let text_control = dom.n(idx).element().is_some_and(|e| {
+            e.is_html()
+                && match &*e.name.local {
+                    "textarea" => true,
+                    "input" => dom.input_type_idx(idx).is_textual(),
+                    _ => false,
+                }
+        });
+        if axis == Axis::Width && text_control {
+            let font_size = self.style.computed_font_size(dom, Some(id));
+            let value = dom.value(id).unwrap_or_default();
+            return value.split('\n').map(|seg| text_width(seg, font_size)).fold(0.0, f64::max).ceil();
+        }
+        // A textarea's content is its value (set by script, not a child),
+        // one line per hard break, wrapped to the control's width.
+        if axis == Axis::Height && dom.n(idx).element().is_some_and(|e| e.is_html() && &*e.name.local == "textarea") {
+            let font_size = self.style.computed_font_size(dom, Some(id));
+            let width = self.element_axis_idx(dom, idx, Axis::Width).value.max(1.0);
+            let value = dom.value(id).unwrap_or_default();
+            let mut total = 0.0;
+            for seg in value.split('\n') {
+                let mut w = LineWrap::new(width, font_size);
+                w.add(seg);
+                total += w.height().max(font_size * LINE_HEIGHT);
+            }
+            return total.ceil();
         }
         let mut total = 0.0;
         for c in dom.child_idx_iter(idx) {

@@ -228,7 +228,7 @@ async fn oversized_message_closes_with_1009() {
     let addr = start().await;
     let mut s = upgrade(addr).await;
     let mut frame = vec![0x81, 0x80 | 127];
-    frame.extend_from_slice(&(2u64 * 1024 * 1024).to_be_bytes());
+    frame.extend_from_slice(&(65u64 * 1024 * 1024).to_be_bytes());
     s.write_all(&frame).await.unwrap();
     let (opcode, payload) = read_frame(&mut s).await;
     assert_eq!(opcode, 8);

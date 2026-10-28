@@ -11,6 +11,7 @@ mod driver;
 mod fetch;
 mod input;
 mod metrics;
+mod mocks;
 mod network;
 mod network_delivery;
 mod page;
@@ -244,6 +245,28 @@ pub(crate) struct PageState {
     pub(crate) intercept_drags: bool,
     network: network::NetworkPage,
     dom_nodes: dom::BackendNodes,
+    /// Downloads the page started, newest last (`LP.run` `download` steps).
+    pub(crate) downloads: Vec<DownloadRecord>,
+}
+
+/// A download a page started, kept for `LP.run` whatever the
+/// `Browser.setDownloadBehavior` setting.
+#[derive(Clone, Debug)]
+pub(crate) struct DownloadRecord {
+    pub url: String,
+    pub filename: String,
+    pub body: Result<bytes::Bytes, String>,
+}
+
+/// Bytes of download bodies kept per page; older ones lose their body.
+pub(crate) const DOWNLOAD_BUDGET: usize = 64 * 1024 * 1024;
+
+/// A popup that became a target, for `LP.run` `popup` steps.
+#[derive(Clone, Debug)]
+pub(crate) struct PopupRecord {
+    pub opener: PageKey,
+    pub page: PageKey,
+    pub target_id: String,
 }
 
 /// `Browser.setDownloadBehavior` settings.
@@ -279,6 +302,8 @@ pub struct EngineHost {
     /// Pages booted before the connection (`preboot`), handed to the
     /// protocol layer once by `Host::take_prebooted`.
     prebooted: Vec<crate::target::PrebootedEntry>,
+    /// Popups that became targets, oldest first (`LP.run` `popup` steps).
+    pub(crate) popups: Vec<PopupRecord>,
     /// `LP.act` / `LP.expect` commands waiting for their page to change.
     waiters: driver::Waiters,
 }
@@ -413,6 +438,7 @@ impl EngineHost {
                 intercept_drags: false,
                 network: network::NetworkPage::new(self.body_budget.clone()),
                 dom_nodes: dom::BackendNodes::default(),
+                downloads: Vec::new(),
             },
         );
         let target_id = self.thread.browser.page(id).expect("page exists").main_frame.id.0.clone();
@@ -440,6 +466,7 @@ impl EngineHost {
             pending: runtime::PendingReplies::default(),
             popup_requests: Vec::new(),
             prebooted: Vec::new(),
+            popups: Vec::new(),
             waiters: driver::Waiters::default(),
         })
     }
@@ -775,6 +802,14 @@ impl Host for EngineHost {
 
     fn take_popup_requests(&mut self) -> Vec<crate::target::PopupRequest> {
         std::mem::take(&mut self.popup_requests)
+    }
+
+    fn popup_opened(&mut self, opener: PageKey, page: PageKey, target_id: &str) {
+        self.popups.push(PopupRecord { opener, page, target_id: target_id.to_owned() });
+        if self.popups.len() > 256 {
+            self.popups.remove(0);
+        }
+        self.waiters.log_changed = true;
     }
 
     fn create_page(&mut self, context: ContextKey) -> CdpResult<(PageKey, String)> {

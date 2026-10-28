@@ -80,6 +80,8 @@ pub trait Host {
     /// Chrome reports such a frame's URL as ":" in `Page.getFrameTree`, which
     /// is how clients know to wait for the first real navigation.
     fn set_initial_popup(&mut self, _page: PageKey, _initial: bool) {}
+    /// A popup the engine requested is now a target (`LP.run` `popup` steps).
+    fn popup_opened(&mut self, _opener: PageKey, _page: PageKey, _target_id: &str) {}
     /// A session detached; the host must stop emitting events for it and drop
     /// per-session state (enabled domains, object handles, interception).
     fn session_detached(&mut self, page: PageKey, session_id: &str);
@@ -1097,6 +1099,7 @@ impl<H: Host> Browser<H> {
             if self.discover {
                 self.send_target_created(self.targets.len() - 1, out);
             }
+            self.host.popup_opened(request.opener, page, &target_id);
             if paused {
                 self.host.set_initial_popup(page, true);
                 if self.attach_paused(&target_id, None, true, true, out).is_err() {

@@ -30,6 +30,27 @@ use std::collections::VecDeque;
 use std::rc::Rc;
 use std::time::Duration;
 
+/// `LIGHTNINGPANDA_TRACE_MODULES=1`: one stderr line per step of every ES
+/// module fetch (requested, task started, loaded, handed to the engine), to
+/// find an `import()` that never settles in a real application.
+pub(crate) fn trace_modules() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("LIGHTNINGPANDA_TRACE_MODULES").is_ok_and(|v| v == "1"))
+}
+
+macro_rules! module_trace {
+    ($($arg:tt)*) => {
+        if trace_modules() {
+            eprintln!("lightningpanda: module {:.3} {}", trace_epoch().elapsed().as_secs_f64() * 1e3, format_args!($($arg)*));
+        }
+    };
+}
+
+fn trace_epoch() -> std::time::Instant {
+    static T0: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    *T0.get_or_init(std::time::Instant::now)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResourceKind {
     Document,
@@ -209,6 +230,9 @@ impl ResourceLoader for NetLoader {
         // A preloaded static file: answered here, on the browser thread, with
         // no I/O-thread round trip. Observers still get the Network events.
         if let Some(hit) = self.client.static_direct(&req) {
+            if request.kind == ResourceKind::ModuleScript {
+                module_trace!("served from the static directory {}", req.url);
+            }
             let head = self.client.report_local(&req, &hit);
             let resource = Resource {
                 url: head.url.to_string(),
@@ -220,6 +244,9 @@ impl ResourceLoader for NetLoader {
             };
             browser.scheduler().post(TaskSource::Networking, move |b| b.complete_fetch(id, Ok(resource)));
             return None;
+        }
+        if request.kind == ResourceKind::ModuleScript {
+            module_trace!("sent to the network {}", req.url);
         }
         let mut head: Option<lp_net::ResponseHead> = None;
         let mut body: Vec<u8> = Vec::new();
@@ -365,19 +392,40 @@ impl ModuleFetcher for PageModuleFetcher {
         // `&mut Browser` is available.
         let realm = realm.downgrade();
         let page = self.page;
+        module_trace!("requested {url}");
         let request = RefCell::new(Some(request));
         self.sched.post(TaskSource::Networking, move |b| {
-            let Some(request) = request.borrow_mut().take() else { return };
+            let Some(request) = request.borrow_mut().take() else {
+                module_trace!("task found no request {url}");
+                return;
+            };
             if realm.upgrade().is_none_or(|r| r.is_disposed()) {
+                module_trace!("task skipped, realm gone {url}");
                 return;
             }
+            module_trace!("fetching {url} (document {})", b.doc(page).is_some());
+            let traced = url.clone();
             b.fetch_text(page, url, ResourceKind::ModuleScript, move |_b, res| {
-                let Some(realm) = realm.upgrade() else { return };
-                let Ok(scope) = realm.scope() else { return };
+                match &res {
+                    Ok(text) => module_trace!("loaded {traced} ({} bytes)", text.len()),
+                    Err(e) => module_trace!("failed {traced}: {e}"),
+                }
+                let Some(realm) = realm.upgrade() else {
+                    module_trace!("dropped {traced}: realm gone");
+                    return;
+                };
+                let Ok(scope) = realm.scope() else {
+                    module_trace!("dropped {traced}: no scope");
+                    return;
+                };
                 let r = match res {
                     Ok(text) => request.resolve(&scope, &text),
                     Err(e) => request.reject(&scope, &JsError::Type(e)),
                 };
+                match &r {
+                    Ok(()) => module_trace!("handed to engine {traced}"),
+                    Err(e) => module_trace!("engine rejected {traced}: {e}"),
+                }
                 if let Err(e) = r {
                     scope.report_exception(&e);
                 }

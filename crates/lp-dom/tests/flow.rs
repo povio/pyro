@@ -2201,8 +2201,14 @@ fn focus_and_hover_moves_invalidate_selectively_without_stale_geometry() {
     let w1 = p.id("w1");
     let slot = p.id("slot");
     p.dom.remove_child(w1, holder).unwrap();
+    // Removal is the focus fixup rule: the document has no focused element
+    // until script focuses one again (Chrome; re-insertion restores nothing).
+    assert_eq!(p.dom.focused(doc).unwrap(), None);
     p.dom.append_child(slot, holder).unwrap();
-    assert_matches_fresh(&p, "focused subtree moved to w2");
+    assert_matches_fresh(&p, "focused subtree moved to w2, focus lost");
+    assert_eq!((w(&p, "k1").width, w(&p, "k2").width), (12.0, 12.0));
+    focus(&mut p, Some("a"));
+    assert_matches_fresh(&p, "refocused inside w2");
     assert_eq!((w(&p, "k1").width, w(&p, "k2").width), (12.0, 120.0));
     focus(&mut p, None);
     assert_matches_fresh(&p, "focus cleared");
@@ -4319,4 +4325,60 @@ fn text_clip_facts_cover_absolute_tables_inline_splits_generated_and_shadow_text
     p.dom.append_child(clip, slot).unwrap();
     p.dom.append_child(root, clip).unwrap();
     let _ = (sw(&p, "host"), sw(&p, "shwrap"));
+}
+
+/// A textarea's `scrollHeight` follows its value (hard breaks, wrapping),
+/// not its box: the autosize pattern sets `height: 0` then reads it.
+#[test]
+fn textarea_scroll_height_follows_its_value() {
+    for geometry in [Geometry::Flow, Geometry::Approximate] {
+        let mut p = page(
+            "<!doctype html><body><textarea id=ta rows=1 style=\"width:300px;padding:4px;border:1px solid #000;font-size:16px;line-height:20px\"></textarea></body>",
+            geometry,
+        );
+        let ta = p.id("ta");
+        let empty = p.layout.scroll_height(&p.dom, ta);
+        assert!(empty >= 20.0, "{geometry:?}: an empty textarea is one line tall, got {empty}");
+        p.dom.set_value(ta, "line1\nline2\nline3\nline4").unwrap();
+        let four = p.layout.scroll_height(&p.dom, ta);
+        assert!(four >= empty + 3.0 * 19.0, "{geometry:?}: four lines, got {four} (empty {empty})");
+        // Autosize: height 0, scrollHeight still reports the content.
+        p.dom
+            .set_attribute(
+                ta,
+                "style",
+                "width:300px;padding:4px;border:1px solid #000;font-size:16px;line-height:20px;height:0px",
+            )
+            .unwrap();
+        let zeroed = p.layout.scroll_height(&p.dom, ta);
+        assert!(zeroed >= four - 1.0, "{geometry:?}: height 0 keeps scrollHeight {four}, got {zeroed}");
+        assert!(p.layout.client_height(&p.dom, ta) < zeroed, "{geometry:?}: the box is smaller than its content");
+        // A long line wraps to the control's width.
+        p.dom.set_value(ta, &"word ".repeat(80)).unwrap();
+        let wrapped = p.layout.scroll_height(&p.dom, ta);
+        assert!(wrapped > 3.0 * 19.0, "{geometry:?}: wrapped lines, got {wrapped}");
+    }
+}
+
+/// A text input's `scrollWidth` is its value's width when the value is
+/// longer than the box (truncation detectors compare it with offsetWidth).
+#[test]
+fn text_input_scroll_width_follows_its_value() {
+    for geometry in [Geometry::Flow, Geometry::Approximate] {
+        let mut p = page(
+            "<!doctype html><body><input id=i style=\"width:80px;padding:0;border:0;font-size:14px\" value=short><textarea id=ta style=\"width:80px;padding:0;border:0;font-size:14px\"></textarea></body>",
+            geometry,
+        );
+        let i = p.id("i");
+        let short = p.layout.scroll_width(&p.dom, i);
+        assert!((79.0..=81.0).contains(&short), "{geometry:?}: a short value fills the box, got {short}");
+        p.dom.set_value(i, "E2E-ISO-DEBTOR-9C70E3E9D4").unwrap();
+        let long = p.layout.scroll_width(&p.dom, i);
+        assert!(long > 150.0, "{geometry:?}: the long value's width, got {long}");
+        assert!(p.layout.client_width(&p.dom, i) <= 81.0, "{geometry:?}: the box stays 80px");
+        let ta = p.id("ta");
+        p.dom.set_value(ta, "a\nE2E-ISO-DEBTOR-9C70E3E9D4\nb").unwrap();
+        let w = p.layout.scroll_width(&p.dom, ta);
+        assert!(w > 150.0, "{geometry:?}: the longest textarea line, got {w}");
+    }
 }

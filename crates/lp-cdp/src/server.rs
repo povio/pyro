@@ -47,7 +47,10 @@ impl Default for ServerConfig {
             advertise_host: None,
             max_connections: 16,
             max_http_message_size: 1024 * 1024,
-            ws: WsConfig { max_message_size: 1024 * 1024 },
+            // Test harnesses send whole scripts, storage seeds and route bodies in
+            // one message; Chrome accepts far more than 1 MiB. Nothing is
+            // preallocated per connection from this value.
+            ws: WsConfig { max_message_size: 64 * 1024 * 1024 },
             head_timeout: Duration::from_secs(10),
             frame_timeout: Duration::from_secs(30),
             write_timeout: Duration::from_secs(30),

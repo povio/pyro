@@ -584,6 +584,24 @@ impl EngineHost {
                 self.file_chooser_opened(page, &frame_id, input, multiple);
             }
             PageEvent::Download { frame_id, url, suggested_filename, body } => {
+                if let Some(state) = self.pages.get_mut(&page) {
+                    state.downloads.push(super::DownloadRecord {
+                        url: url.clone(),
+                        filename: suggested_filename.clone(),
+                        body: body.clone(),
+                    });
+                    // Keep the newest bodies within the budget.
+                    let mut kept = 0usize;
+                    for d in state.downloads.iter_mut().rev() {
+                        let len = d.body.as_ref().map_or(0, |b| b.len());
+                        if kept + len > super::DOWNLOAD_BUDGET {
+                            d.body = Err("evicted".into());
+                        } else {
+                            kept += len;
+                        }
+                    }
+                    self.waiters.log_changed = true;
+                }
                 self.deliver_download(page, &frame_id.0, &url, &suggested_filename, body);
             }
             PageEvent::JavascriptDialogOpening { kind, message, default_prompt, .. } => {

@@ -2038,6 +2038,8 @@ fn intersection_observer_options_conversion_and_explicit_limits() {
 #[test]
 fn intersection_observer_clips_ancestors_and_tracks_scroll_styles() {
     let e=env("<style>#clip {overflow:hidden;width:50px;height:50px}</style><body><div id=clip><div id=t style='width:100px;height:100px'></div></div><div style='height:2000px'></div></body>");
+    // The expected ratios below are the approximate (faux) layout's.
+    e.page.layout.borrow_mut().set_geometry(lp_dom::layout::Geometry::Approximate);
     let tasks = Rc::new(ObserverTasks::default());
     e.page.set_hooks(Some(tasks.clone()));
     assert_eq!(
@@ -5207,4 +5209,44 @@ fn abort_controllers_and_traversal_filters_do_not_keep_a_disposed_page_alive() {
         }
     }
     assert!(weak.upgrade().is_none(), "an AbortController or traversal filter kept its disposed PageDom alive");
+}
+
+/// HTML's focus fixup rule: removing (or replacing) the focused element makes
+/// `activeElement` the body, with no blur event; keys then go nowhere
+/// instead of to a detached node, and the replacement can take focus.
+#[test]
+fn removed_focused_element_is_no_longer_active() {
+    let e = env("<body><div id=cell><input id=a value=x></div></body>");
+    let r = &e.main;
+    assert_eq!(
+        eval(r, "const a = document.getElementById('a'); let blurs = 0; a.addEventListener('blur', () => blurs++); a.focus(); const before = document.activeElement.id; a.remove(); [before, document.activeElement.tagName, document.activeElement.isConnected, blurs, a.isConnected, a.parentNode === null].join(':')"),
+        "a:BODY:true:0:false:true"
+    );
+    assert_eq!(
+        eval(r, "const b = document.createElement('input'); b.id = 'b'; document.getElementById('cell').appendChild(b); b.focus(); const c = document.createElement('input'); c.id = 'c'; b.replaceWith(c); const mid = document.activeElement.tagName; c.focus(); [mid, document.activeElement.id].join(':')"),
+        "BODY:c"
+    );
+    // Re-inserting a removed element does not restore its focus.
+    assert_eq!(
+        eval(r, "const c2 = document.getElementById('c'); c2.remove(); document.getElementById('cell').appendChild(c2); document.activeElement.tagName"),
+        "BODY"
+    );
+}
+
+/// `selectionchange` on the document for text controls too: focus, a
+/// scripted selection, select-all, typing and caret keys (tasks run
+/// synchronously in this harness, so nothing coalesces here).
+#[test]
+fn text_controls_fire_selectionchange() {
+    let e = env("<body><input id=t value=abc><input id=u></body>");
+    let r = &e.main;
+    eval(r, "window.sc = 0; window.targets = []; document.addEventListener('selectionchange', (e) => { sc++; targets.push(e.target.id || e.target.nodeName); }, true); document.getElementById('t').focus();");
+    assert_eq!(eval(r, "String(sc) + ':' + targets.join()"), "1:t", "fired on the control, seen at document capture");
+    eval(r, "const t = document.getElementById('t'); t.setSelectionRange(1, 2); t.select();");
+    assert_eq!(eval(r, "String(sc)"), "3");
+    input::insert_text(&e.page, "z");
+    assert_eq!(eval(r, "String(sc) + ':' + t.value"), "4:z");
+    let k = input::KeyInput { key: "ArrowLeft".into(), code: "ArrowLeft".into(), key_code: 37, ..Default::default() };
+    input::dispatch_key(&e.page, input::KeyKind::RawKeyDown, &k);
+    assert_eq!(eval(r, "String(sc)"), "5");
 }

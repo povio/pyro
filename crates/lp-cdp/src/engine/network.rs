@@ -45,11 +45,22 @@ pub(super) struct NetworkContext {
     subscription: Option<Arc<super::network_delivery::Inbox>>,
     routes: HashMap<RequestId, PageKey>,
     pub(super) fetch: Option<Arc<super::fetch::FetchQueue>>,
+    /// `LP.run` mock rules of this context (`mocks.rs`).
+    pub(super) mocks: Arc<super::mocks::DriverMocks>,
+    /// Whether the installed interceptor was built with mocks present.
+    pub(super) mocks_installed: bool,
 }
 
 impl NetworkContext {
     pub(super) fn new(id: ContextId) -> Self {
-        Self { id, subscription: None, routes: HashMap::new(), fetch: None }
+        Self {
+            id,
+            subscription: None,
+            routes: HashMap::new(),
+            fetch: None,
+            mocks: Default::default(),
+            mocks_installed: false,
+        }
     }
 }
 

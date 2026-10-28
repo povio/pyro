@@ -605,9 +605,17 @@ impl Dom {
 
     // ----- focus / hover --------------------------------------------------
 
+    /// HTML's focus fixup rule: an element removed from the document is no
+    /// longer the focused area (no blur event), so `activeElement` falls back
+    /// to the body and the next key goes to the viewport, as in Chrome,
+    /// instead of to a detached node.
     pub(crate) fn focused_idx(&self, doc: u32) -> u32 {
         match &self.n(doc).kind {
-            NodeKind::Document(d) if d.focused != NIL && self.slot_live(d.focused) => d.focused,
+            NodeKind::Document(d)
+                if d.focused != NIL && self.slot_live(d.focused) && self.is_connected_idx(d.focused) =>
+            {
+                d.focused
+            }
             _ => NIL,
         }
     }
