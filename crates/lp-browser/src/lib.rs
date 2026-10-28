@@ -13,6 +13,7 @@ mod images;
 mod loader;
 mod nav;
 mod network_idle;
+mod preload;
 mod stylesheets;
 mod viewport;
 mod window;
@@ -333,6 +334,7 @@ pub struct DocumentState {
     pub(crate) load: Option<loader::DocumentLoad>,
     pub(crate) stylesheets: stylesheets::Stylesheets,
     pub(crate) images: images::Images,
+    pub(crate) preloads: preload::Preloads,
     pub(crate) _owner_pin: Option<loader::ResourceNode>,
 }
 
@@ -683,6 +685,7 @@ impl Browser {
                 load: None,
                 stylesheets: Default::default(),
                 images: Default::default(),
+                preloads: Default::default(),
                 _owner_pin: None,
             },
             session_storage,

@@ -62,6 +62,9 @@ pub enum ResourceKind {
     StyleText,
     Iframe,
     Img,
+    /// `<link rel=modulepreload>` / `<link rel=preload>`: fetched ahead, with
+    /// `load`/`error` on the link (bundlers' preload helpers await them).
+    Preload,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -125,6 +128,14 @@ impl Dom {
                     .is_some_and(|r| r.split_ascii_whitespace().any(|t| t.eq_ignore_ascii_case("stylesheet"))) =>
             {
                 ResourceKind::Stylesheet
+            }
+            "link"
+                if e.attr("rel").is_some_and(|r| {
+                    r.split_ascii_whitespace()
+                        .any(|t| t.eq_ignore_ascii_case("modulepreload") || t.eq_ignore_ascii_case("preload"))
+                }) =>
+            {
+                ResourceKind::Preload
             }
             "iframe" | "frame" => ResourceKind::Iframe,
             "img" => ResourceKind::Img,

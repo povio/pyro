@@ -206,3 +206,31 @@ fn storage_survives_navigation_with_context_and_page_partitions() {
     assert!(bindings.is_disposed());
     assert_eq!(eval(&thread, c, "localStorage.getItem('token')"), "null");
 }
+
+/// `<link rel=modulepreload>` / `<link rel=preload>` fetch their resource
+/// and get `load` (or `error` for a missing one); Vite's preload helper
+/// awaits these before a dynamic `import()`.
+#[test]
+fn preload_links_fire_load_and_error() {
+    let mut thread = BrowserThread::new().unwrap();
+    let page = thread.browser.create_page().unwrap();
+    let loader = Rc::new(StaticLoader::default());
+    loader.insert("http://site.test/", "text/html", r#"<!doctype html><html><head>
+<link id="m" rel="modulepreload" href="/chunk.js">
+<link id="p" rel="preload" as="script" href="/lib.js">
+<link id="x" rel="modulepreload" href="/missing.js">
+<script>globalThis.seen = []; for (const id of ['m', 'p', 'x']) { const l = document.getElementById(id); l.addEventListener('load', () => seen.push(id + ':load')); l.addEventListener('error', () => seen.push(id + ':error')); }</script>
+</head><body></body></html>"#, Duration::ZERO);
+    loader.insert("http://site.test/chunk.js", "text/javascript", "export const a = 1;", Duration::ZERO);
+    loader.insert("http://site.test/lib.js", "text/javascript", "var b = 2;", Duration::ZERO);
+    thread.browser.set_loader(Some(loader.clone()));
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut thread);
+    assert_eq!(eval(&thread, page, "seen.sort().join()"), "m:load,p:load,x:error");
+    assert!(loader.log.borrow().iter().any(|u| u == "http://site.test/chunk.js"), "{:?}", loader.log.borrow());
+    // A link inserted later fetches too, and the same href is not refetched.
+    eval(&thread, page, "const l = document.createElement('link'); l.rel = 'modulepreload'; l.href = '/chunk.js'; l.addEventListener('load', () => seen.push('late:load')); document.head.appendChild(l);");
+    settle(&mut thread);
+    assert!(eval(&thread, page, "seen.includes('late:load')") == "true");
+    assert_eq!(loader.log.borrow().iter().filter(|u| *u == "http://site.test/chunk.js").count(), 2);
+}

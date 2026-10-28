@@ -296,12 +296,11 @@ impl Browser {
         let events = host.dom.borrow_mut().take_resource_events();
         let mut stylesheet_nodes = std::collections::HashSet::new();
         let mut image_nodes = std::collections::HashSet::new();
+        let mut preload_nodes = std::collections::HashSet::new();
         for event in events {
             let document = host.dom.borrow().owner_document(event.node).ok().flatten();
-            let target = host
-                .keys()
-                .into_iter()
-                .find(|key| host.with_frame(*key, |f| f.document == document).unwrap_or(false));
+            let target =
+                host.keys().into_iter().find(|key| host.with_frame(*key, |f| f.document == document).unwrap_or(false));
             let Some(target) = target else { continue };
             let Some(bindings) = host.page_dom(target) else { continue };
             if event.kind == lp_dom::script::ResourceKind::Stylesheet {
@@ -311,6 +310,10 @@ impl Browser {
             } else if event.kind == lp_dom::script::ResourceKind::Img {
                 if image_nodes.insert(event.node) {
                     self.image_event(target, event.node);
+                }
+            } else if event.kind == lp_dom::script::ResourceKind::Preload {
+                if preload_nodes.insert(event.node) {
+                    self.preload_event(target, event.node);
                 }
             } else {
                 bindings.apply_style_event(&event);
