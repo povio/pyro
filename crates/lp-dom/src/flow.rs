@@ -5683,7 +5683,16 @@ impl<'a> Ctx<'a> {
         let e = self.edges(s, cb_width);
         let outer = e.horizontal() + e.margin[LEFT] + e.margin[RIGHT];
         let to_content = |v: f64| Self::declared_content(s, v, e.horizontal());
+        let percent = |d: Dim| matches!(d, Dim::Len(l) if l.percent != 0.0);
         let (min, max) = match (&it.el, s.width.resolve(Some(cb_width))) {
+            // A percentage width resolves against the track being sized, so
+            // it is auto for the contributions (CSS Grid 3, 12.2); a
+            // compressible replaced element (an input with width: 100%)
+            // contributes no min-content width (CSS Sizing 3, 5.2.2).
+            (Some(el), Some(_)) if percent(s.width) => {
+                let min = if s.replaced { 0.0 } else { self.min_content(*el, s) };
+                (min, self.max_content(*el, s))
+            }
             (_, Some(w)) => (to_content(w), to_content(w)),
             (Some(el), None) => (self.min_content(*el, s), self.max_content(*el, s)),
             (None, None) => {

@@ -1122,6 +1122,27 @@ fn grid_parity_auto_columns() {
 }
 
 #[test]
+fn grid_auto_track_after_fr_takes_its_content_width_like_chromium() {
+    // Gap 31: `grid-template-columns: 1fr auto` gave the fr track the whole
+    // width, so the auto track's flex item sat past the grid's edge
+    // (x 504-635 in a 516px box-sizing grid with 24px padding). Chromium
+    // (800x600): the auto track is its item's max-content (131), 1fr the
+    // rest (468 - 12 - 131 = 325), and the input fills its track.
+    flex_check(
+        "grid-fr-auto",
+        "<!doctype html><body style=\"margin:0\"><style>input{width:100%;height:20px;margin:0;padding:0;border:0;box-sizing:border-box}</style>\
+         <div id=g style=\"display:grid;grid-template-columns:1fr auto;gap:12px;width:516px;padding:0 24px;box-sizing:border-box\">\
+         <input id=i><div id=f style=\"display:flex\"><div id=b style=\"width:131px;height:20px\"></div></div></div></body>",
+        &[
+            ("g", [0.0, 0.0, 516.0, 20.0, 516.0, 20.0, 516.0, 20.0]),
+            ("i", [24.0, 0.0, 325.0, 20.0, 325.0, 20.0, 325.0, 20.0]),
+            ("f", [361.0, 0.0, 131.0, 20.0, 131.0, 20.0, 131.0, 20.0]),
+            ("b", [361.0, 0.0, 131.0, 20.0, 131.0, 20.0, 131.0, 20.0]),
+        ],
+    );
+}
+
+#[test]
 fn flow_hit_test_prefers_sticky_header_cell_over_its_row_group() {
     // TOS contact-role: a sticky <th> inside a `position: relative` thead in
     // a positioned scroller. Chromium: elementFromPoint at the th is the th.
