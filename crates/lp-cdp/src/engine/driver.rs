@@ -3460,8 +3460,8 @@ impl EngineHost {
             w.seen = page.dom.borrow().version();
             w.doc = Rc::downgrade(page);
         }
-        w.poll_at = matches!(step, Step::Url(_) | Step::Route { .. } | Step::Release { .. })
-            .then(|| Instant::now() + URL_POLL);
+        w.poll_at =
+            matches!(step, Step::Url(_) | Step::Route { .. } | Step::Release { .. }).then(|| Instant::now() + URL_POLL);
         w.reason = reason;
         w.phase = Phase::Try;
         Ok(Drive::Park(Box::new(w)))

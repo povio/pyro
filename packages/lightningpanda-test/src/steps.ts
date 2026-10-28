@@ -47,7 +47,7 @@ export interface StepLike {
 
 export type ActOptions = { settle?: boolean; timeout?: number };
 /**
- * Pointer options of `click`, `dblclick` and `hover` (engine 0.0.9):
+ * Pointer options of `click`, `dblclick`, `hover` and `wheel` (engine 0.0.10):
  * `button` (left), `position` relative to the element's top-left corner
  * (its center), `force` skips the actionability checks.
  */
@@ -192,7 +192,7 @@ export class Locator {
   drag(to: Locator, opts: ActOptions = {}): StepLike {
     return act(this, 'drag', undefined, { ...opts, to: to.spec });
   }
-  /** Scrolls with the mouse wheel over the element (engine 0.0.9). */
+  /** Scrolls with the mouse wheel over the element (engine 0.0.10). */
   wheel(deltaX: number, deltaY: number, opts: ActOptions = {}): StepLike {
     return act(this, 'wheel', undefined, { ...opts, deltaX, deltaY });
   }
@@ -353,22 +353,22 @@ class RequestCheck implements StepLike {
   count(count: number): RequestCheck {
     return new RequestCheck({ ...this.m, count });
   }
-  /** The request body contains (or matches) `body` (engine 0.0.9). */
+  /** The request body contains (or matches) `body` (engine 0.0.10). */
   body(body: TextMatch): RequestCheck {
     return new RequestCheck({ ...this.m, body: pattern(body) });
   }
-  /** The request body is a JSON object with (at least) these top-level keys (engine 0.0.9). */
+  /** The request body is a JSON object with exactly these top-level keys (engine 0.0.10). */
   bodyKeys(keys: string[]): RequestCheck {
     return new RequestCheck({ ...this.m, bodyKeys: keys });
   }
-  /** Request headers (case-insensitive names) whose values contain (or match) these (engine 0.0.9). */
+  /** Request headers (case-insensitive names) whose values contain (or match) these (engine 0.0.10). */
   headers(headers: Record<string, TextMatch>): RequestCheck {
     const wire = Object.fromEntries(Object.entries(headers).map(([k, v]) => [k, pattern(v)]));
     return new RequestCheck({ ...this.m, headers: wire });
   }
   /**
    * `started` also counts requests still in flight (`count` included);
-   * `finished` (the default) only those with a response or an error (engine 0.0.9).
+   * `finished` (the default) only those with a response or an error (engine 0.0.10).
    */
   state(state: 'started' | 'finished'): RequestCheck {
     return new RequestCheck({ ...this.m, state });
@@ -445,11 +445,11 @@ export type MockOptions = {
   abort?: string;
   /** Answer only the first n matching requests. */
   times?: number;
-  /** Let matching requests reach the network unchanged (an exception to a broader mock; engine 0.0.9). */
+  /** Let matching requests reach the network unchanged (an exception to a broader mock; engine 0.0.10). */
   passthrough?: boolean;
-  /** Hold matching requests under this name until a `release(name)` step (engine 0.0.9). */
+  /** Hold matching requests under this name until a `release(name)` step (engine 0.0.10). */
   hold?: string;
-  /** Let the request reach the server, then rewrite the fields given of its response (engine 0.0.9). */
+  /** Let the request reach the server, then rewrite the fields given of its response (engine 0.0.10). */
   patch?: { status?: number; headers?: Record<string, string>; json?: unknown; body?: string };
 };
 
@@ -465,12 +465,12 @@ export const mock = (url: TextMatch, opts: MockOptions = {}): StepLike => ({
 export const unmock = (url?: TextMatch): StepLike => ({
   toStep: () => ({ unmock: url === undefined ? {} : { url: pattern(url) } }),
 });
-/** Lets the requests held by `mock(url, { hold: name })` go on (engine 0.0.9). */
+/** Lets the requests held by `mock(url, { hold: name })` go on (engine 0.0.10). */
 export const release = (hold: string): StepLike => ({ toStep: () => ({ release: { hold } }) });
 
 // ---- emulation ----
 
-/** Resizes the viewport mid-test; layout and `resize` listeners see the new size (engine 0.0.9). */
+/** Resizes the viewport mid-test; layout and `resize` listeners see the new size (engine 0.0.10). */
 export const viewport = (width: number, height: number): StepLike => ({
   toStep: () => ({ viewport: { width, height } }),
 });
@@ -480,7 +480,7 @@ export type MediaOptions = {
   /** `screen` or `print`. */
   media?: string;
 };
-/** Emulates media features (`prefers-color-scheme` and friends) (engine 0.0.9). */
+/** Emulates media features (`prefers-color-scheme` and friends) (engine 0.0.10). */
 export const media = (opts: MediaOptions): StepLike => ({ toStep: () => ({ media: opts }) });
 
 // ---- downloads, popups and the raw mouse ----
@@ -500,20 +500,22 @@ export const popup = (as?: string, opts: CheckOpts = {}): StepLike => ({
 
 export type MouseAction = 'click' | 'dblclick' | 'move' | 'down' | 'up' | 'wheel';
 export type MouseOptions = {
-  x: number;
-  y: number;
+  /** Viewport point; required for `click`, `dblclick` and `move`, else the pointer stays where it is. */
+  x?: number;
+  y?: number;
   button?: 'left' | 'right' | 'middle';
   /** `wheel`: scroll deltas. */
   deltaX?: number;
   deltaY?: number;
   /** `move`: intermediate `mousemove` events. */
   steps?: number;
+  settle?: boolean;
   timeout?: number;
 };
-/** A raw mouse event at viewport coordinates (engine 0.0.9): `mouse('click', { x: 10, y: 20 })`. */
-export const mouse = (action: MouseAction, opts: MouseOptions): StepLike => ({
+/** A raw mouse event at viewport coordinates (engine 0.0.10): `mouse('click', { x: 10, y: 20 })`. */
+export const mouse = (action: MouseAction, opts: MouseOptions = {}): StepLike => ({
   toStep: () => ({ mouse: { action, ...opts } }),
 });
-/** Mouse wheel over an element (engine 0.0.9). */
+/** Mouse wheel over an element (engine 0.0.10). */
 export const wheel = (loc: Locator, deltaX: number, deltaY: number, opts: ActOptions = {}): StepLike =>
   loc.wheel(deltaX, deltaY, opts);
