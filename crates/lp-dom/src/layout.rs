@@ -653,6 +653,20 @@ impl Layout {
                 wrap = Some(LineWrap::new(width.value, self.style.computed_font_size(dom, Some(id))));
             }
         }
+        // A textarea's content is its value (set by script, not a child),
+        // one line per hard break, wrapped to the control's width.
+        if axis == Axis::Height && dom.n(idx).element().is_some_and(|e| e.is_html() && &*e.name.local == "textarea") {
+            let font_size = self.style.computed_font_size(dom, Some(id));
+            let width = self.element_axis_idx(dom, idx, Axis::Width).value.max(1.0);
+            let value = dom.value(id).unwrap_or_default();
+            let mut total = 0.0;
+            for seg in value.split('\n') {
+                let mut w = LineWrap::new(width, font_size);
+                w.add(seg);
+                total += w.height().max(font_size * LINE_HEIGHT);
+            }
+            return total.ceil();
+        }
         let mut total = 0.0;
         for c in dom.child_idx_iter(idx) {
             match &dom.n(c).kind {
