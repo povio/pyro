@@ -1507,7 +1507,9 @@ pub fn dispatch_mouse_intercepting_drags(
                 dispatch_boundary_events(page, prev, target, tkey, m);
             }
             fire(page, tkey, &mouse_event(page, EventInterface::PointerEvent, "pointermove", m, true));
-            fire(page, tkey, &mouse_event(page, EventInterface::MouseEvent, "mousemove", m, true));
+            if !(page.compat_mouse_suppressed.get() && m.buttons != 0) {
+                fire(page, tkey, &mouse_event(page, EventInterface::MouseEvent, "mousemove", m, true));
+            }
             if m.buttons & 1 != 0 {
                 text_select_move(page, target, m);
             }
@@ -1518,6 +1520,7 @@ pub fn dispatch_mouse_intercepting_drags(
         MouseKind::Pressed => {
             let pd = fire(page, tkey, &mouse_event(page, EventInterface::PointerEvent, "pointerdown", m, true));
             let md = !pd || fire(page, tkey, &mouse_event(page, EventInterface::MouseEvent, "mousedown", m, true));
+            page.compat_mouse_suppressed.set(!pd);
             page.set_press_target(Some(target));
             note_buttons(page, m);
             // Chromium on Linux and macOS opens the context menu on the
@@ -1576,8 +1579,10 @@ pub fn dispatch_mouse_intercepting_drags(
             note_buttons(page, m);
             page.drag_candidate.set(None);
             page.text_drag.set(None);
-            let pu = fire(page, tkey, &mouse_event(page, EventInterface::PointerEvent, "pointerup", m, true));
-            if pu {
+            fire(page, tkey, &mouse_event(page, EventInterface::PointerEvent, "pointerup", m, true));
+            // Only a canceled pointerdown holds back the mouseup (an app's
+            // pointerup handler that calls preventDefault does not).
+            if !page.compat_mouse_suppressed.replace(false) {
                 fire(page, tkey, &mouse_event(page, EventInterface::MouseEvent, "mouseup", m, true));
             }
             let pressed = page.take_press_target();

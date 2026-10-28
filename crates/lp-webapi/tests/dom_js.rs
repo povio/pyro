@@ -5338,6 +5338,38 @@ fn removed_focused_element_is_no_longer_active() {
     );
 }
 
+/// Chromium's compatibility mouse events: a canceled `pointerdown` holds
+/// back `mousedown` and the `mouseup` of that press (not `click`); a
+/// canceled `pointerup` holds back nothing (React Aria's press handlers
+/// cancel it on links, which then still get `mouseup` and `click`).
+#[test]
+fn only_a_canceled_pointerdown_suppresses_the_mouseup() {
+    let e = env("<body style=margin:0><a id=l href=#x style=display:block;width:100px;height:40px>link</a></body>");
+    let r = &e.main;
+    eval(r, "window.log = []; window.cancel = ''; const l = document.getElementById('l'); for (const t of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) l.addEventListener(t, (e) => { log.push(t); if (t === cancel || t === 'click') e.preventDefault(); });");
+    let press = || {
+        let m = input::MouseInput {
+            x: 20.0,
+            y: 20.0,
+            button: input::MouseButton::Left,
+            buttons: 1,
+            click_count: 1,
+            ..Default::default()
+        };
+        input::dispatch_mouse(&e.page, input::MouseKind::Pressed, &m).unwrap();
+        input::dispatch_mouse(&e.page, input::MouseKind::Released, &input::MouseInput { buttons: 0, ..m }).unwrap();
+    };
+    for (cancel, want) in [
+        ("pointerup", "pointerdown,mousedown,pointerup,mouseup,click"),
+        ("pointerdown", "pointerdown,pointerup,click"),
+        ("", "pointerdown,mousedown,pointerup,mouseup,click"),
+    ] {
+        eval(r, &format!("log.length = 0; cancel = '{cancel}';"));
+        press();
+        assert_eq!(eval(r, "log.join()"), want, "pointer{cancel} canceled");
+    }
+}
+
 /// `selectionchange` on the document for text controls too: focus, a
 /// scripted selection, select-all, typing and caret keys (tasks run
 /// synchronously in this harness, so nothing coalesces here).
