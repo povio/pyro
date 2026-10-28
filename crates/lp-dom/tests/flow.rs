@@ -4614,6 +4614,69 @@ fn atomic_inline_in_an_inline_element_is_hit_over_it() {
     }
 }
 
+/// Chat-composer autosize variants: the textarea is a flex item of a column
+/// with `min-height: 0`, border-box with padding at `height: 0`, empty with
+/// only a placeholder, or inside a `display: none` parent that is shown
+/// later. In Chromium `scrollHeight` is never 0 for a textarea: at least
+/// the line height plus padding. `rows` sizes `clientHeight`/`offsetHeight`.
+#[test]
+fn textarea_scroll_height_in_autosize_composers() {
+    const STYLE: &str = "<style>*{box-sizing:border-box;margin:0}textarea{font:inherit;line-height:24px;padding:8px;border:1px solid #000;width:300px;resize:none;overflow:hidden}body{font-size:16px}</style>";
+    // The approximate (faux) geometry ignores stylesheet padding and line
+    // height for controls; pages lay out with the flow geometry.
+    for geometry in [Geometry::Flow] {
+        let mut p = page(
+            &format!(
+                "<!doctype html>{STYLE}<body>\
+                 <div style=\"display:flex;flex-direction:column;min-height:0;height:200px\"><div style=\"flex:1;min-height:0\"></div>\
+                 <textarea id=flex rows=1 style=\"height:0px;min-height:0\" placeholder=\"Message\"></textarea></div>\
+                 <div style=\"display:flex;align-items:flex-end;gap:8px;width:400px\">\
+                 <textarea id=row rows=1 style=\"flex:1 1 0%;width:auto;height:0px;max-height:200px\"></textarea><button>Send</button></div>\
+                 <div style=\"display:grid;grid-template-columns:1fr auto;width:400px\">\
+                 <textarea id=grid rows=1 style=\"width:100%;height:0px\"></textarea><button>Go</button></div>\
+                 <div style=\"position:relative;height:100px\"><textarea id=abs rows=1 style=\"position:absolute;left:0;bottom:0;height:0px\"></textarea></div>\
+                 <textarea id=zero rows=1 style=\"height:0px\"></textarea>\
+                 <textarea id=auto rows=1 style=\"height:auto\" placeholder=\"Say something\"></textarea>\
+                 <div id=hidden style=\"display:none\"><textarea id=later rows=1 style=\"height:0px\"></textarea></div>\
+                 <textarea id=rows rows=3></textarea>\
+                 <textarea id=minh rows=1 style=\"height:0px;min-height:40px\"></textarea>\
+                 <textarea id=norows style=\"height:0px\"></textarea>\
+                 </body>"
+            ),
+            geometry,
+        );
+        // Empty (placeholder only): one line plus padding, 24 + 16 = 40.
+        for id in ["flex", "row", "grid", "abs", "zero", "auto", "minh", "norows"] {
+            let sh = p.layout.scroll_height(&p.dom, p.id(id));
+            assert!((39.0..=41.0).contains(&sh), "{geometry:?}: #{id} empty scrollHeight {sh}");
+        }
+        // Three lines of text: 3 x 24 + 16 = 88, whatever the box height.
+        for id in ["flex", "row", "grid", "abs", "zero", "auto", "minh", "norows"] {
+            p.dom.set_value(p.id(id), "a\nb\nc").unwrap();
+            let sh = p.layout.scroll_height(&p.dom, p.id(id));
+            assert!((87.0..=89.0).contains(&sh), "{geometry:?}: #{id} three-line scrollHeight {sh}");
+        }
+        // The autosize step: height follows scrollHeight, reads stay stable.
+        p.dom.set_attribute(p.id("zero"), "style", "height:88px").unwrap();
+        let sh = p.layout.scroll_height(&p.dom, p.id("zero"));
+        assert!((87.0..=89.0).contains(&sh), "{geometry:?}: sized to content, scrollHeight {sh}");
+        let ch = p.layout.client_height(&p.dom, p.id("zero"));
+        assert!((85.0..=87.0).contains(&ch), "{geometry:?}: clientHeight {ch} (88 border-box minus 2px borders)");
+        // Hidden parent: 0 while hidden, the line height once shown.
+        assert_eq!(p.layout.scroll_height(&p.dom, p.id("later")), 0.0, "{geometry:?}: display:none");
+        p.dom.set_attribute(p.id("hidden"), "style", "").unwrap();
+        let sh = p.layout.scroll_height(&p.dom, p.id("later"));
+        assert!((39.0..=41.0).contains(&sh), "{geometry:?}: shown later, scrollHeight {sh}");
+        // rows=3: content 72 + padding 16 = client 88, offset 90 with borders.
+        let rows = p.id("rows");
+        let (client, offset) = (p.layout.client_height(&p.dom, rows), p.layout.offset_height(&p.dom, rows));
+        assert!((87.0..=89.0).contains(&client), "{geometry:?}: rows=3 clientHeight {client}");
+        assert!((89.0..=91.0).contains(&offset), "{geometry:?}: rows=3 offsetHeight {offset}");
+        let sh = p.layout.scroll_height(&p.dom, rows);
+        assert!((87.0..=89.0).contains(&sh), "{geometry:?}: rows=3 empty scrollHeight is the box, {sh}");
+    }
+}
+
 /// A text input's `scrollWidth` is its value's width when the value is
 /// longer than the box (truncation detectors compare it with offsetWidth).
 #[test]
