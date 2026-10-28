@@ -1,16 +1,15 @@
-//! Flow layout, Stage 1 (docs/dom/FLOW_LAYOUT.md): CSS block and inline
-//! formatting with relative/absolute/fixed positioning, computed from used
-//! style values supplied by a [`FlowStyleSource`]. Opt-in through
-//! `Layout::set_geometry(Geometry::Flow)`; the default geometry remains the
-//! upstream approximation in `layout.rs`.
+//! Flow layout (docs/dom/FLOW_LAYOUT.md): CSS block and inline formatting
+//! with floats, margin collapsing and relative/absolute/fixed/sticky
+//! positioning, plus flex, grid and table containers, computed from used
+//! style values supplied by a [`FlowStyleSource`]. Pages use it by default
+//! (`Geometry::from_env`; `LIGHTNINGPANDA_GEOMETRY=approximate` selects the
+//! upstream approximation in `layout.rs`).
 //!
 //! Used values come from `StyleEngine`'s [`FlowStyleSource`] implementation
 //! (`style_flow.rs`, owned by the style engine).
 //!
-//! Stage 1 lays out flex, grid and table containers as block containers and
-//! ignores floats, sticky positioning, margin collapsing through parents and
-//! baseline alignment. Text uses the engine's fixed-advance measure, so text
-//! widths are approximate; boxes with explicit sizes match Chromium.
+//! Text uses the engine's fixed-advance measure, so text widths are
+//! approximate; boxes with explicit sizes match Chromium.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -97,6 +96,25 @@ pub enum InnerDisplay {
     Flex,
     Grid,
     Table,
+}
+
+/// `float` (`inline-start` / `inline-end` map to left / right in LTR).
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum Float {
+    #[default]
+    None,
+    Left,
+    Right,
+}
+
+/// `clear`: which earlier floats a box goes below.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum Clear {
+    #[default]
+    None,
+    Left,
+    Right,
+    Both,
 }
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
@@ -591,6 +609,9 @@ pub struct FlowStyle {
     pub outer: OuterDisplay,
     pub inner: InnerDisplay,
     pub position: Position,
+    /// None for absolutely positioned boxes; a floated box is block-level.
+    pub float: Float,
+    pub clear: Clear,
     pub inset: Sides<Dim>,
     pub width: Dim,
     pub height: Dim,
@@ -670,6 +691,8 @@ impl Default for FlowStyle {
             outer: OuterDisplay::Block,
             inner: InnerDisplay::Flow,
             position: Position::Static,
+            float: Float::None,
+            clear: Clear::None,
             inset: [Dim::Auto; 4],
             width: Dim::Auto,
             height: Dim::Auto,
@@ -737,6 +760,8 @@ pub trait FlowStyleSource {
 pub struct Generated {
     pub text: std::rc::Rc<str>,
     pub display: GeneratedDisplay,
+    /// `clear` of a block-level one (clearfix).
+    pub clear: Clear,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -1150,6 +1175,8 @@ struct Ctx<'a> {
     /// The bottom margin `block_child` leaves for the next sibling: its own,
     /// collapsed with its contents' `trailing`.
     last_trailing: Margin,
+    /// Floats placed so far in the current block formatting context.
+    floats: Vec<FloatArea>,
 }
 
 impl Drop for Ctx<'_> {
@@ -1282,6 +1309,25 @@ fn establishes_bfc(style: &FlowStyle) -> bool {
         || style.clips_y
         || style.replaced
         || matches!(style.position, Position::Absolute | Position::Fixed)
+        || style.float != Float::None
+}
+
+/// A float's margin box in its block formatting context (layout
+/// coordinates, before relative shifts).
+#[derive(Copy, Clone, Debug)]
+struct FloatArea {
+    left: bool,
+    x0: f64,
+    x1: f64,
+    y0: f64,
+    y1: f64,
+}
+
+impl FloatArea {
+    /// Overlaps the band [y, y + h) (a point when `h` is 0).
+    fn overlaps(&self, y: f64, h: f64) -> bool {
+        self.y1 > y && self.y0 < y + h.max(FIT_EPSILON)
+    }
 }
 
 /// A laid-out box's used edges.
@@ -1355,6 +1401,12 @@ enum InlineItem {
         el: NodeId,
         style: StyleRef,
     },
+    /// A floated box: placed at the current line's top when it fits beside
+    /// the line's content, else below the line.
+    Float {
+        el: NodeId,
+        style: StyleRef,
+    },
     /// A generated `::before` / `::after` inline-block box (no element).
     Generated {
         width: f64,
@@ -1393,6 +1445,7 @@ impl<'a> Ctx<'a> {
             block_flow_child: false,
             trailing: Margin::ZERO,
             last_trailing: Margin::ZERO,
+            floats: Vec::new(),
         }
     }
 
@@ -1811,7 +1864,7 @@ impl<'a> Ctx<'a> {
                     }
                     break;
                 };
-                if matches!(cs.position, Position::Absolute | Position::Fixed) {
+                if matches!(cs.position, Position::Absolute | Position::Fixed) || cs.float != Float::None {
                     continue;
                 }
                 if cs.outer != OuterDisplay::Block {
@@ -1851,6 +1904,7 @@ impl<'a> Ctx<'a> {
             None => self.dom.char_data(c).is_ok_and(is_blank),
             Some(cs) => {
                 matches!(cs.position, Position::Absolute | Position::Fixed)
+                    || cs.float != Float::None
                     || (cs.outer == OuterDisplay::Block && self.collapses_through(c, &cs, width))
             }
         })
@@ -2023,7 +2077,13 @@ impl<'a> Ctx<'a> {
     ) -> f64 {
         let outer = std::mem::replace(&mut self.cb_height, height);
         let outer_own = std::mem::replace(&mut self.own_cb_height, outer);
+        // A new block formatting context: outside floats do not reach in,
+        // its own do not leak out.
+        let outer_floats = self.is_bfc_root(el, style).then(|| std::mem::take(&mut self.floats));
         let h = self.contents_reused(el, style, x, y, width, height, fixed, shift, outer, collapse);
+        if let Some(f) = outer_floats {
+            self.floats = f;
+        }
         if !collapse.bottom {
             self.trailing = Margin::ZERO;
         }
@@ -2094,7 +2154,8 @@ impl<'a> Ctx<'a> {
                 self.defer_absolute(child, s, x - shift.0, static_y);
                 continue;
             }
-            let inline = is_text || child_style.as_ref().is_some_and(|s| s.outer == OuterDisplay::Inline);
+            let inline = is_text
+                || child_style.as_ref().is_some_and(|s| s.outer == OuterDisplay::Inline || s.float != Float::None);
             if inline {
                 self.collect_inline(child, style, &none, &mut items);
                 run_open = true;
@@ -2109,9 +2170,29 @@ impl<'a> Ctx<'a> {
             let e = self.edges(&s, width);
             let lead = self.leading_margin(child, &s, width);
             let through = self.collapses_through(child, &s, width);
-            let border_top = if absorbed { cursor } else { cursor + pending.with(lead).value() };
+            let mut border_top = if absorbed { cursor } else { cursor + pending.with(lead).value() };
+            if s.clear != Clear::None {
+                // Clearance: the border edge goes below the cleared floats.
+                border_top = border_top.max(self.clearance(s.clear));
+            }
+            // A formatting context root goes beside the floats (CSS 2.1 9.5).
+            let (bx, bw) = if establishes_bfc(&s) && !self.floats.is_empty() {
+                let need = s.width.resolve(Some(width)).map(|w| {
+                    let w = if s.border_box { w } else { w + e.horizontal() };
+                    w + e.margin[LEFT] + e.margin[RIGHT]
+                });
+                loop {
+                    let (l, w) = self.line_space(x, width, border_top, 0.0);
+                    match self.next_float_bottom(border_top, 0.0) {
+                        Some(b) if w < width && need.is_some_and(|n| n > w + FIT_EPSILON) => border_top = b,
+                        _ => break (l, w),
+                    }
+                }
+            } else {
+                (x, width)
+            };
             self.block_flow_child = true;
-            let taken = self.block_child(child, &s, x, border_top - e.margin[TOP], width, fixed, shift);
+            let taken = self.block_child(child, &s, bx, border_top - e.margin[TOP], bw, fixed, shift);
             let trailing = std::mem::take(&mut self.last_trailing);
             if through {
                 // An empty block: its margins join those around it.
@@ -2134,9 +2215,27 @@ impl<'a> Ctx<'a> {
             self.flow_run(run, style, x, width, fixed, shift, &mut cursor, &mut pending, &mut absorbed);
         }
         if let Some(g) = after.filter(|g| g.display == GeneratedDisplay::Block) {
+            if g.clear != Clear::None {
+                // `::after { clear: both }` (clearfix).
+                let c = self.clearance(g.clear);
+                if c > cursor + pending.value() {
+                    cursor = c;
+                    pending = Margin::ZERO;
+                    absorbed = false;
+                }
+            }
             generated_items(&g, style, &none, &mut items);
             let run = std::mem::take(&mut items);
             self.flow_run(run, style, x, width, fixed, shift, &mut cursor, &mut pending, &mut absorbed);
+        }
+        if self.is_bfc_root(el, style) && height.is_none() {
+            // A formatting context root's auto height contains its floats
+            // (CSS 2.1 10.6.7).
+            let bottom = self.floats.iter().map(|f| f.y1).fold(f64::NEG_INFINITY, f64::max);
+            if bottom > cursor + pending.value() {
+                cursor = bottom;
+                pending = Margin::ZERO;
+            }
         }
         if collapse.bottom {
             // The last margin collapses with the container's bottom margin.
@@ -2165,7 +2264,7 @@ impl<'a> Ctx<'a> {
     ) {
         let content = items.iter().any(|it| match it {
             InlineItem::Word { height, .. } => *height > 0.0,
-            InlineItem::OutOfFlow { .. } => false,
+            InlineItem::OutOfFlow { .. } | InlineItem::Float { .. } => false,
             _ => true,
         });
         let top = *cursor + pending.value();
@@ -2499,7 +2598,8 @@ impl<'a> Ctx<'a> {
                         s.min_width.resolve(None).map(to_content),
                         s.max_width.resolve(None).map(to_content),
                     );
-                    (inner + e.horizontal() + e.margin[LEFT] + e.margin[RIGHT], s.outer)
+                    let outer = if s.float != Float::None && !flex { OuterDisplay::Inline } else { s.outer };
+                    (inner + e.horizontal() + e.margin[LEFT] + e.margin[RIGHT], outer)
                 }
             };
             text_item = false;
@@ -2579,7 +2679,7 @@ impl<'a> Ctx<'a> {
 
     /// Lays out inline items (`inline_run`) as line boxes in [x, x+width);
     /// returns their height.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments, unused_assignments)]
     fn inline_items(
         &mut self,
         items: Vec<InlineItem>,
@@ -2591,31 +2691,57 @@ impl<'a> Ctx<'a> {
         shift: (f64, f64),
     ) -> f64 {
         let strut = text_extents(parent);
+        let strut_h = strut.0 + strut.1;
         let mut frags: FxHashMap<NodeId, Rect> = FxHashMap::default();
         let mut order_of: Vec<NodeId> = Vec::new();
         let mut line = Line::default();
         let mut line_y = y;
+        // The current line's left edge and width beside the floats, and
+        // floats waiting for the line to end.
+        let (mut lx, mut lw) = self.line_space(x, width, line_y, strut_h);
+        let mut deferred: Vec<(NodeId, StyleRef)> = Vec::new();
+        macro_rules! flush {
+            () => {{
+                line_y += self.flush_line(
+                    &mut line,
+                    lx,
+                    line_y,
+                    lw,
+                    fixed,
+                    shift,
+                    &mut frags,
+                    &mut order_of,
+                    parent.text_align,
+                );
+                for (el, style) in std::mem::take(&mut deferred) {
+                    self.place_float(el, &style, x, width, line_y, fixed, shift);
+                }
+                (lx, lw) = self.line_space(x, width, line_y, strut_h);
+            }};
+        }
+        // On an empty line too narrow beside floats for `need`, moves the
+        // line below the next float that ends.
+        macro_rules! fit_beside_floats {
+            ($need:expr) => {{
+                while line.x == 0.0 && $need > lw + FIT_EPSILON && lw < width {
+                    let Some(b) = self.next_float_bottom(line_y, strut_h) else { break };
+                    line_y = b;
+                    (lx, lw) = self.line_space(x, width, line_y, strut_h);
+                }
+            }};
+        }
         for item in items {
             match item {
                 InlineItem::Break if line.items.is_empty() => {
                     // A forced break on an empty line still makes a line box
                     // of the strut's height (`<p><br></p>`, consecutive brs).
-                    line_y += strut.0 + strut.1;
+                    line_y += strut_h;
                     line = Line::default();
+                    (lx, lw) = self.line_space(x, width, line_y, strut_h);
                 }
                 InlineItem::Break => {
                     line.extents(strut);
-                    line_y += self.flush_line(
-                        &mut line,
-                        x,
-                        line_y,
-                        width,
-                        fixed,
-                        shift,
-                        &mut frags,
-                        &mut order_of,
-                        parent.text_align,
-                    );
+                    flush!();
                 }
                 InlineItem::Word {
                     width: w,
@@ -2630,28 +2756,19 @@ impl<'a> Ctx<'a> {
                 } => {
                     let mut source = source;
                     let gap = if line.x > 0.0 { space_before } else { 0.0 };
-                    if line.x > 0.0 && line.x + gap + w > width + FIT_EPSILON && !nowrap {
-                        line_y += self.flush_line(
-                            &mut line,
-                            x,
-                            line_y,
-                            width,
-                            fixed,
-                            shift,
-                            &mut frags,
-                            &mut order_of,
-                            parent.text_align,
-                        );
+                    if line.x > 0.0 && line.x + gap + w > lw + FIT_EPSILON && !nowrap {
+                        flush!();
                     }
+                    fit_beside_floats!(w);
                     // A word wider than an empty line breaks where overflow-wrap
                     // or word-break allows: the longest prefixes that fit, one
                     // per line; the rest continues the last line.
                     let mut w = w;
-                    if line.x == 0.0 && w > width + FIT_EPSILON {
+                    if line.x == 0.0 && w > lw + FIT_EPSILON {
                         if let Some((text, fs, weight)) = &breakable {
                             // A word broken over lines has no text run.
                             source = None;
-                            let pieces = break_word(text, *fs, *weight, width);
+                            let pieces = break_word(text, *fs, *weight, lw);
                             let (last, full) = pieces.split_last().expect("a word has a piece");
                             for &piece in full {
                                 line.push(0.0, piece, h, ascent, owners.clone(), None);
@@ -2659,17 +2776,7 @@ impl<'a> Ctx<'a> {
                                     it.content = Some(content);
                                 }
                                 line.extents(strut);
-                                line_y += self.flush_line(
-                                    &mut line,
-                                    x,
-                                    line_y,
-                                    width,
-                                    fixed,
-                                    shift,
-                                    &mut frags,
-                                    &mut order_of,
-                                    parent.text_align,
-                                );
+                                flush!();
                             }
                             w = *last;
                         }
@@ -2690,19 +2797,10 @@ impl<'a> Ctx<'a> {
                     };
                     let outer_w = content_w + e.horizontal() + e.margin[LEFT] + e.margin[RIGHT];
                     let outer_h = self.atomic_height(el, &style, content_w, width) + e.margin[TOP] + e.margin[BOTTOM];
-                    if line.x > 0.0 && line.x + outer_w > width + FIT_EPSILON && !parent.nowrap {
-                        line_y += self.flush_line(
-                            &mut line,
-                            x,
-                            line_y,
-                            width,
-                            fixed,
-                            shift,
-                            &mut frags,
-                            &mut order_of,
-                            parent.text_align,
-                        );
+                    if line.x > 0.0 && line.x + outer_w > lw + FIT_EPSILON && !parent.nowrap {
+                        flush!();
                     }
+                    fit_beside_floats!(outer_w);
                     // Text-bearing controls sit on their text baseline; other
                     // atomic boxes on their CSS baseline (atomic_baseline) or
                     // their bottom margin edge.
@@ -2728,18 +2826,8 @@ impl<'a> Ctx<'a> {
                     line.extents(strut);
                 }
                 InlineItem::Generated { width: w, height: h, ascent, owners } => {
-                    if line.x > 0.0 && line.x + w > width + FIT_EPSILON && !parent.nowrap {
-                        line_y += self.flush_line(
-                            &mut line,
-                            x,
-                            line_y,
-                            width,
-                            fixed,
-                            shift,
-                            &mut frags,
-                            &mut order_of,
-                            parent.text_align,
-                        );
+                    if line.x > 0.0 && line.x + w > lw + FIT_EPSILON && !parent.nowrap {
+                        flush!();
                     }
                     let at = line.x;
                     line.push(at, w, h, ascent, owners, None);
@@ -2757,18 +2845,9 @@ impl<'a> Ctx<'a> {
                     line.extents(strut);
                 }
                 InlineItem::Block { el, style, owners } => {
-                    line_y += self.flush_line(
-                        &mut line,
-                        x,
-                        line_y,
-                        width,
-                        fixed,
-                        shift,
-                        &mut frags,
-                        &mut order_of,
-                        parent.text_align,
-                    );
+                    flush!();
                     line_y += self.block_child(el, &style, x, line_y, width, fixed, shift);
+                    (lx, lw) = self.line_space(x, width, line_y, strut_h);
                     if let Some(r) = self.out.boxes.get(&el).map(|b| b.rect) {
                         for o in owners.iter() {
                             union(&mut frags, &mut order_of, *o, r);
@@ -2777,12 +2856,20 @@ impl<'a> Ctx<'a> {
                 }
                 InlineItem::OutOfFlow { el, style } => {
                     // Static position: where the next inline content would go.
-                    self.defer_absolute(el, style.clone(), x - shift.0 + line.x, line_y);
+                    self.defer_absolute(el, style.clone(), lx - shift.0 + line.x, line_y);
+                }
+                InlineItem::Float { el, style } => {
+                    let ((w, _), _) = self.float_size(el, &style, width);
+                    if line.x == 0.0 || line.x + w <= lw + FIT_EPSILON {
+                        self.place_float(el, &style, x, width, line_y, fixed, shift);
+                        (lx, lw) = self.line_space(x, width, line_y, strut_h);
+                    } else {
+                        deferred.push((el, style));
+                    }
                 }
             }
         }
-        line_y +=
-            self.flush_line(&mut line, x, line_y, width, fixed, shift, &mut frags, &mut order_of, parent.text_align);
+        flush!();
         // Inline element boxes: union of their fragments.
         for el in order_of {
             if let Some(r) = frags.get(&el).copied() {
@@ -2810,6 +2897,108 @@ impl<'a> Ctx<'a> {
             }
         }
         line_y - y
+    }
+
+    /// The left edge and width of [x, x + width) left free by the floats
+    /// overlapping [y, y + h).
+    fn line_space(&self, x: f64, width: f64, y: f64, h: f64) -> (f64, f64) {
+        let (mut l, mut r) = (x, x + width);
+        for f in self.floats.iter().filter(|f| f.overlaps(y, h)) {
+            if f.left {
+                l = l.max(f.x1);
+            } else {
+                r = r.min(f.x0);
+            }
+        }
+        (l, (r - l).max(0.0))
+    }
+
+    /// The highest bottom among the floats overlapping [y, y + h).
+    fn next_float_bottom(&self, y: f64, h: f64) -> Option<f64> {
+        self.floats.iter().filter(|f| f.overlaps(y, h)).map(|f| f.y1).reduce(f64::min)
+    }
+
+    /// The lowest bottom of the floats `clear` goes below (-inf: none).
+    fn clearance(&self, clear: Clear) -> f64 {
+        self.floats
+            .iter()
+            .filter(|f| match clear {
+                Clear::None => false,
+                Clear::Left => f.left,
+                Clear::Right => !f.left,
+                Clear::Both => true,
+            })
+            .map(|f| f.y1)
+            .fold(f64::NEG_INFINITY, f64::max)
+    }
+
+    /// A float's margin-box size and content width in a containing block
+    /// `cb_width` wide (auto widths shrink to fit).
+    fn float_size(&self, el: NodeId, style: &FlowStyle, cb_width: f64) -> ((f64, f64), f64) {
+        let e = self.edges(style, cb_width);
+        let content_w = match style.width.resolve(Some(cb_width)) {
+            Some(w) => Self::declared_content(style, w, e.horizontal()),
+            None => {
+                self.intrinsic_width(el, style, (cb_width - e.horizontal() - e.margin[LEFT] - e.margin[RIGHT]).max(0.0))
+            }
+        };
+        let to_content = |w: f64| Self::declared_content(style, w, e.horizontal());
+        let content_w = Self::clamp(
+            content_w,
+            style.min_width.resolve(Some(cb_width)).map(to_content),
+            style.max_width.resolve(Some(cb_width)).map(to_content),
+        );
+        let w = content_w + e.horizontal() + e.margin[LEFT] + e.margin[RIGHT];
+        let h = self.atomic_height(el, style, content_w, cb_width) + e.margin[TOP] + e.margin[BOTTOM];
+        ((w, h), content_w)
+    }
+
+    /// Lays out a float in the containing block [x, x + width) at or below
+    /// `y` (CSS 2.1 9.5.1: not above earlier floats, below cleared ones,
+    /// as high and then as far left/right as it fits) and adds it to the
+    /// formatting context's floats.
+    #[allow(clippy::too_many_arguments)]
+    fn place_float(
+        &mut self,
+        el: NodeId,
+        style: &FlowStyle,
+        x: f64,
+        width: f64,
+        y: f64,
+        fixed: bool,
+        shift: (f64, f64),
+    ) {
+        let ((w, h), content_w) = self.float_size(el, style, width);
+        let left = style.float != Float::Right;
+        let mut top = self.floats.iter().map(|f| f.y0).fold(y, f64::max).max(self.clearance(style.clear));
+        let fx = loop {
+            let (l, free) = self.line_space(x, width, top, h);
+            match self.next_float_bottom(top, h) {
+                Some(b) if free + FIT_EPSILON < w => top = b,
+                _ => break if left { l } else { l + free - w },
+            }
+        };
+        let e = self.edges(style, width);
+        let mut s = style.clone();
+        s.width = Dim::px(if style.border_box { content_w + e.horizontal() } else { content_w });
+        s.min_width = Dim::Auto;
+        s.max_width = Dim::Auto;
+        s.margin[LEFT] = Dim::px(e.margin[LEFT]);
+        s.margin[RIGHT] = Dim::px(e.margin[RIGHT]);
+        self.block_child(el, &s, fx, top, w, fixed, shift);
+        self.floats.push(FloatArea { left, x0: fx, x1: fx + w, y0: top, y1: top + h });
+    }
+
+    /// The root element and boxes that establish a block formatting context
+    /// (floats, overflow clips, flex/grid/table, flow-root, out of flow).
+    fn is_bfc_root(&self, el: NodeId, style: &FlowStyle) -> bool {
+        establishes_bfc(style)
+            || self
+                .dom
+                .parent(el)
+                .ok()
+                .flatten()
+                .is_some_and(|p| self.dom.node_type(p).ok() == Some(NodeType::Document))
     }
 
     /// Places a finished line's items at `line_y` and returns its height
@@ -3039,6 +3228,10 @@ impl<'a> Ctx<'a> {
                 }
                 if matches!(style.position, Position::Absolute | Position::Fixed) {
                     items.push(InlineItem::OutOfFlow { el: n, style });
+                    return;
+                }
+                if style.float != Float::None {
+                    items.push(InlineItem::Float { el: n, style });
                     return;
                 }
                 if style.outer == OuterDisplay::Block {

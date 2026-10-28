@@ -13,8 +13,8 @@ use markup5ever::ns;
 use crate::computed::{self, LengthContext};
 use crate::dom::Dom;
 use crate::flow::{
-    Align, Dim, FlexDirection, FlowStyle, FlowStyleSource, InnerDisplay, Justify, Len, OuterDisplay, Position,
-    TablePart, TextAlign,
+    Align, Clear, Dim, FlexDirection, Float, FlowStyle, FlowStyleSource, InnerDisplay, Justify, Len, OuterDisplay,
+    Position, TablePart, TextAlign,
 };
 use crate::node::NodeId;
 use crate::style::{DeclaredEntry, FlowProp, StyleEngine, TypedValue, DEFAULT_FONT_SIZE};
@@ -271,7 +271,7 @@ impl StyleEngine {
             "table-column-group" => TablePart::ColumnGroup,
             _ => TablePart::None,
         };
-        let (outer, inner) = match display.as_str() {
+        let (mut outer, mut inner) = match display.as_str() {
             "inline" => (OuterDisplay::Inline, InnerDisplay::Flow),
             "inline-block" => (OuterDisplay::Inline, InnerDisplay::FlowRoot),
             "flex" => (OuterDisplay::Block, InnerDisplay::Flex),
@@ -292,6 +292,25 @@ impl StyleEngine {
             Some("fixed") => Position::Fixed,
             Some("sticky") => Position::Sticky,
             _ => Position::Static,
+        };
+        // Floats are block-level (CSS 2.1 9.7); positioned boxes do not float.
+        let float = match reads.keyword(FlowProp::Float).as_deref() {
+            _ if matches!(position, Position::Absolute | Position::Fixed) => Float::None,
+            Some("left" | "inline-start") => Float::Left,
+            Some("right" | "inline-end") => Float::Right,
+            _ => Float::None,
+        };
+        if float != Float::None && outer == OuterDisplay::Inline {
+            outer = OuterDisplay::Block;
+            if inner == InnerDisplay::FlowRoot {
+                inner = InnerDisplay::Flow;
+            }
+        }
+        let clear = match reads.keyword(FlowProp::Clear).as_deref() {
+            Some("left" | "inline-start") => Clear::Left,
+            Some("right" | "inline-end") => Clear::Right,
+            Some("both") => Clear::Both,
+            _ => Clear::None,
         };
         let ua = ua_box(&tag, font_size, zoom);
         const MARGINS: [FlowProp; 4] =
@@ -360,6 +379,8 @@ impl StyleEngine {
         let grid_area = crate::flow::split_grid_area(value("grid-area").as_deref());
         Some(FlowStyle {
             outer,
+            float,
+            clear,
             inner,
             position,
             inset: [dim(FlowProp::Top), dim(FlowProp::Right), dim(FlowProp::Bottom), dim(FlowProp::Left)],

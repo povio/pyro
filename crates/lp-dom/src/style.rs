@@ -46,7 +46,7 @@ use selectors::parser::{Component, NthSelectorData, Selector, SelectorList};
 
 use crate::computed;
 use crate::dom::Dom;
-use crate::flow::{Generated, GeneratedDisplay};
+use crate::flow::{Clear, Generated, GeneratedDisplay};
 use crate::media::{self, Viewport};
 use crate::node::{NodeId, NodeKind, NIL};
 use crate::select::{parse_selectors, Impl, PseudoClass, Selectors};
@@ -1249,10 +1249,12 @@ pub(crate) enum FlowProp {
     TableLayout,
     BorderCollapse,
     TextAlign,
+    Float,
+    Clear,
 }
 
 impl FlowProp {
-    pub(crate) const COUNT: usize = FlowProp::TextAlign as usize + 1;
+    pub(crate) const COUNT: usize = FlowProp::Clear as usize + 1;
     const NAMES: [&'static str; FlowProp::COUNT] = [
         "display",
         "position",
@@ -1306,6 +1308,8 @@ impl FlowProp {
         "table-layout",
         "border-collapse",
         "text-align",
+        "float",
+        "clear",
     ];
 
     pub(crate) fn name(self) -> &'static str {
@@ -3456,7 +3460,13 @@ fn generated_uncached(dom: &Dom, rules: &RuleSet, idx: u32, after: bool) -> Opti
     };
     let value = computed::substitute_vars(raw, &mut lookup, 0)?;
     let text = content_strings(&value)?;
-    Some(Rc::new(Generated { text: Rc::from(text.as_str()), display }))
+    let clear = match get("clear").as_deref() {
+        Some("left" | "inline-start") => Clear::Left,
+        Some("right" | "inline-end") => Clear::Right,
+        Some("both") => Clear::Both,
+        _ => Clear::None,
+    };
+    Some(Rc::new(Generated { text: Rc::from(text.as_str()), display, clear }))
 }
 
 /// The concatenated strings of a `content` value made only of strings (an

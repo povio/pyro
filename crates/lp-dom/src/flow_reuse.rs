@@ -163,6 +163,13 @@ impl<'a> Ctx<'a> {
             shift: (shift.0.to_bits(), shift.1.to_bits()),
             collapse,
         };
+        // Floats around a box in a formatting context it shares reach into
+        // it, and floats from inside it leave it: such subtrees are laid out
+        // afresh.
+        let shared_floats = !self.is_bfc_root(el, style);
+        if shared_floats && !self.floats.is_empty() {
+            return self.contents_in(el, style, x, y, width, height, fixed, shift, collapse);
+        }
         if let Some(h) = self.replay(el, style, key, x, y) {
             return h;
         }
@@ -176,6 +183,11 @@ impl<'a> Ctx<'a> {
         let last_lo = self.pending.last().map_or(0, Vec::len);
         let (fb, lb) = (self.first_baseline.take(), self.last_baseline.take());
         let h = self.contents_in(el, style, x, y, width, height, fixed, shift, collapse);
+        if shared_floats && !self.floats.is_empty() {
+            self.first_baseline = fb.or(self.first_baseline);
+            self.last_baseline = self.last_baseline.or(lb);
+            return h;
+        }
         let trailing = if collapse.bottom { self.trailing } else { Margin::ZERO };
         let (first_baseline, last_baseline) = (self.first_baseline, self.last_baseline);
         self.first_baseline = fb.or(first_baseline);

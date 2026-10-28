@@ -4563,3 +4563,86 @@ fn grid_template_areas_and_named_lines_like_chromium() {
         ],
     );
 }
+
+#[test]
+fn floats_like_chromium() {
+    // Chromium (800x600): left/right floats with margins; lines shortened
+    // beside them; floats stacking and dropping below when the line is
+    // full; formatting context roots (overflow, flex) beside floats or
+    // below when too wide, containing their floats; clear and a clearfix
+    // ::after; a float in the middle of a line; floats leaving a block
+    // into its parent's context.
+    check_rects(
+        "floats",
+        "<!doctype html><html><head><style>body{margin:0;font-family:sans-serif;font-size:16px;line-height:20px}.box{background:#ccc}#c1{width:400px}#a{float:left;width:100px;height:50px;margin:5px}#b{float:right;width:80px;height:30px}#p1{margin:0}#c2{width:300px;overflow:hidden}#d{float:left;width:120px;height:40px}#e{float:left;width:120px;height:60px}#f{float:left;width:120px;height:20px}#c3{width:300px}#g{float:left;width:50px;height:50px}#h{overflow:hidden;height:30px}#i{clear:both;height:10px}#c4{width:300px}#j{float:right;width:100px;height:20px;margin-left:10px}.cf::after{content:\"\";display:table;clear:both}#k{float:left;width:60px;height:45px}#c5{width:200px}#l{float:left;padding:4px;border:1px solid}</style></head><body><div id=c1><div id=a></div><div id=b></div><p id=p1><span id=s1>Some text that wraps around the floated boxes on both sides of the container, long enough to go below them all.</span></p></div><div id=c2><div id=d></div><div id=e></div><div id=f></div></div><div id=c3><div id=g></div><div id=h>bfc</div><div id=i></div></div><div id=c4 class=cf><span id=s2>Lead text </span><div id=j></div><div id=k></div></div><div id=c5><div id=l>shrink</div><span id=s3>after</span></div><div id=end style=\"height:5px\"></div></body></html>",
+        &[
+            ("c1", [0.0, 0.0, 400.0, 80.0]),
+            ("a", [5.0, 5.0, 100.0, 50.0]),
+            ("b", [320.0, 0.0, 80.0, 30.0]),
+            ("p1", [0.0, 0.0, 400.0, 80.0]),
+            ("c2", [0.0, 80.0, 300.0, 80.0]),
+            ("d", [0.0, 80.0, 120.0, 40.0]),
+            ("e", [120.0, 80.0, 120.0, 60.0]),
+            ("f", [0.0, 140.0, 120.0, 20.0]),
+            ("c3", [0.0, 160.0, 300.0, 60.0]),
+            ("g", [0.0, 160.0, 50.0, 50.0]),
+            ("h", [50.0, 160.0, 250.0, 30.0]),
+            ("i", [0.0, 210.0, 300.0, 10.0]),
+            ("c4", [0.0, 220.0, 300.0, 45.0]),
+            ("j", [200.0, 220.0, 100.0, 20.0]),
+            ("k", [0.0, 220.0, 60.0, 45.0]),
+            ("c5", [0.0, 265.0, 200.0, 20.0]),
+            ("end", [0.0, 285.0, 800.0, 5.0]),
+        ],
+    );
+    check_rects(
+        "floats 2",
+        "<!doctype html><html><head><style>body{margin:0;font-family:monospace;font-size:10px;line-height:20px}div{box-sizing:border-box}#c1{width:200px}#a{display:inline-block;width:150px;height:10px}#b{float:left;width:100px;height:30px}#c2{width:200px}#m1{margin-bottom:20px;height:10px}#fl{float:left;width:50px;height:15px}#m2{margin-top:30px;height:10px}#c3{width:200px}#g{float:left;width:120px;height:40px}#h{overflow:hidden;width:100px;height:10px}#h2{display:flex;height:10px}#c4{width:200px}#inner{margin:0}#n1{float:right;width:60px;height:50px}#after{height:10px}#after2{overflow:hidden;height:10px}#c5{width:200px}#sp{}#n2{float:left;width:40px;height:40px}#c6{width:200px}#r1{float:right;width:90px;height:20px}#r2{float:right;width:90px;height:20px}#r3{float:right;width:90px;height:20px}#l1{float:left;width:30px;height:70px;clear:right}</style></head><body><div id=c1><div id=a></div><div id=b></div></div><div id=c2><div id=m1></div><div id=fl></div><div id=m2></div></div><div id=c3><div id=g></div><div id=h></div><div id=h2>x</div></div><div id=c4><div id=inner><div id=n1></div></div><div id=after></div><div id=after2></div></div><div id=c5><span id=sp>aa <div id=n2></div>bb</span></div><div id=c6 style=\"overflow:hidden\"><div id=r1></div><div id=r2></div><div id=r3></div><div id=l1></div></div><div id=end style=\"height:5px\"></div></body></html>",
+        &[
+            ("c1", [0.0, 0.0, 200.0, 20.0]),
+            ("b", [0.0, 20.0, 100.0, 30.0]),
+            ("c2", [0.0, 20.0, 200.0, 50.0]),
+            ("m1", [0.0, 20.0, 200.0, 10.0]),
+            ("fl", [0.0, 50.0, 50.0, 15.0]),
+            ("m2", [0.0, 60.0, 200.0, 10.0]),
+            ("c3", [0.0, 70.0, 200.0, 60.0]),
+            ("g", [0.0, 70.0, 120.0, 40.0]),
+            ("h", [0.0, 110.0, 100.0, 10.0]),
+            ("h2", [0.0, 120.0, 200.0, 10.0]),
+            ("c4", [0.0, 130.0, 200.0, 20.0]),
+            ("inner", [0.0, 130.0, 200.0, 0.0]),
+            ("n1", [140.0, 130.0, 60.0, 50.0]),
+            ("after", [0.0, 130.0, 200.0, 10.0]),
+            ("after2", [0.0, 140.0, 140.0, 10.0]),
+            ("c5", [0.0, 150.0, 200.0, 20.0]),
+            ("n2", [0.0, 150.0, 40.0, 40.0]),
+            ("c6", [40.0, 180.0, 200.0, 110.0]),
+            ("r1", [150.0, 180.0, 90.0, 20.0]),
+            ("r2", [60.0, 180.0, 90.0, 20.0]),
+            ("r3", [150.0, 200.0, 90.0, 20.0]),
+            ("l1", [40.0, 220.0, 30.0, 70.0]),
+            ("end", [0.0, 290.0, 800.0, 5.0]),
+        ],
+    );
+}
+
+#[test]
+fn float_changes_relayout_their_neighbours() {
+    // Subtrees beside floats are not replayed from an earlier pass: a float
+    // that grows, appears or goes away moves the text and boxes around it.
+    let html = "<!doctype html><body style=\"margin:0;line-height:20px\"><div id=c style=\"width:300px\"><div id=f style=\"float:left;width:50px;height:40px\"></div><p id=p style=\"margin:0\">Some words that wrap beside the float and continue below it for a while.</p><div id=b style=\"overflow:hidden;height:10px\"></div></div><div id=after style=\"height:10px\"></div></body>";
+    let mut p = page(html, Geometry::Flow);
+    let f = p.id("f");
+    assert_matches_fresh(&p, "first");
+    p.dom.set_attribute(f, "style", "float:left;width:150px;height:90px").unwrap();
+    assert_matches_fresh(&p, "wider float");
+    p.dom.set_attribute(f, "style", "float:right;width:150px;height:90px").unwrap();
+    assert_matches_fresh(&p, "right float");
+    p.dom.set_attribute(f, "style", "width:150px;height:90px").unwrap();
+    assert_matches_fresh(&p, "no float");
+    p.dom.set_attribute(f, "style", "float:left;width:20px;height:20px").unwrap();
+    assert_matches_fresh(&p, "float again");
+    let c = p.id("c");
+    p.dom.set_attribute(c, "style", "width:300px;overflow:hidden").unwrap();
+    assert_matches_fresh(&p, "container contains its float");
+}
