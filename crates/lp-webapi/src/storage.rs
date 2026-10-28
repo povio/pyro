@@ -28,7 +28,10 @@ use crate::page::PageDom;
 use crate::util::{arg_string, dom_string, to_u32};
 
 static NEXT_AREA: AtomicU64 = AtomicU64::new(1);
-const DEFAULT_QUOTA: usize = 5 * 1024 * 1024;
+/// Chromium's per-origin quota: 10 MiB of keys and values counted as UTF-16
+/// (2 bytes per code unit), about 5.2 M characters, so a 5 M character value
+/// fits.
+const DEFAULT_QUOTA: usize = 10 * 1024 * 1024;
 
 struct Area {
     id: u64,
