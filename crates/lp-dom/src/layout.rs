@@ -147,6 +147,30 @@ pub enum Axis {
     Height,
 }
 
+/// The integer CSSOM View element metrics (`Layout::metric`).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Metric {
+    ScrollWidth,
+    ScrollHeight,
+    ClientWidth,
+    ClientHeight,
+    OffsetTop,
+    OffsetLeft,
+    OffsetWidth,
+    OffsetHeight,
+}
+
+/// Chromium's `LayoutUnit::Round` (half up) of a length in layout units.
+fn round_layout_unit(v: f64) -> f64 {
+    (layout_unit(v) + 0.5).floor()
+}
+
+/// Chromium's `SnapSizeToPixel`: the pixel-snapped size of a box `size`
+/// long starting at `location`, so adjacent snapped boxes tile.
+fn snap_size_to_pixel(size: f64, location: f64) -> f64 {
+    round_layout_unit(location + size) - round_layout_unit(location)
+}
+
 /// An axis' value, and whether it's explicit or the default
 /// (Element.zig:1591-1600).
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -910,6 +934,42 @@ impl Layout {
             return self.flow_offset(dom, el).0;
         }
         self.horizontal_position(dom, el)
+    }
+
+    /// An element metric as script reads it: in flow mode pixel-snapped to
+    /// whole pixels like Chromium (Gap 36: `scrollWidth > clientWidth` must
+    /// not come from a fractional width). Offsets round; sizes snap at the
+    /// box's offset (client and scroll sizes at its padding edge) so that
+    /// equal fractional sizes snap alike. The faux layout is unchanged.
+    pub fn metric(&self, dom: &Dom, el: NodeId, metric: Metric) -> f64 {
+        let raw = match metric {
+            Metric::ScrollWidth => self.scroll_width(dom, el),
+            Metric::ScrollHeight => self.scroll_height(dom, el),
+            Metric::ClientWidth => self.client_width(dom, el),
+            Metric::ClientHeight => self.client_height(dom, el),
+            Metric::OffsetTop => self.offset_top(dom, el),
+            Metric::OffsetLeft => self.offset_left(dom, el),
+            Metric::OffsetWidth => self.offset_width(dom, el),
+            Metric::OffsetHeight => self.offset_height(dom, el),
+        };
+        if !self.flow_mode() || raw == 0.0 {
+            return raw;
+        }
+        let border = |side: usize| {
+            use crate::flow::FlowStyleSource;
+            self.style.flow_style(dom, el).map_or(0.0, |s| s.border[side])
+        };
+        match metric {
+            Metric::OffsetTop | Metric::OffsetLeft => round_layout_unit(raw),
+            Metric::OffsetWidth => snap_size_to_pixel(raw, self.offset_left(dom, el)),
+            Metric::OffsetHeight => snap_size_to_pixel(raw, self.offset_top(dom, el)),
+            Metric::ScrollWidth | Metric::ClientWidth => {
+                snap_size_to_pixel(raw, self.offset_left(dom, el) + border(crate::flow::LEFT))
+            }
+            Metric::ScrollHeight | Metric::ClientHeight => {
+                snap_size_to_pixel(raw, self.offset_top(dom, el) + border(crate::flow::TOP))
+            }
+        }
     }
 
     /// `clientTop` / `clientLeft`: no borders in the faux layout

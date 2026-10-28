@@ -2403,6 +2403,33 @@ fn resize_observer_reports_the_flow_content_box() {
 }
 
 #[test]
+fn element_metrics_are_whole_pixels_like_chromium() {
+    // Gap 36: a chip label reported scrollWidth 44.7135000001 > clientWidth
+    // 44.7135 and was taken for truncated. Chromium's scroll, client and
+    // offset metrics are integers: offsets round, sizes snap at the box's
+    // offset (round(left + width) - round(left)).
+    let e = env(
+        "<body style='margin:0'><div id=a style='width:44.7135px;overflow:hidden;white-space:nowrap'><span style='display:inline-block;width:44.7135px'></span></div>\
+         <div id=b style='margin-left:10.6px;width:20.6px;height:10.4px;padding-top:0.3px'></div></body>",
+    );
+    e.page.layout.borrow_mut().set_geometry(lp_dom::layout::Geometry::Flow);
+    assert_eq!(
+        eval(&e.main, "var a = document.getElementById('a'); [a.scrollWidth, a.clientWidth, a.offsetWidth].join()"),
+        "45,45,45"
+    );
+    assert_eq!(
+        eval(
+            &e.main,
+            "var b = document.getElementById('b'); [b.offsetLeft, b.offsetWidth, b.clientWidth, b.scrollWidth, b.offsetHeight, b.clientHeight].join()"
+        ),
+        "11,20,20,20,11,11"
+    );
+    // getBoundingClientRect keeps the fractional geometry.
+    assert_eq!(eval(&e.main, "b.getBoundingClientRect().width"), "20.59375");
+    e.page.dispose();
+}
+
+#[test]
 fn svg_graphics_elements_report_get_bbox() {
     // TOS analytics reads recharts bar geometry with getBBox().
     let e = env(

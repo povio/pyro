@@ -3,6 +3,7 @@
 
 use std::rc::Rc;
 
+use lp_dom::layout::Metric;
 use lp_dom::style::CheckVisibilityOptions;
 use lp_dom::NodeId;
 use lp_js::{Args, ClassDef, JsClass, JsResult, NoParent, Object, Scope, Value};
@@ -295,17 +296,18 @@ pub(crate) fn metric<'s>(s: &Scope<'s>, n: &NodeData, which: &str) -> JsResult<V
     let page = n.page();
     let dom = page.dom.borrow();
     let l = page.layout.borrow();
-    let v = match which {
-        "scrollWidth" => l.scroll_width(&dom, n.id),
-        "scrollHeight" => l.scroll_height(&dom, n.id),
-        "clientWidth" => l.client_width(&dom, n.id),
-        "clientHeight" => l.client_height(&dom, n.id),
-        "offsetTop" => l.offset_top(&dom, n.id),
-        "offsetLeft" => l.offset_left(&dom, n.id),
-        "offsetWidth" => l.offset_width(&dom, n.id),
-        "offsetHeight" => l.offset_height(&dom, n.id),
-        _ => 0.0,
+    let metric = match which {
+        "scrollWidth" => Metric::ScrollWidth,
+        "scrollHeight" => Metric::ScrollHeight,
+        "clientWidth" => Metric::ClientWidth,
+        "clientHeight" => Metric::ClientHeight,
+        "offsetTop" => Metric::OffsetTop,
+        "offsetLeft" => Metric::OffsetLeft,
+        "offsetWidth" => Metric::OffsetWidth,
+        "offsetHeight" => Metric::OffsetHeight,
+        _ => return Ok(s.number(0.0)),
     };
+    let v = l.metric(&dom, n.id, metric);
     Ok(s.number(v))
 }
 
