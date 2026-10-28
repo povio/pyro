@@ -1073,6 +1073,19 @@ impl<'a> Ctx<'a> {
         Some(lines.max(1.0) * line)
     }
 
+    /// Width of a text control's value on one line (a text input, or a
+    /// textarea's longest line), for `scrollWidth`: Chromium reports the
+    /// text's width when the value is longer than the box, which truncation
+    /// detectors (`offsetWidth < scrollWidth`) rely on. `None` for others.
+    fn text_control_text_width(&self, el: NodeId) -> Option<f64> {
+        if !matches!(control_kind(self.dom, el), Some(Control::Text | Control::TextArea)) {
+            return None;
+        }
+        let style = self.style_of(el)?;
+        let value = self.dom.value(el).unwrap_or_default();
+        Some(value.split('\n').map(|seg| crate::layout::text_width(seg, style.font_size)).fold(0.0, f64::max))
+    }
+
     /// Intrinsic content-box size of a replaced element without a declared
     /// size: form controls by Chromium's defaults (measured in headless
     /// Chromium at 13.33px UA and 16px preflight fonts), otherwise none.
@@ -1447,6 +1460,9 @@ impl<'a> Ctx<'a> {
         // what `scrollHeight` reports (autosizing sets height 0 and reads it).
         if let Some(h) = self.textarea_text_height(el, content_w) {
             sh = sh.max(h + e.padding[TOP] + e.padding[BOTTOM]);
+        }
+        if let Some(w) = self.text_control_text_width(el) {
+            sw = sw.max(w + e.padding[LEFT] + e.padding[RIGHT]);
         }
         // Overflowing text extends the scroll width too (Chromium: through
         // the inline-end padding), unless a clipping element inside this one
