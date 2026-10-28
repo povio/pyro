@@ -100,6 +100,14 @@ enum Action {
     /// Focus, then a key press (`value`: a key name such as `Enter`, or a
     /// chord such as `Shift+Tab`).
     Press,
+    /// Move the pointer to the element's center (tooltips, hover toolbars).
+    Hover,
+    /// Two clicks at the center, the second with click count 2.
+    DblClick,
+    /// Remove focus from the element (`blur()`).
+    Blur,
+    /// Focus, then one key press per character of `value` (`pressSequentially`).
+    Type,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -111,6 +119,12 @@ enum Assert {
     Value,
     Count,
     Checked,
+    /// A computed style property (`property`) equals `expected`.
+    Css,
+    /// The element is the document's focused element.
+    Focused,
+    /// The accessible name equals `expected` (whitespace-normalized).
+    Name,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -120,6 +134,11 @@ enum Read {
     Value,
     Visible,
     Box,
+    /// A computed style property (`property`).
+    Css,
+    /// The accessible name.
+    Name,
+    Focused,
 }
 
 /// Which requests a `request` step looks for in the run's log.
@@ -131,9 +150,60 @@ struct RequestMatch {
     path: Option<String>,
     /// Substring of (or regex on) the full URL.
     url: Option<Pattern>,
-    status: Option<u16>,
+    /// One status code or a list of acceptable ones (`200` or `[200, 304]`).
+    status: Option<StatusSet>,
     /// Exactly this many finished matches (default: at least one).
     count: Option<usize>,
+}
+
+/// `status: 200` or `status: [200, 304]`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct StatusSet(Vec<u16>);
+
+impl StatusSet {
+    fn accepts(&self, status: Option<u16>) -> bool {
+        status.is_some_and(|s| self.0.contains(&s))
+    }
+}
+
+impl<'de> Deserialize<'de> for StatusSet {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Raw {
+            One(u16),
+            Many(Vec<u16>),
+        }
+        Ok(match Raw::deserialize(d)? {
+            Raw::One(s) => StatusSet(vec![s]),
+            Raw::Many(v) if v.is_empty() => return Err(serde::de::Error::custom("status list is empty")),
+            Raw::Many(v) => StatusSet(v),
+        })
+    }
+}
+
+impl Serialize for StatusSet {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        match self.0.as_slice() {
+            [one] => one.serialize(s),
+            many => many.serialize(s),
+        }
+    }
+}
+
+/// `{"mock": {...}}`: what the context answers matching requests with.
+#[derive(Clone, Debug)]
+struct MockSpec {
+    url: Pattern,
+    method: Option<String>,
+    status: u16,
+    content_type: Option<String>,
+    default_type: &'static str,
+    headers: Vec<(String, String)>,
+    body: String,
+    delay: Duration,
+    abort: Option<String>,
+    times: Option<u32>,
 }
 
 #[derive(Clone, Debug)]
@@ -141,6 +211,14 @@ enum Step {
     /// Waits for the current document's `load` (a prepared page taken while
     /// it was still booting).
     Loaded,
+    /// Reloads the current document and waits for its `load`.
+    Reload,
+    /// Waits until the page URL contains (or matches) the pattern.
+    Url(Pattern),
+    /// Registers a network mock on the page's browser context.
+    Mock(MockSpec),
+    /// Removes mocks by URL pattern (all when `None`).
+    Unmock(Option<Pattern>),
     Goto {
         url: String,
         dom_ready: bool,
@@ -166,11 +244,15 @@ enum Step {
         assert: Assert,
         expected: Value,
         not: bool,
+        /// `css`: the property name.
+        property: Option<String>,
     },
     Read {
         locator: Locator,
         read: Read,
         key: Option<String>,
+        /// `css`: the property name.
+        property: Option<String>,
     },
 }
 
@@ -179,6 +261,11 @@ impl Step {
         match self {
             Step::Goto { url, .. } => format!("goto {url}"),
             Step::Loaded => "loaded".into(),
+            Step::Reload => "reload".into(),
+            Step::Url(p) => format!("url {}", p.text),
+            Step::Mock(m) => format!("mock {}", m.url.text),
+            Step::Unmock(Some(p)) => format!("unmock {}", p.text),
+            Step::Unmock(None) => "unmock".into(),
             Step::Route { url } => format!("route {url}"),
             Step::Eval { .. } => "eval".into(),
             Step::Request(m) => format!("request {}", serde_json::to_value(m).map(prune).unwrap_or_default()),
@@ -253,13 +340,23 @@ pub(super) struct Waiter {
     doc: Weak<PageDom>,
     seen: u64,
     reason: String,
+    /// A `url` step: tried again at this time (the URL can change without
+    /// the DOM, e.g. `pushState`).
+    poll_at: Option<Instant>,
 }
+
+/// How often a `url` step looks again.
+const URL_POLL: Duration = Duration::from_millis(25);
 
 impl Waiter {
     fn deadline(&self) -> Instant {
-        match &self.phase {
+        let step = match &self.phase {
             Phase::Settle { until, .. } => *until,
             _ => self.step_deadline,
+        };
+        match self.poll_at {
+            Some(at) if matches!(self.phase, Phase::Try) => step.min(at),
+            _ => step,
         }
     }
 
@@ -275,6 +372,7 @@ impl Waiter {
         }
         match &self.phase {
             Phase::Try if self.waits_on_log() => false,
+            Phase::Try if self.poll_at.is_some() => self.poll_at.is_some_and(|at| now >= at),
             Phase::Try => match self.doc.upgrade() {
                 Some(doc) => doc.is_disposed() || doc.dom.borrow().version() != self.seen,
                 None => true,
@@ -371,7 +469,7 @@ fn text_matches(have: &str, want: &str, exact: bool) -> bool {
 /// tested against the whitespace-normalized text.
 #[derive(Clone, Debug)]
 pub(super) struct Pattern {
-    text: String,
+    pub(super) text: String,
     regex: Option<regex_lite::Regex>,
 }
 
@@ -416,7 +514,7 @@ impl Serialize for Pattern {
 }
 
 impl Pattern {
-    fn matches(&self, have: &str, exact: bool) -> bool {
+    pub(super) fn matches(&self, have: &str, exact: bool) -> bool {
         match &self.regex {
             Some(re) => re.is_match(&normalize(have)),
             None => text_matches(have, &self.text, exact),
@@ -889,6 +987,27 @@ fn act(page: &Rc<PageDom>, id: NodeId, action: Action, value: &str) -> Attempt {
             input::focus_element(page, id);
             Attempt::Done(json!({}))
         }
+        Action::Blur => {
+            input::blur_element(page, id);
+            Attempt::Done(json!({}))
+        }
+        Action::Hover => pointer(page, id, Pointer::Hover),
+        Action::DblClick => pointer(page, id, Pointer::DblClick),
+        Action::Type => {
+            if input::key_target(page) != Some(id) {
+                input::focus_element(page, id);
+            }
+            for c in value.chars() {
+                let name = c.to_string();
+                let Some(keys) = key_chord(&name) else {
+                    return Attempt::Retry(format!("cannot type {c:?}"));
+                };
+                for (kind, k) in keys {
+                    input::dispatch_key(page, kind, &k);
+                }
+            }
+            Attempt::Done(json!({}))
+        }
         Action::Fill => {
             let is_control = {
                 let dom = page.dom.borrow();
@@ -995,20 +1114,40 @@ fn key_chord(chord: &str) -> Option<Vec<(input::KeyKind, input::KeyInput)>> {
     Some(events)
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Pointer {
+    Click,
+    DblClick,
+    Hover,
+}
+
 /// Scrolls the element into view, checks that its center receives pointer
 /// events, then dispatches move, press and release there.
 fn click(page: &Rc<PageDom>, id: NodeId) -> Attempt {
+    pointer(page, id, Pointer::Click)
+}
+
+/// The element's center, once it is revealed and receives pointer events
+/// there.
+fn pointer_target(page: &Rc<PageDom>, id: NodeId) -> Result<(f64, f64), Attempt> {
     super::dom::reveal(page, id);
-    let Some(rect) = visible_box(page, id) else { return Attempt::Retry("element is not visible".into()) };
+    let Some(rect) = visible_box(page, id) else { return Err(Attempt::Retry("element is not visible".into())) };
     let (x, y) = (rect.x + rect.width / 2.0, rect.y + rect.height / 2.0);
     match lp_webapi::layout_api::hit_test(page, x, y) {
-        Some(hit) if contains(&page.dom.borrow(), id, hit) => {}
+        Some(hit) if contains(&page.dom.borrow(), id, hit) => Ok((x, y)),
         Some(hit) => {
             let tag = local(&page.dom.borrow(), hit).unwrap_or("?").to_owned();
-            return Attempt::Retry(format!("<{tag}> intercepts pointer events"));
+            Err(Attempt::Retry(format!("<{tag}> intercepts pointer events")))
         }
-        None => return Attempt::Retry("element is outside the viewport".into()),
+        None => Err(Attempt::Retry("element is outside the viewport".into())),
     }
+}
+
+fn pointer(page: &Rc<PageDom>, id: NodeId, what: Pointer) -> Attempt {
+    let (x, y) = match pointer_target(page, id) {
+        Ok(p) => p,
+        Err(retry) => return retry,
+    };
     let mut m = MouseInput {
         x,
         y,
@@ -1019,12 +1158,33 @@ fn click(page: &Rc<PageDom>, id: NodeId) -> Attempt {
         delta_x: 0.0,
         delta_y: 0.0,
     };
-    let steps = [
-        (MouseKind::Moved, MouseButton::None, 0, 0),
-        (MouseKind::Pressed, MouseButton::Left, 1, 1),
-        (MouseKind::Released, MouseButton::Left, 0, 1),
-    ];
-    for (kind, button, buttons, count) in steps {
+    let steps: &[(MouseKind, MouseButton, u16, u32)] = match what {
+        Pointer::Hover => &[(MouseKind::Moved, MouseButton::None, 0, 0)],
+        Pointer::Click => &[
+            (MouseKind::Moved, MouseButton::None, 0, 0),
+            (MouseKind::Pressed, MouseButton::Left, 1, 1),
+            (MouseKind::Released, MouseButton::Left, 0, 1),
+        ],
+        Pointer::DblClick => &[
+            (MouseKind::Moved, MouseButton::None, 0, 0),
+            (MouseKind::Pressed, MouseButton::Left, 1, 1),
+            (MouseKind::Released, MouseButton::Left, 0, 1),
+            (MouseKind::Pressed, MouseButton::Left, 1, 2),
+            (MouseKind::Released, MouseButton::Left, 0, 2),
+        ],
+    };
+    for &(kind, button, buttons, count) in steps {
+        // Hover-dependent layout (a tooltip the move hid, a menu it opened)
+        // can shift the element between events: press where it is now.
+        if kind == MouseKind::Pressed {
+            match pointer_target(page, id) {
+                Ok((x, y)) => {
+                    m.x = x;
+                    m.y = y;
+                }
+                Err(retry) => return retry,
+            }
+        }
         m.button = button;
         m.buttons = buttons;
         m.click_count = count;
@@ -1042,9 +1202,33 @@ fn expect(
     assert: Assert,
     expected: &Value,
     not: bool,
+    property: Option<&str>,
 ) -> CdpResult<Attempt> {
     let dom = page.dom.borrow();
     let (holds, actual) = match assert {
+        Assert::Css | Assert::Focused | Assert::Name => {
+            let Some(el) = single(found, &dom, locator)? else {
+                return Ok(Attempt::Retry(format!("{} matched no element", locator.describe())));
+            };
+            match assert {
+                Assert::Css => {
+                    let property = property.ok_or_else(|| CdpError::invalid_params("css needs a property"))?;
+                    let want = expected.as_str().ok_or_else(|| CdpError::invalid_params("css needs a string"))?;
+                    let have = page.layout.borrow().computed_style_value(&dom, el, property);
+                    (have == want, json!(have))
+                }
+                Assert::Focused => {
+                    let focused = dom.focused(page.document()).ok().flatten() == Some(el);
+                    (focused == expected.as_bool().unwrap_or(true), json!(focused))
+                }
+                _ => {
+                    let want = expected.as_str().ok_or_else(|| CdpError::invalid_params("name needs a string"))?;
+                    let role = role_of(&dom, el).unwrap_or_default();
+                    let have = normalize(&accessible_name(&dom, page.document(), el, &role));
+                    (have == normalize(want), json!(have))
+                }
+            }
+        }
         Assert::Count => {
             let want = expected.as_u64().ok_or_else(|| CdpError::invalid_params("count needs a number"))?;
             (found.len() as u64 == want, json!(found.len()))
@@ -1116,6 +1300,8 @@ struct ExpectParams {
     expected: Value,
     #[serde(default)]
     not: bool,
+    /// `css`: the property name (`background-color`).
+    property: Option<String>,
     timeout: Option<u64>,
 }
 
@@ -1127,6 +1313,8 @@ struct QueryParams {
     /// Key of the value in the run's `reads`.
     #[serde(rename = "as")]
     key: Option<String>,
+    /// `css`: the property name.
+    property: Option<String>,
     timeout: Option<u64>,
 }
 
@@ -1138,12 +1326,89 @@ struct QueryParams {
 enum StepParams {
     Goto(GotoParams),
     Loaded(LoadedParams),
+    Reload(LoadedParams),
+    Url(UrlParams),
+    Mock(MockParams),
+    Unmock(UnmockParams),
     Route(RouteParams),
     Act(ActParams),
     Check(ExpectParams),
     Read(QueryParams),
     Eval(EvalParams),
     Request(RequestParams),
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct UrlParams {
+    url: Pattern,
+    timeout: Option<u64>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct UnmockParams {
+    url: Option<Pattern>,
+}
+
+/// `{"mock": {"url": "/api/items", "json": [...]}}`: `body` (text) or
+/// `json` (serialized), `status` (200), `contentType`, `headers`, `method`,
+/// `delay` (ms before the response), `abort` (a `Network.ErrorReason` such
+/// as `Failed` or `ConnectionRefused`; no response), `times` (uses).
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct MockParams {
+    url: Pattern,
+    method: Option<String>,
+    status: Option<u16>,
+    body: Option<String>,
+    json: Option<Value>,
+    content_type: Option<String>,
+    #[serde(default)]
+    headers: serde_json::Map<String, Value>,
+    delay: Option<u64>,
+    abort: Option<String>,
+    times: Option<u32>,
+}
+
+impl MockParams {
+    fn step(self) -> CdpResult<(Step, Option<u64>)> {
+        if self.body.is_some() && self.json.is_some() {
+            return Err(CdpError::invalid_params("mock takes body or json, not both"));
+        }
+        if self.abort.is_some() && (self.body.is_some() || self.json.is_some() || self.status.is_some()) {
+            return Err(CdpError::invalid_params("an aborted mock has no response"));
+        }
+        if self.times == Some(0) {
+            return Err(CdpError::invalid_params("times must be at least 1"));
+        }
+        let (body, default_type) = match (self.body, &self.json) {
+            (Some(b), _) => (b, "text/plain; charset=utf-8"),
+            (None, Some(j)) => (serde_json::to_string(j).unwrap_or_default(), "application/json"),
+            (None, None) => (String::new(), "text/plain; charset=utf-8"),
+        };
+        let headers = self
+            .headers
+            .into_iter()
+            .map(|(k, v)| match v {
+                Value::String(s) => Ok((k, s)),
+                other => Err(CdpError::invalid_params(format!("header {k} must be a string, got {other}"))),
+            })
+            .collect::<CdpResult<Vec<_>>>()?;
+        let spec = MockSpec {
+            url: self.url,
+            method: self.method,
+            status: self.status.unwrap_or(200),
+            content_type: self.content_type,
+            default_type,
+            headers,
+            body,
+            delay: Duration::from_millis(self.delay.unwrap_or(0).min(MAX_TIMEOUT_MS)),
+            abort: self.abort,
+            times: self.times,
+        };
+        Ok((Step::Mock(spec), None))
+    }
 }
 
 #[derive(Deserialize)]
@@ -1198,7 +1463,15 @@ impl ActParams {
             "check" => Action::Check,
             "uncheck" => Action::Uncheck,
             "press" => Action::Press,
-            _ => return Err(CdpError::invalid_params("action must be click, fill, focus, check, uncheck or press")),
+            "hover" => Action::Hover,
+            "dblclick" => Action::DblClick,
+            "blur" => Action::Blur,
+            "type" => Action::Type,
+            _ => {
+                return Err(CdpError::invalid_params(
+                    "action must be click, fill, focus, check, uncheck, press, hover, dblclick, blur or type",
+                ))
+            }
         };
         let settle = self.settle.unwrap_or(settle_default);
         Ok((Step::Act { locator: self.locator, action, value: self.value, settle }, self.timeout))
@@ -1208,21 +1481,35 @@ impl ActParams {
 impl ExpectParams {
     fn step(self) -> CdpResult<(Step, Option<u64>)> {
         self.locator.validate()?;
-        let assert = match self.assert.as_str() {
-            "visible" => Assert::Visible,
-            "hidden" => Assert::Hidden,
-            "text" => Assert::Text,
-            "containsText" => Assert::ContainsText,
-            "value" => Assert::Value,
-            "count" => Assert::Count,
-            "checked" => Assert::Checked,
-            _ => {
-                return Err(CdpError::invalid_params(
-                    "assert must be visible, hidden, text, containsText, value, count or checked",
-                ))
-            }
-        };
-        Ok((Step::Check { locator: self.locator, assert, expected: self.expected, not: self.not }, self.timeout))
+        let assert =
+            match self.assert.as_str() {
+                "visible" => Assert::Visible,
+                "hidden" => Assert::Hidden,
+                "text" => Assert::Text,
+                "containsText" => Assert::ContainsText,
+                "value" => Assert::Value,
+                "count" => Assert::Count,
+                "checked" => Assert::Checked,
+                "css" => Assert::Css,
+                "focused" => Assert::Focused,
+                "name" => Assert::Name,
+                _ => return Err(CdpError::invalid_params(
+                    "assert must be visible, hidden, text, containsText, value, count, checked, css, focused or name",
+                )),
+            };
+        if assert == Assert::Css && self.property.is_none() {
+            return Err(CdpError::invalid_params("css needs a property"));
+        }
+        Ok((
+            Step::Check {
+                locator: self.locator,
+                assert,
+                expected: self.expected,
+                not: self.not,
+                property: self.property,
+            },
+            self.timeout,
+        ))
     }
 }
 
@@ -1235,7 +1522,19 @@ impl QueryParams {
             "value" => Read::Value,
             "visible" => Read::Visible,
             "box" => Read::Box,
-            _ => return Err(CdpError::invalid_params("read must be count, text, value, visible or box")),
+            "css" => {
+                if self.property.is_none() {
+                    return Err(CdpError::invalid_params("css needs a property"));
+                }
+                Read::Css
+            }
+            "name" => Read::Name,
+            "focused" => Read::Focused,
+            _ => {
+                return Err(CdpError::invalid_params(
+                    "read must be count, text, value, visible, box, css, name or focused",
+                ))
+            }
         })
     }
 }
@@ -1252,6 +1551,10 @@ impl StepParams {
                 Ok((Step::Goto { url: p.url, dom_ready }, p.timeout))
             }
             StepParams::Loaded(p) => Ok((Step::Loaded, p.timeout)),
+            StepParams::Reload(p) => Ok((Step::Reload, p.timeout)),
+            StepParams::Url(p) => Ok((Step::Url(p.url), p.timeout)),
+            StepParams::Mock(p) => p.step(),
+            StepParams::Unmock(p) => Ok((Step::Unmock(p.url), None)),
             StepParams::Route(p) => Ok((Step::Route { url: p.url }, p.timeout)),
             StepParams::Eval(p) => Ok((Step::Eval { expression: p.expression, key: p.key }, None)),
             StepParams::Request(p) => Ok((Step::Request(p.matcher), p.timeout)),
@@ -1259,15 +1562,25 @@ impl StepParams {
             StepParams::Check(p) => p.step(),
             StepParams::Read(p) => {
                 let read = p.read()?;
-                Ok((Step::Read { locator: p.locator, read, key: p.key }, p.timeout))
+                Ok((Step::Read { locator: p.locator, read, key: p.key, property: p.property }, p.timeout))
             }
         }
     }
 }
 
-fn read_value(page: &PageDom, el: NodeId, read: Read) -> Value {
+fn read_value(page: &PageDom, el: NodeId, read: Read, property: Option<&str>) -> Value {
     match read {
         Read::Count => Value::Null,
+        Read::Css => match property {
+            Some(p) => json!(page.layout.borrow().computed_style_value(&page.dom.borrow(), el, p)),
+            None => Value::Null,
+        },
+        Read::Name => {
+            let dom = page.dom.borrow();
+            let role = role_of(&dom, el).unwrap_or_default();
+            json!(normalize(&accessible_name(&dom, page.document(), el, &role)))
+        }
+        Read::Focused => json!(page.dom.borrow().focused(page.document()).ok().flatten() == Some(el)),
         Read::Text => json!(normalize(&text_of(&page.dom.borrow(), el))),
         Read::Value => json!(page.dom.borrow().value(el).unwrap_or_default()),
         Read::Visible => json!(visible_box(page, el).is_some()),
@@ -1298,7 +1611,15 @@ impl EngineHost {
     fn attempt(&mut self, page: &Rc<PageDom>, step: &Step) -> CdpResult<Attempt> {
         let no_match = |locator: &Locator| Attempt::Retry(format!("{} matched no element", locator.describe()));
         match step {
-            Step::Goto { .. } | Step::Loaded | Step::Route { .. } | Step::Eval { .. } | Step::Request(_) => {
+            Step::Goto { .. }
+            | Step::Loaded
+            | Step::Reload
+            | Step::Url(_)
+            | Step::Mock(_)
+            | Step::Unmock(_)
+            | Step::Route { .. }
+            | Step::Eval { .. }
+            | Step::Request(_) => {
                 unreachable!("not a locator step")
             }
             Step::Act { locator, action, value, .. } => {
@@ -1310,17 +1631,17 @@ impl EngineHost {
                 }
                 Ok(result)
             }
-            Step::Check { locator, assert, expected, not } => {
+            Step::Check { locator, assert, expected, not, property } => {
                 let found = locator.resolve(page, &self.waiters.selectors)?;
-                expect(page, &found, locator, *assert, expected, *not)
+                expect(page, &found, locator, *assert, expected, *not, property.as_deref())
             }
-            Step::Read { locator, read, .. } => {
+            Step::Read { locator, read, property, .. } => {
                 let found = locator.resolve(page, &self.waiters.selectors)?;
                 if *read == Read::Count {
                     return Ok(Attempt::Done(json!(found.len())));
                 }
                 let Some(el) = single(&found, &page.dom.borrow(), locator)? else { return Ok(no_match(locator)) };
-                Ok(Attempt::Done(read_value(page, el, *read)))
+                Ok(Attempt::Done(read_value(page, el, *read, property.as_deref())))
             }
         }
     }
@@ -1387,6 +1708,7 @@ impl EngineHost {
             doc: Weak::new(),
             seen: 0,
             reason: String::new(),
+            poll_at: None,
         };
         match self.drive(waiter)? {
             Drive::Done(value) => Ok(Some(value)),
@@ -1473,10 +1795,41 @@ impl EngineHost {
                         w.phase = Phase::Load { loader, dom_ready: false };
                         continue;
                     }
+                    if let Step::Reload = step {
+                        let url = self
+                            .thread
+                            .browser
+                            .page(pid)
+                            .map(|p| p.main_frame.url.clone())
+                            .ok_or_else(|| w.job.fail(CdpError::server("page is gone")))?;
+                        let loader = self
+                            .thread
+                            .browser
+                            .navigate(pid, NavigateOpts::address_bar(url.as_str()))
+                            .map_err(|e| w.job.fail(CdpError::server(format!("reload failed: {e}"))))?;
+                        self.thread.browser.checkpoint();
+                        w.phase = Phase::Load { loader: loader.0, dom_ready: false };
+                        continue;
+                    }
                     let before = matches!(step, Step::Act { settle: true, .. } | Step::Route { .. })
                         .then(|| net_state(&self.thread.browser, pid));
                     let (attempt, page) = match &step {
                         Step::Request(m) => (self.match_request(&w.job, m), None),
+                        Step::Url(pattern) => {
+                            let url =
+                                self.thread.browser.page(pid).map(|p| p.main_frame.url.clone()).unwrap_or_default();
+                            let attempt = if pattern.matches(&url, false) {
+                                Attempt::Done(json!({ "url": url }))
+                            } else {
+                                Attempt::Retry(format!("url is {url}"))
+                            };
+                            (attempt, None)
+                        }
+                        Step::Mock(spec) => (self.register_mock(w.job.page, spec).map_err(|e| w.job.fail(e))?, None),
+                        Step::Unmock(pattern) => {
+                            let removed = self.remove_mocks(w.job.page, pattern.as_ref()).map_err(|e| w.job.fail(e))?;
+                            (Attempt::Done(json!({ "removed": removed })), None)
+                        }
                         Step::Eval { expression, .. } => {
                             let value = self.eval_step(pid, expression).map_err(|e| w.job.fail(e))?;
                             (Attempt::Done(value), None)
@@ -1528,6 +1881,7 @@ impl EngineHost {
                                 w.seen = page.dom.borrow().version();
                                 w.doc = Rc::downgrade(&page);
                             }
+                            w.poll_at = matches!(step, Step::Url(_)).then(|| Instant::now() + URL_POLL);
                             w.reason = reason;
                             return Ok(Drive::Park(Box::new(w)));
                         }
@@ -1535,6 +1889,37 @@ impl EngineHost {
                 }
             }
         }
+    }
+
+    /// Registers a mock on the page's browser context and makes sure the
+    /// context's interceptor sees it.
+    fn register_mock(&mut self, page: PageKey, spec: &MockSpec) -> CdpResult<Attempt> {
+        let context = self.pages.get(&page).ok_or_else(|| CdpError::server("page is gone"))?.context;
+        let headers = super::mocks::headers_for(spec.content_type.as_deref(), spec.default_type, &spec.headers)
+            .map_err(CdpError::invalid_params)?;
+        let rule = super::mocks::MockRule {
+            id: 0,
+            url: spec.url.clone(),
+            method: spec.method.clone(),
+            status: spec.status,
+            headers,
+            body: bytes::Bytes::from(spec.body.clone()),
+            delay: spec.delay,
+            abort: spec.abort.clone(),
+            times: spec.times,
+        };
+        let mocks = self.contexts.get(&context).ok_or_else(|| CdpError::server("context is gone"))?.mocks.clone();
+        let id = mocks.add(rule);
+        self.update_fetch_interceptors();
+        Ok(Attempt::Done(json!({ "mockId": id, "mocks": mocks.len() })))
+    }
+
+    fn remove_mocks(&mut self, page: PageKey, url: Option<&Pattern>) -> CdpResult<usize> {
+        let context = self.pages.get(&page).ok_or_else(|| CdpError::server("page is gone"))?.context;
+        let mocks = self.contexts.get(&context).ok_or_else(|| CdpError::server("context is gone"))?.mocks.clone();
+        let removed = mocks.remove(url);
+        self.update_fetch_interceptors();
+        Ok(removed)
     }
 
     /// Evaluates `src` in the page's main world; its JSON value.
@@ -1577,7 +1962,7 @@ impl EngineHost {
                 Attempt::Retry(format!("{} matching requests ({} finished), want {n}", matching.len(), finished.len()))
             };
         }
-        match finished.iter().rev().find(|r| m.status.is_none_or(|s| r.status == Some(s))) {
+        match finished.iter().rev().find(|r| m.status.as_ref().is_none_or(|s| s.accepts(r.status))) {
             Some(r) => Attempt::Done(r.to_json()),
             None => Attempt::Retry(match finished.last() {
                 Some(r) => format!("last match was {}", r.to_json()),
@@ -1614,7 +1999,7 @@ impl EngineHost {
         }
         let el = single(&found, &page.dom.borrow(), &p.locator)?
             .ok_or_else(|| CdpError::server(format!("{} matched no element", p.locator.describe())))?;
-        Ok(json!({ "value": read_value(&page, el, read) }))
+        Ok(json!({ "value": read_value(&page, el, read, p.property.as_deref()) }))
     }
 
     /// Drives the waiters that can make progress and replies to those that

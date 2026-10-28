@@ -4123,3 +4123,133 @@ fn driver_run_routes_presses_and_checks_requests() {
     let r = h.page("LP.run", json!({"steps": [{"eval": {"expression": "missing.call()"}}]}));
     assert!(r["error"]["message"].as_str().unwrap_or_default().contains("threw"), "{r}");
 }
+
+const DRIVER_STEPS_PAGE: &str = r#"<!doctype html><body>
+<style>#tip{display:none} #cell:hover + #tip{display:block} #box{color:rgb(1, 2, 3);width:120px;height:40px}</style>
+<div id="cell">Cell</div><div id="tip">Tooltip</div>
+<div id="box"></div>
+<input id="t" aria-label="Title">
+<button id="dbl">Twice</button> <div id="dbl-out"></div>
+<div id="blur-out"></div>
+<button id="load" aria-label="Load items">Load</button> <div id="status"></div> <ul id="items"></ul>
+<script>
+  const t = document.getElementById('t');
+  t.addEventListener('blur', () => { document.getElementById('blur-out').textContent = 'blurred:' + t.value; });
+  document.getElementById('dbl').addEventListener('dblclick', (e) => { document.getElementById('dbl-out').textContent = 'dbl:' + e.detail; });
+  document.getElementById('cell').addEventListener('mouseover', () => { document.getElementById('cell').dataset.hovered = '1'; });
+  document.getElementById('load').addEventListener('click', async () => {
+    const status = document.getElementById('status'); status.textContent = 'loading';
+    try {
+      const r = await fetch('/api/items?page=1');
+      if (!r.ok) { status.textContent = 'error ' + r.status; return; }
+      const items = await r.json();
+      document.getElementById('items').innerHTML = items.map((i) => '<li>' + i.name + '</li>').join('');
+      status.textContent = 'done';
+    } catch (e) { status.textContent = 'failed'; }
+  });
+</script>"#;
+
+/// `LP.run`: mocks answer requests from the context (json/body, delay for a
+/// loading state, abort for a failure, `times`), `url` waits for a route,
+/// `reload` reloads, and the element steps hover, dblclick, blur, type,
+/// css/focused/name checks and reads.
+#[test]
+fn driver_run_mocks_requests_and_covers_the_new_element_steps() {
+    let address = driver_site();
+    let mut h = Harness::new();
+    // Element steps on a data: document.
+    load_html(&mut h, DRIVER_STEPS_PAGE);
+    let r = h.page(
+        "LP.run",
+        json!({"steps": [
+            {"act": {"locator": {"css": "#cell"}, "action": "hover"}},
+            {"check": {"locator": {"css": "#tip"}, "assert": "visible"}},
+            {"read": {"locator": {"css": "#cell"}, "read": "css", "property": "display", "as": "display"}},
+            {"check": {"locator": {"css": "#box"}, "assert": "css", "property": "color", "expected": "rgb(1, 2, 3)"}},
+            {"check": {"locator": {"css": "#box"}, "assert": "css", "property": "width", "expected": "120px"}},
+            {"act": {"locator": {"label": "Title"}, "action": "type", "value": "Hi 2"}},
+            {"check": {"locator": {"label": "Title"}, "assert": "focused"}},
+            {"check": {"locator": {"label": "Title"}, "assert": "value", "expected": "Hi 2"}},
+            {"check": {"locator": {"label": "Title"}, "assert": "name", "expected": "Title"}},
+            {"read": {"locator": {"role": "button", "name": "Load items"}, "read": "name", "as": "name"}},
+            {"act": {"locator": {"label": "Title"}, "action": "blur"}},
+            {"check": {"locator": {"label": "Title"}, "assert": "focused", "expected": false}},
+            {"check": {"locator": {"css": "#blur-out"}, "assert": "text", "expected": "blurred:Hi 2"}},
+            {"act": {"locator": {"css": "#dbl"}, "action": "dblclick"}},
+            {"check": {"locator": {"css": "#dbl-out"}, "assert": "text", "expected": "dbl:2"}},
+            {"read": {"locator": {"css": "#cell"}, "read": "focused"}},
+        ]}),
+    );
+    let result = &r["result"];
+    assert_eq!(result["reads"]["display"], "block", "{r}");
+    assert_eq!(result["reads"]["name"], "Load items", "{r}");
+    let results = result["results"].as_array().unwrap_or_else(|| panic!("{r}"));
+    assert_eq!(results.len(), 16, "{r}");
+    assert_eq!(results[15], false, "{r}");
+    let r = h.page("LP.query", json!({"locator": {"css": "#cell"}, "read": "css", "property": "display"}));
+    assert_eq!(r["result"]["value"], "block", "{r}");
+    let r =
+        h.page("LP.run", json!({"steps": [{"check": {"locator": {"css": "#box"}, "assert": "css", "expected": "x"}}]}));
+    assert!(r["error"]["message"].as_str().unwrap_or_default().contains("css needs a property"), "{r}");
+
+    // Mocks on the site: a json mock, then a delayed one (loading state
+    // visible), then an abort (error state), then `times` and `unmock`.
+    let r = h.page(
+        "LP.run",
+        json!({"steps": [
+            {"goto": {"url": format!("http://{address}/form")}},
+            {"url": {"url": "/form"}},
+            {"route": {"url": "/positions/7"}},
+            {"url": {"url": {"regex": "/positions/\\d+$"}}},
+            {"reload": {}},
+            {"check": {"locator": {"css": "#path"}, "assert": "text", "expected": ""}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    let results = r["result"]["results"].as_array().unwrap_or_else(|| panic!("{r}"));
+    assert!(results[3]["url"].as_str().unwrap().ends_with("/positions/7"), "{r}");
+    let r = h.page("LP.run", json!({"timeout": 100, "steps": [{"url": {"url": "/nowhere"}}]}));
+    assert!(r["error"]["message"].as_str().unwrap_or_default().contains("url is"), "{r}");
+
+    let r = h.page(
+        "LP.run",
+        json!({"steps": [
+            {"mock": {"url": "/api?name=", "json": {"greeting": "Mocked"}, "headers": {"x-mock": "1"}}},
+            {"act": {"locator": {"label": "Name"}, "action": "fill", "value": "Ada"}},
+            {"act": {"locator": {"role": "button", "name": "Send"}, "action": "click"}},
+            {"check": {"locator": {"css": "#out"}, "assert": "text", "expected": "Mocked"}},
+            {"request": {"path": "/api", "status": [200, 304]}},
+            {"unmock": {"url": "/api?name="}},
+            {"mock": {"url": "/api?name=", "status": 503, "body": "down", "times": 1}},
+            {"act": {"locator": {"role": "button", "name": "Send"}, "action": "click"}},
+            {"request": {"path": "/api", "status": 503}},
+            {"act": {"locator": {"role": "button", "name": "Send"}, "action": "click"}},
+            {"request": {"path": "/api", "count": 3}},
+            {"mock": {"url": "/api?name=", "abort": "ConnectionRefused"}},
+            {"act": {"locator": {"role": "button", "name": "Send"}, "action": "click"}},
+            {"mock": {"url": "/api?name=", "json": {"greeting": "Slow"}, "delay": 300}},
+            {"act": {"locator": {"role": "button", "name": "Send"}, "action": "click", "settle": false}},
+            {"check": {"locator": {"css": "#out"}, "assert": "text", "expected": "Slow"}},
+            {"unmock": {}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    let results = r["result"]["results"].as_array().unwrap_or_else(|| panic!("{r}"));
+    assert_eq!(results[0]["mocks"], 1, "{r}");
+    assert_eq!(results[4]["status"], 200, "{r}");
+    assert_eq!(results[5]["removed"], 1, "{r}");
+    assert_eq!(results[8]["status"], 503, "{r}");
+    assert_eq!(results[10]["count"], 3, "{r}");
+    assert!(results[15]["actual"] == "Slow", "{r}");
+    let requests = r["result"]["requests"].as_array().unwrap_or_else(|| panic!("{r}"));
+    let api: Vec<_> = requests.iter().filter(|q| q["url"].as_str().is_some_and(|u| u.contains("/api?name="))).collect();
+    assert!(api.len() >= 5, "{r}");
+    assert!(
+        api.iter()
+            .any(|q| q["error"].as_str().is_some_and(|e| e.contains("CONNECTION_REFUSED")) || q["failed"] == true),
+        "{r}"
+    );
+    assert_eq!(results[16]["removed"], 2, "{r}");
+    let r = h.page("LP.run", json!({"steps": [{"mock": {"url": "/x", "body": "a", "json": 1}}]}));
+    assert!(r["error"]["message"].as_str().unwrap_or_default().contains("body or json"), "{r}");
+}
