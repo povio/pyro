@@ -184,21 +184,37 @@ reuse in `flow_reuse.rs`, invalidation in `Layout::flow`):
   structure is kept until a change reaches it (not one inside a cell).
   Subtrees that share a formatting context with floats are always laid out
   afresh.
+- A result keeps boxes in an array by layout order and texts in the order
+  laid out, each with an index by node (`flow_store.rs`), so a replay is a
+  slice copy; only a subtree that moved (new position or renumbered
+  orders) gets a linear fix-up sweep. A pass lays out into the buffers of
+  the result before last when nothing else holds it.
+- A replayed subtree does not renumber the reuse entries of the elements
+  inside it. Each pass records what it replayed and how far its orders,
+  texts and runs moved; an older entry is carried through those records
+  when it is next used (up to 64 passes back), and dropped when some pass
+  did not copy it.
+- Invalidation is by node: the measurement caches and reuse entries are
+  grouped per element, so a change drops the dirty path's entries without
+  scanning the caches. A table rebuilds a changed structure (a row
+  inserted) from the cached cells of its clean rows.
 - Scroll sizes come from extents folded upward as boxes finish (each box
   adds what its unclipped contents reach to its parent), not from walking
   every descendant at every ancestor; debug builds check each against the
   walk. A stretched item in a single-line flex container of definite cross
   size is not measured (the line decides its size).
 - `LIGHTNINGPANDA_FLOW_VERIFY=1` compares every incremental result with a
-  fresh layout and panics on the first difference (for test runs).
+  fresh layout and panics on the first difference (for test runs);
+  `long_mutation_sequences_relayout_like_a_fresh_pass` does the same over
+  160 random edits, inserts and removals.
 - `tests/flow_bench.rs` (ignored) times the first pass and the relayout
   after typical single-element changes on an app-shaped page (sticky header,
-  sidebar, a table of N rows). At 1,000 rows (20k boxes) a class toggle,
-  hover or focus change takes about 1 ms or less, a text or value edit or a
-  row insert about 13-20 ms (about 17M instructions, mostly copying the
-  20k unchanged boxes into the new result), where every change cost a full
-  pass (about 340 ms) before; the first pass (about 500 ms) is dominated by
-  the style cascade.
+  sidebar, a table of N rows). On an Apple Silicon laptop at 1,000 rows
+  (20k boxes): a class toggle about 0.13 ms, hover 0.3 ms, a text or value
+  edit about 0.9 ms, a row insert about 1.4 ms, against a full pass of
+  about 145 ms (mostly the style cascade). At 200 rows every change is
+  under 0.35 ms. What is left grows with the rows of the changed table
+  (each row's reuse check, column widths, row heights), not with its boxes.
 
 ## Consumers switched in Stage 1 (Flow mode only)
 
