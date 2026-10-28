@@ -2220,10 +2220,6 @@ pub fn with_pass_memo<R>(f: impl FnOnce() -> R) -> R {
     r
 }
 
-/// Whether element `a` (unstyled) has the cascade of element `c`: see
-/// `StyleEngine::shared_flow_style`. `c` is `a`'s previous element sibling
-/// or a cousin at the same depth whose ancestors up to the common one share
-/// their cascade pairwise (recorded when they shared).
 thread_local! {
     static STYLE_SHARING: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
 }
@@ -2235,6 +2231,10 @@ pub fn set_style_sharing(on: bool) {
     STYLE_SHARING.with(|s| s.set(on));
 }
 
+/// Whether element `a` (unstyled) has the cascade of element `c`: see
+/// `StyleEngine::shared_flow_style`. `c` is `a`'s previous element sibling
+/// or a cousin at the same depth whose ancestors up to the common one share
+/// their cascade pairwise (recorded when they shared).
 fn shares_cascade(dom: &Dom, rules: &RuleSet, a: u32, c: u32, reval: &RefCell<FxHashMap<(u32, u32), bool>>) -> bool {
     if !STYLE_SHARING.with(|s| s.get()) {
         return false;
