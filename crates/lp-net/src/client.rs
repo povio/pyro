@@ -210,6 +210,31 @@ pub enum InterceptDecision {
     },
     /// CDP `Network.ErrorReason`, e.g. "Failed", "Aborted", "BlockedByClient".
     Fail(String),
+    /// Continue unmodified, then pause the final response (after redirects,
+    /// with its whole decoded body) at [`Interceptor::response`] before
+    /// anything of it is delivered or observed. Such a response is not cached.
+    PauseResponse,
+}
+
+/// A response paused at [`Interceptor::response`]: the real status, headers
+/// and decoded body of the request's final hop.
+#[derive(Clone, Debug)]
+pub struct PausedResponse {
+    pub id: RequestId,
+    pub request: RequestInfo,
+    pub status: u16,
+    pub headers: HeaderMap,
+    pub body: Bytes,
+}
+
+#[derive(Clone, Debug)]
+pub enum ResponseDecision {
+    /// Deliver the real response.
+    Continue,
+    /// Deliver this instead (with the response kind the real one had).
+    Fulfill { status: u16, headers: HeaderMap, body: Bytes },
+    /// CDP `Network.ErrorReason`.
+    Fail(String),
 }
 
 /// Fetch-domain interception. `paused` must not block; answer through
@@ -223,6 +248,12 @@ pub enum InterceptDecision {
 /// inside its interceptor (that would prevent last-client shutdown).
 pub trait Interceptor: Send + Sync {
     fn paused(&self, req: PausedRequest, reply: oneshot::Sender<InterceptDecision>);
+    /// The response of a request `paused` answered with
+    /// [`InterceptDecision::PauseResponse`]. Must not block; dropping `reply`
+    /// fails the request.
+    fn response(&self, _resp: PausedResponse, reply: oneshot::Sender<ResponseDecision>) {
+        let _ = reply.send(ResponseDecision::Continue);
+    }
     fn handles_auth(&self) -> bool {
         false
     }
@@ -821,6 +852,7 @@ impl Io {
         let mut redirect_response: Option<ResponseHead> = None;
         let mut tainted = false; // cross-origin redirect in cors mode => Origin "null"
         let mut unconditional = false; // a 304 no longer matched its entry: refetch without validators
+        let mut pause_response: Option<RequestInfo> = None; // set by `PauseResponse`: the final hop's response is paused
         loop {
             if tainted {
                 req.origin = Some("null".into());
@@ -868,8 +900,12 @@ impl Io {
                 (req.method.clone(), req.url.clone(), headers, req.body.clone());
             if let Some(i) = &interceptor {
                 let (tx, rx) = oneshot::channel();
+                let paused_info = info.clone();
                 i.paused(PausedRequest { id, request: info }, tx);
                 match rx.await {
+                    Ok(InterceptDecision::PauseResponse) => {
+                        pause_response.get_or_insert(paused_info);
+                    }
                     Ok(InterceptDecision::Continue { url: u, method: m, headers: h, body: b }) => {
                         if let Some(u) = u {
                             url = u;
@@ -918,7 +954,11 @@ impl Io {
 
             // HTTP cache (RFC 9111), after request-stage interception and CORS
             // preflight so that both still apply to cached responses.
-            let cacheable = method == Method::GET && body.is_none() && !headers.contains_key(header::RANGE);
+            // A response to be paused is neither served from nor stored in it.
+            let cacheable = method == Method::GET
+                && body.is_none()
+                && !headers.contains_key(header::RANGE)
+                && pause_response.is_none();
             let request_time = wall_time();
             let sent = if cacheable { Some(headers.clone()) } else { None };
             let mut revalidating = None;
@@ -1142,6 +1182,31 @@ impl Io {
                 ResponseKind::Basic
             };
             let encoding = resp_headers.get(header::CONTENT_ENCODING).and_then(|v| v.to_str().ok()).map(str::to_owned);
+            if let (Some(request), Some(interceptor)) = (pause_response.take(), interceptor.as_ref()) {
+                let body = read_whole_body(resp, encoding.as_deref(), max_body).await?;
+                drop(permit);
+                let (tx, rx) = oneshot::channel();
+                let paused = PausedResponse {
+                    id,
+                    request,
+                    status: status.as_u16(),
+                    headers: resp_headers.clone(),
+                    body: body.clone(),
+                };
+                interceptor.response(paused, tx);
+                let (status, resp_headers, body) = match rx.await {
+                    Ok(ResponseDecision::Continue) => (status, resp_headers, body),
+                    Ok(ResponseDecision::Fulfill { status, headers, body }) => (
+                        StatusCode::from_u16(status).map_err(|_| NetError::Other("invalid status".into()))?,
+                        headers,
+                        body,
+                    ),
+                    Ok(ResponseDecision::Fail(reason)) => return Err(NetError::Blocked(cdp_reason(&reason))),
+                    Err(_) => return Err(NetError::Other("response interception dropped".into())),
+                };
+                let head = self.head(&url, status, resp_headers, kind, redirects > 0);
+                return self.deliver_body(id, &req, sink, head, body);
+            }
             let (store, mut max_entry) = {
                 let cache = self.shared.cache.lock().unwrap();
                 let store = sent.as_ref().is_some_and(|s| cache.storable(status, &resp_headers, s, cache_mode));
@@ -1481,6 +1546,33 @@ impl Io {
         let head = self.head(&req.url, StatusCode::OK, headers, ResponseKind::Basic, false);
         self.deliver_body(id, req, sink, head, body)
     }
+}
+
+/// Reads and decodes a whole response body (at most `max_body` bytes).
+async fn read_whole_body(
+    resp: http::Response<hyper::body::Incoming>,
+    encoding: Option<&str>,
+    max_body: usize,
+) -> Result<Bytes, NetError> {
+    let mut decoder = Decoder::for_encoding(encoding)?;
+    let mut body = resp.into_body();
+    let mut out = Vec::new();
+    let push = |out: &mut Vec<u8>, chunk: Bytes| {
+        out.extend_from_slice(&chunk);
+        if out.len() > max_body {
+            return Err(NetError::TooLarge);
+        }
+        Ok(())
+    };
+    while let Some(frame) = body.frame().await {
+        let frame = frame.map_err(|e| NetError::Other(e.to_string()))?;
+        let Ok(data) = frame.into_data() else { continue };
+        let decoded = decoder.push(data)?;
+        push(&mut out, decoded)?;
+    }
+    let tail = decoder.finish()?;
+    push(&mut out, tail)?;
+    Ok(Bytes::from(out))
 }
 
 /// Response headers of a static-file answer (`serve_static`, `report_local`).

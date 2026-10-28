@@ -151,6 +151,28 @@ Every action and check takes `{ timeout }` (ms); `page.run(steps, { timeout })`
 sets the default for the run. Pass `{ settle: false }` to an action whose
 requests never finish (polling, streaming) or that you do not want to wait for.
 
+### Requests and mocks in detail
+
+- A `RegExp` anywhere (locators, `mock`, `waitForUrl`, `check.request`) runs
+  with JavaScript semantics: look-ahead `(?=…)`, negative look-ahead `(?!…)`,
+  look-behind, backreferences and named groups work; flags `i`, `m`, `s`.
+- `check.request(…)` and the reply's `requests` carry `requestHeaders`,
+  `postData` (text; base64 with `postDataBase64: true` when not UTF-8; cut at
+  1 MiB with `postDataTruncated: true`) and `responseHeaders`.
+  `.bodyKeys(['a', 'b'])` wants exactly these top-level JSON keys;
+  `.headers({ 'X-Key': /^k\d$/ })` matches names case-insensitively.
+- `.state('started')` counts a request as soon as it is sent, so
+  `.count(1).state('started')` holds while a mock still delays or holds it.
+- `mock(url, { patch: { status, headers, json, body } })` sends the request to
+  the real backend and rewrites its response; `json` is a JSON merge patch
+  (`null` deletes a key) onto a JSON object body, else the new body.
+- `mock(url, { hold: 'save', json: … })` keeps the request unsent until
+  `release('save')`, then answers it (or sends it on, without a response
+  option); with `passthrough: true` (or `patch`) the request reaches the
+  backend and its response is held instead. `release` waits until something
+  is held, so it can come before the action's request starts; holds outlive
+  the run. There is no clock control: `delay` is real time.
+
 ## Porting from Playwright
 
 | Playwright | lightningpanda-test |
