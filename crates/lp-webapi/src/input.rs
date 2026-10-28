@@ -145,6 +145,11 @@ pub fn focus_element_with_transition(page: &Rc<PageDom>, el: NodeId, token: &Foc
     } else {
         page.layout.borrow_mut().reveal_for_focus(&page.dom.borrow(), el)
     };
+    // A text control's caret is the document selection: Chromium reports
+    // the change on focus.
+    if is_text_control(&page.dom.borrow(), el) {
+        crate::editing::queue_control_selectionchange(page, el);
+    }
     fire_focus_event(page, el, "focus", false, prev);
     if !live_document(page, doc, token) || !live_element(page, doc, el) {
         return;
@@ -824,10 +829,13 @@ fn default_key_action(page: &Rc<PageDom>, target: NodeId, k: &KeyInput) {
         "Enter" => enter_key(page, target),
         "Tab" => focus_next(page, target, k.modifiers.shift),
         "a" | "A" if editable && (k.modifiers.ctrl || k.modifiers.meta) => {
-            let mut dom = page.dom.borrow_mut();
-            if let Ok(v) = dom.value(target) {
-                let _ = dom.set_selection_range(target, 0, lp_dom::dom::utf16_len(&v));
+            {
+                let mut dom = page.dom.borrow_mut();
+                if let Ok(v) = dom.value(target) {
+                    let _ = dom.set_selection_range(target, 0, lp_dom::dom::utf16_len(&v));
+                }
             }
+            crate::editing::queue_control_selectionchange(page, target);
         }
         "ArrowLeft" | "ArrowRight" | "Home" | "End" if editable => move_caret(page, target, &k.key, k.modifiers.shift),
         // Outside editable content Home/End scroll the document (Chrome's
@@ -924,6 +932,8 @@ fn move_caret_vertically(page: &Rc<PageDom>, el: NodeId, up: bool, extend: bool)
         (true, false) => (s, caret),
     };
     let _ = dom.set_selection_range(el, ns as u32, ne as u32);
+    drop(dom);
+    crate::editing::queue_control_selectionchange(page, el);
 }
 
 fn move_caret(page: &Rc<PageDom>, el: NodeId, key: &str, extend: bool) {
@@ -957,6 +967,8 @@ fn move_caret(page: &Rc<PageDom>, el: NodeId, key: &str, extend: bool) {
         (caret, caret)
     };
     let _ = dom.set_selection_range(el, ns, ne);
+    drop(dom);
+    crate::editing::queue_control_selectionchange(page, el);
 }
 
 fn delete(page: &Rc<PageDom>, el: NodeId, input_type: &str, backward: bool) {
@@ -1026,6 +1038,7 @@ fn insert_text_at(page: &Rc<PageDom>, el: NodeId, text: &str) {
     }
     let changed = page.dom.borrow_mut().insert_text(el, text).unwrap_or(false);
     if changed {
+        crate::editing::queue_control_selectionchange(page, el);
         fire_input_event(page, el, "input", input_type, data, false);
     }
 }

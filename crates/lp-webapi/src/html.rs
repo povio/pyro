@@ -771,9 +771,13 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
         },
         |_s, n, v| {
             let st = to_u32(v)?;
-            let mut dom = n.page().dom.borrow_mut();
-            let (_, e) = dom.selection(n.id).js()?;
-            dom.set_selection_range(n.id, st, e.max(st)).js()
+            {
+                let mut dom = n.page().dom.borrow_mut();
+                let (_, e) = dom.selection(n.id).js()?;
+                dom.set_selection_range(n.id, st, e.max(st)).js()?;
+            }
+            crate::editing::queue_control_selectionchange(n.page(), n.id);
+            Ok(())
         },
     );
     def.accessor(
@@ -786,9 +790,13 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
         },
         |_s, n, v| {
             let end = to_u32(v)?;
-            let mut dom = n.page().dom.borrow_mut();
-            let (st, _) = dom.selection(n.id).js()?;
-            dom.set_selection_range(n.id, st, end).js()
+            {
+                let mut dom = n.page().dom.borrow_mut();
+                let (st, _) = dom.selection(n.id).js()?;
+                dom.set_selection_range(n.id, st, end).js()?;
+            }
+            crate::editing::queue_control_selectionchange(n.page(), n.id);
+            Ok(())
         },
     );
     def.accessor("selectionDirection", |s, _n| Ok(s.string("none")), |_s, _n, _v| Ok(()));
@@ -799,6 +807,7 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
         let arg0 = to_u32(a.get(0))?;
         let arg1 = to_u32(a.get(1))?;
         n.page().dom.borrow_mut().set_selection_range(n.id, arg0, arg1).js()?;
+        crate::editing::queue_control_selectionchange(n.page(), n.id);
         Ok(s.undefined())
     });
     def.method("select", 0, |s, n, _a| {
@@ -811,6 +820,7 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
             let len = lp_dom::dom::utf16_len(&dom.value(n.id).js()?);
             dom.set_selection_range(n.id, 0, len).js()?;
             drop(dom);
+            crate::editing::queue_control_selectionchange(n.page(), n.id);
             crate::input::fire_simple(n.page(), n.id, "select", true, false);
         }
         Ok(s.undefined())
@@ -823,6 +833,8 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
             dom.set_selection_range(n.id, st, en).js()?;
         }
         dom.insert_text(n.id, &text).js()?;
+        drop(dom);
+        crate::editing::queue_control_selectionchange(n.page(), n.id);
         Ok(s.undefined())
     });
 }
