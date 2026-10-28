@@ -177,6 +177,16 @@ struct RequestMatch {
     /// Request headers that must be present (names case-insensitive), each
     /// value a substring of (or regex on) the sent value.
     headers: Option<std::collections::BTreeMap<String, Pattern>>,
+    /// Which requests count: `finished` (the default: finished or failed,
+    /// as `status` needs) or `started` (sent, still in flight or done).
+    state: Option<RequestState>,
+}
+
+#[derive(Deserialize, Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum RequestState {
+    Started,
+    Finished,
 }
 
 impl RequestMatch {
@@ -3035,17 +3045,21 @@ impl EngineHost {
             return Attempt::Retry("the page has no request log".into());
         };
         let matching: Vec<_> = log.since(from).iter().filter(|r| m.accepts(r)).collect();
-        let finished: Vec<_> = matching.iter().filter(|r| r.done).collect();
+        let started = m.state == Some(RequestState::Started);
+        let finished: Vec<_> = matching.iter().copied().filter(|r| r.done).collect();
         if let Some(n) = m.count {
-            return if matching.len() == n && finished.len() == n {
+            return if matching.len() == n && (started || finished.len() == n) {
                 Attempt::Done(json!({ "count": n }))
+            } else if started {
+                Attempt::Retry(format!("{} matching requests started, want {n}", matching.len()))
             } else {
                 Attempt::Retry(format!("{} matching requests ({} finished), want {n}", matching.len(), finished.len()))
             };
         }
-        match finished.iter().rev().find(|r| m.status.as_ref().is_none_or(|s| s.accepts(r.status))) {
+        let candidates = if started { &matching } else { &finished };
+        match candidates.iter().rev().find(|r| m.status.as_ref().is_none_or(|s| s.accepts(r.status))) {
             Some(r) => Attempt::Done(r.to_json()),
-            None => Attempt::Retry(match finished.last() {
+            None => Attempt::Retry(match candidates.last() {
                 Some(r) => format!("last match was {}", r.to_json()),
                 None if matching.is_empty() => "no matching request yet".into(),
                 None => "the matching request is still in flight".into(),

@@ -4456,6 +4456,45 @@ fn driver_run_requests_carry_headers_and_bodies() {
     assert!(r["error"]["message"].as_str().unwrap_or_default().contains("no matching request yet"), "{r}");
 }
 
+/// `request` with `state: "started"` counts requests as soon as they are
+/// sent: a request a delayed mock holds is counted once (and only once,
+/// before and after it finishes), while the default waits for it to finish.
+#[test]
+fn driver_run_counts_started_requests() {
+    let address = driver_api_site();
+    let mut h = Harness::new();
+    let start = Instant::now();
+    let r = h.page(
+        "LP.run",
+        json!({"steps": [
+            {"goto": {"url": format!("http://{address}/")}},
+            {"mock": {"url": "/api", "json": {"total": 5}, "delay": 400}},
+            {"eval": {"expression": "call('/api?x'); 1"}},
+            {"request": {"path": "/api", "count": 1, "state": "started"}},
+            {"request": {"path": "/api", "state": "started"}},
+            {"request": {"path": "/api", "count": 1}},
+            {"request": {"path": "/api", "count": 1, "state": "started"}},
+            {"request": {"path": "/api", "count": 1, "state": "finished"}},
+            {"check": {"locator": {"css": "#out"}, "assert": "containsText", "expected": "5"}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    assert!(start.elapsed() >= Duration::from_millis(400), "{r}");
+    let results = r["result"]["results"].as_array().unwrap_or_else(|| panic!("{r}"));
+    assert_eq!(results[3]["count"], 1, "{r}");
+    assert!(results[4]["status"].is_null() && results[4]["url"].as_str().unwrap().ends_with("/api?x"), "{r}");
+    assert_eq!(results[5]["count"], 1, "{r}");
+    let requests = r["result"]["requests"].as_array().unwrap_or_else(|| panic!("{r}"));
+    assert_eq!(requests.iter().filter(|q| q["url"].as_str().is_some_and(|u| u.contains("/api"))).count(), 1, "{r}");
+
+    // A started count stays unmet (not over-met) when nothing was sent.
+    let r = h.page(
+        "LP.run",
+        json!({"timeout": 100, "steps": [{"request": {"path": "/api", "count": 1, "state": "started"}}]}),
+    );
+    assert!(r["error"]["message"].as_str().unwrap_or_default().contains("0 matching requests started"), "{r}");
+}
+
 const DRIVER_BATCH2_PAGE: &str = r#"<!doctype html><body>
 <iframe id="fr" srcdoc="<button id='inner'>Inner</button><p id='inner-out'></p><script>document.getElementById('inner').addEventListener('click', () => { document.getElementById('inner-out').textContent = 'inner clicked'; });</script>"></iframe>
 <input id="file" type="file" multiple><p id="file-out"></p>
