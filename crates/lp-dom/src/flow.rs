@@ -993,6 +993,17 @@ struct Ctx<'a> {
     /// A probe whose boxes nobody reads (only the height it returns):
     /// replayed subtrees advance the order without copying their boxes.
     measure_only: bool,
+    /// Set by a block container right before laying out a block-level
+    /// child in its flow (taken by `block_child`): the child's margins may
+    /// collapse with its own children's.
+    block_flow_child: bool,
+    /// The margin a block container's contents leave below their last
+    /// in-flow child when it collapses with the container's bottom margin
+    /// (set by `contents`).
+    trailing: Margin,
+    /// The bottom margin `block_child` leaves for the next sibling: its own,
+    /// collapsed with its contents' `trailing`.
+    last_trailing: Margin,
 }
 
 impl Drop for Ctx<'_> {
@@ -1037,6 +1048,8 @@ struct Memo {
     /// Generated content per (element, after), kept across passes like
     /// `styles`.
     generated: RefCell<FxHashMap<(NodeId, bool), Option<std::rc::Rc<Generated>>>>,
+    /// `leading_margin` per (element, containing block width).
+    leading: RefCell<FxHashMap<(NodeId, u64), Margin>>,
     /// `table_rows` per table.
     tables: RefCell<FxHashMap<NodeId, std::rc::Rc<(Vec<TableRow>, usize)>>>,
     /// Subtrees of the previous pass and of this one (`reuse`).
@@ -1080,6 +1093,49 @@ struct Pending {
     style: StyleRef,
     static_x: f64,
     static_y: f64,
+}
+
+/// Adjoining vertical margins (CSS 2.1 8.3.1): the largest positive and
+/// the most negative of them; they collapse to the sum of the two.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct Margin {
+    pos: f64,
+    neg: f64,
+}
+
+impl Margin {
+    const ZERO: Margin = Margin { pos: 0.0, neg: 0.0 };
+
+    fn of(m: f64) -> Margin {
+        Margin { pos: m.max(0.0), neg: m.min(0.0) }
+    }
+
+    fn with(self, o: Margin) -> Margin {
+        Margin { pos: self.pos.max(o.pos), neg: self.neg.min(o.neg) }
+    }
+
+    fn value(self) -> f64 {
+        self.pos + self.neg
+    }
+}
+
+/// Whether a block container's margins collapse with those of its first
+/// (top) and last (bottom) in-flow children.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Collapse {
+    top: bool,
+    bottom: bool,
+}
+
+/// A box that lays its contents out in their own block formatting context:
+/// its margins never collapse with its children's.
+fn establishes_bfc(style: &FlowStyle) -> bool {
+    style.inner != InnerDisplay::Flow
+        || style.outer != OuterDisplay::Block
+        || style.clips_x
+        || style.clips_y
+        || style.replaced
+        || matches!(style.position, Position::Absolute | Position::Fixed)
 }
 
 /// A laid-out box's used edges.
@@ -1165,6 +1221,9 @@ enum InlineItem {
         owners: Owners,
         height: f64,
         ascent: f64,
+        /// No inline-axis margin, border or padding: alone on a line it
+        /// makes no line box (CSS 2.1 9.4.2).
+        phantom: bool,
     },
 }
 
@@ -1185,6 +1244,9 @@ impl<'a> Ctx<'a> {
             last_baseline: None,
             probe: false,
             measure_only: false,
+            block_flow_child: false,
+            trailing: Margin::ZERO,
+            last_trailing: Margin::ZERO,
         }
     }
 
@@ -1520,21 +1582,35 @@ impl<'a> Ctx<'a> {
         if positioned {
             self.pending.push(Vec::new());
         }
+        let in_block_flow = std::mem::take(&mut self.block_flow_child);
         let declared_h =
             style
                 .height
                 .resolve(self.cb_height)
                 .map(|h| if style.border_box { (h - e.vertical()).max(0.0) } else { h });
+        let min_h =
+            style.min_height.resolve(self.cb_height).map(|h| if style.border_box { h - e.vertical() } else { h });
+        let collapse = if in_block_flow && !establishes_bfc(style) {
+            Collapse {
+                top: e.border[TOP] == 0.0 && e.padding[TOP] == 0.0,
+                bottom: e.border[BOTTOM] == 0.0
+                    && e.padding[BOTTOM] == 0.0
+                    && declared_h.is_none()
+                    && min_h.is_none_or(|m| m <= 0.0),
+            }
+        } else {
+            Collapse::default()
+        };
         // A box with a definite height is that tall whatever its contents:
         // a probe that only reads heights does not lay them out (table
         // cells at their row height, flexed items).
         let content_h = if self.measure_only && declared_h.is_some() {
+            self.trailing = Margin::ZERO;
             0.0
         } else {
-            self.contents(el, style, content_x, content_y, content_w, declared_h, fixed, shift)
+            self.contents(el, style, content_x, content_y, content_w, declared_h, fixed, shift, collapse)
         };
-        let min_h =
-            style.min_height.resolve(self.cb_height).map(|h| if style.border_box { h - e.vertical() } else { h });
+        let inner_trailing = std::mem::take(&mut self.trailing);
         let max_h =
             style.max_height.resolve(self.cb_height).map(|h| if style.border_box { h - e.vertical() } else { h });
         let height = Self::clamp(declared_h.unwrap_or(content_h), min_h, max_h);
@@ -1562,7 +1638,76 @@ impl<'a> Ctx<'a> {
             };
             self.place_absolute_into(el, pending, padding_box, fixed, style.clips_x || style.clips_y);
         }
+        self.last_trailing = Margin::of(e.margin[BOTTOM]).with(inner_trailing);
         e.margin[TOP] + rect.height + e.margin[BOTTOM]
+    }
+
+    /// The top margin of a block-level box in a block flow, collapsed with
+    /// the leading margins of its first in-flow children when they adjoin
+    /// (no border, padding or line content between them), and through
+    /// empty blocks before them.
+    fn leading_margin(&self, el: NodeId, style: &FlowStyle, width: f64) -> Margin {
+        let key = (el, width.to_bits());
+        if let Some(&m) = self.memo.leading.borrow().get(&key) {
+            return m;
+        }
+        let e = self.edges(style, width);
+        let mut m = Margin::of(e.margin[TOP]);
+        if !establishes_bfc(style)
+            && e.border[TOP] == 0.0
+            && e.padding[TOP] == 0.0
+            && self.generated(el, false).is_none()
+        {
+            for (c, cs) in self.flatten_children(el) {
+                let Some(cs) = cs else {
+                    if self.dom.char_data(c).is_ok_and(is_blank) {
+                        continue;
+                    }
+                    break;
+                };
+                if matches!(cs.position, Position::Absolute | Position::Fixed) {
+                    continue;
+                }
+                if cs.outer != OuterDisplay::Block {
+                    break;
+                }
+                m = m.with(self.leading_margin(c, &cs, width));
+                if !self.collapses_through(c, &cs, width) {
+                    break;
+                }
+                m = m.with(Margin::of(self.edges(&cs, width).margin[BOTTOM]));
+            }
+        }
+        self.memo.leading.borrow_mut().insert(key, m);
+        m
+    }
+
+    /// An empty block whose top and bottom margins collapse together (CSS
+    /// 2.1 8.3.1): no height, padding, border or in-flow content (decided
+    /// from the tree, before layout).
+    fn collapses_through(&self, el: NodeId, style: &FlowStyle, width: f64) -> bool {
+        let zero = |d: Dim| match d {
+            Dim::Auto => true,
+            Dim::Len(l) => l.resolve(width) == 0.0,
+            Dim::Content(_) => false,
+        };
+        let e = self.edges(style, width);
+        if establishes_bfc(style)
+            || !zero(style.height)
+            || !zero(style.min_height)
+            || e.vertical() != 0.0
+            || self.generated(el, false).is_some()
+            || self.generated(el, true).is_some()
+        {
+            return false;
+        }
+        self.flatten_children(el).into_iter().all(|(c, cs)| match cs {
+            None => self.dom.char_data(c).is_ok_and(is_blank),
+            Some(cs) => {
+                matches!(cs.position, Position::Absolute | Position::Fixed)
+                    || (cs.outer == OuterDisplay::Block && self.collapses_through(c, &cs, width))
+            }
+        })
     }
 
     fn next_order(&mut self) -> u32 {
@@ -1728,10 +1873,14 @@ impl<'a> Ctx<'a> {
         height: Option<f64>,
         fixed: bool,
         shift: (f64, f64),
+        collapse: Collapse,
     ) -> f64 {
         let outer = std::mem::replace(&mut self.cb_height, height);
         let outer_own = std::mem::replace(&mut self.own_cb_height, outer);
-        let h = self.contents_reused(el, style, x, y, width, height, fixed, shift, outer);
+        let h = self.contents_reused(el, style, x, y, width, height, fixed, shift, outer, collapse);
+        if !collapse.bottom {
+            self.trailing = Margin::ZERO;
+        }
         self.cb_height = outer;
         self.own_cb_height = outer_own;
         h
@@ -1748,6 +1897,7 @@ impl<'a> Ctx<'a> {
         height: Option<f64>,
         fixed: bool,
         shift: (f64, f64),
+        collapse: Collapse,
     ) -> f64 {
         if style.replaced {
             // With a ratio the height follows the used width (CSS 2.1 10.6.2).
@@ -1767,17 +1917,24 @@ impl<'a> Ctx<'a> {
         }
         let kids = self.flatten_children(el);
         let mut cursor = y;
-        let mut prev_margin_bottom: Option<f64> = None;
+        // The margin below the last in-flow content, collapsing with the
+        // next block's leading margin (CSS 2.1 8.3.1).
+        let mut pending = Margin::ZERO;
+        // The container's top margin took the leading margins of its first
+        // in-flow blocks (`leading_margin`): they start at the content top.
+        let mut absorbed = collapse.top;
         // The current run of inline-level content (children and generated
         // content), as items; `run_open`: it has begun.
         let mut items: Vec<InlineItem> = Vec::new();
         let mut run_open = false;
         let none = Owners::from([]);
         if let Some(g) = self.generated(el, false) {
+            absorbed = false;
             generated_items(&g, style, &none, &mut items);
             run_open = true;
             if g.display == GeneratedDisplay::Block {
-                cursor += self.inline_items(std::mem::take(&mut items), style, x, cursor, width, fixed, shift);
+                let run = std::mem::take(&mut items);
+                self.flow_run(run, style, x, width, fixed, shift, &mut cursor, &mut pending, &mut absorbed);
                 run_open = false;
             }
         }
@@ -1787,7 +1944,7 @@ impl<'a> Ctx<'a> {
                 child_style.as_ref().is_some_and(|s| matches!(s.position, Position::Absolute | Position::Fixed));
             if out_of_flow {
                 let s = child_style.expect("styled");
-                let static_y = cursor + prev_margin_bottom.unwrap_or(0.0).min(0.0);
+                let static_y = cursor + pending.value().min(0.0);
                 self.defer_absolute(child, s, x - shift.0, static_y);
                 continue;
             }
@@ -1798,26 +1955,28 @@ impl<'a> Ctx<'a> {
                 continue;
             }
             if run_open {
-                let h = self.inline_items(
-                    std::mem::take(&mut items),
-                    style,
-                    x,
-                    cursor + prev_margin_bottom.take().unwrap_or(0.0),
-                    width,
-                    fixed,
-                    shift,
-                );
-                cursor += h;
+                let run = std::mem::take(&mut items);
+                self.flow_run(run, style, x, width, fixed, shift, &mut cursor, &mut pending, &mut absorbed);
                 run_open = false;
             }
             let s = child_style.expect("styled");
             let e = self.edges(&s, width);
-            // Adjacent sibling margins collapse to the larger one.
-            let collapse = prev_margin_bottom.map_or(0.0, |prev| prev.max(e.margin[TOP]) - e.margin[TOP]);
-            let top = cursor + collapse;
-            let taken = self.block_child(child, &s, x, top, width, fixed, shift);
-            cursor = top + taken - e.margin[BOTTOM];
-            prev_margin_bottom = Some(e.margin[BOTTOM]);
+            let lead = self.leading_margin(child, &s, width);
+            let through = self.collapses_through(child, &s, width);
+            let border_top = if absorbed { cursor } else { cursor + pending.with(lead).value() };
+            self.block_flow_child = true;
+            let taken = self.block_child(child, &s, x, border_top - e.margin[TOP], width, fixed, shift);
+            let trailing = std::mem::take(&mut self.last_trailing);
+            if through {
+                // An empty block: its margins join those around it.
+                if !absorbed {
+                    pending = pending.with(lead).with(trailing);
+                }
+            } else {
+                cursor = border_top + taken - e.margin[TOP] - e.margin[BOTTOM];
+                pending = trailing;
+                absorbed = false;
+            }
         }
         let after = self.generated(el, true);
         if let Some(g) = after.as_ref().filter(|g| g.display != GeneratedDisplay::Block) {
@@ -1825,32 +1984,51 @@ impl<'a> Ctx<'a> {
             run_open = true;
         }
         if run_open {
-            let h = self.inline_items(
-                std::mem::take(&mut items),
-                style,
-                x,
-                cursor + prev_margin_bottom.take().unwrap_or(0.0),
-                width,
-                fixed,
-                shift,
-            );
-            cursor += h;
+            let run = std::mem::take(&mut items);
+            self.flow_run(run, style, x, width, fixed, shift, &mut cursor, &mut pending, &mut absorbed);
         }
         if let Some(g) = after.filter(|g| g.display == GeneratedDisplay::Block) {
             generated_items(&g, style, &none, &mut items);
-            let h = self.inline_items(
-                std::mem::take(&mut items),
-                style,
-                x,
-                cursor + prev_margin_bottom.take().unwrap_or(0.0),
-                width,
-                fixed,
-                shift,
-            );
-            cursor += h;
+            let run = std::mem::take(&mut items);
+            self.flow_run(run, style, x, width, fixed, shift, &mut cursor, &mut pending, &mut absorbed);
         }
-        cursor += prev_margin_bottom.unwrap_or(0.0);
+        if collapse.bottom {
+            // The last margin collapses with the container's bottom margin.
+            self.trailing = pending;
+        } else {
+            cursor += pending.value();
+        }
         cursor - y
+    }
+
+    /// Lays out a run of inline content as line boxes below `cursor` (and
+    /// the pending margin). A run of collapsible white space only makes no
+    /// line: margins collapse across it.
+    #[allow(clippy::too_many_arguments)]
+    fn flow_run(
+        &mut self,
+        items: Vec<InlineItem>,
+        style: &FlowStyle,
+        x: f64,
+        width: f64,
+        fixed: bool,
+        shift: (f64, f64),
+        cursor: &mut f64,
+        pending: &mut Margin,
+        absorbed: &mut bool,
+    ) {
+        let content = items.iter().any(|it| match it {
+            InlineItem::Word { height, .. } => *height > 0.0,
+            InlineItem::OutOfFlow { .. } => false,
+            _ => true,
+        });
+        let top = *cursor + pending.value();
+        let h = self.inline_items(items, style, x, top, width, fixed, shift);
+        if content || h > 0.0 {
+            *cursor = top + h;
+            *pending = Margin::ZERO;
+            *absorbed = false;
+        }
     }
 
     /// Children of `el` with their styles (None for text), with
@@ -1971,7 +2149,7 @@ impl<'a> Ctx<'a> {
                 }
                 _ => None,
             });
-            let content_h = self.contents(p.el, s, content_x, content_y, content_w, definite_h, fixed, (0.0, 0.0));
+            let content_h = self.contents(p.el, s, content_x, content_y, content_w, definite_h, fixed, (0.0, 0.0), Collapse::default());
             // min/max-height are border-box sizes under box-sizing: border-box.
             let to_content_h = |h: f64| if s.border_box { (h - e.vertical()).max(0.0) } else { h };
             let min_h = s.min_height.resolve(Some(cb.height)).map(to_content_h);
@@ -2414,9 +2592,12 @@ impl<'a> Ctx<'a> {
                     }
                     line.extents(strut);
                 }
-                InlineItem::Empty { owners, height, ascent } => {
+                InlineItem::Empty { owners, height, ascent, phantom } => {
                     let at = line.x;
                     line.push(at, 0.0, height, ascent, owners, None);
+                    if let Some(it) = line.items.last_mut() {
+                        it.phantom = phantom;
+                    }
                     line.extents(strut);
                 }
                 InlineItem::Block { el, style, owners } => {
@@ -2492,11 +2673,25 @@ impl<'a> Ctx<'a> {
     ) -> f64 {
         // A line holding only collapsible whitespace (zero-width spacers
         // with no owner) has no line box.
-        let blank =
-            line.items.iter().all(|it| it.atomic.is_none() && !it.generated && it.owners.is_empty() && it.width == 0.0);
+        // So does one holding only empty inline boxes without inline-axis
+        // margins, borders or padding (CSS 2.1 9.4.2): they are 0x0 at its
+        // start.
+        let blank = line.items.iter().all(|it| {
+            it.atomic.is_none() && !it.generated && it.width == 0.0 && (it.owners.is_empty() || it.phantom)
+        });
         if blank {
+            for it in line.items.drain(..).filter(|it| it.phantom) {
+                let r = Rect { x: x + it.x + shift.0, y: line_y + shift.1, width: 0.0, height: 0.0 };
+                for o in it.owners.iter() {
+                    union(frags, order_of, *o, r);
+                }
+            }
             *line = Line::default();
             return 0.0;
+        }
+        if !line.ascent.is_finite() || !line.descent.is_finite() {
+            line.ascent = line.ascent.max(0.0);
+            line.descent = line.descent.max(0.0);
         }
         let baseline = line_y + line.ascent;
         self.first_baseline.get_or_insert(baseline);
@@ -2585,7 +2780,7 @@ impl<'a> Ctx<'a> {
         let mut probe = self.probe();
         probe.measure_only = true;
         probe.pending.push(Vec::new());
-        let h = probe.contents(el, style, 0.0, 0.0, content_w, None, false, (0.0, 0.0));
+        let h = probe.contents(el, style, 0.0, 0.0, content_w, None, false, (0.0, 0.0), Collapse::default());
         self.memo.heights.borrow_mut().insert(key, h);
         h
     }
@@ -2609,7 +2804,7 @@ impl<'a> Ctx<'a> {
         }
         let mut probe = self.probe();
         probe.pending.push(Vec::new());
-        probe.contents(el, style, 0.0, 0.0, content_w, Some(content_h), false, (0.0, 0.0));
+        probe.contents(el, style, 0.0, 0.0, content_w, Some(content_h), false, (0.0, 0.0), Collapse::default());
         let baseline = if flowroot {
             probe.last_baseline
         } else {
@@ -2629,7 +2824,7 @@ impl<'a> Ctx<'a> {
                     item.pending.push(Vec::new());
                     let cw = (b.rect.width - e.horizontal()).max(0.0);
                     let ch = (b.rect.height - e.vertical()).max(0.0);
-                    item.contents(c, &cs, 0.0, 0.0, cw, Some(ch), false, (0.0, 0.0));
+                    item.contents(c, &cs, 0.0, 0.0, cw, Some(ch), false, (0.0, 0.0), Collapse::default());
                     match item.first_baseline {
                         Some(fb) => b.rect.y + e.border[TOP] + e.padding[TOP] + fb,
                         None => b.rect.y + b.rect.height,
@@ -2712,7 +2907,14 @@ impl<'a> Ctx<'a> {
                 }
                 if items.len() == before {
                     let (ascent, descent) = text_extents(&style);
-                    items.push(InlineItem::Empty { owners: with, height: ascent + descent, ascent });
+                    let zero = |d: Dim| matches!(d, Dim::Auto) || d.resolve(Some(0.0)) == Some(0.0);
+                    let phantom = zero(style.margin[LEFT])
+                        && zero(style.margin[RIGHT])
+                        && style.padding[LEFT].resolve(0.0) == 0.0
+                        && style.padding[RIGHT].resolve(0.0) == 0.0
+                        && style.border[LEFT] <= 0.0
+                        && style.border[RIGHT] <= 0.0;
+                    items.push(InlineItem::Empty { owners: with, height: ascent + descent, ascent, phantom });
                 }
             }
             _ => {}
@@ -2893,18 +3095,27 @@ fn text_extents(style: &FlowStyle) -> (f64, f64) {
 }
 
 /// A line box being filled.
-#[derive(Default)]
 struct Line {
     x: f64,
+    /// Extents above and below the baseline. Either can be negative (a
+    /// line height below the font's content area): they start unset.
     ascent: f64,
     descent: f64,
     items: Vec<LineItem>,
+}
+
+impl Default for Line {
+    fn default() -> Self {
+        Line { x: 0.0, ascent: f64::NEG_INFINITY, descent: f64::NEG_INFINITY, items: Vec::new() }
+    }
 }
 
 struct LineItem {
     x: f64,
     width: f64,
     height: f64,
+    /// An empty inline box that does not make a line box by itself.
+    phantom: bool,
     ascent: f64,
     owners: Owners,
     atomic: Option<(NodeId, StyleRef)>,
@@ -2934,6 +3145,7 @@ impl Line {
             x,
             width,
             height,
+            phantom: false,
             ascent,
             owners,
             atomic,

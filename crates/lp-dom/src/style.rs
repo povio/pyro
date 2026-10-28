@@ -4797,7 +4797,7 @@ impl StyleEngine {
             // Inherited and resolved against ancestors; None when no author value applies anywhere up the tree.
             let mut cur = Some(idx);
             while let Some(i) = cur {
-                if self.declared_value(dom, rules, dom.id_of(i), name).is_some() {
+                if self.declared_value(dom, rules, dom.id_of(i), name).is_some() || ua_font_size(dom, i).is_some() {
                     return Some(format!("{}px", num(self.font_size_at_cascade(dom, rules, idx, depth))));
                 }
                 cur = flat_tree_parent_element(dom, i);
@@ -5224,7 +5224,10 @@ impl StyleEngine {
 
     fn font_size_from_parent(&self, dom: &Dom, rules: &RuleSet, idx: u32, parent: f64, root: f64) -> f64 {
         let id = dom.id_of(idx);
-        let Some(raw) = self.declared_value(dom, rules, id, "font-size") else { return parent };
+        let Some(raw) = self.declared_value(dom, rules, id, "font-size").or_else(|| ua_font_size(dom, idx).map(str::to_owned))
+        else {
+            return parent;
+        };
         let mut lookup = |var: &str| custom_property_source(dom, rules, id, var).map(|(_, value)| value);
         let Some(value) = computed::substitute_vars(&raw, &mut lookup, 0) else { return parent };
         let keyword = match value.trim().to_ascii_lowercase().as_str() {
@@ -5362,6 +5365,22 @@ pub(crate) fn flat_tree_parent_element(dom: &Dom, idx: u32) -> Option<u32> {
     match &dom.n(p).kind {
         NodeKind::Element(_) => Some(p),
         NodeKind::Fragment(f) if f.shadow.is_some() && f.host != NIL => dom.n(f.host).is_element().then_some(f.host),
+        _ => None,
+    }
+}
+
+
+/// The UA stylesheet's `font-size` of an HTML element (html.css: headings,
+/// small/big, sub/sup), below every author declaration.
+fn ua_font_size(dom: &Dom, idx: u32) -> Option<&'static str> {
+    match dom.n(idx).element().filter(|e| e.is_html()).map(|e| &*e.name.local)? {
+        "h1" => Some("2em"),
+        "h2" => Some("1.5em"),
+        "h3" => Some("1.17em"),
+        "h5" => Some("0.83em"),
+        "h6" => Some("0.67em"),
+        "small" | "sub" | "sup" => Some("smaller"),
+        "big" => Some("larger"),
         _ => None,
     }
 }

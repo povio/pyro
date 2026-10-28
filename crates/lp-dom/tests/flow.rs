@@ -4382,3 +4382,115 @@ fn text_input_scroll_width_follows_its_value() {
         assert!(w > 150.0, "{geometry:?}: the longest textarea line, got {w}");
     }
 }
+
+/// Border boxes [x, y, width, height] of the elements with these ids, all
+/// compared to Chromium's (within 0.01px).
+fn check_rects(name: &str, html: &str, expected: &[(&str, [f64; 4])]) {
+    let p = page(html, Geometry::Flow);
+    let mut diffs = Vec::new();
+    for (id, want) in expected {
+        let r = p.layout.bounding_client_rect(&p.dom, p.id(id));
+        let got = [r.x, r.y, r.width, r.height];
+        if got.iter().zip(want).any(|(g, w)| (g - w).abs() > 0.01) {
+            diffs.push(format!("#{id}: got {got:?}, Chromium {want:?}"));
+        }
+    }
+    assert!(diffs.is_empty(), "{name}:\n{}", diffs.join("\n"));
+}
+
+#[test]
+fn margins_collapse_through_parents_and_empty_blocks_like_chromium() {
+    // CSS 2.1 8.3.1, measured in Chromium (800x600): a first child's top
+    // margin collapses with its parent's (and body's) unless padding or a
+    // border separates them or the parent is a new formatting context; a
+    // last child's bottom margin collapses with an auto-height parent's;
+    // an empty block's margins collapse through it; negative margins add to
+    // the largest positive one.
+    let html = "<!doctype html><body><div id=a><h1 id=h style=\"height:30px;margin:20px 0\">x</h1><p id=p1 style=\"height:10px\">x</p></div>\
+        <div id=b style=\"margin-top:5px\"><div id=b1 style=\"margin-top:40px;height:10px\"></div></div><div id=e style=\"margin:15px 0\"></div>\
+        <div id=c style=\"margin-top:10px;padding-top:1px\"><div id=c1 style=\"margin-top:30px;height:10px;margin-bottom:25px\"></div></div>\
+        <div id=d style=\"height:5px;margin-top:-10px\"></div>\n<section id=s style=\"overflow:hidden\"><p id=s1 style=\"margin:12px 0;height:4px\"></p></section>\
+        <div id=f style=\"margin-bottom:7px\"><div id=f1 style=\"height:3px;margin-bottom:33px\"></div></div><div id=g style=\"height:2px\"></div></body>";
+    check_rects(
+        "margins",
+        html,
+        &[
+            ("a", [8.0, 20.0, 784.0, 60.0]),
+            ("h", [8.0, 20.0, 784.0, 30.0]),
+            ("p1", [8.0, 70.0, 784.0, 10.0]),
+            ("b", [8.0, 120.0, 784.0, 10.0]),
+            ("b1", [8.0, 120.0, 784.0, 10.0]),
+            ("e", [8.0, 145.0, 784.0, 0.0]),
+            ("c", [8.0, 145.0, 784.0, 41.0]),
+            ("c1", [8.0, 176.0, 784.0, 10.0]),
+            ("d", [8.0, 201.0, 784.0, 5.0]),
+            ("s", [8.0, 206.0, 784.0, 28.0]),
+            ("s1", [8.0, 218.0, 784.0, 4.0]),
+            ("f", [8.0, 234.0, 784.0, 3.0]),
+            ("f1", [8.0, 234.0, 784.0, 3.0]),
+            ("g", [8.0, 270.0, 784.0, 2.0]),
+        ],
+    );
+    // UA heading sizes and margins, line content between blocks, chains of
+    // first children, an empty span (no line box), an empty block before
+    // its sibling, a flex item (no collapsing with its children) and an
+    // absolutely positioned first child (skipped).
+    let html = "<!doctype html><body style=\"font-size:16px;line-height:20px;font-family:sans-serif\"><h1 id=h1>Title</h1><p id=p1>para one</p>\n\
+        <p id=p2 style=\"margin-bottom:30px\">two</p>text after<div id=d1 style=\"margin-top:12px;height:5px\"></div>\n\
+        <ul id=ul><li id=li1>a</li><li id=li2>b</li></ul>\n\
+        <div id=n1 style=\"margin-top:-20px\"><div id=n2 style=\"margin-top:10px\"><div id=n3 style=\"margin-top:25px;height:8px;margin-bottom:-5px\"></div></div></div>\n\
+        <div id=x1 style=\"margin-bottom:10px\">  <span id=sp></span>  </div><div id=x2 style=\"margin-top:20px;height:4px\"></div>\n\
+        <div id=y1><div id=y2 style=\"margin:10px 0\"></div><div id=y3 style=\"margin-top:30px;height:6px\"></div></div>\n\
+        <div id=z1 style=\"display:flex\"><div id=z2 style=\"margin-top:9px\"><p id=z3 style=\"margin:14px 0\">in flex</p></div></div>\n\
+        <div id=w1 style=\"position:relative\"><div id=w2 style=\"position:absolute;top:0\"></div><p id=w3 style=\"margin-top:17px;height:3px\"></p></div>\n\
+        <div id=last style=\"margin-bottom:50px\"><p id=lp style=\"margin-bottom:60px;height:2px\"></p></div></body>";
+    let y = |id: &'static str, x: f64, y: f64, w: f64, h: f64| (id, [x, y, w, h]);
+    check_rects(
+        "margins in text",
+        html,
+        &[
+            y("h1", 8.0, 21.44, 784.0, 20.0),
+            y("p1", 8.0, 62.88, 784.0, 20.0),
+            y("p2", 8.0, 98.88, 784.0, 20.0),
+            y("d1", 8.0, 180.88, 784.0, 5.0),
+            y("ul", 8.0, 201.88, 784.0, 40.0),
+            y("li1", 48.0, 201.88, 744.0, 20.0),
+            y("li2", 48.0, 221.88, 744.0, 20.0),
+            y("n1", 8.0, 246.88, 784.0, 8.0),
+            y("n2", 8.0, 246.88, 784.0, 8.0),
+            y("n3", 8.0, 246.88, 784.0, 8.0),
+            y("x1", 8.0, 249.88, 784.0, 0.0),
+            y("sp", 8.0, 249.88, 0.0, 0.0),
+            y("x2", 8.0, 269.88, 784.0, 4.0),
+            y("y1", 8.0, 303.88, 784.0, 6.0),
+            y("y2", 8.0, 303.88, 784.0, 0.0),
+            y("y3", 8.0, 303.88, 784.0, 6.0),
+            y("z1", 8.0, 309.88, 784.0, 57.0),
+            y("w1", 8.0, 383.88, 784.0, 3.0),
+            y("w2", 8.0, 383.88, 0.0, 0.0),
+            y("w3", 8.0, 383.88, 784.0, 3.0),
+            y("last", 8.0, 402.88, 784.0, 2.0),
+            y("lp", 8.0, 402.88, 784.0, 2.0),
+        ],
+    );
+}
+
+#[test]
+fn line_height_below_the_content_area_like_chromium() {
+    // A 32px font in 20px lines: the half-leading is negative on both sides
+    // and the line box stays 20px (it was 22: the descent was floored at 0).
+    let html = "<!doctype html><body style=\"margin:0;font-family:sans-serif\"><div id=a style=\"font-size:32px;line-height:20px\">Title</div>\
+        <div id=b style=\"font-size:16px;line-height:20px\"><div id=c style=\"font-size:32px\">Title</div></div>\
+        <div id=d style=\"font-size:16px;line-height:20px\"><h1 id=e style=\"margin:0\">Title</h1></div></body>";
+    check_rects(
+        "tight lines",
+        html,
+        &[
+            ("a", [0.0, 0.0, 800.0, 20.0]),
+            ("b", [0.0, 20.0, 800.0, 20.0]),
+            ("c", [0.0, 20.0, 800.0, 20.0]),
+            ("d", [0.0, 40.0, 800.0, 20.0]),
+            ("e", [0.0, 40.0, 800.0, 20.0]),
+        ],
+    );
+}

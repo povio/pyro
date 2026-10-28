@@ -21,7 +21,7 @@ use std::rc::Rc;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use super::{Ctx, FlowResult, FlowStyle, NodeId, Pending, Rect, Slot, StyleRef};
+use super::{Collapse, Ctx, FlowResult, FlowStyle, Margin, NodeId, Pending, Rect, Slot, StyleRef};
 
 /// The entries of the last pass (generation `gen - 1`, read from `prev`)
 /// and of the pass in progress (generation `gen`).
@@ -91,6 +91,7 @@ struct Key {
     outer_cb: Option<u64>,
     fixed: bool,
     shift: (u64, u64),
+    collapse: Collapse,
 }
 
 /// A box, run or text of the subtree whose position fixes its translation.
@@ -131,6 +132,8 @@ struct Entry {
     /// Baselines of the first and last line boxes, relative to y.
     first_baseline: Option<f64>,
     last_baseline: Option<f64>,
+    /// The margin left below the last child (`Ctx::trailing`).
+    trailing: Margin,
     escaped: Rc<[Escaped]>,
 }
 
@@ -150,6 +153,7 @@ impl<'a> Ctx<'a> {
         fixed: bool,
         shift: (f64, f64),
         outer_cb: Option<f64>,
+        collapse: Collapse,
     ) -> f64 {
         let key = Key {
             width: width.to_bits(),
@@ -157,12 +161,13 @@ impl<'a> Ctx<'a> {
             outer_cb: outer_cb.map(f64::to_bits),
             fixed,
             shift: (shift.0.to_bits(), shift.1.to_bits()),
+            collapse,
         };
         if let Some(h) = self.replay(el, style, key, x, y) {
             return h;
         }
         if self.probe {
-            return self.contents_in(el, style, x, y, width, height, fixed, shift);
+            return self.contents_in(el, style, x, y, width, height, fixed, shift, collapse);
         }
         let order_lo = self.order;
         let (text_lo, run_lo) = (self.out.text_orders.len(), self.out.text_runs.len());
@@ -170,7 +175,8 @@ impl<'a> Ctx<'a> {
         let first_lo = self.pending.first().map_or(0, Vec::len);
         let last_lo = self.pending.last().map_or(0, Vec::len);
         let (fb, lb) = (self.first_baseline.take(), self.last_baseline.take());
-        let h = self.contents_in(el, style, x, y, width, height, fixed, shift);
+        let h = self.contents_in(el, style, x, y, width, height, fixed, shift, collapse);
+        let trailing = if collapse.bottom { self.trailing } else { Margin::ZERO };
         let (first_baseline, last_baseline) = (self.first_baseline, self.last_baseline);
         self.first_baseline = fb.or(first_baseline);
         self.last_baseline = last_baseline.or(lb);
@@ -197,6 +203,7 @@ impl<'a> Ctx<'a> {
             height: h,
             first_baseline: first_baseline.map(|b| b - y),
             last_baseline: last_baseline.map(|b| b - y),
+            trailing,
             escaped,
         };
         self.remember(el, entry);
@@ -321,6 +328,7 @@ impl<'a> Ctx<'a> {
         if let Some(b) = e.last_baseline {
             self.last_baseline = Some(y + b);
         }
+        self.trailing = e.trailing;
         for p in e.escaped.iter() {
             self.defer_absolute(p.el, p.style.clone(), x + p.dx, y + p.dy);
         }
