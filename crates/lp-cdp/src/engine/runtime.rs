@@ -234,7 +234,7 @@ impl PendingReplies {
     }
 }
 
-fn is_thenable(value: Value<'_>) -> bool {
+pub(super) fn is_thenable(value: Value<'_>) -> bool {
     value.as_object().is_some_and(|o| o.get("then").is_ok_and(|t| t.is_function()))
 }
 

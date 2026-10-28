@@ -33,6 +33,7 @@ use std::time::{Duration, Instant};
 use lp_browser::{Browser, NavigateOpts, PageId};
 use lp_dom::select::SelectorCache;
 use lp_dom::{Dom, NodeId, NodeKind};
+use lp_js::JsException;
 use lp_webapi::input::{self, MouseButton, MouseInput, MouseKind};
 use lp_webapi::PageDom;
 use serde::{Deserialize, Serialize};
@@ -134,6 +135,8 @@ enum Assert {
     Focused,
     /// The accessible name equals `expected` (whitespace-normalized).
     Name,
+    /// The element is not disabled (`expected: false` for disabled).
+    Enabled,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -148,6 +151,7 @@ enum Read {
     /// The accessible name.
     Name,
     Focused,
+    Enabled,
 }
 
 /// Which requests a `request` step looks for in the run's log.
@@ -259,6 +263,8 @@ enum Step {
     /// as a client-side router reacts to; settles like an action.
     Route {
         url: String,
+        /// Wait for the requests the route change started (default).
+        settle: bool,
     },
     Eval {
         expression: String,
@@ -305,7 +311,7 @@ impl Step {
             Step::Unmock(None) => "unmock".into(),
             Step::Download { .. } => "download".into(),
             Step::Popup { .. } => "popup".into(),
-            Step::Route { url } => format!("route {url}"),
+            Step::Route { url, .. } => format!("route {url}"),
             Step::Eval { .. } => "eval".into(),
             Step::Request(m) => format!("request {}", serde_json::to_value(m).map(prune).unwrap_or_default()),
             Step::Act { locator, action, .. } => format!("{action:?} {}", locator.describe()),
@@ -373,6 +379,19 @@ enum Phase {
     /// The step's action ran (or an `idle` step started); waits until the
     /// page is quiet with at most `requests` requests in flight.
     Settle { requests: usize, since: Instant, until: Instant },
+    /// `eval` returned a promise; waits for it to settle.
+    Await(Settlement),
+}
+
+/// Where a promise an `eval` step returned lands once it settles: its JSON
+/// value, or the rejection's message.
+type Settlement = Rc<RefCell<Option<Result<Value, String>>>>;
+
+/// What evaluating an `eval` step produced.
+enum Evaluated {
+    Value(Value),
+    /// A thenable: its settlement arrives later.
+    Pending(Settlement),
 }
 
 pub(super) struct Waiter {
@@ -427,6 +446,7 @@ impl Waiter {
             },
             Phase::Load { loader, dom_ready } => load_reached(browser, self.job.pid, loader, *dom_ready),
             Phase::Settle { requests, .. } => browser.page_work(self.job.pid).is_none_or(|w| w.quiet(*requests)),
+            Phase::Await(settled) => settled.borrow().is_some(),
         }
     }
 }
@@ -458,19 +478,40 @@ impl Waiters {
     }
 }
 
-fn load_reached(browser: &Browser, pid: PageId, loader: &str, dom_ready: bool) -> bool {
-    match browser.page(pid) {
-        None => true,
-        Some(p) => {
-            let f = &p.main_frame;
-            f.loader_id.0 == loader && if dom_ready { f.dom_content_loaded } else { f.loaded }
-        }
+/// Where a `Phase::Load` wait for `loader`'s document stands.
+enum LoadState {
+    /// Fetching or loading.
+    Waiting,
+    Reached,
+    /// Another navigation superseded it before it committed: wait for that one.
+    Follow(String),
+    /// Neither committed nor pending: the navigation failed.
+    Failed,
+}
+
+fn load_state(browser: &Browser, pid: PageId, loader: &str, dom_ready: bool) -> LoadState {
+    let Some(p) = browser.page(pid) else { return LoadState::Reached };
+    let f = &p.main_frame;
+    if f.loader_id.0 == loader {
+        let done = if dom_ready { f.dom_content_loaded } else { f.loaded };
+        return if done { LoadState::Reached } else { LoadState::Waiting };
+    }
+    match p.pending_loader() {
+        Some(pending) if pending.0 == loader => LoadState::Waiting,
+        Some(pending) => LoadState::Follow(pending.0.clone()),
+        None => LoadState::Failed,
     }
 }
 
-/// The page's current document loader.
-fn loader_of(browser: &Browser, pid: PageId) -> String {
-    browser.page(pid).map(|p| p.main_frame.loader_id.0.clone()).unwrap_or_default()
+fn load_reached(browser: &Browser, pid: PageId, loader: &str, dom_ready: bool) -> bool {
+    !matches!(load_state(browser, pid, loader, dom_ready), LoadState::Waiting)
+}
+
+/// The document a `loaded` step waits for: the navigation being fetched
+/// (a prepared page taken while booting), else the current document.
+fn loader_to_wait_for(browser: &Browser, pid: PageId) -> String {
+    let Some(p) = browser.page(pid) else { return String::new() };
+    p.pending_loader().map_or_else(|| p.main_frame.loader_id.0.clone(), |l| l.0.clone())
 }
 
 fn requests_of(browser: &Browser, pid: PageId) -> usize {
@@ -568,6 +609,11 @@ fn local(dom: &Dom, id: NodeId) -> Option<&str> {
 
 fn attr<'d>(dom: &'d Dom, id: NodeId, name: &str) -> Option<&'d str> {
     dom.element(id).ok()?.attr(name)
+}
+
+/// A JavaScript value as JSON (`null` when it has no JSON form).
+fn json_of(v: lp_js::Value<'_>) -> Value {
+    v.to_json(0).ok().flatten().and_then(|j| serde_json::from_str(&j).ok()).unwrap_or(Value::Null)
 }
 
 fn text_of(dom: &Dom, id: NodeId) -> String {
@@ -1343,7 +1389,7 @@ fn expect(
 ) -> CdpResult<Attempt> {
     let dom = page.dom.borrow();
     let (holds, actual) = match assert {
-        Assert::Css | Assert::Focused | Assert::Name => {
+        Assert::Css | Assert::Focused | Assert::Name | Assert::Enabled => {
             let Some(el) = single(found, &dom, locator)? else {
                 return Ok(Attempt::Retry(format!("{} matched no element", locator.describe())));
             };
@@ -1357,6 +1403,10 @@ fn expect(
                 Assert::Focused => {
                     let focused = dom.focused(page.document()).ok().flatten() == Some(el);
                     (focused == expected.as_bool().unwrap_or(true), json!(focused))
+                }
+                Assert::Enabled => {
+                    let enabled = !disabled(&dom, el);
+                    (enabled == expected.as_bool().unwrap_or(true), json!(enabled))
                 }
                 _ => {
                     let want = expected.as_str().ok_or_else(|| CdpError::invalid_params("name needs a string"))?;
@@ -1641,6 +1691,8 @@ struct LoadedParams {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct RouteParams {
     url: String,
+    /// Wait for the requests the route change started (default: true).
+    settle: Option<bool>,
     timeout: Option<u64>,
 }
 
@@ -1650,6 +1702,8 @@ struct EvalParams {
     expression: String,
     #[serde(rename = "as")]
     key: Option<String>,
+    /// How long to wait for a returned promise.
+    timeout: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -1720,8 +1774,9 @@ impl ExpectParams {
                 "css" => Assert::Css,
                 "focused" => Assert::Focused,
                 "name" => Assert::Name,
+                "enabled" => Assert::Enabled,
                 _ => return Err(CdpError::invalid_params(
-                    "assert must be visible, hidden, text, containsText, value, count, checked, css, focused or name",
+                    "assert must be visible, hidden, text, containsText, value, count, checked, css, focused, name or enabled",
                 )),
             };
         if assert == Assert::Css && self.property.is_none() {
@@ -1757,9 +1812,10 @@ impl QueryParams {
             }
             "name" => Read::Name,
             "focused" => Read::Focused,
+            "enabled" => Read::Enabled,
             _ => {
                 return Err(CdpError::invalid_params(
-                    "read must be count, text, value, visible, box, css, name or focused",
+                    "read must be count, text, value, visible, box, css, name, focused or enabled",
                 ))
             }
         })
@@ -1785,8 +1841,8 @@ impl StepParams {
             StepParams::Unmock(p) => Ok((Step::Unmock(p.url), None)),
             StepParams::Download(p) => Ok((Step::Download { save_to: p.save_to, key: p.key }, p.timeout)),
             StepParams::Popup(p) => Ok((Step::Popup { key: p.key }, p.timeout)),
-            StepParams::Route(p) => Ok((Step::Route { url: p.url }, p.timeout)),
-            StepParams::Eval(p) => Ok((Step::Eval { expression: p.expression, key: p.key }, None)),
+            StepParams::Route(p) => Ok((Step::Route { url: p.url, settle: p.settle.unwrap_or(true) }, p.timeout)),
+            StepParams::Eval(p) => Ok((Step::Eval { expression: p.expression, key: p.key }, p.timeout)),
             StepParams::Request(p) => Ok((Step::Request(p.matcher), p.timeout)),
             StepParams::Act(p) => p.step(true),
             StepParams::Check(p) => p.step(),
@@ -1811,6 +1867,7 @@ fn read_value(page: &PageDom, el: NodeId, read: Read, property: Option<&str>) ->
             json!(normalize(&accessible_name(&dom, page.document(), el, &role)))
         }
         Read::Focused => json!(page.dom.borrow().focused(page.document()).ok().flatten() == Some(el)),
+        Read::Enabled => json!(!disabled(&page.dom.borrow(), el)),
         Read::Text => json!(normalize(&text_of(&page.dom.borrow(), el))),
         Read::Value => json!(page.dom.borrow().value(el).unwrap_or_default()),
         Read::Visible => json!(visible_box(page, el).is_some()),
@@ -2048,18 +2105,55 @@ impl EngineHost {
                     }
                     self.next_step(&mut w);
                 }
+                Phase::Await(settled) => {
+                    let outcome = settled.borrow_mut().take();
+                    match outcome {
+                        Some(Ok(value)) => {
+                            if let Some((Step::Eval { key: Some(key), .. }, _)) = w.job.steps.get(w.job.index) {
+                                w.job.reads.insert(key.clone(), value.clone());
+                            }
+                            w.job.results.push(value);
+                            self.next_step(&mut w);
+                        }
+                        Some(Err(message)) => {
+                            return Err(w.job.fail(CdpError::server(format!("rejected: {message}"))));
+                        }
+                        None => {
+                            if now >= w.step_deadline {
+                                let error = CdpError::server(format!(
+                                    "timed out after {} ms waiting for the promise to settle",
+                                    w.job.steps[w.job.index].1.as_millis()
+                                ));
+                                return Err(w.job.fail(error));
+                            }
+                            w.phase = Phase::Await(settled);
+                            return Ok(Drive::Park(Box::new(w)));
+                        }
+                    }
+                }
                 Phase::Load { loader, dom_ready } => {
-                    if !load_reached(&self.thread.browser, pid, &loader, dom_ready) {
-                        if now >= w.step_deadline {
-                            let error = CdpError::server(format!(
-                                "timed out after {} ms waiting for {}",
-                                w.job.steps[w.job.index].1.as_millis(),
-                                if dom_ready { "DOMContentLoaded" } else { "load" }
-                            ));
+                    match load_state(&self.thread.browser, pid, &loader, dom_ready) {
+                        LoadState::Reached => {}
+                        LoadState::Follow(next) => {
+                            w.phase = Phase::Load { loader: next, dom_ready };
+                            continue;
+                        }
+                        LoadState::Failed => {
+                            let error = CdpError::server("the navigation failed before its document loaded");
                             return Err(w.job.fail(error));
                         }
-                        w.phase = Phase::Load { loader, dom_ready };
-                        return Ok(Drive::Park(Box::new(w)));
+                        LoadState::Waiting => {
+                            if now >= w.step_deadline {
+                                let error = CdpError::server(format!(
+                                    "timed out after {} ms waiting for {}",
+                                    w.job.steps[w.job.index].1.as_millis(),
+                                    if dom_ready { "DOMContentLoaded" } else { "load" }
+                                ));
+                                return Err(w.job.fail(error));
+                            }
+                            w.phase = Phase::Load { loader, dom_ready };
+                            return Ok(Drive::Park(Box::new(w)));
+                        }
                     }
                     if self.thread.browser.page(pid).is_none() {
                         return Err(w.job.fail(CdpError::server("page is gone")));
@@ -2084,7 +2178,7 @@ impl EngineHost {
                         continue;
                     }
                     if let Step::Loaded = step {
-                        let loader = loader_of(&self.thread.browser, pid);
+                        let loader = loader_to_wait_for(&self.thread.browser, pid);
                         w.phase = Phase::Load { loader, dom_ready: false };
                         continue;
                     }
@@ -2109,7 +2203,7 @@ impl EngineHost {
                         w.phase = Phase::Load { loader: loader.0, dom_ready: false };
                         continue;
                     }
-                    let before = matches!(step, Step::Act { settle: true, .. } | Step::Route { .. })
+                    let before = matches!(step, Step::Act { settle: true, .. } | Step::Route { settle: true, .. })
                         .then(|| requests_of(&self.thread.browser, pid));
                     let (attempt, page) = match &step {
                         Step::Request(m) => (self.match_request(&w.job, m), None),
@@ -2131,17 +2225,39 @@ impl EngineHost {
                             (Attempt::Done(json!({ "removed": removed })), None)
                         }
                         Step::Eval { expression, .. } => {
-                            let value = self.eval_step(pid, expression).map_err(|e| w.job.fail(e))?;
-                            (Attempt::Done(value), None)
+                            match self.eval_step(pid, expression).map_err(|e| w.job.fail(e))? {
+                                Evaluated::Value(value) => (Attempt::Done(value), None),
+                                Evaluated::Pending(settled) => {
+                                    w.phase = Phase::Await(settled);
+                                    continue;
+                                }
+                            }
                         }
-                        Step::Route { url } => {
-                            let url = serde_json::to_string(url).unwrap_or_default();
-                            let src = format!(
-                                "history.pushState(null, '', {url}); \
-                                 dispatchEvent(new PopStateEvent('popstate', {{ state: history.state }})); null"
-                            );
-                            self.eval_step(pid, &src).map_err(|e| w.job.fail(e))?;
-                            (Attempt::Done(json!({})), None)
+                        Step::Route { url, .. } => {
+                            // `pushState` on `about:blank` throws (origin null): a
+                            // prepared page whose navigation is under way gets
+                            // there; one that never navigated never will.
+                            let blank = self.thread.browser.page(pid).filter(|p| p.main_frame.url == "about:blank");
+                            if let Some(p) = blank {
+                                if p.pending_loader().is_none() {
+                                    return Err(w.job.fail(CdpError::server(
+                                        "the page is on about:blank: route needs a document \
+                                         (goto a URL first, or loaded on a prepared page)",
+                                    )));
+                                }
+                                (
+                                    Attempt::Retry("the page is still on about:blank, its navigation pending".into()),
+                                    None,
+                                )
+                            } else {
+                                let url = serde_json::to_string(url).unwrap_or_default();
+                                let src = format!(
+                                    "history.pushState(null, '', {url}); \
+                                     dispatchEvent(new PopStateEvent('popstate', {{ state: history.state }})); null"
+                                );
+                                self.eval_step(pid, &src).map_err(|e| w.job.fail(e))?;
+                                (Attempt::Done(json!({})), None)
+                            }
                         }
                         _ => {
                             let page = self.main_document(w.job.page).map_err(|e| w.job.fail(e))?;
@@ -2182,7 +2298,8 @@ impl EngineHost {
                                 w.seen = page.dom.borrow().version();
                                 w.doc = Rc::downgrade(&page);
                             }
-                            w.poll_at = matches!(step, Step::Url(_)).then(|| Instant::now() + URL_POLL);
+                            w.poll_at =
+                                matches!(step, Step::Url(_) | Step::Route { .. }).then(|| Instant::now() + URL_POLL);
                             w.reason = reason;
                             return Ok(Drive::Park(Box::new(w)));
                         }
@@ -2276,8 +2393,9 @@ impl EngineHost {
         Ok(removed)
     }
 
-    /// Evaluates `src` in the page's main world; its JSON value.
-    fn eval_step(&mut self, pid: PageId, src: &str) -> CdpResult<Value> {
+    /// Evaluates `src` in the page's main world; its JSON value, or the
+    /// settlement of the promise it returned (as `page.evaluate` awaits one).
+    fn eval_step(&mut self, pid: PageId, src: &str) -> CdpResult<Evaluated> {
         let realm = self
             .thread
             .browser
@@ -2287,7 +2405,19 @@ impl EngineHost {
         let value = {
             let scope = realm.scope().map_err(super::remote::js_to_cdp)?;
             match scope.eval(src, Some("lp-run"), 1) {
-                Ok(v) => v.to_json(0).ok().flatten().and_then(|j| serde_json::from_str(&j).ok()).unwrap_or(Value::Null),
+                Ok(v) if super::runtime::is_thenable(v) => {
+                    let settled: Settlement = Rc::new(RefCell::new(None));
+                    let (ok, err) = (settled.clone(), settled.clone());
+                    scope
+                        .then(
+                            v,
+                            move |_, v| *ok.borrow_mut() = Some(Ok(json_of(v))),
+                            move |s, v| *err.borrow_mut() = Some(Err(JsException::from_value(s, v).message)),
+                        )
+                        .map_err(super::remote::js_to_cdp)?;
+                    Evaluated::Pending(settled)
+                }
+                Ok(v) => Evaluated::Value(json_of(v)),
                 Err(e) => return Err(CdpError::server(format!("threw: {}", e.details(&scope).message))),
             }
         };
