@@ -74,7 +74,19 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::dom::Dom;
-use crate::flow::{FlowBox, FlowResult};
+use crate::flow::{FlowBox, FlowResult, FlowStyleSource, Position};
+
+/// Overflow clips an out-of-flow box escapes while walking up to its
+/// containing block (`Layout::clip_escape`).
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum ClipEscape {
+    None,
+    /// `position: fixed`: no ancestor clips (the viewport contains it).
+    Viewport,
+    /// `position: absolute`: non-positioned ancestors do not clip, up to the
+    /// nearest positioned one.
+    Positioned,
+}
 use crate::media::Viewport;
 use crate::node::{DocumentKind, NodeId, NodeKind, NIL};
 use crate::style::{CheckVisibilityOptions, ScrollAxes, StyleEngine};
@@ -133,6 +145,30 @@ pub fn layout_unit(v: f64) -> f64 {
 pub enum Axis {
     Width,
     Height,
+}
+
+/// The integer CSSOM View element metrics (`Layout::metric`).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Metric {
+    ScrollWidth,
+    ScrollHeight,
+    ClientWidth,
+    ClientHeight,
+    OffsetTop,
+    OffsetLeft,
+    OffsetWidth,
+    OffsetHeight,
+}
+
+/// Chromium's `LayoutUnit::Round` (half up) of a length in layout units.
+fn round_layout_unit(v: f64) -> f64 {
+    (layout_unit(v) + 0.5).floor()
+}
+
+/// Chromium's `SnapSizeToPixel`: the pixel-snapped size of a box `size`
+/// long starting at `location`, so adjacent snapped boxes tile.
+fn snap_size_to_pixel(size: f64, location: f64) -> f64 {
+    round_layout_unit(location + size) - round_layout_unit(location)
 }
 
 /// An axis' value, and whether it's explicit or the default
@@ -900,6 +936,42 @@ impl Layout {
         self.horizontal_position(dom, el)
     }
 
+    /// An element metric as script reads it: in flow mode pixel-snapped to
+    /// whole pixels like Chromium (Gap 36: `scrollWidth > clientWidth` must
+    /// not come from a fractional width). Offsets round; sizes snap at the
+    /// box's offset (client and scroll sizes at its padding edge) so that
+    /// equal fractional sizes snap alike. The faux layout is unchanged.
+    pub fn metric(&self, dom: &Dom, el: NodeId, metric: Metric) -> f64 {
+        let raw = match metric {
+            Metric::ScrollWidth => self.scroll_width(dom, el),
+            Metric::ScrollHeight => self.scroll_height(dom, el),
+            Metric::ClientWidth => self.client_width(dom, el),
+            Metric::ClientHeight => self.client_height(dom, el),
+            Metric::OffsetTop => self.offset_top(dom, el),
+            Metric::OffsetLeft => self.offset_left(dom, el),
+            Metric::OffsetWidth => self.offset_width(dom, el),
+            Metric::OffsetHeight => self.offset_height(dom, el),
+        };
+        if !self.flow_mode() || raw == 0.0 {
+            return raw;
+        }
+        let border = |side: usize| {
+            use crate::flow::FlowStyleSource;
+            self.style.flow_style(dom, el).map_or(0.0, |s| s.border[side])
+        };
+        match metric {
+            Metric::OffsetTop | Metric::OffsetLeft => round_layout_unit(raw),
+            Metric::OffsetWidth => snap_size_to_pixel(raw, self.offset_left(dom, el)),
+            Metric::OffsetHeight => snap_size_to_pixel(raw, self.offset_top(dom, el)),
+            Metric::ScrollWidth | Metric::ClientWidth => {
+                snap_size_to_pixel(raw, self.offset_left(dom, el) + border(crate::flow::LEFT))
+            }
+            Metric::ScrollHeight | Metric::ClientHeight => {
+                snap_size_to_pixel(raw, self.offset_top(dom, el) + border(crate::flow::TOP))
+            }
+        }
+    }
+
     /// `clientTop` / `clientLeft`: no borders in the faux layout
     /// (Element.zig:1989-1997).
     pub fn client_top(&self) -> f64 {
@@ -1100,23 +1172,57 @@ impl Layout {
     /// Whether a text box (viewport coordinates) lies entirely outside the
     /// visible area of an overflow-clipping ancestor of `node`.
     fn text_clipped(&self, dom: &Dom, node: NodeId, x: f64, y: f64, w: f64, h: f64) -> bool {
+        self.clipped_by_ancestor(dom, node, |a, clips| {
+            let r = self.bounding_client_rect_for_visible(dom, a);
+            (clips.x && (x + w <= r.x || x >= r.x + r.width)) || (clips.y && (y + h <= r.y || y >= r.y + r.height))
+        })
+    }
+
+    /// Whether an overflow-clipping ancestor of `node` clips it, as `out`
+    /// decides for each one that applies (its clipped axes given). An
+    /// out-of-flow box escapes the clips between it and its containing
+    /// block (CSS 2.1 10.1): every ancestor for `position: fixed` (the
+    /// viewport; transforms are not laid out), the non-positioned ones below
+    /// the nearest positioned ancestor for `position: absolute`. In-flow
+    /// content escapes with its out-of-flow ancestors.
+    fn clipped_by_ancestor(&self, dom: &Dom, node: NodeId, out: impl Fn(NodeId, ScrollAxes) -> bool) -> bool {
+        let mut escape = self.clip_escape(dom, node);
         let mut cur = dom.parent_element(node).ok().flatten();
         while let Some(a) = cur {
             if self.is_root_container(dom, a) {
                 break;
             }
-            let clips = self.style.overflow_clip_axes(dom, a);
-            if clips.x || clips.y {
-                let r = self.bounding_client_rect_for_visible(dom, a);
-                if (clips.x && (x + w <= r.x || x >= r.x + r.width))
-                    || (clips.y && (y + h <= r.y || y >= r.y + r.height))
-                {
+            let positioned = self.style.flow_style(dom, a).is_some_and(|s| s.position != Position::Static);
+            let applies = match escape {
+                ClipEscape::None => true,
+                ClipEscape::Viewport => false,
+                ClipEscape::Positioned => positioned,
+            };
+            if applies {
+                let clips = self.style.overflow_clip_axes(dom, a);
+                if (clips.x || clips.y) && out(a, clips) {
                     return true;
                 }
+            }
+            if escape == ClipEscape::None || (escape == ClipEscape::Positioned && positioned) {
+                escape = self.clip_escape(dom, a);
             }
             cur = dom.parent_element(a).ok().flatten();
         }
         false
+    }
+
+    /// Which overflow clips above `el` do not apply to it, from its
+    /// `position`.
+    fn clip_escape(&self, dom: &Dom, el: NodeId) -> ClipEscape {
+        if dom.node_type(el).ok() != Some(crate::node::NodeType::Element) {
+            return ClipEscape::None;
+        }
+        match self.style.flow_style(dom, el).map(|s| s.position) {
+            Some(Position::Fixed) => ClipEscape::Viewport,
+            Some(Position::Absolute) => ClipEscape::Positioned,
+            _ => ClipEscape::None,
+        }
     }
 
     /// Whether `node` (or a text node's parent) cannot be selected: the
@@ -1185,7 +1291,9 @@ impl Layout {
         let (dx, dy) = self.ancestor_scroll_offset(dom, el);
         if self.flow_mode() {
             let flow = self.flow(dom);
-            let Some(b) = flow.get(el).copied() else { return Rect::default() };
+            let Some(b) = flow.get(el).copied() else {
+                return self.svg_client_rect(dom, &flow, el).unwrap_or_default();
+            };
             let (kx, ky) = self.sticky_shift(dom, &flow, el);
             let (sx, sy) =
                 if b.fixed { (0.0, 0.0) } else { (self.window_scroll.0 as f64, self.window_scroll.1 as f64) };
@@ -1202,6 +1310,40 @@ impl Layout {
             width: self.box_axis(dom, el, Axis::Width),
             height: self.box_axis(dom, el, Axis::Height),
         }
+    }
+
+    /// The client rect of an SVG element without a CSS box (a shape, text
+    /// or container inside an `<svg>`): its bbox mapped into the content
+    /// box of the nearest `<svg>` ancestor laid out as a box (Gap 34:
+    /// Chromium reports the painted geometry; visibility checks rely on
+    /// it). None for other elements or without geometry.
+    fn svg_client_rect(&self, dom: &Dom, flow: &FlowResult, el: NodeId) -> Option<Rect> {
+        use crate::flow::{FlowStyleSource, BOTTOM, LEFT, RIGHT, TOP};
+        if dom.element(el).ok()?.name.ns != markup5ever::ns!(svg) {
+            return None;
+        }
+        let mut svg = dom.parent_element(el).ok().flatten()?;
+        while flow.get(svg).is_none() {
+            svg = dom.parent_element(svg).ok().flatten()?;
+        }
+        if dom.element(svg).ok()?.name.ns != markup5ever::ns!(svg) {
+            return None;
+        }
+        let b = flow.get(svg)?;
+        let s = self.style.flow_style(dom, svg)?;
+        let pad = |i: usize| s.padding[i].resolve(b.rect.width);
+        let edges = |i: usize| s.border[i] + pad(i);
+        let (left, top) = (edges(LEFT), edges(TOP));
+        let viewport =
+            ((b.client_width - pad(LEFT) - pad(RIGHT)).max(0.0), (b.client_height - pad(TOP) - pad(BOTTOM)).max(0.0));
+        let inner = crate::svg_geometry::client_bounds(dom, &self.style, el, svg, viewport)?;
+        let origin = self.bounding_client_rect_for_visible(dom, svg);
+        Some(Rect {
+            x: origin.x + left + inner.x,
+            y: origin.y + top + inner.y,
+            width: inner.width,
+            height: inner.height,
+        })
     }
 
     /// The scroll-dependent offset of `node`'s sticky ancestors (and itself):
@@ -1419,29 +1561,16 @@ impl Layout {
             if !inside(&r) || !self.is_visible(dom, el) || !self.style.is_hit_testable(dom, el) {
                 continue;
             }
-            // Clipped by an overflow ancestor (fixed boxes escape non-fixed clips).
-            let mut clipped = false;
-            let mut cur = dom.parent_element(el).ok().flatten();
-            while let Some(a) = cur {
-                if self.is_root_container(dom, a) {
-                    break;
+            // Clipped by an overflow ancestor of its containing block chain.
+            let clipped = self.clipped_by_ancestor(dom, el, |a, clips| {
+                if flow.get(a).is_none() {
+                    return false;
                 }
-                let clips = self.style.overflow_clip_axes(dom, a);
-                if clips.x || clips.y {
-                    if let Some(ab) = flow.get(a) {
-                        if !(b.fixed && !ab.fixed) {
-                            let ar = self.bounding_client_rect_for_visible(dom, a);
-                            let out_x = clips.x && !ignore_x && (x < ar.x || x > ar.x + ar.width);
-                            let out_y = clips.y && (y < ar.y || y > ar.y + ar.height);
-                            if out_x || out_y {
-                                clipped = true;
-                                break;
-                            }
-                        }
-                    }
-                }
-                cur = dom.parent_element(a).ok().flatten();
-            }
+                let ar = self.bounding_client_rect_for_visible(dom, a);
+                let out_x = clips.x && !ignore_x && (x < ar.x || x > ar.x + ar.width);
+                let out_y = clips.y && (y < ar.y || y > ar.y + ar.height);
+                out_x || out_y
+            });
             if !clipped {
                 best = Some((b.positioned, b.order, el));
             }

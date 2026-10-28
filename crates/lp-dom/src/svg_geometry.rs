@@ -54,6 +54,58 @@ pub fn bbox(dom: &Dom, style: &StyleEngine, el: NodeId) -> Rect {
     bounds(dom, style, el, 0).map_or(Rect { x: 0.0, y: 0.0, width: 0.0, height: 0.0 }, Bounds::rect)
 }
 
+/// `el`'s bbox mapped into the content box of its `svg` ancestor (CSS px
+/// from the box's content origin): `el`'s own `transform` and those of the
+/// `g`/`a`/`switch` ancestors below `svg` apply, then the svg's `viewBox`
+/// and `preserveAspectRatio` scale into `viewport` (its content-box width
+/// and height). None when `el` has no supported geometry.
+pub fn client_bounds(dom: &Dom, style: &StyleEngine, el: NodeId, svg: NodeId, viewport: (f64, f64)) -> Option<Rect> {
+    let mut b = bounds(dom, style, el, 0)?;
+    let mut cur = Some(el);
+    while let Some(n) = cur.filter(|&n| n != svg) {
+        if let Some(m) = dom.get_attribute(n, "transform").ok().flatten().and_then(parse_transform) {
+            b = transform_bounds(m, b);
+        }
+        cur = dom.parent_element(n).ok().flatten();
+    }
+    if let Some(m) = view_box_transform(dom, svg, viewport) {
+        b = transform_bounds(m, b);
+    }
+    Some(b.rect())
+}
+
+/// The viewBox-to-viewport matrix of `svg` (SVG 2, 8.2), None without a
+/// usable `viewBox`.
+fn view_box_transform(dom: &Dom, svg: NodeId, viewport: (f64, f64)) -> Option<[f64; 6]> {
+    let vb = dom.get_attribute(svg, "viewBox").ok().flatten()?;
+    let [min_x, min_y, w, h] = numbers(vb)[..] else { return None };
+    if w <= 0.0 || h <= 0.0 || viewport.0 <= 0.0 || viewport.1 <= 0.0 {
+        return None;
+    }
+    let par = dom.get_attribute(svg, "preserveAspectRatio").ok().flatten().unwrap_or_default();
+    let mut words = par.split_whitespace();
+    let align = words.next().unwrap_or("xMidYMid");
+    let (mut sx, mut sy) = (viewport.0 / w, viewport.1 / h);
+    let (mut tx, mut ty) = (0.0, 0.0);
+    if align != "none" {
+        let s = if words.next() == Some("slice") { sx.max(sy) } else { sx.min(sy) };
+        (sx, sy) = (s, s);
+        let lower = align.to_ascii_lowercase();
+        let place = |which: &str, free: f64| {
+            if lower.contains(&format!("{which}mid")) {
+                free / 2.0
+            } else if lower.contains(&format!("{which}max")) {
+                free
+            } else {
+                0.0
+            }
+        };
+        tx = place("x", viewport.0 - w * s);
+        ty = place("y", viewport.1 - h * s);
+    }
+    Some([sx, 0.0, 0.0, sy, tx - min_x * sx, ty - min_y * sy])
+}
+
 fn attr(dom: &Dom, el: NodeId, name: &str) -> Option<f64> {
     let v = dom.get_attribute(el, name).ok().flatten()?.trim();
     let v = v.strip_suffix("px").unwrap_or(v);

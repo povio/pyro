@@ -71,8 +71,9 @@ pub struct PageDom {
     /// Scroll event targets awaiting the next rendering update, per document
     /// (None: the document itself), each fired once ("pending scroll event
     /// targets"). Keyed by document: a task dropped by a navigation must not
-    /// block the next document's events.
-    pub(crate) pending_scrolls: RefCell<FxHashSet<(NodeId, Option<NodeId>)>>,
+    /// block the next document's events. The value: whether a `scrollend`
+    /// follows (a scroll that ran to completion, not a layout clamp).
+    pub(crate) pending_scrolls: RefCell<FxHashMap<(NodeId, Option<NodeId>), bool>>,
     /// The DOM version scroll offsets were last re-clamped at, and whether a
     /// re-clamp is queued for the next frame (`layout_api::clamp_scrolls`).
     pub(crate) scroll_clamp: Cell<(Option<u64>, bool)>,

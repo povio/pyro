@@ -3,8 +3,11 @@
 //! an observation's size is the element's faux-layout axis (`getElementAxis`)
 //! while connected and rendered, else 0x0; an entry is delivered when the
 //! size differs from the last reported one (initially 0x0, so observing a
-//! rendered element delivers an initial entry). Every box option reports the
-//! same size (upstream ignores `box`); `contentRect` is (0, 0, width, height).
+//! rendered element delivers an initial entry). Under the flow layout the
+//! entry has Chromium's boxes (content, border and device-pixel content box,
+//! `contentRect` at the padding offset) and the observed `box` decides what
+//! counts as a resize; a disconnected target delivers nothing and keeps its
+//! last size, as in Chromium. The faux layout reports one size for every box.
 //!
 //! Scheduling mirrors IntersectionObserver: `PageDom.after_task` re-measures
 //! only when the DOM/style/viewport/scroll stamp changed or a target was
@@ -12,7 +15,8 @@
 //! (no polling, no inline fallback). Active observers pin their wrapper until
 //! targets and pending records drain; realm/page disposal releases them.
 //! Gaps: no rendering-frame cadence, no loop-limit/"undelivered" error event,
-//! no device-pixel rounding, cross-PageDom targets are NotSupported.
+//! device pixels are the content box scaled and rounded (not snapped to the
+//! pixel grid), cross-PageDom targets are NotSupported.
 
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
@@ -70,14 +74,46 @@ impl Drop for NodeLease {
     }
 }
 
+/// The `ResizeObserverBoxOptions` an observation watches.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum ObservedBox {
+    Content,
+    Border,
+    DevicePixelContent,
+}
+
 struct Observation {
     node: NodeLease,
+    observed: ObservedBox,
     last: (f64, f64),
+}
+
+/// A target's boxes as an entry reports them.
+#[derive(Copy, Clone, Default, PartialEq)]
+struct Sizes {
+    /// `contentRect`'s origin: the padding's left and top.
+    origin: (f64, f64),
+    content: (f64, f64),
+    border: (f64, f64),
+    device_pixel_content: (f64, f64),
+}
+
+impl Sizes {
+    fn uniform(size: (f64, f64)) -> Self {
+        Sizes { origin: (0.0, 0.0), content: size, border: size, device_pixel_content: size }
+    }
+    fn of(&self, observed: ObservedBox) -> (f64, f64) {
+        match observed {
+            ObservedBox::Content => self.content,
+            ObservedBox::Border => self.border,
+            ObservedBox::DevicePixelContent => self.device_pixel_content,
+        }
+    }
 }
 
 struct Pending {
     target: NodeLease,
-    size: (f64, f64),
+    sizes: Sizes,
 }
 
 pub struct Observer {
@@ -120,14 +156,19 @@ impl Observer {
 }
 
 /// Upstream `deliverEntries` size: faux axis when connected and visible.
-/// Under the flow layout, the content box like Chromium's contentRect: the
-/// padding box (clientWidth/Height) less padding. @povio/ui sizes its select
-/// popovers from this, so the faux axis (5 px) clipped every option.
-fn measure(page: &PageDom, id: NodeId) -> (f64, f64) {
+/// Under the flow layout, Chromium's boxes: the content box (the padding box,
+/// clientWidth/Height, less padding), the border box and the content box in
+/// device pixels. @povio/ui sizes its select popovers from contentRect, so the
+/// faux axis (5 px) clipped every option. None for a disconnected target
+/// (Gap 47: Chromium delivers no entry for it).
+fn measure(page: &PageDom, id: NodeId) -> Option<Sizes> {
     let dom = page.dom.borrow();
     let layout = page.layout.borrow();
-    if !dom.is_connected(id).unwrap_or(false) || !layout.is_visible(&dom, id) {
-        return (0.0, 0.0);
+    if !dom.is_connected(id).unwrap_or(false) {
+        return None;
+    }
+    if !layout.is_visible(&dom, id) {
+        return Some(Sizes::default());
     }
     if layout.geometry() == Geometry::Flow {
         let pad = |side: &str| {
@@ -139,9 +180,18 @@ fn measure(page: &PageDom, id: NodeId) -> (f64, f64) {
         };
         let width = (layout.client_width(&dom, id) - pad("left") - pad("right")).max(0.0);
         let height = (layout.client_height(&dom, id) - pad("top") - pad("bottom")).max(0.0);
-        return (width, height);
+        let dpr = layout.device_pixel_ratio();
+        return Some(Sizes {
+            origin: (pad("left"), pad("top")),
+            content: (width, height),
+            border: (layout.offset_width(&dom, id), layout.offset_height(&dom, id)),
+            device_pixel_content: ((width * dpr).round(), (height * dpr).round()),
+        });
     }
-    (layout.element_axis(&dom, id, Axis::Width).value, layout.element_axis(&dom, id, Axis::Height).value)
+    Some(Sizes::uniform((
+        layout.element_axis(&dom, id, Axis::Width).value,
+        layout.element_axis(&dom, id, Axis::Height).value,
+    )))
 }
 
 pub struct ResizeObserver;
@@ -182,23 +232,29 @@ impl JsClass for ResizeObserver {
         def.method("observe", 1, |s, o, args| {
             args.require(1, "ResizeObserver.observe")?;
             let id = o.element(s, args.get(0))?;
-            // `box` is validated like browsers do but, as upstream, all boxes
-            // report the same faux size.
+            let mut observed = ObservedBox::Content;
             if let Some(opts) = args.get(1).as_object() {
                 let b = opts.get("box")?;
                 if !b.is_undefined() {
                     let b = crate::util::dom_string(b)?;
-                    if !matches!(b.as_str(), "content-box" | "border-box" | "device-pixel-content-box") {
-                        return Err(JsError::Type(format!(
-                            "The provided value '{b}' is not a valid ResizeObserverBoxOptions"
-                        )));
-                    }
+                    observed = match b.as_str() {
+                        "content-box" => ObservedBox::Content,
+                        "border-box" => ObservedBox::Border,
+                        "device-pixel-content-box" => ObservedBox::DevicePixelContent,
+                        _ => {
+                            return Err(JsError::Type(format!(
+                                "The provided value '{b}' is not a valid ResizeObserverBoxOptions"
+                            )))
+                        }
+                    };
                 }
             }
             let page = o.page()?;
-            if !o.targets.borrow().iter().any(|t| t.node.id == id) {
+            // Observing again with another box starts a new observation.
+            if !o.targets.borrow().iter().any(|t| t.node.id == id && t.observed == observed) {
+                o.targets.borrow_mut().retain(|t| t.node.id != id);
                 let node = NodeLease::new(&page, id)?;
-                o.targets.borrow_mut().push(Observation { node, last: (0.0, 0.0) });
+                o.targets.borrow_mut().push(Observation { node, observed, last: (0.0, 0.0) });
                 page.resizes.stamp.set(None);
                 o.reconcile(&page)?;
             }
@@ -224,7 +280,7 @@ impl JsClass for ResizeObserver {
 
 pub struct EntryData {
     target: NodeHold,
-    size: (f64, f64),
+    sizes: Sizes,
 }
 
 pub struct ResizeObserverEntry;
@@ -235,11 +291,12 @@ impl JsClass for ResizeObserverEntry {
     fn define(def: &mut ClassDef<Self>) {
         def.getter("target", |s, d| Ok(crate::node::wrap_node(s, &d.target.page, d.target.id)?.value()));
         def.getter("contentRect", |s, d| {
-            crate::layout_api::rect_value(s, Rect { x: 0.0, y: 0.0, width: d.size.0, height: d.size.1 })
+            let Sizes { origin: (x, y), content: (width, height), .. } = d.sizes;
+            crate::layout_api::rect_value(s, Rect { x, y, width, height })
         });
-        def.getter("borderBoxSize", |s, d| sizes(s, d.size));
-        def.getter("contentBoxSize", |s, d| sizes(s, d.size));
-        def.getter("devicePixelContentBoxSize", |s, d| sizes(s, d.size));
+        def.getter("borderBoxSize", |s, d| sizes(s, d.sizes.border));
+        def.getter("contentBoxSize", |s, d| sizes(s, d.sizes.content));
+        def.getter("devicePixelContentBoxSize", |s, d| sizes(s, d.sizes.device_pixel_content));
     }
 }
 
@@ -265,7 +322,7 @@ fn entries<'s>(s: &Scope<'s>, page: &Rc<PageDom>, records: Vec<Pending>) -> JsRe
     let mut values = lp_js::RootedVec::new();
     for record in records {
         let target = NodeHold::new(page, record.target.id)?;
-        let entry = s.wrap::<ResizeObserverEntry>(EntryData { target, size: record.size }, None)?;
+        let entry = s.wrap::<ResizeObserverEntry>(EntryData { target, sizes: record.sizes }, None)?;
         values.push(s, entry.value());
     }
     Ok(s.array(&values.iter(s).collect::<Vec<_>>())?.value())
@@ -313,14 +370,15 @@ pub(crate) fn after_task(page: &PageDom) {
                 continue;
             }
             for target in observer.targets.borrow_mut().iter_mut() {
-                let size = measure(page, target.node.id);
+                let Some(sizes) = measure(page, target.node.id) else { continue };
+                let size = sizes.of(target.observed);
                 if size != target.last {
                     target.last = size;
                     if let Ok(node) = NodeLease::new(&owner, target.node.id) {
                         let mut records = observer.records.borrow_mut();
                         // Only the latest size per target is reported.
                         records.retain(|r| r.target.id != target.node.id);
-                        records.push(Pending { target: node, size });
+                        records.push(Pending { target: node, sizes });
                     }
                 }
             }

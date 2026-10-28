@@ -2031,6 +2031,11 @@ impl<'a> Ctx<'a> {
         let min_w = style.min_width.resolve(Some(cb_width)).map(|w| Self::declared_content(style, w, e.horizontal()));
         let max_w = style.max_width.resolve(Some(cb_width)).map(|w| Self::declared_content(style, w, e.horizontal()));
         content_w = Self::clamp(content_w, min_w, max_w);
+        if style.inner == InnerDisplay::Table && !style.table_layout_fixed {
+            // An automatic-layout table is at least its columns' min-content
+            // widths, past its declared width and its container (Gap 20).
+            content_w = content_w.max(self.table_min_content(el, style));
+        }
         // Auto horizontal margins centre a box narrower than its containing block.
         let mut margin_left = e.margin[LEFT];
         let used = content_w + e.horizontal();
@@ -3459,10 +3464,13 @@ impl<'a> Ctx<'a> {
     #[allow(clippy::too_many_arguments)]
     fn atomic(&mut self, el: NodeId, style: &FlowStyle, x: f64, y: f64, cb_width: f64, fixed: bool, shift: (f64, f64)) {
         let e = self.edges(style, cb_width);
-        let content_w = match style.width.resolve(Some(cb_width)) {
+        let mut content_w = match style.width.resolve(Some(cb_width)) {
             Some(w) => Self::declared_content(style, w, e.horizontal()),
             None => self.intrinsic_width(el, style, (cb_width - e.horizontal()).max(0.0)),
         };
+        if style.inner == InnerDisplay::Table && !style.table_layout_fixed {
+            content_w = content_w.max(self.table_min_content(el, style));
+        }
         let mut s = style.clone();
         s.width = Dim::px(if style.border_box { content_w + e.horizontal() } else { content_w });
         s.margin[LEFT] = Dim::px(e.margin[LEFT]);
@@ -4581,6 +4589,11 @@ impl<'a> Ctx<'a> {
         }
     }
 
+    /// A cell's min-content border-box width.
+    fn cell_min_content(&self, cell: &TableCell, basis: f64) -> f64 {
+        self.min_content(cell.el, &cell.style) + self.edges(&cell.style, basis).horizontal()
+    }
+
     /// A border-box cell width clamped by the cell's `min-width` and
     /// `max-width`, as an automatic-layout column takes them (`min-width`
     /// wins). Chromium sizes the column to the clamped cell, so a cell is
@@ -4617,12 +4630,17 @@ impl<'a> Ctx<'a> {
         } else {
             for row in rows {
                 for c in row.cells.iter().filter(|c| c.span == 1) {
+                    // A column is at least its cells' min-content widths
+                    // (the longest unbreakable word, the whole text for
+                    // nowrap/pre): an explicit cell width is a preferred
+                    // width, not a clamp (CSS Tables 3 / Chromium).
+                    let min = self.clamp_cell_width(c, basis, self.cell_min_content(c, basis));
                     if let Some(d) = self.cell_width(c, basis, false) {
-                        let d = self.clamp_cell_width(c, basis, d);
+                        let d = self.clamp_cell_width(c, basis, d).max(min);
                         declared[c.col] = Some(declared[c.col].map_or(d, |p: f64| p.max(d)));
                     }
                     let w = self.clamp_cell_width(c, basis, self.cell_width(c, basis, true).unwrap_or(0.0));
-                    widths[c.col] = f64::max(widths[c.col], w);
+                    widths[c.col] = f64::max(widths[c.col], w.max(min));
                 }
             }
             for (i, d) in declared.iter().enumerate() {
@@ -4743,8 +4761,7 @@ impl<'a> Ctx<'a> {
         let mut widths = vec![0.0f64; cols];
         for row in rows {
             for c in row.cells.iter().filter(|c| c.span == 1) {
-                let e = self.edges(&c.style, 0.0);
-                let content = self.clamp_cell_width(c, 0.0, self.min_content(c.el, &c.style) + e.horizontal());
+                let content = self.clamp_cell_width(c, 0.0, self.cell_min_content(c, 0.0));
                 let declared = self.cell_width(c, 0.0, false).map_or(0.0, |d| self.clamp_cell_width(c, 0.0, d));
                 widths[c.col] = widths[c.col].max(content).max(declared);
             }
@@ -5666,7 +5683,16 @@ impl<'a> Ctx<'a> {
         let e = self.edges(s, cb_width);
         let outer = e.horizontal() + e.margin[LEFT] + e.margin[RIGHT];
         let to_content = |v: f64| Self::declared_content(s, v, e.horizontal());
+        let percent = |d: Dim| matches!(d, Dim::Len(l) if l.percent != 0.0);
         let (min, max) = match (&it.el, s.width.resolve(Some(cb_width))) {
+            // A percentage width resolves against the track being sized, so
+            // it is auto for the contributions (CSS Grid 3, 12.2); a
+            // compressible replaced element (an input with width: 100%)
+            // contributes no min-content width (CSS Sizing 3, 5.2.2).
+            (Some(el), Some(_)) if percent(s.width) => {
+                let min = if s.replaced { 0.0 } else { self.min_content(*el, s) };
+                (min, self.max_content(*el, s))
+            }
             (_, Some(w)) => (to_content(w), to_content(w)),
             (Some(el), None) => (self.min_content(*el, s), self.max_content(*el, s)),
             (None, None) => {

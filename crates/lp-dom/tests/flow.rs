@@ -246,6 +246,72 @@ fn flow_hit_test_picks_the_option_under_the_point() {
 }
 
 #[test]
+fn fixed_and_absolute_boxes_escape_overflow_clips_outside_their_containing_block() {
+    // Gap 30: a fixed element's containing block is the viewport, so an
+    // `overflow: hidden` ancestor between it and the viewport does not clip
+    // it (Chromium: elementFromPoint(20, 20) is the BUTTON; the engine hit
+    // the content underneath). The same holds for an absolutely positioned
+    // box and non-positioned clipping ancestors below its containing block.
+    let html = "<!doctype html><body style=\"margin:0\">\
+        <div id=under style=\"width:400px;height:400px\"></div>\
+        <section style=\"position:fixed;left:500px;top:0\"><div style=\"overflow:hidden;width:300px;height:300px\">\
+        <div style=\"position:fixed;left:0;top:0;z-index:9999\"><button id=b style=\"width:60px;height:40px;padding:0;border:0\">B</button></div>\
+        <div id=stay style=\"position:fixed;left:700px;top:350px;width:50px;height:50px\"></div>\
+        </div></section>\
+        <div style=\"position:relative;top:0;left:0\"><div style=\"overflow:hidden;width:50px;height:50px\">\
+        <div id=abs style=\"position:absolute;left:100px;top:0;width:50px;height:50px\"></div>\
+        <div id=clipped style=\"position:relative;left:0;top:0;width:200px;height:20px\"></div>\
+        </div></div>\
+        <div style=\"position:fixed;left:0;top:500px\"><div style=\"overflow:hidden;width:10px;height:10px\">\
+        <div id=inner style=\"width:100px;height:100px\"></div></div></div>\
+        </body>";
+    let p = page(html, Geometry::Flow);
+    let r = p.layout.bounding_client_rect(&p.dom, p.id("b"));
+    assert_eq!([r.x, r.y, r.width, r.height], [0.0, 0.0, 60.0, 40.0], "the fixed button sits at the viewport origin");
+    let at = |x: f64, y: f64| p.layout.element_from_point(&p.dom, x, y);
+    assert_eq!(at(20.0, 20.0), Some(p.id("b")), "Chromium hits the BUTTON through the overflow:hidden ancestor");
+    assert_eq!(at(720.0, 370.0), Some(p.id("stay")), "a fixed box outside its clipping ancestor's rect");
+    assert_eq!(at(120.0, 410.0), Some(p.id("abs")), "an absolute box escapes a non-positioned clip");
+    assert_ne!(at(100.0, 410.0), Some(p.id("clipped")), "a relative box inside the clip stays clipped");
+    assert_ne!(at(50.0, 550.0), Some(p.id("inner")), "a clip inside the fixed containing block still applies");
+}
+
+#[test]
+fn svg_shapes_have_client_rects_from_their_bbox_like_chromium() {
+    // Gap 34: SVG shapes had no CSS box, so getBoundingClientRect() was
+    // empty while getBBox() was right, and visibility checks failed.
+    // Chromium (800x600): a shape's client rect is its bbox (own and
+    // ancestor transforms applied) mapped by the <svg>'s viewBox into the
+    // svg's content box.
+    let html = "<!doctype html><body style=\"margin:0\"><div style=\"height:50px\"></div>\
+        <div style=\"padding-left:30px\"><svg id=s1 width=200 height=100 style=\"display:block\">\
+        <rect id=r x=10 y=20 width=50 height=30 />\
+        <g transform=\"translate(100,0)\"><circle id=c cx=20 cy=50 r=10 transform=\"translate(5,5)\"/></g>\
+        <line id=l x1=0 y1=0 x2=10 y2=20 /></svg></div>\
+        <svg id=s2 width=200 height=100 viewBox=\"0 0 100 100\" style=\"display:block\"><rect id=v x=10 y=20 width=50 height=30 /></svg>\
+        <svg id=s3 width=300 height=100 viewBox=\"0 0 100 100\" preserveAspectRatio=\"none\" style=\"display:block\"><rect id=n x=10 y=20 width=50 height=30 /></svg>\
+        <svg id=s4 width=200 height=100 style=\"display:block;padding:10px;box-sizing:border-box\"><rect id=p x=0 y=0 width=50 height=30 /></svg>\
+        </body>";
+    let p = page(html, Geometry::Flow);
+    let r = |id: &str| {
+        let r = p.layout.bounding_client_rect(&p.dom, p.id(id));
+        [r.x, r.y, r.width, r.height].map(|v| (v * 1e4).round() / 1e4)
+    };
+    assert_eq!(r("s1"), [30.0, 50.0, 200.0, 100.0]);
+    assert_eq!(r("r"), [40.0, 70.0, 50.0, 30.0], "rect: svg origin + bbox");
+    assert_eq!(r("c"), [145.0, 95.0, 20.0, 20.0], "circle: own and <g> transforms");
+    assert_eq!(r("l"), [30.0, 50.0, 10.0, 20.0], "line");
+    // viewBox 100x100 in a 200x100 box: xMidYMid meet scales by 1 and
+    // centres horizontally (+50).
+    assert_eq!(r("v"), [60.0, 170.0, 50.0, 30.0], "viewBox meet");
+    // preserveAspectRatio none: 3x horizontally, 1x vertically.
+    assert_eq!(r("n"), [30.0, 270.0, 150.0, 30.0], "viewBox none");
+    // Shapes sit in the svg's content box, inside its padding.
+    assert_eq!(r("p"), [10.0, 360.0, 50.0, 30.0], "padding");
+    assert_eq!(p.layout.client_rects(&p.dom, p.id("r")).len(), 1, "getClientRects has the rect");
+}
+
+#[test]
 fn default_geometry_is_unchanged_by_the_flow_switch() {
     // The approximate layout stays the default, and switching to flow and back
     // reports exactly the approximate geometry again.
@@ -1086,6 +1152,27 @@ fn grid_parity_auto_columns() {
             ("s", [0.0, 62.0, 600.0, 10.0, 600.0, 10.0, 600.0, 10.0]),
             ("s1", [0.0, 62.0, 100.0, 10.0, 100.0, 10.0, 100.0, 10.0]),
             ("s2", [325.0, 62.0, 50.0, 10.0, 50.0, 10.0, 50.0, 10.0]),
+        ],
+    );
+}
+
+#[test]
+fn grid_auto_track_after_fr_takes_its_content_width_like_chromium() {
+    // Gap 31: `grid-template-columns: 1fr auto` gave the fr track the whole
+    // width, so the auto track's flex item sat past the grid's edge
+    // (x 504-635 in a 516px box-sizing grid with 24px padding). Chromium
+    // (800x600): the auto track is its item's max-content (131), 1fr the
+    // rest (468 - 12 - 131 = 325), and the input fills its track.
+    flex_check(
+        "grid-fr-auto",
+        "<!doctype html><body style=\"margin:0\"><style>input{width:100%;height:20px;margin:0;padding:0;border:0;box-sizing:border-box}</style>\
+         <div id=g style=\"display:grid;grid-template-columns:1fr auto;gap:12px;width:516px;padding:0 24px;box-sizing:border-box\">\
+         <input id=i><div id=f style=\"display:flex\"><div id=b style=\"width:131px;height:20px\"></div></div></div></body>",
+        &[
+            ("g", [0.0, 0.0, 516.0, 20.0, 516.0, 20.0, 516.0, 20.0]),
+            ("i", [24.0, 0.0, 325.0, 20.0, 325.0, 20.0, 325.0, 20.0]),
+            ("f", [361.0, 0.0, 131.0, 20.0, 131.0, 20.0, 131.0, 20.0]),
+            ("b", [361.0, 0.0, 131.0, 20.0, 131.0, 20.0, 131.0, 20.0]),
         ],
     );
 }
@@ -3655,6 +3742,50 @@ fn table_columns_keep_their_exact_width_after_fractional_ones_like_chromium() {
     let p = page(html, Geometry::Flow);
     let r = p.layout.bounding_client_rect(&p.dom, p.id("c2"));
     assert_eq!(r.width, 150.0, "Chromium keeps the 150px column exact");
+}
+
+#[test]
+fn table_columns_keep_their_cells_min_content_width_like_chromium() {
+    // Gap 20: a cell's explicit `width` clamped its column, so
+    // `<td style="width:1px;white-space:pre">E2ESE261200655</td>` was 1px
+    // wide (Chromium: 120px, the unbreakable text) and a `width:100%` table
+    // of nowrap cells stayed at its 200px container (Chromium: 514px).
+    // Chromium's automatic layout gives a column at least its cells'
+    // min-content width, explicit widths being preferred widths, and the
+    // table grows past its container to the sum of its columns. Glyph
+    // advances differ per font, so the assertions compare with the same text
+    // measured outside the table.
+    let html = "<!doctype html><body style=\"margin:0\">\
+        <div><span id=m1 style=\"white-space:pre\">E2ESE261200655</span></div>\
+        <div><span id=m2 style=\"white-space:nowrap\">Shipment Body 655A</span></div>\
+        <div><span id=m3 style=\"white-space:nowrap\">abcdefghijklmnopqrstuvwxy</span></div>\
+        <table id=t1 style=\"border-spacing:0\"><tr>\
+        <td id=a style=\"padding:0;width:1px;white-space:pre\"><a href=#>E2ESE261200655</a></td>\
+        <td id=b style=\"padding:0;width:1px\">Shipment Body 655A</td></tr></table>\
+        <div id=w style=\"width:200px\"><table id=t2 style=\"width:100%;border-spacing:0\"><tr>\
+        <td id=c style=\"padding:0;white-space:nowrap\">abcdefghijklmnopqrstuvwxy</td>\
+        <td id=d style=\"padding:0;white-space:nowrap\">abcdefghijklmnopqrstuvwxy</td></tr></table></div>\
+        <table id=t3 style=\"border-spacing:0\"><tr>\
+        <td id=e style=\"padding:0;width:1px\"><a style=\"display:inline-flex\"><span style=\"overflow:hidden;text-overflow:ellipsis;white-space:nowrap\">E2ESE261200655</span></a></td>\
+        <td id=f style=\"padding:0;width:1px\">x</td></tr></table>\
+        </body>";
+    let p = page(html, Geometry::Flow);
+    let w = |id: &str| p.layout.bounding_client_rect(&p.dom, p.id(id)).width;
+    let (m1, m2, m3) = (w("m1"), w("m2"), w("m3"));
+    assert!(m1 > 50.0 && m3 > 150.0, "measured text widths {m1} {m3}");
+    // The pre cell holds its whole text; the breakable one at least its
+    // longest word ("Shipment"), and both columns of the table are wide
+    // enough for them.
+    assert!((w("a") - m1).abs() < 0.5, "#a {} vs text {m1}", w("a"));
+    assert!(w("b") >= m2 / 3.0 && w("b") < m2, "#b {} vs text {m2}", w("b"));
+    assert!((w("t1") - (w("a") + w("b"))).abs() < 0.5, "#t1 {} = #a + #b", w("t1"));
+    // The 100% table grows past its 200px container to the two nowrap cells.
+    assert!((w("c") - m3).abs() < 0.5 && (w("d") - m3).abs() < 0.5, "#c {} #d {} vs text {m3}", w("c"), w("d"));
+    assert!((w("t2") - 2.0 * m3).abs() < 0.5, "#t2 {} = 2 x {m3}", w("t2"));
+    assert_eq!(w("w"), 200.0, "the container keeps its width");
+    // An inline-flex link around a truncating nowrap span still contributes
+    // the text's min-content width.
+    assert!((w("e") - m1).abs() < 0.5, "#e {} vs text {m1}", w("e"));
 }
 
 /// Styles for the generated-content regressions (16px/20px text).

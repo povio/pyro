@@ -3,6 +3,7 @@
 
 use std::rc::Rc;
 
+use lp_dom::layout::Metric;
 use lp_dom::style::CheckVisibilityOptions;
 use lp_dom::NodeId;
 use lp_js::{Args, ClassDef, JsClass, JsResult, NoParent, Object, Scope, Value};
@@ -120,28 +121,47 @@ pub(crate) fn range_rect<'s>(
     rect_value(s, r.layout_units())
 }
 
+/// Queues the `scroll` event of a completed scroll of `target` (None: the
+/// viewport), followed by its `scrollend`.
 pub fn fire_scroll(page: &Rc<PageDom>, target: Option<NodeId>) {
+    queue_scroll(page, target, true);
+}
+
+fn queue_scroll(page: &Rc<PageDom>, target: Option<NodeId>, scrollend: bool) {
     // HTML "run the scroll steps": a scrolled target is queued once and its
-    // scroll event fires in the next rendering update, which ticks    // requestAnimationFrame here (16 ms). Chromium dispatches it in its next
+    // scroll event fires in the next rendering update, which ticks
+    // requestAnimationFrame here (16 ms). Chromium dispatches it in its next
     // frame: on a page that just rendered (TOS react-aria autocomplete) that
     // was 23-29 ms after Playwright's scroll step, after its click; on an
     // idle page a frame can run within ~1 ms. Fired as an immediate task, it
     // let close-on-scroll handlers close the popover before the click.
+    // Scrolls that complete (every scroll here is instant: programmatic,
+    // reveal, wheel) are followed by `scrollend` in the same update, as
+    // Chromium fires it after instant programmatic scrolls (Gap 35); layout
+    // clamps fire `scroll` only.
     let doc = page.document();
-    if !page.pending_scrolls.borrow_mut().insert((doc, target)) {
-        return;
+    {
+        let mut pending = page.pending_scrolls.borrow_mut();
+        if let Some(end) = pending.get_mut(&(doc, target)) {
+            *end |= scrollend;
+            return;
+        }
+        pending.insert((doc, target), scrollend);
     }
     let p = page.clone();
     page.post_delayed_task(
         std::time::Duration::from_millis(16),
         Box::new(move || {
-            p.pending_scrolls.borrow_mut().remove(&(doc, target));
-            dispatch_scroll(&p, doc, target);
+            let end = p.pending_scrolls.borrow_mut().remove(&(doc, target)).unwrap_or(false);
+            dispatch_scroll(&p, doc, target, "scroll");
+            if end {
+                dispatch_scroll(&p, doc, target, "scrollend");
+            }
         }),
     );
 }
 
-fn dispatch_scroll(p: &Rc<PageDom>, doc: NodeId, target: Option<NodeId>) {
+fn dispatch_scroll(p: &Rc<PageDom>, doc: NodeId, target: Option<NodeId>, kind: &str) {
     if p.is_disposed() || p.document() != doc {
         return;
     }
@@ -152,11 +172,11 @@ fn dispatch_scroll(p: &Rc<PageDom>, doc: NodeId, target: Option<NodeId>) {
                 dom.is_connected(el).unwrap_or(false) && dom.node_document(el).ok() == Some(doc)
             };
             if connected {
-                crate::input::fire_simple(p, el, "scroll", false, false);
+                crate::input::fire_simple(p, el, kind, false, false);
             }
         }
         None => {
-            crate::input::fire_simple(p, doc, "scroll", true, false);
+            crate::input::fire_simple(p, doc, kind, true, false);
         }
     }
 }
@@ -181,9 +201,9 @@ pub(crate) fn clamp_scrolls(page: &Rc<PageDom>, now: bool) {
             lp_dom::layout::ScrollTarget::Viewport => None,
         };
         if !now {
-            fire_scroll(page, node);
-        } else if !page.pending_scrolls.borrow().contains(&(doc, node)) {
-            dispatch_scroll(page, doc, node);
+            queue_scroll(page, node, false);
+        } else if !page.pending_scrolls.borrow().contains_key(&(doc, node)) {
+            dispatch_scroll(page, doc, node, "scroll");
         }
     }
 }
@@ -295,17 +315,18 @@ pub(crate) fn metric<'s>(s: &Scope<'s>, n: &NodeData, which: &str) -> JsResult<V
     let page = n.page();
     let dom = page.dom.borrow();
     let l = page.layout.borrow();
-    let v = match which {
-        "scrollWidth" => l.scroll_width(&dom, n.id),
-        "scrollHeight" => l.scroll_height(&dom, n.id),
-        "clientWidth" => l.client_width(&dom, n.id),
-        "clientHeight" => l.client_height(&dom, n.id),
-        "offsetTop" => l.offset_top(&dom, n.id),
-        "offsetLeft" => l.offset_left(&dom, n.id),
-        "offsetWidth" => l.offset_width(&dom, n.id),
-        "offsetHeight" => l.offset_height(&dom, n.id),
-        _ => 0.0,
+    let metric = match which {
+        "scrollWidth" => Metric::ScrollWidth,
+        "scrollHeight" => Metric::ScrollHeight,
+        "clientWidth" => Metric::ClientWidth,
+        "clientHeight" => Metric::ClientHeight,
+        "offsetTop" => Metric::OffsetTop,
+        "offsetLeft" => Metric::OffsetLeft,
+        "offsetWidth" => Metric::OffsetWidth,
+        "offsetHeight" => Metric::OffsetHeight,
+        _ => return Ok(s.number(0.0)),
     };
+    let v = l.metric(&dom, n.id, metric);
     Ok(s.number(v))
 }
 

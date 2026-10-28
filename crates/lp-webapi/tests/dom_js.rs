@@ -2403,6 +2403,72 @@ fn resize_observer_reports_the_flow_content_box() {
 }
 
 #[test]
+fn resize_observer_entries_report_each_box_and_skip_disconnected_targets() {
+    // Gap 47: a 150px content-box div with 4px padding reported
+    // borderBoxSize 142 (Chromium 158), and a detached target that was never
+    // unobserved got an entry with contentRect.width 0.
+    let e = env(
+        "<body style='margin:0'><div id=a style='width:150px;height:20px;padding:4px 4px 2px;border:1px solid'></div><div id=b style='width:30px;height:10px'></div></body>",
+    );
+    e.page.layout.borrow_mut().set_geometry(lp_dom::layout::Geometry::Flow);
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    eval(
+        &e.main,
+        "window.seen=[]; window.a = document.getElementById('a'); window.b = document.getElementById('b'); const box = s => s[0].inlineSize + 'x' + s[0].blockSize;
+         window.ro = new ResizeObserver(l => { for (const en of l) { const r = en.contentRect;
+           seen.push(en.target.id + ':' + [r.x, r.y, r.width, r.height].join(',') + ':' + box(en.contentBoxSize) + ':' + box(en.borderBoxSize) + ':' + box(en.devicePixelContentBoxSize)) } });
+         ro.observe(a); ro.observe(b, {box: 'border-box'}); 'ok'",
+    );
+    e.page.after_task();
+    tasks.drain();
+    assert_eq!(eval(&e.main, "seen.join(' ')"), "a:4,4,150,20:150x20:160x28:150x20 b:0,0,30,10:30x10:30x10:30x10");
+    // Padding grows the border box only: no entry for a content-box observation.
+    assert_eq!(eval(&e.main, "seen.length = 0; a.style.padding = '8px'"), "8px");
+    e.page.after_task();
+    tasks.drain();
+    assert_eq!(eval(&e.main, "seen.join(' ')"), "");
+    // ... but one for a border-box observation.
+    assert_eq!(eval(&e.main, "b.style.padding = '1px'"), "1px");
+    e.page.after_task();
+    tasks.drain();
+    assert_eq!(eval(&e.main, "seen.join(' ')"), "b:1,1,30,10:30x10:32x12:30x10");
+    // A removed target that is still observed delivers nothing.
+    assert_eq!(eval(&e.main, "seen.length = 0; a.style.width = '10px'; a.remove(); a.isConnected"), "false");
+    e.page.after_task();
+    tasks.drain();
+    assert_eq!(eval(&e.main, "seen.length"), "0");
+    e.page.dispose();
+}
+
+#[test]
+fn element_metrics_are_whole_pixels_like_chromium() {
+    // Gap 36: a chip label reported scrollWidth 44.7135000001 > clientWidth
+    // 44.7135 and was taken for truncated. Chromium's scroll, client and
+    // offset metrics are integers: offsets round, sizes snap at the box's
+    // offset (round(left + width) - round(left)).
+    let e = env(
+        "<body style='margin:0'><div id=a style='width:44.7135px;overflow:hidden;white-space:nowrap'><span style='display:inline-block;width:44.7135px'></span></div>\
+         <div id=b style='margin-left:10.6px;width:20.6px;height:10.4px;padding-top:0.3px'></div></body>",
+    );
+    e.page.layout.borrow_mut().set_geometry(lp_dom::layout::Geometry::Flow);
+    assert_eq!(
+        eval(&e.main, "var a = document.getElementById('a'); [a.scrollWidth, a.clientWidth, a.offsetWidth].join()"),
+        "45,45,45"
+    );
+    assert_eq!(
+        eval(
+            &e.main,
+            "var b = document.getElementById('b'); [b.offsetLeft, b.offsetWidth, b.clientWidth, b.scrollWidth, b.offsetHeight, b.clientHeight].join()"
+        ),
+        "11,20,20,20,11,11"
+    );
+    // getBoundingClientRect keeps the fractional geometry.
+    assert_eq!(eval(&e.main, "b.getBoundingClientRect().width"), "20.59375");
+    e.page.dispose();
+}
+
+#[test]
 fn svg_graphics_elements_report_get_bbox() {
     // TOS analytics reads recharts bar geometry with getBBox().
     let e = env(
@@ -4838,6 +4904,45 @@ fn focus_scroll_owner_helpers_preserve_options_and_drop_replaced_document_tasks(
         task();
     }
     assert_eq!(eval(&e.main, "scrolls"), "0");
+}
+
+#[test]
+fn programmatic_scrolls_queue_scroll_then_scrollend_like_chromium() {
+    // Gap 35: a column-virtualized table renders new columns from its
+    // scroller's `scroll` event, so every programmatic scroll (scrollIntoView,
+    // scrollTo/scrollBy, the scrollLeft/scrollTop setters) must queue one,
+    // and Chromium follows it with `scrollend` once the instant scroll is
+    // done. Neither fires when nothing moved.
+    let e = env(
+        "<body style='margin:0'><div id=s style='overflow:auto;width:200px;height:60px'><div style='display:flex;width:2000px'>\
+         <div style='flex:none;width:100px;height:40px'>a</div><div style='flex:none;width:1500px'></div><div id=far style='flex:none;width:100px;height:40px'>z</div>\
+         </div><div style='height:200px'></div></div><div style='height:2000px'></div></body>",
+    );
+    e.page.layout.borrow_mut().set_geometry(lp_dom::layout::Geometry::Flow);
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    eval(
+        &e.main,
+        "window.seen = []; window.s = document.getElementById('s');
+         for (const type of ['scroll', 'scrollend']) {
+           s.addEventListener(type, ev => seen.push(type + ':' + s.scrollLeft + ',' + s.scrollTop));
+           document.addEventListener(type, ev => { if (ev.target === document) seen.push('document ' + type) });
+         }",
+    );
+    let run = |src: &str| {
+        let r = eval(&e.main, &format!("seen.length = 0; {src}; String(seen.length)"));
+        assert_eq!(r, "0", "{src}: events are queued, not dispatched inline");
+        tasks.drain();
+        eval(&e.main, "seen.join(' ')")
+    };
+    assert_eq!(run("document.getElementById('far').scrollIntoView()"), "scroll:1500,0 scrollend:1500,0");
+    assert_eq!(run("s.scrollLeft = 10"), "scroll:10,0 scrollend:10,0");
+    assert_eq!(run("s.scrollTop = 5"), "scroll:10,5 scrollend:10,5");
+    assert_eq!(run("s.scrollTo(20, 0)"), "scroll:20,0 scrollend:20,0");
+    assert_eq!(run("s.scrollBy({left: 5})"), "scroll:25,0 scrollend:25,0");
+    assert_eq!(run("s.scrollLeft = 25"), "", "no move, no events");
+    assert_eq!(run("window.scrollTo(0, 100)"), "document scroll document scrollend");
+    e.page.dispose();
 }
 
 #[test]
