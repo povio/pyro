@@ -342,10 +342,6 @@ impl<V> NodeMap<V> {
         (p != 0 && self.list[p as usize - 1].0 == *node).then(|| p as usize - 1)
     }
 
-    pub(super) fn get(&self, node: &NodeId) -> Option<&V> {
-        self.pos(node).map(|p| &self.list[p].1)
-    }
-
     pub(super) fn get_mut(&mut self, node: &NodeId) -> Option<&mut V> {
         self.pos(node).map(|p| &mut self.list[p].1)
     }

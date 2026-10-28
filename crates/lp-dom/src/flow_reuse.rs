@@ -17,6 +17,7 @@
 //! outside the subtree, which are told apart by order (the slots keep each
 //! box's own positioning and its nearest positioned ancestor).
 
+use std::collections::VecDeque;
 use std::rc::Rc;
 
 use rustc_hash::FxHashSet;
@@ -25,7 +26,12 @@ use super::store::NodeMap;
 use super::{Collapse, Ctx, FlowResult, FlowStyle, Margin, NodeId, Pending, Reach, Rect, StyleRef};
 
 /// The entries of the last pass (generation `gen - 1`, read from `prev`)
-/// and of the pass in progress (generation `gen`).
+/// and of the pass in progress (generation `gen`). An entry recorded by an
+/// earlier pass is still good when every pass since copied its subtree
+/// as part of a replayed one: `history` keeps those copies (`Move`) per
+/// pass, and the entry is renumbered through them when it is next used,
+/// instead of every entry inside a replayed subtree being renumbered on
+/// every pass.
 #[derive(Default)]
 pub(super) struct Reuse {
     gen: u64,
@@ -34,15 +40,76 @@ pub(super) struct Reuse {
     /// once nobody else holds it.
     spare: Option<Rc<FlowResult>>,
     entries: NodeMap<Entry>,
-    /// Entries of generation `gen`.
-    current: usize,
+    /// The subtrees replayed by the pass in progress.
+    moves: Vec<Move>,
+    /// Per earlier pass (oldest first, consecutive generations): the
+    /// subtrees it replayed, by previous slot range.
+    history: VecDeque<(u64, Vec<Move>)>,
+    /// `entries.len()` after the last pruning.
+    pruned_len: usize,
+}
+
+/// Passes an entry can be carried through unused.
+const HISTORY: usize = 64;
+
+/// A subtree a pass replayed: its previous ranges and how far its orders,
+/// texts and runs moved.
+#[derive(Clone, Copy)]
+struct Move {
+    order_lo: u32,
+    order_hi: u32,
+    texts: (usize, usize),
+    runs: (usize, usize),
+    delta: i64,
+    text_delta: i64,
+    run_delta: i64,
+}
+
+impl Move {
+    fn contains(&self, e: &Entry) -> bool {
+        self.order_lo <= e.order_lo
+            && e.order_hi <= self.order_hi
+            && self.texts.0 <= e.texts.0
+            && e.texts.1 <= self.texts.1
+            && self.runs.0 <= e.runs.0
+            && e.runs.1 <= self.runs.1
+    }
+
+    fn apply(&self, e: &mut Entry) {
+        let at = |v: usize, d: i64| (v as i64 + d) as usize;
+        e.order_lo = (e.order_lo as i64 + self.delta) as u32;
+        e.order_hi = (e.order_hi as i64 + self.delta) as u32;
+        e.texts = (at(e.texts.0, self.text_delta), at(e.texts.1, self.text_delta));
+        e.runs = (at(e.runs.0, self.run_delta), at(e.runs.1, self.run_delta));
+        e.anchor = match e.anchor {
+            Anchor::None => Anchor::None,
+            Anchor::Box(i) => Anchor::Box(at(i, self.delta)),
+            Anchor::Run(i) => Anchor::Run(at(i, self.run_delta)),
+            Anchor::Text(i) => Anchor::Text(at(i, self.text_delta)),
+        };
+    }
+}
+
+/// The move (of moves sorted by `order_lo`, disjoint) whose subtree
+/// contains `e`'s ranges.
+fn containing<'m>(moves: &'m [Move], e: &Entry) -> Option<&'m Move> {
+    let end = moves.partition_point(|m| m.order_lo <= e.order_lo);
+    let lo = moves[..end].last()?.order_lo;
+    moves[..end].iter().rev().take_while(|m| m.order_lo == lo).find(|m| m.contains(e))
 }
 
 impl Reuse {
     pub(super) fn clear(&mut self) {
         self.prev = None;
         self.spare = None;
+        self.forget_entries();
+    }
+
+    fn forget_entries(&mut self) {
         self.entries.clear();
+        self.moves.clear();
+        self.history.clear();
+        self.pruned_len = 0;
     }
 
     /// A pass ran and its result was kept (nothing cleared since).
@@ -77,10 +144,10 @@ impl Reuse {
 
     pub(super) fn begin_pass(&mut self) {
         if self.prev.is_none() {
-            self.entries.clear();
+            self.forget_entries();
         }
         self.gen += 1;
-        self.current = 0;
+        self.moves.clear();
     }
 
     /// Keeps the entries recorded (or replayed) by the pass just run; they
@@ -88,17 +155,52 @@ impl Reuse {
     pub(super) fn end_pass(&mut self, relaid: bool) {
         self.spare = self.prev.take();
         if relaid {
-            self.entries.clear();
-        } else if self.entries.len() > 2 * self.current + 256 {
-            // Older entries are never served; drop them once they dominate.
-            let gen = self.gen;
-            self.entries.retain(|_, e| e.gen == gen);
+            self.forget_entries();
+            return;
+        }
+        let mut moves = std::mem::take(&mut self.moves);
+        moves.sort_unstable_by_key(|m| m.order_lo);
+        self.history.push_back((self.gen, moves));
+        if self.history.len() > HISTORY {
+            self.history.pop_front();
+        }
+        if self.entries.len() > 2 * self.pruned_len + 256 {
+            // Entries older than the history can never be carried forward.
+            let oldest = self.gen.saturating_sub(HISTORY as u64);
+            self.entries.retain(|_, e| e.gen >= oldest);
+            self.pruned_len = self.entries.len();
         }
     }
 
-    fn usable(&self, el: NodeId) -> Option<(&Rc<FlowResult>, &Entry)> {
-        let prev = self.prev.as_ref()?;
-        self.entries.get(&el).filter(|e| e.gen + 1 == self.gen).map(|e| (prev, e))
+    /// `el`'s entry, renumbered to describe `prev`, and `prev`.
+    fn usable(&mut self, el: NodeId) -> Option<(Rc<FlowResult>, Entry)> {
+        let prev = self.prev.clone()?;
+        let target = self.gen - 1;
+        let e = self.entries.get_mut(&el)?;
+        if e.gen > target {
+            // Recorded by this pass.
+            return None;
+        }
+        if e.gen != target {
+            let first = self.history.front().map_or(u64::MAX, |(g, _)| *g);
+            let carried = e.gen + 1 >= first
+                && (e.gen + 1..=target).all(|g| {
+                    let moves = self.history.get((g - first) as usize).filter(|(hg, _)| *hg == g);
+                    match moves.and_then(|(_, moves)| containing(moves, e)) {
+                        Some(m) => {
+                            m.apply(e);
+                            true
+                        }
+                        None => false,
+                    }
+                });
+            if !carried {
+                self.entries.remove(&el);
+                return None;
+            }
+            e.gen = target;
+        }
+        Some((prev, e.clone()))
     }
 
     #[cfg(test)]
@@ -351,10 +453,11 @@ impl<'a> Ctx<'a> {
     fn remember(&self, el: NodeId, mut entry: Entry) {
         let mut reuse = self.memo.reuse.borrow_mut();
         entry.gen = reuse.gen;
-        match reuse.entries.insert(el, entry) {
-            // Laid out twice in one pass: ranges overlap, keep nothing.
-            Some(old) if old.gen == reuse.gen => self.memo.relaid.set(true),
-            _ => reuse.current += 1,
+        if let Some(old) = reuse.entries.insert(el, entry) {
+            if old.gen == reuse.gen {
+                // Laid out twice in one pass: ranges overlap, keep nothing.
+                self.memo.relaid.set(true);
+            }
         }
     }
 
@@ -400,14 +503,10 @@ impl<'a> Ctx<'a> {
     /// Copies the previous pass's layout of `el`'s contents when it was laid
     /// out under `key` with an equal style. Returns the content height.
     fn replay(&mut self, el: NodeId, style: &FlowStyle, key: Key, x: f64, y: f64) -> Option<f64> {
-        let (prev, e) = {
-            let reuse = self.memo.reuse.borrow();
-            let (prev, e) = reuse.usable(el)?;
-            if e.key != key || !(std::ptr::eq(e.style.as_ref(), style) || *e.style == *style) || e.reach.is_none() {
-                return None;
-            }
-            (prev.clone(), e.clone())
-        };
+        let (prev, e) = self.memo.reuse.borrow_mut().usable(el)?;
+        if e.key != key || !(std::ptr::eq(e.style.as_ref(), style) || *e.style == *style) || e.reach.is_none() {
+            return None;
+        }
         let (tx, ty) = match Self::anchor_at(&prev, e.anchor) {
             Some((ax, ay)) => (x + e.anchor_local.0 - ax, y + e.anchor_local.1 - ay),
             None => (0.0, 0.0),
@@ -464,7 +563,15 @@ impl<'a> Ctx<'a> {
             self.defer_absolute(p.el, p.style.clone(), x + p.dx, y + p.dy);
         }
         if !self.probe {
-            self.rebase(&prev, &e, delta, text_lo as i64 - e.texts.0 as i64, run_lo as i64 - e.runs.0 as i64);
+            self.memo.reuse.borrow_mut().moves.push(Move {
+                order_lo: e.order_lo,
+                order_hi: e.order_hi,
+                texts: e.texts,
+                runs: e.runs,
+                delta,
+                text_delta: text_lo as i64 - e.texts.0 as i64,
+                run_delta: run_lo as i64 - e.runs.0 as i64,
+            });
             let shift_anchor = |a: Anchor| match a {
                 Anchor::None => Anchor::None,
                 Anchor::Box(i) => Anchor::Box((i as i64 + delta) as usize),
@@ -482,42 +589,6 @@ impl<'a> Ctx<'a> {
             self.remember(el, entry);
         }
         Some(e.height)
-    }
-
-    /// Moves the previous pass's entries of the elements inside a replayed
-    /// subtree to this pass, renumbered, so a later change inside it only
-    /// lays out the changed path again.
-    fn rebase(&self, prev: &FlowResult, e: &Entry, delta: i64, text_delta: i64, run_delta: i64) {
-        let mut reuse = self.memo.reuse.borrow_mut();
-        let gen = reuse.gen;
-        let at = |v: usize, d: i64| (v as i64 + d) as usize;
-        let mut current = 0;
-        for slot in &prev.boxes.slots[e.order_lo as usize..e.order_hi as usize] {
-            let Some(d) = slot.el else { continue };
-            let Some(de) = reuse.entries.get_mut(&d) else { continue };
-            let inside = de.order_lo >= e.order_lo
-                && de.order_hi <= e.order_hi
-                && de.texts.0 >= e.texts.0
-                && de.texts.1 <= e.texts.1
-                && de.runs.0 >= e.runs.0
-                && de.runs.1 <= e.runs.1;
-            if de.gen + 1 != gen || !inside {
-                continue;
-            }
-            de.gen = gen;
-            current += 1;
-            de.order_lo = (de.order_lo as i64 + delta) as u32;
-            de.order_hi = (de.order_hi as i64 + delta) as u32;
-            de.texts = (at(de.texts.0, text_delta), at(de.texts.1, text_delta));
-            de.runs = (at(de.runs.0, run_delta), at(de.runs.1, run_delta));
-            de.anchor = match de.anchor {
-                Anchor::None => Anchor::None,
-                Anchor::Box(i) => Anchor::Box(at(i, delta)),
-                Anchor::Run(i) => Anchor::Run(at(i, run_delta)),
-                Anchor::Text(i) => Anchor::Text(at(i, text_delta)),
-            };
-        }
-        reuse.current += current;
     }
 }
 

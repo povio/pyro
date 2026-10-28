@@ -4678,3 +4678,81 @@ fn table_structure_changes_relayout_like_a_fresh_pass() {
     p.dom.set_text_content(span, "x").unwrap();
     assert_matches_fresh(&p, "text again");
 }
+
+#[test]
+fn long_mutation_sequences_relayout_like_a_fresh_pass() {
+    // Subtrees replayed pass after pass keep their inner reuse entries
+    // without renumbering them; an entry carried through many passes (rows
+    // moved by inserts above them, texts renumbered by edits before them)
+    // must still describe exactly what a fresh pass lays out.
+    let mut rows = String::new();
+    for i in 0..12 {
+        rows.push_str(&format!(
+            "<tr id=r{i}><td><span id=s{i}>row {i}</span></td><td><div class=box><b id=b{i}>bold {i}</b> tail</div></td></tr>"
+        ));
+    }
+    let html = format!(
+        "<!doctype html><style>body{{margin:0;font-size:16px}} td{{padding:2px}} .box{{position:relative;overflow:hidden;width:120px}} .big{{padding:9px}} .abs{{position:absolute;left:3px;top:4px;width:10px;height:10px}}</style><body><div id=top>top text</div><table id=t><tbody id=tb>{rows}</tbody></table><div id=list></div><p id=end>end</p></body>"
+    );
+    let mut p = page(&html, Geometry::Flow);
+    let mut seed: u64 = 0x2545_f491_4f6c_dd1d;
+    let mut next = move |n: u64| {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        seed % n
+    };
+    let check = |p: &Page, step: &str| {
+        let cached = p.layout.flow(&p.dom);
+        let mut fresh = Layout::with_viewport(p.doc, Viewport::new(800, 600));
+        fresh.style_mut().discover_style_elements(&p.dom);
+        fresh.set_geometry(Geometry::Flow);
+        if let Some(d) = lp_dom::flow::difference(&fresh.flow(&p.dom), &cached) {
+            panic!("{step}: {d}");
+        }
+    };
+    check(&p, "first");
+    let mut extra = 0;
+    for step in 0..160 {
+        let tb = p.id("tb");
+        let rows: Vec<NodeId> = p.dom.children(tb).unwrap().collect();
+        let row = rows[next(rows.len() as u64) as usize];
+        let what = next(7);
+        let label = format!("step {step} ({what})");
+        match what {
+            0 | 1 => {
+                // Text of different lengths: runs and line counts change.
+                let words = "word ".repeat(next(9) as usize + 1);
+                let span = p.dom.first_child(p.dom.first_child(row).unwrap().unwrap()).unwrap().unwrap();
+                p.dom.set_text_content(span, &words).unwrap();
+            }
+            2 => {
+                let clone = p.dom.clone_node(row, true, None).unwrap();
+                p.dom.set_attribute(clone, "id", &format!("x{extra}")).unwrap();
+                extra += 1;
+                p.dom.insert_before(tb, clone, Some(rows[next(rows.len() as u64) as usize])).unwrap();
+            }
+            3 if rows.len() > 4 => {
+                p.dom.remove_child(tb, row).unwrap();
+            }
+            4 => {
+                let cls = if next(2) == 0 { "big" } else { "" };
+                p.dom.set_attribute(row, "class", cls).unwrap();
+            }
+            5 => {
+                let top = p.id("top");
+                p.dom.set_text_content(top, &"top ".repeat(next(30) as usize + 1)).unwrap();
+            }
+            _ => {
+                let list = p.id("list");
+                let d = p.dom.create_element(p.doc, "div").unwrap();
+                let cls = if next(3) == 0 { "abs" } else { "box" };
+                p.dom.set_attribute(d, "class", cls).unwrap();
+                let t = p.dom.create_text(p.doc, "item").unwrap();
+                p.dom.append_child(d, t).unwrap();
+                p.dom.append_child(list, d).unwrap();
+            }
+        }
+        check(&p, &label);
+    }
+}
