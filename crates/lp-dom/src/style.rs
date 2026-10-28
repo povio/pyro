@@ -1156,6 +1156,9 @@ struct RuleSet {
     /// Hashes (`dom::attr_name_hash`, as written and lowercased) of every
     /// attribute name a selector tests.
     attr_names: FxHashSet<u64>,
+    /// Every id a selector tests (as written and lowercased): an element
+    /// whose id is not among them styles like one without it.
+    selector_ids: FxHashSet<String>,
     /// Keys of every compound left of a sibling combinator.
     structural_sibling_keys: Vec<ChildKey>,
     /// Keys of compounds testing structural pseudo-classes (`:nth-*`,
@@ -1699,6 +1702,7 @@ struct Builder<'v> {
     has_validity: bool,
     sibling_keys: Vec<AnchorKey>,
     attr_names: FxHashSet<u64>,
+    selector_ids: FxHashSet<String>,
     structural_sibling_keys: Vec<ChildKey>,
     nth_keys: Vec<ChildKey>,
     nth_last_keys: Vec<ChildKey>,
@@ -1729,6 +1733,7 @@ impl<'v> Builder<'v> {
             has_validity: false,
             sibling_keys: Vec::new(),
             attr_names: FxHashSet::default(),
+            selector_ids: FxHashSet::default(),
             structural_sibling_keys: Vec::new(),
             nth_keys: Vec::new(),
             nth_last_keys: Vec::new(),
@@ -1781,6 +1786,7 @@ impl<'v> Builder<'v> {
                         }
                         collect_sibling_keys(sel, &mut self.sibling_keys, &mut self.structural_sibling_keys);
                         collect_attr_names(sel, &mut self.attr_names);
+                        collect_ids(sel, &mut self.selector_ids);
                         let pseudo = |c: &Component<Impl>, wanted: &[PseudoClass]| matches!(c, Component::NonTSPseudoClass(pc) if wanted.contains(pc));
                         collect_nth_keys(sel, &mut self.nth_keys, &mut self.nth_last_keys, false);
                         collect_keys(sel, &|c| matches!(c, Component::Empty), &mut self.empty_keys);
@@ -2052,6 +2058,7 @@ impl<'v> Builder<'v> {
         rs.has_validity = self.has_validity;
         rs.sibling_keys = std::mem::take(&mut self.sibling_keys);
         rs.attr_names = std::mem::take(&mut self.attr_names);
+        rs.selector_ids = std::mem::take(&mut self.selector_ids);
         rs.structural_sibling_keys = std::mem::take(&mut self.structural_sibling_keys);
         rs.nth_keys = std::mem::take(&mut self.nth_keys);
         rs.nth_last_keys = std::mem::take(&mut self.nth_last_keys);
@@ -2223,13 +2230,23 @@ fn shares_cascade(dom: &Dom, rules: &RuleSet, a: u32, c: u32, reval: &RefCell<Fx
             attr.name.ns.is_empty() && (attr.name.local.starts_with("data-") || attr.name.local.starts_with("aria-"));
         plain && !rules.attr_names.contains(&attr.name.local.get_hash())
     };
-    // The attributes that matter, sorted; None for an id or popover one.
+    // An id no selector tests (nor the attribute itself) styles nothing:
+    // rows and cells with generated ids still share.
+    let id_attr_tested = rules.attr_names.contains(&crate::dom::attr_name_hash("id"));
+    let unused_id = |v: &str| {
+        !id_attr_tested && !rules.selector_ids.contains(v) && !rules.selector_ids.contains(&v.to_ascii_lowercase())
+    };
+    // The attributes that matter, sorted; None for a styled id or a popover.
     fn attrs<'e>(
         e: &'e crate::node::ElementData,
         ignorable: &dyn Fn(&crate::node::Attr) -> bool,
+        unused_id: &dyn Fn(&str) -> bool,
     ) -> Option<Vec<(&'e markup5ever::QualName, &'e str)>> {
         let mut v = Vec::with_capacity(e.attrs.len());
         for x in e.attrs.iter() {
+            if x.name.ns.is_empty() && &*x.name.local == "id" && unused_id(&x.value) {
+                continue;
+            }
             if x.name.ns.is_empty() && matches!(&*x.name.local, "id" | "popover") {
                 return None;
             }
@@ -2240,7 +2257,7 @@ fn shares_cascade(dom: &Dom, rules: &RuleSet, a: u32, c: u32, reval: &RefCell<Fx
         v.sort_by(|x, y| (&*x.0.local, &*x.0.ns).cmp(&(&*y.0.local, &*y.0.ns)));
         Some(v)
     }
-    match (attrs(ea, &ignorable), attrs(ec, &ignorable)) {
+    match (attrs(ea, &ignorable, &unused_id), attrs(ec, &ignorable, &unused_id)) {
         (Some(x), Some(y)) if x == y => {}
         _ => return false,
     }
@@ -2311,6 +2328,34 @@ fn shares_cascade(dom: &Dom, rules: &RuleSet, a: u32, c: u32, reval: &RefCell<Fx
 
 /// Tags whose style can depend on state no attribute shows (form controls,
 /// links, media, open/closed widgets): never shared.
+/// `el`'s declared-entry share class while its start still has the entry
+/// it had.
+fn declared_class(cache: &Cache, el: NodeId) -> Option<(NodeId, u64)> {
+    let &(root, stamp) = cache.share_class.get(&el)?;
+    cache.declared_meta.get(&root).is_some_and(|m| m.0 == stamp).then_some((root, stamp))
+}
+
+/// `el`'s flow-style share class while its start still has the entry it
+/// had.
+fn flow_class(cache: &Cache, el: NodeId) -> Option<(NodeId, u64)> {
+    let (root, stamp) = cache.flow.get(&el)?.class;
+    cache.flow.get(&root).is_some_and(|e| e.stamp == stamp).then_some((root, stamp))
+}
+
+/// The sharing-candidate key of `el`: its parent's share class (`class`)
+/// and a hash of its tag and class attribute.
+fn recent_key(dom: &Dom, el: NodeId, class: impl Fn(NodeId) -> Option<(NodeId, u64)>) -> Option<(NodeId, u64, u64)> {
+    use std::hash::{Hash, Hasher};
+    let idx = dom.check(el).ok()?;
+    let parent = dom.selector_parent(idx)?;
+    let (root, stamp) = class(dom.id_of(parent))?;
+    let e = dom.n(idx).element()?;
+    let mut h = rustc_hash::FxHasher::default();
+    e.name.local.hash(&mut h);
+    e.attr("class").hash(&mut h);
+    Some((root, stamp, h.finish()))
+}
+
 fn shareable_tag(tag: &str) -> bool {
     !matches!(
         tag,
@@ -3047,6 +3092,35 @@ fn collect_nth_keys(sel: &Selector<Impl>, out: &mut Vec<ChildKey>, out_last: &mu
     }
 }
 
+/// Every id `sel` tests, at any nesting (as written and lowercased).
+fn collect_ids(sel: &Selector<Impl>, out: &mut FxHashSet<String>) {
+    for c in sel.iter_raw_match_order() {
+        match c {
+            Component::ID(id) => {
+                out.insert(id.0.to_string());
+                out.insert(id.0.to_string().to_ascii_lowercase());
+            }
+            Component::Is(list) | Component::Where(list) | Component::Negation(list) => {
+                for inner in list.slice() {
+                    collect_ids(inner, out);
+                }
+            }
+            Component::Has(list) => {
+                for rel in list.iter() {
+                    collect_ids(&rel.selector, out);
+                }
+            }
+            Component::NthOf(data) => {
+                for inner in data.selectors() {
+                    collect_ids(inner, out);
+                }
+            }
+            Component::Slotted(inner) | Component::Host(Some(inner)) => collect_ids(inner, out),
+            _ => {}
+        }
+    }
+}
+
 /// Every attribute name `sel` tests, at any nesting (hashes of the name as
 /// written and lowercased).
 fn collect_attr_names(sel: &Selector<Impl>, out: &mut FxHashSet<u64>) {
@@ -3410,6 +3484,13 @@ fn generated_uncached(dom: &Dom, rules: &RuleSet, idx: u32, after: bool) -> Opti
         return None;
     }
     let el = dom.id_of(idx);
+    // Without a matching rule that declares `content` there is no box:
+    // test those first (sheets like Tailwind's preflight style `::before`
+    // and `::after` for every element without giving them content).
+    let gives_content = |r: &&GeneratedRule| r.after == after && r.decls.iter().any(|(n, ..)| n == "content");
+    if !rules.generated_rules.iter().filter(gives_content).any(|r| dom.matches(el, &r.selector).unwrap_or(false)) {
+        return None;
+    }
     let mut winners: FxHashMap<&str, (&str, u64)> = FxHashMap::default();
     let mut customs: FxHashMap<&str, (&str, u64)> = FxHashMap::default();
     fn offer<'r>(map: &mut FxHashMap<&'r str, (&'r str, u64)>, name: &'r str, value: &'r str, p: u64) {
@@ -3899,6 +3980,18 @@ struct Cache {
     /// Dropped with `declared`.
     declared_meta: FxHashMap<NodeId, (u64, Option<(NodeId, u64)>)>,
     declared_seq: u64,
+    /// Per element: the element its declared-entry sharing chain started
+    /// from and that element's stamp. Elements of one class have
+    /// equivalent ancestors for selector matching (each link shared with a
+    /// sibling or under equivalent parents). Dropped with `declared_meta`.
+    share_class: FxHashMap<NodeId, (NodeId, u64)>,
+    /// The element last given a declared entry per (its parent's share
+    /// class, a hash of its tag and class attribute): a sharing candidate
+    /// under equivalent parents (the same cell of the previous table row).
+    /// Cleared with `declared`.
+    recent: FxHashMap<(NodeId, u64, u64), NodeId>,
+    /// `recent` for flow styles (classes from `FlowEntry::class`).
+    flow_recent: FxHashMap<(NodeId, u64, u64), NodeId>,
     /// `shares_cascade` revalidation results by (element index, selector
     /// index in `rules.revalidate`): a candidate is tested by every later
     /// sibling, and Tailwind's `:last-child`/sibling rules apply to every
@@ -3917,6 +4010,10 @@ struct FlowEntry {
     style: Option<crate::flow::FlowStyle>,
     stamp: u64,
     shared_from: Option<(NodeId, u64)>,
+    /// The element this entry's sharing chain started from and its stamp:
+    /// elements of one class have equal computed styles and equivalent
+    /// ancestors.
+    class: (NodeId, u64),
 }
 
 /// The style engine of one document (upstream: one StyleManager per frame).
@@ -4237,6 +4334,7 @@ impl StyleEngine {
                     cache.cascaded.remove(&n);
                     cache.declared.remove(&n);
                     cache.declared_meta.remove(&n);
+                    cache.share_class.remove(&n);
                     cache.generated.remove(&(n, false));
                     cache.generated.remove(&(n, true));
                     cache.flow.remove(&n);
@@ -4247,6 +4345,9 @@ impl StyleEngine {
                 cache.cascaded.clear();
                 cache.declared.clear();
                 cache.declared_meta.clear();
+                cache.share_class.clear();
+                cache.recent.clear();
+                cache.flow_recent.clear();
                 cache.reval.borrow_mut().clear();
                 cache.generated.clear();
                 cache.flow.clear();
@@ -4280,6 +4381,7 @@ impl StyleEngine {
 
     pub(crate) fn store_flow_style(
         &self,
+        dom: &Dom,
         el: NodeId,
         style: Option<crate::flow::FlowStyle>,
         shared_from: Option<(NodeId, u64)>,
@@ -4287,7 +4389,11 @@ impl StyleEngine {
         let mut cache = self.cache.borrow_mut();
         cache.flow_seq += 1;
         let stamp = cache.flow_seq;
-        cache.flow.insert(el, FlowEntry { style, stamp, shared_from });
+        let class = shared_from.and_then(|(src, _)| flow_class(&cache, src)).unwrap_or((el, stamp));
+        cache.flow.insert(el, FlowEntry { style, stamp, shared_from, class });
+        if let Some(key) = recent_key(dom, el, |p| flow_class(&cache, p)) {
+            cache.flow_recent.insert(key, el);
+        }
     }
 
     /// The flow style of an element whose cascade must equal that of an
@@ -4349,7 +4455,13 @@ impl StyleEngine {
                 }
             }
         }
-        for c in candidates.into_iter().flatten() {
+        // The last element styled with the same tag and classes under a
+        // parent of the same class (the same cell of the previous row).
+        let recent = recent_key(dom, el, |p| flow_class(&cache, p))
+            .and_then(|k| cache.flow_recent.get(&k))
+            .and_then(|&c| dom.check(c).ok())
+            .filter(|c| !candidates.contains(&Some(*c)));
+        for c in candidates.into_iter().chain([recent]).flatten() {
             let Some(entry) = cache.flow.get(&dom.id_of(c)) else { continue };
             if shares_cascade(dom, &rules, idx, c, &cache.reval) {
                 return Some((entry.style.clone(), (dom.id_of(c), entry.stamp)));
@@ -4932,6 +5044,8 @@ impl StyleEngine {
         if let Some(map) = cache.declared.get(&el) {
             return map.clone();
         }
+        // Parents first, so a child can share under an equivalent parent.
+        Self::declare_ancestors(dom, rules, el, cache);
         if let Some((map, source)) = Self::shared_declared(dom, rules, el, cache) {
             if let Some(cascaded) = cache.cascaded.get(&source.0).cloned() {
                 cache.cascaded.insert(el, cascaded);
@@ -4939,6 +5053,9 @@ impl StyleEngine {
             cache.declared.insert(el, map.clone());
             cache.declared_seq += 1;
             cache.declared_meta.insert(el, (cache.declared_seq, Some(source)));
+            let class = declared_class(cache, source.0).unwrap_or(source);
+            cache.share_class.insert(el, class);
+            Self::note_recent(dom, el, cache);
             return map;
         }
         let mut c = Cascaded::default();
@@ -5100,7 +5217,36 @@ impl StyleEngine {
         cache.cascaded.insert(el, Rc::new((c, pri)));
         cache.declared_seq += 1;
         cache.declared_meta.insert(el, (cache.declared_seq, None));
+        cache.share_class.insert(el, (el, cache.declared_seq));
+        Self::note_recent(dom, el, cache);
         map
+    }
+
+    /// Gives `el`'s element ancestors their declared entries, outermost
+    /// first (iterative: deep trees).
+    fn declare_ancestors(dom: &Dom, rules: &RuleSet, el: NodeId, cache: &mut Cache) {
+        if rules.has_relative || dom.shadow_root_count() != 0 {
+            return;
+        }
+        let mut missing = Vec::new();
+        let mut cur = dom.check(el).ok().and_then(|i| dom.selector_parent(i));
+        while let Some(p) = cur {
+            let id = dom.id_of(p);
+            if cache.declared.contains_key(&id) {
+                break;
+            }
+            missing.push(id);
+            cur = dom.selector_parent(p);
+        }
+        for p in missing.into_iter().rev() {
+            Self::declared_map_in(dom, rules, p, cache);
+        }
+    }
+
+    fn note_recent(dom: &Dom, el: NodeId, cache: &mut Cache) {
+        if let Some(key) = recent_key(dom, el, |p| declared_class(cache, p)) {
+            cache.recent.insert(key, el);
+        }
     }
 
     /// Style sharing for the declared map (Blink's and Stylo's): the entry of
@@ -5154,7 +5300,11 @@ impl StyleEngine {
                 }
             }
         }
-        for c in candidates.into_iter().flatten() {
+        let recent = recent_key(dom, el, |p| declared_class(cache, p))
+            .and_then(|k| cache.recent.get(&k))
+            .and_then(|&c| dom.check(c).ok())
+            .filter(|c| !candidates.contains(&Some(*c)));
+        for c in candidates.into_iter().chain([recent]).flatten() {
             let cid = dom.id_of(c);
             let (Some(entry), Some(&(stamp, _))) = (cache.declared.get(&cid), cache.declared_meta.get(&cid)) else {
                 continue;

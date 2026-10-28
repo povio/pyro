@@ -116,8 +116,22 @@ impl FlowStyleSource for StyleEngine {
         if let Some(cached) = self.cached_flow_style(dom, el) {
             return cached;
         }
+        // Ancestors first (outermost first, iteratively), so this element
+        // can share with one under an equivalent parent.
+        let mut missing = Vec::new();
+        let mut cur = dom.parent_element(el).ok().flatten();
+        while let Some(p) = cur {
+            if self.cached_flow_style(dom, p).is_some() {
+                break;
+            }
+            missing.push(p);
+            cur = dom.parent_element(p).ok().flatten();
+        }
+        for p in missing.into_iter().rev() {
+            <Self as FlowStyleSource>::flow_style(self, dom, p);
+        }
         if let Some((style, from)) = self.shared_flow_style(dom, el) {
-            self.store_flow_style(el, style.clone(), Some(from));
+            self.store_flow_style(dom, el, style.clone(), Some(from));
             return style;
         }
         let started = crate::layout::flow_stats::enabled().then(std::time::Instant::now);
@@ -125,7 +139,7 @@ impl FlowStyleSource for StyleEngine {
         if let Some(t) = started {
             crate::layout::flow_stats::note_style_miss(t.elapsed());
         }
-        self.store_flow_style(el, style.clone(), None);
+        self.store_flow_style(dom, el, style.clone(), None);
         style
     }
 }
