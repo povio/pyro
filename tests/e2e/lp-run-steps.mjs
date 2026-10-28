@@ -35,11 +35,26 @@ fs.writeFileSync(path.join(dist, 'index.html'), `<!doctype html><html><head><sty
 <input id="t" aria-label="Title"><button id="dbl">Twice</button><div id="dbl-out"></div><div id="blur-out"></div>
 <button id="load" aria-label="Load items">Load</button> <span id="status">idle</span> <ul id="items"></ul>
 <a id="nav" href="/dashboard/settings">Settings</a>
+<iframe id="fr" srcdoc="<button id='inner'>Inner</button><p id='inner-out'></p><script>document.getElementById('inner').addEventListener('click', () => { document.getElementById('inner-out').textContent = 'inner clicked'; });</script>"></iframe>
+<input id="file" type="file" multiple><p id="file-out"></p>
+<div id="src" draggable="true">Drag me</div><div id="dst">Drop here</div><p id="drag-out"></p>
+<div id="psrc">Pointer</div><div id="pdst">Pointer target</div><p id="pointer-out"></p>
+<a id="dl" href="/report.csv" download="report.csv">Export</a>
+<a id="tab" href="/other" target="_blank">Open tab</a>
 <script>
   const t = document.getElementById('t');
   t.addEventListener('blur', () => { document.getElementById('blur-out').textContent = 'blurred:' + t.value; });
   document.getElementById('dbl').addEventListener('dblclick', (e) => { document.getElementById('dbl-out').textContent = 'dbl:' + e.detail; });
   document.getElementById('nav').addEventListener('click', (e) => { e.preventDefault(); history.pushState(null, '', '/dashboard/settings'); });
+  const f = document.getElementById('file');
+  f.addEventListener('change', () => { document.getElementById('file-out').textContent = [...f.files].map((x) => x.name + ':' + x.type + ':' + x.size).join(','); });
+  const src = document.getElementById('src'), dst = document.getElementById('dst');
+  src.addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/plain', 'payload'); });
+  dst.addEventListener('dragover', (e) => e.preventDefault());
+  dst.addEventListener('drop', (e) => { e.preventDefault(); document.getElementById('drag-out').textContent = 'dropped:' + e.dataTransfer.getData('text/plain'); });
+  const psrc = document.getElementById('psrc'); let down = false;
+  psrc.addEventListener('mousedown', () => { down = true; });
+  document.addEventListener('mouseup', (e) => { if (down) { down = false; document.getElementById('pointer-out').textContent = 'released on ' + e.target.id; } });
   document.getElementById('load').addEventListener('click', async () => {
     const status = document.getElementById('status'); status.textContent = 'loading';
     try {
@@ -52,6 +67,9 @@ fs.writeFileSync(path.join(dist, 'index.html'), `<!doctype html><html><head><sty
   });
 </script></body></html>`);
 
+fs.writeFileSync(path.join(dist, 'report.csv'), 'a,b\n1,2\n');
+fs.writeFileSync(path.join(dist, 'other.html'), '<!doctype html><title>other</title>');
+fs.writeFileSync(path.join(tmp, 'notes.txt'), 'hello');
 const port = await freePort();
 const child = spawn(bin, ['serve', '--host', '127.0.0.1', '--port', String(port), '--log-level', 'error', '--experimental-features', 'cors', '--static', `${origin}=${dist}`], { stdio: ['ignore', 'ignore', 'pipe'], env: { ...process.env, LIGHTPANDA_DISABLE_TELEMETRY: 'true', LIGHTNINGPANDA_GEOMETRY: 'flow' } });
 let stderr = ''; child.stderr.on('data', (d) => { stderr = (stderr + d).slice(-4000); });
@@ -117,6 +135,43 @@ await check('url wait after a client-side route, then reload', async () => {
   ]);
   assert.ok(r.results[1].url.endsWith('/dashboard/settings'));
   await assert.rejects(run([{ url: { url: '/nowhere' } }], { timeout: 100 }), /url is/);
+});
+
+await check('iframe-scoped locators, upload (inline and path), drag (native and pointer)', async () => {
+  const r = await run([
+    { goto: { url: origin + '/' } },
+    { act: { locator: { css: '#inner', frame: { css: '#fr' } }, action: 'click' } },
+    { check: { locator: { css: '#inner-out', frame: { css: '#fr' } }, assert: 'text', expected: 'inner clicked' } },
+    { act: { locator: { css: '#file' }, action: 'upload', files: [{ name: 'a.csv', text: 'x,y' }] } },
+    { check: { locator: { css: '#file-out' }, assert: 'text', expected: 'a.csv:text/csv:3' } },
+    { act: { locator: { css: '#file' }, action: 'upload', value: path.join(tmp, 'notes.txt') } },
+    { check: { locator: { css: '#file-out' }, assert: 'text', expected: 'notes.txt:text/plain:5' } },
+    { act: { locator: { css: '#src' }, action: 'drag', to: { css: '#dst' } } },
+    { check: { locator: { css: '#drag-out' }, assert: 'text', expected: 'dropped:payload' } },
+    { act: { locator: { css: '#psrc' }, action: 'drag', to: { css: '#pdst' } } },
+    { check: { locator: { css: '#pointer-out' }, assert: 'text', expected: 'released on pdst' } },
+  ]);
+  assert.equal(r.results[7].native, true); assert.equal(r.results[9].native, false);
+});
+await check('download saved under its suggested name; popup from a target=_blank link', async () => {
+  const [popupPage, r] = await Promise.all([
+    page.context().waitForEvent('page'),
+    run([
+      { act: { locator: { role: 'link', name: 'Export' }, action: 'click', settle: false } },
+      { download: { saveTo: path.join(tmp, 'downloads'), as: 'file' } },
+      { act: { locator: { role: 'link', name: 'Open tab' }, action: 'click', settle: false } },
+      { popup: { as: 'popup' } },
+    ]),
+  ]);
+  assert.equal(r.reads.file.filename, 'report.csv');
+  assert.equal(r.reads.file.text, 'a,b\n1,2\n');
+  assert.equal(fs.readFileSync(path.join(tmp, 'downloads', 'report.csv'), 'utf8'), 'a,b\n1,2\n');
+  assert.equal(r.reads.popup.targetId.length, 32);
+  // Playwright sees the same target: the page it reports is the popup.
+  const session = await popupPage.context().newCDPSession(popupPage);
+  const info = await session.send('Target.getTargetInfo');
+  assert.equal(info.targetInfo.targetId, r.reads.popup.targetId);
+  await popupPage.close();
 });
 
 await browser.close(); clearTimeout(deadline);

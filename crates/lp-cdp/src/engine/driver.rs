@@ -75,6 +75,9 @@ pub(super) struct Locator {
     filter: Option<Filter>,
     /// Index into the matches (negative counts from the end).
     nth: Option<i64>,
+    /// Search inside the document of this `<iframe>` (a locator in the
+    /// parent document; may itself have a `frame`).
+    frame: Option<Box<Locator>>,
 }
 
 /// Narrows a locator's matches. Every given condition must hold.
@@ -108,6 +111,11 @@ enum Action {
     Blur,
     /// Focus, then one key press per character of `value` (`pressSequentially`).
     Type,
+    /// Set the files of an `<input type=file>` (`files`, or `value` as a path).
+    Upload,
+    /// Drag the element onto `to`: native drag and drop when the element is
+    /// a drag source, else pointer moves with the button held.
+    Drag,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -206,6 +214,16 @@ struct MockSpec {
     times: Option<u32>,
 }
 
+/// A file for `upload`.
+#[derive(Clone, Debug)]
+struct UploadFile {
+    name: String,
+    mime: String,
+    bytes: Vec<u8>,
+}
+
+/// A run holds a few steps; the large `Act` variant is not worth boxing.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug)]
 enum Step {
     /// Waits for the current document's `load` (a prepared page taken while
@@ -219,6 +237,16 @@ enum Step {
     Mock(MockSpec),
     /// Removes mocks by URL pattern (all when `None`).
     Unmock(Option<Pattern>),
+    /// Waits for the next download the page starts (since the run began).
+    Download {
+        /// Directory to save it in (as the suggested name).
+        save_to: Option<String>,
+        key: Option<String>,
+    },
+    /// Waits for the next popup this page opened; its target id.
+    Popup {
+        key: Option<String>,
+    },
     Goto {
         url: String,
         dom_ready: bool,
@@ -238,6 +266,10 @@ enum Step {
         action: Action,
         value: String,
         settle: bool,
+        /// `drag`: the drop target.
+        to: Option<Locator>,
+        /// `upload`: the files.
+        files: Vec<UploadFile>,
     },
     Check {
         locator: Locator,
@@ -266,6 +298,8 @@ impl Step {
             Step::Mock(m) => format!("mock {}", m.url.text),
             Step::Unmock(Some(p)) => format!("unmock {}", p.text),
             Step::Unmock(None) => "unmock".into(),
+            Step::Download { .. } => "download".into(),
+            Step::Popup { .. } => "popup".into(),
             Step::Route { url } => format!("route {url}"),
             Step::Eval { .. } => "eval".into(),
             Step::Request(m) => format!("request {}", serde_json::to_value(m).map(prune).unwrap_or_default()),
@@ -298,6 +332,9 @@ struct Job {
     started: Instant,
     /// Request log sequence when the run started (`LP.run` only).
     log_from: Option<usize>,
+    /// Downloads and popups recorded before the run started are not its.
+    downloads_from: usize,
+    popups_from: usize,
 }
 
 impl Job {
@@ -360,9 +397,14 @@ impl Waiter {
         }
     }
 
-    /// A `request` step: tried again when the request log grows.
+    /// A `request`, `download` or `popup` step: tried again when the log
+    /// it waits on grows.
     fn waits_on_log(&self) -> bool {
-        matches!(self.phase, Phase::Try) && matches!(self.job.steps.get(self.job.index), Some((Step::Request(_), _)))
+        matches!(self.phase, Phase::Try)
+            && matches!(
+                self.job.steps.get(self.job.index),
+                Some((Step::Request(_) | Step::Download { .. } | Step::Popup { .. }, _))
+            )
     }
 
     /// Whether driving it can make progress.
@@ -993,6 +1035,7 @@ fn act(page: &Rc<PageDom>, id: NodeId, action: Action, value: &str) -> Attempt {
         }
         Action::Hover => pointer(page, id, Pointer::Hover),
         Action::DblClick => pointer(page, id, Pointer::DblClick),
+        Action::Upload | Action::Drag => unreachable!("handled by the host"),
         Action::Type => {
             if input::key_target(page) != Some(id) {
                 input::focus_element(page, id);
@@ -1195,6 +1238,105 @@ fn pointer(page: &Rc<PageDom>, id: NodeId, what: Pointer) -> Attempt {
     Attempt::Done(json!({}))
 }
 
+/// Sets the files of an `<input type=file>`, then `input` and `change`.
+fn upload(page: &Rc<PageDom>, id: NodeId, files: &[UploadFile]) -> Attempt {
+    {
+        let dom = page.dom.borrow();
+        let is_file_input =
+            local(&dom, id) == Some("input") && attr(&dom, id, "type").is_some_and(|t| t.eq_ignore_ascii_case("file"));
+        if !is_file_input {
+            return Attempt::Retry("element is not an <input type=file>".into());
+        }
+        if disabled(&dom, id) {
+            return Attempt::Retry("element is disabled".into());
+        }
+    }
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_millis() as f64);
+    let entries: Vec<lp_webapi::file::FileEntry> = files
+        .iter()
+        .map(|f| lp_webapi::file::FileEntry {
+            name: f.name.clone(),
+            mime: f.mime.clone(),
+            bytes: bytes::Bytes::from(f.bytes.clone()),
+            last_modified: now,
+        })
+        .collect();
+    if let Err(e) = page.set_input_files(id, entries) {
+        return Attempt::Retry(format!("{e:?}"));
+    }
+    input::fire_simple(page, id, "input", true, false);
+    input::fire_simple(page, id, "change", true, false);
+    Attempt::Done(json!({ "files": files.len() }))
+}
+
+/// Drags `from` onto `to`. A native drag source (draggable, link, image)
+/// gets HTML drag and drop: dragstart on the move, then dragenter/dragover
+/// and drop on the target. Anything else gets pointer events with the
+/// button held, as pointer-based drag libraries expect.
+fn drag(page: &Rc<PageDom>, from: NodeId, to: NodeId) -> Attempt {
+    let (x0, y0) = match pointer_target(page, from) {
+        Ok(p) => p,
+        Err(retry) => return retry,
+    };
+    super::dom::reveal(page, to);
+    let Some(target) = visible_box(page, to) else { return Attempt::Retry("drop target is not visible".into()) };
+    let (x1, y1) = (target.x + target.width / 2.0, target.y + target.height / 2.0);
+    let mut m = MouseInput { x: x0, y: y0, ..MouseInput::default() };
+    let send = |m: &MouseInput, kind: MouseKind| input::dispatch_mouse_intercepting_drags(page, kind, m, true);
+    if let Err(e) = send(&m, MouseKind::Moved) {
+        return Attempt::Retry(e);
+    }
+    m.button = MouseButton::Left;
+    m.buttons = 1;
+    m.click_count = 1;
+    if let Err(e) = send(&m, MouseKind::Pressed) {
+        return Attempt::Retry(e);
+    }
+    m.button = MouseButton::None;
+    m.click_count = 0;
+    // A first small move past the drag threshold, then the target.
+    let mut native = None;
+    for (x, y) in [(x0 + 12.0, y0 + 12.0), ((x0 + x1) / 2.0, (y0 + y1) / 2.0), (x1, y1)] {
+        m.x = x;
+        m.y = y;
+        match send(&m, MouseKind::Moved) {
+            Ok(Some(data)) => {
+                native = Some(data);
+                break;
+            }
+            Ok(None) => {}
+            Err(e) => return Attempt::Retry(e),
+        }
+    }
+    if let Some(data) = native {
+        let modifiers = m.modifiers;
+        for (kind, x, y) in [
+            (input::DragKind::Enter, (x0 + x1) / 2.0, (y0 + y1) / 2.0),
+            (input::DragKind::Over, x1, y1),
+            (input::DragKind::Drop, x1, y1),
+        ] {
+            if let Err(e) = input::dispatch_drag(page, kind, x, y, &data, modifiers) {
+                return Attempt::Retry(e);
+            }
+        }
+        m.x = x1;
+        m.y = y1;
+        m.button = MouseButton::Left;
+        m.buttons = 0;
+        let _ = input::dispatch_mouse(page, MouseKind::Released, &m);
+        return Attempt::Done(json!({ "native": true }));
+    }
+    m.x = x1;
+    m.y = y1;
+    m.button = MouseButton::Left;
+    m.buttons = 0;
+    m.click_count = 1;
+    if let Err(e) = input::dispatch_mouse(page, MouseKind::Released, &m) {
+        return Attempt::Retry(e);
+    }
+    Attempt::Done(json!({ "native": false }))
+}
+
 fn expect(
     page: &PageDom,
     found: &[NodeId],
@@ -1288,7 +1430,68 @@ struct ActParams {
     value: String,
     /// Wait for the requests the action started (default: true in `LP.run`).
     settle: Option<bool>,
+    /// `drag`: the drop target.
+    to: Option<Locator>,
+    /// `upload`: inline files; else `value` is a path (several: one per line).
+    #[serde(default)]
+    files: Vec<UploadParams>,
     timeout: Option<u64>,
+}
+
+/// `{"name": "a.csv", "mimeType"?: "text/csv", "text"?: "..." | "base64"?: "..."}`.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct UploadParams {
+    name: String,
+    mime_type: Option<String>,
+    text: Option<String>,
+    base64: Option<String>,
+}
+
+/// Largest file `upload` reads from disk or accepts inline.
+const MAX_UPLOAD_BYTES: usize = 64 * 1024 * 1024;
+
+fn upload_files(action: Action, value: &str, inline: Vec<UploadParams>) -> CdpResult<Vec<UploadFile>> {
+    if action != Action::Upload {
+        return Ok(Vec::new());
+    }
+    let mut files = Vec::new();
+    for f in inline {
+        let bytes = match (f.text, f.base64) {
+            (Some(t), None) => t.into_bytes(),
+            (None, Some(b)) => crate::fetch_protocol::base64_decode(&b)?,
+            (None, None) => Vec::new(),
+            _ => return Err(CdpError::invalid_params("a file takes text or base64, not both")),
+        };
+        if bytes.len() > MAX_UPLOAD_BYTES {
+            return Err(CdpError::invalid_params(format!("file {} is too large", f.name)));
+        }
+        let mime = f.mime_type.unwrap_or_else(|| mime_of(&f.name));
+        files.push(UploadFile { name: f.name, mime, bytes });
+    }
+    for path in value.lines().map(str::trim).filter(|l| !l.is_empty()) {
+        let meta = std::fs::metadata(path).map_err(|e| CdpError::invalid_params(format!("upload {path}: {e}")))?;
+        if meta.len() as usize > MAX_UPLOAD_BYTES {
+            return Err(CdpError::invalid_params(format!("upload {path}: file is too large")));
+        }
+        let bytes = std::fs::read(path).map_err(|e| CdpError::invalid_params(format!("upload {path}: {e}")))?;
+        let name = std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let mime = mime_of(&name);
+        files.push(UploadFile { name, mime, bytes });
+    }
+    if files.is_empty() {
+        return Err(CdpError::invalid_params("upload needs files or a path in value"));
+    }
+    Ok(files)
+}
+
+/// MIME type by extension, without charset (a `File.type` has none).
+fn mime_of(name: &str) -> String {
+    let full = lp_net::static_files::content_type(std::path::Path::new(name));
+    match full {
+        "application/octet-stream" => String::new(),
+        full => full.split(';').next().unwrap_or(full).trim().to_owned(),
+    }
 }
 
 #[derive(Deserialize)]
@@ -1321,6 +1524,7 @@ struct QueryParams {
 /// One `LP.run` step: `{"goto": {...}}`, `{"act": {...}}`, `{"check": {...}}`
 /// `{"read": {...}}`, `{"route": {...}}`, `{"eval": {...}}` or
 /// `{"request": {...}}`.
+#[allow(clippy::large_enum_variant)]
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 enum StepParams {
@@ -1330,6 +1534,8 @@ enum StepParams {
     Url(UrlParams),
     Mock(MockParams),
     Unmock(UnmockParams),
+    Download(DownloadParams),
+    Popup(PopupParams),
     Route(RouteParams),
     Act(ActParams),
     Check(ExpectParams),
@@ -1349,6 +1555,24 @@ struct UrlParams {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct UnmockParams {
     url: Option<Pattern>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DownloadParams {
+    /// Directory to save the file in, under its suggested name.
+    save_to: Option<String>,
+    #[serde(rename = "as")]
+    key: Option<String>,
+    timeout: Option<u64>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PopupParams {
+    #[serde(rename = "as")]
+    key: Option<String>,
+    timeout: Option<u64>,
 }
 
 /// `{"mock": {"url": "/api/items", "json": [...]}}`: `body` (text) or
@@ -1467,14 +1691,21 @@ impl ActParams {
             "dblclick" => Action::DblClick,
             "blur" => Action::Blur,
             "type" => Action::Type,
-            _ => {
-                return Err(CdpError::invalid_params(
-                    "action must be click, fill, focus, check, uncheck, press, hover, dblclick, blur or type",
-                ))
-            }
+            "upload" => Action::Upload,
+            "drag" => Action::Drag,
+            _ => return Err(CdpError::invalid_params(
+                "action must be click, fill, focus, check, uncheck, press, hover, dblclick, blur, type, upload or drag",
+            )),
         };
+        if action == Action::Drag {
+            match &self.to {
+                Some(to) => to.validate()?,
+                None => return Err(CdpError::invalid_params("drag needs `to`")),
+            }
+        }
+        let files = upload_files(action, &self.value, self.files)?;
         let settle = self.settle.unwrap_or(settle_default);
-        Ok((Step::Act { locator: self.locator, action, value: self.value, settle }, self.timeout))
+        Ok((Step::Act { locator: self.locator, action, value: self.value, settle, to: self.to, files }, self.timeout))
     }
 }
 
@@ -1555,6 +1786,8 @@ impl StepParams {
             StepParams::Url(p) => Ok((Step::Url(p.url), p.timeout)),
             StepParams::Mock(p) => p.step(),
             StepParams::Unmock(p) => Ok((Step::Unmock(p.url), None)),
+            StepParams::Download(p) => Ok((Step::Download { save_to: p.save_to, key: p.key }, p.timeout)),
+            StepParams::Popup(p) => Ok((Step::Popup { key: p.key }, p.timeout)),
             StepParams::Route(p) => Ok((Step::Route { url: p.url }, p.timeout)),
             StepParams::Eval(p) => Ok((Step::Eval { expression: p.expression, key: p.key }, None)),
             StepParams::Request(p) => Ok((Step::Request(p.matcher), p.timeout)),
@@ -1607,8 +1840,56 @@ impl EngineHost {
             .ok_or_else(|| CdpError::server("page has no document"))
     }
 
-    /// One try of a locator step.
-    fn attempt(&mut self, page: &Rc<PageDom>, step: &Step) -> CdpResult<Attempt> {
+    /// The document a locator searches: the page's, or the document of the
+    /// `<iframe>` its `frame` names (recursively).
+    fn scope_page(
+        &self,
+        pid: PageId,
+        page: &Rc<PageDom>,
+        locator: &Locator,
+    ) -> CdpResult<Result<Rc<PageDom>, Attempt>> {
+        let Some(frame_locator) = &locator.frame else { return Ok(Ok(page.clone())) };
+        let parent = match self.scope_page(pid, page, frame_locator)? {
+            Ok(p) => p,
+            Err(retry) => return Ok(Err(retry)),
+        };
+        let found = frame_locator.resolve(&parent, &self.waiters.selectors)?;
+        let Some(owner) = single(&found, &parent.dom.borrow(), frame_locator)? else {
+            return Ok(Err(Attempt::Retry(format!("{} matched no frame", frame_locator.describe()))));
+        };
+        {
+            let dom = parent.dom.borrow();
+            if !matches!(local(&dom, owner), Some("iframe" | "frame")) {
+                return Ok(Err(Attempt::Retry(format!("{} is not an iframe", frame_locator.describe()))));
+            }
+        }
+        let doc = self
+            .thread
+            .browser
+            .frame_of_owner(pid, owner)
+            .and_then(|id| self.thread.browser.frame(pid, &id))
+            .and_then(|f| f.page_dom);
+        Ok(match doc {
+            Some(doc) if !doc.is_disposed() => Ok(doc),
+            _ => Err(Attempt::Retry("the frame has no document yet".into())),
+        })
+    }
+
+    /// One try of a locator step; the document it searched (for retries).
+    fn attempt(&mut self, pid: PageId, page: &Rc<PageDom>, step: &Step) -> CdpResult<(Attempt, Rc<PageDom>)> {
+        let locator = match step {
+            Step::Act { locator, .. } | Step::Check { locator, .. } | Step::Read { locator, .. } => locator,
+            _ => unreachable!("not a locator step"),
+        };
+        let page = match self.scope_page(pid, page, locator)? {
+            Ok(p) => p,
+            Err(retry) => return Ok((retry, page.clone())),
+        };
+        let attempt = self.attempt_in(&page, step)?;
+        Ok((attempt, page))
+    }
+
+    fn attempt_in(&mut self, page: &Rc<PageDom>, step: &Step) -> CdpResult<Attempt> {
         let no_match = |locator: &Locator| Attempt::Retry(format!("{} matched no element", locator.describe()));
         match step {
             Step::Goto { .. }
@@ -1617,15 +1898,31 @@ impl EngineHost {
             | Step::Url(_)
             | Step::Mock(_)
             | Step::Unmock(_)
+            | Step::Download { .. }
+            | Step::Popup { .. }
             | Step::Route { .. }
             | Step::Eval { .. }
             | Step::Request(_) => {
                 unreachable!("not a locator step")
             }
-            Step::Act { locator, action, value, .. } => {
+            Step::Act { locator, action, value, to, files, .. } => {
                 let found = locator.resolve(page, &self.waiters.selectors)?;
                 let Some(el) = single(&found, &page.dom.borrow(), locator)? else { return Ok(no_match(locator)) };
-                let result = act(page, el, *action, value);
+                let result = match action {
+                    Action::Upload => upload(page, el, files),
+                    Action::Drag => {
+                        let to = to.as_ref().ok_or_else(|| CdpError::invalid_params("drag needs `to`"))?;
+                        let targets = to.resolve(page, &self.waiters.selectors)?;
+                        let Some(target) = single(&targets, &page.dom.borrow(), to)? else {
+                            return Ok(Attempt::Retry(format!("{} matched no drop target", to.describe())));
+                        };
+                        if visible_box(page, el).is_none() {
+                            return Ok(Attempt::Retry("element is not visible".into()));
+                        }
+                        drag(page, el, target)
+                    }
+                    _ => act(page, el, *action, value),
+                };
                 if matches!(result, Attempt::Done(_)) {
                     self.thread.browser.checkpoint();
                 }
@@ -1676,6 +1973,7 @@ impl EngineHost {
         };
         let state = self.pages.get_mut(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?;
         let pid = state.id;
+        let downloads_from = state.downloads.len();
         // A run records the page's requests from here on (`request` steps, reply).
         let log_from = if single {
             None
@@ -1686,6 +1984,7 @@ impl EngineHost {
             self.update_network_subscriptions();
             Some(0)
         };
+        let popups_from = self.popups.len();
         let now = Instant::now();
         let first = steps.first().map_or(Duration::ZERO, |(_, t)| *t);
         let job = Job {
@@ -1700,6 +1999,8 @@ impl EngineHost {
             single,
             started: now,
             log_from,
+            downloads_from,
+            popups_from,
         };
         let waiter = Waiter {
             job,
@@ -1825,6 +2126,8 @@ impl EngineHost {
                             };
                             (attempt, None)
                         }
+                        Step::Download { save_to, .. } => (self.next_download(&mut w.job, save_to.as_deref()), None),
+                        Step::Popup { .. } => (self.next_popup(&mut w.job), None),
                         Step::Mock(spec) => (self.register_mock(w.job.page, spec).map_err(|e| w.job.fail(e))?, None),
                         Step::Unmock(pattern) => {
                             let removed = self.remove_mocks(w.job.page, pattern.as_ref()).map_err(|e| w.job.fail(e))?;
@@ -1845,12 +2148,17 @@ impl EngineHost {
                         }
                         _ => {
                             let page = self.main_document(w.job.page).map_err(|e| w.job.fail(e))?;
-                            (self.attempt(&page, &step).map_err(|e| w.job.fail(e))?, Some(page))
+                            let (attempt, scope) = self.attempt(pid, &page, &step).map_err(|e| w.job.fail(e))?;
+                            (attempt, Some(scope))
                         }
                     };
                     match attempt {
                         Attempt::Done(value) => {
-                            if let Step::Read { key: Some(key), .. } | Step::Eval { key: Some(key), .. } = &step {
+                            if let Step::Read { key: Some(key), .. }
+                            | Step::Eval { key: Some(key), .. }
+                            | Step::Download { key: Some(key), .. }
+                            | Step::Popup { key: Some(key) } = &step
+                            {
                                 w.job.reads.insert(key.clone(), value.clone());
                             }
                             w.job.results.push(value);
@@ -1889,6 +2197,59 @@ impl EngineHost {
                 }
             }
         }
+    }
+
+    /// The next download of the run not returned yet; saved under its
+    /// suggested name in `save_to` when given.
+    fn next_download(&mut self, job: &mut Job, save_to: Option<&str>) -> Attempt {
+        let Some(state) = self.pages.get(&job.page) else { return Attempt::Retry("page is gone".into()) };
+        let Some(record) = state.downloads.get(job.downloads_from).cloned() else {
+            return Attempt::Retry("no download yet".into());
+        };
+        job.downloads_from += 1;
+        let mut out = json!({ "url": record.url, "filename": record.filename });
+        match &record.body {
+            Ok(bytes) => {
+                out["size"] = json!(bytes.len());
+                if bytes.len() <= 64 * 1024 {
+                    if let Ok(text) = std::str::from_utf8(bytes) {
+                        out["text"] = json!(text);
+                    }
+                }
+                if let Some(dir) = save_to {
+                    let name = std::path::Path::new(&record.filename)
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .filter(|n| !n.is_empty())
+                        .unwrap_or_else(|| "download".into());
+                    let path = std::path::Path::new(dir).join(name);
+                    match std::fs::create_dir_all(dir).and_then(|_| std::fs::write(&path, bytes)) {
+                        Ok(()) => out["path"] = json!(path.to_string_lossy()),
+                        Err(e) => out["error"] = json!(format!("save failed: {e}")),
+                    }
+                }
+            }
+            Err(e) => out["error"] = json!(e),
+        }
+        Attempt::Done(out)
+    }
+
+    /// The next popup this page opened during the run, not returned yet.
+    fn next_popup(&mut self, job: &mut Job) -> Attempt {
+        let Some((i, record)) = self
+            .popups
+            .iter()
+            .enumerate()
+            .skip(job.popups_from)
+            .find(|(_, p)| p.opener == job.page)
+            .map(|(i, p)| (i, p.clone()))
+        else {
+            return Attempt::Retry("no popup yet".into());
+        };
+        job.popups_from = i + 1;
+        let url =
+            self.pages.get(&record.page).and_then(|s| self.thread.browser.page(s.id)).map(|p| p.main_frame.url.clone());
+        Attempt::Done(json!({ "targetId": record.target_id, "url": url }))
     }
 
     /// Registers a mock on the page's browser context and makes sure the
