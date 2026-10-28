@@ -405,7 +405,7 @@ impl ModuleFetcher for PageModuleFetcher {
             }
             module_trace!("fetching {url} (document {})", b.doc(page).is_some());
             let traced = url.clone();
-            b.fetch_text(page, url, ResourceKind::ModuleScript, move |_b, res| {
+            let complete = move |_b: &mut Browser, res: Result<String, String>| {
                 match &res {
                     Ok(text) => module_trace!("loaded {traced} ({} bytes)", text.len()),
                     Err(e) => module_trace!("failed {traced}: {e}"),
@@ -429,7 +429,11 @@ impl ModuleFetcher for PageModuleFetcher {
                 if let Err(e) = r {
                     scope.report_exception(&e);
                 }
-            });
+            };
+            // A modulepreload of this URL already fetched (or is fetching) it.
+            if let Some(complete) = b.preloaded_module(page, &url, Box::new(complete)) {
+                b.fetch_text(page, url, ResourceKind::ModuleScript, complete);
+            }
         });
     }
 }
