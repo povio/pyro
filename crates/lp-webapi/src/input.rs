@@ -1204,6 +1204,11 @@ fn pointer_target(page: &PageDom, x: f64, y: f64, root_fallback: bool) -> Option
     None
 }
 
+/// Where the pointer last moved to (viewport coordinates), if it has.
+pub fn pointer_position(page: &PageDom) -> Option<(f64, f64)> {
+    page.pointer.borrow().as_ref().map(|m| (m.x, m.y))
+}
+
 /// Inclusive ancestors of `node` up to and including its document, innermost
 /// first; empty when it is no longer in the page's document.
 fn hover_chain(page: &PageDom, node: NodeId) -> Vec<NodeId> {
