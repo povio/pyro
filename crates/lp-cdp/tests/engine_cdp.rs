@@ -4816,3 +4816,177 @@ fn driver_within_row_in_frame_scopes_inner_locator() {
     assert!(r.get("error").is_none(), "{r}");
     assert_eq!(r["result"]["reads"], json!({"second": 2, "first": 1, "has": 2}), "{r}");
 }
+
+const DRIVER_POINTER_PAGE: &str = r#"<!doctype html><body>
+<style>#scroller{overflow:auto;width:1000px} #wide{width:2500px;height:26px} #tall{height:300px;width:200px;overflow:auto}</style>
+<div id="target">Target</div><div id="target-out"></div>
+<input id="dis" disabled><div id="dis-out"></div>
+<div id="mi" role="menuitem" aria-disabled="true">Item</div>
+<div id="pad" style="width:200px;height:100px"></div><div id="pad-out"></div>
+<div style="position:relative;width:200px;height:50px"><button id="under">Under</button><div id="over" style="position:absolute;left:0;top:0;width:200px;height:50px"></div></div><div id="over-out"></div>
+<div id="scroller"><div id="wide" ondblclick="this.textContent='ok'">row</div></div><div id="wide-out"></div>
+<div id="tall"><div id="tall-inner" style="height:2000px">tall</div></div><div id="wheel-out"></div>
+<div id="moves-out"></div>
+<script>
+  const t = document.getElementById('target'); const seen = [];
+  for (const n of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click', 'contextmenu', 'auxclick', 'dblclick']) {
+    t.addEventListener(n, (e) => { seen.push(n + ':' + e.button); document.getElementById('target-out').textContent = seen.join(','); });
+  }
+  t.addEventListener('contextmenu', (e) => e.preventDefault());
+  document.addEventListener('contextmenu', (e) => { document.body.dataset.cm = [e.cancelable, e.bubbles, e.composed, e.buttons, e instanceof PointerEvent, e.defaultPrevented].join(); });
+  document.getElementById('dis').addEventListener('mouseover', () => { document.getElementById('dis-out').textContent = 'hovered'; });
+  document.getElementById('mi').addEventListener('mouseover', () => { document.getElementById('mi').dataset.hovered = '1'; });
+  const pad = document.getElementById('pad');
+  pad.addEventListener('click', (e) => { const r = pad.getBoundingClientRect(); document.getElementById('pad-out').textContent = Math.round(e.clientX - r.left) + ',' + Math.round(e.clientY - r.top); });
+  document.getElementById('over').addEventListener('click', () => { document.getElementById('over-out').textContent = 'over'; });
+  document.getElementById('tall').addEventListener('wheel', (e) => { document.getElementById('wheel-out').textContent = 'wheel:' + e.deltaX + ',' + e.deltaY + ':' + e.target.id; });
+  let moves = 0; document.addEventListener('mousemove', (e) => { moves += 1; document.body.dataset.mb = e.buttons; document.getElementById('moves-out').textContent = moves + '@' + e.clientX + ',' + e.clientY; });
+  document.addEventListener('dblclick', (e) => { document.getElementById('wide-out').textContent = e.target.id + '@' + e.clientX; });
+  document.getElementById('wide').addEventListener('dblclick', function () { this.textContent = 'ok'; });
+</script>"#;
+
+/// Gap 1: `click` with `button: "right"` presses and releases button 2,
+/// fires `contextmenu` after the press (Chromium on Linux and macOS) and
+/// `auxclick` after the release, never `click`; `middle` fires `auxclick`;
+/// `dblclick` takes the button too.
+#[test]
+fn driver_run_right_click_fires_contextmenu() {
+    let mut h = Harness::new();
+    load_html(&mut h, DRIVER_POINTER_PAGE);
+    let r = h.page(
+        "LP.run",
+        json!({"steps": [
+            {"act": {"locator": {"css": "#target"}, "action": "click", "button": "right"}},
+            {"check": {"locator": {"css": "#target-out"}, "assert": "text",
+                       "expected": "pointerdown:2,mousedown:2,contextmenu:2,pointerup:2,mouseup:2,auxclick:2"}},
+            {"eval": {"expression": "document.body.dataset.cm", "as": "cm"}},
+            {"act": {"locator": {"css": "#target"}, "action": "click", "button": "middle"}},
+            {"check": {"locator": {"css": "#target-out"}, "assert": "containsText",
+                       "expected": "auxclick:2,pointerdown:1,mousedown:1,pointerup:1,mouseup:1,auxclick:1"}},
+            {"act": {"locator": {"css": "#target"}, "action": "dblclick", "button": "right"}},
+            {"check": {"locator": {"css": "#target-out"}, "assert": "containsText",
+                       "expected": "auxclick:1,pointerdown:2,mousedown:2,contextmenu:2,pointerup:2,mouseup:2,auxclick:2,pointerdown:2,mousedown:2,contextmenu:2,pointerup:2,mouseup:2,auxclick:2"}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    // Cancelable, bubbling, composed, button 2 held, a PointerEvent; the
+    // target's handler canceled it.
+    assert_eq!(r["result"]["reads"]["cm"], "true,true,true,2,true,true", "{r}");
+    let r = h
+        .page("LP.run", json!({"steps": [{"act": {"locator": {"css": "#target"}, "action": "click", "button": "x"}}]}));
+    assert!(r["error"]["message"].as_str().unwrap_or_default().contains("button must be"), "{r}");
+}
+
+/// Gap 18: `hover` does not need an enabled element (a disabled input, an
+/// `aria-disabled` menu item); `click` still does.
+#[test]
+fn driver_run_hover_works_on_disabled_elements() {
+    let mut h = Harness::new();
+    load_html(&mut h, DRIVER_POINTER_PAGE);
+    let r = h.page(
+        "LP.run",
+        json!({"steps": [
+            {"act": {"locator": {"css": "#dis"}, "action": "hover"}},
+            {"check": {"locator": {"css": "#dis-out"}, "assert": "text", "expected": "hovered"}},
+            {"act": {"locator": {"role": "menuitem", "name": "Item"}, "action": "hover"}},
+            {"eval": {"expression": "document.getElementById('mi').dataset.hovered", "as": "mi"}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(r["result"]["reads"]["mi"], "1", "{r}");
+    let r =
+        h.page("LP.run", json!({"timeout": 50, "steps": [{"act": {"locator": {"css": "#dis"}, "action": "click"}}]}));
+    assert!(r["error"]["message"].as_str().unwrap_or_default().contains("element is disabled"), "{r}");
+}
+
+/// Gap 11: the `mouse` step acts at viewport coordinates (`move` with
+/// `steps` sends intermediate moves; `down`/`up`/`wheel` default to the
+/// current position); locator actions take `position` (an offset from the
+/// element's top-left) and `force` (no hit test).
+#[test]
+fn driver_run_mouse_step_at_coordinates_position_and_force() {
+    let mut h = Harness::new();
+    load_html(&mut h, DRIVER_POINTER_PAGE);
+    let r = h.page("LP.query", json!({"locator": {"css": "#pad"}, "read": "box"}));
+    let (x, y) = (r["result"]["value"]["x"].as_f64().unwrap(), r["result"]["value"]["y"].as_f64().unwrap());
+    let r = h.page(
+        "LP.run",
+        json!({"steps": [
+            {"mouse": {"action": "click", "x": x + 10.0, "y": y + 20.0}},
+            {"check": {"locator": {"css": "#pad-out"}, "assert": "text", "expected": "10,20"}},
+            {"act": {"locator": {"css": "#pad"}, "action": "click", "position": {"x": 5, "y": 7}}},
+            {"check": {"locator": {"css": "#pad-out"}, "assert": "text", "expected": "5,7"}},
+            {"mouse": {"action": "move", "x": x + 30.0, "y": y + 30.0, "steps": 4}},
+            {"mouse": {"action": "down"}},
+            {"mouse": {"action": "move", "x": x + 30.0, "y": y + 30.0}},
+            {"eval": {"expression": "document.body.dataset.mb", "as": "held"}},
+            {"mouse": {"action": "up"}},
+            {"check": {"locator": {"css": "#pad-out"}, "assert": "text", "expected": "30,30"}},
+            {"read": {"locator": {"css": "#moves-out"}, "read": "text", "as": "moves"}},
+            {"mouse": {"action": "dblclick", "x": x + 1.0, "y": y + 1.0, "button": "right"}},
+            {"act": {"locator": {"css": "#under"}, "action": "click", "force": true}},
+            {"check": {"locator": {"css": "#over-out"}, "assert": "text", "expected": "over"}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    let moves = r["result"]["reads"]["moves"].as_str().unwrap_or_default();
+    // One move per click so far (2), the 4 steps, then the move with the
+    // button held, ending at the target.
+    assert_eq!(moves, format!("7@{},{}", x + 30.0, y + 30.0), "{r}");
+    // A move between `down` and `up` reports the held left button.
+    assert_eq!(r["result"]["reads"]["held"], "1", "{r}");
+    let r =
+        h.page("LP.run", json!({"timeout": 50, "steps": [{"act": {"locator": {"css": "#under"}, "action": "click"}}]}));
+    assert!(r["error"]["message"].as_str().unwrap_or_default().contains("intercepts pointer events"), "{r}");
+    let r = h.page("LP.run", json!({"steps": [{"mouse": {"action": "click"}}]}));
+    assert!(r["error"]["message"].as_str().unwrap_or_default().contains("needs x and y"), "{r}");
+}
+
+/// Gap 10: `wheel` fires a `wheel` event on the element under the pointer
+/// and scrolls its container; the locator form hovers the element first,
+/// the `mouse` form uses the current pointer position unless given `x`/`y`.
+#[test]
+fn driver_run_wheel_scrolls_the_container_under_the_pointer() {
+    let mut h = Harness::new();
+    load_html(&mut h, DRIVER_POINTER_PAGE);
+    let r = h.page(
+        "LP.run",
+        json!({"steps": [
+            {"act": {"locator": {"css": "#tall"}, "action": "wheel", "deltaY": 100}},
+            {"check": {"locator": {"css": "#wheel-out"}, "assert": "text", "expected": "wheel:0,100:tall-inner"}},
+            {"eval": {"expression": "document.getElementById('tall').scrollTop", "as": "top1"}},
+            {"mouse": {"action": "wheel", "deltaY": 50}},
+            {"eval": {"expression": "document.getElementById('tall').scrollTop", "as": "top2"}},
+            {"mouse": {"action": "wheel", "x": 5, "y": 5, "deltaY": 50}},
+            {"eval": {"expression": "document.getElementById('tall').scrollTop", "as": "top3"}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(r["result"]["reads"]["top1"], 100, "{r}");
+    assert_eq!(r["result"]["reads"]["top2"], 150, "{r}");
+    assert_eq!(r["result"]["reads"]["top3"], 150, "{r}");
+}
+
+/// Gap 6: a pointer action aims at the center of the element's part inside
+/// the viewport and its overflow-clipping ancestors (a 2500 px row in a
+/// 1000 px scroller is clicked at x 500, not 1250).
+#[test]
+fn driver_run_clicks_the_visible_part_of_a_clipped_element() {
+    let mut h = Harness::new();
+    let desktop = json!({"mobile":false,"width":1440,"height":900,"screenWidth":1440,"screenHeight":900,"deviceScaleFactor":1,"screenOrientation":{"angle":0,"type":"landscapePrimary"},"dontSetVisibleSize":false});
+    assert_eq!(h.page("Emulation.setDeviceMetricsOverride", desktop)["result"], json!({}));
+    load_html(&mut h, DRIVER_POINTER_PAGE);
+    let r = h.page(
+        "LP.run",
+        json!({"steps": [
+            {"act": {"locator": {"css": "div[ondblclick]"}, "action": "dblclick"}},
+            {"check": {"locator": {"css": "#wide-out"}, "assert": "containsText", "expected": "wide@"}},
+            {"read": {"locator": {"css": "#wide-out"}, "read": "text", "as": "at"}},
+            {"check": {"locator": {"css": "#wide"}, "assert": "text", "expected": "ok"}},
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    let at = r["result"]["reads"]["at"].as_str().unwrap_or_default();
+    let x: f64 = at.trim_start_matches("wide@").parse().unwrap_or_else(|_| panic!("{r}"));
+    assert!(x > 0.0 && x < 1000.0, "clicked at {x}: {r}");
+}

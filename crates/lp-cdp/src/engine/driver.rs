@@ -119,6 +119,57 @@ enum Action {
     /// Drag the element onto `to`: native drag and drop when the element is
     /// a drag source, else pointer moves with the button held.
     Drag,
+    /// Move the pointer to the element's center, then a wheel turn of
+    /// `deltaX`/`deltaY` there (scrolls the nearest scrollable container).
+    Wheel,
+}
+
+impl Action {
+    /// Actions that need an enabled element (Playwright's actionability:
+    /// hover, focus, blur, wheel and drag do not).
+    fn needs_enabled(self) -> bool {
+        matches!(
+            self,
+            Action::Click
+                | Action::DblClick
+                | Action::Fill
+                | Action::Check
+                | Action::Uncheck
+                | Action::Press
+                | Action::Type
+        )
+    }
+}
+
+/// How a pointer action lands on its element.
+#[derive(Clone, Copy, Debug)]
+struct PointerOpts {
+    /// `click`, `dblclick`, `mouse` down/up/click/dblclick (default left).
+    button: MouseButton,
+    /// Offset from the element's top-left instead of its center.
+    position: Option<(f64, f64)>,
+    /// Skip the hit test and the enabled check: act at the point whatever
+    /// is there.
+    force: bool,
+    /// `wheel`: the delta.
+    delta: (f64, f64),
+}
+
+impl Default for PointerOpts {
+    fn default() -> Self {
+        PointerOpts { button: MouseButton::Left, position: None, force: false, delta: (0.0, 0.0) }
+    }
+}
+
+/// A `mouse` step's action, at viewport coordinates (`page.mouse.*`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MouseAction {
+    Click,
+    DblClick,
+    Move,
+    Down,
+    Up,
+    Wheel,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -281,6 +332,19 @@ enum Step {
         to: Option<Locator>,
         /// `upload`: the files.
         files: Vec<UploadFile>,
+        /// `click`, `dblclick`, `hover`, `wheel`: how the pointer lands.
+        pointer: PointerOpts,
+    },
+    /// A pointer action at viewport coordinates, not tied to an element.
+    Mouse {
+        action: MouseAction,
+        /// Where; `down`, `up` and `wheel` default to the current position.
+        x: Option<f64>,
+        y: Option<f64>,
+        pointer: PointerOpts,
+        /// `move`: intermediate moves from the current position.
+        steps: u32,
+        settle: bool,
     },
     Check {
         locator: Locator,
@@ -316,6 +380,10 @@ impl Step {
             Step::Eval { .. } => "eval".into(),
             Step::Request(m) => format!("request {}", serde_json::to_value(m).map(prune).unwrap_or_default()),
             Step::Act { locator, action, .. } => format!("{action:?} {}", locator.describe()),
+            Step::Mouse { action, x, y, .. } => match (x, y) {
+                (Some(x), Some(y)) => format!("mouse {action:?} at {x},{y}"),
+                _ => format!("mouse {action:?}"),
+            },
             Step::Check { locator, assert, .. } => format!("expect {assert:?} {}", locator.describe()),
             Step::Read { locator, read, .. } => format!("read {read:?} {}", locator.describe()),
         }
@@ -1588,7 +1656,7 @@ fn visible_box(page: &PageDom, id: NodeId) -> Option<lp_dom::layout::Rect> {
     page.layout.borrow().client_rect(&dom, id).filter(|r| r.width > 0.0 && r.height > 0.0)
 }
 
-fn act(page: &Rc<PageDom>, id: NodeId, action: Action, value: &str) -> Attempt {
+fn act(page: &Rc<PageDom>, id: NodeId, action: Action, value: &str, opts: PointerOpts) -> Attempt {
     {
         let dom = page.dom.borrow();
         if dom.root_node(id, true).ok() != Some(page.document()) {
@@ -1598,7 +1666,7 @@ fn act(page: &Rc<PageDom>, id: NodeId, action: Action, value: &str) -> Attempt {
     if visible_box(page, id).is_none() {
         return Attempt::Retry("element is not visible".into());
     }
-    if disabled(&page.dom.borrow(), id) {
+    if action.needs_enabled() && !opts.force && disabled(&page.dom.borrow(), id) {
         return Attempt::Retry("element is disabled".into());
     }
     match action {
@@ -1609,9 +1677,9 @@ fn act(page: &Rc<PageDom>, id: NodeId, action: Action, value: &str) -> Attempt {
             if (checked == Checked::Yes) == (action == Action::Check) {
                 return Attempt::Done(json!({}));
             }
-            click(page, id)
+            click(page, id, opts)
         }
-        Action::Click => click(page, id),
+        Action::Click => click(page, id, opts),
         Action::Press => {
             let Some(keys) = key_chord(value) else {
                 return Attempt::Retry(format!("unknown key {value:?}"));
@@ -1632,8 +1700,9 @@ fn act(page: &Rc<PageDom>, id: NodeId, action: Action, value: &str) -> Attempt {
             input::blur_element(page, id);
             Attempt::Done(json!({}))
         }
-        Action::Hover => pointer(page, id, Pointer::Hover),
-        Action::DblClick => pointer(page, id, Pointer::DblClick),
+        Action::Hover => pointer(page, id, Pointer::Hover, opts),
+        Action::DblClick => pointer(page, id, Pointer::DblClick, opts),
+        Action::Wheel => pointer(page, id, Pointer::Wheel, opts),
         Action::Upload | Action::Drag => unreachable!("handled by the host"),
         Action::Type => {
             if input::key_target(page) != Some(id) {
@@ -1761,20 +1830,82 @@ enum Pointer {
     Click,
     DblClick,
     Hover,
+    Wheel,
 }
 
 /// Scrolls the element into view, checks that its center receives pointer
 /// events, then dispatches move, press and release there.
-fn click(page: &Rc<PageDom>, id: NodeId) -> Attempt {
-    pointer(page, id, Pointer::Click)
+fn click(page: &Rc<PageDom>, id: NodeId, opts: PointerOpts) -> Attempt {
+    pointer(page, id, Pointer::Click, opts)
 }
 
-/// The element's center, once it is revealed and receives pointer events
-/// there.
-fn pointer_target(page: &Rc<PageDom>, id: NodeId) -> Result<(f64, f64), Attempt> {
+/// The `buttons` bit of a button while it is held.
+fn buttons_mask(button: MouseButton) -> u16 {
+    match button {
+        MouseButton::Left => 1,
+        MouseButton::Right => 2,
+        MouseButton::Middle => 4,
+        MouseButton::Back => 8,
+        MouseButton::Forward => 16,
+        MouseButton::None => 0,
+    }
+}
+
+/// The part of the element's box inside the viewport and inside each
+/// overflow-clipping ancestor (what Playwright aims at: the center of the
+/// visible part, not of the whole box), or `None` when nothing shows.
+fn clipped_box(page: &PageDom, id: NodeId, rect: lp_dom::layout::Rect) -> Option<lp_dom::layout::Rect> {
+    let dom = page.dom.borrow();
+    let layout = page.layout.borrow();
+    let (mut left, mut top) = (rect.left().max(0.0), rect.top().max(0.0));
+    let (mut right, mut bottom) =
+        (rect.right().min(layout.inner_width() as f64), rect.bottom().min(layout.inner_height() as f64));
+    let mut cur = dom.parent_element(id).ok().flatten();
+    while let Some(a) = cur {
+        if layout.is_root_container(&dom, a) {
+            break;
+        }
+        let clips = layout.style().overflow_clip_axes(&dom, a);
+        if clips.x || clips.y {
+            if let Some(r) = layout.client_rect(&dom, a) {
+                if clips.x {
+                    left = left.max(r.left());
+                    right = right.min(r.right());
+                }
+                if clips.y {
+                    top = top.max(r.top());
+                    bottom = bottom.min(r.bottom());
+                }
+            }
+        }
+        cur = dom.parent_element(a).ok().flatten();
+    }
+    (right > left && bottom > top).then_some(lp_dom::layout::Rect {
+        x: left,
+        y: top,
+        width: right - left,
+        height: bottom - top,
+    })
+}
+
+/// Where a pointer action lands, once the element is revealed: `position`
+/// from its top-left, else the center of its visible part; checked to
+/// receive pointer events there unless `force`.
+fn pointer_target(page: &Rc<PageDom>, id: NodeId, opts: PointerOpts) -> Result<(f64, f64), Attempt> {
     super::dom::reveal(page, id);
     let Some(rect) = visible_box(page, id) else { return Err(Attempt::Retry("element is not visible".into())) };
-    let (x, y) = (rect.x + rect.width / 2.0, rect.y + rect.height / 2.0);
+    let (x, y) = match opts.position {
+        Some((dx, dy)) => (rect.x + dx, rect.y + dy),
+        None => {
+            let Some(shown) = clipped_box(page, id, rect) else {
+                return Err(Attempt::Retry("element is outside the viewport".into()));
+            };
+            (shown.x + shown.width / 2.0, shown.y + shown.height / 2.0)
+        }
+    };
+    if opts.force {
+        return Ok((x, y));
+    }
     match lp_webapi::layout_api::hit_test(page, x, y) {
         Some(hit) if contains(&page.dom.borrow(), id, hit) => Ok((x, y)),
         Some(hit) => {
@@ -1785,41 +1916,33 @@ fn pointer_target(page: &Rc<PageDom>, id: NodeId) -> Result<(f64, f64), Attempt>
     }
 }
 
-fn pointer(page: &Rc<PageDom>, id: NodeId, what: Pointer) -> Attempt {
-    let (x, y) = match pointer_target(page, id) {
+/// The mouse events of a pointer action: kind, button, click count.
+fn pointer_events(what: Pointer, button: MouseButton) -> Vec<(MouseKind, MouseButton, u32)> {
+    let press = |count| [(MouseKind::Pressed, button, count), (MouseKind::Released, button, count)];
+    let mut events = vec![(MouseKind::Moved, MouseButton::None, 0)];
+    match what {
+        Pointer::Hover => {}
+        Pointer::Wheel => events.push((MouseKind::Wheel, MouseButton::None, 0)),
+        Pointer::Click => events.extend(press(1)),
+        Pointer::DblClick => {
+            events.extend(press(1));
+            events.extend(press(2));
+        }
+    }
+    events
+}
+
+fn pointer(page: &Rc<PageDom>, id: NodeId, what: Pointer, opts: PointerOpts) -> Attempt {
+    let (x, y) = match pointer_target(page, id, opts) {
         Ok(p) => p,
         Err(retry) => return retry,
     };
-    let mut m = MouseInput {
-        x,
-        y,
-        button: MouseButton::None,
-        buttons: 0,
-        click_count: 0,
-        modifiers: Default::default(),
-        delta_x: 0.0,
-        delta_y: 0.0,
-    };
-    let steps: &[(MouseKind, MouseButton, u16, u32)] = match what {
-        Pointer::Hover => &[(MouseKind::Moved, MouseButton::None, 0, 0)],
-        Pointer::Click => &[
-            (MouseKind::Moved, MouseButton::None, 0, 0),
-            (MouseKind::Pressed, MouseButton::Left, 1, 1),
-            (MouseKind::Released, MouseButton::Left, 0, 1),
-        ],
-        Pointer::DblClick => &[
-            (MouseKind::Moved, MouseButton::None, 0, 0),
-            (MouseKind::Pressed, MouseButton::Left, 1, 1),
-            (MouseKind::Released, MouseButton::Left, 0, 1),
-            (MouseKind::Pressed, MouseButton::Left, 1, 2),
-            (MouseKind::Released, MouseButton::Left, 0, 2),
-        ],
-    };
-    for &(kind, button, buttons, count) in steps {
+    let mut m = MouseInput { x, y, delta_x: opts.delta.0, delta_y: opts.delta.1, ..MouseInput::default() };
+    for (kind, button, count) in pointer_events(what, opts.button) {
         // Hover-dependent layout (a tooltip the move hid, a menu it opened)
         // can shift the element between events: press where it is now.
         if kind == MouseKind::Pressed {
-            match pointer_target(page, id) {
+            match pointer_target(page, id, opts) {
                 Ok((x, y)) => {
                     m.x = x;
                     m.y = y;
@@ -1828,10 +1951,60 @@ fn pointer(page: &Rc<PageDom>, id: NodeId, what: Pointer) -> Attempt {
             }
         }
         m.button = button;
-        m.buttons = buttons;
+        m.buttons = if kind == MouseKind::Pressed { buttons_mask(button) } else { 0 };
         m.click_count = count;
         if let Err(e) = input::dispatch_mouse(page, kind, &m) {
             return Attempt::Retry(e);
+        }
+    }
+    Attempt::Done(json!({}))
+}
+
+/// A `mouse` step: the events of `page.mouse.*` at viewport coordinates.
+/// A move with `steps` walks from the current position in equal parts.
+fn mouse_step(
+    page: &Rc<PageDom>,
+    action: MouseAction,
+    x: Option<f64>,
+    y: Option<f64>,
+    opts: PointerOpts,
+    steps: u32,
+) -> Attempt {
+    let (x0, y0) = input::pointer_position(page).unwrap_or((0.0, 0.0));
+    let (x, y) = (x.unwrap_or(x0), y.unwrap_or(y0));
+    let mut m = MouseInput { x, y, delta_x: opts.delta.0, delta_y: opts.delta.1, ..MouseInput::default() };
+    // Buttons stay held between steps (`down`, `move`, `up` drags).
+    m.buttons = input::pointer_buttons(page);
+    let send = |m: &MouseInput, kind: MouseKind| input::dispatch_mouse(page, kind, m).map_err(Attempt::Retry);
+    let events = match action {
+        MouseAction::Move => {
+            let steps = steps.max(1);
+            for i in 1..=steps {
+                let t = i as f64 / steps as f64;
+                m.x = x0 + (x - x0) * t;
+                m.y = y0 + (y - y0) * t;
+                if let Err(retry) = send(&m, MouseKind::Moved) {
+                    return retry;
+                }
+            }
+            return Attempt::Done(json!({}));
+        }
+        MouseAction::Down => vec![(MouseKind::Pressed, opts.button, 1)],
+        MouseAction::Up => vec![(MouseKind::Released, opts.button, 1)],
+        MouseAction::Click => pointer_events(Pointer::Click, opts.button),
+        MouseAction::DblClick => pointer_events(Pointer::DblClick, opts.button),
+        MouseAction::Wheel => vec![(MouseKind::Wheel, MouseButton::None, 0)],
+    };
+    for (kind, button, count) in events {
+        m.button = button;
+        match kind {
+            MouseKind::Pressed => m.buttons |= buttons_mask(button),
+            MouseKind::Released => m.buttons &= !buttons_mask(button),
+            _ => {}
+        }
+        m.click_count = count;
+        if let Err(retry) = send(&m, kind) {
+            return retry;
         }
     }
     Attempt::Done(json!({}))
@@ -1873,7 +2046,7 @@ fn upload(page: &Rc<PageDom>, id: NodeId, files: &[UploadFile]) -> Attempt {
 /// and drop on the target. Anything else gets pointer events with the
 /// button held, as pointer-based drag libraries expect.
 fn drag(page: &Rc<PageDom>, from: NodeId, to: NodeId) -> Attempt {
-    let (x0, y0) = match pointer_target(page, from) {
+    let (x0, y0) = match pointer_target(page, from, PointerOpts::default()) {
         Ok(p) => p,
         Err(retry) => return retry,
     };
@@ -2046,7 +2219,86 @@ struct ActParams {
     /// `upload`: inline files; else `value` is a path (several: one per line).
     #[serde(default)]
     files: Vec<UploadParams>,
+    /// `click`, `dblclick`: `left` (default), `right` or `middle`.
+    button: Option<String>,
+    /// `click`, `dblclick`, `hover`, `wheel`: where on the element, as an
+    /// offset from its top-left (default: the center of its visible part).
+    position: Option<Position>,
+    /// `click`, `dblclick`, `hover`, `wheel`: skip the hit test and the
+    /// enabled check.
+    #[serde(default)]
+    force: bool,
+    /// `wheel`: the delta.
+    delta_x: Option<f64>,
+    delta_y: Option<f64>,
     timeout: Option<u64>,
+}
+
+/// `{"x": 5, "y": 7}`.
+#[derive(Deserialize, Clone, Copy, Debug)]
+#[serde(deny_unknown_fields)]
+struct Position {
+    x: f64,
+    y: f64,
+}
+
+/// `{"mouse": {"action": "click", "x": 10, "y": 20}}`: `page.mouse.*` at
+/// viewport coordinates. `move` takes `steps` (intermediate moves);
+/// `down`/`up` take `button`; `wheel` takes `deltaX`/`deltaY`; `down`, `up`
+/// and `wheel` act at the current position unless given `x` and `y`.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct MouseParams {
+    action: String,
+    x: Option<f64>,
+    y: Option<f64>,
+    button: Option<String>,
+    delta_x: Option<f64>,
+    delta_y: Option<f64>,
+    steps: Option<u32>,
+    /// Wait for the requests the action started (default: true).
+    settle: Option<bool>,
+    timeout: Option<u64>,
+}
+
+fn mouse_button(name: Option<&str>) -> CdpResult<MouseButton> {
+    Ok(match name {
+        None | Some("left") => MouseButton::Left,
+        Some("right") => MouseButton::Right,
+        Some("middle") => MouseButton::Middle,
+        _ => return Err(CdpError::invalid_params("button must be left, right or middle")),
+    })
+}
+
+impl MouseParams {
+    fn step(self) -> CdpResult<(Step, Option<u64>)> {
+        let action = match self.action.as_str() {
+            "click" => MouseAction::Click,
+            "dblclick" => MouseAction::DblClick,
+            "move" => MouseAction::Move,
+            "down" => MouseAction::Down,
+            "up" => MouseAction::Up,
+            "wheel" => MouseAction::Wheel,
+            _ => return Err(CdpError::invalid_params("mouse action must be click, dblclick, move, down, up or wheel")),
+        };
+        if matches!(action, MouseAction::Click | MouseAction::DblClick | MouseAction::Move)
+            && (self.x.is_none() || self.y.is_none())
+        {
+            return Err(CdpError::invalid_params(format!("mouse {} needs x and y", self.action)));
+        }
+        if self.x.is_some() != self.y.is_some() {
+            return Err(CdpError::invalid_params("mouse needs both x and y, or neither"));
+        }
+        let pointer = PointerOpts {
+            button: mouse_button(self.button.as_deref())?,
+            position: None,
+            force: true,
+            delta: (self.delta_x.unwrap_or(0.0), self.delta_y.unwrap_or(0.0)),
+        };
+        let steps = self.steps.unwrap_or(1).clamp(1, 1_000);
+        let settle = self.settle.unwrap_or(true);
+        Ok((Step::Mouse { action, x: self.x, y: self.y, pointer, steps, settle }, self.timeout))
+    }
 }
 
 /// `{"name": "a.csv", "mimeType"?: "text/csv", "text"?: "..." | "base64"?: "..."}`.
@@ -2150,6 +2402,7 @@ enum StepParams {
     Popup(PopupParams),
     Route(RouteParams),
     Act(ActParams),
+    Mouse(MouseParams),
     Check(ExpectParams),
     Read(QueryParams),
     Eval(EvalParams),
@@ -2309,8 +2562,9 @@ impl ActParams {
             "type" => Action::Type,
             "upload" => Action::Upload,
             "drag" => Action::Drag,
+            "wheel" => Action::Wheel,
             _ => return Err(CdpError::invalid_params(
-                "action must be click, fill, focus, check, uncheck, press, hover, dblclick, blur, type, upload or drag",
+                "action must be click, fill, focus, check, uncheck, press, hover, dblclick, blur, type, upload, drag or wheel",
             )),
         };
         if action == Action::Drag {
@@ -2321,7 +2575,16 @@ impl ActParams {
         }
         let files = upload_files(action, &self.value, self.files)?;
         let settle = self.settle.unwrap_or(settle_default);
-        Ok((Step::Act { locator: self.locator, action, value: self.value, settle, to: self.to, files }, self.timeout))
+        let pointer = PointerOpts {
+            button: mouse_button(self.button.as_deref())?,
+            position: self.position.map(|p| (p.x, p.y)),
+            force: self.force,
+            delta: (self.delta_x.unwrap_or(0.0), self.delta_y.unwrap_or(0.0)),
+        };
+        Ok((
+            Step::Act { locator: self.locator, action, value: self.value, settle, to: self.to, files, pointer },
+            self.timeout,
+        ))
     }
 }
 
@@ -2411,6 +2674,7 @@ impl StepParams {
             StepParams::Eval(p) => Ok((Step::Eval { expression: p.expression, key: p.key }, p.timeout)),
             StepParams::Request(p) => Ok((Step::Request(p.matcher), p.timeout)),
             StepParams::Act(p) => p.step(true),
+            StepParams::Mouse(p) => p.step(),
             StepParams::Check(p) => p.step(),
             StepParams::Read(p) => {
                 let read = p.read()?;
@@ -2521,10 +2785,11 @@ impl EngineHost {
             | Step::Popup { .. }
             | Step::Route { .. }
             | Step::Eval { .. }
-            | Step::Request(_) => {
+            | Step::Request(_)
+            | Step::Mouse { .. } => {
                 unreachable!("not a locator step")
             }
-            Step::Act { locator, action, value, to, files, .. } => {
+            Step::Act { locator, action, value, to, files, pointer, .. } => {
                 let found = locator.resolve(page, &self.waiters.selectors)?;
                 let Some(el) = single(&found, &page.dom.borrow(), locator)? else { return Ok(no_match(locator)) };
                 let result = match action {
@@ -2540,7 +2805,7 @@ impl EngineHost {
                         }
                         drag(page, el, target)
                     }
-                    _ => act(page, el, *action, value),
+                    _ => act(page, el, *action, value, *pointer),
                 };
                 if matches!(result, Attempt::Done(_)) {
                     self.thread.browser.checkpoint();
@@ -2767,8 +3032,13 @@ impl EngineHost {
                         w.phase = Phase::Load { loader: loader.0, dom_ready: false };
                         continue;
                     }
-                    let before = matches!(step, Step::Act { settle: true, .. } | Step::Route { settle: true, .. })
-                        .then(|| requests_of(&self.thread.browser, pid));
+                    let before = matches!(
+                        step,
+                        Step::Act { settle: true, .. }
+                            | Step::Mouse { settle: true, .. }
+                            | Step::Route { settle: true, .. }
+                    )
+                    .then(|| requests_of(&self.thread.browser, pid));
                     let (attempt, page) = match &step {
                         Step::Request(m) => (self.match_request(&w.job, m), None),
                         Step::Url(pattern) => {
@@ -2822,6 +3092,14 @@ impl EngineHost {
                                 self.eval_step(pid, &src).map_err(|e| w.job.fail(e))?;
                                 (Attempt::Done(json!({})), None)
                             }
+                        }
+                        Step::Mouse { action, x, y, pointer, steps, .. } => {
+                            let page = self.main_document(w.job.page).map_err(|e| w.job.fail(e))?;
+                            let attempt = mouse_step(&page, *action, *x, *y, *pointer, *steps);
+                            if matches!(attempt, Attempt::Done(_)) {
+                                self.thread.browser.checkpoint();
+                            }
+                            (attempt, Some(page))
                         }
                         _ => {
                             let page = self.main_document(w.job.page).map_err(|e| w.job.fail(e))?;
