@@ -1,5 +1,5 @@
 diff --git a/Source/JavaScriptCore/API/JSAPIGlobalObject.cpp b/Source/JavaScriptCore/API/JSAPIGlobalObject.cpp
-index b0ddb105..fc91fb2f 100644
+index b0ddb105..24fc4d22 100644
 --- a/Source/JavaScriptCore/API/JSAPIGlobalObject.cpp
 +++ b/Source/JavaScriptCore/API/JSAPIGlobalObject.cpp
 @@ -30,6 +30,26 @@
@@ -124,7 +124,7 @@ index b0ddb105..fc91fb2f 100644
 +{
 +    VM& vm = globalObject->vm();
 +    auto scope = DECLARE_THROW_SCOPE(vm);
-+    auto* thisObject = jsCast<JSAPIGlobalObject*>(globalObject);
++    auto* thisObject = uncheckedDowncast<JSAPIGlobalObject>(globalObject);
 +
 +    JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
 +

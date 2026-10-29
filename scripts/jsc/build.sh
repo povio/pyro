@@ -55,7 +55,12 @@ for p in "$inputs"/patches/*.patch; do
     git -C "$src" apply --whitespace=nowarn "$p"
 done
 
+# Resolve the real interpreter: version-manager shims (asdf) fail in the build
+# directory, which has no .tool-versions.
+ruby_bin="$(ruby -e 'print RbConfig.ruby' 2>/dev/null || echo /usr/bin/ruby)"
+
 cmake -G Ninja -S "$src" -B "$build" \
+    -DRuby_EXECUTABLE="$ruby_bin" \
     -DPORT=JSCOnly \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
@@ -64,8 +69,10 @@ cmake -G Ninja -S "$src" -B "$build" \
     -DENABLE_TOOLS=OFF
 ninja -C "$build" -j "$jobs" JavaScriptCore
 
-lib="$(find "$build/lib" -maxdepth 1 -name 'libJavaScriptCore*.dylib' -type f | head -1)"
-[[ -n "$lib" ]] || { echo "no libJavaScriptCore dylib under $build/lib" >&2; exit 1; }
+# On Apple platforms JSCOnly emits a framework; ship its binary as a plain dylib so
+# it cannot be confused with the system JavaScriptCore.framework.
+lib="$(find "$build/lib/JavaScriptCore.framework/Versions" -maxdepth 2 -name JavaScriptCore -type f | head -1)"
+[[ -n "$lib" ]] || { echo "no JavaScriptCore binary under $build/lib" >&2; exit 1; }
 
 tmp="$out.tmp"
 rm -rf "$tmp"

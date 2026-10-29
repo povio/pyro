@@ -11,7 +11,7 @@ see [PARITY.md](PARITY.md) for what exists today.
 
 | Crate | Owner | Depends on | Responsibility |
 |---|---|---|---|
-| `lp-jsc-sys` | W1 runtime | system JSC | Raw C API FFI. Runtime-resolved private SPI (`spi::get()`). ObjC module-loader shim. |
+| `lp-jsc-sys` | W1 runtime | patched source JSC (or system JSC) | Raw C API FFI. Runtime-resolved private SPI (`spi::get()`). C module-loader shim (source JSC) or ObjC shim (system JSC). |
 | `lp-js` | W1 | lp-jsc-sys | Engine, realms/worlds, values, `Persistent`, host classes, errors, promises, modules, console, termination. |
 | `lp-runtime` | W1 | — | Single-threaded event loop: tasks, timers, `LoopHandle` cross-thread posting. |
 | `lp-browser` | W1 (W2 provides document loading) | lp-js, lp-runtime, later lp-dom/lp-net/lp-webapi | Browser → Page → Frame tree, navigation state machine, loader ids, worlds, init scripts, window timers, ordered `PageEvent`s. |
@@ -225,11 +225,35 @@ Order on navigation:
 **Only `about:blank` loads today.** Unlike the pinned upstream build, it has an executable realm. Other URLs emit
 `FrameNavigateFailed("net::ERR_NOT_IMPLEMENTED …")` until W2's loader is integrated.
 
+## JavaScriptCore source build
+
+`lp-jsc-sys` links a patched JavaScriptCore built from WebKit source, so the engine can be changed (the goal is
+copy-on-write page snapshots: load an app's JS once, then start each test from that state). Inputs live in
+`crates/lp-jsc-sys/webkit/`: `REVISION` (WebKit commit) and `patches/*.patch`, kept small and few, like Bun's fork.
+
+- `scripts/jsc/build.sh` builds WebKit's portable JSCOnly CMake port (the Apple framework build needs full Xcode)
+  into `~/Library/Caches/lightningpanda/jsc/<revision>-<patch hash>/lib/libJavaScriptCore.dylib`, with a copy of
+  the inputs. Needs `brew install cmake ninja`. A clean build took a few minutes at `-j10` on an M1 Max; after a
+  patch change ninja rebuilds incrementally.
+- The dylib has an absolute install name and is linked dynamically, so Rust edit rebuilds cost the same as with the
+  system framework.
+- `build.rs` links the cached build whose inputs match the checkout. Without one it warns and falls back to the
+  system framework (patched-only entry points are then reported unsupported). `LP_JSC=system` forces the system
+  framework, `LP_JSC_DIR=<dir>` uses `<dir>/lib/libJavaScriptCore.dylib`.
+- JSCOnly has no Objective-C API, so patch `0001` adds a C module-loader SPI (`JSGlobalContextSetModuleLoader`,
+  `JSModuleSourceCreate`, `JSLoadAndEvaluateModule`) to `JSAPIGlobalObject`, ported from `JSAPIGlobalObject.mm`.
+  `shim/modules_source.c` maps the crate's `lp_jsc_module_*` interface onto it.
+
+To change JSC: edit the checkout in `~/Library/Caches/lightningpanda/webkit-src`, `ninja -C ../webkit-build
+JavaScriptCore` to iterate, then regenerate the patch with `git diff` (use `git add -N` for new files) and rerun
+`scripts/jsc/build.sh`, which resets the checkout and applies `patches/` from scratch.
+
 ## Platform support
 
 | Platform | JSC | Status |
 |---|---|---|
 | macOS 27.0.1 (26A434) arm64, SDK 27.0, JavaScriptCore 22625.1.29.11.28 (dylib 625.1.29), rustc 1.99.1 | system framework | builds; all tests pass |
+| macOS 27.0.1 arm64, Command Line Tools only (no Xcode), WebKit `0e0dd70` JSCOnly + `webkit/patches` | source dylib | builds; all tests pass |
 | other macOS versions | system framework | untested. Deployment target is 14.0; SPI is probed at runtime |
 | Linux | WebKitGTK `libjavascriptcoregtk` (C API only) | **not supported yet** (`build.rs` panics). No module loader exists there |
 
