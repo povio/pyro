@@ -21,6 +21,7 @@ lp-dom = { path = "crates/lp-dom" }
 lp-net = { path = "crates/lp-net" }
 lp-psl = { path = "crates/lp-psl" }
 lp-webapi = { path = "crates/lp-webapi" }
+lp-cdp-protocol = { path = "crates/lp-cdp-protocol" }
 lp-cdp = { path = "crates/lp-cdp" }
 
 [workspace.lints.rust]
