@@ -3,10 +3,17 @@
 # resolved at runtime (lp_jsc_sys::spi) rather than linked.
 MACOSX_DEPLOYMENT_TARGET = "14.0"
 
-# Sign macOS executables with the JIT entitlement after linking (see
-# scripts/macos/link-and-sign.sh). Applies to `cargo build`, `run` and `test`.
+# Sign macOS executables with the JIT entitlement after linking: `cc` takes
+# `ld` from scripts/macos/linker (see scripts/macos/linker/ld). Applies to
+# `cargo build`, `run` and `test`. The path is relative to rustc's working
+# directory, which Cargo sets to the workspace root for workspace members, so
+# rustc command lines carry no checkout path and sccache can share dependency
+# builds across worktrees (a `linker = ...` path is made absolute by Cargo).
+# Dependencies' build scripts link from their own directory, where the path
+# does not exist, and `cc` falls back to the default ld.
+# RUSTFLAGS in the environment replaces these flags; add them back to it.
 [target.aarch64-apple-darwin]
-linker = "scripts/macos/link-and-sign.sh"
+rustflags = ["-C", "link-arg=-Bscripts/macos/linker"]
 
 [target.x86_64-apple-darwin]
-linker = "scripts/macos/link-and-sign.sh"
+rustflags = ["-C", "link-arg=-Bscripts/macos/linker"]

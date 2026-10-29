@@ -1,4 +1,4 @@
-//! The macOS build path (scripts/macos/link-and-sign.sh via .cargo/config.toml)
+//! The macOS build path (scripts/macos/linker/ld via .cargo/config.toml)
 //! must sign executables with the JIT entitlement; without it the system
 //! JavaScriptCore silently runs interpreter-only.
 #![cfg(target_os = "macos")]
