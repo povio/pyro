@@ -7,6 +7,7 @@
 mod conn;
 pub mod engine;
 pub mod fetch_protocol;
+pub mod fork;
 mod handshake_crypto;
 pub mod http;
 pub mod msg;

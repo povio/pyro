@@ -52,6 +52,9 @@ options:
                                         quiet (default, one extra booted app) or once the
                                         acquired page's context closes (no extra app;
                                         env LIGHTNINGPANDA_PREPARE_REFILL)
+  --fork                                serve every connection from a fork() of a process
+                                        that booted the prepared pages once (patched
+                                        JavaScriptCore only; env LIGHTNINGPANDA_FORK=1)
 
 HTTP and data: document loading are supported; browser API coverage is partial.
 --experimental-features and --load-resources are accepted for CLI compatibility;
@@ -81,6 +84,14 @@ its default context. Lightningpanda.registerPreparedPage {url, initScripts?,
 viewport?, pool?} declares a profile at run time, with the init scripts a
 test would otherwise install after the page exists. Lightningpanda.preparedPages
 lists what is waiting.
+
+--fork: one template process boots one page per prepared profile (--prepare,
+and every Lightningpanda.registerPreparedPage, from any connection), and each
+connection is served by a fork() of it. A connection therefore starts with
+every profile's page booted, sharing its memory with the template until it
+writes to it, and its process exits when it closes. Open one connection per
+test (Lightningpanda.capabilities reports {fork: true}); registering a profile
+boots it in the template for the connections that follow.
 ";
 
 /// How long a spare thread keeps booting prepared pages before it just waits.
@@ -108,6 +119,11 @@ pub struct ServeOptions {
     /// `--prepare-refill after-close`: replacements wait for the acquired
     /// page's context to close.
     pub prepare_refill_after_close: bool,
+    /// `--fork` (or `LIGHTNINGPANDA_FORK=1`): connections are forks of a
+    /// template process ([`crate::fork`]).
+    pub fork: bool,
+    /// `--template <socket>`: this process is that template (internal).
+    pub template: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -140,9 +156,14 @@ impl Default for ServeOptions {
                 .map(|v| v.split(';').map(str::trim).filter(|e| !e.is_empty()).map(str::to_owned).collect())
                 .unwrap_or_default(),
             prepare_refill_after_close: std::env::var(PREPARE_REFILL_ENV).is_ok_and(|v| v.trim() == "after-close"),
+            fork: std::env::var(FORK_ENV).is_ok_and(|v| v.trim() == "1"),
+            template: None,
         }
     }
 }
+
+/// Environment equivalent of `--fork` (`1`).
+pub const FORK_ENV: &str = "LIGHTNINGPANDA_FORK";
 
 /// Environment equivalent of `--prepare-refill`.
 pub const PREPARE_REFILL_ENV: &str = "LIGHTNINGPANDA_PREPARE_REFILL";
@@ -218,6 +239,8 @@ pub fn parse_args(args: &[String]) -> Result<ServeOptions, String> {
                 "after-close" => o.prepare_refill_after_close = true,
                 other => return Err(format!("--prepare-refill: '{other}' is not quiet or after-close")),
             },
+            "--fork" => o.fork = true,
+            "--template" => o.template = Some(PathBuf::from(value()?)),
             other => return Err(format!("unknown option '{other}'")),
         }
     }
@@ -291,12 +314,30 @@ pub fn serve_main(args: &[String]) -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    if let Some(socket) = &options.template {
+        return crate::fork::template_main(&options, socket);
+    }
     let profile = match browser_profile(&options) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("lightningpanda serve: {e}");
             return ExitCode::from(2);
         }
+    };
+    let template = if options.fork {
+        if !crate::fork::supported() {
+            eprintln!("lightningpanda serve: --fork needs the patched JavaScriptCore (scripts/jsc/build.sh)");
+            return ExitCode::from(2);
+        }
+        match crate::fork::Template::spawn(args) {
+            Ok(t) => Some(Arc::new(t)),
+            Err(e) => {
+                eprintln!("lightningpanda serve: --fork: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    } else {
+        None
     };
     if options.log_level <= LogLevel::Info {
         for (origin, count) in profile.local_storage.summary() {
@@ -318,6 +359,13 @@ pub fn serve_main(args: &[String]) -> ExitCode {
     };
     let result = runtime.block_on(async {
         let addr = SocketAddr::new(options.host, options.port);
+        if let Some(template) = template {
+            let server = Server::bind(addr, options.server.clone(), ForkPerConnection { template }).await?;
+            if options.log_level <= LogLevel::Info {
+                eprintln!("lightningpanda: CDP server listening on ws://{}/ (fork mode)", server.local_addr()?);
+            }
+            return server.run().await;
+        }
         let factory = ThreadPerConnection::with_spare(profile)?;
         let server = Server::bind(addr, options.server.clone(), factory).await?;
         if options.log_level <= LogLevel::Info {
@@ -404,7 +452,7 @@ impl ThreadPerConnection {
                 }
             };
             let _finished = a.finished;
-            run_browser_thread(prepared, &profile, a.socket, &a.buffered, a.config);
+            run_browser_thread(prepared, &profile, a.socket, &a.buffered, a.config, None);
         })?;
         Ok(tx)
     }
@@ -456,17 +504,44 @@ impl SessionFactory for ThreadPerConnection {
     }
 }
 
+/// `serve --fork`: every upgraded connection goes to a fork of the template.
+pub struct ForkPerConnection {
+    template: Arc<crate::fork::Template>,
+}
+
+impl SessionFactory for ForkPerConnection {
+    fn start(&self, _peer: SocketAddr) -> std::io::Result<SessionChannels> {
+        Err(std::io::Error::other("ForkPerConnection serves the upgraded socket itself (start_owned)"))
+    }
+
+    fn owns_sockets(&self) -> bool {
+        true
+    }
+
+    fn start_owned(
+        &self,
+        _peer: SocketAddr,
+        socket: std::net::TcpStream,
+        buffered: Vec<u8>,
+        _config: &ServerConfig,
+    ) -> Option<std::io::Result<oneshot::Receiver<()>>> {
+        Some(crate::fork::connect(self.template.socket(), socket, buffered))
+    }
+}
+
 /// Replies to pipelined commands are written at least every this many commands.
 const FLUSH_EVERY: usize = 16;
 
 /// Serves one connection on this (browser) thread until it ends: the
 /// connection's socket is read and written here (see [`crate::conn`]).
-fn run_browser_thread(
+/// `fork_register` makes it a fork child of the template (`serve --fork`).
+pub(crate) fn run_browser_thread(
     prepared: Result<(lp_browser::BrowserThread, Vec<crate::engine::Prebooted>), crate::msg::CdpError>,
     profile: &BrowserProfile,
     socket: std::net::TcpStream,
     buffered: &[u8],
     config: ServerConfig,
+    fork_register: Option<crate::target::RegisterPrepared>,
 ) {
     let (outbox, outbound) = Outbox::channel(DEFAULT_OUTBOUND_BUDGET);
     let conn = match Conn::new(socket, buffered, outbound, config) {
@@ -490,6 +565,9 @@ fn run_browser_thread(
         }
     };
     let mut browser = Browser::with_prepared(host, profile.prepared.clone());
+    if let Some(register) = fork_register {
+        browser.set_fork_child(register);
+    }
     // Network threads that exceed the budget wake this loop to close (1008).
     let handle = browser.host().thread.handle();
     outbox.set_waker(Box::new(move || {

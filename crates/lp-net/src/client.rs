@@ -268,7 +268,8 @@ enum Cmd {
 }
 
 struct Inner {
-    tx: mpsc::UnboundedSender<Cmd>,
+    /// Replaced when the I/O thread restarts after a fork ([`suspend_for_fork`]).
+    tx: Mutex<mpsc::UnboundedSender<Cmd>>,
     next_id: AtomicU64,
     cookies: Arc<Mutex<CookieJar>>,
     shared: Arc<Shared>,
@@ -322,6 +323,8 @@ impl Drop for ActivityGuard {
 }
 
 struct Shared {
+    /// The I/O thread is stopping for a fork, not for good: keep observers open.
+    suspending: std::sync::atomic::AtomicBool,
     config: NetConfig,
     settings: Mutex<NetSettings>,
     observers: Subscriptions,
@@ -347,7 +350,7 @@ impl Drop for Inner {
         // Closing the channel stops the I/O loop, which fails in-flight
         // requests with `Aborted` before exiting.
         let (dead, _) = mpsc::unbounded_channel();
-        self.tx = dead;
+        *self.tx.get_mut().unwrap_or_else(|e| e.into_inner()) = dead;
         if let Some(t) = self.thread.lock().unwrap().take() {
             let _ = t.join();
         }
@@ -366,6 +369,7 @@ impl NetClient {
         let (tx, rx) = mpsc::unbounded_channel();
         let cache = crate::cache::HttpCache::new(config.http_cache_max_bytes, config.http_cache_max_entry_bytes);
         let shared = Arc::new(Shared {
+            suspending: std::sync::atomic::AtomicBool::new(false),
             config,
             settings: Mutex::new(NetSettings::default()),
             observers: Subscriptions::default(),
@@ -376,16 +380,18 @@ impl NetClient {
         let cookies = Arc::new(Mutex::new(CookieJar::new()));
         let (s2, c2) = (shared.clone(), cookies.clone());
         let thread = std::thread::Builder::new().name("lp-net-io".into()).spawn(move || io_main(rx, s2, c2))?;
-        Ok(NetClient {
-            inner: Arc::new(Inner {
-                tx,
-                next_id: AtomicU64::new(1),
-                cookies,
-                shared,
-                thread: Mutex::new(Some(thread)),
-                activity: Arc::default(),
-            }),
-        })
+        let inner = Arc::new(Inner {
+            tx: Mutex::new(tx),
+            next_id: AtomicU64::new(1),
+            cookies,
+            shared,
+            thread: Mutex::new(Some(thread)),
+            activity: Arc::default(),
+        });
+        let mut clients = CLIENTS.lock().unwrap_or_else(|e| e.into_inner());
+        clients.retain(|c| c.strong_count() > 0);
+        clients.push(Arc::downgrade(&inner));
+        Ok(NetClient { inner })
     }
 
     pub fn cookies(&self) -> &Arc<Mutex<CookieJar>> {
@@ -453,7 +459,7 @@ impl NetClient {
             None => sink,
         };
         if let Err(mpsc::error::SendError(Cmd::Fetch(_, _, mut sink))) =
-            self.inner.tx.send(Cmd::Fetch(id, Box::new(req), sink))
+            self.inner.tx.lock().unwrap_or_else(|e| e.into_inner()).send(Cmd::Fetch(id, Box::new(req), sink))
         {
             sink(ResponseEvent::Failed(NetError::Other("network thread stopped".into())));
         }
@@ -502,7 +508,7 @@ impl NetClient {
     /// Aborts a request; its sink receives `Failed(Aborted)` unless it
     /// already finished.
     pub fn cancel(&self, id: RequestId) {
-        let _ = self.inner.tx.send(Cmd::Cancel(id));
+        let _ = self.inner.tx.lock().unwrap_or_else(|e| e.into_inner()).send(Cmd::Cancel(id));
     }
 
     /// Blocking fetch for synchronous XHR. Must not be used while the
@@ -537,6 +543,44 @@ impl NetClient {
 
 type HttpClient = Client<HttpConnector, Full<Bytes>>;
 
+/// Every client of the process, for [`suspend_for_fork`].
+static CLIENTS: Mutex<Vec<std::sync::Weak<Inner>>> = Mutex::new(Vec::new());
+
+/// Stops the I/O thread of every client in the process, so that the process
+/// can `fork()` (only the calling thread survives a fork). Requests still in
+/// flight fail with `Aborted`; cookies, cache and observers are kept. Call
+/// [`resume_after_fork`] afterwards, in the parent and in the child.
+pub fn suspend_for_fork() {
+    let clients: Vec<Arc<Inner>> =
+        CLIENTS.lock().unwrap_or_else(|e| e.into_inner()).iter().filter_map(|c| c.upgrade()).collect();
+    for inner in clients {
+        inner.shared.suspending.store(true, Ordering::Relaxed);
+        let (dead, _) = mpsc::unbounded_channel();
+        *inner.tx.lock().unwrap_or_else(|e| e.into_inner()) = dead;
+        if let Some(t) = inner.thread.lock().unwrap_or_else(|e| e.into_inner()).take() {
+            let _ = t.join();
+        }
+    }
+}
+
+/// Restarts the I/O threads [`suspend_for_fork`] stopped.
+pub fn resume_after_fork() -> std::io::Result<()> {
+    let clients: Vec<Arc<Inner>> =
+        CLIENTS.lock().unwrap_or_else(|e| e.into_inner()).iter().filter_map(|c| c.upgrade()).collect();
+    for inner in clients {
+        let mut thread = inner.thread.lock().unwrap_or_else(|e| e.into_inner());
+        if thread.is_some() {
+            continue;
+        }
+        let (tx, rx) = mpsc::unbounded_channel();
+        let (s2, c2) = (inner.shared.clone(), inner.cookies.clone());
+        *thread = Some(std::thread::Builder::new().name("lp-net-io".into()).spawn(move || io_main(rx, s2, c2))?);
+        *inner.tx.lock().unwrap_or_else(|e| e.into_inner()) = tx;
+        inner.shared.suspending.store(false, Ordering::Relaxed);
+    }
+    Ok(())
+}
+
 struct Io {
     shared: Arc<Shared>,
     cookies: Arc<Mutex<CookieJar>>,
@@ -549,7 +593,9 @@ fn io_main(mut rx: mpsc::UnboundedReceiver<Cmd>, shared: Arc<Shared>, cookies: A
     struct CloseObservers(Arc<Shared>);
     impl Drop for CloseObservers {
         fn drop(&mut self) {
-            self.0.observers.close();
+            if !self.0.suspending.load(Ordering::Relaxed) {
+                self.0.observers.close();
+            }
         }
     }
     let _close_observers = CloseObservers(shared.clone());

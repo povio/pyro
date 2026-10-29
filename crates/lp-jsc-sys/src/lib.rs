@@ -480,6 +480,11 @@ unsafe extern "C" {
     ) -> usize;
 }
 
+/// Linked against the patched source build (`scripts/jsc/build.sh`) rather
+/// than the system framework. Its timers run on WTF's own run loop, not on
+/// `CFRunLoop`.
+pub const SOURCE_BUILD: bool = cfg!(lp_jsc_source);
+
 /// Functions exported by the system JavaScriptCore but declared only in
 /// WebKit's private headers (`JSWeakPrivate.h`, `JSContextRefPrivate.h`,
 /// `JSObjectRefPrivate.h`, `JSBasePrivate.h`). Signatures follow WebKit
@@ -516,6 +521,10 @@ pub mod spi {
     pub type JSSynchronousGarbageCollectForDebuggingFn = unsafe extern "C" fn(ctx: JSContextRef);
     pub type JSObjectGetProxyTargetFn = unsafe extern "C" fn(object: JSObjectRef) -> JSObjectRef;
     pub type JSObjectGetGlobalContextFn = unsafe extern "C" fn(object: JSObjectRef) -> JSGlobalContextRef;
+    /// Patched JavaScriptCore only (`webkit/patches/0002-fork-support.patch`).
+    pub type JSPrepareForForkFn = unsafe extern "C" fn(group: JSContextGroupRef, timeout_seconds: c_double) -> bool;
+    pub type JSDidForkFn = unsafe extern "C" fn(is_child: bool);
+    pub type JSGlobalContextReseedRandomFn = unsafe extern "C" fn(ctx: JSGlobalContextRef);
 
     /// Runtime-resolved SPI table. Each entry is `None` when the running
     /// JavaScriptCore does not export the symbol.
@@ -534,12 +543,20 @@ pub mod spi {
         pub synchronous_gc_for_debugging: Option<JSSynchronousGarbageCollectForDebuggingFn>,
         pub get_proxy_target: Option<JSObjectGetProxyTargetFn>,
         pub get_object_global_context: Option<JSObjectGetGlobalContextFn>,
+        pub prepare_for_fork: Option<JSPrepareForForkFn>,
+        pub did_fork: Option<JSDidForkFn>,
+        pub reseed_random: Option<JSGlobalContextReseedRandomFn>,
     }
 
     impl Spi {
         /// Weak references (wrapper identity maps) need all three entry points.
         pub fn weak(&self) -> Option<(JSWeakCreateFn, JSWeakReleaseFn, JSWeakGetObjectFn)> {
             Some((self.weak_create?, self.weak_release?, self.weak_get_object?))
+        }
+
+        /// fork() support needs all three entry points.
+        pub fn fork(&self) -> Option<(JSPrepareForForkFn, JSDidForkFn, JSGlobalContextReseedRandomFn)> {
+            Some((self.prepare_for_fork?, self.did_fork?, self.reseed_random?))
         }
     }
 
@@ -580,6 +597,9 @@ pub mod spi {
             synchronous_gc_for_debugging: resolve!("JSSynchronousGarbageCollectForDebugging"),
             get_proxy_target: resolve!("JSObjectGetProxyTarget"),
             get_object_global_context: resolve!("JSObjectGetGlobalContext"),
+            prepare_for_fork: resolve!("JSPrepareForFork"),
+            did_fork: resolve!("JSDidFork"),
+            reseed_random: resolve!("JSGlobalContextReseedRandom"),
         })
     }
 }

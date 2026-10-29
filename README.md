@@ -69,6 +69,14 @@ the thread is quiet. Closed pages are collected and their memory returned to
 the OS right away (`LIGHTNINGPANDA_RELEASE_ON_CLOSE=0` disables that for
 comparisons); a 20-test loop on a 2 MB app plateaus at 275 MB instead of 323.
 
+`--fork` (env `LIGHTNINGPANDA_FORK=1`, patched JavaScriptCore only:
+`scripts/jsc/build.sh`) goes further: one template process boots each
+prepared profile once, and every connection is a `fork()` of it, starting
+with those pages booted and sharing their memory copy-on-write. Open one
+connection per test; it costs about 20 ms however long the app takes to boot,
+and its process exits when the connection closes. `lightningpanda-test` does
+this by itself when the server reports `Lightningpanda.capabilities {fork: true}`.
+
 ### Fast E2E tests: `LP.run` and `lightningpanda-test`
 
 Page sessions also accept a native test driver, `LP.run {steps}`: a whole

@@ -243,10 +243,35 @@ copy-on-write page snapshots: load an app's JS once, then start each test from t
 - JSCOnly has no Objective-C API, so patch `0001` adds a C module-loader SPI (`JSGlobalContextSetModuleLoader`,
   `JSModuleSourceCreate`, `JSLoadAndEvaluateModule`) to `JSAPIGlobalObject`, ported from `JSAPIGlobalObject.mm`.
   `shim/modules_source.c` maps the crate's `lp_jsc_module_*` interface onto it.
+- Patch `0002` makes `fork()` safe for a process that has run JavaScript (see "Fork mode"): `JSPrepareForFork`
+  finishes a collection under way and the JIT plans, then parks every JSC helper thread (WTF `AutomaticThread`s
+  are told to exit and joined; the libpas scavenger and prefault threads are suspended and joined).
+  `JSDidFork(child)` resumes them; in the child it also refreshes the thread's mach port, marks the allocator
+  caches of threads that did not survive as orphans, restirs WTF's random generator and restarts the VMTraps
+  queue. `JSGlobalContextReseedRandom` gives a context a new `Math.random()` seed.
 
 To change JSC: edit the checkout in `~/Library/Caches/lightningpanda/webkit-src`, `ninja -C ../webkit-build
 JavaScriptCore` to iterate, then regenerate the patch with `git diff` (use `git add -N` for new files) and rerun
 `scripts/jsc/build.sh`, which resets the checkout and applies `patches/` from scratch.
+
+## Fork mode (`serve --fork`)
+
+Copy-on-write page snapshots: an app's startup (parsing and running its JavaScript) is paid once, not per test.
+
+- The server spawns a **template process** (`serve --template <socket>`, same options). It boots one page per
+  prepared profile (`--prepare`, and every `Lightningpanda.registerPreparedPage` from any connection) on its main
+  thread, settles each once loaded, and listens on a Unix socket.
+- Each upgraded connection is passed to the template with `SCM_RIGHTS`, plus the write end of a pipe. When the
+  booted pages are loaded and quiet (or after 2 s of waiting), the template stops lp-net's I/O threads
+  (`lp_net::client::suspend_for_fork`), calls `Engine::prepare_for_fork`, checks that no other thread is alive,
+  and forks. The child restarts both and serves that one connection on its main thread with every booted page
+  adopted (`Browser::set_fork_child`: no pool refills; registrations go to the template). It exits when the
+  connection closes, which closes the pipe and releases the server's connection slot.
+- The template stops when the server does: its stdin is a pipe only the server writes to.
+- The source JavaScriptCore's timers run on WTF's run loop, so the CoreFoundation run-loop service
+  (`enable_native_runloop_service`) is off with it; CoreFoundation must not be used in a fork child.
+- Measured on an M1 Max with a release build: an app whose startup runs 0.8 s of JavaScript is handed to a new
+  connection, booted, in about 20 ms (the fork itself takes 12-18 ms).
 
 ## Platform support
 
