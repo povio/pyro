@@ -1,6 +1,6 @@
 [package]
 name = "lp-jsc-sys"
-description = "Raw FFI bindings to the system JavaScriptCore C API (plus a small set of exported SPI)."
+description = "Raw FFI bindings to the JavaScriptCore C API (patched source build or the system framework, plus a small set of exported SPI)."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
