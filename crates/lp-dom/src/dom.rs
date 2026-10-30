@@ -30,8 +30,17 @@ pub(crate) struct AttrChanges {
 pub(crate) struct StyleSnapshots {
     /// Attribute local names some selector tests (besides `class` and `id`).
     names: rustc_hash::FxHashSet<markup5ever::LocalName>,
-    elements: rustc_hash::FxHashMap<u32, AttrChanges>,
+    /// Writes since the last read, in order: element index and generation,
+    /// attribute, old value. An append (no lookups) keeps the write path as
+    /// cheap as without a cascade; the first write per attribute wins when
+    /// the cascade reads them.
+    log: Vec<(u32, u32, QualName, Option<Box<str>>)>,
+    /// The log outgrew `STYLE_LOG_CAP`: the cascade restyles everything.
+    overflowed: bool,
 }
+
+/// Attribute writes kept between two style reads at most.
+const STYLE_LOG_CAP: usize = 1 << 16;
 
 /// One journaled DOM mutation (node indices in this DOM).
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -272,27 +281,40 @@ impl Dom {
     /// Starts keeping attribute snapshots (style invalidation) and returns
     /// those of document `doc` (index) taken since the last call; other
     /// documents' stay for their cascades, dead elements' go.
-    pub(crate) fn take_style_snapshots(&self, doc: u32) -> rustc_hash::FxHashMap<u32, AttrChanges> {
+    pub(crate) fn take_style_snapshots(&self, doc: u32) -> Option<rustc_hash::FxHashMap<u32, AttrChanges>> {
         let mut all = self.style_snapshots.borrow_mut();
         let state = all.get_or_insert_with(Default::default);
-        let mut mine = rustc_hash::FxHashMap::default();
-        state.elements.retain(|&i, v| {
-            if !self.slot_live(i) || self.generation_at(i) != v.gen {
+        if std::mem::take(&mut state.overflowed) {
+            state.log.clear();
+            return None;
+        }
+        let mut mine: rustc_hash::FxHashMap<u32, AttrChanges> = rustc_hash::FxHashMap::default();
+        state.log.retain_mut(|(i, gen, name, old)| {
+            let (i, gen) = (*i, *gen);
+            if !self.slot_live(i) || self.generation_at(i) != gen {
                 return false;
             }
-            if self.root_idx(i) == doc {
-                mine.insert(i, std::mem::take(v));
-                return false;
+            if self.root_idx(i) != doc {
+                return true;
             }
-            true
+            let entry = mine.entry(i).or_insert_with(|| AttrChanges { gen, old: Vec::new() });
+            if !entry.old.iter().any(|(n, _)| n == name) {
+                entry.old.push((name.clone(), old.take()));
+            }
+            false
         });
-        mine
+        Some(mine)
     }
 
     /// Elements with recorded attribute snapshots (tests).
     #[doc(hidden)]
     pub fn style_snapshot_count(&self) -> usize {
-        self.style_snapshots.borrow().as_ref().map_or(0, |s| s.elements.len())
+        self.style_snapshots.borrow().as_ref().map_or(0, |s| {
+            let mut elements: Vec<u32> = s.log.iter().map(|e| e.0).collect();
+            elements.sort_unstable();
+            elements.dedup();
+            elements.len()
+        })
     }
 
     /// Attribute names some selector of a cascade over this DOM tests.
@@ -314,17 +336,15 @@ impl Dom {
         if !(*local == local_name!("class") || *local == local_name!("id") || state.names.contains(local)) {
             return;
         }
-        if self.n(i).parent == NIL {
+        if self.n(i).parent == NIL || state.overflowed {
             return;
         }
-        let gen = self.generation_at(i);
-        let entry = state.elements.entry(i).or_default();
-        if entry.gen != gen {
-            *entry = AttrChanges { gen, old: Vec::new() };
+        if state.log.len() >= STYLE_LOG_CAP {
+            state.overflowed = true;
+            state.log = Vec::new();
+            return;
         }
-        if !entry.old.iter().any(|(n, _)| n == name) {
-            entry.old.push((name.clone(), old.map(Into::into)));
-        }
+        state.log.push((i, self.generation_at(i), name.clone(), old.map(Into::into)));
     }
 
     fn push_change(&mut self, change: Change) {

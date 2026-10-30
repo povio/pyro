@@ -671,11 +671,11 @@ impl Cascade {
             self.names_published = true;
         }
         let previous = self.styled.filter(|s| s.0 == stamp.0);
-        let full = match previous {
-            None => true,
-            Some((_, version, old_focus, old_hover)) => {
+        let full = match (previous, attrs) {
+            (Some((_, version, old_focus, old_hover)), Some(attrs)) => {
                 !self.invalidate(dom, doc, version, &attrs, (old_focus, old_hover), (focused, hovered))
             }
+            _ => true,
         };
         if full {
             self.store.sweep(dom);

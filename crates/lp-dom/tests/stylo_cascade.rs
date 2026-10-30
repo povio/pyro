@@ -544,7 +544,32 @@ fn style_read_timings() {
             std::hint::black_box(dom.query_all(doc, &query).unwrap());
             q.push(t.elapsed().as_secs_f64() * 1e6);
         }
+        // DOM writes after the page's styles were read (snapshots on).
+        let mut ins = Vec::new();
+        let mut attrs = Vec::new();
+        for _ in 0..iters.min(100) {
+            let holder = dom.create_element(doc, "div").unwrap();
+            dom.append_child(body, holder).unwrap();
+            let t = std::time::Instant::now();
+            for _ in 0..1000 {
+                let span = dom.create_element(doc, "span").unwrap();
+                let first = dom.first_child(holder).unwrap();
+                dom.insert_before(holder, span, first).unwrap();
+            }
+            ins.push(t.elapsed().as_secs_f64() * 1e6);
+            let kids: Vec<NodeId> = dom.children(holder).unwrap().collect();
+            let t = std::time::Instant::now();
+            for (i, &k) in kids.iter().enumerate() {
+                dom.set_attribute(k, "data-bench", &i.to_string()).unwrap();
+                dom.set_attribute(k, "class", if i % 2 == 0 { "a" } else { "b" }).unwrap();
+            }
+            attrs.push(t.elapsed().as_secs_f64() * 1e6);
+            dom.remove_child(body, holder).unwrap();
+            cs(&dom);
+        }
         println!("{name} ({} elements)", all.len());
+        println!("  insertBefore 1000 after reads      {}", stats(ins));
+        println!("  setAttribute x2000 after reads     {}", stats(attrs));
         println!("  first getComputedStyle after load {}", stats(first_cs));
         println!("  first visibility check after load {}", stats(first_vis));
         println!("  getComputedStyle x100 clean       {}", stats(clean));
