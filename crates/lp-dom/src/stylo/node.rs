@@ -39,6 +39,9 @@ use crate::dom::Dom;
 use crate::node::{NodeKind, NIL};
 use crate::select::PseudoClass;
 
+/// A node generation and its parsed `style` attribute.
+type StyleAttrSlot = (u32, Option<ParsedStyleAttr>);
+
 /// A `style` attribute's text and its parse.
 type ParsedStyleAttr = (Box<str>, Arc<Locked<PropertyDeclarationBlock>>);
 
@@ -54,8 +57,6 @@ pub(crate) struct Slot {
     /// The element state its style was last computed with (the old state
     /// of an invalidation snapshot).
     pub(crate) state: Cell<ElementState>,
-    /// The `style` attribute as parsed, with the text it was parsed from.
-    style_attr: UnsafeCell<Option<ParsedStyleAttr>>,
 }
 
 impl Slot {
@@ -67,7 +68,6 @@ impl Slot {
             has_snapshot: Cell::new(false),
             handled_snapshot: Cell::new(false),
             state: Cell::new(ElementState::empty()),
-            style_attr: UnsafeCell::new(None),
         })
     }
 }
@@ -82,6 +82,10 @@ pub(crate) struct Store {
     /// matching, also on elements not styled yet (a `:has()` search visits
     /// descendants before the traversal styles them).
     flags: Vec<Cell<(u32, u32)>>,
+    /// `style` attributes as parsed, with the text they were parsed from,
+    /// by node index and generation (boxed: references stay put). Apart
+    /// from the slots: lazily resolved elements have none.
+    style_attrs: UnsafeCell<FxHashMap<u32, Box<StyleAttrSlot>>>,
 }
 
 impl Store {
@@ -134,8 +138,25 @@ impl Store {
         slot.as_deref().expect("slot")
     }
 
+    /// The parsed `style` attribute of `idx` as the node of generation `gen`.
+    ///
+    /// # Safety
+    /// Only the element's own style computation may hold the reference
+    /// (styling is sequential).
+    #[allow(clippy::mut_from_ref)]
+    unsafe fn style_attr(&self, idx: u32, gen: u32) -> &mut Option<ParsedStyleAttr> {
+        // SAFETY: see above; entries are boxed, so other insertions do not move them.
+        let map = unsafe { &mut *self.style_attrs.get() };
+        let entry = map.entry(idx).or_insert_with(|| Box::new((gen, None)));
+        if entry.0 != gen {
+            **entry = (gen, None);
+        }
+        &mut entry.1
+    }
+
     /// Drops the data of elements that no longer exist (freed or reused).
     pub(crate) fn sweep(&mut self, dom: &Dom) {
+        self.style_attrs.get_mut().retain(|&i, e| dom.slot_live(i) && dom.generation_at(i) == e.0);
         for (i, slot) in self.slots.get_mut().iter_mut().enumerate() {
             if slot.as_ref().is_some_and(|s| !dom.slot_live(i as u32) || dom.generation_at(i as u32) != s.gen) {
                 *slot = None;
@@ -212,9 +233,39 @@ thread_local! {
 /// cache stores element handles in pointer-sized slots, so the pass context
 /// is not in the handle but in [`CURRENT`], set by [`Cx::enter`].
 #[derive(Clone, Copy)]
-pub(crate) struct SNode<'a> {
+pub(crate) struct SNode<'a, C: CxSource<'a> = Tls<'a>> {
     pub(crate) idx: usize,
+    src: C,
     _cx: PhantomData<&'a Cx<'a>>,
+}
+
+/// Where a node handle finds its pass context: [`Tls`] (one-word handles,
+/// for the traversal) or a `&Cx` (selector matching, which would otherwise
+/// read the thread-local at every step).
+pub(crate) trait CxSource<'a>: Copy {
+    fn get(self) -> &'a Cx<'a>;
+}
+
+/// The context [`Cx::enter`] made current on this thread.
+#[derive(Clone, Copy)]
+pub(crate) struct Tls<'a>(PhantomData<&'a Cx<'a>>);
+
+impl<'a> CxSource<'a> for Tls<'a> {
+    #[inline]
+    fn get(self) -> &'a Cx<'a> {
+        let ptr = CURRENT.with(|c| c.get());
+        debug_assert!(!ptr.is_null(), "no styling pass entered");
+        // SAFETY: handles exist only while their pass is entered (`Cx::enter`
+        // guards every flush and style read), and the pass outlives them.
+        unsafe { &*(ptr as *const Cx<'a>) }
+    }
+}
+
+impl<'a> CxSource<'a> for &'a Cx<'a> {
+    #[inline]
+    fn get(self) -> &'a Cx<'a> {
+        self
+    }
 }
 
 thread_local! {
@@ -232,21 +283,21 @@ impl Drop for Entered {
 
 // SAFETY: the traversal is sequential (`traverse_dom` without a thread pool);
 // Stylo only requires these bounds for its parallel mode.
-unsafe impl Send for SNode<'_> {}
-unsafe impl Sync for SNode<'_> {}
+unsafe impl<'a, C: CxSource<'a>> Send for SNode<'a, C> {}
+unsafe impl<'a, C: CxSource<'a>> Sync for SNode<'a, C> {}
 
-impl PartialEq for SNode<'_> {
+impl<'a, C: CxSource<'a>> PartialEq for SNode<'a, C> {
     fn eq(&self, other: &Self) -> bool {
         self.idx == other.idx
     }
 }
-impl Eq for SNode<'_> {}
-impl Hash for SNode<'_> {
+impl<'a, C: CxSource<'a>> Eq for SNode<'a, C> {}
+impl<'a, C: CxSource<'a>> Hash for SNode<'a, C> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         state.write_usize(self.idx)
     }
 }
-impl fmt::Debug for SNode<'_> {
+impl<'a, C: CxSource<'a>> fmt::Debug for SNode<'a, C> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.node().kind {
             NodeKind::Element(e) => write!(f, "<{} #{}>", e.name.local, self.idx),
@@ -259,23 +310,30 @@ impl<'a> SNode<'a> {
     /// A node of `cx`'s pass; `cx` must be [entered](Cx::enter).
     pub(crate) fn new(cx: &'a Cx<'a>, idx: u32) -> Self {
         debug_assert_eq!(CURRENT.with(|c| c.get()), cx as *const Cx<'a> as *const ());
-        SNode { idx: idx as usize, _cx: PhantomData }
+        SNode { idx: idx as usize, src: Tls(PhantomData), _cx: PhantomData }
     }
-    fn at(idx: u32) -> Self {
-        SNode { idx: idx as usize, _cx: PhantomData }
+}
+
+impl<'a> SNode<'a, &'a Cx<'a>> {
+    /// A node of `cx`, carrying it (selector matching outside the traversal).
+    pub(crate) fn with_cx(cx: &'a Cx<'a>, idx: u32) -> Self {
+        SNode { idx: idx as usize, src: cx, _cx: PhantomData }
     }
+}
+
+impl<'a, C: CxSource<'a>> SNode<'a, C> {
+    fn at(&self, idx: u32) -> Self {
+        SNode { idx: idx as usize, src: self.src, _cx: PhantomData }
+    }
+    #[inline]
     fn cx(&self) -> &'a Cx<'a> {
-        let ptr = CURRENT.with(|c| c.get());
-        debug_assert!(!ptr.is_null(), "no styling pass entered");
-        // SAFETY: handles exist only while their pass is entered (`Cx::enter`
-        // guards every flush and style read), and the pass outlives them.
-        unsafe { &*(ptr as *const Cx<'a>) }
+        self.src.get()
     }
     pub(crate) fn i(&self) -> u32 {
         self.idx as u32
     }
     fn with(&self, idx: u32) -> Option<Self> {
-        (idx != NIL).then(|| Self::at(idx))
+        (idx != NIL).then(|| self.at(idx))
     }
     fn node(&self) -> &'a crate::node::Node {
         self.cx().dom.n(self.i())
@@ -317,7 +375,7 @@ impl<'a> SNode<'a> {
     }
 }
 
-impl NodeInfo for SNode<'_> {
+impl<'a, C: CxSource<'a>> NodeInfo for SNode<'a, C> {
     fn is_element(&self) -> bool {
         self.node().is_element()
     }
@@ -326,8 +384,8 @@ impl NodeInfo for SNode<'_> {
     }
 }
 
-impl<'a> TDocument for SNode<'a> {
-    type ConcreteNode = SNode<'a>;
+impl<'a, C: CxSource<'a>> TDocument for SNode<'a, C> {
+    type ConcreteNode = SNode<'a, C>;
     fn as_node(&self) -> Self::ConcreteNode {
         *self
     }
@@ -342,14 +400,14 @@ impl<'a> TDocument for SNode<'a> {
     }
 }
 
-impl<'a> TShadowRoot for SNode<'a> {
-    type ConcreteNode = SNode<'a>;
+impl<'a, C: CxSource<'a>> TShadowRoot for SNode<'a, C> {
+    type ConcreteNode = SNode<'a, C>;
     fn as_node(&self) -> Self::ConcreteNode {
         *self
     }
-    fn host(&self) -> SNode<'a> {
+    fn host(&self) -> SNode<'a, C> {
         match &self.node().kind {
-            NodeKind::Fragment(f) => SNode::at(f.host),
+            NodeKind::Fragment(f) => self.at(f.host),
             _ => unreachable!("shadow root"),
         }
     }
@@ -365,15 +423,15 @@ impl<'a> TShadowRoot for SNode<'a> {
 
 /// The children styled under an element: a shadow host's shadow tree, then
 /// its light children (inheriting from the host: slots are not modeled).
-pub(crate) struct Children<'a> {
-    _cx: PhantomData<&'a Cx<'a>>,
+pub(crate) struct Children<'a, C: CxSource<'a>> {
+    of: SNode<'a, C>,
     next: u32,
     then: u32,
 }
 
-impl<'a> Iterator for Children<'a> {
-    type Item = SNode<'a>;
-    fn next(&mut self) -> Option<SNode<'a>> {
+impl<'a, C: CxSource<'a>> Iterator for Children<'a, C> {
+    type Item = SNode<'a, C>;
+    fn next(&mut self) -> Option<SNode<'a, C>> {
         if self.next == NIL {
             if self.then == NIL {
                 return None;
@@ -381,15 +439,15 @@ impl<'a> Iterator for Children<'a> {
             self.next = std::mem::replace(&mut self.then, NIL);
         }
         let cur = self.next;
-        self.next = SNode::<'a>::at(cur).cx().dom.n(cur).next;
-        Some(SNode::at(cur))
+        self.next = self.of.cx().dom.n(cur).next;
+        Some(self.of.at(cur))
     }
 }
 
-impl<'a> TNode for SNode<'a> {
-    type ConcreteElement = SNode<'a>;
-    type ConcreteDocument = SNode<'a>;
-    type ConcreteShadowRoot = SNode<'a>;
+impl<'a, C: CxSource<'a>> TNode for SNode<'a, C> {
+    type ConcreteElement = SNode<'a, C>;
+    type ConcreteDocument = SNode<'a, C>;
+    type ConcreteShadowRoot = SNode<'a, C>;
 
     fn parent_node(&self) -> Option<Self> {
         self.with(self.node().parent)
@@ -407,12 +465,12 @@ impl<'a> TNode for SNode<'a> {
         self.with(self.node().next)
     }
     fn owner_doc(&self) -> Self::ConcreteDocument {
-        SNode::at(self.node().owner_doc)
+        self.at(self.node().owner_doc)
     }
     fn is_in_document(&self) -> bool {
         matches!(self.cx().dom.n(self.cx().dom.root_idx(self.i())).kind, NodeKind::Document(_))
     }
-    fn traversal_parent(&self) -> Option<SNode<'a>> {
+    fn traversal_parent(&self) -> Option<SNode<'a, C>> {
         if let Some(host) = self.shadow_host_of_parent() {
             return self.with(host);
         }
@@ -424,18 +482,18 @@ impl<'a> TNode for SNode<'a> {
     fn debug_id(self) -> usize {
         self.idx
     }
-    fn as_element(&self) -> Option<SNode<'a>> {
+    fn as_element(&self) -> Option<SNode<'a, C>> {
         self.is_element().then_some(*self)
     }
-    fn as_document(&self) -> Option<SNode<'a>> {
+    fn as_document(&self) -> Option<SNode<'a, C>> {
         matches!(self.node().kind, NodeKind::Document(_)).then_some(*self)
     }
-    fn as_shadow_root(&self) -> Option<SNode<'a>> {
+    fn as_shadow_root(&self) -> Option<SNode<'a, C>> {
         matches!(&self.node().kind, NodeKind::Fragment(f) if f.shadow.is_some()).then_some(*self)
     }
 }
 
-impl selectors::Element for SNode<'_> {
+impl<'a, C: CxSource<'a>> selectors::Element for SNode<'a, C> {
     type Impl = SelectorImpl;
 
     fn opaque(&self) -> OpaqueElement {
@@ -541,7 +599,9 @@ impl selectors::Element for SNode<'_> {
         }
     }
     fn is_link(&self) -> bool {
-        self.matches(PseudoClass::AnyLink)
+        // Asked of every element matched: only a, area and link can be links.
+        let e = self.element();
+        matches!(&*e.name.local, "a" | "area" | "link") && self.matches(PseudoClass::AnyLink)
     }
     fn is_html_slot_element(&self) -> bool {
         let e = self.element();
@@ -601,11 +661,11 @@ impl selectors::Element for SNode<'_> {
     }
 }
 
-impl<'a> TElement for SNode<'a> {
-    type ConcreteNode = SNode<'a>;
-    type TraversalChildrenIterator = Children<'a>;
+impl<'a, C: CxSource<'a>> TElement for SNode<'a, C> {
+    type ConcreteNode = SNode<'a, C>;
+    type TraversalChildrenIterator = Children<'a, C>;
 
-    fn as_node(&self) -> SNode<'a> {
+    fn as_node(&self) -> SNode<'a, C> {
         *self
     }
     fn implicit_scope_for_sheet_in_shadow_root(
@@ -619,14 +679,14 @@ impl<'a> TElement for SNode<'a> {
     fn inheritance_parent(&self) -> Option<Self> {
         TElement::traversal_parent(self)
     }
-    fn traversal_children(&self) -> LayoutIterator<Children<'a>> {
+    fn traversal_children(&self) -> LayoutIterator<Children<'a, C>> {
         let e = self.element();
         let light = self.node().first_child;
         let shadow = e.shadow_root;
         let (next, then) = if shadow != NIL { (self.cx().dom.n(shadow).first_child, light) } else { (light, NIL) };
         // An empty shadow tree: straight to the light children.
         let (next, then) = if next == NIL { (then, NIL) } else { (next, then) };
-        LayoutIterator(Children { _cx: PhantomData, next, then })
+        LayoutIterator(Children { of: *self, next, then })
     }
     fn is_html_element(&self) -> bool {
         self.element().is_html()
@@ -639,10 +699,10 @@ impl<'a> TElement for SNode<'a> {
     }
     fn style_attribute(&self) -> Option<ArcBorrow<'_, Locked<PropertyDeclarationBlock>>> {
         let text = self.element().attr("style")?;
-        let slot = self.slot()?;
-        // SAFETY: the traversal is sequential, and only this element's own
-        // style computation reads its parsed style attribute.
-        let cached = unsafe { &mut *slot.style_attr.get() };
+        let (cx, i) = (self.cx(), self.i());
+        // SAFETY: styling is sequential, and only this element's own style
+        // computation reads its parsed style attribute.
+        let cached = unsafe { cx.store.style_attr(i, cx.dom.generation_at(i)) };
         if cached.as_ref().is_none_or(|(t, _)| &**t != text) {
             let url = super::url_data();
             let block = style::properties::parse_style_attribute(
@@ -785,10 +845,10 @@ impl<'a> TElement for SNode<'a> {
     fn transition_rule(&self, _context: &SharedStyleContext) -> Option<Arc<Locked<PropertyDeclarationBlock>>> {
         None
     }
-    fn shadow_root(&self) -> Option<SNode<'a>> {
+    fn shadow_root(&self) -> Option<SNode<'a, C>> {
         self.with(self.element().shadow_root)
     }
-    fn containing_shadow(&self) -> Option<SNode<'a>> {
+    fn containing_shadow(&self) -> Option<SNode<'a, C>> {
         let root = self.cx().dom.root_idx(self.i());
         self.with(root).and_then(|r| r.as_shadow_root())
     }

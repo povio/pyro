@@ -23,7 +23,8 @@ pub fn parse(text: &str) -> Option<List> {
     SelectorParser::parse_author_origin_no_namespace(text, &super::url_data()).ok()
 }
 
-/// Matching outside a styling pass: no style data, no open popovers.
+/// Matching outside a styling pass (handles carry the context): no style
+/// data, no open popovers.
 fn with_cx<R>(dom: &Dom, idx: u32, f: impl FnOnce(&Cx) -> R) -> R {
     static LOCK: LazyLock<SharedRwLock> = LazyLock::new(SharedRwLock::new);
     thread_local! {
@@ -41,7 +42,6 @@ fn with_cx<R>(dom: &Dom, idx: u32, f: impl FnOnce(&Cx) -> R) -> R {
     STORE.with(|store| {
         POPOVERS.with(|popovers| {
             let cx = Cx::new(dom, store, &LOCK, quirks, popovers);
-            let _entered = cx.enter();
             f(&cx)
         })
     })
@@ -51,28 +51,28 @@ fn with_cx<R>(dom: &Dom, idx: u32, f: impl FnOnce(&Cx) -> R) -> R {
 /// only) matching `list`, in tree order; at most one when `first`.
 pub(crate) fn query(dom: &Dom, root: u32, list: &List, first: bool) -> Vec<u32> {
     with_cx(dom, root, |cx| {
-        let root = SNode::new(cx, root);
+        let root = SNode::with_cx(cx, root);
         if first {
             let mut out = None;
-            dom_apis::query_selector::<SNode, QueryFirst>(root, list, &mut out, MayUseInvalidation::No);
+            dom_apis::query_selector::<SNode<&Cx>, QueryFirst>(root, list, &mut out, MayUseInvalidation::No);
             out.map(|e| e.as_node().opaque().0 as u32).into_iter().collect()
         } else {
             let mut out = Default::default();
-            dom_apis::query_selector::<SNode, QueryAll>(root, list, &mut out, MayUseInvalidation::No);
-            out.iter().map(|e: &SNode| e.as_node().opaque().0 as u32).collect()
+            dom_apis::query_selector::<SNode<&Cx>, QueryAll>(root, list, &mut out, MayUseInvalidation::No);
+            out.iter().map(|e: &SNode<&Cx>| e.as_node().opaque().0 as u32).collect()
         }
     })
 }
 
 /// `Element.matches`.
 pub(crate) fn matches(dom: &Dom, el: u32, list: &List) -> bool {
-    with_cx(dom, el, |cx| dom_apis::element_matches(&SNode::new(cx, el), list, cx.quirks))
+    with_cx(dom, el, |cx| dom_apis::element_matches(&SNode::with_cx(cx, el), list, cx.quirks))
 }
 
 /// `Element.closest`.
 pub(crate) fn closest(dom: &Dom, el: u32, list: &List) -> Option<u32> {
     with_cx(dom, el, |cx| {
-        dom_apis::element_closest(SNode::new(cx, el), list, cx.quirks).map(|e| e.as_node().opaque().0 as u32)
+        dom_apis::element_closest(SNode::with_cx(cx, el), list, cx.quirks).map(|e| e.as_node().opaque().0 as u32)
     })
     .filter(|&i| i != NIL)
 }

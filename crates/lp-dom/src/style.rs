@@ -4083,7 +4083,7 @@ pub struct StyleEngine {
     /// Stylo, the cascade computed styles come from (`crate::stylo`),
     /// created at the first style read.
     stylo: RefCell<Option<crate::stylo::Cascade>>,
-    /// (sheet generation, DOM tree version) the Stylo sheets were synced at.
+    /// (sheet generation, DOM version) the Stylo sheets were synced at.
     stylo_sheets_at: Cell<Option<(u64, u64)>>,
     /// `computed()` answers for one style stamp.
     stylo_memo: RefCell<FxHashMap<NodeId, ComputedStyle>>,
@@ -4093,6 +4093,15 @@ pub struct StyleEngine {
     /// `cache.restyled`) were last synced with Stylo's restyles at.
     stylo_synced: Cell<Option<Stamp>>,
 }
+
+/// `text-transform: none` as the computed style holds it.
+static TEXT_TRANSFORM_NONE: std::sync::LazyLock<TextTransform> =
+    std::sync::LazyLock::new(|| TextTransform::parse("none").unwrap_or_default());
+
+/// Name hashes (`Change::Attr`) of attributes that affect layout only
+/// through the cascade.
+static STYLE_ONLY_ATTRS: std::sync::LazyLock<[u64; 3]> =
+    std::sync::LazyLock::new(|| ["class", "id", "style"].map(crate::dom::attr_name_hash));
 
 /// Whether computed styles come from Stylo (`crate::stylo`, the default) or
 /// from the original cascade (`LP_CASCADE=legacy`, kept for comparison while
@@ -4129,38 +4138,103 @@ impl StyleEngine {
     /// The Stylo cascade, synced with the sheets and viewport and restyled
     /// where the DOM changed.
     fn stylo(&self, dom: &Dom) -> std::cell::RefMut<'_, crate::stylo::Cascade> {
+        self.stylo_with(dom, false)
+    }
+
+    /// [`Self::stylo`] with the document styled by the traversal (layout).
+    fn stylo_full(&self, dom: &Dom) -> std::cell::RefMut<'_, crate::stylo::Cascade> {
+        self.stylo_with(dom, true)
+    }
+
+    /// Whether a sheet's text may have changed since DOM `version`: text
+    /// in a sheet owner, or a sheet owner inserted or removed.
+    fn sheet_text_may_have_changed(&self, dom: &Dom, version: u64) -> bool {
+        use crate::dom::Change;
+        let Some(changes) = dom.changes_since(version) else { return true };
+        let owners: Vec<u32> = self.sheets.iter().filter_map(|s| dom.check(s.owner).ok()).collect();
+        let holds = |c: u32, owner: u32| {
+            let mut a = owner;
+            while a != NIL {
+                if a == c {
+                    return true;
+                }
+                a = dom.n(a).parent;
+            }
+            false
+        };
+        for c in changes {
+            match c {
+                Change::Attr(..) | Change::State(_) | Change::Pseudo => {}
+                Change::Text(n) => {
+                    if dom.slot_live(n) && owners.contains(&dom.n(n).parent) {
+                        return true;
+                    }
+                }
+                Change::Inserted(p, c) | Change::Removed(p, c, _) => {
+                    if owners.iter().any(|&o| o == p || (dom.slot_live(c) && holds(c, o))) {
+                        return true;
+                    }
+                }
+                Change::Unknown(_) => return true,
+            }
+        }
+        false
+    }
+
+    fn stylo_with(&self, dom: &Dom, full: bool) -> std::cell::RefMut<'_, crate::stylo::Cascade> {
         let mut slot = self.stylo.borrow_mut();
         let quirks = dom.document_data(self.doc).map(|d| d.quirks).unwrap_or(crate::node::QuirksMode::NoQuirks);
         let cascade = slot.get_or_insert_with(|| crate::stylo::Cascade::new(&self.viewport, quirks));
         cascade.set_viewport(&self.viewport);
-        let at = (self.generation, dom.tree_version());
-        if self.stylo_sheets_at.get() != Some(at) {
-            let mut texts = Vec::with_capacity(self.sheets.len());
-            let mut buf = String::new();
-            for sheet in &self.sheets {
-                let active = dom.is_alive(sheet.owner) && dom.is_connected(sheet.owner).unwrap_or(false);
-                if !active {
-                    continue;
-                }
-                let text = match &sheet.source {
-                    SheetSource::Text(t) => t.clone(),
-                    SheetSource::StyleElement => {
-                        buf.clear();
+        let at = (self.generation, dom.version());
+        let resync = match self.stylo_sheets_at.get() {
+            Some(old) if old == at => false,
+            // Same sheets; DOM changes that cannot reach a sheet's text keep it.
+            Some((generation, version)) if generation == at.0 => self.sheet_text_may_have_changed(dom, version),
+            _ => true,
+        };
+        if !resync {
+            self.stylo_sheets_at.set(Some(at));
+        } else {
+            // `<style>` texts collected, loader texts borrowed.
+            let active: Vec<&Sheet> = self
+                .sheets
+                .iter()
+                .filter(|s| dom.is_alive(s.owner) && dom.is_connected(s.owner).unwrap_or(false))
+                .collect();
+            let collected: Vec<String> = active
+                .iter()
+                .map(|sheet| {
+                    let mut buf = String::new();
+                    if matches!(sheet.source, SheetSource::StyleElement) {
                         if let Ok(idx) = dom.check(sheet.owner) {
                             dom.collect_text(idx, &mut buf);
                         }
-                        buf.clone()
                     }
-                };
-                texts.push((text, None));
-            }
+                    buf
+                })
+                .collect();
+            let texts = active
+                .iter()
+                .zip(&collected)
+                .map(|(sheet, buf)| match &sheet.source {
+                    SheetSource::Text(t) => (t.as_str(), None),
+                    SheetSource::StyleElement => (buf.as_str(), None),
+                })
+                .collect();
             cascade.set_sheets(texts);
             // Popovers open and close with a generation bump.
             cascade.set_popovers(self.popover_open.iter().filter_map(|&p| dom.check(p).ok()).collect());
             self.stylo_sheets_at.set(Some(at));
         }
         if let Ok(doc) = dom.check(self.doc) {
-            cascade.flush(dom, doc);
+            // Lazy until layout needs the document styled, or reads are many.
+            const LAZY_READS: usize = 48;
+            if full || cascade.is_full() || cascade.lazy_reads.get() > LAZY_READS {
+                cascade.flush(dom, doc);
+            } else {
+                cascade.prepare(dom, doc);
+            }
         }
         std::cell::RefMut::map(slot, |s| s.as_mut().expect("cascade"))
     }
@@ -4176,6 +4250,15 @@ impl StyleEngine {
         self.stylo(dom).style(dom, idx)
     }
 
+    /// Styles the whole document now (tests, diagnostics); reads otherwise
+    /// resolve lazily until layout needs it or they are many.
+    #[doc(hidden)]
+    pub fn style_document(&self, dom: &Dom) {
+        if self.stylo_on() {
+            self.stylo_full(dom);
+        }
+    }
+
     /// `getComputedStyle(el).getPropertyValue(name)` as Stylo serializes the
     /// computed value (layout-dependent values are the layout's business).
     pub fn stylo_value(&self, dom: &Dom, el: NodeId, name: &str) -> Option<String> {
@@ -4188,7 +4271,7 @@ impl StyleEngine {
     fn computed_stylo(&self, dom: &Dom, el: NodeId) -> Option<ComputedStyle> {
         let idx = self.owns(dom, el)?;
         // Drops the answers of elements restyled since (and their subtrees).
-        self.sync(dom);
+        self.sync_lazy(dom);
         if let Some(c) = self.stylo_memo.borrow().get(&el) {
             return Some(*c);
         }
@@ -4209,7 +4292,20 @@ impl StyleEngine {
             _ => Overflow::Scroll,
         };
         let (ox, oy) = (overflow(style.get_box().overflow_x), overflow(style.get_box().overflow_y));
-        let (pan_x, pan_y) = parse_touch_action(&get("touch-action")).unwrap_or((true, true));
+        // The initial values typed, anything else through its serialization.
+        let (pan_x, pan_y) = if style.get_box().touch_action == style::values::specified::box_::TouchAction::AUTO {
+            (true, true)
+        } else {
+            parse_touch_action(&get("touch-action")).unwrap_or((true, true))
+        };
+        let overscroll = |o: style::values::specified::box_::OverscrollBehavior, name: &str| {
+            o != style::values::specified::box_::OverscrollBehavior::Auto && overscroll_contains(&get(name))
+        };
+        let size = |s: &style::values::computed::Size, name: &str| match s {
+            style::values::generics::length::GenericSize::Auto => Length::default(),
+            _ => Length::parse(&get(name)),
+        };
+        let position = style.get_position();
         let e = dom.n(idx).element().expect("element");
         let ua_display = match e.is_html() {
             true => crate::style_flow::ua_display(&e.name.local.to_ascii_lowercase()),
@@ -4229,13 +4325,17 @@ impl StyleEngine {
             overflow_x_clips: ox != Overflow::Visible,
             overflow_y_scrolls: oy == Overflow::Scroll,
             overflow_y_clips: oy != Overflow::Visible,
-            overscroll_x_contains: overscroll_contains(&get("overscroll-behavior-x")),
-            overscroll_y_contains: overscroll_contains(&get("overscroll-behavior-y")),
-            width: Length::parse(&get("width")),
-            height: Length::parse(&get("height")),
+            overscroll_x_contains: overscroll(style.get_box().overscroll_behavior_x, "overscroll-behavior-x"),
+            overscroll_y_contains: overscroll(style.get_box().overscroll_behavior_y, "overscroll-behavior-y"),
+            width: size(&position.width, "width"),
+            height: size(&position.height, "height"),
             pan_x_blocked: !pan_x || above.pan_x_blocked,
             pan_y_blocked: !pan_y || above.pan_y_blocked,
-            text_transform: TextTransform::parse(&get("text-transform")).unwrap_or_default(),
+            text_transform: if style.get_inherited_text().text_transform.is_empty() {
+                *TEXT_TRANSFORM_NONE
+            } else {
+                TextTransform::parse(&get("text-transform")).unwrap_or_default()
+            },
             absolutely_positioned: matches!(
                 style.get_box().position,
                 PositionProperty::Absolute | PositionProperty::Fixed
@@ -4257,14 +4357,25 @@ impl StyleEngine {
     /// to date with `dom`: drops the flow styles and generated content of
     /// the elements Stylo restyled, and reports them to `take_restyled`.
     fn sync(&self, dom: &Dom) {
+        self.sync_with(dom, true)
+    }
+
+    /// [`Self::sync`] for `computed()`: lazily resolved styles will do.
+    fn sync_lazy(&self, dom: &Dom) {
+        self.sync_with(dom, false)
+    }
+
+    fn sync_with(&self, dom: &Dom, full: bool) {
         if !self.stylo_on() {
             return self.ensure(dom);
         }
         let stamp = self.stamp(dom);
-        if self.stylo_synced.get() == Some(stamp) {
+        if self.stylo_synced.get() == Some(stamp)
+            && (!full || self.stylo.borrow().as_ref().is_some_and(|c| c.is_full()))
+        {
             return;
         }
-        let mut changes = self.stylo(dom).take_changes();
+        let mut changes = self.stylo_with(dom, full).take_changes();
         // Flow styles also read DOM state no selector sees (an image's
         // natural size, a control's type): the elements the journal names
         // drop theirs too.
@@ -4275,6 +4386,9 @@ impl StyleEngine {
                     use crate::dom::Change;
                     for c in journal {
                         match c {
+                            // Attributes that reach flow styles only through
+                            // the cascade (its damage covers them).
+                            Change::Attr(_, h, plain) if plain || STYLE_ONLY_ATTRS.contains(&h) => {}
                             Change::Attr(n, ..) | Change::State(n) => changed.push(n),
                             // The moved node too: what it inherits changed.
                             Change::Inserted(p, c) | Change::Removed(p, c, _) => changed.extend([p, c]),
@@ -5176,7 +5290,7 @@ impl StyleEngine {
             // Properties Stylo's servo build does not know (`overflow-anchor`,
             // `text-anchor`, `line-clamp`...) come from the legacy cascade,
             // built only for pages that read them.
-            if !name.starts_with("--") && style::properties::PropertyId::parse_enabled_for_all_content(name).is_err() {
+            if !name.starts_with("--") && crate::stylo::property_id(name).is_none() {
                 return self.legacy_value(dom, el, name, precise);
             }
             return self.stylo_value(dom, el, name);
@@ -5696,7 +5810,7 @@ impl StyleEngine {
         if !generates_content(dom, idx) {
             return None;
         }
-        let style = self.stylo(dom).pseudo(dom, idx, after)?;
+        let style = self.stylo_full(dom).pseudo(dom, idx, after)?;
         let get = |name: &str| crate::stylo::serialize(&style, name).unwrap_or_default();
         let display = get("display");
         let display = match display.as_str() {

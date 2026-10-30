@@ -56,12 +56,32 @@ use markup5ever::local_name;
 
 pub(crate) use node::{Cx, SNode, Store};
 
+/// The property `name` names, if Stylo knows it (parsed once per name).
+pub(crate) fn property_id(name: &str) -> Option<style::properties::PropertyId> {
+    use style::properties::PropertyId;
+    thread_local! {
+        /// Property names as parsed (the same few dozen, read per element).
+        static IDS: std::cell::RefCell<rustc_hash::FxHashMap<Box<str>, Option<PropertyId>>> = Default::default();
+    }
+    IDS.with(|ids| {
+        if let Some(id) = ids.borrow().get(name) {
+            return id.clone();
+        }
+        let id = PropertyId::parse_enabled_for_all_content(name).ok();
+        let mut ids = ids.borrow_mut();
+        if ids.len() < 4096 {
+            ids.insert(name.into(), id.clone());
+        }
+        id
+    })
+}
+
 /// A property's computed value as `getComputedStyle` serializes it: a
 /// longhand directly, a shorthand when all its longhands serialize alike, a
 /// custom property as specified. `None` for unknown properties.
 pub fn serialize(style: &ComputedValues, name: &str) -> Option<String> {
-    use style::properties::{PropertyDeclarationId, PropertyId};
-    let id = PropertyId::parse_enabled_for_all_content(name).ok()?;
+    use style::properties::PropertyDeclarationId;
+    let id = property_id(name)?;
     match id.as_shorthand() {
         Ok(shorthand) => {
             // The value all its longhands share...
@@ -184,6 +204,16 @@ fn device(viewport: &Viewport, quirks: QuirksMode) -> Device {
     )
 }
 
+/// Records the root's style on the device for root-relative units (`rem`,
+/// `rlh`), as the traversal does when it styles the root.
+fn set_root(device: &Device, style: &Arc<ComputedValues>) {
+    device.set_root_style(style);
+    let size = style.get_font().clone_font_size().computed_size();
+    device.set_root_font_size(style.effective_zoom.unzoom(size.px()));
+    let line_height = device.calc_line_height(style.get_font(), style.writing_mode, None).0;
+    device.set_root_line_height(style.effective_zoom.unzoom(line_height.px()));
+}
+
 struct NoPainters;
 impl RegisteredSpeculativePainters for NoPainters {
     fn get(&self, _name: &Atom) -> Option<&dyn RegisteredSpeculativePainter> {
@@ -240,6 +270,8 @@ impl<'dom> DomTraversal<SNode<'dom>> for Recalc<'_> {
 /// from it.
 struct AuthorSheet {
     key: SheetKey,
+    /// The text, to confirm a key match (keys hash a sample of it).
+    text: std::sync::Arc<str>,
     has_relative: bool,
     sheet: DocumentStyleSheet,
     /// Attribute local names its selectors test.
@@ -252,8 +284,21 @@ struct SheetKey(u64, usize, Option<String>, bool);
 
 impl SheetKey {
     fn new(text: &str, media: Option<String>, quirks: QuirksMode) -> Self {
-        use std::hash::BuildHasher;
-        SheetKey(rustc_hash::FxBuildHasher.hash_one(text), text.len(), media, quirks == QuirksMode::Quirks)
+        // A sample (start, end, 64 slices between): hashing all of a 1 MB
+        // bundle per document cost more than its first style read; a match
+        // is confirmed against the whole text.
+        let b = text.as_bytes();
+        let mut h = rustc_hash::FxHasher::default();
+        use std::hash::Hasher;
+        h.write(&b[..b.len().min(1024)]);
+        h.write(&b[b.len().saturating_sub(1024)..]);
+        if b.len() > 4096 {
+            for i in 0..64 {
+                let at = b.len() / 64 * i;
+                h.write(&b[at..(at + 16).min(b.len())]);
+            }
+        }
+        SheetKey(h.finish(), text.len(), media, quirks == QuirksMode::Quirks)
     }
 }
 
@@ -266,13 +311,17 @@ thread_local! {
     static PARSED: std::cell::RefCell<rustc_hash::FxHashMap<SheetKey, ParsedSheet>> = Default::default();
 }
 
-/// A parsed sheet and the attribute local names its selectors test.
-type ParsedSheet = (DocumentStyleSheet, std::sync::Arc<[markup5ever::LocalName]>);
+/// A parsed sheet, the attribute local names its selectors test, its text.
+type ParsedSheet = (DocumentStyleSheet, std::sync::Arc<[markup5ever::LocalName]>, std::sync::Arc<str>);
 
 /// The attribute local names the selectors of `sheet` test (attribute
 /// selectors, at any depth: `:is()`, `:has()`, nested and conditional
 /// rules). Attribute writes outside these need no invalidation snapshot.
-fn attribute_names(sheet: &Stylesheet, device: &Device, guard: &style::shared_lock::SharedRwLockReadGuard) -> std::sync::Arc<[markup5ever::LocalName]> {
+fn attribute_names(
+    sheet: &Stylesheet,
+    device: &Device,
+    guard: &style::shared_lock::SharedRwLockReadGuard,
+) -> std::sync::Arc<[markup5ever::LocalName]> {
     use selectors::visitor::SelectorVisitor;
     use style::stylesheets::{AllRules, CssRule, RulesIterator, StylesheetInDocument};
     struct Names(rustc_hash::FxHashSet<markup5ever::LocalName>);
@@ -303,6 +352,45 @@ fn attribute_names(sheet: &Stylesheet, device: &Device, guard: &style::shared_lo
     names.0.into_iter().collect()
 }
 
+/// A root element's style: its tag and attributes, and the style.
+type RootStyle = (markup5ever::QualName, Vec<(markup5ever::QualName, Box<str>)>, Arc<ComputedValues>);
+
+/// A stylist and its author sheets, kept for the next document.
+struct PooledStylist {
+    stylist: Stylist,
+    sheets: Vec<AuthorSheet>,
+    root: Option<RootStyle>,
+    viewport: Viewport,
+    quirks: QuirksMode,
+}
+
+thread_local! {
+    /// Stylists of dropped cascades (a navigation drops one document and
+    /// styles the next, mostly from the same sheets).
+    static STYLISTS: std::cell::RefCell<Vec<PooledStylist>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+impl Drop for Cascade {
+    fn drop(&mut self) {
+        let stylist =
+            std::mem::replace(&mut self.stylist, Stylist::new(device(&self.viewport, self.quirks), self.quirks));
+        let pooled = PooledStylist {
+            stylist,
+            sheets: std::mem::take(&mut self.sheets),
+            root: self.root.take(),
+            viewport: self.viewport.clone(),
+            quirks: self.quirks,
+        };
+        let _ = STYLISTS.try_with(|p| {
+            let mut p = p.borrow_mut();
+            if p.len() >= 2 {
+                p.remove(0);
+            }
+            p.push(pooled);
+        });
+    }
+}
+
 /// Sheets kept for reuse at most (cleared past it).
 const PARSED_CAP: usize = 64;
 
@@ -331,6 +419,30 @@ pub struct Cascade {
     popovers: rustc_hash::FxHashSet<u32>,
     /// Whether the DOM knows the attribute names the sheets test.
     names_published: bool,
+    /// Whether the document is styled and kept styled (the traversal ran).
+    /// Until then reads resolve the asked elements and their ancestors
+    /// only (`lazy`): a check right after load does not style the page.
+    full: bool,
+    /// Styles resolved outside the traversal (before `full`, and elements
+    /// it skips: `display: none` subtrees), for `lazy_at`.
+    lazy: std::cell::RefCell<style::traversal::UndisplayedStyleCache>,
+    lazy_at: std::cell::Cell<Option<(u64, u64, u32, u32)>>,
+    /// Bumped whenever `lazy` is cleared before `full` (`take_changes`).
+    lazy_epoch: std::cell::Cell<u64>,
+    taken_epoch: u64,
+    /// Elements resolved lazily since load: past `LAZY_READS` the reads are
+    /// many, and the traversal styles the rest at once.
+    pub(crate) lazy_reads: std::cell::Cell<usize>,
+    /// The last invalidation reached elements without stored styles.
+    lazy_dirty: bool,
+    /// Elements the last invalidation restyled or snapshotted, and their
+    /// parents (sibling selectors).
+    touched: rustc_hash::FxHashSet<u32>,
+    /// The root element's style by its tag and attributes, for the next
+    /// document with the same sheets (a root's style depends on nothing
+    /// else without `:has()`; resolving `:root`'s custom properties is most
+    /// of a first style read on pages with large themes).
+    root: std::cell::RefCell<Option<RootStyle>>,
     /// Elements whose values the last flush changed, and elements it
     /// visited (diagnostics, tests).
     pub(crate) last_restyled: usize,
@@ -367,21 +479,44 @@ impl Cascade {
             crate::node::QuirksMode::NoQuirks => QuirksMode::NoQuirks,
         };
         let lock = LOCK.with(|l| l.clone());
-        let mut stylist = Stylist::new(device(viewport, quirks), quirks);
-        stylist.append_stylesheet(ua_sheet(), &lock.read());
+        // A stylist a closed document left, for the same viewport and mode:
+        // its rules (from the same sheets, usually) are built already.
+        let pooled = STYLISTS.with(|p| {
+            let mut p = p.borrow_mut();
+            let i = p.iter().position(|s| s.viewport == *viewport && s.quirks == quirks)?;
+            Some(p.swap_remove(i))
+        });
+        let (stylist, sheets, root) = match pooled {
+            Some(p) => (p.stylist, p.sheets, p.root),
+            None => {
+                let mut stylist = Stylist::new(device(viewport, quirks), quirks);
+                stylist.append_stylesheet(ua_sheet(), &lock.read());
+                (stylist, Vec::new(), None)
+            }
+        };
+        let has_relative = sheets.iter().any(|s: &AuthorSheet| s.has_relative);
         Cascade {
             lock,
             stylist,
             store: Store::default(),
             snapshots: SnapshotMap::new(),
-            sheets: Vec::new(),
-            has_relative: false,
+            sheets,
+            has_relative,
             quirks,
             viewport: viewport.clone(),
             styled: None,
             changes: Restyled::All,
             popovers: Default::default(),
             names_published: false,
+            full: false,
+            lazy: Default::default(),
+            lazy_at: Default::default(),
+            lazy_epoch: Default::default(),
+            taken_epoch: 0,
+            lazy_reads: Default::default(),
+            lazy_dirty: false,
+            touched: Default::default(),
+            root: std::cell::RefCell::new(root),
             last_restyled: 0,
             last_visited: 0,
         }
@@ -389,10 +524,11 @@ impl Cascade {
 
     /// Makes `sheets` (text and `media` attribute, in cascade order) the
     /// author sheets; unchanged sheets keep their parse.
-    pub fn set_sheets(&mut self, sheets: Vec<(String, Option<String>)>) {
-        let sheets: Vec<(SheetKey, String)> =
-            sheets.into_iter().map(|(t, m)| (SheetKey::new(&t, m, self.quirks), t)).collect();
-        let same = sheets.len() == self.sheets.len() && sheets.iter().zip(&self.sheets).all(|((k, _), s)| *k == s.key);
+    pub fn set_sheets(&mut self, sheets: Vec<(&str, Option<String>)>) {
+        let sheets: Vec<(SheetKey, &str)> =
+            sheets.into_iter().map(|(t, m)| (SheetKey::new(t, m, self.quirks), t)).collect();
+        let same = sheets.len() == self.sheets.len()
+            && sheets.iter().zip(&self.sheets).all(|((k, t), s)| *k == s.key && *s.text == **t);
         if same {
             return;
         }
@@ -403,29 +539,32 @@ impl Cascade {
         }
         drop(guard);
         for (key, text) in sheets {
-            let reuse = old.iter().position(|s| s.key == key);
+            let reuse = old.iter().position(|s| s.key == key && *s.text == *text);
             let sheet = match reuse {
                 Some(i) => old.swap_remove(i),
                 None => {
                     // The same text twice in a document: a sheet of its own
                     // (a stylist holds a sheet once).
-                    let twice = self.sheets.iter().any(|s| s.key == key);
-                    let shared = (!twice).then(|| PARSED.with(|p| p.borrow().get(&key).cloned())).flatten();
-                    let (sheet, attrs) = shared.unwrap_or_else(|| {
-                        let sheet = self.parse(&text, key.2.as_deref());
+                    let twice = self.sheets.iter().any(|s| s.key == key && *s.text == *text);
+                    let shared = (!twice)
+                        .then(|| PARSED.with(|p| p.borrow().get(&key).filter(|p| *p.2 == *text).cloned()))
+                        .flatten();
+                    let (sheet, attrs, text) = shared.unwrap_or_else(|| {
+                        let sheet = self.parse(text, key.2.as_deref());
                         let attrs = attribute_names(&sheet.0, self.stylist.device(), &self.lock.read());
+                        let text: std::sync::Arc<str> = text.into();
                         if !twice {
                             PARSED.with(|p| {
                                 let mut p = p.borrow_mut();
                                 if p.len() >= PARSED_CAP {
                                     p.clear();
                                 }
-                                p.insert(key.clone(), (sheet.clone(), attrs.clone()));
+                                p.insert(key.clone(), (sheet.clone(), attrs.clone(), text.clone()));
                             });
                         }
-                        (sheet, attrs)
+                        (sheet, attrs, text)
                     });
-                    AuthorSheet { has_relative: text.contains(":has("), key, sheet, attrs }
+                    AuthorSheet { has_relative: text.contains(":has("), key, text, sheet, attrs }
                 }
             };
             self.stylist.append_stylesheet(sheet.sheet.clone(), &self.lock.read());
@@ -434,6 +573,8 @@ impl Cascade {
         self.has_relative = self.sheets.iter().any(|s| s.has_relative);
         self.names_published = false;
         self.styled = None;
+        self.lazy_at.set(None);
+        self.root.get_mut().take();
     }
 
     fn parse(&self, text: &str, media: Option<&str>) -> DocumentStyleSheet {
@@ -487,6 +628,8 @@ impl Cascade {
         self.stylist.device().set_root_line_height(line_height.px());
         self.stylist.force_stylesheet_origins_dirty(style::stylesheets::OriginSet::all());
         self.styled = None;
+        self.lazy_at.set(None);
+        self.root.get_mut().take();
     }
 
     /// Sets the open popovers; a change restyles everything.
@@ -494,6 +637,8 @@ impl Cascade {
         if popovers != self.popovers {
             self.popovers = popovers;
             self.styled = None;
+            self.lazy_at.set(None);
+            self.root.get_mut().take();
         }
     }
 
@@ -509,6 +654,7 @@ impl Cascade {
         if self.styled == Some(stamp) {
             return;
         }
+        self.full = true;
         self.store.reserve(dom.slot_len());
         // Attributes before their change (and from here on, kept for the next flush).
         let attrs = dom.take_style_snapshots(doc);
@@ -533,6 +679,7 @@ impl Cascade {
         };
         if full {
             self.store.sweep(dom);
+            self.lazy_dirty = true;
         }
         let cx = Cx::new(dom, &self.store, &self.lock, self.quirks, &self.popovers);
         let _entered = cx.enter();
@@ -577,6 +724,26 @@ impl Cascade {
             }
         }
         self.last_restyled = changed.len();
+        // Lazily resolved styles (`display: none` subtrees) inherit from
+        // stored ones: they go when values changed or their subtrees did.
+        let touched = std::mem::take(&mut self.touched);
+        if !changed.is_empty() || std::mem::take(&mut self.lazy_dirty) {
+            self.lazy.get_mut().clear();
+        } else if !touched.is_empty() {
+            // Else those below what the invalidation reached (descendant
+            // and sibling selectors) go.
+            self.lazy.get_mut().retain(|e, _| {
+                // SAFETY: only the address is read (`SNode::opaque` encodes index + 1).
+                let mut at = (unsafe { e.as_const_ptr::<()>() } as usize).wrapping_sub(1) as u32;
+                while at != NIL && dom.slot_live(at) {
+                    if touched.contains(&at) {
+                        return false;
+                    }
+                    at = dom.n(at).parent;
+                }
+                true
+            });
+        }
         // Full restyles compare old and new values too: only the first
         // styling (nothing to compare with) reports everything.
         if let Restyled::Some(earlier) = &mut self.changes {
@@ -586,9 +753,40 @@ impl Cascade {
     }
 
     /// What the flushes since the last call restyled (for caches derived
-    /// from computed styles).
+    /// from computed styles): before the traversal, everything whenever
+    /// the lazily resolved styles were dropped.
     pub(crate) fn take_changes(&mut self) -> Restyled {
+        if !self.full {
+            let epoch = self.lazy_epoch.get();
+            return match std::mem::replace(&mut self.taken_epoch, epoch) == epoch {
+                true => Restyled::Some(Vec::new()),
+                false => Restyled::All,
+            };
+        }
         std::mem::replace(&mut self.changes, Restyled::Some(Vec::new()))
+    }
+
+    /// Whether the traversal styles the document (else reads resolve lazily).
+    pub(crate) fn is_full(&self) -> bool {
+        self.full
+    }
+
+    /// Readies lazy reads: the stylist's rules up to date with the sheets,
+    /// the lazily resolved styles dropped when the DOM or the cascade
+    /// changed since.
+    pub(crate) fn prepare(&mut self, dom: &Dom, doc: u32) {
+        // Selector flags (`:has()` anchors) land in the store's table.
+        self.store.reserve(dom.slot_len());
+        let stamp = (dom.uid(), dom.version(), dom.focused_idx(doc), dom.hovered_idx(doc));
+        if self.lazy_at.get() != Some(stamp) {
+            self.lazy.get_mut().clear();
+            self.lazy_epoch.set(self.lazy_epoch.get() + 1);
+        }
+        self.lazy_at.set(Some(stamp));
+        let guard = self.lock.read();
+        let guards = StylesheetGuards { author: &guard, ua_or_user: &guard };
+        // The invalidation set is for stored styles; there are none yet.
+        drop(self.stylist.flush(&guards));
     }
 
     /// The style of `idx`'s `::before` (`after` false) or `::after`, as the
@@ -668,6 +866,7 @@ impl Cascade {
             | F::HAS_EMPTY_SELECTOR
             | F::MAY_HAVE_TREE_COUNTING_FUNCTION;
         let mut moved: Vec<u32> = Vec::new();
+        let mut unstored_moves = false;
         let mut own_rules: Vec<u32> = Vec::new();
         for (i, change) in changes.enumerate() {
             if i > 10_000 {
@@ -710,6 +909,9 @@ impl Cascade {
                     if matches!(change, Change::Inserted(..)) && live(c) && dom.n(c).is_element() {
                         // A moved element keeps its old style data: restyle it.
                         moved.push(c);
+                    }
+                    if live(c) {
+                        unstored_moves = true;
                     }
                     if dom.slot_live(c) && !radios {
                         let mut cur = c;
@@ -842,7 +1044,11 @@ impl Cascade {
         };
         // A never styled element (new, or under `display: none`): its nearest
         // styled ancestor restyles its subtree. False when there is none.
+        // A change outside the stored styles (`display: none` subtrees, new
+        // elements) may make lazily resolved ones stale.
+        let unstored = std::cell::Cell::new(false);
         let restyle_from = |n: u32| -> bool {
+            unstored.set(true);
             let mut at = n;
             while live(at) {
                 if dom.n(at).is_element() {
@@ -921,6 +1127,7 @@ impl Cascade {
             // `style`, presentational hints.
             let own = snapshot.changed_attrs.iter().any(|a| !matches!(&*a.0, "class" | "id"));
             self.snapshots.insert(OpaqueNode(n as usize), snapshot);
+            self.touched.extend([n, dom.n(n).parent]);
             slot.has_snapshot.set(true);
             if own {
                 if let Some(mut data) = el.mutate_data() {
@@ -929,6 +1136,7 @@ impl Cascade {
             }
             lead(n);
         }
+        self.touched.extend(own_rules.iter().chain(&moved).chain(&subtrees).chain(&selves).chain(&parents).copied());
         for n in own_rules {
             if let Some(mut data) = SNode::new(&cx, n).mutate_data() {
                 data.hint.insert(RestyleHint::RESTYLE_SELF);
@@ -976,12 +1184,14 @@ impl Cascade {
                 }
             }
         }
+        self.lazy_dirty = unstored.get() || unstored_moves;
         true
     }
 
     /// The computed style of element `idx` (after [`Cascade::flush`]):
     /// stored when the traversal styled it, else resolved on demand (an
     /// element under `display: none`, or outside the document).
+    #[allow(clippy::map_entry)] // the lookup and the insert straddle a resolution
     pub(crate) fn style(&self, dom: &Dom, idx: u32) -> Option<Arc<ComputedValues>> {
         if !dom.slot_live(idx) || !dom.n(idx).is_element() {
             return None;
@@ -1008,11 +1218,77 @@ impl Cascade {
             snapshot_map: &self.snapshots,
             registered_speculative_painters: &NoPainters,
         };
-        let style = {
-            let mut thread_local = ThreadLocalStyleContext::new();
-            let mut context = StyleContext { shared: &shared, thread_local: &mut thread_local };
-            resolve_style(&mut context, el, RuleInclusion::All, None, None).primary().clone()
+        let mut lazy = self.lazy.borrow_mut();
+        if let Some(style) = lazy.get(&selectors::Element::opaque(&el)) {
+            thread_state::exit(ThreadState::LAYOUT);
+            return Some(style.clone());
+        }
+        let mut thread_local = ThreadLocalStyleContext::new();
+        let mut context = StyleContext { shared: &shared, thread_local: &mut thread_local };
+        // The root first: `rem` and `rlh` resolve against it, which the
+        // traversal records on the device and resolution here must too.
+        let is_root = |i: u32| {
+            let p = dom.n(i).parent;
+            p != NIL && matches!(dom.n(p).kind, crate::node::NodeKind::Document(_))
         };
+        if !self.full && !is_root(idx) {
+            let root = dom.root_idx(idx);
+            let root = dom.child_idx_iter(root).find(|&c| dom.n(c).is_element());
+            if let Some(root) = root.filter(|&r| r != idx) {
+                let root = SNode::new(&cx, root);
+                if !lazy.contains_key(&selectors::Element::opaque(&root)) {
+                    let e = dom.n(root.i()).element().expect("root");
+                    // Nothing focused or hovered (`:focus-within`, `:hover`).
+                    let doc = dom.root_idx(idx);
+                    let fresh = dom.focused_idx(doc) == NIL && dom.hovered_idx(doc) == NIL;
+                    let known = self
+                        .root
+                        .borrow()
+                        .as_ref()
+                        .filter(|(name, attrs, _)| {
+                            fresh
+                                && *name == e.name
+                                && attrs.len() == e.attrs.len()
+                                && attrs.iter().zip(&e.attrs).all(|((n, v), a)| *n == a.name && *v == a.value)
+                        })
+                        .map(|(_, _, style)| style.clone());
+                    let style = match known {
+                        Some(style) => style,
+                        None => {
+                            let style =
+                                resolve_style(&mut context, root, RuleInclusion::All, None, None).primary().clone();
+                            // Kept unless a `:has()` was tested on it: its
+                            // style may then depend on the document.
+                            use selectors::matching::ElementSelectorFlags as F;
+                            let anchors = root
+                                .selector_flags()
+                                .intersects(F::ANCHORS_RELATIVE_SELECTOR | F::ANCHORS_RELATIVE_SELECTOR_NON_SUBJECT);
+                            if fresh && !anchors {
+                                let attrs = e.attrs.iter().map(|a| (a.name.clone(), a.value.clone())).collect();
+                                *self.root.borrow_mut() = Some((e.name.clone(), attrs, style.clone()));
+                            }
+                            style
+                        }
+                    };
+                    set_root(self.stylist.device(), &style);
+                    lazy.insert(selectors::Element::opaque(&root), style);
+                }
+            }
+        }
+        // Resolution takes a cached ancestor as the parent, but finds the
+        // layout parent past a `display: contents` one in stored data only:
+        // then resolve that chain afresh.
+        let contents_parent = TElement::traversal_parent(&el)
+            .and_then(|p| lazy.get(&selectors::Element::opaque(&p)).cloned())
+            .is_some_and(|p| p.is_display_contents());
+        let cache = if contents_parent { None } else { Some(&mut *lazy) };
+        let style = resolve_style(&mut context, el, RuleInclusion::All, None, cache).primary().clone();
+        if !self.full && is_root(idx) {
+            set_root(self.stylist.device(), &style);
+        }
+        drop(thread_local);
+        lazy.insert(selectors::Element::opaque(&el), style.clone());
+        self.lazy_reads.set(self.lazy_reads.get() + 1);
         thread_state::exit(ThreadState::LAYOUT);
         Some(style)
     }

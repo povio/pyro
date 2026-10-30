@@ -101,11 +101,14 @@ fn dom_changes_restyle() {
 
 #[test]
 fn a_local_change_restyles_locally() {
+    if !lp_dom::style::stylo_cascade() {
+        return; // Stylo's bookkeeping
+    }
     let rows: String = (0..500).map(|i| format!("<li class=r{i}>row {i}</li>")).collect();
     let p = Page::new(&format!(
         "<!doctype html><style>.x {{ color: red }}</style><ul id=a>{rows}</ul><ul id=b><li id=one>x</li></ul>"
     ));
-    p.value("#one", "color");
+    p.layout.style().style_document(&p.dom.borrow());
     let (styled, ..) = p.layout.style().stylo_stats();
     assert!(styled > 500, "{styled}");
     let one = p.find("#one");
@@ -375,6 +378,9 @@ fn memory_per_page() {
 
 #[test]
 fn changes_restyle_locally_with_has_and_sibling_rules() {
+    if !lp_dom::style::stylo_cascade() {
+        return; // Stylo's bookkeeping
+    }
     let rows: String = (0..300).map(|i| format!("<li class=r{i}><span>row {i}</span></li>")).collect();
     let p = Page::new(&format!(
         "<!doctype html><style>.card:has(.on){{outline-style:dotted}} li:nth-child(2n){{width:2px}} \
@@ -403,6 +409,9 @@ fn changes_restyle_locally_with_has_and_sibling_rules() {
 
 #[test]
 fn only_attributes_selectors_test_are_snapshotted() {
+    if !lp_dom::style::stylo_cascade() {
+        return; // Stylo's bookkeeping
+    }
     let p = Page::new(
         "<!doctype html><style>[data-on] > .x{color:rgb(1, 1, 1)} .big{width:9px} [hidden]{display:none}</style>\
          <body><div id=d><span id=x class=x>x</span></div></body>",
@@ -410,6 +419,7 @@ fn only_attributes_selectors_test_are_snapshotted() {
     let d = p.find("#d");
     let snapshots = |p: &Page| p.dom.borrow().style_snapshot_count();
     let visited = |p: &Page| p.layout.style().stylo_stats().2;
+    p.layout.style().style_document(&p.dom.borrow());
     assert_eq!(p.value("#x", "color"), "rgb(0, 0, 0)");
     // No selector tests these: no snapshot, and the next read restyles nothing.
     p.dom.borrow_mut().set_attribute(d, "data-other", "1").unwrap();
@@ -440,4 +450,126 @@ fn only_attributes_selectors_test_are_snapshotted() {
     let fresh = p.dom.borrow_mut().create_element(p.doc, "div").unwrap();
     p.dom.borrow_mut().set_attribute(fresh, "class", "big").unwrap();
     assert_eq!(snapshots(&p), 0);
+}
+
+/// In-process timings of the style reads dom-bench measures over CDP:
+/// `LP_CS_PAGES` as for `memory_per_page`; `LP_CS_ITERS` repetitions
+/// (default 200). Prints the median and the 10th-90th percentile spread
+/// of each operation, per page. Compare with `LP_CASCADE=legacy`.
+#[test]
+#[ignore = "needs pages (LP_CS_PAGES)"]
+fn style_read_timings() {
+    use lp_dom::layout::Geometry;
+    let pages = std::env::var("LP_CS_PAGES").expect("LP_CS_PAGES");
+    let iters: usize = std::env::var("LP_CS_ITERS").ok().and_then(|v| v.parse().ok()).unwrap_or(200);
+    for spec in pages.split(',') {
+        let file = spec.split(':').next().unwrap();
+        let html = std::fs::read_to_string(file).unwrap();
+        let load = || {
+            let dom: DomRef = Rc::new(RefCell::new(Dom::new()));
+            let doc = parse_document(&dom, "http://test/", &html);
+            let dom = Rc::try_unwrap(dom).ok().unwrap().into_inner();
+            let mut layout = Layout::with_viewport(doc, lp_dom::media::Viewport::new(1280, 720));
+            layout.style_mut().discover_style_elements(&dom);
+            layout.set_geometry(Geometry::Flow);
+            (dom, doc, layout)
+        };
+        let stats = |mut v: Vec<f64>| {
+            v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            let at = |q: f64| v[((v.len() - 1) as f64 * q) as usize];
+            format!("{:>9.1} us [{:.1}-{:.1}]", at(0.5), at(0.1), at(0.9))
+        };
+        let name = std::path::Path::new(file).file_stem().unwrap().to_string_lossy().into_owned();
+        // First read after load: one getComputedStyle, one visibility check.
+        let mut first_cs = Vec::new();
+        let mut first_vis = Vec::new();
+        for _ in 0..iters.min(std::env::var("LP_CS_FIRST").ok().and_then(|v| v.parse().ok()).unwrap_or(50)) {
+            let (dom, doc, layout) = load();
+            let body = dom.body(doc).unwrap().unwrap();
+            let t = std::time::Instant::now();
+            layout.computed_style_value(&dom, body, "display");
+            first_cs.push(t.elapsed().as_secs_f64() * 1e6);
+            let (dom, doc, layout) = load();
+            let body = dom.body(doc).unwrap().unwrap();
+            let t = std::time::Instant::now();
+            layout.is_visible(&dom, body);
+            first_vis.push(t.elapsed().as_secs_f64() * 1e6);
+        }
+        let (mut dom, doc, layout) = load();
+        let all = dom.query_selector_all(doc, &parse_selectors("*").unwrap()).unwrap();
+        let step = (all.len() / 100).max(1);
+        let hundred: Vec<NodeId> = all.iter().step_by(step).take(100).copied().collect();
+        let row = dom
+            .query_selector(doc, &parse_selectors("tbody tr").unwrap())
+            .unwrap()
+            .or_else(|| dom.query_selector(doc, &parse_selectors("li, p").unwrap()).unwrap())
+            .unwrap_or_else(|| dom.body(doc).unwrap().unwrap());
+        let body = dom.body(doc).unwrap().unwrap();
+        let run = |dom: &mut Dom, target: NodeId, read: &dyn Fn(&Dom)| {
+            let mut v = Vec::new();
+            for i in 0..iters {
+                let class = if i % 2 == 0 { "bench-dirty" } else { "" };
+                dom.set_attribute(target, "class", class).unwrap();
+                let t = std::time::Instant::now();
+                read(dom);
+                v.push(t.elapsed().as_secs_f64() * 1e6);
+            }
+            stats(v)
+        };
+        let cs = |dom: &Dom| {
+            for &e in &hundred {
+                std::hint::black_box(layout.computed_style_value(dom, e, "color"));
+            }
+        };
+        let rect = |dom: &Dom| {
+            for &e in &hundred {
+                std::hint::black_box(layout.bounding_client_rect(dom, e));
+            }
+        };
+        layout.bounding_client_rect(&dom, body);
+        let row_cs = run(&mut dom, row, &cs);
+        let row_rect = run(&mut dom, row, &rect);
+        let body_cs = run(&mut dom, body, &cs);
+        let body_rect = run(&mut dom, body, &rect);
+        let mut clean = Vec::new();
+        for _ in 0..iters {
+            let t = std::time::Instant::now();
+            cs(&dom);
+            clean.push(t.elapsed().as_secs_f64() * 1e6);
+        }
+        let query = lp_dom::select::parse_query("div span, tbody tr td, li a").unwrap();
+        let mut q = Vec::new();
+        for _ in 0..iters {
+            let t = std::time::Instant::now();
+            std::hint::black_box(dom.query_all(doc, &query).unwrap());
+            q.push(t.elapsed().as_secs_f64() * 1e6);
+        }
+        println!("{name} ({} elements)", all.len());
+        println!("  first getComputedStyle after load {}", stats(first_cs));
+        println!("  first visibility check after load {}", stats(first_vis));
+        println!("  getComputedStyle x100 clean       {}", stats(clean));
+        println!("  getComputedStyle x100 row changed {row_cs}");
+        println!("  rect x100 row changed             {row_rect}");
+        println!("  getComputedStyle x100 body class  {body_cs}");
+        println!("  rect x100 body class              {body_rect}");
+        println!("  css query (descendant)            {}", stats(q));
+    }
+}
+
+#[test]
+fn styles_under_display_none_follow_changes() {
+    let p = Page::new(
+        "<!doctype html><style>#h{display:none} .on #c{color:rgb(4, 4, 4)} .on + #h #c{width:4px}</style>\
+         <body><div id=a></div><div id=h><i id=c>c</i></div></body>",
+    );
+    p.layout.style().style_document(&p.dom.borrow());
+    assert_eq!(p.value("#c", "color"), "rgb(0, 0, 0)");
+    let body = p.dom.borrow().body(p.doc).unwrap().unwrap();
+    p.dom.borrow_mut().set_attribute(body, "class", "on").unwrap();
+    assert_eq!(p.value("#c", "color"), "rgb(4, 4, 4)");
+    let a = p.find("#a");
+    p.dom.borrow_mut().set_attribute(a, "class", "on").unwrap();
+    assert_eq!(p.value("#c", "width"), "4px");
+    p.dom.borrow_mut().set_attribute(a, "class", "").unwrap();
+    assert_eq!(p.value("#c", "width"), "auto");
 }
