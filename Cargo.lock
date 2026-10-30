@@ -1614,6 +1614,7 @@ dependencies = [
  "blitz-traits",
  "image",
  "kurbo",
+ "lp-dom",
  "parley",
  "peniko",
  "png",

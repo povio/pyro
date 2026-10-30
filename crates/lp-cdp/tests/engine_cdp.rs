@@ -5742,6 +5742,78 @@ mod screenshot {
         assert!(r["result"]["results"][0]["pass"] == true, "{r}");
     }
 
+    fn mirror_of(r: &Value) -> Value {
+        r["result"]["lp"]["ms"]["mirror"].clone()
+    }
+
+    #[test]
+    fn repeat_screenshots_update_the_persistent_document() {
+        let mut h = Harness::new();
+        h.page(
+            "Emulation.setDeviceMetricsOverride",
+            json!({"width": 400, "height": 300, "deviceScaleFactor": 1, "mobile": false}),
+        );
+        load_html(&mut h, CARD);
+        let r = h.page("Page.captureScreenshot", json!({}));
+        assert_eq!(mirror_of(&r), json!({"rebuilt": "first", "mutations": mirror_of(&r)["mutations"], "pages": 1}), "{r}");
+        // Nothing changed: the same tree, not even diffed.
+        let r = h.page("Page.captureScreenshot", json!({}));
+        assert_eq!(mirror_of(&r), json!({"rebuilt": null, "mutations": 0, "pages": 1}), "{r}");
+        let before = png_of(&r["result"]["data"]);
+        // A script changes one class and one text: applied in place.
+        h.page(
+            "Runtime.evaluate",
+            json!({"expression": "document.getElementById('card').style.background = '#0000ff'; document.body.append('x'); 1"}),
+        );
+        let r = h.page("Page.captureScreenshot", json!({}));
+        let m = mirror_of(&r);
+        assert_eq!(m["rebuilt"], Value::Null, "{r}");
+        assert!((1..10).contains(&m["mutations"].as_u64().unwrap()), "{r}");
+        let after = png_of(&r["result"]["data"]);
+        assert_eq!(pixel(&before, 100, 100), [0x6d, 0x28, 0xd9, 255]);
+        assert_eq!(pixel(&after, 100, 100), [0, 0, 255, 255]);
+        // Typed text (form state) is applied too.
+        h.page("LP.run", json!({"steps": [{"act": {"locator": {"css": "#name"}, "action": "fill", "value": "Ada"}}]}));
+        let r = h.page("Page.captureScreenshot", json!({}));
+        assert_eq!(mirror_of(&r)["rebuilt"], Value::Null, "{r}");
+        assert_ne!(png_of(&r["result"]["data"]), after, "typed text is rendered");
+        // A navigation is another document.
+        load_html(&mut h, CARD);
+        let r = h.page("Page.captureScreenshot", json!({}));
+        assert_eq!(mirror_of(&r)["rebuilt"], "document", "{r}");
+        assert_eq!(png_of(&r["result"]["data"]), before);
+    }
+
+    #[test]
+    fn only_pages_that_take_screenshots_keep_a_document_until_they_close() {
+        let mut h = Harness::new();
+        load_html(&mut h, CARD);
+        let first = (h.session.clone(), h.frame_id.clone());
+        // A second page that never takes a screenshot.
+        let id = h.send(None, "Target.createTarget", json!({"url": "about:blank"}));
+        let attached = h.until_response(id).into_iter().find(|m| m["method"] == "Target.attachedToTarget").unwrap();
+        let second = (
+            attached["params"]["sessionId"].as_str().unwrap().to_owned(),
+            attached["params"]["targetInfo"]["targetId"].as_str().unwrap().to_owned(),
+        );
+        h.session = second.0.clone();
+        load_html(&mut h, CARD);
+        h.page("Runtime.evaluate", json!({"expression": "for (let i = 0; i < 100; i++) document.body.append('x'); 1"}));
+        h.session = first.0.clone();
+        let r = h.page("Page.captureScreenshot", json!({}));
+        assert_eq!(mirror_of(&r)["pages"], 1, "{r}");
+        // Both pages: two documents; the second one closes: one again.
+        h.session = second.0.clone();
+        let r = h.page("Page.captureScreenshot", json!({}));
+        assert_eq!(mirror_of(&r)["pages"], 2, "{r}");
+        h.call(None, "Target.closeTarget", json!({"targetId": second.1}));
+        h.session = first.0.clone();
+        h.page("Runtime.evaluate", json!({"expression": "document.body.append('y'); 1"}));
+        let r = h.page("Page.captureScreenshot", json!({}));
+        assert_eq!(mirror_of(&r)["pages"], 1, "{r}");
+        assert_eq!(mirror_of(&r)["rebuilt"], Value::Null, "{r}");
+    }
+
     #[test]
     fn match_screenshot_captures_form_state_and_elements() {
         let mut h = Harness::new();

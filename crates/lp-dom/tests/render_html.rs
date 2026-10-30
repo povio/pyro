@@ -129,3 +129,44 @@ fn shadow_trees_are_flattened_with_slots() {
         "{html}"
     );
 }
+
+#[test]
+fn render_tree_has_the_html_content_with_stable_keys() {
+    use lp_dom::snapshot::{render_key, RenderNodeKind, SYNTHETIC_TEXT, TOP};
+    let (dom, d) = doc("<style>p{}</style><p id=p class=a>hi</p><textarea id=t>x</textarea><script>1</script>");
+    let (p, t) = (find(&dom.borrow(), d, "#p"), find(&dom.borrow(), d, "#t"));
+    dom.borrow_mut().set_value(t, "typed").unwrap();
+    let opts = RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: Some((p, "data-x")) };
+    let tree = dom.borrow().render_tree(d, &opts).unwrap();
+    assert_eq!(tree.mark, Some(render_key(p)));
+    assert_eq!(tree.nodes[0].parent, TOP);
+    let element = |key: u64| tree.nodes.iter().find(|n| n.key == key).unwrap();
+    match &element(render_key(p)).kind {
+        // The mark is not an attribute of the tree.
+        RenderNodeKind::Element { name, attrs } => {
+            assert_eq!(&*name.local, "p");
+            assert_eq!(
+                attrs.iter().map(|(n, v)| (&*n.local, v.as_str())).collect::<Vec<_>>(),
+                [("id", "p"), ("class", "a")]
+            );
+        }
+        k => panic!("{k:?}"),
+    }
+    // A textarea's value stands for its children.
+    let value = element(render_key(t) | SYNTHETIC_TEXT);
+    assert_eq!(value.kind, RenderNodeKind::Text("typed".into()));
+    assert_eq!(tree.nodes[value.parent as usize].key, render_key(t));
+    assert!(tree
+        .nodes
+        .iter()
+        .all(|n| !matches!(&n.kind, RenderNodeKind::Element { name, .. } if &*name.local == "script")));
+    // Keys survive a mutation elsewhere; a changed attribute changes only that node.
+    dom.borrow_mut().set_attribute(p, "class", "b").unwrap();
+    let again = dom.borrow().render_tree(d, &opts).unwrap();
+    assert_eq!(
+        again.nodes.iter().map(|n| n.key).collect::<Vec<_>>(),
+        tree.nodes.iter().map(|n| n.key).collect::<Vec<_>>()
+    );
+    let changed: Vec<u64> = again.nodes.iter().zip(&tree.nodes).filter(|(a, b)| a != b).map(|(a, _)| a.key).collect();
+    assert_eq!(changed, [render_key(p)]);
+}

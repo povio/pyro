@@ -14,9 +14,14 @@
 //! A match skips stage 3 when the display-list hash equals the hash recorded
 //! for the baseline, and stops at the first differing pixel when no
 //! difference is allowed.
+//!
+//! A [`Live`] snapshot carries the page as a keyed node list instead of
+//! HTML: the renderer keeps the page's Blitz document and applies only what
+//! changed since its previous render (`mirror` module).
 
 mod compare;
 mod hash;
+mod mirror;
 mod net;
 pub mod worker;
 
@@ -28,7 +33,6 @@ use anyrender::recording::Scene;
 use anyrender::{ImageRenderer, PaintScene};
 use anyrender_vello_cpu::VelloCpuImageRenderer;
 use blitz_dom::{DocumentConfig, StyleThreading};
-use blitz_html::HtmlDocument;
 use blitz_traits::shell::{ColorScheme, Viewport as BlitzViewport};
 use kurbo::{Affine, Rect};
 use parley::fontique::{Blob, Collection, CollectionOptions, SourceCache};
@@ -37,6 +41,7 @@ use peniko::{Color, Fill};
 
 pub use compare::{compare, decode_png, diff_image, encode_jpeg, encode_png, CompareResult};
 pub use hash::scene_hash;
+pub use mirror::{MirrorStats, Rebuild, Tree, TreeKind, TreeNode, TOP};
 pub use net::Fetcher;
 
 /// Content digest for caching baselines (xxh3).
@@ -72,6 +77,24 @@ pub struct Snapshot {
     /// Sub-resource bytes fetched for an earlier snapshot of the same
     /// document are reused while this key is unchanged (the loader id).
     pub resource_scope: String,
+    /// The page as a keyed tree, rendered with the page's persistent
+    /// document instead of `html` (see [`Live`]).
+    pub live: Option<Live>,
+}
+
+/// A snapshot of a page whose Blitz document the renderer keeps between
+/// renders: each render applies only what changed since the page's last
+/// one (`mirror` module). A new `resource_scope` (navigation) or base URL
+/// starts a new document; [`Renderer::forget`] drops it.
+#[derive(Clone, Debug)]
+pub struct Live {
+    /// Which page's document (unique per renderer).
+    pub page: u64,
+    /// The page now. The same `Arc` as the previous render's means nothing
+    /// changed.
+    pub tree: Arc<Tree>,
+    /// Key of the element [`Area::Element`] captures.
+    pub clip: Option<u64>,
 }
 
 /// Attribute the snapshot puts on the element a screenshot is clipped to.
@@ -118,6 +141,8 @@ pub struct Timings {
     /// Style and layout passes while sub-resources arrived (1 when
     /// everything the page asked for came before the first layout).
     pub layout_passes: u32,
+    /// How a [`Live`] snapshot used the page's document.
+    pub mirror: Option<MirrorStats>,
     /// PNG encoding of the returned images.
     pub encode: Duration,
 }
@@ -220,6 +245,8 @@ pub struct Renderer {
     #[cfg(feature = "gpu")]
     gpu: Option<(anyrender_vello::VelloImageRenderer, (u32, u32))>,
     resources: net::ResourceCache,
+    /// Persistent documents of [`Live`] snapshots, by page.
+    mirrors: HashMap<u64, mirror::Mirror>,
     /// Longest wait for sub-resources per render.
     pub fetch_timeout: Duration,
     /// Longest wait, before the first layout, for the fonts and images the
@@ -243,6 +270,7 @@ impl Renderer {
             #[cfg(feature = "gpu")]
             gpu: None,
             resources: net::ResourceCache::default(),
+            mirrors: HashMap::new(),
             fetch_timeout: Duration::from_secs(10),
             first_layout_wait: Duration::from_secs(3),
         }
@@ -254,6 +282,96 @@ impl Renderer {
         self.font_ctx.collection.register_fonts(Blob::new(Arc::new(bytes)), None);
     }
 
+    /// Drops the persistent document of `page` (closed, or gone).
+    pub fn forget(&mut self, page: u64) {
+        self.mirrors.remove(&page);
+    }
+
+    /// Pages with a persistent document.
+    pub fn mirrored_pages(&self) -> usize {
+        self.mirrors.len()
+    }
+
+    /// Every box of `page`'s persistent document, one line each (diagnostics).
+    #[doc(hidden)]
+    pub fn mirrored_layout(&self, page: u64) -> Vec<String> {
+        let Some(m) = self.mirrors.get(&page) else { return Vec::new() };
+        let mut out = Vec::new();
+        let mut stack = vec![(m.doc.root_element().id, 0usize)];
+        while let Some((id, depth)) = stack.pop() {
+            let node = m.doc.get_node(id).expect("node");
+            let line = match node.element_data() {
+                Some(e) => {
+                    let l = node.final_layout();
+                    let class = e.attr(blitz_dom::local_name!("class")).unwrap_or("");
+                    let (x, y, w, h) = (l.location.x, l.location.y, l.size.width, l.size.height);
+                    format!("<{} {class:?}> {x:.1},{y:.1} {w:.1}x{h:.1}", e.name.local)
+                }
+                None => format!("{:?}", node.text_content().chars().take(20).collect::<String>()),
+            };
+            out.push(format!("{}{line}", " ".repeat(depth)));
+            for &c in node.children.iter().rev() {
+                stack.push((c, depth + 1));
+            }
+        }
+        out
+    }
+
+    /// The markup of `page`'s persistent document (tests, diagnostics).
+    #[doc(hidden)]
+    pub fn mirrored_html(&self, page: u64) -> Option<String> {
+        self.mirrors.get(&page).map(|m| m.doc.root_element().outer_html())
+    }
+
+    fn config(&self, snap: &Snapshot, provider: Arc<dyn blitz_traits::net::NetProvider>) -> DocumentConfig {
+        DocumentConfig {
+            base_url: Some(snap.base_url.clone()),
+            net_provider: Some(provider),
+            viewport: Some(viewport_of(snap)),
+            font_ctx: Some(self.font_ctx.clone()),
+            style_threading: StyleThreading::Sequential,
+            ..DocumentConfig::default()
+        }
+    }
+
+    /// The page's persistent document, brought up to `live.tree`.
+    fn mirror(&mut self, snap: &Snapshot, live: &Live, fetcher: &Arc<dyn Fetcher>) -> MirrorStats {
+        let key = viewport_key(snap);
+        let reason = match self.mirrors.get_mut(&live.page) {
+            None => Some(Rebuild::First),
+            Some(m) if m.scope != snap.resource_scope || m.base_url != snap.base_url => Some(Rebuild::Document),
+            Some(m) => {
+                m.bridge.retarget(snap, fetcher.clone());
+                if m.viewport != key {
+                    m.doc.set_viewport(viewport_of(snap));
+                    m.viewport = key;
+                }
+                match m.apply(&live.tree, &snap.sheets) {
+                    Ok(mutations) => return MirrorStats { rebuilt: None, mutations, pages: self.mirrors.len() as u32 },
+                    Err(reason) => Some(reason),
+                }
+            }
+        };
+        self.mirrors.remove(&live.page);
+        let bridge = net::Bridge::new(snap, fetcher.clone(), net::new_cache());
+        let config = self.config(snap, bridge.provider());
+        let mutations = live.tree.nodes.len() as u32;
+        match mirror::Mirror::build(
+            live.tree.clone(),
+            config,
+            bridge,
+            snap.resource_scope.clone(),
+            snap.sheets.clone(),
+            key,
+        ) {
+            Ok(m) => {
+                self.mirrors.insert(live.page, m);
+                MirrorStats { rebuilt: reason, mutations, pages: self.mirrors.len() as u32 }
+            }
+            Err(e) => MirrorStats { rebuilt: Some(e), mutations: 0, pages: self.mirrors.len() as u32 },
+        }
+    }
+
     /// Stages 1 and 2.
     pub fn paint(&mut self, snap: &Snapshot, area: Area, fetcher: &Arc<dyn Fetcher>) -> Result<Painted, RenderError> {
         let mut timings = Timings::default();
@@ -262,30 +380,39 @@ impl Renderer {
         let physical = |css: f64| (css * dpr).round() as u32;
 
         let started = Instant::now();
-        let bridge = net::Bridge::new(snap, fetcher.clone(), self.resources.scoped(&snap.resource_scope));
-        let mut doc = HtmlDocument::from_html(
-            &snap.html,
-            DocumentConfig {
-                base_url: Some(snap.base_url.clone()),
-                net_provider: Some(bridge.provider()),
-                viewport: Some(BlitzViewport::new(
-                    physical(vw as f64),
-                    physical(vh as f64),
-                    dpr as f32,
-                    if snap.dark { ColorScheme::Dark } else { ColorScheme::Light },
-                )),
-                font_ctx: Some(self.font_ctx.clone()),
-                style_threading: StyleThreading::Sequential,
-                ..Default::default()
-            },
-        );
-        let (fetch, passes) = bridge.settle(&mut doc, started + self.fetch_timeout, self.first_layout_wait);
+        let mut fresh = None;
+        let (doc, bridge, clip) = match &snap.live {
+            Some(live) => {
+                let stats = self.mirror(snap, live, fetcher);
+                timings.mirror = Some(stats);
+                match self.mirrors.get_mut(&live.page) {
+                    Some(m) => {
+                        let clip = live.clip.and_then(|k| m.node(k));
+                        (&mut m.doc, &m.bridge, clip)
+                    }
+                    None => return Err(RenderError::BadArea("the page's tree has a repeated key".into())),
+                }
+            }
+            None => {
+                let bridge = net::Bridge::new(snap, fetcher.clone(), self.resources.scoped(&snap.resource_scope));
+                let doc = blitz_html::HtmlDocument::from_html(&snap.html, self.config(snap, bridge.provider()));
+                let (doc, bridge) = fresh.insert((doc.into_inner(), bridge));
+                let clip = doc.query_selector(&format!("[{CLIP_ATTRIBUTE}]")).ok().flatten();
+                (doc, &*bridge, clip)
+            }
+        };
+        let (fetch, passes) = bridge.settle(doc, started + self.fetch_timeout, self.first_layout_wait);
         timings.layout_passes = passes;
         doc.resolve(0.0);
         timings.fetch = fetch;
         timings.layout = started.elapsed().saturating_sub(fetch);
 
         let t = Instant::now();
+        // A persistent document keeps the scroll of its last capture; only
+        // a viewport capture is scrolled.
+        if area != Area::Viewport {
+            doc.set_viewport_scroll(blitz_dom::Point { x: 0.0, y: 0.0 });
+        }
         let root = {
             let root = doc.root_element();
             let (size, overflow) = (root.final_layout().size, root.scrollable_overflow());
@@ -309,8 +436,7 @@ impl Renderer {
                 ((x, y), s, (width * s).round() as u32, (height * s).round() as u32)
             }
             Area::Element => {
-                let selector = format!("[{CLIP_ATTRIBUTE}]");
-                let id = doc.query_selector(&selector).ok().flatten().ok_or(RenderError::NoElement)?;
+                let id = clip.ok_or(RenderError::NoElement)?;
                 let node = doc.get_node(id).ok_or(RenderError::NoElement)?;
                 let size = node.final_layout().size;
                 let at = node.absolute_position(0.0, 0.0);
@@ -337,7 +463,7 @@ impl Renderer {
         let mut page = Scene::new();
         let extent_w = ((origin.0 * dpr) as u32).saturating_add((w as f64 * dpr / scale).ceil() as u32);
         let extent_h = ((origin.1 * dpr) as u32).saturating_add((h as f64 * dpr / scale).ceil() as u32);
-        blitz_paint::paint_scene(&mut page, &mut doc, dpr, extent_w, extent_h, 0, 0);
+        blitz_paint::paint_scene(&mut page, doc, dpr, extent_w, extent_h, 0, 0);
         let transform = Affine::scale(scale / dpr) * Affine::translate((-origin.0 * dpr, -origin.1 * dpr));
         scene.append_scene(page, transform);
         let hash = scene_hash(&scene, w, h, &mut self.font_hashes);
@@ -389,6 +515,21 @@ impl Renderer {
         let (image, timings) = self.raster(painted, backend);
         Ok((image, hash, timings))
     }
+}
+
+fn viewport_of(snap: &Snapshot) -> BlitzViewport {
+    let dpr = snap.device_scale_factor.clamp(0.1, 16.0);
+    let physical = |css: u32| (css.max(1) as f64 * dpr).round() as u32;
+    BlitzViewport::new(
+        physical(snap.width),
+        physical(snap.height),
+        dpr as f32,
+        if snap.dark { ColorScheme::Dark } else { ColorScheme::Light },
+    )
+}
+
+fn viewport_key(snap: &Snapshot) -> (u32, u32, u64, bool) {
+    (snap.width, snap.height, snap.device_scale_factor.to_bits(), snap.dark)
 }
 
 fn ensure<R: ImageRenderer>(slot: &mut Option<(R, (u32, u32))>, w: u32, h: u32) -> &mut R {

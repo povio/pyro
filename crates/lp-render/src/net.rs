@@ -10,7 +10,7 @@ use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use blitz_html::HtmlDocument;
+use blitz_dom::BaseDocument;
 use blitz_traits::net::{Bytes, NetHandler, NetProvider, Request};
 
 use crate::Snapshot;
@@ -43,9 +43,15 @@ impl ResourceCache {
 
 type Delivery = (Box<dyn NetHandler>, String, Bytes);
 
+pub(crate) fn new_cache() -> Cache {
+    Cache::default()
+}
+
 struct Provider {
-    fetcher: Arc<dyn Fetcher>,
-    sheets: HashMap<String, String>,
+    /// The page's loader and sheets of the latest snapshot: a mirrored
+    /// document keeps its provider across renders.
+    fetcher: Mutex<Arc<dyn Fetcher>>,
+    sheets: Mutex<HashMap<String, String>>,
     cache: Cache,
     tx: Sender<Delivery>,
     outstanding: Arc<AtomicUsize>,
@@ -57,8 +63,9 @@ impl NetProvider for Provider {
         self.outstanding.fetch_add(1, Ordering::AcqRel);
         let ready = self
             .sheets
-            .get(&url)
-            .map(|text| Bytes::from(text.clone().into_bytes()))
+            .lock()
+            .ok()
+            .and_then(|s| s.get(&url).map(|text| Bytes::from(text.clone().into_bytes())))
             .or_else(|| self.cache.lock().ok().and_then(|c| c.get(&url).cloned()));
         if let Some(bytes) = ready {
             let _ = self.tx.send((handler, url, bytes));
@@ -66,7 +73,9 @@ impl NetProvider for Provider {
         }
         let tx = self.tx.clone();
         let cache = self.cache.clone();
-        self.fetcher.fetch(
+        let fetcher = self.fetcher.lock().map(|f| f.clone());
+        let Ok(fetcher) = fetcher else { return };
+        fetcher.fetch(
             url.clone(),
             Box::new(move |result| {
                 let bytes = match result {
@@ -96,9 +105,25 @@ impl Bridge {
     pub(crate) fn new(snap: &Snapshot, fetcher: Arc<dyn Fetcher>, cache: Cache) -> Bridge {
         let (tx, rx) = channel();
         let outstanding = Arc::new(AtomicUsize::new(0));
-        let provider =
-            Arc::new(Provider { fetcher, sheets: snap.sheets.clone(), cache, tx, outstanding: outstanding.clone() });
+        let provider = Arc::new(Provider {
+            fetcher: Mutex::new(fetcher),
+            sheets: Mutex::new(snap.sheets.clone()),
+            cache,
+            tx,
+            outstanding: outstanding.clone(),
+        });
         Bridge { provider, rx, outstanding }
+    }
+
+    /// Serves `snap`'s sheets and fetches through `fetcher` from now on (a
+    /// mirrored document's next render).
+    pub(crate) fn retarget(&self, snap: &Snapshot, fetcher: Arc<dyn Fetcher>) {
+        if let Ok(mut f) = self.provider.fetcher.lock() {
+            *f = fetcher;
+        }
+        if let Ok(mut s) = self.provider.sheets.lock() {
+            s.clone_from(&snap.sheets);
+        }
     }
 
     pub(crate) fn provider(&self) -> Arc<dyn NetProvider> {
@@ -118,7 +143,7 @@ impl Bridge {
     /// waiting for the rest until `deadline`.
     pub(crate) fn settle(
         &self,
-        doc: &mut HtmlDocument,
+        doc: &mut BaseDocument,
         deadline: Instant,
         first_layout_wait: Duration,
     ) -> (Duration, u32) {
