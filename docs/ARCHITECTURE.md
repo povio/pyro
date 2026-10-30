@@ -21,6 +21,7 @@ see [PARITY.md](PARITY.md) for what exists today.
 | `lp-webapi` | W2 | lp-js, lp-dom, lp-net | JS bindings for DOM/network WebAPIs using `lp_js::JsClass`. |
 | `lp-cdp-protocol` | W3 automation | lp-net | CDP wire protocol without the engine: WebSocket/HTTP server, messages, `Target` domain, `Network`/`Fetch`/`Runtime` translation helpers. Builds in parallel with lp-dom/lp-webapi/lp-browser. |
 | `lp-cdp` | W3 automation | lp-cdp-protocol, lp-browser, lp-js, lp-webapi | CDP domains on the engine (`engine/`), the per-connection browser thread (`serve`, `conn`); re-exports lp-cdp-protocol's modules. Runtime remote objects implemented natively. |
+| `lp-render` | W3 automation | — (no JS, no lp crate) | Screenshots: a page snapshot (HTML with form state, live sheets, viewport) rendered by Blitz (html5ever, Stylo, Taffy, Parley; vello_cpu, optional vello/wgpu) on a render thread per connection; display-list hash, pixel compare, PNG. Built only with the `render` feature. |
 | `tests/e2e`, `bench/` | W3 | binary | Real TOS E2E compatibility and benchmarks. |
 
 W1 owns the root `Cargo.toml`, `Cargo.lock`, `.cargo/config.toml` and integration branches. Workers add dependencies

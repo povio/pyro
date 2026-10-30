@@ -59,6 +59,8 @@ pub enum ResourceKind {
     Stylesheet,
     Iframe,
     Image,
+    /// A web font (a renderer's `@font-face` source).
+    Font,
     /// A hyperlink download (`<a download>`).
     Download,
 }
@@ -197,6 +199,7 @@ impl ResourceLoader for NetLoader {
             ResourceKind::Stylesheet => lp_net::Destination::Style,
             ResourceKind::Iframe => lp_net::Destination::Iframe,
             ResourceKind::Image => lp_net::Destination::Image,
+            ResourceKind::Font => lp_net::Destination::Font,
             ResourceKind::Download => lp_net::Destination::Other,
         };
         let mut req = lp_net::Request::get(url, destination);

@@ -23,10 +23,12 @@ import { statSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { Cdp, CdpError } from './cdp';
-import { loaded, route as routeStep, goto, type Step, type StepLike } from './steps';
+import { loaded, route as routeStep, goto, matchScreenshot, ScreenshotStep, type ScreenshotOptions, type Step, type StepLike } from './steps';
+import { mismatch, prepare, settle, ScreenshotMismatchError, type ScreenshotResult, type SentBaselines } from './screenshots';
 
 export * from './steps';
 export { Cdp, CdpError } from './cdp';
+export { ScreenshotMismatchError, updateMode, type ScreenshotResult } from './screenshots';
 
 export type Profile = {
   /** Where its pages boot (and stay until a test takes one). */
@@ -55,6 +57,8 @@ export type Profile = {
 export type RunResult = {
   /** Values of `read(as)` and `evaluate(expr, as)` steps. */
   values: Record<string, unknown>;
+  /** `matchScreenshot` steps by name. */
+  screenshots: Record<string, ScreenshotResult>;
   /** One entry per step: what a check saw, a request it matched, settle time. */
   results: unknown[];
   /** Requests the page made during the run. */
@@ -77,8 +81,14 @@ const storageScript = (entries: Record<string, string>) =>
 
 type ProfileEntry = { ids: number[] | null; profile: Profile; scripts: string[] };
 
-/** One CDP connection: one browser thread, with its own page pools. */
-type Conn = { cdp: Cdp; open: number; /** Opened for one page (fork mode): closed with it. */ own?: boolean };
+/** One CDP connection: one browser thread, with its own page pools and screenshot baselines. */
+type Conn = {
+  cdp: Cdp;
+  open: number;
+  baselines: SentBaselines;
+  /** Opened for one page (fork mode): closed with it. */
+  own?: boolean;
+};
 
 export type ConnectOptions = {
   /**
@@ -235,7 +245,7 @@ export class Lightningpanda {
       return this.openPage(this.conns[index], index, entry, opts);
     }
     // The server forks the connection from this profile's snapshot.
-    const conn: Conn = { cdp: await Cdp.open(this.forkUrl(entry?.ids?.[0])), open: 0, own: true };
+    const conn: Conn = { cdp: await Cdp.open(this.forkUrl(entry?.ids?.[0])), open: 0, baselines: new Map(), own: true };
     try {
       return await this.openPage(conn, 0, entry, opts);
     } catch (e) {
@@ -294,7 +304,7 @@ export class Lightningpanda {
 async function openConns(wsUrl: string, opts: ConnectOptions): Promise<Conn[]> {
   const n = Math.max(1, opts.connections ?? 1);
   const cdps = await Promise.all(Array.from({ length: n }, () => Cdp.open(wsUrl)));
-  return cdps.map((cdp) => ({ cdp, open: 0 }));
+  return cdps.map((cdp) => ({ cdp, open: 0, baselines: new Map() }));
 }
 
 async function freshPage(conn: Conn, entry?: ProfileEntry, extra: string[] = []): Promise<Page> {
@@ -329,21 +339,50 @@ export class Page {
     return this.conn.cdp;
   }
 
-  /** Runs the steps in the browser as one command; throws on the first failing step. */
+  /**
+   * Runs the steps in the browser as one command; throws on the first failing
+   * step (a `ScreenshotMismatchError` for a screenshot that does not match).
+   */
   async run(steps: StepLike[], opts: { timeout?: number } = {}): Promise<RunResult> {
     const prefix = this.prefix;
     this.prefix = [];
-    const wire: Step[] = [...prefix, ...steps].map((s) => s.toStep());
+    const all = [...prefix, ...steps];
+    for (const s of all) if (s instanceof ScreenshotStep) prepare(s, this.conn.baselines);
+    const wire: Step[] = all.map((s) => s.toStep());
+    let r: any;
     try {
-      const r = await this.cdp.send('LP.run', { steps: wire, ...opts }, this.sessionId);
-      return { values: r.reads, results: r.results.slice(prefix.length), requests: r.requests, ms: r.ms };
+      r = await this.cdp.send('LP.run', { steps: wire, ...opts }, this.sessionId);
     } catch (e) {
       const m = e instanceof CdpError ? /step (\d+)/.exec(e.message) : null;
       if (!m) throw e;
       const index = Number(m[1]) - prefix.length;
       const where = index < 0 ? `opening the page (${prefix[Number(m[1])] && JSON.stringify(prefix[Number(m[1])].toStep())})` : `step ${index}`;
-      throw new RunError((e as Error).message.replace(/^LP\.run: step \d+/, where), index);
+      const message = (e as Error).message.replace(/^LP\.run: step \d+/, where);
+      const failed = all[Number(m[1])];
+      const data = (e as CdpError).data as any;
+      if (failed instanceof ScreenshotStep && data?.diff) {
+        // The browser may have dropped the baseline with the connection's cache: resend next time.
+        throw mismatch(failed, data, message);
+      }
+      // The connection's cache entry may be stale after a failure: resend next time.
+      for (const s of all) if (s instanceof ScreenshotStep) this.conn.baselines.delete(String(s.wire.name ?? ''));
+      throw new RunError(message, index);
     }
+    const screenshots: Record<string, ScreenshotResult> = {};
+    all.forEach((s, i) => {
+      if (s instanceof ScreenshotStep) screenshots[s.name] = settle(s, r.results[i]);
+    });
+    return { values: r.reads, screenshots, results: r.results.slice(prefix.length), requests: r.requests, ms: r.ms };
+  }
+
+  /**
+   * Expects the page (or `clip`, or `fullPage`) to match the baseline `name`:
+   * one `matchScreenshot` step. Throws `ScreenshotMismatchError` on a mismatch.
+   */
+  async matchScreenshot(name: string, opts: ScreenshotOptions = {}): Promise<ScreenshotResult> {
+    const step = matchScreenshot(name, opts);
+    const r = await this.run([step]);
+    return r.screenshots[step.name];
   }
 
   /**
@@ -396,3 +435,19 @@ function defaultBin(): string {
   const bin = fileURLToPath(new URL('../../lightningpanda', import.meta.url));
   return statSync(bin, { throwIfNoEntry: false })?.isFile() ? bin : 'lightningpanda';
 }
+
+/**
+ * `expect.extend(screenshotMatchers)`, then
+ * `await expect(page).toMatchScreenshot('home', { dir })`.
+ */
+export const screenshotMatchers = {
+  async toMatchScreenshot(page: Page, name: string, opts: ScreenshotOptions = {}) {
+    try {
+      const r = await page.matchScreenshot(name, opts);
+      return { pass: true, message: () => `expected screenshot '${name}' not to match (${r.diffPixels} pixels differ)` };
+    } catch (e) {
+      if (e instanceof ScreenshotMismatchError) return { pass: false, message: () => e.message };
+      throw e;
+    }
+  },
+};

@@ -4548,6 +4548,15 @@ impl StyleEngine {
         removed
     }
 
+    /// Text the loader or CSSOM gave `owner`'s sheet; `None` for a
+    /// `<style>` element read from the DOM, or no sheet.
+    pub fn sheet_text(&self, owner: NodeId) -> Option<&str> {
+        self.sheets.iter().find(|s| s.owner == owner).and_then(|s| match &s.source {
+            SheetSource::Text(t) => Some(t.as_str()),
+            SheetSource::StyleElement => None,
+        })
+    }
+
     pub fn sheet_owners(&self) -> Vec<NodeId> {
         self.sheets.iter().map(|s| s.owner).collect()
     }

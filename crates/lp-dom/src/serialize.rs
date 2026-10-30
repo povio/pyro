@@ -7,7 +7,7 @@ use crate::dom::Dom;
 use crate::error::DomResult;
 use crate::node::{NodeId, NodeKind, NIL};
 
-fn is_void(local: &str) -> bool {
+pub(crate) fn is_void(local: &str) -> bool {
     matches!(
         local,
         "area"
@@ -31,7 +31,7 @@ fn is_void(local: &str) -> bool {
     )
 }
 
-fn escape(out: &mut String, s: &str, attr: bool) {
+pub(crate) fn escape(out: &mut String, s: &str, attr: bool) {
     let mut last = 0;
     for (i, c) in s.char_indices() {
         let rep = match c {
@@ -173,7 +173,7 @@ impl Dom {
         }
     }
 
-    fn serialized_tag(&self, i: u32) -> String {
+    pub(crate) fn serialized_tag(&self, i: u32) -> String {
         let e = self.n(i).element().expect("element");
         if e.is_html() || e.name.ns == ns!(svg) || e.name.ns == ns!(mathml) {
             e.name.local.to_string()

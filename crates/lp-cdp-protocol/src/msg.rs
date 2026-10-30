@@ -24,11 +24,19 @@ pub mod code {
 pub struct CdpError {
     pub code: i64,
     pub message: String,
+    /// JSON-RPC `error.data`: structured details (a failed screenshot match
+    /// carries its images).
+    pub data: Option<serde_json::Value>,
 }
 
 impl CdpError {
     pub fn new(code: i64, message: impl Into<String>) -> Self {
-        Self { code, message: message.into() }
+        Self { code, message: message.into(), data: None }
+    }
+
+    pub fn with_data(mut self, data: Option<serde_json::Value>) -> Self {
+        self.data = data;
+        self
     }
 
     pub fn server(message: impl Into<String>) -> Self {
@@ -139,6 +147,8 @@ pub fn error_frame(id: Option<u64>, error: &CdpError, session_id: Option<&str>) 
     struct ErrorBody<'a> {
         code: i64,
         message: &'a str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        data: Option<&'a serde_json::Value>,
     }
     #[derive(Serialize)]
     struct Out<'a> {
@@ -148,7 +158,11 @@ pub fn error_frame(id: Option<u64>, error: &CdpError, session_id: Option<&str>) 
         #[serde(rename = "sessionId", skip_serializing_if = "Option::is_none")]
         session_id: Option<&'a str>,
     }
-    to_frame(&Out { id, error: ErrorBody { code: error.code, message: &error.message }, session_id })
+    to_frame(&Out {
+        id,
+        error: ErrorBody { code: error.code, message: &error.message, data: error.data.as_ref() },
+        session_id,
+    })
 }
 
 pub fn event_frame<T: Serialize + ?Sized>(method: &str, params: &T, session_id: Option<&str>) -> OutFrame {

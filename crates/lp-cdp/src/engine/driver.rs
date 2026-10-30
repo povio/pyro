@@ -450,6 +450,33 @@ enum Step {
         /// `css`: the property name.
         property: Option<String>,
     },
+    /// Renders the page (or an area, or an element) and compares it with a
+    /// baseline image (`screenshot.rs`).
+    MatchScreenshot(Box<ShotStep>),
+}
+
+/// A `matchScreenshot` step.
+#[derive(Clone, Debug)]
+#[cfg_attr(not(feature = "render"), allow(dead_code))]
+pub(super) struct ShotStep {
+    pub(super) name: String,
+    /// PNG bytes; omitted: the baseline cached under `name` on this
+    /// connection, else the render is returned (`recorded`).
+    pub(super) baseline: Option<Vec<u8>>,
+    /// Display-list hash stored with the baseline.
+    pub(super) scene_hash: Option<u64>,
+    /// 0..1: per-channel difference a pixel may have and still match.
+    pub(super) threshold: f64,
+    pub(super) max_diff_pixels: u64,
+    pub(super) max_diff_pixel_ratio: f64,
+    /// CSS px, relative to the document.
+    pub(super) clip: Option<(f64, f64, f64, f64)>,
+    pub(super) full_page: bool,
+    /// Capture this element's box.
+    pub(super) locator: Option<Locator>,
+    /// Ignore the baseline: render and return the image.
+    pub(super) update: bool,
+    pub(super) key: Option<String>,
 }
 
 impl Step {
@@ -479,6 +506,7 @@ impl Step {
             },
             Step::Check { locator, assert, .. } => format!("expect {assert:?} {}", locator.describe()),
             Step::Read { locator, read, .. } => format!("read {read:?} {}", locator.describe()),
+            Step::MatchScreenshot(shot) => format!("matchScreenshot {}", shot.name),
         }
     }
 }
@@ -543,7 +571,7 @@ impl Job {
             return error;
         }
         let what = self.steps.get(self.index).map(|(s, _)| s.describe()).unwrap_or_default();
-        CdpError::server(format!("step {} ({what}): {}", self.index, error.message))
+        CdpError::server(format!("step {} ({what}): {}", self.index, error.message)).with_data(error.data)
     }
 }
 
@@ -558,6 +586,8 @@ enum Phase {
     Settle { requests: usize, since: Instant, until: Instant },
     /// `eval` returned a promise; waits for it to settle.
     Await(Settlement),
+    /// A `matchScreenshot` render runs on the render thread.
+    Render(RenderSettlement),
     /// An action's input events still to dispatch (`seq`), one per
     /// event-loop turn; with none left, the turn after a non-settling step.
     /// A turn: the frame interval passes (`at`), then a marker task posted
@@ -568,6 +598,10 @@ enum Phase {
 /// Where a promise an `eval` step returned lands once it settles: its JSON
 /// value, or the rejection's message.
 type Settlement = Rc<RefCell<Option<Result<Value, String>>>>;
+
+/// Where a `matchScreenshot` step's outcome lands: its result, or the
+/// failure (a mismatch carries the images in `data`).
+pub(super) type RenderSettlement = Rc<RefCell<Option<Result<Value, CdpError>>>>;
 
 /// What evaluating an `eval` step produced.
 enum Evaluated {
@@ -776,6 +810,7 @@ impl Waiter {
             Phase::Load { loader, dom_ready } => load_reached(browser, self.job.pid, loader, *dom_ready),
             Phase::Settle { requests, .. } => browser.page_work(self.job.pid).is_none_or(|w| w.quiet(*requests)),
             Phase::Await(settled) => settled.borrow().is_some(),
+            Phase::Render(settled) => settled.borrow().is_some(),
             Phase::Act { hop, at, .. } => match hop {
                 Some(done) => done.get(),
                 None => now >= *at,
@@ -2653,6 +2688,85 @@ enum StepParams {
     Viewport(ViewportParams),
     Media(MediaParams),
     Page(PageParams),
+    MatchScreenshot(MatchScreenshotParams),
+}
+
+/// `{"matchScreenshot": {"name": "home", "baseline": "<base64 PNG>"}}`.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct MatchScreenshotParams {
+    name: String,
+    baseline: Option<String>,
+    /// Hex display-list hash returned with the baseline's render.
+    scene_hash: Option<String>,
+    threshold: Option<f64>,
+    max_diff_pixels: Option<u64>,
+    max_diff_pixel_ratio: Option<f64>,
+    clip: Option<ClipRect>,
+    #[serde(default)]
+    full_page: bool,
+    locator: Option<Locator>,
+    #[serde(default)]
+    update: bool,
+    #[serde(rename = "as")]
+    key: Option<String>,
+    timeout: Option<u64>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ClipRect {
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+}
+
+impl MatchScreenshotParams {
+    fn step(self) -> CdpResult<(Step, Option<u64>)> {
+        if self.name.is_empty() {
+            return Err(CdpError::invalid_params("matchScreenshot needs a name"));
+        }
+        let given = [self.clip.is_some(), self.full_page, self.locator.is_some()];
+        if given.iter().filter(|g| **g).count() > 1 {
+            return Err(CdpError::invalid_params("matchScreenshot takes one of clip, fullPage and locator"));
+        }
+        if let Some(l) = &self.locator {
+            l.validate()?;
+        }
+        let threshold = self.threshold.unwrap_or(0.0);
+        if !(0.0..=1.0).contains(&threshold) {
+            return Err(CdpError::invalid_params("threshold must be between 0 and 1"));
+        }
+        let ratio = self.max_diff_pixel_ratio.unwrap_or(0.0);
+        if !(0.0..=1.0).contains(&ratio) {
+            return Err(CdpError::invalid_params("maxDiffPixelRatio must be between 0 and 1"));
+        }
+        if let Some(c) = &self.clip {
+            if !(c.width > 0.0 && c.height > 0.0) {
+                return Err(CdpError::invalid_params("clip width and height must be positive"));
+            }
+        }
+        let baseline = self.baseline.as_deref().map(crate::fetch_protocol::base64_decode).transpose()?;
+        let scene_hash = match self.scene_hash.as_deref() {
+            None => None,
+            Some(h) => Some(u64::from_str_radix(h, 16).map_err(|_| CdpError::invalid_params("sceneHash must be hex"))?),
+        };
+        let shot = ShotStep {
+            name: self.name,
+            baseline,
+            scene_hash,
+            threshold,
+            max_diff_pixels: self.max_diff_pixels.unwrap_or(0),
+            max_diff_pixel_ratio: ratio,
+            clip: self.clip.map(|c| (c.x, c.y, c.width, c.height)),
+            full_page: self.full_page,
+            locator: self.locator,
+            update: self.update,
+            key: self.key,
+        };
+        Ok((Step::MatchScreenshot(Box::new(shot)), self.timeout))
+    }
 }
 
 /// `{"page": {"target": "popup"}}`: the `as` key of an earlier `popup`
@@ -3014,6 +3128,7 @@ impl StepParams {
             StepParams::Viewport(p) => Ok((Step::Viewport { width: p.width, height: p.height }, None)),
             StepParams::Media(p) => p.step(),
             StepParams::Page(p) => Ok((Step::Page { target: p.target }, None)),
+            StepParams::MatchScreenshot(p) => p.step(),
             StepParams::Act(p) => p.step(true),
             StepParams::Mouse(p) => p.step(),
             StepParams::Check(p) => p.step(),
@@ -3131,7 +3246,8 @@ impl EngineHost {
             | Step::Media(_)
             | Step::Page { .. }
             | Step::Request(_)
-            | Step::Mouse { .. } => {
+            | Step::Mouse { .. }
+            | Step::MatchScreenshot(_) => {
                 unreachable!("not a locator step")
             }
             Step::Act { locator, action, value, to, files, pointer, .. } => {
@@ -3170,6 +3286,11 @@ impl EngineHost {
                 Ok(Attempt::Done(read_value(page, el, *read, property.as_deref())))
             }
         }
+    }
+
+    #[cfg(not(feature = "render"))]
+    fn start_shot(&mut self, _pid: PageId, _spec: &ShotStep, _element: Option<NodeId>) -> CdpResult<RenderSettlement> {
+        Err(CdpError::server("matchScreenshot: lightningpanda was built without the render feature"))
     }
 
     pub(super) fn driver_domain(&mut self, action: &str, cmd: &PageCommand<'_, '_>) -> CdpResult<Option<Value>> {
@@ -3300,6 +3421,27 @@ impl EngineHost {
                                 return Err(w.job.fail(error));
                             }
                             w.phase = Phase::Await(settled);
+                            return Ok(Drive::Park(Box::new(w)));
+                        }
+                    }
+                }
+                Phase::Render(settled) => {
+                    let outcome = settled.borrow_mut().take();
+                    match outcome {
+                        Some(Ok(value)) => {
+                            let step = w.job.steps[w.job.index].0.clone();
+                            self.finish_step(&mut w, &step, value, None);
+                        }
+                        Some(Err(error)) => return Err(w.job.fail(error)),
+                        None => {
+                            if now >= w.step_deadline {
+                                let error = CdpError::server(format!(
+                                    "timed out after {} ms waiting for the screenshot",
+                                    w.job.steps[w.job.index].1.as_millis()
+                                ));
+                                return Err(w.job.fail(error));
+                            }
+                            w.phase = Phase::Render(settled);
                             return Ok(Drive::Park(Box::new(w)));
                         }
                     }
@@ -3458,6 +3600,28 @@ impl EngineHost {
                                 }
                             }
                         }
+                        Step::MatchScreenshot(shot) => {
+                            let clip = match &shot.locator {
+                                None => None,
+                                Some(locator) => {
+                                    let page = self.main_document(w.job.page).map_err(|e| w.job.fail(e))?;
+                                    let found =
+                                        locator.resolve(&page, &self.waiters.selectors).map_err(|e| w.job.fail(e))?;
+                                    let one = single(&found, &page.dom.borrow(), locator);
+                                    match one {
+                                        Ok(Some(id)) => Some(id),
+                                        Ok(None) => {
+                                            let reason = format!("{} matches no element", locator.describe());
+                                            return self.park_retry(w, &step, timeout, Some(&page), reason, now);
+                                        }
+                                        Err(e) => return Err(w.job.fail(e)),
+                                    }
+                                }
+                            };
+                            let settled = self.start_shot(pid, shot, clip).map_err(|e| w.job.fail(e))?;
+                            w.phase = Phase::Render(settled);
+                            continue;
+                        }
                         Step::Route { url, .. } => {
                             // `pushState` on `about:blank` throws (origin null): a
                             // prepared page whose navigation is under way gets
@@ -3524,6 +3688,10 @@ impl EngineHost {
         | Step::Popup { key: Some(key) } = step
         {
             w.job.reads.insert(key.clone(), value.clone());
+        } else if let Step::MatchScreenshot(shot) = step {
+            if let Some(key) = &shot.key {
+                w.job.reads.insert(key.clone(), value.clone());
+            }
         }
         w.job.results.push(value);
         let now = Instant::now();

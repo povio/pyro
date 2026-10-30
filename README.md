@@ -17,6 +17,12 @@ cargo test
 ./scripts/check-no-v8.sh
 ```
 
+Screenshots (`Page.captureScreenshot`, `LP.run` `matchScreenshot`) need the `render` feature, off by default:
+`cargo build --release --features render`. It adds lp-render (Blitz, Stylo, Vello's CPU rasterizer: about 200
+crates), about a minute to a release build and 15 MB to the binary (15 to 30 MB on an M1 Max). Release archives
+that ship the test client should be built with it. `lp-render` is not a default workspace member, so test it with
+`cargo test -p lp-render -p lp-cdp --features lp-cdp/render`. See [docs/automation/SCREENSHOTS.md](docs/automation/SCREENSHOTS.md).
+
 On macOS every linked executable (`lightningpanda`, the test binaries) is ad hoc re-signed with
 `com.apple.security.cs.allow-jit` and nothing else; `.cargo/config.toml` passes `-C link-arg=-Bscripts/macos/linker`,
 so `cc` links through `scripts/macos/linker/ld`, which does this. Without that entitlement the system JavaScriptCore

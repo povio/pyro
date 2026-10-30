@@ -356,6 +356,14 @@ pub fn serve_main(args: &[String]) -> ExitCode {
             eprintln!("lightningpanda: preparing a page at {} per connection", prepared.url);
         }
     }
+    // Fonts and the other process-wide render state load on a background
+    // thread, so the first screenshot does not pay for them. Not in fork
+    // mode: connections are served by forks of a separate template process,
+    // which must not start threads before it forks.
+    #[cfg(feature = "render")]
+    if template.is_none() {
+        let _ = lp_render::prewarm();
+    }
     let runtime = match tokio::runtime::Builder::new_current_thread().enable_io().enable_time().build() {
         Ok(r) => r,
         Err(e) => {

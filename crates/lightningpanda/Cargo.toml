@@ -12,6 +12,8 @@ path = "src/main.rs"
 [features]
 # CDP stage timers (LP.perfStats); for profiling builds only.
 perf-trace = ["lp-cdp/perf-trace"]
+# Page.captureScreenshot and LP.run matchScreenshot (lp-render: Blitz + vello_cpu).
+render = ["lp-cdp/render"]
 
 [dependencies]
 lp-js.workspace = true

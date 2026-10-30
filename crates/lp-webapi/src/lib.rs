@@ -45,6 +45,7 @@ pub mod mutation_observer;
 pub mod node;
 pub mod page;
 pub mod range;
+pub mod render_snapshot;
 pub mod resize_observer;
 pub mod response;
 pub mod storage;

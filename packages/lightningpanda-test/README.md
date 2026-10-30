@@ -60,8 +60,22 @@ test.concurrent('closes a position', async () => {
   check waits for the request log. Each step has its own timeout (5 s default,
   `page.run(steps, { timeout })` or per step).
 - **The reply** has `values` (reads), `results` (per step), `requests` (every
-  request the page made during the run) and `ms`. A failure throws `RunError`
-  naming the step and why it was still waiting.
+  request the page made during the run), `screenshots` and `ms`. A failure
+  throws `RunError` naming the step and why it was still waiting.
+- **Screenshots** (a browser built with the `render` feature):
+  `matchScreenshot('home')`, `css('#card').matchScreenshot('card')` or
+  `await page.matchScreenshot('home', { fullPage: true })` render the page in
+  the browser (Blitz, CPU) and compare it there with
+  `__screenshots__/home.png` beside the test file. A baseline is sent once
+  per connection; a render whose display list matches the one recorded in
+  `home.json` passes without rasterizing. A missing baseline is written and
+  fails the test; `LP_UPDATE_SNAPSHOTS=1` (or `bun test -u`) rewrites
+  baselines; a mismatch throws `ScreenshotMismatchError` and writes
+  `home.actual.png` and `home.diff.png`. Options: `threshold` (0-1 per
+  channel), `maxDiffPixels`, `maxDiffPixelRatio`, `clip`, `fullPage`, `dir`.
+  `expect.extend(screenshotMatchers)` adds `await expect(page).toMatchScreenshot(name)`.
+  Baselines come from lightningpanda's renderer: Chromium screenshots do not
+  match them pixel for pixel.
 
 ## Install
 

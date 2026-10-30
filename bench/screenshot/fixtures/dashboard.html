@@ -1,0 +1,356 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Dashboard</title>
+<style>
+  body { margin: 0; font-family: Lato, sans-serif; background: #f3f4f6; color: #111827; font-size: 14px; }
+  header { display: flex; align-items: center; justify-content: space-between; height: 56px; padding: 0 24px; background: #111827; color: #f9fafb; }
+  header .brand { font-weight: 700; font-size: 18px; }
+  header nav { display: flex; gap: 20px; }
+  header nav span { color: #9ca3af; }
+  header nav span.active { color: #ffffff; border-bottom: 2px solid #38bdf8; padding-bottom: 4px; }
+  header .avatar { width: 32px; height: 32px; border-radius: 16px; background: #38bdf8; }
+  main { padding: 24px; }
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
+  .stat { background: #ffffff; border-radius: 10px; padding: 16px; border: 1px solid #e5e7eb; }
+  .stat .label { color: #6b7280; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .stat .value { font-size: 28px; font-weight: 700; margin-top: 6px; }
+  .stat .delta { color: #16a34a; font-size: 12px; margin-top: 4px; }
+  .panel { background: #ffffff; border-radius: 10px; border: 1px solid #e5e7eb; }
+  .panel h2 { font-size: 16px; margin: 0; padding: 14px 16px; border-bottom: 1px solid #e5e7eb; }
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; font-size: 12px; color: #6b7280; background: #f9fafb; padding: 8px 16px; border-bottom: 1px solid #e5e7eb; }
+  td { padding: 8px 16px; border-bottom: 1px solid #f3f4f6; }
+  tr:nth-child(even) td { background: #fafafa; }
+  td.num, th.num { text-align: right; }
+  .pill { padding: 2px 8px; border-radius: 9px; font-size: 12px; }
+  .pill.ok { background: #dcfce7; color: #166534; }
+  .pill.warn { background: #fef9c3; color: #854d0e; }
+  .pill.bad { background: #fee2e2; color: #991b1b; }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">Lightning Ops</div>
+  <nav><span class="active">Overview</span><span>Jobs</span><span>Workers</span><span>Billing</span><span>Settings</span></nav>
+  <div class="avatar"></div>
+</header>
+<main>
+  <section class="stats">
+    <div class="stat"><div class="label">Jobs today</div><div class="value">12,480</div><div class="delta">+4.2% vs yesterday</div></div>
+    <div class="stat"><div class="label">Success rate</div><div class="value">99.1%</div><div class="delta">+0.3 pts</div></div>
+    <div class="stat"><div class="label">p95 latency</div><div class="value">412 ms</div><div class="delta">-18 ms</div></div>
+    <div class="stat"><div class="label">Spend</div><div class="value">$1,284</div><div class="delta">+2.0%</div></div>
+  </section>
+  <section class="panel">
+    <h2>Recent jobs</h2>
+    <table>
+      <thead><tr><th>ID</th><th>Owner</th><th>Region</th><th>Status</th><th class="num">Cost</th><th class="num">Duration (s)</th></tr></thead>
+      <tbody>
+<tr><td>#10001</td><td>Donald Knuth</td><td>AP-South</td><td><span class="pill ok">Active</span></td><td class="num">854.19</td><td class="num">50</td></tr>
+<tr><td>#10002</td><td>Grace Hopper</td><td>EU-West</td><td><span class="pill bad">Failed</span></td><td class="num">480.31</td><td class="num">597</td></tr>
+<tr><td>#10003</td><td>Ada Lovelace</td><td>US-East</td><td><span class="pill bad">Failed</span></td><td class="num">50.14</td><td class="num">89</td></tr>
+<tr><td>#10004</td><td>Ken Thompson</td><td>EU-West</td><td><span class="pill warn">Pending</span></td><td class="num">316.44</td><td class="num">93</td></tr>
+<tr><td>#10005</td><td>Linus Torvalds</td><td>EU-West</td><td><span class="pill warn">Pending</span></td><td class="num">742.15</td><td class="num">127</td></tr>
+<tr><td>#10006</td><td>Edsger Dijkstra</td><td>EU-North</td><td><span class="pill bad">Failed</span></td><td class="num">82.08</td><td class="num">591</td></tr>
+<tr><td>#10007</td><td>Radia Perlman</td><td>EU-West</td><td><span class="pill warn">Pending</span></td><td class="num">290.77</td><td class="num">48</td></tr>
+<tr><td>#10008</td><td>Linus Torvalds</td><td>US-West</td><td><span class="pill ok">Active</span></td><td class="num">550.37</td><td class="num">148</td></tr>
+<tr><td>#10009</td><td>Linus Torvalds</td><td>EU-North</td><td><span class="pill ok">Active</span></td><td class="num">405.33</td><td class="num">574</td></tr>
+<tr><td>#10010</td><td>John McCarthy</td><td>EU-West</td><td><span class="pill ok">Active</span></td><td class="num">763.31</td><td class="num">585</td></tr>
+<tr><td>#10011</td><td>John McCarthy</td><td>US-West</td><td><span class="pill ok">Active</span></td><td class="num">128.70</td><td class="num">561</td></tr>
+<tr><td>#10012</td><td>Frances Allen</td><td>EU-North</td><td><span class="pill ok">Active</span></td><td class="num">79.12</td><td class="num">634</td></tr>
+<tr><td>#10013</td><td>Edsger Dijkstra</td><td>EU-North</td><td><span class="pill warn">Pending</span></td><td class="num">561.45</td><td class="num">796</td></tr>
+<tr><td>#10014</td><td>Donald Knuth</td><td>EU-North</td><td><span class="pill warn">Pending</span></td><td class="num">594.99</td><td class="num">371</td></tr>
+<tr><td>#10015</td><td>Barbara Liskov</td><td>US-East</td><td><span class="pill ok">Active</span></td><td class="num">917.18</td><td class="num">799</td></tr>
+<tr><td>#10016</td><td>Edsger Dijkstra</td><td>EU-North</td><td><span class="pill ok">Active</span></td><td class="num">394.54</td><td class="num">538</td></tr>
+<tr><td>#10017</td><td>Margaret Hamilton</td><td>AP-South</td><td><span class="pill warn">Pending</span></td><td class="num">378.40</td><td class="num">624</td></tr>
+<tr><td>#10018</td><td>Grace Hopper</td><td>EU-North</td><td><span class="pill ok">Active</span></td><td class="num">549.04</td><td class="num">169</td></tr>
+<tr><td>#10019</td><td>Donald Knuth</td><td>AP-South</td><td><span class="pill ok">Active</span></td><td class="num">553.72</td><td class="num">41</td></tr>
+<tr><td>#10020</td><td>John McCarthy</td><td>EU-North</td><td><span class="pill ok">Active</span></td><td class="num">752.07</td><td class="num">809</td></tr>
+<tr><td>#10021</td><td>Donald Knuth</td><td>US-West</td><td><span class="pill warn">Pending</span></td><td class="num">780.05</td><td class="num">509</td></tr>
+<tr><td>#10022</td><td>Radia Perlman</td><td>EU-West</td><td><span class="pill warn">Pending</span></td><td class="num">123.67</td><td class="num">968</td></tr>
+<tr><td>#10023</td><td>Barbara Liskov</td><td>EU-West</td><td><span class="pill warn">Pending</span></td><td class="num">80.52</td><td class="num">749</td></tr>
+<tr><td>#10024</td><td>Frances Allen</td><td>EU-North</td><td><span class="pill warn">Pending</span></td><td class="num">893.91</td><td class="num">842</td></tr>
+<tr><td>#10025</td><td>Margaret Hamilton</td><td>AP-South</td><td><span class="pill warn">Pending</span></td><td class="num">877.41</td><td class="num">356</td></tr>
+<tr><td>#10026</td><td>Ada Lovelace</td><td>US-West</td><td><span class="pill warn">Pending</span></td><td class="num">221.26</td><td class="num">626</td></tr>
+<tr><td>#10027</td><td>Grace Hopper</td><td>EU-West</td><td><span class="pill warn">Pending</span></td><td class="num">287.00</td><td class="num">787</td></tr>
+<tr><td>#10028</td><td>Barbara Liskov</td><td>US-East</td><td><span class="pill ok">Active</span></td><td class="num">522.53</td><td class="num">401</td></tr>
+<tr><td>#10029</td><td>Margaret Hamilton</td><td>US-East</td><td><span class="pill ok">Active</span></td><td class="num">589.75</td><td class="num">412</td></tr>
+<tr><td>#10030</td><td>Linus Torvalds</td><td>US-East</td><td><span class="pill warn">Pending</span></td><td class="num">565.29</td><td class="num">885</td></tr>
+<tr><td>#10031</td><td>Linus Torvalds</td><td>AP-South</td><td><span class="pill warn">Pending</span></td><td class="num">471.24</td><td class="num">700</td></tr>
+<tr><td>#10032</td><td>Ken Thompson</td><td>US-East</td><td><span class="pill ok">Active</span></td><td class="num">109.76</td><td class="num">181</td></tr>
+<tr><td>#10033</td><td>Alan Turing</td><td>US-East</td><td><span class="pill ok">Active</span></td><td class="num">16.81</td><td class="num">497</td></tr>
+<tr><td>#10034</td><td>Radia Perlman</td><td>US-West</td><td><span class="pill ok">Active</span></td><td class="num">370.53</td><td class="num">5</td></tr>
+<tr><td>#10035</td><td>Alan Turing</td><td>EU-North</td><td><span class="pill warn">Pending</span></td><td class="num">484.98</td><td class="num">625</td></tr>
+<tr><td>#10036</td><td>Radia Perlman</td><td>US-East</td><td><span class="pill warn">Pending</span></td><td class="num">906.04</td><td class="num">880</td></tr>
+<tr><td>#10037</td><td>Linus Torvalds</td><td>EU-West</td><td><span class="pill bad">Failed</span></td><td class="num">599.53</td><td class="num">922</td></tr>
+<tr><td>#10038</td><td>John McCarthy</td><td>AP-South</td><td><span class="pill bad">Failed</span></td><td class="num">522.75</td><td class="num">409</td></tr>
+<tr><td>#10039</td><td>Ken Thompson</td><td>AP-South</td><td><span class="pill ok">Active</span></td><td class="num">832.37</td><td class="num">411</td></tr>
+<tr><td>#10040</td><td>Ada Lovelace</td><td>EU-West</td><td><span class="pill ok">Active</span></td><td class="num">274.63</td><td class="num">452</td></tr>
+<tr><td>#10041</td><td>Alan Turing</td><td>US-West</td><td><span class="pill ok">Active</span></td><td class="num">788.38</td><td class="num">54</td></tr>
+<tr><td>#10042</td><td>Grace Hopper</td><td>EU-North</td><td><span class="pill ok">Active</span></td><td class="num">199.26</td><td class="num">550</td></tr>
+<tr><td>#10043</td><td>Grace Hopper</td><td>EU-North</td><td><span class="pill warn">Pending</span></td><td class="num">34.42</td><td class="num">73</td></tr>
+<tr><td>#10044</td><td>Edsger Dijkstra</td><td>AP-South</td><td><span class="pill bad">Failed</span></td><td class="num">195.70</td><td class="num">650</td></tr>
+<tr><td>#10045</td><td>Barbara Liskov</td><td>EU-North</td><td><span class="pill warn">Pending</span></td><td class="num">478.31</td><td class="num">486</td></tr>
+<tr><td>#10046</td><td>Grace Hopper</td><td>AP-South</td><td><span class="pill ok">Active</span></td><td class="num">611.78</td><td class="num">492</td></tr>
+<tr><td>#10047</td><td>Margaret Hamilton</td><td>EU-West</td><td><span class="pill warn">Pending</span></td><td class="num">189.89</td><td class="num">105</td></tr>
+<tr><td>#10048</td><td>Frances Allen</td><td>US-West</td><td><span class="pill warn">Pending</span></td><td class="num">628.33</td><td class="num">849</td></tr>
+<tr><td>#10049</td><td>Frances Allen</td><td>EU-North</td><td><span class="pill ok">Active</span></td><td class="num">31.27</td><td class="num">211</td></tr>
+<tr><td>#10050</td><td>Linus Torvalds</td><td>US-East</td><td><span class="pill warn">Pending</span></td><td class="num">905.48</td><td class="num">557</td></tr>
+<tr><td>#10051</td><td>Ada Lovelace</td><td>US-West</td><td><span class="pill bad">Failed</span></td><td class="num">843.68</td><td class="num">885</td></tr>
+<tr><td>#10052</td><td>Grace Hopper</td><td>US-West</td><td><span class="pill bad">Failed</span></td><td class="num">680.47</td><td class="num">376</td></tr>
+<tr><td>#10053</td><td>Alan Turing</td><td>US-East</td><td><span class="pill warn">Pending</span></td><td class="num">699.07</td><td class="num">555</td></tr>
+<tr><td>#10054</td><td>Linus Torvalds</td><td>US-East</td><td><span class="pill warn">Pending</span></td><td class="num">804.77</td><td class="num">831</td></tr>
+<tr><td>#10055</td><td>Edsger Dijkstra</td><td>AP-South</td><td><span class="pill ok">Active</span></td><td class="num">970.76</td><td class="num">823</td></tr>
+<tr><td>#10056</td><td>Edsger Dijkstra</td><td>EU-North</td><td><span class="pill ok">Active</span></td><td class="num">646.89</td><td class="num">365</td></tr>
+<tr><td>#10057</td><td>Frances Allen</td><td>EU-West</td><td><span class="pill ok">Active</span></td><td class="num">367.23</td><td class="num">484</td></tr>
+<tr><td>#10058</td><td>Barbara Liskov</td><td>EU-North</td><td><span class="pill ok">Active</span></td><td class="num">452.25</td><td class="num">458</td></tr>
+<tr><td>#10059</td><td>Frances Allen</td><td>US-West</td><td><span class="pill warn">Pending</span></td><td class="num">106.56</td><td class="num">226</td></tr>
+<tr><td>#10060</td><td>Grace Hopper</td><td>AP-South</td><td><span class="pill ok">Active</span></td><td class="num">258.82</td><td class="num">346</td></tr>
+<tr><td>#10061</td><td>Edsger Dijkstra</td><td>EU-North</td><td><span class="pill warn">Pending</span></td><td class="num">800.88</td><td class="num">861</td></tr>
+<tr><td>#10062</td><td>Ada Lovelace</td><td>US-West</td><td><span class="pill warn">Pending</span></td><td class="num">843.96</td><td class="num">87</td></tr>
+<tr><td>#10063</td><td>John McCarthy</td><td>AP-South</td><td><span class="pill ok">Active</span></td><td class="num">933.56</td><td class="num">769</td></tr>
+<tr><td>#10064</td><td>Edsger Dijkstra</td><td>US-East</td><td><span class="pill warn">Pending</span></td><td class="num">569.75</td><td class="num">809</td></tr>
+<tr><td>#10065</td><td>John McCarthy</td><td>EU-West</td><td><span class="pill warn">Pending</span></td><td class="num">947.11</td><td class="num">406</td></tr>
+<tr><td>#10066</td><td>Margaret Hamilton</td><td>EU-West</td><td><span class="pill warn">Pending</span></td><td class="num">951.00</td><td class="num">163</td></tr>
+<tr><td>#10067</td><td>Alan Turing</td><td>EU-West</td><td><span class="pill ok">Active</span></td><td class="num">199.11</td><td class="num">605</td></tr>
+<tr><td>#10068</td><td>Margaret Hamilton</td><td>US-East</td><td><span class="pill bad">Failed</span></td><td class="num">802.60</td><td class="num">847</td></tr>
+<tr><td>#10069</td><td>Radia Perlman</td><td>US-West</td><td><span class="pill warn">Pending</span></td><td class="num">205.35</td><td class="num">562</td></tr>
+<tr><td>#10070</td><td>Linus Torvalds</td><td>EU-West</td><td><span class="pill ok">Active</span></td><td class="num">19.66</td><td class="num">819</td></tr>
+<tr><td>#10071</td><td>Frances Allen</td><td>EU-West</td><td><span class="pill bad">Failed</span></td><td class="num">691.20</td><td class="num">768</td></tr>
+<tr><td>#10072</td><td>Alan Turing</td><td>US-East</td><td><span class="pill warn">Pending</span></td><td class="num">277.61</td><td class="num">29</td></tr>
+<tr><td>#10073</td><td>Barbara Liskov</td><td>US-West</td><td><span class="pill ok">Active</span></td><td class="num">657.88</td><td class="num">247</td></tr>
+<tr><td>#10074</td><td>Radia Perlman</td><td>US-West</td><td><span class="pill warn">Pending</span></td><td class="num">714.49</td><td class="num">430</td></tr>
+<tr><td>#10075</td><td>Alan Turing</td><td>US-West</td><td><span class="pill ok">Active</span></td><td class="num">601.52</td><td class="num">679</td></tr>
+<tr><td>#10076</td><td>Radia Perlman</td><td>AP-South</td><td><span class="pill bad">Failed</span></td><td class="num">658.52</td><td class="num">134</td></tr>
+<tr><td>#10077</td><td>Linus Torvalds</td><td>EU-North</td><td><span class="pill ok">Active</span></td><td class="num">670.18</td><td class="num">20</td></tr>
+<tr><td>#10078</td><td>Margaret Hamilton</td><td>EU-North</td><td><span class="pill ok">Active</span></td><td class="num">6.15</td><td class="num">795</td></tr>
+<tr><td>#10079</td><td>Alan Turing</td><td>US-East</td><td><span class="pill ok">Active</span></td><td class="num">621.61</td><td class="num">634</td></tr>
+<tr><td>#10080</td><td>Frances Allen</td><td>EU-North</td><td><span class="pill ok">Active</span></td><td class="num">81.94</td><td class="num">334</td></tr>
+<tr><td>#10081</td><td>John McCarthy</td><td>EU-North</td><td><span class="pill bad">Failed</span></td><td class="num">729.02</td><td class="num">495</td></tr>
+<tr><td>#10082</td><td>Grace Hopper</td><td>EU-West</td><td><span class="pill bad">Failed</span></td><td class="num">326.70</td><td class="num">196</td></tr>
+<tr><td>#10083</td><td>Barbara Liskov</td><td>EU-West</td><td><span class="pill ok">Active</span></td><td class="num">666.47</td><td class="num">464</td></tr>
+<tr><td>#10084</td><td>Linus Torvalds</td><td>EU-West</td><td><span class="pill ok">Active</span></td><td class="num">581.97</td><td class="num">334</td></tr>
+<tr><td>#10085</td><td>Radia Perlman</td><td>EU-North</td><td><span class="pill bad">Failed</span></td><td class="num">672.30</td><td class="num">205</td></tr>
+<tr><td>#10086</td><td>Frances Allen</td><td>AP-South</td><td><span class="pill warn">Pending</span></td><td class="num">667.05</td><td class="num">547</td></tr>
+<tr><td>#10087</td><td>Margaret Hamilton</td><td>US-East</td><td><span class="pill bad">Failed</span></td><td class="num">917.47</td><td class="num">536</td></tr>
+<tr><td>#10088</td><td>Barbara Liskov</td><td>US-East</td><td><span class="pill bad">Failed</span></td><td class="num">587.58</td><td class="num">141</td></tr>
+<tr><td>#10089</td><td>Ken Thompson</td><td>AP-South</td><td><span class="pill ok">Active</span></td><td class="num">580.49</td><td class="num">324</td></tr>
+<tr><td>#10090</td><td>Grace Hopper</td><td>US-East</td><td><span class="pill bad">Failed</span></td><td class="num">562.43</td><td class="num">75</td></tr>
+<tr><td>#10091</td><td>Edsger Dijkstra</td><td>US-West</td><td><span class="pill bad">Failed</span></td><td class="num">161.36</td><td class="num">919</td></tr>
+<tr><td>#10092</td><td>Alan Turing</td><td>US-West</td><td><span class="pill bad">Failed</span></td><td class="num">188.40</td><td class="num">260</td></tr>
+<tr><td>#10093</td><td>Alan Turing</td><td>US-East</td><td><span class="pill warn">Pending</span></td><td class="num">979.69</td><td class="num">976</td></tr>
+<tr><td>#10094</td><td>Grace Hopper</td><td>AP-South</td><td><span class="pill warn">Pending</span></td><td class="num">214.37</td><td class="num">684</td></tr>
+<tr><td>#10095</td><td>Edsger Dijkstra</td><td>AP-South</td><td><span class="pill ok">Active</span></td><td class="num">676.81</td><td class="num">414</td></tr>
+<tr><td>#10096</td><td>Donald Knuth</td><td>US-East</td><td><span class="pill warn">Pending</span></td><td class="num">468.42</td><td class="num">327</td></tr>
+<tr><td>#10097</td><td>Grace Hopper</td><td>US-West</td><td><span class="pill bad">Failed</span></td><td class="num">26.53</td><td class="num">347</td></tr>
+<tr><td>#10098</td><td>Linus Torvalds</td><td>AP-South</td><td><span class="pill warn">Pending</span></td><td class="num">922.63</td><td class="num">19</td></tr>
+<tr><td>#10099</td><td>Ken Thompson</td><td>EU-North</td><td><span class="pill warn">Pending</span></td><td class="num">818.79</td><td class="num">303</td></tr>
+<tr><td>#10100</td><td>Linus Torvalds</td><td>EU-West</td><td><span class="pill ok">Active</span></td><td class="num">300.57</td><td class="num">996</td></tr>
+<tr><td>#10101</td><td>Grace Hopper</td><td>US-West</td><td><span class="pill ok">Active</span></td><td class="num">357.41</td><td class="num">41</td></tr>
+<tr><td>#10102</td><td>Alan Turing</td><td>US-East</td><td><span class="pill warn">Pending</span></td><td class="num">554.45</td><td class="num">870</td></tr>
+<tr><td>#10103</td><td>John McCarthy</td><td>AP-South</td><td><span class="pill warn">Pending</span></td><td class="num">196.77</td><td class="num">550</td></tr>
+<tr><td>#10104</td><td>Linus Torvalds</td><td>AP-South</td><td><span class="pill bad">Failed</span></td><td class="num">919.05</td><td class="num">335</td></tr>
+<tr><td>#10105</td><td>Grace Hopper</td><td>EU-West</td><td><span class="pill warn">Pending</span></td><td class="num">903.04</td><td class="num">188</td></tr>
+<tr><td>#10106</td><td>Ken Thompson</td><td>US-West</td><td><span class="pill ok">Active</span></td><td class="num">23.06</td><td class="num">650</td></tr>
+<tr><td>#10107</td><td>Grace Hopper</td><td>EU-West</td><td><span class="pill warn">Pending</span></td><td class="num">798.15</td><td class="num">877</td></tr>
+<tr><td>#10108</td><td>Edsger Dijkstra</td><td>US-West</td><td><span class="pill ok">Active</span></td><td class="num">160.48</td><td class="num">465</td></tr>
+<tr><td>#10109</td><td>Ada Lovelace</td><td>EU-North</td><td><span class="pill warn">Pending</span></td><td class="num">548.56</td><td class="num">949</td></tr>
+<tr><td>#10110</td><td>Barbara Liskov</td><td>US-East</td><td><span class="pill bad">Failed</span></td><td class="num">57.63</td><td class="num">540</td></tr>
+<tr><td>#10111</td><td>Frances Allen</td><td>EU-West</td><td><span class="pill ok">Active</span></td><td class="num">212.61</td><td class="num">269</td></tr>
+<tr><td>#10112</td><td>Ada Lovelace</td><td>US-East</td><td><span class="pill ok">Active</span></td><td class="num">409.93</td><td class="num">644</td></tr>
+<tr><td>#10113</td><td>Barbara Liskov</td><td>US-East</td><td><span class="pill bad">Failed</span></td><td class="num">381.05</td><td class="num">457</td></tr>
+<tr><td>#10114</td><td>Linus Torvalds</td><td>US-East</td><td><span class="pill bad">Failed</span></td><td class="num">355.57</td><td class="num">356</td></tr>
+<tr><td>#10115</td><td>Ada Lovelace</td><td>EU-West</td><td><span class="pill warn">Pending</span></td><td class="num">21.11</td><td class="num">19</td></tr>
+<tr><td>#10116</td><td>Frances Allen</td><td>EU-North</td><td><span class="pill bad">Failed</span></td><td class="num">249.32</td><td class="num">527</td></tr>
+<tr><td>#10117</td><td>Margaret Hamilton</td><td>AP-South</td><td><span class="pill ok">Active</span></td><td class="num">140.30</td><td class="num">675</td></tr>
+<tr><td>#10118</td><td>John McCarthy</td><td>AP-South</td><td><span class="pill warn">Pending</span></td><td class="num">716.53</td><td class="num">855</td></tr>
+<tr><td>#10119</td><td>Ken Thompson</td><td>US-West</td><td><span class="pill bad">Failed</span></td><td class="num">902.43</td><td class="num">221</td></tr>
+<tr><td>#10120</td><td>Edsger Dijkstra</td><td>US-East</td><td><span class="pill warn">Pending</span></td><td class="num">927.31</td><td class="num">747</td></tr>
+<tr><td>#10121</td><td>John McCarthy</td><td>AP-South</td><td><span class="pill ok">Active</span></td><td class="num">456.54</td><td class="num">56</td></tr>
+<tr><td>#10122</td><td>Alan Turing</td><td>EU-West</td><td><span class="pill ok">Active</span></td><td class="num">820.78</td><td class="num">759</td></tr>
+<tr><td>#10123</td><td>Barbara Liskov</td><td>US-East</td><td><span class="pill warn">Pending</span></td><td class="num">73.61</td><td class="num">87</td></tr>
+<tr><td>#10124</td><td>John McCarthy</td><td>EU-North</td><td><span class="pill warn">Pending</span></td><td class="num">879.89</td><td class="num">995</td></tr>
+<tr><td>#10125</td><td>Barbara Liskov</td><td>US-East</td><td><span class="pill bad">Failed</span></td><td class="num">908.91</td><td class="num">301</td></tr>
+<tr><td>#10126</td><td>Ada Lovelace</td><td>US-East</td><td><span class="pill warn">Pending</span></td><td class="num">207.48</td><td class="num">276</td></tr>
+<tr><td>#10127</td><td>Margaret Hamilton</td><td>US-West</td><td><span class="pill ok">Active</span></td><td class="num">478.28</td><td class="num">985</td></tr>
+<tr><td>#10128</td><td>Donald Knuth</td><td>US-West</td><td><span class="pill bad">Failed</span></td><td class="num">321.40</td><td class="num">36</td></tr>
+<tr><td>#10129</td><td>Barbara Liskov</td><td>US-West</td><td><span class="pill ok">Active</span></td><td class="num">240.80</td><td class="num">2</td></tr>
+<tr><td>#10130</td><td>Donald Knuth</td><td>EU-West</td><td><span class="pill warn">Pending</span></td><td class="num">623.12</td><td class="num">286</td></tr>
+<tr><td>#10131</td><td>Linus Torvalds</td><td>US-East</td><td><span class="pill bad">Failed</span></td><td class="num">326.29</td><td class="num">517</td></tr>
+<tr><td>#10132</td><td>Ada Lovelace</td><td>US-West</td><td><span class="pill ok">Active</span></td><td class="num">118.64</td><td class="num">148</td></tr>
+<tr><td>#10133</td><td>Ken Thompson</td><td>EU-West</td><td><span class="pill bad">Failed</span></td><td class="num">517.39</td><td class="num">24</td></tr>
+<tr><td>#10134</td><td>Barbara Liskov</td><td>US-East</td><td><span class="pill warn">Pending</span></td><td class="num">111.73</td><td class="num">600</td></tr>
+<tr><td>#10135</td><td>Linus Torvalds</td><td>EU-North</td><td><span class="pill ok">Active</span></td><td class="num">511.54</td><td class="num">783</td></tr>
+<tr><td>#10136</td><td>Donald Knuth</td><td>AP-South</td><td><span class="pill bad">Failed</span></td><td class="num">196.90</td><td class="num">291</td></tr>
+<tr><td>#10137</td><td>Frances Allen</td><td>US-East</td><td><span class="pill bad">Failed</span></td><td class="num">58.39</td><td class="num">845</td></tr>
+<tr><td>#10138</td><td>Frances Allen</td><td>AP-South</td><td><span class="pill bad">Failed</span></td><td class="num">962.87</td><td class="num">718</td></tr>
+<tr><td>#10139</td><td>Linus Torvalds</td><td>EU-North</td><td><span class="pill ok">Active</span></td><td class="num">987.79</td><td class="num">517</td></tr>
+<tr><td>#10140</td><td>Radia Perlman</td><td>EU-North</td><td><span class="pill ok">Active</span></td><td class="num">933.16</td><td class="num">700</td></tr>
+<tr><td>#10141</td><td>Frances Allen</td><td>US-East</td><td><span class="pill bad">Failed</span></td><td class="num">112.53</td><td class="num">32</td></tr>
+<tr><td>#10142</td><td>Ada Lovelace</td><td>US-West</td><td><span class="pill ok">Active</span></td><td class="num">138.51</td><td class="num">386</td></tr>
+<tr><td>#10143</td><td>Margaret Hamilton</td><td>EU-West</td><td><span class="pill bad">Failed</span></td><td class="num">823.82</td><td class="num">20</td></tr>
+<tr><td>#10144</td><td>John McCarthy</td><td>US-East</td><td><span class="pill bad">Failed</span></td><td class="num">642.32</td><td class="num">271</td></tr>
+<tr><td>#10145</td><td>Ada Lovelace</td><td>EU-West</td><td><span class="pill warn">Pending</span></td><td class="num">981.76</td><td class="num">955</td></tr>
+<tr><td>#10146</td><td>Linus Torvalds</td><td>EU-West</td><td><span class="pill bad">Failed</span></td><td class="num">865.15</td><td class="num">539</td></tr>
+<tr><td>#10147</td><td>Grace Hopper</td><td>AP-South</td><td><span class="pill bad">Failed</span></td><td class="num">331.55</td><td class="num">829</td></tr>
+<tr><td>#10148</td><td>Grace Hopper</td><td>US-East</td><td><span class="pill warn">Pending</span></td><td class="num">956.95</td><td class="num">775</td></tr>
+<tr><td>#10149</td><td>Edsger Dijkstra</td><td>AP-South</td><td><span class="pill ok">Active</span></td><td class="num">648.42</td><td class="num">866</td></tr>
+<tr><td>#10150</td><td>Ken Thompson</td><td>AP-South</td><td><span class="pill ok">Active</span></td><td class="num">897.13</td><td class="num">295</td></tr>
+<tr><td>#10151</td><td>Ada Lovelace</td><td>US-East</td><td><span class="pill bad">Failed</span></td><td class="num">102.54</td><td class="num">615</td></tr>
+<tr><td>#10152</td><td>Alan Turing</td><td>US-West</td><td><span class="pill warn">Pending</span></td><td class="num">854.97</td><td class="num">762</td></tr>
+<tr><td>#10153</td><td>Frances Allen</td><td>EU-North</td><td><span class="pill warn">Pending</span></td><td class="num">745.17</td><td class="num">137</td></tr>
+<tr><td>#10154</td><td>Ada Lovelace</td><td>EU-West</td><td><span class="pill warn">Pending</span></td><td class="num">637.74</td><td class="num">276</td></tr>
+<tr><td>#10155</td><td>John McCarthy</td><td>US-East</td><td><span class="pill ok">Active</span></td><td class="num">886.66</td><td class="num">502</td></tr>
+<tr><td>#10156</td><td>Barbara Liskov</td><td>EU-North</td><td><span class="pill bad">Failed</span></td><td class="num">375.26</td><td class="num">476</td></tr>
+<tr><td>#10157</td><td>Margaret Hamilton</td><td>EU-West</td><td><span class="pill warn">Pending</span></td><td class="num">720.68</td><td class="num">205</td></tr>
+<tr><td>#10158</td><td>Barbara Liskov</td><td>AP-South</td><td><span class="pill ok">Active</span></td><td class="num">23.94</td><td class="num">297</td></tr>
+<tr><td>#10159</td><td>Margaret Hamilton</td><td>EU-North</td><td><span class="pill ok">Active</span></td><td class="num">590.10</td><td class="num">276</td></tr>
+<tr><td>#10160</td><td>Ken Thompson</td><td>US-East</td><td><span class="pill ok">Active</span></td><td class="num">98.79</td><td class="num">596</td></tr>
+<tr><td>#10161</td><td>Grace Hopper</td><td>EU-North</td><td><span class="pill ok">Active</span></td><td class="num">344.15</td><td class="num">976</td></tr>
+<tr><td>#10162</td><td>Donald Knuth</td><td>EU-North</td><td><span class="pill ok">Active</span></td><td class="num">828.94</td><td class="num">521</td></tr>
+<tr><td>#10163</td><td>Barbara Liskov</td><td>US-West</td><td><span class="pill ok">Active</span></td><td class="num">304.27</td><td class="num">510</td></tr>
+<tr><td>#10164</td><td>Margaret Hamilton</td><td>EU-West</td><td><span class="pill warn">Pending</span></td><td class="num">209.49</td><td class="num">4</td></tr>
+<tr><td>#10165</td><td>Margaret Hamilton</td><td>AP-South</td><td><span class="pill bad">Failed</span></td><td class="num">532.39</td><td class="num">310</td></tr>
+<tr><td>#10166</td><td>Frances Allen</td><td>AP-South</td><td><span class="pill ok">Active</span></td><td class="num">451.83</td><td class="num">386</td></tr>
+<tr><td>#10167</td><td>Donald Knuth</td><td>US-West</td><td><span class="pill ok">Active</span></td><td class="num">3.28</td><td class="num">333</td></tr>
+<tr><td>#10168</td><td>Donald Knuth</td><td>EU-West</td><td><span class="pill warn">Pending</span></td><td class="num">257.56</td><td class="num">731</td></tr>
+<tr><td>#10169</td><td>Ada Lovelace</td><td>US-West</td><td><span class="pill bad">Failed</span></td><td class="num">332.89</td><td class="num">382</td></tr>
+<tr><td>#10170</td><td>Grace Hopper</td><td>AP-South</td><td><span class="pill warn">Pending</span></td><td class="num">773.24</td><td class="num">79</td></tr>
+<tr><td>#10171</td><td>Donald Knuth</td><td>US-West</td><td><span class="pill warn">Pending</span></td><td class="num">64.26</td><td class="num">288</td></tr>
+<tr><td>#10172</td><td>Grace Hopper</td><td>US-West</td><td><span class="pill ok">Active</span></td><td class="num">833.25</td><td class="num">959</td></tr>
+<tr><td>#10173</td><td>Alan Turing</td><td>US-West</td><td><span class="pill ok">Active</span></td><td class="num">572.78</td><td class="num">524</td></tr>
+<tr><td>#10174</td><td>Donald Knuth</td><td>US-West</td><td><span class="pill ok">Active</span></td><td class="num">561.65</td><td class="num">906</td></tr>
+<tr><td>#10175</td><td>Ada Lovelace</td><td>AP-South</td><td><span class="pill bad">Failed</span></td><td class="num">727.33</td><td class="num">563</td></tr>
+<tr><td>#10176</td><td>Edsger Dijkstra</td><td>EU-West</td><td><span class="pill bad">Failed</span></td><td class="num">65.84</td><td class="num">956</td></tr>
+<tr><td>#10177</td><td>Frances Allen</td><td>AP-South</td><td><span class="pill warn">Pending</span></td><td class="num">806.98</td><td class="num">771</td></tr>
+<tr><td>#10178</td><td>Alan Turing</td><td>US-West</td><td><span class="pill bad">Failed</span></td><td class="num">637.45</td><td class="num">51</td></tr>
+<tr><td>#10179</td><td>Linus Torvalds</td><td>US-East</td><td><span class="pill ok">Active</span></td><td class="num">619.90</td><td class="num">425</td></tr>
+<tr><td>#10180</td><td>Donald Knuth</td><td>US-West</td><td><span class="pill warn">Pending</span></td><td class="num">336.20</td><td class="num">757</td></tr>
+<tr><td>#10181</td><td>Frances Allen</td><td>US-West</td><td><span class="pill bad">Failed</span></td><td class="num">533.42</td><td class="num">672</td></tr>
+<tr><td>#10182</td><td>Edsger Dijkstra</td><td>AP-South</td><td><span class="pill warn">Pending</span></td><td class="num">731.49</td><td class="num">685</td></tr>
+<tr><td>#10183</td><td>Ken Thompson</td><td>US-East</td><td><span class="pill ok">Active</span></td><td class="num">844.06</td><td class="num">166</td></tr>
+<tr><td>#10184</td><td>Grace Hopper</td><td>EU-North</td><td><span class="pill ok">Active</span></td><td class="num">652.52</td><td class="num">564</td></tr>
+<tr><td>#10185</td><td>Edsger Dijkstra</td><td>US-West</td><td><span class="pill warn">Pending</span></td><td class="num">996.16</td><td class="num">461</td></tr>
+<tr><td>#10186</td><td>Ken Thompson</td><td>EU-North</td><td><span class="pill ok">Active</span></td><td class="num">253.19</td><td class="num">250</td></tr>
+<tr><td>#10187</td><td>Grace Hopper</td><td>US-West</td><td><span class="pill ok">Active</span></td><td class="num">729.59</td><td class="num">94</td></tr>
+<tr><td>#10188</td><td>Donald Knuth</td><td>US-West</td><td><span class="pill ok">Active</span></td><td class="num">339.63</td><td class="num">829</td></tr>
+<tr><td>#10189</td><td>Radia Perlman</td><td>EU-West</td><td><span class="pill ok">Active</span></td><td class="num">983.59</td><td class="num">892</td></tr>
+<tr><td>#10190</td><td>Ken Thompson</td><td>AP-South</td><td><span class="pill warn">Pending</span></td><td class="num">978.58</td><td class="num">537</td></tr>
+<tr><td>#10191</td><td>Edsger Dijkstra</td><td>US-West</td><td><span class="pill warn">Pending</span></td><td class="num">444.28</td><td class="num">771</td></tr>
+<tr><td>#10192</td><td>Ada Lovelace</td><td>US-West</td><td><span class="pill warn">Pending</span></td><td class="num">753.72</td><td class="num">991</td></tr>
+<tr><td>#10193</td><td>Donald Knuth</td><td>EU-North</td><td><span class="pill ok">Active</span></td><td class="num">694.66</td><td class="num">645</td></tr>
+<tr><td>#10194</td><td>Edsger Dijkstra</td><td>US-West</td><td><span class="pill ok">Active</span></td><td class="num">326.65</td><td class="num">394</td></tr>
+<tr><td>#10195</td><td>Ken Thompson</td><td>AP-South</td><td><span class="pill bad">Failed</span></td><td class="num">567.01</td><td class="num">977</td></tr>
+<tr><td>#10196</td><td>Barbara Liskov</td><td>US-East</td><td><span class="pill ok">Active</span></td><td class="num">43.26</td><td class="num">436</td></tr>
+<tr><td>#10197</td><td>Frances Allen</td><td>EU-North</td><td><span class="pill warn">Pending</span></td><td class="num">643.02</td><td class="num">1</td></tr>
+<tr><td>#10198</td><td>Grace Hopper</td><td>EU-North</td><td><span class="pill warn">Pending</span></td><td class="num">614.61</td><td class="num">996</td></tr>
+<tr><td>#10199</td><td>Margaret Hamilton</td><td>EU-West</td><td><span class="pill ok">Active</span></td><td class="num">294.33</td><td class="num">159</td></tr>
+<tr><td>#10200</td><td>Alan Turing</td><td>EU-West</td><td><span class="pill bad">Failed</span></td><td class="num">946.99</td><td class="num">718</td></tr>
+<tr><td>#10201</td><td>John McCarthy</td><td>EU-West</td><td><span class="pill warn">Pending</span></td><td class="num">723.86</td><td class="num">796</td></tr>
+<tr><td>#10202</td><td>Ada Lovelace</td><td>US-East</td><td><span class="pill ok">Active</span></td><td class="num">305.84</td><td class="num">584</td></tr>
+<tr><td>#10203</td><td>Ada Lovelace</td><td>US-West</td><td><span class="pill bad">Failed</span></td><td class="num">168.72</td><td class="num">642</td></tr>
+<tr><td>#10204</td><td>Barbara Liskov</td><td>AP-South</td><td><span class="pill bad">Failed</span></td><td class="num">916.64</td><td class="num">783</td></tr>
+<tr><td>#10205</td><td>Grace Hopper</td><td>EU-West</td><td><span class="pill ok">Active</span></td><td class="num">394.67</td><td class="num">538</td></tr>
+<tr><td>#10206</td><td>Radia Perlman</td><td>AP-South</td><td><span class="pill ok">Active</span></td><td class="num">342.94</td><td class="num">229</td></tr>
+<tr><td>#10207</td><td>Radia Perlman</td><td>EU-West</td><td><span class="pill ok">Active</span></td><td class="num">705.48</td><td class="num">309</td></tr>
+<tr><td>#10208</td><td>Margaret Hamilton</td><td>US-West</td><td><span class="pill warn">Pending</span></td><td class="num">845.85</td><td class="num">860</td></tr>
+<tr><td>#10209</td><td>Edsger Dijkstra</td><td>EU-North</td><td><span class="pill warn">Pending</span></td><td class="num">308.71</td><td class="num">561</td></tr>
+<tr><td>#10210</td><td>Edsger Dijkstra</td><td>AP-South</td><td><span class="pill ok">Active</span></td><td class="num">924.60</td><td class="num">666</td></tr>
+<tr><td>#10211</td><td>Barbara Liskov</td><td>EU-West</td><td><span class="pill ok">Active</span></td><td class="num">255.43</td><td class="num">511</td></tr>
+<tr><td>#10212</td><td>John McCarthy</td><td>AP-South</td><td><span class="pill bad">Failed</span></td><td class="num">107.28</td><td class="num">264</td></tr>
+<tr><td>#10213</td><td>Edsger Dijkstra</td><td>AP-South</td><td><span class="pill bad">Failed</span></td><td class="num">486.25</td><td class="num">233</td></tr>
+<tr><td>#10214</td><td>Margaret Hamilton</td><td>US-West</td><td><span class="pill ok">Active</span></td><td class="num">942.53</td><td class="num">431</td></tr>
+<tr><td>#10215</td><td>Donald Knuth</td><td>AP-South</td><td><span class="pill bad">Failed</span></td><td class="num">260.62</td><td class="num">7</td></tr>
+<tr><td>#10216</td><td>Barbara Liskov</td><td>EU-North</td><td><span class="pill bad">Failed</span></td><td class="num">89.38</td><td class="num">211</td></tr>
+<tr><td>#10217</td><td>Margaret Hamilton</td><td>US-West</td><td><span class="pill ok">Active</span></td><td class="num">255.19</td><td class="num">237</td></tr>
+<tr><td>#10218</td><td>Margaret Hamilton</td><td>US-West</td><td><span class="pill ok">Active</span></td><td class="num">997.76</td><td class="num">911</td></tr>
+<tr><td>#10219</td><td>Barbara Liskov</td><td>EU-North</td><td><span class="pill ok">Active</span></td><td class="num">650.80</td><td class="num">625</td></tr>
+<tr><td>#10220</td><td>Alan Turing</td><td>AP-South</td><td><span class="pill ok">Active</span></td><td class="num">547.60</td><td class="num">933</td></tr>
+<tr><td>#10221</td><td>John McCarthy</td><td>EU-North</td><td><span class="pill ok">Active</span></td><td class="num">192.86</td><td class="num">945</td></tr>
+<tr><td>#10222</td><td>Ken Thompson</td><td>US-East</td><td><span class="pill ok">Active</span></td><td class="num">31.97</td><td class="num">998</td></tr>
+<tr><td>#10223</td><td>Radia Perlman</td><td>AP-South</td><td><span class="pill ok">Active</span></td><td class="num">68.94</td><td class="num">727</td></tr>
+<tr><td>#10224</td><td>Ada Lovelace</td><td>AP-South</td><td><span class="pill ok">Active</span></td><td class="num">590.35</td><td class="num">920</td></tr>
+<tr><td>#10225</td><td>Frances Allen</td><td>EU-West</td><td><span class="pill warn">Pending</span></td><td class="num">105.02</td><td class="num">954</td></tr>
+<tr><td>#10226</td><td>Alan Turing</td><td>US-East</td><td><span class="pill warn">Pending</span></td><td class="num">244.15</td><td class="num">669</td></tr>
+<tr><td>#10227</td><td>Linus Torvalds</td><td>AP-South</td><td><span class="pill bad">Failed</span></td><td class="num">42.80</td><td class="num">320</td></tr>
+<tr><td>#10228</td><td>John McCarthy</td><td>AP-South</td><td><span class="pill bad">Failed</span></td><td class="num">491.05</td><td class="num">340</td></tr>
+<tr><td>#10229</td><td>Margaret Hamilton</td><td>EU-West</td><td><span class="pill ok">Active</span></td><td class="num">4.76</td><td class="num">81</td></tr>
+<tr><td>#10230</td><td>Barbara Liskov</td><td>US-West</td><td><span class="pill ok">Active</span></td><td class="num">551.74</td><td class="num">979</td></tr>
+<tr><td>#10231</td><td>Grace Hopper</td><td>US-East</td><td><span class="pill bad">Failed</span></td><td class="num">499.24</td><td class="num">366</td></tr>
+<tr><td>#10232</td><td>Barbara Liskov</td><td>EU-West</td><td><span class="pill warn">Pending</span></td><td class="num">65.56</td><td class="num">723</td></tr>
+<tr><td>#10233</td><td>Margaret Hamilton</td><td>US-West</td><td><span class="pill ok">Active</span></td><td class="num">710.79</td><td class="num">942</td></tr>
+<tr><td>#10234</td><td>Margaret Hamilton</td><td>US-West</td><td><span class="pill ok">Active</span></td><td class="num">478.42</td><td class="num">756</td></tr>
+<tr><td>#10235</td><td>Margaret Hamilton</td><td>AP-South</td><td><span class="pill ok">Active</span></td><td class="num">326.07</td><td class="num">832</td></tr>
+<tr><td>#10236</td><td>John McCarthy</td><td>EU-West</td><td><span class="pill warn">Pending</span></td><td class="num">493.26</td><td class="num">36</td></tr>
+<tr><td>#10237</td><td>Margaret Hamilton</td><td>EU-West</td><td><span class="pill ok">Active</span></td><td class="num">337.87</td><td class="num">200</td></tr>
+<tr><td>#10238</td><td>Frances Allen</td><td>EU-North</td><td><span class="pill ok">Active</span></td><td class="num">445.42</td><td class="num">372</td></tr>
+<tr><td>#10239</td><td>Barbara Liskov</td><td>EU-North</td><td><span class="pill warn">Pending</span></td><td class="num">58.12</td><td class="num">269</td></tr>
+<tr><td>#10240</td><td>Frances Allen</td><td>US-West</td><td><span class="pill bad">Failed</span></td><td class="num">362.27</td><td class="num">305</td></tr>
+<tr><td>#10241</td><td>Ada Lovelace</td><td>EU-North</td><td><span class="pill bad">Failed</span></td><td class="num">831.97</td><td class="num">970</td></tr>
+<tr><td>#10242</td><td>Grace Hopper</td><td>US-East</td><td><span class="pill ok">Active</span></td><td class="num">141.58</td><td class="num">487</td></tr>
+<tr><td>#10243</td><td>Frances Allen</td><td>AP-South</td><td><span class="pill warn">Pending</span></td><td class="num">330.05</td><td class="num">936</td></tr>
+<tr><td>#10244</td><td>Ken Thompson</td><td>US-East</td><td><span class="pill warn">Pending</span></td><td class="num">651.82</td><td class="num">188</td></tr>
+<tr><td>#10245</td><td>Ada Lovelace</td><td>US-West</td><td><span class="pill bad">Failed</span></td><td class="num">908.16</td><td class="num">792</td></tr>
+<tr><td>#10246</td><td>Alan Turing</td><td>US-East</td><td><span class="pill bad">Failed</span></td><td class="num">430.65</td><td class="num">882</td></tr>
+<tr><td>#10247</td><td>Donald Knuth</td><td>US-West</td><td><span class="pill warn">Pending</span></td><td class="num">781.81</td><td class="num">81</td></tr>
+<tr><td>#10248</td><td>Linus Torvalds</td><td>AP-South</td><td><span class="pill ok">Active</span></td><td class="num">987.82</td><td class="num">164</td></tr>
+<tr><td>#10249</td><td>Edsger Dijkstra</td><td>EU-West</td><td><span class="pill warn">Pending</span></td><td class="num">852.37</td><td class="num">35</td></tr>
+<tr><td>#10250</td><td>Margaret Hamilton</td><td>EU-North</td><td><span class="pill bad">Failed</span></td><td class="num">427.97</td><td class="num">165</td></tr>
+<tr><td>#10251</td><td>Ken Thompson</td><td>EU-West</td><td><span class="pill ok">Active</span></td><td class="num">348.19</td><td class="num">640</td></tr>
+<tr><td>#10252</td><td>Grace Hopper</td><td>EU-West</td><td><span class="pill ok">Active</span></td><td class="num">552.89</td><td class="num">511</td></tr>
+<tr><td>#10253</td><td>Frances Allen</td><td>US-East</td><td><span class="pill warn">Pending</span></td><td class="num">307.96</td><td class="num">137</td></tr>
+<tr><td>#10254</td><td>Ken Thompson</td><td>EU-North</td><td><span class="pill warn">Pending</span></td><td class="num">884.56</td><td class="num">241</td></tr>
+<tr><td>#10255</td><td>Frances Allen</td><td>EU-West</td><td><span class="pill bad">Failed</span></td><td class="num">386.25</td><td class="num">301</td></tr>
+<tr><td>#10256</td><td>Barbara Liskov</td><td>US-West</td><td><span class="pill bad">Failed</span></td><td class="num">489.86</td><td class="num">261</td></tr>
+<tr><td>#10257</td><td>Frances Allen</td><td>US-East</td><td><span class="pill warn">Pending</span></td><td class="num">576.92</td><td class="num">254</td></tr>
+<tr><td>#10258</td><td>Alan Turing</td><td>US-East</td><td><span class="pill ok">Active</span></td><td class="num">201.96</td><td class="num">289</td></tr>
+<tr><td>#10259</td><td>Radia Perlman</td><td>US-West</td><td><span class="pill ok">Active</span></td><td class="num">85.94</td><td class="num">406</td></tr>
+<tr><td>#10260</td><td>Barbara Liskov</td><td>EU-North</td><td><span class="pill ok">Active</span></td><td class="num">690.84</td><td class="num">237</td></tr>
+<tr><td>#10261</td><td>John McCarthy</td><td>AP-South</td><td><span class="pill ok">Active</span></td><td class="num">49.52</td><td class="num">105</td></tr>
+<tr><td>#10262</td><td>Ada Lovelace</td><td>US-East</td><td><span class="pill warn">Pending</span></td><td class="num">588.59</td><td class="num">937</td></tr>
+<tr><td>#10263</td><td>Donald Knuth</td><td>US-West</td><td><span class="pill ok">Active</span></td><td class="num">306.25</td><td class="num">123</td></tr>
+<tr><td>#10264</td><td>Ada Lovelace</td><td>EU-North</td><td><span class="pill ok">Active</span></td><td class="num">765.40</td><td class="num">199</td></tr>
+<tr><td>#10265</td><td>Grace Hopper</td><td>EU-North</td><td><span class="pill warn">Pending</span></td><td class="num">233.99</td><td class="num">460</td></tr>
+<tr><td>#10266</td><td>Radia Perlman</td><td>EU-West</td><td><span class="pill warn">Pending</span></td><td class="num">139.64</td><td class="num">653</td></tr>
+<tr><td>#10267</td><td>Radia Perlman</td><td>EU-North</td><td><span class="pill bad">Failed</span></td><td class="num">459.35</td><td class="num">223</td></tr>
+<tr><td>#10268</td><td>Ada Lovelace</td><td>US-West</td><td><span class="pill warn">Pending</span></td><td class="num">186.29</td><td class="num">46</td></tr>
+<tr><td>#10269</td><td>Edsger Dijkstra</td><td>EU-West</td><td><span class="pill warn">Pending</span></td><td class="num">786.67</td><td class="num">750</td></tr>
+<tr><td>#10270</td><td>John McCarthy</td><td>EU-West</td><td><span class="pill ok">Active</span></td><td class="num">429.93</td><td class="num">419</td></tr>
+<tr><td>#10271</td><td>John McCarthy</td><td>US-East</td><td><span class="pill warn">Pending</span></td><td class="num">814.97</td><td class="num">320</td></tr>
+<tr><td>#10272</td><td>Grace Hopper</td><td>EU-West</td><td><span class="pill ok">Active</span></td><td class="num">650.62</td><td class="num">562</td></tr>
+<tr><td>#10273</td><td>Margaret Hamilton</td><td>AP-South</td><td><span class="pill ok">Active</span></td><td class="num">133.89</td><td class="num">815</td></tr>
+<tr><td>#10274</td><td>Ken Thompson</td><td>EU-North</td><td><span class="pill bad">Failed</span></td><td class="num">203.57</td><td class="num">655</td></tr>
+<tr><td>#10275</td><td>Linus Torvalds</td><td>US-East</td><td><span class="pill ok">Active</span></td><td class="num">522.36</td><td class="num">713</td></tr>
+<tr><td>#10276</td><td>Barbara Liskov</td><td>US-West</td><td><span class="pill warn">Pending</span></td><td class="num">876.31</td><td class="num">315</td></tr>
+<tr><td>#10277</td><td>Ken Thompson</td><td>US-West</td><td><span class="pill ok">Active</span></td><td class="num">977.92</td><td class="num">581</td></tr>
+<tr><td>#10278</td><td>Donald Knuth</td><td>AP-South</td><td><span class="pill warn">Pending</span></td><td class="num">24.87</td><td class="num">885</td></tr>
+<tr><td>#10279</td><td>Donald Knuth</td><td>US-East</td><td><span class="pill bad">Failed</span></td><td class="num">513.13</td><td class="num">746</td></tr>
+<tr><td>#10280</td><td>Ken Thompson</td><td>EU-West</td><td><span class="pill ok">Active</span></td><td class="num">570.06</td><td class="num">924</td></tr>
+<tr><td>#10281</td><td>Alan Turing</td><td>EU-West</td><td><span class="pill warn">Pending</span></td><td class="num">119.60</td><td class="num">416</td></tr>
+<tr><td>#10282</td><td>Radia Perlman</td><td>AP-South</td><td><span class="pill warn">Pending</span></td><td class="num">214.05</td><td class="num">134</td></tr>
+<tr><td>#10283</td><td>Ada Lovelace</td><td>EU-North</td><td><span class="pill ok">Active</span></td><td class="num">187.77</td><td class="num">657</td></tr>
+<tr><td>#10284</td><td>Ken Thompson</td><td>EU-North</td><td><span class="pill ok">Active</span></td><td class="num">816.52</td><td class="num">950</td></tr>
+<tr><td>#10285</td><td>Donald Knuth</td><td>EU-North</td><td><span class="pill bad">Failed</span></td><td class="num">226.03</td><td class="num">150</td></tr>
+<tr><td>#10286</td><td>Donald Knuth</td><td>US-East</td><td><span class="pill warn">Pending</span></td><td class="num">684.09</td><td class="num">176</td></tr>
+<tr><td>#10287</td><td>Grace Hopper</td><td>AP-South</td><td><span class="pill ok">Active</span></td><td class="num">643.92</td><td class="num">772</td></tr>
+<tr><td>#10288</td><td>Edsger Dijkstra</td><td>US-East</td><td><span class="pill warn">Pending</span></td><td class="num">58.01</td><td class="num">935</td></tr>
+<tr><td>#10289</td><td>Margaret Hamilton</td><td>EU-West</td><td><span class="pill warn">Pending</span></td><td class="num">797.45</td><td class="num">949</td></tr>
+<tr><td>#10290</td><td>John McCarthy</td><td>EU-West</td><td><span class="pill warn">Pending</span></td><td class="num">934.63</td><td class="num">636</td></tr>
+<tr><td>#10291</td><td>Frances Allen</td><td>US-East</td><td><span class="pill ok">Active</span></td><td class="num">815.02</td><td class="num">415</td></tr>
+<tr><td>#10292</td><td>Radia Perlman</td><td>AP-South</td><td><span class="pill ok">Active</span></td><td class="num">240.81</td><td class="num">579</td></tr>
+<tr><td>#10293</td><td>Edsger Dijkstra</td><td>AP-South</td><td><span class="pill ok">Active</span></td><td class="num">679.81</td><td class="num">161</td></tr>
+<tr><td>#10294</td><td>Ken Thompson</td><td>EU-West</td><td><span class="pill warn">Pending</span></td><td class="num">196.90</td><td class="num">253</td></tr>
+<tr><td>#10295</td><td>Frances Allen</td><td>EU-West</td><td><span class="pill ok">Active</span></td><td class="num">738.07</td><td class="num">863</td></tr>
+<tr><td>#10296</td><td>John McCarthy</td><td>US-West</td><td><span class="pill ok">Active</span></td><td class="num">155.31</td><td class="num">400</td></tr>
+<tr><td>#10297</td><td>Radia Perlman</td><td>EU-North</td><td><span class="pill warn">Pending</span></td><td class="num">822.87</td><td class="num">797</td></tr>
+<tr><td>#10298</td><td>Barbara Liskov</td><td>AP-South</td><td><span class="pill bad">Failed</span></td><td class="num">404.97</td><td class="num">597</td></tr>
+<tr><td>#10299</td><td>Edsger Dijkstra</td><td>AP-South</td><td><span class="pill warn">Pending</span></td><td class="num">864.55</td><td class="num">377</td></tr>
+<tr><td>#10300</td><td>Margaret Hamilton</td><td>AP-South</td><td><span class="pill bad">Failed</span></td><td class="num">235.30</td><td class="num">24</td></tr>
+      </tbody>
+    </table>
+  </section>
+</main>
+</body>
+</html>

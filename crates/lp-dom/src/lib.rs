@@ -20,6 +20,7 @@ pub mod parse;
 pub mod script;
 pub mod select;
 pub mod serialize;
+pub mod snapshot;
 pub mod style;
 pub mod stylo;
 pub mod style_flow;
