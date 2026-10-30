@@ -18,12 +18,13 @@ cargo test
 ```
 
 On macOS every linked executable (`lightningpanda`, the test binaries) is ad hoc re-signed with
-`com.apple.security.cs.allow-jit` and nothing else; this runs through `scripts/macos/link-and-sign.sh`, which
-`.cargo/config.toml` sets as the linker. Without that entitlement the system JavaScriptCore runs interpreter-only.
-Cargo reads `.cargo/config.toml` from the current directory upwards, so run cargo from the repository: a build started
-elsewhere (`cargo build --manifest-path ...`) links unsigned, and the `lightningpanda` build script warns about it. If a
-binary is copied or re-signed outside Cargo, keep the entitlement:
-`codesign -f -s - --entitlements scripts/macos/jit.entitlements <binary>`. With the JIT active, JSC's default
+`com.apple.security.cs.allow-jit` and nothing else; `.cargo/config.toml` passes `-C link-arg=-Bscripts/macos/linker`,
+so `cc` links through `scripts/macos/linker/ld`, which does this. Without that entitlement the system JavaScriptCore
+runs interpreter-only. Cargo reads `.cargo/config.toml` from the current directory upwards, so run cargo from the
+repository: a build started elsewhere (`cargo build --manifest-path ...`) links unsigned, and so does one with
+`RUSTFLAGS` set, which replaces the config's flags (add `-Clink-arg=-Bscripts/macos/linker` to it). The
+`lightningpanda` build script warns in both cases. If a binary is copied or re-signed outside Cargo, keep the
+entitlement: `codesign -f -s - --entitlements scripts/macos/jit.entitlements <binary>`. With the JIT active, JSC's default
 signal-based traps do not stop JIT-compiled loops, so `lp_js::configure_process` (called by `Engine::new` and at the
 start of the CLI) sets `JSC_usePollingTraps=true` unless that variable is already set; script timeouts and termination
 depend on it.
@@ -32,6 +33,24 @@ The release profile keeps `strip = "none"`: Cargo otherwise strips after linking
 `CARGO_PROFILE_RELEASE_DEBUG=0`, which removes the JIT entitlement added by the linker wrapper.
 An explicit strip override requires re-signing the final binary afterward. Check this build contract with
 `python3 scripts/macos/check-jit-signing.py` (macOS; compiles a small temporary executable).
+
+### Sharing dependency builds across worktrees
+
+Each checkout or worktree has its own `target/`, so a new one compiles every dependency again.
+[sccache](https://github.com/mozilla/sccache) caches those compiles across checkouts; the build passes no
+checkout path to dependencies' rustc commands, so the cache hits from any path. One-time setup:
+
+```sh
+brew install sccache
+printf '[build]\nrustc-wrapper = "sccache"\n' >> ~/.cargo/config.toml   # or merge into an existing [build]
+```
+
+Measured with `cargo build --workspace --tests` on an M1 Max (10 cores, other builds running): a second worktree at another path gets 83% cache
+hits and builds in 29-38 s instead of 44-46 s. The misses are dependencies whose inputs carry the checkout path:
+crates that include build-script output from `OUT_DIR`, and users of proc-macros, which sccache cannot cache and
+whose dylibs record where they were linked. Workspace crates are compiled incrementally, which
+sccache passes through, so edit rebuilds are unchanged (lp-dom edit: 4.6-5.3 s with it, 5.8-5.9 s without).
+`sccache --show-stats` shows the hit rate.
 
 ## Usage
 
