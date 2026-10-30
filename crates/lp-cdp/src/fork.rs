@@ -653,6 +653,14 @@ fn fork_process(snapshot: &Snapshot) -> Forked {
     // SAFETY: only this thread is alive (checked above, best effort), and
     // each process continues on it after JSC and the network are told.
     let pid = unsafe { libc::fork() };
+    if pid == 0 {
+        // SAFETY: the network is stopped and this is the sole surviving thread.
+        // Keep inherited handles, but isolate their pipe from sibling readers.
+        if let Err(e) = unsafe { snapshot.browser.host().thread.event_loop.reset_after_fork() } {
+            eprintln!("lightningpanda: child wake pipe reset failed: {e}");
+            std::process::exit(1);
+        }
+    }
     engine.did_fork(pid == 0);
     if let Err(e) = lp_net::client::resume_after_fork() {
         eprintln!("lightningpanda: network restart failed: {e}");

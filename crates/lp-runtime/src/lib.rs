@@ -80,6 +80,54 @@ mod wake {
         Ok((Sleeper(read, std::cell::Cell::new(false), sleeping.clone()), Arc::new(Notifier(write, sleeping))))
     }
 
+    /// Rebind the existing descriptors so every already-cloned notifier uses
+    /// the child's pipe. Replacing just the loop's Arc would strand handles.
+    pub(super) unsafe fn reset_after_fork(sleeper: &Sleeper, notifier: &Notifier) -> std::io::Result<()> {
+        let (fresh_read, fresh_write) = pair()?;
+        for (source, target) in
+            [(fresh_read.0.as_raw_fd(), sleeper.0.as_raw_fd()), (fresh_write.0.as_raw_fd(), notifier.0.as_raw_fd())]
+        {
+            // SAFETY: all descriptors are live; the caller has stopped posters.
+            if unsafe { libc::dup2(source, target) } < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            // dup2 clears the descriptor's close-on-exec flag.
+            if unsafe { libc::fcntl(target, libc::F_SETFD, libc::FD_CLOEXEC) } < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+        }
+        sleeper.1.set(false);
+        sleeper.announce(false);
+        Ok(())
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn child_reset_isolates_existing_notifiers_from_parent_pipe() {
+            let (sleeper, notifier) = pair().unwrap();
+            let existing_handle = notifier.clone();
+            // A duplicate retains the original kernel pipe, just as the parent's
+            // descriptors do after fork. No fork from the threaded test harness.
+            let parent_fd = unsafe { libc::dup(sleeper.0.as_raw_fd()) };
+            assert!(parent_fd >= 0);
+            let parent = unsafe { OwnedFd::from_raw_fd(parent_fd) };
+            let parent_write_fd = unsafe { libc::dup(notifier.0.as_raw_fd()) };
+            assert!(parent_write_fd >= 0);
+            let _parent_write = unsafe { OwnedFd::from_raw_fd(parent_write_fd) };
+            // SAFETY: no concurrent users can access these test-owned descriptors.
+            unsafe { reset_after_fork(&sleeper, &notifier) }.unwrap();
+            sleeper.announce(true);
+            existing_handle.notify_if_sleeping();
+            let mut byte = 0u8;
+            assert_eq!(unsafe { libc::read(parent.as_raw_fd(), (&mut byte as *mut u8).cast(), 1) }, -1);
+            assert_eq!(std::io::Error::last_os_error().raw_os_error(), Some(libc::EAGAIN));
+            assert_eq!(unsafe { libc::read(sleeper.0.as_raw_fd(), (&mut byte as *mut u8).cast(), 1) }, 1);
+        }
+    }
+
     impl Notifier {
         /// Wakes the loop if it sleeps or is about to: called after the task
         /// is in the channel. Pairs with [`Sleeper::announce`] (both sides
@@ -578,6 +626,22 @@ impl<S: LoopState + 'static> Default for EventLoop<S> {
 }
 
 impl<S: LoopState + 'static> EventLoop<S> {
+    /// Give a forked child its own wake pipe before restarting any threads.
+    /// The inherited pipe is shared with the parent and siblings, while their
+    /// task queues are private: another process could otherwise steal a wake.
+    ///
+    /// # Safety
+    /// Call only in the single-threaded child after fork, before any thread can
+    /// post through a LoopHandle. On error the child must exit, not resume.
+    #[cfg(unix)]
+    pub unsafe fn reset_after_fork(&self) -> std::io::Result<()> {
+        if let Some(notifier) = &self.wake_tx {
+            // SAFETY: the caller guarantees no concurrent notifier users.
+            unsafe { wake::reset_after_fork(&self.sleeper, notifier) }?;
+        }
+        Ok(())
+    }
+
     pub fn new() -> Self {
         let (tx, rx) = mpsc::channel();
         #[cfg(unix)]
