@@ -11,6 +11,9 @@ license.workspace = true
 gpu = ["dep:anyrender_vello"]
 
 [dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+url = "2"
 blitz-dom = { version = "=0.3.0-beta.4", default-features = false, features = ["system-fonts", "woff", "svg"] }
 blitz-html = { version = "=0.3.0-beta.4", default-features = false }
 blitz-traits = { version = "=0.3.0-beta.4", default-features = false }

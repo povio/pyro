@@ -218,3 +218,80 @@ fn bench_fixtures_lay_out_once_with_their_web_font() {
         assert_eq!(painted.hash, hash_of(&mut registered, &s), "{name}");
     }
 }
+
+#[test]
+fn fixed_drawer_paints_above_its_ancestor_backdrop() {
+    let s = snap(
+        r#"<!doctype html><style>
+      body {margin:0;background:white}
+      .overlay {position:fixed;inset:0;z-index:60;background:rgba(0,0,0,.4)}
+      .drawer {position:fixed;left:40px;top:30px;width:200px;height:100px;background:white}
+    </style><div class="overlay"><div class="drawer" data-lp-render-clip>Drawer</div></div>"#,
+    );
+    let (img, _, _) = Renderer::new().render(&s, Area::Element, Backend::Cpu, &fetcher()).unwrap();
+    assert_eq!((img.width, img.height), (200, 100));
+    assert_eq!(pixel(&img, 100, 70), [255, 255, 255, 255], "a drawer must paint above its own backdrop");
+}
+
+#[test]
+fn inline_highlight_paints_its_background() {
+    let s = snap(
+        r#"<!doctype html><style>body{margin:0;background:white;font:20px/30px Arial}mark{background:#ffff00}</style><div><mark><strong>Highlighted words</strong></mark></div>"#,
+    );
+    let (img, _, _) = Renderer::new().render(&s, Area::Viewport, Backend::Cpu, &fetcher()).unwrap();
+    let yellow = img.data.chunks_exact(4).filter(|p| p[0] == 255 && p[1] == 255 && p[2] == 0 && p[3] == 255).count();
+    assert!(yellow > 100, "inline highlight background missing: {yellow} yellow pixels");
+}
+
+#[test]
+fn fixed_descendant_retains_viewport_coordinates_in_offset_scrolled_context() {
+    let mut s = snap(
+        r#"<!doctype html><style>
+      body {margin:0;height:1000px;background:white}
+      .overlay {position:fixed;left:80px;top:40px;width:300px;height:250px;z-index:60;background:rgba(0,0,0,.4)}
+      .drawer {position:fixed;left:40px;top:30px;width:200px;height:100px;background:#00ff00}
+    </style><div class="overlay"><div class="drawer" data-lp-render-clip></div></div>"#,
+    );
+    s.scroll_y = 75.0;
+    let (img, _, _) = Renderer::new().render(&s, Area::Viewport, Backend::Cpu, &fetcher()).unwrap();
+    assert_eq!(pixel(&img, 50, 40), [0, 255, 0, 255]);
+    assert_eq!(pixel(&img, 230, 120), [0, 255, 0, 255]);
+}
+
+#[test]
+fn fixed_descendant_cannot_escape_ancestor_stacking_context() {
+    let s = snap(
+        r#"<!doctype html><style>
+      body {margin:0;background:white}
+      .overlay {position:fixed;inset:0;z-index:60;background:rgba(0,0,0,.4)}
+      .drawer {position:fixed;left:40px;top:30px;width:200px;height:100px;z-index:999;background:green}
+      .above {position:fixed;left:40px;top:30px;width:200px;height:100px;z-index:61;background:blue}
+    </style><div class="overlay"><div class="drawer" data-lp-render-clip></div></div><div class="above"></div>"#,
+    );
+    let (img, _, _) = Renderer::new().render(&s, Area::Element, Backend::Cpu, &fetcher()).unwrap();
+    assert_eq!(pixel(&img, 100, 70), [0, 0, 255, 255]);
+}
+
+#[test]
+fn auto_table_columns_grow_beyond_first_row_width_hints() {
+    let s = snap(
+        r#"<!doctype html><style>
+      body {margin:0} table {width:380px;table-layout:auto;border-spacing:0}
+      th,td {width:25px;min-width:25px;white-space:nowrap;overflow:hidden}
+    </style><table><thead><tr><th></th><th>Show</th><th>Column</th></tr></thead>
+    <tbody><tr><td>+</td><td>yes</td><td data-lp-render-clip>Destination Service Provider</td></tr></tbody></table>"#,
+    );
+    let (img, _, _) = Renderer::new().render(&s, Area::Element, Backend::Cpu, &fetcher()).unwrap();
+    assert!(img.width > 150, "auto table label column collapsed to {}px", img.width);
+}
+
+#[test]
+fn element_crop_includes_ancestor_translation_and_scale() {
+    let s = snap(
+        r#"<!doctype html><style>body{margin:0}.sheet{margin-left:10px;transform:translate(50px,70px) scale(1.5);transform-origin:0 0}.card{width:80px;height:40px;background:#6d28d9}</style><div class="sheet"><div class="card" data-lp-render-clip></div></div>"#,
+    );
+    let (img, _, _) = Renderer::new().render(&s, Area::Element, Backend::Cpu, &fetcher()).unwrap();
+    assert_eq!((img.width, img.height), (120, 60));
+    assert_eq!(pixel(&img, 5, 5), [0x6d, 0x28, 0xd9, 255]);
+    assert_eq!(pixel(&img, 115, 55), [0x6d, 0x28, 0xd9, 255]);
+}

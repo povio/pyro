@@ -31,3 +31,19 @@ the rendered display lists. lp-render's tests cover it (`class_selectors_match_a
   over this directory, apply `UPSTREAM.patch` (the cached atoms field is the only structural
   change), bump the `=` versions of the blitz crates in `crates/lp-render/Cargo.toml`, and update the
   version and commit above.
+
+## Screenshot correctness follow-ups
+
+- `layout/paint_tree.rs`: keep out-of-flow boxes in their structural stacking
+  context even when their positioning containing block is outside that context.
+  Resolve the relative paint offset against both positioning chains and keep
+  cached paint contributions free of duplicates. This is a targeted local fix
+  for the issue addressed more broadly by upstream PR #807:
+  https://github.com/DioxusLabs/blitz/pull/807 (currently conflicts with main).
+- `node/node.rs`, `layout/paint_tree.rs`: root-element detection for fixed boxes,
+  adapted from https://github.com/DioxusLabs/blitz/pull/1224.
+- `layout/table.rs`: auto-table width preferences, backported from
+  https://github.com/DioxusLabs/blitz/pull/1345 (no duplicate PR opened).
+
+The original `UPSTREAM.patch` covers only the class-atom optimization above;
+these additional local changes are covered by lp-render's rendering tests.

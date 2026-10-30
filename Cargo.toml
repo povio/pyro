@@ -22,7 +22,7 @@ default-members = [
 ]
 
 [workspace.package]
-version = "0.0.12"
+version = "0.0.13"
 edition = "2021"
 license = "AGPL-3.0-only"
 repository = "https://github.com/povio/lightningpanda"
@@ -153,3 +153,4 @@ opt-level = 0
 # see vendor/blitz-dom/README.lightningpanda.md.
 [patch.crates-io]
 blitz-dom = { path = "vendor/blitz-dom" }
+blitz-paint = { path = "vendor/blitz-paint" }

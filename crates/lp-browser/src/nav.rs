@@ -101,7 +101,7 @@ impl PageNav {
                 scroll_restoration_manual: false,
             }),
             document: RefCell::new(None),
-            time_origin: Cell::new(Instant::now()),
+            time_origin: Cell::new(crate::clock::now()),
         })
     }
 
@@ -176,7 +176,7 @@ impl PageNav {
         st.url = url.to_string();
         drop(st);
         *self.document.borrow_mut() = document;
-        self.time_origin.set(Instant::now());
+        self.time_origin.set(crate::clock::now());
     }
 
     pub(crate) fn set_document(&self, document: Option<(DomRef, NodeId)>) {
@@ -350,7 +350,7 @@ impl PageNav {
 
     /// Milliseconds since the current document's time origin.
     pub fn now_ms(&self) -> f64 {
-        self.time_origin.get().elapsed().as_secs_f64() * 1000.0
+        crate::clock::now().saturating_duration_since(self.time_origin.get()).as_secs_f64() * 1000.0
     }
 }
 
@@ -620,10 +620,7 @@ pub struct PerformanceData {
 
 impl PerformanceData {
     pub(crate) fn new(nav: Rc<PageNav>) -> PerformanceData {
-        let now_wall = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs_f64() * 1000.0)
-            .unwrap_or(0.0);
+        let now_wall = crate::clock::wall_ms();
         let origin_wall_ms = now_wall - nav.now_ms();
         PerformanceData { nav, origin_wall_ms }
     }

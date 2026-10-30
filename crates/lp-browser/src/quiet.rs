@@ -19,7 +19,6 @@
 
 pub use crate::window::TIMER_HORIZON;
 use crate::{Browser, PageId, Window};
-use std::time::Instant;
 
 /// What can still change a page, counted at one moment.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -49,7 +48,7 @@ impl Browser {
     pub fn page_work(&self, page: PageId) -> Option<PageWork> {
         let p = self.page(page)?;
         let net = self.context_net(p.context);
-        let now = Instant::now();
+        let now = crate::clock::now();
         let sched = self.scheduler();
         let tasks = sched.pending_tasks() + sched.pending_remote_tasks();
         let mut work = PageWork { tasks, ..Default::default() };

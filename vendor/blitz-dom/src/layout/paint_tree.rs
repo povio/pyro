@@ -41,7 +41,7 @@ pub fn hoisted_child_position(tree: &NodeTree, sc_root_id: NodeId, child_id: Nod
     // A fixed box contained by a transformed ancestor scrolls with it.
     if child.taffy_position() == taffy::Position::Fixed
         && let Some(cb) = current.and_then(|id| tree.get(id))
-        && cb.containing_block().is_none()
+        && cb.is_root_element()
     {
         let scroll_offset = *cb.scroll_offset();
         let viewport_scroll = tree.viewport_scroll();
@@ -49,8 +49,10 @@ pub fn hoisted_child_position(tree: &NodeTree, sc_root_id: NodeId, child_id: Nod
         position.y += scroll_offset.y as f32 + viewport_scroll.y as f32;
     }
 
+    let mut reached_context = false;
     while let Some(id) = current {
         if id == sc_root_id {
+            reached_context = true;
             break;
         }
         let Some(node) = tree.get(id) else {
@@ -62,6 +64,30 @@ pub fn hoisted_child_position(tree: &NodeTree, sc_root_id: NodeId, child_id: Nod
         position.y += location.y - scroll_offset.y as f32;
         current = node.containing_block();
     }
+    if !reached_context {
+        // A viewport-positioned descendant still belongs to an ancestor's
+        // stacking context even when its containing block lies outside it.
+        // Convert the containing-block coordinates into that context's frame.
+        let mut ancestor = Some(sc_root_id);
+        while let Some(id) = ancestor {
+            let Some(node) = tree.get(id) else { break };
+            let location = node.final_layout().location;
+            let scroll = node.scroll_offset();
+            position.x -= location.x - scroll.x as f32;
+            position.y -= location.y - scroll.y as f32;
+            let cb = node.containing_block();
+            if node.taffy_position() == taffy::Position::Fixed
+                && cb.and_then(|id| tree.get(id)).is_some_and(|n| n.is_root_element())
+            {
+                let root_scroll = tree[cb.unwrap()].scroll_offset();
+                let viewport_scroll = tree.viewport_scroll();
+                position.x -= root_scroll.x as f32 + viewport_scroll.x as f32;
+                position.y -= root_scroll.y as f32 + viewport_scroll.y as f32;
+            }
+            ancestor = cb;
+        }
+    }
+
     position
 }
 
@@ -215,6 +241,47 @@ impl BaseDocument {
     /// enclosing stacking context are replayed from `Node::sc_contribution_cache`.
     pub(crate) fn build_paint_tree(&mut self, root_id: NodeId) {
         self.build_paint_tree_impl(root_id, None);
+        self.restore_out_of_flow_stacking_owners(root_id);
+    }
+
+    /// Layout ownership follows containing blocks; paint ownership follows
+    /// ancestor stacking contexts. Fixed descendants must not escape their
+    /// modal/opacity context merely because layout positions them at the root.
+    fn restore_out_of_flow_stacking_owners(&mut self, root_id: NodeId) {
+        let context_of = |doc: &Self, mut node: Option<NodeId>| {
+            while let Some(id) = node {
+                if doc.nodes[id].stacking_context.is_some() { return id; }
+                node = doc.nodes[id].parent;
+            }
+            root_id
+        };
+        let moves: Vec<_> = self.nodes.iter().filter_map(|(id, node)| {
+            if !node.flags.is_in_document() { return None; }
+            let cb = node.oof_containing_block.get()?;
+            let target = context_of(self, node.parent);
+            (target != context_of(self, Some(cb))).then_some((id, target))
+        }).collect();
+        if moves.is_empty() { return; }
+        let ids: std::collections::HashSet<_> = moves.iter().map(|(id, _)| *id).collect();
+        // Remove stale cache contributions too: a clean subtree can replay
+        // its lists on the next frame, but it must not reintroduce a duplicate.
+        for (_, node) in self.nodes.iter_mut() {
+            if let Some(children) = node.paint_children.get_mut().as_mut() { children.retain(|id| !ids.contains(id)); }
+            node.sc_contribution_cache.get_mut().retain(|child| !ids.contains(&child.node_id));
+            if let Some(sc) = node.stacking_context.as_mut() {
+                sc.children.retain(|child| !ids.contains(&child.node_id));
+                sc.sort();
+                sc.hoisted_content_bbox.set((0, Rect::ZERO));
+            }
+        }
+        for (id, target) in moves {
+            let z = self.nodes[id].z_index();
+            if let Some(sc) = self.nodes[target].stacking_context.as_mut() {
+                sc.children.push(HoistedPaintChild::new(id, z));
+                sc.sort();
+                sc.hoisted_content_bbox.set((0, Rect::ZERO));
+            }
+        }
     }
 
     /// `stacking_context` is the entry list of the nearest ancestor stacking
