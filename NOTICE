@@ -12,3 +12,10 @@ LICENSE. Network users of a modified version must be offered its source
 (AGPL section 13).
 
 It links the platform JavaScriptCore (WebKit, LGPL-2.0+/BSD) dynamically.
+
+crates/lp-dom/src/stylo/ua.css is the HTML user-agent stylesheet of
+blitz-dom (https://github.com/DioxusLabs/blitz), derived from Mozilla
+Firefox's html.css, under the Mozilla Public License 2.0 (header kept),
+with Chrome's defaults for links and form controls.
+crates/lp-dom/src/stylo/hints.rs adapts blitz-dom's presentational hints
+(MIT OR Apache-2.0). Style computation uses Stylo (MPL-2.0).

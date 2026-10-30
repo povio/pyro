@@ -242,6 +242,7 @@ impl<A: DomAccess> TreeSink for Sink<A> {
     }
     fn add_attrs_if_missing(&self, target: &u32, attrs: Vec<Attribute>) {
         self.dom.with(|d| {
+            d.snapshot_attrs(*target);
             for a in attrs {
                 let Some(el) = d.n_mut(*target).element_mut() else { return };
                 if !el.attrs.iter().any(|x| x.name == a.name) {

@@ -1,0 +1,78 @@
+//! The DOM's selector APIs (`querySelector[All]`, `matches`, `closest`)
+//! through Stylo's `dom_apis`: the selector engine the cascade matches with,
+//! over the same element handles.
+
+use std::sync::LazyLock;
+
+use selectors::SelectorList;
+use style::dom::{TElement, TNode};
+use style::dom_apis::{self, MayUseInvalidation, QueryAll, QueryFirst};
+use style::selector_parser::{SelectorImpl, SelectorParser};
+use style::shared_lock::SharedRwLock;
+
+use super::node::{Cx, SNode, Store};
+use crate::dom::Dom;
+use crate::node::{NodeKind, QuirksMode, NIL};
+
+/// A selector list parsed by Stylo.
+pub type List = SelectorList<SelectorImpl>;
+
+/// Parses `text` as Stylo does for `querySelector` (author origin, no
+/// namespace prefixes); `None` when it is not a valid selector list.
+pub fn parse(text: &str) -> Option<List> {
+    SelectorParser::parse_author_origin_no_namespace(text, &super::url_data()).ok()
+}
+
+/// Matching outside a styling pass: no style data, no open popovers.
+fn with_cx<R>(dom: &Dom, idx: u32, f: impl FnOnce(&Cx) -> R) -> R {
+    static LOCK: LazyLock<SharedRwLock> = LazyLock::new(SharedRwLock::new);
+    thread_local! {
+        static STORE: Store = Store::default();
+        static POPOVERS: rustc_hash::FxHashSet<u32> = Default::default();
+    }
+    let quirks = match &dom.n(dom.n(idx).owner_doc).kind {
+        NodeKind::Document(d) => match d.quirks {
+            QuirksMode::Quirks => style::context::QuirksMode::Quirks,
+            QuirksMode::LimitedQuirks => style::context::QuirksMode::LimitedQuirks,
+            QuirksMode::NoQuirks => style::context::QuirksMode::NoQuirks,
+        },
+        _ => style::context::QuirksMode::NoQuirks,
+    };
+    STORE.with(|store| {
+        POPOVERS.with(|popovers| {
+            let cx = Cx::new(dom, store, &LOCK, quirks, popovers);
+            let _entered = cx.enter();
+            f(&cx)
+        })
+    })
+}
+
+/// The elements under `root` (a document, fragment or element; descendants
+/// only) matching `list`, in tree order; at most one when `first`.
+pub(crate) fn query(dom: &Dom, root: u32, list: &List, first: bool) -> Vec<u32> {
+    with_cx(dom, root, |cx| {
+        let root = SNode::new(cx, root);
+        if first {
+            let mut out = None;
+            dom_apis::query_selector::<SNode, QueryFirst>(root, list, &mut out, MayUseInvalidation::No);
+            out.map(|e| e.as_node().opaque().0 as u32).into_iter().collect()
+        } else {
+            let mut out = Default::default();
+            dom_apis::query_selector::<SNode, QueryAll>(root, list, &mut out, MayUseInvalidation::No);
+            out.iter().map(|e: &SNode| e.as_node().opaque().0 as u32).collect()
+        }
+    })
+}
+
+/// `Element.matches`.
+pub(crate) fn matches(dom: &Dom, el: u32, list: &List) -> bool {
+    with_cx(dom, el, |cx| dom_apis::element_matches(&SNode::new(cx, el), list, cx.quirks))
+}
+
+/// `Element.closest`.
+pub(crate) fn closest(dom: &Dom, el: u32, list: &List) -> Option<u32> {
+    with_cx(dom, el, |cx| {
+        dom_apis::element_closest(SNode::new(cx, el), list, cx.quirks).map(|e| e.as_node().opaque().0 as u32)
+    })
+    .filter(|&i| i != NIL)
+}

@@ -3504,9 +3504,11 @@ fn compound_key(compound: &[&Component<Impl>]) -> AnchorKey {
 
 // Return the defining element too: substitution occurs there, before the value
 // is inherited, so a descendant's custom-property override cannot alter it.
-fn generated_uncached(dom: &Dom, rules: &RuleSet, idx: u32, after: bool) -> Option<Rc<Generated>> {
-    let e = dom.n(idx).element().filter(|e| e.is_html())?;
-    if matches!(
+/// Whether `idx` can have `::before`/`::after` boxes: HTML elements bar
+/// form controls, replaced and void elements.
+fn generates_content(dom: &Dom, idx: u32) -> bool {
+    let Some(e) = dom.n(idx).element().filter(|e| e.is_html()) else { return false };
+    !matches!(
         &*e.name.local,
         "input"
             | "textarea"
@@ -3523,7 +3525,11 @@ fn generated_uncached(dom: &Dom, rules: &RuleSet, idx: u32, after: bool) -> Opti
             | "embed"
             | "meter"
             | "progress"
-    ) {
+    )
+}
+
+fn generated_uncached(dom: &Dom, rules: &RuleSet, idx: u32, after: bool) -> Option<Rc<Generated>> {
+    if !generates_content(dom, idx) {
         return None;
     }
     let el = dom.id_of(idx);
@@ -4074,6 +4080,27 @@ pub struct StyleEngine {
     /// every value goes through the string cascade (differential tests).
     typed_flow_reads: Cell<bool>,
     cache: RefCell<Cache>,
+    /// Stylo, the cascade computed styles come from (`crate::stylo`),
+    /// created at the first style read.
+    stylo: RefCell<Option<crate::stylo::Cascade>>,
+    /// (sheet generation, DOM tree version) the Stylo sheets were synced at.
+    stylo_sheets_at: Cell<Option<(u64, u64)>>,
+    /// `computed()` answers for one style stamp.
+    stylo_memo: RefCell<(Option<Stamp>, FxHashMap<NodeId, ComputedStyle>)>,
+    /// Whether this engine uses Stylo ([`stylo_cascade`], or tests' choice).
+    stylo_on: Cell<bool>,
+    /// The stamp the layout caches (`cache.flow`, `cache.generated`,
+    /// `cache.restyled`) were last synced with Stylo's restyles at.
+    stylo_synced: Cell<Option<Stamp>>,
+}
+
+/// Whether computed styles come from Stylo (`crate::stylo`, the default) or
+/// from the original cascade (`LP_CASCADE=legacy`, kept for comparison while
+/// Stylo settles).
+pub fn stylo_cascade() -> bool {
+    static ON: std::sync::LazyLock<bool> =
+        std::sync::LazyLock::new(|| std::env::var("LP_CASCADE").map_or(true, |v| v != "legacy"));
+    *ON
 }
 
 impl StyleEngine {
@@ -4091,7 +4118,223 @@ impl StyleEngine {
             full_restyle: Cell::new(true),
             typed_flow_reads: Cell::new(true),
             cache: RefCell::new(Cache::default()),
+            stylo: RefCell::new(None),
+            stylo_sheets_at: Cell::new(None),
+            stylo_memo: RefCell::default(),
+            stylo_on: Cell::new(stylo_cascade()),
+            stylo_synced: Cell::new(None),
         }
+    }
+
+    /// The Stylo cascade, synced with the sheets and viewport and restyled
+    /// where the DOM changed.
+    fn stylo(&self, dom: &Dom) -> std::cell::RefMut<'_, crate::stylo::Cascade> {
+        let mut slot = self.stylo.borrow_mut();
+        let quirks = dom.document_data(self.doc).map(|d| d.quirks).unwrap_or(crate::node::QuirksMode::NoQuirks);
+        let cascade = slot.get_or_insert_with(|| crate::stylo::Cascade::new(&self.viewport, quirks));
+        cascade.set_viewport(&self.viewport);
+        let at = (self.generation, dom.tree_version());
+        if self.stylo_sheets_at.get() != Some(at) {
+            let mut texts = Vec::with_capacity(self.sheets.len());
+            let mut buf = String::new();
+            for sheet in &self.sheets {
+                let active = dom.is_alive(sheet.owner) && dom.is_connected(sheet.owner).unwrap_or(false);
+                if !active {
+                    continue;
+                }
+                let text = match &sheet.source {
+                    SheetSource::Text(t) => t.clone(),
+                    SheetSource::StyleElement => {
+                        buf.clear();
+                        if let Ok(idx) = dom.check(sheet.owner) {
+                            dom.collect_text(idx, &mut buf);
+                        }
+                        buf.clone()
+                    }
+                };
+                texts.push((text, None));
+            }
+            cascade.set_sheets(texts);
+            // Popovers open and close with a generation bump.
+            cascade.set_popovers(self.popover_open.iter().filter_map(|&p| dom.check(p).ok()).collect());
+            self.stylo_sheets_at.set(Some(at));
+        }
+        if let Ok(doc) = dom.check(self.doc) {
+            cascade.flush(dom, doc);
+        }
+        std::cell::RefMut::map(slot, |s| s.as_mut().expect("cascade"))
+    }
+
+    /// The Stylo computed style of `el`; `None` for stale ids, non-elements
+    /// and elements of other documents.
+    pub fn stylo_style(
+        &self,
+        dom: &Dom,
+        el: NodeId,
+    ) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
+        let idx = self.owns(dom, el)?;
+        self.stylo(dom).style(dom, idx)
+    }
+
+    /// `getComputedStyle(el).getPropertyValue(name)` as Stylo serializes the
+    /// computed value (layout-dependent values are the layout's business).
+    pub fn stylo_value(&self, dom: &Dom, el: NodeId, name: &str) -> Option<String> {
+        let style = self.stylo_style(dom, el)?;
+        crate::stylo::serialize(&style, name)
+    }
+
+    /// [`ComputedStyle`] from Stylo's computed values, memoized per style
+    /// stamp.
+    fn computed_stylo(&self, dom: &Dom, el: NodeId) -> Option<ComputedStyle> {
+        let idx = self.owns(dom, el)?;
+        let stamp = self.stamp(dom);
+        {
+            let mut memo = self.stylo_memo.borrow_mut();
+            if memo.0 != Some(stamp) {
+                memo.0 = Some(stamp);
+                memo.1.clear();
+            }
+            if let Some(c) = memo.1.get(&el) {
+                return Some(*c);
+            }
+        }
+        let style = self.stylo_style(dom, el)?;
+        let get = |name: &str| crate::stylo::serialize(&style, name).unwrap_or_default();
+        let display_text = get("display");
+        let display = Display::parse(&display_text);
+        let parent = flat_tree_parent_element(dom, idx).map(|p| dom.id_of(p));
+        let above = parent.and_then(|p| self.computed_stylo(dom, p)).unwrap_or_default();
+        let in_display_none = display == Display::None || above.in_display_none;
+        // The hot fields read typed (`computed()` runs for every element a
+        // visibility or geometry check touches); the rest serialized.
+        use style::values::specified::box_::{Float as SFloat, Overflow as SOverflow, PositionProperty};
+        let overflow = |o: SOverflow| match o {
+            SOverflow::Visible => Overflow::Visible,
+            SOverflow::Hidden => Overflow::Hidden,
+            SOverflow::Clip => Overflow::Clip,
+            _ => Overflow::Scroll,
+        };
+        let (ox, oy) = (overflow(style.get_box().overflow_x), overflow(style.get_box().overflow_y));
+        let (pan_x, pan_y) = parse_touch_action(&get("touch-action")).unwrap_or((true, true));
+        let e = dom.n(idx).element().expect("element");
+        let ua_display = match e.is_html() {
+            true => crate::style_flow::ua_display(&e.name.local.to_ascii_lowercase()),
+            false => "inline",
+        };
+        let c = ComputedStyle {
+            display,
+            block_flex_or_grid: matches!(display_text.as_str(), "flex" | "grid"),
+            author_display: display_text != ua_display,
+            visibility_hidden: style.get_inherited_box().visibility != style::computed_values::visibility::T::Visible,
+            pointer_events_none: style.get_inherited_ui().pointer_events
+                == style::values::specified::ui::PointerEvents::None,
+            inert: above.inert || (e.is_html() && e.attr("inert").is_some()),
+            in_display_none,
+            in_opacity_zero: above.in_opacity_zero || style.get_effects().opacity == 0.0,
+            overflow_x_scrolls: ox == Overflow::Scroll,
+            overflow_x_clips: ox != Overflow::Visible,
+            overflow_y_scrolls: oy == Overflow::Scroll,
+            overflow_y_clips: oy != Overflow::Visible,
+            overscroll_x_contains: overscroll_contains(&get("overscroll-behavior-x")),
+            overscroll_y_contains: overscroll_contains(&get("overscroll-behavior-y")),
+            width: Length::parse(&get("width")),
+            height: Length::parse(&get("height")),
+            pan_x_blocked: !pan_x || above.pan_x_blocked,
+            pan_y_blocked: !pan_y || above.pan_y_blocked,
+            text_transform: TextTransform::parse(&get("text-transform")).unwrap_or_default(),
+            absolutely_positioned: matches!(
+                style.get_box().position,
+                PositionProperty::Absolute | PositionProperty::Fixed
+            ),
+            floated: style.get_box().float != SFloat::None,
+            important_rule_mask: 0,
+        };
+        self.stylo_memo.borrow_mut().1.insert(el, c);
+        Some(c)
+    }
+
+    /// Elements with Stylo style data; elements whose values the last
+    /// restyle changed, and elements it visited (diagnostics, tests).
+    pub fn stylo_stats(&self) -> (usize, usize, usize) {
+        self.stylo.borrow().as_ref().map_or((0, 0, 0), |c| (c.styled_elements(), c.last_restyled, c.last_visited))
+    }
+
+    /// Brings Stylo and the layout caches derived from computed styles up
+    /// to date with `dom`: drops the flow styles and generated content of
+    /// the elements Stylo restyled, and reports them to `take_restyled`.
+    fn sync(&self, dom: &Dom) {
+        if !self.stylo_on() {
+            return self.ensure(dom);
+        }
+        let stamp = self.stamp(dom);
+        if self.stylo_synced.get() == Some(stamp) {
+            return;
+        }
+        let mut changes = self.stylo(dom).take_changes();
+        // Flow styles also read DOM state no selector sees (an image's
+        // natural size, a control's type): the elements the journal names
+        // drop theirs too.
+        if let crate::stylo::Restyled::Some(changed) = &mut changes {
+            let journal = self.stylo_synced.get().and_then(|old| dom.changes_since(old.version));
+            match journal {
+                Some(journal) => {
+                    use crate::dom::Change;
+                    for c in journal {
+                        match c {
+                            Change::Attr(n, ..) | Change::State(n) => changed.push(n),
+                            Change::Inserted(p, _) | Change::Removed(p, ..) => changed.push(p),
+                            Change::Text(_) | Change::Pseudo => {}
+                            Change::Unknown(_) => {
+                                changes = crate::stylo::Restyled::All;
+                                break;
+                            }
+                        }
+                    }
+                }
+                None if self.stylo_synced.get().is_some_and(|old| old.version != stamp.version) => {
+                    changes = crate::stylo::Restyled::All;
+                }
+                None => {}
+            }
+        }
+        let mut cache = self.cache.borrow_mut();
+        match changes {
+            crate::stylo::Restyled::All => {
+                cache.flow.clear();
+                cache.generated.clear();
+                cache.restyled = None;
+            }
+            crate::stylo::Restyled::Some(mut changed) => {
+                changed.sort_unstable();
+                changed.dedup();
+                for idx in changed {
+                    if !dom.slot_live(idx) {
+                        continue;
+                    }
+                    let n = dom.id_of(idx);
+                    cache.flow.remove(&n);
+                    cache.generated.remove(&(n, false));
+                    cache.generated.remove(&(n, true));
+                    if let Some(restyled) = cache.restyled.as_mut() {
+                        restyled.push(n);
+                    }
+                }
+            }
+        }
+        cache.extent = None;
+        self.stylo_synced.set(Some(stamp));
+    }
+
+    /// Whether computed styles come from Stylo.
+    pub fn stylo_on(&self) -> bool {
+        self.stylo_on.get()
+    }
+
+    /// Tests of the legacy cascade: use it on this engine whatever
+    /// `LP_CASCADE` says (before the first style read).
+    #[doc(hidden)]
+    pub fn use_legacy_cascade(&self) {
+        self.stylo_on.set(false);
     }
 
     pub fn document(&self) -> NodeId {
@@ -4106,7 +4349,8 @@ impl StyleEngine {
     }
 
     pub(crate) fn typed_flow_reads(&self) -> bool {
-        self.typed_flow_reads.get()
+        // The typed slots belong to the legacy cascade.
+        self.typed_flow_reads.get() && !self.stylo_on()
     }
 
     pub fn viewport(&self) -> &Viewport {
@@ -4413,12 +4657,12 @@ impl StyleEngine {
     /// all), after bringing the cache up to date with `dom`. Layout drops
     /// their subtree measurements.
     pub(crate) fn take_restyled(&self, dom: &Dom) -> Option<Vec<NodeId>> {
-        self.ensure(dom);
+        self.sync(dom);
         self.cache.borrow_mut().restyled.replace(Vec::new())
     }
 
     pub(crate) fn cached_flow_style(&self, dom: &Dom, el: NodeId) -> Option<Option<crate::flow::FlowStyle>> {
-        self.ensure(dom);
+        self.sync(dom);
         self.cache.borrow().flow.get(&el).map(|e| e.style.clone())
     }
 
@@ -4457,6 +4701,11 @@ impl StyleEngine {
         dom: &Dom,
         el: NodeId,
     ) -> Option<(Option<crate::flow::FlowStyle>, (NodeId, u64))> {
+        // Stylo shares computed styles itself; the sharing checks here read
+        // the legacy rule set.
+        if self.stylo_on() {
+            return None;
+        }
         let idx = self.owns(dom, el)?;
         let rules = self.cache.borrow().rules.clone();
         if rules.has_relative || dom.shadow_root_count() != 0 {
@@ -4514,7 +4763,7 @@ impl StyleEngine {
     }
 
     pub(crate) fn cached_extent(&self, dom: &Dom) -> Option<(f64, f64)> {
-        self.ensure(dom);
+        self.sync(dom);
         self.cache.borrow().extent
     }
 
@@ -4533,6 +4782,9 @@ impl StyleEngine {
     /// The memoized computed style of `el`; `None` for stale ids, non-elements
     /// and elements of other documents (upstream: no owner frame).
     pub fn computed(&self, dom: &Dom, el: NodeId) -> Option<ComputedStyle> {
+        if self.stylo_on() {
+            return self.computed_stylo(dom, el);
+        }
         let idx = self.owns(dom, el)?;
         self.ensure(dom);
         let mut cache = self.cache.borrow_mut();
@@ -4812,6 +5064,9 @@ impl StyleEngine {
     /// customPropertyValue (StyleManager.zig:1920-1957): the value of `--x`
     /// on `el` or its nearest flat-tree ancestor declaring it, as written.
     pub fn custom_property_value(&self, dom: &Dom, el: NodeId, name: &str) -> Option<String> {
+        if self.stylo_on() {
+            return self.stylo_value(dom, el, name).filter(|v| !v.is_empty());
+        }
         self.owns(dom, el)?;
         self.ensure(dom);
         let rules = self.cache.borrow().rules.clone();
@@ -4832,6 +5087,10 @@ impl StyleEngine {
     /// boxes and flex/grid items, so a `<span>` in a flex `<label>` reports
     /// `block` as in Chromium. `None` as for [`Self::computed_value`].
     pub fn computed_display(&self, dom: &Dom, el: NodeId) -> Option<String> {
+        if self.stylo_on() {
+            // Stylo blockifies as it computes.
+            return self.stylo_value(dom, el, "display");
+        }
         let idx = self.owns(dom, el)?;
         self.ensure(dom);
         let rules = self.cache.borrow().rules.clone();
@@ -4881,6 +5140,32 @@ impl StyleEngine {
     }
 
     fn value_with(&self, dom: &Dom, el: NodeId, name: &str, precise: bool) -> Option<String> {
+        if self.stylo_on() {
+            if precise && name == "line-height" {
+                // The computed value (a number stays a number), not the
+                // resolved length getComputedStyle reports.
+                use style::values::generics::font::GenericLineHeight as L;
+                let style = self.stylo_style(dom, el)?;
+                return Some(match style.get_font().line_height {
+                    L::Normal => "normal".into(),
+                    L::Number(n) => format!("{}", n.0),
+                    L::Length(l) => format!("{}px", style.effective_zoom.unzoom(l.0.px())),
+                    #[allow(unreachable_patterns)]
+                    _ => "normal".into(),
+                });
+            }
+            // Properties Stylo's servo build does not know (`overflow-anchor`,
+            // `text-anchor`, `line-clamp`...) come from the legacy cascade,
+            // built only for pages that read them.
+            if !name.starts_with("--") && style::properties::PropertyId::parse_enabled_for_all_content(name).is_err() {
+                return self.legacy_value(dom, el, name, precise);
+            }
+            return self.stylo_value(dom, el, name);
+        }
+        self.legacy_value(dom, el, name, precise)
+    }
+
+    fn legacy_value(&self, dom: &Dom, el: NodeId, name: &str, precise: bool) -> Option<String> {
         let idx = self.owns(dom, el)?;
         self.ensure(dom);
         // The rule set is replaced only by `ensure`, which ran above: the
@@ -5368,6 +5653,15 @@ impl StyleEngine {
     /// originating element's font; its own box properties are not read.
     pub fn generated_content(&self, dom: &Dom, el: NodeId, after: bool) -> Option<Rc<Generated>> {
         let idx = self.owns(dom, el)?;
+        if self.stylo_on() {
+            self.sync(dom);
+            if let Some(g) = self.cache.borrow().generated.get(&(el, after)) {
+                return g.clone();
+            }
+            let g = self.generated_stylo(dom, idx, after);
+            self.cache.borrow_mut().generated.insert((el, after), g.clone());
+            return g;
+        }
         self.ensure(dom);
         if let Some(g) = self.cache.borrow().generated.get(&(el, after)) {
             return g.clone();
@@ -5376,6 +5670,33 @@ impl StyleEngine {
         let g = if rules.generated_rules.is_empty() { None } else { generated_uncached(dom, &rules, idx, after) };
         self.cache.borrow_mut().generated.insert((el, after), g.clone());
         g
+    }
+
+    /// [`Self::generated_content`] from Stylo's `::before`/`::after` style.
+    fn generated_stylo(&self, dom: &Dom, idx: u32, after: bool) -> Option<Rc<Generated>> {
+        if !generates_content(dom, idx) {
+            return None;
+        }
+        let style = self.stylo(dom).pseudo(dom, idx, after)?;
+        let get = |name: &str| crate::stylo::serialize(&style, name).unwrap_or_default();
+        let display = get("display");
+        let display = match display.as_str() {
+            "none" => return None,
+            "inline" | "contents" => GeneratedDisplay::Inline,
+            d if d.starts_with("inline-") => GeneratedDisplay::InlineBlock,
+            _ => GeneratedDisplay::Block,
+        };
+        if matches!(get("position").as_str(), "absolute" | "fixed") || get("float") != "none" {
+            return None;
+        }
+        let text = content_strings(&get("content"))?;
+        let clear = match get("clear").as_str() {
+            "left" | "inline-start" => Clear::Left,
+            "right" | "inline-end" => Clear::Right,
+            "both" => Clear::Both,
+            _ => Clear::None,
+        };
+        Some(Rc::new(Generated { text: Rc::from(text.as_str()), display, clear }))
     }
 
     /// Units for lengths declared on `idx`: its font-size (em), the root's (rem), the viewport (vw/vh).
@@ -5428,7 +5749,8 @@ impl StyleEngine {
 
     fn font_size_from_parent(&self, dom: &Dom, rules: &RuleSet, idx: u32, parent: f64, root: f64) -> f64 {
         let id = dom.id_of(idx);
-        let Some(raw) = self.declared_value(dom, rules, id, "font-size").or_else(|| ua_font_size(dom, idx).map(str::to_owned))
+        let Some(raw) =
+            self.declared_value(dom, rules, id, "font-size").or_else(|| ua_font_size(dom, idx).map(str::to_owned))
         else {
             return parent;
         };
@@ -5468,6 +5790,10 @@ impl StyleEngine {
     /// computedFontSize (StyleManager.zig:2002-2089): inline `font-size`
     /// declarations and `font-size` attributes up the flat tree.
     pub fn computed_font_size(&self, dom: &Dom, el: Option<NodeId>) -> f64 {
+        if self.stylo_on() {
+            let style = el.and_then(|e| self.stylo_style(dom, e));
+            return style.map_or(DEFAULT_FONT_SIZE, |s| s.get_font().font_size.computed_size().px() as f64);
+        }
         self.font_size_at(dom, el.and_then(|e| dom.check(e).ok()), 0)
     }
 
@@ -5572,7 +5898,6 @@ pub(crate) fn flat_tree_parent_element(dom: &Dom, idx: u32) -> Option<u32> {
         _ => None,
     }
 }
-
 
 /// The UA stylesheet's `font-size` of an HTML element (html.css: headings,
 /// small/big, sub/sup), below every author declaration.
@@ -5796,6 +6121,8 @@ mod has_anchor_tests {
     }
 }
 
+/// The legacy cascade's invalidation (`LP_CASCADE=legacy`); Stylo's is
+/// covered by `tests/stylo_cascade.rs`.
 #[cfg(test)]
 mod validity_has_invalidation_tests {
     use crate::layout::{Geometry, Layout};
@@ -5819,6 +6146,7 @@ mod validity_has_invalidation_tests {
         let doc = parse_document(&dom_ref, "http://test/", &html);
         let mut dom = Rc::try_unwrap(dom_ref).ok().expect("sole owner").into_inner();
         let mut layout = Layout::with_viewport(doc, Viewport::new(800, 600));
+        layout.style().use_legacy_cascade();
         layout.style_mut().discover_style_elements(&dom);
         layout.set_geometry(Geometry::Flow);
         layout.flow(&dom);
@@ -5851,6 +6179,7 @@ mod validity_has_invalidation_tests {
         let doc = parse_document(&dom_ref, "http://test/", &html);
         let mut dom = Rc::try_unwrap(dom_ref).ok().expect("sole owner").into_inner();
         let mut layout = Layout::with_viewport(doc, Viewport::new(800, 600));
+        layout.style().use_legacy_cascade();
         layout.style_mut().discover_style_elements(&dom);
         layout.set_geometry(Geometry::Flow);
         layout.flow(&dom);
@@ -5893,6 +6222,7 @@ mod validity_has_invalidation_tests {
         let doc = parse_document(&dom_ref, "http://test/", html);
         let mut dom = Rc::try_unwrap(dom_ref).ok().expect("sole owner").into_inner();
         let mut layout = Layout::with_viewport(doc, Viewport::new(800, 600));
+        layout.style().use_legacy_cascade();
         layout.style_mut().discover_style_elements(&dom);
         layout.set_geometry(Geometry::Flow);
         layout.flow(&dom);
@@ -5905,6 +6235,8 @@ mod validity_has_invalidation_tests {
     }
 }
 
+/// The legacy cascade's invalidation (`LP_CASCADE=legacy`); Stylo's is
+/// covered by `tests/stylo_cascade.rs`.
 #[cfg(test)]
 mod large_invalidation_tests {
     use crate::layout::{Geometry, Layout};
@@ -5929,6 +6261,7 @@ mod large_invalidation_tests {
         let doc = parse_document(&dom_ref, "http://test/", &html);
         let mut dom = Rc::try_unwrap(dom_ref).ok().expect("sole owner").into_inner();
         let mut layout = Layout::with_viewport(doc, Viewport::new(800, 600));
+        layout.style().use_legacy_cascade();
         layout.style_mut().discover_style_elements(&dom);
         layout.set_geometry(Geometry::Flow);
         layout.flow(&dom);
@@ -5948,6 +6281,8 @@ mod large_invalidation_tests {
     }
 }
 
+/// The legacy cascade's invalidation (`LP_CASCADE=legacy`); Stylo's is
+/// covered by `tests/stylo_cascade.rs`.
 #[cfg(test)]
 mod added_sheet_tests {
     use crate::layout::{Geometry, Layout};
@@ -5967,6 +6302,7 @@ mod added_sheet_tests {
         let doc = parse_document(&dom_ref, "http://test/", &html);
         let dom = Rc::try_unwrap(dom_ref).ok().expect("sole owner").into_inner();
         let mut layout = Layout::with_viewport(doc, Viewport::new(800, 600));
+        layout.style().use_legacy_cascade();
         layout.style_mut().discover_style_elements(&dom);
         layout.set_geometry(Geometry::Flow);
         layout.flow(&dom);

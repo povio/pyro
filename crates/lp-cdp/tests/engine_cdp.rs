@@ -1900,7 +1900,10 @@ fn dom_geometry_matches_native_rect_and_rejects_detached_or_foreign_objects() {
     let rect = &r["result"]["result"]["value"];
     let x = rect["x"].as_f64().unwrap();
     let y = rect["y"].as_f64().unwrap();
-    let quad = json!([x, y, x + 40.0, y, x + 40.0, y + 30.0, x, y + 30.0]);
+    // The border box: 40x30 plus the UA input padding and border.
+    let (bw, bh) = (rect["width"].as_f64().unwrap(), rect["height"].as_f64().unwrap());
+    assert_eq!((bw, bh), (48.0, 36.0));
+    let quad = json!([x, y, x + bw, y, x + bw, y + bh, x, y + bh]);
     assert_eq!(h.page("DOM.getContentQuads", json!({"objectId":object}))["result"]["quads"], json!([quad]));
     assert_eq!(h.page("DOM.getBoxModel", json!({"objectId":object}))["result"]["model"]["border"], quad);
     assert_eq!(h.page("DOM.focus", json!({"objectId":object}))["result"], json!({}));

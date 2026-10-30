@@ -16,6 +16,9 @@ struct Slot {
     node: Option<Node>,
 }
 
+/// Elements' attributes before a change, by node index with its generation.
+pub(crate) type StyleSnapshots = rustc_hash::FxHashMap<u32, (u32, Vec<crate::node::Attr>)>;
+
 /// One journaled DOM mutation (node indices in this DOM).
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Change {
@@ -105,6 +108,11 @@ pub struct Dom {
     journal: Vec<(u64, Change)>,
     /// Versions at or below this have no complete journal.
     journal_floor: u64,
+    /// Elements' attributes before their first change since the style
+    /// cascade last read them (Stylo's invalidation snapshots), by node
+    /// index with its generation. `None` until a cascade asks for them, so
+    /// a page that never reads styles pays nothing.
+    style_snapshots: std::cell::RefCell<Option<StyleSnapshots>>,
     /// Shadow roots ever attached (selective style invalidation does not
     /// model slot assignment, so consumers fall back to full invalidation).
     shadow_roots: u32,
@@ -150,6 +158,7 @@ impl Dom {
             removals: 0,
             journal: Vec::new(),
             journal_floor: 0,
+            style_snapshots: Default::default(),
             shadow_roots: 0,
             mutation: MutationState::default(),
             events: Default::default(),
@@ -190,6 +199,10 @@ impl Dom {
 
     pub(crate) fn generation_at(&self, idx: u32) -> u32 {
         self.slots.get(idx as usize).map_or(0, |s| s.gen)
+    }
+    /// Number of node slots (live or free).
+    pub(crate) fn slot_len(&self) -> usize {
+        self.slots.len()
     }
     pub(crate) fn slot_live(&self, idx: u32) -> bool {
         self.slots.get(idx as usize).is_some_and(|s| s.node.is_some())
@@ -242,6 +255,39 @@ impl Dom {
     pub fn tree_version(&self) -> u64 {
         self.tree_version
     }
+    /// Starts keeping attribute snapshots (style invalidation) and returns
+    /// those taken since the last call.
+    /// Those of document `doc` (index); other documents' stay for their
+    /// cascades, dead elements' go.
+    pub(crate) fn take_style_snapshots(&self, doc: u32) -> StyleSnapshots {
+        let mut all = self.style_snapshots.borrow_mut();
+        let Some(map) = all.as_mut() else {
+            *all = Some(Default::default());
+            return Default::default();
+        };
+        let mut mine = rustc_hash::FxHashMap::default();
+        map.retain(|&i, v| {
+            if !self.slot_live(i) || self.generation_at(i) != v.0 {
+                return false;
+            }
+            if self.root_idx(i) == doc {
+                mine.insert(i, std::mem::take(v));
+                return false;
+            }
+            true
+        });
+        mine
+    }
+
+    /// Keeps element `i`'s attributes as they are, before a change.
+    pub(crate) fn snapshot_attrs(&self, i: u32) {
+        if let Some(map) = self.style_snapshots.borrow_mut().as_mut() {
+            if let Some(e) = self.n(i).element() {
+                map.entry(i).or_insert_with(|| (self.generation_at(i), e.attrs.clone()));
+            }
+        }
+    }
+
     fn push_change(&mut self, change: Change) {
         const CAP: usize = JOURNAL_CAPACITY;
         if self.journal.len() >= CAP {
@@ -1495,6 +1541,7 @@ impl Dom {
     }
 
     fn change_attr(&mut self, i: u32, k: usize, value: &str) {
+        self.snapshot_attrs(i);
         let el = self.n(i).element().unwrap();
         let name = el.attrs[k].name.clone();
         let old = std::mem::replace(&mut self.n_mut(i).element_mut().unwrap().attrs[k].value, value.into());
@@ -1511,6 +1558,7 @@ impl Dom {
         self.resources_after_attr(i, &name.local);
     }
     fn append_attr(&mut self, i: u32, name: QualName, value: &str) {
+        self.snapshot_attrs(i);
         self.n_mut(i).element_mut().unwrap().attrs.push(Attr { name: name.clone(), value: value.into() });
         self.bump_tree();
         self.note(Change::attr(i, &name));
@@ -1541,6 +1589,7 @@ impl Dom {
         }
     }
     fn remove_attr_at(&mut self, i: u32, k: usize) {
+        self.snapshot_attrs(i);
         let attr = self.n_mut(i).element_mut().unwrap().attrs.remove(k);
         self.bump_tree();
         self.note(Change::attr(i, &attr.name));
