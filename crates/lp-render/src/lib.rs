@@ -237,7 +237,7 @@ impl Renderer {
         let root = {
             let root = doc.root_element();
             let (size, overflow) = (root.final_layout().size, root.scrollable_overflow());
-            ((size.width as f64).max(overflow.x1), (size.height as f64).max(overflow.y1))
+            (size.width as f64, (size.height as f64).max(overflow.y1))
         };
         // Where the image starts in the document (CSS px) and its size in device px.
         let (origin, scale, w, h) = match area {
@@ -246,9 +246,11 @@ impl Renderer {
                 ((0.0, 0.0), dpr, physical(vw as f64), physical(vh as f64))
             }
             Area::FullPage => {
-                let width = root.0.max(vw as f64);
+                // The viewport's width, as Chromium's `captureBeyondViewport`:
+                // the document's scrollable overflow also counts content wider
+                // than the scroll containers that clip it (a wide table).
                 let height = root.1.max(vh as f64);
-                ((0.0, 0.0), dpr, physical(width), physical(height))
+                ((0.0, 0.0), dpr, physical(vw as f64), physical(height))
             }
             Area::Clip { x, y, width, height, scale } => {
                 let s = dpr * scale.clamp(0.01, 16.0);
