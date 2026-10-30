@@ -94,6 +94,8 @@ test (Lightningpanda.capabilities reports {fork: true}); registering a profile
 boots it in the template for the connections that follow. A profile's setup
 (LP.run steps, registerPreparedPage {setup}) runs once in the template after
 the page loads, so every connection starts from the state the steps left.
+Each template keeps LIGHTNINGPANDA_FORK_SPARES (default 2) forks waiting, so a
+connection does not wait for its fork.
 ";
 
 /// How long a spare thread keeps booting prepared pages before it just waits.

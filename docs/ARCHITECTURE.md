@@ -276,6 +276,12 @@ Copy-on-write page snapshots: an app's startup (parsing and running its JavaScri
   `<root socket>.<id>`; it runs only the profile's `setup` on its copy of the base page, relabels the page, and
   serves forks itself. Clients ask for a snapshot with `ws://host/?profile=<id>`: the root forwards that
   connection's fds to the template holding it. Registrations always go to the root, which assigns every id.
+- **Spares** take the fork off a test's path: each template keeps `LIGHTNINGPANDA_FORK_SPARES` (default 2) forked
+  children waiting, pages running. They accept connections themselves on the template's connection socket
+  (`<socket>.conn`), so a test never waits for a template that is busy forking; a spare that took one closes its
+  pair with the template and sends `Taken`, and the template forks a replacement. Registering a profile drops the
+  spares (their pages are out of date). Measured on the 8 MB test app: 3.6 ms from connect to an evaluated
+  expression in a booted page.
 - The template stops when the server does: its stdin is a pipe only the server writes to.
 - The source JavaScriptCore's timers run on WTF's run loop, so the CoreFoundation run-loop service
   (`enable_native_runloop_service`) is off with it; CoreFoundation must not be used in a fork child.

@@ -49,6 +49,13 @@ const LOAD_WAIT: Duration = Duration::from_secs(30);
 /// A profile's setup steps must finish within this.
 const SETUP_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// Forked children each template keeps waiting for a connection
+/// (`LIGHTNINGPANDA_FORK_SPARES`), so that a connection does not wait for its
+/// fork.
+fn spares_wanted() -> usize {
+    std::env::var("LIGHTNINGPANDA_FORK_SPARES").ok().and_then(|v| v.parse().ok()).unwrap_or(2)
+}
+
 /// Most file descriptors one message carries.
 const MAX_FDS: usize = 4;
 
@@ -69,6 +76,8 @@ enum Message {
     /// Fork a template for profile `id` off this one's snapshot of `base`,
     /// listening on `socket` (root to the template holding `base`).
     Derive { base: usize, id: usize, profile: PreparedProfile, socket: PathBuf },
+    /// A spare took a connection: wakes its template to fork a replacement.
+    Taken,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -129,6 +138,7 @@ impl Drop for Template {
         let _ = self.child.kill();
         let _ = self.child.wait();
         let _ = std::fs::remove_file(&self.socket);
+        let _ = std::fs::remove_file(conn_socket(&self.socket));
     }
 }
 
@@ -141,7 +151,11 @@ pub fn connect(
     profile: Option<usize>,
 ) -> std::io::Result<tokio::sync::oneshot::Receiver<()>> {
     let (read_end, write_end) = pipe()?;
-    let mut stream = UnixStream::connect(template)?;
+    // A derived snapshot's template takes its connections directly; anything
+    // else goes to the root's (which forwards what is not up yet).
+    let derived = profile.map(|id| conn_socket(&PathBuf::from(format!("{}.{id}", template.display()))));
+    let target = derived.filter(|p| p.exists()).unwrap_or_else(|| conn_socket(template));
+    let mut stream = UnixStream::connect(target)?;
     send(&mut stream, &Message::Connect { buffered, profile }, &[socket.as_raw_fd(), write_end.as_raw_fd()])?;
     drop(write_end);
     let (tx, rx) = tokio::sync::oneshot::channel();
@@ -159,6 +173,12 @@ pub fn connect(
     Ok(rx)
 }
 
+/// Where a template (or one of its spares) accepts connections, beside its
+/// control socket.
+fn conn_socket(control: &Path) -> PathBuf {
+    PathBuf::from(format!("{}.conn", control.display()))
+}
+
 // ---- Template side -------------------------------------------------------
 
 /// What the template boots and forks: the protocol state of a connection
@@ -169,6 +189,9 @@ struct Snapshot {
     outbound: OutboundRx,
     /// Indexed by profile id.
     profiles: Vec<ProfileState>,
+    /// Bumped whenever the pages change (a profile booted or set up): spares
+    /// forked before are out of date.
+    generation: u64,
 }
 
 struct ProfileState {
@@ -209,9 +232,12 @@ struct TemplateProcess {
     snapshot: Snapshot,
     /// The root's socket: registrations go there.
     root: PathBuf,
-    /// This template's socket.
+    /// This template's control socket (registrations, derives).
     socket: PathBuf,
     listener: UnixListener,
+    /// Connections for this template's snapshot: accepted by its spares, or
+    /// by the template itself when none is waiting.
+    conns: UnixListener,
     watch: std::rc::Rc<lp_runtime::FdWatch>,
     /// Connections to fork from here.
     waiting: Waiting,
@@ -222,6 +248,11 @@ struct TemplateProcess {
     /// Root only: where each profile's snapshot is served (`None`: here).
     holders: Vec<Option<PathBuf>>,
     is_root: bool,
+    /// Forked children waiting for a connection (accepting on `conns`), as
+    /// our end of a pair: the spare closes its end once it has taken one,
+    /// and we close ours to drop it. Forked at `spares_generation`.
+    spares: VecDeque<UnixStream>,
+    spares_generation: u64,
 }
 
 /// Entry point of the template process (`serve --template <socket>`).
@@ -254,27 +285,36 @@ fn run_template(options: &ServeOptions, socket: &Path) -> Result<(), String> {
     let states = profiles.iter().map(ProfileState::new).collect();
     let holders = vec![None; profiles.len()];
     let browser = Browser::with_prepared(host, profiles);
-    let snapshot = Snapshot { browser, outbox, outbound, profiles: states };
+    let snapshot = Snapshot { browser, outbox, outbound, profiles: states, generation: 0 };
 
-    let listener = UnixListener::bind(socket).map_err(|e| format!("{}: {e}", socket.display()))?;
-    listener.set_nonblocking(true).map_err(|e| e.to_string())?;
+    // The connection socket first: the server takes the control socket as the sign that both listen.
+    let conns = bind_nonblocking(&conn_socket(socket))?;
+    let listener = bind_nonblocking(socket)?;
     let watch = lp_runtime::FdWatch::new(listener.as_raw_fd());
     let mut t = TemplateProcess {
         snapshot,
         root: socket.to_path_buf(),
         socket: socket.to_path_buf(),
         listener,
+        conns,
         watch,
         waiting: VecDeque::new(),
         forwards: VecDeque::new(),
         derives: VecDeque::new(),
         holders,
         is_root: true,
+        spares: VecDeque::new(),
+        spares_generation: 0,
     };
     t.watch_listener();
 
     'serve: loop {
         t.accept_all();
+        // Spares that took a connection have closed their end.
+        t.spares.retain(|spare| !readable(spare.as_raw_fd()));
+        if t.spares.is_empty() {
+            t.accept_conns();
+        }
         t.forward_waiting();
         let ready = ready_to_fork(&mut t.snapshot, t.waiting.front().map(|w| w.2));
         if ready {
@@ -289,27 +329,37 @@ fn run_template(options: &ServeOptions, socket: &Path) -> Result<(), String> {
                     std::process::exit(child);
                 }
             }
+            if let Some(child) = t.refill_spares(&options.server) {
+                std::process::exit(child);
+            }
         }
         // Boot what is booting; wake for the next message.
         let busy = !ready || !t.forwards.is_empty();
         let deadline = Instant::now() + Duration::from_millis(if busy { 20 } else { 1000 });
+        t.watch_listener();
         let watch = t.watch.clone();
         let outcome = t.snapshot.browser.host_mut().run_until_work(Some(deadline), || watch.take_ready());
         t.snapshot.browser.host_mut().flush();
         t.snapshot.drain();
         if matches!(outcome, lp_runtime::RunOutcome::Idle) {
-            poll_readable(&[t.listener.as_raw_fd(), 0], if busy { 20 } else { -1 });
+            let mut fds = vec![t.listener.as_raw_fd(), t.conns.as_raw_fd(), 0];
+            fds.extend(t.spares.iter().map(|s| s.as_raw_fd()));
+            poll_readable(&fds, if busy { 20 } else { -1 });
         }
         if server_gone() {
             let _ = std::fs::remove_file(&t.socket);
+            let _ = std::fs::remove_file(conn_socket(&t.socket));
             return Ok(());
         }
     }
 }
 
 impl TemplateProcess {
+    /// Wakes the loop for control messages, and for connections while no
+    /// spare is there to take them.
     fn watch_listener(&mut self) {
-        self.watch = lp_runtime::FdWatch::new(self.listener.as_raw_fd());
+        let fd = if self.spares.is_empty() { self.conns.as_raw_fd() } else { self.listener.as_raw_fd() };
+        self.watch = lp_runtime::FdWatch::new(fd);
         self.watch.set_interest(true, false);
         self.snapshot.browser.host_mut().thread.event_loop.watch_fd(Some(self.watch.clone()));
     }
@@ -323,11 +373,7 @@ impl TemplateProcess {
             let Ok((message, fds)) = recv(&mut stream) else { continue };
             match message {
                 Message::Connect { buffered, profile } if fds.len() == 2 => {
-                    let holder = profile.and_then(|id| self.holders.get(id).cloned().flatten());
-                    match holder {
-                        Some(path) => self.forwards.push_back((path, buffered, profile, fds, Instant::now())),
-                        None => self.waiting.push_back((buffered, fds, Instant::now())),
-                    }
+                    self.take_connection(buffered, profile, fds)
                 }
                 Message::Connect { .. } => {}
                 Message::Register { profile } => {
@@ -337,11 +383,34 @@ impl TemplateProcess {
                     };
                     let _ = send(&mut stream, &reply, &[]);
                 }
+                Message::Taken => {}
                 Message::Derive { base, id, profile, socket } => {
                     self.derives.push_back(Derive { base, id, profile, socket });
                     let _ = send(&mut stream, &Registered { profile_id: Some(id), error: None }, &[]);
                 }
             }
+        }
+    }
+
+    /// Takes the connections no spare took.
+    fn accept_conns(&mut self) {
+        while let Ok((mut stream, _)) = self.conns.accept() {
+            let _ = stream.set_nonblocking(false);
+            let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+            if let Ok((Message::Connect { buffered, profile }, fds)) = recv(&mut stream) {
+                if fds.len() == 2 {
+                    self.take_connection(buffered, profile, fds);
+                }
+            }
+        }
+    }
+
+    /// Forks for a connection here, or passes it to the template holding
+    /// the snapshot it asked for.
+    fn take_connection(&mut self, buffered: Vec<u8>, profile: Option<usize>, fds: Vec<OwnedFd>) {
+        match profile.and_then(|id| self.holders.get(id).cloned().flatten()) {
+            Some(path) => self.forwards.push_back((path, buffered, profile, fds, Instant::now())),
+            None => self.waiting.push_back((buffered, fds, Instant::now())),
         }
     }
 
@@ -351,7 +420,7 @@ impl TemplateProcess {
         for _ in 0..self.forwards.len() {
             let Some((path, buffered, profile, fds, since)) = self.forwards.pop_front() else { break };
             let raw: Vec<RawFd> = fds.iter().map(|f| f.as_raw_fd()).collect();
-            let sent = UnixStream::connect(&path)
+            let sent = UnixStream::connect(conn_socket(&path))
                 .and_then(|mut s| send(&mut s, &Message::Connect { buffered: buffered.clone(), profile }, &raw));
             if sent.is_err() && since.elapsed() < LOAD_WAIT {
                 self.forwards.push_back((path, buffered, profile, fds, since));
@@ -375,6 +444,9 @@ impl TemplateProcess {
             }
         }
         self.snapshot.profiles.push(ProfileState::new(&profile));
+        self.snapshot.generation += 1;
+        // Before the reply: a spare forked earlier must not take a connection that wants this profile.
+        self.spares.clear();
         let id = self.snapshot.browser.add_prepared_profile(profile.clone());
         self.holders.resize(id + 1, None);
         let Some(base) = profile.base else {
@@ -403,23 +475,27 @@ impl TemplateProcess {
     /// `derive.id`, listening on its own socket. Whether this process is now
     /// that child.
     fn fork_template(&mut self, derive: Derive) -> bool {
-        let listener = match UnixListener::bind(&derive.socket).and_then(|l| l.set_nonblocking(true).map(|()| l)) {
-            Ok(l) => l,
+        let (conns, listener) = match bind_nonblocking(&conn_socket(&derive.socket))
+            .and_then(|c| bind_nonblocking(&derive.socket).map(|l| (c, l)))
+        {
+            Ok(both) => both,
             Err(e) => {
-                eprintln!("lightningpanda: template: {}: {e}", derive.socket.display());
+                eprintln!("lightningpanda: template: {e}");
                 return false;
             }
         };
         match fork_process(&self.snapshot) {
             Forked::Parent | Forked::Failed => false, // the parent's copy of the listener closes here
             Forked::Child => {
-                self.listener = listener; // closes this child's copy of the parent's
+                self.listener = listener; // closes this child's copies of the parent's
+                self.conns = conns;
                 self.socket = derive.socket;
                 self.is_root = false;
                 self.holders.clear();
                 self.waiting.clear();
                 self.forwards.clear();
                 self.derives.clear();
+                self.spares.clear(); // the parent's: closing our copies lets them see the parent go
                 self.watch_listener();
                 let profiles = &mut self.snapshot.profiles;
                 while profiles.len() <= derive.id {
@@ -439,17 +515,101 @@ impl TemplateProcess {
 
     /// Forks a process for one connection. Returns in the parent with
     /// `None`; in the child, serves the connection and returns its exit code.
-    fn fork_connection(&mut self, config: &ServerConfig, buffered: Vec<u8>, mut fds: Vec<OwnedFd>) -> Option<i32> {
+    fn fork_connection(&mut self, config: &ServerConfig, buffered: Vec<u8>, fds: Vec<OwnedFd>) -> Option<i32> {
         match fork_process(&self.snapshot) {
-            Forked::Parent | Forked::Failed => return None, // the parent's copies of the fds close here
-            Forked::Child => {}
+            Forked::Parent | Forked::Failed => None, // the parent's copies of the fds close here
+            Forked::Child => {
+                self.leave_template();
+                unsafe { libc::close(self.conns.as_raw_fd()) };
+                Some(self.serve_child(config, buffered, fds))
+            }
         }
-        // Child: one connection, then exit.
+    }
+
+    /// Forks spares up to the wanted count. Returns in the parent with
+    /// `None`; in a spare, once it has served its connection, its exit code.
+    fn refill_spares(&mut self, config: &ServerConfig) -> Option<i32> {
+        if self.spares_generation != self.snapshot.generation {
+            self.spares.clear(); // their pages are out of date: they exit
+            self.spares_generation = self.snapshot.generation;
+        }
+        while self.spares.len() < spares_wanted() {
+            let Ok((ours, theirs)) = UnixStream::pair() else { return None };
+            match fork_process(&self.snapshot) {
+                Forked::Failed => return None,
+                Forked::Parent => self.spares.push_back(ours),
+                Forked::Child => {
+                    drop(ours);
+                    self.leave_template();
+                    return Some(self.wait_as_spare(config, theirs));
+                }
+            }
+        }
+        None
+    }
+
+    /// A spare takes the next connection from its template's connection
+    /// socket itself, so that a test never waits on the template (which may
+    /// be forking). Meanwhile its pages keep running (timers, polling), as
+    /// the template's do. EOF from the template means it dropped this spare
+    /// (its pages are out of date) or died.
+    fn wait_as_spare(&mut self, config: &ServerConfig, to_template: UnixStream) -> i32 {
+        let watch = lp_runtime::FdWatch::new(self.conns.as_raw_fd());
+        watch.set_interest(true, false);
+        self.snapshot.browser.host_mut().thread.event_loop.watch_fd(Some(watch.clone()));
+        loop {
+            let deadline = Instant::now() + Duration::from_millis(250);
+            let outcome = self.snapshot.browser.host_mut().run_until_work(Some(deadline), || watch.take_ready());
+            self.snapshot.browser.host_mut().flush();
+            self.snapshot.drain();
+            if matches!(outcome, lp_runtime::RunOutcome::Idle) {
+                poll_readable(&[self.conns.as_raw_fd(), to_template.as_raw_fd()], 250);
+            }
+            if readable(to_template.as_raw_fd()) {
+                return 0;
+            }
+            let Ok((mut stream, _)) = self.conns.accept() else { continue };
+            let _ = stream.set_nonblocking(false);
+            let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+            let Ok((Message::Connect { buffered, profile }, fds)) = recv(&mut stream) else { continue };
+            if fds.len() != 2 {
+                continue;
+            }
+            if profile.is_some_and(|id| self.holders.get(id).is_some_and(|h| h.is_some())) {
+                // A derived snapshot that was not up when the server looked: the
+                // template queues it until that snapshot's template listens.
+                let raw: Vec<RawFd> = fds.iter().map(|f| f.as_raw_fd()).collect();
+                if let Ok(mut s) = UnixStream::connect(&self.socket) {
+                    let _ = send(&mut s, &Message::Connect { buffered, profile }, &raw);
+                }
+                continue;
+            }
+            drop(to_template); // this spare is gone from the template's list
+            if let Ok(mut s) = UnixStream::connect(&self.socket) {
+                let _ = send(&mut s, &Message::Taken, &[]); // and it wakes to fork a replacement
+            }
+            self.snapshot.browser.host_mut().thread.event_loop.watch_fd(None);
+            unsafe { libc::close(self.conns.as_raw_fd()) };
+            return self.serve_child(config, buffered, fds);
+        }
+    }
+
+    /// In a forked child, right after the fork: lets go of everything that
+    /// belongs to the template. Other connections' sockets and pipes, and the
+    /// other spares, would stay open while this process holds them.
+    fn leave_template(&mut self) {
         self.snapshot.browser.host_mut().thread.event_loop.watch_fd(None);
-        // Other connections' sockets and pipes are theirs: holding them would keep them open.
         self.waiting.clear();
         self.forwards.clear();
+        self.spares.clear();
+        self.derives.clear();
+        // `holders` stays: a spare of the root passes on connections for derived snapshots.
         unsafe { libc::close(self.listener.as_raw_fd()) };
+    }
+
+    /// In a forked child (after `leave_template`): serves one connection with
+    /// the snapshot; the exit code.
+    fn serve_child(&mut self, config: &ServerConfig, buffered: Vec<u8>, mut fds: Vec<OwnedFd>) -> i32 {
         let finished = fds.pop().expect("two fds");
         let socket = std::net::TcpStream::from(fds.pop().expect("two fds"));
         let root = self.root.clone();
@@ -465,7 +625,7 @@ impl TemplateProcess {
         browser.set_fork_child(Box::new(move |p: &PreparedProfile| register_with(&root, p)));
         crate::serve::serve_browser(browser, outbox, outbound, socket, &buffered, config.clone());
         drop(finished);
-        Some(0)
+        0
     }
 }
 
@@ -553,6 +713,7 @@ impl Snapshot {
     /// page back to the pool, as profile `id`'s, so that forks get it in that
     /// state.
     fn set_up(&mut self, id: usize, page_of: usize) -> Result<(), String> {
+        self.generation += 1;
         let steps = self.browser.prepared_profiles()[id].setup.clone();
         let page = self.command(
             None,
@@ -687,6 +848,19 @@ fn other_threads() -> Vec<String> {
         );
     }
     names
+}
+
+/// Whether `fd` has data (or EOF) to read right now.
+fn readable(fd: RawFd) -> bool {
+    let mut pfd = libc::pollfd { fd, events: libc::POLLIN, revents: 0 };
+    unsafe { libc::poll(&mut pfd, 1, 0) > 0 }
+}
+
+fn bind_nonblocking(path: &Path) -> Result<UnixListener, String> {
+    let _ = std::fs::remove_file(path);
+    let listener = UnixListener::bind(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    listener.set_nonblocking(true).map_err(|e| e.to_string())?;
+    Ok(listener)
 }
 
 fn poll_readable(fds: &[RawFd], timeout_ms: i32) {
