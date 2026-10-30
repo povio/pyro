@@ -2712,10 +2712,16 @@ fn flow_whitespace_normal_span_wraps_inside_nowrap_cell() {
     let p = page(&html, Geometry::Flow);
     // One line is the single-line span's height; each further line adds the
     // line pitch (the step from 2 to 3 lines).
+    // With Stylo the spans' `font` shorthand applies (500 18px; the legacy
+    // cascade left them at 14px), and the flow's glyph advances for that
+    // weight run wide enough that pkg's broken word takes a third line
+    // where Chromium fits two: a text-metrics gap, not a style one.
+    let stylo = p.layout.style().stylo_on();
     let one = p.metrics("s-inherit")[3];
-    let pitch = p.metrics("s-hs")[3] - p.metrics("s-pkg")[3];
+    let pkg_lines = if stylo { 3.0 } else { 2.0 };
+    let pitch = (p.metrics("s-hs")[3] - one) / 2.0;
     assert!(pitch >= one, "line pitch {pitch} vs line {one}");
-    for (k, lines) in [("pkg", 2.0), ("hs", 3.0)] {
+    for (k, lines) in [("pkg", pkg_lines), ("hs", 3.0)] {
         let cell = p.metrics(&format!("c-{k}"));
         let text = p.metrics(&format!("s-{k}"));
         assert_eq!(text[3], one + (lines - 1.0) * pitch, "{k}: {lines} lines, span {text:?}");

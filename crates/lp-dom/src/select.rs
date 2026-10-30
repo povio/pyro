@@ -257,18 +257,97 @@ pub fn parse_selectors(text: &str) -> DomResult<Selectors> {
         .map_err(|_| DomError::new(DomErrorKind::Syntax, "is not a valid selector"))
 }
 
+/// A selector list for the DOM's query APIs: Stylo's (`crate::stylo::select`,
+/// the cascade's selector engine) unless `LP_CASCADE=legacy`, else (or when
+/// only it parses one) lp-dom's. Queries for one id, class, tag or attribute
+/// presence take lp-dom's direct paths (id index, cached class sets).
+#[derive(Clone)]
+pub struct Query {
+    stylo: Option<crate::stylo::select::List>,
+    lp: Option<Selectors>,
+}
+
+/// Parses a selector list for [`Dom::query_first`] and friends; invalid
+/// syntax maps to a `SyntaxError` DOMException.
+pub fn parse_query(text: &str) -> DomResult<Query> {
+    let stylo = crate::style::stylo_cascade().then(|| crate::stylo::select::parse(text)).flatten();
+    let lp = match &stylo {
+        None => Some(parse_selectors(text)?),
+        // One id, class, tag or attribute presence: lp-dom's direct tests
+        // (the id index, cached class sets) beat general matching.
+        Some(_) => parse_selectors(text).ok().filter(|l| simple(l).is_some()),
+    };
+    Ok(Query { stylo, lp })
+}
+
+impl Dom {
+    /// `querySelector`: the first element below `root` matching `q`.
+    pub fn query_first(&self, root: NodeId, q: &Query) -> DomResult<Option<NodeId>> {
+        match (&q.stylo, &q.lp) {
+            (_, Some(lp)) => self.query_selector(root, lp),
+            (Some(list), None) => {
+                let r = self.check(root)?;
+                Ok(crate::stylo::select::query(self, r, list, true).first().map(|&i| self.id_of(i)))
+            }
+            (None, None) => Ok(None),
+        }
+    }
+
+    /// `querySelectorAll`: the elements below `root` matching `q`, in tree order.
+    pub fn query_all(&self, root: NodeId, q: &Query) -> DomResult<Vec<NodeId>> {
+        match (&q.stylo, &q.lp) {
+            (_, Some(lp)) => self.query_selector_all(root, lp),
+            (Some(list), None) => {
+                let r = self.check(root)?;
+                Ok(crate::stylo::select::query(self, r, list, false).into_iter().map(|i| self.id_of(i)).collect())
+            }
+            (None, None) => Ok(Vec::new()),
+        }
+    }
+
+    /// `Element.matches(selectors)`.
+    pub fn element_matches(&self, el: NodeId, q: &Query) -> DomResult<bool> {
+        match (&q.stylo, &q.lp) {
+            (Some(list), _) => {
+                let i = self.check(el)?;
+                if !self.n(i).is_element() {
+                    return Err(DomError::Type("not an element"));
+                }
+                Ok(crate::stylo::select::matches(self, i, list))
+            }
+            (None, Some(lp)) => self.matches(el, lp),
+            (None, None) => Ok(false),
+        }
+    }
+
+    /// `Element.closest(selectors)`.
+    pub fn element_closest(&self, el: NodeId, q: &Query) -> DomResult<Option<NodeId>> {
+        match (&q.stylo, &q.lp) {
+            (Some(list), _) => {
+                let i = self.check(el)?;
+                if !self.n(i).is_element() {
+                    return Ok(None);
+                }
+                Ok(crate::stylo::select::closest(self, i, list).map(|i| self.id_of(i)))
+            }
+            (None, Some(lp)) => self.closest(el, lp),
+            (None, None) => Ok(None),
+        }
+    }
+}
+
 /// Small parse cache: SPA code calls the same selectors repeatedly.
 #[derive(Default)]
 pub struct SelectorCache {
-    map: FxHashMap<Box<str>, Selectors>,
+    map: FxHashMap<Box<str>, Query>,
 }
 const SELECTOR_CACHE_CAP: usize = 512;
 impl SelectorCache {
-    pub fn get(&mut self, text: &str) -> DomResult<Selectors> {
+    pub fn get(&mut self, text: &str) -> DomResult<Query> {
         if let Some(s) = self.map.get(text) {
             return Ok(s.clone());
         }
-        let s = parse_selectors(text)?;
+        let s = parse_query(text)?;
         if self.map.len() >= SELECTOR_CACHE_CAP {
             self.map.clear();
         }

@@ -16,6 +16,14 @@ precomputed-hash = "0.1"
 quick-xml = "0.42"
 rustc-hash = "2"
 selectors = "0.41"
+# The cascade: Stylo (Servo's style system), as blitz-dom uses it.
+style = { version = "0.22.0", package = "stylo" }
+style_dom = { version = "0.22.0", package = "stylo_dom" }
+style_traits = { version = "0.22.0", package = "stylo_traits" }
+style_config = { version = "0.22.0", package = "stylo_static_prefs" }
+url = "2"
+app_units = "0.7.5"
+euclid = "0.22"
 
 [[test]]
 name = "integration"
@@ -23,3 +31,6 @@ path = "tests/integration.rs"
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+serde_json = "1"

@@ -12,6 +12,7 @@ mod loader;
 mod record_scan_bench;
 mod select_fast;
 mod select_forms;
+mod stylo_cascade;
 mod tree;
 mod typed_flow;
 mod xml;

@@ -414,14 +414,14 @@ fn define_parent_node<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
         let sel = arg_string(&a, 0, "querySelector")?;
         let page = n.page();
         let list = page.selectors.borrow_mut().get(&sel).js()?;
-        let r = page.dom.borrow().query_selector(n.id, &list).js()?;
+        let r = page.dom.borrow().query_first(n.id, &list).js()?;
         node_value(s, page, r)
     });
     def.method("querySelectorAll", 1, |s, n, a| {
         let sel = arg_string(&a, 0, "querySelectorAll")?;
         let page = n.page();
         let list = page.selectors.borrow_mut().get(&sel).js()?;
-        let r = page.dom.borrow().query_selector_all(n.id, &list).js()?;
+        let r = page.dom.borrow().query_all(n.id, &list).js()?;
         Ok(collections::static_node_list(s, page, r)?.value())
     });
 }
@@ -878,7 +878,7 @@ impl JsClass for Element {
             let sel = arg_string(&a, 0, "Element.closest")?;
             let page = n.page();
             let list = page.selectors.borrow_mut().get(&sel).js()?;
-            let r = page.dom.borrow().closest(n.id, &list).js()?;
+            let r = page.dom.borrow().element_closest(n.id, &list).js()?;
             node_value(s, page, r)
         });
         def.method("getElementsByTagName", 1, |s, n, a| {
@@ -1010,7 +1010,7 @@ fn element_matches<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Val
     let sel = arg_string(&a, 0, "Element.matches")?;
     let page = n.page();
     let list = page.selectors.borrow_mut().get(&sel).js()?;
-    Ok(s.boolean(page.dom.borrow().matches(n.id, &list).js()?))
+    Ok(s.boolean(page.dom.borrow().element_matches(n.id, &list).js()?))
 }
 
 fn insert_adjacent(dom: &mut lp_dom::Dom, el: NodeId, pos: &str, node: NodeId) -> JsResult<bool> {

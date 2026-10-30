@@ -21,6 +21,7 @@ pub mod script;
 pub mod select;
 pub mod serialize;
 pub mod style;
+pub mod stylo;
 pub mod style_flow;
 pub mod svg_geometry;
 pub mod text_metrics;
