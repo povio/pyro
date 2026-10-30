@@ -27,6 +27,10 @@ fn free_port() -> u16 {
 }
 
 fn connect(port: u16) -> TcpStream {
+    connect_to(port, "/")
+}
+
+fn connect_to(port: u16, path: &str) -> TcpStream {
     let deadline = Instant::now() + Duration::from_secs(30);
     let mut s = loop {
         match TcpStream::connect(("127.0.0.1", port)) {
@@ -37,8 +41,11 @@ fn connect(port: u16) -> TcpStream {
     };
     s.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
     s.write_all(
-        b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\
-          Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n",
+        format!(
+            "GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\
+             Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n"
+        )
+        .as_bytes(),
     )
     .unwrap();
     let mut head = Vec::new();
@@ -97,6 +104,18 @@ fn call(s: &mut TcpStream, id: u64, method: &str, params: Value, session: Option
 fn eval_in_prepared(port: u16, url: &str, expression: &str) -> Value {
     let mut c = connect(port);
     let page = call(&mut c, 1, "Lightningpanda.acquirePreparedPage", json!({ "url": url, "attach": true }), None);
+    assert_eq!(page["ready"], json!(true));
+    let session = page["sessionId"].as_str().unwrap().to_owned();
+    let r =
+        call(&mut c, 2, "Runtime.evaluate", json!({ "expression": expression, "returnByValue": true }), Some(&session));
+    r["result"]["value"].clone()
+}
+
+/// `eval_in_prepared` for a connection to `?profile=N`, acquiring that profile's page.
+fn eval_in_profile(port: u16, profile: usize, expression: &str) -> Value {
+    let mut c = connect_to(port, &format!("/?profile={profile}"));
+    let page =
+        call(&mut c, 1, "Lightningpanda.acquirePreparedPage", json!({ "profileId": profile, "attach": true }), None);
     assert_eq!(page["ready"], json!(true));
     let session = page["sessionId"].as_str().unwrap().to_owned();
     let r =
@@ -187,6 +206,40 @@ fn connections_are_forks_of_the_booted_app() {
         );
         assert_eq!(state, json!("set up,1,11"));
     }
+
+    // A snapshot built on that one: forked from it, runs only its own steps,
+    // and connections ask for it by profile in the URL.
+    let derived = call(
+        &mut main,
+        5,
+        "Lightningpanda.registerPreparedPage",
+        json!({ "url": "http://app.test/setup.html", "base": 2, "setup": [{ "eval": {
+            "expression": "window.__store.n += 100; window.__derived = (window.__derived || 0) + 1"
+        } }] }),
+        None,
+    );
+    assert_eq!(derived["profileId"], json!(3));
+    let deeper = call(
+        &mut main,
+        6,
+        "Lightningpanda.registerPreparedPage",
+        json!({ "url": "http://app.test/setup.html", "base": 3, "setup": [{ "eval": {
+            "expression": "window.__store.n += 1000"
+        } }] }),
+        None,
+    );
+    assert_eq!(deeper["profileId"], json!(4));
+    for (profile, expected) in [(3, "set up,1,1,111"), (3, "set up,1,1,111"), (4, "set up,1,1,1111")] {
+        let state = eval_in_profile(
+            port,
+            profile,
+            "[document.getElementById('root').textContent, window.__setups, window.__derived, ++window.__store.n].join()",
+        );
+        assert_eq!(state, json!(expected), "profile {profile}");
+    }
+    // The base snapshot is unchanged by what was built on it.
+    let base = eval_in_prepared(port, "http://app.test/setup.html", "[window.__derived, window.__store.n].join()");
+    assert_eq!(base, json!(",10"));
 
     let _ = std::fs::remove_dir_all(&dir);
 }

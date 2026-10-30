@@ -45,6 +45,11 @@ export type Profile = {
    * only): every page of this profile then starts from their result.
    */
   setup?: StepLike[];
+  /**
+   * Starts from another profile's snapshot (`serve --fork` only): its page is
+   * forked from that profile's, and only this profile's `setup` runs on it.
+   */
+  base?: string;
 };
 
 export type RunResult = {
@@ -148,6 +153,8 @@ export class Lightningpanda {
 
   /** Declares a kind of page tests ask for by name (`lp.page({ as: name })`). */
   async profile(name: string, profile: Profile): Promise<void> {
+    const base = profile.base === undefined ? undefined : this.profiles.get(profile.base)?.ids?.[0];
+    if (profile.base !== undefined && base === undefined) throw new Error(`no prepared profile ${profile.base} to start from`);
     const scripts = [...(profile.localStorage ? [storageScript(profile.localStorage)] : []), ...(profile.initScripts ?? [])];
     if (profile.prepare === false) {
       this.profiles.set(name, { ids: null, profile, scripts });
@@ -163,6 +170,7 @@ export class Lightningpanda {
           ...(profile.viewport ? { viewport: profile.viewport } : {}),
           pool: profile.pool ?? 2,
           ...(profile.setup?.length ? { setup: profile.setup.map((s) => s.toStep()) } : {}),
+          ...(base !== undefined ? { base } : {}),
         });
         return profileId as number;
       }),
@@ -178,7 +186,7 @@ export class Lightningpanda {
     if (this.fork) {
       // A new connection is a fork of the template as it is now.
       for (;;) {
-        const cdp = await Cdp.open(this.wsUrl);
+        const cdp = await Cdp.open(this.forkUrl(entry.ids[0]));
         const { pages } = await cdp.send('Lightningpanda.preparedPages').finally(() => cdp.close());
         if (pages.some((p: { profileId: number; ready: boolean }) => p.profileId === entry.ids![0] && p.ready)) return;
         if (Date.now() > deadline) throw new Error(`no booted page for ${name} after ${timeoutMs} ms`);
@@ -226,7 +234,8 @@ export class Lightningpanda {
       const index = this.pick();
       return this.openPage(this.conns[index], index, entry, opts);
     }
-    const conn: Conn = { cdp: await Cdp.open(this.wsUrl), open: 0, own: true };
+    // The server forks the connection from this profile's snapshot.
+    const conn: Conn = { cdp: await Cdp.open(this.forkUrl(entry?.ids?.[0])), open: 0, own: true };
     try {
       return await this.openPage(conn, 0, entry, opts);
     } catch (e) {
@@ -266,6 +275,14 @@ export class Lightningpanda {
     if (opts.route) first.push(routeStep(opts.route));
     page.prefix = first;
     return page;
+  }
+
+  /** The connection URL that forks from `profileId`'s snapshot (fork mode). */
+  private forkUrl(profileId?: number): string {
+    if (profileId === undefined) return this.wsUrl;
+    const url = new URL(this.wsUrl);
+    url.searchParams.set('profile', String(profileId));
+    return url.toString();
   }
 
   close(): void {

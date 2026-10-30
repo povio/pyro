@@ -271,6 +271,11 @@ Copy-on-write page snapshots: an app's startup (parsing and running its JavaScri
   outbox, drained). A profile's `setup` steps run there once the page is loaded and quiet: the template
   acquires the page, runs them as an `LP.run`, hands the page back to the pool (`Browser::return_to_prepared`)
   and settles it. The forked child serves its socket with that same state (`serve::serve_browser`).
+- Snapshots build on snapshots: a profile with `base: <id>` is never booted. The root template asks the template
+  holding the base (itself or a derived one) to fork off a **derived template** listening on
+  `<root socket>.<id>`; it runs only the profile's `setup` on its copy of the base page, relabels the page, and
+  serves forks itself. Clients ask for a snapshot with `ws://host/?profile=<id>`: the root forwards that
+  connection's fds to the template holding it. Registrations always go to the root, which assigns every id.
 - The template stops when the server does: its stdin is a pipe only the server writes to.
 - The source JavaScriptCore's timers run on WTF's run loop, so the CoreFoundation run-loop service
   (`enable_native_runloop_service`) is off with it; CoreFoundation must not be used in a fork child.

@@ -39,7 +39,9 @@ test.concurrent('closes a position', async () => {
   other tests, and its process exits when the page closes. `connections` and
   `pool` then make no difference. `setup` steps in a profile run once on the
   booted page (sign-in flows, opening a view, filling filters) and every page
-  starts from their result.
+  starts from their result. `base: 'otherProfile'` builds a snapshot on top of
+  another one: only its own `setup` runs, on a fork of that snapshot (boot on
+  the login page once, sign in once, then one snapshot per test file).
 - **Locators** are data: `css`, `testId`, `text`, `label`, `placeholder`,
   `role` (and `button`, `dialog`, `link`, …), chained inside one another
   (`dialog().button('OK')`), filtered (`.visible()`, `.hasText()`,

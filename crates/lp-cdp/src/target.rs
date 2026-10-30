@@ -152,6 +152,11 @@ pub struct PreparedProfile {
     /// forked afterwards starts from the resulting state).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub setup: Vec<serde_json::Value>,
+    /// Starts from another profile's page (its id) instead of booting
+    /// `url`: `serve --fork` forks that profile's snapshot and runs only this
+    /// profile's `setup` on it. Pages of such a profile are never booted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base: Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -337,6 +342,28 @@ impl<H: Host> Browser<H> {
         self.prepared_profiles.len() - 1
     }
 
+    /// Sets profile `id`, adding never-booted placeholders before it if
+    /// needed (a derived `serve --fork` template learns profiles by id).
+    pub fn set_prepared_profile(&mut self, id: usize, profile: PreparedProfile) {
+        while self.prepared_profiles.len() <= id {
+            let placeholder = PreparedProfile { base: Some(self.prepared_profiles.len()), ..profile.clone() };
+            self.prepared_profiles.push(placeholder);
+        }
+        self.prepared_profiles[id] = profile;
+    }
+
+    /// Moves a waiting page of profile `from` to profile `to` (a derived
+    /// snapshot's page after its setup); whether there was one.
+    pub fn relabel_prepared(&mut self, from: usize, to: usize) -> bool {
+        match self.prepared.iter_mut().find(|e| e.profile == from) {
+            Some(e) => {
+                e.profile = to;
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Hands an acquired prepared page back to the pool, waiting and hidden
     /// again, with its sessions detached (the `serve --fork` template acquires
     /// a page to run a profile's setup steps on it).
@@ -385,6 +412,9 @@ impl<H: Host> Browser<H> {
     /// Whether profile `i` is below its pool and allowed to boot now.
     fn profile_wants_page(&self, i: usize) -> bool {
         let profile = &self.prepared_profiles[i];
+        if profile.base.is_some() {
+            return false; // its page comes from the base profile's
+        }
         let waiting = self.prepared.iter().filter(|e| e.profile == i).count();
         let in_use = self.targets.iter().filter(|t| t.prepared_profile == Some(i)).count();
         let pool = profile.pool.clamp(1, MAX_POOL);
@@ -472,8 +502,8 @@ impl<H: Host> Browser<H> {
                 if profile.pool == 0 || profile.pool > MAX_POOL {
                     return Err(CdpError::invalid_params("pool must be between 1 and 8"));
                 }
-                if !profile.setup.is_empty() && self.fork.is_none() {
-                    return Err(CdpError::invalid_params("setup steps need serve --fork"));
+                if (!profile.setup.is_empty() || profile.base.is_some()) && self.fork.is_none() {
+                    return Err(CdpError::invalid_params("setup and base need serve --fork"));
                 }
                 if let Some(register) = &self.fork {
                     // The template boots it; connections forked from then on have it.

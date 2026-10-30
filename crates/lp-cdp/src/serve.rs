@@ -299,6 +299,7 @@ pub fn browser_profile(options: &ServeOptions) -> Result<BrowserProfile, String>
             pool: 1,
             refill_after_close: options.prepare_refill_after_close,
             setup: Vec::new(),
+            base: None,
         });
     }
     Ok(profile)
@@ -488,6 +489,7 @@ impl SessionFactory for ThreadPerConnection {
     fn start_owned(
         &self,
         _peer: SocketAddr,
+        _path: &str,
         socket: std::net::TcpStream,
         buffered: Vec<u8>,
         config: &ServerConfig,
@@ -524,11 +526,17 @@ impl SessionFactory for ForkPerConnection {
     fn start_owned(
         &self,
         _peer: SocketAddr,
+        path: &str,
         socket: std::net::TcpStream,
         buffered: Vec<u8>,
         _config: &ServerConfig,
     ) -> Option<std::io::Result<oneshot::Receiver<()>>> {
-        Some(crate::fork::connect(self.template.socket(), socket, buffered))
+        // `ws://host/?profile=N` asks for a fork of that profile's snapshot.
+        let profile = path
+            .split_once('?')
+            .and_then(|(_, query)| query.split('&').find_map(|kv| kv.strip_prefix("profile=")))
+            .and_then(|v| v.parse().ok());
+        Some(crate::fork::connect(self.template.socket(), socket, buffered, profile))
     }
 }
 

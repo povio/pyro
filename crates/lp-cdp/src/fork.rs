@@ -61,10 +61,14 @@ pub fn supported() -> bool {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 enum Message {
-    /// Serve a connection: fds are the upgraded socket and the pipe's write end.
-    Connect { buffered: Vec<u8> },
-    /// Boot a profile for later connections; replies `{"profileId": n}`.
+    /// Serve a connection, from the snapshot of `profile` if given (else the
+    /// root's): fds are the upgraded socket and the pipe's write end.
+    Connect { buffered: Vec<u8>, profile: Option<usize> },
+    /// Boot a profile for later connections (root only); replies `{"profileId": n}`.
     Register { profile: PreparedProfile },
+    /// Fork a template for profile `id` off this one's snapshot of `base`,
+    /// listening on `socket` (root to the template holding `base`).
+    Derive { base: usize, id: usize, profile: PreparedProfile, socket: PathBuf },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -134,10 +138,11 @@ pub fn connect(
     template: &Path,
     socket: std::net::TcpStream,
     buffered: Vec<u8>,
+    profile: Option<usize>,
 ) -> std::io::Result<tokio::sync::oneshot::Receiver<()>> {
     let (read_end, write_end) = pipe()?;
     let mut stream = UnixStream::connect(template)?;
-    send(&mut stream, &Message::Connect { buffered }, &[socket.as_raw_fd(), write_end.as_raw_fd()])?;
+    send(&mut stream, &Message::Connect { buffered, profile }, &[socket.as_raw_fd(), write_end.as_raw_fd()])?;
     drop(write_end);
     let (tx, rx) = tokio::sync::oneshot::channel();
     std::thread::Builder::new().name("lp-fork-wait".into()).spawn(move || {
@@ -173,12 +178,50 @@ struct ProfileState {
     settled: bool,
     /// Its setup steps ran (or it has none).
     set_up: bool,
+    /// A derived profile whose page is still labelled with its base's id:
+    /// its setup turns that page into its own.
+    derive_from: Option<usize>,
 }
 
 impl ProfileState {
     fn new(profile: &PreparedProfile) -> Self {
-        ProfileState { started: Instant::now(), settled: false, set_up: profile.setup.is_empty() }
+        ProfileState { started: Instant::now(), settled: false, set_up: profile.setup.is_empty(), derive_from: None }
     }
+}
+
+type Waiting = VecDeque<(Vec<u8>, Vec<OwnedFd>, Instant)>;
+
+/// A connection for another template: its socket, bytes, profile, fds and
+/// when it arrived.
+type Forward = (PathBuf, Vec<u8>, Option<usize>, Vec<OwnedFd>, Instant);
+
+/// A snapshot to fork off as a template of its own.
+struct Derive {
+    base: usize,
+    id: usize,
+    profile: PreparedProfile,
+    socket: PathBuf,
+}
+
+/// One template process: the root (spawned by the server) or a derived one
+/// (forked from the template holding its base profile).
+struct TemplateProcess {
+    snapshot: Snapshot,
+    /// The root's socket: registrations go there.
+    root: PathBuf,
+    /// This template's socket.
+    socket: PathBuf,
+    listener: UnixListener,
+    watch: std::rc::Rc<lp_runtime::FdWatch>,
+    /// Connections to fork from here.
+    waiting: Waiting,
+    /// Root only: connections for derived snapshots, until their template listens.
+    forwards: VecDeque<Forward>,
+    /// Templates to fork off once the pages are ready.
+    derives: VecDeque<Derive>,
+    /// Root only: where each profile's snapshot is served (`None`: here).
+    holders: Vec<Option<PathBuf>>,
+    is_root: bool,
 }
 
 /// Entry point of the template process (`serve --template <socket>`).
@@ -209,41 +252,261 @@ fn run_template(options: &ServeOptions, socket: &Path) -> Result<(), String> {
     let mut host = EngineHost::with_thread(thread, outbox.clone(), EngineHost::body_budget()).map_err(|e| e.message)?;
     host.adopt_prebooted(pages);
     let states = profiles.iter().map(ProfileState::new).collect();
+    let holders = vec![None; profiles.len()];
     let browser = Browser::with_prepared(host, profiles);
-    let mut snapshot = Snapshot { browser, outbox, outbound, profiles: states };
+    let snapshot = Snapshot { browser, outbox, outbound, profiles: states };
 
     let listener = UnixListener::bind(socket).map_err(|e| format!("{}: {e}", socket.display()))?;
     listener.set_nonblocking(true).map_err(|e| e.to_string())?;
     let watch = lp_runtime::FdWatch::new(listener.as_raw_fd());
-    watch.set_interest(true, false);
-    snapshot.browser.host_mut().thread.event_loop.watch_fd(Some(watch.clone()));
+    let mut t = TemplateProcess {
+        snapshot,
+        root: socket.to_path_buf(),
+        socket: socket.to_path_buf(),
+        listener,
+        watch,
+        waiting: VecDeque::new(),
+        forwards: VecDeque::new(),
+        derives: VecDeque::new(),
+        holders,
+        is_root: true,
+    };
+    t.watch_listener();
 
-    let mut waiting: VecDeque<(Vec<u8>, Vec<OwnedFd>, Instant)> = VecDeque::new();
-    loop {
-        accept_all(&listener, &mut snapshot, &mut waiting);
-        let ready = ready_to_fork(&mut snapshot, waiting.front().map(|w| w.2));
+    'serve: loop {
+        t.accept_all();
+        t.forward_waiting();
+        let ready = ready_to_fork(&mut t.snapshot, t.waiting.front().map(|w| w.2));
         if ready {
-            while let Some((buffered, fds, _)) = waiting.pop_front() {
-                if let Some(child) =
-                    fork_connection(&mut snapshot, &options.server, (&listener, socket), &mut waiting, buffered, fds)
-                {
+            while let Some(derive) = t.derives.pop_front() {
+                if t.fork_template(derive) {
+                    continue 'serve; // this process is now the derived template
+                }
+            }
+            while let Some((buffered, fds, _)) = t.waiting.pop_front() {
+                if let Some(child) = t.fork_connection(&options.server, buffered, fds) {
                     // Only the forked child gets here, and it is done.
                     std::process::exit(child);
                 }
             }
         }
         // Boot what is booting; wake for the next message.
-        let deadline = Instant::now() + Duration::from_millis(if ready { 1000 } else { 20 });
-        let outcome = snapshot.browser.host_mut().run_until_work(Some(deadline), || watch.take_ready());
-        snapshot.browser.host_mut().flush();
-        snapshot.drain();
+        let busy = !ready || !t.forwards.is_empty();
+        let deadline = Instant::now() + Duration::from_millis(if busy { 20 } else { 1000 });
+        let watch = t.watch.clone();
+        let outcome = t.snapshot.browser.host_mut().run_until_work(Some(deadline), || watch.take_ready());
+        t.snapshot.browser.host_mut().flush();
+        t.snapshot.drain();
         if matches!(outcome, lp_runtime::RunOutcome::Idle) {
-            poll_readable(&[listener.as_raw_fd(), 0], if ready { -1 } else { 20 });
+            poll_readable(&[t.listener.as_raw_fd(), 0], if busy { 20 } else { -1 });
         }
         if server_gone() {
-            let _ = std::fs::remove_file(socket);
+            let _ = std::fs::remove_file(&t.socket);
             return Ok(());
         }
+    }
+}
+
+impl TemplateProcess {
+    fn watch_listener(&mut self) {
+        self.watch = lp_runtime::FdWatch::new(self.listener.as_raw_fd());
+        self.watch.set_interest(true, false);
+        self.snapshot.browser.host_mut().thread.event_loop.watch_fd(Some(self.watch.clone()));
+    }
+
+    /// Reads every pending message: registrations are handled now,
+    /// connections and derived templates wait until the pages are ready.
+    fn accept_all(&mut self) {
+        while let Ok((mut stream, _)) = self.listener.accept() {
+            let _ = stream.set_nonblocking(false);
+            let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+            let Ok((message, fds)) = recv(&mut stream) else { continue };
+            match message {
+                Message::Connect { buffered, profile } if fds.len() == 2 => {
+                    let holder = profile.and_then(|id| self.holders.get(id).cloned().flatten());
+                    match holder {
+                        Some(path) => self.forwards.push_back((path, buffered, profile, fds, Instant::now())),
+                        None => self.waiting.push_back((buffered, fds, Instant::now())),
+                    }
+                }
+                Message::Connect { .. } => {}
+                Message::Register { profile } => {
+                    let reply = match self.register(profile) {
+                        Ok(id) => Registered { profile_id: Some(id), error: None },
+                        Err(e) => Registered { profile_id: None, error: Some(e) },
+                    };
+                    let _ = send(&mut stream, &reply, &[]);
+                }
+                Message::Derive { base, id, profile, socket } => {
+                    self.derives.push_back(Derive { base, id, profile, socket });
+                    let _ = send(&mut stream, &Registered { profile_id: Some(id), error: None }, &[]);
+                }
+            }
+        }
+    }
+
+    /// Passes connections on to the templates of derived snapshots (they
+    /// start listening once forked, so a connection may wait a little).
+    fn forward_waiting(&mut self) {
+        for _ in 0..self.forwards.len() {
+            let Some((path, buffered, profile, fds, since)) = self.forwards.pop_front() else { break };
+            let raw: Vec<RawFd> = fds.iter().map(|f| f.as_raw_fd()).collect();
+            let sent = UnixStream::connect(&path)
+                .and_then(|mut s| send(&mut s, &Message::Connect { buffered: buffered.clone(), profile }, &raw));
+            if sent.is_err() && since.elapsed() < LOAD_WAIT {
+                self.forwards.push_back((path, buffered, profile, fds, since));
+            }
+        }
+    }
+
+    /// Adds a profile (or finds the same one): a plain one boots here, a
+    /// derived one is forked off the template holding its base.
+    fn register(&mut self, profile: PreparedProfile) -> Result<usize, String> {
+        if !self.is_root {
+            return Err("registrations go to the root template".into());
+        }
+        let profile = one_page(&profile);
+        if let Some(id) = self.snapshot.browser.prepared_profiles().iter().position(|p| *p == profile) {
+            return Ok(id);
+        }
+        if let Some(base) = profile.base {
+            if base >= self.snapshot.browser.prepared_profiles().len() {
+                return Err(format!("no profile {base} to start from"));
+            }
+        }
+        self.snapshot.profiles.push(ProfileState::new(&profile));
+        let id = self.snapshot.browser.add_prepared_profile(profile.clone());
+        self.holders.resize(id + 1, None);
+        let Some(base) = profile.base else {
+            if !self.snapshot.browser.prepared_pages().iter().any(|(p, _)| *p == id) {
+                return Err(format!("cannot boot a page at {}", profile.url));
+            }
+            return Ok(id);
+        };
+        let socket = PathBuf::from(format!("{}.{id}", self.root.display()));
+        let _ = std::fs::remove_file(&socket);
+        self.holders[id] = Some(socket.clone());
+        let derive = Derive { base, id, profile, socket };
+        match self.holders[base].clone() {
+            None => self.derives.push_back(derive),
+            Some(holder) => {
+                let Derive { base, id, profile, socket } = derive;
+                let mut stream = UnixStream::connect(&holder).map_err(|e| format!("template of {base}: {e}"))?;
+                send(&mut stream, &Message::Derive { base, id, profile, socket }, &[]).map_err(|e| e.to_string())?;
+                let _: (Registered, _) = recv(&mut stream).map_err(|e| e.to_string())?;
+            }
+        }
+        Ok(id)
+    }
+
+    /// Forks a derived template: the child continues as the template of
+    /// `derive.id`, listening on its own socket. Whether this process is now
+    /// that child.
+    fn fork_template(&mut self, derive: Derive) -> bool {
+        let listener = match UnixListener::bind(&derive.socket).and_then(|l| l.set_nonblocking(true).map(|()| l)) {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!("lightningpanda: template: {}: {e}", derive.socket.display());
+                return false;
+            }
+        };
+        match fork_process(&self.snapshot) {
+            Forked::Parent | Forked::Failed => false, // the parent's copy of the listener closes here
+            Forked::Child => {
+                self.listener = listener; // closes this child's copy of the parent's
+                self.socket = derive.socket;
+                self.is_root = false;
+                self.holders.clear();
+                self.waiting.clear();
+                self.forwards.clear();
+                self.derives.clear();
+                self.watch_listener();
+                let profiles = &mut self.snapshot.profiles;
+                while profiles.len() <= derive.id {
+                    profiles.push(ProfileState { set_up: true, ..ProfileState::new(&derive.profile) });
+                }
+                profiles[derive.id] = ProfileState {
+                    started: Instant::now(),
+                    settled: false,
+                    set_up: false,
+                    derive_from: Some(derive.base),
+                };
+                self.snapshot.browser.set_prepared_profile(derive.id, derive.profile);
+                true
+            }
+        }
+    }
+
+    /// Forks a process for one connection. Returns in the parent with
+    /// `None`; in the child, serves the connection and returns its exit code.
+    fn fork_connection(&mut self, config: &ServerConfig, buffered: Vec<u8>, mut fds: Vec<OwnedFd>) -> Option<i32> {
+        match fork_process(&self.snapshot) {
+            Forked::Parent | Forked::Failed => return None, // the parent's copies of the fds close here
+            Forked::Child => {}
+        }
+        // Child: one connection, then exit.
+        self.snapshot.browser.host_mut().thread.event_loop.watch_fd(None);
+        // Other connections' sockets and pipes are theirs: holding them would keep them open.
+        self.waiting.clear();
+        self.forwards.clear();
+        unsafe { libc::close(self.listener.as_raw_fd()) };
+        let finished = fds.pop().expect("two fds");
+        let socket = std::net::TcpStream::from(fds.pop().expect("two fds"));
+        let root = self.root.clone();
+        // The child owns the template's protocol state from here; the
+        // template's copy is never touched again in this process.
+        let (mut browser, outbox, outbound) = unsafe {
+            (
+                std::ptr::read(&self.snapshot.browser),
+                std::ptr::read(&self.snapshot.outbox),
+                std::ptr::read(&self.snapshot.outbound),
+            )
+        };
+        browser.set_fork_child(Box::new(move |p: &PreparedProfile| register_with(&root, p)));
+        crate::serve::serve_browser(browser, outbox, outbound, socket, &buffered, config.clone());
+        drop(finished);
+        Some(0)
+    }
+}
+
+enum Forked {
+    Parent,
+    Child,
+    Failed,
+}
+
+/// `fork()` with JavaScriptCore and the network told before and after.
+fn fork_process(snapshot: &Snapshot) -> Forked {
+    let engine = &snapshot.browser.host().thread.browser.engine;
+    lp_net::client::suspend_for_fork();
+    if let Err(e) = engine.prepare_for_fork() {
+        eprintln!("lightningpanda: template: {e}");
+        let _ = lp_net::client::resume_after_fork();
+        return Forked::Failed;
+    }
+    // JSC's VMTraps queue thread is the one expected survivor: it holds no
+    // lock while idle, and JSDidFork starts a new one in the child.
+    let others: Vec<String> = other_threads().into_iter().filter(|n| n != "JSC VMTraps Signal Sender").collect();
+    if !others.is_empty() {
+        eprintln!("lightningpanda: template: threads alive at fork: {others:?}");
+    }
+    // SAFETY: only this thread is alive (checked above, best effort), and
+    // each process continues on it after JSC and the network are told.
+    let pid = unsafe { libc::fork() };
+    engine.did_fork(pid == 0);
+    if let Err(e) = lp_net::client::resume_after_fork() {
+        eprintln!("lightningpanda: network restart failed: {e}");
+        if pid == 0 {
+            std::process::exit(1);
+        }
+    }
+    match pid {
+        0 => Forked::Child,
+        p if p < 0 => {
+            eprintln!("lightningpanda: template: fork failed: {}", std::io::Error::last_os_error());
+            Forked::Failed
+        }
+        _ => Forked::Parent,
     }
 }
 
@@ -285,14 +548,16 @@ impl Snapshot {
         }
     }
 
-    /// Runs profile `id`'s setup steps on its page, then hands the page back
-    /// to the pool so that forks get it in that state.
-    fn set_up(&mut self, id: usize) -> Result<(), String> {
+    /// Runs profile `id`'s setup steps on the waiting page of profile
+    /// `page_of` (itself, or the base of a derived profile), then hands the
+    /// page back to the pool, as profile `id`'s, so that forks get it in that
+    /// state.
+    fn set_up(&mut self, id: usize, page_of: usize) -> Result<(), String> {
         let steps = self.browser.prepared_profiles()[id].setup.clone();
         let page = self.command(
             None,
             "Lightningpanda.acquirePreparedPage",
-            serde_json::json!({ "profileId": id, "attach": true }),
+            serde_json::json!({ "profileId": page_of, "attach": true }),
         )?;
         let (Some(target), Some(session)) = (page["targetId"].as_str(), page["sessionId"].as_str()) else {
             return Err("acquirePreparedPage: no target".into());
@@ -300,6 +565,9 @@ impl Snapshot {
         let (target, session) = (target.to_owned(), session.to_owned());
         let run = self.command(Some(&session), "LP.run", serde_json::json!({ "steps": steps }));
         self.browser.return_to_prepared(&target).map_err(|e| e.message)?;
+        if page_of != id {
+            self.browser.relabel_prepared(page_of, id);
+        }
         self.drain();
         run.map(|_| ())
     }
@@ -333,45 +601,6 @@ fn one_page(p: &PreparedProfile) -> PreparedProfile {
     PreparedProfile { pool: 1, refill_after_close: false, ..p.clone() }
 }
 
-/// Reads every pending message: registrations are handled now, connections
-/// wait until the pages are ready.
-fn accept_all(
-    listener: &UnixListener,
-    snapshot: &mut Snapshot,
-    waiting: &mut VecDeque<(Vec<u8>, Vec<OwnedFd>, Instant)>,
-) {
-    while let Ok((mut stream, _)) = listener.accept() {
-        let _ = stream.set_nonblocking(false);
-        let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
-        let Ok((message, fds)) = recv(&mut stream) else { continue };
-        match message {
-            Message::Connect { buffered } if fds.len() == 2 => waiting.push_back((buffered, fds, Instant::now())),
-            Message::Connect { .. } => {}
-            Message::Register { profile } => {
-                let reply = match register(snapshot, profile) {
-                    Ok(id) => Registered { profile_id: Some(id), error: None },
-                    Err(e) => Registered { profile_id: None, error: Some(e) },
-                };
-                let _ = send(&mut stream, &reply, &[]);
-            }
-        }
-    }
-}
-
-/// Adds a profile (or finds the same one) and starts booting its page.
-fn register(snapshot: &mut Snapshot, profile: PreparedProfile) -> Result<usize, String> {
-    let profile = one_page(&profile);
-    if let Some(id) = snapshot.browser.prepared_profiles().iter().position(|p| *p == profile) {
-        return Ok(id);
-    }
-    snapshot.profiles.push(ProfileState::new(&profile));
-    let id = snapshot.browser.add_prepared_profile(profile);
-    if !snapshot.browser.prepared_pages().iter().any(|(p, _)| *p == id) {
-        return Err(format!("cannot boot a page at {}", snapshot.browser.prepared_profiles()[id].url));
-    }
-    Ok(id)
-}
-
 /// Every page has loaded, run its setup and gone quiet (or waited long
 /// enough); pages are settled first, so forks start from their live size.
 fn ready_to_fork(snapshot: &mut Snapshot, waiting_since: Option<Instant>) -> bool {
@@ -381,90 +610,32 @@ fn ready_to_fork(snapshot: &mut Snapshot, waiting_since: Option<Instant>) -> boo
         let host = snapshot.browser.host();
         let loaded = host.page_loaded(page);
         let quiet = host.page_work(page).is_none_or(|w| w.quiet(0));
-        let state = &snapshot.profiles[id];
-        let waited = state.started.elapsed();
+        let waited = snapshot.profiles[id].started.elapsed();
         if !(loaded && (quiet || waited_enough) || waited > LOAD_WAIT) {
             ready = false;
             continue;
         }
-        if loaded && !state.set_up {
-            snapshot.profiles[id].set_up = true;
-            if let Err(e) = snapshot.set_up(id) {
-                eprintln!("lightningpanda: template: setup of {}: {e}", snapshot.browser.prepared_profiles()[id].url);
+        // A derived profile waiting for this page, else this profile's own setup.
+        let derived = snapshot.profiles.iter().position(|s| s.derive_from == Some(id) && !s.set_up);
+        let pending = derived.or((!snapshot.profiles[id].set_up).then_some(id));
+        if let (true, Some(target)) = (loaded, pending) {
+            snapshot.profiles[target].set_up = true;
+            snapshot.profiles[target].derive_from = None;
+            if let Err(e) = snapshot.set_up(target, id) {
+                eprintln!("lightningpanda: template: setup of profile {target}: {e}");
             }
             // Whatever the steps started has to go quiet again.
-            snapshot.profiles[id].settled = false;
+            snapshot.profiles[target].settled = false;
+            snapshot.profiles[target].started = Instant::now();
             ready = false;
             continue;
         }
-        if loaded && !state.settled {
+        if loaded && !snapshot.profiles[id].settled {
             snapshot.profiles[id].settled = true;
             snapshot.browser.host().thread.browser.engine.settle();
         }
     }
     ready
-}
-
-/// Forks a process for one connection. Returns in the parent with `None`;
-/// in the child, serves the connection and returns its exit code.
-fn fork_connection(
-    snapshot: &mut Snapshot,
-    config: &ServerConfig,
-    (listener, template): (&UnixListener, &Path),
-    waiting: &mut VecDeque<(Vec<u8>, Vec<OwnedFd>, Instant)>,
-    buffered: Vec<u8>,
-    mut fds: Vec<OwnedFd>,
-) -> Option<i32> {
-    snapshot.drain();
-    let engine = &snapshot.browser.host().thread.browser.engine;
-    lp_net::client::suspend_for_fork();
-    if let Err(e) = engine.prepare_for_fork() {
-        eprintln!("lightningpanda: template: {e}");
-        let _ = lp_net::client::resume_after_fork();
-        return None;
-    }
-    // JSC's VMTraps queue thread is the one expected survivor: it holds no
-    // lock while idle, and JSDidFork starts a new one in the child.
-    let others: Vec<String> = other_threads().into_iter().filter(|n| n != "JSC VMTraps Signal Sender").collect();
-    if !others.is_empty() {
-        eprintln!("lightningpanda: template: threads alive at fork: {others:?}");
-    }
-    // SAFETY: only this thread is alive (checked above, best effort), and
-    // the child continues on it after JSC and the network are told.
-    let pid = unsafe { libc::fork() };
-    if pid != 0 {
-        engine.did_fork(false);
-        if let Err(e) = lp_net::client::resume_after_fork() {
-            eprintln!("lightningpanda: template: network restart failed: {e}");
-        }
-        if pid < 0 {
-            eprintln!("lightningpanda: template: fork failed: {}", std::io::Error::last_os_error());
-        }
-        return None; // the parent's copies of the fds close here
-    }
-
-    // Child: one connection, then exit.
-    engine.did_fork(true);
-    if let Err(e) = lp_net::client::resume_after_fork() {
-        eprintln!("lightningpanda: network restart failed: {e}");
-        return Some(1);
-    }
-    snapshot.browser.host_mut().thread.event_loop.watch_fd(None);
-    // Other connections' sockets and pipes are theirs: holding them would keep them open.
-    waiting.clear();
-    let template = template.to_path_buf();
-    unsafe { libc::close(listener.as_raw_fd()) };
-    let finished = fds.pop().expect("two fds");
-    let socket = std::net::TcpStream::from(fds.pop().expect("two fds"));
-    // The child owns the template's protocol state from here; the template's
-    // copy of `snapshot` is never touched again in this process.
-    let (mut browser, outbox, outbound) = unsafe {
-        (std::ptr::read(&snapshot.browser), std::ptr::read(&snapshot.outbox), std::ptr::read(&snapshot.outbound))
-    };
-    browser.set_fork_child(Box::new(move |p: &PreparedProfile| register_with(&template, p)));
-    crate::serve::serve_browser(browser, outbox, outbound, socket, &buffered, config.clone());
-    drop(finished);
-    Some(0)
 }
 
 /// Sends a registration to the template; its profile id there.
