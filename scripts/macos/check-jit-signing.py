@@ -29,10 +29,11 @@ with tempfile.TemporaryDirectory(prefix="lp-jit-signing-") as directory:
         '[package]\nname="lp-jit-signing-check"\nversion="0.0.0"\nedition="2024"\n\n'
         + profile.group(0)
     )
-    linker = str(root / "scripts/macos/link-and-sign.sh")
+    # Absolute here: the temporary crate is not in the repository's workspace.
+    flag = "link-arg=-B" + str(root / "scripts/macos/linker")
     # TOML basic strings and JSON strings share the escaping needed for this path.
     (work / ".cargo/config.toml").write_text("\n".join(
-        f'[target.{target}]\nlinker={json.dumps(linker)}\n'
+        f'[target.{target}]\nrustflags=["-C", {json.dumps(flag)}]\n'
         for target in ["aarch64-apple-darwin", "x86_64-apple-darwin"]
     ))
     env = dict(os.environ)

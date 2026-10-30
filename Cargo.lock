@@ -577,12 +577,25 @@ dependencies = [
  "http",
  "libc",
  "lp-browser",
+ "lp-cdp-protocol",
  "lp-dom",
  "lp-js",
  "lp-net",
  "lp-runtime",
  "lp-webapi",
  "regress",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "lp-cdp-protocol"
+version = "0.0.10"
+dependencies = [
+ "bytes",
+ "http",
+ "lp-net",
  "ryu-js",
  "serde",
  "serde_json",

@@ -63,7 +63,7 @@ fn response_json(head: &ResponseHead, encoded_len: u64) -> Value {
 
 /// Chromium identifies a document navigation by requestId == loaderId.
 /// Native network ids remain context-local and are used internally.
-pub(crate) fn protocol_request_id(id: RequestId, destination: lp_net::Destination, loader_id: Option<&str>) -> String {
+pub fn protocol_request_id(id: RequestId, destination: lp_net::Destination, loader_id: Option<&str>) -> String {
     if matches!(destination, lp_net::Destination::Document | lp_net::Destination::Iframe) {
         if let Some(loader) = loader_id.filter(|s| !s.is_empty()) {
             return loader.to_owned();
@@ -520,7 +520,8 @@ impl Drop for BodyStore {
     }
 }
 
-pub(crate) fn base64_encode(input: &[u8]) -> String {
+/// Standard base64 with padding, as CDP carries binary bodies.
+pub fn base64_encode(input: &[u8]) -> String {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
     for chunk in input.chunks(3) {

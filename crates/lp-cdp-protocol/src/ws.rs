@@ -304,7 +304,7 @@ pub struct FrameBytes {
     start: usize,
     /// When the frame was finished, for the outbound queue stage.
     #[cfg(feature = "perf-trace")]
-    pub(crate) queued_at: crate::perf::Stamp,
+    pub queued_at: crate::perf::Stamp,
 }
 
 impl AsRef<[u8]> for FrameBytes {

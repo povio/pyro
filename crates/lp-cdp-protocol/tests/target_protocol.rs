@@ -2,9 +2,9 @@
 //! These check message order and id bookkeeping only, not browser behavior
 //! (see tests/engine_cdp.rs and tests/e2e for the JSC-backed checks).
 
-use lp_cdp::msg::{self, CdpResult, Command};
-use lp_cdp::target::{Browser, ContextKey, Host, PageCommand, PageKey, Sink};
-use lp_cdp::ws::OutFrame;
+use lp_cdp_protocol::msg::{self, CdpResult, Command};
+use lp_cdp_protocol::target::{Browser, ContextKey, Host, PageCommand, PageKey, Sink};
+use lp_cdp_protocol::ws::OutFrame;
 use serde_json::{json, Value};
 
 #[derive(Default)]
@@ -280,7 +280,7 @@ fn session_budget_is_checked_before_creating_targets() {
     let mut b = Browser::new(Recorder::default());
     let target =
         send(&mut b, json!({"id":1,"method":"Target.createTarget","params":{}}))[0]["result"]["targetId"].clone();
-    for i in 0..lp_cdp::target::MAX_SESSIONS {
+    for i in 0..lp_cdp_protocol::target::MAX_SESSIONS {
         let r = send(
             &mut b,
             json!({"id": 10 + i, "method":"Target.attachToTarget","params":{"targetId":target,"flatten":true}}),
@@ -487,7 +487,7 @@ fn auto_attach_capacity_failure_is_atomic_and_has_one_reply() {
 /// and replaced right away.
 #[test]
 fn prepared_pages_are_hidden_until_acquired_and_refilled() {
-    let profile: lp_cdp::target::PreparedProfile =
+    let profile: lp_cdp_protocol::target::PreparedProfile =
         serde_json::from_value(json!({"url": "http://app.test/base", "initScripts": ["globalThis.x = 1"], "viewport": {"width": 1440, "height": 900}}))
             .unwrap();
     let mut b = Browser::with_prepared(Recorder::default(), vec![profile]);
@@ -563,7 +563,7 @@ fn prepared_pages_are_hidden_until_acquired_and_refilled() {
 /// call, without `Target.setAutoAttach`. Closing it leaves no open page.
 #[test]
 fn acquiring_a_prepared_page_can_attach_in_the_same_call() {
-    let profile: lp_cdp::target::PreparedProfile =
+    let profile: lp_cdp_protocol::target::PreparedProfile =
         serde_json::from_value(json!({"url": "http://app.test/base"})).unwrap();
     let mut b = Browser::with_prepared(Recorder::default(), vec![profile]);
     let r = send(&mut b, json!({"id":1,"method":"Lightningpanda.acquirePreparedPage","params":{"attach":true}}));
@@ -583,7 +583,7 @@ fn acquiring_a_prepared_page_can_attach_in_the_same_call() {
 /// closing its target lets the pool refill. Loaded pages are settled once.
 #[test]
 fn prepared_pages_refill_after_close_and_settle_once() {
-    let profile: lp_cdp::target::PreparedProfile =
+    let profile: lp_cdp_protocol::target::PreparedProfile =
         serde_json::from_value(json!({"url": "http://app.test/", "refillAfterClose": true})).unwrap();
     let mut b = Browser::with_prepared(Recorder::loaded(), vec![profile]);
     assert!(b.needs_settle());

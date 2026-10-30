@@ -112,7 +112,7 @@ add `--perf-trace`. The browser then times each stage of every command (`io.ws_r
 `json.serialize`, `outbox.push`, `host.flush`, `io.outbound_queue` (time a frame waits for the socket) and `io.ws_write`), and the report
 lists every stage costing at least 10 ns per operation, with the timer floor measured on that host. Stages
 are inclusive and timing adds a few tens of ns per stage, so compare traced builds only with traced builds.
-Normal builds compile the timers out (`crates/lp-cdp/src/perf.rs`).
+Normal builds compile the timers out (`crates/lp-cdp-protocol/src/perf.rs`).
 
 Reading it for optimization: compare `rtt.Browser.getVersion` (protocol floor) with the other `rtt`/`runtime`
 rows to see the cost of the browser-thread hop and JS work; the navigation milestones show whether time goes
