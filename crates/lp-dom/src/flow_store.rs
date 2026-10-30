@@ -337,9 +337,13 @@ impl<V> Default for NodeMap<V> {
 }
 
 impl<V> NodeMap<V> {
-    fn pos(&self, node: &NodeId) -> Option<usize> {
+    fn slot_pos(&self, node: &NodeId) -> Option<usize> {
         let p = *self.index.get(node.index() as usize)?;
-        (p != 0 && self.list[p as usize - 1].0 == *node).then(|| p as usize - 1)
+        (p != 0).then(|| p as usize - 1)
+    }
+
+    fn pos(&self, node: &NodeId) -> Option<usize> {
+        self.slot_pos(node).filter(|&p| self.list[p].0 == *node)
     }
 
     pub(super) fn get(&self, node: &NodeId) -> Option<&V> {
@@ -354,8 +358,11 @@ impl<V> NodeMap<V> {
     where
         V: Default,
     {
-        let p = match self.pos(&node) {
-            Some(p) => p,
+        let p = match self.slot_pos(&node) {
+            Some(p) => {
+                if self.list[p].0 != node { self.list[p] = (node, V::default()); }
+                p
+            },
             None => {
                 self.list.push((node, V::default()));
                 set_index(&mut self.index, node, self.list.len() as u32);
@@ -367,8 +374,9 @@ impl<V> NodeMap<V> {
 
     /// Returns the value replaced.
     pub(super) fn insert(&mut self, node: NodeId, value: V) -> Option<V> {
-        if let Some(p) = self.pos(&node) {
-            return Some(std::mem::replace(&mut self.list[p].1, value));
+        if let Some(p) = self.slot_pos(&node) {
+            let (previous, value) = std::mem::replace(&mut self.list[p], (node, value));
+            return (previous == node).then_some(value);
         }
         self.list.push((node, value));
         set_index(&mut self.index, node, self.list.len() as u32);
@@ -376,13 +384,21 @@ impl<V> NodeMap<V> {
     }
 
     pub(super) fn remove(&mut self, node: &NodeId) -> Option<V> {
-        let p = self.pos(node)?;
-        self.index[node.index() as usize] = 0;
-        let (_, v) = self.list.swap_remove(p);
-        if let Some((moved, _)) = self.list.get(p) {
-            self.index[moved.index() as usize] = p as u32 + 1;
+        self.pos(node).map(|p| self.remove_at(p))
+    }
+
+    fn remove_at(&mut self, p: usize) -> V {
+        let last = self.list.len() as u32;
+        let (node, value) = self.list.swap_remove(p);
+        if self.index[node.index() as usize] == p as u32 + 1 {
+            self.index[node.index() as usize] = 0;
         }
-        Some(v)
+        if let Some((moved, _)) = self.list.get(p) {
+            if self.index[moved.index() as usize] == last {
+                self.index[moved.index() as usize] = p as u32 + 1;
+            }
+        }
+        value
     }
 
     pub(super) fn retain(&mut self, mut keep: impl FnMut(&NodeId, &mut V) -> bool) {
@@ -392,8 +408,9 @@ impl<V> NodeMap<V> {
             if keep(node, v) {
                 p += 1;
             } else {
-                let node = *node;
-                self.remove(&node);
+                // Remove by the dense position we already have. A stale
+                // generation cannot be looked up by key and must not stall pruning.
+                self.remove_at(p);
             }
         }
     }
@@ -407,5 +424,51 @@ impl<V> NodeMap<V> {
 
     pub(super) fn len(&self) -> usize {
         self.list.len()
+    }
+}
+
+
+#[cfg(test)]
+mod node_map_tests {
+    use super::*;
+
+    fn id(idx: u32, gen: u32) -> NodeId { NodeId { idx, gen } }
+
+    #[test]
+    fn reused_slot_insert_replaces_stale_generation() {
+        let mut map = NodeMap::default();
+        assert_eq!(map.insert(id(3, 1), 10), None);
+        assert_eq!(map.insert(id(3, 2), 20), None);
+        assert_eq!(map.len(), 1);
+        assert_eq!(map.get(&id(3, 1)), None);
+        assert_eq!(map.insert(id(3, 2), 30), Some(20));
+        assert_eq!(map.get(&id(3, 2)), Some(&30));
+        map.retain(|_, _| false);
+        assert_eq!(map.len(), 0);
+    }
+
+    #[test]
+    fn reused_slot_default_resets_value_and_preserves_swap_indices() {
+        let mut map = NodeMap::<u32>::default();
+        *map.get_or_default(id(7, 1)) = 99;
+        assert_eq!(*map.get_or_default(id(7, 2)), 0);
+        assert_eq!(map.len(), 1);
+        map.insert(id(2, 1), 22);
+        map.retain(|node, _| node.index() == 2);
+        assert_eq!(map.get(&id(7, 2)), None);
+        assert_eq!(map.get(&id(2, 1)), Some(&22));
+        assert_eq!(map.remove(&id(2, 1)), Some(22));
+        assert_eq!(map.len(), 0);
+    }
+
+    #[test]
+    fn pruning_a_legacy_orphan_advances_and_keeps_the_live_index() {
+        let old = id(0, 1);
+        let current = id(0, 2);
+        let mut map = NodeMap { index: vec![1], list: vec![(current, 20), (old, 10)] };
+        map.retain(|node, _| *node == current);
+        assert_eq!(map.len(), 1);
+        assert_eq!(map.get(&current), Some(&20));
+        assert_eq!(map.get(&old), None);
     }
 }

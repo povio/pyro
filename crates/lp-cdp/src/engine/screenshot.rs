@@ -345,6 +345,19 @@ impl EngineHost {
         element: Option<NodeId>,
     ) -> CdpResult<RenderSettlement> {
         let started = Instant::now();
+        if spec.capture_only {
+            let page = self.thread.browser.page(pid).ok_or_else(|| CdpError::server("page is gone"))?;
+            let frame = &page.main_frame;
+            let dom = frame.page_dom.as_ref().ok_or_else(|| CdpError::server("page has no document"))?;
+            let s = dom.render_snapshot(&frame.base_url, element.map(|id| (id, lp_render::CLIP_ATTRIBUTE)));
+            let value = json!({
+                "captured": true, "snapshotMs": ms(started.elapsed()),
+                "snapshot": { "html": s.html, "baseUrl": frame.base_url, "sheets": s.sheets,
+                    "width": s.width, "height": s.height, "deviceScaleFactor": s.device_scale_factor,
+                    "dark": s.dark, "scrollX": s.scroll_x, "scrollY": s.scroll_y }
+            });
+            return Ok(std::rc::Rc::new(std::cell::RefCell::new(Some(Ok(value)))));
+        }
         let area = match (spec.clip, spec.full_page, element) {
             (Some((x, y, width, height)), _, _) => Area::Clip { x, y, width, height, scale: 1.0 },
             (None, true, _) => Area::FullPage,

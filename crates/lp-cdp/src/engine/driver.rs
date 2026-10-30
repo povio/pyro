@@ -476,6 +476,7 @@ pub(super) struct ShotStep {
     pub(super) locator: Option<Locator>,
     /// Ignore the baseline: render and return the image.
     pub(super) update: bool,
+    pub(super) capture_only: bool,
     pub(super) key: Option<String>,
 }
 
@@ -2724,6 +2725,8 @@ struct MatchScreenshotParams {
     locator: Option<Locator>,
     #[serde(default)]
     update: bool,
+    #[serde(default)]
+    capture_only: bool,
     #[serde(rename = "as")]
     key: Option<String>,
     timeout: Option<u64>,
@@ -2779,6 +2782,7 @@ impl MatchScreenshotParams {
             full_page: self.full_page,
             locator: self.locator,
             update: self.update,
+            capture_only: self.capture_only,
             key: self.key,
         };
         Ok((Step::MatchScreenshot(Box::new(shot)), self.timeout))

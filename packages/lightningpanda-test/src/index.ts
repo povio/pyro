@@ -143,6 +143,7 @@ export class Lightningpanda {
     const port = await freePort();
     const child = spawn(opts.bin ?? defaultBin(), ['serve', '--host', '127.0.0.1', '--port', String(port), ...(opts.args ?? [])], {
       stdio: ['ignore', 'ignore', 'inherit'],
+      detached: process.platform !== 'win32',
     });
     const deadline = Date.now() + 15_000;
     for (;;) {
@@ -153,7 +154,7 @@ export class Lightningpanda {
         return await new Lightningpanda(url, await openConns(url, opts), child).detect();
       } catch (e) {
         if (child.exitCode !== null || Date.now() > deadline) {
-          child.kill();
+          stopLaunchedBrowser(child);
           throw new Error(`lightningpanda serve did not start: ${e}`);
         }
         await new Promise((r) => setTimeout(r, 5));
@@ -297,8 +298,19 @@ export class Lightningpanda {
 
   close(): void {
     for (const c of this.conns) c.cdp.close();
-    this.child?.kill();
+    if (this.child) {
+      const child = this.child;
+      this.child = undefined;
+      stopLaunchedBrowser(child);
+    }
   }
+}
+
+/** The launched server and its forked pages are one owned process group. */
+function stopLaunchedBrowser(child: ChildProcess): void {
+  if (process.platform === 'win32' || !child.pid) { child.kill(); return; }
+  try { process.kill(-child.pid, 'SIGTERM'); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error; }
 }
 
 async function openConns(wsUrl: string, opts: ConnectOptions): Promise<Conn[]> {

@@ -439,15 +439,42 @@ impl Renderer {
                 let id = clip.ok_or(RenderError::NoElement)?;
                 let node = doc.get_node(id).ok_or(RenderError::NoElement)?;
                 let size = node.final_layout().size;
-                let at = node.absolute_position(0.0, 0.0);
                 if size.width <= 0.0 || size.height <= 0.0 {
                     return Err(RenderError::NoElement);
                 }
+                // Use the same translated/transformed positioning chain as
+                // painting. Layout-only coordinates crop the wrong region for
+                // translated bottom sheets and scaled component ancestors.
+                let mut chain = Vec::new();
+                let mut current = Some(id);
+                while let Some(current_id) = current {
+                    let current_node = doc.get_node(current_id).ok_or(RenderError::NoElement)?;
+                    chain.push(current_id);
+                    current = current_node.containing_block();
+                }
+                let mut transform = Affine::IDENTITY;
+                for current_id in chain.into_iter().rev() {
+                    let current_node = doc.get_node(current_id).ok_or(RenderError::NoElement)?;
+                    let location = current_node.final_layout().location;
+                    transform = transform
+                        * Affine::translate((location.x as f64 * dpr, location.y as f64 * dpr))
+                        * current_node.transform().as_deref().copied().unwrap_or_default();
+                    if current_id != id {
+                        let scroll = current_node.scroll_offset();
+                        transform *= Affine::translate((-scroll.x * dpr, -scroll.y * dpr));
+                    }
+                }
+                let bounds = transform.transform_rect_bbox(Rect::new(
+                    0.0,
+                    0.0,
+                    size.width as f64 * dpr,
+                    size.height as f64 * dpr,
+                ));
                 (
-                    (at.x as f64, at.y as f64),
+                    (bounds.x0 / dpr, bounds.y0 / dpr),
                     dpr,
-                    physical(size.width as f64).max(1),
-                    physical(size.height as f64).max(1),
+                    (bounds.width().round() as u32).max(1),
+                    (bounds.height().round() as u32).max(1),
                 )
             }
         };

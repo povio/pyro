@@ -153,3 +153,4 @@ opt-level = 0
 # see vendor/blitz-dom/README.lightningpanda.md.
 [patch.crates-io]
 blitz-dom = { path = "vendor/blitz-dom" }
+blitz-paint = { path = "vendor/blitz-paint" }
