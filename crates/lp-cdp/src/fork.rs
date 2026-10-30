@@ -168,9 +168,14 @@ pub fn connect(
     let (read_end, write_end) = pipe()?;
     // A derived snapshot's template takes its connections directly; anything
     // else goes to the root's (which forwards what is not up yet).
+    // The root also takes one whose derived template is not listening
+    // (yet): its socket file can exist a moment before it does, and a
+    // connect then is refused.
     let derived = profile.map(|id| conn_socket(&PathBuf::from(format!("{}.{id}", template.display()))));
-    let target = derived.filter(|p| p.exists()).unwrap_or_else(|| conn_socket(template));
-    let mut stream = UnixStream::connect(target)?;
+    let mut stream = match derived.filter(|p| p.exists()).map(UnixStream::connect) {
+        Some(Ok(stream)) => stream,
+        _ => UnixStream::connect(conn_socket(template))?,
+    };
     send(&mut stream, &Message::Connect { buffered, profile }, &[socket.as_raw_fd(), write_end.as_raw_fd()])?;
     drop(write_end);
     let (tx, rx) = tokio::sync::oneshot::channel();
@@ -590,12 +595,21 @@ impl TemplateProcess {
             if fds.len() != 2 {
                 continue;
             }
-            if profile.is_some_and(|id| self.holders.get(id).is_some_and(|h| h.is_some())) {
-                // A derived snapshot that was not up when the server looked: the
-                // template queues it until that snapshot's template listens.
+            // This spare cannot serve the connection when it is out of date (the
+            // template dropped it for a newer profile while it was accepting;
+            // its pages miss that profile) or when the profile is a derived
+            // snapshot that was not up when the server looked. The template
+            // gets it instead, and queues it until that snapshot's template
+            // listens if need be.
+            let stale = readable(to_template.as_raw_fd());
+            let unknown = profile.is_some_and(|id| id >= self.snapshot.browser.prepared_profiles().len());
+            if stale || unknown || profile.is_some_and(|id| self.holders.get(id).is_some_and(|h| h.is_some())) {
                 let raw: Vec<RawFd> = fds.iter().map(|f| f.as_raw_fd()).collect();
                 if let Ok(mut s) = UnixStream::connect(&self.socket) {
                     let _ = send(&mut s, &Message::Connect { buffered, profile }, &raw);
+                }
+                if stale {
+                    return 0;
                 }
                 continue;
             }
