@@ -489,6 +489,21 @@ impl<S: 'static> Scheduler<S> {
         self.inner.heap.borrow_mut().push(Reverse((at, seq, id)));
     }
 
+    /// Deadline of the earliest live timer, due or not.
+    pub fn next_timer_deadline(&self) -> Option<Instant> {
+        self.inner.clean_heap_top();
+        self.inner.heap.borrow().peek().map(|r| r.0 .0)
+    }
+
+    /// Makes every pending timer due `by` sooner, as if that much time had
+    /// passed; their order is kept. For virtual time (lp-browser's `clock`).
+    pub fn advance_timers(&self, by: Duration) {
+        let mut heap = self.inner.heap.borrow_mut();
+        let shifted: Vec<_> =
+            heap.drain().map(|Reverse((at, seq, id))| Reverse((at.checked_sub(by).unwrap_or(at), seq, id))).collect();
+        heap.extend(shifted);
+    }
+
     /// Asks the loop to return from `run*` after the current task.
     pub fn stop(&self) {
         self.inner.stop.set(true);

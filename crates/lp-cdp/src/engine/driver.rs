@@ -841,6 +841,22 @@ impl Waiters {
         self.list.iter().map(Waiter::deadline).min()
     }
 
+    /// Virtual time: some run is waiting for its page to settle (or for a
+    /// promise an `eval` returned), and every waiting run's page has nothing
+    /// left but timers (no task, request or navigation), so only the clock
+    /// holds them up. Not while a run waits for a check to hold: a check
+    /// such as "the toast is shown" holds only for as long as real time
+    /// keeps it, and jumping would skip past it.
+    pub(super) fn only_timers_left(&self, browser: &Browser) -> bool {
+        !self.list.is_empty()
+            && self.list.iter().all(|w| {
+                matches!(w.phase, Phase::Settle { .. } | Phase::Await(_))
+                    && browser
+                        .page_work(w.job.pid)
+                        .is_some_and(|work| work.tasks == 0 && work.requests == 0 && work.navigations == 0)
+            })
+    }
+
     pub(super) fn clear(&mut self) {
         self.list.clear();
     }

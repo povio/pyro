@@ -302,7 +302,7 @@ fn schedule<'s>(
             scope.report_exception(&e);
         }
     });
-    let due = (!repeat).then(|| Instant::now() + Duration::from_millis(delay_ms));
+    let due = (!repeat).then(|| crate::clock::now() + Duration::from_millis(delay_ms));
     w.timers.borrow_mut().insert(handle, (id, due));
     Ok(s.number(handle as f64))
 }

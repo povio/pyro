@@ -58,6 +58,10 @@ use crate::runtime_protocol::{HandleBudget, HandleTable};
 use crate::target::{ContextKey, Host, PageCommand, PageKey, Sink};
 use crate::ws::OutFrame;
 
+/// The longest jump virtual time makes at once. A run waiting on a page whose
+/// next timer is further off sleeps as usual (or times out).
+const VIRTUAL_JUMP_MAX: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// Engine notifications waiting to be translated into CDP events.
 pub(crate) enum Queued {
     Page(PageId, PageEvent),
@@ -522,9 +526,32 @@ impl EngineHost {
         // waiting (pipelined or concurrent requests) it would return at once
         // every time, so no timer ever ran between commands.
         thread.event_loop.run_one(&mut thread.browser);
-        thread.event_loop.run_until(&mut thread.browser, deadline, false, |b| {
+        let mut ready = |b: &mut lp_browser::Browser| {
             wake() || !collector.is_empty() || network_wake.ready() || renders.ready() || waiters.ready(b)
-        })
+        };
+        // Virtual time: instead of sleeping until a timer is due while a run
+        // waits on a page that has nothing else to do, jump the page clock to
+        // it (lp_browser::clock).
+        if lp_browser::clock::virtual_time() {
+            loop {
+                if ready(&mut thread.browser) {
+                    return lp_runtime::RunOutcome::Done;
+                }
+                if thread.event_loop.run_one(&mut thread.browser) {
+                    continue;
+                }
+                if !waiters.only_timers_left(&thread.browser) {
+                    break;
+                }
+                let Some(at) = thread.browser.scheduler().next_timer_deadline() else { break };
+                let by = at.saturating_duration_since(std::time::Instant::now());
+                if by.is_zero() || by > VIRTUAL_JUMP_MAX {
+                    break;
+                }
+                thread.browser.advance_time(by);
+            }
+        }
+        thread.event_loop.run_until(&mut thread.browser, deadline, false, ready)
     }
 
     /// Disposes every page and realm (connection teardown).

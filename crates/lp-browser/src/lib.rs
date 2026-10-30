@@ -7,6 +7,7 @@
 //! `lp-webapi` supplies bindings in the main and isolated document worlds.
 
 mod bindings;
+pub mod clock;
 mod focus;
 mod frames;
 mod images;
@@ -23,7 +24,7 @@ use lp_js::{Engine, EngineHooks, JsError, Realm, RealmId, RealmOptions};
 use lp_runtime::{EventLoop, LoopHandle, LoopState, RunOutcome, Scheduler};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 pub use frames::FrameInfo;
 use frames::{FrameHost, FrameKey};
@@ -569,6 +570,13 @@ impl BrowserThread {
 impl Browser {
     pub fn scheduler(&self) -> Scheduler<Browser> {
         self.sched.clone()
+    }
+
+    /// Virtual time ([`clock`]): moves the page clock and every pending
+    /// timer `by` ahead.
+    pub fn advance_time(&self, by: Duration) {
+        self.sched.advance_timers(by);
+        clock::skip(by);
     }
 
     /// Cross-thread handle to this browser's loop.

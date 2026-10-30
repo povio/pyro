@@ -266,6 +266,9 @@ impl FrameHost {
             key,
         ))?;
         lp_webapi::install(&realm.scope()?, dom)?;
+        if crate::clock::virtual_time() {
+            realm.scope()?.eval(crate::clock::DATE_SCRIPT, Some("lightningpanda://internal/clock.js"), 1)?;
+        }
         window::init_frame_indices(&realm)?;
         loader::install_module_fetcher(self.sched.clone(), key, &realm);
         let entry = FrameRealm { world: world.clone(), realm: realm.clone() };
