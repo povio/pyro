@@ -107,19 +107,31 @@ impl Bridge {
 
     /// Resolves the document until no sub-resource is outstanding (styles
     /// can request images and fonts, sheets can request more), or until
-    /// `deadline`. Returns the time spent waiting for fetches.
-    pub(crate) fn settle(&self, doc: &mut HtmlDocument, deadline: Instant) -> Duration {
+    /// `deadline`. Returns the time spent waiting for fetches and the number
+    /// of style and layout passes.
+    ///
+    /// The first layout waits for what the document has asked for so far
+    /// (sheets, `@font-face` fonts, images), at most `first_layout_wait`
+    /// past the sheets, so a page with web fonts is laid out once, with its
+    /// fonts, instead of once with fallback fonts and again when they
+    /// arrive. Past that wait it lays out with what arrived and goes on
+    /// waiting for the rest until `deadline`.
+    pub(crate) fn settle(
+        &self,
+        doc: &mut HtmlDocument,
+        deadline: Instant,
+        first_layout_wait: Duration,
+    ) -> (Duration, u32) {
         let mut waited = Duration::ZERO;
+        let mut passes = 0;
+        let mut first_layout = Some(Instant::now() + first_layout_wait);
         loop {
-            doc.resolve(0.0);
-            if self.outstanding.load(Ordering::Acquire) == 0 {
-                return waited;
-            }
+            let wait_until = first_layout.map_or(deadline, |t| t.min(deadline));
             while self.outstanding.load(Ordering::Acquire) > 0 {
                 let t = Instant::now();
                 let next = match self.rx.try_recv() {
                     Ok(d) => Ok(d),
-                    Err(_) => self.rx.recv_timeout(deadline.saturating_duration_since(t)),
+                    Err(_) => self.rx.recv_timeout(wait_until.saturating_duration_since(t)),
                 };
                 waited += t.elapsed();
                 match next {
@@ -127,15 +139,29 @@ impl Bridge {
                         handler.bytes(url, bytes);
                         self.outstanding.fetch_sub(1, Ordering::AcqRel);
                     }
+                    Err(RecvTimeoutError::Timeout) if first_layout.is_some() && Instant::now() < deadline => {
+                        // Lay out with what arrived; keep waiting afterwards.
+                        break;
+                    }
                     Err(RecvTimeoutError::Timeout | RecvTimeoutError::Disconnected) => {
                         // Render with what arrived; pending sheets would block
                         // painting, so they are dropped.
                         doc.handle_messages();
-                        return waited;
+                        return (waited, passes);
                     }
                 }
             }
             doc.handle_messages();
+            // Taking a sheet can ask for more (fonts, `@import`).
+            if first_layout.is_some_and(|t| Instant::now() < t) && self.outstanding.load(Ordering::Acquire) > 0 {
+                continue;
+            }
+            first_layout = None;
+            doc.resolve(0.0);
+            passes += 1;
+            if self.outstanding.load(Ordering::Acquire) == 0 {
+                return (waited, passes);
+            }
         }
     }
 }

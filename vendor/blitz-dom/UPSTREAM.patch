@@ -1,0 +1,108 @@
+--- a/packages/blitz-dom/src/node/attributes.rs
++++ b/packages/blitz-dom/src/node/attributes.rs
+@@ -1,6 +1,8 @@
+ use std::ops::{Deref, DerefMut};
++use std::sync::OnceLock;
+ 
+-use markup5ever::QualName;
++use markup5ever::{QualName, local_name};
++use style::Atom;
+ use thin_vec::ThinVec;
+ 
+ /// A tag attribute, e.g. `class="test"` in `<div class="test" ...>`.
+@@ -15,20 +17,36 @@
+ #[derive(Clone, Debug)]
+ pub struct Attributes {
+     inner: ThinVec<Attribute>,
++    /// The `class` attribute's tokens, interned on first use and dropped on
++    /// every mutation, so selector matching does not re-intern them per check.
++    classes: OnceLock<Box<[Atom]>>,
+ }
+ 
+ impl Attributes {
+     pub fn new(inner: Vec<Attribute>) -> Self {
+         Self {
+             inner: inner.into_iter().collect(),
++            classes: OnceLock::new(),
+         }
+     }
+ 
++    /// The tokens of the `class` attribute, as atoms.
++    pub fn class_atoms(&self) -> &[Atom] {
++        self.classes.get_or_init(|| {
++            self.inner
++                .iter()
++                .find(|a| a.name.local == local_name!("class"))
++                .map(|a| a.value.split_ascii_whitespace().map(Atom::from).collect())
++                .unwrap_or_default()
++        })
++    }
++
+     pub fn get(&mut self, name: &QualName) -> Option<&Attribute> {
+         self.inner.iter().find(|attr| attr.name == *name)
+     }
+ 
+     pub fn set(&mut self, name: QualName, value: &str) {
++        self.classes.take();
+         let existing_attr = self.inner.iter_mut().find(|a| a.name == name);
+         if let Some(existing_attr) = existing_attr {
+             existing_attr.value.clear();
+@@ -42,6 +60,7 @@
+     }
+ 
+     pub fn remove(&mut self, name: &QualName) -> Option<Attribute> {
++        self.classes.take();
+         let idx = self.inner.iter().position(|attr| attr.name == *name);
+         idx.map(|idx| self.inner.remove(idx))
+     }
+@@ -55,6 +74,7 @@
+ }
+ impl DerefMut for Attributes {
+     fn deref_mut(&mut self) -> &mut Self::Target {
++        self.classes.take();
+         &mut self.inner
+     }
+ }
+--- a/packages/blitz-dom/src/stylo.rs
++++ b/packages/blitz-dom/src/stylo.rs
+@@ -569,18 +569,12 @@
+         search_name: &<Self::Impl as selectors::SelectorImpl>::Identifier,
+         case_sensitivity: selectors::attr::CaseSensitivity,
+     ) -> bool {
+-        let class_attr = self.data.attr(local_name!("class"));
+-        if let Some(class_attr) = class_attr {
+-            // split the class attribute
+-            for pheme in class_attr.split_ascii_whitespace() {
+-                let atom = Atom::from(pheme);
+-                if case_sensitivity.eq_atom(&atom, search_name) {
+-                    return true;
+-                }
+-            }
+-        }
+-
+-        false
++        self.element_data().is_some_and(|el| {
++            el.attrs
++                .class_atoms()
++                .iter()
++                .any(|atom| case_sensitivity.eq_atom(atom, search_name))
++        })
+     }
+ 
+     fn imported_part(
+@@ -687,12 +681,9 @@
+     where
+         F: FnMut(&style::values::AtomIdent),
+     {
+-        let class_attr = self.data.attr(local_name!("class"));
+-        if let Some(class_attr) = class_attr {
+-            // split the class attribute
+-            for pheme in class_attr.split_ascii_whitespace() {
+-                let atom = Atom::from(pheme); // interns the string
+-                callback(AtomIdent::cast(&atom));
++        if let Some(el) = self.element_data() {
++            for atom in el.attrs.class_atoms() {
++                callback(AtomIdent::cast(atom));
+             }
+         }
+     }

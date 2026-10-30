@@ -22,7 +22,14 @@ and the measurements that led here are on the `proto/blitz-screenshot` branch (`
    out. Sub-resources Blitz asks for (images, `@font-face` fonts, `@import`) are fetched back on the browser thread
    through the page's own loader (`Browser::fetch_subresource`): cookies, `LP.run` mocks, Fetch interception and
    the HTTP cache apply, and CDP sees the requests. The bytes are handed to Blitz on the render thread and cached
-   for that document (loader id). The wait is capped at 10 s.
+   for that document (loader id). The wait is capped at 10 s. The first layout waits for what the document asked
+   for before it (sheets, `@font-face` fonts, images), up to 3 s past the sheets, so a page with web fonts is laid out
+   once, with them.
+
+   System fonts are scanned once per process and shared by every connection's renderer. `lightningpanda serve`
+   loads them, with the rest of the process-wide render state (usvg's font database, Stylo's global data, font
+   fallback), on a background thread at startup, so the first screenshot does not pay for it. Not in `--fork` mode,
+   where connections are served by forks of the template process.
 3. **Display list** (`anyrender` recording) and its xxh3 **scene hash**. Glyph fonts are hashed by content, so the
    hash is stable across processes.
 4. **Raster** (vello_cpu) and readback to RGBA. The CPU backend is bit-exact across runs. The GPU backend (vello on
@@ -87,7 +94,8 @@ of pixels differ exactly and 4-5% by more than 32 per channel). Known Blitz gaps
 ## Cost
 
 The `render` feature adds about 200 crates, about a minute to a release build and 15 MB to the binary (14.9 to
-30.1 MB, M1 Max, sccache warm). Builds without the feature are unchanged. Without it, `captureScreenshot` and
+30.1 MB, M1 Max, sccache warm). lp-render uses blitz-dom with one patch (`vendor/blitz-dom`: class names interned
+once per element instead of on every selector check; see its README). Builds without the feature are unchanged. Without it, `captureScreenshot` and
 `matchScreenshot` fail with an explicit error.
 
 The end-to-end benchmark (`bun bench/screenshot/match-screenshot.ts`) runs through the client, CDP and `LP.run` on

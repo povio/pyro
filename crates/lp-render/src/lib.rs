@@ -21,7 +21,7 @@ mod net;
 pub mod worker;
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 use anyrender::recording::Scene;
@@ -115,6 +115,9 @@ pub struct Timings {
     pub decode: Duration,
     /// Pixel compare.
     pub compare: Duration,
+    /// Style and layout passes while sub-resources arrived (1 when
+    /// everything the page asked for came before the first layout).
+    pub layout_passes: u32,
     /// PNG encoding of the returned images.
     pub encode: Duration,
 }
@@ -161,6 +164,54 @@ impl std::fmt::Display for RenderError {
 
 impl std::error::Error for RenderError {}
 
+/// The process's fonts: the system font scan (fontique, tens of ms) runs
+/// once, and every [`Renderer`] works on a clone. Clones share the scanned
+/// system fonts and the loaded font data; fonts a renderer registers stay its
+/// own.
+static FONTS: LazyLock<Mutex<FontContext>> = LazyLock::new(|| {
+    let mut font_ctx = FontContext {
+        source_cache: SourceCache::new_shared(),
+        collection: Collection::new(CollectionOptions { shared: false, system_fonts: true }),
+    };
+    font_ctx.collection.register_fonts(Blob::new(Arc::new(blitz_dom::BULLET_FONT) as _), None);
+    Mutex::new(font_ctx)
+});
+
+fn process_fonts() -> FontContext {
+    FONTS.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+/// Warms the process-wide state a first render would otherwise pay for, on a
+/// background thread: the system font scan, the system font database usvg
+/// loads for the first inline SVG, Stylo's global data and the platform's
+/// font fallback. Call once at startup, before any `fork`.
+pub fn prewarm() -> std::io::Result<std::thread::JoinHandle<()>> {
+    std::thread::Builder::new().name("lp-render-warm".into()).spawn(|| {
+        struct NoFetch;
+        impl Fetcher for NoFetch {
+            fn fetch(&self, _url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+                done(Err("prewarm".into()));
+            }
+        }
+        let snap = Snapshot {
+            html: PREWARM_HTML.into(),
+            base_url: "about:blank".into(),
+            width: 64,
+            height: 64,
+            device_scale_factor: 1.0,
+            ..Default::default()
+        };
+        let fetcher: Arc<dyn Fetcher> = Arc::new(NoFetch);
+        let _ = Renderer::new().paint(&snap, Area::Viewport, &fetcher);
+    })
+}
+
+/// Text in a few scripts (font fallback), a form control (text editor
+/// layout) and an inline SVG (usvg's font database).
+const PREWARM_HTML: &str = r#"<!doctype html><html><body style="font-family: system-ui">
+<p>Aa 0 €<b>b</b><i>i</i> Ωж 中文 العربية</p><input value="x"><button>b</button>
+<svg width="8" height="8"><text x="0" y="8">s</text></svg></body></html>"#;
+
 /// Fonts and raster backends, reused across renders on one thread.
 pub struct Renderer {
     font_ctx: FontContext,
@@ -171,6 +222,10 @@ pub struct Renderer {
     resources: net::ResourceCache,
     /// Longest wait for sub-resources per render.
     pub fetch_timeout: Duration,
+    /// Longest wait, before the first layout, for the fonts and images the
+    /// document asked for (a browser's font block period); sheets block it
+    /// until `fetch_timeout`.
+    pub first_layout_wait: Duration,
 }
 
 impl Default for Renderer {
@@ -181,19 +236,15 @@ impl Default for Renderer {
 
 impl Renderer {
     pub fn new() -> Self {
-        let mut font_ctx = FontContext {
-            source_cache: SourceCache::new_shared(),
-            collection: Collection::new(CollectionOptions { shared: false, system_fonts: true }),
-        };
-        font_ctx.collection.register_fonts(Blob::new(Arc::new(blitz_dom::BULLET_FONT) as _), None);
         Self {
-            font_ctx,
+            font_ctx: process_fonts(),
             font_hashes: HashMap::new(),
             cpu: None,
             #[cfg(feature = "gpu")]
             gpu: None,
             resources: net::ResourceCache::default(),
             fetch_timeout: Duration::from_secs(10),
+            first_layout_wait: Duration::from_secs(3),
         }
     }
 
@@ -228,7 +279,8 @@ impl Renderer {
                 ..Default::default()
             },
         );
-        let fetch = bridge.settle(&mut doc, started + self.fetch_timeout);
+        let (fetch, passes) = bridge.settle(&mut doc, started + self.fetch_timeout, self.first_layout_wait);
+        timings.layout_passes = passes;
         doc.resolve(0.0);
         timings.fetch = fetch;
         timings.layout = started.elapsed().saturating_sub(fetch);

@@ -94,3 +94,127 @@ fn sheets_and_images_come_through_the_bridge() {
     assert_eq!(pixel(&img, 25, 25), [255, 0, 0, 255], "image painted ({t:?})");
     assert_eq!(pixel(&img, 200, 200), [0, 255, 0, 255], "linked sheet applied");
 }
+
+const LATO: &[u8] = include_bytes!("../../../bench/screenshot/fixtures/fonts/Lato-Regular.ttf");
+const TEXT: &str = r#"<!doctype html><html><head><style>
+  body { margin: 0; font: 40px/1 Lato, serif; }
+</style></head><body>Hamburgefonstiv</body></html>"#;
+
+fn hash_of(r: &mut Renderer, s: &Snapshot) -> u64 {
+    r.paint(s, Area::Viewport, &fetcher()).unwrap().hash
+}
+
+#[test]
+fn renderers_share_system_fonts_but_not_registered_ones() {
+    // Fonts are scanned once per process; each renderer works on a clone.
+    let mut plain = Renderer::new();
+    let fallback = hash_of(&mut plain, &snap(TEXT));
+    let mut with_lato = Renderer::new();
+    with_lato.register_font(LATO.to_vec());
+    let lato = hash_of(&mut with_lato, &snap(TEXT));
+    assert_ne!(fallback, lato, "the registered font is used");
+    // A font registered on one renderer does not leak into later ones.
+    assert_eq!(hash_of(&mut Renderer::new(), &snap(TEXT)), fallback);
+    // Renderers on other threads (one per CDP connection) render the same.
+    let others: Vec<u64> = (0..4)
+        .map(|_| std::thread::spawn(|| hash_of(&mut Renderer::new(), &snap(TEXT))))
+        .collect::<Vec<_>>()
+        .into_iter()
+        .map(|t| t.join().unwrap())
+        .collect();
+    assert!(others.iter().all(|&h| h == fallback), "{others:x?} vs {fallback:x}");
+    lp_render::prewarm().unwrap().join().unwrap();
+    assert_eq!(hash_of(&mut Renderer::new(), &snap(TEXT)), fallback);
+}
+
+/// Serves Lato after `delay`, on another thread (as the page's loader does).
+struct SlowFont(std::time::Duration);
+impl Fetcher for SlowFont {
+    fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+        let delay = self.0;
+        std::thread::spawn(move || {
+            std::thread::sleep(delay);
+            done(if url.ends_with("lato.ttf") { Ok(LATO.to_vec()) } else { Err("404".into()) })
+        });
+    }
+}
+
+#[test]
+fn the_first_layout_waits_for_web_fonts() {
+    let web_font = TEXT.replace("<style>", r#"<style>@font-face { font-family: Lato; src: url(lato.ttf); }"#);
+    let mut expected = Renderer::new();
+    expected.register_font(LATO.to_vec());
+    let lato = hash_of(&mut expected, &snap(TEXT));
+
+    // The font arrives within the block period: one layout, with the font.
+    let slow: Arc<dyn Fetcher> = Arc::new(SlowFont(std::time::Duration::from_millis(150)));
+    let mut r = Renderer::new();
+    let painted = r.paint(&snap(&web_font), Area::Viewport, &slow).unwrap();
+    assert_eq!(painted.timings.layout_passes, 1);
+    assert_eq!(painted.hash, lato, "laid out with the web font");
+
+    // Past the block period the page is laid out with fallback fonts, then
+    // again when the font arrives (within the fetch timeout).
+    let mut r = Renderer::new();
+    r.first_layout_wait = std::time::Duration::from_millis(20);
+    let painted = r.paint(&snap(&web_font), Area::Viewport, &slow).unwrap();
+    assert_eq!(painted.timings.layout_passes, 2);
+    assert_eq!(painted.hash, lato);
+}
+
+#[test]
+fn class_selectors_match_as_before() {
+    // blitz-dom is patched to intern class tokens once per element
+    // (vendor/blitz-dom); matching must not change.
+    let html = "<!doctype html><html><head><style>
+      body { margin: 0 } div { width: 10px; height: 10px; background: #000 }
+      .a.b { background: #f00 } [class~=c] { background: #0f0 } .D { background: #00f }
+    </style></head><body>
+      <div class=\"b\ta\n\"></div><div class=\" x c \"></div><div class=\"d\"></div><div class=\"D\"></div><div class=\"\"></div>
+    </body></html>";
+    let mut r = Renderer::new();
+    let (img, _, _) = r.render(&snap(html), Area::Viewport, Backend::Cpu, &fetcher()).unwrap();
+    let at = |i: u32| pixel(&img, 5, i * 10 + 5);
+    assert_eq!(at(0), [255, 0, 0, 255], "tokens split on any ASCII whitespace");
+    assert_eq!(at(1), [0, 255, 0, 255], "[class~=] uses the same tokens");
+    assert_eq!(at(2), [0, 0, 0, 255], "class names are case-sensitive");
+    assert_eq!(at(3), [0, 0, 255, 255]);
+    assert_eq!(at(4), [0, 0, 0, 255]);
+}
+
+#[test]
+fn class_changes_invalidate_the_cached_tokens() {
+    use blitz_dom::{local_name, ns, DocumentConfig, QualName};
+    let mut doc = blitz_html::HtmlDocument::from_html(
+        "<!doctype html><body><p id=p class=\"a\">x</p></body>",
+        DocumentConfig::default(),
+    );
+    let p = doc.query_selector("#p").unwrap().unwrap();
+    assert_eq!(doc.query_selector(".a").unwrap(), Some(p));
+    let class = QualName::new(None, ns!(), local_name!("class"));
+    doc.mutate().set_attribute(p, class.clone(), "b");
+    assert_eq!(doc.query_selector(".a").unwrap(), None);
+    assert_eq!(doc.query_selector(".b").unwrap(), Some(p));
+    doc.mutate().clear_attribute(p, class);
+    assert_eq!(doc.query_selector(".b").unwrap(), None);
+}
+
+#[test]
+fn bench_fixtures_lay_out_once_with_their_web_font() {
+    // The fixtures of bench/screenshot, with Lato as a web font as the
+    // benchmark serves it: one layout, and the same display list as with
+    // the font already registered.
+    let face = r#"<style>@font-face { font-family: Lato; src: url(lato.ttf) format("truetype"); }</style>"#;
+    let fast: Arc<dyn Fetcher> = Arc::new(SlowFont(std::time::Duration::from_millis(5)));
+    for name in ["login", "dashboard", "article"] {
+        let path = format!("{}/../../bench/screenshot/fixtures/{name}.html", env!("CARGO_MANIFEST_DIR"));
+        let html = std::fs::read_to_string(path).unwrap();
+        let mut s = snap(&html.replace("<head>", &format!("<head>{face}")));
+        (s.width, s.height) = (1280, 720);
+        let painted = Renderer::new().paint(&s, Area::Viewport, &fast).unwrap();
+        assert_eq!(painted.timings.layout_passes, 1, "{name}");
+        let mut registered = Renderer::new();
+        registered.register_font(LATO.to_vec());
+        assert_eq!(painted.hash, hash_of(&mut registered, &s), "{name}");
+    }
+}

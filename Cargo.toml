@@ -148,3 +148,8 @@ opt-level = 0
 opt-level = 0
 [profile.dev.package.find-msvc-tools]
 opt-level = 0
+
+# blitz-dom 0.3.0-beta.4 with one change (class atoms cached per element);
+# see vendor/blitz-dom/README.lightningpanda.md.
+[patch.crates-io]
+blitz-dom = { path = "vendor/blitz-dom" }
