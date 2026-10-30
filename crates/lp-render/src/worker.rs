@@ -1,0 +1,267 @@
+//! The render thread: one per CDP connection, created on first use. It owns
+//! a [`Renderer`] (fonts, raster backend, sub-resource cache), so the
+//! browser thread only builds a snapshot and goes on with its event loop.
+
+use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{channel, Sender};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Instant;
+
+use crate::{
+    compare, decode_png, diff_image, encode_jpeg, encode_png, Area, Backend, Fetcher, Renderer, RgbaImage, Snapshot,
+    Timings,
+};
+
+/// A baseline, cached per name on the connection. The PNG is decoded on the
+/// render thread the first time a render is compared with it (never on a
+/// hash hit), then kept decoded.
+pub struct Baseline {
+    /// xxh3 of the PNG bytes.
+    pub digest: u64,
+    png: Mutex<Option<Vec<u8>>>,
+    image: OnceLock<Result<RgbaImage, String>>,
+    /// Display-list hash of a render that matched it exactly (0: none yet).
+    scene_hash: AtomicU64,
+}
+
+impl Baseline {
+    pub fn from_png(png: Vec<u8>, scene_hash: Option<u64>) -> Baseline {
+        Baseline {
+            digest: crate::digest(&png),
+            png: Mutex::new(Some(png)),
+            image: OnceLock::new(),
+            scene_hash: AtomicU64::new(scene_hash.unwrap_or(0)),
+        }
+    }
+
+    pub fn from_image(image: RgbaImage, scene_hash: Option<u64>) -> Baseline {
+        Baseline {
+            digest: 0,
+            png: Mutex::new(None),
+            image: OnceLock::from(Ok(image)),
+            scene_hash: AtomicU64::new(scene_hash.unwrap_or(0)),
+        }
+    }
+
+    /// The decoded image (decoding it on first use).
+    pub fn image(&self) -> Result<&RgbaImage, String> {
+        self.image
+            .get_or_init(|| {
+                let png = self.png.lock().ok().and_then(|mut p| p.take()).unwrap_or_default();
+                decode_png(&png).map_err(|e| format!("baseline: {e}"))
+            })
+            .as_ref()
+            .map_err(Clone::clone)
+    }
+
+    pub fn scene_hash(&self) -> Option<u64> {
+        Some(self.scene_hash.load(Ordering::Acquire)).filter(|h| *h != 0)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct MatchOptions {
+    /// Largest per-channel difference a pixel may have and still match.
+    pub tolerance: u8,
+    /// Differing pixels allowed.
+    pub max_diff_pixels: u64,
+    /// Differing pixels allowed as a fraction of the image (the larger of
+    /// the two limits applies).
+    pub max_diff_ratio: f64,
+    pub backend: Backend,
+}
+
+impl MatchOptions {
+    fn allowed(&self, width: u32, height: u32) -> u64 {
+        let by_ratio = (self.max_diff_ratio.clamp(0.0, 1.0) * width as f64 * height as f64).floor() as u64;
+        self.max_diff_pixels.max(by_ratio)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImageFormat {
+    Png,
+    Jpeg(u8),
+}
+
+pub struct Captured {
+    pub bytes: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+    pub scene_hash: u64,
+    pub timings: Timings,
+}
+
+#[derive(Debug)]
+pub struct MatchOutcome {
+    pub pass: bool,
+    /// Passed on the display-list hash: no raster, no compare.
+    pub hash_hit: bool,
+    /// No baseline was given: the render is returned as `actual`.
+    pub recorded: bool,
+    pub diff_pixels: u64,
+    pub scene_hash: u64,
+    pub width: u32,
+    pub height: u32,
+    pub timings: Timings,
+    /// PNG of the render, when recorded or failed.
+    pub actual: Option<Vec<u8>>,
+    /// PNG of the difference, when failed.
+    pub diff: Option<Vec<u8>>,
+}
+
+pub enum Job {
+    Capture {
+        snapshot: Snapshot,
+        area: Area,
+        format: ImageFormat,
+        backend: Backend,
+        fetcher: Arc<dyn Fetcher>,
+        done: Box<dyn FnOnce(Result<Captured, String>) + Send>,
+    },
+    Match {
+        snapshot: Snapshot,
+        area: Area,
+        baseline: Option<Arc<Baseline>>,
+        opts: MatchOptions,
+        fetcher: Arc<dyn Fetcher>,
+        done: Box<dyn FnOnce(Result<MatchOutcome, String>) + Send>,
+    },
+}
+
+/// The render thread has exited.
+#[derive(Debug)]
+pub struct WorkerGone;
+
+/// Handle to the render thread; dropping it ends the thread after the
+/// queued jobs.
+pub struct RenderWorker {
+    tx: Sender<Job>,
+}
+
+impl RenderWorker {
+    pub fn spawn() -> std::io::Result<RenderWorker> {
+        let (tx, rx) = channel::<Job>();
+        std::thread::Builder::new().name("lp-render".into()).spawn(move || {
+            let mut renderer = None;
+            while let Ok(job) = rx.recv() {
+                let r = renderer.get_or_insert_with(Renderer::new);
+                run(r, job);
+            }
+        })?;
+        Ok(RenderWorker { tx })
+    }
+
+    /// Queues a job; `Err` when the thread is gone.
+    pub fn submit(&self, job: Job) -> Result<(), WorkerGone> {
+        self.tx.send(job).map_err(|_| WorkerGone)
+    }
+}
+
+fn run(r: &mut Renderer, job: Job) {
+    match job {
+        Job::Capture { snapshot, area, format, backend, fetcher, done } => {
+            let out = guarded(|| capture(r, &snapshot, area, format, backend, &fetcher));
+            done(out);
+        }
+        Job::Match { snapshot, area, baseline, opts, fetcher, done } => {
+            let out = guarded(|| match_baseline(r, &snapshot, area, baseline.as_deref(), opts, &fetcher));
+            done(out);
+        }
+    }
+}
+
+fn guarded<T>(f: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    catch_unwind(AssertUnwindSafe(f)).unwrap_or_else(|panic| {
+        let what = panic
+            .downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| panic.downcast_ref::<String>().cloned())
+            .unwrap_or_default();
+        Err(format!("renderer panicked: {what}"))
+    })
+}
+
+pub fn capture(
+    r: &mut Renderer,
+    snap: &Snapshot,
+    area: Area,
+    format: ImageFormat,
+    backend: Backend,
+    fetcher: &Arc<dyn Fetcher>,
+) -> Result<Captured, String> {
+    let (image, scene_hash, mut timings) = r.render(snap, area, backend, fetcher).map_err(|e| e.to_string())?;
+    let t = Instant::now();
+    let bytes = match format {
+        ImageFormat::Png => encode_png(&image),
+        ImageFormat::Jpeg(q) => encode_jpeg(&image, q)?,
+    };
+    timings.encode = t.elapsed();
+    Ok(Captured { bytes, width: image.width, height: image.height, scene_hash, timings })
+}
+
+pub fn match_baseline(
+    r: &mut Renderer,
+    snap: &Snapshot,
+    area: Area,
+    baseline: Option<&Baseline>,
+    opts: MatchOptions,
+    fetcher: &Arc<dyn Fetcher>,
+) -> Result<MatchOutcome, String> {
+    let painted = r.paint(snap, area, fetcher).map_err(|e| e.to_string())?;
+    let (scene_hash, width, height) = (painted.hash, painted.width, painted.height);
+    let outcome = |pass, hash_hit, diff_pixels, timings| MatchOutcome {
+        pass,
+        hash_hit,
+        recorded: false,
+        diff_pixels,
+        scene_hash,
+        width,
+        height,
+        timings,
+        actual: None,
+        diff: None,
+    };
+    if let Some(b) = baseline {
+        // The hash stands for the pixels of the CPU backend only.
+        if opts.backend == Backend::Cpu && b.scene_hash() == Some(scene_hash) {
+            return Ok(outcome(true, true, 0, painted.timings));
+        }
+    }
+    let (image, mut timings) = r.raster(painted, opts.backend);
+    let Some(b) = baseline else {
+        let t = Instant::now();
+        let actual = encode_png(&image);
+        timings.encode = t.elapsed();
+        let mut o = outcome(true, false, 0, timings);
+        o.recorded = true;
+        o.actual = Some(actual);
+        return Ok(o);
+    };
+    let t = Instant::now();
+    let expected = b.image()?;
+    timings.decode = t.elapsed();
+    let t = Instant::now();
+    let allowed = opts.allowed(width, height);
+    let cmp = compare(&image, expected, opts.tolerance, Some(allowed));
+    timings.compare = t.elapsed();
+    let pass = cmp.diff_pixels <= allowed;
+    if cmp.equal && opts.backend == Backend::Cpu {
+        b.scene_hash.store(scene_hash, Ordering::Release);
+    }
+    if pass {
+        return Ok(outcome(true, false, cmp.diff_pixels, timings));
+    }
+    // Failed: count every differing pixel for the report, then the images.
+    let t = Instant::now();
+    let full = compare(&image, expected, opts.tolerance, None);
+    let diff = diff_image(&image, expected, opts.tolerance);
+    timings.compare += t.elapsed();
+    let t = Instant::now();
+    let mut o = outcome(false, false, full.diff_pixels, timings);
+    o.actual = Some(encode_png(&image));
+    o.diff = Some(encode_png(&diff));
+    o.timings.encode = t.elapsed();
+    Ok(o)
+}

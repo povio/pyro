@@ -4,6 +4,22 @@
 [workspace]
 resolver = "2"
 members = ["crates/*"]
+# lp-render (Blitz) builds only with `--features render`, `-p lp-render` or
+# `--workspace`: a plain `cargo build` / `cargo test` stays as fast as without it.
+# List every other new crate here as well.
+default-members = [
+    "crates/lightningpanda",
+    "crates/lp-browser",
+    "crates/lp-cdp",
+    "crates/lp-cdp-protocol",
+    "crates/lp-dom",
+    "crates/lp-js",
+    "crates/lp-jsc-sys",
+    "crates/lp-net",
+    "crates/lp-psl",
+    "crates/lp-runtime",
+    "crates/lp-webapi",
+]
 
 [workspace.package]
 version = "0.0.10"
@@ -23,6 +39,7 @@ lp-psl = { path = "crates/lp-psl" }
 lp-webapi = { path = "crates/lp-webapi" }
 lp-cdp-protocol = { path = "crates/lp-cdp-protocol" }
 lp-cdp = { path = "crates/lp-cdp" }
+lp-render = { path = "crates/lp-render" }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

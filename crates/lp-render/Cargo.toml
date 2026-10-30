@@ -1,0 +1,30 @@
+[package]
+name = "lp-render"
+description = "Page snapshot to pixels with Blitz (Stylo + Taffy + Parley, painted by Vello), plus screenshot comparison."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+# GPU raster (vello on wgpu/Metal). Off: the CPU backend (vello_cpu) is the
+# default and the deterministic one.
+gpu = ["dep:anyrender_vello"]
+
+[dependencies]
+blitz-dom = { version = "=0.3.0-beta.4", default-features = false, features = ["system-fonts", "woff", "svg"] }
+blitz-html = { version = "=0.3.0-beta.4", default-features = false }
+blitz-traits = { version = "=0.3.0-beta.4", default-features = false }
+blitz-paint = { version = "=0.3.0-beta.4", default-features = false, features = ["svg"] }
+anyrender = "0.14.0"
+anyrender_vello_cpu = { version = "0.18.0", features = ["multithreading"] }
+anyrender_vello = { version = "0.15.0", optional = true }
+peniko = "0.6.0"
+kurbo = "0.13.1"
+parley = { version = "0.12", default-features = false, features = ["std"] }
+# blitz-dom decodes images with `image` but enables no format.
+image = { version = "0.25.6", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+png = "0.18"
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+
+[lints]
+workspace = true

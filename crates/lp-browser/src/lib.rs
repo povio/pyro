@@ -653,6 +653,32 @@ impl Browser {
         self.contexts.iter().find(|c| c.id == ctx).and_then(|c| c.loader.clone()).or_else(|| self.loader.clone())
     }
 
+    /// Fetches a sub-resource of `page`'s current document through its
+    /// context's loader (cookies, mocks, HTTP cache; CDP sees the request),
+    /// for a renderer that needs bytes the DOM does not keep (screenshots:
+    /// images, fonts, imported sheets). `done` runs on this thread.
+    pub fn fetch_subresource(&mut self, page: PageId, url: String, kind: ResourceKind, done: FetchDone) {
+        let Some(frame) = self.page(page).map(|p| p.main_frame.clone()) else {
+            self.scheduler().post(lp_runtime::TaskSource::Networking, move |b| done(b, Err("page is gone".into())));
+            return;
+        };
+        let Some(loader) = self.loader_for(page) else {
+            self.scheduler()
+                .post(lp_runtime::TaskSource::Networking, move |b| done(b, Err("no resource loader".into())));
+            return;
+        };
+        let request = FetchRequest {
+            url,
+            kind,
+            page,
+            referrer: Some(frame.base_url.clone()),
+            frame_id: Some(frame.id.0.clone()),
+            loader_id: Some(frame.loader_id.0.clone()),
+            crossorigin: None,
+        };
+        loader.fetch(self, request, done);
+    }
+
     /// Creates a page in context `context`.
     pub fn create_page_in(&mut self, context: ContextId) -> Result<PageId, JsError> {
         if !self.contexts.iter().any(|c| c.id == context) {

@@ -80,11 +80,11 @@ Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 53 engi
 | `Network.setExtraHTTPHeaders` | yes | engine | per page (sibling pages, even in the same browser context, are unaffected); each call replaces the map and {} clears it; applied to navigations, subresources, fetch and XHR only while the session has Network enabled (kept while disabled), as in Chrome 147; page headers override same-name request headers including User-Agent; invalid names/values rejected with Chrome's messages |
 | `Page.addScriptToEvaluateOnNewDocument` | yes | engine |  |
 | `Page.bringToFront` | yes | accepted, recorded only | single foreground page per target |
-| `Page.captureScreenshot` | yes | pending |  |
+| `Page.captureScreenshot` | yes | engine (`render` feature) | rendered by lp-render (Blitz: Stylo, Taffy, Parley, vello_cpu) from a snapshot of the live DOM, off the browser thread; `png` and `jpeg` (`quality`), `clip` (document CSS px, `scale`), `captureBeyondViewport` (whole document); `webp`, `fromSurface: false` and `optimizeForSpeed` are ignored or refused; pixels differ from Chromium's (no hinting, Blitz layout); see [SCREENSHOTS.md](SCREENSHOTS.md). Without the feature: an explicit error |
 | `Page.close` | yes | pending |  |
 | `Page.enable` | yes | engine |  |
 | `Page.getFrameTree` | yes | engine | nested native frames with per-document loader and actual security origin |
-| `Page.getLayoutMetrics` | yes | engine | main frame, CSS px: emulated viewport, window scroll offset and document scroll size (at least the viewport); no pinch zoom, so the visual viewport equals the layout viewport with `scale`/`zoom` 1; the deprecated fields repeat the CSS values, as headless Chromium on macOS reports at DPR 1 and 2. `page.screenshot` still fails at `Page.captureScreenshot` (no rasterizer) |
+| `Page.getLayoutMetrics` | yes | engine | main frame, CSS px: emulated viewport, window scroll offset and document scroll size (at least the viewport); no pinch zoom, so the visual viewport equals the layout viewport with `scale`/`zoom` 1; the deprecated fields repeat the CSS values, as headless Chromium on macOS reports at DPR 1 and 2. The document size comes from lightningpanda's approximate layout, not the renderer's, so a full-page `clip` built from it can differ from `captureBeyondViewport` |
 | `Page.getNavigationHistory` | yes | engine | main-frame session history with stable entry ids; `title` is empty and `transitionType` is `other`; the initial about:blank entry is kept by the first navigation (Chrome replaces it) |
 | `Page.handleJavaScriptDialog` | yes | pending |  |
 | `Page.navigate` | yes | engine | about:blank, data and HTTP documents; frameId supports native children; explicit failures, no joint child history |

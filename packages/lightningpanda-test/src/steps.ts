@@ -196,6 +196,10 @@ export class Locator {
   wheel(deltaX: number, deltaY: number, opts: ActOptions = {}): StepLike {
     return act(this, 'wheel', undefined, { ...opts, deltaX, deltaY });
   }
+  /** Compares this element's box with the baseline `name` (see `matchScreenshot`). */
+  matchScreenshot(name: string, opts: ScreenshotOptions = {}): ScreenshotStep {
+    return new ScreenshotStep(name, { ...opts, locator: this.spec }, callerDir());
+  }
   /**
    * Reads a value into the run's `values[as]`: `read('n', 'css', 'color')`
    * for a computed style property, `'name'` for the accessible name.
@@ -526,3 +530,62 @@ export const mouse = (action: MouseAction, opts: MouseOptions = {}): StepLike =>
 /** Mouse wheel over an element (engine 0.0.10). */
 export const wheel = (loc: Locator, deltaX: number, deltaY: number, opts: ActOptions = {}): StepLike =>
   loc.wheel(deltaX, deltaY, opts);
+
+// ---- screenshots ----
+
+export type ScreenshotOptions = {
+  /** 0-1: how far a pixel's channels may differ and still match (default 0: exact). */
+  threshold?: number;
+  /** Differing pixels allowed (default 0). */
+  maxDiffPixels?: number;
+  /** Differing pixels allowed as a fraction of the image. */
+  maxDiffPixelRatio?: number;
+  /** A rectangle of the document, CSS px. */
+  clip?: { x: number; y: number; width: number; height: number };
+  /** The whole document, not only the viewport. */
+  fullPage?: boolean;
+  /** Where baselines live (default: `__screenshots__` beside the test file). */
+  dir?: string;
+  timeout?: number;
+};
+
+/**
+ * A `matchScreenshot` step: the page renders in the browser and is compared
+ * there with the baseline `<dir>/<name>.png`. `page.run` reads the baseline
+ * (sent once per connection), writes it when missing or in update mode, and
+ * writes `<name>.actual.png` and `<name>.diff.png` on a mismatch.
+ */
+export class ScreenshotStep implements StepLike {
+  /** Baseline fields `page.run` adds (`baseline`, `sceneHash`, `update`). */
+  wire: Record<string, unknown> = {};
+
+  constructor(
+    readonly name: string,
+    readonly opts: ScreenshotOptions & { locator?: LocatorSpec },
+    /** Directory of the test file that built the step. */
+    readonly testDir: string,
+  ) {
+    if (!/^[\w.@-][\w.@/-]*$/.test(name) || name.includes('..')) {
+      throw new Error(`screenshot name '${name}': use letters, digits, '.', '-', '_', '@' and '/'`);
+    }
+  }
+
+  toStep(): Step {
+    const { dir: _dir, ...opts } = this.opts;
+    return { matchScreenshot: { name: this.name, ...opts, ...this.wire } };
+  }
+}
+
+/** Compares the viewport (or `clip`, or `fullPage`) with the baseline `name`. */
+export const matchScreenshot = (name: string, opts: ScreenshotOptions = {}): ScreenshotStep =>
+  new ScreenshotStep(name, opts, callerDir());
+
+/** Directory of the first stack frame outside this package (the test file). */
+function callerDir(): string {
+  const here = import.meta.url.replace(/^file:\/\//, '').replace(/[^/]*$/, '');
+  for (const line of (new Error().stack ?? '').split('\n').slice(1)) {
+    const m = /(?:\(|at )(?:file:\/\/)?(\/[^():]+):\d+:\d+\)?\s*$/.exec(line);
+    if (m && !m[1].startsWith(here)) return m[1].replace(/\/[^/]*$/, '');
+  }
+  return process.cwd();
+}

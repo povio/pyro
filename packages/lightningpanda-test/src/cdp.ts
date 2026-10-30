@@ -6,6 +6,8 @@ export class CdpError extends Error {
     readonly method: string,
     readonly code: number,
     message: string,
+    /** The error's `data` (a failed `matchScreenshot` carries its images). */
+    readonly data?: unknown,
   ) {
     super(`${method}: ${message}`);
   }
@@ -58,7 +60,7 @@ export class Cdp {
     const p = this.pending.get(msg.id);
     if (!p) return;
     this.pending.delete(msg.id);
-    if (msg.error) p.reject(new CdpError(p.method, msg.error.code, msg.error.message));
+    if (msg.error) p.reject(new CdpError(p.method, msg.error.code, msg.error.message, msg.error.data));
     else p.resolve(msg.result);
   }
 

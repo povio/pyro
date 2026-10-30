@@ -10,6 +10,7 @@ mod inner_text;
 mod layout;
 mod loader;
 mod record_scan_bench;
+mod render_html;
 mod select_forms;
 mod tree;
 mod typed_flow;

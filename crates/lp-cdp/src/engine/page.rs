@@ -218,6 +218,12 @@ impl EngineHost {
                 Ok(Some(json!({})))
             }
             "getLayoutMetrics" => self.layout_metrics(cmd),
+            #[cfg(feature = "render")]
+            "captureScreenshot" => self.capture_screenshot(cmd),
+            #[cfg(not(feature = "render"))]
+            "captureScreenshot" => {
+                Err(CdpError::server("Page.captureScreenshot: lightningpanda was built without the render feature"))
+            }
             // Accepted because there is nothing to change: the engine enforces
             // no CSP, opens no file chooser and has a single foreground page.
             "setInterceptFileChooserDialog" => {

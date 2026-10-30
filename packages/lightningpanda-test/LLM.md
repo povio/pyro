@@ -127,6 +127,7 @@ reuse them.
 | `mock('/api/items', { json: [] })` / `unmock(url?)` | answer matching requests (`status`, `body`, `headers`, `delay`, `abort`, `times`); `{ passthrough: true }` lets them through, `{ patch: { … } }` rewrites the real response, `{ hold: 'name' }` holds them until `release('name')` |
 | `download({ as, saveTo })` / `popup('name')` | wait for the next download / popup of the run |
 | `viewport(w, h)` / `media({ colorScheme: 'dark' })` | resize the viewport / emulate media features mid-test |
+| `matchScreenshot('name', { … })` / `loc.matchScreenshot('name')` | renders the page (or `clip`, `fullPage`, the element) in the browser and compares it with `__screenshots__/name.png` beside the test; see Screenshots below |
 | `evaluate('expression', 'name')` | escape hatch: JSON value of a page expression into `r.values.name`; a returned promise is awaited (within the step timeout) and a rejection fails the step |
 
 Pointer options (wire shape; the builders take the same names): `click` and
@@ -219,3 +220,35 @@ condition, so a timeout means the condition never held.
 - Do not send one `run` per step "to be safe": it costs a round trip per step
   and request checks only see their own run.
 - Do not share a page between tests; take a new one per test.
+
+## Screenshots
+
+Visual checks run in the browser, in the same `run` as the steps that lead
+to the state (needs a browser built with the `render` feature):
+
+```ts
+await page.run([
+  label('Email').fill('ada@example.com'),
+  matchScreenshot('login-filled'),                     // viewport
+  css('.card').matchScreenshot('login-card'),          // one element's box
+  matchScreenshot('login-full', { fullPage: true }),
+]);
+await page.matchScreenshot('dashboard', { maxDiffPixels: 20 });  // one-step form
+```
+
+- Baselines are `__screenshots__/<name>.png` (+ `<name>.json` with the
+  display-list hash) beside the test file; `dir` overrides. Commit them.
+- First run (no baseline): the image is written and the test fails. Run once
+  with `LP_UPDATE_SNAPSHOTS=1` (or `bun test -u`) to write or refresh all.
+- A mismatch throws `ScreenshotMismatchError` (`.result.diffPixels`,
+  `.result.files`) and writes `<name>.actual.png` and `<name>.diff.png`
+  (differing pixels in red). Look at the diff before updating a baseline.
+- Rendering is deterministic on the CPU: compare exactly by default. Use
+  `threshold` (0-1, per channel) or `maxDiffPixels` only for known noise.
+- What is captured: the live DOM after script, every stylesheet (including
+  ones added or edited by script), input/textarea/select state, the window
+  scroll position, viewport and device scale factor, images and fonts loaded
+  through the page's network (mocks apply). Not captured: canvas and video
+  pixels, iframe contents, element scroll offsets, `:hover`/`:focus` styles,
+  the caret, running animations. Pixels come from lightningpanda's renderer
+  (Blitz), never compare them with Chromium screenshots.

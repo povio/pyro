@@ -384,6 +384,8 @@ fn unsupported_commands_fail_explicitly() {
         "DOM.getDocument",
         "Input.dispatchTouchEvent",
         "Fetch.getResponseBody",
+        // With the `render` feature it renders (see `mod screenshot`).
+        #[cfg(not(feature = "render"))]
         "Page.captureScreenshot",
         "Runtime.addBinding",
     ] {
@@ -5630,4 +5632,150 @@ fn timers_run_between_commands_of_a_client_that_never_waits() {
         }
     }
     panic!("the 0 ms timer never ran: {seen:?}");
+}
+
+/// Screenshots rendered with lp-render (`render` feature).
+#[cfg(feature = "render")]
+mod screenshot {
+    use super::*;
+
+    const CARD: &str = r#"<!doctype html><html><head><style>
+      body { margin: 0; background: #f3f4f6; font-family: sans-serif; }
+      .card { width: 300px; height: 120px; margin: 40px; background: #6d28d9; border-radius: 12px; }
+      .tall { height: 2000px; }
+    </style></head><body><div class="card" id="card"></div><input id="name"><div class="tall"></div></body></html>"#;
+
+    fn png_of(b64: &Value) -> lp_render::RgbaImage {
+        let bytes = lp_cdp::fetch_protocol::base64_decode(b64.as_str().expect("base64 string")).unwrap();
+        lp_render::decode_png(&bytes).unwrap()
+    }
+
+    fn pixel(img: &lp_render::RgbaImage, x: u32, y: u32) -> [u8; 4] {
+        let i = (y as usize * img.width as usize + x as usize) * 4;
+        img.data[i..i + 4].try_into().unwrap()
+    }
+
+    #[test]
+    fn capture_screenshot_renders_the_viewport_clip_and_full_page() {
+        let mut h = Harness::new();
+        h.page(
+            "Emulation.setDeviceMetricsOverride",
+            json!({"width": 640, "height": 480, "deviceScaleFactor": 1, "mobile": false}),
+        );
+        load_html(&mut h, CARD);
+        let r = h.page("Page.captureScreenshot", json!({}));
+        let img = png_of(&r["result"]["data"]);
+        assert_eq!((img.width, img.height), (640, 480), "{r}");
+        assert_eq!(pixel(&img, 100, 100), [0x6d, 0x28, 0xd9, 255]);
+        assert_eq!(pixel(&img, 5, 5), [0xf3, 0xf4, 0xf6, 255]);
+
+        let r = h.page(
+            "Page.captureScreenshot",
+            json!({"clip": {"x": 40, "y": 40, "width": 300, "height": 120, "scale": 1}}),
+        );
+        let img = png_of(&r["result"]["data"]);
+        assert_eq!((img.width, img.height), (300, 120), "{r}");
+        assert_eq!(pixel(&img, 150, 60), [0x6d, 0x28, 0xd9, 255]);
+
+        let r = h.page("Page.captureScreenshot", json!({"captureBeyondViewport": true}));
+        let img = png_of(&r["result"]["data"]);
+        assert_eq!(img.width, 640, "{r}");
+        assert!(img.height > 2000, "full page is {}x{}", img.width, img.height);
+
+        let r = h.page("Page.captureScreenshot", json!({"format": "jpeg", "quality": 50}));
+        let bytes = lp_cdp::fetch_protocol::base64_decode(r["result"]["data"].as_str().unwrap()).unwrap();
+        assert_eq!(&bytes[..2], &[0xff, 0xd8], "JPEG magic");
+        let r = h.page("Page.captureScreenshot", json!({"format": "webp"}));
+        assert!(r["error"]["message"].as_str().unwrap().contains("webp"), "{r}");
+    }
+
+    #[test]
+    fn match_screenshot_records_matches_hits_the_hash_and_fails_on_a_change() {
+        let mut h = Harness::new();
+        h.page(
+            "Emulation.setDeviceMetricsOverride",
+            json!({"width": 400, "height": 300, "deviceScaleFactor": 1, "mobile": false}),
+        );
+        load_html(&mut h, CARD);
+
+        // No baseline: the render comes back.
+        let r = h.page("LP.run", json!({"steps": [{"matchScreenshot": {"name": "card", "as": "shot"}}]}));
+        let shot = &r["result"]["reads"]["shot"];
+        assert_eq!(shot["recorded"], true, "{r}");
+        let baseline = shot["actual"].as_str().unwrap().to_owned();
+        assert_eq!(png_of(&shot["actual"]).width, 400);
+
+        // Same page against it: compared, then a hash hit (cached per connection).
+        let step = json!({"matchScreenshot": {"name": "card", "baseline": baseline, "as": "shot"}});
+        let r = h.page("LP.run", json!({"steps": [step]}));
+        let shot = &r["result"]["reads"]["shot"];
+        assert_eq!((shot["pass"].clone(), shot["hashHit"].clone()), (json!(true), json!(false)), "{r}");
+        let r = h.page("LP.run", json!({"steps": [{"matchScreenshot": {"name": "card", "as": "shot"}}]}));
+        let shot = &r["result"]["reads"]["shot"];
+        assert_eq!((shot["pass"].clone(), shot["hashHit"].clone()), (json!(true), json!(true)), "{r}");
+        assert_eq!(shot["ms"]["raster"], 0.0, "{r}");
+        let hash = shot["sceneHash"].as_str().unwrap().to_owned();
+
+        // One CSS color, from a sheet script added: a different scene, failing pixels, images in error.data.
+        let r = h.page(
+            "LP.run",
+            json!({"steps": [
+                {"eval": {"expression": "const s = document.createElement('style'); s.textContent = '.card { background: #6d28da }'; document.head.append(s); 1"}},
+                {"matchScreenshot": {"name": "card", "baseline": baseline}},
+            ]}),
+        );
+        let error = &r["error"];
+        assert!(error["message"].as_str().unwrap().contains("pixels differ"), "{r}");
+        let data = &error["data"];
+        assert_eq!(data["pass"], false, "{r}");
+        assert_ne!(data["sceneHash"], json!(hash), "{r}");
+        // Only the card changed (less the background showing in its rounded corners).
+        let diff_pixels = data["diffPixels"].as_u64().unwrap();
+        assert!((35_000..=36_000).contains(&diff_pixels), "{diff_pixels}");
+        assert_eq!(png_of(&data["actual"]).width, 400);
+        let diff = png_of(&data["diff"]);
+        assert_eq!(pixel(&diff, 100, 100), [255, 0, 0, 255]);
+
+        // A tolerance absorbs a one-unit change.
+        let step = json!({"matchScreenshot": {"name": "card", "baseline": baseline, "threshold": 0.01}});
+        let r = h.page("LP.run", json!({"steps": [step]}));
+        assert!(r["result"]["results"][0]["pass"] == true, "{r}");
+    }
+
+    #[test]
+    fn match_screenshot_captures_form_state_and_elements() {
+        let mut h = Harness::new();
+        h.page(
+            "Emulation.setDeviceMetricsOverride",
+            json!({"width": 400, "height": 300, "deviceScaleFactor": 1, "mobile": false}),
+        );
+        load_html(&mut h, CARD);
+        let r = h.page("LP.run", json!({"steps": [{"matchScreenshot": {"name": "form", "as": "s"}}]}));
+        let empty = r["result"]["reads"]["s"]["actual"].as_str().unwrap().to_owned();
+        let r = h.page(
+            "LP.run",
+            json!({"steps": [
+                {"act": {"locator": {"css": "#name"}, "action": "fill", "value": "Ada Lovelace"}},
+                {"matchScreenshot": {"name": "form", "baseline": empty}},
+            ]}),
+        );
+        assert!(r["error"]["data"]["diffPixels"].as_u64().unwrap() > 0, "typed text is rendered: {r}");
+
+        let r = h.page(
+            "LP.run",
+            json!({"steps": [{"matchScreenshot": {"name": "card-only", "locator": {"css": "#card"}, "as": "s"}}]}),
+        );
+        let s = &r["result"]["reads"]["s"];
+        assert_eq!((s["width"].clone(), s["height"].clone()), (json!(300), json!(120)), "{r}");
+        let img = png_of(&s["actual"]);
+        // Rounded corners show the page behind them.
+        assert_eq!(pixel(&img, 150, 60), [0x6d, 0x28, 0xd9, 255]);
+        assert_eq!(pixel(&img, 0, 0), [0xf3, 0xf4, 0xf6, 255]);
+
+        let r = h.page(
+            "LP.run",
+            json!({"steps": [{"matchScreenshot": {"name": "x", "locator": {"css": "#missing"}, "timeout": 100}}]}),
+        );
+        assert!(r["error"]["message"].as_str().unwrap().contains("matches no element"), "{r}");
+    }
 }

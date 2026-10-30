@@ -18,7 +18,8 @@
     "LLM.md"
   ],
   "scripts": {
-    "build": "bun build src/index.ts --outdir dist --target node --format esm && tsc -p tsconfig.json"
+    "build": "bun build src/index.ts --outdir dist --target node --format esm && tsc -p tsconfig.json",
+    "test": "bun test ./test"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

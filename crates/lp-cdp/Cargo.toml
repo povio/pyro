@@ -11,6 +11,8 @@ rust-version.workspace = true
 [features]
 # Stage timers for CDP handling, read with LP.perfStats (see lp-cdp-protocol/src/perf.rs).
 perf-trace = ["lp-cdp-protocol/perf-trace"]
+# Page.captureScreenshot and the LP.run matchScreenshot step (lp-render: Blitz).
+render = ["dep:lp-render"]
 
 [dependencies]
 lp-browser.workspace = true
@@ -20,6 +22,7 @@ lp-net.workspace = true
 lp-webapi.workspace = true
 lp-dom.workspace = true
 lp-cdp-protocol.workspace = true
+lp-render = { workspace = true, optional = true }
 bytes = "1"
 http = "1"
 regress = "0.12"

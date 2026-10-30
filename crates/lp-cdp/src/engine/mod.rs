@@ -17,6 +17,25 @@ mod network_delivery;
 mod page;
 mod remote;
 mod runtime;
+#[cfg(feature = "render")]
+mod screenshot;
+#[cfg(not(feature = "render"))]
+mod screenshot {
+    //! Built without the `render` feature: screenshots are refused.
+    #[derive(Default)]
+    pub(crate) struct Renders;
+
+    impl Renders {
+        pub(super) fn ready(&self) -> bool {
+            false
+        }
+        pub(super) fn clear(&mut self) {}
+    }
+
+    impl super::EngineHost {
+        pub(super) fn flush_renders(&mut self) {}
+    }
+}
 mod storage;
 
 use std::cell::{Cell, RefCell};
@@ -290,6 +309,8 @@ pub struct EngineHost {
     pub(crate) download_behavior: HashMap<Option<ContextKey>, DownloadBehavior>,
     body_budget: BodyBudget,
     network_wake: network::NetworkWake,
+    /// Screenshot renders of this connection (`screenshot.rs`).
+    renders: screenshot::Renders,
     pub(crate) pages: HashMap<PageKey, PageState>,
     pub(crate) sessions: HashMap<String, Session>,
     pub(crate) next_exception_id: i64,
@@ -458,6 +479,7 @@ impl EngineHost {
             download_behavior: HashMap::new(),
             body_budget,
             network_wake: network::NetworkWake::default(),
+            renders: screenshot::Renders::default(),
             pages: HashMap::new(),
             sessions: HashMap::new(),
             next_exception_id: 1,
@@ -485,6 +507,7 @@ impl EngineHost {
         let collector = &self.collector;
         let thread = &mut self.thread;
         let network_wake = &self.network_wake;
+        let renders = &self.renders;
         let waiters = &self.waiters;
         let deadline = [deadline, waiters.next_deadline()].into_iter().flatten().min();
         // One ready task or due timer first: `run_until` checks `wake` before
@@ -493,7 +516,7 @@ impl EngineHost {
         // every time, so no timer ever ran between commands.
         thread.event_loop.run_one(&mut thread.browser);
         thread.event_loop.run_until(&mut thread.browser, deadline, false, |b| {
-            wake() || !collector.is_empty() || network_wake.ready() || waiters.ready(b)
+            wake() || !collector.is_empty() || network_wake.ready() || renders.ready() || waiters.ready(b)
         })
     }
 
@@ -501,6 +524,7 @@ impl EngineHost {
     pub fn close_all(&mut self) {
         self.pending.cancel_all();
         self.waiters.clear();
+        self.renders.clear();
         self.sessions.clear();
         self.pages.clear();
         self.thread.browser.close_all();
@@ -555,7 +579,7 @@ impl EngineHost {
 
     /// True when engine notifications are waiting for [`EngineHost::flush`].
     pub fn has_pending_events(&self) -> bool {
-        !self.collector.is_empty() || self.network_wake.ready()
+        !self.collector.is_empty() || self.network_wake.ready() || self.renders.ready()
     }
 
     pub(crate) fn page_key(&self, id: PageId) -> Option<PageKey> {
@@ -604,6 +628,7 @@ impl EngineHost {
 
     /// Translates queued engine notifications into CDP events, in order.
     pub fn flush(&mut self) {
+        self.flush_renders();
         self.service_waiters();
         self.drain_collector();
         self.flush_network();
