@@ -8,8 +8,9 @@ and the measurements that led here are on the `proto/blitz-screenshot` branch (`
 
 ## Pipeline
 
-1. **Snapshot** (browser thread, `PageDom::render_snapshot`, about 0.02-0.4 ms on the fixtures below): the live
-   DOM as HTML (`Dom::render_html`):
+1. **Snapshot** (browser thread, `PageDom::render_snapshot_tree`, about 0.02-0.4 ms on the fixtures below): the
+   live DOM as a list of nodes keyed by their lp-dom identity (`Dom::render_tree`; `Dom::render_html` writes the same
+   content as HTML):
    - Form state is written into the markup: input values, checkedness, textarea values and option selectedness.
    - `<style>` text comes from the style engine, so CSSOM edits are included; `<link rel=stylesheet>` keeps its
      absolute URL, and the sheet's text (as loaded, plus CSSOM edits) is passed beside it.
@@ -18,8 +19,8 @@ and the measurements that led here are on the `proto/blitz-screenshot` branch (`
 
    The snapshot also carries the emulated viewport, device scale factor and color scheme, and the window scroll
    position.
-2. **Render thread** (one per CDP connection, started on first use): Blitz parses, styles and lays the snapshot
-   out. Sub-resources Blitz asks for (images, `@font-face` fonts, `@import`) are fetched back on the browser thread
+2. **Render thread** (one per CDP connection, started on first use): Blitz builds, styles and lays the document
+   out. It keeps each page's document between screenshots (see [Repeat screenshots](#repeat-screenshots)). Sub-resources Blitz asks for (images, `@font-face` fonts, `@import`) are fetched back on the browser thread
    through the page's own loader (`Browser::fetch_subresource`): cookies, `LP.run` mocks, Fetch interception and
    the HTTP cache apply, and CDP sees the requests. The bytes are handed to Blitz on the render thread and cached
    for that document (loader id). The wait is capped at 10 s. The first layout waits for what the document asked
@@ -36,6 +37,30 @@ and the measurements that led here are on the `proto/blitz-screenshot` branch (`
    wgpu/Metal, lp-render feature `gpu`) is not: in the prototype, 1-2 pixels flipped on some frames.
 5. The result is queued to the browser thread, which wakes its loop and replies or settles the waiting step. The
    event loop never blocks on a render.
+
+## Repeat screenshots
+
+The render thread keeps one Blitz document per page that took a screenshot, and each later screenshot changes it
+instead of building a new one, so Stylo restyles and Taffy re-lays out only what changed:
+
+- The browser thread builds the node list again only when the page's render stamp moved (the DOM version, which
+  covers tree, attribute, text and form-state changes, and the style engine's sheet generation). Otherwise it sends
+  the previous list, and the render thread does no work for the document.
+- The render thread compares the list with the previous one by key and applies the differences through blitz-dom's
+  `DocumentMutator`: attributes, text, inserted, removed and moved nodes, `<style>` text, linked sheet text (CSSOM
+  edits), viewport, device scale factor, color scheme and scroll. A `<textarea>` whose text changed and an
+  `<input>` whose `type` changed are replaced, as blitz-dom sets them up only when it builds their box.
+- A new document is built on a navigation (new loader id) or base URL, when more than half of the nodes were added
+  or removed, and after a render panicked. A closed page's document is dropped; nothing is kept for a page that
+  never took a screenshot. Nothing is recorded on the DOM mutation path: lp-dom's own change journal already exists
+  for its style caches, and the list is built at screenshot time.
+- Replies say how the document was used: `ms.mirror` is `{rebuilt, mutations, pages}` (`rebuilt`: `first`,
+  `document`, `changes` or null when updated in place; `pages`: documents the connection's renderer holds).
+
+The rendered result is the same as a fresh build of the same node list (lp-render's `mirror` tests compare scene
+hashes after random mutation sequences). Known exception: blitz-dom has no anonymous table boxes, and when table
+parts sit outside a table (a `<tr>` moved into a `<span>`, a `<td>` in a `<td>`) its incremental relayout can
+differ from a fresh one. `bun bench/screenshot/repeat.ts` measures repeat screenshots.
 
 ## `Page.captureScreenshot`
 

@@ -12,6 +12,14 @@
 //! Baselines are decoded once and cached per name on the connection, with
 //! the display-list hash of the first render that matched one exactly: a
 //! later render with that hash passes without raster or compare.
+//!
+//! The snapshot is the page as a keyed node list (`PageDom::render_snapshot_tree`).
+//! The render thread keeps each page's Blitz document between renders and
+//! applies only what changed (`lp_render::Live`). The node list is built
+//! again only when the page's render stamp moved (DOM or sheets changed);
+//! otherwise the previous one is sent again, and the render thread skips the
+//! diff. Nothing is recorded for a page before its first screenshot, and a
+//! closed page's document is dropped.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -21,7 +29,7 @@ use std::time::Instant;
 use lp_browser::{Browser, PageId, ResourceKind};
 use lp_dom::NodeId;
 use lp_render::worker::{Baseline, Captured, ImageFormat, Job, MatchOptions, MatchOutcome, RenderWorker};
-use lp_render::{Area, Backend, Fetcher, Snapshot, Timings};
+use lp_render::{Area, Backend, Fetcher, Live, Snapshot, Timings, Tree, TreeKind, TreeNode};
 use lp_runtime::LoopHandle;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -52,9 +60,18 @@ struct MatchWait {
     snapshot_ms: f64,
 }
 
+/// The latest node list sent for a page, and the render stamp it was built at.
+struct LiveTree {
+    stamp: (u64, u64, u64),
+    tree: Arc<Tree>,
+    sheets: HashMap<String, String>,
+}
+
 /// Render state of one connection.
 #[derive(Default)]
 pub(crate) struct Renders {
+    /// Pages that took a screenshot.
+    live: HashMap<PageId, LiveTree>,
     worker: Option<RenderWorker>,
     finished: Arc<Mutex<Vec<Finished>>>,
     ready: Arc<AtomicBool>,
@@ -106,6 +123,19 @@ impl Renders {
         self.captures.clear();
         self.matches.clear();
         self.baselines.clear();
+        for page in self.live.keys().copied().collect::<Vec<_>>() {
+            self.forget(page);
+        }
+    }
+
+    /// Drops what is kept for `page` (closed): its node list here, its
+    /// document on the render thread.
+    pub(super) fn forget(&mut self, page: PageId) {
+        if self.live.remove(&page).is_some() {
+            if let Some(w) = &self.worker {
+                let _ = w.submit(Job::Forget { page: page.0 as u64 });
+            }
+        }
     }
 }
 
@@ -150,6 +180,25 @@ fn kind_of(url: &str) -> ResourceKind {
     }
 }
 
+/// lp-dom's render tree as lp-render takes it (the same `QualName`s).
+fn convert(t: lp_dom::snapshot::RenderTree) -> Tree {
+    use lp_dom::snapshot::RenderNodeKind;
+    Tree {
+        nodes: t
+            .nodes
+            .into_iter()
+            .map(|n| TreeNode {
+                key: n.key,
+                parent: n.parent,
+                kind: match n.kind {
+                    RenderNodeKind::Element { name, attrs } => TreeKind::Element { name, attrs },
+                    RenderNodeKind::Text(t) => TreeKind::Text(t),
+                },
+            })
+            .collect(),
+    }
+}
+
 fn ms(d: std::time::Duration) -> f64 {
     d.as_secs_f64() * 1e3
 }
@@ -165,6 +214,13 @@ fn timings_json(t: &Timings, snapshot_ms: f64, total_ms: f64) -> Value {
         "compare": ms(t.compare),
         "encode": ms(t.encode),
         "total": total_ms,
+        // How the page's persistent document was used: `rebuilt` names why
+        // it was built from scratch (null: updated in place).
+        "mirror": t.mirror.map(|m| json!({
+            "rebuilt": m.rebuilt.map(|r| format!("{r:?}").to_lowercase()),
+            "mutations": m.mutations,
+            "pages": m.pages,
+        })),
     })
 }
 
@@ -205,13 +261,28 @@ impl ClipParams {
 }
 
 impl EngineHost {
-    fn snapshot(&self, pid: PageId, mark: Option<NodeId>) -> CdpResult<Snapshot> {
+    fn snapshot(&mut self, pid: PageId, mark: Option<NodeId>) -> CdpResult<Snapshot> {
         let page = self.thread.browser.page(pid).ok_or_else(|| CdpError::server("page is gone"))?;
         let frame = &page.main_frame;
         let dom = frame.page_dom.clone().ok_or_else(|| CdpError::server("page has no document"))?;
-        let s = dom.render_snapshot(&frame.base_url, mark.map(|n| (n, lp_render::CLIP_ATTRIBUTE)));
+        let stamp = dom.render_stamp();
+        let (s, live) = match self.renders.live.get(&pid) {
+            // Unchanged: the same `Arc`, which the render thread does not diff.
+            Some(l) if l.stamp == stamp => {
+                let mut s = dom.render_view();
+                s.sheets = l.sheets.clone();
+                (s, l.tree.clone())
+            }
+            _ => {
+                let mut s = dom.render_snapshot_tree(&frame.base_url, None);
+                let tree = Arc::new(convert(s.tree.take().unwrap_or_default()));
+                let sheets = s.sheets.clone();
+                self.renders.live.insert(pid, LiveTree { stamp, tree: tree.clone(), sheets });
+                (s, tree)
+            }
+        };
         Ok(Snapshot {
-            html: s.html,
+            html: String::new(),
             base_url: frame.base_url.clone(),
             sheets: s.sheets,
             width: s.width,
@@ -221,6 +292,7 @@ impl EngineHost {
             scroll_x: s.scroll_x,
             scroll_y: s.scroll_y,
             resource_scope: frame.loader_id.0.clone(),
+            live: Some(Live { page: pid.0 as u64, tree: live, clip: mark.map(lp_dom::snapshot::render_key) }),
         })
     }
 

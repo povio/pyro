@@ -128,6 +128,8 @@ pub enum Job {
         fetcher: Arc<dyn Fetcher>,
         done: Box<dyn FnOnce(Result<MatchOutcome, String>) + Send>,
     },
+    /// Drops a page's persistent document ([`crate::Live`]).
+    Forget { page: u64 },
 }
 
 /// The render thread has exited.
@@ -162,18 +164,29 @@ impl RenderWorker {
 fn run(r: &mut Renderer, job: Job) {
     match job {
         Job::Capture { snapshot, area, format, backend, fetcher, done } => {
-            let out = guarded(|| capture(r, &snapshot, area, format, backend, &fetcher));
+            let out = guarded(r, &snapshot, |r| capture(r, &snapshot, area, format, backend, &fetcher));
             done(out);
         }
         Job::Match { snapshot, area, baseline, opts, fetcher, done } => {
-            let out = guarded(|| match_baseline(r, &snapshot, area, baseline.as_deref(), opts, &fetcher));
+            let out =
+                guarded(r, &snapshot, |r| match_baseline(r, &snapshot, area, baseline.as_deref(), opts, &fetcher));
             done(out);
         }
+        Job::Forget { page } => r.forget(page),
     }
 }
 
-fn guarded<T>(f: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
-    catch_unwind(AssertUnwindSafe(f)).unwrap_or_else(|panic| {
+/// Runs a render; a panic becomes an error, and drops the page's persistent
+/// document (it may be half updated).
+fn guarded<T>(
+    r: &mut Renderer,
+    snap: &Snapshot,
+    f: impl FnOnce(&mut Renderer) -> Result<T, String>,
+) -> Result<T, String> {
+    catch_unwind(AssertUnwindSafe(|| f(&mut *r))).unwrap_or_else(|panic| {
+        if let Some(live) = &snap.live {
+            r.forget(live.page);
+        }
         let what = panic
             .downcast_ref::<&str>()
             .map(|s| s.to_string())

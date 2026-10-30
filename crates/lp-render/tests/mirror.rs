@@ -1,0 +1,563 @@
+//! Persistent documents (`Live` snapshots): a page's Blitz document is
+//! updated from lp-dom's render tree instead of being rebuilt, and must
+//! render exactly what a fresh build of the same tree renders.
+
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::sync::Arc;
+
+use lp_dom::parse::{parse_document, DomRef};
+use lp_dom::select::parse_selectors;
+use lp_dom::snapshot::{RenderHtml, RenderNodeKind, RenderTree};
+use lp_dom::{Dom, NodeId, NodeType};
+use lp_render::*;
+
+struct NoFetch;
+impl Fetcher for NoFetch {
+    fn fetch(&self, _url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+        done(Err("offline".into()));
+    }
+}
+
+fn fetcher() -> Arc<dyn Fetcher> {
+    Arc::new(NoFetch)
+}
+
+struct Page {
+    dom: DomRef,
+    doc: NodeId,
+}
+
+impl Page {
+    fn new(html: &str) -> Page {
+        let dom: DomRef = Rc::new(RefCell::new(Dom::new()));
+        let doc = parse_document(&dom, "http://test/", html);
+        Page { dom, doc }
+    }
+    fn find(&self, css: &str) -> NodeId {
+        self.dom.borrow().query_selector(self.doc, &parse_selectors(css).unwrap()).unwrap().unwrap()
+    }
+    fn opts() -> RenderHtml<'static> {
+        RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None }
+    }
+    fn tree(&self) -> Arc<Tree> {
+        Arc::new(convert(self.dom.borrow().render_tree(self.doc, &Self::opts()).unwrap()))
+    }
+    fn html(&self) -> String {
+        self.dom.borrow().render_html(self.doc, &Self::opts()).unwrap()
+    }
+    fn snapshot(&self, page: u64, tree: Arc<Tree>) -> Snapshot {
+        Snapshot {
+            base_url: "http://test/".into(),
+            width: 640,
+            height: 480,
+            device_scale_factor: 1.0,
+            resource_scope: "doc".into(),
+            live: Some(Live { page, tree, clip: None }),
+            ..Default::default()
+        }
+    }
+}
+
+/// lp-dom's render tree as lp-render takes it (lp-cdp does the same).
+fn convert(t: RenderTree) -> Tree {
+    Tree {
+        nodes: t
+            .nodes
+            .into_iter()
+            .map(|n| TreeNode {
+                key: n.key,
+                parent: n.parent,
+                kind: match n.kind {
+                    RenderNodeKind::Element { name, attrs } => TreeKind::Element { name, attrs },
+                    RenderNodeKind::Text(t) => TreeKind::Text(t),
+                },
+            })
+            .collect(),
+    }
+}
+
+fn paint(r: &mut Renderer, s: &Snapshot) -> Painted {
+    r.paint(s, Area::Viewport, &fetcher()).unwrap()
+}
+
+/// Renders the page with the persistent renderer and with a fresh one;
+/// returns the persistent render's stats.
+#[track_caller]
+fn check(live: &mut Renderer, page: &Page, what: &str) -> MirrorStats {
+    let tree = page.tree();
+    let mirrored = paint(live, &page.snapshot(1, tree.clone()));
+    let fresh = paint(&mut Renderer::new(), &page.snapshot(1, tree));
+    assert_eq!(mirrored.hash, fresh.hash, "after {what}");
+    mirrored.timings.mirror.expect("live")
+}
+
+const PAGE: &str = r#"<!doctype html><html><head><style>
+  body { margin: 0; font: 14px sans-serif } .row { display: flex; gap: 4px; height: 20px }
+  .on { background: #0a0 } .wide { width: 300px } li:nth-child(even) { color: #00f }
+  #panel > p + p { margin-top: 10px } .hidden { display: none }
+</style></head><body>
+<div id="panel"><p class="row">one</p><p class="row on">two</p><p>three</p></div>
+<ul id="list"><li>a</li><li>b</li><li>c</li><li>d</li></ul>
+<form><input id="name" value="x"><input id="agree" type="checkbox"><textarea id="note">n</textarea>
+<select id="pick"><option>a</option><option id="b">b</option></select></form>
+<svg id="icon" width="40" height="20"><rect id="bar" width="10" height="20" fill="red"/></svg>
+<input id="kind" type="text" value="v">
+<table id="t"><tbody><tr><td>1</td><td>2</td></tr><tr><td>3</td><td>4</td></tr></tbody></table>
+</body></html>"#;
+
+#[test]
+fn each_mutation_kind_matches_a_fresh_build() {
+    let page = Page::new(PAGE);
+    let mut r = Renderer::new();
+    assert_eq!(check(&mut r, &page, "the first render").rebuilt, Some(Rebuild::First));
+    let unchanged = check(&mut r, &page, "no change");
+    assert_eq!(unchanged, MirrorStats { rebuilt: None, mutations: 0, pages: 1 });
+
+    type Step = Box<dyn Fn(&Page)>;
+    let steps: Vec<(&str, Step)> = vec![
+        (
+            "a class toggle",
+            Box::new(|p| {
+                let n = p.find("#panel p");
+                p.dom.borrow_mut().set_attribute(n, "class", "row on wide").unwrap();
+            }),
+        ),
+        (
+            "a style attribute",
+            Box::new(|p| {
+                let n = p.find("#list");
+                p.dom.borrow_mut().set_attribute(n, "style", "padding: 30px").unwrap();
+            }),
+        ),
+        (
+            "an attribute removed",
+            Box::new(|p| {
+                {
+                    let n = p.find("#panel p");
+                    p.dom.borrow_mut().remove_attribute(n, "class").unwrap();
+                };
+            }),
+        ),
+        (
+            "a text change",
+            Box::new(|p| {
+                let n = p.find("#t td");
+                p.dom.borrow_mut().set_text_content(n, "one hundred").unwrap();
+            }),
+        ),
+        (
+            "an insertion",
+            Box::new(|p| {
+                let list = p.find("#list");
+                let mut d = p.dom.borrow_mut();
+                let li = d.create_element(p.doc, "li").unwrap();
+                let t = d.create_text(p.doc, "new").unwrap();
+                d.append_child(li, t).unwrap();
+                let first = d.first_child(list).unwrap();
+                d.insert_before(list, li, first).unwrap();
+            }),
+        ),
+        (
+            "a removal",
+            Box::new(|p| {
+                let row = p.find("#t tr");
+                let parent = p.dom.borrow().parent(row).unwrap().unwrap();
+                p.dom.borrow_mut().remove_child(parent, row).unwrap();
+            }),
+        ),
+        (
+            "a move to another parent",
+            Box::new(|p| {
+                let li = p.find("#list li:last-child");
+                let panel = p.find("#panel");
+                p.dom.borrow_mut().append_child(panel, li).unwrap();
+            }),
+        ),
+        (
+            "a move within the parent",
+            Box::new(|p| {
+                let last = p.find("#list li:last-child");
+                let list = p.find("#list");
+                let first = p.dom.borrow().first_child(list).unwrap();
+                p.dom.borrow_mut().insert_before(list, last, first).unwrap();
+            }),
+        ),
+        (
+            "a typed value",
+            Box::new(|p| {
+                let n = p.find("#name");
+                p.dom.borrow_mut().set_value(n, "typed text").unwrap();
+            }),
+        ),
+        (
+            "a checkbox",
+            Box::new(|p| {
+                let n = p.find("#agree");
+                p.dom.borrow_mut().set_checked(n, true).unwrap();
+            }),
+        ),
+        (
+            "a textarea",
+            Box::new(|p| {
+                let n = p.find("#note");
+                p.dom.borrow_mut().set_value(n, "line 1\nline 2").unwrap();
+            }),
+        ),
+        (
+            "an option",
+            Box::new(|p| {
+                let n = p.find("#b");
+                p.dom.borrow_mut().set_option_selected(n, true).unwrap();
+            }),
+        ),
+        (
+            "a <style> edit",
+            Box::new(|p| {
+                let style = p.find("style");
+                let text = p.dom.borrow().text_content(style).unwrap().unwrap() + " p { color: #c00 }";
+                p.dom.borrow_mut().set_text_content(style, &text).unwrap();
+            }),
+        ),
+        (
+            "an attribute inside an inline svg",
+            Box::new(|p| {
+                let n = p.find("#bar");
+                p.dom.borrow_mut().set_attribute(n, "width", "35").unwrap();
+            }),
+        ),
+        (
+            "an input's type",
+            Box::new(|p| {
+                let n = p.find("#kind");
+                p.dom.borrow_mut().set_attribute(n, "type", "checkbox").unwrap();
+            }),
+        ),
+        (
+            "a hidden subtree",
+            Box::new(|p| {
+                let n = p.find("#t");
+                p.dom.borrow_mut().set_attribute(n, "class", "hidden").unwrap();
+            }),
+        ),
+        (
+            "the checkbox again",
+            Box::new(|p| {
+                let n = p.find("#agree");
+                p.dom.borrow_mut().set_checked(n, false).unwrap();
+            }),
+        ),
+    ];
+    for (what, step) in steps {
+        step(&page);
+        let stats = check(&mut r, &page, what);
+        assert_eq!(stats.rebuilt, None, "{what}");
+        assert!(stats.mutations > 0, "{what}");
+    }
+}
+
+/// xorshift: deterministic, no dependency.
+struct Rng(u64);
+impl Rng {
+    fn next(&mut self) -> u64 {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        self.0
+    }
+    fn pick<T: Copy>(&mut self, xs: &[T]) -> Option<T> {
+        (!xs.is_empty()).then(|| xs[(self.next() % xs.len() as u64) as usize])
+    }
+}
+
+fn mutate(page: &Page, rng: &mut Rng) -> String {
+    let body = page.dom.borrow().body(page.doc).unwrap().unwrap();
+    let (elements, texts): (Vec<NodeId>, Vec<NodeId>) = {
+        let d = page.dom.borrow();
+        let all: Vec<NodeId> = d.descendants(body).unwrap().filter(|&n| n != body).collect();
+        let el = all.iter().copied().filter(|&n| d.node_type(n).ok() == Some(NodeType::Element)).collect();
+        let tx = all.iter().copied().filter(|&n| d.node_type(n).ok() == Some(NodeType::Text)).collect();
+        (el, tx)
+    };
+    let mut d = page.dom.borrow_mut();
+    let classes = ["on", "wide", "hidden", "row", "active", "x"];
+    match rng.next() % 8 {
+        0 => {
+            let Some(e) = rng.pick(&elements) else { return "nothing".to_string() };
+            let c = rng.pick(&classes).unwrap();
+            let current = d.get_attribute(e, "class").unwrap().unwrap_or("").to_owned();
+            let next = if current.split_whitespace().any(|x| x == c) {
+                current.split_whitespace().filter(|x| *x != c).collect::<Vec<_>>().join(" ")
+            } else {
+                format!("{current} {c}")
+            };
+            d.set_attribute(e, "class", &next).unwrap();
+            format!("class {} {current:?} -> {next:?}", d.tag_name(e).unwrap())
+        }
+        1 => {
+            let Some(t) = rng.pick(&texts) else { return "nothing".to_string() };
+            d.set_text_content(t, &format!("text {}", rng.next() % 1000)).unwrap();
+            "text".to_string()
+        }
+        2 => {
+            let Some(parent) = rng.pick(&elements).or(Some(body)) else { return "nothing".to_string() };
+            let parent_tag = d.tag_name(parent).unwrap();
+            // A row into a row group, other elements where HTML allows them.
+            let row = matches!(parent_tag.as_str(), "TBODY" | "THEAD" | "TFOOT");
+            let tag = if row { "tr" } else { rng.pick(&["div", "span", "p", "b"]).unwrap() };
+            if !allowed_in(&tag.to_ascii_uppercase(), &parent_tag) {
+                return "nothing".to_string();
+            }
+            let e = d.create_element(page.doc, tag).unwrap();
+            let cells = if row { 2 } else { 0 };
+            for _ in 0..cells {
+                let td = d.create_element(page.doc, "td").unwrap();
+                let t = d.create_text(page.doc, "cell").unwrap();
+                d.append_child(td, t).unwrap();
+                d.append_child(e, td).unwrap();
+            }
+            if !row {
+                let t = d.create_text(page.doc, "inserted").unwrap();
+                d.append_child(e, t).unwrap();
+            }
+            let before = d.children(parent).unwrap().collect::<Vec<_>>();
+            let anchor = rng.pick(&before);
+            if d.insert_before(parent, e, anchor).is_err() {
+                return "nothing".to_string();
+            }
+            "insert".to_string()
+        }
+        3 => {
+            let Some(e) = rng.pick(&elements) else { return "nothing".to_string() };
+            let Some(parent) = d.parent(e).unwrap() else { return "nothing".to_string() };
+            d.remove_child(parent, e).unwrap();
+            "remove".to_string()
+        }
+        4 => {
+            let (Some(e), Some(to)) = (rng.pick(&elements), rng.pick(&elements)) else { return "nothing".to_string() };
+            if !allowed_in(&d.tag_name(e).unwrap(), &d.tag_name(to).unwrap()) || d.append_child(to, e).is_err() {
+                return "nothing".to_string();
+            }
+            format!("move {} into {}", d.tag_name(e).unwrap(), d.tag_name(to).unwrap())
+        }
+        5 => {
+            let Some(e) = rng.pick(&elements) else { return "nothing".to_string() };
+            let v = format!("padding-left: {}px", rng.next() % 40);
+            d.set_attribute(e, "style", &v).unwrap();
+            "style".to_string()
+        }
+        6 => {
+            let Some(e) = rng.pick(&elements) else { return "nothing".to_string() };
+            d.set_attribute(e, "data-x", &(rng.next() % 9).to_string()).unwrap();
+            "data attribute".to_string()
+        }
+        _ => {
+            // Form state: a typed value or a checkbox, when the page has one.
+            let controls: Vec<NodeId> = elements
+                .iter()
+                .copied()
+                .filter(|&e| d.tag_name(e).is_ok_and(|t| t == "INPUT" || t == "TEXTAREA"))
+                .collect();
+            let Some(e) = rng.pick(&controls) else { return "nothing".to_string() };
+            let checkable = d.get_attribute(e, "type").unwrap().is_some_and(|t| t == "checkbox" || t == "radio");
+            if checkable {
+                let on = rng.next().is_multiple_of(2);
+                d.set_checked(e, on).unwrap();
+            } else {
+                d.set_value(e, &format!("typed {}", rng.next() % 100)).unwrap();
+            }
+            "form state".to_string()
+        }
+    }
+}
+
+/// Whether HTML lets `child` sit in `parent` as far as tables go (blitz-dom
+/// has no anonymous table boxes: table parts out of place lay out
+/// differently after an incremental relayout than after a fresh one).
+fn allowed_in(child: &str, parent: &str) -> bool {
+    match child {
+        "TR" => matches!(parent, "TBODY" | "THEAD" | "TFOOT" | "TABLE"),
+        "TD" | "TH" => parent == "TR",
+        "TBODY" | "THEAD" | "TFOOT" | "CAPTION" | "COLGROUP" => parent == "TABLE",
+        _ => !matches!(parent, "TABLE" | "TBODY" | "THEAD" | "TFOOT" | "TR" | "COLGROUP"),
+    }
+}
+
+#[test]
+fn random_mutation_sequences_match_fresh_builds() {
+    let fixtures = ["login", "dashboard", "article"];
+    // LP_MIRROR_STEPS / LP_MIRROR_SEED: longer runs, other sequences.
+    let env = |k: &str| std::env::var(k).ok().and_then(|v| v.parse::<u64>().ok());
+    let steps = env("LP_MIRROR_STEPS").unwrap_or(if cfg!(debug_assertions) { 8 } else { 40 });
+    let seed = env("LP_MIRROR_SEED").unwrap_or(0);
+    for (i, name) in fixtures.iter().enumerate() {
+        let path = format!("{}/../../bench/screenshot/fixtures/{name}.html", env!("CARGO_MANIFEST_DIR"));
+        let page = Page::new(&std::fs::read_to_string(path).unwrap());
+        let mut r = Renderer::new();
+        check(&mut r, &page, "the first render");
+        let mut rng = Rng(0x9e37_79b9_7f4a_7c15 ^ (i as u64 + 1) ^ seed.wrapping_mul(0x2545_f491_4f6c_dd1d));
+        let mut done = Vec::new();
+        for _ in 0..steps {
+            done.push(mutate(&page, &mut rng));
+            let tree = page.tree();
+            let mirrored = paint(&mut r, &page.snapshot(1, tree.clone()));
+            let fresh = paint(&mut Renderer::new(), &page.snapshot(1, tree));
+            if mirrored.hash != fresh.hash {
+                let mut f = Renderer::new();
+                paint(&mut f, &page.snapshot(1, page.tree()));
+                let (a, b) = (r.mirrored_html(1).unwrap(), f.mirrored_html(1).unwrap());
+                let (la, lb) = (r.mirrored_layout(1), f.mirrored_layout(1));
+                for i in (0..la.len().min(lb.len())).filter(|&i| la[i] != lb[i]).take(25) {
+                    eprintln!("DIFF {i}: {} | {}", la[i], lb[i].trim_start());
+                }
+                if let Some(i) = (0..la.len().min(lb.len())).find(|&i| la[i] != lb[i]) {
+                    eprintln!("first layout difference at box {i}:\n  mirrored {}\n  fresh    {}", la[i], lb[i]);
+                    for (k, line) in la.iter().enumerate().take(i + 4).skip(i.saturating_sub(6)) {
+                        eprintln!("  {line} | {}", lb.get(k).map(String::as_str).unwrap_or(""));
+                    }
+                }
+                if std::env::var_os("LP_MIRROR_DUMP").is_some() {
+                    let (ia, _) = r.raster(mirrored, Backend::Cpu);
+                    let (ib, _) = Renderer::new().raster(fresh, Backend::Cpu);
+                    eprintln!("{:?}", compare(&ia, &ib, 0, None));
+                    std::fs::write("/tmp/claude-mirror-a.png", encode_png(&ia)).unwrap();
+                    std::fs::write("/tmp/claude-mirror-b.png", encode_png(&ib)).unwrap();
+                    std::fs::write("/tmp/claude-mirror-d.png", encode_png(&diff_image(&ia, &ib, 0))).unwrap();
+                    std::fs::write("/tmp/claude-mirror-a.html", &a).unwrap();
+                    std::fs::write("/tmp/claude-mirror-b.html", &b).unwrap();
+                }
+                panic!("{name}: same markup {}; after {done:?}", a == b);
+            }
+        }
+    }
+}
+
+#[test]
+fn a_tree_builds_what_its_html_parses_to() {
+    // The persistent document is built from the tree, not parsed: the
+    // pixels must not depend on which.
+    for name in ["login", "dashboard", "article"] {
+        let path = format!("{}/../../bench/screenshot/fixtures/{name}.html", env!("CARGO_MANIFEST_DIR"));
+        let page = Page::new(&std::fs::read_to_string(path).unwrap());
+        let live = paint(&mut Renderer::new(), &page.snapshot(1, page.tree()));
+        let parsed = Snapshot { html: page.html(), live: None, ..page.snapshot(1, page.tree()) };
+        assert_eq!(live.hash, paint(&mut Renderer::new(), &parsed).hash, "{name}");
+    }
+}
+
+#[test]
+fn navigation_large_changes_and_forget_rebuild() {
+    let page = Page::new(PAGE);
+    let mut r = Renderer::new();
+    check(&mut r, &page, "the first render");
+    // Another document (a navigation gives the page a new loader id).
+    let s = Snapshot { resource_scope: "next".into(), ..page.snapshot(1, page.tree()) };
+    assert_eq!(paint(&mut r, &s).timings.mirror.unwrap().rebuilt, Some(Rebuild::Document));
+    // Most of the page replaced.
+    {
+        let mut d = page.dom.borrow_mut();
+        let body = d.body(page.doc).unwrap().unwrap();
+        let fresh = d.create_element(page.doc, "main").unwrap();
+        let t = d.create_text(page.doc, "replaced").unwrap();
+        d.append_child(fresh, t).unwrap();
+        d.replace_all(body, Some(fresh)).unwrap();
+    }
+    let s = Snapshot { resource_scope: "next".into(), ..page.snapshot(1, page.tree()) };
+    assert_eq!(paint(&mut r, &s).timings.mirror.unwrap().rebuilt, Some(Rebuild::Changes));
+    // Pages are independent; a forgotten page starts over.
+    assert_eq!(paint(&mut r, &page.snapshot(2, page.tree())).timings.mirror.unwrap().rebuilt, Some(Rebuild::First));
+    assert_eq!(r.mirrored_pages(), 2);
+    r.forget(1);
+    r.forget(2);
+    assert_eq!(r.mirrored_pages(), 0);
+    let s = Snapshot { resource_scope: "next".into(), ..page.snapshot(1, page.tree()) };
+    assert_eq!(paint(&mut r, &s).timings.mirror.unwrap().rebuilt, Some(Rebuild::First));
+}
+
+#[test]
+fn the_same_tree_is_not_diffed_again() {
+    let page = Page::new(PAGE);
+    let mut r = Renderer::new();
+    let tree = page.tree();
+    paint(&mut r, &page.snapshot(1, tree.clone()));
+    let again = paint(&mut r, &page.snapshot(1, tree));
+    assert_eq!(again.timings.mirror, Some(MirrorStats { rebuilt: None, mutations: 0, pages: 1 }));
+    assert_eq!(again.timings.layout_passes, 1);
+}
+
+#[test]
+fn viewport_and_scroll_changes_apply_to_the_persistent_document() {
+    let page = Page::new(&PAGE.replace("</body>", "<div style=\"height: 2000px\"></div></body>"));
+    let mut r = Renderer::new();
+    let tree = page.tree();
+    let fresh = |s: &Snapshot, area: Area| Renderer::new().paint(s, area, &fetcher()).unwrap().hash;
+    for s in [
+        page.snapshot(1, tree.clone()),
+        Snapshot { width: 400, device_scale_factor: 2.0, ..page.snapshot(1, tree.clone()) },
+        Snapshot { scroll_y: 300.0, ..page.snapshot(1, tree.clone()) },
+        Snapshot { dark: true, ..page.snapshot(1, tree.clone()) },
+    ] {
+        assert_eq!(r.paint(&s, Area::Viewport, &fetcher()).unwrap().hash, fresh(&s, Area::Viewport));
+        // A full-page capture after a scrolled one starts at the top.
+        assert_eq!(r.paint(&s, Area::FullPage, &fetcher()).unwrap().hash, fresh(&s, Area::FullPage));
+    }
+}
+
+#[test]
+fn element_captures_find_their_element_by_key() {
+    let page = Page::new(PAGE);
+    let key = lp_dom::snapshot::render_key(page.find("#t"));
+    let mut r = Renderer::new();
+    let s =
+        Snapshot { live: Some(Live { page: 1, tree: page.tree(), clip: Some(key) }), ..page.snapshot(1, page.tree()) };
+    let painted = r.paint(&s, Area::Element, &fetcher()).unwrap();
+    let html = Snapshot {
+        html: page
+            .dom
+            .borrow()
+            .render_html(
+                page.doc,
+                &RenderHtml {
+                    style_text: &|_| None,
+                    stylesheet_href: &|_| None,
+                    mark: Some((page.find("#t"), CLIP_ATTRIBUTE)),
+                },
+            )
+            .unwrap(),
+        live: None,
+        ..page.snapshot(1, page.tree())
+    };
+    let parsed = Renderer::new().paint(&html, Area::Element, &fetcher()).unwrap();
+    assert_eq!((painted.width, painted.height), (parsed.width, parsed.height));
+    assert_eq!(painted.hash, parsed.hash);
+}
+
+#[test]
+fn linked_sheet_edits_reach_the_persistent_document() {
+    // A CSSOM edit changes a linked sheet's text, not the tree.
+    let page = Page::new(
+        r#"<!doctype html><html><head><link rel="stylesheet" href="a.css"></head><body><p>x</p></body></html>"#,
+    );
+    let url = "http://test/a.css".to_string();
+    let tree = {
+        let href = |_: NodeId| Some(url.clone());
+        Arc::new(convert(
+            page.dom
+                .borrow()
+                .render_tree(page.doc, &RenderHtml { style_text: &|_| None, stylesheet_href: &href, mark: None })
+                .unwrap(),
+        ))
+    };
+    let snap = |css: &str| {
+        let mut s = page.snapshot(1, tree.clone());
+        s.sheets.insert(url.clone(), css.into());
+        s
+    };
+    let mut r = Renderer::new();
+    let first = paint(&mut r, &snap("p { color: #00f }"));
+    let edited = snap("p { color: #f00; padding: 20px }");
+    let mirrored = paint(&mut r, &edited);
+    assert_ne!(mirrored.hash, first.hash);
+    assert_eq!(mirrored.hash, paint(&mut Renderer::new(), &edited).hash);
+    assert_eq!(mirrored.timings.mirror.unwrap().rebuilt, None);
+}

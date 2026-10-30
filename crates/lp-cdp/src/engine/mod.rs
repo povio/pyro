@@ -30,6 +30,7 @@ mod screenshot {
             false
         }
         pub(super) fn clear(&mut self) {}
+        pub(super) fn forget(&mut self, _page: lp_browser::PageId) {}
     }
 
     impl super::EngineHost {
@@ -915,6 +916,7 @@ impl Host for EngineHost {
                 session.handles.borrow_mut().clear();
             }
         }
+        self.renders.forget(state.id);
         self.thread.browser.close_page(state.id);
         self.update_network_subscriptions();
         // Realm/frame teardown events have no session left to go to.
