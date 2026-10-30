@@ -14,6 +14,10 @@
 // `lp.page()` takes one and attaches in one call, and its `route` becomes the
 // first step of the first run. `page.run()` is one LP.run command: the browser
 // runs every step, waiting in place, and replies once.
+//
+// Against `lightningpanda serve --fork` every page gets a connection of its own:
+// the server forks it from a process that booted each profile once, so the
+// page starts booted and its process exits when the page closes.
 import { spawn, type ChildProcess } from 'node:child_process';
 import { statSync } from 'node:fs';
 import { createServer } from 'node:net';
@@ -36,6 +40,16 @@ export type Profile = {
   pool?: number;
   /** Keep pages booted ahead (default); false boots each page when a test asks. */
   prepare?: boolean;
+  /**
+   * Steps run once on the booted page before tests get it (`serve --fork`
+   * only): every page of this profile then starts from their result.
+   */
+  setup?: StepLike[];
+  /**
+   * Starts from another profile's snapshot (`serve --fork` only): its page is
+   * forked from that profile's, and only this profile's `setup` runs on it.
+   */
+  base?: string;
 };
 
 export type RunResult = {
@@ -64,7 +78,7 @@ const storageScript = (entries: Record<string, string>) =>
 type ProfileEntry = { ids: number[] | null; profile: Profile; scripts: string[] };
 
 /** One CDP connection: one browser thread, with its own page pools. */
-type Conn = { cdp: Cdp; open: number };
+type Conn = { cdp: Cdp; open: number; /** Opened for one page (fork mode): closed with it. */ own?: boolean };
 
 export type ConnectOptions = {
   /**
@@ -79,13 +93,27 @@ export type ConnectOptions = {
 export class Lightningpanda {
   private profiles = new Map<string, ProfileEntry>();
   private turn = 0;
+  /** `serve --fork`: one connection (a forked process) per page. */
+  private fork = false;
   /** Pages taken from a pool, and pages booted on demand because none was waiting. */
   readonly stats = { prepared: 0, preparedBooting: 0, fresh: 0 };
 
   private constructor(
+    private wsUrl: string,
     private conns: Conn[],
     private child?: ChildProcess,
   ) {}
+
+  /** Asks the server whether it forks connections (`serve --fork`). */
+  private async detect(): Promise<this> {
+    try {
+      const { fork } = await this.cdp.send('Lightningpanda.capabilities');
+      this.fork = fork === true;
+    } catch (e) {
+      if (!(e instanceof CdpError)) throw e; // an older server: no fork mode
+    }
+    return this;
+  }
 
   /** The first connection, for browser-level commands. */
   get cdp(): Cdp {
@@ -93,7 +121,7 @@ export class Lightningpanda {
   }
 
   static async connect(wsUrl: string, opts: ConnectOptions = {}): Promise<Lightningpanda> {
-    return new Lightningpanda(await openConns(wsUrl, opts));
+    return new Lightningpanda(wsUrl, await openConns(wsUrl, opts)).detect();
   }
 
   /**
@@ -111,7 +139,8 @@ export class Lightningpanda {
       try {
         const r = await fetch(`http://127.0.0.1:${port}/json/version`);
         const v = (await r.json()) as { webSocketDebuggerUrl?: string };
-        return new Lightningpanda(await openConns(v.webSocketDebuggerUrl ?? `ws://127.0.0.1:${port}/`, opts), child);
+        const url = v.webSocketDebuggerUrl ?? `ws://127.0.0.1:${port}/`;
+        return await new Lightningpanda(url, await openConns(url, opts), child).detect();
       } catch (e) {
         if (child.exitCode !== null || Date.now() > deadline) {
           child.kill();
@@ -124,18 +153,24 @@ export class Lightningpanda {
 
   /** Declares a kind of page tests ask for by name (`lp.page({ as: name })`). */
   async profile(name: string, profile: Profile): Promise<void> {
+    const base = profile.base === undefined ? undefined : this.profiles.get(profile.base)?.ids?.[0];
+    if (profile.base !== undefined && base === undefined) throw new Error(`no prepared profile ${profile.base} to start from`);
     const scripts = [...(profile.localStorage ? [storageScript(profile.localStorage)] : []), ...(profile.initScripts ?? [])];
     if (profile.prepare === false) {
       this.profiles.set(name, { ids: null, profile, scripts });
       return;
     }
+    // Fork mode: the server's template boots the profile once for every connection.
+    const conns = this.fork ? this.conns.slice(0, 1) : this.conns;
     const ids = await Promise.all(
-      this.conns.map(async (c) => {
+      conns.map(async (c) => {
         const { profileId } = await c.cdp.send('Lightningpanda.registerPreparedPage', {
           url: profile.url,
           initScripts: scripts,
           ...(profile.viewport ? { viewport: profile.viewport } : {}),
           pool: profile.pool ?? 2,
+          ...(profile.setup?.length ? { setup: profile.setup.map((s) => s.toStep()) } : {}),
+          ...(base !== undefined ? { base } : {}),
         });
         return profileId as number;
       }),
@@ -148,6 +183,16 @@ export class Lightningpanda {
     const entry = this.profiles.get(name);
     if (!entry?.ids) return;
     const deadline = Date.now() + timeoutMs;
+    if (this.fork) {
+      // A new connection is a fork of the template as it is now.
+      for (;;) {
+        const cdp = await Cdp.open(this.forkUrl(entry.ids[0]));
+        const { pages } = await cdp.send('Lightningpanda.preparedPages').finally(() => cdp.close());
+        if (pages.some((p: { profileId: number; ready: boolean }) => p.profileId === entry.ids![0] && p.ready)) return;
+        if (Date.now() > deadline) throw new Error(`no booted page for ${name} after ${timeoutMs} ms`);
+        await new Promise((r) => setTimeout(r, 10));
+      }
+    }
     await Promise.all(
       this.conns.map(async (c, i) => {
         for (;;) {
@@ -185,8 +230,26 @@ export class Lightningpanda {
   async page(opts: { as?: string; route?: string; url?: string; initScripts?: string[] } = {}): Promise<Page> {
     const entry = opts.as === undefined ? undefined : this.profiles.get(opts.as);
     if (opts.as !== undefined && !entry) throw new Error(`no profile ${opts.as}: declare it with lp.profile()`);
-    const index = this.pick();
-    const conn = this.conns[index];
+    if (!this.fork) {
+      const index = this.pick();
+      return this.openPage(this.conns[index], index, entry, opts);
+    }
+    // The server forks the connection from this profile's snapshot.
+    const conn: Conn = { cdp: await Cdp.open(this.forkUrl(entry?.ids?.[0])), open: 0, own: true };
+    try {
+      return await this.openPage(conn, 0, entry, opts);
+    } catch (e) {
+      conn.cdp.close();
+      throw e;
+    }
+  }
+
+  private async openPage(
+    conn: Conn,
+    index: number,
+    entry: ProfileEntry | undefined,
+    opts: { route?: string; url?: string; initScripts?: string[] },
+  ): Promise<Page> {
     const first: StepLike[] = [];
     let page: Page | undefined;
     const extra = opts.initScripts ?? [];
@@ -212,6 +275,14 @@ export class Lightningpanda {
     if (opts.route) first.push(routeStep(opts.route));
     page.prefix = first;
     return page;
+  }
+
+  /** The connection URL that forks from `profileId`'s snapshot (fork mode). */
+  private forkUrl(profileId?: number): string {
+    if (profileId === undefined) return this.wsUrl;
+    const url = new URL(this.wsUrl);
+    url.searchParams.set('profile', String(profileId));
+    return url.toString();
   }
 
   close(): void {
@@ -294,6 +365,11 @@ export class Page {
     if (this.closed) return;
     this.closed = true;
     this.conn.open--;
+    if (this.conn.own) {
+      // Its own forked process: closing the connection ends it, page and all.
+      this.cdp.close();
+      return;
+    }
     this.cdp.post('Target.closeTarget', { targetId: this.targetId });
     this.cdp.post('Target.disposeBrowserContext', { browserContextId: this.browserContextId });
   }
