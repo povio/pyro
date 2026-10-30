@@ -350,6 +350,12 @@ pub struct BrowserProfile {
 }
 
 impl EngineHost {
+    /// What can still change `page` now (`serve --fork` waits for quiet
+    /// pages before forking); `None` once it is gone.
+    pub fn page_work(&self, page: PageKey) -> Option<lp_browser::PageWork> {
+        self.thread.browser.page_work(self.pages.get(&page)?.id)
+    }
+
     /// Creates the engine for the current thread (at most one per thread).
     pub fn new(out: Outbox) -> CdpResult<EngineHost> {
         Self::with_body_budget(out, Self::body_budget())

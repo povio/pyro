@@ -9,6 +9,7 @@
 
 mod conn;
 pub mod engine;
+pub mod fork;
 pub mod serve;
 
 pub use lp_cdp_protocol::{

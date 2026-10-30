@@ -90,13 +90,15 @@ pub trait SessionFactory: Send + Sync + 'static {
     fn start(&self, peer: SocketAddr) -> std::io::Result<SessionChannels>;
 
     /// Takes over the upgraded socket instead: the session does its own
-    /// WebSocket I/O (bytes in `buffered` were read past the upgrade request).
+    /// WebSocket I/O (bytes in `buffered` were read past the upgrade request;
+    /// `path` is the upgrade request's target, query included).
     /// Returns `None` to use [`SessionFactory::start`]'s channels; otherwise a
     /// receiver that resolves once the session has fully stopped (the
     /// connection slot is held until then).
     fn start_owned(
         &self,
         _peer: SocketAddr,
+        _path: &str,
         _socket: std::net::TcpStream,
         _buffered: Vec<u8>,
         _config: &ServerConfig,
@@ -188,7 +190,7 @@ async fn serve_connection<F: SessionFactory>(
 
     if factory.owns_sockets() {
         let socket = stream.into_std()?;
-        if let Some(started) = factory.start_owned(peer, socket, buf[head_len..].to_vec(), config) {
+        if let Some(started) = factory.start_owned(peer, &head.path, socket, buf[head_len..].to_vec(), config) {
             // The slot is held until the session's thread has finished.
             let _ = started?.await;
             return Ok(());

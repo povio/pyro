@@ -29,6 +29,8 @@ pub struct Capabilities {
     pub proxy_targets: bool,
     /// Native global-object detection, including globals retained after realm disposal.
     pub object_global_context: bool,
+    /// fork() support (patched JavaScriptCore): [`Engine::prepare_for_fork`].
+    pub fork: bool,
 }
 
 impl Capabilities {
@@ -43,6 +45,7 @@ impl Capabilities {
             hidden_properties: spi.get_private_property.is_some() && spi.set_private_property.is_some(),
             proxy_targets: spi.get_proxy_target.is_some(),
             object_global_context: spi.get_object_global_context.is_some(),
+            fork: spi.fork().is_some(),
         }
     }
 }
@@ -393,11 +396,55 @@ impl Engine {
         }
     }
 
+    /// Makes a `fork()` of this process safe for JavaScriptCore: finishes a
+    /// collection under way (it starts none: [`Engine::settle`] first for a
+    /// compact parent) and JIT work, and parks every JSC helper thread.
+    /// Call on the engine's thread, with no other thread running JavaScript,
+    /// right before `fork()`, then [`Engine::did_fork`] in both processes.
+    /// The child keeps this engine with all of its state, shared
+    /// copy-on-write with the parent.
+    pub fn prepare_for_fork(&self) -> Result<(), JsError> {
+        let Some((prepare, _, _)) = sys::spi::get().fork() else {
+            return Err(JsError::Unsupported("fork (patched JavaScriptCore)"));
+        };
+        self.drain_finalized();
+        // SAFETY: the group is alive and used by this thread only.
+        if unsafe { prepare(self.inner.group, FORK_PREPARE_TIMEOUT_SECS) } {
+            Ok(())
+        } else {
+            unsafe { (sys::spi::get().fork().expect("checked").1)(false) };
+            Err(JsError::Type("JavaScriptCore helper threads did not stop".into()))
+        }
+    }
+
+    /// Call right after `fork()` in the parent (`child: false`) and in the
+    /// child (`child: true`), after a successful [`Engine::prepare_for_fork`].
+    /// In the child every realm also gets a new `Math.random()` seed.
+    pub fn did_fork(&self, child: bool) {
+        let Some((_, did_fork, reseed)) = sys::spi::get().fork() else { return };
+        // SAFETY: called on the engine's thread after prepare_for_fork; the
+        // contexts are alive (the root always, realms while listed and live).
+        unsafe {
+            did_fork(child);
+            if child {
+                reseed(self.inner.root);
+                for (global, realm) in self.inner.realms.borrow().iter() {
+                    if realm.strong_count() > 0 {
+                        reseed(*global);
+                    }
+                }
+            }
+        }
+    }
+
     /// Live realms of this engine.
     pub fn realms(&self) -> Vec<Realm> {
         self.inner.realms.borrow().iter().filter_map(|(_, r)| r.upgrade()).map(|inner| Realm { inner }).collect()
     }
 }
+
+/// How long [`Engine::prepare_for_fork`] waits for JSC's helper threads.
+const FORK_PREPARE_TIMEOUT_SECS: f64 = 5.0;
 
 /// How often running JavaScript polls the termination flag.
 const WATCHDOG_INTERVAL_SECS: f64 = 0.05;

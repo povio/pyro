@@ -131,7 +131,7 @@ struct ContextEntry {
 /// `Lightningpanda.registerPreparedPage`): its own browser context (seeded
 /// local storage), init scripts, viewport, then a navigation to `url`.
 /// `pool` pages per profile are kept ready; each acquisition starts the next.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PreparedProfile {
     pub url: String,
@@ -147,9 +147,19 @@ pub struct PreparedProfile {
     /// for the boot when tests run back to back.
     #[serde(default)]
     pub refill_after_close: bool,
+    /// `LP.run` steps run once on the booted page before tests get it
+    /// (`serve --fork` only: the template runs them, and every connection
+    /// forked afterwards starts from the resulting state).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub setup: Vec<serde_json::Value>,
+    /// Starts from another profile's page (its id) instead of booting
+    /// `url`: `serve --fork` forks that profile's snapshot and runs only this
+    /// profile's `setup` on it. Pages of such a profile are never booted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base: Option<usize>,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ViewportSize {
     pub width: u32,
     pub height: u32,
@@ -158,6 +168,9 @@ pub struct ViewportSize {
 fn default_pool() -> usize {
     1
 }
+
+/// `serve --fork`: hands a profile to the template process; its id there.
+pub type RegisterPrepared = Box<dyn Fn(&PreparedProfile) -> Result<usize, String>>;
 
 /// At most this many pages booting ahead per profile.
 pub const MAX_POOL: usize = 8;
@@ -231,6 +244,10 @@ pub struct Browser<H: Host> {
     /// The last refill could create nothing (limits, failures): wait for
     /// the next acquisition before trying again.
     refill_blocked: bool,
+    /// `serve --fork`: this connection is a fork of the template process
+    /// (see [`crate::fork`]), which boots prepared pages for every later
+    /// connection. Nothing is booted here; registrations go to the template.
+    fork: Option<RegisterPrepared>,
 }
 
 #[derive(Serialize)]
@@ -265,7 +282,14 @@ impl<H: Host> Browser<H> {
             prepared_profiles: Vec::new(),
             prepared: Vec::new(),
             refill_blocked: false,
+            fork: None,
         }
+    }
+
+    /// Makes this connection a fork child (see the `fork` field): no
+    /// refills, and `registerPreparedPage` goes through `register`.
+    pub fn set_fork_child(&mut self, register: RegisterPrepared) {
+        self.fork = Some(register);
     }
 
     /// `new`, then starts booting `profiles`' pages right away so the first
@@ -299,6 +323,75 @@ impl<H: Host> Browser<H> {
         browser
     }
 
+    /// The profiles prepared pages are booted for; a profile's id is its index.
+    pub fn prepared_profiles(&self) -> &[PreparedProfile] {
+        &self.prepared_profiles
+    }
+
+    /// Prepared pages waiting for a test, as (profile id, page).
+    pub fn prepared_pages(&self) -> Vec<(usize, PageKey)> {
+        self.prepared.iter().map(|e| (e.profile, e.page)).collect()
+    }
+
+    /// Adds a profile and starts booting its pages; its id (`serve --fork`
+    /// template, which registers profiles for every connection).
+    pub fn add_prepared_profile(&mut self, profile: PreparedProfile) -> usize {
+        self.prepared_profiles.push(profile);
+        self.refill_blocked = false;
+        self.refill_prepared();
+        self.prepared_profiles.len() - 1
+    }
+
+    /// Sets profile `id`, adding never-booted placeholders before it if
+    /// needed (a derived `serve --fork` template learns profiles by id).
+    pub fn set_prepared_profile(&mut self, id: usize, profile: PreparedProfile) {
+        while self.prepared_profiles.len() <= id {
+            let placeholder = PreparedProfile { base: Some(self.prepared_profiles.len()), ..profile.clone() };
+            self.prepared_profiles.push(placeholder);
+        }
+        self.prepared_profiles[id] = profile;
+    }
+
+    /// Moves a waiting page of profile `from` to profile `to` (a derived
+    /// snapshot's page after its setup); whether there was one.
+    pub fn relabel_prepared(&mut self, from: usize, to: usize) -> bool {
+        match self.prepared.iter_mut().find(|e| e.profile == from) {
+            Some(e) => {
+                e.profile = to;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Hands an acquired prepared page back to the pool, waiting and hidden
+    /// again, with its sessions detached (the `serve --fork` template acquires
+    /// a page to run a profile's setup steps on it).
+    pub fn return_to_prepared(&mut self, target_id: &str) -> CdpResult<()> {
+        let pos = self
+            .targets
+            .iter()
+            .position(|t| t.id == target_id && t.prepared_profile.is_some())
+            .ok_or_else(|| CdpError::invalid_params("not an acquired prepared page"))?;
+        let sessions: Vec<String> =
+            self.sessions.iter().filter(|(_, s)| s.target_id == target_id).map(|(id, _)| id.clone()).collect();
+        for session in sessions {
+            self.detach_session(&session, &mut Discard);
+        }
+        let target = self.targets.remove(pos);
+        if let Some(c) = self.contexts.iter_mut().find(|c| c.id == target.context_id) {
+            c.hidden = true;
+        }
+        self.prepared.push(PreparedEntry {
+            profile: target.prepared_profile.expect("checked"),
+            context_id: target.context_id,
+            page: target.page,
+            target_id: target.id,
+            settled: false,
+        });
+        Ok(())
+    }
+
     /// No page is open on this connection: no test is using it, so a refill
     /// delays nobody.
     pub fn no_open_pages(&self) -> bool {
@@ -311,12 +404,17 @@ impl<H: Host> Browser<H> {
     /// open), so a test's own commands are never queued behind the next
     /// page's boot.
     pub fn needs_refill(&self) -> bool {
-        !self.refill_blocked && (0..self.prepared_profiles.len()).any(|i| self.profile_wants_page(i))
+        self.fork.is_none()
+            && !self.refill_blocked
+            && (0..self.prepared_profiles.len()).any(|i| self.profile_wants_page(i))
     }
 
     /// Whether profile `i` is below its pool and allowed to boot now.
     fn profile_wants_page(&self, i: usize) -> bool {
         let profile = &self.prepared_profiles[i];
+        if profile.base.is_some() {
+            return false; // its page comes from the base profile's
+        }
         let waiting = self.prepared.iter().filter(|e| e.profile == i).count();
         let in_use = self.targets.iter().filter(|t| t.prepared_profile == Some(i)).count();
         let pool = profile.pool.clamp(1, MAX_POOL);
@@ -347,6 +445,9 @@ impl<H: Host> Browser<H> {
 
     /// Boots the missing pages now (see `needs_refill`).
     pub fn refill_prepared(&mut self) {
+        if self.fork.is_some() {
+            return;
+        }
         if !self.fill_prepared() {
             self.refill_blocked = true;
         }
@@ -400,6 +501,15 @@ impl<H: Host> Browser<H> {
                 }
                 if profile.pool == 0 || profile.pool > MAX_POOL {
                     return Err(CdpError::invalid_params("pool must be between 1 and 8"));
+                }
+                if (!profile.setup.is_empty() || profile.base.is_some()) && self.fork.is_none() {
+                    return Err(CdpError::invalid_params("setup and base need serve --fork"));
+                }
+                if let Some(register) = &self.fork {
+                    // The template boots it; connections forked from then on have it.
+                    let profile_id = register(&profile).map_err(CdpError::server)?;
+                    out.send(msg::result_frame(id, &serde_json::json!({ "profileId": profile_id }), cmd.session_id()));
+                    return Ok(());
                 }
                 self.prepared_profiles.push(profile);
                 self.refill_blocked = false;
@@ -485,6 +595,9 @@ impl<H: Host> Browser<H> {
                 ));
                 // The replacement boots once the thread is quiet (`needs_refill`).
                 self.refill_blocked = false;
+            }
+            "capabilities" => {
+                out.send(msg::result_frame(id, &serde_json::json!({ "fork": self.fork.is_some() }), cmd.session_id()));
             }
             "preparedPages" => {
                 let pages: Vec<serde_json::Value> = self

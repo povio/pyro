@@ -1458,6 +1458,7 @@ dependencies = [
  "lp-js",
  "lp-net",
  "lp-runtime",
+ "serde_json",
 ]
 
 [[package]]
@@ -1516,6 +1517,7 @@ dependencies = [
  "bytes",
  "getrandom",
  "http",
+ "libc",
  "lp-browser",
  "lp-cdp-protocol",
  "lp-dom",
