@@ -6,7 +6,7 @@ use std::borrow::Borrow;
 use std::fmt;
 
 use cssparser::{CowRcStr, ParseError, Parser as CssParser, ToCss};
-use markup5ever::{local_name, LocalName, Namespace};
+use markup5ever::{local_name, ns, LocalName, Namespace};
 use precomputed_hash::PrecomputedHash;
 use rustc_hash::FxHashMap;
 use selectors::attr::{AttrSelectorOperation, CaseSensitivity, NamespaceConstraint};
@@ -257,18 +257,97 @@ pub fn parse_selectors(text: &str) -> DomResult<Selectors> {
         .map_err(|_| DomError::new(DomErrorKind::Syntax, "is not a valid selector"))
 }
 
+/// A selector list for the DOM's query APIs: Stylo's (`crate::stylo::select`,
+/// the cascade's selector engine) unless `LP_CASCADE=legacy`, else (or when
+/// only it parses one) lp-dom's. Queries for one id, class, tag or attribute
+/// presence take lp-dom's direct paths (id index, cached class sets).
+#[derive(Clone)]
+pub struct Query {
+    stylo: Option<crate::stylo::select::List>,
+    lp: Option<Selectors>,
+}
+
+/// Parses a selector list for [`Dom::query_first`] and friends; invalid
+/// syntax maps to a `SyntaxError` DOMException.
+pub fn parse_query(text: &str) -> DomResult<Query> {
+    let stylo = crate::style::stylo_cascade().then(|| crate::stylo::select::parse(text)).flatten();
+    let lp = match &stylo {
+        None => Some(parse_selectors(text)?),
+        // One id, class, tag or attribute presence: lp-dom's direct tests
+        // (the id index, cached class sets) beat general matching.
+        Some(_) => parse_selectors(text).ok().filter(|l| simple(l).is_some()),
+    };
+    Ok(Query { stylo, lp })
+}
+
+impl Dom {
+    /// `querySelector`: the first element below `root` matching `q`.
+    pub fn query_first(&self, root: NodeId, q: &Query) -> DomResult<Option<NodeId>> {
+        match (&q.stylo, &q.lp) {
+            (_, Some(lp)) => self.query_selector(root, lp),
+            (Some(list), None) => {
+                let r = self.check(root)?;
+                Ok(crate::stylo::select::query(self, r, list, true).first().map(|&i| self.id_of(i)))
+            }
+            (None, None) => Ok(None),
+        }
+    }
+
+    /// `querySelectorAll`: the elements below `root` matching `q`, in tree order.
+    pub fn query_all(&self, root: NodeId, q: &Query) -> DomResult<Vec<NodeId>> {
+        match (&q.stylo, &q.lp) {
+            (_, Some(lp)) => self.query_selector_all(root, lp),
+            (Some(list), None) => {
+                let r = self.check(root)?;
+                Ok(crate::stylo::select::query(self, r, list, false).into_iter().map(|i| self.id_of(i)).collect())
+            }
+            (None, None) => Ok(Vec::new()),
+        }
+    }
+
+    /// `Element.matches(selectors)`.
+    pub fn element_matches(&self, el: NodeId, q: &Query) -> DomResult<bool> {
+        match (&q.stylo, &q.lp) {
+            (Some(list), _) => {
+                let i = self.check(el)?;
+                if !self.n(i).is_element() {
+                    return Err(DomError::Type("not an element"));
+                }
+                Ok(crate::stylo::select::matches(self, i, list))
+            }
+            (None, Some(lp)) => self.matches(el, lp),
+            (None, None) => Ok(false),
+        }
+    }
+
+    /// `Element.closest(selectors)`.
+    pub fn element_closest(&self, el: NodeId, q: &Query) -> DomResult<Option<NodeId>> {
+        match (&q.stylo, &q.lp) {
+            (Some(list), _) => {
+                let i = self.check(el)?;
+                if !self.n(i).is_element() {
+                    return Ok(None);
+                }
+                Ok(crate::stylo::select::closest(self, i, list).map(|i| self.id_of(i)))
+            }
+            (None, Some(lp)) => self.closest(el, lp),
+            (None, None) => Ok(None),
+        }
+    }
+}
+
 /// Small parse cache: SPA code calls the same selectors repeatedly.
 #[derive(Default)]
 pub struct SelectorCache {
-    map: FxHashMap<Box<str>, Selectors>,
+    map: FxHashMap<Box<str>, Query>,
 }
 const SELECTOR_CACHE_CAP: usize = 512;
 impl SelectorCache {
-    pub fn get(&mut self, text: &str) -> DomResult<Selectors> {
+    pub fn get(&mut self, text: &str) -> DomResult<Query> {
         if let Some(s) = self.map.get(text) {
             return Ok(s.clone());
         }
-        let s = parse_selectors(text)?;
+        let s = parse_query(text)?;
         if self.map.len() >= SELECTOR_CACHE_CAP {
             self.map.clear();
         }
@@ -626,29 +705,126 @@ impl Dom {
     /// `querySelector` on a Document, DocumentFragment or Element.
     pub fn query_selector(&self, root: NodeId, sel: &Selectors) -> DomResult<Option<NodeId>> {
         let r = self.check(root)?;
-        let mut caches = SelectorCaches::default();
-        let mut cur = self.n(r).first_child;
-        while cur != NIL {
-            if self.n(cur).is_element() && self.matches_with(sel, cur, r, &mut caches) {
-                return Ok(Some(self.id_of(cur)));
+        let quirks = self.quirks(r) == SelQuirks::Quirks;
+        if let (Some(Simple::Id(id)), false) = (simple(sel), quirks) {
+            // The id index gives the first element with the id in the tree:
+            // the answer when it is inside the scope. (Duplicate ids, a match
+            // outside the scope: scan.)
+            let tree = self.root_idx(r);
+            match self.get_element_by_id(self.id_of(tree), id)? {
+                None => return Ok(None),
+                Some(found) => {
+                    let f = self.check(found)?;
+                    if f != r && self.is_inclusive_ancestor(r, f) {
+                        return Ok(Some(found));
+                    }
+                }
             }
-            cur = self.following_in(cur, r);
         }
-        Ok(None)
+        let mut first = None;
+        self.select(r, sel, |idx| {
+            first = Some(idx);
+            false
+        });
+        Ok(first.map(|i| self.id_of(i)))
     }
 
     /// `querySelectorAll` (static result, tree order).
     pub fn query_selector_all(&self, root: NodeId, sel: &Selectors) -> DomResult<Vec<NodeId>> {
         let r = self.check(root)?;
-        let mut caches = SelectorCaches::default();
+        if let (Some(Simple::Id(id)), false) = (simple(sel), self.quirks(r) == SelQuirks::Quirks) {
+            // No element with the id in the whole tree: nothing to scan.
+            if self.get_element_by_id(self.id_of(self.root_idx(r)), id)?.is_none() {
+                return Ok(Vec::new());
+            }
+        }
         let mut out = Vec::new();
+        self.select(r, sel, |idx| {
+            out.push(self.id_of(idx));
+            true
+        });
+        Ok(out)
+    }
+
+    /// Calls `found` for each element under `r` matching `sel`, in tree
+    /// order, while it returns true. Simple selectors (one tag, class or
+    /// attribute presence) are tested directly; others go through
+    /// `selectors` with one matching context for the whole walk.
+    fn select(&self, r: u32, sel: &Selectors, mut found: impl FnMut(u32) -> bool) {
+        let quirks = self.quirks(r);
+        let html_doc = self.is_html_doc(self.n(r).owner_doc);
+        let fast = simple(sel).filter(|s| quirks != SelQuirks::Quirks || !matches!(s, Simple::Class(_)));
+        let mut caches = SelectorCaches::default();
+        let mut ctx = MatchingContext::new(
+            MatchingMode::Normal,
+            None,
+            &mut caches,
+            quirks,
+            NeedsSelectorFlags::No,
+            MatchingForInvalidation::No,
+        );
+        if self.n(r).is_element() {
+            ctx.scope_element = Some(OpaqueElement::new(self.n(r)));
+        }
+        let class = match &fast {
+            Some(Simple::Class(name)) => Some(CssLocalName((*name).clone())),
+            _ => None,
+        };
         let mut cur = self.n(r).first_child;
         while cur != NIL {
-            if self.n(cur).is_element() && self.matches_with(sel, cur, r, &mut caches) {
-                out.push(self.id_of(cur));
+            if let Some(e) = self.n(cur).element() {
+                let hit = match &fast {
+                    Some(Simple::Tag(name, lower)) => {
+                        let want = if html_doc && e.is_html() { lower } else { name };
+                        e.name.local == **want
+                    }
+                    // The per-element class sets `has_class` keeps for the
+                    // DOM version (long Tailwind attributes split once).
+                    Some(Simple::Class(_)) => {
+                        let name = class.as_ref().expect("class");
+                        selectors::Element::has_class(&self.element_ref(cur), name, CaseSensitivity::CaseSensitive)
+                    }
+                    Some(Simple::Attr(name, lower)) => {
+                        let want = if html_doc && e.is_html() { lower } else { name };
+                        e.attrs.iter().any(|a| a.name.ns == ns!() && a.name.local == **want)
+                    }
+                    Some(Simple::Id(_)) | None => matches_selector_list(sel, &self.element_ref(cur), &mut ctx),
+                };
+                if hit && !found(cur) {
+                    return;
+                }
             }
             cur = self.following_in(cur, r);
         }
-        Ok(out)
     }
+}
+
+/// A selector list of one selector made of one simple selector, which
+/// `select` tests without the matching machinery.
+enum Simple<'a> {
+    Id(&'a str),
+    Class(&'a LocalName),
+    /// The name as written and lowercased (HTML elements in HTML documents).
+    Tag(&'a LocalName, &'a LocalName),
+    /// `[name]` in no namespace: as written and lowercased.
+    Attr(&'a LocalName, &'a LocalName),
+}
+
+fn simple(sel: &Selectors) -> Option<Simple<'_>> {
+    use selectors::parser::Component;
+    let [one] = sel.slice() else { return None };
+    let mut parts = one.iter_raw_match_order();
+    let first = parts.next()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some(match first {
+        Component::ID(id) => Simple::Id(&id.0),
+        Component::Class(c) => Simple::Class(&c.0),
+        Component::LocalName(n) => Simple::Tag(&n.name.0, &n.lower_name.0),
+        Component::AttributeInNoNamespaceExists { local_name, local_name_lower } => {
+            Simple::Attr(&local_name.0, &local_name_lower.0)
+        }
+        _ => return None,
+    })
 }

@@ -1797,7 +1797,7 @@ impl Locator {
         let mut found = Vec::new();
         if let Some(css) = &self.css {
             let sel = selectors.borrow_mut().get(css).map_err(|_| CdpError::invalid_params("invalid css selector"))?;
-            found = dom.query_selector_all(root, &sel).map_err(|e| CdpError::server(format!("{e:?}")))?;
+            found = dom.query_all(root, &sel).map_err(|e| CdpError::server(format!("{e:?}")))?;
         } else if let Some(id) = &self.test_id {
             let name = self.test_id_attribute.as_deref().unwrap_or("data-testid");
             found = elements(&dom, root).filter(inside).filter(|n| attr(&dom, *n, name) == Some(id.as_str())).collect();

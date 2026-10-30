@@ -2301,11 +2301,19 @@ impl Layout {
                 if let Some(px) = declared.filter(|v| v.ends_with("px")) {
                     return px;
                 }
-                if let Some(v) = self.style.inline_style_value(dom, el, &name) {
-                    return v;
+                // Stylo's computed value already accounts for the inline one.
+                if !self.style.stylo_on() {
+                    if let Some(v) = self.style.inline_style_value(dom, el, &name) {
+                        return v;
+                    }
                 }
                 let axis = if name == "width" { Axis::Width } else { Axis::Height };
                 return format!("{}px", self.box_axis(dom, el, axis));
+            }
+            if self.style.stylo_on() {
+                if let Some(v) = declared.as_deref().and_then(|v| self.resolved_value(dom, el, &name, v)) {
+                    return v;
+                }
             }
             if let Some(v) = declared {
                 return v;
@@ -2316,6 +2324,69 @@ impl Layout {
         }
         default_property_value(dom, el, &name).to_owned()
     }
+}
+
+impl Layout {
+    /// getComputedStyle's resolved value where it differs from Stylo's
+    /// computed one (CSSOM §resolved values, as Chromium reports them):
+    /// `auto` minimum sizes outside flex and grid items, `auto` insets of
+    /// relatively positioned boxes, lengths clamped to Blink's LayoutUnit
+    /// range. `None`: the computed value stands.
+    fn resolved_value(&self, dom: &Dom, el: NodeId, name: &str, value: &str) -> Option<String> {
+        let style = &self.style;
+        let position = || style.computed_value(dom, el, "position").unwrap_or_default();
+        match name {
+            "min-width" | "min-height" if value == "auto" => {
+                // The box's parent: display:contents ancestors generate none.
+                let mut parent = dom.parent_element(el).ok().flatten();
+                while let Some(p) = parent.filter(|&p| style.computed_display(dom, p).as_deref() == Some("contents")) {
+                    parent = dom.parent_element(p).ok().flatten();
+                }
+                let item = parent
+                    .and_then(|p| style.computed_display(dom, p))
+                    .is_some_and(|d| matches!(d.as_str(), "flex" | "inline-flex" | "grid" | "inline-grid"));
+                let out_of_flow = matches!(position().as_str(), "absolute" | "fixed");
+                (!item || out_of_flow).then(|| "0px".into())
+            }
+            "top" | "bottom" | "left" | "right" if value == "auto" && position() == "relative" => {
+                let opposite = match name {
+                    "top" => "bottom",
+                    "bottom" => "top",
+                    "left" => "right",
+                    _ => "left",
+                };
+                match style.computed_value(dom, el, opposite).as_deref() {
+                    Some(o) if o.ends_with("px") => {
+                        let px = o.trim_end_matches("px").parse::<f64>().ok()?;
+                        Some(format!("{}px", crate::computed::fmt_num(-px)))
+                    }
+                    _ => Some("0px".into()),
+                }
+            }
+            _ => clamp_layout_units(value),
+        }
+    }
+}
+
+/// `value` with every px length beyond Blink's LayoutUnit range (±2^25)
+/// clamped as Chromium serializes it; `None` when none is.
+fn clamp_layout_units(value: &str) -> Option<String> {
+    const MAX: f64 = 33_554_431.0;
+    if !value.contains("px") {
+        return None;
+    }
+    let mut changed = false;
+    let out: Vec<String> = value
+        .split(' ')
+        .map(|token| match token.strip_suffix("px").and_then(|n| n.parse::<f64>().ok()) {
+            Some(n) if n.abs() > MAX => {
+                changed = true;
+                format!("{}3.35544e+07px", if n < 0.0 { "-" } else { "" })
+            }
+            _ => token.to_owned(),
+        })
+        .collect();
+    changed.then(|| out.join(" "))
 }
 
 /// `countSubtreeNodes` (Element.zig:2046-2053): the node and its light-tree
@@ -2603,6 +2674,11 @@ fn default_property_value(dom: &Dom, el: NodeId, name: &str) -> &'static str {
         "background-color" => "rgba(0, 0, 0, 0)",
         "fill" => "rgb(0, 0, 0)",
         "stroke" => "none",
+        // Gecko-only in Stylo, so the cascade has no value.
+        "resize" => match element {
+            Some(e) if e.is_html() && e.name.local == local_name!("textarea") => "both",
+            _ => "none",
+        },
         _ => "",
     }
 }

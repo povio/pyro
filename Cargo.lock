@@ -1547,14 +1547,22 @@ dependencies = [
 name = "lp-dom"
 version = "0.0.10"
 dependencies = [
+ "app_units",
  "cssparser",
  "encoding_rs",
+ "euclid",
  "html5ever",
  "markup5ever",
  "precomputed-hash",
  "quick-xml",
  "rustc-hash 2.1.3",
  "selectors",
+ "serde_json",
+ "stylo",
+ "stylo_dom",
+ "stylo_static_prefs",
+ "stylo_traits",
+ "url",
 ]
 
 [[package]]

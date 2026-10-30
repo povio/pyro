@@ -3092,9 +3092,19 @@ impl<'a> Ctx<'a> {
                         }
                         Some(_) => outer_h,
                         None => {
-                            let content_h = outer_h - e.margin[TOP] - e.margin[BOTTOM] - e.vertical();
-                            match self.atomic_baseline(el, &style, content_w, content_h.max(0.0)) {
-                                Some(b) => e.margin[TOP] + e.border[TOP] + e.padding[TOP] + b,
+                            let content_h = (outer_h - e.margin[TOP] - e.margin[BOTTOM] - e.vertical()).max(0.0);
+                            // A <button> centers its contents in a taller box
+                            // (Chromium's anonymous button content box).
+                            let centered = match local_tag(self.dom, el) {
+                                Some(t)
+                                    if t.eq_ignore_ascii_case("button") && style.inner == InnerDisplay::FlowRoot =>
+                                {
+                                    ((content_h - self.measure_height(el, &style, content_w)) / 2.0).max(0.0)
+                                }
+                                _ => 0.0,
+                            };
+                            match self.atomic_baseline(el, &style, content_w, content_h) {
+                                Some(b) => e.margin[TOP] + e.border[TOP] + e.padding[TOP] + centered + b,
                                 None => outer_h,
                             }
                         }

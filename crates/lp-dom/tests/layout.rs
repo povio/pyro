@@ -514,7 +514,8 @@ fn media_at_rule_cascade() {
     }
     let deep = p.id("deep-nest-style");
     p.layout.style_mut().set_sheet_text(deep, &css);
-    assert!(p.visible(p.id("deep-nest-target")));
+    // 50 levels apply in Chrome; the legacy cascade capped the nesting.
+    assert_eq!(p.visible(p.id("deep-nest-target")), !p.layout.style().stylo_on());
 }
 
 #[test]
@@ -594,7 +595,8 @@ fn layer_at_rule_cascade() {
     }
     let deep = p.id("deep-nest-style");
     p.layout.style_mut().set_sheet_text(deep, &css);
-    assert!(p.visible(p.id("deep-nest-target")));
+    // 50 levels apply in Chrome; the legacy cascade capped the nesting.
+    assert_eq!(p.visible(p.id("deep-nest-target")), !p.layout.style().stylo_on());
 }
 
 // tests/css/layer_order_cascade.html
@@ -2083,7 +2085,9 @@ fn computed_style_defaults_and_inline() {
     assert_eq!(p.cs(anchor, "display"), "inline");
     assert_eq!(p.cs(div, "visibility"), "visible");
     assert_eq!(p.cs(div, "opacity"), "1");
-    assert_eq!(p.cs(anchor, "color"), "rgb(0, 0, 238)");
+    // Without href it is not a link (Chrome: black; the legacy cascade: link blue).
+    let anchor_color = if p.layout.style().stylo_on() { "rgb(0, 0, 0)" } else { "rgb(0, 0, 238)" };
+    assert_eq!(p.cs(anchor, "color"), anchor_color);
 
     // computedStyleBoxModelDefaults
     for side in ["top", "right", "bottom", "left"] {
@@ -2279,9 +2283,10 @@ fn custom_properties() {
     assert_eq!(v("within-block", "--important-first"), "kept");
     // custom_property_dynamic_pseudo_skipped
     assert_eq!(v("dynamic", "--hover-only"), "");
-    // custom_property_no_var_substitution
+    // custom_property_var_substitution (Chrome substitutes var(); the legacy
+    // cascade reports the declaration as written)
     assert_eq!(v("alias", "--base"), "4px");
-    assert_eq!(v("alias", "--derived"), "var(--base)");
+    assert_eq!(v("alias", "--derived"), if p.layout.style().stylo_on() { "4px" } else { "var(--base)" });
     // custom_property_nearest_ancestor_wins
     assert_eq!(v("nearest", "--nearest"), "near");
     assert_eq!(v("outer", "--nearest"), "far");
@@ -2543,7 +2548,9 @@ fn variable_dimensions_invalid_values_and_cycles_use_computed_fallback() {
     );
     assert_eq!(p.rect(p.id("missing")).height, 5.0, "invalid at computed value does not revive 99px");
     assert_eq!(p.rect(p.id("cycle")).height, 42.0);
-    assert_eq!(p.rect(p.id("fallbackcycle")).height, 43.0, "unused fallback participates in a cycle");
+    // Chrome (and Stylo) do not count an unused fallback as a cycle: 10px.
+    let fallback_cycle = if p.layout.style().stylo_on() { 10.0 } else { 43.0 };
+    assert_eq!(p.rect(p.id("fallbackcycle")).height, fallback_cycle, "unused fallback");
     assert_eq!(p.rect(p.id("wrong")).height, 5.0, "existing invalid length does not use var fallback");
     assert_eq!(p.rect(p.id("initial")).height, 44.0);
 }
@@ -2825,7 +2832,8 @@ fn computed_style_maps_logical_properties() {
     assert_eq!(p.cs(b, "padding-top"), "4px");
     assert_eq!(p.cs(b, "border-left-width"), "1px");
     assert_eq!(p.cs(b, "border-right-style"), "solid");
-    assert_eq!(p.cs(b, "border-top-width"), "0px");
+    // The UA button border (Chrome: 2px outset; the legacy cascade has none).
+    assert_eq!(p.cs(b, "border-top-width"), if p.layout.style().stylo_on() { "2px" } else { "0px" });
 }
 
 #[test]
@@ -2845,8 +2853,9 @@ fn flow_inputs_keep_full_precision() {
     let mut p = page("<!DOCTYPE html><body><button id=b class='text-sm'>Today</button></body>");
     p.add_style(".text-sm{font-size:.875rem;line-height:calc(1.25 / .875);padding-block:calc(.25rem * 1.5)}");
     let b = p.id("b");
-    // getComputedStyle keeps Chromium's six-digit serialization...
-    assert_eq!(p.cs(b, "line-height"), "1.42857");
+    // getComputedStyle reports the resolved length (Chrome: 20px; the
+    // legacy cascade: the number)...
+    assert_eq!(p.cs(b, "line-height"), if p.layout.style().stylo_on() { "20px" } else { "1.42857" });
     // ...but layout sees the exact value: 14px x 1.25/0.875 = 20px.
     let style = p.layout.style().flow_style(&p.dom, b).unwrap();
     assert!((style.line_height.unwrap() - 20.0).abs() < 1e-9, "{:?}", style.line_height);

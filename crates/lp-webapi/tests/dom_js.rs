@@ -5453,3 +5453,67 @@ fn text_controls_fire_selectionchange() {
     input::dispatch_key(&e.page, input::KeyKind::RawKeyDown, &k);
     assert_eq!(eval(r, "String(sc)"), "5");
 }
+
+#[test]
+fn live_collections_follow_changes_in_their_own_subtree() {
+    let e = env("<!doctype html><body><div id=list><p class=x>1</p><p>2</p><p class=x>3</p></div><div id=other class=x></div></body>");
+    let r = &e.main;
+    eval(r, "var list = document.getElementById('list'); var kids = list.children; var xs = list.getElementsByClassName('x'); var nodes = list.childNodes; var ps = document.getElementsByTagName('p')");
+    assert_eq!(eval(r, "kids.length + ':' + xs.length + ':' + nodes.length + ':' + ps.length"), "3:2:3:3");
+    // Text written under a child keeps `children`, and a loop over it sees
+    // every child once.
+    assert_eq!(eval(r, "let n = 0; for (const c of kids) { c.textContent = 'v' + n++; } n + ':' + kids[2].textContent"), "3:v2");
+    // A change elsewhere in the document does not affect them...
+    eval(r, "document.getElementById('other').append(document.createElement('p')); document.getElementById('other').className = 'y'");
+    assert_eq!(eval(r, "kids.length + ':' + xs.length + ':' + ps.length"), "3:2:4");
+    // ...changes inside do: class, insertion, removal, move, text node.
+    assert_eq!(eval(r, "kids[1].className = 'x'; xs.length + ':' + xs[1].textContent"), "3:v1");
+    assert_eq!(eval(r, "list.append(document.createElement('p')); kids.length + ':' + ps.length"), "4:5");
+    assert_eq!(eval(r, "kids[0].remove(); kids.length + ':' + xs.length + ':' + xs[0].textContent"), "3:2:v1");
+    assert_eq!(eval(r, "list.prepend(kids[1]); kids[0].textContent + ':' + xs[0].textContent"), "v2:v2");
+    assert_eq!(eval(r, "const before = nodes.length; list.append('text'); before + ':' + nodes.length + ':' + kids.length"), "3:4:3");
+    // A nested insertion counts for descendant collections.
+    assert_eq!(eval(r, "kids[0].append(Object.assign(document.createElement('p'), {className: 'x'})); xs.length + ':' + ps.length"), "3:5");
+}
+
+#[test]
+fn collections_over_the_same_root_and_name_share_members() {
+    let e = env("<!doctype html><body><i class='a b'></i><i class='b'></i><i class='a'></i></body>");
+    let r = &e.main;
+    assert_eq!(eval(r, "document.getElementsByClassName('a').length"), "2");
+    // A second object over the same root and name sees the same members,
+    // and stays live on its own.
+    assert_eq!(eval(r, "var c = document.getElementsByClassName('a'); document.body.lastChild.className = 'b'; c.length + ':' + document.getElementsByClassName('a').length"), "1:1");
+    assert_eq!(eval(r, "document.getElementsByClassName('a b').length + ':' + document.getElementsByClassName(' b  a ').length + ':' + document.getElementsByClassName('').length"), "1:1:0");
+}
+
+#[test]
+fn class_name_collections_ignore_case_in_quirks_mode() {
+    // No doctype: quirks mode.
+    {
+        let e = env("<body><i class=Foo></i><i class=foo></i></body>");
+        let r = &e.main;
+        assert_eq!(eval(r, "document.compatMode + ':' + document.getElementsByClassName('FOO').length"), "BackCompat:2");
+    }
+    let e = env("<!doctype html><body><i class=Foo></i><i class=foo></i></body>");
+    let r = &e.main;
+    assert_eq!(eval(r, "document.compatMode + ':' + document.getElementsByClassName('FOO').length"), "CSS1Compat:0");
+}
+
+#[test]
+fn mutation_observers_still_see_every_mutation() {
+    let e = env("<!doctype html><body><div id=box></div></body>");
+    let r = &e.main;
+    // Many mutations with an observer attached, taken synchronously.
+    assert_eq!(
+        eval(r, "var box = document.getElementById('box'); var mo = new MutationObserver(() => {}); mo.observe(box, {childList: true, attributes: true, characterData: true, subtree: true}); for (let i = 0; i < 100; i++) { const s = document.createElement('span'); box.append(s); s.setAttribute('data-i', i); s.textContent = 'x'; } mo.takeRecords().length"),
+        "300"
+    );
+    // A target observed while detached is observed once connected.
+    assert_eq!(
+        eval(r, "var loose = document.createElement('div'); var seen = []; var mo2 = new MutationObserver(rs => seen.push(rs.length)); mo2.observe(loose, {attributes: true}); document.body.append(loose); loose.id = 'now'; mo2.takeRecords().length"),
+        "1"
+    );
+    // After every observer disconnects, mutations are not recorded.
+    assert_eq!(eval(r, "mo.disconnect(); mo2.disconnect(); box.append('more'); mo.takeRecords().length + mo2.takeRecords().length"), "0");
+}

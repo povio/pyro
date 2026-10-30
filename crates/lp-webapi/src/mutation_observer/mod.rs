@@ -228,6 +228,15 @@ pub fn checkpoint(page: &Rc<PageDom>) {
     if page.is_disposed() {
         return;
     }
+    // No observer, nothing pinned, nothing to drop: nothing to do (this runs
+    // after every DOM call from script).
+    if page.mutations.observers.borrow().is_empty()
+        && page.mutations.pins.borrow().is_empty()
+        && page.mutations.pending_drops.borrow().is_empty()
+        && page.mutations.pending_roots.borrow().is_empty()
+    {
+        return;
+    }
     let (new_pending, version) = {
         let Ok(mut dom) = page.dom.try_borrow_mut() else { return };
         for id in page.mutations.pending_drops.take() {
@@ -281,8 +290,10 @@ pub fn checkpoint(page: &Rc<PageDom>) {
             }
         }
     }
-    // Reconcile only observed targets when the native tree changes.
-    if page.mutations.version.replace(Some(version)) != Some(version) {
+    // Reconcile only observed targets when the native tree changes, and only
+    // when one of them was connected or disconnected (checked first without
+    // allocating: most mutations leave every target where it was).
+    if page.mutations.version.replace(Some(version)) != Some(version) && pins_out_of_date(page) {
         let observers: Vec<_> = page.mutations.observers.borrow().values().filter_map(Weak::upgrade).collect();
         let mut needed = FxHashMap::default();
         for observer in observers {
@@ -303,6 +314,29 @@ pub fn checkpoint(page: &Rc<PageDom>) {
         }
     }
 }
+/// Whether some observed target's pin no longer matches whether it is in
+/// the active document (or a pin outlived its target), so `checkpoint` must
+/// reconcile. Runs no script and allocates nothing.
+fn pins_out_of_date(page: &PageDom) -> bool {
+    let Ok(dom) = page.dom.try_borrow() else { return true };
+    let pins = page.mutations.pins.borrow();
+    let observers = page.mutations.observers.borrow();
+    let mut pinned_targets = 0;
+    for observer in observers.values() {
+        let Some(observer) = observer.upgrade() else { return true };
+        let Ok(targets) = observer.targets.try_borrow() else { return true };
+        for &node in targets.iter() {
+            let pinned = pins.contains_key(&(observer.realm_id, node));
+            if pinned != dom.is_in_active_document(node) {
+                return true;
+            }
+            pinned_targets += usize::from(pinned);
+        }
+    }
+    // Pins of targets no observer has any more.
+    pins.len() != pinned_targets
+}
+
 fn notify(page: &Rc<PageDom>) {
     if page.is_disposed() {
         return;
