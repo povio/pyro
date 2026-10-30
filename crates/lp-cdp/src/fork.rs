@@ -100,6 +100,15 @@ pub struct Template {
 // writes to: EOF there means the server is gone (even killed), and the
 // template exits too.
 
+/// JavaScriptCore options the template starts with unless the environment
+/// sets them. JSC reads them once, before the template's first VM, and its
+/// forks inherit them. A fork serves one short connection: code it tiers up
+/// to the DFG (and FTL) is compiled on helper threads that compete with the
+/// other forks for cores, and the connection usually ends before that code
+/// pays for itself. Baseline JIT and LLInt stay on. Set `JSC_useDFGJIT=true`
+/// to get the default tiers back.
+const FORK_JSC_DEFAULTS: [(&str, &str); 1] = [("JSC_useDFGJIT", "false")];
+
 impl Template {
     /// Starts `lightningpanda serve --template <socket> <args>` and waits
     /// until it listens.
@@ -107,13 +116,19 @@ impl Template {
         let socket = std::env::temp_dir().join(format!("lightningpanda-{}.sock", std::process::id()));
         let _ = std::fs::remove_file(&socket);
         let exe = std::env::current_exe()?;
-        let child = std::process::Command::new(exe)
+        let mut command = std::process::Command::new(exe);
+        command
             .arg("serve")
             .arg("--template")
             .arg(&socket)
             .args(args.iter().filter(|a| a.as_str() != "--fork"))
-            .stdin(std::process::Stdio::piped())
-            .spawn()?;
+            .stdin(std::process::Stdio::piped());
+        for (name, value) in FORK_JSC_DEFAULTS {
+            if std::env::var_os(name).is_none() {
+                command.env(name, value);
+            }
+        }
+        let child = command.spawn()?;
         let mut template = Template { child, socket };
         let deadline = Instant::now() + Duration::from_secs(30);
         while UnixStream::connect(&template.socket).is_err() {
