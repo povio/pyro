@@ -44,14 +44,39 @@ strip = "none"
 [profile.release.package.lp-webapi]
 codegen-units = 64
 
+# Release build for local iteration (`cargo build --profile release-fast`,
+# binary in target/release-fast). With lp-webapi already split, lp-cdp and
+# lp-dom are the single-core tail of a clean release build; 16 units each
+# cut it from ~70 s to ~48 s on an M1 Max. The cost is CDP round-trip
+# latency: on cdp_microbench (5 alternating runs) Runtime.evaluate went
+# 5.1 -> 5.5 us, evaluate handle + releaseObject 8.1 -> 9.1 us, small
+# callFunctionOn 5.6 -> 5.8 us. Splitting only lp-dom gains ~5 s. Ship and
+# benchmark with `release`.
+[profile.release-fast]
+inherits = "release"
+
+[profile.release-fast.package.lp-webapi]
+codegen-units = 64
+
+[profile.release-fast.package.lp-cdp]
+codegen-units = 16
+
+[profile.release-fast.package.lp-dom]
+codegen-units = 16
+
 [profile.dev]
 # Backtraces keep file:line; debuggers lose local variables. Cuts clean builds
 # and target/ size; incremental rebuilds are unaffected.
 debug = "line-tables-only"
 
-# Generated public suffix list: compiled once, so optimizing it is cheap.
+# Generated public suffix list. At opt-level 2 LLVM spends ~16 s on its
+# tables on one core; at -O0 it builds in ~3 s and the lookup cost in dev and
+# tests is negligible. Every test binary and the main binary link against it,
+# so it must not become the last job: today the lp-dom -> lp-cdp chain ends
+# at about the same time, so a clean build gains ~1 s of wall time and ~13 s
+# of CPU on an M1 Max.
 [profile.dev.package.lp-psl]
-opt-level = 2
+opt-level = 0
 
 [profile.dev.package."*"]
 opt-level = 2
