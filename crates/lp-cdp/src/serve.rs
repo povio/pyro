@@ -91,7 +91,9 @@ connection is served by a fork() of it. A connection therefore starts with
 every profile's page booted, sharing its memory with the template until it
 writes to it, and its process exits when it closes. Open one connection per
 test (Lightningpanda.capabilities reports {fork: true}); registering a profile
-boots it in the template for the connections that follow.
+boots it in the template for the connections that follow. A profile's setup
+(LP.run steps, registerPreparedPage {setup}) runs once in the template after
+the page loads, so every connection starts from the state the steps left.
 ";
 
 /// How long a spare thread keeps booting prepared pages before it just waits.
@@ -296,6 +298,7 @@ pub fn browser_profile(options: &ServeOptions) -> Result<BrowserProfile, String>
             viewport: None,
             pool: 1,
             refill_after_close: options.prepare_refill_after_close,
+            setup: Vec::new(),
         });
     }
     Ok(profile)
@@ -544,13 +547,6 @@ pub(crate) fn run_browser_thread(
     fork_register: Option<crate::target::RegisterPrepared>,
 ) {
     let (outbox, outbound) = Outbox::channel(DEFAULT_OUTBOUND_BUDGET);
-    let conn = match Conn::new(socket, buffered, outbound, config) {
-        Ok(conn) => conn,
-        Err(e) => {
-            eprintln!("lightningpanda: CDP connection: {e}");
-            return;
-        }
-    };
     let host = match prepared.and_then(|(t, prebooted)| {
         let mut host = EngineHost::with_thread(t, outbox.clone(), EngineHost::body_budget())?;
         host.adopt_prebooted(prebooted);
@@ -560,7 +556,9 @@ pub(crate) fn run_browser_thread(
         Err(e) => {
             eprintln!("lightningpanda: {}", e.message);
             drop(outbox);
-            conn.finish(); // a normal close, as when a session ends
+            if let Ok(conn) = Conn::new(socket, buffered, outbound, config) {
+                conn.finish(); // a normal close, as when a session ends
+            }
             return;
         }
     };
@@ -568,6 +566,26 @@ pub(crate) fn run_browser_thread(
     if let Some(register) = fork_register {
         browser.set_fork_child(register);
     }
+    serve_browser(browser, outbox, outbound, socket, buffered, config);
+}
+
+/// Serves one connection with protocol state that already exists: `browser`
+/// writes to `outbox`, whose frames `outbound` carries to the socket.
+pub(crate) fn serve_browser(
+    mut browser: Browser<EngineHost>,
+    outbox: Outbox,
+    outbound: crate::outbox::OutboundRx,
+    socket: std::net::TcpStream,
+    buffered: &[u8],
+    config: ServerConfig,
+) {
+    let conn = match Conn::new(socket, buffered, outbound, config) {
+        Ok(conn) => conn,
+        Err(e) => {
+            eprintln!("lightningpanda: CDP connection: {e}");
+            return;
+        }
+    };
     // Network threads that exceed the budget wake this loop to close (1008).
     let handle = browser.host().thread.handle();
     outbox.set_waker(Box::new(move || {

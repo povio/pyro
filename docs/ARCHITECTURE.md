@@ -267,6 +267,10 @@ Copy-on-write page snapshots: an app's startup (parsing and running its JavaScri
   and forks. The child restarts both and serves that one connection on its main thread with every booted page
   adopted (`Browser::set_fork_child`: no pool refills; registrations go to the template). It exits when the
   connection closes, which closes the pipe and releases the server's connection slot.
+- The template holds the protocol state of a connection without a socket (`Browser<EngineHost>` with its own
+  outbox, drained). A profile's `setup` steps run there once the page is loaded and quiet: the template
+  acquires the page, runs them as an `LP.run`, hands the page back to the pool (`Browser::return_to_prepared`)
+  and settles it. The forked child serves its socket with that same state (`serve::serve_browser`).
 - The template stops when the server does: its stdin is a pipe only the server writes to.
 - The source JavaScriptCore's timers run on WTF's run loop, so the CoreFoundation run-loop service
   (`enable_native_runloop_service`) is off with it; CoreFoundation must not be used in a fork child.

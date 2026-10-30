@@ -114,6 +114,7 @@ fn connections_are_forks_of_the_booted_app() {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("index.html"), APP).unwrap();
     std::fs::write(dir.join("other.html"), APP).unwrap();
+    std::fs::write(dir.join("setup.html"), APP).unwrap();
     std::fs::write(dir.join("app.js"), APP_JS).unwrap();
     let port = free_port();
     let _server = Server(
@@ -165,6 +166,27 @@ fn connections_are_forks_of_the_booted_app() {
     assert_eq!(again["profileId"], json!(1), "the same profile is booted once");
     let seeded = eval_in_prepared(port, "http://app.test/other.html", "[window.__seeded, location.pathname].join()");
     assert_eq!(seeded, json!("42,/other.html"));
+
+    // Setup steps run once in the template; every fork starts from their result.
+    let with_setup = call(
+        &mut main,
+        4,
+        "Lightningpanda.registerPreparedPage",
+        json!({ "url": "http://app.test/setup.html", "setup": [{ "eval": {
+            "expression": "window.__store.n += 10; window.__setups = (window.__setups || 0) + 1; \
+                           document.getElementById('root').textContent = 'set up'"
+        } }] }),
+        None,
+    );
+    assert_eq!(with_setup["profileId"], json!(2));
+    for _ in 0..2 {
+        let state = eval_in_prepared(
+            port,
+            "http://app.test/setup.html",
+            "[document.getElementById('root').textContent, window.__setups, ++window.__store.n].join()",
+        );
+        assert_eq!(state, json!("set up,1,11"));
+    }
 
     let _ = std::fs::remove_dir_all(&dir);
 }

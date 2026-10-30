@@ -29,10 +29,14 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-use crate::engine::{BrowserProfile, EngineHost, Prebooted};
+use serde_json::Value;
+
+use crate::engine::EngineHost;
+use crate::outbox::{Outbound, OutboundRx, Outbox, DEFAULT_OUTBOUND_BUDGET};
 use crate::serve::ServeOptions;
 use crate::server::ServerConfig;
-use crate::target::PreparedProfile;
+use crate::target::{Browser, Host, PreparedProfile};
+use crate::ws::OutFrame;
 
 /// A connection waits at most this long for loaded pages to go quiet: a
 /// request still in flight at the fork fails in the template (its network
@@ -41,6 +45,9 @@ const QUIET_WAIT: Duration = Duration::from_secs(2);
 
 /// A page that has not loaded by then is forked as it is.
 const LOAD_WAIT: Duration = Duration::from_secs(30);
+
+/// A profile's setup steps must finish within this.
+const SETUP_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Most file descriptors one message carries.
 const MAX_FDS: usize = 4;
@@ -149,15 +156,29 @@ pub fn connect(
 
 // ---- Template side -------------------------------------------------------
 
-/// What the template boots and forks.
+/// What the template boots and forks: the protocol state of a connection
+/// that has no socket yet, with one prepared page per profile.
 struct Snapshot {
-    thread: lp_browser::BrowserThread,
-    pages: Vec<Prebooted>,
-    profiles: Vec<PreparedProfile>,
-    /// When each page started booting (indexed like `pages`).
-    started: Vec<Instant>,
-    /// Pages settled (one full collection) since they loaded.
-    settled: Vec<bool>,
+    browser: Browser<EngineHost>,
+    outbox: Outbox,
+    outbound: OutboundRx,
+    /// Indexed by profile id.
+    profiles: Vec<ProfileState>,
+}
+
+struct ProfileState {
+    /// When its page started booting.
+    started: Instant,
+    /// Settled (one full collection) since it loaded or ran its setup.
+    settled: bool,
+    /// Its setup steps ran (or it has none).
+    set_up: bool,
+}
+
+impl ProfileState {
+    fn new(profile: &PreparedProfile) -> Self {
+        ProfileState { started: Instant::now(), settled: false, set_up: profile.setup.is_empty() }
+    }
 }
 
 /// Entry point of the template process (`serve --template <socket>`).
@@ -184,15 +205,18 @@ fn run_template(options: &ServeOptions, socket: &Path) -> Result<(), String> {
     let mut thread = EngineHost::prepare_thread_with(&profile).map_err(|e| e.message)?;
     let profiles: Vec<PreparedProfile> = profile.prepared.iter().map(one_page).collect();
     let pages = EngineHost::preboot(&mut thread, &profiles);
-    let now = Instant::now();
-    let mut snapshot =
-        Snapshot { thread, started: vec![now; pages.len()], settled: vec![false; pages.len()], pages, profiles };
+    let (outbox, outbound) = Outbox::channel(DEFAULT_OUTBOUND_BUDGET);
+    let mut host = EngineHost::with_thread(thread, outbox.clone(), EngineHost::body_budget()).map_err(|e| e.message)?;
+    host.adopt_prebooted(pages);
+    let states = profiles.iter().map(ProfileState::new).collect();
+    let browser = Browser::with_prepared(host, profiles);
+    let mut snapshot = Snapshot { browser, outbox, outbound, profiles: states };
 
     let listener = UnixListener::bind(socket).map_err(|e| format!("{}: {e}", socket.display()))?;
     listener.set_nonblocking(true).map_err(|e| e.to_string())?;
     let watch = lp_runtime::FdWatch::new(listener.as_raw_fd());
     watch.set_interest(true, false);
-    snapshot.thread.event_loop.watch_fd(Some(watch.clone()));
+    snapshot.browser.host_mut().thread.event_loop.watch_fd(Some(watch.clone()));
 
     let mut waiting: VecDeque<(Vec<u8>, Vec<OwnedFd>, Instant)> = VecDeque::new();
     loop {
@@ -200,15 +224,9 @@ fn run_template(options: &ServeOptions, socket: &Path) -> Result<(), String> {
         let ready = ready_to_fork(&mut snapshot, waiting.front().map(|w| w.2));
         if ready {
             while let Some((buffered, fds, _)) = waiting.pop_front() {
-                if let Some(child) = fork_connection(
-                    &mut snapshot,
-                    &profile,
-                    &options.server,
-                    (&listener, socket),
-                    &mut waiting,
-                    buffered,
-                    fds,
-                ) {
+                if let Some(child) =
+                    fork_connection(&mut snapshot, &options.server, (&listener, socket), &mut waiting, buffered, fds)
+                {
                     // Only the forked child gets here, and it is done.
                     std::process::exit(child);
                 }
@@ -216,7 +234,9 @@ fn run_template(options: &ServeOptions, socket: &Path) -> Result<(), String> {
         }
         // Boot what is booting; wake for the next message.
         let deadline = Instant::now() + Duration::from_millis(if ready { 1000 } else { 20 });
-        let outcome = snapshot.thread.run_until(Some(deadline), |_| watch.take_ready());
+        let outcome = snapshot.browser.host_mut().run_until_work(Some(deadline), || watch.take_ready());
+        snapshot.browser.host_mut().flush();
+        snapshot.drain();
         if matches!(outcome, lp_runtime::RunOutcome::Idle) {
             poll_readable(&[listener.as_raw_fd(), 0], if ready { -1 } else { 20 });
         }
@@ -225,6 +245,77 @@ fn run_template(options: &ServeOptions, socket: &Path) -> Result<(), String> {
             return Ok(());
         }
     }
+}
+
+impl Snapshot {
+    /// Drops what the template's protocol state wrote: no client reads it.
+    fn drain(&mut self) {
+        while let Some(Outbound::Frame(_)) = self.outbound.try_recv() {}
+    }
+
+    /// Runs one CDP command on the template's protocol state and waits for
+    /// its reply (`LP.run` replies once its steps are done).
+    fn command(&mut self, session: Option<&str>, method: &str, params: Value) -> Result<Value, String> {
+        static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1 << 40);
+        let id = NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let mut message = serde_json::json!({ "id": id, "method": method, "params": params });
+        if let Some(session) = session {
+            message["sessionId"] = session.into();
+        }
+        let mut sink: Vec<OutFrame> = Vec::new();
+        self.browser.handle_text(&message.to_string(), &mut sink);
+        let deadline = Instant::now() + SETUP_TIMEOUT;
+        loop {
+            self.browser.host_mut().flush();
+            // Synchronous replies come through the sink, later ones through the outbox.
+            let mut frames: Vec<Value> = sink.drain(..).filter_map(|f| frame_json(f.finish_text().as_ref())).collect();
+            while let Some(Outbound::Frame(f)) = self.outbound.try_recv() {
+                frames.extend(frame_json(f.as_ref()));
+            }
+            if let Some(reply) = frames.into_iter().find(|v| v["id"] == serde_json::json!(id)) {
+                return match reply.get("error") {
+                    Some(e) => Err(e["message"].as_str().unwrap_or("failed").to_owned()),
+                    None => Ok(reply["result"].clone()),
+                };
+            }
+            if Instant::now() > deadline {
+                return Err(format!("{method} timed out"));
+            }
+            self.browser.host_mut().run_until_work(Some(Instant::now() + Duration::from_millis(20)), || false);
+        }
+    }
+
+    /// Runs profile `id`'s setup steps on its page, then hands the page back
+    /// to the pool so that forks get it in that state.
+    fn set_up(&mut self, id: usize) -> Result<(), String> {
+        let steps = self.browser.prepared_profiles()[id].setup.clone();
+        let page = self.command(
+            None,
+            "Lightningpanda.acquirePreparedPage",
+            serde_json::json!({ "profileId": id, "attach": true }),
+        )?;
+        let (Some(target), Some(session)) = (page["targetId"].as_str(), page["sessionId"].as_str()) else {
+            return Err("acquirePreparedPage: no target".into());
+        };
+        let (target, session) = (target.to_owned(), session.to_owned());
+        let run = self.command(Some(&session), "LP.run", serde_json::json!({ "steps": steps }));
+        self.browser.return_to_prepared(&target).map_err(|e| e.message)?;
+        self.drain();
+        run.map(|_| ())
+    }
+}
+
+/// The JSON payload of an outgoing (unmasked) WebSocket text frame.
+fn frame_json(frame: &[u8]) -> Option<Value> {
+    if frame.len() < 2 || frame[0] & 0x0f != 1 {
+        return None;
+    }
+    let start = match frame[1] & 0x7f {
+        126 => 4,
+        127 => 10,
+        _ => 2,
+    };
+    serde_json::from_slice(frame.get(start..)?).ok()
 }
 
 /// The server closed our stdin (see [`Template`]).
@@ -270,41 +361,45 @@ fn accept_all(
 /// Adds a profile (or finds the same one) and starts booting its page.
 fn register(snapshot: &mut Snapshot, profile: PreparedProfile) -> Result<usize, String> {
     let profile = one_page(&profile);
-    if let Some(id) = snapshot.profiles.iter().position(|p| *p == profile) {
+    if let Some(id) = snapshot.browser.prepared_profiles().iter().position(|p| *p == profile) {
         return Ok(id);
     }
-    let id = snapshot.profiles.len();
-    let booted = EngineHost::preboot(&mut snapshot.thread, std::slice::from_ref(&profile));
-    if booted.is_empty() {
-        return Err(format!("cannot boot a page at {}", profile.url));
-    }
-    snapshot.profiles.push(profile);
-    for mut page in booted {
-        page.profile = id;
-        snapshot.pages.push(page);
-        snapshot.started.push(Instant::now());
-        snapshot.settled.push(false);
+    snapshot.profiles.push(ProfileState::new(&profile));
+    let id = snapshot.browser.add_prepared_profile(profile);
+    if !snapshot.browser.prepared_pages().iter().any(|(p, _)| *p == id) {
+        return Err(format!("cannot boot a page at {}", snapshot.browser.prepared_profiles()[id].url));
     }
     Ok(id)
 }
 
-/// Every page has loaded and gone quiet (or waited long enough); loaded
-/// pages are settled first, so forks start from their live size.
+/// Every page has loaded, run its setup and gone quiet (or waited long
+/// enough); pages are settled first, so forks start from their live size.
 fn ready_to_fork(snapshot: &mut Snapshot, waiting_since: Option<Instant>) -> bool {
     let waited_enough = waiting_since.is_some_and(|t| t.elapsed() > QUIET_WAIT);
     let mut ready = true;
-    for (i, page) in snapshot.pages.iter().enumerate() {
-        let browser = &snapshot.thread.browser;
-        let loaded = browser.page(page.page).is_some_and(|p| p.main_frame.loaded && p.pending_loader().is_none());
-        let waited = snapshot.started[i].elapsed();
-        let quiet = browser.page_work(page.page).is_none_or(|w| w.quiet(0));
+    for (id, page) in snapshot.browser.prepared_pages() {
+        let host = snapshot.browser.host();
+        let loaded = host.page_loaded(page);
+        let quiet = host.page_work(page).is_none_or(|w| w.quiet(0));
+        let state = &snapshot.profiles[id];
+        let waited = state.started.elapsed();
         if !(loaded && (quiet || waited_enough) || waited > LOAD_WAIT) {
             ready = false;
             continue;
         }
-        if loaded && !snapshot.settled[i] {
-            snapshot.settled[i] = true;
-            browser.engine.settle();
+        if loaded && !state.set_up {
+            snapshot.profiles[id].set_up = true;
+            if let Err(e) = snapshot.set_up(id) {
+                eprintln!("lightningpanda: template: setup of {}: {e}", snapshot.browser.prepared_profiles()[id].url);
+            }
+            // Whatever the steps started has to go quiet again.
+            snapshot.profiles[id].settled = false;
+            ready = false;
+            continue;
+        }
+        if loaded && !state.settled {
+            snapshot.profiles[id].settled = true;
+            snapshot.browser.host().thread.browser.engine.settle();
         }
     }
     ready
@@ -314,14 +409,14 @@ fn ready_to_fork(snapshot: &mut Snapshot, waiting_since: Option<Instant>) -> boo
 /// in the child, serves the connection and returns its exit code.
 fn fork_connection(
     snapshot: &mut Snapshot,
-    profile: &BrowserProfile,
     config: &ServerConfig,
     (listener, template): (&UnixListener, &Path),
     waiting: &mut VecDeque<(Vec<u8>, Vec<OwnedFd>, Instant)>,
     buffered: Vec<u8>,
     mut fds: Vec<OwnedFd>,
 ) -> Option<i32> {
-    let engine = &snapshot.thread.browser.engine;
+    snapshot.drain();
+    let engine = &snapshot.browser.host().thread.browser.engine;
     lp_net::client::suspend_for_fork();
     if let Err(e) = engine.prepare_for_fork() {
         eprintln!("lightningpanda: template: {e}");
@@ -354,21 +449,20 @@ fn fork_connection(
         eprintln!("lightningpanda: network restart failed: {e}");
         return Some(1);
     }
-    snapshot.thread.event_loop.watch_fd(None);
+    snapshot.browser.host_mut().thread.event_loop.watch_fd(None);
     // Other connections' sockets and pipes are theirs: holding them would keep them open.
     waiting.clear();
     let template = template.to_path_buf();
     unsafe { libc::close(listener.as_raw_fd()) };
     let finished = fds.pop().expect("two fds");
     let socket = std::net::TcpStream::from(fds.pop().expect("two fds"));
-    let profiles = snapshot.profiles.clone();
-    let pages = std::mem::take(&mut snapshot.pages);
-    // The child owns the template's thread from here; the template's copy
-    // of `snapshot` is never touched again in this process.
-    let thread = unsafe { std::ptr::read(&snapshot.thread) };
-    let register: crate::target::RegisterPrepared = Box::new(move |p: &PreparedProfile| register_with(&template, p));
-    let profile = BrowserProfile { prepared: profiles, ..profile.clone() };
-    crate::serve::run_browser_thread(Ok((thread, pages)), &profile, socket, &buffered, config.clone(), Some(register));
+    // The child owns the template's protocol state from here; the template's
+    // copy of `snapshot` is never touched again in this process.
+    let (mut browser, outbox, outbound) = unsafe {
+        (std::ptr::read(&snapshot.browser), std::ptr::read(&snapshot.outbox), std::ptr::read(&snapshot.outbound))
+    };
+    browser.set_fork_child(Box::new(move |p: &PreparedProfile| register_with(&template, p)));
+    crate::serve::serve_browser(browser, outbox, outbound, socket, &buffered, config.clone());
     drop(finished);
     Some(0)
 }

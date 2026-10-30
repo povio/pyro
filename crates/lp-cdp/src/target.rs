@@ -147,6 +147,11 @@ pub struct PreparedProfile {
     /// for the boot when tests run back to back.
     #[serde(default)]
     pub refill_after_close: bool,
+    /// `LP.run` steps run once on the booted page before tests get it
+    /// (`serve --fork` only: the template runs them, and every connection
+    /// forked afterwards starts from the resulting state).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub setup: Vec<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -313,6 +318,53 @@ impl<H: Host> Browser<H> {
         browser
     }
 
+    /// The profiles prepared pages are booted for; a profile's id is its index.
+    pub fn prepared_profiles(&self) -> &[PreparedProfile] {
+        &self.prepared_profiles
+    }
+
+    /// Prepared pages waiting for a test, as (profile id, page).
+    pub fn prepared_pages(&self) -> Vec<(usize, PageKey)> {
+        self.prepared.iter().map(|e| (e.profile, e.page)).collect()
+    }
+
+    /// Adds a profile and starts booting its pages; its id (`serve --fork`
+    /// template, which registers profiles for every connection).
+    pub fn add_prepared_profile(&mut self, profile: PreparedProfile) -> usize {
+        self.prepared_profiles.push(profile);
+        self.refill_blocked = false;
+        self.refill_prepared();
+        self.prepared_profiles.len() - 1
+    }
+
+    /// Hands an acquired prepared page back to the pool, waiting and hidden
+    /// again, with its sessions detached (the `serve --fork` template acquires
+    /// a page to run a profile's setup steps on it).
+    pub fn return_to_prepared(&mut self, target_id: &str) -> CdpResult<()> {
+        let pos = self
+            .targets
+            .iter()
+            .position(|t| t.id == target_id && t.prepared_profile.is_some())
+            .ok_or_else(|| CdpError::invalid_params("not an acquired prepared page"))?;
+        let sessions: Vec<String> =
+            self.sessions.iter().filter(|(_, s)| s.target_id == target_id).map(|(id, _)| id.clone()).collect();
+        for session in sessions {
+            self.detach_session(&session, &mut Discard);
+        }
+        let target = self.targets.remove(pos);
+        if let Some(c) = self.contexts.iter_mut().find(|c| c.id == target.context_id) {
+            c.hidden = true;
+        }
+        self.prepared.push(PreparedEntry {
+            profile: target.prepared_profile.expect("checked"),
+            context_id: target.context_id,
+            page: target.page,
+            target_id: target.id,
+            settled: false,
+        });
+        Ok(())
+    }
+
     /// No page is open on this connection: no test is using it, so a refill
     /// delays nobody.
     pub fn no_open_pages(&self) -> bool {
@@ -419,6 +471,9 @@ impl<H: Host> Browser<H> {
                 }
                 if profile.pool == 0 || profile.pool > MAX_POOL {
                     return Err(CdpError::invalid_params("pool must be between 1 and 8"));
+                }
+                if !profile.setup.is_empty() && self.fork.is_none() {
+                    return Err(CdpError::invalid_params("setup steps need serve --fork"));
                 }
                 if let Some(register) = &self.fork {
                     // The template boots it; connections forked from then on have it.

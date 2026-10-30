@@ -37,7 +37,9 @@ test.concurrent('closes a position', async () => {
   its own connection, which the server forks from a process that booted the
   profile once: the page starts booted in about 20 ms, shares nothing with
   other tests, and its process exits when the page closes. `connections` and
-  `pool` then make no difference.
+  `pool` then make no difference. `setup` steps in a profile run once on the
+  booted page (sign-in flows, opening a view, filling filters) and every page
+  starts from their result.
 - **Locators** are data: `css`, `testId`, `text`, `label`, `placeholder`,
   `role` (and `button`, `dialog`, `link`, …), chained inside one another
   (`dialog().button('OK')`), filtered (`.visible()`, `.hasText()`,

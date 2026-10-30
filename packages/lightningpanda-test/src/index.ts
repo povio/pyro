@@ -40,6 +40,11 @@ export type Profile = {
   pool?: number;
   /** Keep pages booted ahead (default); false boots each page when a test asks. */
   prepare?: boolean;
+  /**
+   * Steps run once on the booted page before tests get it (`serve --fork`
+   * only): every page of this profile then starts from their result.
+   */
+  setup?: StepLike[];
 };
 
 export type RunResult = {
@@ -157,6 +162,7 @@ export class Lightningpanda {
           initScripts: scripts,
           ...(profile.viewport ? { viewport: profile.viewport } : {}),
           pool: profile.pool ?? 2,
+          ...(profile.setup?.length ? { setup: profile.setup.map((s) => s.toStep()) } : {}),
         });
         return profileId as number;
       }),
