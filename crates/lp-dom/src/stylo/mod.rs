@@ -242,6 +242,8 @@ struct AuthorSheet {
     key: SheetKey,
     has_relative: bool,
     sheet: DocumentStyleSheet,
+    /// Attribute local names its selectors test.
+    attrs: std::sync::Arc<[markup5ever::LocalName]>,
 }
 
 /// A sheet by content: text hash and length, `media`, quirks.
@@ -261,7 +263,44 @@ thread_local! {
     static LOCK: SharedRwLock = SharedRwLock::new();
     /// Parsed author sheets by content, shared by the documents of the
     /// thread (a test suite loads the same bundle on every page).
-    static PARSED: std::cell::RefCell<rustc_hash::FxHashMap<SheetKey, DocumentStyleSheet>> = Default::default();
+    static PARSED: std::cell::RefCell<rustc_hash::FxHashMap<SheetKey, ParsedSheet>> = Default::default();
+}
+
+/// A parsed sheet and the attribute local names its selectors test.
+type ParsedSheet = (DocumentStyleSheet, std::sync::Arc<[markup5ever::LocalName]>);
+
+/// The attribute local names the selectors of `sheet` test (attribute
+/// selectors, at any depth: `:is()`, `:has()`, nested and conditional
+/// rules). Attribute writes outside these need no invalidation snapshot.
+fn attribute_names(sheet: &Stylesheet, device: &Device, guard: &style::shared_lock::SharedRwLockReadGuard) -> std::sync::Arc<[markup5ever::LocalName]> {
+    use selectors::visitor::SelectorVisitor;
+    use style::stylesheets::{AllRules, CssRule, RulesIterator, StylesheetInDocument};
+    struct Names(rustc_hash::FxHashSet<markup5ever::LocalName>);
+    impl SelectorVisitor for Names {
+        type Impl = style::selector_parser::SelectorImpl;
+        fn visit_attribute_selector(
+            &mut self,
+            _ns: &selectors::attr::NamespaceConstraint<&style::Namespace>,
+            name: &style::LocalName,
+            lower: &style::LocalName,
+        ) -> bool {
+            self.0.insert(name.0.clone());
+            self.0.insert(lower.0.clone());
+            true
+        }
+    }
+    let mut names = Names(Default::default());
+    let contents = sheet.contents(guard);
+    let rules = contents.rules(guard);
+    let custom_media: Box<style::stylesheets::CustomMediaMap> = Box::default();
+    for rule in RulesIterator::<AllRules, _>::new(device, contents.quirks_mode, custom_media, guard, rules.iter()) {
+        if let CssRule::Style(style_rule) = rule {
+            for selector in style_rule.read_with(guard).selectors.slice() {
+                selector.visit(&mut names);
+            }
+        }
+    }
+    names.0.into_iter().collect()
 }
 
 /// Sheets kept for reuse at most (cleared past it).
@@ -290,6 +329,8 @@ pub struct Cascade {
     changes: Restyled,
     /// Open popovers (element indices).
     popovers: rustc_hash::FxHashSet<u32>,
+    /// Whether the DOM knows the attribute names the sheets test.
+    names_published: bool,
     /// Elements whose values the last flush changed, and elements it
     /// visited (diagnostics, tests).
     pub(crate) last_restyled: usize,
@@ -340,6 +381,7 @@ impl Cascade {
             styled: None,
             changes: Restyled::All,
             popovers: Default::default(),
+            names_published: false,
             last_restyled: 0,
             last_visited: 0,
         }
@@ -369,27 +411,28 @@ impl Cascade {
                     // (a stylist holds a sheet once).
                     let twice = self.sheets.iter().any(|s| s.key == key);
                     let shared = (!twice).then(|| PARSED.with(|p| p.borrow().get(&key).cloned())).flatten();
-                    let sheet = shared.unwrap_or_else(|| {
+                    let (sheet, attrs) = shared.unwrap_or_else(|| {
                         let sheet = self.parse(&text, key.2.as_deref());
-                        if twice {
-                            return sheet;
+                        let attrs = attribute_names(&sheet.0, self.stylist.device(), &self.lock.read());
+                        if !twice {
+                            PARSED.with(|p| {
+                                let mut p = p.borrow_mut();
+                                if p.len() >= PARSED_CAP {
+                                    p.clear();
+                                }
+                                p.insert(key.clone(), (sheet.clone(), attrs.clone()));
+                            });
                         }
-                        PARSED.with(|p| {
-                            let mut p = p.borrow_mut();
-                            if p.len() >= PARSED_CAP {
-                                p.clear();
-                            }
-                            p.insert(key.clone(), sheet.clone());
-                        });
-                        sheet
+                        (sheet, attrs)
                     });
-                    AuthorSheet { has_relative: text.contains(":has("), key, sheet }
+                    AuthorSheet { has_relative: text.contains(":has("), key, sheet, attrs }
                 }
             };
             self.stylist.append_stylesheet(sheet.sheet.clone(), &self.lock.read());
             self.sheets.push(sheet);
         }
         self.has_relative = self.sheets.iter().any(|s| s.has_relative);
+        self.names_published = false;
         self.styled = None;
     }
 
@@ -469,6 +512,18 @@ impl Cascade {
         self.store.reserve(dom.slot_len());
         // Attributes before their change (and from here on, kept for the next flush).
         let attrs = dom.take_style_snapshots(doc);
+        if !self.names_published {
+            static UA_NAMES: LazyLock<std::sync::Arc<[markup5ever::LocalName]>> = LazyLock::new(|| {
+                let sheet = ua_sheet();
+                let lock = SharedRwLock::read_only();
+                let guard = lock.read();
+                let device = device(&Viewport::default(), QuirksMode::NoQuirks);
+                attribute_names(&sheet.0, &device, &guard)
+            });
+            dom.add_style_attr_names(UA_NAMES.iter().cloned());
+            dom.add_style_attr_names(self.sheets.iter().flat_map(|s| s.attrs.iter().cloned()));
+            self.names_published = true;
+        }
         let previous = self.styled.filter(|s| s.0 == stamp.0);
         let full = match previous {
             None => true,
@@ -564,7 +619,7 @@ impl Cascade {
         dom: &Dom,
         doc: u32,
         version: u64,
-        attrs: &crate::dom::StyleSnapshots,
+        attrs: &rustc_hash::FxHashMap<u32, crate::dom::AttrChanges>,
         old: (u32, u32),
         new: (u32, u32),
     ) -> bool {
@@ -613,6 +668,7 @@ impl Cascade {
             | F::HAS_EMPTY_SELECTOR
             | F::MAY_HAVE_TREE_COUNTING_FUNCTION;
         let mut moved: Vec<u32> = Vec::new();
+        let mut own_rules: Vec<u32> = Vec::new();
         for (i, change) in changes.enumerate() {
             if i > 10_000 {
                 return false;
@@ -625,10 +681,11 @@ impl Cascade {
                     }
                     changed.push(n);
                     relative.push((n, false));
-                    if matches!(c, Change::Attr(_, h, _) if h != 0) && !attrs.contains_key(&n) {
-                        // No snapshot (taken before this cascade asked): as before.
-                        let p = dom.n(n).parent;
-                        subtrees.push(if live(p) && dom.n(p).is_element() { p } else { n });
+                    // An attribute no selector tests (no snapshot): only the
+                    // element's own declarations can change (`style`,
+                    // presentational hints); data-/aria- ones, nothing.
+                    if matches!(c, Change::Attr(_, h, false) if h != 0) && !attrs.contains_key(&n) {
+                        own_rules.push(n);
                     }
                     // Any attribute of an input may move it into or out of a group.
                     radios |= matches!(c, Change::Attr(..)) && is_input(n) || is_radio(n);
@@ -809,43 +866,51 @@ impl Cascade {
                 continue;
             };
             let (old_state, new_state) = (slot.state.get(), el.state());
-            let old_attrs = attrs.get(&n).filter(|(gen, _)| *gen == dom.generation_at(n)).map(|(_, a)| a);
+            let changes = attrs.get(&n).filter(|c| c.gen == dom.generation_at(n));
+            let now = &dom.n(n).element().expect("element").attrs;
+            // The attributes as they were: the current ones with each
+            // recorded change undone.
+            let old_attrs = changes.map(|c| {
+                let mut old: Vec<(markup5ever::QualName, Box<str>)> = now
+                    .iter()
+                    .filter(|a| !c.old.iter().any(|(n, _)| *n == a.name))
+                    .map(|a| (a.name.clone(), a.value.clone()))
+                    .collect();
+                old.extend(c.old.iter().filter_map(|(n, v)| v.clone().map(|v| (n.clone(), v))));
+                old
+            });
             if old_state == new_state && old_attrs.is_none() {
                 continue;
             }
             let mut snapshot = ServoElementSnapshot::new();
             snapshot.state = Some(old_state);
-            if let Some(old_attrs) = old_attrs {
-                let now = &dom.n(n).element().expect("element").attrs;
-                let value = |a: &[crate::node::Attr], name: &crate::node::Attr| {
-                    a.iter().find(|x| x.name == name.name).map(|x| x.value.clone())
-                };
-                for a in old_attrs.iter().chain(now.iter()) {
-                    let differs = value(old_attrs, a) != value(now, a);
-                    if !differs || snapshot.changed_attrs.iter().any(|c| c.0 == a.name.local) {
+            if let (Some(c), Some(old_attrs)) = (changes, old_attrs) {
+                for (name, old) in &c.old {
+                    let current = now.iter().find(|a| a.name == *name).map(|a| &a.value);
+                    if current == old.as_ref() {
                         continue;
                     }
-                    match &*a.name.local {
-                        "class" if a.name.ns.is_empty() => snapshot.class_changed = true,
-                        "id" if a.name.ns.is_empty() => snapshot.id_changed = true,
+                    match &*name.local {
+                        "class" if name.ns.is_empty() => snapshot.class_changed = true,
+                        "id" if name.ns.is_empty() => snapshot.id_changed = true,
                         _ => snapshot.other_attributes_changed = true,
                     }
-                    snapshot.changed_attrs.push(style::values::GenericAtomIdent(a.name.local.clone()));
+                    snapshot.changed_attrs.push(style::values::GenericAtomIdent(name.local.clone()));
                 }
                 snapshot.attrs = Some(
                     old_attrs
-                        .iter()
-                        .map(|a| {
-                            let ident = AttrIdentifier {
-                                local_name: style::values::GenericAtomIdent(a.name.local.clone()),
-                                name: style::values::GenericAtomIdent(a.name.local.clone()),
-                                namespace: style::values::GenericAtomIdent(a.name.ns.clone()),
-                                prefix: a.name.prefix.clone().map(style::values::GenericAtomIdent),
+                        .into_iter()
+                        .map(|(name, value)| {
+                            let value = match (&*name.local, name.ns.is_empty()) {
+                                ("class", true) => AttrValue::from_serialized_tokenlist(value.into()),
+                                ("id", true) => AttrValue::from_atomic(value.into()),
+                                _ => AttrValue::String(value.into()),
                             };
-                            let value = match (&*a.name.local, a.name.ns.is_empty()) {
-                                ("class", true) => AttrValue::from_serialized_tokenlist(a.value.to_string()),
-                                ("id", true) => AttrValue::from_atomic(a.value.to_string()),
-                                _ => AttrValue::String(a.value.to_string()),
+                            let ident = AttrIdentifier {
+                                local_name: style::values::GenericAtomIdent(name.local.clone()),
+                                name: style::values::GenericAtomIdent(name.local),
+                                namespace: style::values::GenericAtomIdent(name.ns),
+                                prefix: name.prefix.map(style::values::GenericAtomIdent),
                             };
                             (ident, value)
                         })
@@ -863,6 +928,13 @@ impl Cascade {
                 }
             }
             lead(n);
+        }
+        for n in own_rules {
+            if let Some(mut data) = SNode::new(&cx, n).mutate_data() {
+                data.hint.insert(RestyleHint::RESTYLE_SELF);
+                drop(data);
+                lead(n);
+            }
         }
         for n in moved {
             if let Some(mut data) = SNode::new(&cx, n).mutate_data() {

@@ -400,3 +400,44 @@ fn changes_restyle_locally_with_has_and_sibling_rules() {
     p.value("#far", "color");
     assert!(visited(&p) < 10, "visited {}", visited(&p));
 }
+
+#[test]
+fn only_attributes_selectors_test_are_snapshotted() {
+    let p = Page::new(
+        "<!doctype html><style>[data-on] > .x{color:rgb(1, 1, 1)} .big{width:9px} [hidden]{display:none}</style>\
+         <body><div id=d><span id=x class=x>x</span></div></body>",
+    );
+    let d = p.find("#d");
+    let snapshots = |p: &Page| p.dom.borrow().style_snapshot_count();
+    let visited = |p: &Page| p.layout.style().stylo_stats().2;
+    assert_eq!(p.value("#x", "color"), "rgb(0, 0, 0)");
+    // No selector tests these: no snapshot, and the next read restyles nothing.
+    p.dom.borrow_mut().set_attribute(d, "data-other", "1").unwrap();
+    p.dom.borrow_mut().set_attribute(d, "aria-label", "l").unwrap();
+    assert_eq!(snapshots(&p), 0);
+    assert_eq!(p.value("#x", "color"), "rgb(0, 0, 0)");
+    assert_eq!(visited(&p), 0);
+    // A non-selector attribute that is not data-/aria-: the element itself only.
+    p.dom.borrow_mut().set_attribute(d, "accesskey", "k").unwrap();
+    assert_eq!(snapshots(&p), 0);
+    assert_eq!(p.value("#x", "color"), "rgb(0, 0, 0)");
+    assert!(visited(&p) <= 3, "visited {}", visited(&p));
+    // Attributes selectors test: snapshotted once per element until the next read.
+    p.dom.borrow_mut().set_attribute(d, "data-on", "").unwrap();
+    p.dom.borrow_mut().set_attribute(d, "data-on", "again").unwrap();
+    p.dom.borrow_mut().set_attribute(d, "class", "big").unwrap();
+    assert_eq!(snapshots(&p), 1);
+    assert_eq!(p.value("#x", "color"), "rgb(1, 1, 1)");
+    assert_eq!(p.value("#d", "width"), "9px");
+    assert_eq!(snapshots(&p), 0);
+    p.dom.borrow_mut().remove_attribute(d, "data-on").unwrap();
+    assert_eq!(p.value("#x", "color"), "rgb(0, 0, 0)");
+    // A style attribute (no selector reads it) still restyles the element.
+    p.dom.borrow_mut().set_attribute(d, "style", "width: 3px").unwrap();
+    assert_eq!(snapshots(&p), 0);
+    assert_eq!(p.value("#d", "width"), "3px");
+    // Detached elements are not snapshotted.
+    let fresh = p.dom.borrow_mut().create_element(p.doc, "div").unwrap();
+    p.dom.borrow_mut().set_attribute(fresh, "class", "big").unwrap();
+    assert_eq!(snapshots(&p), 0);
+}

@@ -4086,7 +4086,7 @@ pub struct StyleEngine {
     /// (sheet generation, DOM tree version) the Stylo sheets were synced at.
     stylo_sheets_at: Cell<Option<(u64, u64)>>,
     /// `computed()` answers for one style stamp.
-    stylo_memo: RefCell<(Option<Stamp>, FxHashMap<NodeId, ComputedStyle>)>,
+    stylo_memo: RefCell<FxHashMap<NodeId, ComputedStyle>>,
     /// Whether this engine uses Stylo ([`stylo_cascade`], or tests' choice).
     stylo_on: Cell<bool>,
     /// The stamp the layout caches (`cache.flow`, `cache.generated`,
@@ -4187,16 +4187,10 @@ impl StyleEngine {
     /// stamp.
     fn computed_stylo(&self, dom: &Dom, el: NodeId) -> Option<ComputedStyle> {
         let idx = self.owns(dom, el)?;
-        let stamp = self.stamp(dom);
-        {
-            let mut memo = self.stylo_memo.borrow_mut();
-            if memo.0 != Some(stamp) {
-                memo.0 = Some(stamp);
-                memo.1.clear();
-            }
-            if let Some(c) = memo.1.get(&el) {
-                return Some(*c);
-            }
+        // Drops the answers of elements restyled since (and their subtrees).
+        self.sync(dom);
+        if let Some(c) = self.stylo_memo.borrow().get(&el) {
+            return Some(*c);
         }
         let style = self.stylo_style(dom, el)?;
         let get = |name: &str| crate::stylo::serialize(&style, name).unwrap_or_default();
@@ -4249,7 +4243,7 @@ impl StyleEngine {
             floated: style.get_box().float != SFloat::None,
             important_rule_mask: 0,
         };
-        self.stylo_memo.borrow_mut().1.insert(el, c);
+        self.stylo_memo.borrow_mut().insert(el, c);
         Some(c)
     }
 
@@ -4282,7 +4276,8 @@ impl StyleEngine {
                     for c in journal {
                         match c {
                             Change::Attr(n, ..) | Change::State(n) => changed.push(n),
-                            Change::Inserted(p, _) | Change::Removed(p, ..) => changed.push(p),
+                            // The moved node too: what it inherits changed.
+                            Change::Inserted(p, c) | Change::Removed(p, c, _) => changed.extend([p, c]),
                             Change::Text(_) | Change::Pseudo => {}
                             Change::Unknown(_) => {
                                 changes = crate::stylo::Restyled::All;
@@ -4295,6 +4290,30 @@ impl StyleEngine {
                     changes = crate::stylo::Restyled::All;
                 }
                 None => {}
+            }
+        }
+        // `computed()` answers inherit from ancestors (display: none,
+        // opacity: 0, inert, touch-action): a changed element drops its
+        // subtree's. An element without one has no descendant with one.
+        {
+            let mut memo = self.stylo_memo.borrow_mut();
+            match &changes {
+                // The walk below follows the light tree only.
+                crate::stylo::Restyled::All => memo.clear(),
+                _ if dom.shadow_root_count() != 0 => memo.clear(),
+                crate::stylo::Restyled::Some(changed) if !memo.is_empty() => {
+                    for &idx in changed {
+                        if !dom.slot_live(idx) || memo.remove(&dom.id_of(idx)).is_none() {
+                            continue;
+                        }
+                        let mut d = dom.n(idx).first_child;
+                        while d != NIL {
+                            memo.remove(&dom.id_of(d));
+                            d = dom.following_in(d, idx);
+                        }
+                    }
+                }
+                crate::stylo::Restyled::Some(_) => {}
             }
         }
         let mut cache = self.cache.borrow_mut();

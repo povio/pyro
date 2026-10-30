@@ -16,8 +16,22 @@ struct Slot {
     node: Option<Node>,
 }
 
-/// Elements' attributes before a change, by node index with its generation.
-pub(crate) type StyleSnapshots = rustc_hash::FxHashMap<u32, (u32, Vec<crate::node::Attr>)>;
+/// The old values of an element's attributes that selectors may read and
+/// that changed since the style cascade last read styles (`None`: it was
+/// absent), first change only; with the element's generation.
+#[derive(Default)]
+pub(crate) struct AttrChanges {
+    pub(crate) gen: u32,
+    pub(crate) old: Vec<(QualName, Option<Box<str>>)>,
+}
+
+/// Style invalidation's view of attribute writes (see `note_style_attr`).
+#[derive(Default)]
+pub(crate) struct StyleSnapshots {
+    /// Attribute local names some selector tests (besides `class` and `id`).
+    names: rustc_hash::FxHashSet<markup5ever::LocalName>,
+    elements: rustc_hash::FxHashMap<u32, AttrChanges>,
+}
 
 /// One journaled DOM mutation (node indices in this DOM).
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -108,10 +122,10 @@ pub struct Dom {
     journal: Vec<(u64, Change)>,
     /// Versions at or below this have no complete journal.
     journal_floor: u64,
-    /// Elements' attributes before their first change since the style
-    /// cascade last read them (Stylo's invalidation snapshots), by node
-    /// index with its generation. `None` until a cascade asks for them, so
-    /// a page that never reads styles pays nothing.
+    /// Old values of attributes selectors read, from their first change
+    /// since the style cascade last read styles (Stylo's invalidation
+    /// snapshots). `None` until a cascade asks for them, so a page that
+    /// never reads styles pays nothing.
     style_snapshots: std::cell::RefCell<Option<StyleSnapshots>>,
     /// Shadow roots ever attached (selective style invalidation does not
     /// model slot assignment, so consumers fall back to full invalidation).
@@ -256,18 +270,14 @@ impl Dom {
         self.tree_version
     }
     /// Starts keeping attribute snapshots (style invalidation) and returns
-    /// those taken since the last call.
-    /// Those of document `doc` (index); other documents' stay for their
-    /// cascades, dead elements' go.
-    pub(crate) fn take_style_snapshots(&self, doc: u32) -> StyleSnapshots {
+    /// those of document `doc` (index) taken since the last call; other
+    /// documents' stay for their cascades, dead elements' go.
+    pub(crate) fn take_style_snapshots(&self, doc: u32) -> rustc_hash::FxHashMap<u32, AttrChanges> {
         let mut all = self.style_snapshots.borrow_mut();
-        let Some(map) = all.as_mut() else {
-            *all = Some(Default::default());
-            return Default::default();
-        };
+        let state = all.get_or_insert_with(Default::default);
         let mut mine = rustc_hash::FxHashMap::default();
-        map.retain(|&i, v| {
-            if !self.slot_live(i) || self.generation_at(i) != v.0 {
+        state.elements.retain(|&i, v| {
+            if !self.slot_live(i) || self.generation_at(i) != v.gen {
                 return false;
             }
             if self.root_idx(i) == doc {
@@ -279,12 +289,41 @@ impl Dom {
         mine
     }
 
-    /// Keeps element `i`'s attributes as they are, before a change.
-    pub(crate) fn snapshot_attrs(&self, i: u32) {
-        if let Some(map) = self.style_snapshots.borrow_mut().as_mut() {
-            if let Some(e) = self.n(i).element() {
-                map.entry(i).or_insert_with(|| (self.generation_at(i), e.attrs.clone()));
-            }
+    /// Elements with recorded attribute snapshots (tests).
+    #[doc(hidden)]
+    pub fn style_snapshot_count(&self) -> usize {
+        self.style_snapshots.borrow().as_ref().map_or(0, |s| s.elements.len())
+    }
+
+    /// Attribute names some selector of a cascade over this DOM tests.
+    pub(crate) fn add_style_attr_names(&self, names: impl IntoIterator<Item = markup5ever::LocalName>) {
+        let mut all = self.style_snapshots.borrow_mut();
+        all.get_or_insert_with(Default::default).names.extend(names);
+    }
+
+    /// Records attribute `name`'s value before a write (`None`: absent)
+    /// when a style cascade reads this DOM and a selector can test it. A
+    /// write no selector can see (most `data-*`, `aria-*`), a detached
+    /// element's, or a second write to the same attribute before the next
+    /// style read costs a lookup.
+    #[inline]
+    pub(crate) fn note_style_attr(&self, i: u32, name: &QualName, old: Option<&str>) {
+        let mut all = self.style_snapshots.borrow_mut();
+        let Some(state) = all.as_mut() else { return };
+        let local = &name.local;
+        if !(*local == local_name!("class") || *local == local_name!("id") || state.names.contains(local)) {
+            return;
+        }
+        if self.n(i).parent == NIL {
+            return;
+        }
+        let gen = self.generation_at(i);
+        let entry = state.elements.entry(i).or_default();
+        if entry.gen != gen {
+            *entry = AttrChanges { gen, old: Vec::new() };
+        }
+        if !entry.old.iter().any(|(n, _)| n == name) {
+            entry.old.push((name.clone(), old.map(Into::into)));
         }
     }
 
@@ -1541,10 +1580,12 @@ impl Dom {
     }
 
     fn change_attr(&mut self, i: u32, k: usize, value: &str) {
-        self.snapshot_attrs(i);
         let el = self.n(i).element().unwrap();
         let name = el.attrs[k].name.clone();
         let old = std::mem::replace(&mut self.n_mut(i).element_mut().unwrap().attrs[k].value, value.into());
+        if *old != *value {
+            self.note_style_attr(i, &name, Some(&old));
+        }
         if *old == *value {
             // Same value: still an attribute mutation (records, XPath
             // iterators), but nothing that styles or geometry depend on
@@ -1558,7 +1599,7 @@ impl Dom {
         self.resources_after_attr(i, &name.local);
     }
     fn append_attr(&mut self, i: u32, name: QualName, value: &str) {
-        self.snapshot_attrs(i);
+        self.note_style_attr(i, &name, None);
         self.n_mut(i).element_mut().unwrap().attrs.push(Attr { name: name.clone(), value: value.into() });
         self.bump_tree();
         self.note(Change::attr(i, &name));
@@ -1589,8 +1630,8 @@ impl Dom {
         }
     }
     fn remove_attr_at(&mut self, i: u32, k: usize) {
-        self.snapshot_attrs(i);
         let attr = self.n_mut(i).element_mut().unwrap().attrs.remove(k);
+        self.note_style_attr(i, &attr.name, Some(&attr.value));
         self.bump_tree();
         self.note(Change::attr(i, &attr.name));
         self.queue_attribute(i, &attr.name, Some(&attr.value));
