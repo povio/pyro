@@ -259,7 +259,8 @@ pub fn parse_selectors(text: &str) -> DomResult<Selectors> {
 
 /// A selector list for the DOM's query APIs: Stylo's (`crate::stylo::select`,
 /// the cascade's selector engine) unless `LP_CASCADE=legacy`, else (or when
-/// only it parses one) lp-dom's.
+/// only it parses one) lp-dom's. Queries for one id, class, tag or attribute
+/// presence take lp-dom's direct paths (id index, cached class sets).
 #[derive(Clone)]
 pub struct Query {
     stylo: Option<crate::stylo::select::List>,
@@ -270,7 +271,12 @@ pub struct Query {
 /// syntax maps to a `SyntaxError` DOMException.
 pub fn parse_query(text: &str) -> DomResult<Query> {
     let stylo = crate::style::stylo_cascade().then(|| crate::stylo::select::parse(text)).flatten();
-    let lp = if stylo.is_some() { None } else { Some(parse_selectors(text)?) };
+    let lp = match &stylo {
+        None => Some(parse_selectors(text)?),
+        // One id, class, tag or attribute presence: lp-dom's direct tests
+        // (the id index, cached class sets) beat general matching.
+        Some(_) => parse_selectors(text).ok().filter(|l| simple(l).is_some()),
+    };
     Ok(Query { stylo, lp })
 }
 
@@ -278,11 +284,11 @@ impl Dom {
     /// `querySelector`: the first element below `root` matching `q`.
     pub fn query_first(&self, root: NodeId, q: &Query) -> DomResult<Option<NodeId>> {
         match (&q.stylo, &q.lp) {
-            (Some(list), _) => {
+            (_, Some(lp)) => self.query_selector(root, lp),
+            (Some(list), None) => {
                 let r = self.check(root)?;
                 Ok(crate::stylo::select::query(self, r, list, true).first().map(|&i| self.id_of(i)))
             }
-            (None, Some(lp)) => self.query_selector(root, lp),
             (None, None) => Ok(None),
         }
     }
@@ -290,11 +296,11 @@ impl Dom {
     /// `querySelectorAll`: the elements below `root` matching `q`, in tree order.
     pub fn query_all(&self, root: NodeId, q: &Query) -> DomResult<Vec<NodeId>> {
         match (&q.stylo, &q.lp) {
-            (Some(list), _) => {
+            (_, Some(lp)) => self.query_selector_all(root, lp),
+            (Some(list), None) => {
                 let r = self.check(root)?;
                 Ok(crate::stylo::select::query(self, r, list, false).into_iter().map(|i| self.id_of(i)).collect())
             }
-            (None, Some(lp)) => self.query_selector_all(root, lp),
             (None, None) => Ok(Vec::new()),
         }
     }

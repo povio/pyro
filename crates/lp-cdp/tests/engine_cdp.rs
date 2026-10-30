@@ -1902,7 +1902,9 @@ fn dom_geometry_matches_native_rect_and_rejects_detached_or_foreign_objects() {
     let y = rect["y"].as_f64().unwrap();
     // The border box: 40x30 plus the UA input padding and border.
     let (bw, bh) = (rect["width"].as_f64().unwrap(), rect["height"].as_f64().unwrap());
-    assert_eq!((bw, bh), (48.0, 36.0));
+    // (The legacy cascade has no UA padding or border on inputs.)
+    let expected = if lp_dom::style::stylo_cascade() { (48.0, 36.0) } else { (40.0, 30.0) };
+    assert_eq!((bw, bh), expected);
     let quad = json!([x, y, x + bw, y, x + bw, y + bh, x, y + bh]);
     assert_eq!(h.page("DOM.getContentQuads", json!({"objectId":object}))["result"]["quads"], json!([quad]));
     assert_eq!(h.page("DOM.getBoxModel", json!({"objectId":object}))["result"]["model"]["border"], quad);
