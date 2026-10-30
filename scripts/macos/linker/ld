@@ -10,13 +10,18 @@
 # Dynamic libraries and bundles are left with the linker's signature.
 set -eu
 xcrun ld "$@"
-out=""
-prev=""
-for arg in "$@"; do
-    case "$arg" in -dylib|-bundle) exit 0 ;; esac
-    if [ "$prev" = "-o" ]; then out="$arg"; fi
-    prev="$arg"
-done
+# The arguments, one per line, response files (`@file`, which cc passes when
+# the command line is long, e.g. with the render feature) expanded.
+args() {
+    for arg in "$@"; do
+        case "$arg" in
+            @*) xargs -n1 < "${arg#@}" ;;
+            *) printf '%s\n' "$arg" ;;
+        esac
+    done
+}
+if args "$@" | grep -qx -e -dylib -e -bundle; then exit 0; fi
+out="$(args "$@" | awk 'prev == "-o" { print; exit } { prev = $0 }')"
 [ -n "$out" ] || exit 0
 entitlements="$(cd "$(dirname "$0")/.." && pwd)/jit.entitlements"
 # codesign reports "replacing existing signature" on stderr; rustc would
