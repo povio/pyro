@@ -28,6 +28,10 @@ pub struct PageDom {
     flushing_iframes: Cell<bool>,
     connected_iframes: RefCell<FxHashSet<NodeId>>,
     pub(crate) selectors: RefCell<SelectorCache>,
+    /// Members of live collections by (root, kind), shared by every
+    /// collection object over the same root and kind
+    /// (`collections::CollectionData`).
+    pub(crate) collection_members: RefCell<crate::collections::MemberCache>,
     /// Node references released by finalized wrappers while the DOM was
     /// borrowed; applied at the next safe point.
     pending_release: RefCell<Vec<NodeId>>,
@@ -300,6 +304,7 @@ impl PageDom {
             flushing_iframes: Cell::new(false),
             connected_iframes: RefCell::new(FxHashSet::default()),
             selectors: RefCell::new(SelectorCache::default()),
+            collection_members: RefCell::default(),
             pending_release: RefCell::new(Vec::new()),
             after_task_stamp: Cell::new(None),
             current_script: Cell::new(None),

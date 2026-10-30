@@ -27,7 +27,7 @@ pub mod text_metrics;
 pub mod xml;
 pub mod xpath;
 
-pub use dom::{position, Dom};
+pub use dom::{attr_name_hash, position, CollectionWatch, Dom};
 pub use error::{DomError, DomErrorKind, DomResult};
 pub use node::{Attr, ControlState, DocumentKind, NodeId, NodeKind, NodeType, QuirksMode, ShadowRootMode};
 
