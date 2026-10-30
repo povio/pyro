@@ -9,8 +9,8 @@ autotests = false
 rust-version.workspace = true
 
 [features]
-# Stage timers for CDP handling, read with LP.perfStats (see src/perf.rs).
-perf-trace = []
+# Stage timers for CDP handling, read with LP.perfStats (see lp-cdp-protocol/src/perf.rs).
+perf-trace = ["lp-cdp-protocol/perf-trace"]
 
 [dependencies]
 lp-browser.workspace = true
@@ -19,9 +19,9 @@ lp-runtime.workspace = true
 lp-net.workspace = true
 lp-webapi.workspace = true
 lp-dom.workspace = true
+lp-cdp-protocol.workspace = true
 bytes = "1"
 http = "1"
-ryu-js = "1"
 regress = "0.12"
 serde = { version = "1", features = ["derive"] }
 getrandom = "0.3"
@@ -34,10 +34,6 @@ tokio = { version = "1", features = ["rt-multi-thread", "time"] }
 [[test]]
 name = "integration"
 path = "tests/integration.rs"
-
-[[test]]
-name = "server_socket"
-path = "tests/server_socket.rs"
 
 [lints]
 workspace = true

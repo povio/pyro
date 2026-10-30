@@ -4,10 +4,10 @@
 use std::net::SocketAddr;
 use std::thread;
 
-use lp_cdp::msg::{self, CdpResult, Command};
-use lp_cdp::outbox::{Outbox, DEFAULT_OUTBOUND_BUDGET};
-use lp_cdp::server::{Inbound, Server, ServerConfig, SessionChannels, SessionFactory};
-use lp_cdp::target::{Browser, ContextKey, Host, PageCommand, PageKey, Sink};
+use lp_cdp_protocol::msg::{self, CdpResult, Command};
+use lp_cdp_protocol::outbox::{Outbox, DEFAULT_OUTBOUND_BUDGET};
+use lp_cdp_protocol::server::{Inbound, Server, ServerConfig, SessionChannels, SessionFactory};
+use lp_cdp_protocol::target::{Browser, ContextKey, Host, PageCommand, PageKey, Sink};
 use serde_json::{json, Value};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
