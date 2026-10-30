@@ -1,11 +1,17 @@
 //! NodeList, HTMLCollection, DOMTokenList, NamedNodeMap/Attr and
 //! DOMStringMap. Live collections cache their member list against
-//! `Dom::version()` so indexed loops are O(1) per access between mutations.
+//! `Dom::version()`; a later version keeps it when the change journal shows
+//! nothing that can change its members (a change inside another subtree, a
+//! text write under a child), so indexed loops stay O(1) per access while
+//! the page mutates elsewhere. Member lists are also shared per page by
+//! (root, kind): a second `getElementsByClassName('x')` reuses the first's.
+
+use std::collections::HashMap;
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use lp_dom::{Dom, NodeId, NodeType};
+use lp_dom::{attr_name_hash, CollectionWatch, Dom, NodeId, NodeType};
 use lp_js::{ClassDef, IdentityKey, JsClass, JsError, JsResult, NoParent, Object, Scope, Value};
 
 use crate::node::wrap_node;
@@ -56,15 +62,24 @@ pub struct NodeListData {
     cache: RefCell<(u64, Vec<NodeId>)>,
 }
 
+/// `childNodes`: the root's children, text included.
+fn child_nodes_watch() -> CollectionWatch {
+    CollectionWatch { children_only: true, ..CollectionWatch::default() }
+}
+
 impl NodeListData {
     fn items(&self, dom: &Dom) -> Vec<NodeId> {
         match &self.source {
             NodeListSource::Static(v) => v.iter().map(|h| h.id).collect(),
             NodeListSource::Children(h) => {
                 let mut c = self.cache.borrow_mut();
-                if c.0 != dom.version() || c.1.is_empty() {
-                    c.1 = dom.children(h.id).map(|it| it.collect()).unwrap_or_default();
-                    c.0 = dom.version();
+                if c.0 != dom.version() {
+                    if c.0 != u64::MAX && dom.collection_unchanged_since(h.id, c.0, &child_nodes_watch()) {
+                        c.0 = dom.version();
+                    } else {
+                        c.1 = dom.children(h.id).map(|it| it.collect()).unwrap_or_default();
+                        c.0 = dom.version();
+                    }
                 }
                 c.1.clone()
             }
@@ -81,15 +96,14 @@ impl NodeListData {
             NodeListSource::Static(v) => v.get(i).map(|h| (h.page.clone(), h.id)),
             NodeListSource::Children(h) => {
                 let dom = h.page.dom.borrow();
-                let items = {
+                {
                     let c = self.cache.borrow();
-                    if c.0 == dom.version() && !c.1.is_empty() {
+                    if c.0 == dom.version() {
                         return c.1.get(i).map(|&id| (h.page.clone(), id));
                     }
-                    drop(c);
-                    self.items(&dom)
-                };
-                items.get(i).map(|&id| (h.page.clone(), id))
+                }
+                self.items(&dom);
+                self.cache.borrow().1.get(i).map(|&id| (h.page.clone(), id))
             }
         }
     }
@@ -153,7 +167,7 @@ pub fn child_nodes<'s>(s: &Scope<'s>, page: &PageDom, id: NodeId) -> JsResult<Ob
 
 // ----- HTMLCollection ---------------------------------------------------------
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum CollectionKind {
     Children,
     TagName(String),
@@ -176,7 +190,39 @@ pub enum CollectionKind {
 pub struct CollectionData {
     root: NodeHold,
     kind: CollectionKind,
-    cache: RefCell<(u64, Vec<NodeId>)>,
+    cache: RefCell<(u64, Rc<Vec<NodeId>>)>,
+}
+
+/// Member lists of live collections by (root, kind) with the DOM version
+/// they were computed at (`PageDom::collection_members`).
+#[derive(Default)]
+pub struct MemberCache(HashMap<(NodeId, CollectionKind), Members>);
+
+/// A member list and the DOM version it was computed at.
+type Members = (u64, Rc<Vec<NodeId>>);
+
+/// Most (root, kind) member lists kept per page.
+const MEMBER_CACHE_SIZE: usize = 256;
+
+/// What decides membership, for kinds whose members the change journal can
+/// vouch for; `None`: recomputed after any DOM change.
+fn watch(kind: &CollectionKind) -> Option<CollectionWatch> {
+    let subtree = |attrs: &[&str]| CollectionWatch {
+        children_only: false,
+        elements_only: true,
+        attrs: attrs.iter().map(|a| attr_name_hash(a)).collect(),
+        state: false,
+    };
+    Some(match kind {
+        CollectionKind::Children => {
+            CollectionWatch { children_only: true, elements_only: true, ..CollectionWatch::default() }
+        }
+        CollectionKind::TagName(_) | CollectionKind::TagNameNs(..) => subtree(&[]),
+        CollectionKind::ClassName(_) => subtree(&["class"]),
+        CollectionKind::Name(_) => subtree(&["name"]),
+        CollectionKind::Links => subtree(&["href"]),
+        _ => return None,
+    })
 }
 
 fn matches_kind(dom: &Dom, root: NodeId, id: NodeId, kind: &CollectionKind) -> bool {
@@ -206,11 +252,17 @@ fn matches_kind(dom: &Dom, root: NodeId, id: NodeId, kind: &CollectionKind) -> b
             (namespace == "*" || namespace.as_str() == &*e.name.ns) && (name == "*" || name.as_str() == local)
         }
         CollectionKind::ClassName(names) => {
-            let want: Vec<&str> = names.split_ascii_whitespace().collect();
-            !want.is_empty()
+            // Quirks-mode documents compare class names ASCII
+            // case-insensitively (DOM, "list of elements with class names").
+            let quirks = dom
+                .node_document(id)
+                .ok()
+                .and_then(|d| dom.document_data(d).ok())
+                .is_some_and(|d| d.quirks == lp_dom::QuirksMode::Quirks);
+            let same = |a: &str, b: &str| if quirks { a.eq_ignore_ascii_case(b) } else { a == b };
+            names.split_ascii_whitespace().next().is_some()
                 && e.attr("class").is_some_and(|c| {
-                    let have: Vec<&str> = c.split_ascii_whitespace().collect();
-                    want.iter().all(|w| have.contains(w))
+                    names.split_ascii_whitespace().all(|w| c.split_ascii_whitespace().any(|h| same(h, w)))
                 })
         }
         CollectionKind::Name(n) => e.attr("name") == Some(n.as_str()),
@@ -250,23 +302,51 @@ fn compute(dom: &Dom, root: NodeId, kind: &CollectionKind) -> Vec<NodeId> {
 }
 
 impl CollectionData {
+    /// Brings the cached members up to the DOM's version: kept when the
+    /// journal shows no change that can affect them, else taken from the
+    /// page's shared list for (root, kind) or recomputed.
+    fn refresh(&self, dom: &Dom) {
+        let version = dom.version();
+        let mut c = self.cache.borrow_mut();
+        if c.0 == version {
+            return;
+        }
+        let watch = watch(&self.kind);
+        let still = |since: u64| {
+            since != u64::MAX && watch.as_ref().is_some_and(|w| dom.collection_unchanged_since(self.root.id, since, w))
+        };
+        if still(c.0) {
+            c.0 = version;
+            return;
+        }
+        let mut shared = self.root.page.collection_members.borrow_mut();
+        let key = (self.root.id, self.kind.clone());
+        let members = match shared.0.get_mut(&key) {
+            Some(entry) if entry.0 == version || still(entry.0) => {
+                entry.0 = version;
+                entry.1.clone()
+            }
+            _ => {
+                let members = Rc::new(compute(dom, self.root.id, &self.kind));
+                if shared.0.len() >= MEMBER_CACHE_SIZE {
+                    shared.0.clear();
+                }
+                shared.0.insert(key, (version, members.clone()));
+                members
+            }
+        };
+        *c = (version, members);
+    }
     fn items(&self) -> Vec<NodeId> {
         let dom = self.root.page.dom.borrow();
-        let mut c = self.cache.borrow_mut();
-        if c.0 != dom.version() {
-            c.1 = compute(&dom, self.root.id, &self.kind);
-            c.0 = dom.version();
-        }
-        c.1.clone()
+        self.refresh(&dom);
+        self.cache.borrow().1.to_vec()
     }
     fn with_items<R>(&self, f: impl FnOnce(&[NodeId]) -> R) -> R {
         let dom = self.root.page.dom.borrow();
-        let mut c = self.cache.borrow_mut();
-        if c.0 != dom.version() {
-            c.1 = compute(&dom, self.root.id, &self.kind);
-            c.0 = dom.version();
-        }
-        f(&c.1)
+        self.refresh(&dom);
+        let members = self.cache.borrow().1.clone();
+        f(&members)
     }
     fn named(&self, name: &str) -> Option<NodeId> {
         if name.is_empty() {
@@ -389,7 +469,8 @@ pub fn collection<'s>(s: &Scope<'s>, page: &PageDom, root: NodeId, kind: Collect
     }
     let page = page_rc(s)?;
     let options = kind == CollectionKind::Options;
-    let data = CollectionData { root: NodeHold::new(&page, root)?, kind, cache: RefCell::new((u64::MAX, Vec::new())) };
+    let data =
+        CollectionData { root: NodeHold::new(&page, root)?, kind, cache: RefCell::new((u64::MAX, Rc::default())) };
     if options {
         s.wrap::<HtmlOptionsCollection>(data, key)
     } else {
