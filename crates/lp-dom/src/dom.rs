@@ -69,6 +69,21 @@ pub enum Change {
     Unknown(&'static std::panic::Location<'static>),
 }
 
+/// What the members of a live collection depend on
+/// ([`Dom::collection_unchanged_since`]).
+#[derive(Clone, Debug, Default)]
+pub struct CollectionWatch {
+    /// Members are the root's children (else its descendants).
+    pub children_only: bool,
+    /// Only element nodes are members (text nodes coming and going do not
+    /// matter).
+    pub elements_only: bool,
+    /// `attr_name_hash` of the attributes membership depends on.
+    pub attrs: Vec<u64>,
+    /// Form-control state matters (selectedness).
+    pub state: bool,
+}
+
 /// Most changes the journal holds (32 bytes each: at most 1 MiB per DOM).
 /// On overflow it keeps the newer half, so a consumer that reads it after
 /// every batch stays covered for batches of up to half of this (a React
@@ -394,6 +409,71 @@ impl Dom {
         }
         let start = self.journal.partition_point(|(v, _)| *v <= version);
         Some(self.journal[start..].iter().map(|(_, c)| *c))
+    }
+
+    /// Whether the members of a live collection over `root` (computed at
+    /// `since`) are still the same, judged from the change journal: true
+    /// when no change since then can have added, removed or reordered one.
+    /// Uncovered versions, unknown changes and long change runs answer
+    /// false (recompute).
+    pub fn collection_unchanged_since(&self, root: NodeId, since: u64, watch: &CollectionWatch) -> bool {
+        if since == self.version {
+            return true;
+        }
+        let Ok(r) = self.check(root) else { return false };
+        let Some(changes) = self.changes_since(since) else { return false };
+        // Past this, walking the journal costs more than recomputing.
+        const MOST: usize = 4096;
+        // Whether a node at `idx` (a parent recorded by a change) lies in
+        // the collection's scope. A freed slot is not known: changed.
+        let in_scope = |idx: u32| -> Option<bool> {
+            if !self.slot_live(idx) {
+                return None;
+            }
+            Some(if watch.children_only { idx == r } else { self.is_inclusive_ancestor(r, idx) })
+        };
+        let counts = |idx: u32| -> bool { !watch.elements_only || !self.slot_live(idx) || self.n(idx).is_element() };
+        for (i, c) in changes.enumerate() {
+            if i >= MOST {
+                return false;
+            }
+            let relevant = match c {
+                Change::Pseudo | Change::Text(_) => Some(false),
+                Change::State(n) => {
+                    if watch.state {
+                        in_scope(n)
+                    } else {
+                        Some(false)
+                    }
+                }
+                Change::Attr(n, hash, _) => {
+                    if watch.attrs.contains(&hash) {
+                        // The element itself is the one that may join or leave.
+                        if !self.slot_live(n) {
+                            None
+                        } else if watch.children_only {
+                            Some(self.n(n).parent == r)
+                        } else {
+                            Some(n != r && self.is_inclusive_ancestor(r, n))
+                        }
+                    } else {
+                        Some(false)
+                    }
+                }
+                Change::Inserted(p, n) | Change::Removed(p, n, _) => {
+                    if counts(n) {
+                        in_scope(p)
+                    } else {
+                        Some(false)
+                    }
+                }
+                Change::Unknown(_) => None,
+            };
+            if relevant != Some(false) {
+                return false;
+            }
+        }
+        true
     }
 
     /// Number of shadow roots attached in this DOM so far.

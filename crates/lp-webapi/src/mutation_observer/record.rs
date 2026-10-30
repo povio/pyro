@@ -35,13 +35,24 @@ impl JsClass for MutationRecord {
         def.getter("removedNodes", |s, d| list(s, d, "removed"));
     }
 }
+/// `addedNodes` / `removedNodes`: built on first access (most observers
+/// never read them) and kept on the record, so every access returns the
+/// same NodeList.
 fn list<'s>(s: &Scope<'s>, data: &RecordData, name: &str) -> JsResult<Value<'s>> {
     let realm = data.realm.upgrade().ok_or(JsError::ContextDestroyed)?;
     let owner = realm.scope()?;
     let object = owner.lookup_identity(data.identity).ok_or(JsError::ContextDestroyed)?;
     // SAFETY: realm and caller belong to the same VM; getter receiver roots it.
     let object = unsafe { Object::from_raw(s.ctx(), object.as_raw()) };
-    Ok(s.get_hidden(object, name)?.unwrap_or(s.undefined()))
+    if let Some(list) = s.get_hidden(object, name)? {
+        return Ok(list);
+    }
+    let ids = if name == "added" { &data.record.added } else { &data.record.removed };
+    let list = static_node_list(&owner, &data.page, ids.clone())?;
+    // SAFETY: as above.
+    let list = unsafe { Value::from_raw(s.ctx(), list.value().as_raw()) };
+    s.set_hidden(object, name, list)?;
+    Ok(list)
 }
 
 pub(super) struct HeldRecord {
@@ -68,8 +79,6 @@ pub(super) fn array<'s>(s: &Scope<'s>, records: Vec<HeldRecord>) -> JsResult<Val
     let mut values = lp_js::RootedVec::new();
     for held in records {
         let page = held.page.clone();
-        let added = held.record.added.clone();
-        let removed = held.record.removed.clone();
         let identity = page.event_identity(page.next_event_id());
         let object = s.wrap::<MutationRecord>(
             RecordData {
@@ -81,10 +90,7 @@ pub(super) fn array<'s>(s: &Scope<'s>, records: Vec<HeldRecord>) -> JsResult<Val
             },
             Some(identity),
         )?;
-        let root = Persistent::new(s, object.value());
-        s.set_hidden(object, "added", static_node_list(s, &page, added)?.value())?;
-        s.set_hidden(object, "removed", static_node_list(s, &page, removed)?.value())?;
-        values.push(s, root.get(s));
+        values.push(s, object.value());
     }
     Ok(s.array(&values.iter(s).collect::<Vec<_>>())?.value())
 }
