@@ -2987,7 +2987,6 @@ fn fit_wrapper(width: u32, table: &str) -> String {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn fixed_tables_size_columns_by_their_col_widths_like_chromium() {
     // TOS finance tables: `table-layout: fixed`, 100% wide, `<col>` widths
     // summing to 1822px. The columns ignored `<col>` and the table's
@@ -3042,7 +3041,6 @@ fn fixed_tables_size_columns_by_their_col_widths_like_chromium() {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn fixed_tables_without_a_header_keep_col_widths_across_colspans_like_chromium() {
     // TOS Grand Total table: same `<col>` widths, no thead, a first body row
     // with a colspan. Its columns split the width evenly instead (194px vs
@@ -3075,7 +3073,6 @@ fn fixed_tables_without_a_header_keep_col_widths_across_colspans_like_chromium()
 type XWidths<'a> = Vec<(&'a str, [f64; 2])>;
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn table_cell_min_and_max_widths_size_their_columns_like_chromium() {
     // Automatic-layout columns ignored a cell's min-width / max-width while
     // the cell's own box honoured them, so a `min-w-80` cell spilled over the
@@ -3186,7 +3183,6 @@ fn table_columns_keep_their_exact_width_after_fractional_ones_like_chromium() {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn table_columns_keep_their_cells_min_content_width_like_chromium() {
     // Gap 20: a cell's explicit `width` clamped its column, so
     // `<td style="width:1px;white-space:pre">E2ESE261200655</td>` was 1px

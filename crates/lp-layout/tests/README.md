@@ -12,7 +12,7 @@ Ignored tests (`Blitz parity gap`) fail against Blitz today, grouped:
   attribute selectors, focus/hover, radio groups and some removals (cached vs fresh layout differ).
 - Text: `<br>` line boxes, trailing space in right-aligned lines, nbsp, `overflow-wrap`, generated
   content, text input/textarea scroll sizes from their value, whitespace in shrink-to-fit widths.
-- Tables: fixed-layout column widths, rowspan, cell min/max widths.
+- Tables: rowspan (row heights and row boxes around a spanning cell).
 - Floats: incremental relayout when a float changes (its neighbours keep their old lines); the float
   layout itself runs since Blitz's `floats` feature was enabled. Margin collapsing through parents, caret positions, scroll anchoring, SVG shape rects, image
   natural size (the tests' fetcher loads nothing).
