@@ -1998,7 +1998,12 @@ fn act(page: &Rc<PageDom>, id: NodeId, action: Action, value: &str, opts: Pointe
         }
     }
     if visible_box(page, id).is_none() {
-        return Attempt::Retry("element is not visible".into());
+        let rect = page.layout.borrow().client_rect(&page.dom.borrow(), id);
+        let detail = match rect {
+            Some(r) => format!(" (box {:.1},{:.1} {:.1}x{:.1})", r.x, r.y, r.width, r.height),
+            None => " (not rendered)".into(),
+        };
+        return Attempt::Retry(format!("element is not visible{detail}"));
     }
     if action.needs_enabled() && !opts.force && disabled(&page.dom.borrow(), id) {
         return Attempt::Retry("element is disabled".into());
@@ -2232,7 +2237,16 @@ fn pointer_target(page: &Rc<PageDom>, id: NodeId, opts: PointerOpts) -> Result<(
         Some((dx, dy)) => (rect.x + dx, rect.y + dy),
         None => {
             let Some(shown) = clipped_box(page, id, rect) else {
-                return Err(Attempt::Retry("element is outside the viewport".into()));
+                let layout = page.layout.borrow();
+                return Err(Attempt::Retry(format!(
+                    "element is outside the viewport (box {:.1},{:.1} {:.1}x{:.1}; viewport {}x{})",
+                    rect.x,
+                    rect.y,
+                    rect.width,
+                    rect.height,
+                    layout.inner_width(),
+                    layout.inner_height()
+                )));
             };
             (shown.x + shown.width / 2.0, shown.y + shown.height / 2.0)
         }
@@ -2246,7 +2260,10 @@ fn pointer_target(page: &Rc<PageDom>, id: NodeId, opts: PointerOpts) -> Result<(
             let tag = local(&page.dom.borrow(), hit).unwrap_or("?").to_owned();
             Err(Attempt::Retry(format!("<{tag}> intercepts pointer events")))
         }
-        None => Err(Attempt::Retry("element is outside the viewport".into())),
+        None => Err(Attempt::Retry(format!(
+            "element is outside the viewport (nothing is hit at {x:.1},{y:.1}; box {:.1},{:.1} {:.1}x{:.1})",
+            rect.x, rect.y, rect.width, rect.height
+        ))),
     }
 }
 

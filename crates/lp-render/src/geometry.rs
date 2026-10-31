@@ -285,6 +285,34 @@ fn in_layout_tree(doc: &BaseDocument, id: NodeId) -> bool {
     })
 }
 
+/// `id` and its ancestors as Blitz styled and laid them out (diagnostics).
+pub(crate) fn describe(doc: &BaseDocument, id: NodeId) -> String {
+    let mut out = Vec::new();
+    let mut cur = Some(id);
+    while let Some(i) = cur {
+        let Some(n) = doc.get_node(i) else { break };
+        if let Some(e) = n.element_data() {
+            let class: String = e.attr(blitz_dom::local_name!("class")).unwrap_or("").chars().take(70).collect();
+            let s = n.primary_styles();
+            let display = s.as_ref().map(|s| format!("{:?}", s.clone_display())).unwrap_or_default();
+            let height = s.as_ref().map(|s| format!("{:?}", s.clone_height())).unwrap_or_default();
+            let l = n.unrounded_layout();
+            out.push(format!(
+                "<{} class={class:?}> display={display} height={height} laid={:.1}x{:.1} in_tree={}",
+                e.name.local,
+                l.size.width,
+                l.size.height,
+                in_layout_tree(doc, i)
+            ));
+        }
+        if out.len() >= 8 {
+            break;
+        }
+        cur = n.parent;
+    }
+    out.join("\n  ")
+}
+
 fn tag(doc: &BaseDocument, id: NodeId) -> Option<&str> {
     doc.get_node(id).and_then(|n| n.element_data()).map(|e| &*e.name.local)
 }

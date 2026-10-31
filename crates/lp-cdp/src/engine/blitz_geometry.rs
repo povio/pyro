@@ -33,11 +33,13 @@ thread_local! {
 
 static NEXT_PAGE: AtomicU64 = AtomicU64::new(1);
 
-/// In a `serve --fork` template: Blitz geometry waits for the forked child.
-/// The template must not start threads before it forks (system font
-/// enumeration does, through CoreText), so it boots prepared pages with
-/// lp-dom's geometry; each child switches to Blitz on its first layout
-/// query after the fork.
+/// In a `serve --fork` template: the template must not start threads
+/// before it forks, which system font enumeration through CoreText does.
+/// With fork-safe fonts (`lp_render::use_fork_safe_fonts`, which the
+/// template loads first) Blitz geometry runs in the template too, and forked
+/// children inherit its warm documents; otherwise the template boots
+/// prepared pages with lp-dom's geometry and each child switches to Blitz
+/// after the fork (building its documents then).
 static IN_TEMPLATE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Marks this process as a fork template (`true`) or one of its children
@@ -300,7 +302,7 @@ impl BlitzGeometry {
 
 impl GeometrySource for BlitzGeometry {
     fn active(&self) -> bool {
-        !IN_TEMPLATE.load(Ordering::Relaxed)
+        !IN_TEMPLATE.load(Ordering::Relaxed) || lp_render::fork_safe_fonts()
     }
 
     fn as_any(&self) -> &dyn std::any::Any {
@@ -320,6 +322,10 @@ impl GeometrySource for BlitzGeometry {
         let t = Instant::now();
         let b = RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.element_box(self.page, key));
         READ_NS.fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        if std::env::var_os("LP_GEOMETRY_DEBUG").is_some() && b.is_some_and(|b| b.width == 0.0 || b.height == 0.0) {
+            let what = RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.describe_element(self.page, key));
+            eprintln!("lp-geometry: empty box {b:?}\n  {}", what.unwrap_or_default());
+        }
         b.map(external)
     }
 

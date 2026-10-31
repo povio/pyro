@@ -269,11 +269,97 @@ impl std::error::Error for RenderError {}
 static FONTS: LazyLock<Mutex<FontContext>> = LazyLock::new(|| {
     let mut font_ctx = FontContext {
         source_cache: SourceCache::new_shared(),
-        collection: Collection::new(CollectionOptions { shared: false, system_fonts: true }),
+        collection: if FORK_SAFE_FONTS.load(std::sync::atomic::Ordering::Relaxed) {
+            fork_safe_collection()
+        } else {
+            Collection::new(CollectionOptions { shared: false, system_fonts: true })
+        },
     };
     font_ctx.collection.register_fonts(Blob::new(Arc::new(blitz_dom::BULLET_FONT) as _), None);
     Mutex::new(font_ctx)
 });
+
+static FORK_SAFE_FONTS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Loads system fonts without the platform font API, now, on this thread
+/// (`serve --fork`). macOS's CoreText starts dispatch threads and Objective-C
+/// initializers that a later `fork()` cannot survive ("+[NSFontCollection
+/// initialize] may have been in progress"); a fork template, and children
+/// that fork again, must not use it. Fonts are read from the system font
+/// directories instead (memory-mapped), with the generic families and
+/// script fallbacks the platform backend would pick. Call before any render.
+pub fn use_fork_safe_fonts() {
+    FORK_SAFE_FONTS.store(true, std::sync::atomic::Ordering::Relaxed);
+    drop(process_fonts());
+}
+
+/// Whether [`use_fork_safe_fonts`] was called (fonts never touch CoreText).
+pub fn fork_safe_fonts() -> bool {
+    FORK_SAFE_FONTS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The system fonts by directory scan: see [`use_fork_safe_fonts`].
+fn fork_safe_collection() -> Collection {
+    use parley::fontique::{GenericFamily, Script};
+    let mut c = Collection::new(CollectionOptions { shared: false, system_fonts: false });
+    let mut dirs: Vec<std::path::PathBuf> = if cfg!(target_os = "macos") {
+        ["/System/Library/Fonts", "/Library/Fonts"].iter().map(Into::into).collect()
+    } else {
+        ["/usr/share/fonts", "/usr/local/share/fonts"].iter().map(Into::into).collect()
+    };
+    if let Some(home) = std::env::var_os("HOME") {
+        let home = std::path::PathBuf::from(home);
+        dirs.push(if cfg!(target_os = "macos") { home.join("Library/Fonts") } else { home.join(".local/share/fonts") });
+    }
+    c.load_fonts_from_paths(dirs.iter().filter(|d| d.is_dir()));
+    let ids = |c: &mut Collection, names: &[&str]| -> Vec<parley::fontique::FamilyId> {
+        names.iter().filter_map(|n| c.family_id(n)).collect()
+    };
+    // As fontique's CoreText backend (Chromium's macOS defaults), then
+    // common Linux families.
+    let generics: &[(GenericFamily, &[&str])] = &[
+        (GenericFamily::Serif, &["Times", "Times New Roman", "DejaVu Serif", "Liberation Serif"]),
+        (GenericFamily::SansSerif, &["Helvetica", "Arial", "DejaVu Sans", "Liberation Sans"]),
+        (GenericFamily::Monospace, &["Courier", "Courier New", "Menlo", "DejaVu Sans Mono", "Liberation Mono"]),
+        (GenericFamily::Cursive, &["Apple Chancery"]),
+        (GenericFamily::Fantasy, &["Papyrus"]),
+        (GenericFamily::SystemUi, &["System Font", ".SF NS", "SF Pro", "Helvetica Neue", "Helvetica", "DejaVu Sans"]),
+        (GenericFamily::UiSansSerif, &["System Font", ".SF NS", "SF Pro", "Helvetica Neue", "Helvetica"]),
+        (GenericFamily::UiSerif, &["New York", "Times"]),
+        (GenericFamily::UiMonospace, &["SF Mono", "Menlo", "Courier"]),
+        (GenericFamily::Emoji, &["Apple Color Emoji", "Noto Color Emoji"]),
+        (GenericFamily::Math, &["STIX Two Math"]),
+    ];
+    for (generic, names) in generics {
+        let families = ids(&mut c, names);
+        c.set_generic_families(*generic, families.into_iter());
+    }
+    // Script fallbacks CoreText would answer for the usual scripts.
+    let fallbacks: &[(&[u8; 4], &[&str])] = &[
+        (b"Latn", &["Helvetica", "Lucida Grande", "Arial Unicode MS", "DejaVu Sans"]),
+        (b"Grek", &["Helvetica", "Lucida Grande", "Arial Unicode MS", "DejaVu Sans"]),
+        (b"Cyrl", &["Helvetica", "Lucida Grande", "Arial Unicode MS", "DejaVu Sans"]),
+        (b"Hani", &["PingFang SC", "Heiti SC", "Hiragino Sans GB", "Noto Sans CJK SC"]),
+        (b"Hans", &["PingFang SC", "Heiti SC", "Hiragino Sans GB", "Noto Sans CJK SC"]),
+        (b"Hant", &["PingFang TC", "Heiti TC", "Noto Sans CJK TC"]),
+        (b"Jpan", &["Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans CJK JP"]),
+        (b"Hira", &["Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans CJK JP"]),
+        (b"Kana", &["Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans CJK JP"]),
+        (b"Hang", &["Apple SD Gothic Neo", "Noto Sans CJK KR"]),
+        (b"Kore", &["Apple SD Gothic Neo", "Noto Sans CJK KR"]),
+        (b"Arab", &["Geeza Pro", "Noto Sans Arabic", "DejaVu Sans"]),
+        (b"Hebr", &["Arial Hebrew", "Noto Sans Hebrew", "DejaVu Sans"]),
+        (b"Thai", &["Thonburi", "Noto Sans Thai"]),
+        (b"Deva", &["Kohinoor Devanagari", "Devanagari Sangam MN", "Noto Sans Devanagari"]),
+        (b"Zsym", &["Apple Symbols", "Apple Color Emoji", "Noto Color Emoji"]),
+        (b"Zsye", &["Apple Color Emoji", "Noto Color Emoji"]),
+    ];
+    for (script, names) in fallbacks {
+        let families = ids(&mut c, names);
+        c.set_fallbacks(Script::from_bytes(**script), families.into_iter());
+    }
+    c
+}
 
 fn process_fonts() -> FontContext {
     FONTS.lock().unwrap_or_else(|e| e.into_inner()).clone()
@@ -309,6 +395,10 @@ pub fn prewarm() -> std::io::Result<std::thread::JoinHandle<()>> {
 const PREWARM_HTML: &str = r#"<!doctype html><html><body style="font-family: system-ui">
 <p>Aa 0 €<b>b</b><i>i</i> Ωж 中文 العربية</p><input value="x"><button>b</button>
 <svg width="8" height="8"><text x="0" y="8">s</text></svg></body></html>"#;
+
+/// UA rule that settles transitions and animations at their end values.
+const NO_TRANSITIONS: &str =
+    "*, *::before, *::after { transition: none !important; animation: none !important; }";
 
 /// Fonts and raster backends, reused across renders on one thread.
 pub struct Renderer {
@@ -403,14 +493,19 @@ impl Renderer {
     }
 
     fn config(&self, snap: &Snapshot, provider: Arc<dyn blitz_traits::net::NetProvider>) -> DocumentConfig {
-        DocumentConfig {
+        let mut config = DocumentConfig {
             base_url: Some(snap.base_url.clone()),
             net_provider: Some(provider),
             viewport: Some(viewport_of(snap)),
             font_ctx: Some(self.font_ctx.clone()),
             style_threading: StyleThreading::Sequential,
             ..DocumentConfig::default()
-        }
+        };
+        // Documents are resolved at time 0: a CSS transition or animation
+        // would stay at its first frame (a drawer sliding in stays off
+        // screen). Layout queries, screenshots and PDFs take the end state.
+        config.ua_stylesheets.push(blitz_dom::UserAgentStylesheet::parse(NO_TRANSITIONS));
+        config
     }
 
     /// The page's persistent document, brought up to `live.tree`.
@@ -647,6 +742,13 @@ impl Renderer {
     pub fn element_box(&self, page: u64, key: u64) -> Option<LayoutBox> {
         let m = self.mirrors.get(&page)?;
         self.geometry.get(&page)?.element_box(&m.doc, m.node(key)?)
+    }
+
+    /// The element keyed `key` and its ancestors as Blitz laid them out
+    /// (diagnostics).
+    pub fn describe_element(&self, page: u64, key: u64) -> Option<String> {
+        let m = self.mirrors.get(&page)?;
+        Some(geometry::describe(&m.doc, m.node(key)?))
     }
 
     /// Every element's box ([`Renderer::element_box`]) after

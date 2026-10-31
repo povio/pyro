@@ -291,7 +291,12 @@ fn run_template(options: &ServeOptions, socket: &Path) -> Result<(), String> {
     // The static-file preload runs on a thread of its own: let it finish.
     let _ = profile.net.static_files.preloaded();
     #[cfg(feature = "render")]
-    crate::engine::set_fork_template(true);
+    {
+        crate::engine::set_fork_template(true);
+        // Fonts without CoreText, loaded here before any fork (children
+        // inherit them): see lp_render::use_fork_safe_fonts.
+        lp_render::use_fork_safe_fonts();
+    }
 
     let mut thread = EngineHost::prepare_thread_with(&profile).map_err(|e| e.message)?;
     let profiles: Vec<PreparedProfile> = profile.prepared.iter().map(one_page).collect();
