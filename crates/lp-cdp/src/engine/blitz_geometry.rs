@@ -280,6 +280,10 @@ impl GeometrySource for BlitzGeometry {
         }
     }
 
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
     fn set_base_url(&self, url: &str) {
         *self.base_url.borrow_mut() = url.to_owned();
     }
@@ -307,4 +311,23 @@ impl GeometrySource for BlitzGeometry {
             document_height: out.document_height,
         })
     }
+}
+
+/// `Page.printToPDF` from the page document's own Blitz document (the one
+/// its layout queries were answered from), on this thread: no second
+/// document on the render thread. `None`: the document has no Blitz
+/// geometry (print through the render thread).
+pub(crate) fn print_pdf(
+    page_dom: &lp_webapi::PageDom,
+    opts: &lp_render::PdfOptions,
+) -> Option<Result<lp_render::PdfOutput, String>> {
+    let dom = page_dom.dom.borrow();
+    let layout = page_dom.layout.borrow();
+    let source = layout.synced_geometry_source(&dom)?;
+    let page = source.as_any().downcast_ref::<BlitzGeometry>()?.page;
+    let v = layout.viewport();
+    RENDERER.with(|r| {
+        let mut r = r.try_borrow_mut().ok()?;
+        Some(r.as_mut()?.print_pdf_page(page, (v.width, v.height), v.device_scale_factor, opts).map_err(|e| e.to_string()))
+    })
 }

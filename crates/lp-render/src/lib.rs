@@ -657,55 +657,28 @@ impl Renderer {
         let mut timings = Timings::default();
         let dpr = snap.device_scale_factor.clamp(0.1, 16.0);
         let mut fresh = None;
-        let (doc, _) = self.prepare(snap, fetcher, &mut fresh, &mut timings)?;
-        let t = Instant::now();
-        doc.set_viewport_scroll(blitz_dom::Point { x: 0.0, y: 0.0 });
-        let root = doc.root_element();
-        let (size, overflow) = (root.final_layout().size, *root.scrollable_overflow());
-        let doc_w = (size.width as f64).max(overflow.x1).max(snap.width as f64) * dpr;
-        let doc_h = (size.height as f64).max(overflow.y1).max(snap.height as f64) * dpr;
-        let mut pages = Vec::new();
-        for id in doc.query_selector_all(&opts.page_selector).unwrap_or_default() {
-            let Some(rect) = element_bounds(doc, id, dpr) else { continue };
-            // Off-screen boxes (Paprize's measuring page sits at -9999px) are
-            // not printed, as in Chromium.
-            if rect.width() < 1.0 || rect.height() < 1.0 || rect.x1 <= 0.0 || rect.y1 <= 0.0 {
-                continue;
-            }
-            let (right, bottom, culprit) = content_extent(doc, id);
-            let node_size = doc.get_node(id).map(|n| n.final_layout().size).unwrap_or_default();
-            pages.push(PdfPage {
-                rect,
-                overflow_right: (right - node_size.width as f64).max(0.0),
-                overflow_bottom: (bottom - node_size.height as f64).max(0.0),
-                culprit,
-            });
-        }
-        let by_selector = !pages.is_empty();
-        if !by_selector {
-            let (pw, ph) = (opts.paper.0 * dpr, opts.paper.1 * dpr);
-            let mut y = 0.0;
-            while y < doc_h - 0.5 || y == 0.0 {
-                pages.push(PdfPage {
-                    rect: Rect::new(0.0, y, pw, y + ph),
-                    overflow_right: 0.0,
-                    overflow_bottom: 0.0,
-                    culprit: None,
-                });
-                y += ph;
-            }
-        }
-        let extent_h = pages.iter().map(|p| p.rect.y1).fold(doc_h, f64::max);
-        let extent_w = pages.iter().map(|p| p.rect.x1).fold(doc_w, f64::max);
-        let mut scene = Scene::new();
-        blitz_paint::paint_scene(&mut scene, doc, dpr, extent_w.ceil() as u32, extent_h.ceil() as u32, 0, 0);
-        timings.scene = t.elapsed();
-        let t = Instant::now();
-        let rects: Vec<Rect> = pages.iter().map(|p| p.rect).collect();
-        let (bytes, stats) =
-            pdf::write(&scene, &rects, pdf::PX_TO_PT / dpr, &mut self.pdf_cache).map_err(RenderError::Resource)?;
-        timings.raster = t.elapsed();
-        Ok(PdfOutput { bytes, pages, by_selector, stats, commands: scene.commands.len(), timings })
+        let mut cache = std::mem::take(&mut self.pdf_cache);
+        let out = match self.prepare(snap, fetcher, &mut fresh, &mut timings) {
+            Ok((doc, _)) => print_document(doc, (snap.width, snap.height), dpr, opts, timings, &mut cache),
+            Err(e) => Err(e),
+        };
+        self.pdf_cache = cache;
+        out
+    }
+
+    /// [`Renderer::print_pdf`] of `page`'s persistent document as it is
+    /// (brought up to date by [`Renderer::sync_layout`] or
+    /// [`Renderer::sync_delta`]): the document layout queries were answered
+    /// from is the one printed. `viewport`: CSS px; `dpr`: device scale.
+    pub fn print_pdf_page(
+        &mut self,
+        page: u64,
+        viewport: (u32, u32),
+        dpr: f64,
+        opts: &PdfOptions,
+    ) -> Result<PdfOutput, RenderError> {
+        let m = self.mirrors.get_mut(&page).ok_or(RenderError::NoElement)?;
+        print_document(&mut m.doc, viewport, dpr.clamp(0.1, 16.0), opts, Timings::default(), &mut self.pdf_cache)
     }
 
     /// Stage 3.
@@ -752,6 +725,65 @@ impl Renderer {
         let (image, timings) = self.raster(painted, backend);
         Ok((image, hash, timings))
     }
+}
+
+/// Pages and PDF of a laid-out document ([`Renderer::print_pdf`]).
+fn print_document(
+    doc: &mut blitz_dom::BaseDocument,
+    viewport: (u32, u32),
+    dpr: f64,
+    opts: &PdfOptions,
+    mut timings: Timings,
+    cache: &mut pdf::PdfCache,
+) -> Result<PdfOutput, RenderError> {
+    let t = Instant::now();
+    doc.set_viewport_scroll(blitz_dom::Point { x: 0.0, y: 0.0 });
+    let root = doc.root_element();
+    let (size, overflow) = (root.final_layout().size, *root.scrollable_overflow());
+    let doc_w = (size.width as f64).max(overflow.x1).max(viewport.0 as f64) * dpr;
+    let doc_h = (size.height as f64).max(overflow.y1).max(viewport.1 as f64) * dpr;
+    let mut pages = Vec::new();
+    for id in doc.query_selector_all(&opts.page_selector).unwrap_or_default() {
+        let Some(rect) = element_bounds(doc, id, dpr) else { continue };
+        // Off-screen boxes (Paprize's measuring page sits at -9999px) are
+        // not printed, as in Chromium.
+        if rect.width() < 1.0 || rect.height() < 1.0 || rect.x1 <= 0.0 || rect.y1 <= 0.0 {
+            continue;
+        }
+        let (right, bottom, culprit) = content_extent(doc, id);
+        let node_size = doc.get_node(id).map(|n| n.final_layout().size).unwrap_or_default();
+        pages.push(PdfPage {
+            rect,
+            overflow_right: (right - node_size.width as f64).max(0.0),
+            overflow_bottom: (bottom - node_size.height as f64).max(0.0),
+            culprit,
+        });
+    }
+    let by_selector = !pages.is_empty();
+    if !by_selector {
+        let (pw, ph) = (opts.paper.0 * dpr, opts.paper.1 * dpr);
+        let mut y = 0.0;
+        while y < doc_h - 0.5 || y == 0.0 {
+            pages.push(PdfPage {
+                rect: Rect::new(0.0, y, pw, y + ph),
+                overflow_right: 0.0,
+                overflow_bottom: 0.0,
+                culprit: None,
+            });
+            y += ph;
+        }
+    }
+    let extent_h = pages.iter().map(|p| p.rect.y1).fold(doc_h, f64::max);
+    let extent_w = pages.iter().map(|p| p.rect.x1).fold(doc_w, f64::max);
+    let mut scene = Scene::new();
+    blitz_paint::paint_scene(&mut scene, doc, dpr, extent_w.ceil() as u32, extent_h.ceil() as u32, 0, 0);
+    timings.scene = t.elapsed();
+    let t = Instant::now();
+    let rects: Vec<Rect> = pages.iter().map(|p| p.rect).collect();
+    let (bytes, stats) =
+        pdf::write(&scene, &rects, pdf::PX_TO_PT / dpr, cache).map_err(RenderError::Resource)?;
+    timings.raster = t.elapsed();
+    Ok(PdfOutput { bytes, pages, by_selector, stats, commands: scene.commands.len(), timings })
 }
 
 /// How far the boxes inside `id` reach (CSS px, from its border box's

@@ -304,6 +304,8 @@ pub trait GeometrySource {
     fn element_box(&self, key: u64) -> Option<ExternalBox>;
     /// The document's URL (relative sub-resources resolve against it).
     fn set_base_url(&self, _url: &str) {}
+    /// The source itself (its owner reaches its engine's document).
+    fn as_any(&self) -> &dyn std::any::Any;
 }
 
 thread_local! {
@@ -395,6 +397,19 @@ impl Layout {
         self.external = source;
         self.external_synced.set(None);
         self.flow_cache.borrow_mut().take();
+    }
+
+    /// The external geometry source, brought up to the document (synced
+    /// when anything it lays out changed since the last query).
+    pub fn synced_geometry_source(&self, dom: &Dom) -> Option<&Rc<dyn GeometrySource>> {
+        let source = self.external.as_ref()?;
+        let v = self.viewport();
+        let key = (self.style.observation_stamp(dom), (v.width, v.height));
+        if self.external_synced.get() != Some(key) {
+            source.sync(dom, self);
+            self.external_synced.set(Some(key));
+        }
+        Some(source)
     }
 
     /// The document's URL, for the external geometry source.
@@ -564,15 +579,9 @@ impl Layout {
     }
 
     fn flow_box(&self, dom: &Dom, el: NodeId) -> Option<FlowBox> {
-        if let Some(source) = &self.external {
-            // One element from the external engine, synced only when
-            // something it lays out changed: no whole-tree work per query.
-            let v = self.viewport();
-            let key = (self.style.observation_stamp(dom), (v.width, v.height));
-            if self.external_synced.get() != Some(key) {
-                source.sync(dom, self);
-                self.external_synced.set(Some(key));
-            }
+        // One element from the external engine, synced only when something
+        // it lays out changed: no whole-tree work per query.
+        if let Some(source) = self.synced_geometry_source(dom) {
             return source.element_box(crate::snapshot::render_key(el)).map(|b| FlowBox {
                 rect: Rect { x: b.x, y: b.y, width: b.width, height: b.height },
                 fixed: b.fixed,

@@ -364,6 +364,15 @@ impl EngineHost {
         let opts = lp_render::PdfOptions { page_selector: ".pz-page".into(), paper: (w, h) };
         let pid = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?.id;
         let started = Instant::now();
+        let stream = p.transfer_mode.as_deref() == Some("ReturnAsStream");
+        // Blitz geometry: print the document layout queries were answered
+        // from, here (one Blitz document per page document).
+        let page_dom = self.thread.browser.page(pid).and_then(|p| p.main_frame.page_dom.clone());
+        if let Some(out) = page_dom.and_then(|d| super::blitz_geometry::print_pdf(&d, &opts)) {
+            let o = out.map_err(CdpError::server)?;
+            let token = self.renders.token();
+            return Ok(Some(self.pdf_body(o, stream, token, 0.0, ms(started.elapsed()))));
+        }
         let snapshot = self.snapshot(pid, None)?;
         let snapshot_ms = ms(started.elapsed());
         let fetcher = self.fetcher(pid);
@@ -376,10 +385,35 @@ impl EngineHost {
             session: cmd.session_id.to_owned(),
             started,
             snapshot_ms,
-            stream: p.transfer_mode.as_deref() == Some("ReturnAsStream"),
+            stream,
         };
         self.renders.captures.insert(token, wait);
         Ok(None)
+    }
+
+    /// The `printToPDF` reply: the PDF (inline, or as an `IO` stream) and
+    /// lightningpanda's report (`lp`: pages, overflow, mapping stats, timings).
+    fn pdf_body(&mut self, o: lp_render::PdfOutput, stream: bool, token: u64, snapshot_ms: f64, total: f64) -> Value {
+        let lp = json!({
+            "pages": o.pages.iter().map(|p| json!({
+                "x": p.rect.x0, "y": p.rect.y0, "width": p.rect.width(), "height": p.rect.height(),
+                "overflowRight": p.overflow_right, "overflowBottom": p.overflow_bottom, "culprit": p.culprit,
+            })).collect::<Vec<_>>(),
+            "bySelector": o.by_selector,
+            "commands": o.commands,
+            "stats": o.stats,
+            "ms": {
+                "snapshot": snapshot_ms, "fetch": ms(o.timings.fetch), "layout": ms(o.timings.layout),
+                "paint": ms(o.timings.scene), "pdf": ms(o.timings.raster), "total": total,
+            },
+        });
+        if stream {
+            let handle = format!("lp-pdf-{token}");
+            self.renders.streams.insert(handle.clone(), (o.bytes, 0));
+            json!({ "data": "", "stream": handle, "lp": lp })
+        } else {
+            json!({ "data": base64_encode(&o.bytes), "lp": lp })
+        }
     }
 
     /// `IO.read` / `IO.close` on the streams `printToPDF` made.
@@ -516,26 +550,7 @@ impl EngineHost {
                     let frame = match result {
                         Ok(o) => {
                             let total = ms(wait.started.elapsed());
-                            let lp = json!({
-                                "pages": o.pages.iter().map(|p| json!({
-                                    "x": p.rect.x0, "y": p.rect.y0, "width": p.rect.width(), "height": p.rect.height(),
-                                    "overflowRight": p.overflow_right, "overflowBottom": p.overflow_bottom, "culprit": p.culprit,
-                                })).collect::<Vec<_>>(),
-                                "bySelector": o.by_selector,
-                                "commands": o.commands,
-                                "stats": o.stats,
-                                "ms": {
-                                    "snapshot": wait.snapshot_ms, "fetch": ms(o.timings.fetch), "layout": ms(o.timings.layout),
-                                    "paint": ms(o.timings.scene), "pdf": ms(o.timings.raster), "total": total,
-                                },
-                            });
-                            let body = if wait.stream {
-                                let handle = format!("lp-pdf-{token}");
-                                self.renders.streams.insert(handle.clone(), (o.bytes, 0));
-                                json!({ "data": "", "stream": handle, "lp": lp })
-                            } else {
-                                json!({ "data": base64_encode(&o.bytes), "lp": lp })
-                            };
+                            let body = self.pdf_body(o, wait.stream, token, wait.snapshot_ms, total);
                             msg::result_frame(wait.id, &body, Some(&wait.session))
                         }
                         Err(e) => msg::error_frame(Some(wait.id), &CdpError::server(e), Some(&wait.session)),
