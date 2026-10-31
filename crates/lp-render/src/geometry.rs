@@ -185,7 +185,19 @@ impl Geometry {
     /// arithmetic on them agrees wherever it is done; a 1/100 unit tolerance
     /// keeps f32 layout noise (19.999998) from losing a whole unit.
     pub(crate) fn element_box(&self, doc: &BaseDocument, id: NodeId) -> Option<LayoutBox> {
-        let b = self.adjusted_box(doc, id)?;
+        let mut b = self.adjusted_box(doc, id)?;
+        // CSSOM View: an inline box has no client or scroll area (atomic
+        // inlines, which `display: inline` controls and replaced elements
+        // are, do).
+        let atomic = matches!(
+            tag(doc, id),
+            Some("img" | "input" | "textarea" | "select" | "button" | "video" | "canvas" | "iframe" | "object" | "embed" | "svg")
+        );
+        let inline = !atomic
+            && doc.get_node(id).and_then(|n| n.primary_styles()).is_some_and(|s| s.clone_display().is_inline_flow());
+        if inline {
+            (b.client_width, b.client_height, b.scroll_width, b.scroll_height) = (0.0, 0.0, 0.0, 0.0);
+        }
         let unit = |v: f64| v.signum() * ((v.abs() * 64.0 + 0.01).trunc() / 64.0);
         Some(LayoutBox {
             x: unit(b.x),

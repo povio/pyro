@@ -683,6 +683,13 @@ fn flush_pseudo_elements(doc: &mut BaseDocument, node_id: NodeId) {
             .as_ref()
             .and_then(|d| d.styles.pseudos.as_array()[0].clone());
 
+        // lightningpanda: `content: normal | none` generates no box (an
+        // unset `var()` in `content` computes to `normal`).
+        let generates =
+            |s: &style::servo_arc::Arc<style::properties::ComputedValues>| !matches!(s.get_counters().content, Content::Normal | Content::None);
+        let before_style = before_style.filter(generates);
+        let after_style = after_style.filter(generates);
+
         (before_style, after_style, before_node_id, after_node_id)
     };
 

@@ -1322,7 +1322,6 @@ fn flow_parity_registered_custom_properties() {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn flow_parity_block_in_inline() {
     // A block-level box inside an inline element ends the line and takes
     // its own height (no strut): TOS's `<label>` around a `display:flex`
@@ -3250,7 +3249,6 @@ const GENERATED_STYLES: &str = "<style>body{margin:0;font-family:sans-serif;font
     @property --tw-content{syntax:'*';inherits:false;initial-value:''}</style>";
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn generated_string_content_takes_a_line_like_chromium() {
     // TOS Cost Type filter: an empty multi-select's trigger holds only
     // `<span class="block truncate empty:before:inline-block
@@ -3307,7 +3305,6 @@ fn generated_string_content_takes_a_line_like_chromium() {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn generated_content_follows_dom_changes_like_chromium() {
     // Generated content is cached per element (found and not found). TOS's
     // trigger relies on `:empty`, so the cache must follow text added and
