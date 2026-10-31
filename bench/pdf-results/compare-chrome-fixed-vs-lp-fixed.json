@@ -486,7 +486,7 @@
   "pages": [
    {
     "page": 1,
-    "ratio": 0.05007432181345225,
+    "ratio": 0.05012490193649614,
     "sizeA": [
      828,
      1171
@@ -497,11 +497,11 @@
     ]
    }
   ],
-  "meanRatio": 0.05007432181345225,
-  "maxRatio": 0.05007432181345225,
+  "meanRatio": 0.05012490193649614,
+  "maxRatio": 0.05012490193649614,
   "wordsA": 320,
-  "wordsB": 320,
-  "textOverlap": 0.90625
+  "wordsB": 318,
+  "textOverlap": 0.9028213166144201
  },
  {
   "case": "cmr-overflow",
@@ -510,7 +510,7 @@
   "pages": [
    {
     "page": 1,
-    "ratio": 0.051711466204219826,
+    "ratio": 0.05174656261612783,
     "sizeA": [
      828,
      1171
@@ -677,11 +677,11 @@
     ]
    }
   ],
-  "meanRatio": 0.04433887138168018,
-  "maxRatio": 0.051711466204219826,
+  "meanRatio": 0.04434137826824504,
+  "maxRatio": 0.05174656261612783,
   "wordsA": 3030,
-  "wordsB": 3030,
-  "textOverlap": 0.9910891089108911
+  "wordsB": 3028,
+  "textOverlap": 0.9907560250907891
  },
  {
   "case": "cmr-populated",
@@ -690,7 +690,7 @@
   "pages": [
    {
     "page": 1,
-    "ratio": 0.04874788389281143,
+    "ratio": 0.04879846401585532,
     "sizeA": [
      828,
      1171
@@ -701,11 +701,11 @@
     ]
    }
   ],
-  "meanRatio": 0.04874788389281143,
-  "maxRatio": 0.04874788389281143,
+  "meanRatio": 0.04879846401585532,
+  "maxRatio": 0.04879846401585532,
   "wordsA": 307,
-  "wordsB": 307,
-  "textOverlap": 0.9022801302931596
+  "wordsB": 305,
+  "textOverlap": 0.8986928104575164
  },
  {
   "case": "cmr-reference",
@@ -714,7 +714,7 @@
   "pages": [
    {
     "page": 1,
-    "ratio": 0.05567736074982452,
+    "ratio": 0.05561542590528098,
     "sizeA": [
      828,
      1171
@@ -725,11 +725,11 @@
     ]
    }
   ],
-  "meanRatio": 0.05567736074982452,
-  "maxRatio": 0.05567736074982452,
+  "meanRatio": 0.05561542590528098,
+  "maxRatio": 0.05561542590528098,
   "wordsA": 398,
-  "wordsB": 398,
-  "textOverlap": 0.9045226130653267
+  "wordsB": 396,
+  "textOverlap": 0.9017632241813602
  },
  {
   "case": "house-bl-final-copy-historical-b",
@@ -863,7 +863,7 @@
   "pages": [
    {
     "page": 1,
-    "ratio": 0.04299620132953466,
+    "ratio": 0.046195136050208516,
     "sizeA": [
      828,
      1171
@@ -874,11 +874,11 @@
     ]
    }
   ],
-  "meanRatio": 0.04299620132953466,
-  "maxRatio": 0.04299620132953466,
+  "meanRatio": 0.046195136050208516,
+  "maxRatio": 0.046195136050208516,
   "wordsA": 216,
-  "wordsB": 157,
-  "textOverlap": 0.8096514745308311
+  "wordsB": 218,
+  "textOverlap": 0.9861751152073732
  },
  {
   "case": "invoice-bank-footer-tos-budapest-hungarian-bank-huf",
@@ -887,7 +887,7 @@
   "pages": [
    {
     "page": 1,
-    "ratio": 0.04485424666584087,
+    "ratio": 0.048053181386514716,
     "sizeA": [
      828,
      1171
@@ -898,11 +898,11 @@
     ]
    }
   ],
-  "meanRatio": 0.04485424666584087,
-  "maxRatio": 0.04485424666584087,
+  "meanRatio": 0.048053181386514716,
+  "maxRatio": 0.048053181386514716,
   "wordsA": 213,
-  "wordsB": 155,
-  "textOverlap": 0.8043478260869565
+  "wordsB": 216,
+  "textOverlap": 0.9790209790209791
  },
  {
   "case": "invoice-bank-footer-tos-vienna-english-bank-factoring",
@@ -911,7 +911,7 @@
   "pages": [
    {
     "page": 1,
-    "ratio": 0.04574094719022255,
+    "ratio": 0.0493403939056113,
     "sizeA": [
      828,
      1171
@@ -922,11 +922,11 @@
     ]
    }
   ],
-  "meanRatio": 0.04574094719022255,
-  "maxRatio": 0.04574094719022255,
+  "meanRatio": 0.0493403939056113,
+  "maxRatio": 0.0493403939056113,
   "wordsA": 262,
-  "wordsB": 167,
-  "textOverlap": 0.7505827505827506
+  "wordsB": 264,
+  "textOverlap": 0.9885931558935361
  },
  {
   "case": "invoice-bank-footer-tos-vienna-english-bank-regular",
@@ -935,7 +935,7 @@
   "pages": [
    {
     "page": 1,
-    "ratio": 0.043977868615549774,
+    "ratio": 0.046421198232792435,
     "sizeA": [
      828,
      1171
@@ -946,11 +946,11 @@
     ]
    }
   ],
-  "meanRatio": 0.043977868615549774,
-  "maxRatio": 0.043977868615549774,
+  "meanRatio": 0.046421198232792435,
+  "maxRatio": 0.046421198232792435,
   "wordsA": 244,
-  "wordsB": 165,
-  "textOverlap": 0.78239608801956
+  "wordsB": 246,
+  "textOverlap": 0.9877551020408163
  },
  {
   "case": "invoice-final",
@@ -1007,7 +1007,7 @@
   "pages": [
    {
     "page": 1,
-    "ratio": 0.04230046657582889,
+    "ratio": 0.044259672158222886,
     "sizeA": [
      828,
      1171
@@ -1018,11 +1018,11 @@
     ]
    }
   ],
-  "meanRatio": 0.04230046657582889,
-  "maxRatio": 0.04230046657582889,
+  "meanRatio": 0.044259672158222886,
+  "maxRatio": 0.044259672158222886,
   "wordsA": 230,
-  "wordsB": 165,
-  "textOverlap": 0.810126582278481
+  "wordsB": 233,
+  "textOverlap": 0.980561555075594
  },
  {
   "case": "invoice-office-kombi-kargo-german",
@@ -1031,7 +1031,7 @@
   "pages": [
    {
     "page": 1,
-    "ratio": 0.043359552417523435,
+    "ratio": 0.04531875799991742,
     "sizeA": [
      828,
      1171
@@ -1042,11 +1042,11 @@
     ]
    }
   ],
-  "meanRatio": 0.043359552417523435,
-  "maxRatio": 0.043359552417523435,
+  "meanRatio": 0.04531875799991742,
+  "maxRatio": 0.04531875799991742,
   "wordsA": 214,
-  "wordsB": 149,
-  "textOverlap": 0.7933884297520661
+  "wordsB": 217,
+  "textOverlap": 0.9791183294663574
  },
  {
   "case": "invoice-office-ole-hamburg-english",
@@ -1055,7 +1055,7 @@
   "pages": [
    {
     "page": 1,
-    "ratio": 0.04462508774102977,
+    "ratio": 0.047820925719476444,
     "sizeA": [
      828,
      1171
@@ -1066,11 +1066,11 @@
     ]
    }
   ],
-  "meanRatio": 0.04462508774102977,
-  "maxRatio": 0.04462508774102977,
+  "meanRatio": 0.047820925719476444,
+  "maxRatio": 0.047820925719476444,
   "wordsA": 326,
-  "wordsB": 175,
-  "textOverlap": 0.6866267465069861
+  "wordsB": 328,
+  "textOverlap": 0.9908256880733946
  },
  {
   "case": "invoice-office-ole-hamburg-german",
@@ -1079,7 +1079,7 @@
   "pages": [
    {
     "page": 1,
-    "ratio": 0.04608571782484826,
+    "ratio": 0.04907510632148313,
     "sizeA": [
      828,
      1171
@@ -1090,11 +1090,11 @@
     ]
    }
   ],
-  "meanRatio": 0.04608571782484826,
-  "maxRatio": 0.04608571782484826,
+  "meanRatio": 0.04907510632148313,
+  "maxRatio": 0.04907510632148313,
   "wordsA": 280,
-  "wordsB": 155,
-  "textOverlap": 0.6896551724137931
+  "wordsB": 282,
+  "textOverlap": 0.9893238434163701
  },
  {
   "case": "invoice-office-tos-budapest-english",
@@ -1103,7 +1103,7 @@
   "pages": [
    {
     "page": 1,
-    "ratio": 0.044973987365291714,
+    "ratio": 0.04877678682026508,
     "sizeA": [
      828,
      1171
@@ -1114,11 +1114,11 @@
     ]
    }
   ],
-  "meanRatio": 0.044973987365291714,
-  "maxRatio": 0.044973987365291714,
+  "meanRatio": 0.04877678682026508,
+  "maxRatio": 0.04877678682026508,
   "wordsA": 186,
-  "wordsB": 148,
-  "textOverlap": 0.8562874251497006
+  "wordsB": 189,
+  "textOverlap": 0.9706666666666667
  },
  {
   "case": "invoice-office-tos-budapest-hungarian",
@@ -1127,7 +1127,7 @@
   "pages": [
    {
     "page": 1,
-    "ratio": 0.04688570956686899,
+    "ratio": 0.050688509021842354,
     "sizeA": [
      828,
      1171
@@ -1138,11 +1138,11 @@
     ]
    }
   ],
-  "meanRatio": 0.04688570956686899,
-  "maxRatio": 0.04688570956686899,
+  "meanRatio": 0.050688509021842354,
+  "maxRatio": 0.050688509021842354,
   "wordsA": 183,
-  "wordsB": 146,
-  "textOverlap": 0.8449848024316109
+  "wordsB": 187,
+  "textOverlap": 0.9621621621621622
  },
  {
   "case": "invoice-office-tos-houston-english",
@@ -1199,7 +1199,7 @@
   "pages": [
    {
     "page": 1,
-    "ratio": 0.04708080432718114,
+    "ratio": 0.04696003138032123,
     "sizeA": [
      828,
      1171
@@ -1210,8 +1210,8 @@
     ]
    }
   ],
-  "meanRatio": 0.04708080432718114,
-  "maxRatio": 0.04708080432718114,
+  "meanRatio": 0.04696003138032123,
+  "maxRatio": 0.04696003138032123,
   "wordsA": 246,
   "wordsB": 248,
   "textOverlap": 0.9878542510121457
@@ -1223,7 +1223,7 @@
   "pages": [
    {
     "page": 1,
-    "ratio": 0.04621681324579875,
+    "ratio": 0.04683925843346133,
     "sizeA": [
      828,
      1171
@@ -1234,11 +1234,11 @@
     ]
    }
   ],
-  "meanRatio": 0.04621681324579875,
-  "maxRatio": 0.04621681324579875,
+  "meanRatio": 0.04683925843346133,
+  "maxRatio": 0.04683925843346133,
   "wordsA": 237,
-  "wordsB": 206,
-  "textOverlap": 0.8623024830699775
+  "wordsB": 239,
+  "textOverlap": 0.9831932773109243
  },
  {
   "case": "invoice-office-tos-vienna-english",
@@ -1247,7 +1247,7 @@
   "pages": [
    {
     "page": 1,
-    "ratio": 0.04406973863495603,
+    "ratio": 0.04651306825219869,
     "sizeA": [
      828,
      1171
@@ -1258,11 +1258,11 @@
     ]
    }
   ],
-  "meanRatio": 0.04406973863495603,
-  "maxRatio": 0.04406973863495603,
+  "meanRatio": 0.04651306825219869,
+  "maxRatio": 0.04651306825219869,
   "wordsA": 244,
-  "wordsB": 165,
-  "textOverlap": 0.78239608801956
+  "wordsB": 246,
+  "textOverlap": 0.9877551020408163
  },
  {
   "case": "invoice-office-tos-vienna-german",
@@ -1271,7 +1271,7 @@
   "pages": [
    {
     "page": 1,
-    "ratio": 0.04517527561005822,
+    "ratio": 0.04761860522730088,
     "sizeA": [
      828,
      1171
@@ -1282,11 +1282,11 @@
     ]
    }
   ],
-  "meanRatio": 0.04517527561005822,
-  "maxRatio": 0.04517527561005822,
+  "meanRatio": 0.04761860522730088,
+  "maxRatio": 0.04761860522730088,
   "wordsA": 228,
-  "wordsB": 149,
-  "textOverlap": 0.7639257294429708
+  "wordsB": 230,
+  "textOverlap": 0.9868995633187773
  },
  {
   "case": "invoice-preview",
@@ -1319,7 +1319,7 @@
   "pages": [
    {
     "page": 1,
-    "ratio": 0.07174532391923696,
+    "ratio": 0.07236776910689954,
     "sizeA": [
      828,
      1171
@@ -1331,7 +1331,7 @@
    },
    {
     "page": 2,
-    "ratio": 0.021617221044453537,
+    "ratio": 0.022240198691643627,
     "sizeA": [
      828,
      1171
@@ -1342,11 +1342,11 @@
     ]
    }
   ],
-  "meanRatio": 0.046681272481845254,
-  "maxRatio": 0.07174532391923696,
+  "meanRatio": 0.04730398389927158,
+  "maxRatio": 0.07236776910689954,
   "wordsA": 480,
-  "wordsB": 416,
-  "textOverlap": 0.8616071428571429
+  "wordsB": 482,
+  "textOverlap": 0.9812889812889813
  },
  {
   "case": "templated-document-cargo-alignment-final",
