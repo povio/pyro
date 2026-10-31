@@ -386,3 +386,14 @@ fn a_fit_content_flex_row_is_clamped_to_the_available_width() {
     );
     assert_eq!(element_width(&html), 400);
 }
+
+#[test]
+fn a_padded_inline_flex_keeps_its_max_content_width() {
+    // ToS "Add Cover" quick-action preview: the clamp compares outer sizes, so
+    // an inline-flex measured at its own max-content width is not shrunk by
+    // its padding and border.
+    let html = r#"<!doctype html><html><body style="margin:0"><div style="display:flex;width:600px"><div style="flex:1"></div>
+        <div><span data-lp-render-clip style="display:inline-flex;border:1px solid;padding:0 12px"><span style="width:60px;min-width:0;height:10px"></span></span></div>
+        </div></body></html>"#;
+    assert_eq!(element_width(html), 86);
+}

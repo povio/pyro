@@ -1493,6 +1493,8 @@ fn determine_container_main_size(
                     // Without the clamp, a single line of shrinkable items (a
                     // centered row in a column, `width: fit-content`) takes its
                     // max-content length and overflows instead of shrinking.
+                    // `main_axis_available_space` is the content box's; `size`
+                    // and `min_content_size` are outer sizes.
                     let min_content_size: f32 = lines
                         .iter()
                         .map(|line| {
@@ -1516,7 +1518,7 @@ fn determine_container_main_size(
                         .max_by(|a, b| a.total_cmp(b))
                         .unwrap_or(0.0)
                         + main_content_box_inset;
-                    f32_max(f32_min(size, main_axis_available_space), min_content_size)
+                    f32_max(f32_min(size, main_axis_available_space + main_content_box_inset), min_content_size)
                 }
             }
             AvailableSpace::MinContent if constants.is_wrap => {
