@@ -345,8 +345,14 @@ impl LayoutPassState<'_> {
                 .downcast_element_mut()
                 .unwrap()
                 .inline_layout_data = Some(inline_layout);
+            // lightningpanda: its own (or known) size still applies: a
+            // `width: 200px` div holding only an empty `<i>` is 200px wide.
             return LayoutOutput::from_outer_size(
-                Size::ZERO.maybe_max(container_pb.sum_axes().map(Some)),
+                Size {
+                    width: node_size.width.unwrap_or(0.0),
+                    height: node_size.height.unwrap_or(0.0),
+                }
+                .maybe_max(container_pb.sum_axes().map(Some)),
             );
         }
 
