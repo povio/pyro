@@ -982,8 +982,7 @@ impl Layout {
         0.0
     }
 
-    /// `offsetParent` (Element.zig:1943-1987). `position` is read from the
-    /// inline style only, like upstream's `positionStyle`.
+    /// `offsetParent`, including positioned ancestors styled through stylesheets.
     pub fn offset_parent(&self, dom: &Dom, el: NodeId) -> Option<NodeId> {
         if !dom.is_connected(el).ok()? || !self.is_visible(dom, el) {
             return None;
@@ -1025,7 +1024,7 @@ impl Layout {
     }
 
     fn position_style(&self, dom: &Dom, el: NodeId) -> String {
-        self.style.inline_declared_value(dom, el, "position").map(|(v, _)| v).unwrap_or_default()
+        self.style.computed_value(dom, el, "position").unwrap_or_default()
     }
 
     // ----- positions ---------------------------------------------------------

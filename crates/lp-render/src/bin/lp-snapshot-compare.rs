@@ -67,17 +67,10 @@ impl Fetcher for Assets {
 }
 fn compare(worker: &RenderWorker, request: Request) -> Result<serde_json::Value, String> {
     let started = Instant::now();
-    let meta = request.baseline.with_extension("json");
     let existed = request.baseline.exists();
     let baseline = if !request.update && existed {
         let png = std::fs::read(&request.baseline).map_err(|e| e.to_string())?;
-        let digest = format!("{:016x}", lp_render::digest(&png));
-        let hash = std::fs::read_to_string(&meta)
-            .ok()
-            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-            .filter(|m| m["pngHash"].as_str() == Some(digest.as_str()))
-            .and_then(|m| m["sceneHash"].as_str().and_then(|s| u64::from_str_radix(s, 16).ok()));
-        Some(Arc::new(Baseline::from_png(png, hash)))
+        Some(Arc::new(Baseline::from_png(png, None)))
     } else {
         None
     };
@@ -130,7 +123,6 @@ fn compare(worker: &RenderWorker, request: Request) -> Result<serde_json::Value,
     if outcome.recorded && request.update {
         std::fs::write(&request.baseline, outcome.actual.as_ref().ok_or("recording has no pixels")?)
             .map_err(|e| e.to_string())?;
-        std::fs::write(meta,serde_json::to_vec_pretty(&json!({"sceneHash":format!("{:016x}",outcome.scene_hash),"pngHash":format!("{:016x}",lp_render::digest(outcome.actual.as_ref().unwrap())),"width":outcome.width,"height":outcome.height})).unwrap()).map_err(|e|e.to_string())?;
     } else if !outcome.pass || outcome.recorded {
         if let Some(bytes) = &outcome.actual {
             std::fs::write(&actual, bytes).map_err(|e| e.to_string())?;

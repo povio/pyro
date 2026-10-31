@@ -126,3 +126,13 @@ once per element instead of on every selector check; see its README). Builds wit
 The end-to-end benchmark (`bun bench/screenshot/match-screenshot.ts`) runs through the client, CDP and `LP.run` on
 the three prototype fixtures, with Lato served as a web font. Numbers are in the PR that added this; the browser-side
 split shows layout (Blitz) dominating, raster at 2.4-4.2 ms, and compare under 0.6 ms.
+
+## Deferred full-page comparisons (v0.0.14)
+
+The `lp-snapshot-compare` worker consumes immutable HTML captures and writes PNG-only baselines. It no longer reads or writes JSON scene-hash sidecars: every comparison checks pixels. Existing sidecars may be removed; missing baseline PNGs still fail unless update mode is explicitly requested. This applies to the deferred worker; the native synchronous matchScreenshot API is unchanged.
+
+Full-page bounds respect root overflow clipping. A viewport-locked app with independently scrolling drawers can therefore have a full-page image equal to its viewport size; ordinary tall documents include content below the viewport.
+
+HTML snapshot rendering resolves external SVG references to self-contained symbols through the provided resource loader, preserving SVG currentColor/stroke/viewBox behavior. Missing resources or symbols fail explicitly. The renderer's live-tree mirror path and external symbols depending on definitions elsewhere in the sprite are not covered by this implementation.
+
+The engine now uses computed stylesheet positioning for offsetParent. This keeps overlay libraries from positioning a popover in viewport coordinates when its actual offset parent is a CSS-positioned drawer.

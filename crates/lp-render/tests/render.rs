@@ -295,3 +295,65 @@ fn element_crop_includes_ancestor_translation_and_scale() {
     assert_eq!(pixel(&img, 5, 5), [0x6d, 0x28, 0xd9, 255]);
     assert_eq!(pixel(&img, 115, 55), [0x6d, 0x28, 0xd9, 255]);
 }
+
+struct SpriteFetch;
+impl Fetcher for SpriteFetch {
+    fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+        assert_eq!(url, "http://test/icons.svg");
+        done(Ok(br#"<svg xmlns="http://www.w3.org/2000/svg"><symbol id="check" viewBox="0 0 24 24"><path d="M4 12L9 17L20 6"/></symbol></svg>"#.to_vec()));
+    }
+}
+#[test]
+fn external_svg_symbol_keeps_current_color_stroke_and_viewbox() {
+    let mut renderer = Renderer::new();
+    let markup = r##"<html><body style="margin:0"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" style="color:red"><use href="/icons.svg#check"/></svg><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" style="color:blue"><use href="/icons.svg#check"/></svg></body></html>"##;
+    let reference = markup.replace(r##"<use href="/icons.svg#check"/>"##, r#"<path d="M4 12L9 17L20 6"/>"#);
+    let sprite: Arc<dyn Fetcher> = Arc::new(SpriteFetch);
+    let (actual, _, _) = renderer.render(&snap(markup), Area::FullPage, Backend::Cpu, &sprite).unwrap();
+    let (expected, _, _) = renderer.render(&snap(&reference), Area::FullPage, Backend::Cpu, &fetcher()).unwrap();
+    assert!(compare(&actual, &expected, 0, None).equal);
+    assert!(actual.data.chunks_exact(4).any(|p| p == [255, 0, 0, 255]));
+    assert!(actual.data.chunks_exact(4).any(|p| p == [0, 0, 255, 255]));
+}
+#[test]
+fn full_page_does_not_include_overflow_clipped_by_the_root() {
+    let mut renderer = Renderer::new();
+    let markup = "<html style='height:300px;overflow:hidden'><body style='margin:0'><div style='height:900px;background:red'></div></body></html>";
+    let (image, _, _) = renderer.render(&snap(markup), Area::FullPage, Backend::Cpu, &fetcher()).unwrap();
+    assert_eq!((image.width, image.height), (400, 300));
+}
+
+#[test]
+fn absolute_popover_in_display_contents_paints_above_fixed_drawer() {
+    let markup = "<html style='height:300px;overflow:hidden'><body style='margin:0'><div style='height:300px'></div><div style='position:fixed;inset:0;background:red;z-index:50'></div><div style='display:contents'><div style='position:absolute;left:200px;top:100px;width:100px;height:60px;background:lime;z-index:100000'></div></div></body></html>";
+    let (image, _, _) = Renderer::new().render(&snap(markup), Area::FullPage, Backend::Cpu, &fetcher()).unwrap();
+    assert_eq!(pixel(&image, 220, 120), [0, 255, 0, 255]);
+}
+
+#[test]
+fn external_svg_missing_symbol_fails_instead_of_silently_drawing_nothing() {
+    let sprite: Arc<dyn Fetcher> = Arc::new(SpriteFetch);
+    let result = Renderer::new().render(
+        &snap(r##"<svg width="24" height="24"><use href="/icons.svg#missing"/></svg>"##),
+        Area::Viewport,
+        Backend::Cpu,
+        &sprite,
+    );
+    assert!(result.err().unwrap().to_string().contains("missing SVG fragment"));
+}
+
+struct MultipleSprites;
+impl Fetcher for MultipleSprites {
+    fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+        let color = if url.contains("first.svg") { "red" } else { "blue" };
+        done(Ok(format!(r#"<svg xmlns="http://www.w3.org/2000/svg"><symbol id="same" viewBox="0 0 10 10"><rect width="10" height="10" fill="{color}"/></symbol></svg>"#).into_bytes()));
+    }
+}
+#[test]
+fn external_symbols_with_equal_ids_and_escaped_urls_remain_distinct() {
+    let source = r##"<body style="margin:0"><svg width="20" height="10"><use href="/first.svg?a=1&amp;b=2#same" width="10" height="10"/><use href="/second.svg#same" x="10" width="10" height="10"/></svg></body>"##;
+    let fetch: Arc<dyn Fetcher> = Arc::new(MultipleSprites);
+    let (image, _, _) = Renderer::new().render(&snap(source), Area::Viewport, Backend::Cpu, &fetch).unwrap();
+    assert_eq!(pixel(&image, 5, 5), [255, 0, 0, 255]);
+    assert_eq!(pixel(&image, 15, 5), [0, 0, 255, 255]);
+}
