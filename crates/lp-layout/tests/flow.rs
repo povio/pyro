@@ -118,7 +118,6 @@ fn flow_parity_collapse() {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn flow_parity_boxmodel() {
     let html = "<!doctype html><body style=\"margin:0\"><div id=p style=\"width:100px;height:50px;padding:10px;border:2px solid black\"></div><div id=q style=\"width:100px;height:50px;padding:10px;border:2px solid black;box-sizing:border-box\"></div><div id=r style=\"padding:5px 7px;margin:3px 11px\"><div id=r1 style=\"height:20px\"></div><div id=r2 style=\"height:25px\"></div></div></body>";
     check(
@@ -137,7 +136,6 @@ fn flow_parity_boxmodel() {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn flow_parity_nested() {
     let html = "<!doctype html><body style=\"margin:0\"><div id=outer style=\"width:300px;padding:10px\"><div id=mid style=\"padding:4px;border-width:1px;border-style:solid\"><div id=inner style=\"height:40px;width:100px;margin-left:15px\"></div></div></div></body>";
     check(
@@ -154,7 +152,6 @@ fn flow_parity_nested() {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn flow_parity_popover() {
     let html = "<!doctype html><body><main>FILLER</main><div id=pop style=\"position:absolute;top:120px;left:200px;width:280px\"><div id=list role=listbox style=\"max-height:300px;overflow:auto\">OPTIONS</div></div></body>";
     check(
@@ -214,7 +211,6 @@ fn flow_parity_relative() {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn flow_parity_absolute() {
     let html = "<!doctype html><body style=\"margin:0\"><div id=cb style=\"position:relative;margin:20px;width:400px;height:200px;border:5px solid\"><div id=tr style=\"position:absolute;top:10px;right:10px;width:50px;height:30px\"></div><div id=br style=\"position:absolute;bottom:0;left:0;right:0;height:20px\"></div><div id=st style=\"position:absolute;width:30px;height:30px\"></div></div></body>";
     check(
@@ -463,7 +459,6 @@ fn flex_parity_wrap() {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn flex_parity_shell() {
     flex_check(
         "shell",
@@ -625,7 +620,6 @@ fn flex_cascade_parity_wrap() {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn flex_cascade_parity_shell() {
     check(
         "shell (cascade)",
@@ -776,7 +770,6 @@ fn flow_parity_form_controls() {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn flow_parity_percent_heights_in_flex_shell() {
     let html = "<!doctype html><style>html,body{height:100%;margin:0}</style><body><div id=shell style=\"display:flex;flex-direction:column;height:100%\"><header id=hd style=\"height:50px\"></header><main id=main style=\"flex:1;min-height:0;display:flex\"><aside id=side style=\"width:200px;overflow:auto\"><div id=list style=\"height:2000px\"></div></aside><section id=sec style=\"flex:1;display:flex;flex-direction:column\"><div id=full style=\"height:100%\"><div id=half style=\"height:50%\"></div></div></section></main></div></body>";
     check(
@@ -1089,7 +1082,6 @@ fn flow_parity_text_align() {
 
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn flex_parity_cross_size_min_max() {
     // TOS positions header: a `max-h-[40vh] overflow-y-auto` flex item in a
     // row container must be clamped (it pushed the page 364px down).
@@ -1260,7 +1252,6 @@ fn flow_parity_intrinsic_width_keywords() {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn flow_parity_abs_border_box_min_height_and_scroll_extent() {
     // An abs box with inset:0 under border-box keeps its min-height as a
     // border-box size (TOS textarea mirror was 124 vs 120px), and a

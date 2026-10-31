@@ -201,7 +201,7 @@ impl BaseDocument {
                 transform *= *t
             }
 
-            let overflow = *node.scrollable_overflow();
+            let overflow = overflow_contribution(node, *node.scrollable_overflow(), scale);
             return transform.transform_rect_bbox(overflow);
         }
 
@@ -209,7 +209,15 @@ impl BaseDocument {
 
         let w = self.nodes[node_id].final_layout().size.width as f64 * scale;
         let h = self.nodes[node_id].final_layout().size.height as f64 * scale;
-        let mut overflow = Rect::new(0.0, 0.0, w, h);
+        // lightningpanda: the scrollable overflow starts at the padding box
+        // (CSS Overflow 3 2.2), not the border box.
+        let b = self.nodes[node_id].final_layout().border;
+        let mut overflow = Rect::new(
+            b.left as f64 * scale,
+            b.top as f64 * scale,
+            (w - b.right as f64 * scale).max(b.left as f64 * scale),
+            (h - b.bottom as f64 * scale).max(b.top as f64 * scale),
+        );
 
         let layout_children = std::mem::take(self.nodes[node_id].layout_children.get_mut());
 
@@ -256,7 +264,8 @@ impl BaseDocument {
             Affine::translate((scaled_x, scaled_y))
         };
 
-        full.transform_rect_bbox(overflow)
+        let contribution = overflow_contribution(&self.nodes[node_id], overflow, scale);
+        full.transform_rect_bbox(contribution)
     }
 
     /// Ensure that the layout_children field is populated for all nodes
@@ -483,6 +492,26 @@ impl BaseDocument {
         // println!("\n\n");
         // taffy::print_tree(self, root_node_id)
     }
+}
+
+/// lightningpanda: what a box adds to its parent's scrollable overflow
+/// (its own coordinates): its border box, plus its own scrollable overflow
+/// on the axes it does not clip. A scroll container keeps its content's
+/// overflow to itself.
+fn overflow_contribution(node: &crate::Node, overflow: Rect, scale: f64) -> Rect {
+    use style::values::computed::Overflow;
+    let size = node.final_layout().size;
+    let border_box = Rect::new(0.0, 0.0, size.width as f64 * scale, size.height as f64 * scale);
+    let mut out = overflow.union(border_box);
+    if let Some(style) = node.primary_styles() {
+        if style.clone_overflow_x() != Overflow::Visible {
+            (out.x0, out.x1) = (border_box.x0, border_box.x1);
+        }
+        if style.clone_overflow_y() != Overflow::Visible {
+            (out.y0, out.y1) = (border_box.y0, border_box.y1);
+        }
+    }
+    out
 }
 
 /// lightningpanda: cumulative time per `resolve` phase (style, damage,
