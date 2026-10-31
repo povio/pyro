@@ -565,10 +565,14 @@ impl Dom {
         let kind = e.is_html()
             && (control || matches!(local, "form" | "fieldset" | "option" | "optgroup" | "details" | "dialog"));
         let editable = e.attr("contenteditable").is_some();
-        if !kind && !editable {
+        let natural = (e.is_html() && local == "img").then(|| self.natural_size(self.id_of(n))).flatten();
+        if !kind && !editable && natural.is_none() {
             return None;
         }
         let mut out = String::new();
+        if let Some((w, h)) = natural {
+            out.push_str(&format!("natural={w},{h}"));
+        }
         for (pc, name) in [
             (Valid, "valid"),
             (Invalid, "invalid"),

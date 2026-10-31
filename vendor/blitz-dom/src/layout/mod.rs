@@ -478,6 +478,22 @@ impl LayoutPassState<'_> {
                         _ => unreachable!(),
                     };
 
+                    // lightningpanda: an image the embedder has loaded but Blitz
+                    // has not (yet) reports its natural size through the
+                    // render tree's state attribute (`natural=W,H`).
+                    let loaded = matches!(&element_data.special_data, SpecialElementData::Image(d) if !matches!(&**d, ImageData::None));
+                    let (intrinsic_sizes, default_object_size) = match lp_natural_size(element_data) {
+                        Some((width, height)) if !loaded && *element_data.name.local == *"img" => (
+                            IntrinsicSizes {
+                                width: Some(width),
+                                height: Some(height),
+                                ratio: (height > 0.0).then_some(width / height),
+                            },
+                            DEFAULT_OBJECT_SIZE,
+                        ),
+                        _ => (intrinsic_sizes, default_object_size),
+                    };
+
                     #[cfg(feature = "writing-mode")]
                     let (intrinsic_sizes, default_object_size) =
                         if node.writing_mode().is_vertical() {
@@ -989,4 +1005,13 @@ impl Iterator for RefCellChildIter<'_> {
             taffy_node_id(*id)
         })
     }
+}
+
+/// lightningpanda: the `natural=W,H` token of the element's
+/// `urn:x-lightningpanda:state` attribute.
+fn lp_natural_size(element: &crate::node::ElementData) -> Option<(f32, f32)> {
+    let attr = element.attrs.iter().find(|a| &*a.name.ns == "urn:x-lightningpanda:state")?;
+    let token = attr.value.split_ascii_whitespace().find_map(|t| t.strip_prefix("natural="))?;
+    let (w, h) = token.split_once(',')?;
+    Some((w.parse().ok()?, h.parse().ok()?))
 }

@@ -37,7 +37,14 @@ fn page(html: &str) -> Page {
     let html = html.replace("FILLER", &filler()).replace("OPTIONS", &options());
     let dom_ref: DomRef = Rc::new(RefCell::new(Dom::new()));
     let doc = parse_document(&dom_ref, "http://test/", &html);
-    let dom = Rc::try_unwrap(dom_ref).ok().expect("sole owner").into_inner();
+    let mut dom = Rc::try_unwrap(dom_ref).ok().expect("sole owner").into_inner();
+    // Stand-in for a loaded image's natural size (the embedder records it).
+    let imgs = dom.query_selector_all(doc, &lp_dom::select::parse_selectors("img[data-natural]").unwrap()).unwrap();
+    for img in imgs {
+        let v = dom.get_attribute(img, "data-natural").unwrap().unwrap();
+        let (w, h) = v.split_once(',').unwrap();
+        dom.set_natural_size(img, Some((w.parse().unwrap(), h.parse().unwrap())));
+    }
     let mut layout = Layout::with_viewport(doc, Viewport::new(800, 600));
     layout.style_mut().discover_style_elements(&dom);
     Page { dom, doc, layout }
@@ -1392,7 +1399,6 @@ fn flow_skips_relayout_for_identical_writes_but_not_real_changes() {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn flow_parity_image_intrinsic_sizing() {
     // CSS 2.1 10.3.2 / 10.6.2 with a loaded image's natural size: the TOS
     // chat image (`w-full max-h-64`, 1x1 PNG in a 240px container) is
@@ -1671,7 +1677,6 @@ fn added_sheets_restyle_their_subjects_without_stale_geometry() {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn loaded_image_natural_size_reaches_flow_through_the_dom() {
     // TOS chat: <img class="max-h-64 w-full object-contain"> in a 240px
     // button, holding the uploaded 1x1 PNG. Unloaded it is 240x0 (hidden
@@ -1702,7 +1707,6 @@ fn assert_journaled(p: &Page, since: u64, what: &str) {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn form_state_writes_invalidate_selectively_without_stale_geometry() {
     // Form value/checked/selected writes and image natural sizes are
     // journaled precisely (they used to add an Unknown change, so every
