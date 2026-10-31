@@ -3549,7 +3549,6 @@ fn scroll_anchoring_inside_a_position_fixed_container_like_chromium() {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn scroll_anchoring_reselects_in_the_previous_layout_like_chromium() {
     // The anchor is selected in the layout the scroller was settled in,
     // with the current styles, however many earlier candidates are now
@@ -4434,5 +4433,6 @@ fn table_structure_changes_relayout_like_a_fresh_pass() {
     p.dom.set_text_content(span, "x").unwrap();
     assert_matches_fresh(&p, "text again");
 }
+
 
 

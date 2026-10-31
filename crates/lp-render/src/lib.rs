@@ -795,6 +795,11 @@ impl Renderer {
             if !node.is_element() {
                 continue;
             }
+            // Not rendered (display: none, or inside it: never styled) has no box.
+            let rendered = node.primary_styles().is_some_and(|s| !s.clone_display().is_none());
+            if !rendered {
+                continue;
+            }
             let (Some(&key), Some(b)) = (keys.get(&id), g.element_box(doc, id)) else { continue };
             if b.position == BoxPosition::Sticky {
                 sticky.push((key, g.sticky_box(doc, id)));
