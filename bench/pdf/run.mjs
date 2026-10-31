@@ -166,6 +166,8 @@ const renderOnce = async (page, payload, landscape, geometry = false) => {
     timeout: 120000,
   });
   await page.evaluate(() => document.fonts.ready.then(() => undefined));
+  // --probe <expression>: print what it evaluates to in the paginated page.
+  if (args.probe) console.log('probe', JSON.stringify(await page.evaluate(args.probe)));
   const t1 = performance.now();
   // Outside the timed window: the layouts pagination forced.
   const geom = geometry ? await geometryStats(page) : undefined;

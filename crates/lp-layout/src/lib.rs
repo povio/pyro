@@ -51,6 +51,35 @@ static SNAPSHOT_NS: AtomicU64 = AtomicU64::new(0);
 static LAYOUT_NS: AtomicU64 = AtomicU64::new(0);
 static READ_NS: AtomicU64 = AtomicU64::new(0);
 
+/// `LP_GEOMETRY_PROFILE=1`: time in syncs, whole-document reads and box
+/// reads, printed to stderr every 100 syncs (diagnostic).
+mod profile {
+    use std::cell::Cell;
+    use std::time::Duration;
+    thread_local! {
+        static T: Cell<[(u64, Duration); 4]> = const { Cell::new([(0, Duration::ZERO); 4]) };
+    }
+    pub(crate) fn on() -> bool {
+        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *ON.get_or_init(|| std::env::var_os("LP_GEOMETRY_PROFILE").is_some())
+    }
+    /// 0 sync, 1 full rebuild, 2 whole document, 3 element box.
+    pub(crate) fn add(i: usize, d: Duration) {
+        T.with(|t| {
+            let mut v = t.get();
+            v[i].0 += 1;
+            v[i].1 += d;
+            t.set(v);
+            if i == 0 && v[0].0 % 100 == 0 {
+                eprintln!(
+                    "lp-geometry-profile pid={} sync={}/{:?} rebuild={}/{:?} document={}/{:?} box={}/{:?}",
+                    std::process::id(), v[0].0, v[0].1, v[1].0, v[1].1, v[2].0, v[2].1, v[3].0, v[3].1
+                );
+            }
+        });
+    }
+}
+
 /// Bumped when a sub-resource arrives that documents may have been laid out
 /// without (a font or image fetched in the background): each page's
 /// document is built again at its next layout query.
@@ -280,6 +309,61 @@ impl BlitzGeometry {
     }
 }
 
+impl BlitzGeometry {
+    fn sync_inner(&self, dom: &Dom, layout: &Layout) {
+        let resources = RESOURCES.load(Ordering::Relaxed);
+        let rebuild = self.resources.replace(resources) != resources;
+        if rebuild {
+            // Build the document again: Blitz does not retry a resource
+            // that failed, and the new one is in the fetcher's cache now.
+            RENDERER.with(|r| {
+                if let Ok(mut r) = r.try_borrow_mut() {
+                    if let Some(r) = r.as_mut() {
+                        r.forget(self.page);
+                    }
+                }
+            });
+            self.synced.set(None);
+        }
+        let t = (rebuild && profile::on()).then(Instant::now);
+        self.sync_document(dom, layout);
+        if let Some(t) = t {
+            profile::add(1, t.elapsed());
+        }
+        self.sync_interaction(dom, layout);
+    }
+
+    fn element_box_inner(&self, key: u64) -> Option<ExternalBox> {
+        let t = Instant::now();
+        let b = RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.element_box(self.page, key));
+        READ_NS.fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        if std::env::var_os("LP_GEOMETRY_DEBUG").is_some() && b.is_some_and(|b| b.width == 0.0 || b.height == 0.0) {
+            let what = RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.describe_element(self.page, key));
+            eprintln!("lp-geometry: empty box {b:?}\n  {}", what.unwrap_or_default());
+        }
+        b.map(external)
+    }
+
+    fn geometry_inner(&self) -> Option<ExternalGeometry> {
+        let out = RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.page_layout(self.page))?;
+        READ_NS.fetch_add(out.timings.scene.as_nanos() as u64, Ordering::Relaxed);
+        Some(ExternalGeometry {
+            boxes: out.boxes.into_iter().map(|(k, b)| (k, external(b))).collect(),
+            words: out
+                .words
+                .into_iter()
+                .map(|(k, w)| {
+                    (k, ExternalWord { x: w.x, y: w.y, width: w.width, height: w.height, fixed: w.fixed, edges: w.edges })
+                })
+                .collect(),
+            sticky: out.sticky.into_iter().map(|(k, s)| (k, ExternalSticky { insets: s.insets, limit: s.limit })).collect(),
+            document_width: out.document_width,
+            document_height: out.document_height,
+        })
+    }
+
+}
+
 impl GeometrySource for BlitzGeometry {
     fn active(&self) -> bool {
         !IN_TEMPLATE.load(Ordering::Relaxed) || lp_render::fork_safe_fonts()
@@ -298,50 +382,29 @@ impl GeometrySource for BlitzGeometry {
     }
 
     fn sync(&self, dom: &Dom, layout: &Layout) {
-        let resources = RESOURCES.load(Ordering::Relaxed);
-        if self.resources.replace(resources) != resources {
-            // Build the document again: Blitz does not retry a resource
-            // that failed, and the new one is in the fetcher's cache now.
-            RENDERER.with(|r| {
-                if let Ok(mut r) = r.try_borrow_mut() {
-                    if let Some(r) = r.as_mut() {
-                        r.forget(self.page);
-                    }
-                }
-            });
-            self.synced.set(None);
+        let t = profile::on().then(Instant::now);
+        self.sync_inner(dom, layout);
+        if let Some(t) = t {
+            profile::add(0, t.elapsed());
         }
-        self.sync_document(dom, layout);
-        self.sync_interaction(dom, layout);
     }
 
     fn element_box(&self, key: u64) -> Option<ExternalBox> {
-        let t = Instant::now();
-        let b = RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.element_box(self.page, key));
-        READ_NS.fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
-        if std::env::var_os("LP_GEOMETRY_DEBUG").is_some() && b.is_some_and(|b| b.width == 0.0 || b.height == 0.0) {
-            let what = RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.describe_element(self.page, key));
-            eprintln!("lp-geometry: empty box {b:?}\n  {}", what.unwrap_or_default());
+        let t = profile::on().then(Instant::now);
+        let b = self.element_box_inner(key);
+        if let Some(t) = t {
+            profile::add(3, t.elapsed());
         }
-        b.map(external)
+        b
     }
 
     fn geometry(&self) -> Option<ExternalGeometry> {
-        let out = RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.page_layout(self.page))?;
-        READ_NS.fetch_add(out.timings.scene.as_nanos() as u64, Ordering::Relaxed);
-        Some(ExternalGeometry {
-            boxes: out.boxes.into_iter().map(|(k, b)| (k, external(b))).collect(),
-            words: out
-                .words
-                .into_iter()
-                .map(|(k, w)| {
-                    (k, ExternalWord { x: w.x, y: w.y, width: w.width, height: w.height, fixed: w.fixed, edges: w.edges })
-                })
-                .collect(),
-            sticky: out.sticky.into_iter().map(|(k, s)| (k, ExternalSticky { insets: s.insets, limit: s.limit })).collect(),
-            document_width: out.document_width,
-            document_height: out.document_height,
-        })
+        let t = profile::on().then(Instant::now);
+        let g = self.geometry_inner();
+        if let Some(t) = t {
+            profile::add(2, t.elapsed());
+        }
+        g
     }
 
     fn document_size(&self) -> Option<(f64, f64)> {
