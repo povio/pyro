@@ -66,6 +66,12 @@ pub mod sync_profile {
 
     /// Milliseconds applying node lists, settling sub-resources and resolving
     /// (style + layout) since the last call.
+    /// As [`take`], without resetting.
+    pub fn peek() -> (f64, f64, f64) {
+        let ms = |a: &AtomicU64| a.load(Ordering::Relaxed) as f64 / 1e6;
+        (ms(&MIRROR), ms(&SETTLE), ms(&RESOLVE))
+    }
+
     pub fn take() -> (f64, f64, f64) {
         let ms = |a: &AtomicU64| a.swap(0, Ordering::Relaxed) as f64 / 1e6;
         (ms(&MIRROR), ms(&SETTLE), ms(&RESOLVE))

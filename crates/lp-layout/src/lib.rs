@@ -52,7 +52,7 @@ static LAYOUT_NS: AtomicU64 = AtomicU64::new(0);
 static READ_NS: AtomicU64 = AtomicU64::new(0);
 
 /// `LP_GEOMETRY_PROFILE=1`: time in syncs, whole-document reads and box
-/// reads, printed to stderr every 100 syncs (diagnostic).
+/// reads, printed to stderr every 250 syncs (diagnostic).
 mod profile {
     use std::cell::Cell;
     use std::time::Duration;
@@ -70,10 +70,12 @@ mod profile {
             v[i].0 += 1;
             v[i].1 += d;
             t.set(v);
-            if i == 0 && v[0].0 % 100 == 0 {
+            if i == 0 && v[0].0 % 250 == 0 {
+                let ms = |a: &std::sync::atomic::AtomicU64| a.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1e6;
                 eprintln!(
-                    "lp-geometry-profile pid={} sync={}/{:?} rebuild={}/{:?} document={}/{:?} box={}/{:?}",
-                    std::process::id(), v[0].0, v[0].1, v[1].0, v[1].1, v[2].0, v[2].1, v[3].0, v[3].1
+                    "lp-geometry-profile pid={} sync={}/{:?} rebuild={}/{:?} document={}/{:?} box={}/{:?} delta-build={:.0}ms blitz={:.0}ms mirror/settle/resolve={:?}",
+                    std::process::id(), v[0].0, v[0].1, v[1].0, v[1].1, v[2].0, v[2].1, v[3].0, v[3].1,
+                    ms(&super::SNAPSHOT_NS), ms(&super::LAYOUT_NS), lp_render::sync_profile::peek()
                 );
             }
         });

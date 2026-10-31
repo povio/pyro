@@ -102,7 +102,15 @@ const waitCdp = async (port) => {
 const startEngine = async (name, build, cmd, cmdArgs, port, env = {}) => {
   const proc = spawn(cmd, cmdArgs, { stdio: ['ignore', 'ignore', 'pipe'], env: { ...process.env, ...env } });
   let err = '';
-  proc.stderr.on('data', (d) => (err = (err + d).slice(-4000)));
+  let partial = '';
+  proc.stderr.on('data', (d) => {
+    err = (err + d).slice(-4000);
+    // LP_GEOMETRY_PROFILE=1: pass the engine's timing lines through.
+    partial += String(d);
+    const lines = partial.split('\n');
+    partial = lines.pop();
+    for (const line of lines) if (line.includes('-profile')) console.log(name, line);
+  });
   await waitCdp(port);
   const connect = () => chromium.connectOverCDP(`http://127.0.0.1:${port}`);
   const browser = await connect();
