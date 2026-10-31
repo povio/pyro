@@ -661,7 +661,8 @@ fn content_extent(doc: &blitz_dom::BaseDocument, id: blitz_dom::NodeId) -> (f64,
             right = right.max(r);
             bottom = bottom.max(b);
             let past = (r - size.width as f64).max(b - size.height as f64);
-            if past > worst {
+            // `>=`: descendants come later, so the deepest box at that edge wins.
+            if past >= worst {
                 worst = past;
                 culprit = Some(match node.element_data() {
                     Some(e) => format!(

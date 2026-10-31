@@ -357,3 +357,32 @@ fn external_symbols_with_equal_ids_and_escaped_urls_remain_distinct() {
     assert_eq!(pixel(&image, 5, 5), [255, 0, 0, 255]);
     assert_eq!(pixel(&image, 15, 5), [0, 0, 255, 255]);
 }
+
+/// Element border-box width as Blitz lays it out (via an element capture).
+fn element_width(html: &str) -> u32 {
+    let mut r = Renderer::new();
+    r.paint(&snap(html), Area::Element, &fetcher()).unwrap().width
+}
+
+#[test]
+fn a_centered_flex_item_is_clamped_to_its_container() {
+    // ToS invoice footers: a flex row in an `align-items: center` column is
+    // fit-content (min(max-content, available)), so its text wraps.
+    let text = "word ".repeat(200);
+    let html = format!(
+        r#"<!doctype html><html><body style="margin:0"><div style="display:flex;flex-direction:column;align-items:center">
+        <div data-lp-render-clip style="display:flex;gap:30px"><p style="flex-shrink:0;margin:0">fixed</p><div><p style="margin:0">{text}</p></div></div>
+        </div></body></html>"#
+    );
+    assert_eq!(element_width(&html), 400);
+}
+
+#[test]
+fn a_fit_content_flex_row_is_clamped_to_the_available_width() {
+    let text = "word ".repeat(200);
+    let html = format!(
+        r#"<!doctype html><html><body style="margin:0"><div data-lp-render-clip style="display:flex;width:fit-content">
+        <div>{text}</div></div></body></html>"#
+    );
+    assert_eq!(element_width(&html), 400);
+}

@@ -154,3 +154,5 @@ opt-level = 0
 [patch.crates-io]
 blitz-dom = { path = "vendor/blitz-dom" }
 blitz-paint = { path = "vendor/blitz-paint" }
+# Flex fit-content clamp; see vendor/taffy/README.lightningpanda.md.
+taffy = { path = "vendor/taffy" }

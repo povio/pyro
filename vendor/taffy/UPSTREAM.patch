@@ -1,0 +1,43 @@
+--- a/src/compute/flexbox.rs
++++ b/src/compute/flexbox.rs
+@@ -1484,8 +1484,39 @@
+ 
+                 if lines.len() > 1 {
+                     f32_max(size, main_axis_available_space)
+-                } else {
++                } else if !constants.is_row {
++                    // Block axis: an auto height is the content height.
+                     size
++                } else {
++                    // Inline axis: an auto-width container in definite available
++                    // space is fit-content: min(max-content, max(min-content, available)).
++                    // Without the clamp, a single line of shrinkable items (a
++                    // centered row in a column, `width: fit-content`) takes its
++                    // max-content length and overflows instead of shrinking.
++                    let min_content_size: f32 = lines
++                        .iter()
++                        .map(|line| {
++                            let line_main_axis_gap = sum_axis_gaps(main_axis_gap, line.items.len());
++                            let min_sizes = line
++                                .items
++                                .iter()
++                                .map(|child| {
++                                    let padding_border_sum =
++                                        (child.padding + child.border).main_axis_sum(constants.dir);
++                                    let min = if child.flex_shrink == 0.0 {
++                                        child.flex_basis.max(child.resolved_minimum_main_size)
++                                    } else {
++                                        child.resolved_minimum_main_size
++                                    };
++                                    (min + child.margin.main_axis_sum(constants.dir)).max(padding_border_sum)
++                                })
++                                .sum::<f32>();
++                            min_sizes + line_main_axis_gap
++                        })
++                        .max_by(|a, b| a.total_cmp(b))
++                        .unwrap_or(0.0)
++                        + main_content_box_inset;
++                    f32_max(f32_min(size, main_axis_available_space), min_content_size)
+                 }
+             }
+             AvailableSpace::MinContent if constants.is_wrap => {
