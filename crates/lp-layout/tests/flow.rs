@@ -4152,7 +4152,6 @@ fn check_rects(name: &str, html: &str, expected: &[(&str, [f64; 4])]) {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn margins_collapse_through_parents_and_empty_blocks_like_chromium() {
     // CSS 2.1 8.3.1, measured in Chromium (800x600): a first child's top
     // margin collapses with its parent's (and body's) unless padding or a

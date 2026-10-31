@@ -273,6 +273,17 @@ impl Geometry {
             if let Some(r) = self.inline_union(doc, id) {
                 return Some(LayoutBox { client_width: 0.0, client_height: 0.0, scroll_width: 0.0, scroll_height: 0.0, ..LayoutBox::from_rect(r, b.fixed) });
             }
+            // No fragment (an empty span among collapsed white space): a
+            // zero box at the content-box origin of the nearest box around it.
+            let mut cur = doc.get_node(id).and_then(|n| n.parent);
+            while let Some(p) = cur {
+                if in_layout_tree(doc, p) {
+                    let pb = self.laid_out(doc, p)?;
+                    let (x, y) = (pb.x + pb.border[3] + pb.padding[3], pb.y + pb.border[0] + pb.padding[0]);
+                    return Some(LayoutBox { fixed: pb.fixed, ..LayoutBox::from_rect(Rect::new(x, y, x, y), pb.fixed) });
+                }
+                cur = doc.get_node(p).and_then(|n| n.parent);
+            }
         }
         Some(b)
     }
