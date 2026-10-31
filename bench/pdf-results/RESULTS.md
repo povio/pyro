@@ -12,6 +12,35 @@ Engines: `chrome-base` (Chrome, base build), `chrome-fixed` (Chrome, `--paprize-
 against LP. Each case runs three interleaved repetitions after one untimed warm-up, and the tables report
 medians. Peak RSS covers the whole process tree, sampled every 50 ms.
 
+## Latest: Blitz is the only geometry, with HTTPS (2026-10-31)
+
+lp-dom's flow layout and the approximate layout are gone: every layout query is answered from the page's
+Blitz document, the one printToPDF prints. lp-net fetches HTTPS (rustls), so ToS pdfgen's Inter loads from
+Google Fonts. Measured in one run (2 interleaved repetitions per case, 6-concurrent throughput after); the
+machine was shared (load average 15–45 during the run). Per-case table: [summary.md](summary.md).
+
+| | chrome-fixed | lp (flow geometry, earlier) | lp (Blitz only, now) |
+|---|---|---|---|
+| page count equal to Chrome | – | 43/44 | **44/44** |
+| pixel diff per case, median | – | 4.7% | **4.3%** |
+| sum of median pagination ms (44 cases) | 2040 | 3306–3515 | 4092 |
+| sum of median printToPDF ms | 3834 | 918–938 | 947 |
+| 6 concurrent: docs/s | 13.8 | 24.7–25.3 | 19.1 |
+| 6 concurrent: p50 / p95 ms | 186 / 263 | 85–92 / 389–417 | 89 / 457 |
+| 6 concurrent: peak RSS MB | 4383 | 1131–1164 | 1155 |
+
+- Both booking-overflow cases give 10 pages as in Chrome (9 without Inter), with Inter-Regular and
+  Inter-Bold embedded; glyphs and line breaks match Chrome
+  ([side by side](booking-request-overflow-https-p1-6.7pct.png)). Their header logo (an SVG with
+  `h-[37mm] w-auto` in a centered flex row) was 130 px off to the left; fixed (a replaced item's automatic
+  minimum width is its natural width).
+- Pagination is still LP's slow part: the forced layouts themselves. In cmr-overflow (2544 forced layouts per
+  render) one sync costs 0.29 ms: 0.006 ms building lp-dom's change delta, 0.026 ms applying it to the
+  mirror, 0.27 ms in Blitz's incremental restyle and relayout. Chrome does the same pagination in 266 ms
+  (about 0.1 ms per layout); LP takes 880 ms.
+- The 6-concurrent throughput dropped from ~25 to 19 docs/s under a heavier machine load than the earlier
+  runs; not separated from the pagination cost above.
+
 ## Measured: first run → after the three fixes
 
 | | chrome-base | chrome-fixed | lp-fixed (first) | lp-fixed (fixed) |
