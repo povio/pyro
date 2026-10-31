@@ -306,6 +306,10 @@ pub trait GeometrySource {
     fn set_base_url(&self, _url: &str) {}
     /// The source itself (its owner reaches its engine's document).
     fn as_any(&self) -> &dyn std::any::Any;
+    /// Whether the source answers now (else the flow layout does).
+    fn active(&self) -> bool {
+        true
+    }
 }
 
 thread_local! {
@@ -330,6 +334,8 @@ struct FlowCache {
     stamp: (u64, u64, u32, u32),
     viewport: (u32, u32),
     result: Rc<FlowResult>,
+    /// Patched with an active external source's boxes.
+    external: bool,
 }
 
 #[derive(Default)]
@@ -402,7 +408,7 @@ impl Layout {
     /// The external geometry source, brought up to the document (synced
     /// when anything it lays out changed since the last query).
     pub fn synced_geometry_source(&self, dom: &Dom) -> Option<&Rc<dyn GeometrySource>> {
-        let source = self.external.as_ref()?;
+        let source = self.external.as_ref().filter(|s| s.active())?;
         let v = self.viewport();
         let key = (self.style.observation_stamp(dom), (v.width, v.height));
         if self.external_synced.get() != Some(key) {
@@ -451,8 +457,9 @@ impl Layout {
         let stamp = self.style.observation_stamp(dom);
         let v = self.viewport();
         let viewport = (v.width, v.height);
+        let external = self.external.as_ref().is_some_and(|s| s.active());
         let previous = match self.flow_cache.borrow().as_ref() {
-            Some(c) if c.stamp == stamp && c.viewport == viewport => return c.result.clone(),
+            Some(c) if c.stamp == stamp && c.viewport == viewport && c.external == external => return c.result.clone(),
             Some(c) => Some((c.stamp, c.viewport, c.result.clone())),
             None => None,
         };
@@ -461,8 +468,9 @@ impl Layout {
         let unchanged = self.invalidate_measures(dom, &mut measures, viewport);
         let result = match previous.as_ref() {
             // Nothing that could move a box changed (hover, focus, a class
-            // that only changes colours): the last layout still holds.
-            Some((_, old_viewport, old)) if unchanged && *old_viewport == viewport => old.clone(),
+            // that only changes colours): the last layout still holds (unless
+            // it was patched by an external source and that changed).
+            Some((_, old_viewport, old)) if unchanged && *old_viewport == viewport && !external => old.clone(),
             _ => {
                 let result = Rc::new(crate::style::with_pass_memo(|| {
                     crate::flow::layout_cached(
@@ -492,11 +500,11 @@ impl Layout {
         if let Some(t) = started {
             flow_stats::record(previous.map(|(s, v, _)| (s, v)), (stamp, viewport), t.elapsed());
         }
-        let result = match self.external.as_ref().and_then(|source| source.geometry(dom, self)) {
-            Some(external) => Rc::new(patch_external(dom, &result, &external)),
+        let result = match self.external.as_ref().filter(|s| s.active()).and_then(|source| source.geometry(dom, self)) {
+            Some(boxes) => Rc::new(patch_external(dom, &result, &boxes)),
             None => result,
         };
-        *self.flow_cache.borrow_mut() = Some(FlowCache { stamp, viewport, result: result.clone() });
+        *self.flow_cache.borrow_mut() = Some(FlowCache { stamp, viewport, result: result.clone(), external });
         result
     }
 
@@ -1445,7 +1453,8 @@ impl Layout {
             // An external engine answers per element (its layout includes
             // sticky offsets); SVG content without a CSS box falls back to the
             // whole flow result.
-            let external = if self.external.is_some() { self.flow_box(dom, el) } else { None };
+            let external =
+                if self.external.as_ref().is_some_and(|s| s.active()) { self.flow_box(dom, el) } else { None };
             let (b, (kx, ky)) = match external {
                 Some(b) => (b, (0.0, 0.0)),
                 None => {

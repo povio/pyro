@@ -13,11 +13,9 @@
 //!
 //! Sub-resources resolve against the document's URL and load synchronously
 //! when they are local: `data:` URLs, `file:` URLs and `serve --static`
-//! roots. Network ones (a Google Fonts `@import` and its fonts) are fetched
-//! through the browser's network client, blocking the layout up to
-//! [`NETWORK_WAIT`], once per process: bodies are kept by URL, so later
-//! documents lay out with them at once. The text is then measured in the
-//! font it is painted in, as Chromium measures it after `document.fonts`.
+//! roots. Network ones are fetched in the background through the browser's
+//! network client and kept per process by URL: a layout never waits for the
+//! network, and later documents lay out with them at once.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -34,6 +32,19 @@ thread_local! {
 }
 
 static NEXT_PAGE: AtomicU64 = AtomicU64::new(1);
+
+/// In a `serve --fork` template: Blitz geometry waits for the forked child.
+/// The template must not start threads before it forks (system font
+/// enumeration does, through CoreText), so it boots prepared pages with
+/// lp-dom's geometry; each child switches to Blitz on its first layout
+/// query after the fork.
+static IN_TEMPLATE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Marks this process as a fork template (`true`) or one of its children
+/// leaving it (`false`).
+pub(crate) fn set_fork_template(template: bool) {
+    IN_TEMPLATE.store(template, Ordering::Relaxed);
+}
 static CALLS: AtomicU64 = AtomicU64::new(0);
 /// Syncs from lp-dom's change journal (the rest sent the whole tree).
 static DELTAS: AtomicU64 = AtomicU64::new(0);
@@ -59,9 +70,6 @@ pub(crate) fn take_stats() -> (u64, u64, f64, f64, f64) {
 
 /// Makes this thread's new documents take Blitz geometry when
 /// `LIGHTNINGPANDA_GEOMETRY=blitz`.
-/// Longest wait for one network sub-resource of a layout.
-const NETWORK_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
-
 /// Network sub-resources loaded for layouts, by URL (process-wide).
 static NETWORK_BODIES: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, Arc<Vec<u8>>>>> =
     std::sync::LazyLock::new(Default::default);
@@ -88,13 +96,20 @@ struct LocalFiles {
 }
 
 impl LocalFiles {
-    /// A network body, from the process cache or fetched (bounded wait: a
-    /// request held by interception the blocked thread would answer gives
-    /// up after [`NETWORK_WAIT`]).
+    /// A network body from the process cache. A miss starts the fetch in
+    /// the background (into the cache) and answers `None` now: a layout
+    /// never waits for the network (a request held by interception would
+    /// need this thread), and the next documents get the body at once.
     fn network(&self, url: &lp_net::Url) -> Option<Vec<u8>> {
         let key = url.as_str().to_owned();
-        if let Some(b) = NETWORK_BODIES.lock().ok()?.get(&key) {
-            return Some(b.to_vec());
+        {
+            let mut cache = NETWORK_BODIES.lock().ok()?;
+            match cache.get(&key) {
+                Some(b) if !b.is_empty() => return Some(b.to_vec()),
+                Some(_) => return None,
+                // An empty entry marks the fetch in flight (or failed).
+                None => cache.insert(key.clone(), Arc::new(Vec::new())),
+            };
         }
         let net = self.net.as_ref()?;
         let path = url.path().to_ascii_lowercase();
@@ -105,34 +120,22 @@ impl LocalFiles {
         } else {
             lp_net::Destination::Image
         };
-        let (tx, rx) = std::sync::mpsc::channel();
-        let id = net.next_request_id();
-        net.fetch_with_id(
-            id,
+        let mut body = Vec::new();
+        let mut ok = false;
+        net.fetch(
             lp_net::Request::get(url.clone(), destination),
-            Box::new(move |ev| {
-                let _ = tx.send(ev);
+            Box::new(move |ev| match ev {
+                lp_net::ResponseEvent::Response(h) => ok = h.status.is_success(),
+                lp_net::ResponseEvent::Data(d) => body.extend_from_slice(&d),
+                lp_net::ResponseEvent::Finished { .. } if ok => {
+                    if let Ok(mut cache) = NETWORK_BODIES.lock() {
+                        cache.insert(key.clone(), Arc::new(std::mem::take(&mut body)));
+                    }
+                }
+                _ => {}
             }),
         );
-        let deadline = Instant::now() + NETWORK_WAIT;
-        let (mut ok, mut body) = (false, Vec::new());
-        loop {
-            match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
-                Ok(lp_net::ResponseEvent::Response(h)) => ok = h.status.is_success(),
-                Ok(lp_net::ResponseEvent::Data(d)) => body.extend_from_slice(&d),
-                Ok(lp_net::ResponseEvent::Redirect { .. }) => {}
-                Ok(lp_net::ResponseEvent::Finished { .. }) => break,
-                Ok(lp_net::ResponseEvent::Failed(_)) | Err(_) => {
-                    net.cancel(id);
-                    return None;
-                }
-            }
-        }
-        if !ok {
-            return None;
-        }
-        NETWORK_BODIES.lock().ok()?.insert(key, Arc::new(body.clone()));
-        Some(body)
+        None
     }
 }
 
@@ -296,6 +299,10 @@ impl BlitzGeometry {
 }
 
 impl GeometrySource for BlitzGeometry {
+    fn active(&self) -> bool {
+        !IN_TEMPLATE.load(Ordering::Relaxed)
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }

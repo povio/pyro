@@ -8,6 +8,8 @@
 
 #[cfg(feature = "render")]
 mod blitz_geometry;
+#[cfg(feature = "render")]
+pub(crate) use blitz_geometry::set_fork_template;
 mod dom;
 mod driver;
 mod fetch;
