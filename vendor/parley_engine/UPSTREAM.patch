@@ -1,0 +1,91 @@
+diff --git a/src/shape/shaped_text.rs b/src/shape/shaped_text.rs
+index 63afadd..065900e 100644
+--- a/src/shape/shaped_text.rs
++++ b/src/shape/shaped_text.rs
+@@ -93,6 +93,7 @@ impl FontMetrics {
+                 ),
+         );
+         Some(Self::from_skrifa_metrics(
++            &font_ref,
+             &skrifa::metrics::Metrics::new(
+                 &font_ref,
+                 skrifa::prelude::Size::new(font_size),
+@@ -102,7 +103,11 @@ impl FontMetrics {
+         ))
+     }
+ 
+-    fn from_skrifa_metrics(metrics: &skrifa::metrics::Metrics, font_size: f32) -> Self {
++    fn from_skrifa_metrics(
++        font_ref: &skrifa::FontRef<'_>,
++        metrics: &skrifa::metrics::Metrics,
++        font_size: f32,
++    ) -> Self {
+         // Default values from HarfBuzz: https://github.com/harfbuzz/harfbuzz/blob/12ee77ee00514c442bcd28f9aa9d56b708c37382/src/hb-ot-metrics.cc#L355-L372
+         let fallback_decoration_size = font_size / 18.0;
+ 
+@@ -119,7 +124,7 @@ impl FontMetrics {
+         };
+ 
+         Self {
+-            ascent: metrics.ascent,
++            ascent: metrics.ascent + chromium_ascent_adjustment(font_ref, metrics),
+             descent: -metrics.descent,
+             leading: metrics.leading,
+             underline_offset,
+@@ -132,6 +137,42 @@ impl FontMetrics {
+     }
+ }
+ 
++/// lightningpanda: WebKit's and Chromium's (macOS) extra ascent for Times,
++/// Helvetica and Courier, "to closely match the vertical metrics of their
++/// Microsoft counterparts": 15% of the rounded ascent plus descent, rounded
++/// (16px Helvetica: 2px, a 18px normal line instead of 16px). These are the
++/// macOS default `serif`, `sans-serif` and `monospace` fonts.
++fn chromium_ascent_adjustment(font_ref: &skrifa::FontRef<'_>, metrics: &skrifa::metrics::Metrics) -> f32 {
++    use skrifa::MetadataProvider;
++    use std::cell::RefCell;
++    std::thread_local! {
++        /// Whether a font (data address, index) is one of the three.
++        static ADJUSTED: RefCell<Vec<((usize, u32), bool)>> = const { RefCell::new(Vec::new()) };
++    }
++    let key = (font_ref.data().as_bytes().as_ptr() as usize, font_ref.ttc_index().unwrap_or(0));
++    let adjusted = ADJUSTED.with(|cache| {
++        if let Some(&(_, v)) = cache.borrow().iter().find(|(k, _)| *k == key) {
++            return v;
++        }
++        let family = font_ref
++            .localized_strings(skrifa::string::StringId::FAMILY_NAME)
++            .english_or_first()
++            .map(|s| s.chars().collect::<std::string::String>());
++        let v = matches!(family.as_deref(), Some("Times" | "Helvetica" | "Courier"));
++        let mut cache = cache.borrow_mut();
++        if cache.len() > 256 {
++            cache.clear();
++        }
++        cache.push((key, v));
++        v
++    });
++    if !adjusted {
++        return 0.0;
++    }
++    let height = metrics.ascent.round() + (-metrics.descent).round();
++    (height * 0.15 + 0.5).floor()
++}
++
+ /// The result of shaping.
+ ///
+ /// After [analyzing][crate::Analysis] your text, [shape the text][crate::Shaper::shape_text],
+@@ -313,7 +354,12 @@ impl ShapedText {
+             )
+         };
+         let units_per_em = metrics.units_per_em as f32;
+-        let font_metrics = FontMetrics::from_skrifa_metrics(&metrics, options.font_size);
++        let font_metrics = {
++            let font = &self.fonts[font_index];
++            let font_ref =
++                skrifa::FontRef::from_index(font.font.data.as_ref(), font.font.index).unwrap();
++            FontMetrics::from_skrifa_metrics(&font_ref, &metrics, options.font_size)
++        };
+ 
+         // `HarfRust` returns glyphs in visual order, so we need to process them as such while
+         // maintaining logical ordering of clusters.

@@ -156,3 +156,5 @@ blitz-dom = { path = "vendor/blitz-dom" }
 blitz-paint = { path = "vendor/blitz-paint" }
 # Flex fit-content clamp; see vendor/taffy/README.lightningpanda.md.
 taffy = { path = "vendor/taffy" }
+# Chromium's ascent for Times/Helvetica/Courier; see vendor/parley_engine/README.lightningpanda.md.
+parley_engine = { path = "vendor/parley_engine" }
