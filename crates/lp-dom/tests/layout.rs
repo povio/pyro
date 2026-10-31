@@ -3118,3 +3118,10 @@ fn cascade_ancestor_prefilter_never_rejects_a_matching_rule() {
         assert!(matched >= rules.len() - 9, "{doctype:?}: only {matched} rules matched");
     }
 }
+
+#[test]
+fn offset_parent_includes_stylesheet_positioned_drawer() {
+    let p = page("<style>.drawer{position:fixed;right:0;top:0;width:200px;height:300px}.popover{position:absolute;top:20px;left:10px;width:50px;height:50px}</style><div id='drawer' class='drawer'><div style='display:contents'><div id='popover' class='popover'></div></div></div>");
+    assert_eq!(p.layout.offset_parent(&p.dom, p.id("popover")), Some(p.id("drawer")));
+    assert_eq!(p.layout.offset_parent(&p.dom, p.id("drawer")), None);
+}

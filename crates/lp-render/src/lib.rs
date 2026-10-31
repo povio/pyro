@@ -23,6 +23,7 @@ mod compare;
 mod hash;
 mod mirror;
 mod net;
+mod svg_use;
 pub mod worker;
 
 use std::collections::HashMap;
@@ -174,6 +175,7 @@ pub struct Painted {
 pub enum RenderError {
     /// No element carries [`CLIP_ATTRIBUTE`] or it has no box.
     NoElement,
+    Resource(String),
     /// The area is empty or larger than [`MAX_WIDTH`] x [`MAX_HEIGHT`].
     BadArea(String),
 }
@@ -181,6 +183,7 @@ pub enum RenderError {
 impl std::fmt::Display for RenderError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            RenderError::Resource(m) => f.write_str(m),
             RenderError::NoElement => f.write_str("the element has no box to capture"),
             RenderError::BadArea(m) => f.write_str(m),
         }
@@ -396,7 +399,10 @@ impl Renderer {
             None => {
                 let bridge = net::Bridge::new(snap, fetcher.clone(), self.resources.scoped(&snap.resource_scope));
                 let doc = blitz_html::HtmlDocument::from_html(&snap.html, self.config(snap, bridge.provider()));
-                let (doc, bridge) = fresh.insert((doc.into_inner(), bridge));
+                let mut doc = doc.into_inner();
+                svg_use::resolve(&mut doc, &snap.base_url, fetcher, self.fetch_timeout)
+                    .map_err(RenderError::Resource)?;
+                let (doc, bridge) = fresh.insert((doc, bridge));
                 let clip = doc.query_selector(&format!("[{CLIP_ATTRIBUTE}]")).ok().flatten();
                 (doc, &*bridge, clip)
             }
@@ -416,7 +422,13 @@ impl Renderer {
         let root = {
             let root = doc.root_element();
             let (size, overflow) = (root.final_layout().size, root.scrollable_overflow());
-            (size.width as f64, (size.height as f64).max(overflow.y1))
+            let clipped = root.primary_styles().is_some_and(|s| {
+                matches!(
+                    s.clone_overflow_y(),
+                    style::values::computed::Overflow::Hidden | style::values::computed::Overflow::Clip
+                )
+            });
+            (size.width as f64, if clipped { size.height as f64 } else { (size.height as f64).max(overflow.y1) })
         };
         // Where the image starts in the document (CSS px) and its size in device px.
         let (origin, scale, w, h) = match area {
