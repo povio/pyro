@@ -81,3 +81,63 @@ Mac the shadow fix halves Chrome's printToPDF and changes zero pixels; it did no
   than source-over, variable-font coordinates, synthetic bold. The 44 cases use none of these.
 - Zero-area fills are dropped. vendor/blitz-paint also skips zero-width border edges: Tailwind's
   `border: 0 solid` otherwise prints as hairlines.
+
+## Blitz-backed layout queries (`LIGHTNINGPANDA_GEOMETRY=blitz`, `a04026e`)
+
+Paprize paginates with `getBoundingClientRect()` heights (plus the computed margins). By default LP answers those
+from lp-dom's flow layout, an approximation. With `LIGHTNINGPANDA_GEOMETRY=blitz`, LP answers them from the same
+Blitz layout that printToPDF paints. Per-case table: [summary.md](summary.md). Final run, load average 12–22.
+
+**Design.** Layout queries are synchronous on the JS thread, and the render worker's Blitz documents live on
+another thread. In this mode the browser thread therefore keeps its own `lp_render::Renderer`, with one persistent,
+mirrored Blitz document per page document. lp-dom recomputes its layout only when the DOM, styles or viewport
+changed (the existing stamp cache skips everything otherwise). When it does, a `GeometrySource` hook builds the
+keyed node list, the mirror applies the difference, Blitz restyles and relays out incrementally, and the element
+boxes replace lp-dom's. Every geometry getter (bounding/client rects, `offset*`, `client*`, `scroll*`) follows from
+that one replacement. Text and range geometry stays lp-dom's. Fonts are the ones Blitz paints with: system fonts
+plus `data:` web fonts. Other sub-resources are not loaded in this mode.
+
+Chromium reports boxes differently from what Blitz paints in four places, so the queries are adjusted:
+
+- Boxes are unrounded (fractional), as Chromium reports them; painting still uses the rounded layout.
+- Table rows and row groups get the union of their cells' boxes. Blitz has no box for a row, so rows measured
+  0 px tall, and Paprize packed too many rows per page.
+- Inline elements get the union of their text fragments, since Blitz gives them no box either.
+- In collapsed-border tables, cells take half of the collapsed cell and row borders. Blitz lays collapsed
+  borders out as gutters and ignores row borders, so `tr.border-t border-b` rows measured 1 px short each.
+
+| | Chrome (fixed) | LP, lp-dom geometry | LP, Blitz geometry |
+|---|---|---|---|
+| page count equal to Chrome | – | 43/44 | 42/44 |
+| cases with `.pz-page` content overflowing vertically | – | 1 (vermas-overflow, 324 px) | **0** |
+| pixel diff per case, median / mean | – | 4.7% / 5.0% | 4.7% / 4.9% |
+| text overlap with Chrome, min / cases < 0.9 | – | 0.833 / 2 | 0.899 / 1 |
+| sum of median pagination ms (44 cases) | 2295 | 3515 | 9491 |
+| sum of median printToPDF ms | 4104 | 938 | 936 |
+| 6 concurrent: docs/s | 12.5 | 24.7 | 8.2 |
+| 6 concurrent: p50 / p95 ms | 213 / 335 | 92 / 417 | 118 / 1469 |
+| 6 concurrent: peak RSS MB | 4285 | 1164 | 1332 |
+
+- house-bl-final-overflowing-table now has 4 pages, as in Chrome (3 with lp-dom geometry). vermas-overflow no
+  longer clips 13 rows: 36 rows on page 1, as in Chrome. Its text match went from 0.83 to 0.99.
+- booking-request-overflow and booking-confirmation-overflow give 9 pages; Chrome gives 10. All heights match now
+  except one cell, where Chrome wraps "1.130,069 ft³" onto two lines in a 62 px column and Blitz keeps one line
+  (Blitz's text widths come out whole-pixel: 62.00 vs Chrome's 61.56). Each page ends up a row longer. Not fixed.
+- Cost: 3205 forced layouts over the 44 cases, 1.7 ms each. That splits into 1.1 ms of mirror diff plus Blitz
+  restyle/relayout, 0.35 ms rebuilding the node list and 0.25 ms reading boxes, plus lp-dom's own pass. cmr-overflow
+  alone forces 2544 layouts (3.5 s; Chrome takes 0.3 s for the same work). house-bl forces 147 (570 ms; Chrome 77 ms).
+  Already done: no work when the DOM/style/viewport stamp is unchanged, incremental Blitz relayout through the
+  mirror, an O(n) box read, text layouts walked only for inline elements that need a rect, and FxHash maps.
+  The next step is feeding lp-dom's change journal to the mirror, instead of rebuilding and diffing the whole node
+  list per layout, and skipping lp-dom's flow pass in this mode.
+- Default behaviour is unchanged: without the variable, all getters use lp-dom's flow layout.
+
+## The two cases below 90% text match after the Taffy fix
+
+- **vermas-overflow (0.83):** a pagination mismatch, the same cause as house-bl. Paprize, measuring with lp-dom's
+  geometry, put 36 rows on page 1. In Blitz they ran 324 px past the page box and 13 rows were clipped. Blitz
+  geometry fixes it (0.99). The word "TRANSOCEAN" is still missing: it is SVG `<text>` in the logo, which usvg draws
+  as paths.
+- **cmr-populated (0.899), with cmr-reference and cmr-long-address at 0.90:** the margin labels use
+  `writing-mode: vertical-rl`. Blitz does not support it (its blitz-dom `writing-mode` feature is off), so the labels
+  are laid out horizontally across the form.
