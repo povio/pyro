@@ -689,6 +689,37 @@ impl LayoutPassState<'_> {
         // Perform inline layout
         #[cfg(feature = "floats")]
         {
+            // Floats waiting for the line they follow to end.
+            let mut pending_floats: Vec<(NodeId, LayoutOutput, taffy::Rect<f32>, taffy::FloatDirection, Clear)> =
+                Vec::new();
+            macro_rules! place_float {
+                ($node_id:expr, $output:expr, $margin:expr, $direction:expr, $clear:expr, $min_y:expr) => {{
+                    let (node_id, mut output, margin) = ($node_id, $output, $margin);
+                    // Note: `pos` is content-box relative
+                    let pos = block_ctx.place_floated_box(
+                        output.size + margin.sum_axes(),
+                        $min_y,
+                        $direction,
+                        $clear,
+                        false,
+                    );
+                    let location = taffy::Point {
+                        x: pos.x + margin.left + container_pb.left,
+                        y: pos.y + margin.top + container_pb.top,
+                    };
+                    let layout = self.nodes[node_id].unrounded_layout_mut();
+                    layout.size = output.size;
+                    layout.location = location;
+                    layout.margin = margin;
+
+                    // Translate anchors from item-relative to container-relative
+                    // coordinates and collect candidates bubbled from the float's subtree
+                    if !output.oof_candidates.is_empty() {
+                        output.oof_candidates.translate(location);
+                        oof_candidates.append(&mut output.oof_candidates);
+                    }
+                }};
+            }
             let mut breaker = inline_layout.layout.break_lines();
             let initial_slot = block_ctx.find_content_slot(0.0, Clear::None, None);
             let mut has_active_floats = initial_slot.segment_id.is_some();
@@ -709,6 +740,12 @@ impl LayoutPassState<'_> {
                 match yield_data {
                     YieldData::LineBreak(_line_break_data) => {
                         let state = breaker.state_mut();
+
+                        let line_top = state.line_y() as f32 / scale;
+                        for (node_id, output, margin, direction, clear) in pending_floats.drain(..) {
+                            place_float!(node_id, output, margin, direction, clear, line_top);
+                            has_active_floats = true;
+                        }
 
                         if has_active_floats {
                             // TODO: revert state and retry layout if a line doesn't fit
@@ -756,44 +793,27 @@ impl LayoutPassState<'_> {
 
                         let margin_sum = margin.sum_axes();
 
-                        let mut output = self.compute_child_layout(
+                        let output = self.compute_child_layout(
                             crate::taffy_node_id(node_id),
                             float_child_inputs,
                         );
-                        let min_y = state.line_y() as f32 / scale;
+                        // A float that doesn't fit beside the line's content so far
+                        // goes below that line: it is placed when the line ends.
+                        let used = box_break_data.advance / scale;
+                        let line_width = state.line_max_advance() / scale;
+                        if used > 0.0 && used + output.size.width + margin_sum.width > line_width + 0.01 {
+                            pending_floats.push((node_id, output, margin, direction, clear));
+                        } else {
+                            let min_y = state.line_y() as f32 / scale;
+                            place_float!(node_id, output, margin, direction, clear, min_y);
+                            let min_y = state.line_y() / scale as f64;
+                            let next_slot =
+                                block_ctx.find_content_slot(min_y as f32, Clear::None, None);
+                            has_active_floats = next_slot.segment_id.is_some();
 
-                        // Note: `pos` is content-box relative
-                        let pos = block_ctx.place_floated_box(
-                            output.size + margin_sum,
-                            min_y,
-                            direction,
-                            clear,
-                            false,
-                        );
-
-                        let min_y = state.line_y() / scale as f64; //.max(pos.y as f64);
-                        let next_slot =
-                            block_ctx.find_content_slot(min_y as f32, Clear::None, None);
-                        has_active_floats = next_slot.segment_id.is_some();
-
-                        state.set_line_max_advance(next_slot.width * scale);
-                        state.set_line_x(next_slot.x * scale);
-                        state.set_line_y((next_slot.y * scale) as f64);
-
-                        let location = taffy::Point {
-                            x: pos.x + margin.left + container_pb.left,
-                            y: pos.y + margin.top + container_pb.top,
-                        };
-                        let layout = self.nodes[node_id].unrounded_layout_mut();
-                        layout.size = output.size;
-                        layout.location = location;
-                        layout.margin = margin;
-
-                        // Translate anchors from item-relative to container-relative
-                        // coordinates and collect candidates bubbled from the float's subtree
-                        if !output.oof_candidates.is_empty() {
-                            output.oof_candidates.translate(location);
-                            oof_candidates.append(&mut output.oof_candidates);
+                            state.set_line_max_advance(next_slot.width * scale);
+                            state.set_line_x(next_slot.x * scale);
+                            state.set_line_y((next_slot.y * scale) as f64);
                         }
 
                         // dbg!(&layout.size);
@@ -815,6 +835,10 @@ impl LayoutPassState<'_> {
                         // }
                     }
                 }
+            }
+            let line_top = breaker.state().line_y() as f32 / scale;
+            for (node_id, output, margin, direction, clear) in pending_floats.drain(..) {
+                place_float!(node_id, output, margin, direction, clear, line_top);
             }
             breaker.finish();
         }

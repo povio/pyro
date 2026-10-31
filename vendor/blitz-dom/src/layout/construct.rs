@@ -843,6 +843,15 @@ fn collect_complex_layout_children(
         else if needs_wrap(child_node_kind, display_outside) {
             out.push_wrapped(container_node_id, child_id, doc);
         }
+        // A float after inline content belongs to that inline formatting context
+        // (it sits beside the line it follows rather than below it).
+        else if out.anonymous_block_id.is_some()
+            && doc.nodes[child_id]
+                .primary_styles()
+                .is_some_and(|s| s.clone_float() != Float::None)
+        {
+            out.push_wrapped(container_node_id, child_id, doc);
+        }
         // Else push the child directly (and close any open "anonymous block container")
         else {
             out.push(child_id, doc);

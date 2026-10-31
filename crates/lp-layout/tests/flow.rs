@@ -4314,7 +4314,6 @@ fn grid_template_areas_and_named_lines_like_chromium() {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn floats_like_chromium() {
     // Chromium (800x600): left/right floats with margins; lines shortened
     // beside them; floats stacking and dropping below when the line is
