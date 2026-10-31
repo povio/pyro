@@ -237,8 +237,22 @@ fn convert_delta(d: lp_dom::snapshot::RenderDelta) -> Vec<DeltaOp> {
         .collect()
 }
 
-impl GeometrySource for BlitzGeometry {
-    fn sync(&self, dom: &Dom, layout: &Layout) {
+impl BlitzGeometry {
+    /// The pointer's and focus's elements, which the node list does not carry.
+    fn sync_interaction(&self, dom: &Dom, layout: &Layout) {
+        let doc = layout.document();
+        let hovered = dom.hovered(doc).map(lp_dom::snapshot::render_key);
+        let focused = dom.focused(doc).ok().flatten().map(lp_dom::snapshot::render_key);
+        RENDERER.with(|r| {
+            if let Ok(mut r) = r.try_borrow_mut() {
+                if let Some(r) = r.as_mut() {
+                    r.set_interaction(self.page, hovered, focused);
+                }
+            }
+        });
+    }
+
+    fn sync_document(&self, dom: &Dom, layout: &Layout) {
         let v = layout.viewport();
         let viewport = (v.width, v.height, v.device_scale_factor.to_bits(), v.color_scheme == lp_dom::media::ColorScheme::Dark);
         let now = (dom.version(), layout.style().observation_stamp(dom).1, viewport);
@@ -279,13 +293,20 @@ impl GeometrySource for BlitzGeometry {
             LAYOUT_NS.fetch_add((t.fetch + t.layout).as_nanos() as u64, Ordering::Relaxed);
         }
     }
+}
 
+impl GeometrySource for BlitzGeometry {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
 
     fn set_base_url(&self, url: &str) {
         *self.base_url.borrow_mut() = url.to_owned();
+    }
+
+    fn sync(&self, dom: &Dom, layout: &Layout) {
+        self.sync_document(dom, layout);
+        self.sync_interaction(dom, layout);
     }
 
     fn element_box(&self, key: u64) -> Option<ExternalBox> {

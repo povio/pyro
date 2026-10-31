@@ -109,7 +109,8 @@ impl Geometry {
         let rect = t.transform_rect_bbox(Rect::new(0.0, 0.0, l.size.width as f64, l.size.height as f64));
         let client_width = (l.size.width - l.border.left - l.border.right - l.scrollbar_size.width).max(0.0) as f64;
         let client_height = (l.size.height - l.border.top - l.border.bottom - l.scrollbar_size.height).max(0.0) as f64;
-        let o = node.scrollable_overflow();
+        // Scrollable overflow is kept in device px.
+        let o = node.scrollable_overflow().scale_from_origin(1.0 / doc.viewport().scale_f64());
         Some(LayoutBox {
             x: rect.x0,
             y: rect.y0,
@@ -123,8 +124,28 @@ impl Geometry {
         })
     }
 
-    /// `id`'s box as Chromium reports it (see the module docs).
+    /// `id`'s box as Chromium reports it (see the module docs), in
+    /// Chromium's layout units: each value truncated toward zero to 1/64 px
+    /// (100.7px reports 100.6875). The values are exact binary fractions, so
+    /// arithmetic on them agrees wherever it is done; a 1/100 unit tolerance
+    /// keeps f32 layout noise (19.999998) from losing a whole unit.
     pub(crate) fn element_box(&self, doc: &BaseDocument, id: NodeId) -> Option<LayoutBox> {
+        let b = self.adjusted_box(doc, id)?;
+        let unit = |v: f64| v.signum() * ((v.abs() * 64.0 + 0.01).trunc() / 64.0);
+        Some(LayoutBox {
+            x: unit(b.x),
+            y: unit(b.y),
+            width: unit(b.width),
+            height: unit(b.height),
+            client_width: unit(b.client_width),
+            client_height: unit(b.client_height),
+            scroll_width: unit(b.scroll_width),
+            scroll_height: unit(b.scroll_height),
+            fixed: b.fixed,
+        })
+    }
+
+    fn adjusted_box(&self, doc: &BaseDocument, id: NodeId) -> Option<LayoutBox> {
         let mut b = self.laid_out(doc, id)?;
         if is_cell(doc, id) {
             if let Some((gx, top, bottom)) = cell_gutters(doc, id) {
@@ -176,15 +197,25 @@ impl Geometry {
     /// text layout: glyph runs (content area: ascent to descent) and atomic
     /// inlines inside it.
     fn inline_union(&self, doc: &BaseDocument, id: NodeId) -> Option<Rect> {
-        let mut root_id = doc.get_node(id)?.parent;
-        while let Some(r) = root_id {
+        // The nearest ancestor laying the element out inline: a DOM ancestor,
+        // or an anonymous block one wraps its inline children in.
+        let mut child = id;
+        let mut cur = doc.get_node(id)?.parent;
+        let root_id = loop {
+            let r = cur?;
             let n = doc.get_node(r)?;
             if n.flags.is_inline_root() {
-                break;
+                break r;
             }
-            root_id = n.parent;
-        }
-        let root_id = root_id?;
+            let anon = n.anonymous_blocks.iter().copied().find(|&a| {
+                doc.get_node(a).is_some_and(|a| a.flags.is_inline_root() && a.children.contains(&child))
+            });
+            if let Some(a) = anon {
+                break a;
+            }
+            child = r;
+            cur = n.parent;
+        };
         let root = doc.get_node(root_id)?;
         let text = root.element_data()?.inline_layout_data.as_ref()?;
         let (t, _) = self.transform(doc, root_id)?;

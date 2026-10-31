@@ -619,6 +619,13 @@ impl Dom {
             _ => NIL,
         }
     }
+    /// The element the pointer is over (`:hover`), if any.
+    pub fn hovered(&self, doc: NodeId) -> Option<NodeId> {
+        let d = self.check(doc).ok()?;
+        let i = self.hovered_idx(d);
+        (i != NIL).then(|| self.id_of(i))
+    }
+
     pub(crate) fn hovered_idx(&self, doc: u32) -> u32 {
         match &self.n(doc).kind {
             NodeKind::Document(d) if d.hovered != NIL && self.slot_live(d.hovered) => d.hovered,

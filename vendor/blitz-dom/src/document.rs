@@ -1912,6 +1912,28 @@ impl BaseDocument {
         true
     }
 
+    /// Puts `:hover` on `node` and its ancestors (and off the previous
+    /// ones), as a pointer over it would: for an embedder that tracks the
+    /// pointer itself. `None` clears hover.
+    pub fn set_hover_node(&mut self, node: Option<NodeId>) -> bool {
+        let node = node.and_then(|id| self.nearest_non_anonymous_ancestor(id));
+        if node == self.hover_node_id {
+            return false;
+        }
+        let old_node_path = self.maybe_node_element_ancestors(self.hover_node_id);
+        let new_node_path = self.maybe_node_element_ancestors(node);
+        let same_count = old_node_path.iter().zip(&new_node_path).take_while(|(o, n)| o == n).count();
+        for &id in old_node_path.iter().skip(same_count) {
+            self.snapshot_node_and(id, ElementState::HOVER, |node| node.unhover());
+        }
+        for &id in new_node_path.iter().skip(same_count) {
+            self.snapshot_node_and(id, ElementState::HOVER, |node| node.hover());
+        }
+        self.hover_node_id = node;
+        self.hover_hit_node_id = node;
+        true
+    }
+
     pub fn clear_hover(&mut self) -> bool {
         // The pointer is no longer over the document, so stop re-resolving
         // hover state against it.

@@ -618,6 +618,30 @@ impl Renderer {
         Ok(timings)
     }
 
+    /// Puts `:hover` on the element keyed `hovered` and focus on `focused`
+    /// in `page`'s persistent document (the page's pointer and focus, which
+    /// a node list does not carry), restyling and relaying out what that
+    /// changes.
+    pub fn set_interaction(&mut self, page: u64, hovered: Option<u64>, focused: Option<u64>) {
+        let Some(m) = self.mirrors.get_mut(&page) else { return };
+        let hover = hovered.and_then(|k| m.node(k));
+        let focus = focused.and_then(|k| m.node(k));
+        let mut changed = m.doc.set_hover_node(hover);
+        if m.doc.get_focussed_node_id() != focus {
+            match focus {
+                Some(id) => {
+                    m.doc.set_focus_to(id);
+                }
+                None => m.doc.clear_focus(),
+            }
+            changed = true;
+        }
+        if changed {
+            m.doc.resolve(0.0);
+            self.geometry.entry(page).or_default().clear();
+        }
+    }
+
     /// The box of the element keyed `key` in `page`'s persistent document,
     /// as of the last [`Renderer::sync_layout`] (see [`LayoutBox`]).
     pub fn element_box(&self, page: u64, key: u64) -> Option<LayoutBox> {
@@ -635,7 +659,8 @@ impl Renderer {
         let g = self.geometry.get(&page).ok_or(RenderError::NoElement)?;
         let boxes = m.elements().filter_map(|(key, id)| Some((key, g.element_box(&m.doc, id)?))).collect();
         let root = m.doc.root_element();
-        let (size, overflow) = (root.final_layout().size, *root.scrollable_overflow());
+        let (size, overflow) =
+            (root.final_layout().size, root.scrollable_overflow().scale_from_origin(1.0 / m.doc.viewport().scale_f64()));
         timings.scene = t.elapsed();
         Ok(LayoutBoxes {
             boxes,
