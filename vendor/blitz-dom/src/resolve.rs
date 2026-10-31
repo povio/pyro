@@ -74,6 +74,7 @@ impl BaseDocument {
 
         let root_node_id = self.root_element().id;
         debug_timer!(timer, feature = "log-phase-times");
+        let mut phase_t = std::time::Instant::now();
 
         // Apply any device changes (viewport resize, zoom, color-scheme, etc)
         // accumulated since the last resolve as a single device rebuild.
@@ -82,6 +83,7 @@ impl BaseDocument {
         // we need to resolve stylist first since it will need to drive our layout bits
         self.resolve_stylist(current_time_for_animations);
         timer.record_time("style");
+        phase_profile::mark(0, &mut phase_t);
 
         // Non-incremental mode is "every node is damaged every frame": mark the
         // whole tree and let the same damage pipeline reconstruct and relayout
@@ -94,12 +96,14 @@ impl BaseDocument {
         // Propagate damage flags (from mutation and restyles) up and down the tree
         self.propagate_damage_flags(root_node_id);
         timer.record_time("damage");
+        phase_profile::mark(1, &mut phase_t);
 
         // Fix up tree for layout (insert anonymous blocks as necessary, etc)
         self.resolve_layout_children();
         #[cfg(debug_assertions)]
         self.assert_layout_parents_consistent();
         timer.record_time("construct");
+        phase_profile::mark(2, &mut phase_t);
 
         self.resolve_deferred_tasks();
         // Flush background/mask images from style to dedicated storage on the
@@ -107,27 +111,32 @@ impl BaseDocument {
         // pseudo-element box construction), fetching any not-yet-loaded images.
         self.flush_pending_style_images();
         timer.record_time("pconstruct");
+        phase_profile::mark(3, &mut phase_t);
 
         // Next we resolve layout with the data resolved by stlist
         self.resolve_layout();
         timer.record_time("layout");
+        phase_profile::mark(4, &mut phase_t);
         self.nodes.bump_geometry_generation();
 
         // Resolve transforms
         self.resolve_transforms(root_node_id);
         timer.record_time("transform");
+        phase_profile::mark(5, &mut phase_t);
 
         // Build paint children / stacking contexts for damaged subtrees. Runs
         // after layout and transforms so that stacking-context roots created by
         // this frame's transforms are picked up, and before damage is cleared.
         self.build_paint_tree(root_node_id);
         timer.record_time("paint_tree");
+        phase_profile::mark(6, &mut phase_t);
 
         // Clear all damage and dirty flags, walking only subtrees which are
         // marked as (potentially) containing damage.
         let doc_node_id = self.root_node().id;
         self.clear_damage_and_dirty_flags(doc_node_id);
         timer.record_time("c_damage");
+        phase_profile::mark(7, &mut phase_t);
 
         // Re-resolve the hover node from the pointer position against the fresh
         // layout. This must run *after* the damage/dirty flags are cleared
@@ -164,6 +173,7 @@ impl BaseDocument {
         }
         self.subdoc_is_animating = subdoc_is_animating;
         timer.record_time("subdocs");
+        phase_profile::mark(8, &mut phase_t);
 
         timer.print_times(&format!("Resolve({}): ", self.id()));
     }
@@ -472,5 +482,30 @@ impl BaseDocument {
 
         // println!("\n\n");
         // taffy::print_tree(self, root_node_id)
+    }
+}
+
+/// lightningpanda: cumulative time per `resolve` phase (style, damage,
+/// construct, pconstruct, layout, transform, paint_tree, c_damage, subdocs),
+/// for profiling incremental relayout.
+pub mod phase_profile {
+    use std::cell::Cell;
+    use std::time::Instant;
+    std::thread_local! {
+        static NS: Cell<[u64; 9]> = const { Cell::new([0; 9]) };
+    }
+    pub(crate) fn mark(i: usize, t: &mut Instant) {
+        let now = Instant::now();
+        let d = (now - *t).as_nanos() as u64;
+        *t = now;
+        NS.with(|ns| {
+            let mut v = ns.get();
+            v[i] += d;
+            ns.set(v);
+        });
+    }
+    /// Milliseconds per phase on this thread so far.
+    pub fn peek() -> [f64; 9] {
+        NS.with(|ns| ns.get().map(|n| n as f64 / 1e6))
     }
 }

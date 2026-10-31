@@ -78,6 +78,11 @@ pub mod sync_profile {
     }
 }
 
+/// Milliseconds per Blitz `resolve` phase on this thread (profiling).
+pub fn blitz_phases() -> [f64; 9] {
+    blitz_dom::phase_profile::peek()
+}
+
 /// Content digest for caching baselines (xxh3).
 pub fn digest(bytes: &[u8]) -> u64 {
     xxhash_rust::xxh3::xxh3_64(bytes)
