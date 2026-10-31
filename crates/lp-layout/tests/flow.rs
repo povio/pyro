@@ -3633,7 +3633,6 @@ fn scroll_anchoring_reselects_in_the_previous_layout_like_chromium() {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn caret_from_point_takes_the_nearest_character_boundary_like_chromium() {
     // Native selection needs the caret under a point. Chromium (measured,
     // monospace 20px): a point 20% into the third character is at offset 2,
@@ -3644,7 +3643,14 @@ fn caret_from_point_takes_the_nearest_character_boundary_like_chromium() {
     let p = page(html);
     let (tp, tq) = (p.dom.first_child(p.id("p")).unwrap().unwrap(), p.dom.first_child(p.id("q")).unwrap().unwrap());
     let r = p.layout.text_rect(&p.dom, tp).unwrap();
-    let w = |s: &str| lp_dom::text_metrics::text_width(s, 20.0, 400);
+    // The engine's advances: the x of each character boundary of "abcdefghij".
+    let result = p.layout.layout_result(&p.dom);
+    let edges = result.text_runs.iter().find(|t| t.node == tp).unwrap().edges().to_vec();
+    let w = |s: &str| {
+        let at = |o: u32| edges.iter().find(|e| e.0 == o).unwrap().1;
+        let start = "abcdefghij".find(s).unwrap() as u32;
+        at(start + s.len() as u32) - at(start)
+    };
     let y = r.y + r.height / 2.0;
     let body = p.dom.parent_element(p.id("p")).unwrap().unwrap();
     let at = |x: f64, y: f64| p.layout.caret_from_point(&p.dom, body, x, y, &|_| true).map(|(n, o, _)| (n, o));

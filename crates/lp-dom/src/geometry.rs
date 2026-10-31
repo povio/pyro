@@ -174,6 +174,11 @@ pub struct TextRun {
 }
 
 impl TextRun {
+    /// Caret positions (UTF-16 offset, document x) from `start` to `end`.
+    pub fn edges(&self) -> &[(u32, f64)] {
+        &self.edges
+    }
+
     /// The offset of the character boundary nearest to `dx` px from the
     /// run's left edge, as Chromium places a caret under a point.
     pub fn offset_at(&self, dx: f64) -> u32 {
