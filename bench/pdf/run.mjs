@@ -44,14 +44,31 @@ const readPayload = async (c) => {
 };
 
 // ---- process-tree RSS ----
+// One long-lived `ps` loop in a child shell (50 ms), parsed as it streams:
+// sampling must not block this process's event loop, which times the runs.
+const psLoop = spawn('sh', ['-c', 'while :; do ps -A -o pid=,ppid=,rss=; echo ---; sleep 0.05; done'], {
+  stdio: ['ignore', 'pipe', 'ignore'],
+});
+let psBuf = '';
+let psRows = [];
+const watchers = new Set();
+psLoop.stdout.on('data', (d) => {
+  psBuf += d;
+  let i;
+  while ((i = psBuf.indexOf('---\n')) >= 0) {
+    const block = psBuf.slice(0, i);
+    psBuf = psBuf.slice(i + 4);
+    psRows = block
+      .trim()
+      .split('\n')
+      .map((l) => l.trim().split(/\s+/).map(Number));
+    for (const w of watchers) w();
+  }
+});
 const treeRss = (root) => {
-  const rows = execFileSync('ps', ['-A', '-o', 'pid=,ppid=,rss='], { encoding: 'utf8' })
-    .trim()
-    .split('\n')
-    .map((l) => l.trim().split(/\s+/).map(Number));
   const kids = new Map();
-  for (const [pid, ppid] of rows) kids.set(ppid, [...(kids.get(ppid) ?? []), pid]);
-  const rss = new Map(rows.map(([pid, , r]) => [pid, r]));
+  for (const [pid, ppid] of psRows) kids.set(ppid, [...(kids.get(ppid) ?? []), pid]);
+  const rss = new Map(psRows.map(([pid, , r]) => [pid, r]));
   let total = 0;
   const stack = [root];
   while (stack.length) {
@@ -62,15 +79,10 @@ const treeRss = (root) => {
   return total * 1024;
 };
 const sampler = (pid) => {
-  let peak = 0;
-  const tick = () => {
-    try {
-      peak = Math.max(peak, treeRss(pid));
-    } catch {}
-  };
-  tick();
-  const t = setInterval(tick, 25);
-  return { stop: () => (clearInterval(t), tick(), peak) };
+  let peak = treeRss(pid);
+  const w = () => (peak = Math.max(peak, treeRss(pid)));
+  watchers.add(w);
+  return { stop: () => (watchers.delete(w), w(), peak) };
 };
 
 // ---- engines ----
@@ -210,8 +222,11 @@ const lpReport = async (page, landscape) => {
 
 const load = () => execFileSync('uptime', { encoding: 'utf8' }).trim();
 const meta = { started: new Date().toISOString(), loadBefore: load() };
-const rows = [];
+// Rows are written after every case; a rerun with the same --out resumes.
+const runsFile = path.join(out, 'runs.json');
+const rows = await readFile(runsFile, 'utf8').then(JSON.parse).catch(() => []);
 for (const c of cases) {
+  if (rows.some((r) => r.case === c.name)) continue;
   const { payload, landscape } = await readPayload(c);
   for (let rep = 0; rep < reps; rep++) {
     for (const e of engines) {
@@ -256,9 +271,10 @@ for (const c of cases) {
       await preparePage(e.page, e.build);
     }
   }
+  await writeFile(runsFile, JSON.stringify(rows, null, 1));
 }
 meta.loadAfterSequential = load();
-await writeFile(path.join(out, 'runs.json'), JSON.stringify(rows, null, 1));
+await writeFile(runsFile, JSON.stringify(rows, null, 1));
 
 // ---- throughput: N concurrent requests over all cases ----
 const concurrency = Number(args.concurrency ?? 6);
@@ -322,3 +338,4 @@ for (const e of engines) {
   await e.browser.close().catch(() => {});
   e.proc.kill();
 }
+psLoop.kill();

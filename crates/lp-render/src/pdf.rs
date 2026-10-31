@@ -40,11 +40,13 @@ pub struct PdfStats {
     /// Glyphs with no cmap entry: drawn, but no text behind them.
     pub glyphs_without_text: u32,
     pub images: u32,
+    /// Inset box shadows, written as box-minus-hole fills.
+    pub inset_shadows: u32,
     /// Zero-area or fully transparent fills: not written.
     pub degenerate_skipped: u32,
     /// Commands outside the page they were replayed for.
     pub culled: u32,
-    /// Blurred shadows: not drawn.
+    /// Blurred shadows: outset ones not drawn, inset ones drawn unblurred.
     pub box_shadows_skipped: u32,
     /// Layer filters and backdrop filters: content drawn unfiltered.
     pub filters_skipped: u32,
@@ -173,7 +175,36 @@ struct Replay<'a, 'b> {
 
 impl Replay<'_, '_> {
     fn run(&mut self, scene: &Scene) {
-        for cmd in &scene.commands {
+        let cmds = &scene.commands;
+        let mut i = 0;
+        while i < cmds.len() {
+            let cmd = &cmds[i];
+            i += 1;
+            // Blitz's inset box-shadow: fill the box, then knock the shadow's
+            // hole out with a `DestOut` layer. PDF has no destination-out;
+            // the same pixels are one even-odd fill of box minus hole (the
+            // blur is dropped).
+            if let (RenderCommand::Fill(f), Some(RenderCommand::PushLayer(l)), Some(RenderCommand::BoxShadow(b)), Some(RenderCommand::PopLayer)) =
+                (cmd, cmds.get(i), cmds.get(i + 1), cmds.get(i + 2))
+            {
+                if l.blend.compose == peniko::Compose::DestOut {
+                    i += 3;
+                    let mut path = f.shape.clone();
+                    path.apply_affine(f.transform);
+                    let mut hole = kurbo::RoundedRect::from_rect(b.rect, b.radius).to_path(0.1);
+                    hole.apply_affine(b.transform);
+                    path.extend(hole);
+                    if !self.visible(path.bounding_box()) {
+                        continue;
+                    }
+                    if b.std_dev > 0.5 {
+                        self.stats.box_shadows_skipped += 1;
+                    }
+                    self.stats.inset_shadows += 1;
+                    self.fill(&path, Affine::IDENTITY, Fill::EvenOdd, &f.brush, f.brush_transform);
+                    continue;
+                }
+            }
             match cmd {
                 RenderCommand::PushClipLayer(c) => self.layers.push(Pending {
                     layer: Layer::Clip { path: to_path(&c.clip, c.transform), rule: rule(c.fill) },

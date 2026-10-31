@@ -1,0 +1,6231 @@
+[
+ {
+  "case": "invoice-preview",
+  "engine": "chrome-base",
+  "rep": 0,
+  "paginateMs": 42.528749999999945,
+  "pdfMs": 148.46583299999975,
+  "totalMs": 190.9945829999997,
+  "bytes": 249421,
+  "pages": 1,
+  "peakRss": 1906720768
+ },
+ {
+  "case": "invoice-preview",
+  "engine": "chrome-fixed",
+  "rep": 0,
+  "paginateMs": 42.13770799999975,
+  "pdfMs": 95.55045800000016,
+  "totalMs": 137.6881659999999,
+  "bytes": 193584,
+  "pages": 1,
+  "peakRss": 1579532288
+ },
+ {
+  "case": "invoice-preview",
+  "engine": "lp-fixed",
+  "rep": 0,
+  "paginateMs": 64.48004200000014,
+  "pdfMs": 26.544916999999714,
+  "totalMs": 91.02495899999985,
+  "bytes": 79689,
+  "pages": 1,
+  "peakRss": 239976448,
+  "lp": {
+   "bySelector": true,
+   "commands": 295,
+   "ms": {
+    "fetch": 0,
+    "layout": 0.078083,
+    "paint": 0.27025,
+    "pdf": 2.826959,
+    "snapshot": 0.003334,
+    "total": 3.213292
+   },
+   "pages": [
+    {
+     "culprit": "<div \"\"> 0,0 795x1123 overflow 1170x1123",
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 375,
+     "width": 795,
+     "x": 0,
+     "y": 0
+    }
+   ],
+   "stats": {
+    "boxShadowsSkipped": 0,
+    "brushesSkipped": 0,
+    "composeSkipped": 0,
+    "culled": 0,
+    "degenerateSkipped": 153,
+    "emboldenSkipped": 0,
+    "fills": 26,
+    "filtersSkipped": 0,
+    "fontsFailed": 0,
+    "glyphRuns": 102,
+    "glyphs": 1333,
+    "glyphsWithoutText": 0,
+    "images": 1,
+    "insetShadows": 0,
+    "strokes": 2,
+    "variableRuns": 0
+   }
+  }
+ },
+ {
+  "case": "invoice-preview",
+  "engine": "chrome-base",
+  "rep": 1,
+  "paginateMs": 47.943665999999666,
+  "pdfMs": 149.71091700000034,
+  "totalMs": 197.654583,
+  "bytes": 249421,
+  "peakRss": 1983234048
+ },
+ {
+  "case": "invoice-preview",
+  "engine": "chrome-fixed",
+  "rep": 1,
+  "paginateMs": 46.690708000000086,
+  "pdfMs": 89.34708299999966,
+  "totalMs": 136.03779099999974,
+  "bytes": 193584,
+  "peakRss": 1819656192
+ },
+ {
+  "case": "invoice-preview",
+  "engine": "lp-fixed",
+  "rep": 1,
+  "paginateMs": 66.58437499999991,
+  "pdfMs": 25.715375000000222,
+  "totalMs": 92.29975000000013,
+  "bytes": 79689,
+  "peakRss": 265863168
+ },
+ {
+  "case": "invoice-preview",
+  "engine": "chrome-base",
+  "rep": 2,
+  "paginateMs": 43.51133300000038,
+  "pdfMs": 146.7639589999999,
+  "totalMs": 190.27529200000026,
+  "bytes": 249421,
+  "peakRss": 2028158976
+ },
+ {
+  "case": "invoice-preview",
+  "engine": "chrome-fixed",
+  "rep": 2,
+  "paginateMs": 43.19620799999984,
+  "pdfMs": 90.69700000000012,
+  "totalMs": 133.89320799999996,
+  "bytes": 193584,
+  "peakRss": 1836892160
+ },
+ {
+  "case": "invoice-preview",
+  "engine": "lp-fixed",
+  "rep": 2,
+  "paginateMs": 69.1319999999996,
+  "pdfMs": 26.329250000000684,
+  "totalMs": 95.46125000000029,
+  "bytes": 79689,
+  "peakRss": 319209472
+ },
+ {
+  "case": "invoice-final",
+  "engine": "chrome-base",
+  "rep": 0,
+  "paginateMs": 42.31383300000016,
+  "pdfMs": 137.5302500000007,
+  "totalMs": 179.84408300000086,
+  "bytes": 248378,
+  "pages": 1,
+  "peakRss": 2036334592
+ },
+ {
+  "case": "invoice-final",
+  "engine": "chrome-fixed",
+  "rep": 0,
+  "paginateMs": 43.51324999999997,
+  "pdfMs": 91.47787499999959,
+  "totalMs": 134.99112499999956,
+  "bytes": 192541,
+  "pages": 1,
+  "peakRss": 1918255104
+ },
+ {
+  "case": "invoice-final",
+  "engine": "lp-fixed",
+  "rep": 0,
+  "paginateMs": 66.47262500000033,
+  "pdfMs": 28.15466699999979,
+  "totalMs": 94.62729200000012,
+  "bytes": 79639,
+  "pages": 1,
+  "peakRss": 329596928,
+  "lp": {
+   "bySelector": true,
+   "commands": 295,
+   "ms": {
+    "fetch": 0,
+    "layout": 0.09016700000000001,
+    "paint": 0.268291,
+    "pdf": 2.841125,
+    "snapshot": 0.003583,
+    "total": 3.242125
+   },
+   "pages": [
+    {
+     "culprit": "<div \"\"> 0,0 795x1123 overflow 1170x1123",
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 375,
+     "width": 795,
+     "x": 0,
+     "y": 0
+    }
+   ],
+   "stats": {
+    "boxShadowsSkipped": 0,
+    "brushesSkipped": 0,
+    "composeSkipped": 0,
+    "culled": 0,
+    "degenerateSkipped": 153,
+    "emboldenSkipped": 0,
+    "fills": 26,
+    "filtersSkipped": 0,
+    "fontsFailed": 0,
+    "glyphRuns": 102,
+    "glyphs": 1333,
+    "glyphsWithoutText": 0,
+    "images": 1,
+    "insetShadows": 0,
+    "strokes": 2,
+    "variableRuns": 0
+   }
+  }
+ },
+ {
+  "case": "invoice-final",
+  "engine": "chrome-base",
+  "rep": 1,
+  "paginateMs": 44.46604099999968,
+  "pdfMs": 137.7016250000006,
+  "totalMs": 182.16766600000028,
+  "bytes": 248378,
+  "peakRss": 2074591232
+ },
+ {
+  "case": "invoice-final",
+  "engine": "chrome-fixed",
+  "rep": 1,
+  "paginateMs": 44.506083999999646,
+  "pdfMs": 85.75329099999999,
+  "totalMs": 130.25937499999964,
+  "bytes": 192541,
+  "peakRss": 1957920768
+ },
+ {
+  "case": "invoice-final",
+  "engine": "lp-fixed",
+  "rep": 1,
+  "paginateMs": 39.653707999999824,
+  "pdfMs": 27.655083999999988,
+  "totalMs": 67.30879199999981,
+  "bytes": 79639,
+  "peakRss": 351911936
+ },
+ {
+  "case": "invoice-final",
+  "engine": "chrome-base",
+  "rep": 2,
+  "paginateMs": 41.256374999999935,
+  "pdfMs": 139.12237499999992,
+  "totalMs": 180.37874999999985,
+  "bytes": 248378,
+  "peakRss": 2058485760
+ },
+ {
+  "case": "invoice-final",
+  "engine": "chrome-fixed",
+  "rep": 2,
+  "paginateMs": 44.755292000000736,
+  "pdfMs": 86.04274999999961,
+  "totalMs": 130.79804200000035,
+  "bytes": 192541,
+  "peakRss": 2000732160
+ },
+ {
+  "case": "invoice-final",
+  "engine": "lp-fixed",
+  "rep": 2,
+  "paginateMs": 41.99195800000052,
+  "pdfMs": 25.571124999999483,
+  "totalMs": 67.563083,
+  "bytes": 79639,
+  "peakRss": 394330112
+ },
+ {
+  "case": "invoice-final-copy",
+  "engine": "chrome-base",
+  "rep": 0,
+  "paginateMs": 41.8686660000003,
+  "pdfMs": 139.7865840000004,
+  "totalMs": 181.6552500000007,
+  "bytes": 246914,
+  "pages": 1,
+  "peakRss": 2074312704
+ },
+ {
+  "case": "invoice-final-copy",
+  "engine": "chrome-fixed",
+  "rep": 0,
+  "paginateMs": 43.19537499999933,
+  "pdfMs": 87.608792,
+  "totalMs": 130.80416699999932,
+  "bytes": 191077,
+  "pages": 1,
+  "peakRss": 2034958336
+ },
+ {
+  "case": "invoice-final-copy",
+  "engine": "lp-fixed",
+  "rep": 0,
+  "paginateMs": 62.53587499999958,
+  "pdfMs": 25.84862500000054,
+  "totalMs": 88.38450000000012,
+  "bytes": 79549,
+  "pages": 1,
+  "peakRss": 450461696,
+  "lp": {
+   "bySelector": true,
+   "commands": 295,
+   "ms": {
+    "fetch": 0,
+    "layout": 0.08612500000000001,
+    "paint": 0.251375,
+    "pdf": 2.6938750000000002,
+    "snapshot": 0.0028339999999999997,
+    "total": 3.064667
+   },
+   "pages": [
+    {
+     "culprit": "<div \"\"> 0,0 795x1123 overflow 1170x1123",
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 375,
+     "width": 795,
+     "x": 0,
+     "y": 0
+    }
+   ],
+   "stats": {
+    "boxShadowsSkipped": 0,
+    "brushesSkipped": 0,
+    "composeSkipped": 0,
+    "culled": 0,
+    "degenerateSkipped": 153,
+    "emboldenSkipped": 0,
+    "fills": 26,
+    "filtersSkipped": 0,
+    "fontsFailed": 0,
+    "glyphRuns": 102,
+    "glyphs": 1330,
+    "glyphsWithoutText": 0,
+    "images": 1,
+    "insetShadows": 0,
+    "strokes": 2,
+    "variableRuns": 0
+   }
+  }
+ },
+ {
+  "case": "invoice-final-copy",
+  "engine": "chrome-base",
+  "rep": 1,
+  "paginateMs": 47.277624999999716,
+  "pdfMs": 140.23833300000024,
+  "totalMs": 187.51595799999996,
+  "bytes": 246914,
+  "peakRss": 2006827008
+ },
+ {
+  "case": "invoice-final-copy",
+  "engine": "chrome-fixed",
+  "rep": 1,
+  "paginateMs": 46.954916000000594,
+  "pdfMs": 88.43758399999933,
+  "totalMs": 135.39249999999993,
+  "bytes": 191077,
+  "peakRss": 2031681536
+ },
+ {
+  "case": "invoice-final-copy",
+  "engine": "lp-fixed",
+  "rep": 1,
+  "paginateMs": 63.69945799999914,
+  "pdfMs": 25.87129200000072,
+  "totalMs": 89.57074999999986,
+  "bytes": 79549,
+  "peakRss": 496041984
+ },
+ {
+  "case": "invoice-final-copy",
+  "engine": "chrome-base",
+  "rep": 2,
+  "paginateMs": 41.048415999999634,
+  "pdfMs": 141.3299590000006,
+  "totalMs": 182.37837500000023,
+  "bytes": 246914,
+  "peakRss": 1955446784
+ },
+ {
+  "case": "invoice-final-copy",
+  "engine": "chrome-fixed",
+  "rep": 2,
+  "paginateMs": 43.18004199999996,
+  "pdfMs": 88.14737500000047,
+  "totalMs": 131.32741700000042,
+  "bytes": 191077,
+  "peakRss": 1978187776
+ },
+ {
+  "case": "invoice-final-copy",
+  "engine": "lp-fixed",
+  "rep": 2,
+  "paginateMs": 63.718166999999994,
+  "pdfMs": 25.21008299999994,
+  "totalMs": 88.92824999999993,
+  "bytes": 79549,
+  "peakRss": 541704192
+ },
+ {
+  "case": "invoice-office-kombi-kargo-english",
+  "engine": "chrome-base",
+  "rep": 0,
+  "paginateMs": 38.93425000000025,
+  "pdfMs": 120.36029199999939,
+  "totalMs": 159.29454199999964,
+  "bytes": 243833,
+  "pages": 1,
+  "peakRss": 1983086592
+ },
+ {
+  "case": "invoice-office-kombi-kargo-english",
+  "engine": "chrome-fixed",
+  "rep": 0,
+  "paginateMs": 37.14366599999994,
+  "pdfMs": 67.690834,
+  "totalMs": 104.83449999999993,
+  "bytes": 187988,
+  "pages": 1,
+  "peakRss": 1989902336
+ },
+ {
+  "case": "invoice-office-kombi-kargo-english",
+  "engine": "lp-fixed",
+  "rep": 0,
+  "paginateMs": 36.861000000000786,
+  "pdfMs": 14.753124999999272,
+  "totalMs": 51.61412500000006,
+  "bytes": 52869,
+  "pages": 1,
+  "peakRss": 564772864,
+  "lp": {
+   "bySelector": true,
+   "commands": 219,
+   "ms": {
+    "fetch": 0,
+    "layout": 0.067041,
+    "paint": 0.190333,
+    "pdf": 2.230167,
+    "snapshot": 0.0035,
+    "total": 2.518542
+   },
+   "pages": [
+    {
+     "culprit": "<div \"\"> 38,1001 719x76 overflow 1344x78",
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 587,
+     "width": 795,
+     "x": 0,
+     "y": 0
+    }
+   ],
+   "stats": {
+    "boxShadowsSkipped": 0,
+    "brushesSkipped": 0,
+    "composeSkipped": 0,
+    "culled": 0,
+    "degenerateSkipped": 129,
+    "emboldenSkipped": 0,
+    "fills": 5,
+    "filtersSkipped": 0,
+    "fontsFailed": 0,
+    "glyphRuns": 80,
+    "glyphs": 1263,
+    "glyphsWithoutText": 0,
+    "images": 0,
+    "insetShadows": 0,
+    "strokes": 1,
+    "variableRuns": 0
+   }
+  }
+ },
+ {
+  "case": "invoice-office-kombi-kargo-english",
+  "engine": "chrome-base",
+  "rep": 1,
+  "paginateMs": 36.829750000000786,
+  "pdfMs": 119.45983399999932,
+  "totalMs": 156.2895840000001,
+  "bytes": 243833,
+  "peakRss": 2045493248
+ },
+ {
+  "case": "invoice-office-kombi-kargo-english",
+  "engine": "chrome-fixed",
+  "rep": 1,
+  "paginateMs": 39.569666999999754,
+  "pdfMs": 69.97699999999895,
+  "totalMs": 109.5466669999987,
+  "bytes": 187988,
+  "peakRss": 2012971008
+ },
+ {
+  "case": "invoice-office-kombi-kargo-english",
+  "engine": "lp-fixed",
+  "rep": 1,
+  "paginateMs": 56.86016600000039,
+  "pdfMs": 15.919459000000643,
+  "totalMs": 72.77962500000103,
+  "bytes": 52869,
+  "peakRss": 586039296
+ },
+ {
+  "case": "invoice-office-kombi-kargo-english",
+  "engine": "chrome-base",
+  "rep": 2,
+  "paginateMs": 39.65020800000093,
+  "pdfMs": 125.60112499999923,
+  "totalMs": 165.25133300000016,
+  "bytes": 243833,
+  "peakRss": 2112307200
+ },
+ {
+  "case": "invoice-office-kombi-kargo-english",
+  "engine": "chrome-fixed",
+  "rep": 2,
+  "paginateMs": 38.89137499999924,
+  "pdfMs": 67.33637500000077,
+  "totalMs": 106.22775000000001,
+  "bytes": 187988,
+  "peakRss": 2016051200
+ },
+ {
+  "case": "invoice-office-kombi-kargo-english",
+  "engine": "lp-fixed",
+  "rep": 2,
+  "paginateMs": 54.39837500000067,
+  "pdfMs": 14.624166999999943,
+  "totalMs": 69.02254200000061,
+  "bytes": 52869,
+  "peakRss": 617709568
+ },
+ {
+  "case": "invoice-office-kombi-kargo-german",
+  "engine": "chrome-base",
+  "rep": 0,
+  "paginateMs": 40.862584000000425,
+  "pdfMs": 119.22637500000019,
+  "totalMs": 160.0889590000006,
+  "bytes": 248686,
+  "pages": 1,
+  "peakRss": 2145533952
+ },
+ {
+  "case": "invoice-office-kombi-kargo-german",
+  "engine": "chrome-fixed",
+  "rep": 0,
+  "paginateMs": 39.22450000000026,
+  "pdfMs": 68.49374999999964,
+  "totalMs": 107.7182499999999,
+  "bytes": 192843,
+  "pages": 1,
+  "peakRss": 2041151488
+ },
+ {
+  "case": "invoice-office-kombi-kargo-german",
+  "engine": "lp-fixed",
+  "rep": 0,
+  "paginateMs": 53.86645899999894,
+  "pdfMs": 14.683458000001337,
+  "totalMs": 68.54991700000028,
+  "bytes": 52259,
+  "pages": 1,
+  "peakRss": 650690560,
+  "lp": {
+   "bySelector": true,
+   "commands": 219,
+   "ms": {
+    "fetch": 0,
+    "layout": 0.075125,
+    "paint": 0.207375,
+    "pdf": 2.243583,
+    "snapshot": 0.005292000000000001,
+    "total": 2.561375
+   },
+   "pages": [
+    {
+     "culprit": "<div \"\"> 38,1001 719x76 overflow 1344x78",
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 587,
+     "width": 795,
+     "x": 0,
+     "y": 0
+    }
+   ],
+   "stats": {
+    "boxShadowsSkipped": 0,
+    "brushesSkipped": 0,
+    "composeSkipped": 0,
+    "culled": 0,
+    "degenerateSkipped": 129,
+    "emboldenSkipped": 0,
+    "fills": 5,
+    "filtersSkipped": 0,
+    "fontsFailed": 0,
+    "glyphRuns": 80,
+    "glyphs": 1261,
+    "glyphsWithoutText": 0,
+    "images": 0,
+    "insetShadows": 0,
+    "strokes": 1,
+    "variableRuns": 0
+   }
+  }
+ },
+ {
+  "case": "invoice-office-kombi-kargo-german",
+  "engine": "chrome-base",
+  "rep": 1,
+  "paginateMs": 37.46016700000109,
+  "pdfMs": 119.63987499999894,
+  "totalMs": 157.10004200000003,
+  "bytes": 248686,
+  "peakRss": 2124005376
+ },
+ {
+  "case": "invoice-office-kombi-kargo-german",
+  "engine": "chrome-fixed",
+  "rep": 1,
+  "paginateMs": 36.172083000001294,
+  "pdfMs": 68.08287500000006,
+  "totalMs": 104.25495800000135,
+  "bytes": 192843,
+  "peakRss": 1993998336
+ },
+ {
+  "case": "invoice-office-kombi-kargo-german",
+  "engine": "lp-fixed",
+  "rep": 1,
+  "paginateMs": 55.480499999999665,
+  "pdfMs": 14.210709000000861,
+  "totalMs": 69.69120900000053,
+  "bytes": 52259,
+  "peakRss": 698679296
+ },
+ {
+  "case": "invoice-office-kombi-kargo-german",
+  "engine": "chrome-base",
+  "rep": 2,
+  "paginateMs": 42.94158400000015,
+  "pdfMs": 119.35699999999997,
+  "totalMs": 162.29858400000012,
+  "bytes": 248686,
+  "peakRss": 2118664192
+ },
+ {
+  "case": "invoice-office-kombi-kargo-german",
+  "engine": "chrome-fixed",
+  "rep": 2,
+  "paginateMs": 39.59141699999964,
+  "pdfMs": 67.96470800000134,
+  "totalMs": 107.55612500000097,
+  "bytes": 192843,
+  "peakRss": 2019442688
+ },
+ {
+  "case": "invoice-office-kombi-kargo-german",
+  "engine": "lp-fixed",
+  "rep": 2,
+  "paginateMs": 53.47333400000025,
+  "pdfMs": 14.837665999999444,
+  "totalMs": 68.3109999999997,
+  "bytes": 52259,
+  "peakRss": 742670336
+ },
+ {
+  "case": "invoice-office-ole-hamburg-english",
+  "engine": "chrome-base",
+  "rep": 0,
+  "paginateMs": 41.2426660000001,
+  "pdfMs": 126.00616700000137,
+  "totalMs": 167.24883300000147,
+  "bytes": 240223,
+  "pages": 1,
+  "peakRss": 2046427136
+ },
+ {
+  "case": "invoice-office-ole-hamburg-english",
+  "engine": "chrome-fixed",
+  "rep": 0,
+  "paginateMs": 38.173666999999114,
+  "pdfMs": 67.90308300000106,
+  "totalMs": 106.07675000000017,
+  "bytes": 184371,
+  "pages": 1,
+  "peakRss": 2019196928
+ },
+ {
+  "case": "invoice-office-ole-hamburg-english",
+  "engine": "lp-fixed",
+  "rep": 0,
+  "paginateMs": 36.7405830000007,
+  "pdfMs": 14.701833999999508,
+  "totalMs": 51.442417000000205,
+  "bytes": 51756,
+  "pages": 1,
+  "peakRss": 756318208,
+  "lp": {
+   "bySelector": true,
+   "commands": 216,
+   "ms": {
+    "fetch": 0,
+    "layout": 0.057207999999999995,
+    "paint": 0.1945,
+    "pdf": 2.263209,
+    "snapshot": 0.00275,
+    "total": 2.5440419999999997
+   },
+   "pages": [
+    {
+     "culprit": "<div \"\"> 38,968 719x109 overflow 1849x109",
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 1092,
+     "width": 795,
+     "x": 0,
+     "y": 0
+    }
+   ],
+   "stats": {
+    "boxShadowsSkipped": 0,
+    "brushesSkipped": 0,
+    "composeSkipped": 0,
+    "culled": 1,
+    "degenerateSkipped": 129,
+    "emboldenSkipped": 0,
+    "fills": 2,
+    "filtersSkipped": 0,
+    "fontsFailed": 0,
+    "glyphRuns": 79,
+    "glyphs": 1665,
+    "glyphsWithoutText": 0,
+    "images": 0,
+    "insetShadows": 0,
+    "strokes": 1,
+    "variableRuns": 0
+   }
+  }
+ },
+ {
+  "case": "invoice-office-ole-hamburg-english",
+  "engine": "chrome-base",
+  "rep": 1,
+  "paginateMs": 42.2529169999998,
+  "pdfMs": 116.03837500000009,
+  "totalMs": 158.29129199999988,
+  "bytes": 240223,
+  "peakRss": 2078031872
+ },
+ {
+  "case": "invoice-office-ole-hamburg-english",
+  "engine": "chrome-fixed",
+  "rep": 1,
+  "paginateMs": 38.22283299999981,
+  "pdfMs": 66.72054199999911,
+  "totalMs": 104.94337499999892,
+  "bytes": 184371,
+  "peakRss": 2035400704
+ },
+ {
+  "case": "invoice-office-ole-hamburg-english",
+  "engine": "lp-fixed",
+  "rep": 1,
+  "paginateMs": 53.17866700000013,
+  "pdfMs": 15.355499999999665,
+  "totalMs": 68.5341669999998,
+  "bytes": 51756,
+  "peakRss": 766935040
+ },
+ {
+  "case": "invoice-office-ole-hamburg-english",
+  "engine": "chrome-base",
+  "rep": 2,
+  "paginateMs": 37.49437500000022,
+  "pdfMs": 119.847667,
+  "totalMs": 157.34204200000022,
+  "bytes": 240223,
+  "peakRss": 2202861568
+ },
+ {
+  "case": "invoice-office-ole-hamburg-english",
+  "engine": "chrome-fixed",
+  "rep": 2,
+  "paginateMs": 41.19695799999863,
+  "pdfMs": 69.6244170000009,
+  "totalMs": 110.82137499999953,
+  "bytes": 184371,
+  "peakRss": 1996013568
+ },
+ {
+  "case": "invoice-office-ole-hamburg-english",
+  "engine": "lp-fixed",
+  "rep": 2,
+  "paginateMs": 53.49170800000138,
+  "pdfMs": 14.67791699999907,
+  "totalMs": 68.16962500000045,
+  "bytes": 51756,
+  "peakRss": 772882432
+ },
+ {
+  "case": "invoice-office-ole-hamburg-german",
+  "engine": "chrome-base",
+  "rep": 0,
+  "paginateMs": 36.836042000000816,
+  "pdfMs": 121.18191699999988,
+  "totalMs": 158.0179590000007,
+  "bytes": 247102,
+  "pages": 1,
+  "peakRss": 2292367360
+ },
+ {
+  "case": "invoice-office-ole-hamburg-german",
+  "engine": "chrome-fixed",
+  "rep": 0,
+  "paginateMs": 17.700791999999637,
+  "pdfMs": 68.79383300000154,
+  "totalMs": 86.49462500000118,
+  "bytes": 191252,
+  "pages": 1,
+  "peakRss": 2004844544
+ },
+ {
+  "case": "invoice-office-ole-hamburg-german",
+  "engine": "lp-fixed",
+  "rep": 0,
+  "paginateMs": 56.120999999999185,
+  "pdfMs": 15.451250000000073,
+  "totalMs": 71.57224999999926,
+  "bytes": 52306,
+  "pages": 1,
+  "peakRss": 776142848,
+  "lp": {
+   "bySelector": true,
+   "commands": 216,
+   "ms": {
+    "fetch": 0,
+    "layout": 0.078042,
+    "paint": 0.25175000000000003,
+    "pdf": 2.3705000000000003,
+    "snapshot": 0.0022919999999999998,
+    "total": 2.734542
+   },
+   "pages": [
+    {
+     "culprit": "<div \"\"> 38,968 719x109 overflow 1849x109",
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 1092,
+     "width": 795,
+     "x": 0,
+     "y": 0
+    }
+   ],
+   "stats": {
+    "boxShadowsSkipped": 0,
+    "brushesSkipped": 0,
+    "composeSkipped": 0,
+    "culled": 1,
+    "degenerateSkipped": 129,
+    "emboldenSkipped": 0,
+    "fills": 2,
+    "filtersSkipped": 0,
+    "fontsFailed": 0,
+    "glyphRuns": 79,
+    "glyphs": 1631,
+    "glyphsWithoutText": 0,
+    "images": 0,
+    "insetShadows": 0,
+    "strokes": 1,
+    "variableRuns": 0
+   }
+  }
+ },
+ {
+  "case": "invoice-office-ole-hamburg-german",
+  "engine": "chrome-base",
+  "rep": 1,
+  "paginateMs": 41.41362500000105,
+  "pdfMs": 123.30025000000023,
+  "totalMs": 164.71387500000128,
+  "bytes": 247102,
+  "peakRss": 2253357056
+ },
+ {
+  "case": "invoice-office-ole-hamburg-german",
+  "engine": "chrome-fixed",
+  "rep": 1,
+  "paginateMs": 38.923917000000074,
+  "pdfMs": 72.32216599999992,
+  "totalMs": 111.246083,
+  "bytes": 191252,
+  "peakRss": 2012758016
+ },
+ {
+  "case": "invoice-office-ole-hamburg-german",
+  "engine": "lp-fixed",
+  "rep": 1,
+  "paginateMs": 36.855750000000626,
+  "pdfMs": 16.892041999999492,
+  "totalMs": 53.74779200000012,
+  "bytes": 52306,
+  "peakRss": 783450112
+ },
+ {
+  "case": "invoice-office-ole-hamburg-german",
+  "engine": "chrome-base",
+  "rep": 2,
+  "paginateMs": 37.903958000000785,
+  "pdfMs": 121.09245899999951,
+  "totalMs": 158.9964170000003,
+  "bytes": 247102,
+  "peakRss": 2205614080
+ },
+ {
+  "case": "invoice-office-ole-hamburg-german",
+  "engine": "chrome-fixed",
+  "rep": 2,
+  "paginateMs": 38.453583000000435,
+  "pdfMs": 69.06712499999958,
+  "totalMs": 107.52070800000001,
+  "bytes": 191252,
+  "peakRss": 2010267648
+ },
+ {
+  "case": "invoice-office-ole-hamburg-german",
+  "engine": "lp-fixed",
+  "rep": 2,
+  "paginateMs": 56.556792000001224,
+  "pdfMs": 15.513874999998734,
+  "totalMs": 72.07066699999996,
+  "bytes": 52306,
+  "peakRss": 788594688
+ },
+ {
+  "case": "invoice-office-tos-budapest-english",
+  "engine": "chrome-base",
+  "rep": 0,
+  "paginateMs": 209.3160000000007,
+  "pdfMs": 125.41787499999919,
+  "totalMs": 334.7338749999999,
+  "bytes": 246837,
+  "pages": 1,
+  "peakRss": 2251915264
+ },
+ {
+  "case": "invoice-office-tos-budapest-english",
+  "engine": "chrome-fixed",
+  "rep": 0,
+  "paginateMs": 203.350292000001,
+  "pdfMs": 75.72554200000013,
+  "totalMs": 279.0758340000011,
+  "bytes": 191092,
+  "pages": 1,
+  "peakRss": 1986068480
+ },
+ {
+  "case": "invoice-office-tos-budapest-english",
+  "engine": "lp-fixed",
+  "rep": 0,
+  "paginateMs": 62.58512499999961,
+  "pdfMs": 16.975667000000612,
+  "totalMs": 79.56079200000022,
+  "bytes": 59694,
+  "pages": 1,
+  "peakRss": 811679744,
+  "lp": {
+   "bySelector": true,
+   "commands": 254,
+   "ms": {
+    "fetch": 0,
+    "layout": 0.090084,
+    "paint": 0.268208,
+    "pdf": 3.013542,
+    "snapshot": 0.0037500000000000003,
+    "total": 3.419792
+   },
+   "pages": [
+    {
+     "culprit": "<div \"\"> 38,1010 719x67 overflow 1461x67",
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 704,
+     "width": 795,
+     "x": 0,
+     "y": 0
+    }
+   ],
+   "stats": {
+    "boxShadowsSkipped": 0,
+    "brushesSkipped": 0,
+    "composeSkipped": 0,
+    "culled": 4,
+    "degenerateSkipped": 129,
+    "emboldenSkipped": 0,
+    "fills": 32,
+    "filtersSkipped": 0,
+    "fontsFailed": 0,
+    "glyphRuns": 82,
+    "glyphs": 1203,
+    "glyphsWithoutText": 0,
+    "images": 0,
+    "insetShadows": 0,
+    "strokes": 3,
+    "variableRuns": 0
+   }
+  }
+ },
+ {
+  "case": "invoice-office-tos-budapest-english",
+  "engine": "chrome-base",
+  "rep": 1,
+  "paginateMs": 44.44083299999875,
+  "pdfMs": 127.51295899999968,
+  "totalMs": 171.95379199999843,
+  "bytes": 246837,
+  "peakRss": 2152939520
+ },
+ {
+  "case": "invoice-office-tos-budapest-english",
+  "engine": "chrome-fixed",
+  "rep": 1,
+  "paginateMs": 42.19437499999913,
+  "pdfMs": 73.92466699999932,
+  "totalMs": 116.11904199999844,
+  "bytes": 191092,
+  "peakRss": 1998454784
+ },
+ {
+  "case": "invoice-office-tos-budapest-english",
+  "engine": "lp-fixed",
+  "rep": 1,
+  "paginateMs": 61.01433299999917,
+  "pdfMs": 15.917166999999608,
+  "totalMs": 76.93149999999878,
+  "bytes": 59694,
+  "peakRss": 851296256
+ },
+ {
+  "case": "invoice-office-tos-budapest-english",
+  "engine": "chrome-base",
+  "rep": 2,
+  "paginateMs": 40.74937499999942,
+  "pdfMs": 121.53729200000089,
+  "totalMs": 162.2866670000003,
+  "bytes": 246837,
+  "peakRss": 2229387264
+ },
+ {
+  "case": "invoice-office-tos-budapest-english",
+  "engine": "chrome-fixed",
+  "rep": 2,
+  "paginateMs": 40.92675000000054,
+  "pdfMs": 70.86179099999936,
+  "totalMs": 111.7885409999999,
+  "bytes": 191092,
+  "peakRss": 2001993728
+ },
+ {
+  "case": "invoice-office-tos-budapest-english",
+  "engine": "lp-fixed",
+  "rep": 2,
+  "paginateMs": 59.320708000001105,
+  "pdfMs": 16.08258299999943,
+  "totalMs": 75.40329100000054,
+  "bytes": 59694,
+  "peakRss": 886915072
+ },
+ {
+  "case": "invoice-office-tos-budapest-hungarian",
+  "engine": "chrome-base",
+  "rep": 0,
+  "paginateMs": 41.8140829999993,
+  "pdfMs": 121.52129200000127,
+  "totalMs": 163.33537500000057,
+  "bytes": 255518,
+  "pages": 1,
+  "peakRss": 2157461504
+ },
+ {
+  "case": "invoice-office-tos-budapest-hungarian",
+  "engine": "chrome-fixed",
+  "rep": 0,
+  "paginateMs": 42.85908300000119,
+  "pdfMs": 71.1237919999985,
+  "totalMs": 113.9828749999997,
+  "bytes": 199776,
+  "pages": 1,
+  "peakRss": 1879588864
+ },
+ {
+  "case": "invoice-office-tos-budapest-hungarian",
+  "engine": "lp-fixed",
+  "rep": 0,
+  "paginateMs": 57.994416000001365,
+  "pdfMs": 15.914292000001296,
+  "totalMs": 73.90870800000266,
+  "bytes": 61091,
+  "pages": 1,
+  "peakRss": 935936000,
+  "lp": {
+   "bySelector": true,
+   "commands": 254,
+   "ms": {
+    "fetch": 0,
+    "layout": 0.080041,
+    "paint": 0.258291,
+    "pdf": 2.961708,
+    "snapshot": 0.0036669999999999997,
+    "total": 3.3413340000000002
+   },
+   "pages": [
+    {
+     "culprit": "<div \"\"> 38,1010 719x67 overflow 1461x67",
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 704,
+     "width": 795,
+     "x": 0,
+     "y": 0
+    }
+   ],
+   "stats": {
+    "boxShadowsSkipped": 0,
+    "brushesSkipped": 0,
+    "composeSkipped": 0,
+    "culled": 4,
+    "degenerateSkipped": 129,
+    "emboldenSkipped": 0,
+    "fills": 32,
+    "filtersSkipped": 0,
+    "fontsFailed": 0,
+    "glyphRuns": 82,
+    "glyphs": 1250,
+    "glyphsWithoutText": 0,
+    "images": 0,
+    "insetShadows": 0,
+    "strokes": 3,
+    "variableRuns": 0
+   }
+  }
+ },
+ {
+  "case": "invoice-office-tos-budapest-hungarian",
+  "engine": "chrome-base",
+  "rep": 1,
+  "paginateMs": 42.938084000001254,
+  "pdfMs": 121.4239579999994,
+  "totalMs": 164.36204200000066,
+  "bytes": 255518,
+  "peakRss": 2158329856
+ },
+ {
+  "case": "invoice-office-tos-budapest-hungarian",
+  "engine": "chrome-fixed",
+  "rep": 1,
+  "paginateMs": 41.771749999999884,
+  "pdfMs": 74.87579199999891,
+  "totalMs": 116.6475419999988,
+  "bytes": 199776,
+  "peakRss": 1874952192
+ },
+ {
+  "case": "invoice-office-tos-budapest-hungarian",
+  "engine": "lp-fixed",
+  "rep": 1,
+  "paginateMs": 61.29183300000295,
+  "pdfMs": 16.00037499999962,
+  "totalMs": 77.29220800000257,
+  "bytes": 61091,
+  "peakRss": 985464832
+ },
+ {
+  "case": "invoice-office-tos-budapest-hungarian",
+  "engine": "chrome-base",
+  "rep": 2,
+  "paginateMs": 41.5120829999978,
+  "pdfMs": 124.52275000000009,
+  "totalMs": 166.0348329999979,
+  "bytes": 255518,
+  "peakRss": 2185150464
+ },
+ {
+  "case": "invoice-office-tos-budapest-hungarian",
+  "engine": "chrome-fixed",
+  "rep": 2,
+  "paginateMs": 42.80395800000042,
+  "pdfMs": 72.21679199999926,
+  "totalMs": 115.02074999999968,
+  "bytes": 199776,
+  "peakRss": 1885896704
+ },
+ {
+  "case": "invoice-office-tos-budapest-hungarian",
+  "engine": "lp-fixed",
+  "rep": 2,
+  "paginateMs": 57.68183300000237,
+  "pdfMs": 15.54412500000035,
+  "totalMs": 73.22595800000272,
+  "bytes": 61091,
+  "peakRss": 1031847936
+ },
+ {
+  "case": "invoice-office-tos-houston-english",
+  "engine": "chrome-base",
+  "rep": 0,
+  "paginateMs": 42.17091699999946,
+  "pdfMs": 118.1840830000001,
+  "totalMs": 160.35499999999956,
+  "bytes": 232380,
+  "pages": 1,
+  "peakRss": 2097856512
+ },
+ {
+  "case": "invoice-office-tos-houston-english",
+  "engine": "chrome-fixed",
+  "rep": 0,
+  "paginateMs": 41.31745800000135,
+  "pdfMs": 70.24299999999857,
+  "totalMs": 111.56045799999993,
+  "bytes": 176610,
+  "pages": 1,
+  "peakRss": 1875525632
+ },
+ {
+  "case": "invoice-office-tos-houston-english",
+  "engine": "lp-fixed",
+  "rep": 0,
+  "paginateMs": 56.723916999999346,
+  "pdfMs": 15.159625000000233,
+  "totalMs": 71.88354199999958,
+  "bytes": 59322,
+  "pages": 1,
+  "peakRss": 1085161472,
+  "lp": {
+   "bySelector": true,
+   "commands": 262,
+   "ms": {
+    "fetch": 0,
+    "layout": 0.064625,
+    "paint": 0.214042,
+    "pdf": 2.837583,
+    "snapshot": 0.002791,
+    "total": 3.1492080000000002
+   },
+   "pages": [
+    {
+     "culprit": null,
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 0,
+     "width": 795,
+     "x": 0,
+     "y": 0
+    }
+   ],
+   "stats": {
+    "boxShadowsSkipped": 0,
+    "brushesSkipped": 0,
+    "composeSkipped": 0,
+    "culled": 0,
+    "degenerateSkipped": 129,
+    "emboldenSkipped": 0,
+    "fills": 32,
+    "filtersSkipped": 0,
+    "fontsFailed": 0,
+    "glyphRuns": 95,
+    "glyphs": 1228,
+    "glyphsWithoutText": 0,
+    "images": 0,
+    "insetShadows": 0,
+    "strokes": 2,
+    "variableRuns": 0
+   }
+  }
+ },
+ {
+  "case": "invoice-office-tos-houston-english",
+  "engine": "chrome-base",
+  "rep": 1,
+  "paginateMs": 44.184291000001394,
+  "pdfMs": 123.09895899999901,
+  "totalMs": 167.2832500000004,
+  "bytes": 232380,
+  "peakRss": 2113847296
+ },
+ {
+  "case": "invoice-office-tos-houston-english",
+  "engine": "chrome-fixed",
+  "rep": 1,
+  "paginateMs": 41.526458999996976,
+  "pdfMs": 71.10766599999988,
+  "totalMs": 112.63412499999686,
+  "bytes": 176610,
+  "peakRss": 1880309760
+ },
+ {
+  "case": "invoice-office-tos-houston-english",
+  "engine": "lp-fixed",
+  "rep": 1,
+  "paginateMs": 58.63837500000227,
+  "pdfMs": 15.500874999997905,
+  "totalMs": 74.13925000000017,
+  "bytes": 59322,
+  "peakRss": 1135165440
+ },
+ {
+  "case": "invoice-office-tos-houston-english",
+  "engine": "chrome-base",
+  "rep": 2,
+  "paginateMs": 42.73858299999847,
+  "pdfMs": 121.390542000001,
+  "totalMs": 164.12912499999948,
+  "bytes": 232380,
+  "peakRss": 2094432256
+ },
+ {
+  "case": "invoice-office-tos-houston-english",
+  "engine": "chrome-fixed",
+  "rep": 2,
+  "paginateMs": 39.94920899999852,
+  "pdfMs": 72.17795800000022,
+  "totalMs": 112.12716699999874,
+  "bytes": 176610,
+  "peakRss": 1882685440
+ },
+ {
+  "case": "invoice-office-tos-houston-english",
+  "engine": "lp-fixed",
+  "rep": 2,
+  "paginateMs": 59.30845799999952,
+  "pdfMs": 16.896709000000556,
+  "totalMs": 76.20516700000007,
+  "bytes": 59322,
+  "peakRss": 1173585920
+ },
+ {
+  "case": "invoice-office-tos-koper-english",
+  "engine": "chrome-base",
+  "rep": 0,
+  "paginateMs": 41.683208000002196,
+  "pdfMs": 122.50575000000026,
+  "totalMs": 164.18895800000246,
+  "bytes": 237001,
+  "pages": 1,
+  "peakRss": 1985888256
+ },
+ {
+  "case": "invoice-office-tos-koper-english",
+  "engine": "chrome-fixed",
+  "rep": 0,
+  "paginateMs": 39.57662500000151,
+  "pdfMs": 69.17712499999834,
+  "totalMs": 108.75374999999985,
+  "bytes": 181232,
+  "pages": 1,
+  "peakRss": 1760067584
+ },
+ {
+  "case": "invoice-office-tos-koper-english",
+  "engine": "lp-fixed",
+  "rep": 0,
+  "paginateMs": 59.58008300000074,
+  "pdfMs": 15.664249999997992,
+  "totalMs": 75.24433299999873,
+  "bytes": 58329,
+  "pages": 1,
+  "peakRss": 1216462848,
+  "lp": {
+   "bySelector": true,
+   "commands": 250,
+   "ms": {
+    "fetch": 0,
+    "layout": 0.078584,
+    "paint": 0.23466700000000001,
+    "pdf": 2.879291,
+    "snapshot": 0.003875,
+    "total": 3.231792
+   },
+   "pages": [
+    {
+     "culprit": null,
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 0,
+     "width": 795,
+     "x": 0,
+     "y": 0
+    }
+   ],
+   "stats": {
+    "boxShadowsSkipped": 0,
+    "brushesSkipped": 0,
+    "composeSkipped": 0,
+    "culled": 0,
+    "degenerateSkipped": 129,
+    "emboldenSkipped": 0,
+    "fills": 32,
+    "filtersSkipped": 0,
+    "fontsFailed": 0,
+    "glyphRuns": 83,
+    "glyphs": 1274,
+    "glyphsWithoutText": 0,
+    "images": 0,
+    "insetShadows": 0,
+    "strokes": 2,
+    "variableRuns": 0
+   }
+  }
+ },
+ {
+  "case": "invoice-office-tos-koper-english",
+  "engine": "chrome-base",
+  "rep": 1,
+  "paginateMs": 43.71624999999767,
+  "pdfMs": 120.18225000000166,
+  "totalMs": 163.89849999999933,
+  "bytes": 237001,
+  "peakRss": 1943519232
+ },
+ {
+  "case": "invoice-office-tos-koper-english",
+  "engine": "chrome-fixed",
+  "rep": 1,
+  "paginateMs": 41.13400000000183,
+  "pdfMs": 72.10858300000109,
+  "totalMs": 113.24258300000292,
+  "bytes": 181232,
+  "peakRss": 1760428032
+ },
+ {
+  "case": "invoice-office-tos-koper-english",
+  "engine": "lp-fixed",
+  "rep": 1,
+  "paginateMs": 60.820542000001296,
+  "pdfMs": 16.685832999999548,
+  "totalMs": 77.50637500000084,
+  "bytes": 58329,
+  "peakRss": 1270824960
+ },
+ {
+  "case": "invoice-office-tos-koper-english",
+  "engine": "chrome-base",
+  "rep": 2,
+  "paginateMs": 41.53150000000096,
+  "pdfMs": 120.46087500000067,
+  "totalMs": 161.99237500000163,
+  "bytes": 237001,
+  "peakRss": 2008793088
+ },
+ {
+  "case": "invoice-office-tos-koper-english",
+  "engine": "chrome-fixed",
+  "rep": 2,
+  "paginateMs": 45.137666999999055,
+  "pdfMs": 70.94087500000023,
+  "totalMs": 116.07854199999929,
+  "bytes": 181232,
+  "peakRss": 1822015488
+ },
+ {
+  "case": "invoice-office-tos-koper-english",
+  "engine": "lp-fixed",
+  "rep": 2,
+  "paginateMs": 39.96266699999978,
+  "pdfMs": 15.561374999997497,
+  "totalMs": 55.52404199999728,
+  "bytes": 58329,
+  "peakRss": 1306722304
+ },
+ {
+  "case": "invoice-office-tos-prague-czech",
+  "engine": "chrome-base",
+  "rep": 0,
+  "paginateMs": 45.86295899999823,
+  "pdfMs": 130.07420800000182,
+  "totalMs": 175.93716700000004,
+  "bytes": 324482,
+  "pages": 1,
+  "peakRss": 1919631360
+ },
+ {
+  "case": "invoice-office-tos-prague-czech",
+  "engine": "chrome-fixed",
+  "rep": 0,
+  "paginateMs": 42.043666999998095,
+  "pdfMs": 80.00575000000026,
+  "totalMs": 122.04941699999836,
+  "bytes": 268709,
+  "pages": 1,
+  "peakRss": 1835696128
+ },
+ {
+  "case": "invoice-office-tos-prague-czech",
+  "engine": "lp-fixed",
+  "rep": 0,
+  "paginateMs": 39.57429200000115,
+  "pdfMs": 16.334875000000466,
+  "totalMs": 55.90916700000162,
+  "bytes": 62932,
+  "pages": 1,
+  "peakRss": 1330413568,
+  "lp": {
+   "bySelector": true,
+   "commands": 268,
+   "ms": {
+    "fetch": 0,
+    "layout": 0.06787499999999999,
+    "paint": 0.2705,
+    "pdf": 3.2257499999999997,
+    "snapshot": 0.006416,
+    "total": 3.601125
+   },
+   "pages": [
+    {
+     "culprit": null,
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 0,
+     "width": 795,
+     "x": 0,
+     "y": 0
+    }
+   ],
+   "stats": {
+    "boxShadowsSkipped": 0,
+    "brushesSkipped": 0,
+    "composeSkipped": 0,
+    "culled": 0,
+    "degenerateSkipped": 129,
+    "emboldenSkipped": 0,
+    "fills": 32,
+    "filtersSkipped": 0,
+    "fontsFailed": 0,
+    "glyphRuns": 99,
+    "glyphs": 1794,
+    "glyphsWithoutText": 0,
+    "images": 0,
+    "insetShadows": 0,
+    "strokes": 4,
+    "variableRuns": 0
+   }
+  }
+ },
+ {
+  "case": "invoice-office-tos-prague-czech",
+  "engine": "chrome-base",
+  "rep": 1,
+  "paginateMs": 41.956999999998516,
+  "pdfMs": 127.21295800000007,
+  "totalMs": 169.1699579999986,
+  "bytes": 324482,
+  "peakRss": 2001502208
+ },
+ {
+  "case": "invoice-office-tos-prague-czech",
+  "engine": "chrome-fixed",
+  "rep": 1,
+  "paginateMs": 42.538250000001426,
+  "pdfMs": 75.37325000000055,
+  "totalMs": 117.91150000000198,
+  "bytes": 268709,
+  "peakRss": 1754136576
+ },
+ {
+  "case": "invoice-office-tos-prague-czech",
+  "engine": "lp-fixed",
+  "rep": 1,
+  "paginateMs": 58.639916000000085,
+  "pdfMs": 15.738750000000437,
+  "totalMs": 74.37866600000052,
+  "bytes": 62932,
+  "peakRss": 1349582848
+ },
+ {
+  "case": "invoice-office-tos-prague-czech",
+  "engine": "chrome-base",
+  "rep": 2,
+  "paginateMs": 45.74474999999802,
+  "pdfMs": 128.45833400000265,
+  "totalMs": 174.20308400000067,
+  "bytes": 324482,
+  "peakRss": 1912045568
+ },
+ {
+  "case": "invoice-office-tos-prague-czech",
+  "engine": "chrome-fixed",
+  "rep": 2,
+  "paginateMs": 42.206999999998516,
+  "pdfMs": 77.1137910000034,
+  "totalMs": 119.32079100000192,
+  "bytes": 268709,
+  "peakRss": 1770864640
+ },
+ {
+  "case": "invoice-office-tos-prague-czech",
+  "engine": "lp-fixed",
+  "rep": 2,
+  "paginateMs": 61.26666699999987,
+  "pdfMs": 16.58100000000195,
+  "totalMs": 77.84766700000182,
+  "bytes": 62932,
+  "peakRss": 1378091008
+ },
+ {
+  "case": "invoice-office-tos-prague-english",
+  "engine": "chrome-base",
+  "rep": 0,
+  "paginateMs": 41.98833300000115,
+  "pdfMs": 123.48491699999795,
+  "totalMs": 165.4732499999991,
+  "bytes": 269119,
+  "pages": 1,
+  "peakRss": 2016149504
+ },
+ {
+  "case": "invoice-office-tos-prague-english",
+  "engine": "chrome-fixed",
+  "rep": 0,
+  "paginateMs": 43.16137499999968,
+  "pdfMs": 71.4777499999982,
+  "totalMs": 114.63912499999788,
+  "bytes": 213347,
+  "pages": 1,
+  "peakRss": 1767374848
+ },
+ {
+  "case": "invoice-office-tos-prague-english",
+  "engine": "lp-fixed",
+  "rep": 0,
+  "paginateMs": 61.639624999999796,
+  "pdfMs": 16.161334000000352,
+  "totalMs": 77.80095900000015,
+  "bytes": 60959,
+  "pages": 1,
+  "peakRss": 1398145024,
+  "lp": {
+   "bySelector": true,
+   "commands": 265,
+   "ms": {
+    "fetch": 0,
+    "layout": 0.07258300000000001,
+    "paint": 0.245917,
+    "pdf": 3.035542,
+    "snapshot": 0.003541,
+    "total": 3.3878329999999997
+   },
+   "pages": [
+    {
+     "culprit": "<div \"\"> 38,955 719x122 overflow 864x122",
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 107,
+     "width": 795,
+     "x": 0,
+     "y": 0
+    }
+   ],
+   "stats": {
+    "boxShadowsSkipped": 0,
+    "brushesSkipped": 0,
+    "composeSkipped": 0,
+    "culled": 1,
+    "degenerateSkipped": 129,
+    "emboldenSkipped": 0,
+    "fills": 32,
+    "filtersSkipped": 0,
+    "fontsFailed": 0,
+    "glyphRuns": 96,
+    "glyphs": 1559,
+    "glyphsWithoutText": 0,
+    "images": 0,
+    "insetShadows": 0,
+    "strokes": 3,
+    "variableRuns": 0
+   }
+  }
+ },
+ {
+  "case": "invoice-office-tos-prague-english",
+  "engine": "chrome-base",
+  "rep": 1,
+  "paginateMs": 40.341042000000016,
+  "pdfMs": 124.55212500000198,
+  "totalMs": 164.893167000002,
+  "bytes": 269119,
+  "peakRss": 1976320000
+ },
+ {
+  "case": "invoice-office-tos-prague-english",
+  "engine": "chrome-fixed",
+  "rep": 1,
+  "paginateMs": 41.77316700000301,
+  "pdfMs": 73.9919579999987,
+  "totalMs": 115.76512500000172,
+  "bytes": 213347,
+  "peakRss": 1766391808
+ },
+ {
+  "case": "invoice-office-tos-prague-english",
+  "engine": "lp-fixed",
+  "rep": 1,
+  "paginateMs": 62.230250000000524,
+  "pdfMs": 16.51616600000125,
+  "totalMs": 78.74641600000177,
+  "bytes": 60959,
+  "peakRss": 1432567808
+ },
+ {
+  "case": "invoice-office-tos-prague-english",
+  "engine": "chrome-base",
+  "rep": 2,
+  "paginateMs": 44.817957999999635,
+  "pdfMs": 122.94658400000117,
+  "totalMs": 167.7645420000008,
+  "bytes": 269119,
+  "peakRss": 1994604544
+ },
+ {
+  "case": "invoice-office-tos-prague-english",
+  "engine": "chrome-fixed",
+  "rep": 2,
+  "paginateMs": 42.07574999999997,
+  "pdfMs": 71.16587500000242,
+  "totalMs": 113.24162500000239,
+  "bytes": 213347,
+  "peakRss": 1832779776
+ },
+ {
+  "case": "invoice-office-tos-prague-english",
+  "engine": "lp-fixed",
+  "rep": 2,
+  "paginateMs": 61.25712500000009,
+  "pdfMs": 16.208833999997296,
+  "totalMs": 77.46595899999738,
+  "bytes": 60959,
+  "peakRss": 1471889408
+ },
+ {
+  "case": "invoice-office-tos-vienna-english",
+  "engine": "chrome-base",
+  "rep": 0,
+  "paginateMs": 44.54612500000076,
+  "pdfMs": 122.8382500000007,
+  "totalMs": 167.38437500000146,
+  "bytes": 259405,
+  "pages": 1,
+  "peakRss": 1886961664
+ },
+ {
+  "case": "invoice-office-tos-vienna-english",
+  "engine": "chrome-fixed",
+  "rep": 0,
+  "paginateMs": 43.841292000000976,
+  "pdfMs": 69.75058299999728,
+  "totalMs": 113.59187499999825,
+  "bytes": 203631,
+  "pages": 1,
+  "peakRss": 1756692480
+ },
+ {
+  "case": "invoice-office-tos-vienna-english",
+  "engine": "lp-fixed",
+  "rep": 0,
+  "paginateMs": 59.19250000000102,
+  "pdfMs": 15.410749999999098,
+  "totalMs": 74.60325000000012,
+  "bytes": 59279,
+  "pages": 1,
+  "peakRss": 1507852288,
+  "lp": {
+   "bySelector": true,
+   "commands": 247,
+   "ms": {
+    "fetch": 0,
+    "layout": 0.057874999999999996,
+    "paint": 0.203708,
+    "pdf": 2.812875,
+    "snapshot": 0.002291,
+    "total": 3.104625
+   },
+   "pages": [
+    {
+     "culprit": "<div \"\"> 38,992 719x85 overflow 1364x85",
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 607,
+     "width": 795,
+     "x": 0,
+     "y": 0
+    }
+   ],
+   "stats": {
+    "boxShadowsSkipped": 0,
+    "brushesSkipped": 0,
+    "composeSkipped": 0,
+    "culled": 0,
+    "degenerateSkipped": 129,
+    "emboldenSkipped": 0,
+    "fills": 32,
+    "filtersSkipped": 0,
+    "fontsFailed": 0,
+    "glyphRuns": 80,
+    "glyphs": 1259,
+    "glyphsWithoutText": 0,
+    "images": 0,
+    "insetShadows": 0,
+    "strokes": 2,
+    "variableRuns": 0
+   }
+  }
+ },
+ {
+  "case": "invoice-office-tos-vienna-english",
+  "engine": "chrome-base",
+  "rep": 1,
+  "paginateMs": 43.085416999998415,
+  "pdfMs": 122.82733300000109,
+  "totalMs": 165.9127499999995,
+  "bytes": 259405,
+  "peakRss": 1882374144
+ },
+ {
+  "case": "invoice-office-tos-vienna-english",
+  "engine": "chrome-fixed",
+  "rep": 1,
+  "paginateMs": 40.28183299999728,
+  "pdfMs": 69.86900000000242,
+  "totalMs": 110.1508329999997,
+  "bytes": 203631,
+  "peakRss": 1768947712
+ },
+ {
+  "case": "invoice-office-tos-vienna-english",
+  "engine": "lp-fixed",
+  "rep": 1,
+  "paginateMs": 61.49562499999956,
+  "pdfMs": 16.05816699999923,
+  "totalMs": 77.5537919999988,
+  "bytes": 59279,
+  "peakRss": 1544142848
+ },
+ {
+  "case": "invoice-office-tos-vienna-english",
+  "engine": "chrome-base",
+  "rep": 2,
+  "paginateMs": 45.451083000003564,
+  "pdfMs": 128.54112499999974,
+  "totalMs": 173.9922080000033,
+  "bytes": 259405,
+  "peakRss": 1985675264
+ },
+ {
+  "case": "invoice-office-tos-vienna-english",
+  "engine": "chrome-fixed",
+  "rep": 2,
+  "paginateMs": 45.833082999997714,
+  "pdfMs": 69.4958340000012,
+  "totalMs": 115.32891699999891,
+  "bytes": 203631,
+  "peakRss": 1769095168
+ },
+ {
+  "case": "invoice-office-tos-vienna-english",
+  "engine": "lp-fixed",
+  "rep": 2,
+  "paginateMs": 60.156958999999915,
+  "pdfMs": 16.077790999999706,
+  "totalMs": 76.23474999999962,
+  "bytes": 59279,
+  "peakRss": 1584807936
+ },
+ {
+  "case": "invoice-office-tos-vienna-german",
+  "engine": "chrome-base",
+  "rep": 0,
+  "paginateMs": 39.14487499999814,
+  "pdfMs": 122.6241250000021,
+  "totalMs": 161.76900000000023,
+  "bytes": 265770,
+  "pages": 1,
+  "peakRss": 1880457216
+ },
+ {
+  "case": "invoice-office-tos-vienna-german",
+  "engine": "chrome-fixed",
+  "rep": 0,
+  "paginateMs": 42.00712500000009,
+  "pdfMs": 75.34900000000198,
+  "totalMs": 117.35612500000207,
+  "bytes": 209997,
+  "pages": 1,
+  "peakRss": 1828372480
+ },
+ {
+  "case": "invoice-office-tos-vienna-german",
+  "engine": "lp-fixed",
+  "rep": 0,
+  "paginateMs": 39.27720899999986,
+  "pdfMs": 15.416290999997727,
+  "totalMs": 54.693499999997584,
+  "bytes": 59775,
+  "pages": 1,
+  "peakRss": 1624555520,
+  "lp": {
+   "bySelector": true,
+   "commands": 247,
+   "ms": {
+    "fetch": 0,
+    "layout": 0.059040999999999996,
+    "paint": 0.209458,
+    "pdf": 2.839959,
+    "snapshot": 0.001958,
+    "total": 3.138708
+   },
+   "pages": [
+    {
+     "culprit": "<div \"\"> 38,992 719x85 overflow 1364x85",
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 607,
+     "width": 795,
+     "x": 0,
+     "y": 0
+    }
+   ],
+   "stats": {
+    "boxShadowsSkipped": 0,
+    "brushesSkipped": 0,
+    "composeSkipped": 0,
+    "culled": 0,
+    "degenerateSkipped": 129,
+    "emboldenSkipped": 0,
+    "fills": 32,
+    "filtersSkipped": 0,
+    "fontsFailed": 0,
+    "glyphRuns": 80,
+    "glyphs": 1257,
+    "glyphsWithoutText": 0,
+    "images": 0,
+    "insetShadows": 0,
+    "strokes": 2,
+    "variableRuns": 0
+   }
+  }
+ },
+ {
+  "case": "invoice-office-tos-vienna-german",
+  "engine": "chrome-base",
+  "rep": 1,
+  "paginateMs": 41.40495899999951,
+  "pdfMs": 124.2133329999997,
+  "totalMs": 165.6182919999992,
+  "bytes": 265770,
+  "peakRss": 1879408640
+ },
+ {
+  "case": "invoice-office-tos-vienna-german",
+  "engine": "chrome-fixed",
+  "rep": 1,
+  "paginateMs": 42.713707999999315,
+  "pdfMs": 71.015542000001,
+  "totalMs": 113.72925000000032,
+  "bytes": 209997,
+  "peakRss": 1759494144
+ },
+ {
+  "case": "invoice-office-tos-vienna-german",
+  "engine": "lp-fixed",
+  "rep": 1,
+  "paginateMs": 60.92779199999859,
+  "pdfMs": 15.53925000000163,
+  "totalMs": 76.46704200000022,
+  "bytes": 59775,
+  "peakRss": 1677934592
+ },
+ {
+  "case": "invoice-office-tos-vienna-german",
+  "engine": "chrome-base",
+  "rep": 2,
+  "paginateMs": 41.82224999999744,
+  "pdfMs": 120.57525000000169,
+  "totalMs": 162.39749999999913,
+  "bytes": 265770,
+  "peakRss": 1884422144
+ },
+ {
+  "case": "invoice-office-tos-vienna-german",
+  "engine": "chrome-fixed",
+  "rep": 2,
+  "paginateMs": 41.42900000000009,
+  "pdfMs": 71.19591700000092,
+  "totalMs": 112.624917000001,
+  "bytes": 209997,
+  "peakRss": 1763426304
+ },
+ {
+  "case": "invoice-office-tos-vienna-german",
+  "engine": "lp-fixed",
+  "rep": 2,
+  "paginateMs": 39.5168330000015,
+  "pdfMs": 15.73516699999891,
+  "totalMs": 55.25200000000041,
+  "bytes": 59775,
+  "peakRss": 1721778176
+ },
+ {
+  "case": "invoice-bank-footer-tos-budapest-hungarian-bank-huf",
+  "engine": "chrome-base",
+  "rep": 0,
+  "paginateMs": 42.29112499999974,
+  "pdfMs": 120.76016600000003,
+  "totalMs": 163.05129099999976,
+  "bytes": 261586,
+  "pages": 1,
+  "peakRss": 1893679104
+ },
+ {
+  "case": "invoice-bank-footer-tos-budapest-hungarian-bank-huf",
+  "engine": "chrome-fixed",
+  "rep": 0,
+  "paginateMs": 40.18824999999924,
+  "pdfMs": 71.1161659999998,
+  "totalMs": 111.30441599999904,
+  "bytes": 205818,
+  "pages": 1,
+  "peakRss": 1758052352
+ },
+ {
+  "case": "invoice-bank-footer-tos-budapest-hungarian-bank-huf",
+  "engine": "lp-fixed",
+  "rep": 0,
+  "paginateMs": 39.79529099999854,
+  "pdfMs": 15.545792000000802,
+  "totalMs": 55.341082999999344,
+  "bytes": 60281,
+  "pages": 1,
+  "peakRss": 1766277120,
+  "lp": {
+   "bySelector": true,
+   "commands": 247,
+   "ms": {
+    "fetch": 0,
+    "layout": 0.064041,
+    "paint": 0.2195,
+    "pdf": 2.911292,
+    "snapshot": 0.003292,
+    "total": 3.232958
+   },
+   "pages": [
+    {
+     "culprit": "<div \"\"> 38,974 719x103 overflow 1040x103",
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 283,
+     "width": 795,
+     "x": 0,
+     "y": 0
+    }
+   ],
+   "stats": {
+    "boxShadowsSkipped": 0,
+    "brushesSkipped": 0,
+    "composeSkipped": 0,
+    "culled": 0,
+    "degenerateSkipped": 129,
+    "emboldenSkipped": 0,
+    "fills": 32,
+    "filtersSkipped": 0,
+    "fontsFailed": 0,
+    "glyphRuns": 80,
+    "glyphs": 1098,
+    "glyphsWithoutText": 0,
+    "images": 0,
+    "insetShadows": 0,
+    "strokes": 2,
+    "variableRuns": 0
+   }
+  }
+ },
+ {
+  "case": "invoice-bank-footer-tos-budapest-hungarian-bank-huf",
+  "engine": "chrome-base",
+  "rep": 1,
+  "paginateMs": 43.53725000000122,
+  "pdfMs": 122.33837499999936,
+  "totalMs": 165.87562500000058,
+  "bytes": 261586,
+  "peakRss": 1897791488
+ },
+ {
+  "case": "invoice-bank-footer-tos-budapest-hungarian-bank-huf",
+  "engine": "chrome-fixed",
+  "rep": 1,
+  "paginateMs": 40.11458300000231,
+  "pdfMs": 69.32391699999789,
+  "totalMs": 109.4385000000002,
+  "bytes": 205818,
+  "peakRss": 1748959232
+ },
+ {
+  "case": "invoice-bank-footer-tos-budapest-hungarian-bank-huf",
+  "engine": "lp-fixed",
+  "rep": 1,
+  "paginateMs": 39.41949999999997,
+  "pdfMs": 15.918625000002066,
+  "totalMs": 55.33812500000204,
+  "bytes": 60281,
+  "peakRss": 1784741888
+ },
+ {
+  "case": "invoice-bank-footer-tos-budapest-hungarian-bank-huf",
+  "engine": "chrome-base",
+  "rep": 2,
+  "paginateMs": 41.496791999998095,
+  "pdfMs": 123.82258300000103,
+  "totalMs": 165.31937499999913,
+  "bytes": 261586,
+  "peakRss": 1873821696
+ },
+ {
+  "case": "invoice-bank-footer-tos-budapest-hungarian-bank-huf",
+  "engine": "chrome-fixed",
+  "rep": 2,
+  "paginateMs": 41.2599999999984,
+  "pdfMs": 70.42224999999962,
+  "totalMs": 111.68224999999802,
+  "bytes": 205818,
+  "peakRss": 1763721216
+ },
+ {
+  "case": "invoice-bank-footer-tos-budapest-hungarian-bank-huf",
+  "engine": "lp-fixed",
+  "rep": 2,
+  "paginateMs": 60.34675000000061,
+  "pdfMs": 16.01745799999844,
+  "totalMs": 76.36420799999905,
+  "bytes": 60281,
+  "peakRss": 1786609664
+ },
+ {
+  "case": "invoice-bank-footer-tos-budapest-english-bank-main",
+  "engine": "chrome-base",
+  "rep": 0,
+  "paginateMs": 43.890291000003344,
+  "pdfMs": 122.07270900000003,
+  "totalMs": 165.96300000000338,
+  "bytes": 252924,
+  "pages": 1,
+  "peakRss": 1897840640
+ },
+ {
+  "case": "invoice-bank-footer-tos-budapest-english-bank-main",
+  "engine": "chrome-fixed",
+  "rep": 0,
+  "paginateMs": 39.68458299999838,
+  "pdfMs": 69.27887499999997,
+  "totalMs": 108.96345799999835,
+  "bytes": 197154,
+  "pages": 1,
+  "peakRss": 1749204992
+ },
+ {
+  "case": "invoice-bank-footer-tos-budapest-english-bank-main",
+  "engine": "lp-fixed",
+  "rep": 0,
+  "paginateMs": 66.11662499999875,
+  "pdfMs": 16.64087500000096,
+  "totalMs": 82.75749999999971,
+  "bytes": 58524,
+  "pages": 1,
+  "peakRss": 1798946816,
+  "lp": {
+   "bySelector": true,
+   "commands": 247,
+   "ms": {
+    "fetch": 0,
+    "layout": 0.061084,
+    "paint": 0.205209,
+    "pdf": 2.748334,
+    "snapshot": 0.0026249999999999997,
+    "total": 3.044459
+   },
+   "pages": [
+    {
+     "culprit": "<div \"\"> 38,974 719x103 overflow 1040x103",
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 283,
+     "width": 795,
+     "x": 0,
+     "y": 0
+    }
+   ],
+   "stats": {
+    "boxShadowsSkipped": 0,
+    "brushesSkipped": 0,
+    "composeSkipped": 0,
+    "culled": 0,
+    "degenerateSkipped": 129,
+    "emboldenSkipped": 0,
+    "fills": 32,
+    "filtersSkipped": 0,
+    "fontsFailed": 0,
+    "glyphRuns": 80,
+    "glyphs": 1051,
+    "glyphsWithoutText": 0,
+    "images": 0,
+    "insetShadows": 0,
+    "strokes": 2,
+    "variableRuns": 0
+   }
+  }
+ },
+ {
+  "case": "invoice-bank-footer-tos-budapest-english-bank-main",
+  "engine": "chrome-base",
+  "rep": 1,
+  "paginateMs": 41.45341700000063,
+  "pdfMs": 123.36020799999824,
+  "totalMs": 164.81362499999886,
+  "bytes": 252924,
+  "peakRss": 1897873408
+ },
+ {
+  "case": "invoice-bank-footer-tos-budapest-english-bank-main",
+  "engine": "chrome-fixed",
+  "rep": 1,
+  "paginateMs": 42.03804200000013,
+  "pdfMs": 69.51874999999927,
+  "totalMs": 111.5567919999994,
+  "bytes": 197154,
+  "peakRss": 1749368832
+ },
+ {
+  "case": "invoice-bank-footer-tos-budapest-english-bank-main",
+  "engine": "lp-fixed",
+  "rep": 1,
+  "paginateMs": 58.84345899999971,
+  "pdfMs": 15.163499999998749,
+  "totalMs": 74.00695899999846,
+  "bytes": 58524,
+  "peakRss": 1807286272
+ },
+ {
+  "case": "invoice-bank-footer-tos-budapest-english-bank-main",
+  "engine": "chrome-base",
+  "rep": 2,
+  "paginateMs": 42.7131249999984,
+  "pdfMs": 122.23283300000185,
+  "totalMs": 164.94595800000025,
+  "bytes": 252924,
+  "peakRss": 1854734336
+ },
+ {
+  "case": "invoice-bank-footer-tos-budapest-english-bank-main",
+  "engine": "chrome-fixed",
+  "rep": 2,
+  "paginateMs": 42.78220800000054,
+  "pdfMs": 69.79241700000057,
+  "totalMs": 112.5746250000011,
+  "bytes": 197154,
+  "peakRss": 1753448448
+ },
+ {
+  "case": "invoice-bank-footer-tos-budapest-english-bank-main",
+  "engine": "lp-fixed",
+  "rep": 2,
+  "paginateMs": 61.21175000000221,
+  "pdfMs": 16.970665999997436,
+  "totalMs": 78.18241599999965,
+  "bytes": 58524,
+  "peakRss": 1808089088
+ },
+ {
+  "case": "invoice-bank-footer-tos-vienna-english-bank-factoring",
+  "engine": "chrome-base",
+  "rep": 0,
+  "paginateMs": 40.35329199999978,
+  "pdfMs": 124.44350000000122,
+  "totalMs": 164.796792000001,
+  "bytes": 260270,
+  "pages": 1,
+  "peakRss": 1903820800
+ },
+ {
+  "case": "invoice-bank-footer-tos-vienna-english-bank-factoring",
+  "engine": "chrome-fixed",
+  "rep": 0,
+  "paginateMs": 40.32075000000259,
+  "pdfMs": 71.03637499999968,
+  "totalMs": 111.35712500000227,
+  "bytes": 204498,
+  "pages": 1,
+  "peakRss": 1772945408
+ },
+ {
+  "case": "invoice-bank-footer-tos-vienna-english-bank-factoring",
+  "engine": "lp-fixed",
+  "rep": 0,
+  "paginateMs": 60.90324999999939,
+  "pdfMs": 16.41854200000307,
+  "totalMs": 77.32179200000246,
+  "bytes": 59494,
+  "pages": 1,
+  "peakRss": 1818722304,
+  "lp": {
+   "bySelector": true,
+   "commands": 247,
+   "ms": {
+    "fetch": 0,
+    "layout": 0.080917,
+    "paint": 0.241541,
+    "pdf": 2.89425,
+    "snapshot": 0.003125,
+    "total": 3.264583
+   },
+   "pages": [
+    {
+     "culprit": "<div \"\"> 38,992 719x85 overflow 1387x85",
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 630,
+     "width": 795,
+     "x": 0,
+     "y": 0
+    }
+   ],
+   "stats": {
+    "boxShadowsSkipped": 0,
+    "brushesSkipped": 0,
+    "composeSkipped": 0,
+    "culled": 0,
+    "degenerateSkipped": 129,
+    "emboldenSkipped": 0,
+    "fills": 32,
+    "filtersSkipped": 0,
+    "fontsFailed": 0,
+    "glyphRuns": 80,
+    "glyphs": 1259,
+    "glyphsWithoutText": 0,
+    "images": 0,
+    "insetShadows": 0,
+    "strokes": 2,
+    "variableRuns": 0
+   }
+  }
+ },
+ {
+  "case": "invoice-bank-footer-tos-vienna-english-bank-factoring",
+  "engine": "chrome-base",
+  "rep": 1,
+  "paginateMs": 43.84508300000016,
+  "pdfMs": 122.2099589999998,
+  "totalMs": 166.05504199999996,
+  "bytes": 260270,
+  "peakRss": 1881489408
+ },
+ {
+  "case": "invoice-bank-footer-tos-vienna-english-bank-factoring",
+  "engine": "chrome-fixed",
+  "rep": 1,
+  "paginateMs": 44.72166599999764,
+  "pdfMs": 73.34308400000009,
+  "totalMs": 118.06474999999773,
+  "bytes": 204498,
+  "peakRss": 1751187456
+ },
+ {
+  "case": "invoice-bank-footer-tos-vienna-english-bank-factoring",
+  "engine": "lp-fixed",
+  "rep": 1,
+  "paginateMs": 62.10908299999937,
+  "pdfMs": 16.418792000000394,
+  "totalMs": 78.52787499999977,
+  "bytes": 59494,
+  "peakRss": 1827520512
+ },
+ {
+  "case": "invoice-bank-footer-tos-vienna-english-bank-factoring",
+  "engine": "chrome-base",
+  "rep": 2,
+  "paginateMs": 40.322416999999405,
+  "pdfMs": 123.19566699999996,
+  "totalMs": 163.51808399999936,
+  "bytes": 260270,
+  "peakRss": 1890402304
+ },
+ {
+  "case": "invoice-bank-footer-tos-vienna-english-bank-factoring",
+  "engine": "chrome-fixed",
+  "rep": 2,
+  "paginateMs": 43.84466700000121,
+  "pdfMs": 71.15954200000124,
+  "totalMs": 115.00420900000245,
+  "bytes": 204498,
+  "peakRss": 1742454784
+ },
+ {
+  "case": "invoice-bank-footer-tos-vienna-english-bank-factoring",
+  "engine": "lp-fixed",
+  "rep": 2,
+  "paginateMs": 57.935333000001265,
+  "pdfMs": 15.446833000001789,
+  "totalMs": 73.38216600000305,
+  "bytes": 59494,
+  "peakRss": 1816592384
+ },
+ {
+  "case": "invoice-bank-footer-tos-vienna-english-bank-regular",
+  "engine": "chrome-base",
+  "rep": 0,
+  "paginateMs": 40.37474999999904,
+  "pdfMs": 121.6181660000002,
+  "totalMs": 161.99291599999924,
+  "bytes": 260104,
+  "pages": 1,
+  "peakRss": 1844527104
+ },
+ {
+  "case": "invoice-bank-footer-tos-vienna-english-bank-regular",
+  "engine": "chrome-fixed",
+  "rep": 0,
+  "paginateMs": 42.611291000001074,
+  "pdfMs": 69.86241700000028,
+  "totalMs": 112.47370800000135,
+  "bytes": 204331,
+  "pages": 1,
+  "peakRss": 1744535552
+ },
+ {
+  "case": "invoice-bank-footer-tos-vienna-english-bank-regular",
+  "engine": "lp-fixed",
+  "rep": 0,
+  "paginateMs": 61.32999999999811,
+  "pdfMs": 15.821583000000828,
+  "totalMs": 77.15158299999894,
+  "bytes": 59495,
+  "pages": 1,
+  "peakRss": 1818279936,
+  "lp": {
+   "bySelector": true,
+   "commands": 247,
+   "ms": {
+    "fetch": 0,
+    "layout": 0.073292,
+    "paint": 0.231458,
+    "pdf": 2.8955420000000003,
+    "snapshot": 0.002916,
+    "total": 3.234166
+   },
+   "pages": [
+    {
+     "culprit": "<div \"\"> 38,992 719x85 overflow 1364x85",
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 607,
+     "width": 795,
+     "x": 0,
+     "y": 0
+    }
+   ],
+   "stats": {
+    "boxShadowsSkipped": 0,
+    "brushesSkipped": 0,
+    "composeSkipped": 0,
+    "culled": 0,
+    "degenerateSkipped": 129,
+    "emboldenSkipped": 0,
+    "fills": 32,
+    "filtersSkipped": 0,
+    "fontsFailed": 0,
+    "glyphRuns": 80,
+    "glyphs": 1259,
+    "glyphsWithoutText": 0,
+    "images": 0,
+    "insetShadows": 0,
+    "strokes": 2,
+    "variableRuns": 0
+   }
+  }
+ },
+ {
+  "case": "invoice-bank-footer-tos-vienna-english-bank-regular",
+  "engine": "chrome-base",
+  "rep": 1,
+  "paginateMs": 41.257957999998325,
+  "pdfMs": 122.75129200000083,
+  "totalMs": 164.00924999999916,
+  "bytes": 260104,
+  "peakRss": 1850753024
+ },
+ {
+  "case": "invoice-bank-footer-tos-vienna-english-bank-regular",
+  "engine": "chrome-fixed",
+  "rep": 1,
+  "paginateMs": 39.802833000001556,
+  "pdfMs": 72.794624999995,
+  "totalMs": 112.59745799999655,
+  "bytes": 204331,
+  "peakRss": 1753284608
+ },
+ {
+  "case": "invoice-bank-footer-tos-vienna-english-bank-regular",
+  "engine": "lp-fixed",
+  "rep": 1,
+  "paginateMs": 40.73029099999985,
+  "pdfMs": 15.743459000004805,
+  "totalMs": 56.47375000000466,
+  "bytes": 59495,
+  "peakRss": 1822556160
+ },
+ {
+  "case": "invoice-bank-footer-tos-vienna-english-bank-regular",
+  "engine": "chrome-base",
+  "rep": 2,
+  "paginateMs": 39.86000000000058,
+  "pdfMs": 120.61429099999805,
+  "totalMs": 160.47429099999863,
+  "bytes": 260104,
+  "peakRss": 1805352960
+ },
+ {
+  "case": "invoice-bank-footer-tos-vienna-english-bank-regular",
+  "engine": "chrome-fixed",
+  "rep": 2,
+  "paginateMs": 46.64991700000246,
+  "pdfMs": 70.83658299999661,
+  "totalMs": 117.48649999999907,
+  "bytes": 204331,
+  "peakRss": 1753448448
+ },
+ {
+  "case": "invoice-bank-footer-tos-vienna-english-bank-regular",
+  "engine": "lp-fixed",
+  "rep": 2,
+  "paginateMs": 40.552833000001556,
+  "pdfMs": 16.629332999997132,
+  "totalMs": 57.18216599999869,
+  "bytes": 59495,
+  "peakRss": 1828110336
+ },
+ {
+  "case": "bmd-report",
+  "engine": "chrome-base",
+  "rep": 0,
+  "paginateMs": 33.90424999999959,
+  "pdfMs": 109.74758400000428,
+  "totalMs": 143.65183400000387,
+  "bytes": 117611,
+  "pages": 1,
+  "peakRss": 1882488832
+ },
+ {
+  "case": "bmd-report",
+  "engine": "chrome-fixed",
+  "rep": 0,
+  "paginateMs": 34.78116599999339,
+  "pdfMs": 58.423625000003085,
+  "totalMs": 93.20479099999648,
+  "bytes": 63042,
+  "pages": 1,
+  "peakRss": 1741832192
+ },
+ {
+  "case": "bmd-report",
+  "engine": "lp-fixed",
+  "rep": 0,
+  "paginateMs": 34.606707999999344,
+  "pdfMs": 11.543709000005038,
+  "totalMs": 46.15041700000438,
+  "bytes": 38911,
+  "pages": 1,
+  "peakRss": 1829699584,
+  "lp": {
+   "bySelector": true,
+   "commands": 77,
+   "ms": {
+    "fetch": 0,
+    "layout": 0.045417,
+    "paint": 0.11158399999999999,
+    "pdf": 1.501334,
+    "snapshot": 0.002541,
+    "total": 1.6908750000000001
+   },
+   "pages": [
+    {
+     "culprit": "<div \"\"> 38,41 1047x684 overflow 1869x684",
+     "height": 795,
+     "overflowBottom": 0,
+     "overflowRight": 784,
+     "width": 1123,
+     "x": 0,
+     "y": 0
+    }
+   ],
+   "stats": {
+    "boxShadowsSkipped": 0,
+    "brushesSkipped": 0,
+    "composeSkipped": 0,
+    "culled": 5,
+    "degenerateSkipped": 40,
+    "emboldenSkipped": 0,
+    "fills": 3,
+    "filtersSkipped": 0,
+    "fontsFailed": 0,
+    "glyphRuns": 25,
+    "glyphs": 414,
+    "glyphsWithoutText": 0,
+    "images": 0,
+    "insetShadows": 0,
+    "strokes": 0,
+    "variableRuns": 0
+   }
+  }
+ },
+ {
+  "case": "bmd-report",
+  "engine": "chrome-base",
+  "rep": 1,
+  "paginateMs": 32.145125000002736,
+  "pdfMs": 112.7088339999973,
+  "totalMs": 144.85395900000003,
+  "bytes": 117611,
+  "peakRss": 1848442880
+ },
+ {
+  "case": "bmd-report",
+  "engine": "chrome-fixed",
+  "rep": 1,
+  "paginateMs": 11.85466599999927,
+  "pdfMs": 58.5636250000025,
+  "totalMs": 70.41829100000177,
+  "bytes": 63042,
+  "peakRss": 1756626944
+ },
+ {
+  "case": "bmd-report",
+  "engine": "lp-fixed",
+  "rep": 1,
+  "paginateMs": 42.15087499999936,
+  "pdfMs": 11.418707999997423,
+  "totalMs": 53.56958299999678,
+  "bytes": 38911,
+  "peakRss": 1834352640
+ },
+ {
+  "case": "bmd-report",
+  "engine": "chrome-base",
+  "rep": 2,
+  "paginateMs": 33.13695899999584,
+  "pdfMs": 107.95025000000169,
+  "totalMs": 141.08720899999753,
+  "bytes": 117611,
+  "peakRss": 1784741888
+ },
+ {
+  "case": "bmd-report",
+  "engine": "chrome-fixed",
+  "rep": 2,
+  "paginateMs": 31.349417000004905,
+  "pdfMs": 61.170790999996825,
+  "totalMs": 92.52020800000173,
+  "bytes": 63042,
+  "peakRss": 1757446144
+ },
+ {
+  "case": "bmd-report",
+  "engine": "lp-fixed",
+  "rep": 2,
+  "paginateMs": 40.85650000000169,
+  "pdfMs": 11.307416000003286,
+  "totalMs": 52.163916000004974,
+  "bytes": 38911,
+  "peakRss": 1839316992
+ },
+ {
+  "case": "bl-instructions-cargo-alignment-preview",
+  "engine": "chrome-base",
+  "rep": 0,
+  "paginateMs": 40.2546250000014,
+  "pdfMs": 115.18645799999649,
+  "totalMs": 155.4410829999979,
+  "bytes": 163872,
+  "pages": 1,
+  "peakRss": 1773748224
+ },
+ {
+  "case": "bl-instructions-cargo-alignment-preview",
+  "engine": "chrome-fixed",
+  "rep": 0,
+  "paginateMs": 37.14254199999414,
+  "pdfMs": 63.127250000005006,
+  "totalMs": 100.26979199999914,
+  "bytes": 108017,
+  "pages": 1,
+  "peakRss": 1753497600
+ },
+ {
+  "case": "bl-instructions-cargo-alignment-preview",
+  "engine": "lp-fixed",
+  "rep": 0,
+  "paginateMs": 54.85662500000035,
+  "pdfMs": 14.586457999997947,
+  "totalMs": 69.4430829999983,
+  "bytes": 47691,
+  "pages": 1,
+  "peakRss": 1844314112,
+  "lp": {
+   "bySelector": true,
+   "commands": 150,
+   "ms": {
+    "fetch": 0,
+    "layout": 0.07162500000000001,
+    "paint": 0.242875,
+    "pdf": 2.37425,
+    "snapshot": 0.0035,
+    "total": 2.737083
+   },
+   "pages": [
+    {
+     "culprit": null,
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 0,
+     "width": 795,
+     "x": 0,
+     "y": 0
+    }
+   ],
+   "stats": {
+    "boxShadowsSkipped": 0,
+    "brushesSkipped": 0,
+    "composeSkipped": 0,
+    "culled": 0,
+    "degenerateSkipped": 51,
+    "emboldenSkipped": 0,
+    "fills": 16,
+    "filtersSkipped": 0,
+    "fontsFailed": 0,
+    "glyphRuns": 77,
+    "glyphs": 1517,
+    "glyphsWithoutText": 0,
+    "images": 0,
+    "insetShadows": 0,
+    "strokes": 2,
+    "variableRuns": 0
+   }
+  }
+ },
+ {
+  "case": "bl-instructions-cargo-alignment-preview",
+  "engine": "chrome-base",
+  "rep": 1,
+  "paginateMs": 37.249040999995486,
+  "pdfMs": 114.10779200000252,
+  "totalMs": 151.356832999998,
+  "bytes": 163872,
+  "peakRss": 1784053760
+ },
+ {
+  "case": "bl-instructions-cargo-alignment-preview",
+  "engine": "chrome-fixed",
+  "rep": 1,
+  "paginateMs": 36.2042500000025,
+  "pdfMs": 63.091458999995666,
+  "totalMs": 99.29570899999817,
+  "bytes": 108017,
+  "peakRss": 1759281152
+ },
+ {
+  "case": "bl-instructions-cargo-alignment-preview",
+  "engine": "lp-fixed",
+  "rep": 1,
+  "paginateMs": 53.779499999996915,
+  "pdfMs": 14.652208000006794,
+  "totalMs": 68.43170800000371,
+  "bytes": 47691,
+  "peakRss": 1853177856
+ },
+ {
+  "case": "bl-instructions-cargo-alignment-preview",
+  "engine": "chrome-base",
+  "rep": 2,
+  "paginateMs": 37.31741599999805,
+  "pdfMs": 113.1875,
+  "totalMs": 150.50491599999805,
+  "bytes": 163872,
+  "peakRss": 1888845824
+ },
+ {
+  "case": "bl-instructions-cargo-alignment-preview",
+  "engine": "chrome-fixed",
+  "rep": 2,
+  "paginateMs": 35.22166699999798,
+  "pdfMs": 60.09649999999965,
+  "totalMs": 95.31816699999763,
+  "bytes": 108017,
+  "peakRss": 1745092608
+ },
+ {
+  "case": "bl-instructions-cargo-alignment-preview",
+  "engine": "lp-fixed",
+  "rep": 2,
+  "paginateMs": 51.8136250000025,
+  "pdfMs": 14.211624999996275,
+  "totalMs": 66.02524999999878,
+  "bytes": 47691,
+  "peakRss": 1859092480
+ },
+ {
+  "case": "bl-instructions-cargo-alignment-final",
+  "engine": "chrome-base",
+  "rep": 0,
+  "paginateMs": 37.04683400000067,
+  "pdfMs": 109.79179099999601,
+  "totalMs": 146.83862499999668,
+  "bytes": 159342,
+  "pages": 1,
+  "peakRss": 1900888064
+ },
+ {
+  "case": "bl-instructions-cargo-alignment-final",
+  "engine": "chrome-fixed",
+  "rep": 0,
+  "paginateMs": 34.69379100000515,
+  "pdfMs": 63.69266699999571,
+  "totalMs": 98.38645800000086,
+  "bytes": 103486,
+  "pages": 1,
+  "peakRss": 1759264768
+ },
+ {
+  "case": "bl-instructions-cargo-alignment-final",
+  "engine": "lp-fixed",
+  "rep": 0,
+  "paginateMs": 56.608875000005355,
+  "pdfMs": 14.316249999996217,
+  "totalMs": 70.92512500000157,
+  "bytes": 46365,
+  "pages": 1,
+  "peakRss": 1864761344,
+  "lp": {
+   "bySelector": true,
+   "commands": 149,
+   "ms": {
+    "fetch": 0,
+    "layout": 0.070167,
+    "paint": 0.221084,
+    "pdf": 2.2621249999999997,
+    "snapshot": 0.00325,
+    "total": 2.5865
+   },
+   "pages": [
+    {
+     "culprit": null,
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 0,
+     "width": 795,
+     "x": 0,
+     "y": 0
+    }
+   ],
+   "stats": {
+    "boxShadowsSkipped": 0,
+    "brushesSkipped": 0,
+    "composeSkipped": 0,
+    "culled": 0,
+    "degenerateSkipped": 51,
+    "emboldenSkipped": 0,
+    "fills": 16,
+    "filtersSkipped": 0,
+    "fontsFailed": 0,
+    "glyphRuns": 76,
+    "glyphs": 1510,
+    "glyphsWithoutText": 0,
+    "images": 0,
+    "insetShadows": 0,
+    "strokes": 2,
+    "variableRuns": 0
+   }
+  }
+ },
+ {
+  "case": "bl-instructions-cargo-alignment-final",
+  "engine": "chrome-base",
+  "rep": 1,
+  "paginateMs": 42.846292000001995,
+  "pdfMs": 128.08374999999796,
+  "totalMs": 170.93004199999996,
+  "bytes": 159342,
+  "peakRss": 1905164288
+ },
+ {
+  "case": "bl-instructions-cargo-alignment-final",
+  "engine": "chrome-fixed",
+  "rep": 1,
+  "paginateMs": 39.96337499999936,
+  "pdfMs": 66.7691249999989,
+  "totalMs": 106.73249999999825,
+  "bytes": 103486,
+  "peakRss": 1758576640
+ },
+ {
+  "case": "bl-instructions-cargo-alignment-final",
+  "engine": "lp-fixed",
+  "rep": 1,
+  "paginateMs": 55.45666699999856,
+  "pdfMs": 14.840000000003783,
+  "totalMs": 70.29666700000234,
+  "bytes": 46365,
+  "peakRss": 1873100800
+ },
+ {
+  "case": "bl-instructions-cargo-alignment-final",
+  "engine": "chrome-base",
+  "rep": 2,
+  "paginateMs": 40.048249999999825,
+  "pdfMs": 113.86220799999865,
+  "totalMs": 153.91045799999847,
+  "bytes": 159342,
+  "peakRss": 1790001152
+ },
+ {
+  "case": "bl-instructions-cargo-alignment-final",
+  "engine": "chrome-fixed",
+  "rep": 2,
+  "paginateMs": 36.464874999997846,
+  "pdfMs": 63.08754200000112,
+  "totalMs": 99.55241699999897,
+  "bytes": 103486,
+  "peakRss": 1762754560
+ },
+ {
+  "case": "bl-instructions-cargo-alignment-final",
+  "engine": "lp-fixed",
+  "rep": 2,
+  "paginateMs": 56.18241699999635,
+  "pdfMs": 14.320666999999958,
+  "totalMs": 70.5030839999963,
+  "bytes": 46365,
+  "peakRss": 1892679680
+ },
+ {
+  "case": "house-bl-final-historical-b",
+  "engine": "chrome-base",
+  "rep": 0,
+  "paginateMs": 41.61187499999505,
+  "pdfMs": 191.4666670000006,
+  "totalMs": 233.07854199999565,
+  "bytes": 292397,
+  "pages": 2,
+  "peakRss": 1894580224
+ },
+ {
+  "case": "house-bl-final-historical-b",
+  "engine": "chrome-fixed",
+  "rep": 0,
+  "paginateMs": 42.83541700000205,
+  "pdfMs": 75.80820799999492,
+  "totalMs": 118.64362499999697,
+  "bytes": 172135,
+  "pages": 2,
+  "peakRss": 1743699968
+ },
+ {
+  "case": "house-bl-final-historical-b",
+  "engine": "lp-fixed",
+  "rep": 0,
+  "paginateMs": 105.12216700000135,
+  "pdfMs": 18.473000000005413,
+  "totalMs": 123.59516700000677,
+  "bytes": 61100,
+  "pages": 2,
+  "peakRss": 1916665856,
+  "lp": {
+   "bySelector": true,
+   "commands": 206,
+   "ms": {
+    "fetch": 0,
+    "layout": 0.069917,
+    "paint": 0.318125,
+    "pdf": 3.57275,
+    "snapshot": 0.002667,
+    "total": 3.9944589999999995
+   },
+   "pages": [
+    {
+     "culprit": null,
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 0,
+     "width": 795,
+     "x": 0,
+     "y": 0
+    },
+    {
+     "culprit": null,
+     "height": 1122,
+     "overflowBottom": 0,
+     "overflowRight": 0,
+     "width": 795,
+     "x": 0,
+     "y": 1133
+    }
+   ],
+   "stats": {
+    "boxShadowsSkipped": 0,
+    "brushesSkipped": 0,
+    "composeSkipped": 0,
+    "culled": 197,
+    "degenerateSkipped": 52,
+    "emboldenSkipped": 0,
+    "fills": 40,
+    "filtersSkipped": 0,
+    "fontsFailed": 0,
+    "glyphRuns": 105,
+    "glyphs": 4515,
+    "glyphsWithoutText": 0,
+    "images": 0,
+    "insetShadows": 0,
+    "strokes": 2,
+    "variableRuns": 0
+   }
+  }
+ },
+ {
+  "case": "house-bl-final-historical-b",
+  "engine": "chrome-base",
+  "rep": 1,
+  "paginateMs": 40.15658300000359,
+  "pdfMs": 174.85175000000163,
+  "totalMs": 215.00833300000522,
+  "bytes": 292397,
+  "peakRss": 1881620480
+ },
+ {
+  "case": "house-bl-final-historical-b",
+  "engine": "chrome-fixed",
+  "rep": 1,
+  "paginateMs": 54.71179200000188,
+  "pdfMs": 78.64041700000234,
+  "totalMs": 133.35220900000422,
+  "bytes": 172135,
+  "peakRss": 1777909760
+ },
+ {
+  "case": "house-bl-final-historical-b",
+  "engine": "lp-fixed",
+  "rep": 1,
+  "paginateMs": 97.90245900000446,
+  "pdfMs": 19.811957999998413,
+  "totalMs": 117.71441700000287,
+  "bytes": 61100,
+  "peakRss": 1946828800
+ },
+ {
+  "case": "house-bl-final-historical-b",
+  "engine": "chrome-base",
+  "rep": 2,
+  "paginateMs": 39.43166700000438,
+  "pdfMs": 177.9876660000009,
+  "totalMs": 217.41933300000528,
+  "bytes": 292397,
+  "peakRss": 1902510080
+ },
+ {
+  "case": "house-bl-final-historical-b",
+  "engine": "chrome-fixed",
+  "rep": 2,
+  "paginateMs": 39.18424999999843,
+  "pdfMs": 70.22283400000015,
+  "totalMs": 109.40708399999858,
+  "bytes": 172135,
+  "peakRss": 1730215936
+ },
+ {
+  "case": "house-bl-final-historical-b",
+  "engine": "lp-fixed",
+  "rep": 2,
+  "paginateMs": 56.25766700000531,
+  "pdfMs": 17.970040999993216,
+  "totalMs": 74.22770799999853,
+  "bytes": 61100,
+  "peakRss": 1986347008
+ },
+ {
+  "case": "house-bl-final-copy-historical-b",
+  "engine": "chrome-base",
+  "rep": 0,
+  "paginateMs": 39.085957999996026,
+  "pdfMs": 174.58433299999888,
+  "totalMs": 213.6702909999949,
+  "bytes": 292153,
+  "pages": 2,
+  "peakRss": 1902739456
+ },
+ {
+  "case": "house-bl-final-copy-historical-b",
+  "engine": "chrome-fixed",
+  "rep": 0,
+  "paginateMs": 40.194250000000466,
+  "pdfMs": 67.26604100000259,
+  "totalMs": 107.46029100000305,
+  "bytes": 171888,
+  "pages": 2,
+  "peakRss": 1731723264
+ },
+ {
+  "case": "house-bl-final-copy-historical-b",
+  "engine": "lp-fixed",
+  "rep": 0,
+  "paginateMs": 57.21041700000205,
+  "pdfMs": 17.368125000000873,
+  "totalMs": 74.57854200000293,
+  "bytes": 60972,
+  "pages": 2,
+  "peakRss": 2037071872,
+  "lp": {
+   "bySelector": true,
+   "commands": 206,
+   "ms": {
+    "fetch": 0,
+    "layout": 0.08791700000000001,
+    "paint": 0.35612499999999997,
+    "pdf": 3.664459,
+    "snapshot": 0.002916,
+    "total": 4.148874999999999
+   },
+   "pages": [
+    {
+     "culprit": null,
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 0,
+     "width": 795,
+     "x": 0,
+     "y": 0
+    },
+    {
+     "culprit": null,
+     "height": 1122,
+     "overflowBottom": 0,
+     "overflowRight": 0,
+     "width": 795,
+     "x": 0,
+     "y": 1133
+    }
+   ],
+   "stats": {
+    "boxShadowsSkipped": 0,
+    "brushesSkipped": 0,
+    "composeSkipped": 0,
+    "culled": 197,
+    "degenerateSkipped": 52,
+    "emboldenSkipped": 0,
+    "fills": 40,
+    "filtersSkipped": 0,
+    "fontsFailed": 0,
+    "glyphRuns": 105,
+    "glyphs": 4513,
+    "glyphsWithoutText": 0,
+    "images": 0,
+    "insetShadows": 0,
+    "strokes": 2,
+    "variableRuns": 0
+   }
+  }
+ },
+ {
+  "case": "house-bl-final-copy-historical-b",
+  "engine": "chrome-base",
+  "rep": 1,
+  "paginateMs": 40.27270799999678,
+  "pdfMs": 176.4675000000061,
+  "totalMs": 216.7402080000029,
+  "bytes": 292153,
+  "peakRss": 1924366336
+ },
+ {
+  "case": "house-bl-final-copy-historical-b",
+  "engine": "chrome-fixed",
+  "rep": 1,
+  "paginateMs": 41.37924999999814,
+  "pdfMs": 70.12945800000307,
+  "totalMs": 111.5087080000012,
+  "bytes": 171888,
+  "peakRss": 1746288640
+ },
+ {
+  "case": "house-bl-final-copy-historical-b",
+  "engine": "lp-fixed",
+  "rep": 1,
+  "paginateMs": 57.34929199999897,
+  "pdfMs": 18.18566699999792,
+  "totalMs": 75.53495899999689,
+  "bytes": 60972,
+  "peakRss": 2083373056
+ },
+ {
+  "case": "house-bl-final-copy-historical-b",
+  "engine": "chrome-base",
+  "rep": 2,
+  "paginateMs": 40.93762499999866,
+  "pdfMs": 172.9613340000069,
+  "totalMs": 213.89895900000556,
+  "bytes": 292153,
+  "peakRss": 1907834880
+ },
+ {
+  "case": "house-bl-final-copy-historical-b",
+  "engine": "chrome-fixed",
+  "rep": 2,
+  "paginateMs": 41.75008399999933,
+  "pdfMs": 73.75445800000307,
+  "totalMs": 115.5045420000024,
+  "bytes": 171888,
+  "peakRss": 1762967552
+ },
+ {
+  "case": "house-bl-final-copy-historical-b",
+  "engine": "lp-fixed",
+  "rep": 2,
+  "paginateMs": 95.97283299999981,
+  "pdfMs": 17.41029200000048,
+  "totalMs": 113.38312500000029,
+  "bytes": 60972,
+  "peakRss": 2134245376
+ },
+ {
+  "case": "house-bl-final-overflowing-table",
+  "engine": "chrome-base",
+  "rep": 0,
+  "paginateMs": 68.73462499999732,
+  "pdfMs": 293.9792080000043,
+  "totalMs": 362.7138330000016,
+  "bytes": 395460,
+  "pages": 4,
+  "peakRss": 1930330112
+ },
+ {
+  "case": "house-bl-final-overflowing-table",
+  "engine": "chrome-fixed",
+  "rep": 0,
+  "paginateMs": 67.86516700000357,
+  "pdfMs": 84.04587499999616,
+  "totalMs": 151.91104199999972,
+  "bytes": 146357,
+  "pages": 4,
+  "peakRss": 1802092544
+ },
+ {
+  "case": "house-bl-final-overflowing-table",
+  "engine": "lp-fixed",
+  "rep": 0,
+  "paginateMs": 194.0209160000013,
+  "pdfMs": 27.124667000003683,
+  "totalMs": 221.145583000005,
+  "bytes": 63763,
+  "pages": 3,
+  "peakRss": 2213593088,
+  "lp": {
+   "bySelector": true,
+   "commands": 1287,
+   "ms": {
+    "fetch": 0,
+    "layout": 0.32983300000000004,
+    "paint": 1.0491249999999999,
+    "pdf": 4.4975,
+    "snapshot": 0.002875,
+    "total": 5.944708
+   },
+   "pages": [
+    {
+     "culprit": null,
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 0,
+     "width": 795,
+     "x": 0,
+     "y": 0
+    },
+    {
+     "culprit": null,
+     "height": 1122,
+     "overflowBottom": 0,
+     "overflowRight": 0,
+     "width": 795,
+     "x": 0,
+     "y": 1123
+    },
+    {
+     "culprit": null,
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 0,
+     "width": 795,
+     "x": 0,
+     "y": 2245
+    }
+   ],
+   "stats": {
+    "boxShadowsSkipped": 0,
+    "brushesSkipped": 0,
+    "composeSkipped": 0,
+    "culled": 2544,
+    "degenerateSkipped": 881,
+    "emboldenSkipped": 0,
+    "fills": 83,
+    "filtersSkipped": 0,
+    "fontsFailed": 0,
+    "glyphRuns": 315,
+    "glyphs": 8043,
+    "glyphsWithoutText": 0,
+    "images": 0,
+    "insetShadows": 0,
+    "strokes": 2,
+    "variableRuns": 0
+   }
+  }
+ },
+ {
+  "case": "house-bl-final-overflowing-table",
+  "engine": "chrome-base",
+  "rep": 1,
+  "paginateMs": 66.09162500000093,
+  "pdfMs": 291.8028750000012,
+  "totalMs": 357.89450000000215,
+  "bytes": 395460,
+  "peakRss": 1937276928
+ },
+ {
+  "case": "house-bl-final-overflowing-table",
+  "engine": "chrome-fixed",
+  "rep": 1,
+  "paginateMs": 68.93479200000002,
+  "pdfMs": 82.76158299999952,
+  "totalMs": 151.69637499999953,
+  "bytes": 146357,
+  "peakRss": 1782546432
+ },
+ {
+  "case": "house-bl-final-overflowing-table",
+  "engine": "lp-fixed",
+  "rep": 1,
+  "paginateMs": 162.56808399999863,
+  "pdfMs": 31.31445800000074,
+  "totalMs": 193.88254199999938,
+  "bytes": 63763,
+  "peakRss": 2301263872
+ },
+ {
+  "case": "house-bl-final-overflowing-table",
+  "engine": "chrome-base",
+  "rep": 2,
+  "paginateMs": 67.30262499999662,
+  "pdfMs": 298.0970410000009,
+  "totalMs": 365.3996659999975,
+  "bytes": 395460,
+  "peakRss": 1955840000
+ },
+ {
+  "case": "house-bl-final-overflowing-table",
+  "engine": "chrome-fixed",
+  "rep": 2,
+  "paginateMs": 68.02491600000212,
+  "pdfMs": 82.01937500000349,
+  "totalMs": 150.04429100000561,
+  "bytes": 146357,
+  "peakRss": 1797226496
+ },
+ {
+  "case": "house-bl-final-overflowing-table",
+  "engine": "lp-fixed",
+  "rep": 2,
+  "paginateMs": 195.17391700000007,
+  "pdfMs": 28.42779100000189,
+  "totalMs": 223.60170800000196,
+  "bytes": 63763,
+  "peakRss": 2364538880
+ },
+ {
+  "case": "quote-document",
+  "engine": "chrome-base",
+  "rep": 0,
+  "paginateMs": 58.05199999999604,
+  "pdfMs": 207.7537500000035,
+  "totalMs": 265.80574999999953,
+  "bytes": 391622,
+  "pages": 2,
+  "peakRss": 1976565760
+ },
+ {
+  "case": "quote-document",
+  "engine": "chrome-fixed",
+  "rep": 0,
+  "paginateMs": 58.9151669999992,
+  "pdfMs": 104.0759160000016,
+  "totalMs": 162.9910830000008,
+  "bytes": 271510,
+  "pages": 2,
+  "peakRss": 1831583744
+ },
+ {
+  "case": "quote-document",
+  "engine": "lp-fixed",
+  "rep": 0,
+  "paginateMs": 80.47037500000442,
+  "pdfMs": 30.906457999997656,
+  "totalMs": 111.37683300000208,
+  "bytes": 98382,
+  "pages": 2,
+  "peakRss": 2420047872,
+  "lp": {
+   "bySelector": true,
+   "commands": 443,
+   "ms": {
+    "fetch": 0,
+    "layout": 0.11804200000000001,
+    "paint": 0.413792,
+    "pdf": 4.376708,
+    "snapshot": 0.003083,
+    "total": 4.955833
+   },
+   "pages": [
+    {
+     "culprit": "<div \"\"> 0,0 795x1123 overflow 1170x1123",
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 375,
+     "width": 795,
+     "x": 0,
+     "y": 0
+    },
+    {
+     "culprit": "<div \"\"> 0,0 795x1122 overflow 1170x1122",
+     "height": 1122,
+     "overflowBottom": 0,
+     "overflowRight": 375,
+     "width": 795,
+     "x": 0,
+     "y": 1123
+    }
+   ],
+   "stats": {
+    "boxShadowsSkipped": 0,
+    "brushesSkipped": 0,
+    "composeSkipped": 0,
+    "culled": 418,
+    "degenerateSkipped": 181,
+    "emboldenSkipped": 0,
+    "fills": 68,
+    "filtersSkipped": 0,
+    "fontsFailed": 0,
+    "glyphRuns": 166,
+    "glyphs": 3012,
+    "glyphsWithoutText": 0,
+    "images": 2,
+    "insetShadows": 0,
+    "strokes": 5,
+    "variableRuns": 0
+   }
+  }
+ },
+ {
+  "case": "quote-document",
+  "engine": "chrome-base",
+  "rep": 1,
+  "paginateMs": 54.11187500000233,
+  "pdfMs": 204.9586249999993,
+  "totalMs": 259.07050000000163,
+  "bytes": 391622,
+  "peakRss": 1992704000
+ },
+ {
+  "case": "quote-document",
+  "engine": "chrome-fixed",
+  "rep": 1,
+  "paginateMs": 51.012290999999095,
+  "pdfMs": 96.45595900000626,
+  "totalMs": 147.46825000000536,
+  "bytes": 271510,
+  "peakRss": 1885798400
+ },
+ {
+  "case": "quote-document",
+  "engine": "lp-fixed",
+  "rep": 1,
+  "paginateMs": 170.67862500000047,
+  "pdfMs": 29.863291999994544,
+  "totalMs": 200.541916999995,
+  "bytes": 98382,
+  "peakRss": 2513076224
+ },
+ {
+  "case": "quote-document",
+  "engine": "chrome-base",
+  "rep": 2,
+  "paginateMs": 54.776708999997936,
+  "pdfMs": 373.1262910000005,
+  "totalMs": 427.9029999999984,
+  "bytes": 391622,
+  "peakRss": 1966899200
+ },
+ {
+  "case": "quote-document",
+  "engine": "chrome-fixed",
+  "rep": 2,
+  "paginateMs": 54.697832999998354,
+  "pdfMs": 100.47270900000149,
+  "totalMs": 155.17054199999984,
+  "bytes": 271510,
+  "peakRss": 1917763584
+ },
+ {
+  "case": "quote-document",
+  "engine": "lp-fixed",
+  "rep": 2,
+  "paginateMs": 119.97537499999453,
+  "pdfMs": 31.420583000006445,
+  "totalMs": 151.39595800000097,
+  "bytes": 98382,
+  "peakRss": 2530508800
+ },
+ {
+  "case": "templated-document-cargo-alignment-preview",
+  "engine": "chrome-base",
+  "rep": 0,
+  "paginateMs": 37.30016700000124,
+  "pdfMs": 112.30524999999761,
+  "totalMs": 149.60541699999885,
+  "bytes": 162090,
+  "pages": 1,
+  "peakRss": 1963622400
+ },
+ {
+  "case": "templated-document-cargo-alignment-preview",
+  "engine": "chrome-fixed",
+  "rep": 0,
+  "paginateMs": 35.6550419999985,
+  "pdfMs": 56.18316600000253,
+  "totalMs": 91.83820800000103,
+  "bytes": 106240,
+  "pages": 1,
+  "peakRss": 1918140416
+ },
+ {
+  "case": "templated-document-cargo-alignment-preview",
+  "engine": "lp-fixed",
+  "rep": 0,
+  "paginateMs": 46.03662500000064,
+  "pdfMs": 12.039291000000958,
+  "totalMs": 58.0759160000016,
+  "bytes": 48088,
+  "pages": 1,
+  "peakRss": 2549284864,
+  "lp": {
+   "bySelector": true,
+   "commands": 120,
+   "ms": {
+    "fetch": 0,
+    "layout": 0.035583000000000004,
+    "paint": 0.114041,
+    "pdf": 1.877292,
+    "snapshot": 0.002208,
+    "total": 2.053042
+   },
+   "pages": [
+    {
+     "culprit": null,
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 0,
+     "width": 795,
+     "x": 0,
+     "y": 0
+    }
+   ],
+   "stats": {
+    "boxShadowsSkipped": 0,
+    "brushesSkipped": 0,
+    "composeSkipped": 0,
+    "culled": 0,
+    "degenerateSkipped": 59,
+    "emboldenSkipped": 0,
+    "fills": 1,
+    "filtersSkipped": 0,
+    "fontsFailed": 0,
+    "glyphRuns": 55,
+    "glyphs": 785,
+    "glyphsWithoutText": 0,
+    "images": 0,
+    "insetShadows": 0,
+    "strokes": 1,
+    "variableRuns": 0
+   }
+  }
+ },
+ {
+  "case": "templated-document-cargo-alignment-preview",
+  "engine": "chrome-base",
+  "rep": 1,
+  "paginateMs": 33.920915999995486,
+  "pdfMs": 111.5270840000012,
+  "totalMs": 145.44799999999668,
+  "bytes": 162090,
+  "peakRss": 1923301376
+ },
+ {
+  "case": "templated-document-cargo-alignment-preview",
+  "engine": "chrome-fixed",
+  "rep": 1,
+  "paginateMs": 35.69566699999996,
+  "pdfMs": 59.21020800000406,
+  "totalMs": 94.90587500000402,
+  "bytes": 106240,
+  "peakRss": 1862008832
+ },
+ {
+  "case": "templated-document-cargo-alignment-preview",
+  "engine": "lp-fixed",
+  "rep": 1,
+  "paginateMs": 44.50691699999879,
+  "pdfMs": 12.019541000001482,
+  "totalMs": 56.526458000000275,
+  "bytes": 48088,
+  "peakRss": 2560294912
+ },
+ {
+  "case": "templated-document-cargo-alignment-preview",
+  "engine": "chrome-base",
+  "rep": 2,
+  "paginateMs": 35.7242499999993,
+  "pdfMs": 112.72037499999715,
+  "totalMs": 148.44462499999645,
+  "bytes": 162090,
+  "peakRss": 1945518080
+ },
+ {
+  "case": "templated-document-cargo-alignment-preview",
+  "engine": "chrome-fixed",
+  "rep": 2,
+  "paginateMs": 35.16604100000404,
+  "pdfMs": 59.70583400000032,
+  "totalMs": 94.87187500000437,
+  "bytes": 106240,
+  "peakRss": 1881866240
+ },
+ {
+  "case": "templated-document-cargo-alignment-preview",
+  "engine": "lp-fixed",
+  "rep": 2,
+  "paginateMs": 35.8258330000026,
+  "pdfMs": 12.183333000000857,
+  "totalMs": 48.00916600000346,
+  "bytes": 48088,
+  "peakRss": 2570682368
+ },
+ {
+  "case": "templated-document-cargo-alignment-final",
+  "engine": "chrome-base",
+  "rep": 0,
+  "paginateMs": 34.408292000000074,
+  "pdfMs": 108.79550000000017,
+  "totalMs": 143.20379200000025,
+  "bytes": 157623,
+  "pages": 1,
+  "peakRss": 1989394432
+ },
+ {
+  "case": "templated-document-cargo-alignment-final",
+  "engine": "chrome-fixed",
+  "rep": 0,
+  "paginateMs": 34.19712499999878,
+  "pdfMs": 60.16008300000249,
+  "totalMs": 94.35720800000126,
+  "bytes": 101772,
+  "pages": 1,
+  "peakRss": 1893089280
+ },
+ {
+  "case": "templated-document-cargo-alignment-final",
+  "engine": "lp-fixed",
+  "rep": 0,
+  "paginateMs": 44.947541000001365,
+  "pdfMs": 12.35175000000163,
+  "totalMs": 57.299291000002995,
+  "bytes": 47923,
+  "pages": 1,
+  "peakRss": 2590343168,
+  "lp": {
+   "bySelector": true,
+   "commands": 119,
+   "ms": {
+    "fetch": 0,
+    "layout": 0.038291000000000006,
+    "paint": 0.12062500000000001,
+    "pdf": 1.961958,
+    "snapshot": 0.002458,
+    "total": 2.1542499999999998
+   },
+   "pages": [
+    {
+     "culprit": null,
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 0,
+     "width": 795,
+     "x": 0,
+     "y": 0
+    }
+   ],
+   "stats": {
+    "boxShadowsSkipped": 0,
+    "brushesSkipped": 0,
+    "composeSkipped": 0,
+    "culled": 0,
+    "degenerateSkipped": 59,
+    "emboldenSkipped": 0,
+    "fills": 1,
+    "filtersSkipped": 0,
+    "fontsFailed": 0,
+    "glyphRuns": 54,
+    "glyphs": 778,
+    "glyphsWithoutText": 0,
+    "images": 0,
+    "insetShadows": 0,
+    "strokes": 1,
+    "variableRuns": 0
+   }
+  }
+ },
+ {
+  "case": "templated-document-cargo-alignment-final",
+  "engine": "chrome-base",
+  "rep": 1,
+  "paginateMs": 34.58150000000023,
+  "pdfMs": 116.22054199999548,
+  "totalMs": 150.8020419999957,
+  "bytes": 157623,
+  "peakRss": 1900609536
+ },
+ {
+  "case": "templated-document-cargo-alignment-final",
+  "engine": "chrome-fixed",
+  "rep": 1,
+  "paginateMs": 35.47870800000237,
+  "pdfMs": 58.17887499999779,
+  "totalMs": 93.65758300000016,
+  "bytes": 101772,
+  "peakRss": 1893072896
+ },
+ {
+  "case": "templated-document-cargo-alignment-final",
+  "engine": "lp-fixed",
+  "rep": 1,
+  "paginateMs": 37.10095800000272,
+  "pdfMs": 12.086874999993597,
+  "totalMs": 49.18783299999632,
+  "bytes": 47923,
+  "peakRss": 2606891008
+ },
+ {
+  "case": "templated-document-cargo-alignment-final",
+  "engine": "chrome-base",
+  "rep": 2,
+  "paginateMs": 35.50024999999732,
+  "pdfMs": 111.91012500000215,
+  "totalMs": 147.41037499999948,
+  "bytes": 157623,
+  "peakRss": 1851703296
+ },
+ {
+  "case": "templated-document-cargo-alignment-final",
+  "engine": "chrome-fixed",
+  "rep": 2,
+  "paginateMs": 34.714083999999275,
+  "pdfMs": 60.494000000006054,
+  "totalMs": 95.20808400000533,
+  "bytes": 101772,
+  "peakRss": 1906491392
+ },
+ {
+  "case": "templated-document-cargo-alignment-final",
+  "engine": "lp-fixed",
+  "rep": 2,
+  "paginateMs": 46.114749999993364,
+  "pdfMs": 12.332375000005413,
+  "totalMs": 58.44712499999878,
+  "bytes": 47923,
+  "peakRss": 2623668224
+ },
+ {
+  "case": "booking-request-preview",
+  "engine": "chrome-base",
+  "rep": 0,
+  "paginateMs": 38.656667000002926,
+  "pdfMs": 118.75058300000092,
+  "totalMs": 157.40725000000384,
+  "bytes": 204850,
+  "pages": 1,
+  "peakRss": 1864908800
+ },
+ {
+  "case": "booking-request-preview",
+  "engine": "chrome-fixed",
+  "rep": 0,
+  "paginateMs": 40.727167000004556,
+  "pdfMs": 63.76329099999566,
+  "totalMs": 104.49045800000022,
+  "bytes": 148990,
+  "pages": 1,
+  "peakRss": 1915011072
+ },
+ {
+  "case": "booking-request-preview",
+  "engine": "lp-fixed",
+  "rep": 0,
+  "paginateMs": 41.05054100000416,
+  "pdfMs": 17.803874999997788,
+  "totalMs": 58.85441600000195,
+  "bytes": 60000,
+  "pages": 1,
+  "peakRss": 2641657856,
+  "lp": {
+   "bySelector": true,
+   "commands": 161,
+   "ms": {
+    "fetch": 0,
+    "layout": 0.061875,
+    "paint": 0.214417,
+    "pdf": 2.914833,
+    "snapshot": 0.002333,
+    "total": 3.2233750000000003
+   },
+   "pages": [
+    {
+     "culprit": "<div \"\"> 38,30 719x227 overflow 849x227",
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 92,
+     "width": 795,
+     "x": 0,
+     "y": 0
+    }
+   ],
+   "stats": {
+    "boxShadowsSkipped": 0,
+    "brushesSkipped": 0,
+    "composeSkipped": 0,
+    "culled": 0,
+    "degenerateSkipped": 37,
+    "emboldenSkipped": 0,
+    "fills": 30,
+    "filtersSkipped": 0,
+    "fontsFailed": 0,
+    "glyphRuns": 90,
+    "glyphs": 1399,
+    "glyphsWithoutText": 0,
+    "images": 0,
+    "insetShadows": 0,
+    "strokes": 0,
+    "variableRuns": 0
+   }
+  }
+ },
+ {
+  "case": "booking-request-preview",
+  "engine": "chrome-base",
+  "rep": 1,
+  "paginateMs": 36.49266699999862,
+  "pdfMs": 118.42545799999789,
+  "totalMs": 154.9181249999965,
+  "bytes": 204850,
+  "peakRss": 1876787200
+ },
+ {
+  "case": "booking-request-preview",
+  "engine": "chrome-fixed",
+  "rep": 1,
+  "paginateMs": 36.078624999994645,
+  "pdfMs": 64.17812500000582,
+  "totalMs": 100.25675000000047,
+  "bytes": 148990,
+  "peakRss": 1879883776
+ },
+ {
+  "case": "booking-request-preview",
+  "engine": "lp-fixed",
+  "rep": 1,
+  "paginateMs": 57.12470800000301,
+  "pdfMs": 18.19133399999555,
+  "totalMs": 75.31604199999856,
+  "bytes": 60000,
+  "peakRss": 2669608960
+ },
+ {
+  "case": "booking-request-preview",
+  "engine": "chrome-base",
+  "rep": 2,
+  "paginateMs": 38.443208999997296,
+  "pdfMs": 117.63904100000218,
+  "totalMs": 156.08224999999948,
+  "bytes": 204850,
+  "peakRss": 2001207296
+ },
+ {
+  "case": "booking-request-preview",
+  "engine": "chrome-fixed",
+  "rep": 2,
+  "paginateMs": 37.0636250000025,
+  "pdfMs": 64.43258400000195,
+  "totalMs": 101.49620900000446,
+  "bytes": 148990,
+  "peakRss": 1889632256
+ },
+ {
+  "case": "booking-request-preview",
+  "engine": "lp-fixed",
+  "rep": 2,
+  "paginateMs": 39.58679100000154,
+  "pdfMs": 17.675167000001238,
+  "totalMs": 57.26195800000278,
+  "bytes": 60000,
+  "peakRss": 2702163968
+ },
+ {
+  "case": "booking-request-final",
+  "engine": "chrome-base",
+  "rep": 0,
+  "paginateMs": 36.116375000005064,
+  "pdfMs": 117.33174999999756,
+  "totalMs": 153.44812500000262,
+  "bytes": 198872,
+  "pages": 1,
+  "peakRss": 2003976192
+ },
+ {
+  "case": "booking-request-final",
+  "engine": "chrome-fixed",
+  "rep": 0,
+  "paginateMs": 38.42104100000142,
+  "pdfMs": 66.38662499999919,
+  "totalMs": 104.80766600000061,
+  "bytes": 143014,
+  "pages": 1,
+  "peakRss": 1916289024
+ },
+ {
+  "case": "booking-request-final",
+  "engine": "lp-fixed",
+  "rep": 0,
+  "paginateMs": 37.75295900000492,
+  "pdfMs": 17.292999999997846,
+  "totalMs": 55.04595900000277,
+  "bytes": 58321,
+  "pages": 1,
+  "peakRss": 2734391296,
+  "lp": {
+   "bySelector": true,
+   "commands": 160,
+   "ms": {
+    "fetch": 0,
+    "layout": 0.07037500000000001,
+    "paint": 0.238292,
+    "pdf": 2.987625,
+    "snapshot": 0.003292,
+    "total": 3.34075
+   },
+   "pages": [
+    {
+     "culprit": "<div \"\"> 38,30 719x227 overflow 849x227",
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 92,
+     "width": 795,
+     "x": 0,
+     "y": 0
+    }
+   ],
+   "stats": {
+    "boxShadowsSkipped": 0,
+    "brushesSkipped": 0,
+    "composeSkipped": 0,
+    "culled": 0,
+    "degenerateSkipped": 37,
+    "emboldenSkipped": 0,
+    "fills": 30,
+    "filtersSkipped": 0,
+    "fontsFailed": 0,
+    "glyphRuns": 89,
+    "glyphs": 1392,
+    "glyphsWithoutText": 0,
+    "images": 0,
+    "insetShadows": 0,
+    "strokes": 0,
+    "variableRuns": 0
+   }
+  }
+ },
+ {
+  "case": "booking-request-final",
+  "engine": "chrome-base",
+  "rep": 1,
+  "paginateMs": 50.51020900000003,
+  "pdfMs": 118.55745800000295,
+  "totalMs": 169.06766700000298,
+  "bytes": 198872,
+  "peakRss": 1978335232
+ },
+ {
+  "case": "booking-request-final",
+  "engine": "chrome-fixed",
+  "rep": 1,
+  "paginateMs": 39.69166699999914,
+  "pdfMs": 64.7074999999968,
+  "totalMs": 104.39916699999594,
+  "bytes": 143014,
+  "peakRss": 1897529344
+ },
+ {
+  "case": "booking-request-final",
+  "engine": "lp-fixed",
+  "rep": 1,
+  "paginateMs": 37.909459000002244,
+  "pdfMs": 17.550875000000815,
+  "totalMs": 55.46033400000306,
+  "bytes": 58321,
+  "peakRss": 2778087424
+ },
+ {
+  "case": "booking-request-final",
+  "engine": "chrome-base",
+  "rep": 2,
+  "paginateMs": 37.24250000000029,
+  "pdfMs": 115.27695799999492,
+  "totalMs": 152.5194579999952,
+  "bytes": 198872,
+  "peakRss": 1993326592
+ },
+ {
+  "case": "booking-request-final",
+  "engine": "chrome-fixed",
+  "rep": 2,
+  "paginateMs": 37.94475000000239,
+  "pdfMs": 64.10270799999853,
+  "totalMs": 102.04745800000092,
+  "bytes": 143014,
+  "peakRss": 1913110528
+ },
+ {
+  "case": "booking-request-final",
+  "engine": "lp-fixed",
+  "rep": 2,
+  "paginateMs": 38.58037499999773,
+  "pdfMs": 18.22099999999773,
+  "totalMs": 56.80137499999546,
+  "bytes": 58321,
+  "peakRss": 2817179648
+ },
+ {
+  "case": "booking-request-sparse",
+  "engine": "chrome-base",
+  "rep": 0,
+  "paginateMs": 34.02545800000371,
+  "pdfMs": 108.40424999999959,
+  "totalMs": 142.4297080000033,
+  "bytes": 116797,
+  "pages": 1,
+  "peakRss": 2001911808
+ },
+ {
+  "case": "booking-request-sparse",
+  "engine": "chrome-fixed",
+  "rep": 0,
+  "paginateMs": 31.78258300000016,
+  "pdfMs": 54.50149999999849,
+  "totalMs": 86.28408299999865,
+  "bytes": 60949,
+  "pages": 1,
+  "peakRss": 1951891456
+ },
+ {
+  "case": "booking-request-sparse",
+  "engine": "lp-fixed",
+  "rep": 0,
+  "paginateMs": 35.28754200000549,
+  "pdfMs": 10.44462499999645,
+  "totalMs": 45.73216700000194,
+  "bytes": 24779,
+  "pages": 1,
+  "peakRss": 2846867456,
+  "lp": {
+   "bySelector": true,
+   "commands": 62,
+   "ms": {
+    "fetch": 0,
+    "layout": 0.051084,
+    "paint": 0.109833,
+    "pdf": 1.021792,
+    "snapshot": 0.0025840000000000004,
+    "total": 1.213959
+   },
+   "pages": [
+    {
+     "culprit": null,
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 0,
+     "width": 795,
+     "x": 0,
+     "y": 0
+    }
+   ],
+   "stats": {
+    "boxShadowsSkipped": 0,
+    "brushesSkipped": 0,
+    "composeSkipped": 0,
+    "culled": 0,
+    "degenerateSkipped": 1,
+    "emboldenSkipped": 0,
+    "fills": 25,
+    "filtersSkipped": 0,
+    "fontsFailed": 0,
+    "glyphRuns": 32,
+    "glyphs": 341,
+    "glyphsWithoutText": 0,
+    "images": 0,
+    "insetShadows": 0,
+    "strokes": 0,
+    "variableRuns": 0
+   }
+  }
+ },
+ {
+  "case": "booking-request-sparse",
+  "engine": "chrome-base",
+  "rep": 1,
+  "paginateMs": 31.385792000000947,
+  "pdfMs": 109.04725000000326,
+  "totalMs": 140.4330420000042,
+  "bytes": 116797,
+  "peakRss": 1972912128
+ },
+ {
+  "case": "booking-request-sparse",
+  "engine": "chrome-fixed",
+  "rep": 1,
+  "paginateMs": 32.13749999999709,
+  "pdfMs": 52.3605000000025,
+  "totalMs": 84.49799999999959,
+  "bytes": 60949,
+  "peakRss": 1965228032
+ },
+ {
+  "case": "booking-request-sparse",
+  "engine": "lp-fixed",
+  "rep": 1,
+  "paginateMs": 45.49574999999459,
+  "pdfMs": 10.792750000000524,
+  "totalMs": 56.28849999999511,
+  "bytes": 24779,
+  "peakRss": 2876375040
+ },
+ {
+  "case": "booking-request-sparse",
+  "engine": "chrome-base",
+  "rep": 2,
+  "paginateMs": 33.885541000003286,
+  "pdfMs": 108.01550000000134,
+  "totalMs": 141.90104100000462,
+  "bytes": 116797,
+  "peakRss": 2023309312
+ },
+ {
+  "case": "booking-request-sparse",
+  "engine": "chrome-fixed",
+  "rep": 2,
+  "paginateMs": 31.99308399999427,
+  "pdfMs": 54.738499999999476,
+  "totalMs": 86.73158399999375,
+  "bytes": 60949,
+  "peakRss": 1987198976
+ },
+ {
+  "case": "booking-request-sparse",
+  "engine": "lp-fixed",
+  "rep": 2,
+  "paginateMs": 32.93004199999996,
+  "pdfMs": 10.561374999997497,
+  "totalMs": 43.491416999997455,
+  "bytes": 24779,
+  "peakRss": 2908995584
+ },
+ {
+  "case": "booking-request-overflow",
+  "engine": "chrome-base",
+  "rep": 0,
+  "paginateMs": 92.4252919999999,
+  "pdfMs": 648.460417000002,
+  "totalMs": 740.885709000002,
+  "bytes": 824904,
+  "pages": 10,
+  "peakRss": 1996914688
+ },
+ {
+  "case": "booking-request-overflow",
+  "engine": "chrome-fixed",
+  "rep": 0,
+  "paginateMs": 95.85945899999933,
+  "pdfMs": 106.12645799999882,
+  "totalMs": 201.98591699999815,
+  "bytes": 189790,
+  "pages": 10,
+  "peakRss": 1999486976
+ },
+ {
+  "case": "booking-request-overflow",
+  "engine": "lp-fixed",
+  "rep": 0,
+  "paginateMs": 251.74466699999903,
+  "pdfMs": 65.23466600000393,
+  "totalMs": 316.97933300000295,
+  "bytes": 175245,
+  "pages": 10,
+  "peakRss": 2994208768,
+  "lp": {
+   "bySelector": true,
+   "commands": 2107,
+   "ms": {
+    "fetch": 0,
+    "layout": 0.638833,
+    "paint": 2.206792,
+    "pdf": 13.835541,
+    "snapshot": 0.0026249999999999997,
+    "total": 16.767709
+   },
+   "pages": [
+    {
+     "culprit": "<div \"\"> 38,30 719x227 overflow 849x227",
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 92,
+     "width": 795,
+     "x": 0,
+     "y": 0
+    },
+    {
+     "culprit": "<div \"\"> 38,30 719x227 overflow 849x227",
+     "height": 1122,
+     "overflowBottom": 0,
+     "overflowRight": 92,
+     "width": 795,
+     "x": 0,
+     "y": 1123
+    },
+    {
+     "culprit": "<div \"\"> 38,30 719x227 overflow 849x227",
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 92,
+     "width": 795,
+     "x": 0,
+     "y": 2245
+    },
+    {
+     "culprit": "<div \"\"> 38,30 719x227 overflow 849x227",
+     "height": 1122,
+     "overflowBottom": 0,
+     "overflowRight": 92,
+     "width": 795,
+     "x": 0,
+     "y": 3368
+    },
+    {
+     "culprit": "<div \"\"> 38,30 719x227 overflow 849x227",
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 92,
+     "width": 795,
+     "x": 0,
+     "y": 4490
+    },
+    {
+     "culprit": "<div \"\"> 38,30 719x227 overflow 849x227",
+     "height": 1122,
+     "overflowBottom": 0,
+     "overflowRight": 92,
+     "width": 795,
+     "x": 0,
+     "y": 5613
+    },
+    {
+     "culprit": "<div \"\"> 38,31 719x226 overflow 849x226",
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 92,
+     "width": 795,
+     "x": 0,
+     "y": 6735
+    },
+    {
+     "culprit": "<div \"\"> 38,30 719x227 overflow 849x227",
+     "height": 1122,
+     "overflowBottom": 0,
+     "overflowRight": 92,
+     "width": 795,
+     "x": 0,
+     "y": 7858
+    },
+    {
+     "culprit": "<div \"\"> 38,31 719x227 overflow 849x227",
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 92,
+     "width": 795,
+     "x": 0,
+     "y": 8980
+    },
+    {
+     "culprit": "<div \"\"> 38,30 719x227 overflow 849x227",
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 92,
+     "width": 795,
+     "x": 0,
+     "y": 10103
+    }
+   ],
+   "stats": {
+    "boxShadowsSkipped": 0,
+    "brushesSkipped": 0,
+    "composeSkipped": 0,
+    "culled": 18576,
+    "degenerateSkipped": 1098,
+    "emboldenSkipped": 0,
+    "fills": 120,
+    "filtersSkipped": 0,
+    "fontsFailed": 0,
+    "glyphRuns": 876,
+    "glyphs": 19335,
+    "glyphsWithoutText": 0,
+    "images": 0,
+    "insetShadows": 0,
+    "strokes": 0,
+    "variableRuns": 0
+   }
+  }
+ },
+ {
+  "case": "booking-request-overflow",
+  "engine": "chrome-base",
+  "rep": 1,
+  "paginateMs": 85.85087499999645,
+  "pdfMs": 648.1725000000006,
+  "totalMs": 734.023374999997,
+  "bytes": 824904,
+  "peakRss": 2011824128
+ },
+ {
+  "case": "booking-request-overflow",
+  "engine": "chrome-fixed",
+  "rep": 1,
+  "paginateMs": 86.28829099999712,
+  "pdfMs": 111.42399999999907,
+  "totalMs": 197.71229099999618,
+  "bytes": 189790,
+  "peakRss": 1949876224
+ },
+ {
+  "case": "booking-request-overflow",
+  "engine": "lp-fixed",
+  "rep": 1,
+  "paginateMs": 296.33712500000547,
+  "pdfMs": 68.44683399999485,
+  "totalMs": 364.7839590000003,
+  "bytes": 175245,
+  "peakRss": 3085320192
+ },
+ {
+  "case": "booking-request-overflow",
+  "engine": "chrome-base",
+  "rep": 2,
+  "paginateMs": 90.63070799999696,
+  "pdfMs": 650.6706670000058,
+  "totalMs": 741.3013750000027,
+  "bytes": 824904,
+  "peakRss": 2089058304
+ },
+ {
+  "case": "booking-request-overflow",
+  "engine": "chrome-fixed",
+  "rep": 2,
+  "paginateMs": 85.04666699999507,
+  "pdfMs": 107.71583300000202,
+  "totalMs": 192.7624999999971,
+  "bytes": 189790,
+  "peakRss": 1929248768
+ },
+ {
+  "case": "booking-request-overflow",
+  "engine": "lp-fixed",
+  "rep": 2,
+  "paginateMs": 252.84683400000358,
+  "pdfMs": 69.40483299999323,
+  "totalMs": 322.2516669999968,
+  "bytes": 175245,
+  "peakRss": 3176136704
+ },
+ {
+  "case": "booking-confirmation-preview",
+  "engine": "chrome-base",
+  "rep": 0,
+  "paginateMs": 38.70112499999959,
+  "pdfMs": 116.21999999999389,
+  "totalMs": 154.92112499999348,
+  "bytes": 203866,
+  "pages": 1,
+  "peakRss": 2041348096
+ },
+ {
+  "case": "booking-confirmation-preview",
+  "engine": "chrome-fixed",
+  "rep": 0,
+  "paginateMs": 38.09945799999696,
+  "pdfMs": 66.74150000000373,
+  "totalMs": 104.84095800000068,
+  "bytes": 148006,
+  "pages": 1,
+  "peakRss": 1930936320
+ },
+ {
+  "case": "booking-confirmation-preview",
+  "engine": "lp-fixed",
+  "rep": 0,
+  "paginateMs": 53.564832999996725,
+  "pdfMs": 19.699625000001106,
+  "totalMs": 73.26445799999783,
+  "bytes": 59900,
+  "pages": 1,
+  "peakRss": 3222798336,
+  "lp": {
+   "bySelector": true,
+   "commands": 162,
+   "ms": {
+    "fetch": 0,
+    "layout": 0.067625,
+    "paint": 0.222125,
+    "pdf": 2.914333,
+    "snapshot": 0.002541,
+    "total": 3.235
+   },
+   "pages": [
+    {
+     "culprit": "<div \"\"> 38,30 719x227 overflow 849x227",
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 92,
+     "width": 795,
+     "x": 0,
+     "y": 0
+    }
+   ],
+   "stats": {
+    "boxShadowsSkipped": 0,
+    "brushesSkipped": 0,
+    "composeSkipped": 0,
+    "culled": 0,
+    "degenerateSkipped": 37,
+    "emboldenSkipped": 0,
+    "fills": 31,
+    "filtersSkipped": 0,
+    "fontsFailed": 0,
+    "glyphRuns": 90,
+    "glyphs": 1425,
+    "glyphsWithoutText": 0,
+    "images": 0,
+    "insetShadows": 0,
+    "strokes": 0,
+    "variableRuns": 0
+   }
+  }
+ },
+ {
+  "case": "booking-confirmation-preview",
+  "engine": "chrome-base",
+  "rep": 1,
+  "paginateMs": 40.29529100000218,
+  "pdfMs": 115.16566699999385,
+  "totalMs": 155.46095799999603,
+  "bytes": 203866,
+  "peakRss": 1962147840
+ },
+ {
+  "case": "booking-confirmation-preview",
+  "engine": "chrome-fixed",
+  "rep": 1,
+  "paginateMs": 38.381249999998545,
+  "pdfMs": 66.56212499999674,
+  "totalMs": 104.94337499999529,
+  "bytes": 148006,
+  "peakRss": 1906081792
+ },
+ {
+  "case": "booking-confirmation-preview",
+  "engine": "lp-fixed",
+  "rep": 1,
+  "paginateMs": 39.21058300000004,
+  "pdfMs": 18.72054200000275,
+  "totalMs": 57.931125000002794,
+  "bytes": 59900,
+  "peakRss": 3260547072
+ },
+ {
+  "case": "booking-confirmation-preview",
+  "engine": "chrome-base",
+  "rep": 2,
+  "paginateMs": 39.64487499999814,
+  "pdfMs": 123.7340419999964,
+  "totalMs": 163.37891699999454,
+  "bytes": 203866,
+  "peakRss": 1966669824
+ },
+ {
+  "case": "booking-confirmation-preview",
+  "engine": "chrome-fixed",
+  "rep": 2,
+  "paginateMs": 39.39358400000492,
+  "pdfMs": 63.35991599999397,
+  "totalMs": 102.7534999999989,
+  "bytes": 148006,
+  "peakRss": 1919565824
+ },
+ {
+  "case": "booking-confirmation-preview",
+  "engine": "lp-fixed",
+  "rep": 2,
+  "paginateMs": 54.434583999995084,
+  "pdfMs": 19.712500000001455,
+  "totalMs": 74.14708399999654,
+  "bytes": 59900,
+  "peakRss": 3307405312
+ },
+ {
+  "case": "booking-confirmation-final",
+  "engine": "chrome-base",
+  "rep": 0,
+  "paginateMs": 39.65791600000375,
+  "pdfMs": 119.35645899999508,
+  "totalMs": 159.01437499999884,
+  "bytes": 197891,
+  "pages": 1,
+  "peakRss": 2088796160
+ },
+ {
+  "case": "booking-confirmation-final",
+  "engine": "chrome-fixed",
+  "rep": 0,
+  "paginateMs": 15.84245799999917,
+  "pdfMs": 66.40991699999722,
+  "totalMs": 82.25237499999639,
+  "bytes": 142030,
+  "pages": 1,
+  "peakRss": 1933754368
+ },
+ {
+  "case": "booking-confirmation-final",
+  "engine": "lp-fixed",
+  "rep": 0,
+  "paginateMs": 38.59350000000268,
+  "pdfMs": 19.901208999996015,
+  "totalMs": 58.49470899999869,
+  "bytes": 58235,
+  "pages": 1,
+  "peakRss": 3364306944,
+  "lp": {
+   "bySelector": true,
+   "commands": 161,
+   "ms": {
+    "fetch": 0,
+    "layout": 0.079583,
+    "paint": 0.263166,
+    "pdf": 2.90925,
+    "snapshot": 0.004083,
+    "total": 3.2862080000000002
+   },
+   "pages": [
+    {
+     "culprit": "<div \"\"> 38,30 719x227 overflow 849x227",
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 92,
+     "width": 795,
+     "x": 0,
+     "y": 0
+    }
+   ],
+   "stats": {
+    "boxShadowsSkipped": 0,
+    "brushesSkipped": 0,
+    "composeSkipped": 0,
+    "culled": 0,
+    "degenerateSkipped": 37,
+    "emboldenSkipped": 0,
+    "fills": 31,
+    "filtersSkipped": 0,
+    "fontsFailed": 0,
+    "glyphRuns": 89,
+    "glyphs": 1418,
+    "glyphsWithoutText": 0,
+    "images": 0,
+    "insetShadows": 0,
+    "strokes": 0,
+    "variableRuns": 0
+   }
+  }
+ },
+ {
+  "case": "booking-confirmation-final",
+  "engine": "chrome-base",
+  "rep": 1,
+  "paginateMs": 40.90537499999482,
+  "pdfMs": 118.94916700000613,
+  "totalMs": 159.85454200000095,
+  "bytes": 197891,
+  "peakRss": 2045984768
+ },
+ {
+  "case": "booking-confirmation-final",
+  "engine": "chrome-fixed",
+  "rep": 1,
+  "paginateMs": 37.29883300000074,
+  "pdfMs": 69.32962499999849,
+  "totalMs": 106.62845799999923,
+  "bytes": 142030,
+  "peakRss": 1921974272
+ },
+ {
+  "case": "booking-confirmation-final",
+  "engine": "lp-fixed",
+  "rep": 1,
+  "paginateMs": 58.03837499999645,
+  "pdfMs": 19.159208000004583,
+  "totalMs": 77.19758300000103,
+  "bytes": 58235,
+  "peakRss": 3408543744
+ },
+ {
+  "case": "booking-confirmation-final",
+  "engine": "chrome-base",
+  "rep": 2,
+  "paginateMs": 39.93358299999818,
+  "pdfMs": 119.91616700000304,
+  "totalMs": 159.84975000000122,
+  "bytes": 197891,
+  "peakRss": 2176696320
+ },
+ {
+  "case": "booking-confirmation-final",
+  "engine": "chrome-fixed",
+  "rep": 2,
+  "paginateMs": 38.67616700000508,
+  "pdfMs": 63.99412499999744,
+  "totalMs": 102.67029200000252,
+  "bytes": 142030,
+  "peakRss": 1921875968
+ },
+ {
+  "case": "booking-confirmation-final",
+  "engine": "lp-fixed",
+  "rep": 2,
+  "paginateMs": 57.91387499999837,
+  "pdfMs": 19.089124999998603,
+  "totalMs": 77.00299999999697,
+  "bytes": 58235,
+  "peakRss": 3475472384
+ },
+ {
+  "case": "booking-confirmation-sparse",
+  "engine": "chrome-base",
+  "rep": 0,
+  "paginateMs": 31.19445799999812,
+  "pdfMs": 111.06995800000004,
+  "totalMs": 142.26441599999816,
+  "bytes": 119414,
+  "pages": 1,
+  "peakRss": 2103132160
+ },
+ {
+  "case": "booking-confirmation-sparse",
+  "engine": "chrome-fixed",
+  "rep": 0,
+  "paginateMs": 31.258709000001545,
+  "pdfMs": 54.016208000000915,
+  "totalMs": 85.27491700000246,
+  "bytes": 63568,
+  "pages": 1,
+  "peakRss": 1900232704
+ },
+ {
+  "case": "booking-confirmation-sparse",
+  "engine": "lp-fixed",
+  "rep": 0,
+  "paginateMs": 42.36499999999796,
+  "pdfMs": 10.867166999996698,
+  "totalMs": 53.23216699999466,
+  "bytes": 24808,
+  "pages": 1,
+  "peakRss": 3519660032,
+  "lp": {
+   "bySelector": true,
+   "commands": 64,
+   "ms": {
+    "fetch": 0,
+    "layout": 0.0385,
+    "paint": 0.094458,
+    "pdf": 1.056958,
+    "snapshot": 0.002291,
+    "total": 1.218416
+   },
+   "pages": [
+    {
+     "culprit": null,
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 0,
+     "width": 795,
+     "x": 0,
+     "y": 0
+    }
+   ],
+   "stats": {
+    "boxShadowsSkipped": 0,
+    "brushesSkipped": 0,
+    "composeSkipped": 0,
+    "culled": 0,
+    "degenerateSkipped": 1,
+    "emboldenSkipped": 0,
+    "fills": 26,
+    "filtersSkipped": 0,
+    "fontsFailed": 0,
+    "glyphRuns": 33,
+    "glyphs": 368,
+    "glyphsWithoutText": 0,
+    "images": 0,
+    "insetShadows": 0,
+    "strokes": 0,
+    "variableRuns": 0
+   }
+  }
+ },
+ {
+  "case": "booking-confirmation-sparse",
+  "engine": "chrome-base",
+  "rep": 1,
+  "paginateMs": 36.18862499999523,
+  "pdfMs": 107.51345800000126,
+  "totalMs": 143.7020829999965,
+  "bytes": 119414,
+  "peakRss": 1999437824
+ },
+ {
+  "case": "booking-confirmation-sparse",
+  "engine": "chrome-fixed",
+  "rep": 1,
+  "paginateMs": 31.613832999995793,
+  "pdfMs": 55.22925000000396,
+  "totalMs": 86.84308299999975,
+  "bytes": 63568,
+  "peakRss": 1914191872
+ },
+ {
+  "case": "booking-confirmation-sparse",
+  "engine": "lp-fixed",
+  "rep": 1,
+  "paginateMs": 42.84604200000467,
+  "pdfMs": 10.542832999999519,
+  "totalMs": 53.38887500000419,
+  "bytes": 24808,
+  "peakRss": 3565912064
+ },
+ {
+  "case": "booking-confirmation-sparse",
+  "engine": "chrome-base",
+  "rep": 2,
+  "paginateMs": 30.5076659999977,
+  "pdfMs": 105.97933400000329,
+  "totalMs": 136.487000000001,
+  "bytes": 119414,
+  "peakRss": 2022457344
+ },
+ {
+  "case": "booking-confirmation-sparse",
+  "engine": "chrome-fixed",
+  "rep": 2,
+  "paginateMs": 9.521250000005239,
+  "pdfMs": 60.36137499999313,
+  "totalMs": 69.88262499999837,
+  "bytes": 63568,
+  "peakRss": 1906475008
+ },
+ {
+  "case": "booking-confirmation-sparse",
+  "engine": "lp-fixed",
+  "rep": 2,
+  "paginateMs": 42.33445899999788,
+  "pdfMs": 10.614708000000974,
+  "totalMs": 52.94916699999885,
+  "bytes": 24808,
+  "peakRss": 3606364160
+ },
+ {
+  "case": "booking-confirmation-overflow",
+  "engine": "chrome-base",
+  "rep": 0,
+  "paginateMs": 87.36466600000131,
+  "pdfMs": 650.2464169999948,
+  "totalMs": 737.6110829999961,
+  "bytes": 824272,
+  "pages": 10,
+  "peakRss": 2139308032
+ },
+ {
+  "case": "booking-confirmation-overflow",
+  "engine": "chrome-fixed",
+  "rep": 0,
+  "paginateMs": 87.95354199999565,
+  "pdfMs": 108.91912500000035,
+  "totalMs": 196.872666999996,
+  "bytes": 189151,
+  "pages": 10,
+  "peakRss": 1890861056
+ },
+ {
+  "case": "booking-confirmation-overflow",
+  "engine": "lp-fixed",
+  "rep": 0,
+  "paginateMs": 263.8140409999978,
+  "pdfMs": 67.28187500000058,
+  "totalMs": 331.0959159999984,
+  "bytes": 175105,
+  "pages": 10,
+  "peakRss": 3712385024,
+  "lp": {
+   "bySelector": true,
+   "commands": 2108,
+   "ms": {
+    "fetch": 0,
+    "layout": 0.589917,
+    "paint": 2.070334,
+    "pdf": 13.57325,
+    "snapshot": 0.003333,
+    "total": 16.305500000000002
+   },
+   "pages": [
+    {
+     "culprit": "<div \"\"> 38,30 719x227 overflow 849x227",
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 92,
+     "width": 795,
+     "x": 0,
+     "y": 0
+    },
+    {
+     "culprit": "<div \"\"> 38,30 719x227 overflow 849x227",
+     "height": 1122,
+     "overflowBottom": 0,
+     "overflowRight": 92,
+     "width": 795,
+     "x": 0,
+     "y": 1123
+    },
+    {
+     "culprit": "<div \"\"> 38,30 719x227 overflow 849x227",
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 92,
+     "width": 795,
+     "x": 0,
+     "y": 2245
+    },
+    {
+     "culprit": "<div \"\"> 38,30 719x227 overflow 849x227",
+     "height": 1122,
+     "overflowBottom": 0,
+     "overflowRight": 92,
+     "width": 795,
+     "x": 0,
+     "y": 3368
+    },
+    {
+     "culprit": "<div \"\"> 38,30 719x227 overflow 849x227",
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 92,
+     "width": 795,
+     "x": 0,
+     "y": 4490
+    },
+    {
+     "culprit": "<div \"\"> 38,30 719x227 overflow 849x227",
+     "height": 1122,
+     "overflowBottom": 0,
+     "overflowRight": 92,
+     "width": 795,
+     "x": 0,
+     "y": 5613
+    },
+    {
+     "culprit": "<div \"\"> 38,31 719x226 overflow 849x226",
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 92,
+     "width": 795,
+     "x": 0,
+     "y": 6735
+    },
+    {
+     "culprit": "<div \"\"> 38,30 719x227 overflow 849x227",
+     "height": 1122,
+     "overflowBottom": 0,
+     "overflowRight": 92,
+     "width": 795,
+     "x": 0,
+     "y": 7858
+    },
+    {
+     "culprit": "<div \"\"> 38,31 719x227 overflow 849x227",
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 92,
+     "width": 795,
+     "x": 0,
+     "y": 8980
+    },
+    {
+     "culprit": "<div \"\"> 38,30 719x227 overflow 849x227",
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 92,
+     "width": 795,
+     "x": 0,
+     "y": 10103
+    }
+   ],
+   "stats": {
+    "boxShadowsSkipped": 0,
+    "brushesSkipped": 0,
+    "composeSkipped": 0,
+    "culled": 18585,
+    "degenerateSkipped": 1098,
+    "emboldenSkipped": 0,
+    "fills": 121,
+    "filtersSkipped": 0,
+    "fontsFailed": 0,
+    "glyphRuns": 876,
+    "glyphs": 19424,
+    "glyphsWithoutText": 0,
+    "images": 0,
+    "insetShadows": 0,
+    "strokes": 0,
+    "variableRuns": 0
+   }
+  }
+ },
+ {
+  "case": "booking-confirmation-overflow",
+  "engine": "chrome-base",
+  "rep": 1,
+  "paginateMs": 88.30841700000019,
+  "pdfMs": 643.2436660000021,
+  "totalMs": 731.5520830000023,
+  "bytes": 824272,
+  "peakRss": 2069905408
+ },
+ {
+  "case": "booking-confirmation-overflow",
+  "engine": "chrome-fixed",
+  "rep": 1,
+  "paginateMs": 87.11091700000543,
+  "pdfMs": 106.21549999999843,
+  "totalMs": 193.32641700000386,
+  "bytes": 189151,
+  "peakRss": 1842610176
+ },
+ {
+  "case": "booking-confirmation-overflow",
+  "engine": "lp-fixed",
+  "rep": 1,
+  "paginateMs": 279.6677079999936,
+  "pdfMs": 72.58666699999594,
+  "totalMs": 352.2543749999895,
+  "bytes": 175105,
+  "peakRss": 3816112128
+ },
+ {
+  "case": "booking-confirmation-overflow",
+  "engine": "chrome-base",
+  "rep": 2,
+  "paginateMs": 92.7398749999993,
+  "pdfMs": 642.2775409999886,
+  "totalMs": 735.0174159999879,
+  "bytes": 824272,
+  "peakRss": 2079571968
+ },
+ {
+  "case": "booking-confirmation-overflow",
+  "engine": "chrome-fixed",
+  "rep": 2,
+  "paginateMs": 90.70441700000083,
+  "pdfMs": 110.91220799999428,
+  "totalMs": 201.6166249999951,
+  "bytes": 189151,
+  "peakRss": 1855012864
+ },
+ {
+  "case": "booking-confirmation-overflow",
+  "engine": "lp-fixed",
+  "rep": 2,
+  "paginateMs": 269.0804589999898,
+  "pdfMs": 72.07079100000556,
+  "totalMs": 341.15124999999534,
+  "bytes": 175105,
+  "peakRss": 3904667648
+ },
+ {
+  "case": "vermas-preview",
+  "engine": "chrome-base",
+  "rep": 0,
+  "paginateMs": 37.746291999996174,
+  "pdfMs": 112.24966700001096,
+  "totalMs": 149.99595900000713,
+  "bytes": 183980,
+  "pages": 1,
+  "peakRss": 1935147008
+ },
+ {
+  "case": "vermas-preview",
+  "engine": "chrome-fixed",
+  "rep": 0,
+  "paginateMs": 34.751625000004424,
+  "pdfMs": 60.10025000000314,
+  "totalMs": 94.85187500000757,
+  "bytes": 128125,
+  "pages": 1,
+  "peakRss": 1847492608
+ },
+ {
+  "case": "vermas-preview",
+  "engine": "lp-fixed",
+  "rep": 0,
+  "paginateMs": 43.99945899999875,
+  "pdfMs": 17.461374999998952,
+  "totalMs": 61.4608339999977,
+  "bytes": 54019,
+  "pages": 1,
+  "peakRss": 3916349440,
+  "lp": {
+   "bySelector": true,
+   "commands": 85,
+   "ms": {
+    "fetch": 0,
+    "layout": 0.034709000000000004,
+    "paint": 0.112875,
+    "pdf": 2.364083,
+    "snapshot": 0.002667,
+    "total": 2.539542
+   },
+   "pages": [
+    {
+     "culprit": "<div \"\"> 38,30 719x227 overflow 849x227",
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 92,
+     "width": 795,
+     "x": 0,
+     "y": 0
+    }
+   ],
+   "stats": {
+    "boxShadowsSkipped": 0,
+    "brushesSkipped": 0,
+    "composeSkipped": 0,
+    "culled": 0,
+    "degenerateSkipped": 22,
+    "emboldenSkipped": 0,
+    "fills": 15,
+    "filtersSkipped": 0,
+    "fontsFailed": 0,
+    "glyphRuns": 44,
+    "glyphs": 590,
+    "glyphsWithoutText": 0,
+    "images": 0,
+    "insetShadows": 0,
+    "strokes": 0,
+    "variableRuns": 0
+   }
+  }
+ },
+ {
+  "case": "vermas-preview",
+  "engine": "chrome-base",
+  "rep": 1,
+  "paginateMs": 36.72691599999962,
+  "pdfMs": 113.38524999999208,
+  "totalMs": 150.1121659999917,
+  "bytes": 183980,
+  "peakRss": 1909817344
+ },
+ {
+  "case": "vermas-preview",
+  "engine": "chrome-fixed",
+  "rep": 1,
+  "paginateMs": 36.392875000005006,
+  "pdfMs": 60.51891599998635,
+  "totalMs": 96.91179099999135,
+  "bytes": 128125,
+  "peakRss": 1861582848
+ },
+ {
+  "case": "vermas-preview",
+  "engine": "lp-fixed",
+  "rep": 1,
+  "paginateMs": 44.40854099999706,
+  "pdfMs": 16.465875000008964,
+  "totalMs": 60.87441600000602,
+  "bytes": 54019,
+  "peakRss": 3917070336
+ },
+ {
+  "case": "vermas-preview",
+  "engine": "chrome-base",
+  "rep": 2,
+  "paginateMs": 36.68595800000185,
+  "pdfMs": 114.87520900000527,
+  "totalMs": 151.56116700000712,
+  "bytes": 183980,
+  "peakRss": 1918795776
+ },
+ {
+  "case": "vermas-preview",
+  "engine": "chrome-fixed",
+  "rep": 2,
+  "paginateMs": 36.251625000004424,
+  "pdfMs": 60.92420900000434,
+  "totalMs": 97.17583400000876,
+  "bytes": 128125,
+  "peakRss": 1878654976
+ },
+ {
+  "case": "vermas-preview",
+  "engine": "lp-fixed",
+  "rep": 2,
+  "paginateMs": 44.021749999999884,
+  "pdfMs": 16.366457999989507,
+  "totalMs": 60.38820799998939,
+  "bytes": 54019,
+  "peakRss": 3917676544
+ },
+ {
+  "case": "vermas-final",
+  "engine": "chrome-base",
+  "rep": 0,
+  "paginateMs": 35.48450000000594,
+  "pdfMs": 112.92879200000607,
+  "totalMs": 148.413292000012,
+  "bytes": 178008,
+  "pages": 1,
+  "peakRss": 2053783552
+ },
+ {
+  "case": "vermas-final",
+  "engine": "chrome-fixed",
+  "rep": 0,
+  "paginateMs": 37.34200000000419,
+  "pdfMs": 57.02870900000562,
+  "totalMs": 94.37070900000981,
+  "bytes": 122152,
+  "pages": 1,
+  "peakRss": 1891549184
+ },
+ {
+  "case": "vermas-final",
+  "engine": "lp-fixed",
+  "rep": 0,
+  "paginateMs": 44.284542000008514,
+  "pdfMs": 16.81500000000233,
+  "totalMs": 61.09954200001084,
+  "bytes": 52303,
+  "pages": 1,
+  "peakRss": 3924410368,
+  "lp": {
+   "bySelector": true,
+   "commands": 84,
+   "ms": {
+    "fetch": 0,
+    "layout": 0.040125,
+    "paint": 0.128417,
+    "pdf": 2.437209,
+    "snapshot": 0.002458,
+    "total": 2.643875
+   },
+   "pages": [
+    {
+     "culprit": "<div \"\"> 38,30 719x227 overflow 849x227",
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 92,
+     "width": 795,
+     "x": 0,
+     "y": 0
+    }
+   ],
+   "stats": {
+    "boxShadowsSkipped": 0,
+    "brushesSkipped": 0,
+    "composeSkipped": 0,
+    "culled": 0,
+    "degenerateSkipped": 22,
+    "emboldenSkipped": 0,
+    "fills": 15,
+    "filtersSkipped": 0,
+    "fontsFailed": 0,
+    "glyphRuns": 43,
+    "glyphs": 583,
+    "glyphsWithoutText": 0,
+    "images": 0,
+    "insetShadows": 0,
+    "strokes": 0,
+    "variableRuns": 0
+   }
+  }
+ },
+ {
+  "case": "vermas-final",
+  "engine": "chrome-base",
+  "rep": 1,
+  "paginateMs": 37.38245800000732,
+  "pdfMs": 111.82720899999549,
+  "totalMs": 149.2096670000028,
+  "bytes": 178008,
+  "peakRss": 1962147840
+ },
+ {
+  "case": "vermas-final",
+  "engine": "chrome-fixed",
+  "rep": 1,
+  "paginateMs": 35.61499999999069,
+  "pdfMs": 60.58975000001374,
+  "totalMs": 96.20475000000442,
+  "bytes": 122152,
+  "peakRss": 1868316672
+ },
+ {
+  "case": "vermas-final",
+  "engine": "lp-fixed",
+  "rep": 1,
+  "paginateMs": 45.29937500000233,
+  "pdfMs": 17.02400000000489,
+  "totalMs": 62.32337500000722,
+  "bytes": 52303,
+  "peakRss": 3925098496
+ },
+ {
+  "case": "vermas-final",
+  "engine": "chrome-base",
+  "rep": 2,
+  "paginateMs": 36.17195800000627,
+  "pdfMs": 114.37187499999709,
+  "totalMs": 150.54383300000336,
+  "bytes": 178008,
+  "peakRss": 1967915008
+ },
+ {
+  "case": "vermas-final",
+  "engine": "chrome-fixed",
+  "rep": 2,
+  "paginateMs": 35.800957999992534,
+  "pdfMs": 59.50404200000048,
+  "totalMs": 95.30499999999302,
+  "bytes": 122152,
+  "peakRss": 1867677696
+ },
+ {
+  "case": "vermas-final",
+  "engine": "lp-fixed",
+  "rep": 2,
+  "paginateMs": 45.45658299999195,
+  "pdfMs": 17.75183300000208,
+  "totalMs": 63.20841599999403,
+  "bytes": 52303,
+  "peakRss": 3925491712
+ },
+ {
+  "case": "vermas-sparse",
+  "engine": "chrome-base",
+  "rep": 0,
+  "paginateMs": 31.603333000006387,
+  "pdfMs": 104.36925000000338,
+  "totalMs": 135.97258300000976,
+  "bytes": 105843,
+  "pages": 1,
+  "peakRss": 1970470912
+ },
+ {
+  "case": "vermas-sparse",
+  "engine": "chrome-fixed",
+  "rep": 0,
+  "paginateMs": 31.615334000001894,
+  "pdfMs": 56.56470800000534,
+  "totalMs": 88.18004200000723,
+  "bytes": 50000,
+  "pages": 1,
+  "peakRss": 1885257728
+ },
+ {
+  "case": "vermas-sparse",
+  "engine": "lp-fixed",
+  "rep": 0,
+  "paginateMs": 39.10708400000294,
+  "pdfMs": 10.496790999997756,
+  "totalMs": 49.6038750000007,
+  "bytes": 24312,
+  "pages": 1,
+  "peakRss": 3926376448,
+  "lp": {
+   "bySelector": true,
+   "commands": 43,
+   "ms": {
+    "fetch": 0,
+    "layout": 0.044125000000000004,
+    "paint": 0.092667,
+    "pdf": 1.1147500000000001,
+    "snapshot": 0.0047079999999999995,
+    "total": 1.300125
+   },
+   "pages": [
+    {
+     "culprit": null,
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 0,
+     "width": 795,
+     "x": 0,
+     "y": 0
+    }
+   ],
+   "stats": {
+    "boxShadowsSkipped": 0,
+    "brushesSkipped": 0,
+    "composeSkipped": 0,
+    "culled": 0,
+    "degenerateSkipped": 7,
+    "emboldenSkipped": 0,
+    "fills": 12,
+    "filtersSkipped": 0,
+    "fontsFailed": 0,
+    "glyphRuns": 20,
+    "glyphs": 217,
+    "glyphsWithoutText": 0,
+    "images": 0,
+    "insetShadows": 0,
+    "strokes": 0,
+    "variableRuns": 0
+   }
+  }
+ },
+ {
+  "case": "vermas-sparse",
+  "engine": "chrome-base",
+  "rep": 1,
+  "paginateMs": 30.98795899999095,
+  "pdfMs": 108.37099999999919,
+  "totalMs": 139.35895899999014,
+  "bytes": 105843,
+  "peakRss": 2054733824
+ },
+ {
+  "case": "vermas-sparse",
+  "engine": "chrome-fixed",
+  "rep": 1,
+  "paginateMs": 29.89070800000627,
+  "pdfMs": 52.69479199999478,
+  "totalMs": 82.58550000000105,
+  "bytes": 50000,
+  "peakRss": 1897250816
+ },
+ {
+  "case": "vermas-sparse",
+  "engine": "lp-fixed",
+  "rep": 1,
+  "paginateMs": 38.02612500000396,
+  "pdfMs": 10.879333000004408,
+  "totalMs": 48.905458000008366,
+  "bytes": 24312,
+  "peakRss": 3927031808
+ },
+ {
+  "case": "vermas-sparse",
+  "engine": "chrome-base",
+  "rep": 2,
+  "paginateMs": 33.61000000000058,
+  "pdfMs": 105.544624999995,
+  "totalMs": 139.15462499999558,
+  "bytes": 105843,
+  "peakRss": 1919844352
+ },
+ {
+  "case": "vermas-sparse",
+  "engine": "chrome-fixed",
+  "rep": 2,
+  "paginateMs": 32.884791999997105,
+  "pdfMs": 54.296541000003344,
+  "totalMs": 87.18133300000045,
+  "bytes": 50000,
+  "peakRss": 1910751232
+ },
+ {
+  "case": "vermas-sparse",
+  "engine": "lp-fixed",
+  "rep": 2,
+  "paginateMs": 32.639082999987295,
+  "pdfMs": 10.468292000005022,
+  "totalMs": 43.10737499999232,
+  "bytes": 24312,
+  "peakRss": 3895508992
+ },
+ {
+  "case": "vermas-overflow",
+  "engine": "chrome-base",
+  "rep": 0,
+  "paginateMs": 45.82133399999293,
+  "pdfMs": 180.41633300000103,
+  "totalMs": 226.23766699999396,
+  "bytes": 246725,
+  "pages": 2,
+  "peakRss": 2060500992
+ },
+ {
+  "case": "vermas-overflow",
+  "engine": "chrome-fixed",
+  "rep": 0,
+  "paginateMs": 48.318499999993946,
+  "pdfMs": 67.72950000000128,
+  "totalMs": 116.04799999999523,
+  "bytes": 126509,
+  "pages": 2,
+  "peakRss": 1866694656
+ },
+ {
+  "case": "vermas-overflow",
+  "engine": "lp-fixed",
+  "rep": 0,
+  "paginateMs": 85.11874999999418,
+  "pdfMs": 23.62979199999245,
+  "totalMs": 108.74854199998663,
+  "bytes": 64612,
+  "pages": 2,
+  "peakRss": 3912482816,
+  "lp": {
+   "bySelector": true,
+   "commands": 364,
+   "ms": {
+    "fetch": 0,
+    "layout": 0.13908299999999998,
+    "paint": 0.39637500000000003,
+    "pdf": 3.4748330000000003,
+    "snapshot": 0.003,
+    "total": 4.05
+   },
+   "pages": [
+    {
+     "culprit": "<div \"\"> 38,257 719x797 overflow 719x1190",
+     "height": 1123,
+     "overflowBottom": 324,
+     "overflowRight": 92,
+     "width": 795,
+     "x": 0,
+     "y": 0
+    },
+    {
+     "culprit": "<div \"\"> 38,30 719x227 overflow 849x227",
+     "height": 1122,
+     "overflowBottom": 0,
+     "overflowRight": 92,
+     "width": 795,
+     "x": 0,
+     "y": 1123
+    }
+   ],
+   "stats": {
+    "boxShadowsSkipped": 0,
+    "brushesSkipped": 0,
+    "composeSkipped": 0,
+    "culled": 349,
+    "degenerateSkipped": 198,
+    "emboldenSkipped": 0,
+    "fills": 25,
+    "filtersSkipped": 0,
+    "fontsFailed": 0,
+    "glyphRuns": 140,
+    "glyphs": 1727,
+    "glyphsWithoutText": 0,
+    "images": 0,
+    "insetShadows": 0,
+    "strokes": 0,
+    "variableRuns": 0
+   }
+  }
+ },
+ {
+  "case": "vermas-overflow",
+  "engine": "chrome-base",
+  "rep": 1,
+  "paginateMs": 48.44312500000524,
+  "pdfMs": 172.06754199998977,
+  "totalMs": 220.510666999995,
+  "bytes": 246725,
+  "peakRss": 2045837312
+ },
+ {
+  "case": "vermas-overflow",
+  "engine": "chrome-fixed",
+  "rep": 1,
+  "paginateMs": 49.81770800000231,
+  "pdfMs": 67.96158400000422,
+  "totalMs": 117.77929200000654,
+  "bytes": 126509,
+  "peakRss": 1883602944
+ },
+ {
+  "case": "vermas-overflow",
+  "engine": "lp-fixed",
+  "rep": 1,
+  "paginateMs": 82.24149999998917,
+  "pdfMs": 24.770166000002064,
+  "totalMs": 107.01166599999124,
+  "bytes": 64612,
+  "peakRss": 3916267520
+ },
+ {
+  "case": "vermas-overflow",
+  "engine": "chrome-base",
+  "rep": 2,
+  "paginateMs": 45.163291999997455,
+  "pdfMs": 171.5913750000036,
+  "totalMs": 216.75466700000106,
+  "bytes": 246725,
+  "peakRss": 2023915520
+ },
+ {
+  "case": "vermas-overflow",
+  "engine": "chrome-fixed",
+  "rep": 2,
+  "paginateMs": 48.10158399998909,
+  "pdfMs": 66.13333300000522,
+  "totalMs": 114.23491699999431,
+  "bytes": 126509,
+  "peakRss": 1893711872
+ },
+ {
+  "case": "vermas-overflow",
+  "engine": "lp-fixed",
+  "rep": 2,
+  "paginateMs": 81.32649999999558,
+  "pdfMs": 22.840250000008382,
+  "totalMs": 104.16675000000396,
+  "bytes": 64612,
+  "peakRss": 3917316096
+ },
+ {
+  "case": "cmr-reference",
+  "engine": "chrome-base",
+  "rep": 0,
+  "paginateMs": 40.73791700000584,
+  "pdfMs": 155.57529100000102,
+  "totalMs": 196.31320800000685,
+  "bytes": 258431,
+  "pages": 1,
+  "peakRss": 2076082176
+ },
+ {
+  "case": "cmr-reference",
+  "engine": "chrome-fixed",
+  "rep": 0,
+  "paginateMs": 42.623457999987295,
+  "pdfMs": 102.82850000000326,
+  "totalMs": 145.45195799999055,
+  "bytes": 202659,
+  "pages": 1,
+  "peakRss": 1887125504
+ },
+ {
+  "case": "cmr-reference",
+  "engine": "lp-fixed",
+  "rep": 0,
+  "paginateMs": 60.0595830000093,
+  "pdfMs": 16.575083999996423,
+  "totalMs": 76.63466700000572,
+  "bytes": 52894,
+  "pages": 1,
+  "peakRss": 3921002496,
+  "lp": {
+   "bySelector": true,
+   "commands": 294,
+   "ms": {
+    "fetch": 0,
+    "layout": 0.067625,
+    "paint": 0.25325,
+    "pdf": 2.495167,
+    "snapshot": 0.002375,
+    "total": 2.848916
+   },
+   "pages": [
+    {
+     "culprit": null,
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 0,
+     "width": 794,
+     "x": 0,
+     "y": 0
+    }
+   ],
+   "stats": {
+    "boxShadowsSkipped": 0,
+    "brushesSkipped": 0,
+    "composeSkipped": 0,
+    "culled": 0,
+    "degenerateSkipped": 20,
+    "emboldenSkipped": 0,
+    "fills": 28,
+    "filtersSkipped": 0,
+    "fontsFailed": 0,
+    "glyphRuns": 162,
+    "glyphs": 2443,
+    "glyphsWithoutText": 0,
+    "images": 0,
+    "insetShadows": 10,
+    "strokes": 4,
+    "variableRuns": 0
+   }
+  }
+ },
+ {
+  "case": "cmr-reference",
+  "engine": "chrome-base",
+  "rep": 1,
+  "paginateMs": 40.46600000000035,
+  "pdfMs": 157.09366699999373,
+  "totalMs": 197.55966699999408,
+  "bytes": 258431,
+  "peakRss": 2048458752
+ },
+ {
+  "case": "cmr-reference",
+  "engine": "chrome-fixed",
+  "rep": 1,
+  "paginateMs": 36.843917000005604,
+  "pdfMs": 103.43241699998907,
+  "totalMs": 140.27633399999468,
+  "bytes": 202659,
+  "peakRss": 1962459136
+ },
+ {
+  "case": "cmr-reference",
+  "engine": "lp-fixed",
+  "rep": 1,
+  "paginateMs": 57.91737500000454,
+  "pdfMs": 17.273290999990422,
+  "totalMs": 75.19066599999496,
+  "bytes": 52894,
+  "peakRss": 3921788928
+ },
+ {
+  "case": "cmr-reference",
+  "engine": "chrome-base",
+  "rep": 2,
+  "paginateMs": 41.494416000001365,
+  "pdfMs": 157.27099999999336,
+  "totalMs": 198.76541599999473,
+  "bytes": 258431,
+  "peakRss": 2089615360
+ },
+ {
+  "case": "cmr-reference",
+  "engine": "chrome-fixed",
+  "rep": 2,
+  "paginateMs": 42.433167000010144,
+  "pdfMs": 104.25658299999486,
+  "totalMs": 146.689750000005,
+  "bytes": 202659,
+  "peakRss": 1919844352
+ },
+ {
+  "case": "cmr-reference",
+  "engine": "lp-fixed",
+  "rep": 2,
+  "paginateMs": 56.32870899999398,
+  "pdfMs": 16.334291000006488,
+  "totalMs": 72.66300000000047,
+  "bytes": 52894,
+  "peakRss": 3926163456
+ },
+ {
+  "case": "cmr-populated",
+  "engine": "chrome-base",
+  "rep": 0,
+  "paginateMs": 39.761624999999185,
+  "pdfMs": 155.3589590000047,
+  "totalMs": 195.12058400000387,
+  "bytes": 245918,
+  "pages": 1,
+  "peakRss": 2049310720
+ },
+ {
+  "case": "cmr-populated",
+  "engine": "chrome-fixed",
+  "rep": 0,
+  "paginateMs": 41.71845800000301,
+  "pdfMs": 112.76229199999943,
+  "totalMs": 154.48075000000244,
+  "bytes": 190154,
+  "pages": 1,
+  "peakRss": 1964212224
+ },
+ {
+  "case": "cmr-populated",
+  "engine": "lp-fixed",
+  "rep": 0,
+  "paginateMs": 36.580291999998735,
+  "pdfMs": 17.278375000008964,
+  "totalMs": 53.8586670000077,
+  "bytes": 52811,
+  "pages": 1,
+  "peakRss": 3934126080,
+  "lp": {
+   "bySelector": true,
+   "commands": 270,
+   "ms": {
+    "fetch": 0,
+    "layout": 0.100334,
+    "paint": 0.30616699999999997,
+    "pdf": 2.429084,
+    "snapshot": 0.003584,
+    "total": 2.877084
+   },
+   "pages": [
+    {
+     "culprit": null,
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 0,
+     "width": 794,
+     "x": 0,
+     "y": 0
+    }
+   ],
+   "stats": {
+    "boxShadowsSkipped": 0,
+    "brushesSkipped": 0,
+    "composeSkipped": 0,
+    "culled": 0,
+    "degenerateSkipped": 20,
+    "emboldenSkipped": 0,
+    "fills": 28,
+    "filtersSkipped": 0,
+    "fontsFailed": 0,
+    "glyphRuns": 138,
+    "glyphs": 1751,
+    "glyphsWithoutText": 0,
+    "images": 0,
+    "insetShadows": 10,
+    "strokes": 4,
+    "variableRuns": 0
+   }
+  }
+ },
+ {
+  "case": "cmr-populated",
+  "engine": "chrome-base",
+  "rep": 1,
+  "paginateMs": 39.47583399999712,
+  "pdfMs": 156.43775000001187,
+  "totalMs": 195.913584000009,
+  "bytes": 245918,
+  "peakRss": 2036760576
+ },
+ {
+  "case": "cmr-populated",
+  "engine": "chrome-fixed",
+  "rep": 1,
+  "paginateMs": 38.54908299999079,
+  "pdfMs": 101.94416700000875,
+  "totalMs": 140.49324999999953,
+  "bytes": 190154,
+  "peakRss": 1990311936
+ },
+ {
+  "case": "cmr-populated",
+  "engine": "lp-fixed",
+  "rep": 1,
+  "paginateMs": 36.66066600001068,
+  "pdfMs": 16.516583999997238,
+  "totalMs": 53.177250000007916,
+  "bytes": 52811,
+  "peakRss": 3934994432
+ },
+ {
+  "case": "cmr-populated",
+  "engine": "chrome-base",
+  "rep": 2,
+  "paginateMs": 37.54391700000269,
+  "pdfMs": 156.8672499999957,
+  "totalMs": 194.4111669999984,
+  "bytes": 245918,
+  "peakRss": 2089107456
+ },
+ {
+  "case": "cmr-populated",
+  "engine": "chrome-fixed",
+  "rep": 2,
+  "paginateMs": 39.10145800000464,
+  "pdfMs": 103.11199999999371,
+  "totalMs": 142.21345799999835,
+  "bytes": 190154,
+  "peakRss": 1920319488
+ },
+ {
+  "case": "cmr-populated",
+  "engine": "lp-fixed",
+  "rep": 2,
+  "paginateMs": 36.34575000000768,
+  "pdfMs": 16.984541999991052,
+  "totalMs": 53.330291999998735,
+  "bytes": 52811,
+  "peakRss": 3935633408
+ },
+ {
+  "case": "cmr-overflow",
+  "engine": "chrome-base",
+  "rep": 0,
+  "paginateMs": 276.8137090000091,
+  "pdfMs": 1383.2281249999942,
+  "totalMs": 1660.0418340000033,
+  "bytes": 1260137,
+  "pages": 14,
+  "peakRss": 2122940416
+ },
+ {
+  "case": "cmr-overflow",
+  "engine": "chrome-fixed",
+  "rep": 0,
+  "paginateMs": 282.30012500000885,
+  "pdfMs": 607.5511249999981,
+  "totalMs": 889.851250000007,
+  "bytes": 369345,
+  "pages": 14,
+  "peakRss": 2076377088
+ },
+ {
+  "case": "cmr-overflow",
+  "engine": "lp-fixed",
+  "rep": 0,
+  "paginateMs": 481.92554100000416,
+  "pdfMs": 36.47833399999945,
+  "totalMs": 518.4038750000036,
+  "bytes": 109094,
+  "pages": 14,
+  "peakRss": 3951951872,
+  "lp": {
+   "bySelector": true,
+   "commands": 2140,
+   "ms": {
+    "fetch": 0,
+    "layout": 0.271167,
+    "paint": 1.548708,
+    "pdf": 7.607875,
+    "snapshot": 0.0029579999999999997,
+    "total": 9.507458
+   },
+   "pages": [
+    {
+     "culprit": null,
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 0,
+     "width": 794,
+     "x": 0,
+     "y": 0
+    },
+    {
+     "culprit": null,
+     "height": 1122,
+     "overflowBottom": 0,
+     "overflowRight": 0,
+     "width": 794,
+     "x": 0,
+     "y": 1123
+    },
+    {
+     "culprit": null,
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 0,
+     "width": 794,
+     "x": 0,
+     "y": 2245
+    },
+    {
+     "culprit": null,
+     "height": 1122,
+     "overflowBottom": 0,
+     "overflowRight": 0,
+     "width": 794,
+     "x": 0,
+     "y": 3368
+    },
+    {
+     "culprit": null,
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 0,
+     "width": 794,
+     "x": 0,
+     "y": 4490
+    },
+    {
+     "culprit": null,
+     "height": 1122,
+     "overflowBottom": 0,
+     "overflowRight": 0,
+     "width": 794,
+     "x": 0,
+     "y": 5613
+    },
+    {
+     "culprit": null,
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 0,
+     "width": 794,
+     "x": 0,
+     "y": 6735
+    },
+    {
+     "culprit": null,
+     "height": 1122,
+     "overflowBottom": 0,
+     "overflowRight": 0,
+     "width": 794,
+     "x": 0,
+     "y": 7858
+    },
+    {
+     "culprit": null,
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 0,
+     "width": 794,
+     "x": 0,
+     "y": 8980
+    },
+    {
+     "culprit": null,
+     "height": 1122,
+     "overflowBottom": 0,
+     "overflowRight": 0,
+     "width": 794,
+     "x": 0,
+     "y": 10103
+    },
+    {
+     "culprit": null,
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 0,
+     "width": 794,
+     "x": 0,
+     "y": 11225
+    },
+    {
+     "culprit": null,
+     "height": 1122,
+     "overflowBottom": 0,
+     "overflowRight": 0,
+     "width": 794,
+     "x": 0,
+     "y": 12348
+    },
+    {
+     "culprit": null,
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 0,
+     "width": 794,
+     "x": 0,
+     "y": 13470
+    },
+    {
+     "culprit": null,
+     "height": 1122,
+     "overflowBottom": 0,
+     "overflowRight": 0,
+     "width": 794,
+     "x": 0,
+     "y": 14593
+    }
+   ],
+   "stats": {
+    "boxShadowsSkipped": 0,
+    "brushesSkipped": 0,
+    "composeSkipped": 0,
+    "culled": 25142,
+    "degenerateSkipped": 442,
+    "emboldenSkipped": 0,
+    "fills": 197,
+    "filtersSkipped": 0,
+    "fontsFailed": 0,
+    "glyphRuns": 1352,
+    "glyphs": 20895,
+    "glyphsWithoutText": 0,
+    "images": 0,
+    "insetShadows": 10,
+    "strokes": 17,
+    "variableRuns": 0
+   }
+  }
+ },
+ {
+  "case": "cmr-overflow",
+  "engine": "chrome-base",
+  "rep": 1,
+  "paginateMs": 267.260666999995,
+  "pdfMs": 1352.512625000003,
+  "totalMs": 1619.773291999998,
+  "bytes": 1260137,
+  "peakRss": 2248785920
+ },
+ {
+  "case": "cmr-overflow",
+  "engine": "chrome-fixed",
+  "rep": 1,
+  "paginateMs": 269.00800000000163,
+  "pdfMs": 599.8140830000048,
+  "totalMs": 868.8220830000064,
+  "bytes": 369345,
+  "peakRss": 2193801216
+ },
+ {
+  "case": "cmr-overflow",
+  "engine": "lp-fixed",
+  "rep": 1,
+  "paginateMs": 509.66650000000664,
+  "pdfMs": 36.120209000000614,
+  "totalMs": 545.7867090000072,
+  "bytes": 109094,
+  "peakRss": 3979329536
+ },
+ {
+  "case": "cmr-overflow",
+  "engine": "chrome-base",
+  "rep": 2,
+  "paginateMs": 282.2619169999962,
+  "pdfMs": 1344.6545000000042,
+  "totalMs": 1626.9164170000004,
+  "bytes": 1260137,
+  "peakRss": 2333147136
+ },
+ {
+  "case": "cmr-overflow",
+  "engine": "chrome-fixed",
+  "rep": 2,
+  "paginateMs": 266.1141659999994,
+  "pdfMs": 599.3032919999969,
+  "totalMs": 865.4174579999963,
+  "bytes": 369345,
+  "peakRss": 2174484480
+ },
+ {
+  "case": "cmr-overflow",
+  "engine": "lp-fixed",
+  "rep": 2,
+  "paginateMs": 516.246542000008,
+  "pdfMs": 35.78583300000173,
+  "totalMs": 552.0323750000098,
+  "bytes": 109094,
+  "peakRss": 3999858688
+ },
+ {
+  "case": "cmr-long-address",
+  "engine": "chrome-base",
+  "rep": 0,
+  "paginateMs": 41.2996659999917,
+  "pdfMs": 154.6924590000126,
+  "totalMs": 195.9921250000043,
+  "bytes": 247852,
+  "pages": 1,
+  "peakRss": 2302541824
+ },
+ {
+  "case": "cmr-long-address",
+  "engine": "chrome-fixed",
+  "rep": 0,
+  "paginateMs": 37.538832999998704,
+  "pdfMs": 101.83783399999083,
+  "totalMs": 139.37666699998954,
+  "bytes": 192092,
+  "pages": 1,
+  "peakRss": 2045870080
+ },
+ {
+  "case": "cmr-long-address",
+  "engine": "lp-fixed",
+  "rep": 0,
+  "paginateMs": 36.191665999998804,
+  "pdfMs": 16.739000000001397,
+  "totalMs": 52.9306660000002,
+  "bytes": 53016,
+  "pages": 1,
+  "peakRss": 4001660928,
+  "lp": {
+   "bySelector": true,
+   "commands": 275,
+   "ms": {
+    "fetch": 0,
+    "layout": 0.070208,
+    "paint": 0.237208,
+    "pdf": 2.3019160000000003,
+    "snapshot": 0.002458,
+    "total": 2.6395
+   },
+   "pages": [
+    {
+     "culprit": null,
+     "height": 1123,
+     "overflowBottom": 0,
+     "overflowRight": 0,
+     "width": 794,
+     "x": 0,
+     "y": 0
+    }
+   ],
+   "stats": {
+    "boxShadowsSkipped": 0,
+    "brushesSkipped": 0,
+    "composeSkipped": 0,
+    "culled": 0,
+    "degenerateSkipped": 20,
+    "emboldenSkipped": 0,
+    "fills": 28,
+    "filtersSkipped": 0,
+    "fontsFailed": 0,
+    "glyphRuns": 143,
+    "glyphs": 1829,
+    "glyphsWithoutText": 0,
+    "images": 0,
+    "insetShadows": 10,
+    "strokes": 4,
+    "variableRuns": 0
+   }
+  }
+ },
+ {
+  "case": "cmr-long-address",
+  "engine": "chrome-base",
+  "rep": 1,
+  "paginateMs": 40.084124999993946,
+  "pdfMs": 154.3657499999972,
+  "totalMs": 194.44987499999115,
+  "bytes": 247852,
+  "peakRss": 2240872448
+ },
+ {
+  "case": "cmr-long-address",
+  "engine": "chrome-fixed",
+  "rep": 1,
+  "paginateMs": 39.56762499999604,
+  "pdfMs": 100.42704199999571,
+  "totalMs": 139.99466699999175,
+  "bytes": 192092,
+  "peakRss": 2164260864
+ },
+ {
+  "case": "cmr-long-address",
+  "engine": "lp-fixed",
+  "rep": 1,
+  "paginateMs": 58.925958000007086,
+  "pdfMs": 17.24254199999268,
+  "totalMs": 76.16849999999977,
+  "bytes": 53016,
+  "peakRss": 4002381824
+ },
+ {
+  "case": "cmr-long-address",
+  "engine": "chrome-base",
+  "rep": 2,
+  "paginateMs": 38.57654100000218,
+  "pdfMs": 156.50879199999326,
+  "totalMs": 195.08533299999544,
+  "bytes": 247852,
+  "peakRss": 2311225344
+ },
+ {
+  "case": "cmr-long-address",
+  "engine": "chrome-fixed",
+  "rep": 2,
+  "paginateMs": 40.67429199999606,
+  "pdfMs": 100.00245800000266,
+  "totalMs": 140.67674999999872,
+  "bytes": 192092,
+  "peakRss": 2062696448
+ },
+ {
+  "case": "cmr-long-address",
+  "engine": "lp-fixed",
+  "rep": 2,
+  "paginateMs": 57.78395899999305,
+  "pdfMs": 17.105708000002778,
+  "totalMs": 74.88966699999582,
+  "bytes": 53016,
+  "peakRss": 4003086336
+ }
+]
