@@ -66,7 +66,7 @@ Mac the shadow fix halves Chrome's printToPDF and changes zero pixels; it did no
    goto + generate + printToPDF, RSS went from 6783 MB to 330 MB, and each iteration got faster (172 → 157 ms).
    The collection costs about 5 ms per navigation. About 0.3 MB per navigation is still retained.
    `LIGHTNINGPANDA_RELEASE_ON_CLOSE=0` turns this off. `navmem.mjs` measures it.
-3. **Puppeteer** (`9807cd5`). puppeteer ≥ 22 auto-attaches to tab targets and attaches each page from its tab's
+3. **Puppeteer** (`db84ceb`). puppeteer ≥ 22 auto-attaches to tab targets and attaches each page from its tab's
    session; LP had only page targets, so `newPage()` hung. Each page now has a virtual tab target. Page setup
    also needed Audits/Performance enable, `Network.setUserAgentOverride`, and
    `Emulation.setTouchEmulationEnabled(false)`. Result: the unchanged ToS `PdfRenderer` flow produces 44/44 PDFs
