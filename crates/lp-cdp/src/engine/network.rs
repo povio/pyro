@@ -241,6 +241,8 @@ impl RequestLog {
 impl EngineHost {
     pub(super) fn network_domain(&mut self, action: &str, cmd: &PageCommand<'_, '_>) -> CdpResult<Option<Value>> {
         match action {
+            // The same override as Emulation's (puppeteer sends this one).
+            "setUserAgentOverride" => self.emulation_domain(action, cmd),
             "enable" => {
                 // The server's process budget is currently configured by its
                 // embedder. Refuse per-session options rather than ignore them.

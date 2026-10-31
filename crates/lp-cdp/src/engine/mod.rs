@@ -719,6 +719,9 @@ impl EngineHost {
             #[cfg(feature = "render")]
             "IO" => self.io_domain(action, cmd),
             "Log" if matches!(action, "enable" | "disable") => Ok(Some(serde_json::json!({}))),
+            // puppeteer enables both on every page; there are no issues or
+            // metrics to report (`Performance.getMetrics` stays unsupported).
+            "Audits" | "Performance" if matches!(action, "enable" | "disable") => Ok(Some(serde_json::json!({}))),
             _ => Err(CdpError::unsupported(&cmd.command.method)),
         }
     }
@@ -767,6 +770,18 @@ impl EngineHost {
         match action {
             // Headless pages always behave as focused; there is no window focus to emulate.
             "setFocusEmulationEnabled" => Ok(Some(serde_json::json!({}))),
+            // puppeteer's setViewport sends it with every viewport. Pages have
+            // no touch input, which is what `enabled: false` asks for.
+            "setTouchEmulationEnabled" => {
+                #[derive(Deserialize)]
+                struct P {
+                    enabled: bool,
+                }
+                if cmd.command.params::<P>()?.enabled {
+                    return Err(CdpError::unsupported("Emulation.setTouchEmulationEnabled enabled: true"));
+                }
+                Ok(Some(serde_json::json!({})))
+            }
             "setDeviceMetricsOverride" | "clearDeviceMetricsOverride" => self.device_metrics(action, cmd),
             // Each call replaces the whole emulation (as Chrome): the media
             // type and the `prefers-*` features it lists; the rest reset.
