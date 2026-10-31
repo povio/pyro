@@ -913,6 +913,12 @@ impl PageDom {
         self.pinned.borrow().len()
     }
 
+    /// The document's URL, for a layout engine that loads sub-resources
+    /// (`LIGHTNINGPANDA_GEOMETRY=blitz`).
+    pub fn set_base_url(&self, url: &str) {
+        self.layout.borrow().set_base_url(url);
+    }
+
     /// Borrow helper for bindings.
     pub fn with_dom<R>(&self, f: impl FnOnce(&mut Dom) -> R) -> R {
         f(&mut self.dom.borrow_mut())

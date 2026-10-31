@@ -970,6 +970,8 @@ impl Browser {
         }
         self.sync_root(page.page);
         let page_dom = self.create_document_bindings(page, &opts.url, &loader_id)?;
+        // Sub-resources of an external layout engine resolve against it.
+        page_dom.set_base_url(&opts.url);
         if let Some(previous) = self.doc(page).map(|p| p.main_frame.loader_id.clone()) {
             self.forget_network_activity(page, &previous);
         }

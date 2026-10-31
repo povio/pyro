@@ -11,9 +11,13 @@
 //! applies what changed and Blitz relays out incrementally; the element boxes
 //! then replace the flow layout's (`lp_dom::layout::GeometrySource`).
 //!
-//! Sub-resources: only `data:` URLs are loaded (synchronously). Images and
-//! fonts from the network are not waited for, so their boxes may differ from
-//! a render's until a later layout.
+//! Sub-resources resolve against the document's URL and load synchronously
+//! when they are local: `data:` URLs, `file:` URLs and `serve --static`
+//! roots. Network ones (a Google Fonts `@import` and its fonts) are fetched
+//! through the browser's network client, blocking the layout up to
+//! [`NETWORK_WAIT`], once per process: bodies are kept by URL, so later
+//! documents lay out with them at once. The text is then measured in the
+//! font it is painted in, as Chromium measures it after `document.fonts`.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -37,8 +41,8 @@ static SNAPSHOT_NS: AtomicU64 = AtomicU64::new(0);
 static LAYOUT_NS: AtomicU64 = AtomicU64::new(0);
 static READ_NS: AtomicU64 = AtomicU64::new(0);
 
-/// Base URL of the Blitz documents (relative sub-resources are not loaded).
-const BASE_URL: &str = "about:blank";
+/// Base URL of a document whose URL was not given.
+const BLANK: &str = "about:blank";
 
 /// Layouts since the last call: count and milliseconds building the node
 /// list, applying it and laying out, and reading the boxes.
@@ -55,27 +59,109 @@ pub(crate) fn take_stats() -> (u64, u64, f64, f64, f64) {
 
 /// Makes this thread's new documents take Blitz geometry when
 /// `LIGHTNINGPANDA_GEOMETRY=blitz`.
-pub(crate) fn install() {
+/// Longest wait for one network sub-resource of a layout.
+const NETWORK_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// Network sub-resources loaded for layouts, by URL (process-wide).
+static NETWORK_BODIES: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, Arc<Vec<u8>>>>> =
+    std::sync::LazyLock::new(Default::default);
+
+pub(crate) fn install(statics: lp_net::StaticFiles, net: Option<lp_net::NetClient>) {
     if lp_dom::layout::blitz_geometry_requested() {
-        lp_dom::layout::set_geometry_source_factory(Some(Rc::new(|| {
-            Rc::new(BlitzGeometry { page: NEXT_PAGE.fetch_add(1, Ordering::Relaxed), synced: Default::default() })
-                as Rc<dyn GeometrySource>
+        let fetcher: Arc<dyn Fetcher> = Arc::new(LocalFiles { statics, net });
+        lp_dom::layout::set_geometry_source_factory(Some(Rc::new(move || {
+            Rc::new(BlitzGeometry {
+                page: NEXT_PAGE.fetch_add(1, Ordering::Relaxed),
+                synced: Default::default(),
+                base_url: std::cell::RefCell::new(BLANK.into()),
+                fetcher: fetcher.clone(),
+            }) as Rc<dyn GeometrySource>
         })));
     }
 }
 
-struct DataUrls;
+/// Loads sub-resources synchronously: `data:` and `file:` URLs and
+/// `serve --static` roots from disk, the rest through `net` (cached).
+struct LocalFiles {
+    statics: lp_net::StaticFiles,
+    net: Option<lp_net::NetClient>,
+}
 
-impl Fetcher for DataUrls {
+impl LocalFiles {
+    /// A network body, from the process cache or fetched (bounded wait: a
+    /// request held by interception the blocked thread would answer gives
+    /// up after [`NETWORK_WAIT`]).
+    fn network(&self, url: &lp_net::Url) -> Option<Vec<u8>> {
+        let key = url.as_str().to_owned();
+        if let Some(b) = NETWORK_BODIES.lock().ok()?.get(&key) {
+            return Some(b.to_vec());
+        }
+        let net = self.net.as_ref()?;
+        let path = url.path().to_ascii_lowercase();
+        let destination = if [".woff2", ".woff", ".ttf", ".otf"].iter().any(|e| path.ends_with(e)) {
+            lp_net::Destination::Font
+        } else if path.ends_with(".css") || url.host_str() == Some("fonts.googleapis.com") {
+            lp_net::Destination::Style
+        } else {
+            lp_net::Destination::Image
+        };
+        let (tx, rx) = std::sync::mpsc::channel();
+        let id = net.next_request_id();
+        net.fetch_with_id(
+            id,
+            lp_net::Request::get(url.clone(), destination),
+            Box::new(move |ev| {
+                let _ = tx.send(ev);
+            }),
+        );
+        let deadline = Instant::now() + NETWORK_WAIT;
+        let (mut ok, mut body) = (false, Vec::new());
+        loop {
+            match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+                Ok(lp_net::ResponseEvent::Response(h)) => ok = h.status.is_success(),
+                Ok(lp_net::ResponseEvent::Data(d)) => body.extend_from_slice(&d),
+                Ok(lp_net::ResponseEvent::Redirect { .. }) => {}
+                Ok(lp_net::ResponseEvent::Finished { .. }) => break,
+                Ok(lp_net::ResponseEvent::Failed(_)) | Err(_) => {
+                    net.cancel(id);
+                    return None;
+                }
+            }
+        }
+        if !ok {
+            return None;
+        }
+        NETWORK_BODIES.lock().ok()?.insert(key, Arc::new(body.clone()));
+        Some(body)
+    }
+}
+
+impl Fetcher for LocalFiles {
     fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
-        let body = lp_net::Url::parse(&url).ok().and_then(|u| lp_net::data_url::parse(&u)).map(|(_, b)| b.to_vec());
-        done(body.ok_or_else(|| format!("{url}: Blitz geometry loads data: URLs only")));
+        let body = (|| {
+            let u = lp_net::Url::parse(&url).ok()?;
+            match u.scheme() {
+                "data" => lp_net::data_url::parse(&u).map(|(_, b)| b.to_vec()),
+                "file" => std::fs::read(u.to_file_path().ok()?).ok(),
+                _ => match self.statics.lookup(&u, false) {
+                    Some(hit) => Some(hit.file.body.to_vec()),
+                    None => match self.statics.resolve(&u, false) {
+                        Some(hit) => std::fs::read(hit.path).ok(),
+                        None if matches!(u.scheme(), "http" | "https") => self.network(&u),
+                        None => None,
+                    },
+                },
+            }
+        })();
+        done(body.ok_or_else(|| format!("{url}: not a local resource")));
     }
 }
 
 /// The Blitz document of one page document.
 struct BlitzGeometry {
     page: u64,
+    base_url: std::cell::RefCell<String>,
+    fetcher: Arc<dyn Fetcher>,
     /// The DOM version, style generation and viewport it was last synced at.
     synced: std::cell::Cell<Option<(u64, u64, (u32, u32, u64, bool))>>,
 }
@@ -96,11 +182,12 @@ impl BlitzGeometry {
     /// The document as a keyed node list for this page's Blitz document.
     fn snapshot(&self, dom: &Dom, layout: &Layout) -> Option<Snapshot> {
         let t = Instant::now();
-        let s = lp_webapi::render_snapshot::render_tree_snapshot(dom, layout, layout.document(), BASE_URL);
+        let base_url = self.base_url.borrow().clone();
+        let s = lp_webapi::render_snapshot::render_tree_snapshot(dom, layout, layout.document(), &base_url);
         let tree = Arc::new(super::screenshot::convert(s.tree?));
         let snap = Snapshot {
             html: String::new(),
-            base_url: BASE_URL.into(),
+            base_url,
             sheets: s.sheets,
             width: s.width,
             height: s.height,
@@ -161,7 +248,9 @@ impl GeometrySource for BlitzGeometry {
         if let Some((version, generation, vp)) = last {
             if generation == now.1 && vp == viewport {
                 let t = Instant::now();
-                let delta = lp_webapi::render_snapshot::render_tree_delta(dom, layout, layout.document(), BASE_URL, version);
+                let base_url = self.base_url.borrow().clone();
+                let delta =
+                    lp_webapi::render_snapshot::render_tree_delta(dom, layout, layout.document(), &base_url, version);
                 SNAPSHOT_NS.fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
                 if let Some(delta) = delta {
                     let ops = convert_delta(delta);
@@ -180,7 +269,7 @@ impl GeometrySource for BlitzGeometry {
             }
         }
         let Some(snap) = self.snapshot(dom, layout) else { return };
-        let fetcher: Arc<dyn Fetcher> = Arc::new(DataUrls);
+        let fetcher = self.fetcher.clone();
         let timings = RENDERER.with(|r| {
             let mut r = r.try_borrow_mut().ok()?;
             r.get_or_insert_with(Renderer::new).sync_layout(&snap, &fetcher).ok()
@@ -189,6 +278,10 @@ impl GeometrySource for BlitzGeometry {
             CALLS.fetch_add(1, Ordering::Relaxed);
             LAYOUT_NS.fetch_add((t.fetch + t.layout).as_nanos() as u64, Ordering::Relaxed);
         }
+    }
+
+    fn set_base_url(&self, url: &str) {
+        *self.base_url.borrow_mut() = url.to_owned();
     }
 
     fn element_box(&self, key: u64) -> Option<ExternalBox> {
@@ -200,7 +293,7 @@ impl GeometrySource for BlitzGeometry {
 
     fn geometry(&self, dom: &Dom, layout: &Layout) -> Option<ExternalGeometry> {
         let snap = self.snapshot(dom, layout)?;
-        let fetcher: Arc<dyn Fetcher> = Arc::new(DataUrls);
+        let fetcher = self.fetcher.clone();
         let out = RENDERER.with(|r| {
             let mut r = r.try_borrow_mut().ok()?;
             r.get_or_insert_with(Renderer::new).layout_boxes(&snap, &fetcher).ok()

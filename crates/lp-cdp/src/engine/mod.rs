@@ -390,11 +390,14 @@ impl EngineHost {
     pub fn prepare_thread_with(profile: &BrowserProfile) -> CdpResult<BrowserThread> {
         let mut thread =
             BrowserThread::new().map_err(|e| CdpError::server(format!("JavaScript engine unavailable: {e}")))?;
-        #[cfg(feature = "render")]
-        blitz_geometry::install();
         thread
             .enable_network(profile.net.clone())
             .map_err(|e| CdpError::server(format!("network unavailable: {e}")))?;
+        #[cfg(feature = "render")]
+        blitz_geometry::install(
+            profile.net.static_files.clone(),
+            thread.browser.context_net(lp_browser::DEFAULT_CONTEXT).cloned(),
+        );
         if !profile.local_storage.is_empty() {
             thread.set_local_storage_seed(profile.local_storage.clone());
         }

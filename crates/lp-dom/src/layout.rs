@@ -302,6 +302,8 @@ pub trait GeometrySource {
     fn sync(&self, dom: &Dom, layout: &Layout);
     /// One element's box as of the last sync (`None`: not rendered).
     fn element_box(&self, key: u64) -> Option<ExternalBox>;
+    /// The document's URL (relative sub-resources resolve against it).
+    fn set_base_url(&self, _url: &str) {}
 }
 
 thread_local! {
@@ -393,6 +395,13 @@ impl Layout {
         self.external = source;
         self.external_synced.set(None);
         self.flow_cache.borrow_mut().take();
+    }
+
+    /// The document's URL, for the external geometry source.
+    pub fn set_base_url(&self, url: &str) {
+        if let Some(source) = &self.external {
+            source.set_base_url(url);
+        }
     }
 
     /// Installs this thread's geometry source when
