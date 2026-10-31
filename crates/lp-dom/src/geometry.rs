@@ -132,6 +132,8 @@ pub struct LayoutBox {
     pub position: BoxPosition,
     /// Tree order (1-based), for paint order among equals.
     pub order: u32,
+    /// It or an ancestor is positioned: painted in the positioned layer.
+    pub in_positioned: bool,
 }
 
 impl LayoutBox {
@@ -147,12 +149,14 @@ impl LayoutBox {
             padding: b.padding,
             position: b.position,
             order,
+            in_positioned: b.position != BoxPosition::Static,
         }
     }
 
-    /// Positioned (relative/absolute/fixed/sticky): painted above in-flow boxes.
+    /// Positioned (relative/absolute/fixed/sticky), or inside such a box:
+    /// painted above in-flow boxes.
     pub fn positioned(&self) -> bool {
-        self.position != BoxPosition::Static
+        self.in_positioned
     }
 }
 
@@ -212,9 +216,19 @@ impl LayoutResult {
             document_height: g.document_height,
             ..LayoutResult::default()
         };
+        // Tree order: an element's ancestors are in before it.
         for (i, (key, b)) in g.boxes.iter().enumerate() {
             if let Some(el) = node_of(dom, *key) {
-                out.boxes.insert(el, LayoutBox::from_external(b, i as u32 + 1));
+                let mut b = LayoutBox::from_external(b, i as u32 + 1);
+                let mut cur = dom.parent_element(el).ok().flatten();
+                while let Some(p) = cur {
+                    if let Some(pb) = out.boxes.get(&p) {
+                        b.in_positioned |= pb.in_positioned;
+                        break;
+                    }
+                    cur = dom.parent_element(p).ok().flatten();
+                }
+                out.boxes.insert(el, b);
             }
         }
         let mut seen = FxHashSet::default();
