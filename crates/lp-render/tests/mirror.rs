@@ -651,3 +651,33 @@ fn incremental_boxes_match_fresh_builds() {
         }
     });
 }
+
+/// Words of text nodes with their UTF-16 offsets (white space collapsed,
+/// several nodes in one line) and caret edges; hit testing by key.
+#[test]
+fn page_layout_reports_words_and_hits() {
+    let page = Page::new(
+        "<!doctype html><body style=\"margin:0;font:16px sans-serif\"><p id=p style=\"margin:0\">  Hello   w\u{e9}rld<b id=b>bold</b> \u{1f600}x</p></body>",
+    );
+    let mut r = Renderer::new();
+    r.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+    let out = r.page_layout(1).unwrap();
+    let text_key = |sel: &str, i: usize| {
+        let dom = page.dom.borrow();
+        let el = page.find(sel);
+        lp_dom::snapshot::render_key(dom.children(el).unwrap().nth(i).unwrap())
+    };
+    let words: Vec<(u64, u32, u32)> =
+        out.words.iter().map(|(k, w)| (*k, w.edges[0].0, w.edges.last().unwrap().0)).collect();
+    let (p0, b0, p2) = (text_key("#p", 0), text_key("#b", 0), text_key("#p", 2));
+    assert_eq!(words, vec![(p0, 2, 7), (p0, 10, 15), (b0, 0, 4), (p2, 1, 3), (p2, 3, 4)]);
+    let hello = &out.words[0].1;
+    assert!(hello.width > 20.0 && hello.height > 10.0 && hello.edges.len() == 6, "{hello:?}");
+    assert!(hello.edges.windows(2).all(|e| e[0].1 < e[1].1));
+    let bold = &out.words[2].1;
+    let hit = r.elements_from_point(1, bold.x + 2.0, bold.y + 2.0);
+    let dom = page.dom.borrow();
+    assert_eq!(hit[0], lp_dom::snapshot::render_key(page.find("#b")));
+    assert_eq!(hit[1], lp_dom::snapshot::render_key(page.find("#p")));
+    drop(dom);
+}

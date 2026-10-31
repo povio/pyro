@@ -1108,6 +1108,7 @@ fn build_inline_layout_with(
     // The marker is a separate box, so words in the content don't continue from it.
     let mut text_transformer = TextTransformer::default();
     text_transformer.word_break(&builder);
+    let text_nodes = &mut Vec::new();
 
     if let Some(before_id) = root_node.before() {
         build_inline_layout_recursive(
@@ -1116,6 +1117,7 @@ fn build_inline_layout_with(
             nodes,
             before_id,
             &text_transform,
+            text_nodes,
         );
     }
     for child_id in root_node.children.iter().copied() {
@@ -1125,6 +1127,7 @@ fn build_inline_layout_with(
             nodes,
             child_id,
             &text_transform,
+            text_nodes,
         );
     }
     if let Some(after_id) = root_node.after() {
@@ -1134,6 +1137,7 @@ fn build_inline_layout_with(
             nodes,
             after_id,
             &text_transform,
+            text_nodes,
         );
     }
 
@@ -1141,6 +1145,7 @@ fn build_inline_layout_with(
         builder.push_text("\u{200B}");
     }
     text_layout.text = builder.build_into(&mut text_layout.layout);
+    text_layout.text_nodes = std::mem::take(text_nodes);
     return;
 
     fn build_inline_layout_recursive(
@@ -1149,6 +1154,7 @@ fn build_inline_layout_with(
         nodes: &crate::NodeTree,
         node_id: NodeId,
         parent_text_transform: &CaseTransform,
+        text_nodes: &mut Vec<(NodeId, std::ops::Range<usize>)>,
     ) {
         let node = &nodes[node_id];
 
@@ -1211,6 +1217,7 @@ fn build_inline_layout_with(
                                 nodes,
                                 child_id,
                                 &text_transform,
+                                text_nodes,
                             );
                         }
                         builder.pop_style_span();
@@ -1266,6 +1273,7 @@ fn build_inline_layout_with(
                                     nodes,
                                     before_id,
                                     &text_transform,
+                                    text_nodes,
                                 );
                             }
 
@@ -1276,6 +1284,7 @@ fn build_inline_layout_with(
                                     nodes,
                                     child_id,
                                     &text_transform,
+                                    text_nodes,
                                 );
                             }
                             if let Some(after_id) = node.after() {
@@ -1285,6 +1294,7 @@ fn build_inline_layout_with(
                                     nodes,
                                     after_id,
                                     &text_transform,
+                                    text_nodes,
                                 );
                             }
 
@@ -1319,7 +1329,9 @@ fn build_inline_layout_with(
 
                 let text =
                     text_transformer.transform(&data.content, parent_text_transform, builder);
+                let start = builder.text().len();
                 builder.push_text(text);
+                text_nodes.push((node_id, start..builder.text().len()));
             }
             NodeData::Comment { .. } => {
                 // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);

@@ -272,6 +272,126 @@ impl Geometry {
     }
 }
 
+/// One word of a text node on a line (or the part of it in one glyph run):
+/// its content area in document CSS px (viewport ones inside a fixed box).
+#[derive(Clone, Debug, PartialEq)]
+pub struct TextWord {
+    pub node: NodeId,
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+    pub fixed: bool,
+    /// Caret positions along the word: a UTF-16 offset into the node's data
+    /// and its x, from the word's start to its end.
+    pub edges: Vec<(u32, f64)>,
+}
+
+impl Geometry {
+    /// Every word laid out in the document's inline formatting contexts, in
+    /// layout order.
+    pub(crate) fn text_words(&self, doc: &BaseDocument) -> Vec<TextWord> {
+        let mut out = Vec::new();
+        for (id, node) in doc.tree().iter() {
+            let Some(text) = node.element_data().and_then(|e| e.inline_layout_data.as_ref()) else { continue };
+            if !node.flags.is_inline_root() || text.text_nodes.is_empty() || !in_layout_tree(doc, id) {
+                continue;
+            }
+            let Some((t, fixed)) = self.transform(doc, id) else { continue };
+            let l = node.unrounded_layout();
+            let origin = t * Affine::translate((
+                (l.border.left + l.padding.left) as f64,
+                (l.border.top + l.padding.top) as f64 + text.block_offset as f64,
+            ));
+            let scale = text.layout.scale() as f64;
+            // Per text node: the UTF-16 offset of each byte of its laid-out text.
+            let offsets: Vec<Vec<u32>> = text
+                .text_nodes
+                .iter()
+                .map(|(n, range)| {
+                    let source = doc.get_node(*n).and_then(|n| n.text_data()).map_or("", |d| d.content.as_str());
+                    utf16_offsets(source, &text.text[range.clone()])
+                })
+                .collect();
+            let owner = |byte: usize| {
+                let i = text.text_nodes.partition_point(|(_, r)| r.end <= byte);
+                text.text_nodes.get(i).filter(|(_, r)| r.start <= byte).map(|_| i)
+            };
+            for line in text.layout.lines() {
+                for item in line.items() {
+                    let parley::PositionedLayoutItem::GlyphRun(run) = item else { continue };
+                    let metrics = run.run().font_metrics();
+                    let baseline = run.baseline() as f64;
+                    let (top, bottom) = (baseline - metrics.ascent as f64, baseline + metrics.descent as f64);
+                    let mut x = run.offset() as f64;
+                    let mut word: Option<(usize, Vec<(u32, f64)>)> = None;
+                    let mut flush = |word: &mut Option<(usize, Vec<(u32, f64)>)>| {
+                        let Some((i, edges)) = word.take() else { return };
+                        let (x0, x1) = (edges[0].1, edges[edges.len() - 1].1);
+                        let r = origin.transform_rect_bbox(Rect::new(x0 / scale, top / scale, x1 / scale, bottom / scale));
+                        let edges = edges.into_iter().map(|(o, ex)| (o, origin.transform_rect_bbox(Rect::new(ex / scale, 0.0, ex / scale, 0.0)).x0)).collect();
+                        out.push(TextWord {
+                            node: text.text_nodes[i].0,
+                            x: r.x0,
+                            y: r.y0,
+                            width: r.width(),
+                            height: r.height(),
+                            fixed,
+                            edges,
+                        });
+                    };
+                    for cluster in run.run().visual_clusters() {
+                        let advance = cluster.advance() as f64;
+                        let range = cluster.text_range();
+                        let at = owner(range.start);
+                        let blank = cluster.is_space_or_nbsp() || cluster.is_hard_line_break() || at.is_none();
+                        if blank || word.as_ref().is_some_and(|(i, _)| Some(*i) != at) {
+                            flush(&mut word);
+                        }
+                        if let (false, Some(i)) = (blank, at) {
+                            let base = text.text_nodes[i].1.start;
+                            let map = &offsets[i];
+                            let offset = |b: usize| map[(b - base).min(map.len() - 1)];
+                            let (start, end) = if cluster.is_rtl() { (range.end, range.start) } else { (range.start, range.end) };
+                            let w = word.get_or_insert_with(|| (i, vec![(offset(start), x)]));
+                            w.1.push((offset(end), x + advance));
+                        }
+                        x += advance;
+                    }
+                    flush(&mut word);
+                }
+            }
+        }
+        out
+    }
+}
+
+/// The UTF-16 offset into `source` (a text node's data) of each byte of
+/// `laid` (what it became in the layout: white space collapsed, case
+/// transformed), plus one past the end.
+fn utf16_offsets(source: &str, laid: &str) -> Vec<u32> {
+    let mut map = vec![0u32; laid.len() + 1];
+    let mut src = source.chars().peekable();
+    let mut at = 0u32;
+    let same = |s: char, l: char| s == l || (s.is_whitespace() && l == ' ') || s.to_lowercase().eq(l.to_lowercase());
+    for (b, c) in laid.char_indices() {
+        // Source white space the layout collapsed away.
+        while let Some(&s) = src.peek() {
+            if same(s, c) || !s.is_whitespace() {
+                break;
+            }
+            at += s.len_utf16() as u32;
+            src.next();
+        }
+        map[b..b + c.len_utf8()].fill(at);
+        if src.peek().is_some_and(|&s| same(s, c)) {
+            at += src.next().unwrap().len_utf16() as u32;
+        }
+    }
+    map[laid.len()] = at;
+    map
+}
+
 /// Whether `id` is a box of the current layout: the root element, or a
 /// layout child of its layout parent.
 fn in_layout_tree(doc: &BaseDocument, id: NodeId) -> bool {

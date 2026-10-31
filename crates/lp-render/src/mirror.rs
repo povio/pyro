@@ -209,6 +209,11 @@ impl Mirror {
         self.nodes.get(&key).map(|e| e.id)
     }
 
+    /// The key of each mirrored node.
+    pub(crate) fn keys(&self) -> FxHashMap<NodeId, u64> {
+        self.nodes.iter().map(|(k, e)| (e.id, *k)).collect()
+    }
+
     /// Every element's key and node.
     pub(crate) fn elements(&self) -> impl Iterator<Item = (u64, NodeId)> + '_ {
         self.nodes.iter().filter(|(_, e)| e.name.is_some()).map(|(k, e)| (*k, e.id))

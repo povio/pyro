@@ -43,7 +43,7 @@ use parley::fontique::{Blob, Collection, CollectionOptions, SourceCache};
 use parley::FontContext;
 use peniko::{Color, Fill};
 
-pub use geometry::LayoutBox;
+pub use geometry::{LayoutBox, TextWord};
 pub use compare::{compare, decode_png, diff_image, encode_jpeg, encode_png, CompareResult};
 pub use hash::scene_hash;
 pub use mirror::{DeltaOp, MirrorStats, Rebuild, Tree, TreeKind, TreeNode, TOP};
@@ -131,6 +131,10 @@ pub const CLIP_ATTRIBUTE: &str = "data-lp-render-clip";
 pub struct LayoutBoxes {
     /// By render key (`lp_dom::snapshot::render_key`).
     pub boxes: Vec<(u64, LayoutBox)>,
+    /// Each word of each text node (by its key), in layout order.
+    pub words: Vec<(u64, TextWord)>,
+    /// `position: sticky` elements (their boxes are laid out as if static).
+    pub sticky: Vec<u64>,
     pub document_width: f64,
     pub document_height: f64,
     /// `fetch`/`layout`: bringing the document up to date; `scene`: reading the boxes.
@@ -754,22 +758,65 @@ impl Renderer {
     /// Every element's box ([`Renderer::element_box`]) after
     /// [`Renderer::sync_layout`], and the document's scroll size.
     pub fn layout_boxes(&mut self, snap: &Snapshot, fetcher: &Arc<dyn Fetcher>) -> Result<LayoutBoxes, RenderError> {
-        let mut timings = self.sync_layout(snap, fetcher)?;
+        let timings = self.sync_layout(snap, fetcher)?;
         let page = snap.live.as_ref().map(|l| l.page).unwrap_or_default();
+        let mut out = self.page_layout(page).ok_or(RenderError::NoElement)?;
+        out.timings = Timings { scene: out.timings.scene, ..timings };
+        Ok(out)
+    }
+
+    /// `page`'s persistent document as last synced: every element's box
+    /// ([`Renderer::element_box`]), every word, the sticky elements and the
+    /// document's scroll size (at least the viewport).
+    pub fn page_layout(&self, page: u64) -> Option<LayoutBoxes> {
         let t = Instant::now();
-        let m = self.mirrors.get(&page).ok_or(RenderError::NoElement)?;
-        let g = self.geometry.get(&page).ok_or(RenderError::NoElement)?;
-        let boxes = m.elements().filter_map(|(key, id)| Some((key, g.element_box(&m.doc, id)?))).collect();
-        let root = m.doc.root_element();
+        let m = self.mirrors.get(&page)?;
+        let g = self.geometry.get(&page)?;
+        let doc = &m.doc;
+        let keys = m.keys();
+        let mut boxes = Vec::new();
+        let mut sticky = Vec::new();
+        for (key, id) in m.elements() {
+            let Some(b) = g.element_box(doc, id) else { continue };
+            boxes.push((key, b));
+            let is_sticky = doc
+                .get_node(id)
+                .and_then(|n| n.primary_styles())
+                .is_some_and(|s| s.clone_position() == style::computed_values::position::T::Sticky);
+            if is_sticky {
+                sticky.push(key);
+            }
+        }
+        let words = g.text_words(doc).into_iter().filter_map(|w| Some((*keys.get(&w.node)?, w))).collect();
+        let root = doc.root_element();
         let (size, overflow) =
-            (root.final_layout().size, root.scrollable_overflow().scale_from_origin(1.0 / m.doc.viewport().scale_f64()));
-        timings.scene = t.elapsed();
-        Ok(LayoutBoxes {
+            (root.final_layout().size, root.scrollable_overflow().scale_from_origin(1.0 / doc.viewport().scale_f64()));
+        let (vw, vh) = (m.viewport.0 as f64, m.viewport.1 as f64);
+        Some(LayoutBoxes {
             boxes,
-            document_width: (size.width as f64).max(overflow.x1).max(snap.width as f64),
-            document_height: (size.height as f64).max(overflow.y1).max(snap.height as f64),
-            timings,
+            words,
+            sticky,
+            document_width: (size.width as f64).max(overflow.x1).max(vw),
+            document_height: (size.height as f64).max(overflow.y1).max(vh),
+            timings: Timings { scene: t.elapsed(), ..Timings::default() },
         })
+    }
+
+    /// The keys of the elements at viewport point (`x`, `y`) of `page`'s
+    /// persistent document, topmost first (`document.elementsFromPoint`;
+    /// the first is `elementFromPoint`'s).
+    pub fn elements_from_point(&self, page: u64, x: f64, y: f64) -> Vec<u64> {
+        let Some(m) = self.mirrors.get(&page) else { return Vec::new() };
+        let keys = m.keys();
+        let mut out = Vec::new();
+        let mut cur = m.doc.element_from_point(x as f32, y as f32);
+        while let Some(id) = cur {
+            if let Some(&k) = keys.get(&id) {
+                out.push(k);
+            }
+            cur = m.doc.get_node(id).and_then(|n| n.parent);
+        }
+        out
     }
 
     /// The document as a PDF: one page per element matching
