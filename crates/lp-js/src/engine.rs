@@ -345,7 +345,7 @@ impl Engine {
         class::drain_finalized(&self.inner)
     }
 
-    /// Frees what a closed page left behind: a collection of the engine's
+    /// Frees what a closed page (or a navigated-away document) left behind: a collection of the engine's
     /// heap, then the allocator's retained free pages are returned to the OS
     /// (`release_memory`). A closed page's wrappers and DOM are otherwise
     /// kept until the next collection, which an idle test process may never
