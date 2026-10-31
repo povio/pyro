@@ -397,3 +397,15 @@ fn a_padded_inline_flex_keeps_its_max_content_width() {
         </div></body></html>"#;
     assert_eq!(element_width(html), 86);
 }
+
+#[test]
+fn a_replaced_flex_item_shrinks_to_its_natural_width() {
+    // ToS pdfgen logos: `<svg width=700 height=100 class="h-[37mm] w-auto">`
+    // in a centered flex row. Its automatic minimum width is its natural
+    // width (700), not its height through the ratio (980), so it shrinks to
+    // the container as in Chromium.
+    let html = r#"<!doctype html><html><body style="margin:0"><div style="display:flex;justify-content:center;width:719px">
+        <svg data-lp-render-clip xmlns="http://www.w3.org/2000/svg" width="700" height="100" viewBox="0 0 700 100" style="height:140px;width:auto"><rect width="700" height="100"/></svg>
+        </div></body></html>"#;
+    assert_eq!(element_width(html), 719);
+}
