@@ -23,7 +23,7 @@ use std::time::Instant;
 
 use lp_dom::layout::{ExternalBox, ExternalGeometry, GeometrySource, Layout};
 use lp_dom::Dom;
-use lp_render::{Fetcher, Live, Renderer, Snapshot};
+use lp_render::{DeltaOp, Fetcher, Live, Renderer, Snapshot, TreeKind, TreeNode};
 
 thread_local! {
     static RENDERER: RefCell<Option<Renderer>> = const { RefCell::new(None) };
@@ -31,6 +31,8 @@ thread_local! {
 
 static NEXT_PAGE: AtomicU64 = AtomicU64::new(1);
 static CALLS: AtomicU64 = AtomicU64::new(0);
+/// Syncs from lp-dom's change journal (the rest sent the whole tree).
+static DELTAS: AtomicU64 = AtomicU64::new(0);
 static SNAPSHOT_NS: AtomicU64 = AtomicU64::new(0);
 static LAYOUT_NS: AtomicU64 = AtomicU64::new(0);
 static READ_NS: AtomicU64 = AtomicU64::new(0);
@@ -40,9 +42,15 @@ const BASE_URL: &str = "about:blank";
 
 /// Layouts since the last call: count and milliseconds building the node
 /// list, applying it and laying out, and reading the boxes.
-pub(crate) fn take_stats() -> (u64, f64, f64, f64) {
+pub(crate) fn take_stats() -> (u64, u64, f64, f64, f64) {
     let ms = |a: &AtomicU64| a.swap(0, Ordering::Relaxed) as f64 / 1e6;
-    (CALLS.swap(0, Ordering::Relaxed), ms(&SNAPSHOT_NS), ms(&LAYOUT_NS), ms(&READ_NS))
+    (
+        CALLS.swap(0, Ordering::Relaxed),
+        DELTAS.swap(0, Ordering::Relaxed),
+        ms(&SNAPSHOT_NS),
+        ms(&LAYOUT_NS),
+        ms(&READ_NS),
+    )
 }
 
 /// Makes this thread's new documents take Blitz geometry when
@@ -50,7 +58,8 @@ pub(crate) fn take_stats() -> (u64, f64, f64, f64) {
 pub(crate) fn install() {
     if lp_dom::layout::blitz_geometry_requested() {
         lp_dom::layout::set_geometry_source_factory(Some(Rc::new(|| {
-            Rc::new(BlitzGeometry { page: NEXT_PAGE.fetch_add(1, Ordering::Relaxed) }) as Rc<dyn GeometrySource>
+            Rc::new(BlitzGeometry { page: NEXT_PAGE.fetch_add(1, Ordering::Relaxed), synced: Default::default() })
+                as Rc<dyn GeometrySource>
         })));
     }
 }
@@ -67,6 +76,8 @@ impl Fetcher for DataUrls {
 /// The Blitz document of one page document.
 struct BlitzGeometry {
     page: u64,
+    /// The DOM version, style generation and viewport it was last synced at.
+    synced: std::cell::Cell<Option<(u64, u64, (u32, u32, u64, bool))>>,
 }
 
 impl Drop for BlitzGeometry {
@@ -119,8 +130,55 @@ fn external(b: lp_render::LayoutBox) -> ExternalBox {
     }
 }
 
+/// lp-dom's delta as lp-render takes it.
+fn convert_delta(d: lp_dom::snapshot::RenderDelta) -> Vec<DeltaOp> {
+    use lp_dom::snapshot::{DeltaOp as D, RenderNodeKind};
+    let kind = |k: RenderNodeKind| match k {
+        RenderNodeKind::Element { name, attrs } => TreeKind::Element { name, attrs },
+        RenderNodeKind::Text(t) => TreeKind::Text(t),
+    };
+    d.ops
+        .into_iter()
+        .map(|op| match op {
+            D::Node { key, kind: k } => DeltaOp::Node { key, kind: kind(k) },
+            D::Children { parent, kids, nodes } => DeltaOp::Children {
+                parent,
+                kids,
+                nodes: nodes.into_iter().map(|n| TreeNode { key: n.key, parent: n.parent, kind: kind(n.kind) }).collect(),
+            },
+        })
+        .collect()
+}
+
 impl GeometrySource for BlitzGeometry {
     fn sync(&self, dom: &Dom, layout: &Layout) {
+        let v = layout.viewport();
+        let viewport = (v.width, v.height, v.device_scale_factor.to_bits(), v.color_scheme == lp_dom::media::ColorScheme::Dark);
+        let now = (dom.version(), layout.style().observation_stamp(dom).1, viewport);
+        let last = self.synced.replace(Some(now));
+        // The changes since the last sync, when the journal covers them and
+        // neither sheets nor viewport changed: no whole-tree snapshot or diff.
+        if let Some((version, generation, vp)) = last {
+            if generation == now.1 && vp == viewport {
+                let t = Instant::now();
+                let delta = lp_webapi::render_snapshot::render_tree_delta(dom, layout, layout.document(), BASE_URL, version);
+                SNAPSHOT_NS.fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
+                if let Some(delta) = delta {
+                    let ops = convert_delta(delta);
+                    let dpr = v.device_scale_factor;
+                    let timings = RENDERER.with(|r| {
+                        let mut r = r.try_borrow_mut().ok()?;
+                        r.as_mut()?.sync_delta(self.page, &ops, (viewport.0, viewport.1, dpr, viewport.3)).ok()
+                    });
+                    if let Some(t) = timings {
+                        CALLS.fetch_add(1, Ordering::Relaxed);
+                        DELTAS.fetch_add(1, Ordering::Relaxed);
+                        LAYOUT_NS.fetch_add((t.fetch + t.layout).as_nanos() as u64, Ordering::Relaxed);
+                        return;
+                    }
+                }
+            }
+        }
         let Some(snap) = self.snapshot(dom, layout) else { return };
         let fetcher: Arc<dyn Fetcher> = Arc::new(DataUrls);
         let timings = RENDERER.with(|r| {

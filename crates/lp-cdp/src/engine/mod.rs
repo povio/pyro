@@ -722,9 +722,11 @@ impl EngineHost {
             // Blitz-backed layout queries since the last call (LIGHTNINGPANDA_GEOMETRY=blitz).
             #[cfg(feature = "render")]
             "LP" if action == "geometryStats" => {
-                let (layouts, snapshot_ms, layout_ms, read_ms) = blitz_geometry::take_stats();
+                let (layouts, deltas, snapshot_ms, layout_ms, read_ms) = blitz_geometry::take_stats();
+                let (mirror_ms, settle_ms, resolve_ms) = lp_render::sync_profile::take();
                 Ok(Some(serde_json::json!({
-                    "layouts": layouts, "snapshotMs": snapshot_ms, "layoutMs": layout_ms, "readMs": read_ms,
+                    "layouts": layouts, "deltas": deltas, "snapshotMs": snapshot_ms, "layoutMs": layout_ms, "readMs": read_ms,
+                    "mirrorMs": mirror_ms, "settleMs": settle_ms, "resolveMs": resolve_ms,
                 })))
             }
             "LP" => self.driver_domain(action, cmd),

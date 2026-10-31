@@ -46,8 +46,31 @@ use peniko::{Color, Fill};
 pub use geometry::LayoutBox;
 pub use compare::{compare, decode_png, diff_image, encode_jpeg, encode_png, CompareResult};
 pub use hash::scene_hash;
-pub use mirror::{MirrorStats, Rebuild, Tree, TreeKind, TreeNode, TOP};
+pub use mirror::{DeltaOp, MirrorStats, Rebuild, Tree, TreeKind, TreeNode, TOP};
 pub use net::Fetcher;
+
+/// Where document syncs spend their time (diagnostics, `LP.geometryStats`).
+pub mod sync_profile {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::Duration;
+
+    static MIRROR: AtomicU64 = AtomicU64::new(0);
+    static SETTLE: AtomicU64 = AtomicU64::new(0);
+    static RESOLVE: AtomicU64 = AtomicU64::new(0);
+
+    pub(crate) fn record(mirror: Duration, settle: Duration, resolve: Duration) {
+        MIRROR.fetch_add(mirror.as_nanos() as u64, Ordering::Relaxed);
+        SETTLE.fetch_add(settle.as_nanos() as u64, Ordering::Relaxed);
+        RESOLVE.fetch_add(resolve.as_nanos() as u64, Ordering::Relaxed);
+    }
+
+    /// Milliseconds applying node lists, settling sub-resources and resolving
+    /// (style + layout) since the last call.
+    pub fn take() -> (f64, f64, f64) {
+        let ms = |a: &AtomicU64| a.swap(0, Ordering::Relaxed) as f64 / 1e6;
+        (ms(&MIRROR), ms(&SETTLE), ms(&RESOLVE))
+    }
+}
 
 /// Content digest for caching baselines (xxh3).
 pub fn digest(bytes: &[u8]) -> u64 {
@@ -461,9 +484,12 @@ impl Renderer {
                 (doc, &*bridge, clip)
             }
         };
+        let mirrored = started.elapsed();
         let (fetch, passes) = bridge.settle(doc, started + self.fetch_timeout, self.first_layout_wait);
         timings.layout_passes = passes;
+        let resolving = Instant::now();
         doc.resolve(0.0);
+        sync_profile::record(mirrored, started.elapsed().saturating_sub(mirrored + resolving.elapsed()), resolving.elapsed());
         timings.fetch = fetch;
         timings.layout = started.elapsed().saturating_sub(fetch);
         Ok((doc, clip))
@@ -558,6 +584,37 @@ impl Renderer {
         let mut fresh = None;
         self.prepare(snap, fetcher, &mut fresh, &mut timings)?;
         self.geometry.entry(live.page).or_default().clear();
+        Ok(timings)
+    }
+
+    /// [`Renderer::sync_layout`] from the changes since the page's last tree
+    /// or delta (lp-dom's change journal) instead of the whole tree. `Err`
+    /// (nothing applied) when the page has no document at this viewport or
+    /// the delta does not fit it: sync the whole tree instead.
+    pub fn sync_delta(
+        &mut self,
+        page: u64,
+        ops: &[DeltaOp],
+        viewport: (u32, u32, f64, bool),
+    ) -> Result<Timings, RenderError> {
+        let started = Instant::now();
+        let mut timings = Timings::default();
+        let m = self.mirrors.get_mut(&page).ok_or(RenderError::NoElement)?;
+        let (w, h, dpr, dark) = viewport;
+        if m.viewport != (w, h, dpr.to_bits(), dark) {
+            return Err(RenderError::BadArea("the viewport changed".into()));
+        }
+        m.apply_delta(ops).map_err(|_| RenderError::BadArea("the delta does not fit the document".into()))?;
+        let mirrored = started.elapsed();
+        let mirror::Mirror { doc, bridge, .. } = m;
+        let (fetch, passes) = bridge.settle(doc, started + self.fetch_timeout, self.first_layout_wait);
+        let resolving = Instant::now();
+        doc.resolve(0.0);
+        sync_profile::record(mirrored, started.elapsed().saturating_sub(mirrored + resolving.elapsed()), resolving.elapsed());
+        timings.layout_passes = passes;
+        timings.fetch = fetch;
+        timings.layout = started.elapsed().saturating_sub(fetch);
+        self.geometry.entry(page).or_default().clear();
         Ok(timings)
     }
 

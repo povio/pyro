@@ -20,7 +20,7 @@ use std::borrow::Cow;
 
 use markup5ever::{ns, QualName};
 
-use crate::dom::Dom;
+use crate::dom::{Change, Dom};
 use crate::error::DomResult;
 use crate::forms::InputType;
 use crate::node::{NodeId, NodeKind, NIL};
@@ -36,6 +36,23 @@ pub struct RenderHtml<'a> {
     pub stylesheet_href: &'a dyn Fn(NodeId) -> Option<String>,
     /// Element to mark with `mark.1` (a valueless attribute).
     pub mark: Option<(NodeId, &'a str)>,
+}
+
+/// Changes to a [`RenderTree`] ([`Dom::render_delta`]).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct RenderDelta {
+    pub ops: Vec<DeltaOp>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum DeltaOp {
+    /// The node's own content (an element's name and attributes, a text's
+    /// data) is now `kind`; its children are unchanged.
+    Node { key: u64, kind: RenderNodeKind },
+    /// The render children of `parent` (`None`: the top level) are now
+    /// `kids`; `nodes` are the subtrees of the inserted ones (parents index
+    /// into `nodes`, [`TOP`] for a child of `parent`).
+    Children { parent: Option<u64>, kids: Vec<u64>, nodes: Vec<RenderNode> },
 }
 
 /// The document as [`Dom::render_html`] would serialize it, as nodes in
@@ -225,13 +242,20 @@ impl Dom {
 
     fn render_walk(&self, doc: NodeId, opts: &RenderHtml<'_>, sink: &mut dyn Sink) -> DomResult<()> {
         let d = self.check(doc)?;
+        self.render_walk_from(self.child_idx_iter(d).collect(), opts, sink);
+        Ok(())
+    }
+
+    /// The render walk over the subtrees of `roots` (in order), outside any
+    /// shadow tree.
+    fn render_walk_from(&self, roots: Vec<u32>, opts: &RenderHtml<'_>, sink: &mut dyn Sink) {
         let mark = opts.mark.and_then(|(id, _)| self.check(id).ok());
         // Shadow hosts entered: (host, the host's own scope).
         let mut hosts: Vec<(u32, Scope)> = Vec::new();
         // Tags of the open elements, for `close`.
         let mut tags: Vec<String> = Vec::new();
         let mut stack = Vec::new();
-        push_children(&mut stack, self.child_idx_iter(d).collect(), NONE);
+        push_children(&mut stack, roots, NONE);
         while let Some(step) = stack.pop() {
             let (n, scope) = match step {
                 Step::Synthetic(e, text, kind) => {
@@ -362,7 +386,132 @@ impl Dom {
                 }
             }
         }
-        Ok(())
+    }
+
+    /// What changed in [`Dom::render_tree`] of `doc` since DOM version
+    /// `since`, from the change journal: element attributes and text that
+    /// changed in place, and the new render children of every node whose
+    /// children changed, with the subtrees of those inserted. `None` when the
+    /// journal does not cover `since` or a change needs the whole tree
+    /// (unknown changes, shadow trees, `<style>`/`<textarea>`/`<link>`/
+    /// frames, whose render content is not their DOM content).
+    pub fn render_delta(&self, doc: NodeId, since: u64, opts: &RenderHtml<'_>) -> Option<RenderDelta> {
+        let d = self.check(doc).ok()?;
+        if self.shadow_root_count() != 0 || opts.mark.is_some() {
+            return None;
+        }
+        let mut changed: Vec<u32> = Vec::new();
+        let mut parents: Vec<u32> = Vec::new();
+        let mut inserted: rustc_hash::FxHashSet<u32> = rustc_hash::FxHashSet::default();
+        for c in self.changes_since(since)? {
+            match c {
+                Change::Attr(i, _, _) | Change::State(i) | Change::Text(i) => changed.push(i),
+                Change::Inserted(p, c) => {
+                    parents.push(p);
+                    inserted.insert(c);
+                }
+                Change::Removed(p, _, _) => parents.push(p),
+                Change::Pseudo => {}
+                Change::Unknown(_) => return None,
+            }
+        }
+        // Where a node is rendered: connected to `doc`, outside elements whose
+        // children are not rendered. `Err`: in an element rendered specially.
+        let rendered = |mut i: u32| -> Result<bool, ()> {
+            if !self.slot_live(i) {
+                return Ok(false);
+            }
+            loop {
+                if i == d {
+                    return Ok(true);
+                }
+                if let NodeKind::Element(e) = &self.n(i).kind {
+                    let local: &str = &e.name.local;
+                    if e.is_html() && matches!(local, "script" | "noscript" | "template" | "iframe" | "frame") {
+                        return Ok(false);
+                    }
+                    if e.is_html() && matches!(local, "style" | "textarea" | "link" | "slot") {
+                        return Err(());
+                    }
+                    if e.name.ns == ns!(svg) && local == "script" {
+                        return Ok(false);
+                    }
+                }
+                let parent = self.n(i).parent;
+                if parent == NIL {
+                    return Ok(false);
+                }
+                i = parent;
+            }
+        };
+        // Nodes inside a subtree that is serialized whole (an inserted one).
+        let covered = |mut i: u32| {
+            i = self.n(i).parent;
+            while i != NIL && i != d {
+                if inserted.contains(&i) {
+                    return true;
+                }
+                i = self.n(i).parent;
+            }
+            false
+        };
+        let mut ops = Vec::new();
+        let mut seen = rustc_hash::FxHashSet::default();
+        parents.sort_unstable();
+        parents.dedup();
+        for p in parents {
+            match rendered(p) {
+                Err(()) => return None,
+                Ok(false) => continue,
+                Ok(true) => {}
+            }
+            if covered(p) || !seen.insert(p) {
+                continue;
+            }
+            let kids: Vec<u32> = self.child_idx_iter(p).filter(|&k| self.render_child(k)).collect();
+            let fresh: Vec<u32> = kids.iter().copied().filter(|k| inserted.contains(k)).collect();
+            let mut sink = TreeSink::default();
+            self.render_walk_from(fresh, opts, &mut sink);
+            ops.push(DeltaOp::Children {
+                parent: (p != d).then(|| render_key(self.id_of(p))),
+                kids: kids.iter().map(|&k| render_key(self.id_of(k))).collect(),
+                nodes: sink.tree.nodes,
+            });
+        }
+        changed.sort_unstable();
+        changed.dedup();
+        for i in changed {
+            match rendered(i) {
+                Err(()) => return None,
+                Ok(false) => continue,
+                Ok(true) => {}
+            }
+            if covered(i) || inserted.contains(&i) {
+                continue;
+            }
+            // The node alone (its subtree walk, first node).
+            let mut sink = TreeSink::default();
+            self.render_walk_from(vec![i], opts, &mut sink);
+            let Some(first) = sink.tree.nodes.into_iter().next() else { continue };
+            if first.key != render_key(self.id_of(i)) {
+                return None;
+            }
+            ops.push(DeltaOp::Node { key: first.key, kind: first.kind });
+        }
+        Some(RenderDelta { ops })
+    }
+
+    /// Whether child `k` appears in the render tree (as itself).
+    fn render_child(&self, k: u32) -> bool {
+        match &self.n(k).kind {
+            NodeKind::Text(_) | NodeKind::CData(_) => true,
+            NodeKind::Element(e) => {
+                let local: &str = &e.name.local;
+                !(e.is_html() && matches!(local, "script" | "noscript" | "template"))
+                    && !(e.name.ns == ns!(svg) && local == "script")
+            }
+            _ => false,
+        }
     }
 
     /// Light children of `host` assigned to the slot named `name` (the

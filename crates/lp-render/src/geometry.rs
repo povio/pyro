@@ -95,9 +95,15 @@ impl Geometry {
         Some((t, fixed))
     }
 
-    /// The box Blitz lays out for `id`, before the adjustments.
+    /// The box Blitz lays out for `id`, before the adjustments. A node that
+    /// is not in the layout tree now (an inline element in an inline
+    /// formatting context) has none, whatever an earlier layout left in it.
     fn laid_out(&self, doc: &BaseDocument, id: NodeId) -> Option<LayoutBox> {
         let node = doc.get_node(id)?;
+        if !in_layout_tree(doc, id) {
+            let (_, fixed) = self.transform(doc, id)?;
+            return Some(LayoutBox { fixed, ..LayoutBox::default() });
+        }
         let (t, fixed) = self.transform(doc, id)?;
         let l = node.unrounded_layout();
         let rect = t.transform_rect_bbox(Rect::new(0.0, 0.0, l.size.width as f64, l.size.height as f64));
@@ -233,6 +239,19 @@ impl Geometry {
         }
         acc
     }
+}
+
+/// Whether `id` is a box of the current layout: the root element, or a
+/// layout child of its layout parent.
+fn in_layout_tree(doc: &BaseDocument, id: NodeId) -> bool {
+    if doc.root_element().id == id {
+        return true;
+    }
+    let Some(parent) = doc.get_node(id).and_then(|n| n.layout_parent.get()) else { return false };
+    doc.get_node(parent).is_some_and(|p| {
+        p.layout_children.borrow().as_ref().is_some_and(|c| c.contains(&id))
+            || p.hoisted_children.borrow().contains(&id)
+    })
 }
 
 fn tag(doc: &BaseDocument, id: NodeId) -> Option<&str> {

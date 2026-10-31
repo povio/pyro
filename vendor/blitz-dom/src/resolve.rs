@@ -175,11 +175,14 @@ impl BaseDocument {
 
         let scale = self.viewport.scale_f64();
 
-        if !self.nodes[node_id]
-            .damage()
-            .map(|d| d.contains(style::selector_parser::RestyleDamage::RECALCULATE_OVERFLOW))
-            .unwrap_or(false)
-        {
+        // The cached overflow holds only while nothing in the subtree changed:
+        // a descendant's relayout (its overflow shrinking) reaches its
+        // ancestors as their damage, not as `RECALCULATE_OVERFLOW`.
+        let unchanged = {
+            let node = &self.nodes[node_id];
+            node.damage().is_some_and(|d| d.is_empty()) && !node.has_damaged_descendants() && !node.is_anonymous()
+        };
+        if unchanged {
             let node = &self.nodes[node_id];
             let location = node.final_layout().location.map(|v| v as f64 * scale);
 

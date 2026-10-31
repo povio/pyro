@@ -561,3 +561,93 @@ fn linked_sheet_edits_reach_the_persistent_document() {
     assert_eq!(mirrored.hash, paint(&mut Renderer::new(), &edited).hash);
     assert_eq!(mirrored.timings.mirror.unwrap().rebuilt, None);
 }
+
+fn delta_ops(d: lp_dom::snapshot::RenderDelta) -> Vec<DeltaOp> {
+    use lp_dom::snapshot::DeltaOp as D;
+    let kind = |k: RenderNodeKind| match k {
+        RenderNodeKind::Element { name, attrs } => TreeKind::Element { name, attrs },
+        RenderNodeKind::Text(t) => TreeKind::Text(t),
+    };
+    d.ops
+        .into_iter()
+        .map(|op| match op {
+            D::Node { key, kind: k } => DeltaOp::Node { key, kind: kind(k) },
+            D::Children { parent, kids, nodes } => DeltaOp::Children {
+                parent,
+                kids,
+                nodes: nodes.into_iter().map(|n| TreeNode { key: n.key, parent: n.parent, kind: kind(n.kind) }).collect(),
+            },
+        })
+        .collect()
+}
+
+/// Runs random mutation sequences on the fixtures, syncing one renderer from
+/// lp-dom's change journal (`sync_delta`) and one from the whole tree
+/// (`sync_layout`), and calls `check(delta, whole, page, what)` after each.
+fn delta_sequences(steps_debug: u64, steps_release: u64, mut check: impl FnMut(&Renderer, &Renderer, &Page, &str)) -> (u32, u32) {
+    let fixtures = ["login", "dashboard", "article"];
+    let env = |k: &str| std::env::var(k).ok().and_then(|v| v.parse::<u64>().ok());
+    let steps = env("LP_MIRROR_STEPS").unwrap_or(if cfg!(debug_assertions) { steps_debug } else { steps_release });
+    let seed = env("LP_MIRROR_SEED").unwrap_or(0);
+    let (mut applied, mut total) = (0, 0);
+    for (i, name) in fixtures.iter().enumerate() {
+        let path = format!("{}/../../bench/screenshot/fixtures/{name}.html", env!("CARGO_MANIFEST_DIR"));
+        let page = Page::new(&std::fs::read_to_string(path).unwrap());
+        let (mut r, mut w) = (Renderer::new(), Renderer::new());
+        r.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+        w.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+        let mut rng = Rng(0x5851_f42d_4c95_7f2d ^ (i as u64 + 1) ^ seed.wrapping_mul(0x2545_f491_4f6c_dd1d));
+        let mut done = Vec::new();
+        for _ in 0..steps {
+            let since = page.dom.borrow().version();
+            done.push(mutate(&page, &mut rng));
+            total += 1;
+            let delta = page.dom.borrow().render_delta(page.doc, since, &Page::opts());
+            if delta.is_some_and(|d| r.sync_delta(1, &delta_ops(d), (640, 480, 1.0, false)).is_ok()) {
+                applied += 1;
+            } else {
+                r.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+            }
+            w.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+            check(&r, &w, &page, &format!("{name} after {done:?}"));
+        }
+    }
+    (applied, total)
+}
+
+/// Every element's box as layout queries report it.
+fn boxes(r: &Renderer, page: &Page) -> Vec<(u64, Option<LayoutBox>)> {
+    page.tree()
+        .nodes
+        .iter()
+        .filter(|n| matches!(n.kind, TreeKind::Element { .. }))
+        .map(|n| (n.key, r.element_box(1, n.key)))
+        .collect()
+}
+
+/// lp-dom's change journal applied as deltas (`Renderer::sync_delta`, the
+/// layout-query path) gives exactly what syncing the whole tree gives.
+#[test]
+fn random_mutation_deltas_match_whole_tree_syncs() {
+    let (applied, total) = delta_sequences(12, 60, |r, w, page, what| {
+        assert_eq!(r.mirrored_html(1), w.mirrored_html(1), "markup: {what}");
+        assert_eq!(boxes(r, page), boxes(w, page), "boxes: {what}");
+    });
+    assert!(applied * 2 > total, "most changes sync as deltas ({applied} of {total})");
+}
+
+/// Incremental documents report the boxes a fresh build of the same tree
+/// does. Known gaps in blitz-dom's incremental layout remain (stale
+/// scrollable overflow, inline/anonymous boxes after some moves): run with
+/// `--ignored` to see them.
+#[test]
+#[ignore]
+fn incremental_boxes_match_fresh_builds() {
+    delta_sequences(12, 60, |r, _, page, what| {
+        let mut f = Renderer::new();
+        f.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+        for ((k, a), (_, b)) in boxes(r, page).into_iter().zip(boxes(&f, page)) {
+            assert_eq!(a, b, "box {k:x}: {what}");
+        }
+    });
+}

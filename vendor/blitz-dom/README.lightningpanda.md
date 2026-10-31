@@ -52,6 +52,9 @@ these additional local changes are covered by lp-render's rendering tests.
 
 - `src/resolve.rs` (`resolve_layout_children`): an undamaged subtree without damaged descendants is not
   walked (its layout children are those of the last pass); anonymous boxes are always visited.
+- `src/resolve.rs` (`resolve_transforms`): a node's cached scrollable overflow is reused only when it and
+  its subtree are undamaged (a descendant's relayout reaches ancestors as damage, not as
+  `RECALCULATE_OVERFLOW`).
 - `src/layout/mod.rs`, `src/node/element.rs`: incremental rounding (taffy's `RoundTree::rounded_unchanged`,
   vendored taffy), keyed by `LayoutData::rounded_from`.
 
