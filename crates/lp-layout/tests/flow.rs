@@ -4000,7 +4000,6 @@ fn text_clip_facts_cover_absolute_tables_inline_splits_generated_and_shadow_text
 /// A textarea's `scrollHeight` follows its value (hard breaks, wrapping),
 /// not its box: the autosize pattern sets `height: 0` then reads it.
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn textarea_scroll_height_follows_its_value() {
     for geometry in ["blitz"] {
         let mut p = page(
@@ -4055,7 +4054,6 @@ fn atomic_inline_in_an_inline_element_is_hit_over_it() {
 /// later. In Chromium `scrollHeight` is never 0 for a textarea: at least
 /// the line height plus padding. `rows` sizes `clientHeight`/`offsetHeight`.
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn textarea_scroll_height_in_autosize_composers() {
     const STYLE: &str = "<style>*{box-sizing:border-box;margin:0}textarea{font:inherit;line-height:24px;padding:8px;border:1px solid #000;width:300px;resize:none;overflow:hidden}body{font-size:16px}</style>";
     for geometry in ["blitz"] {
