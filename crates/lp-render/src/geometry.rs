@@ -292,17 +292,35 @@ pub(crate) fn describe(doc: &BaseDocument, id: NodeId) -> String {
     while let Some(i) = cur {
         let Some(n) = doc.get_node(i) else { break };
         if let Some(e) = n.element_data() {
-            let class: String = e.attr(blitz_dom::local_name!("class")).unwrap_or("").chars().take(70).collect();
+            let class: String = e.attr(blitz_dom::local_name!("class")).unwrap_or("").chars().take(300).collect();
             let s = n.primary_styles();
             let display = s.as_ref().map(|s| format!("{:?}", s.clone_display())).unwrap_or_default();
             let height = s.as_ref().map(|s| format!("{:?}", s.clone_height())).unwrap_or_default();
             let l = n.unrounded_layout();
+            let text: String = n.text_content().chars().take(40).collect();
+            let kids: Vec<String> = n
+                .children
+                .iter()
+                .filter_map(|&c| doc.get_node(c))
+                .map(|c| match c.element_data() {
+                    Some(ce) => format!(
+                        "<{} {:?} {:?}>",
+                        ce.name.local,
+                        ce.attr(blitz_dom::local_name!("class")).unwrap_or(""),
+                        c.primary_styles().map(|s| format!("{:?}", s.clone_display())).unwrap_or_default()
+                    ),
+                    None => format!("text {:?}", c.text_content()),
+                })
+                .collect();
             out.push(format!(
-                "<{} class={class:?}> display={display} height={height} laid={:.1}x{:.1} in_tree={}",
+                "<{} class={class:?}> display={display} height={height} laid={:.1}x{:.1} in_tree={} children={} kids={kids:?} text={text:?} padding={:?} border={:?}",
                 e.name.local,
                 l.size.width,
                 l.size.height,
-                in_layout_tree(doc, i)
+                in_layout_tree(doc, i),
+                n.children.len(),
+                l.padding,
+                l.border,
             ));
         }
         if out.len() >= 8 {
