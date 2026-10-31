@@ -178,8 +178,10 @@ pub struct Layout {
     external: Option<Rc<dyn GeometrySource>>,
     /// The observation stamp and viewport the engine was last synced at.
     external_synced: std::cell::Cell<Option<((u64, u64, u32, u32), (u32, u32))>>,
+    /// Syncs so far (the whole document's geometry is read again after one).
+    syncs: std::cell::Cell<u64>,
     /// The whole document's geometry, with the sync it was read at.
-    result: RefCell<Option<(((u64, u64, u32, u32), (u32, u32)), Rc<LayoutResult>)>>,
+    result: RefCell<Option<(u64, Rc<LayoutResult>)>>,
 }
 
 thread_local! {
@@ -211,6 +213,7 @@ impl Layout {
             scroll_anchors: FxHashMap::default(),
             external: GEOMETRY_SOURCE.with(|f| f.borrow().as_ref().map(|make| make())),
             external_synced: std::cell::Cell::new(None),
+            syncs: std::cell::Cell::new(0),
             result: RefCell::new(None),
         }
     }
@@ -228,9 +231,10 @@ impl Layout {
     pub fn synced_geometry_source(&self, dom: &Dom) -> Option<&Rc<dyn GeometrySource>> {
         let source = self.external.as_ref().filter(|s| s.active())?;
         let key = self.sync_key(dom);
-        if self.external_synced.get() != Some(key) {
+        if self.external_synced.get() != Some(key) || source.stale() {
             source.sync(dom, self);
             self.external_synced.set(Some(key));
+            self.syncs.set(self.syncs.get() + 1);
         }
         Some(source)
     }
@@ -251,7 +255,7 @@ impl Layout {
     /// focus/hover or viewport changed.
     pub fn layout_result(&self, dom: &Dom) -> Rc<LayoutResult> {
         let Some(source) = self.synced_geometry_source(dom) else { return Rc::default() };
-        let key = self.sync_key(dom);
+        let key = self.syncs.get();
         if let Some((k, r)) = self.result.borrow().as_ref() {
             if *k == key {
                 return r.clone();
@@ -260,8 +264,7 @@ impl Layout {
         let started = flow_stats::enabled().then(std::time::Instant::now);
         let result = Rc::new(source.geometry().map(|g| LayoutResult::from_external(dom, g)).unwrap_or_default());
         if let Some(t) = started {
-            let previous = self.result.borrow().as_ref().map(|(k, _)| *k);
-            flow_stats::record(previous, key, t.elapsed());
+            flow_stats::record(None, self.sync_key(dom), t.elapsed());
         }
         *self.result.borrow_mut() = Some((key, result.clone()));
         result

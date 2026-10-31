@@ -110,6 +110,11 @@ pub trait GeometrySource {
     fn active(&self) -> bool {
         true
     }
+    /// Whether the engine must sync again although the document did not
+    /// change (a sub-resource it laid out without arrived since).
+    fn stale(&self) -> bool {
+        false
+    }
 }
 
 /// An element's boxes (document coordinates; viewport ones inside a fixed

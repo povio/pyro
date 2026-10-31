@@ -15,6 +15,9 @@ pub(crate) use lp_layout::{set_fork_template, take_stats};
 static NETWORK_BODIES: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, Arc<Vec<u8>>>>> =
     std::sync::LazyLock::new(Default::default);
 
+/// Network fetches for layouts still in flight.
+static IN_FLIGHT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 /// Makes this thread's new documents take their geometry from Blitz.
 pub(crate) fn install(statics: lp_net::StaticFiles, net: Option<lp_net::NetClient>) {
     lp_layout::install(Arc::new(LocalFiles { statics, net }));
@@ -44,6 +47,15 @@ impl LocalFiles {
             };
         }
         let net = self.net.as_ref()?;
+        // Counts the fetch in flight until lp-net drops its callback.
+        IN_FLIGHT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        struct Done;
+        impl Drop for Done {
+            fn drop(&mut self) {
+                IN_FLIGHT.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+        let done = Done;
         let path = url.path().to_ascii_lowercase();
         let destination = if [".woff2", ".woff", ".ttf", ".otf"].iter().any(|e| path.ends_with(e)) {
             lp_net::Destination::Font
@@ -56,15 +68,19 @@ impl LocalFiles {
         let mut ok = false;
         net.fetch(
             lp_net::Request::get(url.clone(), destination),
-            Box::new(move |ev| match ev {
-                lp_net::ResponseEvent::Response(h) => ok = h.status.is_success(),
-                lp_net::ResponseEvent::Data(d) => body.extend_from_slice(&d),
-                lp_net::ResponseEvent::Finished { .. } if ok => {
-                    if let Ok(mut cache) = NETWORK_BODIES.lock() {
-                        cache.insert(key.clone(), Arc::new(std::mem::take(&mut body)));
+            Box::new(move |ev| {
+                let _ = &done;
+                match ev {
+                    lp_net::ResponseEvent::Response(h) => ok = h.status.is_success(),
+                    lp_net::ResponseEvent::Data(d) => body.extend_from_slice(&d),
+                    lp_net::ResponseEvent::Finished { .. } if ok => {
+                        if let Ok(mut cache) = NETWORK_BODIES.lock() {
+                            cache.insert(key.clone(), Arc::new(std::mem::take(&mut body)));
+                        }
+                        lp_layout::resources_changed();
                     }
+                    _ => {}
                 }
-                _ => {}
             }),
         );
         None
@@ -99,5 +115,16 @@ pub(crate) fn print_pdf(
     page_dom: &lp_webapi::PageDom,
     opts: &lp_render::PdfOptions,
 ) -> Option<Result<lp_render::PdfOutput, String>> {
+    // The document as laid out now starts its sub-resource fetches; a page
+    // prints with its web fonts and images, so wait for them (bounded),
+    // after which the document is built again with them.
+    {
+        let dom = page_dom.dom.borrow();
+        page_dom.layout.borrow().synced_geometry_source(&dom)?;
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while IN_FLIGHT.load(std::sync::atomic::Ordering::Relaxed) > 0 && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
     lp_layout::print_pdf(&page_dom.dom.borrow(), &page_dom.layout.borrow(), opts)
 }

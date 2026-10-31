@@ -51,6 +51,16 @@ static SNAPSHOT_NS: AtomicU64 = AtomicU64::new(0);
 static LAYOUT_NS: AtomicU64 = AtomicU64::new(0);
 static READ_NS: AtomicU64 = AtomicU64::new(0);
 
+/// Bumped when a sub-resource arrives that documents may have been laid out
+/// without (a font or image fetched in the background): each page's
+/// document is built again at its next layout query.
+static RESOURCES: AtomicU64 = AtomicU64::new(0);
+
+/// A sub-resource arrived: documents laid out before it lay out again.
+pub fn resources_changed() {
+    RESOURCES.fetch_add(1, Ordering::Relaxed);
+}
+
 /// Base URL of a document whose URL was not given.
 const BLANK: &str = "about:blank";
 
@@ -74,6 +84,7 @@ pub fn install(fetcher: Arc<dyn Fetcher>) {
         Rc::new(BlitzGeometry {
             page: NEXT_PAGE.fetch_add(1, Ordering::Relaxed),
             synced: Default::default(),
+            resources: std::cell::Cell::new(RESOURCES.load(Ordering::Relaxed)),
             base_url: RefCell::new(BLANK.into()),
             fetcher: fetcher.clone(),
         }) as Rc<dyn GeometrySource>
@@ -87,6 +98,8 @@ pub struct BlitzGeometry {
     fetcher: Arc<dyn Fetcher>,
     /// The DOM version, style generation and viewport it was last synced at.
     synced: std::cell::Cell<Option<(u64, u64, (u32, u32, u64, bool))>>,
+    /// [`RESOURCES`] when its document was built.
+    resources: std::cell::Cell<u64>,
 }
 
 impl Drop for BlitzGeometry {
@@ -280,7 +293,24 @@ impl GeometrySource for BlitzGeometry {
         *self.base_url.borrow_mut() = url.to_owned();
     }
 
+    fn stale(&self) -> bool {
+        self.resources.get() != RESOURCES.load(Ordering::Relaxed)
+    }
+
     fn sync(&self, dom: &Dom, layout: &Layout) {
+        let resources = RESOURCES.load(Ordering::Relaxed);
+        if self.resources.replace(resources) != resources {
+            // Build the document again: Blitz does not retry a resource
+            // that failed, and the new one is in the fetcher's cache now.
+            RENDERER.with(|r| {
+                if let Ok(mut r) = r.try_borrow_mut() {
+                    if let Some(r) = r.as_mut() {
+                        r.forget(self.page);
+                    }
+                }
+            });
+            self.synced.set(None);
+        }
         self.sync_document(dom, layout);
         self.sync_interaction(dom, layout);
     }
