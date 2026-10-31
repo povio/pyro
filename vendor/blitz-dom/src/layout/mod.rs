@@ -863,6 +863,22 @@ impl RoundTree for LayoutPassState<'_> {
     fn get_hoisted_child_id(&self, node_id: NodeId, index: usize) -> NodeId {
         taffy_node_id(self.node_from_id(node_id).hoisted_children.borrow()[index])
     }
+
+    // Incremental rounding: an undamaged subtree reached with the same
+    // unrounded layout at the same offset rounds as it did last time.
+    // Anonymous boxes are always rounded (damage marking walks the DOM parent
+    // chain, so their descendant flags are not maintained).
+    fn rounded_unchanged(&self, node_id: NodeId, unrounded: &Layout, absolute_x: f32, absolute_y: f32) -> bool {
+        let node = self.node_from_id(node_id);
+        !node.is_anonymous()
+            && !node.has_damaged_descendants()
+            && node.damage().is_none_or(|d| d.is_empty())
+            && node.layout_data().rounded_from == Some((*unrounded, absolute_x, absolute_y))
+    }
+
+    fn record_rounded(&mut self, node_id: NodeId, unrounded: &Layout, absolute_x: f32, absolute_y: f32) {
+        self.node_from_id_mut(node_id).layout_data_mut().rounded_from = Some((*unrounded, absolute_x, absolute_y));
+    }
 }
 
 pub(crate) struct TaffyDebugTree<'doc>(pub(crate) &'doc BaseDocument);

@@ -47,3 +47,12 @@ the rendered display lists. lp-render's tests cover it (`class_selectors_match_a
 
 The original `UPSTREAM.patch` covers only the class-atom optimization above;
 these additional local changes are covered by lp-render's rendering tests.
+
+## Incremental passes for layout queries
+
+- `src/resolve.rs` (`resolve_layout_children`): an undamaged subtree without damaged descendants is not
+  walked (its layout children are those of the last pass); anonymous boxes are always visited.
+- `src/layout/mod.rs`, `src/node/element.rs`: incremental rounding (taffy's `RoundTree::rounded_unchanged`,
+  vendored taffy), keyed by `LayoutData::rounded_from`.
+
+lp-render's mirror tests (incremental documents against fresh builds after random mutations) cover both.

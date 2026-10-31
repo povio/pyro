@@ -41,3 +41,42 @@
                  }
              }
              AvailableSpace::MinContent if constants.is_wrap => {
+--- a/src/compute/mod.rs
++++ b/src/compute/mod.rs
+@@ -378,6 +378,9 @@
+     /// Recursive function to apply rounding to all descendents
+     fn round_layout_inner(tree: &mut impl RoundTree, node_id: NodeId, cumulative_x: f32, cumulative_y: f32) {
+         let unrounded_layout = tree.get_unrounded_layout(node_id);
++        if tree.rounded_unchanged(node_id, &unrounded_layout, cumulative_x, cumulative_y) {
++            return;
++        }
+         let mut layout = unrounded_layout;
+ 
+         let parent_x = cumulative_x;
+@@ -413,6 +416,7 @@
+         );
+ 
+         tree.set_final_layout(node_id, &layout);
++        tree.record_rounded(node_id, &unrounded_layout, parent_x, parent_y);
+ 
+         // Recurse into in-flow children. Out-of-flow (absolute/fixed) children are skipped here:
+         // they are instead visited via their containing block's hoisted child list below, which
+--- a/src/tree/traits.rs
++++ b/src/tree/traits.rs
+@@ -290,6 +290,16 @@
+     /// Get the nth out-of-flow box whose containing block is `node_id`
+     /// (as recorded by [`LayoutContainingBlock::add_hoisted_children`])
+     fn get_hoisted_child_id(&self, node_id: NodeId, index: usize) -> NodeId;
++    /// Whether `node_id`'s subtree is rounded as it was the last time: the tree knows the
++    /// subtree's layout did not change and `round_layout` reached the node with the same
++    /// unrounded layout at the same unrounded absolute offset. [`round_layout`](crate::round_layout)
++    /// then skips the subtree. The default never skips.
++    fn rounded_unchanged(&self, _node_id: NodeId, _unrounded: &Layout, _absolute_x: f32, _absolute_y: f32) -> bool {
++        false
++    }
++    /// Records the unrounded layout and absolute offset `node_id` was just rounded from
++    /// (for [`RoundTree::rounded_unchanged`]).
++    fn record_rounded(&mut self, _node_id: NodeId, _unrounded: &Layout, _absolute_x: f32, _absolute_y: f32) {}
+ }
+ 
+ /// Trait used by the `print_tree` method which prints a debug representation

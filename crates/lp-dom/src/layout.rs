@@ -225,6 +225,8 @@ pub struct Layout {
     measures: RefCell<Measures>,
     /// Element boxes from another engine, patched over the flow layout's.
     external: Option<Rc<dyn GeometrySource>>,
+    /// The observation stamp and viewport the external engine was last synced at.
+    external_synced: std::cell::Cell<Option<((u64, u64, u32, u32), (u32, u32))>>,
 }
 
 /// Subtree measurements kept across flow passes, with what they are valid
@@ -274,6 +276,8 @@ pub struct ExternalBox {
     /// `scrollWidth/Height`.
     pub scroll_width: f64,
     pub scroll_height: f64,
+    /// Inside (or itself) a `position: fixed` box (then viewport coordinates).
+    pub fixed: bool,
 }
 
 /// Element boxes laid out by an external engine, keyed by
@@ -291,7 +295,13 @@ pub struct ExternalGeometry {
 /// report what that engine paints. Called when the flow layout is
 /// recomputed (DOM, style or viewport changed).
 pub trait GeometrySource {
+    /// Every element's box (the whole flow result is replaced).
     fn geometry(&self, dom: &Dom, layout: &Layout) -> Option<ExternalGeometry>;
+    /// Brings the engine's layout up to the document; [`GeometrySource::element_box`]
+    /// then answers from it.
+    fn sync(&self, dom: &Dom, layout: &Layout);
+    /// One element's box as of the last sync (`None`: not rendered).
+    fn element_box(&self, key: u64) -> Option<ExternalBox>;
 }
 
 thread_local! {
@@ -340,6 +350,7 @@ fn patch_external(dom: &Dom, flow: &FlowResult, external: &ExternalGeometry) -> 
             fb.client_height = b.client_height;
             fb.scroll_width = b.scroll_width;
             fb.scroll_height = b.scroll_height;
+            fb.fixed = b.fixed;
         }
     }
     result.document_width = result.document_width.max(external.document_width);
@@ -372,6 +383,7 @@ impl Layout {
             flow_cache: RefCell::new(None),
             measures: RefCell::default(),
             external: None,
+            external_synced: std::cell::Cell::new(None),
         }
     }
 
@@ -379,6 +391,7 @@ impl Layout {
     /// returns to the flow layout's own.
     pub fn set_geometry_source(&mut self, source: Option<Rc<dyn GeometrySource>>) {
         self.external = source;
+        self.external_synced.set(None);
         self.flow_cache.borrow_mut().take();
     }
 
@@ -542,6 +555,27 @@ impl Layout {
     }
 
     fn flow_box(&self, dom: &Dom, el: NodeId) -> Option<FlowBox> {
+        if let Some(source) = &self.external {
+            // One element from the external engine, synced only when
+            // something it lays out changed: no whole-tree work per query.
+            let v = self.viewport();
+            let key = (self.style.observation_stamp(dom), (v.width, v.height));
+            if self.external_synced.get() != Some(key) {
+                source.sync(dom, self);
+                self.external_synced.set(Some(key));
+            }
+            return source.element_box(crate::snapshot::render_key(el)).map(|b| FlowBox {
+                rect: Rect { x: b.x, y: b.y, width: b.width, height: b.height },
+                fixed: b.fixed,
+                client_width: b.client_width,
+                client_height: b.client_height,
+                scroll_width: b.scroll_width,
+                scroll_height: b.scroll_height,
+                positioned: false,
+                order: 0,
+                clipped_by: 0,
+            });
+        }
         self.flow(dom).get(el).copied()
     }
 
@@ -1390,11 +1424,20 @@ impl Layout {
     fn bounding_client_rect_for_visible(&self, dom: &Dom, el: NodeId) -> Rect {
         let (dx, dy) = self.ancestor_scroll_offset(dom, el);
         if self.flow_mode() {
-            let flow = self.flow(dom);
-            let Some(b) = flow.get(el).copied() else {
-                return self.svg_client_rect(dom, &flow, el).unwrap_or_default();
+            // An external engine answers per element (its layout includes
+            // sticky offsets); SVG content without a CSS box falls back to the
+            // whole flow result.
+            let external = if self.external.is_some() { self.flow_box(dom, el) } else { None };
+            let (b, (kx, ky)) = match external {
+                Some(b) => (b, (0.0, 0.0)),
+                None => {
+                    let flow = self.flow(dom);
+                    let Some(b) = flow.get(el).copied() else {
+                        return self.svg_client_rect(dom, &flow, el).unwrap_or_default();
+                    };
+                    (b, self.sticky_shift(dom, &flow, el))
+                }
             };
-            let (kx, ky) = self.sticky_shift(dom, &flow, el);
             let (sx, sy) =
                 if b.fixed { (0.0, 0.0) } else { (self.window_scroll.0 as f64, self.window_scroll.1 as f64) };
             return Rect {

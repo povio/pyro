@@ -81,8 +81,9 @@ impl Drop for BlitzGeometry {
     }
 }
 
-impl GeometrySource for BlitzGeometry {
-    fn geometry(&self, dom: &Dom, layout: &Layout) -> Option<ExternalGeometry> {
+impl BlitzGeometry {
+    /// The document as a keyed node list for this page's Blitz document.
+    fn snapshot(&self, dom: &Dom, layout: &Layout) -> Option<Snapshot> {
         let t = Instant::now();
         let s = lp_webapi::render_snapshot::render_tree_snapshot(dom, layout, layout.document(), BASE_URL);
         let tree = Arc::new(super::screenshot::convert(s.tree?));
@@ -100,6 +101,47 @@ impl GeometrySource for BlitzGeometry {
             live: Some(Live { page: self.page, tree, clip: None }),
         };
         SNAPSHOT_NS.fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        Some(snap)
+    }
+}
+
+fn external(b: lp_render::LayoutBox) -> ExternalBox {
+    ExternalBox {
+        x: b.x,
+        y: b.y,
+        width: b.width,
+        height: b.height,
+        client_width: b.client_width,
+        client_height: b.client_height,
+        scroll_width: b.scroll_width,
+        scroll_height: b.scroll_height,
+        fixed: b.fixed,
+    }
+}
+
+impl GeometrySource for BlitzGeometry {
+    fn sync(&self, dom: &Dom, layout: &Layout) {
+        let Some(snap) = self.snapshot(dom, layout) else { return };
+        let fetcher: Arc<dyn Fetcher> = Arc::new(DataUrls);
+        let timings = RENDERER.with(|r| {
+            let mut r = r.try_borrow_mut().ok()?;
+            r.get_or_insert_with(Renderer::new).sync_layout(&snap, &fetcher).ok()
+        });
+        if let Some(t) = timings {
+            CALLS.fetch_add(1, Ordering::Relaxed);
+            LAYOUT_NS.fetch_add((t.fetch + t.layout).as_nanos() as u64, Ordering::Relaxed);
+        }
+    }
+
+    fn element_box(&self, key: u64) -> Option<ExternalBox> {
+        let t = Instant::now();
+        let b = RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.element_box(self.page, key));
+        READ_NS.fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        b.map(external)
+    }
+
+    fn geometry(&self, dom: &Dom, layout: &Layout) -> Option<ExternalGeometry> {
+        let snap = self.snapshot(dom, layout)?;
         let fetcher: Arc<dyn Fetcher> = Arc::new(DataUrls);
         let out = RENDERER.with(|r| {
             let mut r = r.try_borrow_mut().ok()?;
@@ -109,23 +151,7 @@ impl GeometrySource for BlitzGeometry {
         LAYOUT_NS.fetch_add((out.timings.fetch + out.timings.layout).as_nanos() as u64, Ordering::Relaxed);
         READ_NS.fetch_add(out.timings.scene.as_nanos() as u64, Ordering::Relaxed);
         Some(ExternalGeometry {
-            boxes: out
-                .boxes
-                .into_iter()
-                .map(|(k, b)| {
-                    let b = ExternalBox {
-                        x: b.x,
-                        y: b.y,
-                        width: b.width,
-                        height: b.height,
-                        client_width: b.client_width,
-                        client_height: b.client_height,
-                        scroll_width: b.scroll_width,
-                        scroll_height: b.scroll_height,
-                    };
-                    (k, b)
-                })
-                .collect(),
+            boxes: out.boxes.into_iter().map(|(k, b)| (k, external(b))).collect(),
             document_width: out.document_width,
             document_height: out.document_height,
         })

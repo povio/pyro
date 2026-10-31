@@ -290,6 +290,16 @@ pub trait RoundTree: TraverseTree {
     /// Get the nth out-of-flow box whose containing block is `node_id`
     /// (as recorded by [`LayoutContainingBlock::add_hoisted_children`])
     fn get_hoisted_child_id(&self, node_id: NodeId, index: usize) -> NodeId;
+    /// Whether `node_id`'s subtree is rounded as it was the last time: the tree knows the
+    /// subtree's layout did not change and `round_layout` reached the node with the same
+    /// unrounded layout at the same unrounded absolute offset. [`round_layout`](crate::round_layout)
+    /// then skips the subtree. The default never skips.
+    fn rounded_unchanged(&self, _node_id: NodeId, _unrounded: &Layout, _absolute_x: f32, _absolute_y: f32) -> bool {
+        false
+    }
+    /// Records the unrounded layout and absolute offset `node_id` was just rounded from
+    /// (for [`RoundTree::rounded_unchanged`]).
+    fn record_rounded(&mut self, _node_id: NodeId, _unrounded: &Layout, _absolute_x: f32, _absolute_y: f32) {}
 }
 
 /// Trait used by the `print_tree` method which prints a debug representation

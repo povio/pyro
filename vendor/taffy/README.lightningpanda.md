@@ -18,3 +18,8 @@ Hit by a `display:flex` row inside an `align-items:center` column (ToS invoice f
 Upstream's full test suite (6605 generated tests) passes with the patch. The regression tests are
 `a_centered_flex_item_is_clamped_to_its_container` and
 `a_fit_content_flex_row_is_clamped_to_the_available_width` in `crates/lp-render/tests/render.rs`.
+
+`compute/mod.rs` and `tree/traits.rs`: incremental rounding. `RoundTree` gains `rounded_unchanged` and
+`record_rounded` (defaults: never skip, record nothing), and `round_layout` skips a subtree its tree reports
+unchanged. blitz-dom implements them: an undamaged, non-anonymous subtree reached with the same unrounded
+layout at the same offset is rounded as before. Without it, every layout query rounded the whole tree.

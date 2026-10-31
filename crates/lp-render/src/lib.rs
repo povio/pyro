@@ -20,6 +20,7 @@
 //! changed since its previous render (`mirror` module).
 
 mod compare;
+mod geometry;
 mod hash;
 mod mirror;
 mod net;
@@ -30,7 +31,6 @@ pub mod worker;
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex};
 
-use rustc_hash::{FxHashMap, FxHashSet};
 use std::time::{Duration, Instant};
 
 use anyrender::recording::Scene;
@@ -43,6 +43,7 @@ use parley::fontique::{Blob, Collection, CollectionOptions, SourceCache};
 use parley::FontContext;
 use peniko::{Color, Fill};
 
+pub use geometry::LayoutBox;
 pub use compare::{compare, decode_png, diff_image, encode_jpeg, encode_png, CompareResult};
 pub use hash::scene_hash;
 pub use mirror::{MirrorStats, Rebuild, Tree, TreeKind, TreeNode, TOP};
@@ -103,21 +104,6 @@ pub struct Live {
 
 /// Attribute the snapshot puts on the element a screenshot is clipped to.
 pub const CLIP_ATTRIBUTE: &str = "data-lp-render-clip";
-
-/// One element's boxes ([`Renderer::layout_boxes`]), CSS px.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct LayoutBox {
-    /// Border box, document coordinates.
-    pub x: f64,
-    pub y: f64,
-    pub width: f64,
-    pub height: f64,
-    /// Padding box size less scrollbars.
-    pub client_width: f64,
-    pub client_height: f64,
-    pub scroll_width: f64,
-    pub scroll_height: f64,
-}
 
 pub struct LayoutBoxes {
     /// By render key (`lp_dom::snapshot::render_key`).
@@ -312,6 +298,8 @@ pub struct Renderer {
     /// Persistent documents of [`Live`] snapshots, by page.
     mirrors: HashMap<u64, mirror::Mirror>,
     pdf_cache: pdf::PdfCache,
+    /// Layout-query memos of persistent documents, by page.
+    geometry: HashMap<u64, geometry::Geometry>,
     /// Longest wait for sub-resources per render.
     pub fetch_timeout: Duration,
     /// Longest wait, before the first layout, for the fonts and images the
@@ -337,6 +325,7 @@ impl Renderer {
             resources: net::ResourceCache::default(),
             mirrors: HashMap::new(),
             pdf_cache: pdf::PdfCache::default(),
+            geometry: HashMap::new(),
             fetch_timeout: Duration::from_secs(10),
             first_layout_wait: Duration::from_secs(3),
         }
@@ -351,6 +340,7 @@ impl Renderer {
     /// Drops the persistent document of `page` (closed, or gone).
     pub fn forget(&mut self, page: u64) {
         self.mirrors.remove(&page);
+        self.geometry.remove(&page);
     }
 
     /// Pages with a persistent document.
@@ -559,295 +549,35 @@ impl Renderer {
         Ok(Painted { scene, hash, width: w, height: h, timings })
     }
 
-    /// Element boxes of a [`Live`] snapshot's document as Blitz lays it out
-    /// (CSS px, document coordinates), for answering layout queries with
-    /// the geometry that is painted. The page's persistent document is
-    /// brought up to the snapshot first (only what changed is applied and
-    /// relaid out).
-    pub fn layout_boxes(&mut self, snap: &Snapshot, fetcher: &Arc<dyn Fetcher>) -> Result<LayoutBoxes, RenderError> {
-        let live =
-            snap.live.as_ref().ok_or_else(|| RenderError::BadArea("layout boxes need a live snapshot".into()))?;
+    /// Brings `snap`'s persistent document up to date for layout queries
+    /// ([`Renderer::element_box`]): only what changed is applied and relaid
+    /// out. `fetch`/`layout` time it.
+    pub fn sync_layout(&mut self, snap: &Snapshot, fetcher: &Arc<dyn Fetcher>) -> Result<Timings, RenderError> {
+        let live = snap.live.as_ref().ok_or_else(|| RenderError::BadArea("layout queries need a live snapshot".into()))?;
         let mut timings = Timings::default();
         let mut fresh = None;
         self.prepare(snap, fetcher, &mut fresh, &mut timings)?;
+        self.geometry.entry(live.page).or_default().clear();
+        Ok(timings)
+    }
+
+    /// The box of the element keyed `key` in `page`'s persistent document,
+    /// as of the last [`Renderer::sync_layout`] (see [`LayoutBox`]).
+    pub fn element_box(&self, page: u64, key: u64) -> Option<LayoutBox> {
+        let m = self.mirrors.get(&page)?;
+        self.geometry.get(&page)?.element_box(&m.doc, m.node(key)?)
+    }
+
+    /// Every element's box ([`Renderer::element_box`]) after
+    /// [`Renderer::sync_layout`], and the document's scroll size.
+    pub fn layout_boxes(&mut self, snap: &Snapshot, fetcher: &Arc<dyn Fetcher>) -> Result<LayoutBoxes, RenderError> {
+        let mut timings = self.sync_layout(snap, fetcher)?;
+        let page = snap.live.as_ref().map(|l| l.page).unwrap_or_default();
         let t = Instant::now();
-        let m = self.mirrors.get(&live.page).ok_or(RenderError::NoElement)?;
-        let doc = &m.doc;
-        let mut boxes = Vec::new();
-        // Each node's transform to the document, memoized along the
-        // containing-block chains (`element_bounds` walks each one whole).
-        let mut transforms: FxHashMap<blitz_dom::NodeId, Affine> = FxHashMap::default();
-        // Node to its entry in `boxes`.
-        let mut index: FxHashMap<blitz_dom::NodeId, usize> = FxHashMap::default();
-        for (key, id) in m.elements() {
-            let Some(node) = doc.get_node(id) else { continue };
-            let Some(t) = node_transform(doc, id, &mut transforms) else { continue };
-            // Unrounded, as Chromium reports fractional boxes (painting uses the rounded layout).
-            let l = node.unrounded_layout();
-            let size = l.size;
-            let rect = t.transform_rect_bbox(Rect::new(0.0, 0.0, size.width as f64, size.height as f64));
-            let client_width = (l.size.width - l.border.left - l.border.right - l.scrollbar_size.width).max(0.0) as f64;
-            let client_height =
-                (l.size.height - l.border.top - l.border.bottom - l.scrollbar_size.height).max(0.0) as f64;
-            let o = node.scrollable_overflow();
-            index.insert(id, boxes.len());
-            boxes.push((
-                key,
-                LayoutBox {
-                    x: rect.x0,
-                    y: rect.y0,
-                    width: rect.width(),
-                    height: rect.height(),
-                    client_width,
-                    client_height,
-                    scroll_width: client_width.max(o.x1 - l.border.left as f64),
-                    scroll_height: client_height.max(o.y1 - l.border.top as f64),
-                },
-            ));
-        }
-        // Inline elements have no box of their own in Blitz: their content
-        // is in the inline root's text layout. Chromium's rect is the union
-        // of their fragments: each glyph run's (content area: ascent to
-        // descent) and atomic inline's, credited to every inline ancestor
-        // up to the root.
-        {
-            // Only the inline roots holding an inline element without a box
-            // (walking every text layout per query is the costly part).
-            let mut roots: FxHashSet<blitz_dom::NodeId> = FxHashSet::default();
-            for (&id, &i) in &index {
-                let b = &boxes[i].1;
-                if b.width != 0.0 || b.height != 0.0 {
-                    continue;
-                }
-                let inline = doc
-                    .get_node(id)
-                    .and_then(|n| n.primary_styles())
-                    .is_some_and(|s| s.clone_display().is_inline_flow());
-                if !inline {
-                    continue;
-                }
-                let mut cur = doc.get_node(id).and_then(|n| n.parent);
-                while let Some(p) = cur {
-                    let Some(n) = doc.get_node(p) else { break };
-                    if n.flags.is_inline_root() {
-                        roots.insert(p);
-                        break;
-                    }
-                    cur = n.parent;
-                }
-            }
-            let mut acc: FxHashMap<blitz_dom::NodeId, Rect> = FxHashMap::default();
-            for root_id in roots {
-                let Some(root) = doc.get_node(root_id) else { continue };
-                let Some(text) = root.element_data().and_then(|e| e.inline_layout_data.as_ref()) else { continue };
-                let Some(t) = transforms.get(&root_id).copied() else { continue };
-                let l = root.unrounded_layout();
-                let origin = t * Affine::translate((
-                    (l.border.left + l.padding.left) as f64,
-                    (l.border.top + l.padding.top) as f64 + text.block_offset as f64,
-                ));
-                let scale = text.layout.scale() as f64;
-                let mut credit = |start: Option<blitz_dom::NodeId>, r: Rect| {
-                    let r =
-                        origin.transform_rect_bbox(Rect::new(r.x0 / scale, r.y0 / scale, r.x1 / scale, r.y1 / scale));
-                    let mut cur = start;
-                    while let Some(id) = cur {
-                        if id == root_id {
-                            break;
-                        }
-                        let Some(node) = doc.get_node(id) else { break };
-                        let Some(styles) = node.primary_styles() else { break };
-                        let display = styles.clone_display();
-                        if !display.is_contents() {
-                            if !display.is_inline_flow() {
-                                break;
-                            }
-                            acc.entry(id).and_modify(|a| *a = a.union(r)).or_insert(r);
-                        }
-                        cur = node.parent;
-                    }
-                };
-                for line in text.layout.lines() {
-                    for item in line.items() {
-                        match item {
-                            parley::PositionedLayoutItem::GlyphRun(run) => {
-                                let metrics = run.run().font_metrics();
-                                let (x, baseline) = (run.offset() as f64, run.baseline() as f64);
-                                let r = Rect::new(
-                                    x,
-                                    baseline - metrics.ascent as f64,
-                                    x + run.advance() as f64,
-                                    baseline + metrics.descent as f64,
-                                );
-                                credit(Some(run.style().brush.id), r);
-                            }
-                            parley::PositionedLayoutItem::InlineBox(b) => {
-                                let id = blitz_dom::NodeId::from_u64(b.id);
-                                let parent = doc.get_node(id).and_then(|n| n.parent);
-                                let r =
-                                    Rect::new(b.x as f64, b.y as f64, (b.x + b.width) as f64, (b.y + b.height) as f64);
-                                credit(parent, r);
-                            }
-                        }
-                    }
-                }
-            }
-            for (id, r) in acc {
-                let Some(&i) = index.get(&id) else { continue };
-                let b = &mut boxes[i].1;
-                if b.width == 0.0 && b.height == 0.0 {
-                    *b = LayoutBox {
-                        x: r.x0,
-                        y: r.y0,
-                        width: r.width(),
-                        height: r.height(),
-                        client_width: 0.0,
-                        client_height: 0.0,
-                        scroll_width: 0.0,
-                        scroll_height: 0.0,
-                    };
-                }
-            }
-        }
-        // Collapsed borders: Blitz lays them out as gutters between
-        // borderless cells (the table's gap: the first cell's widest
-        // horizontal / vertical border). Chromium's cell boxes take half of
-        // each collapsed border, so a row measures a border taller.
-        {
-            fn is_cell(doc: &blitz_dom::BaseDocument, id: blitz_dom::NodeId) -> bool {
-                doc.get_node(id)
-                    .and_then(|n| n.element_data())
-                    .is_some_and(|e| matches!(e.name.local.as_ref(), "td" | "th"))
-            }
-            fn first_cell(doc: &blitz_dom::BaseDocument, id: blitz_dom::NodeId) -> Option<blitz_dom::NodeId> {
-                let node = doc.get_node(id)?;
-                for &c in &node.children {
-                    if is_cell(doc, c) {
-                        return Some(c);
-                    }
-                    let nested_table =
-                        doc.get_node(c).and_then(|n| n.element_data()).is_some_and(|e| &*e.name.local == "table");
-                    if !nested_table {
-                        if let Some(f) = first_cell(doc, c) {
-                            return Some(f);
-                        }
-                    }
-                }
-                None
-            }
-            let side = |w: app_units::Au, s: style::values::computed::BorderStyle| {
-                if s.none_or_hidden() {
-                    0.0
-                } else {
-                    w.to_f64_px()
-                }
-            };
-            let mut gutters: FxHashMap<blitz_dom::NodeId, Option<(f64, f64)>> = FxHashMap::default();
-            for (_, id) in m.elements() {
-                if !is_cell(doc, id) {
-                    continue;
-                }
-                let mut table = doc.get_node(id).and_then(|n| n.parent);
-                while let Some(t) = table {
-                    let n = doc.get_node(t);
-                    if n.and_then(|n| n.element_data()).is_some_and(|e| &*e.name.local == "table") {
-                        break;
-                    }
-                    table = n.and_then(|n| n.parent);
-                }
-                let Some(table) = table else { continue };
-                let gutter = *gutters.entry(table).or_insert_with(|| {
-                    let styles = doc.get_node(table)?.primary_styles()?;
-                    if styles.clone_border_collapse() != style::computed_values::border_collapse::T::Collapse {
-                        return None;
-                    }
-                    let cell = doc.get_node(first_cell(doc, table)?)?.primary_styles()?;
-                    let b = cell.get_border();
-                    let x = side(b.border_left_width.0, b.border_left_style)
-                        .max(side(b.border_right_width.0, b.border_right_style));
-                    let y = side(b.border_top_width.0, b.border_top_style)
-                        .max(side(b.border_bottom_width.0, b.border_bottom_style));
-                    Some((x / 2.0, y / 2.0))
-                });
-                let Some((gx, gy)) = gutter else { continue };
-                // Row borders collapse into the cells' too; Blitz's gutter
-                // only has the first cell's.
-                let (mut top, mut bottom) = (gy, gy);
-                if let Some(row) = doc.get_node(id).and_then(|n| n.parent).and_then(|p| doc.get_node(p)) {
-                    if let Some(rs) = row.primary_styles() {
-                        let b = rs.get_border();
-                        top = top.max(side(b.border_top_width.0, b.border_top_style) / 2.0);
-                        bottom = bottom.max(side(b.border_bottom_width.0, b.border_bottom_style) / 2.0);
-                    }
-                }
-                if let Some(&i) = index.get(&id) {
-                    let b = &mut boxes[i].1;
-                    b.x -= gx;
-                    b.y -= top;
-                    b.width += 2.0 * gx;
-                    b.height += top + bottom;
-                }
-            }
-        }
-        // Blitz lays table cells out in the table's grid: rows and row
-        // groups get no box of their own. Chromium's is the union of their
-        // cells' (rows') boxes; Paprize measures rows.
-        let by_node = &index;
-        fn table_part(doc: &blitz_dom::BaseDocument, id: blitz_dom::NodeId) -> bool {
-            doc.get_node(id)
-                .and_then(|n| n.element_data())
-                .is_some_and(|e| matches!(e.name.local.as_ref(), "tr" | "thead" | "tbody" | "tfoot"))
-        }
-        fn union(
-            doc: &blitz_dom::BaseDocument,
-            id: blitz_dom::NodeId,
-            by_node: &FxHashMap<blitz_dom::NodeId, usize>,
-            boxes: &mut [(u64, LayoutBox)],
-        ) -> Option<Rect> {
-            let node = doc.get_node(id)?;
-            let mut acc: Option<Rect> = None;
-            for &c in &node.children {
-                let r = if table_part(doc, c) {
-                    union(doc, c, by_node, boxes)
-                } else {
-                    by_node.get(&c).map(|&i| {
-                        let b = boxes[i].1;
-                        Rect::new(b.x, b.y, b.x + b.width, b.y + b.height)
-                    })
-                };
-                if let Some(r) = r.filter(|r| r.width() > 0.0 || r.height() > 0.0) {
-                    acc = Some(acc.map_or(r, |a| a.union(r)));
-                }
-            }
-            let i = *by_node.get(&id)?;
-            let b = &mut boxes[i].1;
-            if b.width == 0.0 && b.height == 0.0 {
-                if let Some(r) = acc {
-                    *b = LayoutBox {
-                        x: r.x0,
-                        y: r.y0,
-                        width: r.width(),
-                        height: r.height(),
-                        client_width: r.width(),
-                        client_height: r.height(),
-                        scroll_width: r.width(),
-                        scroll_height: r.height(),
-                    };
-                }
-            }
-            Some(Rect::new(b.x, b.y, b.x + b.width, b.y + b.height))
-        }
-        let parts: Vec<blitz_dom::NodeId> = m
-            .elements()
-            .map(|(_, id)| id)
-            .filter(|&id| {
-                table_part(doc, id) && !doc.get_node(id).and_then(|n| n.parent).is_some_and(|p| table_part(doc, p))
-            })
-            .collect();
-        for id in parts {
-            union(doc, id, by_node, &mut boxes);
-        }
-        let root = doc.root_element();
+        let m = self.mirrors.get(&page).ok_or(RenderError::NoElement)?;
+        let g = self.geometry.get(&page).ok_or(RenderError::NoElement)?;
+        let boxes = m.elements().filter_map(|(key, id)| Some((key, g.element_box(&m.doc, id)?))).collect();
+        let root = m.doc.root_element();
         let (size, overflow) = (root.final_layout().size, *root.scrollable_overflow());
         timings.scene = t.elapsed();
         Ok(LayoutBoxes {
@@ -1010,34 +740,6 @@ fn content_extent(doc: &blitz_dom::BaseDocument, id: blitz_dom::NodeId) -> (f64,
         }
     }
     (right, bottom, culprit)
-}
-
-/// The transform from `id`'s border box to the document (CSS px), as
-/// [`element_bounds`] computes it but from the unrounded layout, memoized
-/// in `memo`.
-fn node_transform(
-    doc: &blitz_dom::BaseDocument,
-    id: blitz_dom::NodeId,
-    memo: &mut FxHashMap<blitz_dom::NodeId, Affine>,
-) -> Option<Affine> {
-    if let Some(t) = memo.get(&id) {
-        return Some(*t);
-    }
-    let node = doc.get_node(id)?;
-    let base = match node.containing_block() {
-        Some(parent) => {
-            let p = node_transform(doc, parent, memo)?;
-            let scroll = doc.get_node(parent)?.scroll_offset();
-            p * Affine::translate((-scroll.x, -scroll.y))
-        }
-        None => Affine::IDENTITY,
-    };
-    let location = node.unrounded_layout().location;
-    let t = base
-        * Affine::translate((location.x as f64, location.y as f64))
-        * node.transform().as_deref().copied().unwrap_or_default();
-    memo.insert(id, t);
-    Some(t)
 }
 
 /// The border box of `id` in device px, document coordinates, through the

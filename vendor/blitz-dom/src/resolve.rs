@@ -296,7 +296,16 @@ impl BaseDocument {
                 damage.remove(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                 // damage.insert(RestyleDamage::RELAYOUT | RestyleDamage::REPAINT);
             } else {
-                //if damage.contains(CONSTRUCT_DESCENDENT) {
+                // A subtree with no damage has nothing to reconstruct: its
+                // layout children and their `layout_parent` links are those
+                // of the last pass. (The same skip as `propagate_damage_flags`;
+                // anonymous boxes are always visited, as they are there.)
+                {
+                    let node = &doc.nodes[node_id];
+                    if damage.is_empty() && !node.has_damaged_descendants() && !node.is_anonymous() {
+                        return;
+                    }
+                }
                 let layout_children = doc.nodes[node_id].layout_children.borrow_mut().take();
                 if let Some(layout_children) = layout_children {
                     for child_id in layout_children.iter().copied() {
