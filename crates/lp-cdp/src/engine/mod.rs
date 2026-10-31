@@ -6,6 +6,8 @@
 //! events by [`EngineHost::flush`] afterwards, so no CDP state is borrowed
 //! while JavaScript is on the stack.
 
+#[cfg(feature = "render")]
+mod blitz_geometry;
 mod dom;
 mod driver;
 mod fetch;
@@ -388,6 +390,8 @@ impl EngineHost {
     pub fn prepare_thread_with(profile: &BrowserProfile) -> CdpResult<BrowserThread> {
         let mut thread =
             BrowserThread::new().map_err(|e| CdpError::server(format!("JavaScript engine unavailable: {e}")))?;
+        #[cfg(feature = "render")]
+        blitz_geometry::install();
         thread
             .enable_network(profile.net.clone())
             .map_err(|e| CdpError::server(format!("network unavailable: {e}")))?;
@@ -715,6 +719,14 @@ impl EngineHost {
             "Network" => self.network_domain(action, cmd),
             "Fetch" => self.fetch_domain(action, cmd),
             "Input" => self.input_domain(action, cmd),
+            // Blitz-backed layout queries since the last call (LIGHTNINGPANDA_GEOMETRY=blitz).
+            #[cfg(feature = "render")]
+            "LP" if action == "geometryStats" => {
+                let (layouts, snapshot_ms, layout_ms, read_ms) = blitz_geometry::take_stats();
+                Ok(Some(serde_json::json!({
+                    "layouts": layouts, "snapshotMs": snapshot_ms, "layoutMs": layout_ms, "readMs": read_ms,
+                })))
+            }
             "LP" => self.driver_domain(action, cmd),
             #[cfg(feature = "render")]
             "IO" => self.io_domain(action, cmd),

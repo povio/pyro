@@ -223,6 +223,8 @@ pub struct Layout {
     geometry: Geometry,
     flow_cache: RefCell<Option<FlowCache>>,
     measures: RefCell<Measures>,
+    /// Element boxes from another engine, patched over the flow layout's.
+    external: Option<Rc<dyn GeometrySource>>,
 }
 
 /// Subtree measurements kept across flow passes, with what they are valid
@@ -258,6 +260,58 @@ impl Geometry {
     }
 }
 
+/// One element's boxes from an external layout engine (document CSS px).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ExternalBox {
+    /// Border box.
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+    /// Padding box size (`clientWidth/Height`).
+    pub client_width: f64,
+    pub client_height: f64,
+    /// `scrollWidth/Height`.
+    pub scroll_width: f64,
+    pub scroll_height: f64,
+}
+
+/// Element boxes laid out by an external engine, keyed by
+/// [`crate::snapshot::render_key`].
+#[derive(Clone, Debug, Default)]
+pub struct ExternalGeometry {
+    pub boxes: Vec<(u64, ExternalBox)>,
+    pub document_width: f64,
+    pub document_height: f64,
+}
+
+/// Lays the document out with another engine (Blitz, in lp-cdp's
+/// `render` builds) whose element boxes replace the flow layout's: the
+/// getters (`getBoundingClientRect`, `offset*`, `client*`, `scroll*`) then
+/// report what that engine paints. Called when the flow layout is
+/// recomputed (DOM, style or viewport changed).
+pub trait GeometrySource {
+    fn geometry(&self, dom: &Dom, layout: &Layout) -> Option<ExternalGeometry>;
+}
+
+thread_local! {
+    static GEOMETRY_SOURCE: RefCell<Option<Rc<dyn Fn() -> Rc<dyn GeometrySource>>>> = const { RefCell::new(None) };
+}
+
+/// Installs the factory of external geometry sources for this thread's new
+/// documents (`LIGHTNINGPANDA_GEOMETRY=blitz`).
+pub fn set_geometry_source_factory(factory: Option<Rc<dyn Fn() -> Rc<dyn GeometrySource>>>) {
+    GEOMETRY_SOURCE.with(|f| *f.borrow_mut() = factory);
+}
+
+/// `LIGHTNINGPANDA_GEOMETRY=blitz`: new documents take their geometry from
+/// the installed [`GeometrySource`] (the flow layout when none is).
+pub fn blitz_geometry_requested() -> bool {
+    static BLITZ: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *BLITZ
+        .get_or_init(|| std::env::var("LIGHTNINGPANDA_GEOMETRY").is_ok_and(|v| v.trim().eq_ignore_ascii_case("blitz")))
+}
+
 struct FlowCache {
     stamp: (u64, u64, u32, u32),
     viewport: (u32, u32),
@@ -268,6 +322,29 @@ struct FlowCache {
 struct AutomaticHeights {
     stamp: Option<(u64, u64, u32, u32)>,
     values: FxHashMap<NodeId, f64>,
+}
+
+/// The flow layout with each element box the external engine laid out
+/// replaced by its box. Elements it has no box for keep the flow layout's;
+/// text geometry (ranges, carets) stays the flow layout's.
+fn patch_external(dom: &Dom, flow: &FlowResult, external: &ExternalGeometry) -> FlowResult {
+    let mut result = flow.clone();
+    for (key, b) in &external.boxes {
+        let id = crate::node::NodeId { idx: *key as u32, gen: (*key >> 32) as u32 };
+        if dom.check(id).is_err() {
+            continue;
+        }
+        if let Some(fb) = result.boxes.get_mut(&id) {
+            fb.rect = Rect { x: b.x, y: b.y, width: b.width, height: b.height };
+            fb.client_width = b.client_width;
+            fb.client_height = b.client_height;
+            fb.scroll_width = b.scroll_width;
+            fb.scroll_height = b.scroll_height;
+        }
+    }
+    result.document_width = result.document_width.max(external.document_width);
+    result.document_height = external.document_height.max(1.0);
+    result
 }
 
 const NODE_HEIGHT: f64 = 5.0;
@@ -294,6 +371,26 @@ impl Layout {
             geometry: Geometry::default(),
             flow_cache: RefCell::new(None),
             measures: RefCell::default(),
+            external: None,
+        }
+    }
+
+    /// Takes element boxes from `source` (see [`GeometrySource`]); `None`
+    /// returns to the flow layout's own.
+    pub fn set_geometry_source(&mut self, source: Option<Rc<dyn GeometrySource>>) {
+        self.external = source;
+        self.flow_cache.borrow_mut().take();
+    }
+
+    /// Installs this thread's geometry source when
+    /// `LIGHTNINGPANDA_GEOMETRY=blitz` (see [`set_geometry_source_factory`]).
+    pub fn use_requested_geometry_source(&mut self) {
+        if blitz_geometry_requested() {
+            let source = GEOMETRY_SOURCE.with(|f| f.borrow().as_ref().map(|make| make()));
+            if source.is_some() {
+                self.geometry = Geometry::Flow;
+                self.set_geometry_source(source);
+            }
         }
     }
 
@@ -358,6 +455,10 @@ impl Layout {
         if let Some(t) = started {
             flow_stats::record(previous.map(|(s, v, _)| (s, v)), (stamp, viewport), t.elapsed());
         }
+        let result = match self.external.as_ref().and_then(|source| source.geometry(dom, self)) {
+            Some(external) => Rc::new(patch_external(dom, &result, &external)),
+            None => result,
+        };
         *self.flow_cache.borrow_mut() = Some(FlowCache { stamp, viewport, result: result.clone() });
         result
     }

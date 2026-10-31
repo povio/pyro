@@ -1,0 +1,133 @@
+//! Blitz-backed geometry (`LIGHTNINGPANDA_GEOMETRY=blitz`): layout queries
+//! (`getBoundingClientRect`, `offset*`, `client*`, `scroll*`) report the
+//! boxes Blitz lays out, the same layout `captureScreenshot` and
+//! `printToPDF` paint, instead of lp-dom's flow layout.
+//!
+//! Layout queries are synchronous on the browser thread, and the render
+//! thread's documents are its own, so the browser thread keeps a second
+//! `Renderer` here, with one persistent Blitz document per page document.
+//! When lp-dom recomputes its layout (the DOM, styles or viewport changed
+//! since the last query), the source builds the keyed node list, the mirror
+//! applies what changed and Blitz relays out incrementally; the element boxes
+//! then replace the flow layout's (`lp_dom::layout::GeometrySource`).
+//!
+//! Sub-resources: only `data:` URLs are loaded (synchronously). Images and
+//! fonts from the network are not waited for, so their boxes may differ from
+//! a render's until a later layout.
+
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::time::Instant;
+
+use lp_dom::layout::{ExternalBox, ExternalGeometry, GeometrySource, Layout};
+use lp_dom::Dom;
+use lp_render::{Fetcher, Live, Renderer, Snapshot};
+
+thread_local! {
+    static RENDERER: RefCell<Option<Renderer>> = const { RefCell::new(None) };
+}
+
+static NEXT_PAGE: AtomicU64 = AtomicU64::new(1);
+static CALLS: AtomicU64 = AtomicU64::new(0);
+static SNAPSHOT_NS: AtomicU64 = AtomicU64::new(0);
+static LAYOUT_NS: AtomicU64 = AtomicU64::new(0);
+static READ_NS: AtomicU64 = AtomicU64::new(0);
+
+/// Base URL of the Blitz documents (relative sub-resources are not loaded).
+const BASE_URL: &str = "about:blank";
+
+/// Layouts since the last call: count and milliseconds building the node
+/// list, applying it and laying out, and reading the boxes.
+pub(crate) fn take_stats() -> (u64, f64, f64, f64) {
+    let ms = |a: &AtomicU64| a.swap(0, Ordering::Relaxed) as f64 / 1e6;
+    (CALLS.swap(0, Ordering::Relaxed), ms(&SNAPSHOT_NS), ms(&LAYOUT_NS), ms(&READ_NS))
+}
+
+/// Makes this thread's new documents take Blitz geometry when
+/// `LIGHTNINGPANDA_GEOMETRY=blitz`.
+pub(crate) fn install() {
+    if lp_dom::layout::blitz_geometry_requested() {
+        lp_dom::layout::set_geometry_source_factory(Some(Rc::new(|| {
+            Rc::new(BlitzGeometry { page: NEXT_PAGE.fetch_add(1, Ordering::Relaxed) }) as Rc<dyn GeometrySource>
+        })));
+    }
+}
+
+struct DataUrls;
+
+impl Fetcher for DataUrls {
+    fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+        let body = lp_net::Url::parse(&url).ok().and_then(|u| lp_net::data_url::parse(&u)).map(|(_, b)| b.to_vec());
+        done(body.ok_or_else(|| format!("{url}: Blitz geometry loads data: URLs only")));
+    }
+}
+
+/// The Blitz document of one page document.
+struct BlitzGeometry {
+    page: u64,
+}
+
+impl Drop for BlitzGeometry {
+    fn drop(&mut self) {
+        let _ = RENDERER.try_with(|r| {
+            if let Ok(mut r) = r.try_borrow_mut() {
+                if let Some(r) = r.as_mut() {
+                    r.forget(self.page);
+                }
+            }
+        });
+    }
+}
+
+impl GeometrySource for BlitzGeometry {
+    fn geometry(&self, dom: &Dom, layout: &Layout) -> Option<ExternalGeometry> {
+        let t = Instant::now();
+        let s = lp_webapi::render_snapshot::render_tree_snapshot(dom, layout, layout.document(), BASE_URL);
+        let tree = Arc::new(super::screenshot::convert(s.tree?));
+        let snap = Snapshot {
+            html: String::new(),
+            base_url: BASE_URL.into(),
+            sheets: s.sheets,
+            width: s.width,
+            height: s.height,
+            device_scale_factor: s.device_scale_factor,
+            dark: s.dark,
+            scroll_x: 0.0,
+            scroll_y: 0.0,
+            resource_scope: format!("geometry-{}", self.page),
+            live: Some(Live { page: self.page, tree, clip: None }),
+        };
+        SNAPSHOT_NS.fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        let fetcher: Arc<dyn Fetcher> = Arc::new(DataUrls);
+        let out = RENDERER.with(|r| {
+            let mut r = r.try_borrow_mut().ok()?;
+            r.get_or_insert_with(Renderer::new).layout_boxes(&snap, &fetcher).ok()
+        })?;
+        CALLS.fetch_add(1, Ordering::Relaxed);
+        LAYOUT_NS.fetch_add((out.timings.fetch + out.timings.layout).as_nanos() as u64, Ordering::Relaxed);
+        READ_NS.fetch_add(out.timings.scene.as_nanos() as u64, Ordering::Relaxed);
+        Some(ExternalGeometry {
+            boxes: out
+                .boxes
+                .into_iter()
+                .map(|(k, b)| {
+                    let b = ExternalBox {
+                        x: b.x,
+                        y: b.y,
+                        width: b.width,
+                        height: b.height,
+                        client_width: b.client_width,
+                        client_height: b.client_height,
+                        scroll_width: b.scroll_width,
+                        scroll_height: b.scroll_height,
+                    };
+                    (k, b)
+                })
+                .collect(),
+            document_width: out.document_width,
+            document_height: out.document_height,
+        })
+    }
+}

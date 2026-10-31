@@ -187,7 +187,7 @@ fn kind_of(url: &str) -> ResourceKind {
 }
 
 /// lp-dom's render tree as lp-render takes it (the same `QualName`s).
-fn convert(t: lp_dom::snapshot::RenderTree) -> Tree {
+pub(super) fn convert(t: lp_dom::snapshot::RenderTree) -> Tree {
     use lp_dom::snapshot::RenderNodeKind;
     Tree {
         nodes: t
@@ -393,8 +393,11 @@ impl EngineHost {
         let p: P = cmd.command.params()?;
         match action {
             "read" => {
-                let (bytes, pos) =
-                    self.renders.streams.get_mut(&p.handle).ok_or_else(|| CdpError::invalid_params("Invalid stream handle"))?;
+                let (bytes, pos) = self
+                    .renders
+                    .streams
+                    .get_mut(&p.handle)
+                    .ok_or_else(|| CdpError::invalid_params("Invalid stream handle"))?;
                 if let Some(o) = p.offset {
                     *pos = o.min(bytes.len());
                 }

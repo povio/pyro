@@ -9,7 +9,9 @@
 //! rest. A tree that shares too little with the previous one, a different
 //! document (navigation) or a different base URL builds a new document.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
+
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::hash::Hasher;
 use std::sync::Arc;
 
@@ -82,7 +84,7 @@ pub(crate) struct Mirror {
     pub(crate) viewport: (u32, u32, u64, bool),
     sheets: HashMap<String, String>,
     tree: Arc<Tree>,
-    nodes: HashMap<u64, Entry>,
+    nodes: FxHashMap<u64, Entry>,
     top: Vec<u64>,
 }
 
@@ -129,8 +131,8 @@ fn name_of(kind: &TreeKind) -> Option<QualName> {
 }
 
 /// Keys of the children of each node, and of the top level.
-fn children_of(tree: &Tree) -> (HashMap<u64, Vec<u64>>, Vec<u64>) {
-    let mut kids: HashMap<u64, Vec<u64>> = HashMap::with_capacity(tree.nodes.len());
+fn children_of(tree: &Tree) -> (FxHashMap<u64, Vec<u64>>, Vec<u64>) {
+    let mut kids: FxHashMap<u64, Vec<u64>> = FxHashMap::with_capacity_and_hasher(tree.nodes.len(), Default::default());
     let mut top = Vec::new();
     for n in &tree.nodes {
         if n.parent == TOP {
@@ -161,7 +163,8 @@ impl Mirror {
         }
         let root = doc.root_node().id;
         let (kids, top) = children_of(&tree);
-        let mut nodes: HashMap<u64, Entry> = HashMap::with_capacity(tree.nodes.len());
+        let mut nodes: FxHashMap<u64, Entry> =
+            FxHashMap::with_capacity_and_hasher(tree.nodes.len(), Default::default());
         {
             let mut m = doc.mutate();
             let mut ids = Vec::with_capacity(tree.nodes.len());
@@ -193,6 +196,11 @@ impl Mirror {
         self.nodes.get(&key).map(|e| e.id)
     }
 
+    /// Every element's key and node.
+    pub(crate) fn elements(&self) -> impl Iterator<Item = (u64, NodeId)> + '_ {
+        self.nodes.iter().filter(|(_, e)| e.name.is_some()).map(|(k, e)| (*k, e.id))
+    }
+
     /// Applies `tree` (the page now) and `sheets` (linked sheet texts by
     /// URL). Returns the number of mutations, or why the document must be
     /// built anew instead.
@@ -203,7 +211,7 @@ impl Mirror {
             return Ok(0);
         }
         let new = &tree.nodes;
-        let mut index: HashMap<u64, usize> = HashMap::with_capacity(new.len());
+        let mut index: FxHashMap<u64, usize> = FxHashMap::with_capacity_and_hasher(new.len(), Default::default());
         for (i, n) in new.iter().enumerate() {
             if index.insert(n.key, i).is_some() {
                 return Err(Rebuild::Malformed);
@@ -213,7 +221,7 @@ impl Mirror {
 
         let hashes: Vec<u64> = new.iter().map(|n| hash_kind(&n.kind)).collect();
         // Gone, or now a node of another kind under the same key.
-        let mut removed: HashSet<u64> = self
+        let mut removed: FxHashSet<u64> = self
             .nodes
             .iter()
             .filter(|(key, e)| match index.get(*key) {
@@ -227,7 +235,7 @@ impl Mirror {
         // text) and an `<input>` whose type changed. Their children are kept
         // and moved into the new element.
         let empty = Vec::new();
-        let mut replace = HashSet::new();
+        let mut replace = FxHashSet::default();
         for (i, n) in new.iter().enumerate() {
             let dirty = match self.nodes.get(&n.key) {
                 None => true,
@@ -298,7 +306,7 @@ impl Mirror {
         }
 
         // 2. Create new nodes (detached; placed below), update changed ones.
-        let mut created = HashSet::new();
+        let mut created = FxHashSet::default();
         for (n, &hash) in new.iter().zip(&hashes) {
             match nodes.get_mut(&n.key) {
                 None => {
@@ -396,7 +404,7 @@ fn update(m: &mut DocumentMutator<'_>, id: NodeId, kind: &TreeKind) {
 /// Makes `want` the children of `parent`, moving as few nodes as it can
 /// (an insertion, removal or move costs one operation). Children that do
 /// not belong here any more are detached; their new parent places them.
-fn reorder(m: &mut DocumentMutator<'_>, parent: NodeId, want: &[u64], nodes: &HashMap<u64, Entry>) -> u32 {
+fn reorder(m: &mut DocumentMutator<'_>, parent: NodeId, want: &[u64], nodes: &FxHashMap<u64, Entry>) -> u32 {
     let want: Vec<NodeId> = want.iter().map(|k| nodes[k].id).collect();
     let mut current: Vec<NodeId> = m.child_ids(parent).to_vec();
     let mut ops = 0;

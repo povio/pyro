@@ -847,7 +847,7 @@ struct WordSource {
     weight: u16,
 }
 
-#[derive(Default, Debug)]
+#[derive(Clone, Default, Debug)]
 pub struct FlowResult {
     pub boxes: Boxes,
     /// Text nodes laid out in line boxes: the union of their fragments

@@ -73,6 +73,30 @@ impl PageDom {
     fn snapshot_as(&self, base_url: &str, mark: Option<(NodeId, &str)>, form: Form) -> RenderSnapshot {
         let dom = self.dom.borrow();
         let layout = self.layout.borrow();
+        snapshot_of(&dom, &layout, self.document(), base_url, mark, form)
+    }
+}
+
+/// [`PageDom::render_snapshot_tree`] from a borrowed document and layout
+/// (a geometry source, called while the page's layout is borrowed).
+pub fn render_tree_snapshot(
+    dom: &lp_dom::Dom,
+    layout: &lp_dom::layout::Layout,
+    document: NodeId,
+    base_url: &str,
+) -> RenderSnapshot {
+    snapshot_of(dom, layout, document, base_url, None, Form::Tree)
+}
+
+fn snapshot_of(
+    dom: &lp_dom::Dom,
+    layout: &lp_dom::layout::Layout,
+    document: NodeId,
+    base_url: &str,
+    mark: Option<(NodeId, &str)>,
+    form: Form,
+) -> RenderSnapshot {
+    {
         let style = layout.style();
         let base = url::Url::parse(base_url).ok();
         let sheets = std::cell::RefCell::new(HashMap::new());
@@ -86,8 +110,8 @@ impl PageDom {
         };
         let opts = RenderHtml { style_text: &style_text, stylesheet_href: &stylesheet_href, mark };
         let (html, tree) = match form {
-            Form::Html => (dom.render_html(self.document(), &opts).unwrap_or_default(), None),
-            Form::Tree => (String::new(), Some(dom.render_tree(self.document(), &opts).unwrap_or_default())),
+            Form::Html => (dom.render_html(document, &opts).unwrap_or_default(), None),
+            Form::Tree => (String::new(), Some(dom.render_tree(document, &opts).unwrap_or_default())),
             Form::None => (String::new(), None),
         };
         let viewport = layout.viewport();

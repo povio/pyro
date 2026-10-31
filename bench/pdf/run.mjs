@@ -99,8 +99,8 @@ const waitCdp = async (port) => {
   throw new Error(`no CDP endpoint on ${port}`);
 };
 
-const startEngine = async (name, build, cmd, cmdArgs, port) => {
-  const proc = spawn(cmd, cmdArgs, { stdio: ['ignore', 'ignore', 'pipe'] });
+const startEngine = async (name, build, cmd, cmdArgs, port, env = {}) => {
+  const proc = spawn(cmd, cmdArgs, { stdio: ['ignore', 'ignore', 'pipe'], env: { ...process.env, ...env } });
   let err = '';
   proc.stderr.on('data', (d) => (err = (err + d).slice(-4000)));
   await waitCdp(port);
@@ -121,14 +121,15 @@ const launchChrome = (build, port) =>
     'about:blank',
   ], port);
 
-const launchLp = (build, port) =>
+const launchLp = (build, port, geometry) =>
   startEngine(
-    `lp-${build.name}`,
+    geometry ? `lp-${geometry}` : `lp-${build.name}`,
     { ...build, url: 'http://pdfgen.localhost/index.html' },
     path.resolve(args.lp),
     // Lightningpanda has no file: scheme: the build is served in place of an origin.
     ['serve', '--port', String(port), '--static', `http://pdfgen.localhost=${build.dir}`],
     port,
+    geometry ? { LIGHTNINGPANDA_GEOMETRY: geometry } : {},
   );
 
 const newPage = async (browser) => {
@@ -143,9 +144,18 @@ const preparePage = async (page, build) => {
   await page.waitForSelector('html[data-pdfgen-ready="true"]', { state: 'attached', timeout: 60000 });
 };
 
+// LP.geometryStats: Blitz-backed layouts since the last call (lp-blitz only).
+const geometryStats = async (page) => {
+  const session = await page.context().newCDPSession(page);
+  const r = await session.send('LP.geometryStats').catch(() => null);
+  await session.detach().catch(() => {});
+  return r;
+};
+
 let seq = 0;
-const renderOnce = async (page, payload, landscape) => {
+const renderOnce = async (page, payload, landscape, geometry = false) => {
   const token = `pdf-${++seq}`;
+  if (geometry) await geometryStats(page);
   const t0 = performance.now();
   await page.evaluate(
     ({ data, token }) => globalThis.postMessage({ type: 'generate-pdf', data, generationToken: token }),
@@ -157,6 +167,9 @@ const renderOnce = async (page, payload, landscape) => {
   });
   await page.evaluate(() => document.fonts.ready.then(() => undefined));
   const t1 = performance.now();
+  // Outside the timed window: the layouts pagination forced.
+  const geom = geometry ? await geometryStats(page) : undefined;
+  const t1b = performance.now();
   const pdf = await page.pdf({
     displayHeaderFooter: false,
     format: 'A4',
@@ -168,7 +181,7 @@ const renderOnce = async (page, payload, landscape) => {
     tagged: false,
   });
   const t2 = performance.now();
-  return { pdf: Buffer.from(pdf), paginateMs: t1 - t0, pdfMs: t2 - t1, totalMs: t2 - t0 };
+  return { pdf: Buffer.from(pdf), paginateMs: t1 - t0, pdfMs: t2 - t1b, totalMs: t1 - t0 + (t2 - t1b), geom };
 };
 
 const pageCount = (file) => {
@@ -189,7 +202,9 @@ if (!args.skipChrome) {
   engines.push(await launchChrome(builds[0], 9431));
   engines.push(await launchChrome(builds[1], 9432));
 }
-if (args.lp) engines.push(await launchLp(builds[1], Number(args.port ?? 9433)));
+if (args.lp && !args.skipFlow) engines.push(await launchLp(builds[1], Number(args.port ?? 9433)));
+// --blitz: the same binary with Blitz-backed layout queries.
+if (args.lp && args.blitz) engines.push(await launchLp(builds[1], 9434, 'blitz'));
 
 for (const e of engines) {
   e.page = await newPage(e.browser);
@@ -233,7 +248,7 @@ for (const c of cases) {
       const s = sampler(e.pid);
       let r;
       try {
-        r = await renderOnce(e.page, payload, landscape);
+        r = await renderOnce(e.page, payload, landscape, e.name === 'lp-blitz');
       } catch (err) {
         s.stop();
         rows.push({ case: c.name, engine: e.name, rep, error: String(err).slice(0, 300) });
@@ -261,6 +276,7 @@ for (const c of cases) {
         bytes: r.pdf.length,
         pages: rep === 0 ? pageCount(file) : undefined,
         peakRss,
+        geometry: r.geom,
         lp: rep === 0 && e.name.startsWith('lp') ? await lpReport(e.page, landscape).catch((x) => String(x)) : undefined,
       };
       rows.push(row);
