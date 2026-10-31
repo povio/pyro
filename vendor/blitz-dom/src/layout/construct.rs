@@ -319,22 +319,16 @@ fn classify_flow_children(
     classification: &mut FlowClassification,
 ) {
     let node = &doc.nodes[container_node_id];
-    // ::before/::after pseudos with display:contents are transparent for box
-    // generation, so their children (e.g. generated text) participate in the
-    // container's formatting context and vote in the classification. Pseudos
-    // with any other display value generate their own box, which every
-    // construction arm already pushes explicitly, so they cast no vote.
-    let pseudo_ids = node
+    // ::before/::after pseudos vote like children: a display:contents pseudo
+    // through its children (e.g. generated text), any other through its own
+    // box. A container whose only in-flow content is an inline-block pseudo
+    // (`:empty::before { content: ''; display: inline-block }`) is an inline
+    // formatting context with a line strut, not an empty out-of-flow one.
+    let child_ids = node
         .before()
         .into_iter()
-        .chain(node.after())
-        .filter(|pe_id| {
-            let display = doc.nodes[*pe_id]
-                .display_style()
-                .unwrap_or(Display::inline());
-            matches!(display.inside(), DisplayInside::Contents)
-        });
-    let child_ids = node.children.iter().copied().chain(pseudo_ids);
+        .chain(node.children.iter().copied())
+        .chain(node.after());
     for child_id in child_ids {
         let child = &doc.nodes[child_id];
 
@@ -1039,6 +1033,25 @@ pub(crate) fn build_inline_layout_into(
     scale: f32,
     inline_context_root_node_id: NodeId,
 ) {
+    build_inline_layout_with(nodes, layout_ctx, font_ctx, text_layout, scale, inline_context_root_node_id, false);
+    // A line holding atomic inlines but no text still has its strut (CSS 2.1
+    // 10.8.1): the root's font and line height. Parley makes no line height
+    // without text, so a line of empty inline-blocks was 0px tall. A
+    // zero-width space provides the strut.
+    if text_layout.layout.inline_boxes().len() > 0 && text_layout.text.trim().is_empty() {
+        build_inline_layout_with(nodes, layout_ctx, font_ctx, text_layout, scale, inline_context_root_node_id, true);
+    }
+}
+
+fn build_inline_layout_with(
+    nodes: &crate::NodeTree,
+    layout_ctx: &mut LayoutContext<TextBrush>,
+    font_ctx: &mut FontContext,
+    text_layout: &mut TextLayout,
+    scale: f32,
+    inline_context_root_node_id: NodeId,
+    strut: bool,
+) {
     // Get the inline context's root node's text styles
     let root_node = &nodes[inline_context_root_node_id];
     let root_node_style = root_node.primary_styles().or_else(|| {
@@ -1124,6 +1137,9 @@ pub(crate) fn build_inline_layout_into(
         );
     }
 
+    if strut {
+        builder.push_text("\u{200B}");
+    }
     text_layout.text = builder.build_into(&mut text_layout.layout);
     return;
 
