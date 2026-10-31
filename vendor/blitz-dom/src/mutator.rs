@@ -539,6 +539,12 @@ impl DocumentMutator<'_> {
 
     /// Remove the node from it's parent but don't drop it
     pub fn remove_node(&mut self, node_id: NodeId) {
+        // A removed element inside a `:has()` argument changes its anchors.
+        self.doc.invalidate_has_anchors(node_id);
+        if let Some(parent_id) = self.doc.nodes[node_id].parent {
+            self.doc.invalidate_has_anchors(parent_id);
+            self.restyle_if_empty_matters(parent_id);
+        }
         let node_is_in_document = self.doc.nodes[node_id].flags.is_in_document();
         // Process the subtree *before* severing the parent link so that
         // interaction state referencing removed nodes can retarget to the
@@ -662,12 +668,40 @@ impl DocumentMutator<'_> {
         });
     }
 
+    /// lightningpanda: `:empty`: a parent some `:empty` selector was tested
+    /// on (`HAS_EMPTY_SELECTOR`) restyles when it gains or loses children.
+    fn restyle_if_empty_matters(&mut self, parent_id: NodeId) {
+        let parent = &mut self.doc.nodes[parent_id];
+        if parent.is_element()
+            && parent.selector_flags().get().contains(selectors::matching::ElementSelectorFlags::HAS_EMPTY_SELECTOR)
+            && parent.primary_styles().is_some()
+        {
+            parent.set_restyle_hint(style::invalidation::element::restyle_hints::RestyleHint::restyle_subtree());
+        }
+    }
+
     fn add_children_to_parent(
         &mut self,
         parent_id: NodeId,
         child_ids: &[NodeId],
         insert_children_fn: &dyn Fn(&mut Node, &[NodeId]),
     ) {
+        // New children of an element in a `:has()` search path (or of an
+        // anchor) can change what the anchors match.
+        self.doc.invalidate_has_anchors(parent_id);
+        self.restyle_if_empty_matters(parent_id);
+        if self.doc.nodes[parent_id].is_element()
+            && self.doc.nodes[parent_id]
+            .selector_flags()
+            .get()
+            .intersects(
+                selectors::matching::ElementSelectorFlags::ANCHORS_RELATIVE_SELECTOR
+                    | selectors::matching::ElementSelectorFlags::ANCHORS_RELATIVE_SELECTOR_NON_SUBJECT,
+            )
+            && self.doc.nodes[parent_id].primary_styles().is_some()
+        {
+            self.doc.nodes[parent_id].set_restyle_hint(style::invalidation::element::restyle_hints::RestyleHint::restyle_subtree());
+        }
         let new_parent_is_in_document = self.doc.nodes[parent_id].flags.is_in_document();
         self.mutations_occurred |= new_parent_is_in_document && !child_ids.is_empty();
         // Detach the children from their old parents *before* inserting them into

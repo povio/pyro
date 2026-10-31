@@ -409,3 +409,13 @@ fn a_replaced_flex_item_shrinks_to_its_natural_width() {
         </div></body></html>"#;
     assert_eq!(element_width(html), 719);
 }
+
+#[test]
+/// `:has()` matches (Stylo gates it behind a pref Blitz did not set).
+fn has_selectors_match() {
+    let html = r#"<!doctype html><html><style>.group:has(input:disabled) .icon{width:150px} .icon{width:20px;height:10px} .g2:has(.x) .icon{width:77px}</style><body style="margin:0"><div class=group><div><input disabled></div><div><div class=icon data-lp-render-clip></div></div></div></body></html>"#;
+    let a = element_width(html);
+    let html2 = r#"<!doctype html><html><style>.g2:has(.x) .icon{width:77px} .icon{width:20px;height:10px}</style><body style="margin:0"><div class=g2><div class=x></div><div class=icon data-lp-render-clip></div></div></body></html>"#;
+    let b = element_width(html2);
+    assert_eq!((a, b), (150, 77));
+}

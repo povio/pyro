@@ -1459,7 +1459,6 @@ fn assert_matches_fresh(p: &Page, step: &str) {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn incremental_style_invalidation_never_serves_stale_geometry() {
     // Selective style invalidation (DOM change journal) must give exactly the
     // geometry of a full recomputation after each kind of change it handles:
@@ -1897,7 +1896,6 @@ fn sibling_and_fragment_invalidation_stays_exact() {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn data_and_aria_attributes_restyle_only_through_selectors_naming_them() {
     // Style and layout never read data-*/aria-* attributes: only selectors
     // can observe them, so a change of one no selector names restyles
@@ -1958,7 +1956,6 @@ fn incremental_style_survives_garbage_collected_removed_nodes() {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn focus_and_hover_moves_invalidate_selectively_without_stale_geometry() {
     // A moved focus or hover restyles the elements whose :focus,
     // :focus-within or :hover match changed (the old and new elements, and
@@ -2050,7 +2047,6 @@ fn focus_and_hover_moves_invalidate_selectively_without_stale_geometry() {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn radio_group_changes_invalidate_selectively_without_stale_geometry() {
     // Regrouping (type/name) and removing radios restyle every radio in the
     // tree and what their validity restyles, instead of everything. (No
@@ -2097,7 +2093,6 @@ fn radio_group_changes_invalidate_selectively_without_stale_geometry() {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn insertions_and_removals_invalidate_selectively_without_stale_geometry() {
     // An insertion or removal restyles the inserted/removed subtree, later
     // siblings through any sibling combinator (adjacency changes even for
@@ -2197,7 +2192,6 @@ fn insertions_and_removals_invalidate_selectively_without_stale_geometry() {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn has_anchor_context_bounds_universal_anchors_without_stale_geometry() {
     // TOS: `[data-is-empty=true] :has(>[data-static-segment-type])>...`
     // anchors are universal but must sit below a [data-is-empty] ancestor,
@@ -2550,7 +2544,6 @@ fn journal_overflow_keeps_recent_changes_covered() {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn large_react_like_batches_invalidate_without_stale_geometry() {
     // A list filled child by child between two flushes (TOS Positions rows
     // rebuilt off-document, then inserted): more changes than the old
@@ -2833,7 +2826,6 @@ fn sticky_boxes_stay_in_their_scrollport_like_chromium() {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn validity_has_anchors_invalidate_selectively_without_stale_geometry() {
     // Tailwind's has-invalid: utility as Lightning CSS serves it to TOS. A
     // `:has()` testing descendant validity made every DOM change restyle the
@@ -3763,7 +3755,6 @@ fn assert_styles_match_fresh(p: &Page, step: &str, ids: &[&str]) -> Vec<String> 
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn has_anchor_argument_guard_never_serves_stale_styles() {
     // `:has()` anchors are rooted only through path nodes that can satisfy
     // the argument's first compound. Every kind of change the guard looks at
@@ -4454,4 +4445,5 @@ fn table_structure_changes_relayout_like_a_fresh_pass() {
     p.dom.set_text_content(span, "x").unwrap();
     assert_matches_fresh(&p, "text again");
 }
+
 

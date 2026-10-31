@@ -26,6 +26,11 @@ use crate::forms::InputType;
 use crate::node::{NodeId, NodeKind, NIL};
 use crate::serialize::{escape, is_void};
 
+/// Namespace of the `state` attribute render trees carry on form controls
+/// (see `Dom::render_states`): page CSS cannot match it (`[state]` matches
+/// the null namespace only), the renderer maps it to pseudo-classes.
+pub const STATE_NS: &str = "urn:x-lightningpanda:state";
+
 /// What the caller supplies.
 pub struct RenderHtml<'a> {
     /// Sheet text replacing a `<style>` element's own text (CSSOM edits);
@@ -146,7 +151,8 @@ impl Sink for HtmlSink<'_> {
         let out = &mut self.out;
         out.push('<');
         out.push_str(tag);
-        for a in attrs {
+        // The state attribute is for keyed trees: markup would lose its namespace.
+        for a in attrs.iter().filter(|a| &*a.name.ns != STATE_NS) {
             out.push(' ');
             match &a.name.prefix {
                 Some(p) if !p.is_empty() => {
@@ -356,6 +362,13 @@ impl Dom {
                     if html && local == "option" && self.option_selected(id).unwrap_or(false) {
                         attrs.push(RAttr { name: plain("selected"), value: Cow::Borrowed(""), valueless: true });
                     }
+                    if let Some(states) = self.render_states(n) {
+                        attrs.push(RAttr {
+                            name: Cow::Owned(QualName::new(None, STATE_NS.into(), "state".into())),
+                            value: Cow::Owned(states),
+                            valueless: false,
+                        });
+                    }
                     let tag = self.serialized_tag(n);
                     let void = html && is_void(local);
                     sink.open(render_key(id), &tag, &e.name, &attrs, mark == Some(n), void);
@@ -410,7 +423,39 @@ impl Dom {
                     parents.push(p);
                     inserted.insert(c);
                 }
-                Change::Removed(p, _, _) => parents.push(p),
+                Change::Removed(p, n, _) => {
+                    parents.push(p);
+                    // A removed radio leaves its group (the radios still in
+                    // the document revalidate).
+                    if self.slot_live(n) && self.slot_live(p) {
+                        let is_radio = |k: u32| {
+                            self.n(k).element().is_some_and(|e| {
+                                e.is_html()
+                                    && &*e.name.local == "input"
+                                    && e.attr("type").is_some_and(|t| t.eq_ignore_ascii_case("radio"))
+                            })
+                        };
+                        // The removed node or anything inside it.
+                        let mut radio = false;
+                        let mut k = n;
+                        while k != NIL && !radio {
+                            radio = is_radio(k);
+                            k = self.following_in(k, n);
+                        }
+                        if radio {
+                            let mut first = Vec::new();
+                            let root = self.root_idx(p);
+                            let mut k = root;
+                            while k != NIL {
+                                if is_radio(k) {
+                                    first.push(k);
+                                }
+                                k = self.following_in(k, root);
+                            }
+                            changed.extend(first);
+                        }
+                    }
+                }
                 Change::Pseudo => {}
                 Change::Unknown(_) => return None,
             }
@@ -459,7 +504,7 @@ impl Dom {
         let mut seen = rustc_hash::FxHashSet::default();
         parents.sort_unstable();
         parents.dedup();
-        for p in parents {
+        for &p in &parents {
             match rendered(p) {
                 Err(()) => return None,
                 Ok(false) => continue,
@@ -478,6 +523,13 @@ impl Dom {
                 nodes: sink.tree.nodes,
             });
         }
+        // Validity is not local: a form or fieldset follows its controls,
+        // and a required radio group spans its radios.
+        let mut dependents = Vec::new();
+        for &i in changed.iter().chain(parents.iter()) {
+            self.state_dependents(i, &mut dependents);
+        }
+        changed.extend(dependents);
         changed.sort_unstable();
         changed.dedup();
         for i in changed {
@@ -499,6 +551,76 @@ impl Dom {
             ops.push(DeltaOp::Node { key: first.key, kind: first.kind });
         }
         Some(RenderDelta { ops })
+    }
+
+    /// The pseudo-class states of element `n` a renderer cannot derive from
+    /// its markup (validity, placeholder shown, read-write, ...), as the
+    /// space-separated value of the [`STATE_NS`] `state` attribute; `None`
+    /// for elements without any.
+    fn render_states(&self, n: u32) -> Option<String> {
+        use crate::select::PseudoClass::*;
+        let e = self.n(n).element()?;
+        let local: &str = &e.name.local;
+        let control = matches!(local, "input" | "textarea" | "select" | "button" | "output");
+        let kind = e.is_html()
+            && (control || matches!(local, "form" | "fieldset" | "option" | "optgroup" | "details" | "dialog"));
+        let editable = e.attr("contenteditable").is_some();
+        if !kind && !editable {
+            return None;
+        }
+        let mut out = String::new();
+        for (pc, name) in [
+            (Valid, "valid"),
+            (Invalid, "invalid"),
+            (Indeterminate, "indeterminate"),
+            (Required, "required"),
+            (Optional, "optional"),
+            (ReadWrite, "read-write"),
+            (PlaceholderShown, "placeholder-shown"),
+            (Default, "default"),
+            (Open, "open"),
+        ] {
+            if self.matches_state(n, pc) {
+                if !out.is_empty() {
+                    out.push(' ');
+                }
+                out.push_str(name);
+            }
+        }
+        (!out.is_empty()).then_some(out)
+    }
+
+    /// Elements whose [`Dom::render_states`] a change at `i` can change
+    /// besides `i`: the forms, fieldsets and selects around it, and every
+    /// radio when `i` is one (a renamed radio leaves one group for another).
+    fn state_dependents(&self, i: u32, out: &mut Vec<u32>) {
+        if !self.slot_live(i) {
+            return;
+        }
+        let mut cur = self.n(i).parent;
+        while cur != NIL {
+            if let Some(e) = self.n(cur).element() {
+                if e.is_html() && matches!(&*e.name.local, "form" | "fieldset" | "select") {
+                    out.push(cur);
+                }
+            }
+            cur = self.n(cur).parent;
+        }
+        let is_radio = |e: &crate::node::ElementData| {
+            e.is_html() && &*e.name.local == "input" && e.attr("type").is_some_and(|t| t.eq_ignore_ascii_case("radio"))
+        };
+        if self.n(i).element().is_some_and(is_radio) {
+            let root = self.root_idx(i);
+            let mut n = root;
+            while n != NIL {
+                if n != i {
+                    if self.n(n).element().is_some_and(is_radio) {
+                        out.push(n);
+                    }
+                }
+                n = self.following_in(n, root);
+            }
+        }
     }
 
     /// Whether child `k` appears in the render tree (as itself).

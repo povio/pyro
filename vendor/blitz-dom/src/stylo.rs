@@ -59,6 +59,20 @@ use style_dom::ElementState;
 
 use style::values::computed::text::TextAlign as StyloTextAlign;
 
+impl Node {
+    /// lightningpanda: whether the element's `urn:x-lightningpanda:state`
+    /// attribute (written by lp-dom's render tree) lists `state`: the
+    /// pseudo-classes Blitz cannot derive itself (validity, placeholder
+    /// shown, read-write, ...).
+    fn has_lp_state(&self, state: &str) -> bool {
+        self.element_data().is_some_and(|e| {
+            e.attrs.iter().any(|a| {
+                &*a.name.ns == "urn:x-lightningpanda:state" && a.value.split_ascii_whitespace().any(|s| s == state)
+            })
+        })
+    }
+}
+
 impl crate::document::BaseDocument {
     pub fn resolve_stylist(&mut self, now: f64) {
         style::thread_state::enter(ThreadState::LAYOUT);
@@ -468,36 +482,36 @@ impl selectors::Element for BlitzNode<'_> {
                 .element_state()
                 .intersects(ElementState::VISITED_OR_UNVISITED),
             NonTSPseudoClass::Checked => self.element_state().contains(ElementState::CHECKED),
-            NonTSPseudoClass::Valid => false,
-            NonTSPseudoClass::Invalid => false,
+            NonTSPseudoClass::Valid => self.has_lp_state("valid"),
+            NonTSPseudoClass::Invalid => self.has_lp_state("invalid"),
             NonTSPseudoClass::Defined => false,
             NonTSPseudoClass::Disabled => self.element_state().contains(ElementState::DISABLED),
             NonTSPseudoClass::Enabled => self.element_state().contains(ElementState::ENABLED),
             NonTSPseudoClass::Focus => self.element_state().contains(ElementState::FOCUS),
-            NonTSPseudoClass::FocusWithin => false,
-            NonTSPseudoClass::FocusVisible => false,
+            NonTSPseudoClass::FocusWithin => self.element_state().contains(ElementState::FOCUS_WITHIN),
+            NonTSPseudoClass::FocusVisible => self.element_state().contains(ElementState::FOCUS),
             NonTSPseudoClass::Fullscreen => false,
             NonTSPseudoClass::Hover => self.element_state().contains(ElementState::HOVER),
-            NonTSPseudoClass::Indeterminate => false,
+            NonTSPseudoClass::Indeterminate => self.has_lp_state("indeterminate"),
             NonTSPseudoClass::Lang(_) => false,
             NonTSPseudoClass::CustomState(_) => false,
             NonTSPseudoClass::Link => self.element_state().contains(ElementState::UNVISITED),
-            NonTSPseudoClass::PlaceholderShown => false,
-            NonTSPseudoClass::ReadWrite => false,
-            NonTSPseudoClass::ReadOnly => false,
+            NonTSPseudoClass::PlaceholderShown => self.has_lp_state("placeholder-shown"),
+            NonTSPseudoClass::ReadWrite => self.has_lp_state("read-write"),
+            NonTSPseudoClass::ReadOnly => !self.has_lp_state("read-write"),
             NonTSPseudoClass::ServoNonZeroBorder => false,
             NonTSPseudoClass::Target => false,
             NonTSPseudoClass::Visited => false,
             NonTSPseudoClass::Autofill => false,
-            NonTSPseudoClass::Default => false,
+            NonTSPseudoClass::Default => self.has_lp_state("default"),
 
             NonTSPseudoClass::InRange => false,
             NonTSPseudoClass::Modal => false,
-            NonTSPseudoClass::Open => false,
-            NonTSPseudoClass::Optional => false,
+            NonTSPseudoClass::Open => self.has_lp_state("open"),
+            NonTSPseudoClass::Optional => self.has_lp_state("optional"),
             NonTSPseudoClass::OutOfRange => false,
             NonTSPseudoClass::PopoverOpen => false,
-            NonTSPseudoClass::Required => false,
+            NonTSPseudoClass::Required => self.has_lp_state("required"),
             NonTSPseudoClass::UserInvalid => false,
             NonTSPseudoClass::UserValid => false,
             NonTSPseudoClass::MozMeterOptimum => false,
