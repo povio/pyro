@@ -754,6 +754,14 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
     }
 }
 
+impl LayoutPassState<'_> {
+    #[cfg(feature = "floats")]
+    fn clear_layout_cache_of(&mut self, node_id: NodeId) {
+        use taffy::CacheTree as _;
+        self.cache_clear(node_id);
+    }
+}
+
 impl taffy::CacheTree for LayoutPassState<'_> {
     #[inline]
     fn cache_get(
@@ -809,11 +817,25 @@ impl taffy::LayoutBlockContainer for LayoutPassState<'_> {
         &mut self,
         node_id: NodeId,
         inputs: taffy::LayoutInput,
-        block_ctx: Option<&mut BlockContext<'_>>,
+        mut block_ctx: Option<&mut BlockContext<'_>>,
     ) -> taffy::LayoutOutput {
-        compute_cached_layout(self, node_id, inputs, |tree, node_id, inputs| {
-            tree.compute_child_layout_internal(node_id, inputs, block_ctx)
-        })
+        // A block in a formatting context with floats depends on them, which
+        // the cache doesn't key on: it is laid out afresh, and one that placed
+        // floats is not replayed from the cache later (its floats would not
+        // be placed again).
+        #[cfg(feature = "floats")]
+        if block_ctx.as_ref().is_some_and(|ctx| ctx.has_floats()) {
+            self.clear_layout_cache_of(node_id);
+            return self.compute_child_layout_internal(node_id, inputs, block_ctx);
+        }
+        let output = compute_cached_layout(self, node_id, inputs, |tree, node_id, inputs| {
+            tree.compute_child_layout_internal(node_id, inputs, block_ctx.as_deref_mut())
+        });
+        #[cfg(feature = "floats")]
+        if block_ctx.as_ref().is_some_and(|ctx| ctx.has_floats()) {
+            self.clear_layout_cache_of(node_id);
+        }
+        output
     }
 }
 

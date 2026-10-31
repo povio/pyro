@@ -6,16 +6,13 @@ exercised flow internals (its style source, reuse caches, result diffing) were d
 
 Ignored tests (`Blitz parity gap`) fail against Blitz today, grouped:
 
-- scrollWidth/Height: one border too many when nothing overflows, and a nested scroll container's
-  overflow propagating to its ancestors (shell, popover, cross-min-max, compressible inputs).
-- Stale geometry after mutations: Blitz's incremental restyle/relayout misses `:has()`, `aria-`/`data-`
-  attribute selectors, focus/hover, radio groups and some removals (cached vs fresh layout differ).
-- Text: `<br>` line boxes, trailing space in right-aligned lines, nbsp, `overflow-wrap`, generated
-  content, text input/textarea scroll sizes from their value, whitespace in shrink-to-fit widths.
+- Text measured in system-ui (SF on macOS, where Chromium's tracking differs): form controls and a
+  modal with an input, compressible inputs (percentage and flex-wrap), nbsp width, `overflow-wrap`,
+  whitespace between inline pieces in shrink-to-fit widths, a normal-whitespace span wrapping in a
+  nowrap cell (line pitch), a text input's and textarea's scroll width from their value, text-align.
+- Grid: fractional `fr` tracks round to 1/64 px where Chromium keeps the exact fraction (2).
+- Flex: a percentage flex-basis in a column of indefinite height should behave as content.
 - Tables: rowspan (row heights and row boxes around a spanning cell).
-- Floats: incremental relayout when a float changes (its neighbours keep their old lines); the float
-  layout itself runs since Blitz's `floats` feature was enabled. Margin collapsing through parents, caret positions, scroll anchoring, SVG shape rects, image
-  natural size (the tests' fetcher loads nothing).
 
 `pending/layout.rs`: lp-dom's faux-layout tests (upstream's renderless geometry). Most expectations are that
 layout's synthetic numbers; the scroll/visibility behaviour among them is still to be ported.
