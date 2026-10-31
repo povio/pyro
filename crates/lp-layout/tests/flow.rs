@@ -292,7 +292,6 @@ fn fixed_and_absolute_boxes_escape_overflow_clips_outside_their_containing_block
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn svg_shapes_have_client_rects_from_their_bbox_like_chromium() {
     // Gap 34: SVG shapes had no CSS box, so getBoundingClientRect() was
     // empty while getBBox() was right, and visibility checks failed.

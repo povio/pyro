@@ -792,10 +792,12 @@ impl Layout {
 
     fn bounding_client_rect_for_visible(&self, dom: &Dom, el: NodeId) -> Rect {
         let (dx, dy) = self.ancestor_scroll_offset(dom, el);
-        let Some(b) = self.layout_box(dom, el) else {
-            // SVG content has no CSS box.
-            return self.svg_client_rect(dom, el).unwrap_or_default();
-        };
+        // SVG content (anything in an `<svg>` but a nested `<svg>`'s own box
+        // aside) has no CSS box: its geometry is its bbox.
+        if let Some(r) = self.svg_client_rect(dom, el) {
+            return r;
+        }
+        let Some(b) = self.layout_box(dom, el) else { return Rect::default() };
         let (kx, ky) = match self.external.as_ref().is_some_and(|s| s.has_sticky()) {
             true => self.sticky_shift(dom, &self.layout_result(dom), el),
             false => (0.0, 0.0),
@@ -813,16 +815,23 @@ impl Layout {
         if dom.element(el).ok()?.name.ns != markup5ever::ns!(svg) {
             return None;
         }
+        if dom.element(el).ok()?.name.local == local_name!("svg") {
+            return None;
+        }
+        // The nearest `<svg>` laid out as a box.
         let mut svg = dom.parent_element(el).ok().flatten()?;
         let b = loop {
-            if let Some(b) = self.layout_box(dom, svg) {
-                break b;
+            let e = dom.element(svg).ok()?;
+            if e.name.ns != markup5ever::ns!(svg) {
+                return None;
+            }
+            if e.name.local == local_name!("svg") {
+                if let Some(b) = self.layout_box(dom, svg).filter(|b| b.rect.width > 0.0 || b.rect.height > 0.0) {
+                    break b;
+                }
             }
             svg = dom.parent_element(svg).ok().flatten()?;
         };
-        if dom.element(svg).ok()?.name.ns != markup5ever::ns!(svg) {
-            return None;
-        }
         let edges = |i: usize| b.border[i] + b.padding[i];
         let (left, top) = (edges(LEFT), edges(TOP));
         let viewport = (
