@@ -1208,7 +1208,6 @@ fn grid_parity_min_function_track() {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn flow_parity_br_line_boxes() {
     // ProseMirror's empty paragraph `<p><br></p>` is one line tall; two brs
     // make two lines; a br after content does not add a line.

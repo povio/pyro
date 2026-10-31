@@ -268,7 +268,13 @@ impl BaseDocument {
                     (m.offset + m.advance - m.hanging_advance) as f64
                 })
                 .fold(0.0, f64::max);
-            let height = text_layout.height() as f64;
+            // The empty line parley adds after a final hard break (`<br>`)
+            // is not content.
+            let height = text_layout
+                .lines()
+                .filter(|line| !line.text_range().is_empty())
+                .map(|line| line.metrics().block_max_coord as f64)
+                .fold(0.0, f64::max);
             if width > 0.0 || height > 0.0 {
                 let x0 = (l.border.left + l.padding.left) as f64 * scale;
                 let y0 = (l.border.top + l.padding.top + block_offset) as f64 * scale;

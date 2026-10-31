@@ -1037,8 +1037,8 @@ pub(crate) fn build_inline_layout_into(
     // A line holding atomic inlines but no text still has its strut (CSS 2.1
     // 10.8.1): the root's font and line height. Parley makes no line height
     // without text, so a line of empty inline-blocks was 0px tall. A
-    // zero-width space provides the strut.
-    if text_layout.layout.inline_boxes().len() > 0 && text_layout.text.trim().is_empty() {
+    // word joiner (zero-width, no break opportunity) provides the strut.
+    if text_layout.layout.inline_boxes().len() > 0 && text_layout.text.chars().all(|c| c.is_whitespace() && c != '\n') {
         build_inline_layout_with(nodes, layout_ctx, font_ctx, text_layout, scale, inline_context_root_node_id, true);
     }
 }
@@ -1109,6 +1109,10 @@ fn build_inline_layout_with(
     let mut text_transformer = TextTransformer::default();
     text_transformer.word_break(&builder);
     let text_nodes = &mut Vec::new();
+    // The strut goes before the first in-flow inline box: trailing white
+    // space after it still hangs, leading white space before it still
+    // collapses.
+    let strut = &mut { strut };
 
     if let Some(before_id) = root_node.before() {
         build_inline_layout_recursive(
@@ -1118,6 +1122,7 @@ fn build_inline_layout_with(
             before_id,
             &text_transform,
             text_nodes,
+            strut,
         );
     }
     for child_id in root_node.children.iter().copied() {
@@ -1128,6 +1133,7 @@ fn build_inline_layout_with(
             child_id,
             &text_transform,
             text_nodes,
+            strut,
         );
     }
     if let Some(after_id) = root_node.after() {
@@ -1138,12 +1144,10 @@ fn build_inline_layout_with(
             after_id,
             &text_transform,
             text_nodes,
+            strut,
         );
     }
 
-    if strut {
-        builder.push_text("\u{200B}");
-    }
     text_layout.text = builder.build_into(&mut text_layout.layout);
     text_layout.text_nodes = std::mem::take(text_nodes);
     return;
@@ -1155,6 +1159,7 @@ fn build_inline_layout_with(
         node_id: NodeId,
         parent_text_transform: &CaseTransform,
         text_nodes: &mut Vec<(NodeId, std::ops::Range<usize>)>,
+        strut: &mut bool,
     ) {
         let node = &nodes[node_id];
 
@@ -1218,6 +1223,7 @@ fn build_inline_layout_with(
                                 child_id,
                                 &text_transform,
                                 text_nodes,
+                                strut,
                             );
                         }
                         builder.pop_style_span();
@@ -1228,6 +1234,9 @@ fn build_inline_layout_with(
                         if is_inline_box_element(tag_name) {
                             if box_kind == InlineBoxKind::InFlow {
                                 text_transformer.word_break(builder);
+                                if std::mem::take(strut) {
+                                    builder.push_text("\u{2060}");
+                                }
                             }
                             builder.push_inline_box(InlineBox {
                                 id: node_id.as_u64(),
@@ -1274,6 +1283,7 @@ fn build_inline_layout_with(
                                     before_id,
                                     &text_transform,
                                     text_nodes,
+                                    strut,
                                 );
                             }
 
@@ -1285,6 +1295,7 @@ fn build_inline_layout_with(
                                     child_id,
                                     &text_transform,
                                     text_nodes,
+                                    strut,
                                 );
                             }
                             if let Some(after_id) = node.after() {
@@ -1295,6 +1306,7 @@ fn build_inline_layout_with(
                                     after_id,
                                     &text_transform,
                                     text_nodes,
+                                    strut,
                                 );
                             }
 
@@ -1305,6 +1317,9 @@ fn build_inline_layout_with(
                     (_, _) => {
                         if box_kind == InlineBoxKind::InFlow {
                             text_transformer.word_break(builder);
+                            if std::mem::take(strut) {
+                                builder.push_text("\u{2060}");
+                            }
                         }
                         builder.push_inline_box(InlineBox {
                             id: node_id.as_u64(),
