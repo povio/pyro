@@ -87,6 +87,14 @@ textarea {
     background-color: white;
 }
 
+/* Chromium's `font: -webkit-small-control`: form controls default to 13.333px. */
+input,
+select,
+button,
+textarea {
+    font-size: 13.333px;
+}
+
 input,
 select,
 button {

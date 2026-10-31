@@ -356,16 +356,23 @@ impl LayoutPassState<'_> {
                             );
                         }
                         None | Some("text" | "password" | "email" | "tel" | "url" | "search") => {
+                            // Chromium's intrinsic width: `size` (default 20) average
+                            // characters plus a max-char allowance, about
+                            // (size / 2 + 0.4)em (166px for 16px Arial). It does not
+                            // shrink to the available space: inputs keep it in flex rows
+                            // unless given `min-width: 0`.
+                            let size = element_data
+                                .attr(local_name!("size"))
+                                .and_then(|val| val.trim().parse::<u32>().ok())
+                                .filter(|&size| size > 0)
+                                .unwrap_or(20) as f32;
+                            let width = (size * 0.5 + 0.4) * font_size.unwrap_or(13.333);
                             return compute_leaf_layout(
                                 inputs,
                                 &node.layout_style(),
                                 resolve_calc_value,
                                 |_known_size, _available_space| taffy::Size {
-                                    width: match inputs.available_space.width {
-                                        AvailableSpace::Definite(limit) => limit.min(300.0),
-                                        AvailableSpace::MinContent => 0.0,
-                                        AvailableSpace::MaxContent => 300.0,
-                                    },
+                                    width,
                                     height: resolved_line_height.unwrap_or(16.0),
                                 },
                             );
