@@ -3661,7 +3661,6 @@ fn caret_from_point_takes_the_nearest_character_boundary_like_chromium() {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn overflowing_text_extends_the_scroll_width_like_chromium() {
     // A box's scroll size counted only descendant boxes, so a long name as
     // the direct text of a `truncate` cell (nowrap, overflow hidden,
@@ -3877,7 +3876,6 @@ fn sw(p: &Page, id: &str) -> f64 {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn text_clip_facts_nested_block_and_inline_clippers() {
     let p = page(
         r#"<div id=outer style="width:200px"><div id=clip style="width:100px;overflow:hidden"><span id=s style="white-space:nowrap">a very long run of text that overflows its clipping container by far</span></div>
@@ -3903,7 +3901,6 @@ fn text_clip_facts_nested_block_and_inline_clippers() {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn text_clip_facts_fixed_absolute_and_contents_wrappers() {
     let p = page(
         r#"<div id=root style="width:300px;height:200px;overflow:auto;position:relative">
@@ -3934,7 +3931,6 @@ fn text_clip_facts_deep_nesting_without_recursion() {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn text_clip_facts_are_per_pass_across_reparenting_and_style_changes() {
     let mut p = page(
         r#"<div id=wrap style="width:120px"><div id=a style="width:120px;overflow:hidden"><span id=t style="white-space:nowrap">a long run of text that overflows whichever container holds it</span></div><div id=b style="width:120px"></div></div>"#
@@ -3957,7 +3953,6 @@ fn text_clip_facts_are_per_pass_across_reparenting_and_style_changes() {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn text_clip_facts_cover_absolute_tables_inline_splits_generated_and_shadow_text() {
     // Absolute containing block above intervening (one clipping) wrappers; the absolute box's text is
     // clipped by the wrapper for every ancestor above it and extends only the absolute box itself.

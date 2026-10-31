@@ -252,6 +252,34 @@ impl BaseDocument {
             overflow = overflow.union(child_rect_in_self);
         }
 
+        // lightningpanda: the lines of an inline formatting context are
+        // overflow too (a nowrap name in a 100px `truncate` cell scrolls), and
+        // a scroll container adds its end padding after them.
+        if let Some(text) = self.nodes[node_id].element_data().and_then(|e| e.inline_layout_data.as_deref()) {
+            let l = self.nodes[node_id].final_layout();
+            let width = text
+                .layout
+                .lines()
+                .map(|line| {
+                    let m = line.metrics();
+                    (m.offset + m.advance - m.hanging_advance) as f64
+                })
+                .fold(0.0, f64::max);
+            let height = text.layout.height() as f64;
+            if width > 0.0 || height > 0.0 {
+                let x0 = (l.border.left + l.padding.left) as f64 * scale;
+                let y0 = (l.border.top + l.padding.top + text.block_offset) as f64 * scale;
+                let style = self.nodes[node_id].primary_styles();
+                let scrolls = style.as_ref().is_some_and(|s| {
+                    s.clone_overflow_x() != style::values::computed::Overflow::Visible
+                        || s.clone_overflow_y() != style::values::computed::Overflow::Visible
+                });
+                let (end_x, end_y) =
+                    if scrolls { (l.padding.right as f64 * scale, l.padding.bottom as f64 * scale) } else { (0.0, 0.0) };
+                overflow = overflow.union(Rect::new(x0, y0, x0 + width + end_x, y0 + height + end_y));
+            }
+        }
+
         *self.nodes[node_id].scrollable_overflow_mut() = overflow;
         *self.nodes[node_id].layout_children.get_mut() = layout_children;
 
