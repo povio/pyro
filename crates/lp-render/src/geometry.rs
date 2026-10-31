@@ -36,6 +36,43 @@ pub struct LayoutBox {
     pub scroll_height: f64,
     /// Inside (or itself) a `position: fixed` box.
     pub fixed: bool,
+    /// Border and padding widths: top, right, bottom, left.
+    pub border: [f64; 4],
+    pub padding: [f64; 4],
+    pub position: BoxPosition,
+}
+
+/// An element's `position`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum BoxPosition {
+    #[default]
+    Static,
+    Relative,
+    Absolute,
+    Fixed,
+    Sticky,
+}
+
+/// A `position: sticky` element's inputs (its box is laid out as if static).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct StickyBox {
+    /// `top`, `right`, `bottom`, `left`: px plus a fraction of the scrollport
+    /// (`None`: auto).
+    pub insets: [Option<(f64, f64)>; 4],
+    /// Its containing block's content box (the table's for table parts),
+    /// document coordinates: the box never leaves it.
+    pub limit: Option<(f64, f64, f64, f64)>,
+}
+
+fn box_position(node: &blitz_dom::Node) -> BoxPosition {
+    use style::computed_values::position::T;
+    match node.primary_styles().map(|s| s.clone_position()) {
+        Some(T::Relative) => BoxPosition::Relative,
+        Some(T::Absolute) => BoxPosition::Absolute,
+        Some(T::Fixed) => BoxPosition::Fixed,
+        Some(T::Sticky) => BoxPosition::Sticky,
+        _ => BoxPosition::Static,
+    }
 }
 
 impl LayoutBox {
@@ -54,6 +91,7 @@ impl LayoutBox {
             scroll_width: r.width(),
             scroll_height: r.height(),
             fixed,
+            ..LayoutBox::default()
         }
     }
 }
@@ -62,11 +100,25 @@ impl LayoutBox {
 #[derive(Default)]
 pub(crate) struct Geometry {
     transforms: RefCell<FxHashMap<NodeId, (Affine, bool)>>,
+    has_sticky: std::cell::Cell<Option<bool>>,
 }
 
 impl Geometry {
     pub(crate) fn clear(&self) {
         self.transforms.borrow_mut().clear();
+        self.has_sticky.set(None);
+    }
+
+    /// Whether any element is `position: sticky`.
+    pub(crate) fn has_sticky(&self, doc: &BaseDocument) -> bool {
+        if let Some(v) = self.has_sticky.get() {
+            return v;
+        }
+        let v = doc.tree().iter().any(|(_, n)| {
+            n.primary_styles().is_some_and(|s| s.clone_position() == style::computed_values::position::T::Sticky)
+        });
+        self.has_sticky.set(Some(v));
+        v
     }
 
     /// `id`'s border box to the document and whether it is in a fixed box.
@@ -121,6 +173,9 @@ impl Geometry {
             scroll_width: client_width.max(o.x1 - l.border.left as f64),
             scroll_height: client_height.max(o.y1 - l.border.top as f64),
             fixed,
+            border: [l.border.top, l.border.right, l.border.bottom, l.border.left].map(f64::from),
+            padding: [l.padding.top, l.padding.right, l.padding.bottom, l.padding.left].map(f64::from),
+            position: BoxPosition::Static,
         })
     }
 
@@ -142,7 +197,40 @@ impl Geometry {
             scroll_width: unit(b.scroll_width),
             scroll_height: unit(b.scroll_height),
             fixed: b.fixed,
+            border: b.border.map(unit),
+            padding: b.padding.map(unit),
+            position: box_position(doc.get_node(id)?),
         })
+    }
+
+    /// The sticky inputs of `id` (see [`StickyBox`]).
+    pub(crate) fn sticky_box(&self, doc: &BaseDocument, id: NodeId) -> StickyBox {
+        let Some(style) = doc.get_node(id).and_then(|n| n.primary_styles()) else { return StickyBox::default() };
+        let inset = |v: &style::values::computed::Inset| {
+            let style::values::generics::position::GenericInset::LengthPercentage(lp) = v else { return None };
+            let px = lp.resolve(style::values::computed::Length::new(0.0)).px() as f64;
+            let hundred = lp.resolve(style::values::computed::Length::new(100.0)).px() as f64;
+            Some((px, (hundred - px) / 100.0))
+        };
+        let insets = [
+            inset(&style.clone_top()),
+            inset(&style.clone_right()),
+            inset(&style.clone_bottom()),
+            inset(&style.clone_left()),
+        ];
+        // Containing block: the table for table parts, else the parent.
+        let mut cb = doc.get_node(id).and_then(|n| n.parent);
+        if is_table_part(doc, id) || is_cell(doc, id) {
+            while let Some(c) = cb.filter(|&c| tag(doc, c) != Some("table")) {
+                cb = doc.get_node(c).and_then(|n| n.parent);
+            }
+        }
+        let limit = cb.and_then(|c| {
+            let b = self.element_box(doc, c)?;
+            let (t, r, bo, l) = (b.border[0] + b.padding[0], b.border[1] + b.padding[1], b.border[2] + b.padding[2], b.border[3] + b.padding[3]);
+            Some((b.x + l, b.y + t, (b.width - l - r).max(0.0), (b.height - t - bo).max(0.0)))
+        });
+        StickyBox { insets, limit }
     }
 
     fn adjusted_box(&self, doc: &BaseDocument, id: NodeId) -> Option<LayoutBox> {
@@ -318,11 +406,17 @@ impl Geometry {
                 text.text_nodes.get(i).filter(|(_, r)| r.start <= byte).map(|_| i)
             };
             for line in text.layout.lines() {
+                let m = line.metrics();
+                let (line_top, line_height) =
+                    (m.block_min_coord as f64 / scale, (m.block_max_coord - m.block_min_coord) as f64 / scale);
                 for item in line.items() {
                     let parley::PositionedLayoutItem::GlyphRun(run) = item else { continue };
                     let metrics = run.run().font_metrics();
-                    let baseline = run.baseline() as f64;
-                    let (top, bottom) = (baseline - metrics.ascent as f64, baseline + metrics.descent as f64);
+                    // Chromium's text box: whole-pixel ascent and descent,
+                    // the half-leading floored (CSS px, back to layout units).
+                    let (a, d) = (metrics.ascent as f64 / scale, metrics.descent as f64 / scale);
+                    let top = line_top + ((line_height - a.round() - d.round()) / 2.0).floor();
+                    let (top, bottom) = (top * scale, (top + a.round() + d.round()) * scale);
                     let mut x = run.offset() as f64;
                     let mut word: Option<(usize, Vec<(u32, f64)>)> = None;
                     let mut flush = |word: &mut Option<(usize, Vec<(u32, f64)>)>| {
@@ -334,7 +428,8 @@ impl Geometry {
                             node: text.text_nodes[i].0,
                             x: r.x0,
                             y: r.y0,
-                            width: r.width(),
+                            // Chromium rounds a text fragment's width up to its layout unit.
+                            width: (r.width() * 64.0 - 0.01).ceil() / 64.0,
                             height: r.height(),
                             fixed,
                             edges,

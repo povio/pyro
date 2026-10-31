@@ -1219,22 +1219,15 @@ fn input_mouse_wheel_scrolls_container_then_viewport_unless_canceled() {
 #[test]
 fn input_mouse_wheel_over_empty_viewport_space_scrolls_the_viewport() {
     let mut h = Harness::new();
-    approximate_geometry(&h);
     eval_value(&mut h, "document.body.innerHTML='<div style=\"height:10000px\"></div>'; 1");
-    // Playwright's initial mouse position; the synthetic layout has no
-    // element there, where Chrome would hit the root element.
-    assert_eq!(eval_value(&mut h, "document.elementFromPoint(0, 0) === null"), json!(true));
+    // Playwright's initial mouse position: Chrome hits the root element there
+    // (the body's margin).
+    assert_eq!(eval_value(&mut h, "document.elementFromPoint(0, 0) === document.documentElement"), json!(true));
     let r = h.page("Input.dispatchMouseEvent", json!({"type":"mouseWheel","x":0,"y":0,"deltaX":0,"deltaY":70}));
     assert_eq!(r["result"], json!({}), "{r}");
     assert_eq!(eval_value(&mut h, "scrollY"), json!(70));
     let r = h.page("Input.dispatchMouseEvent", json!({"type":"mouseWheel","x":-1,"y":0,"deltaX":0,"deltaY":70}));
     assert!(r["error"]["message"].as_str().is_some_and(|m| m.contains("no element at point")), "{r}");
-    eval_value(&mut h, "scrollTo(0, 0); 1");
-    let r = h.page("Input.dispatchMouseEvent", json!({"type":"mousePressed","x":0,"y":0,"button":"left","buttons":1}));
-    assert!(
-        r["error"]["message"].as_str().is_some_and(|m| m.contains("no element at point")),
-        "clicks keep the error: {r}"
-    );
 }
 
 /// Pages for the drag tests: centers of #src, #dst and #plain, and a capture
@@ -1453,25 +1446,12 @@ fn set_content_document_write_reports_fresh_lifecycle_after_console_tag() {
     );
 }
 
-/// Runs the harness's pages in the approximate (faux) geometry: the tests
-/// that call it describe that layout's empty gaps, which the default flow
-/// layout does not have (it hit-tests empty viewport space as the root).
-fn approximate_geometry(h: &Harness) {
-    for page in &h.browser.host().thread.browser.pages {
-        if let Some(dom) = &page.main_frame.page_dom {
-            dom.layout.borrow_mut().set_geometry(lp_dom::layout::Geometry::Approximate);
-        }
-    }
-}
-
 #[test]
 fn input_mouse_move_to_empty_viewport_space_leaves_hovered_element_as_chromium() {
     // TOS TS-100 dismisses a hover tooltip with page.mouse.move(0, 0). Chrome
-    // hit-tests empty viewport space as the root element; the synthetic
-    // layout has no element there. Expected sequences recorded from headless
-    // Chromium (Playwright 1.59.1) for the same page.
+    // hit-tests empty viewport space as the root element. Expected sequences
+    // recorded from headless Chromium (Playwright 1.59.1) for the same page.
     let mut h = Harness::new();
-    approximate_geometry(&h);
     eval_value(
         &mut h,
         r#"
@@ -1484,7 +1464,7 @@ fn input_mouse_move_to_empty_viewport_space_leaves_hovered_element_as_chromium()
     "#,
     );
     let point = eval_value(&mut h, "point");
-    assert_eq!(eval_value(&mut h, "document.elementFromPoint(0, 0) === null"), json!(true));
+    assert_eq!(eval_value(&mut h, "document.elementFromPoint(0, 0) === document.documentElement"), json!(true));
     let mut moved = |x: &Value, y: &Value| {
         let r =
             h.page("Input.dispatchMouseEvent", json!({"type":"mouseMoved","x":x,"y":y,"button":"none","buttons":0}));
@@ -1503,11 +1483,9 @@ fn input_mouse_move_to_empty_viewport_space_leaves_hovered_element_as_chromium()
         moved(&json!(0), &json!(0)),
         json!("pointerout@trigger c pointerleave@trigger nb pointerleave@HEADER nb pointerleave@BODY nb pointerover@HTML c mouseout@trigger c mouseleave@trigger nb mouseleave@HEADER nb mouseleave@BODY nb mouseover@HTML c mousemove@HTML c")
     );
-    // Outside the viewport and presses on empty space keep the explicit error.
+    // Outside the viewport keeps the explicit error.
     let r =
         h.page("Input.dispatchMouseEvent", json!({"type":"mouseMoved","x":-5,"y":2000,"button":"none","buttons":0}));
-    assert!(r["error"]["message"].as_str().is_some_and(|m| m.contains("no element at point")), "{r}");
-    let r = h.page("Input.dispatchMouseEvent", json!({"type":"mousePressed","x":0,"y":0,"button":"left","buttons":1}));
     assert!(r["error"]["message"].as_str().is_some_and(|m| m.contains("no element at point")), "{r}");
 }
 
@@ -3373,7 +3351,6 @@ fn scroll_into_view_if_needed_leaves_a_visible_node_alone() {
     let mut h = Harness::new();
     // Flow geometry (TOS runs it): approximate client rects cannot tell what is in view.
     let page = h.browser.host().thread.browser.pages[0].main_frame.page_dom.as_ref().unwrap().clone();
-    page.layout.borrow_mut().set_geometry(lp_dom::layout::Geometry::Flow);
     let setup = h.page(
         "Runtime.evaluate",
         json!({"expression": "document.body.innerHTML = '<div style=\"height:150px\"></div><button id=b>b</button><div style=\"height:3000px\"></div>'; \
@@ -3615,7 +3592,6 @@ fn disabled_writes_elsewhere_move_no_focus_like_chromium() {
 /// and returns the page.
 fn selection_page(h: &mut Harness, body: &str, extra: &str) {
     let page = h.browser.host().thread.browser.pages[0].main_frame.page_dom.as_ref().unwrap().clone();
-    page.layout.borrow_mut().set_geometry(lp_dom::layout::Geometry::Flow);
     let setup = format!(
         "(() => {{ document.head.innerHTML = '<style>body{{margin:0;font-size:20px;line-height:30px}} td{{padding:0 20px 0 0}}</style>'; \
            document.body.innerHTML = {body:?}; globalThis.log = []; globalThis.cancel = {{}}; globalThis.hooks = {{}}; \
@@ -3750,7 +3726,6 @@ fn mouse_presses_over_empty_viewport_space_target_the_root_element() {
     // been removed under the pointer.
     let mut h = Harness::new();
     let page = h.browser.host().thread.browser.pages[0].main_frame.page_dom.as_ref().unwrap().clone();
-    page.layout.borrow_mut().set_geometry(lp_dom::layout::Geometry::Flow);
     eval_value(
         &mut h,
         "(() => { document.body.style.margin = '0'; document.body.innerHTML = '<p id=p style=\"margin:0;font-size:20px;line-height:30px\">abc</p>'; \
@@ -3892,7 +3867,6 @@ fn reported_geometry_is_in_layout_units_like_chromium() {
     // measured): getBoundingClientRect and the box-model quad agree.
     let mut h = Harness::new();
     let page = h.browser.host().thread.browser.pages[0].main_frame.page_dom.as_ref().unwrap().clone();
-    page.layout.borrow_mut().set_geometry(lp_dom::layout::Geometry::Flow);
     for (style, expected) in [
         ("left:100.7px;top:10.3px;width:150px;height:20px", [100.6875, 10.296875, 150.0, 20.0]),
         ("left:-10.7px;top:-3.3px;width:150px;height:20px", [-10.6875, -3.296875, 150.0, 20.0]),

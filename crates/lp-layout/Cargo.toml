@@ -1,0 +1,14 @@
+[package]
+name = "lp-layout"
+description = "lp-dom's layout queries answered from a persistent Blitz document per page (lp-render)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+lp-dom = { workspace = true }
+lp-render = { workspace = true }
+url = "2"
+
+[lints]
+workspace = true

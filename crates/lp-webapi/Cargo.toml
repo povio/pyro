@@ -36,5 +36,10 @@ path = "tests/integration.rs"
 name = "payload_cycles"
 path = "tests/payload_cycles.rs"
 
+[dev-dependencies]
+# Geometry for the layout tests (Blitz).
+lp-layout = { workspace = true }
+lp-render = { workspace = true }
+
 [lints]
 workspace = true

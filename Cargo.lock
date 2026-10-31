@@ -1569,6 +1569,7 @@ dependencies = [
  "lp-cdp-protocol",
  "lp-dom",
  "lp-js",
+ "lp-layout",
  "lp-net",
  "lp-render",
  "lp-runtime",
@@ -1628,6 +1629,15 @@ name = "lp-jsc-sys"
 version = "0.0.14"
 dependencies = [
  "cc",
+]
+
+[[package]]
+name = "lp-layout"
+version = "0.0.14"
+dependencies = [
+ "lp-dom",
+ "lp-render",
+ "url",
 ]
 
 [[package]]
@@ -1705,7 +1715,9 @@ dependencies = [
  "getrandom",
  "lp-dom",
  "lp-js",
+ "lp-layout",
  "lp-net",
+ "lp-render",
  "markup5ever",
  "percent-encoding",
  "rustc-hash 2.1.3",
@@ -2088,8 +2100,6 @@ checksum = "9c4482d912d7671a7cd2089794f90ef3bb5f5f8c738230fb0fcd50fa020f0ed3"
 [[package]]
 name = "parley_engine"
 version = "0.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b74c0d373e462e504ad4436710a39f099e18e848e1ee711f70cd2dcd5a69b290"
 dependencies = [
  "fontique",
  "harfrust",

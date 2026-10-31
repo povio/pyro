@@ -2,20 +2,14 @@
 //! whole engine (and is re-signed on macOS), so one per file made `cargo test`
 //! mostly link time. Add new test files as modules here.
 
-mod flow;
-mod flow_bench;
-mod flow_snapshot;
 mod id_index;
 mod inner_text;
-mod layout;
 mod loader;
-mod record_scan_bench;
 mod render_html;
 mod select_fast;
 mod select_forms;
 mod stylo_cascade;
 mod tree;
-mod typed_flow;
 mod xml;
 mod xpath;
 

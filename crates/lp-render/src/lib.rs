@@ -43,7 +43,7 @@ use parley::fontique::{Blob, Collection, CollectionOptions, SourceCache};
 use parley::FontContext;
 use peniko::{Color, Fill};
 
-pub use geometry::{LayoutBox, TextWord};
+pub use geometry::{BoxPosition, LayoutBox, StickyBox, TextWord};
 pub use compare::{compare, decode_png, diff_image, encode_jpeg, encode_png, CompareResult};
 pub use hash::scene_hash;
 pub use mirror::{DeltaOp, MirrorStats, Rebuild, Tree, TreeKind, TreeNode, TOP};
@@ -134,7 +134,7 @@ pub struct LayoutBoxes {
     /// Each word of each text node (by its key), in layout order.
     pub words: Vec<(u64, TextWord)>,
     /// `position: sticky` elements (their boxes are laid out as if static).
-    pub sticky: Vec<u64>,
+    pub sticky: Vec<(u64, StickyBox)>,
     pub document_width: f64,
     pub document_height: f64,
     /// `fetch`/`layout`: bringing the document up to date; `scene`: reading the boxes.
@@ -776,30 +776,49 @@ impl Renderer {
         let keys = m.keys();
         let mut boxes = Vec::new();
         let mut sticky = Vec::new();
-        for (key, id) in m.elements() {
-            let Some(b) = g.element_box(doc, id) else { continue };
-            boxes.push((key, b));
-            let is_sticky = doc
-                .get_node(id)
-                .and_then(|n| n.primary_styles())
-                .is_some_and(|s| s.clone_position() == style::computed_values::position::T::Sticky);
-            if is_sticky {
-                sticky.push(key);
+        // Tree order (paint order among equals for hit testing).
+        let mut stack = vec![doc.root_element().id];
+        while let Some(id) = stack.pop() {
+            let Some(node) = doc.get_node(id) else { continue };
+            stack.extend(node.children.iter().rev().copied());
+            if !node.is_element() {
+                continue;
             }
+            let (Some(&key), Some(b)) = (keys.get(&id), g.element_box(doc, id)) else { continue };
+            if b.position == BoxPosition::Sticky {
+                sticky.push((key, g.sticky_box(doc, id)));
+            }
+            boxes.push((key, b));
         }
         let words = g.text_words(doc).into_iter().filter_map(|w| Some((*keys.get(&w.node)?, w))).collect();
-        let root = doc.root_element();
-        let (size, overflow) =
-            (root.final_layout().size, root.scrollable_overflow().scale_from_origin(1.0 / doc.viewport().scale_f64()));
-        let (vw, vh) = (m.viewport.0 as f64, m.viewport.1 as f64);
+        let (document_width, document_height) = self.document_size(page)?;
         Some(LayoutBoxes {
             boxes,
             words,
             sticky,
-            document_width: (size.width as f64).max(overflow.x1).max(vw),
-            document_height: (size.height as f64).max(overflow.y1).max(vh),
+            document_width,
+            document_height,
             timings: Timings { scene: t.elapsed(), ..Timings::default() },
         })
+    }
+
+    /// `page`'s document scroll size (at least the viewport), as last synced.
+    pub fn document_size(&self, page: u64) -> Option<(f64, f64)> {
+        let m = self.mirrors.get(&page)?;
+        let doc = &m.doc;
+        let root = doc.root_element();
+        let (size, overflow) =
+            (root.final_layout().size, root.scrollable_overflow().scale_from_origin(1.0 / doc.viewport().scale_f64()));
+        let (vw, vh) = (m.viewport.0 as f64, m.viewport.1 as f64);
+        Some(((size.width as f64).max(overflow.x1).max(vw), (size.height as f64).max(overflow.y1).max(vh)))
+    }
+
+    /// Whether any element of `page`'s document is `position: sticky`.
+    pub fn has_sticky(&self, page: u64) -> bool {
+        match (self.mirrors.get(&page), self.geometry.get(&page)) {
+            (Some(m), Some(g)) => g.has_sticky(&m.doc),
+            _ => false,
+        }
     }
 
     /// The keys of the elements at viewport point (`x`, `y`) of `page`'s

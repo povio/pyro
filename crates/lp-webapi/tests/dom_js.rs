@@ -41,7 +41,16 @@ struct Env {
     main: Realm,
 }
 
+/// Loads no sub-resources (the layout tests' pages have none).
+struct NoFetch;
+impl lp_render::Fetcher for NoFetch {
+    fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+        done(Err(format!("{url}: offline")));
+    }
+}
+
 fn env(html: &str) -> Env {
+    lp_layout::install(std::sync::Arc::new(NoFetch));
     let engine = Engine::new().expect("engine");
     register(&engine);
     let window_class = engine.register::<TestWindow>();
@@ -2064,8 +2073,6 @@ fn intersection_observer_options_conversion_and_explicit_limits() {
 #[test]
 fn intersection_observer_clips_ancestors_and_tracks_scroll_styles() {
     let e=env("<style>#clip {overflow:hidden;width:50px;height:50px}</style><body><div id=clip><div id=t style='width:100px;height:100px'></div></div><div style='height:2000px'></div></body>");
-    // The expected ratios below are the approximate (faux) layout's.
-    e.page.layout.borrow_mut().set_geometry(lp_dom::layout::Geometry::Approximate);
     let tasks = Rc::new(ObserverTasks::default());
     e.page.set_hooks(Some(tasks.clone()));
     assert_eq!(
@@ -2080,7 +2087,7 @@ fn intersection_observer_clips_ancestors_and_tracks_scroll_styles() {
     );
     e.page.after_task();
     tasks.drain();
-    assert_eq!(eval(&e.main,"records.length===1 && records[0].isIntersecting && records[0].intersectionRatio>0 && records[0].intersectionRatio<.25"),"true");
+    assert_eq!(eval(&e.main,"records.length===1 && records[0].isIntersecting && records[0].intersectionRatio===.25"),"true");
     assert_eq!(eval(&e.main, "clip.style.overflow='visible'; 'ok'"), "ok");
     e.page.after_task();
     tasks.drain();
@@ -2405,7 +2412,6 @@ fn resize_observer_reports_the_flow_content_box() {
     let e = env(
         "<body style='margin:0'><div style='width:300px'><div id=a style='padding:4px 6px;border:2px solid'>x</div></div></body>",
     );
-    e.page.layout.borrow_mut().set_geometry(lp_dom::layout::Geometry::Flow);
     let tasks = Rc::new(ObserverTasks::default());
     e.page.set_hooks(Some(tasks.clone()));
     eval(
@@ -2436,7 +2442,6 @@ fn resize_observer_entries_report_each_box_and_skip_disconnected_targets() {
     let e = env(
         "<body style='margin:0'><div id=a style='width:150px;height:20px;padding:4px 4px 2px;border:1px solid'></div><div id=b style='width:30px;height:10px'></div></body>",
     );
-    e.page.layout.borrow_mut().set_geometry(lp_dom::layout::Geometry::Flow);
     let tasks = Rc::new(ObserverTasks::default());
     e.page.set_hooks(Some(tasks.clone()));
     eval(
@@ -2477,7 +2482,6 @@ fn element_metrics_are_whole_pixels_like_chromium() {
         "<body style='margin:0'><div id=a style='width:44.7135px;overflow:hidden;white-space:nowrap'><span style='display:inline-block;width:44.7135px'></span></div>\
          <div id=b style='margin-left:10.6px;width:20.6px;height:10.4px;padding-top:0.3px'></div></body>",
     );
-    e.page.layout.borrow_mut().set_geometry(lp_dom::layout::Geometry::Flow);
     assert_eq!(
         eval(&e.main, "var a = document.getElementById('a'); [a.scrollWidth, a.clientWidth, a.offsetWidth].join()"),
         "45,45,45"
@@ -4944,7 +4948,6 @@ fn programmatic_scrolls_queue_scroll_then_scrollend_like_chromium() {
          <div style='flex:none;width:100px;height:40px'>a</div><div style='flex:none;width:1500px'></div><div id=far style='flex:none;width:100px;height:40px'>z</div>\
          </div><div style='height:200px'></div></div><div style='height:2000px'></div></body>",
     );
-    e.page.layout.borrow_mut().set_geometry(lp_dom::layout::Geometry::Flow);
     let tasks = Rc::new(ObserverTasks::default());
     e.page.set_hooks(Some(tasks.clone()));
     eval(
@@ -5130,23 +5133,22 @@ fn style_assignment_forwards_to_css_text() {
 }
 
 #[test]
-fn range_over_text_reports_the_text_box_in_flow_geometry() {
+fn range_over_text_reports_the_text_box() {
     // Playwright's accessible-name check measures a label's text with
     // Range.selectNode(text).getBoundingClientRect(); TOS buttons put the
     // text in a `display: contents` span, which has no box. Chromium reports
-    // the text box (x 8, y 5, ~76 x 17 here); the role query then finds the
-    // button by name.
-    let e = env("<!doctype html><body style=\"margin:0;font-family:-apple-system,BlinkMacSystemFont,sans-serif;font-size:14px;line-height:20px\"><button id=btn style=\"display:inline-flex;padding:4px 8px;border:0;font:inherit\"><span id=c style=\"display:contents\">Files &amp; links</span></button></body>");
-    e.page.layout.borrow_mut().set_geometry(lp_dom::layout::Geometry::Flow);
+    // the text box (8, 6, 74.6875 x 16 here, measured); the role query then
+    // finds the button by name.
+    let e = env("<!doctype html><body style=\"margin:0;font-family:Arial,sans-serif;font-size:14px;line-height:20px\"><button id=btn style=\"display:inline-flex;padding:4px 8px;border:0;font:inherit\"><span id=c style=\"display:contents\">Files &amp; links</span></button></body>");
     let r = &e.main;
     let got = eval(
         r,
         "(() => { const t = document.getElementById('c').firstChild; const range = document.createRange(); range.selectNode(t); \
          const a = range.getBoundingClientRect(); const inner = document.createRange(); inner.selectNodeContents(t); \
          const b = inner.getBoundingClientRect(); const span = document.getElementById('c').getBoundingClientRect(); \
-         return [a.x, a.y, a.height, a.width > 70 && a.width < 80, b.x, b.height, span.width, span.height].join(','); })()",
+         return [a.x, a.y, a.height, a.width, b.x, b.height, span.width, span.height].join(','); })()",
     );
-    assert_eq!(got, "8,5,17,true,8,17,0,0");
+    assert_eq!(got, "8,6,16,74.6875,8,16,0,0");
 }
 
 #[test]
@@ -5158,7 +5160,6 @@ fn scroll_offsets_round_like_chromium_so_synced_panes_settle() {
     // and ping-ponged ~1200 scroll tasks down to 0. Values measured in
     // Chromium (Playwright 1.59.1).
     let e = env("<!doctype html><body style=\"margin:0\"><div id=m style=\"height:500px;overflow:auto\"><div style=\"height:5003px\"></div></div><div id=s style=\"height:500px;overflow:auto\"><div style=\"height:2997px\"></div></div><div style=\"height:9000px\"></div></body>");
-    e.page.layout.borrow_mut().set_geometry(lp_dom::layout::Geometry::Flow);
     let tasks = Rc::new(ObserverTasks::default());
     e.page.set_hooks(Some(tasks.clone()));
     let got = eval(
@@ -5213,7 +5214,6 @@ fn single_axis_overflow_makes_a_scroll_container_like_chromium() {
         })
         .collect();
     let e = env(&format!("<body style='margin:0'>{html}</body>"));
-    e.page.layout.borrow_mut().set_geometry(lp_dom::layout::Geometry::Flow);
     let tasks = Rc::new(ObserverTasks::default());
     e.page.set_hooks(Some(tasks.clone()));
     let ids: Vec<String> = cases.iter().map(|(k, _, _)| format!("'{k}'")).collect();
@@ -5249,7 +5249,6 @@ fn content_shrink_clamps_scroll_offsets_and_fires_scroll_like_chromium() {
     // window and an extra measuring round). Chromium: 900, then 400 at the
     // read with an event, then 200 at the next frame without a read.
     let e = env("<body style='margin:0'><div id=s style='height:100px;overflow:auto'><div id=c style='height:1000px'></div></div></body>");
-    e.page.layout.borrow_mut().set_geometry(lp_dom::layout::Geometry::Flow);
     let tasks = Rc::new(ObserverTasks::default());
     e.page.set_hooks(Some(tasks.clone()));
     eval(

@@ -1487,8 +1487,8 @@ fn text_select_move(page: &Rc<PageDom>, target: NodeId, m: &MouseInput) {
             Some(hit)
         } else {
             let after = crate::editing::compare(page, (hit.0, 0), anchor) > 0;
-            let flow = layout.flow(&dom);
-            let runs = flow
+            let result = layout.layout_result(&dom);
+            let runs = result
                 .text_runs
                 .iter()
                 .filter(|r| dom.is_connected(r.node).unwrap_or(false) && !layout.user_select_none(&dom, r.node));
@@ -1515,11 +1515,8 @@ pub fn dispatch_mouse_intercepting_drags(
     m: &MouseInput,
     intercept_drags: bool,
 ) -> Result<Option<DragData>, String> {
-    // Empty viewport space targets the root element, as Chromium hit-tests
-    // it: for moves and wheels always, for presses and releases in flow
-    // geometry (the synthetic layout's gaps are not real empty space).
-    let flow = page.layout.borrow().geometry() == lp_dom::layout::Geometry::Flow;
-    let target = pointer_target(page, m.x, m.y, flow || matches!(kind, MouseKind::Wheel | MouseKind::Moved))
+    // Empty viewport space targets the root element, as Chromium hit-tests it.
+    let target = pointer_target(page, m.x, m.y, true)
         .ok_or_else(|| "no element at point".to_owned())?;
     let Some(tkey) = key_of(page, target) else { return Err("stale target".into()) };
     match kind {

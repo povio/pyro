@@ -13,7 +13,9 @@ and `tests/` were left out of the copy.
 available space with a single line took the line's max-content length. CSS sizes it fit-content,
 `min(max-content, max(min-content, available))`, so its shrinkable items shrink and their text wraps.
 Hit by a `display:flex` row inside an `align-items:center` column (ToS invoice footers) and by
-`width: fit-content`. Column containers are unchanged: an auto height is the content height.
+`width: fit-content`. Column containers are unchanged: an auto height is the content height. The available size is the
+content box's; the clamp adds the container's padding and border to it before comparing outer
+sizes (`a_padded_inline_flex_keeps_its_max_content_width`).
 
 Upstream's full test suite (6605 generated tests) passes with the patch. The regression tests are
 `a_centered_flex_item_is_clamped_to_its_container` and

@@ -214,11 +214,6 @@ impl Mirror {
         self.nodes.iter().map(|(k, e)| (e.id, *k)).collect()
     }
 
-    /// Every element's key and node.
-    pub(crate) fn elements(&self) -> impl Iterator<Item = (u64, NodeId)> + '_ {
-        self.nodes.iter().filter(|(_, e)| e.name.is_some()).map(|(k, e)| (*k, e.id))
-    }
-
     /// Applies `tree` (the page now) and `sheets` (linked sheet texts by
     /// URL). Returns the number of mutations, or why the document must be
     /// built anew instead.

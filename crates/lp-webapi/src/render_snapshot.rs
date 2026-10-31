@@ -77,38 +77,6 @@ impl PageDom {
     }
 }
 
-/// [`PageDom::render_snapshot_tree`] from a borrowed document and layout
-/// (a geometry source, called while the page's layout is borrowed).
-pub fn render_tree_snapshot(
-    dom: &lp_dom::Dom,
-    layout: &lp_dom::layout::Layout,
-    document: NodeId,
-    base_url: &str,
-) -> RenderSnapshot {
-    snapshot_of(dom, layout, document, base_url, None, Form::Tree)
-}
-
-/// The changes to [`render_tree_snapshot`]'s tree since DOM version `since`
-/// (`lp_dom::Dom::render_delta`); `None`: take a whole snapshot.
-pub fn render_tree_delta(
-    dom: &lp_dom::Dom,
-    layout: &lp_dom::layout::Layout,
-    document: NodeId,
-    base_url: &str,
-    since: u64,
-) -> Option<lp_dom::snapshot::RenderDelta> {
-    let style = layout.style();
-    let base = url::Url::parse(base_url).ok();
-    let style_text = |owner: NodeId| style.sheet_text(owner).map(str::to_owned);
-    let stylesheet_href = |link: NodeId| {
-        style.sheet_text(link)?;
-        let href = dom.get_attribute(link, "href").ok().flatten()?;
-        Some(base.as_ref()?.join(href.trim()).ok()?.to_string())
-    };
-    let opts = RenderHtml { style_text: &style_text, stylesheet_href: &stylesheet_href, mark: None };
-    dom.render_delta(document, since, &opts)
-}
-
 fn snapshot_of(
     dom: &lp_dom::Dom,
     layout: &lp_dom::layout::Layout,
