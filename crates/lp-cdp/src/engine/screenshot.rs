@@ -42,6 +42,7 @@ use crate::target::PageCommand;
 
 enum Finished {
     Capture(u64, Result<Captured, String>),
+    Pdf(u64, Result<lp_render::PdfOutput, String>),
     Match(u64, Result<MatchOutcome, String>),
 }
 
@@ -50,6 +51,9 @@ struct CaptureWait {
     session: String,
     started: Instant,
     snapshot_ms: f64,
+    /// `printToPDF` with `transferMode: ReturnAsStream`: the bytes go to
+    /// an `IO` stream.
+    stream: bool,
 }
 
 struct MatchWait {
@@ -80,6 +84,8 @@ pub(crate) struct Renders {
     matches: HashMap<u64, MatchWait>,
     baselines: HashMap<String, Arc<Baseline>>,
     next: u64,
+    /// `IO` streams by handle: bytes and the read offset.
+    streams: HashMap<String, (Vec<u8>, usize)>,
 }
 
 impl Renders {
@@ -331,9 +337,78 @@ impl EngineHost {
             done: Box::new(move |r| deliver(Finished::Capture(token, r))),
         };
         self.renders.worker()?.submit(job).map_err(|_| CdpError::server("the render thread is gone"))?;
-        let wait = CaptureWait { id: cmd.command.id, session: cmd.session_id.to_owned(), started, snapshot_ms };
+        let wait =
+            CaptureWait { id: cmd.command.id, session: cmd.session_id.to_owned(), started, snapshot_ms, stream: false };
         self.renders.captures.insert(token, wait);
         Ok(None)
+    }
+
+    /// `Page.printToPDF`: one PDF page per Paprize page box (`.pz-page`),
+    /// else the document cut to the paper size; replied to from
+    /// `flush_renders`. Margins, scale, header/footer and page ranges are
+    /// not applied.
+    pub(super) fn print_to_pdf(&mut self, cmd: &PageCommand<'_, '_>) -> CdpResult<Option<Value>> {
+        #[derive(Deserialize, Default)]
+        #[serde(rename_all = "camelCase")]
+        struct P {
+            landscape: Option<bool>,
+            paper_width: Option<f64>,
+            paper_height: Option<f64>,
+            transfer_mode: Option<String>,
+        }
+        let p = cmd.command.params::<Option<P>>()?.unwrap_or_default();
+        let (mut w, mut h) = (p.paper_width.unwrap_or(8.5) * 96.0, p.paper_height.unwrap_or(11.0) * 96.0);
+        if p.landscape == Some(true) {
+            std::mem::swap(&mut w, &mut h);
+        }
+        let opts = lp_render::PdfOptions { page_selector: ".pz-page".into(), paper: (w, h) };
+        let pid = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?.id;
+        let started = Instant::now();
+        let snapshot = self.snapshot(pid, None)?;
+        let snapshot_ms = ms(started.elapsed());
+        let fetcher = self.fetcher(pid);
+        let token = self.renders.token();
+        let deliver = self.renders.deliver(self.thread.handle());
+        let job = Job::Pdf { snapshot, opts, fetcher, done: Box::new(move |r| deliver(Finished::Pdf(token, r))) };
+        self.renders.worker()?.submit(job).map_err(|_| CdpError::server("the render thread is gone"))?;
+        let wait = CaptureWait {
+            id: cmd.command.id,
+            session: cmd.session_id.to_owned(),
+            started,
+            snapshot_ms,
+            stream: p.transfer_mode.as_deref() == Some("ReturnAsStream"),
+        };
+        self.renders.captures.insert(token, wait);
+        Ok(None)
+    }
+
+    /// `IO.read` / `IO.close` on the streams `printToPDF` made.
+    pub(super) fn io_domain(&mut self, action: &str, cmd: &PageCommand<'_, '_>) -> CdpResult<Option<Value>> {
+        #[derive(Deserialize)]
+        struct P {
+            handle: String,
+            offset: Option<usize>,
+            size: Option<usize>,
+        }
+        let p: P = cmd.command.params()?;
+        match action {
+            "read" => {
+                let (bytes, pos) =
+                    self.renders.streams.get_mut(&p.handle).ok_or_else(|| CdpError::invalid_params("Invalid stream handle"))?;
+                if let Some(o) = p.offset {
+                    *pos = o.min(bytes.len());
+                }
+                let end = (*pos + p.size.unwrap_or(1 << 20)).min(bytes.len());
+                let data = base64_encode(&bytes[*pos..end]);
+                *pos = end;
+                Ok(Some(json!({ "base64Encoded": true, "data": data, "eof": end >= bytes.len() })))
+            }
+            "close" => {
+                self.renders.streams.remove(&p.handle);
+                Ok(Some(json!({})))
+            }
+            _ => Err(CdpError::unsupported(&cmd.command.method)),
+        }
     }
 
     /// Starts a `matchScreenshot` step on `pid`'s current document; `element`
@@ -427,6 +502,37 @@ impl EngineHost {
                                 "data": base64_encode(&c.bytes),
                                 "lp": { "width": c.width, "height": c.height, "sceneHash": format!("{:016x}", c.scene_hash), "ms": timings_json(&c.timings, wait.snapshot_ms, total) },
                             });
+                            msg::result_frame(wait.id, &body, Some(&wait.session))
+                        }
+                        Err(e) => msg::error_frame(Some(wait.id), &CdpError::server(e), Some(&wait.session)),
+                    };
+                    self.out.push(frame);
+                }
+                Finished::Pdf(token, result) => {
+                    let Some(wait) = self.renders.captures.remove(&token) else { continue };
+                    let frame = match result {
+                        Ok(o) => {
+                            let total = ms(wait.started.elapsed());
+                            let lp = json!({
+                                "pages": o.pages.iter().map(|p| json!({
+                                    "x": p.rect.x0, "y": p.rect.y0, "width": p.rect.width(), "height": p.rect.height(),
+                                    "overflowRight": p.overflow_right, "overflowBottom": p.overflow_bottom, "culprit": p.culprit,
+                                })).collect::<Vec<_>>(),
+                                "bySelector": o.by_selector,
+                                "commands": o.commands,
+                                "stats": o.stats,
+                                "ms": {
+                                    "snapshot": wait.snapshot_ms, "fetch": ms(o.timings.fetch), "layout": ms(o.timings.layout),
+                                    "paint": ms(o.timings.scene), "pdf": ms(o.timings.raster), "total": total,
+                                },
+                            });
+                            let body = if wait.stream {
+                                let handle = format!("lp-pdf-{token}");
+                                self.renders.streams.insert(handle.clone(), (o.bytes, 0));
+                                json!({ "data": "", "stream": handle, "lp": lp })
+                            } else {
+                                json!({ "data": base64_encode(&o.bytes), "lp": lp })
+                            };
                             msg::result_frame(wait.id, &body, Some(&wait.session))
                         }
                         Err(e) => msg::error_frame(Some(wait.id), &CdpError::server(e), Some(&wait.session)),

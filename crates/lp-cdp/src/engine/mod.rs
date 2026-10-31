@@ -716,6 +716,8 @@ impl EngineHost {
             "Fetch" => self.fetch_domain(action, cmd),
             "Input" => self.input_domain(action, cmd),
             "LP" => self.driver_domain(action, cmd),
+            #[cfg(feature = "render")]
+            "IO" => self.io_domain(action, cmd),
             "Log" if matches!(action, "enable" | "disable") => Ok(Some(serde_json::json!({}))),
             _ => Err(CdpError::unsupported(&cmd.command.method)),
         }

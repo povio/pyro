@@ -220,6 +220,8 @@ impl EngineHost {
             "getLayoutMetrics" => self.layout_metrics(cmd),
             #[cfg(feature = "render")]
             "captureScreenshot" => self.capture_screenshot(cmd),
+            #[cfg(feature = "render")]
+            "printToPDF" => self.print_to_pdf(cmd),
             #[cfg(not(feature = "render"))]
             "captureScreenshot" => {
                 Err(CdpError::server("Page.captureScreenshot: lightningpanda was built without the render feature"))

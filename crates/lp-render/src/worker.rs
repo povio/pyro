@@ -128,6 +128,13 @@ pub enum Job {
         fetcher: Arc<dyn Fetcher>,
         done: Box<dyn FnOnce(Result<MatchOutcome, String>) + Send>,
     },
+    /// `Page.printToPDF`.
+    Pdf {
+        snapshot: Snapshot,
+        opts: crate::PdfOptions,
+        fetcher: Arc<dyn Fetcher>,
+        done: Box<dyn FnOnce(Result<crate::PdfOutput, String>) + Send>,
+    },
     /// Drops a page's persistent document ([`crate::Live`]).
     Forget { page: u64 },
 }
@@ -170,6 +177,10 @@ fn run(r: &mut Renderer, job: Job) {
         Job::Match { snapshot, area, baseline, opts, fetcher, done } => {
             let out =
                 guarded(r, &snapshot, |r| match_baseline(r, &snapshot, area, baseline.as_deref(), opts, &fetcher));
+            done(out);
+        }
+        Job::Pdf { snapshot, opts, fetcher, done } => {
+            let out = guarded(r, &snapshot, |r| r.print_pdf(&snapshot, &fetcher, &opts).map_err(|e| e.to_string()));
             done(out);
         }
         Job::Forget { page } => r.forget(page),

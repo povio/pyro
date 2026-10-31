@@ -243,7 +243,11 @@ impl ElementCx<'_, '_> {
             };
             let color = color.resolve_to_absolute(&current_color).as_srgb_color();
 
-            if color.components[3] <= 0.0 {
+            // A zero-width edge (Tailwind's preflight sets `border: 0 solid` on
+            // every element) covers nothing, but its degenerate polygon is still
+            // painted as a hairline by PDF rasterizers, which fill every pixel a
+            // shape touches.
+            if color.components[3] <= 0.0 || self.edge_width(edge) <= 0.0 {
                 continue;
             }
 
