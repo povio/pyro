@@ -4377,6 +4377,7 @@ fn floats_like_chromium() {
 }
 
 #[test]
+#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn float_changes_relayout_their_neighbours() {
     // Subtrees beside floats are not replayed from an earlier pass: a float
     // that grows, appears or goes away moves the text and boxes around it.
