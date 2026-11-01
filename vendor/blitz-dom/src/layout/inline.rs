@@ -720,127 +720,147 @@ impl LayoutPassState<'_> {
                     }
                 }};
             }
-            let mut breaker = inline_layout.layout.break_lines();
-            let initial_slot = block_ctx.find_content_slot(0.0, Clear::None, None);
-            let mut has_active_floats = initial_slot.segment_id.is_some();
-            let state = breaker.state_mut();
-            state.set_layout_max_advance(width);
-            state.set_line_max_advance(initial_slot.width * scale);
-            state.set_line_x(initial_slot.x * scale);
-            state.set_line_y((initial_slot.y * scale) as f64);
+            // Breaking again with the inputs of the last break (no floats
+            // involved) gives the same lines.
+            let break_key = {
+                use std::hash::{Hash, Hasher};
+                let mut h = std::hash::DefaultHasher::new();
+                width.to_bits().hash(&mut h);
+                resolved_text_indent.to_bits().hash(&mut h);
+                for ibox in inline_layout.layout.inline_boxes() {
+                    (ibox.id, ibox.width.to_bits(), ibox.height.to_bits(), ibox.baseline.map(f32::to_bits)).hash(&mut h);
+                }
+                h.finish()
+            };
+            let floats_involved = block_ctx.find_content_slot(0.0, Clear::None, None).segment_id.is_some()
+                || inline_layout
+                    .layout
+                    .inline_boxes()
+                    .any(|ibox| ibox.kind == parley::InlineBoxKind::CustomOutOfFlow);
+            if floats_involved || inline_layout.last_break != Some(break_key) {
+                let mut breaker = inline_layout.layout.break_lines();
+                let initial_slot = block_ctx.find_content_slot(0.0, Clear::None, None);
+                let mut has_active_floats = initial_slot.segment_id.is_some();
+                let state = breaker.state_mut();
+                state.set_layout_max_advance(width);
+                state.set_line_max_advance(initial_slot.width * scale);
+                state.set_line_x(initial_slot.x * scale);
+                state.set_line_y((initial_slot.y * scale) as f64);
 
-            // TODO: revert state and retry layout if a line doesn't fit
-            //
-            // Save initial state. Saved state is used to revert the layout to a previous state if needed
-            // (e.g. to revert a line that doesn't fit in the space it was laid out into)
-            //
-            // let mut saved_state = breaker.state().clone();
+                // TODO: revert state and retry layout if a line doesn't fit
+                //
+                // Save initial state. Saved state is used to revert the layout to a previous state if needed
+                // (e.g. to revert a line that doesn't fit in the space it was laid out into)
+                //
+                // let mut saved_state = breaker.state().clone();
 
-            while let Some(yield_data) = breaker.break_next() {
-                match yield_data {
-                    YieldData::LineBreak(_line_break_data) => {
-                        let state = breaker.state_mut();
+                while let Some(yield_data) = breaker.break_next() {
+                    match yield_data {
+                        YieldData::LineBreak(_line_break_data) => {
+                            let state = breaker.state_mut();
 
-                        let line_top = state.line_y() as f32 / scale;
-                        for (node_id, output, margin, direction, clear) in pending_floats.drain(..) {
-                            place_float!(node_id, output, margin, direction, clear, line_top);
-                            has_active_floats = true;
+                            let line_top = state.line_y() as f32 / scale;
+                            for (node_id, output, margin, direction, clear) in pending_floats.drain(..) {
+                                place_float!(node_id, output, margin, direction, clear, line_top);
+                                has_active_floats = true;
+                            }
+
+                            if has_active_floats {
+                                // TODO: revert state and retry layout if a line doesn't fit
+                                // saved_state = state.clone();
+
+                                let min_y = state.line_y() / scale as f64;
+                                let next_slot =
+                                    block_ctx.find_content_slot(min_y as f32, Clear::None, None);
+                                has_active_floats = next_slot.segment_id.is_some();
+
+                                state.set_line_max_advance(next_slot.width * scale);
+                                state.set_line_x(next_slot.x * scale);
+                                state.set_line_y((next_slot.y * scale) as f64);
+                            } else {
+                                state.set_line_x(0.0);
+                                state.set_line_max_advance(width);
+                            }
+
+                            continue;
                         }
-
-                        if has_active_floats {
-                            // TODO: revert state and retry layout if a line doesn't fit
-                            // saved_state = state.clone();
-
-                            let min_y = state.line_y() / scale as f64;
-                            let next_slot =
-                                block_ctx.find_content_slot(min_y as f32, Clear::None, None);
-                            has_active_floats = next_slot.segment_id.is_some();
-
-                            state.set_line_max_advance(next_slot.width * scale);
-                            state.set_line_x(next_slot.x * scale);
-                            state.set_line_y((next_slot.y * scale) as f64);
-                        } else {
-                            state.set_line_x(0.0);
-                            state.set_line_max_advance(width);
+                        YieldData::MaxHeightExceeded(_data) => {
+                            // TODO
+                            continue;
                         }
+                        YieldData::InlineBoxBreak(box_break_data) => {
+                            let state = breaker.state_mut();
+                            let node_id = NodeId::from_u64(box_break_data.inline_box_id);
 
-                        continue;
-                    }
-                    YieldData::MaxHeightExceeded(_data) => {
-                        // TODO
-                        continue;
-                    }
-                    YieldData::InlineBoxBreak(box_break_data) => {
-                        let state = breaker.state_mut();
-                        let node_id = NodeId::from_u64(box_break_data.inline_box_id);
-
-                        let (direction, clear, margin) = {
-                            let style = self.child_layout_style(&self.nodes[node_id]);
-                            // We can assume that the box is a float because we only set `break_on_box: true` for floats
-                            let direction = match style.float() {
-                                Float::Left => taffy::FloatDirection::Left,
-                                Float::Right => taffy::FloatDirection::Right,
-                                Float::None => unreachable!(),
+                            let (direction, clear, margin) = {
+                                let style = self.child_layout_style(&self.nodes[node_id]);
+                                // We can assume that the box is a float because we only set `break_on_box: true` for floats
+                                let direction = match style.float() {
+                                    Float::Left => taffy::FloatDirection::Left,
+                                    Float::Right => taffy::FloatDirection::Right,
+                                    Float::None => unreachable!(),
+                                };
+                                (
+                                    direction,
+                                    style.clear(),
+                                    style
+                                        .margin()
+                                        .resolve_or_zero(inputs.parent_size, resolve_calc_value),
+                                )
                             };
-                            (
-                                direction,
-                                style.clear(),
-                                style
-                                    .margin()
-                                    .resolve_or_zero(inputs.parent_size, resolve_calc_value),
-                            )
-                        };
 
-                        let margin_sum = margin.sum_axes();
+                            let margin_sum = margin.sum_axes();
 
-                        let output = self.compute_child_layout(
-                            crate::taffy_node_id(node_id),
-                            float_child_inputs,
-                        );
-                        // A float that doesn't fit beside the line's content so far
-                        // goes below that line: it is placed when the line ends.
-                        let used = box_break_data.advance / scale;
-                        let line_width = state.line_max_advance() / scale;
-                        if used > 0.0 && used + output.size.width + margin_sum.width > line_width + 0.01 {
-                            pending_floats.push((node_id, output, margin, direction, clear));
-                        } else {
-                            let min_y = state.line_y() as f32 / scale;
-                            place_float!(node_id, output, margin, direction, clear, min_y);
-                            let min_y = state.line_y() / scale as f64;
-                            let next_slot =
-                                block_ctx.find_content_slot(min_y as f32, Clear::None, None);
-                            has_active_floats = next_slot.segment_id.is_some();
+                            let output = self.compute_child_layout(
+                                crate::taffy_node_id(node_id),
+                                float_child_inputs,
+                            );
+                            // A float that doesn't fit beside the line's content so far
+                            // goes below that line: it is placed when the line ends.
+                            let used = box_break_data.advance / scale;
+                            let line_width = state.line_max_advance() / scale;
+                            if used > 0.0 && used + output.size.width + margin_sum.width > line_width + 0.01 {
+                                pending_floats.push((node_id, output, margin, direction, clear));
+                            } else {
+                                let min_y = state.line_y() as f32 / scale;
+                                place_float!(node_id, output, margin, direction, clear, min_y);
+                                let min_y = state.line_y() / scale as f64;
+                                let next_slot =
+                                    block_ctx.find_content_slot(min_y as f32, Clear::None, None);
+                                has_active_floats = next_slot.segment_id.is_some();
 
-                            state.set_line_max_advance(next_slot.width * scale);
-                            state.set_line_x(next_slot.x * scale);
-                            state.set_line_y((next_slot.y * scale) as f64);
+                                state.set_line_max_advance(next_slot.width * scale);
+                                state.set_line_x(next_slot.x * scale);
+                                state.set_line_y((next_slot.y * scale) as f64);
+                            }
+
+                            // dbg!(&layout.size);
+                            // dbg!(&layout.location);
+
+                            // Floats are out-of-flow and must not contribute to the line's height.
+                            state.append_inline_box_to_line(
+                                box_break_data.advance,
+                                f32::NEG_INFINITY,
+                                f32::NEG_INFINITY,
+                            );
+
+                            // if float.is_floated() {
+                            //     println!("INLINE FLOATED BOX ({}) {:?}", ibox.id, float);
+                            //     println!(
+                            //         "w:{} h:{} x:{}, y:{}",
+                            //         layout.size.width, layout.size.height, 0, 0
+                            //     );
+                            // }
                         }
-
-                        // dbg!(&layout.size);
-                        // dbg!(&layout.location);
-
-                        // Floats are out-of-flow and must not contribute to the line's height.
-                        state.append_inline_box_to_line(
-                            box_break_data.advance,
-                            f32::NEG_INFINITY,
-                            f32::NEG_INFINITY,
-                        );
-
-                        // if float.is_floated() {
-                        //     println!("INLINE FLOATED BOX ({}) {:?}", ibox.id, float);
-                        //     println!(
-                        //         "w:{} h:{} x:{}, y:{}",
-                        //         layout.size.width, layout.size.height, 0, 0
-                        //     );
-                        // }
                     }
                 }
+                let line_top = breaker.state().line_y() as f32 / scale;
+                for (node_id, output, margin, direction, clear) in pending_floats.drain(..) {
+                    place_float!(node_id, output, margin, direction, clear, line_top);
+                }
+                breaker.finish();
+                inline_layout.last_break = (!floats_involved).then_some(break_key);
             }
-            let line_top = breaker.state().line_y() as f32 / scale;
-            for (node_id, output, margin, direction, clear) in pending_floats.drain(..) {
-                place_float!(node_id, output, margin, direction, clear, line_top);
-            }
-            breaker.finish();
         }
 
         // Propagate the height consumed by floats placed within this container to the

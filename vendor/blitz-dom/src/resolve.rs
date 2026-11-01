@@ -453,6 +453,7 @@ impl BaseDocument {
                     let font_ctx_mut = &mut *self.font_ctx.lock().unwrap();
 
                     layout.content_widths = None;
+                    layout.last_break = None;
                     build_inline_layout_into(
                         &self.nodes,
                         layout_ctx_mut,
