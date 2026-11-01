@@ -31,9 +31,9 @@ byte-identical to the morning run's. Per-case table: [summary.md](summary.md).
 | 6 concurrent: p50 / p95 ms | 241 / 338 | 85–92 / 389–417 | 89 / 380 | **69 / 283** |
 | 6 concurrent: peak RSS MB | 1100 | 1131–1164 | 1171 | **1186** |
 
-- The gap to Chrome is now in four documents: cmr-overflow (423 vs 279 ms), the booking-overflow pair (~190 vs
-  ~95 ms) and house-bl's overflowing table (159 vs 69 ms). The other 40 cases together are within ~90 ms of
-  Chrome.
+- Of the 790 ms gap to Chrome, 424 ms is four documents: cmr-overflow (423 vs 279 ms), the booking-overflow
+  pair (~190 vs ~95 ms) and house-bl's overflowing table (159 vs 69 ms). The other 40 cases account for the
+  remaining ~370 ms, about 9 ms each (not profiled yet).
 - Chrome's numbers moved between runs (the machine was shared all day); compare within a run.
 
 ## Earlier: Blitz relayout as fast as flow (2026-11-01)
