@@ -816,7 +816,6 @@ fn flow_parity_percent_heights_in_blocks() {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn flow_parity_fixed_modal_with_input() {
     let html = format!(
         "<!doctype html>{PREFLIGHT}<body><div id=ov style=\"position:fixed;inset:0;display:flex;align-items:center;justify-content:center\"><div id=dlg style=\"width:400px;max-height:100%;overflow:auto;padding:16px\"><input id=din style=\"width:100%\"></div></div></body>"
@@ -1116,7 +1115,6 @@ fn flex_parity_cross_size_min_max() {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn flow_nbsp_is_content_not_collapsible_space() {
     // TOS tooltips render `<span class="whitespace-nowrap">&nbsp;</span>` in a
     // flex column: Chromium gives it a space-wide box (4px at 13px Arial),
@@ -1126,8 +1124,9 @@ fn flow_nbsp_is_content_not_collapsible_space() {
     let nb = p.metrics("nb");
     assert!(nb[2] > 0.0 && nb[3] > 0.0, "nbsp span has a box: {nb:?}");
     let space = p.metrics("nb")[2];
-    // Chromium (system UI font, 16px): a no-break space is 4.19px wide.
-    assert!((space - 4.1872).abs() < 0.01, "as wide as a space: {space}");
+    // Headless Chromium on macOS (default font Times, 16px): a no-break space is
+    // 4px wide (the 4.19 recorded earlier came from another default font).
+    assert!((space - 4.0).abs() < 0.01, "as wide as a space: {space}");
     let ws = p.metrics("ws");
     assert_eq!(ws[2], 0.0, "collapsible white space has no width: {ws:?}");
     // Text directly in a flex container that is only a no-break space is an item.
