@@ -84,6 +84,11 @@ pub fn blitz_rebuilds() -> (u64, u64) {
     blitz_dom::phase_profile::rebuilds()
 }
 
+/// Nodes Blitz's style traversal visited on this thread.
+pub fn blitz_restyles() -> u64 {
+    blitz_dom::phase_profile::restyles()
+}
+
 pub fn blitz_phases() -> [f64; 9] {
     blitz_dom::phase_profile::peek()
 }

@@ -588,6 +588,17 @@ pub mod phase_profile {
     pub fn rebuilds() -> (u64, u64) {
         REBUILDS.with(|r| r.get())
     }
+    std::thread_local! {
+        static RESTYLED: Cell<u64> = const { Cell::new(0) };
+    }
+    /// A node was visited by the style traversal.
+    pub(crate) fn restyled() {
+        RESTYLED.with(|r| r.set(r.get() + 1));
+    }
+    /// Nodes the style traversal visited on this thread so far.
+    pub fn restyles() -> u64 {
+        RESTYLED.with(|r| r.get())
+    }
     /// Milliseconds per phase on this thread so far.
     pub fn peek() -> [f64; 9] {
         NS.with(|ns| ns.get().map(|n| n as f64 / 1e6))

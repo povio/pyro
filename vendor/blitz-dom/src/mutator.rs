@@ -560,7 +560,11 @@ impl DocumentMutator<'_> {
             parent.insert_damage(ALL_DAMAGE);
             // Mark ancestors dirty so the style traversal visits this subtree.
             parent.mark_ancestors_dirty();
+            let at = parent.children.iter().position(|id| *id == node_id);
             parent.children.retain(|id| *id != node_id);
+            if let (true, Some(at)) = (node_is_in_document, at) {
+                self.restyle_for_child_list_change(parent_id, at..at);
+            }
             self.maybe_record_node(parent_id);
         }
     }
@@ -588,19 +592,16 @@ impl DocumentMutator<'_> {
             parent.insert_damage(ALL_DAMAGE);
             let parent_is_in_doc = parent.flags.is_in_document();
 
-            // TODO: make this fine grained / conditional based on ElementSelectorFlags
             if parent_is_in_doc {
-                if let Some(mut data) = parent
-                    .try_stylo_element_data_mut()
-                    .and_then(|s| s.get_mut())
-                {
-                    data.hint |= RestyleHint::restyle_subtree();
-                }
                 // Mark ancestors dirty so the style traversal visits this subtree.
                 parent.mark_ancestors_dirty();
             }
 
+            let at = parent.children.iter().position(|id| *id == node_id);
             parent.children.retain(|id| *id != node_id);
+            if let (true, Some(at)) = (parent_is_in_doc, at) {
+                self.restyle_for_child_list_change(parent_id, at..at);
+            }
             self.maybe_record_node(parent_id);
         }
 
@@ -668,6 +669,51 @@ impl DocumentMutator<'_> {
         });
     }
 
+    /// lightningpanda: restyles what a change of `parent_id`'s children over
+    /// `at` (the indices of the inserted children, or the empty range where a
+    /// removed one was) can
+    /// restyle, from the selector flags matching left on the parent (as
+    /// Servo and Gecko do): all children for `:nth-last-*` and the like, the
+    /// later ones for `:nth-*` and sibling combinators, the edge children and
+    /// the change's neighbours for `:first-child`/`:last-child`. Upstream
+    /// restyled the parent's whole subtree.
+    fn restyle_for_child_list_change(&mut self, parent_id: NodeId, at: std::ops::Range<usize>) {
+        use selectors::matching::ElementSelectorFlags as F;
+        use style::invalidation::element::restyle_hints::RestyleHint;
+        let parent = &self.doc.nodes[parent_id];
+        if !parent.is_element() || !parent.flags.is_in_document() {
+            return;
+        }
+        let flags = parent.selector_flags().get();
+        if !flags.intersects(F::HAS_SLOW_SELECTOR | F::HAS_SLOW_SELECTOR_LATER_SIBLINGS | F::HAS_EDGE_CHILD_SELECTOR) {
+            return;
+        }
+        let elements: Vec<(usize, NodeId)> = parent
+            .children
+            .iter()
+            .copied()
+            .enumerate()
+            .filter(|&(_, id)| self.doc.nodes[id].is_element())
+            .collect();
+        let mut restyle: Vec<NodeId> = Vec::new();
+        if flags.contains(F::HAS_SLOW_SELECTOR) {
+            restyle.extend(elements.iter().map(|&(_, id)| id));
+        } else if flags.contains(F::HAS_SLOW_SELECTOR_LATER_SIBLINGS) {
+            restyle.extend(elements.iter().filter(|&&(i, _)| i >= at.start).map(|&(_, id)| id));
+        }
+        if flags.contains(F::HAS_EDGE_CHILD_SELECTOR) {
+            restyle.extend(elements.first().map(|&(_, id)| id));
+            restyle.extend(elements.last().map(|&(_, id)| id));
+            restyle.extend(elements.iter().rev().find(|&&(i, _)| i < at.start).map(|&(_, id)| id));
+            restyle.extend(elements.iter().find(|&&(i, _)| i >= at.end).map(|&(_, id)| id));
+        }
+        for id in restyle {
+            if self.doc.nodes[id].primary_styles().is_some() {
+                self.doc.nodes[id].set_restyle_hint(RestyleHint::restyle_subtree());
+            }
+        }
+    }
+
     /// lightningpanda: `:empty`: a parent some `:empty` selector was tested
     /// on (`HAS_EMPTY_SELECTOR`) restyles when it gains or loses children.
     fn restyle_if_empty_matters(&mut self, parent_id: NodeId) {
@@ -721,43 +767,50 @@ impl DocumentMutator<'_> {
             let old_parent = &mut self.doc.nodes[old_parent_id];
             old_parent.insert_damage(ALL_DAMAGE);
 
-            // TODO: make this fine grained / conditional based on ElementSelectorFlags
+            let at = old_parent.children.iter().position(|id| *id == child_id);
             if child_was_in_doc {
-                if let Some(mut data) = old_parent
-                    .try_stylo_element_data_mut()
-                    .and_then(|s| s.get_mut())
-                {
-                    data.hint |= RestyleHint::restyle_subtree();
-                }
                 // Mark ancestors dirty so the style traversal visits this subtree.
                 old_parent.mark_ancestors_dirty();
             }
 
             old_parent.children.retain(|id| *id != child_id);
+            if let (true, Some(at)) = (child_was_in_doc, at) {
+                self.restyle_for_child_list_change(old_parent_id, at..at);
+            }
             self.maybe_record_node(old_parent_id);
         }
 
         let new_parent = &mut self.doc.nodes[parent_id];
         new_parent.insert_damage(ALL_DAMAGE);
 
-        // TODO: make this fine grained / conditional based on ElementSelectorFlags
         if new_parent_is_in_document {
-            if let Some(mut data) = new_parent
-                .try_stylo_element_data_mut()
-                .and_then(|s| s.get_mut())
-            {
-                data.hint |= RestyleHint::restyle_subtree();
-            }
             // Mark ancestors dirty so the style traversal visits this subtree.
             new_parent.mark_ancestors_dirty();
         }
 
         insert_children_fn(new_parent, child_ids);
+        if new_parent_is_in_document {
+            let children = &new_parent.children;
+            let start = children.iter().position(|id| child_ids.contains(id)).unwrap_or(0);
+            let end = children.iter().rposition(|id| child_ids.contains(id)).map_or(start, |i| i + 1);
+            self.restyle_for_child_list_change(parent_id, start..end);
+        }
 
         for child_id in child_ids.iter().copied() {
             let child = &mut self.doc.nodes[child_id];
             let child_was_in_doc = child.flags.is_in_document();
             child.parent = Some(parent_id);
+            // A moved element's ancestors (inherited styles, descendant
+            // selectors) changed; new ones have no style yet. Either way the
+            // style traversal must reach it.
+            if new_parent_is_in_document {
+                if child.is_element() {
+                    if let Some(mut data) = child.try_stylo_element_data_mut().and_then(|s| s.get_mut()) {
+                        data.hint |= RestyleHint::restyle_subtree();
+                    }
+                }
+                child.mark_ancestors_dirty();
+            }
 
             if new_parent_is_in_document && !child_was_in_doc {
                 self.process_added_subtree(child_id);

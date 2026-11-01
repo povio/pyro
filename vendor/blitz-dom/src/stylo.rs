@@ -1334,6 +1334,7 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
         node: BlitzNode<'dom>,
         note_child: F,
     ) {
+        crate::resolve::phase_profile::restyled();
         if let Some(el) = node.as_element() {
             // let mut data = el.mutate_data().unwrap();
             let mut data = unsafe { el.ensure_data() };

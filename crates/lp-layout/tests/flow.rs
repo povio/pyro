@@ -4429,3 +4429,57 @@ fn table_structure_changes_relayout_like_a_fresh_pass() {
 
 
 
+
+#[test]
+fn structural_selectors_follow_child_list_changes_without_stale_geometry() {
+    // Siblings restyle only as the parent's selector flags require (Blitz
+    // used to restyle the parent's whole subtree): edge children for
+    // `:first-child`/`:last-child`, later ones for `~`, all for
+    // `:nth-last-child`. Each step compares every box with a fresh layout.
+    let css = "<style>\
+        li{height:10px;width:10px} .e li:last-child{width:201px} .e li:first-child{width:202px}\
+        .s .on ~ li{width:203px} .n li:nth-last-child(2){width:204px}\
+        </style>";
+    let html = format!(
+        "<!doctype html>{css}<body style=\"margin:0\">\
+         <ul id=e class=e><li id=e1></li><li id=e2></li></ul>\
+         <ul id=s class=s><li id=s1></li><li id=s2 class=on></li><li id=s3></li></ul>\
+         <ul id=n class=n><li id=n1></li><li id=n2></li><li id=n3></li></ul>\
+         <ul id=x></ul>\
+         </body>"
+    );
+    let mut p = page(&html);
+    assert_matches_fresh(&p, "initial");
+    let li = |p: &mut Page| p.dom.create_element(p.doc, "li").unwrap();
+    // Appended: the old last child is no longer :last-child.
+    let (e, x) = (p.id("e"), p.id("x"));
+    let a = li(&mut p);
+    p.dom.append_child(e, a).unwrap();
+    assert_matches_fresh(&p, "appended after the last child");
+    // Prepended: the old first child is no longer :first-child.
+    let b = li(&mut p);
+    let e1 = p.id("e1");
+    p.dom.insert_before(e, b, Some(e1)).unwrap();
+    assert_matches_fresh(&p, "inserted before the first child");
+    // Removed: the new last child is :last-child.
+    p.dom.remove_child(e, a).unwrap();
+    assert_matches_fresh(&p, "last child removed");
+    // `~`: a sibling inserted after `.on` matches; removing `.on` unmatches.
+    let (s, s1, s2) = (p.id("s"), p.id("s1"), p.id("s2"));
+    let c = li(&mut p);
+    p.dom.insert_before(s, c, Some(s1)).unwrap();
+    assert_matches_fresh(&p, "inserted before .on");
+    p.dom.remove_child(s, s2).unwrap();
+    assert_matches_fresh(&p, ".on removed");
+    // `:nth-last-child`: an append shifts every match.
+    let n = p.id("n");
+    let d = li(&mut p);
+    p.dom.append_child(n, d).unwrap();
+    assert_matches_fresh(&p, "appended under :nth-last-child");
+    // Moved into a list without structural rules, and back.
+    let n1 = p.id("n1");
+    p.dom.append_child(x, n1).unwrap();
+    assert_matches_fresh(&p, "moved out");
+    p.dom.insert_before(n, n1, None).unwrap();
+    assert_matches_fresh(&p, "moved back");
+}
