@@ -766,7 +766,14 @@ impl<'a> TElement for BlitzNode<'a> {
     }
 
     fn borrow_data(&self) -> Option<ElementDataRef<'_>> {
-        self.try_stylo_element_data().and_then(|s| s.get())
+        // lightningpanda: elements get their data when created, before they
+        // are styled. Until then they are unstyled to Stylo (as in Gecko and
+        // Servo, which give an element data when they style it): the
+        // traversal styles them from scratch, and invalidation must not read
+        // their (missing) styles.
+        self.try_stylo_element_data()
+            .and_then(|s| s.get())
+            .filter(|data| data.styles.get_primary().is_some())
     }
 
     fn mutate_data(&self) -> Option<ElementDataMut<'_>> {

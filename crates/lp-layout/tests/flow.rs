@@ -4483,3 +4483,22 @@ fn structural_selectors_follow_child_list_changes_without_stale_geometry() {
     p.dom.insert_before(n, n1, None).unwrap();
     assert_matches_fresh(&p, "moved back");
 }
+
+#[test]
+fn an_attribute_change_over_a_new_child_restyles_without_stale_geometry() {
+    // A class change whose rules reach descendants walks the element's
+    // subtree to invalidate it; a child inserted in the same pass has no
+    // computed style yet (Stylo panicked reading it).
+    let css = "<style>.box{width:10px;height:10px} .on .box{width:200px}</style>";
+    let html = format!("<!doctype html>{css}<body style=\"margin:0\"><div id=p><div class=box></div></div></body>");
+    let mut p = page(&html);
+    assert_matches_fresh(&p, "initial");
+    let parent = p.id("p");
+    let child = p.dom.create_element(p.doc, "div").unwrap();
+    p.dom.set_attribute(child, "class", "box").unwrap();
+    let inner = p.dom.create_element(p.doc, "span").unwrap();
+    p.dom.append_child(child, inner).unwrap();
+    p.dom.append_child(parent, child).unwrap();
+    p.dom.set_attribute(parent, "class", "on").unwrap();
+    assert_matches_fresh(&p, "class set over a new child");
+}
