@@ -1345,7 +1345,15 @@ impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
         if let Some(el) = node.as_element() {
             // let mut data = el.mutate_data().unwrap();
             let mut data = unsafe { el.ensure_data() };
+            let before = context.thread_local.statistics.clone();
             recalc_style_at(self, context, el, &mut data, note_child);
+            let after = &context.thread_local.statistics;
+            crate::resolve::phase_profile::style_stats([
+                after.elements_styled - before.elements_styled,
+                after.elements_matched - before.elements_matched,
+                after.styles_shared - before.styles_shared,
+                after.styles_reused - before.styles_reused,
+            ]);
 
             sync_pseudo_element_styles(el, &data, &self.nodes_needing_style_image_flush);
 

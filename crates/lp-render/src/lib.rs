@@ -89,6 +89,11 @@ pub fn blitz_restyles() -> u64 {
     blitz_dom::phase_profile::restyles()
 }
 
+/// Elements Blitz styled, matched, shared and reused on this thread.
+pub fn blitz_style_stats() -> [u64; 4] {
+    blitz_dom::phase_profile::style_stats_peek()
+}
+
 pub fn blitz_phases() -> [f64; 9] {
     blitz_dom::phase_profile::peek()
 }
