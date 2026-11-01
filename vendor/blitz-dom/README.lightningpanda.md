@@ -67,3 +67,5 @@ lp-render's mirror tests (incremental documents against fresh builds after rando
   `@starting-style`, `@scope`, `line-clamp`, `fit-content()` and `@supports at-rule()` are on, as in
   lp-dom's cascade. The prefs are process-wide and read while sheets are parsed, so Blitz used to drop
   those rules unless lp-dom's cascade had been created first.
+- `src/document.rs`, `src/mutator.rs`, `src/form.rs`: a URL that cannot be resolved against the
+  document's (`src="x"` in a `data:` document) loads nothing instead of panicking, as in browsers.
