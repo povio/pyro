@@ -3990,7 +3990,8 @@ fn text_clip_facts_cover_absolute_tables_inline_splits_generated_and_shadow_text
 /// not its box: the autosize pattern sets `height: 0` then reads it.
 #[test]
 fn textarea_scroll_height_follows_its_value() {
-    for geometry in ["blitz"] {
+    {
+        let geometry = "blitz";
         let mut p = page(
             "<!doctype html><body><textarea id=ta rows=1 style=\"width:300px;padding:4px;border:1px solid #000;font-size:16px;line-height:20px\"></textarea></body>"
         );
@@ -4102,7 +4103,8 @@ fn textarea_scroll_height_in_autosize_composers() {
 #[test]
 #[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn text_input_scroll_width_follows_its_value() {
-    for geometry in ["blitz"] {
+    {
+        let geometry = "blitz";
         let mut p = page(
             "<!doctype html><body><input id=i style=\"width:80px;padding:0;border:0;font-size:14px\" value=short><textarea id=ta style=\"width:80px;padding:0;border:0;font-size:14px\"></textarea></body>"
         );

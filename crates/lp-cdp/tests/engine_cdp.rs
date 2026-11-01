@@ -3349,8 +3349,6 @@ fn scroll_into_view_if_needed_leaves_a_visible_node_alone() {
     // treats as moving the trigger, so a combobox popover on any page taller
     // than the viewport never rendered.
     let mut h = Harness::new();
-    // Flow geometry (TOS runs it): approximate client rects cannot tell what is in view.
-    let page = h.browser.host().thread.browser.pages[0].main_frame.page_dom.as_ref().unwrap().clone();
     let setup = h.page(
         "Runtime.evaluate",
         json!({"expression": "document.body.innerHTML = '<div style=\"height:150px\"></div><button id=b>b</button><div style=\"height:3000px\"></div>'; \
@@ -3591,7 +3589,6 @@ fn disabled_writes_elsewhere_move_no_focus_like_chromium() {
 /// Loads `body` (flow geometry, 20px/30px text), logs mouse/selection events
 /// and returns the page.
 fn selection_page(h: &mut Harness, body: &str, extra: &str) {
-    let page = h.browser.host().thread.browser.pages[0].main_frame.page_dom.as_ref().unwrap().clone();
     let setup = format!(
         "(() => {{ document.head.innerHTML = '<style>body{{margin:0;font-size:20px;line-height:30px}} td{{padding:0 20px 0 0}}</style>'; \
            document.body.innerHTML = {body:?}; globalThis.log = []; globalThis.cancel = {{}}; globalThis.hooks = {{}}; \
@@ -3725,7 +3722,6 @@ fn mouse_presses_over_empty_viewport_space_target_the_root_element() {
     // there ("no element at point"), e.g. a drag released where content had
     // been removed under the pointer.
     let mut h = Harness::new();
-    let page = h.browser.host().thread.browser.pages[0].main_frame.page_dom.as_ref().unwrap().clone();
     eval_value(
         &mut h,
         "(() => { document.body.style.margin = '0'; document.body.innerHTML = '<p id=p style=\"margin:0;font-size:20px;line-height:30px\">abc</p>'; \
@@ -3866,7 +3862,6 @@ fn reported_geometry_is_in_layout_units_like_chromium() {
     // 149.9999999999999, below the column's 150px minimum. Chromium (800x600,
     // measured): getBoundingClientRect and the box-model quad agree.
     let mut h = Harness::new();
-    let page = h.browser.host().thread.browser.pages[0].main_frame.page_dom.as_ref().unwrap().clone();
     for (style, expected) in [
         ("left:100.7px;top:10.3px;width:150px;height:20px", [100.6875, 10.296875, 150.0, 20.0]),
         ("left:-10.7px;top:-3.3px;width:150px;height:20px", [-10.6875, -3.296875, 150.0, 20.0]),

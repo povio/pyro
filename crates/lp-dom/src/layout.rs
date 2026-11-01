@@ -177,19 +177,25 @@ pub struct Layout {
     /// The engine laying the document out.
     external: Option<Rc<dyn GeometrySource>>,
     /// The observation stamp and viewport the engine was last synced at.
-    external_synced: std::cell::Cell<Option<((u64, u64, u32, u32), (u32, u32))>>,
+    external_synced: std::cell::Cell<Option<SyncedAt>>,
     /// Syncs so far (the whole document's geometry is read again after one).
     syncs: std::cell::Cell<u64>,
     /// The whole document's geometry, with the sync it was read at.
     result: RefCell<Option<(u64, Rc<LayoutResult>)>>,
 }
 
+/// The observation stamp and viewport a geometry source was synced at.
+type SyncedAt = ((u64, u64, u32, u32), (u32, u32));
+
+/// Makes the geometry source of a new document.
+pub type GeometrySourceFactory = Rc<dyn Fn() -> Rc<dyn GeometrySource>>;
+
 thread_local! {
-    static GEOMETRY_SOURCE: RefCell<Option<Rc<dyn Fn() -> Rc<dyn GeometrySource>>>> = const { RefCell::new(None) };
+    static GEOMETRY_SOURCE: RefCell<Option<GeometrySourceFactory>> = const { RefCell::new(None) };
 }
 
 /// Installs the factory of geometry sources for this thread's new documents.
-pub fn set_geometry_source_factory(factory: Option<Rc<dyn Fn() -> Rc<dyn GeometrySource>>>) {
+pub fn set_geometry_source_factory(factory: Option<GeometrySourceFactory>) {
     GEOMETRY_SOURCE.with(|f| *f.borrow_mut() = factory);
 }
 

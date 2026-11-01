@@ -124,13 +124,17 @@ pub fn install(fetcher: Arc<dyn Fetcher>) {
 }
 
 /// The Blitz document of one page document.
+/// DOM version, style generation, viewport (width, height, device pixel
+/// ratio bits, dark) and style invalidations.
+type SyncedAt = (u64, u64, (u32, u32, u64, bool), u64);
+
 pub struct BlitzGeometry {
     page: u64,
     base_url: RefCell<String>,
     fetcher: Arc<dyn Fetcher>,
     /// The DOM version, style generation, viewport and style invalidations
     /// it was last synced at.
-    synced: std::cell::Cell<Option<(u64, u64, (u32, u32, u64, bool), u64)>>,
+    synced: std::cell::Cell<Option<SyncedAt>>,
     /// [`RESOURCES`] when its document was built.
     resources: std::cell::Cell<u64>,
     /// Each style sheet's owner, whether it is a `<style>`, and its text's

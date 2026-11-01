@@ -521,13 +521,10 @@ impl Dom {
         parents.dedup();
         for &p in &parents {
             match rendered(p) {
-                Err(()) => match style_owner(p) {
-                    Some(owner) => {
-                        styles.push(owner);
-                        continue;
-                    }
-                    None => return None,
-                },
+                Err(()) => {
+                    styles.push(style_owner(p)?);
+                    continue;
+                }
                 Ok(false) => continue,
                 Ok(true) => {}
             }
@@ -692,10 +689,8 @@ impl Dom {
             let root = self.root_idx(i);
             let mut n = root;
             while n != NIL {
-                if n != i {
-                    if self.n(n).element().is_some_and(is_radio) {
-                        out.push(n);
-                    }
+                if n != i && self.n(n).element().is_some_and(is_radio) {
+                    out.push(n);
                 }
                 n = self.following_in(n, root);
             }
