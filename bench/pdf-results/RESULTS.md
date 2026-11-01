@@ -12,7 +12,31 @@ Engines: `chrome-base` (Chrome, base build), `chrome-fixed` (Chrome, `--paprize-
 against LP. Each case runs three interleaved repetitions after one untimed warm-up, and the tables report
 medians. Peak RSS covers the whole process tree, sampled every 50 ms.
 
-## Latest: Blitz relayout as fast as flow (2026-11-01)
+## Latest: closing on Chrome's pagination (2026-11-01, afternoon)
+
+Forced layouts in the long overflow documents got cheaper: line breaking is not repeated for the same
+inputs, deltas no longer fall back to a whole-tree sync when pagination adds and fills a container or edits,
+removes or re-attributes a `<style>`, and inserting or removing a child restyles only what structural
+selectors require (Blitz restyled the parent's whole subtree). Measured in one run (2 interleaved repetitions
+per case, 6-concurrent throughput after); load average 23 → 16 during the run. Every one of the 44 PDFs is
+byte-identical to the morning run's. Per-case table: [summary.md](summary.md).
+
+| | chrome-fixed | lp (flow geometry, earlier) | lp (Blitz, morning) | lp (Blitz, now) |
+|---|---|---|---|---|
+| page count equal to Chrome | – | 43/44 | 44/44 | **44/44** |
+| pixel diff per case, median | – | 4.7% | 4.3% | **4.3%** |
+| sum of median pagination ms (44 cases) | 1974 | 3306–3515 | 3291 | **2766** |
+| sum of median printToPDF ms | 3974 | 918–938 | 858 | **415** |
+| 6 concurrent: docs/s | 9.3 | 24.7–25.3 | 23.7 | **24.4** |
+| 6 concurrent: p50 / p95 ms | 241 / 338 | 85–92 / 389–417 | 89 / 380 | **69 / 283** |
+| 6 concurrent: peak RSS MB | 1100 | 1131–1164 | 1171 | **1186** |
+
+- The gap to Chrome is now in four documents: cmr-overflow (423 vs 279 ms), the booking-overflow pair (~190 vs
+  ~95 ms) and house-bl's overflowing table (159 vs 69 ms). The other 40 cases together are within ~90 ms of
+  Chrome.
+- Chrome's numbers moved between runs (the machine was shared all day); compare within a run.
+
+## Earlier: Blitz relayout as fast as flow (2026-11-01)
 
 Shaped runs and whole built text layouts are now reused for identical text and styles (pagination clones
 content into pages), and two whole-tree scans per sync are gone. Measured in one run (2 interleaved
