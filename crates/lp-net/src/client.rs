@@ -541,7 +541,26 @@ impl NetClient {
 // ---------------------------------------------------------------------------
 // I/O thread
 
-type HttpClient = Client<HttpConnector, Full<Bytes>>;
+type HttpClient = Client<hyper_rustls::HttpsConnector<HttpConnector>, Full<Bytes>>;
+
+/// The TLS settings of every client: Mozilla's root certificates (webpki-roots),
+/// rustls on ring. Plain data, built once per process (a fork child keeps it;
+/// connections live on the I/O thread, which forks stop and restart).
+fn tls_config() -> Arc<rustls::ClientConfig> {
+    static CONFIG: std::sync::OnceLock<Arc<rustls::ClientConfig>> = std::sync::OnceLock::new();
+    CONFIG
+        .get_or_init(|| {
+            let roots = rustls::RootCertStore { roots: webpki_roots::TLS_SERVER_ROOTS.to_vec() };
+            let provider = Arc::new(rustls::crypto::ring::default_provider());
+            let config = rustls::ClientConfig::builder_with_provider(provider)
+                .with_safe_default_protocol_versions()
+                .expect("rustls protocol versions")
+                .with_root_certificates(roots)
+                .with_no_client_auth();
+            Arc::new(config)
+        })
+        .clone()
+}
 
 /// Every client of the process, for [`suspend_for_fork`].
 static CLIENTS: Mutex<Vec<std::sync::Weak<Inner>>> = Mutex::new(Vec::new());
@@ -609,6 +628,11 @@ fn io_main(mut rx: mpsc::UnboundedReceiver<Cmd>, shared: Arc<Shared>, cookies: A
         connector.set_connect_timeout(Some(shared.config.connect_timeout));
         connector.set_nodelay(true);
         connector.enforce_http(false);
+        let connector = hyper_rustls::HttpsConnectorBuilder::new()
+            .with_tls_config((*tls_config()).clone())
+            .https_or_http()
+            .enable_http1()
+            .wrap_connector(connector);
         let client = Client::builder(TokioExecutor::new()).pool_idle_timeout(Duration::from_secs(30)).build(connector);
         let io = std::rc::Rc::new(Io {
             shared,
@@ -929,8 +953,7 @@ impl Io {
                 return self.serve_data(id, &req, sink, None);
             }
             match req.url.scheme() {
-                "http" => {}
-                "https" => return Err(NetError::UnsupportedScheme("https (built without TLS support)".into())),
+                "http" | "https" => {}
                 s => return Err(NetError::UnsupportedScheme(s.to_owned())),
             }
             if self.shared.settings.lock().unwrap().offline {

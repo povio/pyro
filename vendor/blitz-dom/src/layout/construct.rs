@@ -319,22 +319,16 @@ fn classify_flow_children(
     classification: &mut FlowClassification,
 ) {
     let node = &doc.nodes[container_node_id];
-    // ::before/::after pseudos with display:contents are transparent for box
-    // generation, so their children (e.g. generated text) participate in the
-    // container's formatting context and vote in the classification. Pseudos
-    // with any other display value generate their own box, which every
-    // construction arm already pushes explicitly, so they cast no vote.
-    let pseudo_ids = node
+    // ::before/::after pseudos vote like children: a display:contents pseudo
+    // through its children (e.g. generated text), any other through its own
+    // box. A container whose only in-flow content is an inline-block pseudo
+    // (`:empty::before { content: ''; display: inline-block }`) is an inline
+    // formatting context with a line strut, not an empty out-of-flow one.
+    let child_ids = node
         .before()
         .into_iter()
-        .chain(node.after())
-        .filter(|pe_id| {
-            let display = doc.nodes[*pe_id]
-                .display_style()
-                .unwrap_or(Display::inline());
-            matches!(display.inside(), DisplayInside::Contents)
-        });
-    let child_ids = node.children.iter().copied().chain(pseudo_ids);
+        .chain(node.children.iter().copied())
+        .chain(node.after());
     for child_id in child_ids {
         let child = &doc.nodes[child_id];
 
@@ -689,6 +683,13 @@ fn flush_pseudo_elements(doc: &mut BaseDocument, node_id: NodeId) {
             .as_ref()
             .and_then(|d| d.styles.pseudos.as_array()[0].clone());
 
+        // lightningpanda: `content: normal | none` generates no box (an
+        // unset `var()` in `content` computes to `normal`).
+        let generates =
+            |s: &style::servo_arc::Arc<style::properties::ComputedValues>| !matches!(s.get_counters().content, Content::Normal | Content::None);
+        let before_style = before_style.filter(generates);
+        let after_style = after_style.filter(generates);
+
         (before_style, after_style, before_node_id, after_node_id)
     };
 
@@ -840,6 +841,15 @@ fn collect_complex_layout_children(
         // Push nodes that need wrapping into the current "anonymous block container".
         // If there is not an open one then we create one.
         else if needs_wrap(child_node_kind, display_outside) {
+            out.push_wrapped(container_node_id, child_id, doc);
+        }
+        // A float after inline content belongs to that inline formatting context
+        // (it sits beside the line it follows rather than below it).
+        else if out.anonymous_block_id.is_some()
+            && doc.nodes[child_id]
+                .primary_styles()
+                .is_some_and(|s| s.clone_float() != Float::None)
+        {
             out.push_wrapped(container_node_id, child_id, doc);
         }
         // Else push the child directly (and close any open "anonymous block container")
@@ -1039,6 +1049,25 @@ pub(crate) fn build_inline_layout_into(
     scale: f32,
     inline_context_root_node_id: NodeId,
 ) {
+    build_inline_layout_with(nodes, layout_ctx, font_ctx, text_layout, scale, inline_context_root_node_id, false);
+    // A line holding atomic inlines but no text still has its strut (CSS 2.1
+    // 10.8.1): the root's font and line height. Parley makes no line height
+    // without text, so a line of empty inline-blocks was 0px tall. A
+    // word joiner (zero-width, no break opportunity) provides the strut.
+    if text_layout.layout.inline_boxes().len() > 0 && text_layout.text.chars().all(|c| c.is_whitespace() && c != '\n') {
+        build_inline_layout_with(nodes, layout_ctx, font_ctx, text_layout, scale, inline_context_root_node_id, true);
+    }
+}
+
+fn build_inline_layout_with(
+    nodes: &crate::NodeTree,
+    layout_ctx: &mut LayoutContext<TextBrush>,
+    font_ctx: &mut FontContext,
+    text_layout: &mut TextLayout,
+    scale: f32,
+    inline_context_root_node_id: NodeId,
+    strut: bool,
+) {
     // Get the inline context's root node's text styles
     let root_node = &nodes[inline_context_root_node_id];
     let root_node_style = root_node.primary_styles().or_else(|| {
@@ -1095,6 +1124,11 @@ pub(crate) fn build_inline_layout_into(
     // The marker is a separate box, so words in the content don't continue from it.
     let mut text_transformer = TextTransformer::default();
     text_transformer.word_break(&builder);
+    let text_nodes = &mut Vec::new();
+    // The strut goes before the first in-flow inline box: trailing white
+    // space after it still hangs, leading white space before it still
+    // collapses.
+    let strut = &mut { strut };
 
     if let Some(before_id) = root_node.before() {
         build_inline_layout_recursive(
@@ -1103,6 +1137,8 @@ pub(crate) fn build_inline_layout_into(
             nodes,
             before_id,
             &text_transform,
+            text_nodes,
+            strut,
         );
     }
     for child_id in root_node.children.iter().copied() {
@@ -1112,6 +1148,8 @@ pub(crate) fn build_inline_layout_into(
             nodes,
             child_id,
             &text_transform,
+            text_nodes,
+            strut,
         );
     }
     if let Some(after_id) = root_node.after() {
@@ -1121,10 +1159,13 @@ pub(crate) fn build_inline_layout_into(
             nodes,
             after_id,
             &text_transform,
+            text_nodes,
+            strut,
         );
     }
 
     text_layout.text = builder.build_into(&mut text_layout.layout);
+    text_layout.text_nodes = std::mem::take(text_nodes);
     return;
 
     fn build_inline_layout_recursive(
@@ -1133,6 +1174,8 @@ pub(crate) fn build_inline_layout_into(
         nodes: &crate::NodeTree,
         node_id: NodeId,
         parent_text_transform: &CaseTransform,
+        text_nodes: &mut Vec<(NodeId, std::ops::Range<usize>)>,
+        strut: &mut bool,
     ) {
         let node = &nodes[node_id];
 
@@ -1195,6 +1238,8 @@ pub(crate) fn build_inline_layout_into(
                                 nodes,
                                 child_id,
                                 &text_transform,
+                                text_nodes,
+                                strut,
                             );
                         }
                         builder.pop_style_span();
@@ -1205,6 +1250,9 @@ pub(crate) fn build_inline_layout_into(
                         if is_inline_box_element(tag_name) {
                             if box_kind == InlineBoxKind::InFlow {
                                 text_transformer.word_break(builder);
+                                if std::mem::take(strut) {
+                                    builder.push_text("\u{2060}");
+                                }
                             }
                             builder.push_inline_box(InlineBox {
                                 id: node_id.as_u64(),
@@ -1250,6 +1298,8 @@ pub(crate) fn build_inline_layout_into(
                                     nodes,
                                     before_id,
                                     &text_transform,
+                                    text_nodes,
+                                    strut,
                                 );
                             }
 
@@ -1260,6 +1310,8 @@ pub(crate) fn build_inline_layout_into(
                                     nodes,
                                     child_id,
                                     &text_transform,
+                                    text_nodes,
+                                    strut,
                                 );
                             }
                             if let Some(after_id) = node.after() {
@@ -1269,6 +1321,8 @@ pub(crate) fn build_inline_layout_into(
                                     nodes,
                                     after_id,
                                     &text_transform,
+                                    text_nodes,
+                                    strut,
                                 );
                             }
 
@@ -1279,6 +1333,9 @@ pub(crate) fn build_inline_layout_into(
                     (_, _) => {
                         if box_kind == InlineBoxKind::InFlow {
                             text_transformer.word_break(builder);
+                            if std::mem::take(strut) {
+                                builder.push_text("\u{2060}");
+                            }
                         }
                         builder.push_inline_box(InlineBox {
                             id: node_id.as_u64(),
@@ -1303,7 +1360,9 @@ pub(crate) fn build_inline_layout_into(
 
                 let text =
                     text_transformer.transform(&data.content, parent_text_transform, builder);
+                let start = builder.text().len();
                 builder.push_text(text);
+                text_nodes.push((node_id, start..builder.text().len()));
             }
             NodeData::Comment { .. } => {
                 // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);

@@ -46,7 +46,6 @@ use selectors::parser::{Component, NthSelectorData, Selector, SelectorList};
 
 use crate::computed;
 use crate::dom::Dom;
-use crate::flow::{Clear, Generated, GeneratedDisplay};
 use crate::media::{self, Viewport};
 use crate::node::{NodeId, NodeKind, NIL};
 use crate::select::{parse_selectors, Impl, PseudoClass, Selectors};
@@ -1191,218 +1190,12 @@ struct RuleSet {
     /// filter for every one of them on every such element.
     generic_by_tag_anc: FxHashMap<(String, String), Vec<u32>>,
     generic_by_class_anc: FxHashMap<(String, String), Vec<u32>>,
-    /// `::before` / `::after` rules, by their originating element's selector
-    /// (`StyleEngine::generated_content`).
-    generated_rules: Vec<GeneratedRule>,
-}
-
-/// The longhands `style_flow.rs` reads for every laid-out element, as slot
-/// indices of [`DeclaredEntry::flow`]. `font-size` and `font-weight` have
-/// their own cascade functions and are not slots.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-#[repr(u8)]
-pub(crate) enum FlowProp {
-    Display,
-    Position,
-    Top,
-    Right,
-    Bottom,
-    Left,
-    Width,
-    Height,
-    MinWidth,
-    MaxWidth,
-    MinHeight,
-    MaxHeight,
-    MarginTop,
-    MarginRight,
-    MarginBottom,
-    MarginLeft,
-    PaddingTop,
-    PaddingRight,
-    PaddingBottom,
-    PaddingLeft,
-    BorderTopStyle,
-    BorderRightStyle,
-    BorderBottomStyle,
-    BorderLeftStyle,
-    BorderTopWidth,
-    BorderRightWidth,
-    BorderBottomWidth,
-    BorderLeftWidth,
-    OverflowX,
-    OverflowY,
-    WhiteSpace,
-    OverflowWrap,
-    WordWrap,
-    WordBreak,
-    LineHeight,
-    Zoom,
-    BoxSizing,
-    FlexDirection,
-    FlexWrap,
-    RowGap,
-    ColumnGap,
-    AlignItems,
-    AlignSelf,
-    JustifyContent,
-    JustifyItems,
-    JustifySelf,
-    FlexGrow,
-    FlexShrink,
-    FlexBasis,
-    TableLayout,
-    BorderCollapse,
-    TextAlign,
-    Float,
-    Clear,
-}
-
-impl FlowProp {
-    pub(crate) const COUNT: usize = FlowProp::Clear as usize + 1;
-    const NAMES: [&'static str; FlowProp::COUNT] = [
-        "display",
-        "position",
-        "top",
-        "right",
-        "bottom",
-        "left",
-        "width",
-        "height",
-        "min-width",
-        "max-width",
-        "min-height",
-        "max-height",
-        "margin-top",
-        "margin-right",
-        "margin-bottom",
-        "margin-left",
-        "padding-top",
-        "padding-right",
-        "padding-bottom",
-        "padding-left",
-        "border-top-style",
-        "border-right-style",
-        "border-bottom-style",
-        "border-left-style",
-        "border-top-width",
-        "border-right-width",
-        "border-bottom-width",
-        "border-left-width",
-        "overflow-x",
-        "overflow-y",
-        "white-space",
-        "overflow-wrap",
-        "word-wrap",
-        "word-break",
-        "line-height",
-        "zoom",
-        "box-sizing",
-        "flex-direction",
-        "flex-wrap",
-        "row-gap",
-        "column-gap",
-        "align-items",
-        "align-self",
-        "justify-content",
-        "justify-items",
-        "justify-self",
-        "flex-grow",
-        "flex-shrink",
-        "flex-basis",
-        "table-layout",
-        "border-collapse",
-        "text-align",
-        "float",
-        "clear",
-    ];
-
-    pub(crate) fn name(self) -> &'static str {
-        FlowProp::NAMES[self as usize]
-    }
-
-    pub(crate) fn from_name(name: &str) -> Option<FlowProp> {
-        // SAFETY of the transmute: the index comes from NAMES, which has exactly COUNT entries in variant order.
-        FlowProp::NAMES.iter().position(|n| *n == name).map(|i| unsafe { std::mem::transmute::<u8, FlowProp>(i as u8) })
-    }
-
-    /// Whether the property inherits (an element without an own declaration
-    /// takes its parent's computed value).
-    pub(crate) fn inherited(self) -> bool {
-        static TABLE: std::sync::OnceLock<[bool; FlowProp::COUNT]> = std::sync::OnceLock::new();
-        TABLE.get_or_init(|| FlowProp::NAMES.map(computed::is_inherited))[self as usize]
-    }
-}
-
-/// A declared value in the form `style_flow.rs` can use without the string
-/// cascade: parsed once per rule (or per inline style), by syntax only.
-#[derive(Clone, Debug)]
-pub(crate) enum TypedValue {
-    /// `<number>px`.
-    Px(f64),
-    /// `<number>%`.
-    Pct(f64),
-    /// A unitless `<number>` (`0` included).
-    Number(f64),
-    /// Identifier words, trimmed, in the declared case (`auto`, `first baseline`).
-    Keyword(Rc<str>),
-    /// Everything the string cascade must resolve: `var()`, `calc()`,
-    /// relative or viewport units, CSS-wide keywords, lists, invalid values.
-    Other,
-}
-
-impl TypedValue {
-    fn parse(value: &str) -> TypedValue {
-        let v = value.trim();
-        if v.is_empty() {
-            return TypedValue::Other;
-        }
-        let bytes = v.as_bytes();
-        if bytes.iter().all(|b| b.is_ascii_alphabetic() || *b == b'-' || *b == b' ') {
-            return match v.to_ascii_lowercase().as_str() {
-                "inherit" | "initial" | "unset" | "revert" | "revert-layer" => TypedValue::Other,
-                _ => TypedValue::Keyword(Rc::from(v)),
-            };
-        }
-        // Numbers and absolute px/% lengths only; the CSS tokenizer decides validity exactly as the string path does.
-        let numeric = |s: &str| s.bytes().all(|b| b.is_ascii_digit() || matches!(b, b'.' | b'+' | b'-' | b'e' | b'E'));
-        let fonts = computed::LengthContext::fonts(DEFAULT_FONT_SIZE, DEFAULT_FONT_SIZE);
-        if let Some(n) = v.strip_suffix("px").or_else(|| v.strip_suffix("PX")).filter(|n| numeric(n)) {
-            return match computed::resolve_len(v, &fonts) {
-                Some((px, 0.0)) if !n.is_empty() => TypedValue::Px(px),
-                _ => TypedValue::Other,
-            };
-        }
-        if v.strip_suffix('%').is_some_and(|n| numeric(n) && !n.is_empty()) {
-            return match computed::resolve_len(v, &fonts) {
-                Some((0.0, pct)) => TypedValue::Pct(pct),
-                _ => TypedValue::Other,
-            };
-        }
-        if numeric(v) {
-            return computed::resolve_number(v).map_or(TypedValue::Other, TypedValue::Number);
-        }
-        TypedValue::Other
-    }
 }
 
 /// An element's winning author declarations: every longhand as text (for
-/// `getComputedStyle`), and the flow longhands as typed slots with their
-/// cascade priority, filled by the same matching pass.
+/// `getComputedStyle`).
 pub(crate) struct DeclaredEntry {
     pub(crate) map: FxHashMap<String, String>,
-    pub(crate) flow: [Option<(TypedValue, u64)>; FlowProp::COUNT],
-}
-
-/// A rule whose selector ends in `::before` or `::after`, with the
-/// pseudo-element stripped: it matches the originating element.
-struct GeneratedRule {
-    after: bool,
-    selector: Selectors,
-    decls: Rc<[(String, Rc<str>, bool)]>,
-    customs: Rc<[(String, Rc<str>, bool)]>,
-    normal: u64,
-    important: u64,
 }
 
 struct GenericRule {
@@ -1412,8 +1205,6 @@ struct GenericRule {
     typed_important: Option<(Rc<Declared>, u32)>,
     selector: Selectors,
     decls: Rc<[(String, Rc<str>, bool)]>,
-    /// For each of `decls`: its flow slot and typed value, parsed once.
-    typed: Rc<[Option<(FlowProp, TypedValue)>]>,
     normal: u64,
     important: u64,
     /// Bloom hashes its ancestor compounds require (0: none), to skip it for
@@ -1644,36 +1435,6 @@ struct PendingRule {
     bucket: BucketKey,
 }
 
-struct PendingGenerated {
-    after: bool,
-    /// The full selector (its specificity ranks the rule).
-    full: Selector<Impl>,
-    selector: Selectors,
-    decls: Rc<[(String, Rc<str>, bool)]>,
-    customs: Rc<[(String, Rc<str>, bool)]>,
-    layer: u16,
-    doc: u32,
-}
-
-/// `sel` without a final `::before` / `::after` (or the legacy one-colon
-/// forms): the originating element's selector, and whether it is `::after`.
-/// None for other pseudo-elements, or one followed by a pseudo-class.
-fn generated_selector(sel: &Selector<Impl>) -> Option<(bool, Selectors)> {
-    use cssparser::ToCss;
-    let text = sel.to_css_string();
-    let (rest, after) = match text.strip_suffix("::before") {
-        Some(r) => (r, false),
-        None => (text.strip_suffix("::after")?, true),
-    };
-    if rest.contains("::") {
-        return None;
-    }
-    // `::before` alone, or after a combinator, applies to any element.
-    let rest =
-        if rest.is_empty() || rest.ends_with([' ', '>', '+', '~']) { format!("{rest}*") } else { rest.to_owned() };
-    parse_selectors(&rest).ok().map(|s| (after, s))
-}
-
 struct PendingCustom {
     important: bool,
     name: String,
@@ -1695,7 +1456,6 @@ struct Builder<'v> {
     pending: Vec<PendingRule>,
     customs: Vec<PendingCustom>,
     generics: Vec<PendingGeneric>,
-    generated: Vec<PendingGenerated>,
     properties: FxHashMap<String, (bool, Option<Rc<str>>)>,
     has_relative: bool,
     has_anchors: Vec<HasAnchor>,
@@ -1727,7 +1487,6 @@ impl<'v> Builder<'v> {
             pending: Vec::new(),
             customs: Vec::new(),
             generics: Vec::new(),
-            generated: Vec::new(),
             properties: FxHashMap::default(),
             has_relative: false,
             has_anchors: Vec::new(),
@@ -1801,25 +1560,6 @@ impl<'v> Builder<'v> {
                         );
                         collect_keys(sel, &|c| pseudo(c, &[PseudoClass::FocusWithin]), &mut self.within_keys);
                         collect_keys(sel, &|c| pseudo(c, &[PseudoClass::Hover]), &mut self.hover_keys);
-                    }
-                    // `::before` / `::after` rules keep their declarations for
-                    // generated content; other pseudo-element rules are dropped.
-                    let generated: Vec<_> =
-                        list.slice().iter().filter_map(|sel| generated_selector(sel).map(|g| (sel, g))).collect();
-                    if !generated.is_empty() {
-                        let doc = self.next_doc_order(layer);
-                        let customs: Rc<[(String, Rc<str>, bool)]> = customs.clone().into();
-                        for (sel, (after, selector)) in generated {
-                            self.generated.push(PendingGenerated {
-                                after,
-                                full: sel.clone(),
-                                selector,
-                                decls: generics.clone(),
-                                customs: customs.clone(),
-                                layer,
-                                doc,
-                            });
-                        }
                     }
                     // StyleManager.zig:485-525; generic declarations share the block's order.
                     if !customs.is_empty() || !generics.is_empty() {
@@ -2080,18 +1820,12 @@ impl<'v> Builder<'v> {
             let important = (rank_of(layers, g.layer, true) << RANK_SHIFT) | spec | g.doc as u64 | IMPORTANT_BIT;
             let idx = rs.generic_rules.len() as u32;
             let ancestors = ancestor_hashes(&g.selector);
-            let typed: Rc<[Option<(FlowProp, TypedValue)>]> = g
-                .decls
-                .iter()
-                .map(|(name, value, _)| FlowProp::from_name(name).map(|p| (p, TypedValue::parse(value))))
-                .collect();
             rs.generic_rules.push(GenericRule {
                 ancestors,
                 typed_decl: g.typed,
                 typed_important: g.typed_important,
                 selector: SelectorList::from_one(g.selector),
                 decls: g.decls,
-                typed,
                 normal,
                 important,
             });
@@ -2111,17 +1845,6 @@ impl<'v> Builder<'v> {
                 (BucketKey::AttrValue(k, v), _) => rs.generic_by_attr_value.entry((k, v)).or_default().push(idx),
                 (BucketKey::Other, _) => rs.generic_other.push(idx),
             }
-        }
-        for g in self.generated {
-            let spec = (g.full.specificity() as u64) << SPEC_SHIFT;
-            rs.generated_rules.push(GeneratedRule {
-                after: g.after,
-                selector: g.selector,
-                decls: g.decls,
-                customs: g.customs,
-                normal: (rank_of(layers, g.layer, false) << RANK_SHIFT) | spec | g.doc as u64,
-                important: (rank_of(layers, g.layer, true) << RANK_SHIFT) | spec | g.doc as u64 | IMPORTANT_BIT,
-            });
         }
         rs
     }
@@ -2375,13 +2098,6 @@ fn declared_class(cache: &Cache, el: NodeId) -> Option<(NodeId, u64)> {
     cache.declared_meta.get(&root).is_some_and(|m| m.0 == stamp).then_some((root, stamp))
 }
 
-/// `el`'s flow-style share class while its start still has the entry it
-/// had.
-fn flow_class(cache: &Cache, el: NodeId) -> Option<(NodeId, u64)> {
-    let (root, stamp) = cache.flow.get(&el)?.class;
-    cache.flow.get(&root).is_some_and(|e| e.stamp == stamp).then_some((root, stamp))
-}
-
 /// The sharing-candidate key of `el`: its parent's share class (`class`)
 /// and a hash of its tag and class attribute.
 fn recent_key(dom: &Dom, el: NodeId, class: impl Fn(NodeId) -> Option<(NodeId, u64)>) -> Option<(NodeId, u64, u64)> {
@@ -2563,9 +2279,7 @@ fn added_rule_subjects(dom: &Dom, doc: NodeId, added: &RuleSet) -> Option<Vec<u3
                     || added.generic_by_attr_value.get(&key).is_some_and(|l| generic(l))
             });
         }
-        hit = hit
-            || added.generated_rules.iter().any(|g| dom.matches(id, &g.selector).unwrap_or(false))
-            || added.customs.values().flatten().any(|c| dom.matches(id, &c.selector).unwrap_or(false));
+        hit = hit || added.customs.values().flatten().any(|c| dom.matches(id, &c.selector).unwrap_or(false));
         if hit {
             subjects.push(dom.check(id).ok()?);
         }
@@ -3504,158 +3218,27 @@ fn compound_key(compound: &[&Component<Impl>]) -> AnchorKey {
 
 // Return the defining element too: substitution occurs there, before the value
 // is inherited, so a descendant's custom-property override cannot alter it.
-/// Whether `idx` can have `::before`/`::after` boxes: HTML elements bar
-/// form controls, replaced and void elements.
-fn generates_content(dom: &Dom, idx: u32) -> bool {
-    let Some(e) = dom.n(idx).element().filter(|e| e.is_html()) else { return false };
-    !matches!(
-        &*e.name.local,
-        "input"
-            | "textarea"
-            | "select"
-            | "img"
-            | "br"
-            | "wbr"
-            | "hr"
-            | "iframe"
-            | "video"
-            | "audio"
-            | "canvas"
-            | "object"
-            | "embed"
-            | "meter"
-            | "progress"
-    )
-}
-
-fn generated_uncached(dom: &Dom, rules: &RuleSet, idx: u32, after: bool) -> Option<Rc<Generated>> {
-    if !generates_content(dom, idx) {
-        return None;
+/// HTML rendering section display defaults. `display: none` elements are
+/// filtered earlier by `has_display_none`.
+pub(crate) fn ua_display(tag: &str) -> &'static str {
+    match tag {
+        "html" | "body" | "div" | "p" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "ul" | "ol" | "dl" | "dt" | "dd"
+        | "section" | "article" | "header" | "footer" | "nav" | "main" | "aside" | "form" | "fieldset" | "figure"
+        | "figcaption" | "blockquote" | "pre" | "hr" | "address" | "details" | "summary" | "dialog" | "menu"
+        | "legend" | "center" | "search" | "hgroup" | "optgroup" | "option" => "block",
+        "li" => "list-item",
+        "table" => "table",
+        "thead" => "table-header-group",
+        "tbody" => "table-row-group",
+        "tfoot" => "table-footer-group",
+        "tr" => "table-row",
+        "td" | "th" => "table-cell",
+        "caption" => "table-caption",
+        "colgroup" => "table-column-group",
+        "col" => "table-column",
+        "button" | "input" | "select" | "textarea" | "meter" | "progress" => "inline-block",
+        _ => "inline",
     }
-    let el = dom.id_of(idx);
-    // Without a matching rule that declares `content` there is no box:
-    // test those first (sheets like Tailwind's preflight style `::before`
-    // and `::after` for every element without giving them content).
-    let gives_content = |r: &&GeneratedRule| r.after == after && r.decls.iter().any(|(n, ..)| n == "content");
-    if !rules.generated_rules.iter().filter(gives_content).any(|r| dom.matches(el, &r.selector).unwrap_or(false)) {
-        return None;
-    }
-    let mut winners: FxHashMap<&str, (&str, u64)> = FxHashMap::default();
-    let mut customs: FxHashMap<&str, (&str, u64)> = FxHashMap::default();
-    fn offer<'r>(map: &mut FxHashMap<&'r str, (&'r str, u64)>, name: &'r str, value: &'r str, p: u64) {
-        if map.get(name).is_none_or(|&(_, q)| q <= p) {
-            map.insert(name, (value, p));
-        }
-    }
-    for r in rules.generated_rules.iter().filter(|r| r.after == after) {
-        if !dom.matches(el, &r.selector).unwrap_or(false) {
-            continue;
-        }
-        for (name, value, important) in r.decls.iter() {
-            offer(&mut winners, name.as_str(), value, if *important { r.important } else { r.normal });
-        }
-        for (name, value, important) in r.customs.iter() {
-            offer(&mut customs, name.as_str(), value, if *important { r.important } else { r.normal });
-        }
-    }
-    let get = |name: &str| winners.get(name).map(|(v, _)| v.trim().to_ascii_lowercase());
-    let display = match get("display").as_deref() {
-        None | Some("inline" | "contents" | "initial" | "unset" | "revert" | "revert-layer") => {
-            GeneratedDisplay::Inline
-        }
-        Some("none") => return None,
-        Some(d) if d.starts_with("inline-") || d.contains("inline-block") => GeneratedDisplay::InlineBlock,
-        Some(_) => GeneratedDisplay::Block,
-    };
-    if matches!(get("position").as_deref(), Some("absolute" | "fixed"))
-        || matches!(get("float").as_deref(), Some("left" | "right" | "inline-start" | "inline-end"))
-    {
-        return None;
-    }
-    let raw = winners.get("content")?.0;
-    // The pseudo-element's own custom properties, else what it inherits from
-    // its originating element (a registered non-inheriting one: its initial
-    // value).
-    let mut lookup = |var: &str| -> Option<String> {
-        if let Some((v, _)) = customs.get(var) {
-            return Some((*v).to_owned());
-        }
-        match rules.properties.get(var) {
-            Some((false, initial)) => initial.as_ref().map(|v| v.to_string()),
-            Some((true, initial)) => custom_property_inherited(dom, rules, el, var)
-                .map(|(_, v)| v)
-                .or_else(|| initial.as_ref().map(|v| v.to_string())),
-            None => custom_property_inherited(dom, rules, el, var).map(|(_, v)| v),
-        }
-    };
-    let value = computed::substitute_vars(raw, &mut lookup, 0)?;
-    let text = content_strings(&value)?;
-    let clear = match get("clear").as_deref() {
-        Some("left" | "inline-start") => Clear::Left,
-        Some("right" | "inline-end") => Clear::Right,
-        Some("both") => Clear::Both,
-        _ => Clear::None,
-    };
-    Some(Rc::new(Generated { text: Rc::from(text.as_str()), display, clear }))
-}
-
-/// The concatenated strings of a `content` value made only of strings (an
-/// alternative text after `/` is dropped); None for anything else.
-fn content_strings(value: &str) -> Option<String> {
-    let mut out = String::new();
-    let mut chars = value.trim().chars().peekable();
-    let mut any = false;
-    while let Some(c) = chars.next() {
-        match c {
-            c if c.is_ascii_whitespace() => {}
-            '/' if any => return Some(out),
-            '"' | '\'' => {
-                let quote = c;
-                let mut closed = false;
-                while let Some(c) = chars.next() {
-                    match c {
-                        c if c == quote => {
-                            closed = true;
-                            break;
-                        }
-                        '\\' => match chars.peek().copied() {
-                            Some('\n') => {
-                                chars.next();
-                            }
-                            Some(h) if h.is_ascii_hexdigit() => {
-                                let mut code = 0u32;
-                                for _ in 0..6 {
-                                    match chars.peek().and_then(|h| h.to_digit(16)) {
-                                        Some(d) => {
-                                            code = code * 16 + d;
-                                            chars.next();
-                                        }
-                                        None => break,
-                                    }
-                                }
-                                if chars.peek().is_some_and(|c| c.is_ascii_whitespace()) {
-                                    chars.next();
-                                }
-                                out.push(char::from_u32(code).filter(|&c| c != '\0').unwrap_or('\u{FFFD}'));
-                            }
-                            Some(other) => {
-                                chars.next();
-                                out.push(other);
-                            }
-                            None => {}
-                        },
-                        c => out.push(c),
-                    }
-                }
-                if !closed {
-                    return None;
-                }
-                any = true;
-            }
-            _ => return None,
-        }
-    }
-    any.then_some(out)
 }
 
 fn custom_property_source(dom: &Dom, rules: &RuleSet, el: NodeId, name: &str) -> Option<(NodeId, String)> {
@@ -4001,14 +3584,7 @@ struct Cache {
     memo: FxHashMap<NodeId, ComputedStyle>,
     /// Winning generic declarations per element (`declared_map`), dropped with `memo`.
     declared: FxHashMap<NodeId, Rc<DeclaredEntry>>,
-    /// Generated `::before` (false) / `::after` (true) content per element,
-    /// dropped with `memo`.
-    generated: FxHashMap<(NodeId, bool), Option<Rc<Generated>>>,
-    /// Flow layout inputs per element (`FlowStyleSource`), dropped with `memo`.
-    flow: FxHashMap<NodeId, FlowEntry>,
-    /// Stamps `flow` entries (a recomputed element gets a new one).
-    flow_seq: u64,
-    /// Elements whose cached styles were dropped since layout last asked
+    /// Elements whose cached styles were dropped since last asked
     /// (`take_restyled`); None: all of them.
     restyled: Option<Vec<NodeId>>,
     /// Ancestor filters by element for `ancestor_bits_cached`, valid for one
@@ -4039,30 +3615,14 @@ struct Cache {
     /// under equivalent parents (the same cell of the previous table row).
     /// Cleared with `declared`.
     recent: FxHashMap<(NodeId, u64, u64), NodeId>,
-    /// `recent` for flow styles (classes from `FlowEntry::class`).
-    flow_recent: FxHashMap<(NodeId, u64, u64), NodeId>,
     /// `shares_cascade` revalidation results by (element index, selector
     /// index in `rules.revalidate`): a candidate is tested by every later
     /// sibling, and Tailwind's `:last-child`/sibling rules apply to every
     /// element. Cleared with `declared`.
     reval: RefCell<FxHashMap<(u32, u32), bool>>,
-    extent: Option<(f64, f64)>,
     /// The focused and hovered elements of `stamp` (indices there), to tell
     /// a freed one from a live one.
     pseudo_ids: (Option<NodeId>, Option<NodeId>),
-}
-
-/// A cached flow style. `stamp` tells a recomputed entry from the one an
-/// element shared from; `shared_from` is (source element, its stamp then)
-/// when the style was shared rather than computed.
-struct FlowEntry {
-    style: Option<crate::flow::FlowStyle>,
-    stamp: u64,
-    shared_from: Option<(NodeId, u64)>,
-    /// The element this entry's sharing chain started from and its stamp:
-    /// elements of one class have equal computed styles and equivalent
-    /// ancestors.
-    class: (NodeId, u64),
 }
 
 /// The style engine of one document (upstream: one StyleManager per frame).
@@ -4072,13 +3632,13 @@ pub struct StyleEngine {
     sheets: Vec<Sheet>,
     popover_open: FxHashSet<NodeId>,
     generation: u64,
+    /// Generation bumps by [`StyleEngine::invalidate`] (anything but a sheet
+    /// being added, filled or removed).
+    invalidations: u64,
     /// Set by every generation bump except a sheet being added or filled
     /// (`add_sheet`, `discover_style_elements`): the next rebuild then clears
     /// every cached style instead of restyling the added rules' subjects.
     full_restyle: Cell<bool>,
-    /// `style_flow.rs` reads literal flow values from the typed slots; off,
-    /// every value goes through the string cascade (differential tests).
-    typed_flow_reads: Cell<bool>,
     cache: RefCell<Cache>,
     /// Stylo, the cascade computed styles come from (`crate::stylo`),
     /// created at the first style read.
@@ -4124,8 +3684,8 @@ impl StyleEngine {
             sheets: Vec::new(),
             popover_open: FxHashSet::default(),
             generation: 0,
+            invalidations: 0,
             full_restyle: Cell::new(true),
-            typed_flow_reads: Cell::new(true),
             cache: RefCell::new(Cache::default()),
             stylo: RefCell::new(None),
             stylo_sheets_at: Cell::new(None),
@@ -4308,7 +3868,7 @@ impl StyleEngine {
         let position = style.get_position();
         let e = dom.n(idx).element().expect("element");
         let ua_display = match e.is_html() {
-            true => crate::style_flow::ua_display(&e.name.local.to_ascii_lowercase()),
+            true => ua_display(&e.name.local.to_ascii_lowercase()),
             false => "inline",
         };
         let c = ComputedStyle {
@@ -4433,8 +3993,6 @@ impl StyleEngine {
         let mut cache = self.cache.borrow_mut();
         match changes {
             crate::stylo::Restyled::All => {
-                cache.flow.clear();
-                cache.generated.clear();
                 cache.restyled = None;
             }
             crate::stylo::Restyled::Some(mut changed) => {
@@ -4445,16 +4003,12 @@ impl StyleEngine {
                         continue;
                     }
                     let n = dom.id_of(idx);
-                    cache.flow.remove(&n);
-                    cache.generated.remove(&(n, false));
-                    cache.generated.remove(&(n, true));
                     if let Some(restyled) = cache.restyled.as_mut() {
                         restyled.push(n);
                     }
                 }
             }
         }
-        cache.extent = None;
         self.stylo_synced.set(Some(stamp));
     }
 
@@ -4472,18 +4026,6 @@ impl StyleEngine {
 
     pub fn document(&self) -> NodeId {
         self.doc
-    }
-
-    /// Differential tests: compare flow styles read through the typed slots
-    /// with the string cascade alone.
-    #[doc(hidden)]
-    pub fn set_typed_flow_reads(&self, on: bool) {
-        self.typed_flow_reads.set(on);
-    }
-
-    pub(crate) fn typed_flow_reads(&self) -> bool {
-        // The typed slots belong to the legacy cascade.
-        self.typed_flow_reads.get() && !self.stylo_on()
     }
 
     pub fn viewport(&self) -> &Viewport {
@@ -4508,7 +4050,15 @@ impl StyleEngine {
     /// doesn't cover (form state written through `control_state_mut`, ...).
     pub fn invalidate(&mut self) {
         self.generation += 1;
+        self.invalidations += 1;
         self.full_restyle.set(true);
+    }
+
+    /// How many generation bumps were not a sheet being added, filled or
+    /// removed (viewport, popovers, state the DOM version does not cover):
+    /// while it is unchanged, the sheets are all that changed.
+    pub fn invalidations(&self) -> u64 {
+        self.invalidations
     }
 
     /// A sheet was added, or an empty one got its text: the rule set must be
@@ -4543,7 +4093,11 @@ impl StyleEngine {
         let removed = self.sheets.len() != before;
         if removed {
             self.cache.get_mut().parsed.clear();
-            self.invalidate();
+            // Every cached style is dropped, but a removed sheet is a change
+            // of the sheets (not an `invalidations` one): its owner leaving
+            // the document says what changed.
+            self.generation += 1;
+            self.full_restyle.set(true);
         }
         removed
     }
@@ -4764,9 +4318,6 @@ impl StyleEngine {
                     cache.declared.remove(&n);
                     cache.declared_meta.remove(&n);
                     cache.share_class.remove(&n);
-                    cache.generated.remove(&(n, false));
-                    cache.generated.remove(&(n, true));
-                    cache.flow.remove(&n);
                 }
             }
             None => {
@@ -4776,14 +4327,10 @@ impl StyleEngine {
                 cache.declared_meta.clear();
                 cache.share_class.clear();
                 cache.recent.clear();
-                cache.flow_recent.clear();
                 cache.reval.borrow_mut().clear();
-                cache.generated.clear();
-                cache.flow.clear();
                 cache.restyled = None;
             }
         }
-        cache.extent = None;
         if cache.bits_version != Some((dom.uid(), stamp.version)) {
             cache.bits.clear();
             cache.bits_version = Some((dom.uid(), stamp.version));
@@ -4796,121 +4343,10 @@ impl StyleEngine {
     }
 
     /// The elements whose styles were dropped since the last call (None:
-    /// all), after bringing the cache up to date with `dom`. Layout drops
-    /// their subtree measurements.
-    pub(crate) fn take_restyled(&self, dom: &Dom) -> Option<Vec<NodeId>> {
+    /// all), after bringing the cache up to date with `dom`.
+    pub fn take_restyled(&self, dom: &Dom) -> Option<Vec<NodeId>> {
         self.sync(dom);
         self.cache.borrow_mut().restyled.replace(Vec::new())
-    }
-
-    pub(crate) fn cached_flow_style(&self, dom: &Dom, el: NodeId) -> Option<Option<crate::flow::FlowStyle>> {
-        self.sync(dom);
-        self.cache.borrow().flow.get(&el).map(|e| e.style.clone())
-    }
-
-    pub(crate) fn store_flow_style(
-        &self,
-        dom: &Dom,
-        el: NodeId,
-        style: Option<crate::flow::FlowStyle>,
-        shared_from: Option<(NodeId, u64)>,
-    ) {
-        let mut cache = self.cache.borrow_mut();
-        cache.flow_seq += 1;
-        let stamp = cache.flow_seq;
-        let class = shared_from.and_then(|(src, _)| flow_class(&cache, src)).unwrap_or((el, stamp));
-        cache.flow.insert(el, FlowEntry { style, stamp, shared_from, class });
-        if let Some(key) = recent_key(dom, el, |p| flow_class(&cache, p)) {
-            cache.flow_recent.insert(key, el);
-        }
-    }
-
-    /// The flow style of an element whose cascade must equal that of an
-    /// already styled one (Blink's and Stylo's style sharing): one of its
-    /// four previous element siblings (striped rows alternate), or the
-    /// element at its position under the element
-    /// its parent shared from (rows React inserts: each cell and its
-    /// contents then share with the row above). Returns the style and the
-    /// source with its stamp. Conservative: same tag, no id, the same
-    /// attributes (bar data-/aria- ones no selector reads), no state-bearing
-    /// elements (form controls, links, replaced, dialog/details, popovers),
-    /// the same result on both for every selector that could still tell
-    /// them apart (structural pseudo-classes, sibling combinators, :has(),
-    /// validity), no hovered or focused element under either side, and no
-    /// shadow roots or unbounded :has() at all.
-    pub(crate) fn shared_flow_style(
-        &self,
-        dom: &Dom,
-        el: NodeId,
-    ) -> Option<(Option<crate::flow::FlowStyle>, (NodeId, u64))> {
-        // Stylo shares computed styles itself; the sharing checks here read
-        // the legacy rule set.
-        if self.stylo_on() {
-            return None;
-        }
-        let idx = self.owns(dom, el)?;
-        let rules = self.cache.borrow().rules.clone();
-        if rules.has_relative || dom.shadow_root_count() != 0 {
-            return None;
-        }
-        let parent = dom.selector_parent(idx)?;
-        let cache = self.cache.borrow();
-        // Up to 4 previous element siblings (striped rows alternate).
-        let mut candidates: [Option<u32>; 5] = [None; 5];
-        let mut prev = dom.n(idx).prev;
-        let mut found = 0;
-        while prev != NIL && found < 4 {
-            if dom.n(prev).is_element() {
-                candidates[found] = Some(prev);
-                found += 1;
-            }
-            prev = dom.n(prev).prev;
-        }
-        // The same-position child of the element the parent shared from.
-        if let Some(&FlowEntry { shared_from: Some((src, stamp)), .. }) = cache.flow.get(&dom.id_of(parent)) {
-            if cache.flow.get(&src).is_some_and(|e| e.stamp == stamp) {
-                let position = |p: u32, of: Option<u32>, nth: Option<usize>| -> (usize, Option<u32>) {
-                    let mut i = 0;
-                    let mut c = dom.n(p).first_child;
-                    while c != NIL {
-                        if dom.n(c).is_element() {
-                            if Some(c) == of || Some(i) == nth {
-                                return (i, Some(c));
-                            }
-                            i += 1;
-                        }
-                        c = dom.n(c).next;
-                    }
-                    (i, None)
-                };
-                let (k, _) = position(parent, Some(idx), None);
-                if let Ok(src_idx) = dom.check(src) {
-                    candidates[4] = position(src_idx, None, Some(k)).1;
-                }
-            }
-        }
-        // The last element styled with the same tag and classes under a
-        // parent of the same class (the same cell of the previous row).
-        let recent = recent_key(dom, el, |p| flow_class(&cache, p))
-            .and_then(|k| cache.flow_recent.get(&k))
-            .and_then(|&c| dom.check(c).ok())
-            .filter(|c| !candidates.contains(&Some(*c)));
-        for c in candidates.into_iter().chain([recent]).flatten() {
-            let Some(entry) = cache.flow.get(&dom.id_of(c)) else { continue };
-            if shares_cascade(dom, &rules, idx, c, &cache.reval) {
-                return Some((entry.style.clone(), (dom.id_of(c), entry.stamp)));
-            }
-        }
-        None
-    }
-
-    pub(crate) fn cached_extent(&self, dom: &Dom) -> Option<(f64, f64)> {
-        self.sync(dom);
-        self.cache.borrow().extent
-    }
-
-    pub(crate) fn store_extent(&self, extent: (f64, f64)) {
-        self.cache.borrow_mut().extent = Some(extent);
     }
 
     // ----- cascade ---------------------------------------------------------
@@ -5240,7 +4676,7 @@ impl StyleEngine {
             |i: u32, name: &str| self.computed_value_at(dom, &rules, i, name, 0, false).map(|v| v.to_ascii_lowercase());
         let display = |i: u32| {
             value(i, "display").unwrap_or_else(|| match dom.n(i).element() {
-                Some(e) if e.is_html() => crate::style_flow::ua_display(&e.name.local.to_ascii_lowercase()).to_owned(),
+                Some(e) if e.is_html() => ua_display(&e.name.local.to_ascii_lowercase()).to_owned(),
                 _ => "inline".to_owned(),
             })
         };
@@ -5490,15 +4926,6 @@ impl StyleEngine {
         None
     }
 
-    /// All winning author declarations of `el`, computed in one pass over the
-    /// bucketed candidate rules and cached until the DOM or sheets change.
-    pub(crate) fn declared_entry(&self, dom: &Dom, el: NodeId) -> Option<Rc<DeclaredEntry>> {
-        self.owns(dom, el)?;
-        self.ensure(dom);
-        let rules = self.cache.borrow().rules.clone();
-        Some(self.declared_map(dom, &rules, el))
-    }
-
     fn declared_map(&self, dom: &Dom, rules: &RuleSet, el: NodeId) -> Rc<DeclaredEntry> {
         if let Some(map) = self.cache.borrow().declared.get(&el) {
             return map.clone();
@@ -5531,7 +4958,6 @@ impl StyleEngine {
         let mut c = Cascaded::default();
         let mut pri = [0u64; NF];
         let mut winners: FxHashMap<String, (String, u64)> = FxHashMap::default();
-        let mut flow: [Option<(TypedValue, u64)>; FlowProp::COUNT] = std::array::from_fn(|_| None);
         let mut offer = |name: &str, value: &str, priority: u64| match winners.get_mut(name) {
             Some(slot) if slot.1 > priority => {}
             Some(slot) => *slot = (value.to_owned(), priority),
@@ -5539,12 +4965,7 @@ impl StyleEngine {
                 winners.insert(name.to_owned(), (value.to_owned(), priority));
             }
         };
-        // The same winner rule as `offer`, on the typed slot of a flow longhand.
-        let mut offer_typed = |prop: FlowProp, value: &TypedValue, priority: u64| match &flow[prop as usize] {
-            Some((_, p)) if *p > priority => {}
-            _ => flow[prop as usize] = Some((value.clone(), priority)),
-        };
-        let Ok(e) = dom.element(el) else { return Rc::new(DeclaredEntry { map: FxHashMap::default(), flow }) };
+        let Ok(e) = dom.element(el) else { return Rc::new(DeclaredEntry { map: FxHashMap::default() }) };
         if let Some(style) = e.attr("style") {
             let decls = parse_declarations(style);
             let mut slots = Slots::default();
@@ -5556,9 +4977,6 @@ impl StyleEngine {
                 let p = if d.important { INLINE_IMPORTANT_PRIORITY } else { INLINE_PRIORITY };
                 for (longhand, v) in computed::expand(&d.name, &d.value) {
                     offer(&longhand, &v, p);
-                    if let Some(prop) = FlowProp::from_name(&longhand) {
-                        offer_typed(prop, &TypedValue::parse(&v), p);
-                    }
                 }
             }
             apply_declared(&mut c, &mut pri, &slots.props(Importance::Normal), INLINE_PRIORITY);
@@ -5589,12 +5007,9 @@ impl StyleEngine {
                 if let Some((d, _)) = &r.typed_important {
                     apply_declared(&mut c, &mut pri, d, r.important);
                 }
-                for ((name, value, important), typed) in r.decls.iter().zip(r.typed.iter()) {
+                for (name, value, important) in r.decls.iter() {
                     let priority = if *important { r.important } else { r.normal };
                     offer(name, value, priority);
-                    if let Some((prop, typed)) = typed {
-                        offer_typed(*prop, typed, priority);
-                    }
                 }
             }
         };
@@ -5678,10 +5093,10 @@ impl StyleEngine {
         }
         check(&rules.generic_other);
         drop(check);
-        let map = if winners.is_empty() && flow.iter().all(Option::is_none) {
-            cache.empty_entry.get_or_insert_with(|| Rc::new(DeclaredEntry { map: FxHashMap::default(), flow })).clone()
+        let map = if winners.is_empty() {
+            cache.empty_entry.get_or_insert_with(|| Rc::new(DeclaredEntry { map: FxHashMap::default() })).clone()
         } else {
-            Rc::new(DeclaredEntry { map: winners.into_iter().map(|(k, (v, _))| (k, v)).collect(), flow })
+            Rc::new(DeclaredEntry { map: winners.into_iter().map(|(k, (v, _))| (k, v)).collect() })
         };
         cache.declared.insert(el, map.clone());
         cache.cascaded.insert(el, Rc::new((c, pri)));
@@ -5784,61 +5199,6 @@ impl StyleEngine {
             }
         }
         None
-    }
-
-    /// The generated `::before` (`after`: `::after`) content of `el`: one
-    /// or more strings (after `var()` substitution) in an in-flow box. None
-    /// for `content: none`/`normal`, other content values (counters,
-    /// `attr()`, images, quotes), `display: none`, absolute/fixed/floated
-    /// pseudo-elements, and elements without generated content (form
-    /// controls, replaced and void elements). The pseudo-element takes its
-    /// originating element's font; its own box properties are not read.
-    pub fn generated_content(&self, dom: &Dom, el: NodeId, after: bool) -> Option<Rc<Generated>> {
-        let idx = self.owns(dom, el)?;
-        if self.stylo_on() {
-            self.sync(dom);
-            if let Some(g) = self.cache.borrow().generated.get(&(el, after)) {
-                return g.clone();
-            }
-            let g = self.generated_stylo(dom, idx, after);
-            self.cache.borrow_mut().generated.insert((el, after), g.clone());
-            return g;
-        }
-        self.ensure(dom);
-        if let Some(g) = self.cache.borrow().generated.get(&(el, after)) {
-            return g.clone();
-        }
-        let rules = self.cache.borrow().rules.clone();
-        let g = if rules.generated_rules.is_empty() { None } else { generated_uncached(dom, &rules, idx, after) };
-        self.cache.borrow_mut().generated.insert((el, after), g.clone());
-        g
-    }
-
-    /// [`Self::generated_content`] from Stylo's `::before`/`::after` style.
-    fn generated_stylo(&self, dom: &Dom, idx: u32, after: bool) -> Option<Rc<Generated>> {
-        if !generates_content(dom, idx) {
-            return None;
-        }
-        let style = self.stylo_full(dom).pseudo(dom, idx, after)?;
-        let get = |name: &str| crate::stylo::serialize(&style, name).unwrap_or_default();
-        let display = get("display");
-        let display = match display.as_str() {
-            "none" => return None,
-            "inline" | "contents" => GeneratedDisplay::Inline,
-            d if d.starts_with("inline-") => GeneratedDisplay::InlineBlock,
-            _ => GeneratedDisplay::Block,
-        };
-        if matches!(get("position").as_str(), "absolute" | "fixed") || get("float") != "none" {
-            return None;
-        }
-        let text = content_strings(&get("content"))?;
-        let clear = match get("clear").as_str() {
-            "left" | "inline-start" => Clear::Left,
-            "right" | "inline-end" => Clear::Right,
-            "both" => Clear::Both,
-            _ => Clear::None,
-        };
-        Some(Rc::new(Generated { text: Rc::from(text.as_str()), display, clear }))
     }
 
     /// Units for lengths declared on `idx`: its font-size (em), the root's (rem), the viewport (vw/vh).
@@ -6267,7 +5627,7 @@ mod has_anchor_tests {
 /// covered by `tests/stylo_cascade.rs`.
 #[cfg(test)]
 mod validity_has_invalidation_tests {
-    use crate::layout::{Geometry, Layout};
+    use crate::layout::Layout;
     use crate::media::Viewport;
     use crate::parse::{parse_document, DomRef};
     use crate::Dom;
@@ -6290,8 +5650,9 @@ mod validity_has_invalidation_tests {
         let mut layout = Layout::with_viewport(doc, Viewport::new(800, 600));
         layout.style().use_legacy_cascade();
         layout.style_mut().discover_style_elements(&dom);
-        layout.set_geometry(Geometry::Flow);
-        layout.flow(&dom);
+        for el in dom.query_selector_all(doc, &crate::select::parse_selectors("*").unwrap()).unwrap() {
+            layout.style().computed(&dom, el);
+        }
         layout.style().take_restyled(&dom);
         let id = |dom: &Dom, s: &str| dom.get_element_by_id(doc, s).unwrap().unwrap();
         // An unrelated style write restyles that element alone.
@@ -6323,8 +5684,9 @@ mod validity_has_invalidation_tests {
         let mut layout = Layout::with_viewport(doc, Viewport::new(800, 600));
         layout.style().use_legacy_cascade();
         layout.style_mut().discover_style_elements(&dom);
-        layout.set_geometry(Geometry::Flow);
-        layout.flow(&dom);
+        for el in dom.query_selector_all(doc, &crate::select::parse_selectors("*").unwrap()).unwrap() {
+            layout.style().computed(&dom, el);
+        }
         layout.style().take_restyled(&dom);
         let id = |dom: &Dom, s: &str| dom.get_element_by_id(doc, s).unwrap().unwrap();
         let (shell, child, field, seg, lit) =
@@ -6347,7 +5709,9 @@ mod validity_has_invalidation_tests {
         assert!(restyled.contains(&shell), "{restyled:?}");
         // Losing it may have changed the match too (the key no longer
         // holds, but it did before the change).
-        layout.flow(&dom);
+        for el in dom.query_selector_all(doc, &crate::select::parse_selectors("*").unwrap()).unwrap() {
+            layout.style().computed(&dom, el);
+        }
         dom.remove_attribute(child, "data-static-segment-type").unwrap();
         let restyled = layout.style().take_restyled(&dom).expect("selective");
         assert!(restyled.contains(&shell), "{restyled:?}");
@@ -6366,8 +5730,9 @@ mod validity_has_invalidation_tests {
         let mut layout = Layout::with_viewport(doc, Viewport::new(800, 600));
         layout.style().use_legacy_cascade();
         layout.style_mut().discover_style_elements(&dom);
-        layout.set_geometry(Geometry::Flow);
-        layout.flow(&dom);
+        for el in dom.query_selector_all(doc, &crate::select::parse_selectors("*").unwrap()).unwrap() {
+            layout.style().computed(&dom, el);
+        }
         layout.style().take_restyled(&dom);
         let id = |dom: &Dom, s: &str| dom.get_element_by_id(doc, s).unwrap().unwrap();
         let (group, input) = (id(&dom, "g"), id(&dom, "i"));
@@ -6381,7 +5746,7 @@ mod validity_has_invalidation_tests {
 /// covered by `tests/stylo_cascade.rs`.
 #[cfg(test)]
 mod large_invalidation_tests {
-    use crate::layout::{Geometry, Layout};
+    use crate::layout::Layout;
     use crate::media::Viewport;
     use crate::parse::{parse_document, DomRef};
     use crate::Dom;
@@ -6405,12 +5770,12 @@ mod large_invalidation_tests {
         let mut layout = Layout::with_viewport(doc, Viewport::new(800, 600));
         layout.style().use_legacy_cascade();
         layout.style_mut().discover_style_elements(&dom);
-        layout.set_geometry(Geometry::Flow);
-        layout.flow(&dom);
+        for el in dom.query_selector_all(doc, &crate::select::parse_selectors("*").unwrap()).unwrap() {
+            layout.style().computed(&dom, el);
+        }
         layout.style().take_restyled(&dom);
         let id = |dom: &Dom, s: &str| dom.get_element_by_id(doc, s).unwrap().unwrap();
         let (side, list, after) = (id(&dom, "side"), id(&dom, "list"), id(&dom, "after"));
-        assert!(layout.style().cached_flow_style(&dom, side).is_some(), "side styled by the first pass");
         dom.set_attribute(list, "class", "list dense").unwrap();
         let restyled = layout.style().take_restyled(&dom).expect("selective, not a full clear");
         // The list, its 40 rows and their spans, and the sibling after it:
@@ -6418,8 +5783,6 @@ mod large_invalidation_tests {
         assert!(restyled.contains(&list) && restyled.contains(&after), "{restyled:?}");
         assert!(restyled.len() >= 81, "{}", restyled.len());
         assert!(!restyled.contains(&side), "{restyled:?}");
-        assert!(layout.style().cached_flow_style(&dom, side).is_some(), "side kept its cached flow style");
-        assert!(layout.style().cached_flow_style(&dom, list).is_none(), "list dropped");
     }
 }
 
@@ -6427,7 +5790,7 @@ mod large_invalidation_tests {
 /// covered by `tests/stylo_cascade.rs`.
 #[cfg(test)]
 mod added_sheet_tests {
-    use crate::layout::{Geometry, Layout};
+    use crate::layout::Layout;
     use crate::media::Viewport;
     use crate::parse::{parse_document, DomRef};
     use crate::{Dom, NodeId};
@@ -6446,8 +5809,9 @@ mod added_sheet_tests {
         let mut layout = Layout::with_viewport(doc, Viewport::new(800, 600));
         layout.style().use_legacy_cascade();
         layout.style_mut().discover_style_elements(&dom);
-        layout.set_geometry(Geometry::Flow);
-        layout.flow(&dom);
+        for el in dom.query_selector_all(doc, &crate::select::parse_selectors("*").unwrap()).unwrap() {
+            layout.style().computed(&dom, el);
+        }
         layout.style().take_restyled(&dom);
         (dom, doc, layout)
     }
@@ -6473,7 +5837,6 @@ mod added_sheet_tests {
             add_style(&mut dom, doc, &mut layout, ".doc-content p{height:99px} .doc-content>*+*{margin-top:3px}");
         let restyled = layout.style().take_restyled(&dom).expect("selective, not a full clear");
         assert!(restyled.iter().all(|&n| n == style || dom.parent(n).ok().flatten() == Some(style)), "{restyled:?}");
-        assert!(layout.style().cached_flow_style(&dom, side).is_some(), "side kept its flow style");
         // A sheet matching one row: that row and its subtree only.
         add_style(&mut dom, doc, &mut layout, "#r3{height:20px}");
         let restyled = layout.style().take_restyled(&dom).expect("selective");

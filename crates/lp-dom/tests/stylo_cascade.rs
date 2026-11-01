@@ -459,7 +459,6 @@ fn only_attributes_selectors_test_are_snapshotted() {
 #[test]
 #[ignore = "needs pages (LP_CS_PAGES)"]
 fn style_read_timings() {
-    use lp_dom::layout::Geometry;
     let pages = std::env::var("LP_CS_PAGES").expect("LP_CS_PAGES");
     let iters: usize = std::env::var("LP_CS_ITERS").ok().and_then(|v| v.parse().ok()).unwrap_or(200);
     for spec in pages.split(',') {
@@ -471,7 +470,6 @@ fn style_read_timings() {
             let dom = Rc::try_unwrap(dom).ok().unwrap().into_inner();
             let mut layout = Layout::with_viewport(doc, lp_dom::media::Viewport::new(1280, 720));
             layout.style_mut().discover_style_elements(&dom);
-            layout.set_geometry(Geometry::Flow);
             (dom, doc, layout)
         };
         let stats = |mut v: Vec<f64>| {

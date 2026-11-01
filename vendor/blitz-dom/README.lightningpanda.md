@@ -47,3 +47,19 @@ the rendered display lists. lp-render's tests cover it (`class_selectors_match_a
 
 The original `UPSTREAM.patch` covers only the class-atom optimization above;
 these additional local changes are covered by lp-render's rendering tests.
+
+## Incremental passes for layout queries
+
+- `src/resolve.rs` (`resolve_layout_children`): an undamaged subtree without damaged descendants is not
+  walked (its layout children are those of the last pass); anonymous boxes are always visited.
+- `src/resolve.rs` (`resolve_transforms`): a node's cached scrollable overflow is reused only when it and
+  its subtree are undamaged (a descendant's relayout reaches ancestors as damage, not as
+  `RECALCULATE_OVERFLOW`).
+- `src/layout/mod.rs`, `src/node/element.rs`: incremental rounding (taffy's `RoundTree::rounded_unchanged`,
+  vendored taffy), keyed by `LayoutData::rounded_from`.
+
+lp-render's mirror tests (incremental documents against fresh builds after random mutations) cover both.
+- `assets/default.css`: text inputs take Chromium's UA box (`border: 2px inset`, `padding: 1px 2px`; a
+  40x30 input is 48x36), textareas keep `1px solid` / `2px`.
+- `src/document.rs`: `set_hover_node` puts `:hover` on a node and its ancestors (an embedder that tracks
+  the pointer itself: lightningpanda mirrors lp-dom's hovered element).

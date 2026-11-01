@@ -1,0 +1,12 @@
+{
+  "name": "lightningpanda-bench-pdf",
+  "private": true,
+  "type": "module",
+  "description": "Page.printToPDF: Lightningpanda (krilla) vs Chrome on the ToS pdfgen visual cases",
+  "dependencies": {
+    "pixelmatch": "7.1.0",
+    "pngjs": "7.0.0",
+    "playwright-core": "1.59.1",
+    "puppeteer-core": "25.2.1"
+  }
+}

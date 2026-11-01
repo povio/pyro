@@ -18,6 +18,10 @@ http = "1"
 http-body-util = "0.1"
 hyper = { version = "1", features = ["client", "http1"] }
 hyper-util = { version = "0.1", features = ["client-legacy", "tokio", "http1"] }
+# HTTPS: rustls with ring (pure Rust, no system TLS state) and Mozilla's roots.
+hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "ring", "tls12", "webpki-roots"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+webpki-roots = "1"
 lp-psl.workspace = true
 percent-encoding = "2.3.2"
 rustc-hash = "2.1.3"

@@ -121,6 +121,7 @@ impl Env {
         let dom = Rc::new(RefCell::new(lp_dom::Dom::new()));
         let doc = lp_dom::parse::parse_document(&dom, url, "<body></body>");
         dom.borrow_mut().set_document_active(doc, true).unwrap();
+        lp_layout::install(std::sync::Arc::new(NoFetch));
         let page = PageDom::new(dom, doc);
         *page.net.borrow_mut() = Some(lp_net::NetClient::new(Default::default()).unwrap());
         let (tx, tasks) = mpsc::channel();
@@ -343,5 +344,13 @@ impl Drop for Server {
         let url = lp_net::Url::parse(&self.url).unwrap();
         let _ = TcpStream::connect(("127.0.0.1", url.port().unwrap()));
         self.thread.take().unwrap().join().unwrap();
+    }
+}
+
+/// Loads no sub-resources for the layout (the tests' pages have none).
+struct NoFetch;
+impl lp_render::Fetcher for NoFetch {
+    fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+        done(Err(format!("{url}: offline")));
     }
 }

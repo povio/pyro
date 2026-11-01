@@ -255,13 +255,18 @@ impl BaseDocument {
             }
             root_id
         };
-        let moves: Vec<_> = self.nodes.iter().filter_map(|(id, node)| {
+        self.oof_hoisted.retain(|id| self.nodes.get(*id).is_some_and(|n| n.oof_containing_block.get().is_some()));
+        let mut moves: Vec<_> = self.oof_hoisted.iter().filter_map(|&id| {
+            let node = &self.nodes[id];
             if !node.flags.is_in_document() { return None; }
             let cb = node.oof_containing_block.get()?;
             let target = context_of(self, node.parent);
             (target != context_of(self, Some(cb))).then_some((id, target))
         }).collect();
         if moves.is_empty() { return; }
+        // In node slot order, as when every node was scanned (equal z-indices
+        // paint in insertion order).
+        moves.sort_unstable_by_key(|(id, _)| id.as_u64() as u32);
         let ids: std::collections::HashSet<_> = moves.iter().map(|(id, _)| *id).collect();
         // Remove stale cache contributions too: a clean subtree can replay
         // its lists on the next frame, but it must not reintroduce a duplicate.

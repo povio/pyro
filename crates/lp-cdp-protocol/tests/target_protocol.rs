@@ -264,7 +264,7 @@ fn filters_excluding_pages_are_honored() {
     );
     send(
         &mut b,
-        json!({"id":2,"method":"Target.setAutoAttach","params":{"autoAttach":true,"waitForDebuggerOnStart":false,"flatten":true,"filter":[{"type":"page","exclude":true},{}]}}),
+        json!({"id":2,"method":"Target.setAutoAttach","params":{"autoAttach":true,"waitForDebuggerOnStart":false,"flatten":true,"filter":[{"type":"page","exclude":true},{"type":"tab","exclude":true},{}]}}),
     );
     let r = send(&mut b, json!({"id":3,"method":"Target.createTarget","params":{}}));
     assert_eq!(r.len(), 1, "no targetCreated/attachedToTarget for excluded pages: {r:?}");
@@ -609,4 +609,57 @@ fn prepared_pages_refill_after_close_and_settle_once() {
     assert!(b.host().calls.iter().any(|c| c == "create_context -> 3"), "{:?}", b.host().calls);
     let r = send(&mut b, json!({"id":5,"method":"Lightningpanda.preparedPages"}));
     assert_eq!(r[0]["result"]["pages"].as_array().unwrap().len(), 1);
+}
+
+/// puppeteer >= 22: auto-attach to tab targets (pages excluded), then attach
+/// each page from its tab's session, as Chrome does.
+#[test]
+fn tab_targets_attach_their_page_from_the_tab_session() {
+    let mut b = Browser::new(Recorder::default());
+    let r = send(&mut b, json!({"id":1,"method":"Target.setDiscoverTargets","params":{"discover":true,"filter":[{}]}}));
+    assert_eq!(r.len(), 1);
+    send(
+        &mut b,
+        json!({"id":2,"method":"Target.setAutoAttach","params":{"autoAttach":true,"waitForDebuggerOnStart":true,"flatten":true,"filter":[{"type":"page","exclude":true},{}]}}),
+    );
+    let r = send(&mut b, json!({"id":3,"method":"Target.createTarget","params":{"url":"about:blank"}}));
+    let methods: Vec<&str> = r.iter().filter_map(|m| m["method"].as_str()).collect();
+    assert_eq!(methods, ["Target.targetCreated", "Target.targetCreated", "Target.attachedToTarget"], "{r:?}");
+    let page = r.last().unwrap()["result"]["targetId"].as_str().unwrap().to_owned();
+    let attached = &r[2]["params"];
+    assert_eq!(attached["targetInfo"]["type"], "tab");
+    assert_eq!(attached["targetInfo"]["targetId"], format!("tab-{page}"));
+    assert!(r[2].get("sessionId").is_none(), "tab sessions are browser-level");
+    let tab_session = attached["sessionId"].as_str().unwrap().to_owned();
+
+    // The tab session's auto-attach attaches the page, on the tab session.
+    let r = send(
+        &mut b,
+        json!({"id":4,"sessionId":tab_session,"method":"Target.setAutoAttach","params":{"autoAttach":true,"waitForDebuggerOnStart":true,"flatten":true,"filter":[{}]}}),
+    );
+    assert_eq!(r[0]["id"], 4);
+    assert_eq!(r[1]["method"], "Target.attachedToTarget");
+    assert_eq!(r[1]["sessionId"], tab_session.as_str());
+    assert_eq!(r[1]["params"]["targetInfo"]["type"], "page");
+    assert_eq!(r[1]["params"]["targetInfo"]["targetId"], page.as_str());
+    let page_session = r[1]["params"]["sessionId"].as_str().unwrap().to_owned();
+    let r = send(&mut b, json!({"id":5,"sessionId":tab_session,"method":"Runtime.runIfWaitingForDebugger"}));
+    assert_eq!(r[0]["result"], json!({}));
+
+    // Closing the page detaches the page session (on the tab session), then the tab.
+    let r = send(&mut b, json!({"id":6,"method":"Target.closeTarget","params":{"targetId":page}}));
+    let events: Vec<(String, String)> = r
+        .iter()
+        .filter(|m| m["method"] == "Target.detachedFromTarget")
+        .map(|m| {
+            (m["params"]["sessionId"].as_str().unwrap().to_owned(), m["sessionId"].as_str().unwrap_or("").to_owned())
+        })
+        .collect();
+    assert_eq!(events, [(page_session, tab_session.clone()), (tab_session, String::new())]);
+    let destroyed: Vec<&str> = r
+        .iter()
+        .filter(|m| m["method"] == "Target.targetDestroyed")
+        .map(|m| m["params"]["targetId"].as_str().unwrap())
+        .collect();
+    assert_eq!(destroyed, [page.clone(), format!("tab-{page}")]);
 }

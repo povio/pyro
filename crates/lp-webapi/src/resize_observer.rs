@@ -22,7 +22,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 use std::time::{Duration, Instant};
 
-use lp_dom::layout::{Axis, Geometry, Rect};
+use lp_dom::layout::Rect;
 use lp_dom::NodeId;
 use lp_js::{
     ClassDef, IdentityKey, JsClass, JsError, JsResult, NoParent, Persistent, RealmId, Scope, Value, WeakRealm,
@@ -99,9 +99,6 @@ struct Sizes {
 }
 
 impl Sizes {
-    fn uniform(size: (f64, f64)) -> Self {
-        Sizes { origin: (0.0, 0.0), content: size, border: size, device_pixel_content: size }
-    }
     fn of(&self, observed: ObservedBox) -> (f64, f64) {
         match observed {
             ObservedBox::Content => self.content,
@@ -170,28 +167,22 @@ fn measure(page: &PageDom, id: NodeId) -> Option<Sizes> {
     if !layout.is_visible(&dom, id) {
         return Some(Sizes::default());
     }
-    if layout.geometry() == Geometry::Flow {
-        let pad = |side: &str| {
-            layout
-                .style()
-                .used_value(&dom, id, &format!("padding-{side}"))
-                .and_then(|v| v.trim().strip_suffix("px").and_then(|n| n.parse::<f64>().ok()))
-                .unwrap_or(0.0)
-        };
-        let width = (layout.client_width(&dom, id) - pad("left") - pad("right")).max(0.0);
-        let height = (layout.client_height(&dom, id) - pad("top") - pad("bottom")).max(0.0);
-        let dpr = layout.device_pixel_ratio();
-        return Some(Sizes {
-            origin: (pad("left"), pad("top")),
-            content: (width, height),
-            border: (layout.offset_width(&dom, id), layout.offset_height(&dom, id)),
-            device_pixel_content: ((width * dpr).round(), (height * dpr).round()),
-        });
-    }
-    Some(Sizes::uniform((
-        layout.element_axis(&dom, id, Axis::Width).value,
-        layout.element_axis(&dom, id, Axis::Height).value,
-    )))
+    let pad = |side: &str| {
+        layout
+            .style()
+            .used_value(&dom, id, &format!("padding-{side}"))
+            .and_then(|v| v.trim().strip_suffix("px").and_then(|n| n.parse::<f64>().ok()))
+            .unwrap_or(0.0)
+    };
+    let width = (layout.client_width(&dom, id) - pad("left") - pad("right")).max(0.0);
+    let height = (layout.client_height(&dom, id) - pad("top") - pad("bottom")).max(0.0);
+    let dpr = layout.device_pixel_ratio();
+    Some(Sizes {
+        origin: (pad("left"), pad("top")),
+        content: (width, height),
+        border: (layout.offset_width(&dom, id), layout.offset_height(&dom, id)),
+        device_pixel_content: ((width * dpr).round(), (height * dpr).round()),
+    })
 }
 
 pub struct ResizeObserver;
@@ -335,8 +326,7 @@ pub(crate) fn after_task(page: &PageDom) {
     }
     let Some(owner) = page.resizes.owner.borrow().upgrade() else { return };
     let stamp = (page.document(), page.layout.borrow().observation_stamp(&page.dom.borrow()));
-    let flow = page.layout.borrow().geometry() == Geometry::Flow;
-    if flow && page.resizes.stamp.get() != Some(stamp) && !page.resizes.observers.borrow().is_empty() {
+    if page.resizes.stamp.get() != Some(stamp) && !page.resizes.observers.borrow().is_empty() {
         // Each gather lays out the whole document under the flow layout.
         // Chromium gathers once per rendering update, not per task: gather
         // at most every max(16 ms, twice the last gather's cost), and wake
@@ -384,10 +374,8 @@ pub(crate) fn after_task(page: &PageDom) {
             }
         }
         page.resizes.observers.borrow_mut().retain(|o| o.strong_count() > 0);
-        if flow {
-            let cost = started.elapsed();
-            page.resizes.next_gather.set(Some(Instant::now() + (cost * 2).max(Duration::from_millis(16))));
-        }
+        let cost = started.elapsed();
+        page.resizes.next_gather.set(Some(Instant::now() + (cost * 2).max(Duration::from_millis(16))));
     }
     let pending =
         page.resizes.observers.borrow().iter().filter_map(Weak::upgrade).any(|o| !o.records.borrow().is_empty());

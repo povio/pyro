@@ -6,6 +6,10 @@
 //! events by [`EngineHost::flush`] afterwards, so no CDP state is borrowed
 //! while JavaScript is on the stack.
 
+#[cfg(feature = "render")]
+mod blitz_geometry;
+#[cfg(feature = "render")]
+pub(crate) use blitz_geometry::set_fork_template;
 mod dom;
 mod driver;
 mod fetch;
@@ -391,6 +395,11 @@ impl EngineHost {
         thread
             .enable_network(profile.net.clone())
             .map_err(|e| CdpError::server(format!("network unavailable: {e}")))?;
+        #[cfg(feature = "render")]
+        blitz_geometry::install(
+            profile.net.static_files.clone(),
+            thread.browser.context_net(lp_browser::DEFAULT_CONTEXT).cloned(),
+        );
         if !profile.local_storage.is_empty() {
             thread.set_local_storage_seed(profile.local_storage.clone());
         }
@@ -715,8 +724,23 @@ impl EngineHost {
             "Network" => self.network_domain(action, cmd),
             "Fetch" => self.fetch_domain(action, cmd),
             "Input" => self.input_domain(action, cmd),
+            // Blitz-backed layout queries since the last call (LIGHTNINGPANDA_GEOMETRY=blitz).
+            #[cfg(feature = "render")]
+            "LP" if action == "geometryStats" => {
+                let (layouts, deltas, snapshot_ms, layout_ms, read_ms) = blitz_geometry::take_stats();
+                let (mirror_ms, settle_ms, resolve_ms) = lp_render::sync_profile::take();
+                Ok(Some(serde_json::json!({
+                    "layouts": layouts, "deltas": deltas, "snapshotMs": snapshot_ms, "layoutMs": layout_ms, "readMs": read_ms,
+                    "mirrorMs": mirror_ms, "settleMs": settle_ms, "resolveMs": resolve_ms,
+                })))
+            }
             "LP" => self.driver_domain(action, cmd),
+            #[cfg(feature = "render")]
+            "IO" => self.io_domain(action, cmd),
             "Log" if matches!(action, "enable" | "disable") => Ok(Some(serde_json::json!({}))),
+            // puppeteer enables both on every page; there are no issues or
+            // metrics to report (`Performance.getMetrics` stays unsupported).
+            "Audits" | "Performance" if matches!(action, "enable" | "disable") => Ok(Some(serde_json::json!({}))),
             _ => Err(CdpError::unsupported(&cmd.command.method)),
         }
     }
@@ -765,6 +789,18 @@ impl EngineHost {
         match action {
             // Headless pages always behave as focused; there is no window focus to emulate.
             "setFocusEmulationEnabled" => Ok(Some(serde_json::json!({}))),
+            // puppeteer's setViewport sends it with every viewport. Pages have
+            // no touch input, which is what `enabled: false` asks for.
+            "setTouchEmulationEnabled" => {
+                #[derive(Deserialize)]
+                struct P {
+                    enabled: bool,
+                }
+                if cmd.command.params::<P>()?.enabled {
+                    return Err(CdpError::unsupported("Emulation.setTouchEmulationEnabled enabled: true"));
+                }
+                Ok(Some(serde_json::json!({})))
+            }
             "setDeviceMetricsOverride" | "clearDeviceMetricsOverride" => self.device_metrics(action, cmd),
             // Each call replaces the whole emulation (as Chrome): the media
             // type and the `prefers-*` features it lists; the rest reset.

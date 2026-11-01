@@ -33,6 +33,15 @@ pub struct TextLayout {
     /// containing block (as `SPAN_*_CB` flags). The inline root claims those boxes in its place.
     /// Set by each `RunMode::PerformLayout` run of inline layout.
     pub span_cb_flags: stylo_taffy::StyleFlags,
+    /// Each text node laid out here and the byte range of `text` it produced
+    /// (after white-space collapsing; trailing collapsible white space
+    /// belongs to the next node, or is dropped).
+    pub text_nodes: Vec<(NodeId, std::ops::Range<usize>)>,
+    /// The inputs of the last line breaking that involved no floats (its
+    /// width, text indent and inline box sizes, hashed): breaking with the
+    /// same inputs again gives the same lines, so it is skipped. `None` when
+    /// the layout was built again since.
+    pub last_break: Option<u64>,
 }
 
 impl TextLayout {

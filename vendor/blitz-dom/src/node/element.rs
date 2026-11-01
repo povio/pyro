@@ -129,6 +129,9 @@ pub struct LayoutData {
     pub final_layout: Layout,
     pub scroll_offset: crate::Point<f64>,
     pub scrollable_overflow: KurboRect,
+    /// The unrounded layout and absolute offset the final layout was last rounded from
+    /// (incremental rounding: `RoundTree::rounded_unchanged`).
+    pub rounded_from: Option<(Layout, f32, f32)>,
     /// The writing mode this node's layout algorithm ran in (the root takes it from `<body>`),
     /// recorded by the layout pass for CSSOM geometry lookups.
     #[cfg(feature = "writing-mode")]
@@ -143,6 +146,7 @@ impl LayoutData {
             final_layout: Layout::new(),
             scroll_offset: crate::Point::ZERO,
             scrollable_overflow: KurboRect::ZERO,
+            rounded_from: None,
             #[cfg(feature = "writing-mode")]
             writing_mode: stylo_taffy::WritingMode::empty(),
         }

@@ -350,6 +350,9 @@ pub struct BaseDocument {
     pub(crate) changed_nodes: HashSet<NodeId>,
     /// Set of changed nodes for updating the accessibility tree
     pub(crate) deferred_construction_nodes: Vec<ConstructionTask>,
+    /// Boxes laid out by an out-of-flow containing block (`oof_containing_block`
+    /// set), so paint-tree passes visit them instead of every node.
+    pub(crate) oof_hoisted: HashSet<NodeId>,
 
     /// Nodes that contain custom widgets
     #[cfg(feature = "custom-widget")]
@@ -427,6 +430,8 @@ impl BaseDocument {
 
         // Make sure we turn on stylo features *before* creating the Stylist
         style_config::set_pref!("layout.grid.enabled", true);
+        // lightningpanda: `:has()` (with invalidation, `invalidate_has_anchors`).
+        style_config::set_pref!("layout.css.has-selector.enabled", true);
         style_config::set_pref!("layout.flexbox.balance", true);
         style_config::set_pref!("layout.unimplemented", true);
         style_config::set_pref!("layout.columns.enabled", true);
@@ -514,6 +519,7 @@ impl BaseDocument {
 
             changed_nodes: HashSet::new(),
             deferred_construction_nodes: Vec::new(),
+            oof_hoisted: HashSet::new(),
             image_cache: HashMap::new(),
             pending_images: HashMap::new(),
             pending_style_image_nodes: Vec::new(),
@@ -943,6 +949,7 @@ impl BaseDocument {
             self.active_node_id = self.nearest_surviving_element_ancestor(node_id);
         }
         if self.focus_node_id == Some(node_id) {
+            self.set_focus_within(node_id, false);
             let shell_provider = self.shell_provider.clone();
             self.nodes[node_id].blur(shell_provider);
             self.focus_node_id = None;
@@ -1459,7 +1466,55 @@ impl BaseDocument {
         self.snapshot_node_impl(node_id, false)
     }
 
+    /// lightningpanda: `:has()` invalidation. Stylo leaves it to the embedder
+    /// (Gecko runs its `RelativeSelectorInvalidator` on every DOM mutation),
+    /// so a change inside a `:has()` argument left the anchor's styles stale
+    /// until something else restyled it. Matching flags every element a
+    /// `:has()` search visits (`RELATIVE_SELECTOR_SEARCH_DIRECTION_*`) and
+    /// every anchor (`ANCHORS_RELATIVE_SELECTOR[_NON_SUBJECT]`); when `node_id` is in a
+    /// search path, the anchors that can see it (its ancestors and their
+    /// previous siblings, and its own previous siblings) restyle their
+    /// subtrees.
+    pub fn invalidate_has_anchors(&mut self, node_id: NodeId) {
+        use selectors::matching::ElementSelectorFlags as F;
+        let search = F::RELATIVE_SELECTOR_SEARCH_DIRECTION_ANCESTOR
+            | F::RELATIVE_SELECTOR_SEARCH_DIRECTION_SIBLING
+            | F::RELATIVE_SELECTOR_SEARCH_DIRECTION_ANCESTOR_SIBLING;
+        let flags = |n: &Node| if n.is_element() { n.selector_flags().get() } else { F::empty() };
+        let Some(node) = self.nodes.get(node_id) else { return };
+        if !flags(node).intersects(search) {
+            return;
+        }
+        let mut anchors = Vec::new();
+        let mut cur = Some(node_id);
+        while let Some(id) = cur {
+            let parent = self.nodes[id].parent;
+            let is_anchor =
+                |n: &Node| flags(n).intersects(F::ANCHORS_RELATIVE_SELECTOR | F::ANCHORS_RELATIVE_SELECTOR_NON_SUBJECT);
+            if is_anchor(&self.nodes[id]) {
+                anchors.push(id);
+            }
+            if let Some(p) = parent {
+                for &s in &self.nodes[p].children {
+                    if s == id {
+                        break;
+                    }
+                    if is_anchor(&self.nodes[s]) {
+                        anchors.push(s);
+                    }
+                }
+            }
+            cur = parent;
+        }
+        for id in anchors {
+            if self.nodes[id].primary_styles().is_some() {
+                self.nodes[id].set_restyle_hint(RestyleHint::restyle_subtree());
+            }
+        }
+    }
+
     fn snapshot_node_impl(&mut self, node_id: NodeId, capture_attrs: bool) {
+        self.invalidate_has_anchors(node_id);
         let node = &mut self.nodes[node_id];
 
         // Do not snapshot nodes that have never been styled. A snapshot records an element's
@@ -1684,8 +1739,25 @@ impl BaseDocument {
     }
 
     /// Clear the focussed node
+    /// lightningpanda: `:focus-within`: sets (or clears) `FOCUS_WITHIN` on
+    /// `node_id` and its element ancestors.
+    fn set_focus_within(&mut self, node_id: NodeId, on: bool) {
+        let mut cur = Some(node_id);
+        while let Some(id) = cur {
+            if self.nodes[id].is_element() {
+                self.snapshot_node_and(id, ElementState::FOCUS_WITHIN, |node| {
+                    if let Some(e) = node.element_data_mut() {
+                        e.element_state.set(ElementState::FOCUS_WITHIN, on);
+                    }
+                });
+            }
+            cur = self.nodes[id].parent;
+        }
+    }
+
     pub fn clear_focus(&mut self) {
         if let Some(id) = self.focus_node_id {
+            self.set_focus_within(id, false);
             let shell_provider = self.shell_provider.clone();
             self.snapshot_node_and(id, ElementState::FOCUS | ElementState::FOCUSRING, |node| {
                 node.blur(shell_provider)
@@ -1712,6 +1784,7 @@ impl BaseDocument {
 
         // Remove focus from the old node
         if let Some(id) = self.focus_node_id {
+            self.set_focus_within(id, false);
             self.snapshot_node_and(id, ElementState::FOCUS | ElementState::FOCUSRING, |node| {
                 node.blur(shell_provider.clone())
             });
@@ -1725,6 +1798,7 @@ impl BaseDocument {
         );
 
         self.focus_node_id = Some(focus_node_id);
+        self.set_focus_within(focus_node_id, true);
 
         true
     }
@@ -1909,6 +1983,28 @@ impl BaseDocument {
         // Request redraw
         self.shell_provider.request_redraw();
 
+        true
+    }
+
+    /// Puts `:hover` on `node` and its ancestors (and off the previous
+    /// ones), as a pointer over it would: for an embedder that tracks the
+    /// pointer itself. `None` clears hover.
+    pub fn set_hover_node(&mut self, node: Option<NodeId>) -> bool {
+        let node = node.and_then(|id| self.nearest_non_anonymous_ancestor(id));
+        if node == self.hover_node_id {
+            return false;
+        }
+        let old_node_path = self.maybe_node_element_ancestors(self.hover_node_id);
+        let new_node_path = self.maybe_node_element_ancestors(node);
+        let same_count = old_node_path.iter().zip(&new_node_path).take_while(|(o, n)| o == n).count();
+        for &id in old_node_path.iter().skip(same_count) {
+            self.snapshot_node_and(id, ElementState::HOVER, |node| node.unhover());
+        }
+        for &id in new_node_path.iter().skip(same_count) {
+            self.snapshot_node_and(id, ElementState::HOVER, |node| node.hover());
+        }
+        self.hover_node_id = node;
+        self.hover_hit_node_id = node;
         true
     }
 

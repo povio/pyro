@@ -156,11 +156,31 @@ pub fn walk_tree(indent: usize, node: &Node) {
 /// Parse an SVG image.
 #[cfg(feature = "svg")]
 pub(crate) fn parse_svg_image(source: &[u8]) -> Result<crate::node::SvgImageData, usvg::Error> {
+    // lightningpanda: parsed images by their source. An inline <svg> is
+    // parsed from a snapshot of its subtree each time its box is built, and
+    // pages that clone content (a header logo on every printed page) build
+    // the same one again and again; the parse depends on the source alone.
+    std::thread_local! {
+        static PARSED: std::cell::RefCell<std::collections::HashMap<Vec<u8>, crate::node::SvgImageData>> =
+            Default::default();
+    }
+    const MAX_ENTRIES: usize = 256;
+    if let Some(svg) = PARSED.with(|p| p.borrow().get(source).cloned()) {
+        return Ok(svg);
+    }
     let options = usvg::Options {
         fontdb: Arc::clone(&*FONT_DB),
         ..Default::default()
     };
-    crate::node::SvgImageData::from_data(source, &options)
+    let svg = crate::node::SvgImageData::from_data(source, &options)?;
+    PARSED.with(|p| {
+        let mut p = p.borrow_mut();
+        if p.len() >= MAX_ENTRIES {
+            p.clear();
+        }
+        p.insert(source.to_vec(), svg.clone());
+    });
+    Ok(svg)
 }
 
 pub trait ToColorColor {

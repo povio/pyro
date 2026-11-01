@@ -136,6 +136,7 @@ impl Lab {
         let dom: DomRef = Rc::new(RefCell::new(Dom::new()));
         let doc = parse_document(&dom, "http://localhost:5173/app", html);
         dom.borrow_mut().set_document_active(doc, true).unwrap();
+        lp_layout::install(std::sync::Arc::new(NoFetch));
         let page = PageDom::new(dom, doc);
         let mut vp = page.viewport();
         vp.width = 1440;
@@ -961,4 +962,12 @@ fn formdata_serializes_a_file_whose_own_realm_is_closed() {
         r##"[__body.includes('filename="A.txt"'), __body.includes('aaa'), __body.startsWith('ERROR')].join()"##,
     );
     assert_eq!(out, "true,true,false");
+}
+
+/// Loads no sub-resources for the layout (the tests' pages have none).
+struct NoFetch;
+impl lp_render::Fetcher for NoFetch {
+    fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+        done(Err(format!("{url}: offline")));
+    }
 }

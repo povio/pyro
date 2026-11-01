@@ -9,10 +9,12 @@ autotests = false
 rust-version.workspace = true
 
 [features]
+default = ["render"]
 # Stage timers for CDP handling, read with LP.perfStats (see lp-cdp-protocol/src/perf.rs).
 perf-trace = ["lp-cdp-protocol/perf-trace"]
-# Page.captureScreenshot and the LP.run matchScreenshot step (lp-render: Blitz).
-render = ["dep:lp-render"]
+# Blitz (lp-render): layout geometry, Page.captureScreenshot, Page.printToPDF
+# and the LP.run matchScreenshot step. Without it nothing is laid out.
+render = ["dep:lp-render", "dep:lp-layout"]
 
 [dependencies]
 lp-browser.workspace = true
@@ -23,6 +25,7 @@ lp-webapi.workspace = true
 lp-dom.workspace = true
 lp-cdp-protocol.workspace = true
 lp-render = { workspace = true, optional = true }
+lp-layout = { workspace = true, optional = true }
 bytes = "1"
 http = "1"
 regress = "0.12"

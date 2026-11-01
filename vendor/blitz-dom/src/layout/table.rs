@@ -33,6 +33,133 @@ use super::resolve_calc_value;
 pub struct TableTreeWrapper<'a, 'doc> {
     pub(crate) doc: &'a mut LayoutPassState<'doc>,
     pub(crate) ctx: Arc<TableContext>,
+    /// The table's style with the column widths of [`Self::auto_column_widths`].
+    pub(crate) style: Option<taffy::Style<Atom>>,
+}
+
+impl TableTreeWrapper<'_, '_> {
+    /// The table's style for a layout at `inputs`, with the column widths the
+    /// automatic table layout algorithm gives its columns when they all have
+    /// an auto width: a table wider than its columns' min-content widths
+    /// shares the extra space in proportion to their max-content widths
+    /// (from min-content up to max-content, then beyond it), where a grid
+    /// shares it equally. `None`: the table's own grid tracks apply.
+    pub(crate) fn auto_column_widths(
+        &mut self,
+        inputs: &taffy::tree::LayoutInput,
+    ) -> Option<taffy::Style<Atom>> {
+        use taffy::MaybeResolve as _;
+        let ctx = Arc::clone(&self.ctx);
+        let style = &ctx.style;
+        let n = style.grid_template_columns.len();
+        let all_auto = style.grid_template_columns.iter().all(|c| {
+            matches!(c, taffy::GridTemplateComponent::Single(t) if t.min.is_auto() && t.max.is_auto())
+        });
+        if ctx.is_fixed || n == 0 || !all_auto {
+            return None;
+        }
+        let parent = inputs.parent_size.width;
+        let padding = style.padding.resolve_or_zero(parent, resolve_calc_value);
+        let border = style.border.resolve_or_zero(parent, resolve_calc_value);
+        let extra = padding.left + padding.right + border.left + border.right;
+        let border_box = |w: Option<f32>| {
+            w.map(|w| match style.box_sizing {
+                taffy::BoxSizing::ContentBox => w + extra,
+                taffy::BoxSizing::BorderBox => w.max(extra),
+            })
+        };
+        let min_width = border_box(style.min_size.width.maybe_resolve(parent, resolve_calc_value));
+        // The table's width when it doesn't depend on its columns; else the
+        // most it may take (it shrinks to fit its columns' max-content).
+        let (width, shrink) = match inputs.known_dimensions.width {
+            Some(w) => (w, false),
+            None => match border_box(style.size.width.maybe_resolve(parent, resolve_calc_value)) {
+                Some(w) => (w.max(min_width.unwrap_or(0.0)), false),
+                None => match inputs.available_space.width {
+                    taffy::AvailableSpace::Definite(a) => (a.max(min_width.unwrap_or(0.0)), true),
+                    _ => return None,
+                },
+            },
+        };
+        let gap = style.gap.width.resolve_or_zero(Some(width), resolve_calc_value);
+        let spacing = extra + gap * (n - 1) as f32;
+        let inner = width - spacing;
+        let measure = |this: &mut Self, idx: usize, space: taffy::AvailableSpace| {
+            let input = taffy::tree::LayoutInput {
+                run_mode: taffy::RunMode::ComputeSize,
+                sizing_mode: taffy::SizingMode::InherentSize,
+                axis: taffy::RequestedAxis::Horizontal,
+                known_dimensions: taffy::Size::NONE,
+                known_dimensions_are_definite: taffy::Size { width: true, height: true },
+                parent_size: taffy::Size { width: Some(inner), height: None },
+                available_space: taffy::Size { width: space, height: taffy::AvailableSpace::MaxContent },
+                vertical_margins_are_collapsible: taffy::Line::FALSE,
+            };
+            this.compute_child_layout(taffy::NodeId::from(idx), input).size.width
+        };
+        let (mut min, mut max) = (vec![0f32; n], vec![0f32; n]);
+        let mut spanning = Vec::new();
+        for (idx, cell) in ctx.cells.iter().enumerate() {
+            let column = cell.column as usize;
+            let lo = measure(self, idx, taffy::AvailableSpace::MinContent);
+            let hi = measure(self, idx, taffy::AvailableSpace::MaxContent).max(lo);
+            if cell.colspan == 1 && column < n {
+                min[column] = min[column].max(lo);
+                max[column] = max[column].max(hi);
+            } else {
+                spanning.push((column, (cell.colspan as usize).max(1), lo, hi));
+            }
+        }
+        // A spanning cell wider than the columns it spans: leave it to the grid.
+        for (column, span, lo, hi) in spanning {
+            let end = (column + span).min(n);
+            let spacing = gap * (end.saturating_sub(column + 1)) as f32;
+            let sum = |w: &[f32]| w[column.min(end)..end].iter().sum::<f32>() + spacing;
+            if lo > sum(&min) + 0.01 || hi > sum(&max) + 0.01 {
+                return None;
+            }
+        }
+        let (sum_min, sum_max) = (min.iter().sum::<f32>(), max.iter().sum::<f32>());
+        if sum_max <= 0.0 {
+            return None;
+        }
+        let mut style = style.clone();
+        if inner < sum_min {
+            // A table never gets narrower than its columns' min-content widths.
+            if shrink {
+                return None;
+            }
+            let content = sum_min + gap * (n - 1) as f32;
+            let grown = match style.box_sizing {
+                taffy::BoxSizing::ContentBox => content,
+                taffy::BoxSizing::BorderBox => content + extra,
+            };
+            style.min_size.width = style_helpers::length(grown);
+            style.grid_template_columns = min.into_iter().map(|w| {
+                let track: TrackSizingFunction = style_helpers::length(w);
+                track.into()
+            }).collect();
+            return Some(style);
+        }
+        let min_inner = min_width.map_or(0.0, |w| w - spacing);
+        let inner = if shrink { inner.min(sum_max.max(min_inner)) } else { inner };
+        let widths: Vec<f32> = if inner >= sum_max {
+            max.iter().map(|m| m * inner / sum_max).collect()
+        } else if sum_max > sum_min {
+            let t = (inner - sum_min) / (sum_max - sum_min);
+            min.iter().zip(&max).map(|(lo, hi)| lo + (hi - lo) * t).collect()
+        } else {
+            min
+        };
+        style.grid_template_columns = widths
+            .into_iter()
+            .map(|w| {
+                let track: TrackSizingFunction = style_helpers::length(w);
+                track.into()
+            })
+            .collect();
+        Some(style)
+    }
 }
 
 // Deliberately not `Clone`: `style` may hold raw pointers into `calc_values`.
@@ -48,6 +175,9 @@ pub struct TableContext {
     pub computed_grid_info: AtomicRefCell<Option<DetailedGridInfo<Atom>>>,
     pub border_style: Option<ServoArc<Border>>,
     pub border_collapse: BorderCollapse,
+    /// Laid out with the fixed table layout algorithm: cell contents don't size
+    /// the columns, so cells have no intrinsic width.
+    pub is_fixed: bool,
     /// Backing storage for `calc()` track sizes synthesised by the table layout code.
     /// Taffy stores calc values as raw pointers, so these must outlive the `style`.
     #[allow(dead_code)]
@@ -348,6 +478,20 @@ pub(crate) fn build_table_context(
                 *column = percent_track(percent, extra);
             }
         }
+
+        // When every column has a length width, a table wider than their sum
+        // widens them in proportion to their widths: a track flexing by its own
+        // width (`minmax(W, W fr)`) never goes below W and shares the free space
+        // in that proportion.
+        let lengths: Option<Vec<f32>> = column_sizes
+            .iter()
+            .map(|c| (c.max.into_raw().tag() == taffy::CompactLength::LENGTH_TAG).then(|| c.max.into_raw().value()))
+            .collect();
+        if let Some(lengths) = lengths.filter(|l| l.iter().any(|w| *w > 0.0)) {
+            for (column, width) in column_sizes.iter_mut().zip(lengths) {
+                *column = style_helpers::minmax(style_helpers::length(width), style_helpers::fr(width));
+            }
+        }
     } else {
         // In the auto table layout algorithm a column's length width is a minimum: the
         // column still grows to fit the min-content width of the cells that originate in
@@ -461,6 +605,7 @@ pub(crate) fn build_table_context(
             computed_grid_info: AtomicRefCell::new(None),
             border_collapse,
             border_style: first_cell_border,
+            is_fixed,
             calc_values,
         },
         layout_children,
@@ -828,7 +973,7 @@ impl taffy::LayoutPartialTree for TableTreeWrapper<'_, '_> {
     type CustomIdent = Atom;
 
     fn get_core_container_style(&self, _node_id: taffy::NodeId) -> &taffy::Style<Atom> {
-        &self.ctx.style
+        self.style.as_ref().unwrap_or(&self.ctx.style)
     }
 
     fn resolve_calc_value(&self, calc_ptr: *const (), parent_size: f32) -> f32 {
@@ -847,6 +992,12 @@ impl taffy::LayoutPartialTree for TableTreeWrapper<'_, '_> {
     ) -> taffy::LayoutOutput {
         let cell = &self.ctx.cells[usize::from(node_id)];
         let node_id = crate::taffy_node_id(cell.node_id);
+        // Cell contents don't size the columns of a fixed table.
+        if self.ctx.is_fixed && inputs.known_dimensions.width.is_none() {
+            let mut output = self.doc.compute_child_layout(node_id, inputs);
+            output.size.width = 0.0;
+            return output;
+        }
         // Measuring the intrinsic width of a cell with a minimum width (see
         // `TableCell::min_width`): the cell's own `width` would fix the width of its box,
         // so it is ignored to measure the contents.
@@ -860,7 +1011,22 @@ impl taffy::LayoutPartialTree for TableTreeWrapper<'_, '_> {
                 ..inputs
             };
             let mut output = self.doc.compute_child_layout(node_id, inputs);
-            output.size.width = output.size.width.max(min_width);
+            // Its own `min-width` still applies (and wins over `max-width`).
+            let style = &cell.style;
+            let parent = inputs.parent_size.width;
+            let own_min = {
+                use taffy::MaybeResolve as _;
+                style.min_size.width.maybe_resolve(parent, resolve_calc_value).map(|w| {
+                    let padding = style.padding.resolve_or_zero(parent, resolve_calc_value);
+                    let border = style.border.resolve_or_zero(parent, resolve_calc_value);
+                    let extra = padding.left + padding.right + border.left + border.right;
+                    match style.box_sizing {
+                        taffy::BoxSizing::ContentBox => w + extra,
+                        taffy::BoxSizing::BorderBox => w.max(extra),
+                    }
+                })
+            };
+            output.size.width = output.size.width.max(min_width).max(own_min.unwrap_or(0.0));
             return output;
         }
         self.doc.compute_child_layout(node_id, inputs)

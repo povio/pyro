@@ -223,6 +223,7 @@ impl LayoutPassState<'_> {
         block_ctx: Option<&mut BlockContext<'_>>,
     ) -> taffy::tree::LayoutOutput {
         let orthogonal_percent_basis = self.orthogonal_percent_basis_of(dom_node_id(node_id));
+        let scale = self.doc.viewport.scale();
         let node = &mut self.nodes[dom_node_id(node_id)];
 
         let font_styles = node.primary_styles().map(|style| {
@@ -356,19 +357,46 @@ impl LayoutPassState<'_> {
                             );
                         }
                         None | Some("text" | "password" | "email" | "tel" | "url" | "search") => {
-                            return compute_leaf_layout(
+                            // Chromium's intrinsic width: `size` (default 20) average
+                            // characters plus a max-char allowance, about
+                            // (size / 2 + 0.4)em (166px for 16px Arial). It does not
+                            // shrink to the available space: inputs keep it in flex rows
+                            // unless given `min-width: 0`.
+                            let size = element_data
+                                .attr(local_name!("size"))
+                                .and_then(|val| val.trim().parse::<u32>().ok())
+                                .filter(|&size| size > 0)
+                                .unwrap_or(20) as f32;
+                            let width = (size * 0.5 + 0.4) * font_size.unwrap_or(13.333);
+                            let line = element_data
+                                .text_input_data()
+                                .and_then(|input| input.editor.try_layout())
+                                .and_then(|layout| layout.lines().next())
+                                .map(|line| *line.metrics());
+                            let style = node.layout_style();
+                            let mut output = compute_leaf_layout(
                                 inputs,
-                                &node.layout_style(),
+                                &style,
                                 resolve_calc_value,
                                 |_known_size, _available_space| taffy::Size {
-                                    width: match inputs.available_space.width {
-                                        AvailableSpace::Definite(limit) => limit.min(300.0),
-                                        AvailableSpace::MinContent => 0.0,
-                                        AvailableSpace::MaxContent => 300.0,
-                                    },
+                                    width,
                                     height: resolved_line_height.unwrap_or(16.0),
                                 },
                             );
+                            // Its baseline is its text's, the line centred in the content
+                            // box (Chromium), not its bottom edge.
+                            if let Some(line) = line {
+                                let parent = inputs.parent_size.width;
+                                let padding = style.padding().resolve_or_zero(parent, resolve_calc_value);
+                                let border = style.border().resolve_or_zero(parent, resolve_calc_value);
+                                let content_top = padding.top + border.top;
+                                let content_height =
+                                    output.size.height - content_top - padding.bottom - border.bottom;
+                                let (line_height, baseline) = (line.line_height / scale, line.baseline / scale);
+                                let baseline = content_top + (content_height - line_height) / 2.0 + baseline;
+                                output.baselines = taffy::Baselines { first: Some(baseline), last: Some(baseline) };
+                            }
+                            return output;
                         }
                         _ => {}
                     }
@@ -471,6 +499,22 @@ impl LayoutPassState<'_> {
                         _ => unreachable!(),
                     };
 
+                    // lightningpanda: an image the embedder has loaded but Blitz
+                    // has not (yet) reports its natural size through the
+                    // render tree's state attribute (`natural=W,H`).
+                    let loaded = matches!(&element_data.special_data, SpecialElementData::Image(d) if !matches!(&**d, ImageData::None));
+                    let (intrinsic_sizes, default_object_size) = match lp_natural_size(element_data) {
+                        Some((width, height)) if !loaded && *element_data.name.local == *"img" => (
+                            IntrinsicSizes {
+                                width: Some(width),
+                                height: Some(height),
+                                ratio: (height > 0.0).then_some(width / height),
+                            },
+                            DEFAULT_OBJECT_SIZE,
+                        ),
+                        _ => (intrinsic_sizes, default_object_size),
+                    };
+
                     #[cfg(feature = "writing-mode")]
                     let (intrinsic_sizes, default_object_size) =
                         if node.writing_mode().is_vertical() {
@@ -534,7 +578,9 @@ impl LayoutPassState<'_> {
                     let mut table_wrapper = TableTreeWrapper {
                         doc: self,
                         ctx: context,
+                        style: None,
                     };
+                    table_wrapper.style = table_wrapper.auto_column_widths(&inputs);
                     let mut output = compute_grid_layout(&mut table_wrapper, node_id, inputs);
 
                     // Absolutely positioned children take no part in the table grid. Their
@@ -695,17 +741,20 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
 
     fn clear_hoisted_children(&mut self, node_id: NodeId) {
         let containing_block = dom_node_id(node_id);
-        let mut hoisted = self.node_from_id(node_id).hoisted_children.borrow_mut();
+        let hoisted = std::mem::take(&mut *self.node_from_id(node_id).hoisted_children.borrow_mut());
         for &hoisted_id in hoisted.iter() {
             // A box which has since been claimed by another containing block
             // must keep pointing at that one.
             if let Some(node) = self.nodes.get(hoisted_id) {
                 if node.oof_containing_block.get() == Some(containing_block) {
                     node.oof_containing_block.set(None);
+                    self.doc.oof_hoisted.remove(&hoisted_id);
                 }
             }
         }
-        hoisted.clear();
+        let mut list = hoisted;
+        list.clear();
+        *self.node_from_id(node_id).hoisted_children.borrow_mut() = list;
     }
 
     fn add_hoisted_children(&mut self, node_id: NodeId, hoisted: &[NodeId]) {
@@ -718,6 +767,7 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
             self.node_from_id(hoisted_id)
                 .oof_containing_block
                 .set(Some(containing_block));
+            self.doc.oof_hoisted.insert(dom_node_id(hoisted_id));
         }
     }
 
@@ -726,6 +776,14 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
             .element_data()
             .map(|element| &element.detailed_layout_info)
             .unwrap_or(&DetailedLayoutInfo::None)
+    }
+}
+
+impl LayoutPassState<'_> {
+    #[cfg(feature = "floats")]
+    fn clear_layout_cache_of(&mut self, node_id: NodeId) {
+        use taffy::CacheTree as _;
+        self.cache_clear(node_id);
     }
 }
 
@@ -779,16 +837,42 @@ impl taffy::LayoutBlockContainer for LayoutPassState<'_> {
         self.child_layout_style(self.node_from_id(child_node_id))
     }
 
+    fn block_child_width_fits_content(&self, child_node_id: NodeId) -> bool {
+        // Form controls keep their intrinsic width as block-level boxes (Chromium).
+        let Some(el) = self.node_from_id(child_node_id).data.downcast_element() else {
+            return false;
+        };
+        match el.name.local {
+            local_name!("select") | local_name!("textarea") | local_name!("button") => true,
+            local_name!("input") => !matches!(el.attr(local_name!("type")), Some("hidden")),
+            _ => false,
+        }
+    }
+
     #[inline(always)]
     fn compute_block_child_layout(
         &mut self,
         node_id: NodeId,
         inputs: taffy::LayoutInput,
-        block_ctx: Option<&mut BlockContext<'_>>,
+        mut block_ctx: Option<&mut BlockContext<'_>>,
     ) -> taffy::LayoutOutput {
-        compute_cached_layout(self, node_id, inputs, |tree, node_id, inputs| {
-            tree.compute_child_layout_internal(node_id, inputs, block_ctx)
-        })
+        // A block in a formatting context with floats depends on them, which
+        // the cache doesn't key on: it is laid out afresh, and one that placed
+        // floats is not replayed from the cache later (its floats would not
+        // be placed again).
+        #[cfg(feature = "floats")]
+        if block_ctx.as_ref().is_some_and(|ctx| ctx.has_floats()) {
+            self.clear_layout_cache_of(node_id);
+            return self.compute_child_layout_internal(node_id, inputs, block_ctx);
+        }
+        let output = compute_cached_layout(self, node_id, inputs, |tree, node_id, inputs| {
+            tree.compute_child_layout_internal(node_id, inputs, block_ctx.as_deref_mut())
+        });
+        #[cfg(feature = "floats")]
+        if block_ctx.as_ref().is_some_and(|ctx| ctx.has_floats()) {
+            self.clear_layout_cache_of(node_id);
+        }
+        output
     }
 }
 
@@ -862,6 +946,22 @@ impl RoundTree for LayoutPassState<'_> {
 
     fn get_hoisted_child_id(&self, node_id: NodeId, index: usize) -> NodeId {
         taffy_node_id(self.node_from_id(node_id).hoisted_children.borrow()[index])
+    }
+
+    // Incremental rounding: an undamaged subtree reached with the same
+    // unrounded layout at the same offset rounds as it did last time.
+    // Anonymous boxes are always rounded (damage marking walks the DOM parent
+    // chain, so their descendant flags are not maintained).
+    fn rounded_unchanged(&self, node_id: NodeId, unrounded: &Layout, absolute_x: f32, absolute_y: f32) -> bool {
+        let node = self.node_from_id(node_id);
+        !node.is_anonymous()
+            && !node.has_damaged_descendants()
+            && node.damage().is_none_or(|d| d.is_empty())
+            && node.layout_data().rounded_from == Some((*unrounded, absolute_x, absolute_y))
+    }
+
+    fn record_rounded(&mut self, node_id: NodeId, unrounded: &Layout, absolute_x: f32, absolute_y: f32) {
+        self.node_from_id_mut(node_id).layout_data_mut().rounded_from = Some((*unrounded, absolute_x, absolute_y));
     }
 }
 
@@ -966,4 +1066,13 @@ impl Iterator for RefCellChildIter<'_> {
             taffy_node_id(*id)
         })
     }
+}
+
+/// lightningpanda: the `natural=W,H` token of the element's
+/// `urn:x-lightningpanda:state` attribute.
+fn lp_natural_size(element: &crate::node::ElementData) -> Option<(f32, f32)> {
+    let attr = element.attrs.iter().find(|a| &*a.name.ns == "urn:x-lightningpanda:state")?;
+    let token = attr.value.split_ascii_whitespace().find_map(|t| t.strip_prefix("natural="))?;
+    let (w, h) = token.split_once(',')?;
+    Some((w.parse().ok()?, h.parse().ok()?))
 }

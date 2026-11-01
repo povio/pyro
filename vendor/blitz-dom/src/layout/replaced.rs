@@ -266,6 +266,13 @@ pub fn compute_replaced_layout(
             RequestedAxis::Horizontal => {
                 style_size.width = None;
                 min_size.width = None;
+                // A min-content width (a flex item's content size suggestion)
+                // is converted through the ratio only by min/max heights, not
+                // the preferred one: Chromium shrinks a `height: 140px;
+                // width: auto` logo to its natural width, not 140px * ratio.
+                if available_space.width == AvailableSpace::MinContent {
+                    style_size.height = None;
+                }
             }
             RequestedAxis::Vertical => {
                 style_size.height = None;
@@ -274,6 +281,18 @@ pub fn compute_replaced_layout(
             RequestedAxis::Both => {}
         }
     }
+
+    // As above for a height the parent resolved (a flex row item's definite
+    // or stretched height): a min-content width does not transfer it.
+    let known_dimensions = if sizing_mode == SizingMode::ContentSize
+        && requested_axis == RequestedAxis::Horizontal
+        && available_space.width == AvailableSpace::MinContent
+        && known_dimensions.width.is_none()
+    {
+        Size { width: None, height: None }
+    } else {
+        known_dimensions
+    };
 
     // Known dimensions are the parent's current sizing inputs. Clamp them before transferring
     // an aspect ratio so provisional cross-axis sizes do not bypass replaced-element limits.

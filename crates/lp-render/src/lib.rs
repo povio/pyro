@@ -20,14 +20,17 @@
 //! changed since its previous render (`mirror` module).
 
 mod compare;
+mod geometry;
 mod hash;
 mod mirror;
 mod net;
+pub mod pdf;
 mod svg_use;
 pub mod worker;
 
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex};
+
 use std::time::{Duration, Instant};
 
 use anyrender::recording::Scene;
@@ -41,9 +44,54 @@ use parley::FontContext;
 use peniko::{Color, Fill};
 
 pub use compare::{compare, decode_png, diff_image, encode_jpeg, encode_png, CompareResult};
+pub use geometry::{BoxPosition, LayoutBox, StickyBox, TextWord};
 pub use hash::scene_hash;
-pub use mirror::{MirrorStats, Rebuild, Tree, TreeKind, TreeNode, TOP};
+pub use mirror::{DeltaOp, MirrorStats, Rebuild, Tree, TreeKind, TreeNode, TOP};
 pub use net::Fetcher;
+
+/// Where document syncs spend their time (diagnostics, `LP.geometryStats`).
+pub mod sync_profile {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::Duration;
+
+    static MIRROR: AtomicU64 = AtomicU64::new(0);
+    static SETTLE: AtomicU64 = AtomicU64::new(0);
+    static RESOLVE: AtomicU64 = AtomicU64::new(0);
+
+    pub(crate) fn record(mirror: Duration, settle: Duration, resolve: Duration) {
+        MIRROR.fetch_add(mirror.as_nanos() as u64, Ordering::Relaxed);
+        SETTLE.fetch_add(settle.as_nanos() as u64, Ordering::Relaxed);
+        RESOLVE.fetch_add(resolve.as_nanos() as u64, Ordering::Relaxed);
+    }
+
+    /// Milliseconds applying node lists, settling sub-resources and resolving
+    /// (style + layout) since the last call.
+    /// As [`take`], without resetting.
+    pub fn peek() -> (f64, f64, f64) {
+        let ms = |a: &AtomicU64| a.load(Ordering::Relaxed) as f64 / 1e6;
+        (ms(&MIRROR), ms(&SETTLE), ms(&RESOLVE))
+    }
+
+    pub fn take() -> (f64, f64, f64) {
+        let ms = |a: &AtomicU64| a.swap(0, Ordering::Relaxed) as f64 / 1e6;
+        (ms(&MIRROR), ms(&SETTLE), ms(&RESOLVE))
+    }
+}
+
+/// Milliseconds per Blitz `resolve` phase on this thread (profiling).
+/// Inline layouts Blitz built (shaped) on this thread, and their text bytes.
+pub fn blitz_rebuilds() -> (u64, u64) {
+    blitz_dom::phase_profile::rebuilds()
+}
+
+/// Nodes Blitz's style traversal visited on this thread.
+pub fn blitz_restyles() -> u64 {
+    blitz_dom::phase_profile::restyles()
+}
+
+pub fn blitz_phases() -> [f64; 9] {
+    blitz_dom::phase_profile::peek()
+}
 
 /// Content digest for caching baselines (xxh3).
 pub fn digest(bytes: &[u8]) -> u64 {
@@ -100,6 +148,53 @@ pub struct Live {
 
 /// Attribute the snapshot puts on the element a screenshot is clipped to.
 pub const CLIP_ATTRIBUTE: &str = "data-lp-render-clip";
+
+pub struct LayoutBoxes {
+    /// By render key (`lp_dom::snapshot::render_key`).
+    pub boxes: Vec<(u64, LayoutBox)>,
+    /// Each word of each text node (by its key), in layout order.
+    pub words: Vec<(u64, TextWord)>,
+    /// `position: sticky` elements (their boxes are laid out as if static).
+    pub sticky: Vec<(u64, StickyBox)>,
+    pub document_width: f64,
+    pub document_height: f64,
+    /// `fetch`/`layout`: bringing the document up to date; `scene`: reading the boxes.
+    pub timings: Timings,
+}
+
+/// `Page.printToPDF` options.
+#[derive(Clone, Debug)]
+pub struct PdfOptions {
+    /// Elements that become one page each (Paprize: `.pz-page`).
+    pub page_selector: String,
+    /// Page size (CSS px) when no element matches.
+    pub paper: (f64, f64),
+}
+
+/// One page of a [`PdfOutput`].
+#[derive(Clone, Debug)]
+pub struct PdfPage {
+    /// The page box in the document (device px).
+    pub rect: Rect,
+    /// How far content inside the box reaches past its right and bottom
+    /// edges (CSS px; 0 when it fits).
+    pub overflow_right: f64,
+    pub overflow_bottom: f64,
+    /// The box reaching furthest past the page (`<tag class>` x,y wxh), when one does.
+    pub culprit: Option<String>,
+}
+
+pub struct PdfOutput {
+    pub bytes: Vec<u8>,
+    pub pages: Vec<PdfPage>,
+    /// Pages came from `page_selector` (else: the document cut by `paper`).
+    pub by_selector: bool,
+    pub stats: pdf::PdfStats,
+    /// Display-list commands of the whole document.
+    pub commands: usize,
+    /// `scene`: paint; `raster`: PDF writing.
+    pub timings: Timings,
+}
 
 /// Which part of the page to rasterize.
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
@@ -199,11 +294,97 @@ impl std::error::Error for RenderError {}
 static FONTS: LazyLock<Mutex<FontContext>> = LazyLock::new(|| {
     let mut font_ctx = FontContext {
         source_cache: SourceCache::new_shared(),
-        collection: Collection::new(CollectionOptions { shared: false, system_fonts: true }),
+        collection: if FORK_SAFE_FONTS.load(std::sync::atomic::Ordering::Relaxed) {
+            fork_safe_collection()
+        } else {
+            Collection::new(CollectionOptions { shared: false, system_fonts: true })
+        },
     };
     font_ctx.collection.register_fonts(Blob::new(Arc::new(blitz_dom::BULLET_FONT) as _), None);
     Mutex::new(font_ctx)
 });
+
+static FORK_SAFE_FONTS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Loads system fonts without the platform font API, now, on this thread
+/// (`serve --fork`). macOS's CoreText starts dispatch threads and Objective-C
+/// initializers that a later `fork()` cannot survive ("+[NSFontCollection
+/// initialize] may have been in progress"); a fork template, and children
+/// that fork again, must not use it. Fonts are read from the system font
+/// directories instead (memory-mapped), with the generic families and
+/// script fallbacks the platform backend would pick. Call before any render.
+pub fn use_fork_safe_fonts() {
+    FORK_SAFE_FONTS.store(true, std::sync::atomic::Ordering::Relaxed);
+    drop(process_fonts());
+}
+
+/// Whether [`use_fork_safe_fonts`] was called (fonts never touch CoreText).
+pub fn fork_safe_fonts() -> bool {
+    FORK_SAFE_FONTS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The system fonts by directory scan: see [`use_fork_safe_fonts`].
+fn fork_safe_collection() -> Collection {
+    use parley::fontique::{GenericFamily, Script};
+    let mut c = Collection::new(CollectionOptions { shared: false, system_fonts: false });
+    let mut dirs: Vec<std::path::PathBuf> = if cfg!(target_os = "macos") {
+        ["/System/Library/Fonts", "/Library/Fonts"].iter().map(Into::into).collect()
+    } else {
+        ["/usr/share/fonts", "/usr/local/share/fonts"].iter().map(Into::into).collect()
+    };
+    if let Some(home) = std::env::var_os("HOME") {
+        let home = std::path::PathBuf::from(home);
+        dirs.push(if cfg!(target_os = "macos") { home.join("Library/Fonts") } else { home.join(".local/share/fonts") });
+    }
+    c.load_fonts_from_paths(dirs.iter().filter(|d| d.is_dir()));
+    let ids = |c: &mut Collection, names: &[&str]| -> Vec<parley::fontique::FamilyId> {
+        names.iter().filter_map(|n| c.family_id(n)).collect()
+    };
+    // As fontique's CoreText backend (Chromium's macOS defaults), then
+    // common Linux families.
+    let generics: &[(GenericFamily, &[&str])] = &[
+        (GenericFamily::Serif, &["Times", "Times New Roman", "DejaVu Serif", "Liberation Serif"]),
+        (GenericFamily::SansSerif, &["Helvetica", "Arial", "DejaVu Sans", "Liberation Sans"]),
+        (GenericFamily::Monospace, &["Courier", "Courier New", "Menlo", "DejaVu Sans Mono", "Liberation Mono"]),
+        (GenericFamily::Cursive, &["Apple Chancery"]),
+        (GenericFamily::Fantasy, &["Papyrus"]),
+        (GenericFamily::SystemUi, &["System Font", ".SF NS", "SF Pro", "Helvetica Neue", "Helvetica", "DejaVu Sans"]),
+        (GenericFamily::UiSansSerif, &["System Font", ".SF NS", "SF Pro", "Helvetica Neue", "Helvetica"]),
+        (GenericFamily::UiSerif, &["New York", "Times"]),
+        (GenericFamily::UiMonospace, &["SF Mono", "Menlo", "Courier"]),
+        (GenericFamily::Emoji, &["Apple Color Emoji", "Noto Color Emoji"]),
+        (GenericFamily::Math, &["STIX Two Math"]),
+    ];
+    for (generic, names) in generics {
+        let families = ids(&mut c, names);
+        c.set_generic_families(*generic, families.into_iter());
+    }
+    // Script fallbacks CoreText would answer for the usual scripts.
+    let fallbacks: &[(&[u8; 4], &[&str])] = &[
+        (b"Latn", &["Helvetica", "Lucida Grande", "Arial Unicode MS", "DejaVu Sans"]),
+        (b"Grek", &["Helvetica", "Lucida Grande", "Arial Unicode MS", "DejaVu Sans"]),
+        (b"Cyrl", &["Helvetica", "Lucida Grande", "Arial Unicode MS", "DejaVu Sans"]),
+        (b"Hani", &["PingFang SC", "Heiti SC", "Hiragino Sans GB", "Noto Sans CJK SC"]),
+        (b"Hans", &["PingFang SC", "Heiti SC", "Hiragino Sans GB", "Noto Sans CJK SC"]),
+        (b"Hant", &["PingFang TC", "Heiti TC", "Noto Sans CJK TC"]),
+        (b"Jpan", &["Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans CJK JP"]),
+        (b"Hira", &["Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans CJK JP"]),
+        (b"Kana", &["Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans CJK JP"]),
+        (b"Hang", &["Apple SD Gothic Neo", "Noto Sans CJK KR"]),
+        (b"Kore", &["Apple SD Gothic Neo", "Noto Sans CJK KR"]),
+        (b"Arab", &["Geeza Pro", "Noto Sans Arabic", "DejaVu Sans"]),
+        (b"Hebr", &["Arial Hebrew", "Noto Sans Hebrew", "DejaVu Sans"]),
+        (b"Thai", &["Thonburi", "Noto Sans Thai"]),
+        (b"Deva", &["Kohinoor Devanagari", "Devanagari Sangam MN", "Noto Sans Devanagari"]),
+        (b"Zsym", &["Apple Symbols", "Apple Color Emoji", "Noto Color Emoji"]),
+        (b"Zsye", &["Apple Color Emoji", "Noto Color Emoji"]),
+    ];
+    for (script, names) in fallbacks {
+        let families = ids(&mut c, names);
+        c.set_fallbacks(Script::from_bytes(**script), families.into_iter());
+    }
+    c
+}
 
 fn process_fonts() -> FontContext {
     FONTS.lock().unwrap_or_else(|e| e.into_inner()).clone()
@@ -240,6 +421,9 @@ const PREWARM_HTML: &str = r#"<!doctype html><html><body style="font-family: sys
 <p>Aa 0 €<b>b</b><i>i</i> Ωж 中文 العربية</p><input value="x"><button>b</button>
 <svg width="8" height="8"><text x="0" y="8">s</text></svg></body></html>"#;
 
+/// UA rule that settles transitions and animations at their end values.
+const NO_TRANSITIONS: &str = "*, *::before, *::after { transition: none !important; animation: none !important; }";
+
 /// Fonts and raster backends, reused across renders on one thread.
 pub struct Renderer {
     font_ctx: FontContext,
@@ -250,6 +434,9 @@ pub struct Renderer {
     resources: net::ResourceCache,
     /// Persistent documents of [`Live`] snapshots, by page.
     mirrors: HashMap<u64, mirror::Mirror>,
+    pdf_cache: pdf::PdfCache,
+    /// Layout-query memos of persistent documents, by page.
+    geometry: HashMap<u64, geometry::Geometry>,
     /// Longest wait for sub-resources per render.
     pub fetch_timeout: Duration,
     /// Longest wait, before the first layout, for the fonts and images the
@@ -274,6 +461,8 @@ impl Renderer {
             gpu: None,
             resources: net::ResourceCache::default(),
             mirrors: HashMap::new(),
+            pdf_cache: pdf::PdfCache::default(),
+            geometry: HashMap::new(),
             fetch_timeout: Duration::from_secs(10),
             first_layout_wait: Duration::from_secs(3),
         }
@@ -288,6 +477,7 @@ impl Renderer {
     /// Drops the persistent document of `page` (closed, or gone).
     pub fn forget(&mut self, page: u64) {
         self.mirrors.remove(&page);
+        self.geometry.remove(&page);
     }
 
     /// Pages with a persistent document.
@@ -327,14 +517,19 @@ impl Renderer {
     }
 
     fn config(&self, snap: &Snapshot, provider: Arc<dyn blitz_traits::net::NetProvider>) -> DocumentConfig {
-        DocumentConfig {
+        let mut config = DocumentConfig {
             base_url: Some(snap.base_url.clone()),
             net_provider: Some(provider),
             viewport: Some(viewport_of(snap)),
             font_ctx: Some(self.font_ctx.clone()),
             style_threading: StyleThreading::Sequential,
             ..DocumentConfig::default()
-        }
+        };
+        // Documents are resolved at time 0: a CSS transition or animation
+        // would stay at its first frame (a drawer sliding in stays off
+        // screen). Layout queries, screenshots and PDFs take the end state.
+        config.ua_stylesheets.push(blitz_dom::UserAgentStylesheet::parse(NO_TRANSITIONS));
+        config
     }
 
     /// The page's persistent document, brought up to `live.tree`.
@@ -375,15 +570,16 @@ impl Renderer {
         }
     }
 
-    /// Stages 1 and 2.
-    pub fn paint(&mut self, snap: &Snapshot, area: Area, fetcher: &Arc<dyn Fetcher>) -> Result<Painted, RenderError> {
-        let mut timings = Timings::default();
-        let dpr = snap.device_scale_factor.clamp(0.1, 16.0);
-        let (vw, vh) = (snap.width.max(1), snap.height.max(1));
-        let physical = |css: f64| (css * dpr).round() as u32;
-
+    /// Stage 1: the document styled and laid out, sub-resources settled.
+    /// Returns it with the node [`Live::clip`] (or [`CLIP_ATTRIBUTE`]) names.
+    fn prepare<'a>(
+        &'a mut self,
+        snap: &Snapshot,
+        fetcher: &Arc<dyn Fetcher>,
+        fresh: &'a mut Option<(blitz_dom::BaseDocument, net::Bridge)>,
+        timings: &mut Timings,
+    ) -> Result<(&'a mut blitz_dom::BaseDocument, Option<blitz_dom::NodeId>), RenderError> {
         let started = Instant::now();
-        let mut fresh = None;
         let (doc, bridge, clip) = match &snap.live {
             Some(live) => {
                 let stats = self.mirror(snap, live, fetcher);
@@ -407,11 +603,30 @@ impl Renderer {
                 (doc, &*bridge, clip)
             }
         };
+        let mirrored = started.elapsed();
         let (fetch, passes) = bridge.settle(doc, started + self.fetch_timeout, self.first_layout_wait);
         timings.layout_passes = passes;
+        let resolving = Instant::now();
         doc.resolve(0.0);
+        sync_profile::record(
+            mirrored,
+            started.elapsed().saturating_sub(mirrored + resolving.elapsed()),
+            resolving.elapsed(),
+        );
         timings.fetch = fetch;
         timings.layout = started.elapsed().saturating_sub(fetch);
+        Ok((doc, clip))
+    }
+
+    /// Stages 1 and 2.
+    pub fn paint(&mut self, snap: &Snapshot, area: Area, fetcher: &Arc<dyn Fetcher>) -> Result<Painted, RenderError> {
+        let mut timings = Timings::default();
+        let dpr = snap.device_scale_factor.clamp(0.1, 16.0);
+        let (vw, vh) = (snap.width.max(1), snap.height.max(1));
+        let physical = |css: f64| (css * dpr).round() as u32;
+
+        let mut fresh = None;
+        let (doc, clip) = self.prepare(snap, fetcher, &mut fresh, &mut timings)?;
 
         let t = Instant::now();
         // A persistent document keeps the scroll of its last capture; only
@@ -454,34 +669,7 @@ impl Renderer {
                 if size.width <= 0.0 || size.height <= 0.0 {
                     return Err(RenderError::NoElement);
                 }
-                // Use the same translated/transformed positioning chain as
-                // painting. Layout-only coordinates crop the wrong region for
-                // translated bottom sheets and scaled component ancestors.
-                let mut chain = Vec::new();
-                let mut current = Some(id);
-                while let Some(current_id) = current {
-                    let current_node = doc.get_node(current_id).ok_or(RenderError::NoElement)?;
-                    chain.push(current_id);
-                    current = current_node.containing_block();
-                }
-                let mut transform = Affine::IDENTITY;
-                for current_id in chain.into_iter().rev() {
-                    let current_node = doc.get_node(current_id).ok_or(RenderError::NoElement)?;
-                    let location = current_node.final_layout().location;
-                    transform = transform
-                        * Affine::translate((location.x as f64 * dpr, location.y as f64 * dpr))
-                        * current_node.transform().as_deref().copied().unwrap_or_default();
-                    if current_id != id {
-                        let scroll = current_node.scroll_offset();
-                        transform *= Affine::translate((-scroll.x * dpr, -scroll.y * dpr));
-                    }
-                }
-                let bounds = transform.transform_rect_bbox(Rect::new(
-                    0.0,
-                    0.0,
-                    size.width as f64 * dpr,
-                    size.height as f64 * dpr,
-                ));
+                let bounds = element_bounds(doc, id, dpr).ok_or(RenderError::NoElement)?;
                 (
                     (bounds.x0 / dpr, bounds.y0 / dpr),
                     dpr,
@@ -508,6 +696,216 @@ impl Renderer {
         let hash = scene_hash(&scene, w, h, &mut self.font_hashes);
         timings.scene = t.elapsed();
         Ok(Painted { scene, hash, width: w, height: h, timings })
+    }
+
+    /// Brings `snap`'s persistent document up to date for layout queries
+    /// ([`Renderer::element_box`]): only what changed is applied and relaid
+    /// out. `fetch`/`layout` time it.
+    pub fn sync_layout(&mut self, snap: &Snapshot, fetcher: &Arc<dyn Fetcher>) -> Result<Timings, RenderError> {
+        let live =
+            snap.live.as_ref().ok_or_else(|| RenderError::BadArea("layout queries need a live snapshot".into()))?;
+        let mut timings = Timings::default();
+        let mut fresh = None;
+        self.prepare(snap, fetcher, &mut fresh, &mut timings)?;
+        self.geometry.entry(live.page).or_default().clear();
+        Ok(timings)
+    }
+
+    /// [`Renderer::sync_layout`] from the changes since the page's last tree
+    /// or delta (lp-dom's change journal) instead of the whole tree. `Err`
+    /// (nothing applied) when the page has no document at this viewport or
+    /// the delta does not fit it: sync the whole tree instead.
+    pub fn sync_delta(
+        &mut self,
+        page: u64,
+        ops: &[DeltaOp],
+        viewport: (u32, u32, f64, bool),
+    ) -> Result<Timings, RenderError> {
+        let started = Instant::now();
+        let mut timings = Timings::default();
+        let m = self.mirrors.get_mut(&page).ok_or(RenderError::NoElement)?;
+        let (w, h, dpr, dark) = viewport;
+        if m.viewport != (w, h, dpr.to_bits(), dark) {
+            return Err(RenderError::BadArea("the viewport changed".into()));
+        }
+        m.apply_delta(ops).map_err(|_| RenderError::BadArea("the delta does not fit the document".into()))?;
+        let mirrored = started.elapsed();
+        let mirror::Mirror { doc, bridge, .. } = m;
+        let (fetch, passes) = bridge.settle(doc, started + self.fetch_timeout, self.first_layout_wait);
+        let resolving = Instant::now();
+        doc.resolve(0.0);
+        sync_profile::record(
+            mirrored,
+            started.elapsed().saturating_sub(mirrored + resolving.elapsed()),
+            resolving.elapsed(),
+        );
+        timings.layout_passes = passes;
+        timings.fetch = fetch;
+        timings.layout = started.elapsed().saturating_sub(fetch);
+        self.geometry.entry(page).or_default().clear();
+        Ok(timings)
+    }
+
+    /// Puts `:hover` on the element keyed `hovered` and focus on `focused`
+    /// in `page`'s persistent document (the page's pointer and focus, which
+    /// a node list does not carry), restyling and relaying out what that
+    /// changes.
+    pub fn set_interaction(&mut self, page: u64, hovered: Option<u64>, focused: Option<u64>) {
+        let Some(m) = self.mirrors.get_mut(&page) else { return };
+        let hover = hovered.and_then(|k| m.node(k));
+        let focus = focused.and_then(|k| m.node(k));
+        let mut changed = m.doc.set_hover_node(hover);
+        if m.doc.get_focussed_node_id() != focus {
+            match focus {
+                Some(id) => {
+                    m.doc.set_focus_to(id);
+                }
+                None => m.doc.clear_focus(),
+            }
+            changed = true;
+        }
+        if changed {
+            m.doc.resolve(0.0);
+            self.geometry.entry(page).or_default().clear();
+        }
+    }
+
+    /// The box of the element keyed `key` in `page`'s persistent document,
+    /// as of the last [`Renderer::sync_layout`] (see [`LayoutBox`]).
+    pub fn element_box(&self, page: u64, key: u64) -> Option<LayoutBox> {
+        let m = self.mirrors.get(&page)?;
+        self.geometry.get(&page)?.element_box(&m.doc, m.node(key)?)
+    }
+
+    /// The element keyed `key` and its ancestors as Blitz laid them out
+    /// (diagnostics).
+    pub fn describe_element(&self, page: u64, key: u64) -> Option<String> {
+        let m = self.mirrors.get(&page)?;
+        Some(geometry::describe(&m.doc, m.node(key)?))
+    }
+
+    /// Every element's box ([`Renderer::element_box`]) after
+    /// [`Renderer::sync_layout`], and the document's scroll size.
+    pub fn layout_boxes(&mut self, snap: &Snapshot, fetcher: &Arc<dyn Fetcher>) -> Result<LayoutBoxes, RenderError> {
+        let timings = self.sync_layout(snap, fetcher)?;
+        let page = snap.live.as_ref().map(|l| l.page).unwrap_or_default();
+        let mut out = self.page_layout(page).ok_or(RenderError::NoElement)?;
+        out.timings = Timings { scene: out.timings.scene, ..timings };
+        Ok(out)
+    }
+
+    /// `page`'s persistent document as last synced: every element's box
+    /// ([`Renderer::element_box`]), every word, the sticky elements and the
+    /// document's scroll size (at least the viewport).
+    pub fn page_layout(&self, page: u64) -> Option<LayoutBoxes> {
+        let t = Instant::now();
+        let m = self.mirrors.get(&page)?;
+        let g = self.geometry.get(&page)?;
+        let doc = &m.doc;
+        let keys = m.keys();
+        let mut boxes = Vec::new();
+        let mut sticky = Vec::new();
+        // Tree order (paint order among equals for hit testing).
+        let mut stack = vec![doc.root_element().id];
+        while let Some(id) = stack.pop() {
+            let Some(node) = doc.get_node(id) else { continue };
+            stack.extend(node.children.iter().rev().copied());
+            if !node.is_element() {
+                continue;
+            }
+            // Not rendered (display: none, or inside it: never styled) has no box.
+            let rendered = node.primary_styles().is_some_and(|s| !s.clone_display().is_none());
+            if !rendered {
+                continue;
+            }
+            let (Some(&key), Some(b)) = (keys.get(&id), g.element_box(doc, id)) else { continue };
+            if b.position == BoxPosition::Sticky {
+                sticky.push((key, g.sticky_box(doc, id)));
+            }
+            boxes.push((key, b));
+        }
+        let words = g.text_words(doc).into_iter().filter_map(|w| Some((*keys.get(&w.node)?, w))).collect();
+        let (document_width, document_height) = self.document_size(page)?;
+        Some(LayoutBoxes {
+            boxes,
+            words,
+            sticky,
+            document_width,
+            document_height,
+            timings: Timings { scene: t.elapsed(), ..Timings::default() },
+        })
+    }
+
+    /// `page`'s document scroll size (at least the viewport), as last synced.
+    pub fn document_size(&self, page: u64) -> Option<(f64, f64)> {
+        let m = self.mirrors.get(&page)?;
+        let doc = &m.doc;
+        let root = doc.root_element();
+        let (size, overflow) =
+            (root.final_layout().size, root.scrollable_overflow().scale_from_origin(1.0 / doc.viewport().scale_f64()));
+        let (vw, vh) = (m.viewport.0 as f64, m.viewport.1 as f64);
+        Some(((size.width as f64).max(overflow.x1).max(vw), (size.height as f64).max(overflow.y1).max(vh)))
+    }
+
+    /// Whether any element of `page`'s document is `position: sticky`.
+    pub fn has_sticky(&self, page: u64) -> bool {
+        match (self.mirrors.get(&page), self.geometry.get(&page)) {
+            (Some(m), Some(g)) => g.has_sticky(&m.doc),
+            _ => false,
+        }
+    }
+
+    /// The keys of the elements at viewport point (`x`, `y`) of `page`'s
+    /// persistent document, topmost first (`document.elementsFromPoint`;
+    /// the first is `elementFromPoint`'s).
+    pub fn elements_from_point(&self, page: u64, x: f64, y: f64) -> Vec<u64> {
+        let Some(m) = self.mirrors.get(&page) else { return Vec::new() };
+        let keys = m.keys();
+        let mut out = Vec::new();
+        let mut cur = m.doc.element_from_point(x as f32, y as f32);
+        while let Some(id) = cur {
+            if let Some(&k) = keys.get(&id) {
+                out.push(k);
+            }
+            cur = m.doc.get_node(id).and_then(|n| n.parent);
+        }
+        out
+    }
+
+    /// The document as a PDF: one page per element matching
+    /// `opts.page_selector` (its border box, CSS px * 0.75 = pt), or the
+    /// document cut into `opts.paper` sized pages when none matches.
+    pub fn print_pdf(
+        &mut self,
+        snap: &Snapshot,
+        fetcher: &Arc<dyn Fetcher>,
+        opts: &PdfOptions,
+    ) -> Result<PdfOutput, RenderError> {
+        let mut timings = Timings::default();
+        let dpr = snap.device_scale_factor.clamp(0.1, 16.0);
+        let mut fresh = None;
+        let mut cache = std::mem::take(&mut self.pdf_cache);
+        let out = match self.prepare(snap, fetcher, &mut fresh, &mut timings) {
+            Ok((doc, _)) => print_document(doc, (snap.width, snap.height), dpr, opts, timings, &mut cache),
+            Err(e) => Err(e),
+        };
+        self.pdf_cache = cache;
+        out
+    }
+
+    /// [`Renderer::print_pdf`] of `page`'s persistent document as it is
+    /// (brought up to date by [`Renderer::sync_layout`] or
+    /// [`Renderer::sync_delta`]): the document layout queries were answered
+    /// from is the one printed. `viewport`: CSS px; `dpr`: device scale.
+    pub fn print_pdf_page(
+        &mut self,
+        page: u64,
+        viewport: (u32, u32),
+        dpr: f64,
+        opts: &PdfOptions,
+    ) -> Result<PdfOutput, RenderError> {
+        let m = self.mirrors.get_mut(&page).ok_or(RenderError::NoElement)?;
+        print_document(&mut m.doc, viewport, dpr.clamp(0.1, 16.0), opts, Timings::default(), &mut self.pdf_cache)
     }
 
     /// Stage 3.
@@ -554,6 +952,137 @@ impl Renderer {
         let (image, timings) = self.raster(painted, backend);
         Ok((image, hash, timings))
     }
+}
+
+/// Pages and PDF of a laid-out document ([`Renderer::print_pdf`]).
+fn print_document(
+    doc: &mut blitz_dom::BaseDocument,
+    viewport: (u32, u32),
+    dpr: f64,
+    opts: &PdfOptions,
+    mut timings: Timings,
+    cache: &mut pdf::PdfCache,
+) -> Result<PdfOutput, RenderError> {
+    let t = Instant::now();
+    doc.set_viewport_scroll(blitz_dom::Point { x: 0.0, y: 0.0 });
+    let root = doc.root_element();
+    let (size, overflow) = (root.final_layout().size, *root.scrollable_overflow());
+    let doc_w = (size.width as f64).max(overflow.x1).max(viewport.0 as f64) * dpr;
+    let doc_h = (size.height as f64).max(overflow.y1).max(viewport.1 as f64) * dpr;
+    let mut pages = Vec::new();
+    for id in doc.query_selector_all(&opts.page_selector).unwrap_or_default() {
+        let Some(rect) = element_bounds(doc, id, dpr) else { continue };
+        // Off-screen boxes (Paprize's measuring page sits at -9999px) are
+        // not printed, as in Chromium.
+        if rect.width() < 1.0 || rect.height() < 1.0 || rect.x1 <= 0.0 || rect.y1 <= 0.0 {
+            continue;
+        }
+        let (right, bottom, culprit) = content_extent(doc, id);
+        let node_size = doc.get_node(id).map(|n| n.final_layout().size).unwrap_or_default();
+        pages.push(PdfPage {
+            rect,
+            overflow_right: (right - node_size.width as f64).max(0.0),
+            overflow_bottom: (bottom - node_size.height as f64).max(0.0),
+            culprit,
+        });
+    }
+    let by_selector = !pages.is_empty();
+    if !by_selector {
+        let (pw, ph) = (opts.paper.0 * dpr, opts.paper.1 * dpr);
+        let mut y = 0.0;
+        while y < doc_h - 0.5 || y == 0.0 {
+            pages.push(PdfPage {
+                rect: Rect::new(0.0, y, pw, y + ph),
+                overflow_right: 0.0,
+                overflow_bottom: 0.0,
+                culprit: None,
+            });
+            y += ph;
+        }
+    }
+    let extent_h = pages.iter().map(|p| p.rect.y1).fold(doc_h, f64::max);
+    let extent_w = pages.iter().map(|p| p.rect.x1).fold(doc_w, f64::max);
+    let mut scene = Scene::new();
+    blitz_paint::paint_scene(&mut scene, doc, dpr, extent_w.ceil() as u32, extent_h.ceil() as u32, 0, 0);
+    timings.scene = t.elapsed();
+    let t = Instant::now();
+    let rects: Vec<Rect> = pages.iter().map(|p| p.rect).collect();
+    let (bytes, stats) = pdf::write(&scene, &rects, pdf::PX_TO_PT / dpr, cache).map_err(RenderError::Resource)?;
+    timings.raster = t.elapsed();
+    Ok(PdfOutput { bytes, pages, by_selector, stats, commands: scene.commands.len(), timings })
+}
+
+/// How far the boxes inside `id` reach (CSS px, from its border box's
+/// top-left corner): the largest right and bottom edge of any descendant
+/// box or its content, transforms ignored, and the box that reaches
+/// furthest past `id`'s own size.
+fn content_extent(doc: &blitz_dom::BaseDocument, id: blitz_dom::NodeId) -> (f64, f64, Option<String>) {
+    let size = doc.get_node(id).map(|n| n.final_layout().size).unwrap_or_default();
+    let (mut right, mut bottom, mut worst, mut culprit) = (0.0f64, 0.0f64, 0.5f64, None);
+    let mut stack = vec![(id, 0.0f64, 0.0f64)];
+    while let Some((nid, x, y)) = stack.pop() {
+        let Some(node) = doc.get_node(nid) else { continue };
+        let l = node.final_layout();
+        let (nx, ny) = if nid == id { (0.0, 0.0) } else { (x + l.location.x as f64, y + l.location.y as f64) };
+        if nid != id {
+            let o = node.scrollable_overflow();
+            let r = nx + (l.size.width as f64).max(o.x1);
+            let b = ny + (l.size.height as f64).max(o.y1);
+            right = right.max(r);
+            bottom = bottom.max(b);
+            let past = (r - size.width as f64).max(b - size.height as f64);
+            // `>=`: descendants come later, so the deepest box at that edge wins.
+            if past >= worst {
+                worst = past;
+                culprit = Some(match node.element_data() {
+                    Some(e) => format!(
+                        "<{} {:?}> {nx:.0},{ny:.0} {:.0}x{:.0} overflow {:.0}x{:.0}",
+                        e.name.local,
+                        e.attr(blitz_dom::local_name!("class")).unwrap_or(""),
+                        l.size.width,
+                        l.size.height,
+                        o.x1,
+                        o.y1
+                    ),
+                    None => format!("text {:?}", node.text_content().chars().take(30).collect::<String>()),
+                });
+            }
+        }
+        if let Some(children) = node.layout_children.borrow().as_ref() {
+            for &c in children.iter() {
+                stack.push((c, nx, ny));
+            }
+        }
+    }
+    (right, bottom, culprit)
+}
+
+/// The border box of `id` in device px, document coordinates, through the
+/// same translated/transformed positioning chain as painting (layout-only
+/// coordinates crop the wrong region for translated bottom sheets and scaled
+/// component ancestors).
+pub(crate) fn element_bounds(doc: &blitz_dom::BaseDocument, id: blitz_dom::NodeId, dpr: f64) -> Option<Rect> {
+    let size = doc.get_node(id)?.final_layout().size;
+    let mut chain = Vec::new();
+    let mut current = Some(id);
+    while let Some(current_id) = current {
+        let current_node = doc.get_node(current_id)?;
+        chain.push(current_id);
+        current = current_node.containing_block();
+    }
+    let mut transform = Affine::IDENTITY;
+    for current_id in chain.into_iter().rev() {
+        let current_node = doc.get_node(current_id)?;
+        let location = current_node.final_layout().location;
+        transform = transform
+            * Affine::translate((location.x as f64 * dpr, location.y as f64 * dpr))
+            * current_node.transform().as_deref().copied().unwrap_or_default();
+        if current_id != id {
+            let scroll = current_node.scroll_offset();
+            transform *= Affine::translate((-scroll.x * dpr, -scroll.y * dpr));
+        }
+    }
+    Some(transform.transform_rect_bbox(Rect::new(0.0, 0.0, size.width as f64 * dpr, size.height as f64 * dpr)))
 }
 
 fn viewport_of(snap: &Snapshot) -> BlitzViewport {

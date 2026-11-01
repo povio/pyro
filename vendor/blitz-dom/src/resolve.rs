@@ -74,6 +74,7 @@ impl BaseDocument {
 
         let root_node_id = self.root_element().id;
         debug_timer!(timer, feature = "log-phase-times");
+        let mut phase_t = std::time::Instant::now();
 
         // Apply any device changes (viewport resize, zoom, color-scheme, etc)
         // accumulated since the last resolve as a single device rebuild.
@@ -82,6 +83,7 @@ impl BaseDocument {
         // we need to resolve stylist first since it will need to drive our layout bits
         self.resolve_stylist(current_time_for_animations);
         timer.record_time("style");
+        phase_profile::mark(0, &mut phase_t);
 
         // Non-incremental mode is "every node is damaged every frame": mark the
         // whole tree and let the same damage pipeline reconstruct and relayout
@@ -94,12 +96,14 @@ impl BaseDocument {
         // Propagate damage flags (from mutation and restyles) up and down the tree
         self.propagate_damage_flags(root_node_id);
         timer.record_time("damage");
+        phase_profile::mark(1, &mut phase_t);
 
         // Fix up tree for layout (insert anonymous blocks as necessary, etc)
         self.resolve_layout_children();
         #[cfg(debug_assertions)]
         self.assert_layout_parents_consistent();
         timer.record_time("construct");
+        phase_profile::mark(2, &mut phase_t);
 
         self.resolve_deferred_tasks();
         // Flush background/mask images from style to dedicated storage on the
@@ -107,27 +111,32 @@ impl BaseDocument {
         // pseudo-element box construction), fetching any not-yet-loaded images.
         self.flush_pending_style_images();
         timer.record_time("pconstruct");
+        phase_profile::mark(3, &mut phase_t);
 
         // Next we resolve layout with the data resolved by stlist
         self.resolve_layout();
         timer.record_time("layout");
+        phase_profile::mark(4, &mut phase_t);
         self.nodes.bump_geometry_generation();
 
         // Resolve transforms
         self.resolve_transforms(root_node_id);
         timer.record_time("transform");
+        phase_profile::mark(5, &mut phase_t);
 
         // Build paint children / stacking contexts for damaged subtrees. Runs
         // after layout and transforms so that stacking-context roots created by
         // this frame's transforms are picked up, and before damage is cleared.
         self.build_paint_tree(root_node_id);
         timer.record_time("paint_tree");
+        phase_profile::mark(6, &mut phase_t);
 
         // Clear all damage and dirty flags, walking only subtrees which are
         // marked as (potentially) containing damage.
         let doc_node_id = self.root_node().id;
         self.clear_damage_and_dirty_flags(doc_node_id);
         timer.record_time("c_damage");
+        phase_profile::mark(7, &mut phase_t);
 
         // Re-resolve the hover node from the pointer position against the fresh
         // layout. This must run *after* the damage/dirty flags are cleared
@@ -164,6 +173,7 @@ impl BaseDocument {
         }
         self.subdoc_is_animating = subdoc_is_animating;
         timer.record_time("subdocs");
+        phase_profile::mark(8, &mut phase_t);
 
         timer.print_times(&format!("Resolve({}): ", self.id()));
     }
@@ -175,11 +185,14 @@ impl BaseDocument {
 
         let scale = self.viewport.scale_f64();
 
-        if !self.nodes[node_id]
-            .damage()
-            .map(|d| d.contains(style::selector_parser::RestyleDamage::RECALCULATE_OVERFLOW))
-            .unwrap_or(false)
-        {
+        // The cached overflow holds only while nothing in the subtree changed:
+        // a descendant's relayout (its overflow shrinking) reaches its
+        // ancestors as their damage, not as `RECALCULATE_OVERFLOW`.
+        let unchanged = {
+            let node = &self.nodes[node_id];
+            node.damage().is_some_and(|d| d.is_empty()) && !node.has_damaged_descendants() && !node.is_anonymous()
+        };
+        if unchanged {
             let node = &self.nodes[node_id];
             let location = node.final_layout().location.map(|v| v as f64 * scale);
 
@@ -188,7 +201,7 @@ impl BaseDocument {
                 transform *= *t
             }
 
-            let overflow = *node.scrollable_overflow();
+            let overflow = overflow_contribution(node, *node.scrollable_overflow(), scale);
             return transform.transform_rect_bbox(overflow);
         }
 
@@ -196,7 +209,15 @@ impl BaseDocument {
 
         let w = self.nodes[node_id].final_layout().size.width as f64 * scale;
         let h = self.nodes[node_id].final_layout().size.height as f64 * scale;
-        let mut overflow = Rect::new(0.0, 0.0, w, h);
+        // lightningpanda: the scrollable overflow starts at the padding box
+        // (CSS Overflow 3 2.2), not the border box.
+        let b = self.nodes[node_id].final_layout().border;
+        let mut overflow = Rect::new(
+            b.left as f64 * scale,
+            b.top as f64 * scale,
+            (w - b.right as f64 * scale).max(b.left as f64 * scale),
+            (h - b.bottom as f64 * scale).max(b.top as f64 * scale),
+        );
 
         let layout_children = std::mem::take(self.nodes[node_id].layout_children.get_mut());
 
@@ -231,6 +252,45 @@ impl BaseDocument {
             overflow = overflow.union(child_rect_in_self);
         }
 
+        // lightningpanda: the lines of an inline formatting context are
+        // overflow too (a nowrap name in a 100px `truncate` cell scrolls), and
+        // a scroll container adds its end padding after them.
+        let element = self.nodes[node_id].element_data();
+        let editor_layout = element.and_then(|e| e.text_input_data()).and_then(|i| i.editor.try_layout());
+        let inline = element.and_then(|e| e.inline_layout_data.as_deref());
+        let lines = inline.map(|t| (&t.layout, t.block_offset)).or(editor_layout.map(|l| (l, 0.0)));
+        if let Some((text_layout, block_offset)) = lines {
+            let l = self.nodes[node_id].final_layout();
+            let width = text_layout
+                .lines()
+                .map(|line| {
+                    let m = line.metrics();
+                    (m.offset + m.advance - m.hanging_advance) as f64
+                })
+                .fold(0.0, f64::max);
+            // The empty line parley adds after a final hard break (`<br>`)
+            // is not content.
+            let height = text_layout
+                .lines()
+                .filter(|line| !line.text_range().is_empty())
+                .map(|line| line.metrics().block_max_coord as f64)
+                .fold(0.0, f64::max);
+            if width > 0.0 || height > 0.0 {
+                let x0 = (l.border.left + l.padding.left) as f64 * scale;
+                let y0 = (l.border.top + l.padding.top + block_offset) as f64 * scale;
+                let style = self.nodes[node_id].primary_styles();
+                // Text controls scroll their value whatever their `overflow`.
+                let scrolls = editor_layout.is_some()
+                    || style.as_ref().is_some_and(|s| {
+                        s.clone_overflow_x() != style::values::computed::Overflow::Visible
+                            || s.clone_overflow_y() != style::values::computed::Overflow::Visible
+                    });
+                let (end_x, end_y) =
+                    if scrolls { (l.padding.right as f64 * scale, l.padding.bottom as f64 * scale) } else { (0.0, 0.0) };
+                overflow = overflow.union(Rect::new(x0, y0, x0 + width + end_x, y0 + height + end_y));
+            }
+        }
+
         *self.nodes[node_id].scrollable_overflow_mut() = overflow;
         *self.nodes[node_id].layout_children.get_mut() = layout_children;
 
@@ -243,7 +303,8 @@ impl BaseDocument {
             Affine::translate((scaled_x, scaled_y))
         };
 
-        full.transform_rect_bbox(overflow)
+        let contribution = overflow_contribution(&self.nodes[node_id], overflow, scale);
+        full.transform_rect_bbox(contribution)
     }
 
     /// Ensure that the layout_children field is populated for all nodes
@@ -296,7 +357,16 @@ impl BaseDocument {
                 damage.remove(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                 // damage.insert(RestyleDamage::RELAYOUT | RestyleDamage::REPAINT);
             } else {
-                //if damage.contains(CONSTRUCT_DESCENDENT) {
+                // A subtree with no damage has nothing to reconstruct: its
+                // layout children and their `layout_parent` links are those
+                // of the last pass. (The same skip as `propagate_damage_flags`;
+                // anonymous boxes are always visited, as they are there.)
+                {
+                    let node = &doc.nodes[node_id];
+                    if damage.is_empty() && !node.has_damaged_descendants() && !node.is_anonymous() {
+                        return;
+                    }
+                }
                 let layout_children = doc.nodes[node_id].layout_children.borrow_mut().take();
                 if let Some(layout_children) = layout_children {
                     for child_id in layout_children.iter().copied() {
@@ -383,6 +453,7 @@ impl BaseDocument {
                     let font_ctx_mut = &mut *self.font_ctx.lock().unwrap();
 
                     layout.content_widths = None;
+                    layout.last_break = None;
                     build_inline_layout_into(
                         &self.nodes,
                         layout_ctx_mut,
@@ -391,6 +462,7 @@ impl BaseDocument {
                         self.viewport.scale(),
                         task.node_id,
                     );
+                    phase_profile::rebuilt(layout.text.len());
 
                     #[cfg(feature = "parallel-construct")]
                     {
@@ -460,5 +532,75 @@ impl BaseDocument {
 
         // println!("\n\n");
         // taffy::print_tree(self, root_node_id)
+    }
+}
+
+/// lightningpanda: what a box adds to its parent's scrollable overflow
+/// (its own coordinates): its border box, plus its own scrollable overflow
+/// on the axes it does not clip. A scroll container keeps its content's
+/// overflow to itself.
+fn overflow_contribution(node: &crate::Node, overflow: Rect, scale: f64) -> Rect {
+    use style::values::computed::Overflow;
+    let size = node.final_layout().size;
+    let border_box = Rect::new(0.0, 0.0, size.width as f64 * scale, size.height as f64 * scale);
+    let mut out = overflow.union(border_box);
+    if let Some(style) = node.primary_styles() {
+        if style.clone_overflow_x() != Overflow::Visible {
+            (out.x0, out.x1) = (border_box.x0, border_box.x1);
+        }
+        if style.clone_overflow_y() != Overflow::Visible {
+            (out.y0, out.y1) = (border_box.y0, border_box.y1);
+        }
+    }
+    out
+}
+
+/// lightningpanda: cumulative time per `resolve` phase (style, damage,
+/// construct, pconstruct, layout, transform, paint_tree, c_damage, subdocs),
+/// for profiling incremental relayout.
+pub mod phase_profile {
+    use std::cell::Cell;
+    use std::time::Instant;
+    std::thread_local! {
+        static NS: Cell<[u64; 9]> = const { Cell::new([0; 9]) };
+    }
+    pub(crate) fn mark(i: usize, t: &mut Instant) {
+        let now = Instant::now();
+        let d = (now - *t).as_nanos() as u64;
+        *t = now;
+        NS.with(|ns| {
+            let mut v = ns.get();
+            v[i] += d;
+            ns.set(v);
+        });
+    }
+    std::thread_local! {
+        static REBUILDS: Cell<(u64, u64)> = const { Cell::new((0, 0)) };
+    }
+    /// An inline layout of `bytes` text was built (shaped) again.
+    pub(crate) fn rebuilt(bytes: usize) {
+        REBUILDS.with(|r| {
+            let (n, b) = r.get();
+            r.set((n + 1, b + bytes as u64));
+        });
+    }
+    /// Inline layouts built on this thread so far, and their text bytes.
+    pub fn rebuilds() -> (u64, u64) {
+        REBUILDS.with(|r| r.get())
+    }
+    std::thread_local! {
+        static RESTYLED: Cell<u64> = const { Cell::new(0) };
+    }
+    /// A node was visited by the style traversal.
+    pub(crate) fn restyled() {
+        RESTYLED.with(|r| r.set(r.get() + 1));
+    }
+    /// Nodes the style traversal visited on this thread so far.
+    pub fn restyles() -> u64 {
+        RESTYLED.with(|r| r.get())
+    }
+    /// Milliseconds per phase on this thread so far.
+    pub fn peek() -> [f64; 9] {
+        NS.with(|ns| ns.get().map(|n| n as f64 / 1e6))
     }
 }

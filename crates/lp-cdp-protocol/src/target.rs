@@ -227,6 +227,8 @@ struct SessionEntry {
     target_id: String,
     parent: Option<String>,
     auto_attached: bool,
+    /// A session on the page's tab target (`target_id` is the page's).
+    tab: bool,
 }
 
 /// Per-connection browser protocol state.
@@ -234,6 +236,13 @@ pub struct Browser<H: Host> {
     host: H,
     auto_attach: bool,
     discover: bool,
+    /// Browser-level auto-attach to tab targets (puppeteer: pages excluded,
+    /// tabs included). Each page has a virtual tab target, `tab-<page id>`,
+    /// whose session attaches the page when asked (`Target.setAutoAttach`
+    /// on the tab session), as Chrome's tab targets do.
+    tab_attach: bool,
+    /// `setDiscoverTargets` included tab targets.
+    discover_tabs: bool,
     contexts: Vec<ContextEntry>,
     targets: Vec<TargetEntry>,
     sessions: HashMap<String, SessionEntry>,
@@ -274,6 +283,8 @@ impl<H: Host> Browser<H> {
             host,
             auto_attach: false,
             discover: false,
+            tab_attach: false,
+            discover_tabs: false,
             contexts: Vec::new(),
             targets: Vec::new(),
             sessions: HashMap::new(),
@@ -572,11 +583,14 @@ impl<H: Host> Browser<H> {
                     pending_url: None,
                     prepared_profile: Some(entry.profile),
                 });
-                if self.discover {
+                if self.discover || self.discover_tabs {
                     self.send_target_created(self.targets.len() - 1, out);
                 }
                 let session_id = if self.auto_attach {
                     Some(self.attach(&target_id, None, true, out)?)
+                } else if self.tab_attach {
+                    self.attach_tab(&target_id, out)?;
+                    None
                 } else if p.attach {
                     Some(self.attach(&target_id, cmd.session_id(), false, out)?)
                 } else {
@@ -741,6 +755,9 @@ impl<H: Host> Browser<H> {
             .find(|t| t.id == session.target_id)
             .ok_or_else(|| CdpError::server("target of session is gone"))?;
         let (page, target_id) = (target.page, target.id.clone());
+        if session.tab {
+            return self.tab_session_command(session_id, &target_id, cmd, out);
+        }
         match cmd.method.as_ref() {
             // Session-scoped Target commands Playwright sends on page sessions.
             "Target.setAutoAttach" => {
@@ -795,6 +812,104 @@ impl<H: Host> Browser<H> {
         }
     }
 
+    /// The tab target of `target` (`id` is its `tab_id`).
+    fn tab_info<'a>(&self, target: &'a TargetEntry, id: &'a str, url: &'a str, title: &'a str) -> TargetInfo<'a> {
+        let attached = self.sessions.values().any(|s| s.tab && s.target_id == target.id);
+        TargetInfo {
+            kind: "tab",
+            target_id: id,
+            attached,
+            opener_id: None,
+            opener_frame_id: None,
+            can_access_opener: false,
+            ..self.info(target, url, title, attached)
+        }
+    }
+
+    /// Commands on a tab target's session: attaching its page (puppeteer
+    /// sends `setAutoAttach` here and waits for the page's
+    /// `attachedToTarget` on this session).
+    fn tab_session_command(
+        &mut self,
+        session_id: &str,
+        target_id: &str,
+        cmd: &Command<'_>,
+        out: &mut dyn Sink,
+    ) -> CdpResult<()> {
+        match cmd.method.as_ref() {
+            "Target.setAutoAttach" => {
+                let params: AutoAttachParams = cmd.params()?;
+                out.send(msg::result_frame(cmd.id, &Empty {}, Some(session_id)));
+                let attached = self
+                    .sessions
+                    .values()
+                    .any(|s| !s.tab && s.target_id == target_id && s.parent.as_deref() == Some(session_id));
+                if params.auto_attach && includes(params.filter.as_deref(), "page", true) && !attached {
+                    // A popup waits for `Runtime.runIfWaitingForDebugger` on its page session.
+                    let paused = self.target(target_id)?.pending_url.is_some();
+                    self.attach_paused(target_id, Some(session_id), true, paused, out)?;
+                }
+            }
+            "Runtime.runIfWaitingForDebugger" => out.send(msg::result_frame(cmd.id, &Empty {}, Some(session_id))),
+            "Target.getTargetInfo" => {
+                let target = self.target(target_id)?;
+                let (url, title) = (self.host.page_url(target.page), self.host.page_title(target.page));
+                let tab_id = tab_id(target_id);
+                let info = self.tab_info(target, &tab_id, &url, &title);
+                out.send(msg::result_frame(cmd.id, &serde_json::json!({ "targetInfo": info }), Some(session_id)));
+            }
+            "Target.detachFromTarget" => {
+                #[derive(Deserialize)]
+                #[serde(rename_all = "camelCase")]
+                struct P {
+                    session_id: String,
+                }
+                let child = cmd.params::<P>()?.session_id;
+                if self.sessions.get(&child).is_none_or(|s| s.parent.as_deref() != Some(session_id)) {
+                    return Err(CdpError::new(-32001, "Session is not attached to this browser session."));
+                }
+                self.detach_session(&child, out);
+                out.send(msg::result_frame(cmd.id, &Empty {}, Some(session_id)));
+            }
+            _ => return Err(CdpError::unsupported(&cmd.method)),
+        }
+        Ok(())
+    }
+
+    /// Attaches a browser-level session to `target_id`'s tab target.
+    fn attach_tab(&mut self, target_id: &str, out: &mut dyn Sink) -> CdpResult<String> {
+        if self.sessions.len() + self.browser_sessions.len() >= MAX_SESSIONS {
+            return Err(CdpError::server("Too many sessions"));
+        }
+        let session_id = self.mint("");
+        self.sessions.insert(
+            session_id.clone(),
+            SessionEntry { target_id: target_id.to_owned(), parent: None, auto_attached: true, tab: true },
+        );
+        let target = self.target(target_id)?;
+        let (url, title) = (self.host.page_url(target.page), self.host.page_title(target.page));
+        let tab_id = tab_id(target_id);
+        let info = self.tab_info(target, &tab_id, &url, &title);
+        out.send(msg::event_frame(
+            "Target.attachedToTarget",
+            &serde_json::json!({ "sessionId": session_id, "targetInfo": info, "waitingForDebugger": false }),
+            None,
+        ));
+        Ok(session_id)
+    }
+
+    /// A new target is attached as the browser-level auto-attach asks: its
+    /// page (Playwright), or its tab (puppeteer). `paused`: a popup waiting
+    /// for `Runtime.runIfWaitingForDebugger`.
+    fn auto_attach_new(&mut self, target_id: &str, paused: bool, out: &mut dyn Sink) -> CdpResult<()> {
+        if self.auto_attach {
+            self.attach_paused(target_id, None, true, paused, out)?;
+        } else if self.tab_attach {
+            self.attach_tab(target_id, out)?;
+        }
+        Ok(())
+    }
+
     fn target_command(&mut self, action: &str, cmd: &Command<'_>, out: &mut dyn Sink) -> CdpResult<()> {
         let id = cmd.id;
         match action {
@@ -811,12 +926,19 @@ impl<H: Host> Browser<H> {
                 if !params.flatten {
                     return Err(CdpError::server("Only flatten mode is supported"));
                 }
-                // Only page targets exist; a filter excluding pages means no auto-attach.
-                let auto_attach = params.auto_attach && includes_pages(params.filter.as_deref());
-                let unattached: Vec<String> = if auto_attach {
+                // Pages, or (pages excluded, tabs included) the pages' tab targets.
+                let filter = params.filter.as_deref();
+                let auto_attach = params.auto_attach && includes(filter, "page", true);
+                let tab_attach = params.auto_attach && !auto_attach && includes(filter, "tab", false);
+                let unattached: Vec<String> = if auto_attach || tab_attach {
                     self.targets
                         .iter()
-                        .filter(|t| !self.sessions.values().any(|s| s.target_id == t.id && s.parent.is_none()))
+                        .filter(|t| {
+                            !self
+                                .sessions
+                                .values()
+                                .any(|s| s.target_id == t.id && s.parent.is_none() && s.tab == tab_attach)
+                        })
                         .map(|t| t.id.clone())
                         .collect()
                 } else {
@@ -828,14 +950,22 @@ impl<H: Host> Browser<H> {
                     return Err(CdpError::server("Too many sessions"));
                 }
                 self.auto_attach = auto_attach;
+                self.tab_attach = tab_attach;
                 out.send(msg::result_frame(id, &Empty {}, cmd.session_id()));
-                if self.auto_attach {
+                if self.auto_attach || self.tab_attach {
                     for target_id in unattached {
-                        self.attach(&target_id, None, true, out)?;
+                        self.auto_attach_new(&target_id, false, out)?;
                     }
                 } else {
-                    let sessions: Vec<String> =
-                        self.sessions.iter().filter(|(_, s)| s.auto_attached).map(|(id, _)| id.clone()).collect();
+                    // Tab sessions first detach their pages' sessions.
+                    let mut sessions: Vec<(bool, String)> = self
+                        .sessions
+                        .iter()
+                        .filter(|(_, s)| s.auto_attached && s.parent.is_none())
+                        .map(|(id, s)| (s.tab, id.clone()))
+                        .collect();
+                    sessions.sort();
+                    let sessions: Vec<String> = sessions.into_iter().map(|(_, id)| id).collect();
                     for session_id in sessions {
                         self.detach_session(&session_id, out);
                     }
@@ -848,9 +978,10 @@ impl<H: Host> Browser<H> {
                     filter: Option<Vec<TargetFilter>>,
                 }
                 let p = cmd.params::<P>()?;
-                self.discover = p.discover && includes_pages(p.filter.as_deref());
+                self.discover = p.discover && includes(p.filter.as_deref(), "page", true);
+                self.discover_tabs = p.discover && includes(p.filter.as_deref(), "tab", false);
                 out.send(msg::result_frame(id, &Empty {}, cmd.session_id()));
-                if self.discover {
+                if self.discover || self.discover_tabs {
                     for i in 0..self.targets.len() {
                         self.send_target_created(i, out);
                     }
@@ -871,7 +1002,7 @@ impl<H: Host> Browser<H> {
                         let target = self.target(&target_id)?;
                         let url = self.host.page_url(target.page);
                         let title = self.host.page_title(target.page);
-                        let attached = self.sessions.values().any(|s| s.target_id == target.id);
+                        let attached = self.sessions.values().any(|s| !s.tab && s.target_id == target.id);
                         serde_json::to_value(self.info(target, &url, &title, attached)).expect("serializable")
                     }
                 };
@@ -884,7 +1015,7 @@ impl<H: Host> Browser<H> {
                 }
                 // Only page targets exist (the browser target is never listed,
                 // as with Chrome's default filter).
-                let pages = includes_pages(cmd.params::<P>()?.filter.as_deref());
+                let pages = includes(cmd.params::<P>()?.filter.as_deref(), "page", true);
                 let infos: Vec<serde_json::Value> = self
                     .targets
                     .iter()
@@ -892,7 +1023,7 @@ impl<H: Host> Browser<H> {
                     .map(|t| {
                         let url = self.host.page_url(t.page);
                         let title = self.host.page_title(t.page);
-                        let attached = self.sessions.values().any(|s| s.target_id == t.id);
+                        let attached = self.sessions.values().any(|s| !s.tab && s.target_id == t.id);
                         serde_json::to_value(self.info(t, &url, &title, attached)).expect("serializable")
                     })
                     .collect();
@@ -955,7 +1086,9 @@ impl<H: Host> Browser<H> {
                 // Preflight every budget the creation needs, so no failure can
                 // happen after the page exists (attach is the only fallible step
                 // left besides navigation, which rolls back below).
-                if self.auto_attach && self.sessions.len() + self.browser_sessions.len() >= MAX_SESSIONS {
+                if (self.auto_attach || self.tab_attach)
+                    && self.sessions.len() + self.browser_sessions.len() >= MAX_SESSIONS
+                {
                     return Err(CdpError::server("Too many sessions"));
                 }
                 let (page, target_id) = self.host.create_page(context_key)?;
@@ -968,14 +1101,12 @@ impl<H: Host> Browser<H> {
                     pending_url: None,
                     prepared_profile: None,
                 });
-                if self.discover {
+                if self.discover || self.discover_tabs {
                     self.send_target_created(self.targets.len() - 1, out);
                 }
                 // attachedToTarget must precede the result: Playwright looks the
                 // page up by targetId as soon as createTarget returns.
-                if self.auto_attach {
-                    self.attach(&target_id, None, true, out)?;
-                }
+                self.auto_attach_new(&target_id, false, out)?;
                 if !params.url.is_empty() && params.url != "about:blank" {
                     if let Err(error) = self.host.navigate(page, &params.url) {
                         // No half-created target survives a failed createTarget.
@@ -1107,7 +1238,12 @@ impl<H: Host> Browser<H> {
         let session_id = self.mint("");
         self.sessions.insert(
             session_id.clone(),
-            SessionEntry { target_id: target_id.to_owned(), parent: parent.map(str::to_owned), auto_attached },
+            SessionEntry {
+                target_id: target_id.to_owned(),
+                parent: parent.map(str::to_owned),
+                auto_attached,
+                tab: false,
+            },
         );
         let target = self.target(target_id)?;
         let page = target.page;
@@ -1145,7 +1281,27 @@ impl<H: Host> Browser<H> {
             out.send(msg::event_frame("Target.detachedFromTarget", &serde_json::json!({"sessionId":session_id}), None));
             return;
         }
+        let Some(session) = self.sessions.get(session_id) else { return };
+        if session.tab {
+            let children: Vec<String> = self
+                .sessions
+                .iter()
+                .filter(|(_, s)| s.parent.as_deref() == Some(session_id))
+                .map(|(id, _)| id.clone())
+                .collect();
+            for child in children {
+                self.detach_session(&child, out);
+            }
+        }
         let Some(session) = self.sessions.remove(session_id) else { return };
+        if session.tab {
+            out.send(msg::event_frame(
+                "Target.detachedFromTarget",
+                &serde_json::json!({ "sessionId": session_id, "targetId": tab_id(&session.target_id) }),
+                None,
+            ));
+            return;
+        }
         if let Some(target) = self.targets.iter().find(|t| t.id == session.target_id) {
             self.host.session_detached(target.page, session_id);
         }
@@ -1157,9 +1313,21 @@ impl<H: Host> Browser<H> {
     }
 
     fn close_target(&mut self, target_id: &str, out: &mut dyn Sink) {
-        let sessions: Vec<String> =
-            self.sessions.iter().filter(|(_, s)| s.target_id == target_id).map(|(k, _)| k.clone()).collect();
-        for session_id in &sessions {
+        // Page sessions before tab sessions (a page session's events go to its tab's session).
+        let mut sessions: Vec<(bool, String)> =
+            self.sessions.iter().filter(|(_, s)| s.target_id == target_id).map(|(k, s)| (s.tab, k.clone())).collect();
+        sessions.sort();
+        for (tab, session_id) in &sessions {
+            if *tab {
+                if self.sessions.remove(session_id).is_some() {
+                    out.send(msg::event_frame(
+                        "Target.detachedFromTarget",
+                        &serde_json::json!({ "sessionId": session_id, "targetId": tab_id(target_id) }),
+                        None,
+                    ));
+                }
+                continue;
+            }
             if let Some(session) = self.sessions.remove(session_id) {
                 if let Some(target) = self.targets.iter().find(|t| t.id == session.target_id) {
                     self.host.session_detached(target.page, session_id);
@@ -1181,6 +1349,13 @@ impl<H: Host> Browser<H> {
                 out.send(msg::event_frame(
                     "Target.targetDestroyed",
                     &serde_json::json!({ "targetId": target_id }),
+                    None,
+                ));
+            }
+            if self.discover_tabs {
+                out.send(msg::event_frame(
+                    "Target.targetDestroyed",
+                    &serde_json::json!({ "targetId": tab_id(target_id) }),
                     None,
                 ));
             }
@@ -1210,12 +1385,13 @@ impl<H: Host> Browser<H> {
             let (opener_id, context_id) = (opener.id.clone(), opener.context_id.clone());
             let Ok(context_key) = self.context(&context_id).map(|c| c.key) else { continue };
             if self.targets.len() >= MAX_TARGETS
-                || (self.auto_attach && self.sessions.len() + self.browser_sessions.len() >= MAX_SESSIONS)
+                || ((self.auto_attach || self.tab_attach)
+                    && self.sessions.len() + self.browser_sessions.len() >= MAX_SESSIONS)
             {
                 continue;
             }
             let Ok((page, target_id)) = self.host.create_page(context_key) else { continue };
-            let paused = self.auto_attach;
+            let paused = self.auto_attach || self.tab_attach;
             self.targets.push(TargetEntry {
                 id: target_id.clone(),
                 context_id,
@@ -1225,13 +1401,13 @@ impl<H: Host> Browser<H> {
                 pending_url: paused.then(|| request.url.clone()),
                 prepared_profile: None,
             });
-            if self.discover {
+            if self.discover || self.discover_tabs {
                 self.send_target_created(self.targets.len() - 1, out);
             }
             self.host.popup_opened(request.opener, page, &target_id);
             if paused {
                 self.host.set_initial_popup(page, true);
-                if self.attach_paused(&target_id, None, true, true, out).is_err() {
+                if self.auto_attach_new(&target_id, true, out).is_err() {
                     self.close_target(&target_id, out);
                 }
             } else if self.host.navigate(page, &request.url).is_err() {
@@ -1255,12 +1431,22 @@ impl<H: Host> Browser<H> {
         let target = &self.targets[index];
         let url = self.host.page_url(target.page);
         let title = self.host.page_title(target.page);
-        let attached = self.sessions.values().any(|s| s.target_id == target.id);
-        out.send(msg::event_frame(
-            "Target.targetCreated",
-            &serde_json::json!({ "targetInfo": self.info(target, &url, &title, attached) }),
-            None,
-        ));
+        let attached = self.sessions.values().any(|s| !s.tab && s.target_id == target.id);
+        if self.discover_tabs {
+            let tab_id = tab_id(&target.id);
+            out.send(msg::event_frame(
+                "Target.targetCreated",
+                &serde_json::json!({ "targetInfo": self.tab_info(target, &tab_id, &url, &title) }),
+                None,
+            ));
+        }
+        if self.discover {
+            out.send(msg::event_frame(
+                "Target.targetCreated",
+                &serde_json::json!({ "targetInfo": self.info(target, &url, &title, attached) }),
+                None,
+            ));
+        }
     }
 
     /// Tears down everything when the client disconnects. This is also when
@@ -1295,10 +1481,16 @@ struct TargetFilter {
     exclude: bool,
 }
 
-/// Whether page targets pass `filter` (absent = Chrome's default, which includes pages).
-fn includes_pages(filter: Option<&[TargetFilter]>) -> bool {
-    let Some(filter) = filter else { return true };
-    filter.iter().find(|f| f.kind.as_deref().is_none_or(|k| k == "page")).is_some_and(|f| !f.exclude)
+/// Whether targets of type `kind` pass `filter`; `default` when there is no
+/// filter (Chrome's default filter includes pages and excludes tabs).
+fn includes(filter: Option<&[TargetFilter]>, kind: &str, default: bool) -> bool {
+    let Some(filter) = filter else { return default };
+    filter.iter().find(|f| f.kind.as_deref().is_none_or(|k| k == kind)).is_some_and(|f| !f.exclude)
+}
+
+/// The id of a page target's tab target.
+fn tab_id(page_target_id: &str) -> String {
+    format!("tab-{page_target_id}")
 }
 
 #[derive(Deserialize)]

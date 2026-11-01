@@ -290,6 +290,13 @@ fn run_template(options: &ServeOptions, socket: &Path) -> Result<(), String> {
     unsafe { libc::signal(libc::SIGCHLD, libc::SIG_IGN) };
     // The static-file preload runs on a thread of its own: let it finish.
     let _ = profile.net.static_files.preloaded();
+    #[cfg(feature = "render")]
+    {
+        crate::engine::set_fork_template(true);
+        // Fonts without CoreText, loaded here before any fork (children
+        // inherit them): see lp_render::use_fork_safe_fonts.
+        lp_render::use_fork_safe_fonts();
+    }
 
     let mut thread = EngineHost::prepare_thread_with(&profile).map_err(|e| e.message)?;
     let profiles: Vec<PreparedProfile> = profile.prepared.iter().map(one_page).collect();
@@ -613,6 +620,8 @@ impl TemplateProcess {
     /// belongs to the template. Other connections' sockets and pipes, and the
     /// other spares, would stay open while this process holds them.
     fn leave_template(&mut self) {
+        #[cfg(feature = "render")]
+        crate::engine::set_fork_template(false);
         self.snapshot.browser.host_mut().thread.event_loop.watch_fd(None);
         self.waiting.clear();
         self.forwards.clear();

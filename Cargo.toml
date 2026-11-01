@@ -4,9 +4,7 @@
 [workspace]
 resolver = "2"
 members = ["crates/*"]
-# lp-render (Blitz) builds only with `--features render`, `-p lp-render` or
-# `--workspace`: a plain `cargo build` / `cargo test` stays as fast as without it.
-# List every other new crate here as well.
+# Every crate (lp-render's Blitz lays pages out, so it is no longer optional).
 default-members = [
     "crates/lightningpanda",
     "crates/lp-browser",
@@ -14,15 +12,17 @@ default-members = [
     "crates/lp-cdp-protocol",
     "crates/lp-dom",
     "crates/lp-js",
+    "crates/lp-layout",
     "crates/lp-jsc-sys",
     "crates/lp-net",
     "crates/lp-psl",
+    "crates/lp-render",
     "crates/lp-runtime",
     "crates/lp-webapi",
 ]
 
 [workspace.package]
-version = "0.0.14"
+version = "0.0.15"
 edition = "2021"
 license = "AGPL-3.0-only"
 repository = "https://github.com/povio/lightningpanda"
@@ -40,6 +40,7 @@ lp-webapi = { path = "crates/lp-webapi" }
 lp-cdp-protocol = { path = "crates/lp-cdp-protocol" }
 lp-cdp = { path = "crates/lp-cdp" }
 lp-render = { path = "crates/lp-render" }
+lp-layout = { path = "crates/lp-layout" }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
@@ -154,3 +155,9 @@ opt-level = 0
 [patch.crates-io]
 blitz-dom = { path = "vendor/blitz-dom" }
 blitz-paint = { path = "vendor/blitz-paint" }
+# Flex fit-content clamp; see vendor/taffy/README.lightningpanda.md.
+taffy = { path = "vendor/taffy" }
+# Chromium's ascent for Times/Helvetica/Courier; see vendor/parley_engine/README.lightningpanda.md.
+parley_engine = { path = "vendor/parley_engine" }
+# Built layouts reused for identical text and styles; see vendor/parley/README.lightningpanda.md.
+parley = { path = "vendor/parley" }

@@ -357,3 +357,85 @@ fn external_symbols_with_equal_ids_and_escaped_urls_remain_distinct() {
     assert_eq!(pixel(&image, 5, 5), [255, 0, 0, 255]);
     assert_eq!(pixel(&image, 15, 5), [0, 0, 255, 255]);
 }
+
+/// Element border-box width as Blitz lays it out (via an element capture).
+fn element_width(html: &str) -> u32 {
+    let mut r = Renderer::new();
+    r.paint(&snap(html), Area::Element, &fetcher()).unwrap().width
+}
+
+#[test]
+fn a_centered_flex_item_is_clamped_to_its_container() {
+    // ToS invoice footers: a flex row in an `align-items: center` column is
+    // fit-content (min(max-content, available)), so its text wraps.
+    let text = "word ".repeat(200);
+    let html = format!(
+        r#"<!doctype html><html><body style="margin:0"><div style="display:flex;flex-direction:column;align-items:center">
+        <div data-lp-render-clip style="display:flex;gap:30px"><p style="flex-shrink:0;margin:0">fixed</p><div><p style="margin:0">{text}</p></div></div>
+        </div></body></html>"#
+    );
+    assert_eq!(element_width(&html), 400);
+}
+
+#[test]
+fn a_fit_content_flex_row_is_clamped_to_the_available_width() {
+    let text = "word ".repeat(200);
+    let html = format!(
+        r#"<!doctype html><html><body style="margin:0"><div data-lp-render-clip style="display:flex;width:fit-content">
+        <div>{text}</div></div></body></html>"#
+    );
+    assert_eq!(element_width(&html), 400);
+}
+
+#[test]
+fn a_padded_inline_flex_keeps_its_max_content_width() {
+    // ToS "Add Cover" quick-action preview: the clamp compares outer sizes, so
+    // an inline-flex measured at its own max-content width is not shrunk by
+    // its padding and border.
+    let html = r#"<!doctype html><html><body style="margin:0"><div style="display:flex;width:600px"><div style="flex:1"></div>
+        <div><span data-lp-render-clip style="display:inline-flex;border:1px solid;padding:0 12px"><span style="width:60px;min-width:0;height:10px"></span></span></div>
+        </div></body></html>"#;
+    assert_eq!(element_width(html), 86);
+}
+
+#[test]
+fn a_replaced_flex_item_shrinks_to_its_natural_width() {
+    // ToS pdfgen logos: `<svg width=700 height=100 class="h-[37mm] w-auto">`
+    // in a centered flex row. Its automatic minimum width is its natural
+    // width (700), not its height through the ratio (980), so it shrinks to
+    // the container as in Chromium.
+    let html = r#"<!doctype html><html><body style="margin:0"><div style="display:flex;justify-content:center;width:719px">
+        <svg data-lp-render-clip xmlns="http://www.w3.org/2000/svg" width="700" height="100" viewBox="0 0 700 100" style="height:140px;width:auto"><rect width="700" height="100"/></svg>
+        </div></body></html>"#;
+    assert_eq!(element_width(html), 719);
+}
+
+#[test]
+/// `:has()` matches (Stylo gates it behind a pref Blitz did not set).
+fn has_selectors_match() {
+    let html = r#"<!doctype html><html><style>.group:has(input:disabled) .icon{width:150px} .icon{width:20px;height:10px} .g2:has(.x) .icon{width:77px}</style><body style="margin:0"><div class=group><div><input disabled></div><div><div class=icon data-lp-render-clip></div></div></div></body></html>"#;
+    let a = element_width(html);
+    let html2 = r#"<!doctype html><html><style>.g2:has(.x) .icon{width:77px} .icon{width:20px;height:10px}</style><body style="margin:0"><div class=g2><div class=x></div><div class=icon data-lp-render-clip></div></div></body></html>"#;
+    let b = element_width(html2);
+    assert_eq!((a, b), (150, 77));
+}
+
+#[test]
+fn identical_text_keeps_each_elements_colour() {
+    // Layouts built from the same text and styles are reused (parley's build
+    // cache); each must still paint with its own element's colour.
+    let s = snap(
+        r#"<!doctype html><style>body{margin:0;background:white;font:bold 40px/50px Arial}</style><div style="color:#ff0000">WWWW</div><div style="color:#0000ff">WWWW</div>"#,
+    );
+    let (img, _, _) = Renderer::new().render(&s, Area::Viewport, Backend::Cpu, &fetcher()).unwrap();
+    let count = |y0: u32, y1: u32, rgb: [u8; 3]| {
+        (y0..y1)
+            .flat_map(|y| (0..img.width).map(move |x| (x, y)))
+            .filter(|&(x, y)| pixel(&img, x, y)[..3] == rgb)
+            .count()
+    };
+    assert!(count(0, 50, [255, 0, 0]) > 100, "first line is red");
+    assert!(count(50, 100, [0, 0, 255]) > 100, "second line is blue");
+    assert_eq!(count(0, 50, [0, 0, 255]), 0, "no blue on the first line");
+    assert_eq!(count(50, 100, [255, 0, 0]), 0, "no red on the second line");
+}

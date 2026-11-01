@@ -10,9 +10,11 @@ name = "lightningpanda"
 path = "src/main.rs"
 
 [features]
+default = ["render"]
 # CDP stage timers (LP.perfStats); for profiling builds only.
 perf-trace = ["lp-cdp/perf-trace"]
-# Page.captureScreenshot and LP.run matchScreenshot (lp-render: Blitz + vello_cpu).
+# Blitz (lp-render): layout geometry, screenshots and PDFs. Without it
+# nothing is laid out.
 render = ["lp-cdp/render"]
 
 [dependencies]

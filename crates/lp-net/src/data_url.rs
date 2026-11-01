@@ -9,8 +9,18 @@ pub fn parse(url: &Url) -> Option<(String, Bytes)> {
     if url.scheme() != "data" {
         return None;
     }
-    // Serialize without fragment, strip "data:".
-    let s = url.as_str();
+    parse_str(url.as_str())
+}
+
+/// [`parse`] of a URL already serialized (`Url::as_str`, or a string the
+/// `url` crate produced): its text is all a `data:` URL holds, so a caller
+/// with the string skips parsing it again (fonts inlined as `data:` URLs
+/// run to megabytes).
+pub fn parse_str(s: &str) -> Option<(String, Bytes)> {
+    if !s.get(..5).is_some_and(|p| p.eq_ignore_ascii_case("data:")) {
+        return None;
+    }
+    // Without fragment, strip "data:".
     let s = &s[5..s.find('#').unwrap_or(s.len())];
     let (meta, body) = s.split_once(',')?;
     let meta = meta.trim_matches(|c: char| c.is_ascii_whitespace());

@@ -1,0 +1,1507 @@
+[
+ {
+  "case": "bl-instructions-cargo-alignment-final",
+  "pagesA": 1,
+  "pagesB": 1,
+  "pages": [
+   {
+    "page": 1,
+    "ratio": 0.04589371980676329,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1170
+    ]
+   }
+  ],
+  "meanRatio": 0.04589371980676329,
+  "maxRatio": 0.04589371980676329,
+  "wordsA": 243,
+  "wordsB": 243,
+  "textOverlap": 1
+ },
+ {
+  "case": "bl-instructions-cargo-alignment-preview",
+  "pagesA": 1,
+  "pagesB": 1,
+  "pages": [
+   {
+    "page": 1,
+    "ratio": 0.04622094223543499,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1170
+    ]
+   }
+  ],
+  "meanRatio": 0.04622094223543499,
+  "maxRatio": 0.04622094223543499,
+  "wordsA": 244,
+  "wordsB": 244,
+  "textOverlap": 1
+ },
+ {
+  "case": "bmd-report",
+  "pagesA": 1,
+  "pagesB": 1,
+  "pages": [
+   {
+    "page": 1,
+    "ratio": 0.008456170775011354,
+    "sizeA": [
+     1171,
+     828
+    ],
+    "sizeB": [
+     1170,
+     829
+    ]
+   }
+  ],
+  "meanRatio": 0.008456170775011354,
+  "maxRatio": 0.008456170775011354,
+  "wordsA": 69,
+  "wordsB": 62,
+  "textOverlap": 0.9465648854961832
+ },
+ {
+  "case": "booking-confirmation-final",
+  "pagesA": 1,
+  "pagesB": 1,
+  "pages": [
+   {
+    "page": 1,
+    "ratio": 0.05631012841157769,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1170
+    ]
+   }
+  ],
+  "meanRatio": 0.05631012841157769,
+  "maxRatio": 0.05631012841157769,
+  "wordsA": 226,
+  "wordsB": 222,
+  "textOverlap": 0.9910714285714286
+ },
+ {
+  "case": "booking-confirmation-overflow",
+  "pagesA": 10,
+  "pagesB": 10,
+  "pages": [
+   {
+    "page": 1,
+    "ratio": 0.07581650770056567,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1170
+    ]
+   },
+   {
+    "page": 2,
+    "ratio": 0.06634763599095804,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1169
+    ]
+   },
+   {
+    "page": 3,
+    "ratio": 0.06648086213303604,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1170
+    ]
+   },
+   {
+    "page": 4,
+    "ratio": 0.06615960625333185,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1169
+    ]
+   },
+   {
+    "page": 5,
+    "ratio": 0.06636215368099425,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1170
+    ]
+   },
+   {
+    "page": 6,
+    "ratio": 0.06619989833996603,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1169
+    ]
+   },
+   {
+    "page": 7,
+    "ratio": 0.06633634749576779,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1170
+    ]
+   },
+   {
+    "page": 8,
+    "ratio": 0.06623605790489415,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1169
+    ]
+   },
+   {
+    "page": 9,
+    "ratio": 0.06394669474379619,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1170
+    ]
+   },
+   {
+    "page": 10,
+    "ratio": 0.04147570089599075,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1170
+    ]
+   }
+  ],
+  "meanRatio": 0.06453614651393007,
+  "maxRatio": 0.07581650770056567,
+  "wordsA": 3499,
+  "wordsB": 3459,
+  "textOverlap": 0.9942512216154067
+ },
+ {
+  "case": "booking-confirmation-preview",
+  "pagesA": 1,
+  "pagesB": 1,
+  "pages": [
+   {
+    "page": 1,
+    "ratio": 0.05631012841157769,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1170
+    ]
+   }
+  ],
+  "meanRatio": 0.05631012841157769,
+  "maxRatio": 0.05631012841157769,
+  "wordsA": 227,
+  "wordsB": 223,
+  "textOverlap": 0.9911111111111112
+ },
+ {
+  "case": "booking-confirmation-sparse",
+  "pagesA": 1,
+  "pagesB": 1,
+  "pages": [
+   {
+    "page": 1,
+    "ratio": 0.02217164209917833,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1170
+    ]
+   }
+  ],
+  "meanRatio": 0.02217164209917833,
+  "maxRatio": 0.02217164209917833,
+  "wordsA": 57,
+  "wordsB": 57,
+  "textOverlap": 1
+ },
+ {
+  "case": "booking-request-final",
+  "pagesA": 1,
+  "pagesB": 1,
+  "pages": [
+   {
+    "page": 1,
+    "ratio": 0.05560200668896321,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1170
+    ]
+   }
+  ],
+  "meanRatio": 0.05560200668896321,
+  "maxRatio": 0.05560200668896321,
+  "wordsA": 225,
+  "wordsB": 221,
+  "textOverlap": 0.9910313901345291
+ },
+ {
+  "case": "booking-request-overflow",
+  "pagesA": 10,
+  "pagesB": 10,
+  "pages": [
+   {
+    "page": 1,
+    "ratio": 0.07370246500681284,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1170
+    ]
+   },
+   {
+    "page": 2,
+    "ratio": 0.06827958988854589,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1169
+    ]
+   },
+   {
+    "page": 3,
+    "ratio": 0.066270283661588,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1170
+    ]
+   },
+   {
+    "page": 4,
+    "ratio": 0.06594884764632226,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1169
+    ]
+   },
+   {
+    "page": 5,
+    "ratio": 0.06615157520954622,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1170
+    ]
+   },
+   {
+    "page": 6,
+    "ratio": 0.06598913973295645,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1169
+    ]
+   },
+   {
+    "page": 7,
+    "ratio": 0.06612576902431976,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1170
+    ]
+   },
+   {
+    "page": 8,
+    "ratio": 0.06602529929788456,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1169
+    ]
+   },
+   {
+    "page": 9,
+    "ratio": 0.06380218010652794,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1170
+    ]
+   },
+   {
+    "page": 10,
+    "ratio": 0.041265122424542715,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1170
+    ]
+   }
+  ],
+  "meanRatio": 0.06435602719990466,
+  "maxRatio": 0.07370246500681284,
+  "wordsA": 3498,
+  "wordsB": 3458,
+  "textOverlap": 0.9942495687176538
+ },
+ {
+  "case": "booking-request-preview",
+  "pagesA": 1,
+  "pagesB": 1,
+  "pages": [
+   {
+    "page": 1,
+    "ratio": 0.05560200668896321,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1170
+    ]
+   }
+  ],
+  "meanRatio": 0.05560200668896321,
+  "maxRatio": 0.05560200668896321,
+  "wordsA": 226,
+  "wordsB": 222,
+  "textOverlap": 0.9910714285714286
+ },
+ {
+  "case": "booking-request-sparse",
+  "pagesA": 1,
+  "pagesB": 1,
+  "pages": [
+   {
+    "page": 1,
+    "ratio": 0.022423510466988726,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1170
+    ]
+   }
+  ],
+  "meanRatio": 0.022423510466988726,
+  "maxRatio": 0.022423510466988726,
+  "wordsA": 52,
+  "wordsB": 52,
+  "textOverlap": 1
+ },
+ {
+  "case": "cmr-long-address",
+  "pagesA": 1,
+  "pagesB": 1,
+  "pages": [
+   {
+    "page": 1,
+    "ratio": 0.05012490193649614,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     828,
+     1170
+    ]
+   }
+  ],
+  "meanRatio": 0.05012490193649614,
+  "maxRatio": 0.05012490193649614,
+  "wordsA": 320,
+  "wordsB": 318,
+  "textOverlap": 0.9028213166144201
+ },
+ {
+  "case": "cmr-overflow",
+  "pagesA": 14,
+  "pagesB": 14,
+  "pages": [
+   {
+    "page": 1,
+    "ratio": 0.05174656261612783,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     828,
+     1170
+    ]
+   },
+   {
+    "page": 2,
+    "ratio": 0.0441064041688879,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     828,
+     1169
+    ]
+   },
+   {
+    "page": 3,
+    "ratio": 0.04275981667286015,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     828,
+     1170
+    ]
+   },
+   {
+    "page": 4,
+    "ratio": 0.0441064041688879,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     828,
+     1169
+    ]
+   },
+   {
+    "page": 5,
+    "ratio": 0.04264936620009084,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     828,
+     1170
+    ]
+   },
+   {
+    "page": 6,
+    "ratio": 0.0441064041688879,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     828,
+     1169
+    ]
+   },
+   {
+    "page": 7,
+    "ratio": 0.04264936620009084,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     828,
+     1170
+    ]
+   },
+   {
+    "page": 8,
+    "ratio": 0.04389977808358438,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     828,
+     1169
+    ]
+   },
+   {
+    "page": 9,
+    "ratio": 0.04269994632313473,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     828,
+     1170
+    ]
+   },
+   {
+    "page": 10,
+    "ratio": 0.04363426356396937,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     828,
+     1169
+    ]
+   },
+   {
+    "page": 11,
+    "ratio": 0.04262046327263719,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     828,
+     1170
+    ]
+   },
+   {
+    "page": 12,
+    "ratio": 0.043700383911266495,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     828,
+     1169
+    ]
+   },
+   {
+    "page": 13,
+    "ratio": 0.04267001114827202,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     828,
+     1170
+    ]
+   },
+   {
+    "page": 14,
+    "ratio": 0.04943012525673291,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     828,
+     1169
+    ]
+   }
+  ],
+  "meanRatio": 0.04434137826824504,
+  "maxRatio": 0.05174656261612783,
+  "wordsA": 3030,
+  "wordsB": 3028,
+  "textOverlap": 0.9907560250907891
+ },
+ {
+  "case": "cmr-populated",
+  "pagesA": 1,
+  "pagesB": 1,
+  "pages": [
+   {
+    "page": 1,
+    "ratio": 0.04879846401585532,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     828,
+     1170
+    ]
+   }
+  ],
+  "meanRatio": 0.04879846401585532,
+  "maxRatio": 0.04879846401585532,
+  "wordsA": 307,
+  "wordsB": 305,
+  "textOverlap": 0.8986928104575164
+ },
+ {
+  "case": "cmr-reference",
+  "pagesA": 1,
+  "pagesB": 1,
+  "pages": [
+   {
+    "page": 1,
+    "ratio": 0.05561542590528098,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     828,
+     1170
+    ]
+   }
+  ],
+  "meanRatio": 0.05561542590528098,
+  "maxRatio": 0.05561542590528098,
+  "wordsA": 398,
+  "wordsB": 396,
+  "textOverlap": 0.9017632241813602
+ },
+ {
+  "case": "house-bl-final-copy-historical-b",
+  "pagesA": 2,
+  "pagesB": 2,
+  "pages": [
+   {
+    "page": 1,
+    "ratio": 0.0715832610760147,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1170
+    ]
+   },
+   {
+    "page": 2,
+    "ratio": 0.007163726377472797,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1169
+    ]
+   }
+  ],
+  "meanRatio": 0.03937349372674375,
+  "maxRatio": 0.0715832610760147,
+  "wordsA": 474,
+  "wordsB": 474,
+  "textOverlap": 0.9978902953586498
+ },
+ {
+  "case": "house-bl-final-historical-b",
+  "pagesA": 2,
+  "pagesB": 2,
+  "pages": [
+   {
+    "page": 1,
+    "ratio": 0.07168235682728437,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1170
+    ]
+   },
+   {
+    "page": 2,
+    "ratio": 0.006160556733324242,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1169
+    ]
+   }
+  ],
+  "meanRatio": 0.03892145678030431,
+  "maxRatio": 0.07168235682728437,
+  "wordsA": 474,
+  "wordsB": 474,
+  "textOverlap": 0.9978902953586498
+ },
+ {
+  "case": "house-bl-final-overflowing-table",
+  "pagesA": 4,
+  "pagesB": 3,
+  "pages": [
+   {
+    "page": 1,
+    "ratio": 0.07766010157314505,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1170
+    ]
+   },
+   {
+    "page": 2,
+    "ratio": 0.05465983147576483,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1169
+    ]
+   },
+   {
+    "page": 3,
+    "ratio": 0.05764069532185474,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1170
+    ]
+   },
+   {
+    "page": 4,
+    "ratio": 1,
+    "missing": "lp-fixed"
+   }
+  ],
+  "meanRatio": 0.29749015709269117,
+  "maxRatio": 1,
+  "wordsA": 1560,
+  "wordsB": 1333,
+  "textOverlap": 0.9215347390252333
+ },
+ {
+  "case": "invoice-bank-footer-tos-budapest-english-bank-main",
+  "pagesA": 1,
+  "pagesB": 1,
+  "pages": [
+   {
+    "page": 1,
+    "ratio": 0.046195136050208516,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1170
+    ]
+   }
+  ],
+  "meanRatio": 0.046195136050208516,
+  "maxRatio": 0.046195136050208516,
+  "wordsA": 216,
+  "wordsB": 218,
+  "textOverlap": 0.9861751152073732
+ },
+ {
+  "case": "invoice-bank-footer-tos-budapest-hungarian-bank-huf",
+  "pagesA": 1,
+  "pagesB": 1,
+  "pages": [
+   {
+    "page": 1,
+    "ratio": 0.048053181386514716,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1170
+    ]
+   }
+  ],
+  "meanRatio": 0.048053181386514716,
+  "maxRatio": 0.048053181386514716,
+  "wordsA": 213,
+  "wordsB": 216,
+  "textOverlap": 0.9790209790209791
+ },
+ {
+  "case": "invoice-bank-footer-tos-vienna-english-bank-factoring",
+  "pagesA": 1,
+  "pagesB": 1,
+  "pages": [
+   {
+    "page": 1,
+    "ratio": 0.0493403939056113,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1170
+    ]
+   }
+  ],
+  "meanRatio": 0.0493403939056113,
+  "maxRatio": 0.0493403939056113,
+  "wordsA": 262,
+  "wordsB": 264,
+  "textOverlap": 0.9885931558935361
+ },
+ {
+  "case": "invoice-bank-footer-tos-vienna-english-bank-regular",
+  "pagesA": 1,
+  "pagesB": 1,
+  "pages": [
+   {
+    "page": 1,
+    "ratio": 0.046421198232792435,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1170
+    ]
+   }
+  ],
+  "meanRatio": 0.046421198232792435,
+  "maxRatio": 0.046421198232792435,
+  "wordsA": 244,
+  "wordsB": 246,
+  "textOverlap": 0.9877551020408163
+ },
+ {
+  "case": "invoice-final",
+  "pagesA": 1,
+  "pagesB": 1,
+  "pages": [
+   {
+    "page": 1,
+    "ratio": 0.04925265287584128,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1170
+    ]
+   }
+  ],
+  "meanRatio": 0.04925265287584128,
+  "maxRatio": 0.04925265287584128,
+  "wordsA": 215,
+  "wordsB": 215,
+  "textOverlap": 1
+ },
+ {
+  "case": "invoice-final-copy",
+  "pagesA": 1,
+  "pagesB": 1,
+  "pages": [
+   {
+    "page": 1,
+    "ratio": 0.04925265287584128,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1170
+    ]
+   }
+  ],
+  "meanRatio": 0.04925265287584128,
+  "maxRatio": 0.04925265287584128,
+  "wordsA": 215,
+  "wordsB": 215,
+  "textOverlap": 1
+ },
+ {
+  "case": "invoice-office-kombi-kargo-english",
+  "pagesA": 1,
+  "pagesB": 1,
+  "pages": [
+   {
+    "page": 1,
+    "ratio": 0.044259672158222886,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1170
+    ]
+   }
+  ],
+  "meanRatio": 0.044259672158222886,
+  "maxRatio": 0.044259672158222886,
+  "wordsA": 230,
+  "wordsB": 233,
+  "textOverlap": 0.980561555075594
+ },
+ {
+  "case": "invoice-office-kombi-kargo-german",
+  "pagesA": 1,
+  "pagesB": 1,
+  "pages": [
+   {
+    "page": 1,
+    "ratio": 0.04531875799991742,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1170
+    ]
+   }
+  ],
+  "meanRatio": 0.04531875799991742,
+  "maxRatio": 0.04531875799991742,
+  "wordsA": 214,
+  "wordsB": 217,
+  "textOverlap": 0.9791183294663574
+ },
+ {
+  "case": "invoice-office-ole-hamburg-english",
+  "pagesA": 1,
+  "pagesB": 1,
+  "pages": [
+   {
+    "page": 1,
+    "ratio": 0.047820925719476444,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1170
+    ]
+   }
+  ],
+  "meanRatio": 0.047820925719476444,
+  "maxRatio": 0.047820925719476444,
+  "wordsA": 326,
+  "wordsB": 328,
+  "textOverlap": 0.9908256880733946
+ },
+ {
+  "case": "invoice-office-ole-hamburg-german",
+  "pagesA": 1,
+  "pagesB": 1,
+  "pages": [
+   {
+    "page": 1,
+    "ratio": 0.04907510632148313,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1170
+    ]
+   }
+  ],
+  "meanRatio": 0.04907510632148313,
+  "maxRatio": 0.04907510632148313,
+  "wordsA": 280,
+  "wordsB": 282,
+  "textOverlap": 0.9893238434163701
+ },
+ {
+  "case": "invoice-office-tos-budapest-english",
+  "pagesA": 1,
+  "pagesB": 1,
+  "pages": [
+   {
+    "page": 1,
+    "ratio": 0.04877678682026508,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1170
+    ]
+   }
+  ],
+  "meanRatio": 0.04877678682026508,
+  "maxRatio": 0.04877678682026508,
+  "wordsA": 186,
+  "wordsB": 189,
+  "textOverlap": 0.9706666666666667
+ },
+ {
+  "case": "invoice-office-tos-budapest-hungarian",
+  "pagesA": 1,
+  "pagesB": 1,
+  "pages": [
+   {
+    "page": 1,
+    "ratio": 0.050688509021842354,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1170
+    ]
+   }
+  ],
+  "meanRatio": 0.050688509021842354,
+  "maxRatio": 0.050688509021842354,
+  "wordsA": 183,
+  "wordsB": 187,
+  "textOverlap": 0.9621621621621622
+ },
+ {
+  "case": "invoice-office-tos-houston-english",
+  "pagesA": 1,
+  "pagesB": 1,
+  "pages": [
+   {
+    "page": 1,
+    "ratio": 0.04027416491184607,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1170
+    ]
+   }
+  ],
+  "meanRatio": 0.04027416491184607,
+  "maxRatio": 0.04027416491184607,
+  "wordsA": 189,
+  "wordsB": 191,
+  "textOverlap": 0.9842105263157894
+ },
+ {
+  "case": "invoice-office-tos-koper-english",
+  "pagesA": 1,
+  "pagesB": 1,
+  "pages": [
+   {
+    "page": 1,
+    "ratio": 0.04058280688715471,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1170
+    ]
+   }
+  ],
+  "meanRatio": 0.04058280688715471,
+  "maxRatio": 0.04058280688715471,
+  "wordsA": 199,
+  "wordsB": 201,
+  "textOverlap": 0.985
+ },
+ {
+  "case": "invoice-office-tos-prague-czech",
+  "pagesA": 1,
+  "pagesB": 1,
+  "pages": [
+   {
+    "page": 1,
+    "ratio": 0.04696003138032123,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1170
+    ]
+   }
+  ],
+  "meanRatio": 0.04696003138032123,
+  "maxRatio": 0.04696003138032123,
+  "wordsA": 246,
+  "wordsB": 248,
+  "textOverlap": 0.9878542510121457
+ },
+ {
+  "case": "invoice-office-tos-prague-english",
+  "pagesA": 1,
+  "pagesB": 1,
+  "pages": [
+   {
+    "page": 1,
+    "ratio": 0.04683925843346133,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1170
+    ]
+   }
+  ],
+  "meanRatio": 0.04683925843346133,
+  "maxRatio": 0.04683925843346133,
+  "wordsA": 237,
+  "wordsB": 239,
+  "textOverlap": 0.9831932773109243
+ },
+ {
+  "case": "invoice-office-tos-vienna-english",
+  "pagesA": 1,
+  "pagesB": 1,
+  "pages": [
+   {
+    "page": 1,
+    "ratio": 0.04651306825219869,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1170
+    ]
+   }
+  ],
+  "meanRatio": 0.04651306825219869,
+  "maxRatio": 0.04651306825219869,
+  "wordsA": 244,
+  "wordsB": 246,
+  "textOverlap": 0.9877551020408163
+ },
+ {
+  "case": "invoice-office-tos-vienna-german",
+  "pagesA": 1,
+  "pagesB": 1,
+  "pages": [
+   {
+    "page": 1,
+    "ratio": 0.04761860522730088,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1170
+    ]
+   }
+  ],
+  "meanRatio": 0.04761860522730088,
+  "maxRatio": 0.04761860522730088,
+  "wordsA": 228,
+  "wordsB": 230,
+  "textOverlap": 0.9868995633187773
+ },
+ {
+  "case": "invoice-preview",
+  "pagesA": 1,
+  "pagesB": 1,
+  "pages": [
+   {
+    "page": 1,
+    "ratio": 0.04925265287584128,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1170
+    ]
+   }
+  ],
+  "meanRatio": 0.04925265287584128,
+  "maxRatio": 0.04925265287584128,
+  "wordsA": 215,
+  "wordsB": 215,
+  "textOverlap": 1
+ },
+ {
+  "case": "quote-document",
+  "pagesA": 2,
+  "pagesB": 2,
+  "pages": [
+   {
+    "page": 1,
+    "ratio": 0.07236776910689954,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1170
+    ]
+   },
+   {
+    "page": 2,
+    "ratio": 0.022240198691643627,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1169
+    ]
+   }
+  ],
+  "meanRatio": 0.04730398389927158,
+  "maxRatio": 0.07236776910689954,
+  "wordsA": 480,
+  "wordsB": 482,
+  "textOverlap": 0.9812889812889813
+ },
+ {
+  "case": "templated-document-cargo-alignment-final",
+  "pagesA": 1,
+  "pagesB": 1,
+  "pages": [
+   {
+    "page": 1,
+    "ratio": 0.02881002518683678,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1170
+    ]
+   }
+  ],
+  "meanRatio": 0.02881002518683678,
+  "maxRatio": 0.02881002518683678,
+  "wordsA": 119,
+  "wordsB": 120,
+  "textOverlap": 0.9874476987447699
+ },
+ {
+  "case": "templated-document-cargo-alignment-preview",
+  "pagesA": 1,
+  "pagesB": 1,
+  "pages": [
+   {
+    "page": 1,
+    "ratio": 0.02893492712333292,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1170
+    ]
+   }
+  ],
+  "meanRatio": 0.02893492712333292,
+  "maxRatio": 0.02893492712333292,
+  "wordsA": 121,
+  "wordsB": 121,
+  "textOverlap": 1
+ },
+ {
+  "case": "vermas-final",
+  "pagesA": 1,
+  "pagesB": 1,
+  "pages": [
+   {
+    "page": 1,
+    "ratio": 0.02700978570543788,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1170
+    ]
+   }
+  ],
+  "meanRatio": 0.02700978570543788,
+  "maxRatio": 0.02700978570543788,
+  "wordsA": 100,
+  "wordsB": 96,
+  "textOverlap": 0.9795918367346939
+ },
+ {
+  "case": "vermas-overflow",
+  "pagesA": 2,
+  "pagesB": 2,
+  "pages": [
+   {
+    "page": 1,
+    "ratio": 0.05615942028985507,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1170
+    ]
+   },
+   {
+    "page": 2,
+    "ratio": 0.027173396478265003,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1169
+    ]
+   }
+  ],
+  "meanRatio": 0.041666408384060036,
+  "maxRatio": 0.05615942028985507,
+  "wordsA": 437,
+  "wordsB": 312,
+  "textOverlap": 0.8331108144192256
+ },
+ {
+  "case": "vermas-preview",
+  "pagesA": 1,
+  "pagesB": 1,
+  "pages": [
+   {
+    "page": 1,
+    "ratio": 0.02700978570543788,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1170
+    ]
+   }
+  ],
+  "meanRatio": 0.02700978570543788,
+  "maxRatio": 0.02700978570543788,
+  "wordsA": 101,
+  "wordsB": 97,
+  "textOverlap": 0.9797979797979798
+ },
+ {
+  "case": "vermas-sparse",
+  "pagesA": 1,
+  "pagesB": 1,
+  "pages": [
+   {
+    "page": 1,
+    "ratio": 0.012007101862174326,
+    "sizeA": [
+     828,
+     1171
+    ],
+    "sizeB": [
+     829,
+     1170
+    ]
+   }
+  ],
+  "meanRatio": 0.012007101862174326,
+  "maxRatio": 0.012007101862174326,
+  "wordsA": 35,
+  "wordsB": 35,
+  "textOverlap": 1
+ }
+]

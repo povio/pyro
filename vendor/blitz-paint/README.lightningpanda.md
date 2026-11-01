@@ -6,6 +6,9 @@ This is the published MIT/Apache-2.0 `blitz-paint` crate from upstream commit
 - `src/text.rs`: paint non-atomic inline ancestor backgrounds behind nested text,
   from outermost to innermost; stop at block/atomic boxes and skip contents boxes.
   Upstream contribution: `xban1x:codex/inline-ancestor-backgrounds` in DioxusLabs/blitz.
+- `src/render/border.rs`: skip zero-width border edges (Tailwind's preflight
+  `border: 0 solid`); their degenerate polygons cover nothing in a raster but
+  print as hairlines in PDF output.
 - `src/debug_overlay.rs`: use the real root-element predicate for fixed boxes;
   adapted from https://github.com/DioxusLabs/blitz/pull/1224.
 

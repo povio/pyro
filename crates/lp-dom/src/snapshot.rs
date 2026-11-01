@@ -20,11 +20,16 @@ use std::borrow::Cow;
 
 use markup5ever::{ns, QualName};
 
-use crate::dom::Dom;
+use crate::dom::{Change, Dom};
 use crate::error::DomResult;
 use crate::forms::InputType;
 use crate::node::{NodeId, NodeKind, NIL};
 use crate::serialize::{escape, is_void};
+
+/// Namespace of the `state` attribute render trees carry on form controls
+/// (see `Dom::render_states`): page CSS cannot match it (`[state]` matches
+/// the null namespace only), the renderer maps it to pseudo-classes.
+pub const STATE_NS: &str = "urn:x-lightningpanda:state";
 
 /// What the caller supplies.
 pub struct RenderHtml<'a> {
@@ -36,6 +41,23 @@ pub struct RenderHtml<'a> {
     pub stylesheet_href: &'a dyn Fn(NodeId) -> Option<String>,
     /// Element to mark with `mark.1` (a valueless attribute).
     pub mark: Option<(NodeId, &'a str)>,
+}
+
+/// Changes to a [`RenderTree`] ([`Dom::render_delta`]).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct RenderDelta {
+    pub ops: Vec<DeltaOp>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum DeltaOp {
+    /// The node's own content (an element's name and attributes, a text's
+    /// data) is now `kind`; its children are unchanged.
+    Node { key: u64, kind: RenderNodeKind },
+    /// The render children of `parent` (`None`: the top level) are now
+    /// `kids`; `nodes` are the subtrees of the inserted ones (parents index
+    /// into `nodes`, [`TOP`] for a child of `parent`).
+    Children { parent: Option<u64>, kids: Vec<u64>, nodes: Vec<RenderNode> },
 }
 
 /// The document as [`Dom::render_html`] would serialize it, as nodes in
@@ -129,7 +151,8 @@ impl Sink for HtmlSink<'_> {
         let out = &mut self.out;
         out.push('<');
         out.push_str(tag);
-        for a in attrs {
+        // The state attribute is for keyed trees: markup would lose its namespace.
+        for a in attrs.iter().filter(|a| &*a.name.ns != STATE_NS) {
             out.push(' ');
             match &a.name.prefix {
                 Some(p) if !p.is_empty() => {
@@ -225,13 +248,20 @@ impl Dom {
 
     fn render_walk(&self, doc: NodeId, opts: &RenderHtml<'_>, sink: &mut dyn Sink) -> DomResult<()> {
         let d = self.check(doc)?;
+        self.render_walk_from(self.child_idx_iter(d).collect(), opts, sink);
+        Ok(())
+    }
+
+    /// The render walk over the subtrees of `roots` (in order), outside any
+    /// shadow tree.
+    fn render_walk_from(&self, roots: Vec<u32>, opts: &RenderHtml<'_>, sink: &mut dyn Sink) {
         let mark = opts.mark.and_then(|(id, _)| self.check(id).ok());
         // Shadow hosts entered: (host, the host's own scope).
         let mut hosts: Vec<(u32, Scope)> = Vec::new();
         // Tags of the open elements, for `close`.
         let mut tags: Vec<String> = Vec::new();
         let mut stack = Vec::new();
-        push_children(&mut stack, self.child_idx_iter(d).collect(), NONE);
+        push_children(&mut stack, roots, NONE);
         while let Some(step) = stack.pop() {
             let (n, scope) = match step {
                 Step::Synthetic(e, text, kind) => {
@@ -332,6 +362,13 @@ impl Dom {
                     if html && local == "option" && self.option_selected(id).unwrap_or(false) {
                         attrs.push(RAttr { name: plain("selected"), value: Cow::Borrowed(""), valueless: true });
                     }
+                    if let Some(states) = self.render_states(n) {
+                        attrs.push(RAttr {
+                            name: Cow::Owned(QualName::new(None, STATE_NS.into(), "state".into())),
+                            value: Cow::Owned(states),
+                            valueless: false,
+                        });
+                    }
                     let tag = self.serialized_tag(n);
                     let void = html && is_void(local);
                     sink.open(render_key(id), &tag, &e.name, &attrs, mark == Some(n), void);
@@ -362,7 +399,315 @@ impl Dom {
                 }
             }
         }
-        Ok(())
+    }
+
+    /// What changed in [`Dom::render_tree`] of `doc` since DOM version
+    /// `since`, from the change journal: element attributes and text that
+    /// changed in place, and the new render children of every node whose
+    /// children changed, with the subtrees of those inserted. `None` when the
+    /// journal does not cover `since` or a change needs the whole tree
+    /// (unknown changes, shadow trees, `<textarea>`/`<link>`/frames, whose
+    /// render content is not their DOM content). A change of a `<style>`'s
+    /// content gives its sheet text.
+    pub fn render_delta(&self, doc: NodeId, since: u64, opts: &RenderHtml<'_>) -> Option<RenderDelta> {
+        let d = self.check(doc).ok()?;
+        if self.shadow_root_count() != 0 || opts.mark.is_some() {
+            return None;
+        }
+        let mut changed: Vec<u32> = Vec::new();
+        let mut parents: Vec<u32> = Vec::new();
+        let mut inserted: rustc_hash::FxHashSet<u32> = rustc_hash::FxHashSet::default();
+        for c in self.changes_since(since)? {
+            match c {
+                Change::Attr(i, _, _) | Change::State(i) | Change::Text(i) => changed.push(i),
+                Change::Inserted(p, c) => {
+                    parents.push(p);
+                    inserted.insert(c);
+                }
+                Change::Removed(p, n, _) => {
+                    parents.push(p);
+                    // A removed radio leaves its group (the radios still in
+                    // the document revalidate).
+                    if self.slot_live(n) && self.slot_live(p) {
+                        let is_radio = |k: u32| {
+                            self.n(k).element().is_some_and(|e| {
+                                e.is_html()
+                                    && &*e.name.local == "input"
+                                    && e.attr("type").is_some_and(|t| t.eq_ignore_ascii_case("radio"))
+                            })
+                        };
+                        // The removed node or anything inside it.
+                        let mut radio = false;
+                        let mut k = n;
+                        while k != NIL && !radio {
+                            radio = is_radio(k);
+                            k = self.following_in(k, n);
+                        }
+                        if radio {
+                            let mut first = Vec::new();
+                            let root = self.root_idx(p);
+                            let mut k = root;
+                            while k != NIL {
+                                if is_radio(k) {
+                                    first.push(k);
+                                }
+                                k = self.following_in(k, root);
+                            }
+                            changed.extend(first);
+                        }
+                    }
+                }
+                Change::Pseudo => {}
+                Change::Unknown(_) => return None,
+            }
+        }
+        // Where a node is rendered: connected to `doc`, outside elements whose
+        // children are not rendered. `Err`: in an element rendered specially.
+        let rendered = |mut i: u32| -> Result<bool, ()> {
+            if !self.slot_live(i) {
+                return Ok(false);
+            }
+            loop {
+                if i == d {
+                    return Ok(true);
+                }
+                if let NodeKind::Element(e) = &self.n(i).kind {
+                    let local: &str = &e.name.local;
+                    if e.is_html() && matches!(local, "script" | "noscript" | "template" | "iframe" | "frame") {
+                        return Ok(false);
+                    }
+                    if e.is_html() && matches!(local, "style" | "textarea" | "link" | "slot") {
+                        return Err(());
+                    }
+                    if e.name.ns == ns!(svg) && local == "script" {
+                        return Ok(false);
+                    }
+                }
+                let parent = self.n(i).parent;
+                if parent == NIL {
+                    return Ok(false);
+                }
+                i = parent;
+            }
+        };
+        // The `<style>` element `i` is or is in: its render content is its
+        // sheet's text, which a change inside it replaces.
+        let style_owner = |mut i: u32| -> Option<u32> {
+            while i != NIL && i != d {
+                if let NodeKind::Element(e) = &self.n(i).kind {
+                    if e.is_html() && &*e.name.local == "style" {
+                        return Some(i);
+                    }
+                }
+                i = self.n(i).parent;
+            }
+            None
+        };
+        let mut styles: Vec<u32> = Vec::new();
+        // Nodes inside a subtree that is serialized whole (an inserted one).
+        let covered = |mut i: u32| {
+            i = self.n(i).parent;
+            while i != NIL && i != d {
+                if inserted.contains(&i) {
+                    return true;
+                }
+                i = self.n(i).parent;
+            }
+            false
+        };
+        let mut ops = Vec::new();
+        let mut seen = rustc_hash::FxHashSet::default();
+        parents.sort_unstable();
+        parents.dedup();
+        for &p in &parents {
+            match rendered(p) {
+                Err(()) => {
+                    styles.push(style_owner(p)?);
+                    continue;
+                }
+                Ok(false) => continue,
+                Ok(true) => {}
+            }
+            // An inserted node's children are in its own serialized subtree.
+            if covered(p) || inserted.contains(&p) || !seen.insert(p) {
+                continue;
+            }
+            let kids: Vec<u32> = self.child_idx_iter(p).filter(|&k| self.render_child(k)).collect();
+            let fresh: Vec<u32> = kids.iter().copied().filter(|k| inserted.contains(k)).collect();
+            let mut sink = TreeSink::default();
+            self.render_walk_from(fresh, opts, &mut sink);
+            ops.push(DeltaOp::Children {
+                parent: (p != d).then(|| render_key(self.id_of(p))),
+                kids: kids.iter().map(|&k| render_key(self.id_of(k))).collect(),
+                nodes: sink.tree.nodes,
+            });
+        }
+        // Validity is not local: a form or fieldset follows its controls,
+        // and a required radio group spans its radios.
+        let mut dependents = Vec::new();
+        for &i in changed.iter().chain(parents.iter()) {
+            self.state_dependents(i, &mut dependents);
+        }
+        changed.extend(dependents);
+        changed.sort_unstable();
+        changed.dedup();
+        for i in changed {
+            // Removed since: nothing to render.
+            if !self.slot_live(i) {
+                continue;
+            }
+            // A `<style>`'s own attributes: the element (its text stays its
+            // sheet's).
+            let is_style = style_owner(i) == Some(i);
+            let place = if is_style && self.n(i).parent != NIL { rendered(self.n(i).parent) } else { rendered(i) };
+            match place {
+                // Inside a `<style>`: its sheet text.
+                Err(()) => match style_owner(i).filter(|&owner| owner != i) {
+                    Some(owner) => {
+                        styles.push(owner);
+                        continue;
+                    }
+                    None if covered(i) || inserted.contains(&i) => continue,
+                    None => return None,
+                },
+                Ok(false) => continue,
+                Ok(true) => {}
+            }
+            if covered(i) || inserted.contains(&i) {
+                continue;
+            }
+            // The node alone (its subtree walk, first node).
+            let mut sink = TreeSink::default();
+            self.render_walk_from(vec![i], opts, &mut sink);
+            let Some(first) = sink.tree.nodes.into_iter().next() else { continue };
+            if first.key != render_key(self.id_of(i)) {
+                return None;
+            }
+            ops.push(DeltaOp::Node { key: first.key, kind: first.kind });
+            if is_style {
+                styles.push(i);
+            }
+        }
+        // A `<style>` whose content changed: its sheet text (unless the
+        // element itself is new, and serialized whole above).
+        styles.sort_unstable();
+        styles.dedup();
+        for owner in styles {
+            if covered(owner) || inserted.contains(&owner) {
+                continue;
+            }
+            let parent = self.n(owner).parent;
+            if parent == NIL {
+                continue;
+            }
+            match rendered(parent) {
+                Ok(true) => {}
+                Ok(false) => continue,
+                Err(()) => return None,
+            }
+            let id = self.id_of(owner);
+            let text =
+                (opts.style_text)(id).unwrap_or_else(|| self.text_content(id).ok().flatten().unwrap_or_default());
+            ops.push(DeltaOp::Node { key: render_key(id) | SYNTHETIC_TEXT, kind: RenderNodeKind::Text(text) });
+        }
+        Some(RenderDelta { ops })
+    }
+
+    /// The `<style>` sheet text the render tree gives `owner` (see
+    /// [`Dom::render_delta`]), as a delta op.
+    pub fn render_style_text(&self, owner: NodeId, opts: &RenderHtml<'_>) -> Option<DeltaOp> {
+        let e = self.node(owner).ok()?.element()?;
+        if !(e.is_html() && &*e.name.local == "style") {
+            return None;
+        }
+        let text =
+            (opts.style_text)(owner).unwrap_or_else(|| self.text_content(owner).ok().flatten().unwrap_or_default());
+        Some(DeltaOp::Node { key: render_key(owner) | SYNTHETIC_TEXT, kind: RenderNodeKind::Text(text) })
+    }
+
+    /// The pseudo-class states of element `n` a renderer cannot derive from
+    /// its markup (validity, placeholder shown, read-write, ...), as the
+    /// space-separated value of the [`STATE_NS`] `state` attribute; `None`
+    /// for elements without any.
+    fn render_states(&self, n: u32) -> Option<String> {
+        use crate::select::PseudoClass::*;
+        let e = self.n(n).element()?;
+        let local: &str = &e.name.local;
+        let control = matches!(local, "input" | "textarea" | "select" | "button" | "output");
+        let kind = e.is_html()
+            && (control || matches!(local, "form" | "fieldset" | "option" | "optgroup" | "details" | "dialog"));
+        let editable = e.attr("contenteditable").is_some();
+        let natural = (e.is_html() && local == "img").then(|| self.natural_size(self.id_of(n))).flatten();
+        if !kind && !editable && natural.is_none() {
+            return None;
+        }
+        let mut out = String::new();
+        if let Some((w, h)) = natural {
+            out.push_str(&format!("natural={w},{h}"));
+        }
+        for (pc, name) in [
+            (Valid, "valid"),
+            (Invalid, "invalid"),
+            (Indeterminate, "indeterminate"),
+            (Required, "required"),
+            (Optional, "optional"),
+            (ReadWrite, "read-write"),
+            (PlaceholderShown, "placeholder-shown"),
+            (Default, "default"),
+            (Open, "open"),
+        ] {
+            if self.matches_state(n, pc) {
+                if !out.is_empty() {
+                    out.push(' ');
+                }
+                out.push_str(name);
+            }
+        }
+        (!out.is_empty()).then_some(out)
+    }
+
+    /// Elements whose [`Dom::render_states`] a change at `i` can change
+    /// besides `i`: the forms, fieldsets and selects around it, and every
+    /// radio when `i` is one (a renamed radio leaves one group for another).
+    fn state_dependents(&self, i: u32, out: &mut Vec<u32>) {
+        if !self.slot_live(i) {
+            return;
+        }
+        let mut cur = self.n(i).parent;
+        while cur != NIL {
+            if let Some(e) = self.n(cur).element() {
+                if e.is_html() && matches!(&*e.name.local, "form" | "fieldset" | "select") {
+                    out.push(cur);
+                }
+            }
+            cur = self.n(cur).parent;
+        }
+        let is_radio = |e: &crate::node::ElementData| {
+            e.is_html() && &*e.name.local == "input" && e.attr("type").is_some_and(|t| t.eq_ignore_ascii_case("radio"))
+        };
+        if self.n(i).element().is_some_and(is_radio) {
+            let root = self.root_idx(i);
+            let mut n = root;
+            while n != NIL {
+                if n != i && self.n(n).element().is_some_and(is_radio) {
+                    out.push(n);
+                }
+                n = self.following_in(n, root);
+            }
+        }
+    }
+
+    /// Whether child `k` appears in the render tree (as itself).
+    fn render_child(&self, k: u32) -> bool {
+        match &self.n(k).kind {
+            NodeKind::Text(_) | NodeKind::CData(_) => true,
+            NodeKind::Element(e) => {
+                let local: &str = &e.name.local;
+                !(e.is_html() && matches!(local, "script" | "noscript" | "template"))
+                    && !(e.name.ns == ns!(svg) && local == "script")
+            }
+            _ => false,
+        }
     }
 
     /// Light children of `host` assigned to the slot named `name` (the

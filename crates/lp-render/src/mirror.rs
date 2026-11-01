@@ -9,7 +9,9 @@
 //! rest. A tree that shares too little with the previous one, a different
 //! document (navigation) or a different base URL builds a new document.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
+
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::hash::Hasher;
 use std::sync::Arc;
 
@@ -40,6 +42,19 @@ pub enum TreeKind {
 
 /// `TreeNode::parent` of a top-level node.
 pub const TOP: u32 = u32::MAX;
+
+/// A change to a page's [`Tree`] (lp-dom's `Dom::render_delta`), applied to
+/// its document without the whole tree ([`crate::Renderer::sync_delta`]).
+#[derive(Clone, Debug, PartialEq)]
+pub enum DeltaOp {
+    /// The node's own content is now `kind` (same element name, or text);
+    /// its children are unchanged.
+    Node { key: u64, kind: TreeKind },
+    /// The children of `parent` (`None`: the top level) are now `kids`;
+    /// `nodes` are the subtrees of the inserted ones (parents index into
+    /// `nodes`, [`TOP`] for a child of `parent`).
+    Children { parent: Option<u64>, kids: Vec<u64>, nodes: Vec<TreeNode> },
+}
 
 /// Why a render built its document from scratch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -82,7 +97,7 @@ pub(crate) struct Mirror {
     pub(crate) viewport: (u32, u32, u64, bool),
     sheets: HashMap<String, String>,
     tree: Arc<Tree>,
-    nodes: HashMap<u64, Entry>,
+    nodes: FxHashMap<u64, Entry>,
     top: Vec<u64>,
 }
 
@@ -129,8 +144,8 @@ fn name_of(kind: &TreeKind) -> Option<QualName> {
 }
 
 /// Keys of the children of each node, and of the top level.
-fn children_of(tree: &Tree) -> (HashMap<u64, Vec<u64>>, Vec<u64>) {
-    let mut kids: HashMap<u64, Vec<u64>> = HashMap::with_capacity(tree.nodes.len());
+fn children_of(tree: &Tree) -> (FxHashMap<u64, Vec<u64>>, Vec<u64>) {
+    let mut kids: FxHashMap<u64, Vec<u64>> = FxHashMap::with_capacity_and_hasher(tree.nodes.len(), Default::default());
     let mut top = Vec::new();
     for n in &tree.nodes {
         if n.parent == TOP {
@@ -161,7 +176,8 @@ impl Mirror {
         }
         let root = doc.root_node().id;
         let (kids, top) = children_of(&tree);
-        let mut nodes: HashMap<u64, Entry> = HashMap::with_capacity(tree.nodes.len());
+        let mut nodes: FxHashMap<u64, Entry> =
+            FxHashMap::with_capacity_and_hasher(tree.nodes.len(), Default::default());
         {
             let mut m = doc.mutate();
             let mut ids = Vec::with_capacity(tree.nodes.len());
@@ -193,6 +209,11 @@ impl Mirror {
         self.nodes.get(&key).map(|e| e.id)
     }
 
+    /// The key of each mirrored node.
+    pub(crate) fn keys(&self) -> FxHashMap<NodeId, u64> {
+        self.nodes.iter().map(|(k, e)| (e.id, *k)).collect()
+    }
+
     /// Applies `tree` (the page now) and `sheets` (linked sheet texts by
     /// URL). Returns the number of mutations, or why the document must be
     /// built anew instead.
@@ -203,7 +224,7 @@ impl Mirror {
             return Ok(0);
         }
         let new = &tree.nodes;
-        let mut index: HashMap<u64, usize> = HashMap::with_capacity(new.len());
+        let mut index: FxHashMap<u64, usize> = FxHashMap::with_capacity_and_hasher(new.len(), Default::default());
         for (i, n) in new.iter().enumerate() {
             if index.insert(n.key, i).is_some() {
                 return Err(Rebuild::Malformed);
@@ -213,7 +234,7 @@ impl Mirror {
 
         let hashes: Vec<u64> = new.iter().map(|n| hash_kind(&n.kind)).collect();
         // Gone, or now a node of another kind under the same key.
-        let mut removed: HashSet<u64> = self
+        let mut removed: FxHashSet<u64> = self
             .nodes
             .iter()
             .filter(|(key, e)| match index.get(*key) {
@@ -227,7 +248,7 @@ impl Mirror {
         // text) and an `<input>` whose type changed. Their children are kept
         // and moved into the new element.
         let empty = Vec::new();
-        let mut replace = HashSet::new();
+        let mut replace = FxHashSet::default();
         for (i, n) in new.iter().enumerate() {
             let dirty = match self.nodes.get(&n.key) {
                 None => true,
@@ -298,7 +319,7 @@ impl Mirror {
         }
 
         // 2. Create new nodes (detached; placed below), update changed ones.
-        let mut created = HashSet::new();
+        let mut created = FxHashSet::default();
         for (n, &hash) in new.iter().zip(&hashes) {
             match nodes.get_mut(&n.key) {
                 None => {
@@ -363,6 +384,172 @@ impl Mirror {
     }
 }
 
+impl Mirror {
+    /// Applies changes since the last tree or delta: nodes changed in place,
+    /// and new children lists with the inserted subtrees. Children dropped
+    /// from a list and not placed elsewhere are removed. `Err`: the delta
+    /// does not fit this document (the caller sends the whole tree).
+    pub(crate) fn apply_delta(&mut self, ops: &[DeltaOp]) -> Result<u32, Rebuild> {
+        // Check first: nothing is applied from a delta that does not fit.
+        // Nodes the ops before (and the current one) create.
+        let mut created: FxHashSet<u64> = FxHashSet::default();
+        for op in ops {
+            match op {
+                DeltaOp::Node { key, kind } => {
+                    let e = self.nodes.get(key).ok_or(Rebuild::Changes)?;
+                    if e.name != name_of(kind) || self.needs_replacing(e.id, kind) {
+                        return Err(Rebuild::Changes);
+                    }
+                }
+                DeltaOp::Children { parent, nodes, kids } => {
+                    if parent.is_some_and(|p| !self.nodes.contains_key(&p)) {
+                        return Err(Rebuild::Changes);
+                    }
+                    // Every kid is a node already mirrored or created by
+                    // this op or an earlier one.
+                    created.extend(nodes.iter().map(|n| n.key));
+                    if kids.iter().any(|k| !self.nodes.contains_key(k) && !created.contains(k)) {
+                        if std::env::var_os("LP_MIRRORDBG").is_some() {
+                            eprintln!(
+                                "mirror-profile unknown kid parent={parent:x?} kids={} new={}",
+                                kids.len(),
+                                nodes.len()
+                            );
+                        }
+                        return Err(Rebuild::Changes);
+                    }
+                    for n in nodes {
+                        if let Some(e) = self.nodes.get(&n.key) {
+                            if e.name != name_of(&n.kind) || self.needs_replacing(e.id, &n.kind) {
+                                return Err(Rebuild::Changes);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let mut mutations = 0u32;
+        let Mirror { doc, nodes, top, .. } = self;
+        let mut m = doc.mutate();
+        let mut dropped: Vec<(u64, Option<u64>)> = Vec::new();
+        for op in ops {
+            match op {
+                DeltaOp::Node { key, kind } => {
+                    let e = nodes.get_mut(key).expect("checked");
+                    let hash = hash_kind(kind);
+                    if e.hash != hash {
+                        e.hash = hash;
+                        update(&mut m, e.id, kind);
+                        mutations += 1;
+                    }
+                }
+                DeltaOp::Children { parent, kids, nodes: sub } => {
+                    // The inserted subtrees: new nodes created, moved ones updated.
+                    for n in sub {
+                        let hash = hash_kind(&n.kind);
+                        match nodes.get_mut(&n.key) {
+                            None => {
+                                let id = create(&mut m, &n.kind);
+                                nodes.insert(
+                                    n.key,
+                                    Entry { id, name: name_of(&n.kind), hash, parent: None, children: Vec::new() },
+                                );
+                                mutations += 1;
+                            }
+                            Some(e) if e.hash != hash => {
+                                e.hash = hash;
+                                update(&mut m, e.id, &n.kind);
+                                mutations += 1;
+                            }
+                            Some(_) => {}
+                        }
+                    }
+                    let mut kids_of: FxHashMap<u64, Vec<u64>> = FxHashMap::default();
+                    for n in sub {
+                        let p = if n.parent == TOP { None } else { Some(sub[n.parent as usize].key) };
+                        if let Some(p) = p {
+                            kids_of.entry(p).or_default().push(n.key);
+                        }
+                        nodes.get_mut(&n.key).expect("entry").parent = p.or(*parent);
+                    }
+                    for n in sub {
+                        let want = kids_of.remove(&n.key).unwrap_or_default();
+                        let e = &nodes[&n.key];
+                        for old in e.children.iter().filter(|k| !want.contains(k)) {
+                            dropped.push((*old, Some(n.key)));
+                        }
+                        if e.children != want || !want.is_empty() {
+                            let id = e.id;
+                            mutations += reorder(&mut m, id, &want, nodes);
+                            nodes.get_mut(&n.key).expect("entry").children = want;
+                        }
+                    }
+                    // The parent's own list.
+                    let (pid, old) = match parent {
+                        Some(p) => (nodes[p].id, nodes[p].children.clone()),
+                        None => (m.doc.root_node().id, top.clone()),
+                    };
+                    for k in old.iter().filter(|k| !kids.contains(k)) {
+                        dropped.push((*k, *parent));
+                    }
+                    mutations += reorder(&mut m, pid, kids, nodes);
+                    match parent {
+                        Some(p) => nodes.get_mut(p).expect("entry").children = kids.clone(),
+                        None => top.clone_from(kids),
+                    }
+                    for k in kids {
+                        nodes.get_mut(k).expect("entry").parent = *parent;
+                    }
+                }
+            }
+        }
+        // Children dropped from a list and not placed in another: removed
+        // with their subtrees.
+        for (key, from) in dropped {
+            let Some(e) = nodes.get(&key) else { continue };
+            if e.parent != from {
+                continue;
+            }
+            let on_list = |p: &Option<u64>| match p {
+                Some(p) => nodes.get(p).is_some_and(|pe| pe.children.contains(&key)),
+                None => top.contains(&key),
+            };
+            if on_list(&e.parent) {
+                continue;
+            }
+            m.remove_and_drop_node(e.id);
+            mutations += 1;
+            let mut stack = vec![key];
+            while let Some(k) = stack.pop() {
+                if let Some(e) = nodes.remove(&k) {
+                    stack.extend(e.children);
+                }
+            }
+        }
+        drop(m);
+        // The kept tree no longer describes the document: the next whole
+        // tree is diffed in full.
+        self.tree = Arc::new(Tree::default());
+        Ok(mutations)
+    }
+
+    /// blitz-dom sets up an `<input>` once, when it builds its box: a new
+    /// `type` replaces the element (the whole-tree path does that).
+    fn needs_replacing(&self, id: NodeId, kind: &TreeKind) -> bool {
+        let TreeKind::Element { name, attrs } = kind else { return false };
+        if name.local != blitz_dom::local_name!("input") {
+            return false;
+        }
+        let is_type = |a: &QualName| a.local == blitz_dom::local_name!("type");
+        let now = attrs.iter().find(|(a, _)| is_type(a)).map(|(_, v)| v.to_ascii_lowercase());
+        let before = self.doc.get_node(id).and_then(|node| {
+            let el = node.element_data()?;
+            el.attrs.iter().find(|a| is_type(&a.name)).map(|a| a.value.to_ascii_lowercase())
+        });
+        now != before
+    }
+}
+
 /// Brings an existing node to `kind` (same element name or both text).
 fn update(m: &mut DocumentMutator<'_>, id: NodeId, kind: &TreeKind) {
     match kind {
@@ -396,7 +583,7 @@ fn update(m: &mut DocumentMutator<'_>, id: NodeId, kind: &TreeKind) {
 /// Makes `want` the children of `parent`, moving as few nodes as it can
 /// (an insertion, removal or move costs one operation). Children that do
 /// not belong here any more are detached; their new parent places them.
-fn reorder(m: &mut DocumentMutator<'_>, parent: NodeId, want: &[u64], nodes: &HashMap<u64, Entry>) -> u32 {
+fn reorder(m: &mut DocumentMutator<'_>, parent: NodeId, want: &[u64], nodes: &FxHashMap<u64, Entry>) -> u32 {
     let want: Vec<NodeId> = want.iter().map(|k| nodes[k].id).collect();
     let mut current: Vec<NodeId> = m.child_ids(parent).to_vec();
     let mut ops = 0;

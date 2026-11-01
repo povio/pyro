@@ -36,7 +36,7 @@ use style::media_queries::{MediaList, MediaType};
 use style::properties::style_structs::Font;
 use style::properties::ComputedValues;
 use style::queries::values::PrefersColorScheme;
-use style::selector_parser::{PseudoElement, SnapshotMap};
+use style::selector_parser::SnapshotMap;
 use style::servo::media_features::PointerCapabilities;
 use style::servo_arc::Arc;
 use style::shared_lock::{SharedRwLock, StylesheetGuards};
@@ -787,18 +787,6 @@ impl Cascade {
         let guards = StylesheetGuards { author: &guard, ua_or_user: &guard };
         // The invalidation set is for stored styles; there are none yet.
         drop(self.stylist.flush(&guards));
-    }
-
-    /// The style of `idx`'s `::before` (`after` false) or `::after`, as the
-    /// traversal computed it (Stylo computes these eagerly when a rule
-    /// targets them).
-    pub(crate) fn pseudo(&self, dom: &Dom, idx: u32, after: bool) -> Option<Arc<ComputedValues>> {
-        let cx = Cx::new(dom, &self.store, &self.lock, self.quirks, &self.popovers);
-        let _entered = cx.enter();
-        let el = SNode::new(&cx, idx);
-        let data = el.borrow_data()?;
-        let pseudo = if after { PseudoElement::After } else { PseudoElement::Before };
-        data.styles.pseudos.get(&pseudo).cloned()
     }
 
     /// Marks what changed since `version` for restyling. False when the
