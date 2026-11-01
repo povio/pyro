@@ -1,3 +1,15 @@
+--- a/src/compute/block.rs
++++ b/src/compute/block.rs
+@@ -905,7 +905,8 @@
+ 
+             let is_block = child_style.is_block();
+             let is_table = child_style.is_table();
+-            let is_compressible_replaced = child_style.is_compressible_replaced();
++            let is_compressible_replaced =
++                child_style.is_compressible_replaced() || tree.block_child_width_fits_content(child_node_id);
+             let is_scroll_container = overflow.x.is_scroll_container() || overflow.y.is_scroll_container();
+             let contain = child_style.contain();
+ 
 --- a/src/compute/flexbox.rs
 +++ b/src/compute/flexbox.rs
 @@ -1484,8 +1484,41 @@
@@ -82,3 +94,17 @@
  }
  
  /// Trait used by the `print_tree` method which prints a debug representation
+@@ -373,6 +383,13 @@
+     /// Interpreted in the container's axes (see [`LayoutPartialTree::get_core_container_style`]).
+     fn get_block_child_style(&self, child_node_id: NodeId) -> Self::BlockItemStyle<'_>;
+ 
++    /// Whether a block-level child's `auto` width fits its content rather than stretching
++    /// (form controls in browsers), as for tables and replaced elements.
++    fn block_child_width_fits_content(&self, child_node_id: NodeId) -> bool {
++        let _ = child_node_id;
++        false
++    }
++
+     /// Compute the specified node's size or full layout given the specified constraints
+     #[cfg(feature = "block_layout")]
+     fn compute_block_child_layout(

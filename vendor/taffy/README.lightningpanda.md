@@ -25,3 +25,8 @@ Upstream's full test suite (6605 generated tests) passes with the patch. The reg
 `record_rounded` (defaults: never skip, record nothing), and `round_layout` skips a subtree its tree reports
 unchanged. blitz-dom implements them: an undamaged, non-anonymous subtree reached with the same unrounded
 layout at the same offset is rounded as before. Without it, every layout query rounded the whole tree.
+
+`compute/block.rs` and `tree/traits.rs`: `LayoutBlockContainer::block_child_width_fits_content`
+(default false) lets a tree keep a block-level child's `auto` width at its content size, as for tables and
+replaced elements. blitz-dom answers true for form controls (`input`, `select`, `textarea`, `button`),
+which Chromium does not stretch in block layout.

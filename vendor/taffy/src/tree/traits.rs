@@ -383,6 +383,13 @@ pub trait LayoutBlockContainer: LayoutPartialTree {
     /// Interpreted in the container's axes (see [`LayoutPartialTree::get_core_container_style`]).
     fn get_block_child_style(&self, child_node_id: NodeId) -> Self::BlockItemStyle<'_>;
 
+    /// Whether a block-level child's `auto` width fits its content rather than stretching
+    /// (form controls in browsers), as for tables and replaced elements.
+    fn block_child_width_fits_content(&self, child_node_id: NodeId) -> bool {
+        let _ = child_node_id;
+        false
+    }
+
     /// Compute the specified node's size or full layout given the specified constraints
     #[cfg(feature = "block_layout")]
     fn compute_block_child_layout(

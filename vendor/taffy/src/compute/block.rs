@@ -905,7 +905,8 @@ fn generate_item_list(
 
             let is_block = child_style.is_block();
             let is_table = child_style.is_table();
-            let is_compressible_replaced = child_style.is_compressible_replaced();
+            let is_compressible_replaced =
+                child_style.is_compressible_replaced() || tree.block_child_width_fits_content(child_node_id);
             let is_scroll_container = overflow.x.is_scroll_container() || overflow.y.is_scroll_container();
             let contain = child_style.contain();
 

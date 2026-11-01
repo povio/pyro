@@ -223,6 +223,7 @@ impl LayoutPassState<'_> {
         block_ctx: Option<&mut BlockContext<'_>>,
     ) -> taffy::tree::LayoutOutput {
         let orthogonal_percent_basis = self.orthogonal_percent_basis_of(dom_node_id(node_id));
+        let scale = self.doc.viewport.scale();
         let node = &mut self.nodes[dom_node_id(node_id)];
 
         let font_styles = node.primary_styles().map(|style| {
@@ -367,15 +368,35 @@ impl LayoutPassState<'_> {
                                 .filter(|&size| size > 0)
                                 .unwrap_or(20) as f32;
                             let width = (size * 0.5 + 0.4) * font_size.unwrap_or(13.333);
-                            return compute_leaf_layout(
+                            let line = element_data
+                                .text_input_data()
+                                .and_then(|input| input.editor.try_layout())
+                                .and_then(|layout| layout.lines().next())
+                                .map(|line| *line.metrics());
+                            let style = node.layout_style();
+                            let mut output = compute_leaf_layout(
                                 inputs,
-                                &node.layout_style(),
+                                &style,
                                 resolve_calc_value,
                                 |_known_size, _available_space| taffy::Size {
                                     width,
                                     height: resolved_line_height.unwrap_or(16.0),
                                 },
                             );
+                            // Its baseline is its text's, the line centred in the content
+                            // box (Chromium), not its bottom edge.
+                            if let Some(line) = line {
+                                let parent = inputs.parent_size.width;
+                                let padding = style.padding().resolve_or_zero(parent, resolve_calc_value);
+                                let border = style.border().resolve_or_zero(parent, resolve_calc_value);
+                                let content_top = padding.top + border.top;
+                                let content_height =
+                                    output.size.height - content_top - padding.bottom - border.bottom;
+                                let (line_height, baseline) = (line.line_height / scale, line.baseline / scale);
+                                let baseline = content_top + (content_height - line_height) / 2.0 + baseline;
+                                output.baselines = taffy::Baselines { first: Some(baseline), last: Some(baseline) };
+                            }
+                            return output;
                         }
                         _ => {}
                     }
@@ -810,6 +831,18 @@ impl taffy::LayoutBlockContainer for LayoutPassState<'_> {
 
     fn get_block_child_style(&self, child_node_id: NodeId) -> Self::BlockItemStyle<'_> {
         self.child_layout_style(self.node_from_id(child_node_id))
+    }
+
+    fn block_child_width_fits_content(&self, child_node_id: NodeId) -> bool {
+        // Form controls keep their intrinsic width as block-level boxes (Chromium).
+        let Some(el) = self.node_from_id(child_node_id).data.downcast_element() else {
+            return false;
+        };
+        match el.name.local {
+            local_name!("select") | local_name!("textarea") | local_name!("button") => true,
+            local_name!("input") => !matches!(el.attr(local_name!("type")), Some("hidden")),
+            _ => false,
+        }
     }
 
     #[inline(always)]
