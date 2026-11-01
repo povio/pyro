@@ -12,7 +12,30 @@ Engines: `chrome-base` (Chrome, base build), `chrome-fixed` (Chrome, `--paprize-
 against LP. Each case runs three interleaved repetitions after one untimed warm-up, and the tables report
 medians. Peak RSS covers the whole process tree, sampled every 50 ms.
 
-## Latest: Blitz is the only geometry, with HTTPS (2026-10-31)
+## Latest: Blitz relayout as fast as flow (2026-11-01)
+
+Shaped runs and whole built text layouts are now reused for identical text and styles (pagination clones
+content into pages), and two whole-tree scans per sync are gone. Measured in one run (2 interleaved
+repetitions per case, 6-concurrent throughput after; load average 25 → 14 during the run), and again
+without Chrome right after (3289 ms pagination, 24.3 docs/s). Per-case table: [summary.md](summary.md).
+
+| | chrome-fixed | lp (flow geometry, earlier) | lp (Blitz, 2026-10-31) | lp (Blitz, now) |
+|---|---|---|---|---|
+| page count equal to Chrome | – | 43/44 | 44/44 | **44/44** |
+| pixel diff per case, median | – | 4.7% | 4.3% | **4.3%** |
+| sum of median pagination ms (44 cases) | 2074 | 3306–3515 | 4092 | **3291** |
+| sum of median printToPDF ms | 3788 | 918–938 | 947 | **858** |
+| 6 concurrent: docs/s | 13.0 | 24.7–25.3 | 19.1 | **23.7** |
+| 6 concurrent: p50 / p95 ms | 184 / 270 | 85–92 / 389–417 | 89 / 457 | **89 / 380** |
+| 6 concurrent: peak RSS MB | 4618 | 1131–1164 | 1155 | **1171** |
+
+- cmr-overflow (2544 forced layouts per render): 925 → 485 ms per render. Blitz's inline construction went from
+  466 to 107 ms: 79% of the text it shapes there is identical to text shaped before. The PDF is byte-identical
+  after every step.
+- What is left of the gap to Chrome is the long overflow documents (cmr-overflow, the booking-overflow pair,
+  house-bl's overflowing table): line breaking of freshly cloned content and the pagination script itself.
+
+## Earlier: Blitz is the only geometry, with HTTPS (2026-10-31)
 
 lp-dom's flow layout and the approximate layout are gone: every layout query is answered from the page's
 Blitz document, the one printToPDF prints. lp-net fetches HTTPS (rustls), so ToS pdfgen's Inter loads from
