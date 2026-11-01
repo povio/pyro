@@ -1356,7 +1356,7 @@ impl BaseDocument {
                 self.apply_iframe_html(node_id, res.request_id, res.resolved_url, &html);
             }
             Resource::Font(bytes, overrides) => {
-                let font = Blob::new(Arc::new(bytes));
+                let font = crate::util::intern_font_blob(bytes);
 
                 // Build a `FontInfoOverride` from the `@font-face` descriptors
                 // captured during stylesheet parsing. Without this, parley
