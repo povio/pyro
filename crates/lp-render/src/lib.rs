@@ -784,16 +784,19 @@ impl Renderer {
     }
 
     /// The computed style of the element keyed `key` in `page`'s persistent
-    /// document as of the last sync (`None`: not mirrored, or unstyled, as
-    /// under `display: none`).
+    /// document as of the last sync; one under `display: none` (which the
+    /// traversal does not style) is resolved now. `None`: not mirrored.
     pub fn element_style(
         &self,
         page: u64,
         key: u64,
     ) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
         let m = self.mirrors.get(&page)?;
-        let node = m.doc.get_node(m.node(key)?)?;
-        node.primary_styles().map(|s| (*s).clone())
+        let id = m.node(key)?;
+        match m.doc.get_node(id)?.primary_styles() {
+            Some(s) => Some((*s).clone()),
+            None => m.doc.resolve_undisplayed_style(id),
+        }
     }
 
     /// The box of the element keyed `key` in `page`'s persistent document,

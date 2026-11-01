@@ -4491,3 +4491,23 @@ fn an_attribute_change_over_a_new_child_restyles_without_stale_geometry() {
     p.dom.set_attribute(parent, "class", "on").unwrap();
     assert_matches_fresh(&p, "class set over a new child");
 }
+
+#[test]
+fn computed_styles_come_from_blitz_even_under_display_none() {
+    // getComputedStyle answers from the page's Blitz document; elements the
+    // traversal skips (a display: none subtree) are resolved there on
+    // demand, and follow changes like the rest.
+    let mut p = page(
+        "<!doctype html><style>#h{display:none} #h b{color:rgb(4, 4, 4)} .on #h b{color:rgb(7, 7, 7)} li{color:rgb(1, 2, 3)}</style>\
+         <body><ul id=u><li id=l>x</li></ul><div id=h><b id=b>y</b></div></body>",
+    );
+    let v = |p: &Page, id: &str, prop: &str| p.layout.computed_style_value(&p.dom, p.id(id), prop);
+    assert_eq!(v(&p, "l", "color"), "rgb(1, 2, 3)");
+    assert_eq!(v(&p, "h", "display"), "none");
+    assert_eq!(v(&p, "b", "color"), "rgb(4, 4, 4)");
+    assert_eq!(v(&p, "b", "display"), "inline");
+    let body = p.dom.body(p.doc).unwrap().unwrap();
+    p.dom.set_attribute(body, "class", "on").unwrap();
+    assert_eq!(v(&p, "b", "color"), "rgb(7, 7, 7)");
+    assert!(!p.layout.style().own_cascade_used(), "lp-dom's cascade answered nothing");
+}

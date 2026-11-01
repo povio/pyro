@@ -3984,6 +3984,13 @@ impl StyleEngine {
         Some(c)
     }
 
+    /// Whether this engine's own cascade ran (reads it answered, not the
+    /// layout engine).
+    #[doc(hidden)]
+    pub fn own_cascade_used(&self) -> bool {
+        self.stylo.borrow().is_some()
+    }
+
     /// Elements with Stylo style data; elements whose values the last
     /// restyle changed, and elements it visited (diagnostics, tests).
     pub fn stylo_stats(&self) -> (usize, usize, usize) {
