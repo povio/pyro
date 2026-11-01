@@ -72,3 +72,6 @@ lp-render's mirror tests (incremental documents against fresh builds after rando
 - `src/resolve.rs`: `resolve_style` runs the style pass of `resolve` alone (messages, device changes,
   the traversal), leaving damage, box construction and layout to the next `resolve`: lightningpanda
   answers `getComputedStyle` from Blitz's styles without laying the document out.
+- `src/mutator.rs`: a child moved to another parent leaves its old one as `remove_node` does: the old
+  parent's `:empty` and `:has()` anchors are restyled (they were not, so `ul:empty` stayed unmatched
+  after its last child moved out).

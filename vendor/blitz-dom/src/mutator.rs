@@ -757,6 +757,14 @@ impl DocumentMutator<'_> {
         // parent's child list, and anchor indices would be computed against a
         // child list that still contains the moved nodes.
         for child_id in child_ids.iter().copied() {
+            // lightningpanda: a moved child leaves its old parent as
+            // `remove_node` does (`:has()` anchors, `:empty`), checked while
+            // it is still linked.
+            if let Some(old_parent_id) = self.doc.nodes[child_id].parent {
+                self.doc.invalidate_has_anchors(child_id);
+                self.doc.invalidate_has_anchors(old_parent_id);
+                self.restyle_if_empty_matters(old_parent_id);
+            }
             let child = &mut self.doc.nodes[child_id];
             let child_was_in_doc = child.flags.is_in_document();
             self.mutations_occurred |= child_was_in_doc;
