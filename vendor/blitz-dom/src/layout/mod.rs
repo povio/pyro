@@ -741,17 +741,20 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
 
     fn clear_hoisted_children(&mut self, node_id: NodeId) {
         let containing_block = dom_node_id(node_id);
-        let mut hoisted = self.node_from_id(node_id).hoisted_children.borrow_mut();
+        let hoisted = std::mem::take(&mut *self.node_from_id(node_id).hoisted_children.borrow_mut());
         for &hoisted_id in hoisted.iter() {
             // A box which has since been claimed by another containing block
             // must keep pointing at that one.
             if let Some(node) = self.nodes.get(hoisted_id) {
                 if node.oof_containing_block.get() == Some(containing_block) {
                     node.oof_containing_block.set(None);
+                    self.doc.oof_hoisted.remove(&hoisted_id);
                 }
             }
         }
-        hoisted.clear();
+        let mut list = hoisted;
+        list.clear();
+        *self.node_from_id(node_id).hoisted_children.borrow_mut() = list;
     }
 
     fn add_hoisted_children(&mut self, node_id: NodeId, hoisted: &[NodeId]) {
@@ -764,6 +767,7 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
             self.node_from_id(hoisted_id)
                 .oof_containing_block
                 .set(Some(containing_block));
+            self.doc.oof_hoisted.insert(dom_node_id(hoisted_id));
         }
     }
 

@@ -350,6 +350,9 @@ pub struct BaseDocument {
     pub(crate) changed_nodes: HashSet<NodeId>,
     /// Set of changed nodes for updating the accessibility tree
     pub(crate) deferred_construction_nodes: Vec<ConstructionTask>,
+    /// Boxes laid out by an out-of-flow containing block (`oof_containing_block`
+    /// set), so paint-tree passes visit them instead of every node.
+    pub(crate) oof_hoisted: HashSet<NodeId>,
 
     /// Nodes that contain custom widgets
     #[cfg(feature = "custom-widget")]
@@ -516,6 +519,7 @@ impl BaseDocument {
 
             changed_nodes: HashSet::new(),
             deferred_construction_nodes: Vec::new(),
+            oof_hoisted: HashSet::new(),
             image_cache: HashMap::new(),
             pending_images: HashMap::new(),
             pending_style_image_nodes: Vec::new(),
