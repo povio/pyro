@@ -6,8 +6,8 @@ exercised flow internals (its style source, reuse caches, result diffing) were d
 
 Ignored tests (`Blitz parity gap`) fail against Blitz today, grouped:
 
-- Text measured in system-ui (SF on macOS, where Chromium's tracking differs): form controls and a
-  modal with an input, compressible inputs (percentage and flex-wrap), nbsp width, `overflow-wrap`,
+- Text measured in system-ui (SF on macOS): form-control intrinsic widths (Chromium uses the font's
+  average and max character widths), compressible inputs (percentage and flex-wrap), `overflow-wrap`,
   whitespace between inline pieces in shrink-to-fit widths, a normal-whitespace span wrapping in a
   nowrap cell (line pitch), a text input's and textarea's scroll width from their value, text-align.
 - Grid: fractional `fr` tracks round to 1/64 px where Chromium keeps the exact fraction (2).
