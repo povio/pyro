@@ -14,7 +14,7 @@ fn settle(t: &mut BrowserThread) {
 
 #[test]
 fn viewport_persists_before_init_scripts_and_isolates_sibling_pages() {
-    let mut t = BrowserThread::new().unwrap();
+    let mut t = crate::browser_thread().unwrap();
     let a = t.browser.create_page().unwrap();
     let b = t.browser.create_page().unwrap();
     let original = eval(&t, b, SNAPSHOT);
@@ -70,7 +70,7 @@ fn viewport_persists_before_init_scripts_and_isolates_sibling_pages() {
 
 #[test]
 fn resize_delivery_is_coalesced_trusted_and_dropped_on_navigation_or_close() {
-    let mut t = BrowserThread::new().unwrap();
+    let mut t = crate::browser_thread().unwrap();
     let page = t.browser.create_page().unwrap();
     let world = t.browser.isolated_world(page, "automation").unwrap();
     eval(&t, page, "globalThis.events=[];addEventListener('resize', e=>{events.push([innerWidth,e.isTrusted,e.bubbles,e.cancelable,e.target===window].join(':'));document.body.textContent='resized'})");
@@ -114,7 +114,7 @@ fn resize_delivery_is_coalesced_trusted_and_dropped_on_navigation_or_close() {
 
 #[test]
 fn media_change_releases_parser_wait_without_waiting_for_stylesheet_response() {
-    let mut t = BrowserThread::new().unwrap();
+    let mut t = crate::browser_thread().unwrap();
     let page = t.browser.create_page().unwrap();
     let loader = Rc::new(StaticLoader::default());
     loader.insert(
@@ -161,7 +161,7 @@ fn visual_viewport_matches_the_layout_viewport() {
     // height; without the object every TOS popover got max-height: 0.
     // Chromium without pinch zoom: the layout viewport size, offsets 0,
     // page offsets = scroll position, scale 1, one object per window.
-    let mut t = BrowserThread::new().unwrap();
+    let mut t = crate::browser_thread().unwrap();
     let page = t.browser.create_page().unwrap();
     t.browser.set_viewport(page, Viewport::new(1440, 900)).unwrap();
     settle(&mut t);
@@ -183,7 +183,7 @@ fn visual_viewport_and_screen_orientation_are_event_targets() {
     // object, so the TOS app shell threw and never mounted. Both are
     // EventTargets (VisualViewport, ScreenOrientation): listeners, handlers
     // and dispatch, trusted resize/change from the embedder, per realm.
-    let mut t = BrowserThread::new().unwrap();
+    let mut t = crate::browser_thread().unwrap();
     let page = t.browser.create_page().unwrap();
     t.browser.set_viewport(page, Viewport::new(1000, 700)).unwrap();
     settle(&mut t);

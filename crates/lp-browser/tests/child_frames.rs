@@ -28,7 +28,7 @@ impl PageObserver for Events {
 
 #[test]
 fn initial_blank_is_synchronous_and_srcdoc_owns_its_document_and_worlds() {
-    let mut t = BrowserThread::new().unwrap();
+    let mut t = crate::browser_thread().unwrap();
     let page = t.browser.create_page().unwrap();
     let root = main_realm(&t, page);
     assert_eq!(eval(&root,"globalThis.f=document.createElement('iframe'); document.body.appendChild(f); f.contentWindow !== null && f.contentDocument.URL === 'about:blank' && f.contentDocument === f.contentWindow.document && f.contentWindow.parent === window && f.contentWindow.top === window && f.contentWindow.frameElement === f && length === 1"),"true");
@@ -50,7 +50,7 @@ fn initial_blank_is_synchronous_and_srcdoc_owns_its_document_and_worlds() {
 
 #[test]
 fn sandboxed_srcdoc_keeps_inspector_realms_but_blocks_author_script_and_parent_access() {
-    let mut t = BrowserThread::new().unwrap();
+    let mut t = crate::browser_thread().unwrap();
     let page = t.browser.create_page().unwrap();
     let root = main_realm(&t, page);
     eval(&root,"globalThis.f=document.createElement('iframe'); f.setAttribute('sandbox','allow-downloads'); f.srcdoc='<p>preview</p><script>globalThis.authorRan=true</script>'; document.body.appendChild(f)");
@@ -68,7 +68,7 @@ fn sandboxed_srcdoc_keeps_inspector_realms_but_blocks_author_script_and_parent_a
 
 #[test]
 fn nested_removal_destroys_only_descendants_in_depth_first_order() {
-    let mut t = BrowserThread::new().unwrap();
+    let mut t = crate::browser_thread().unwrap();
     let events = Rc::new(Events::default());
     t.browser.set_observer(Some(events.clone()));
     let page = t.browser.create_page().unwrap();
@@ -108,7 +108,7 @@ fn nested_removal_destroys_only_descendants_in_depth_first_order() {
 
 #[test]
 fn parent_load_waits_for_http_child_and_child_has_its_own_request_identity() {
-    let mut t = BrowserThread::new().unwrap();
+    let mut t = crate::browser_thread().unwrap();
     let loader = Rc::new(StaticLoader::default());
     loader.insert("https://example.test/main", "text/html", "<iframe src='/child'></iframe>", Duration::ZERO);
     loader.insert("https://example.test/child", "text/html", "<p>child</p>", Duration::from_millis(20));
@@ -136,7 +136,7 @@ fn parent_load_waits_for_http_child_and_child_has_its_own_request_identity() {
 
 #[test]
 fn child_location_navigation_keeps_parent_and_sibling_realms() {
-    let mut t = BrowserThread::new().unwrap();
+    let mut t = crate::browser_thread().unwrap();
     let loader = Rc::new(StaticLoader::default());
     loader.insert("https://example.test/next", "text/html", "<p>next</p>", Duration::ZERO);
     t.browser.set_loader(Some(loader));
@@ -158,7 +158,7 @@ fn child_location_navigation_keeps_parent_and_sibling_realms() {
 
 #[test]
 fn removal_inside_child_script_finishes_the_callback_then_releases_its_realms() {
-    let mut t = BrowserThread::new().unwrap();
+    let mut t = crate::browser_thread().unwrap();
     let page = t.browser.create_page().unwrap();
     let root = main_realm(&t, page);
     eval(&root, "globalThis.f=document.createElement('iframe');f.id='owner';document.body.appendChild(f)");
@@ -174,7 +174,7 @@ fn removal_inside_child_script_finishes_the_callback_then_releases_its_realms() 
 
 #[test]
 fn sandbox_changes_apply_on_navigation_and_descendants_cannot_enable_scripts() {
-    let mut t = BrowserThread::new().unwrap();
+    let mut t = crate::browser_thread().unwrap();
     let page = t.browser.create_page().unwrap();
     let root = main_realm(&t, page);
     eval(&root, "globalThis.f=document.createElement('iframe');f.srcdoc='<p>same</p>';document.body.appendChild(f)");
@@ -191,7 +191,7 @@ fn sandbox_changes_apply_on_navigation_and_descendants_cannot_enable_scripts() {
 
 #[test]
 fn frame_indices_and_names_follow_removal_and_queued_navigation_is_stale_safe() {
-    let mut t = BrowserThread::new().unwrap();
+    let mut t = crate::browser_thread().unwrap();
     let page = t.browser.create_page().unwrap();
     let root = main_realm(&t, page);
     eval(&root,"globalThis.a=document.createElement('iframe');globalThis.b=document.createElement('iframe');a.srcdoc='<p>unused</p>';document.body.appendChild(a);document.body.appendChild(b);b.name='second';a.remove()");
@@ -223,7 +223,7 @@ fn detached_pending_navigation_is_cancelled_and_late_completion_cannot_resurrect
         }
     }
     let loader = Rc::new(Delayed::default());
-    let mut t = BrowserThread::new().unwrap();
+    let mut t = crate::browser_thread().unwrap();
     t.browser.set_loader(Some(loader.clone()));
     let page = t.browser.create_page().unwrap();
     let root = main_realm(&t, page);
@@ -257,7 +257,7 @@ fn detached_pending_navigation_is_cancelled_and_late_completion_cannot_resurrect
 
 #[test]
 fn repeated_frame_removal_releases_native_realms_without_retaining_the_page() {
-    let mut t = BrowserThread::new().unwrap();
+    let mut t = crate::browser_thread().unwrap();
     let page = t.browser.create_page().unwrap();
     let root = main_realm(&t, page);
     let mut weak = Vec::new();
@@ -279,7 +279,7 @@ fn repeated_frame_removal_releases_native_realms_without_retaining_the_page() {
 
 #[test]
 fn failed_child_fetch_releases_parent_load_without_destroying_initial_document() {
-    let mut t = BrowserThread::new().unwrap();
+    let mut t = crate::browser_thread().unwrap();
     let loader = Rc::new(StaticLoader::default());
     loader.insert("https://example.test/main", "text/html", "<iframe src='/missing'></iframe>", Duration::ZERO);
     t.browser.set_loader(Some(loader));
@@ -302,7 +302,7 @@ fn failed_child_fetch_releases_parent_load_without_destroying_initial_document()
 
 #[test]
 fn inspector_navigation_applies_new_sandbox_and_unnamed_worlds_remain_isolated() {
-    let mut t = BrowserThread::new().unwrap();
+    let mut t = crate::browser_thread().unwrap();
     let page = t.browser.create_page().unwrap();
     let root = main_realm(&t, page);
     eval(
@@ -326,7 +326,7 @@ fn inspector_navigation_applies_new_sandbox_and_unnamed_worlds_remain_isolated()
 
 #[test]
 fn init_script_worlds_exist_in_initial_and_replacement_child_documents() {
-    let mut t = BrowserThread::new().unwrap();
+    let mut t = crate::browser_thread().unwrap();
     let page = t.browser.create_page().unwrap();
     for (id, world) in [("main", None), ("utility", Some("utility".to_owned()))] {
         t.browser.add_init_script(

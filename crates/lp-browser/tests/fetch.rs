@@ -95,7 +95,7 @@ fn navigate(thread: &mut BrowserThread, page: PageId, server: &Server) {
 #[test]
 fn document_fetch_uses_its_context_and_exact_frame_loader_metadata() {
     let server = Server::new();
-    let mut thread = BrowserThread::new().unwrap();
+    let mut thread = crate::browser_thread().unwrap();
     thread.enable_network(Default::default()).unwrap();
     let events = thread.browser.context_net(DEFAULT_CONTEXT).unwrap().subscribe();
     let page = thread.browser.create_page().unwrap();
@@ -119,7 +119,7 @@ fn document_fetch_uses_its_context_and_exact_frame_loader_metadata() {
 #[test]
 fn navigation_cancels_old_fetch_without_closing_shared_context_network() {
     let server = Server::new();
-    let mut thread = BrowserThread::new().unwrap();
+    let mut thread = crate::browser_thread().unwrap();
     thread.enable_network(Default::default()).unwrap();
     let a = thread.browser.create_page().unwrap();
     let b = thread.browser.create_page().unwrap();

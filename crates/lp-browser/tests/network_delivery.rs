@@ -149,7 +149,7 @@ impl Log {
 }
 
 fn setup() -> (BrowserThread, Rc<Log>) {
-    let mut thread = BrowserThread::new().unwrap();
+    let mut thread = crate::browser_thread().unwrap();
     thread.enable_network(Default::default()).unwrap();
     let log = Rc::new(Log::default());
     thread.browser.set_observer(Some(log.clone()));

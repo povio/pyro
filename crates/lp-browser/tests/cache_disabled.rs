@@ -134,7 +134,7 @@ fn cacheable(seen: &[Seen]) -> Vec<&Seen> {
 
 fn setup() -> (Server, BrowserThread) {
     let server = Server::new();
-    let mut thread = BrowserThread::new().unwrap();
+    let mut thread = crate::browser_thread().unwrap();
     thread.enable_network(Default::default()).unwrap();
     (server, thread)
 }

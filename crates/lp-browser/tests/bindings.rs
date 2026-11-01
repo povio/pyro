@@ -34,7 +34,7 @@ fn isolated_world_event_reports_the_document_origin() {
             }
         }
     }
-    let mut thread = BrowserThread::new().unwrap();
+    let mut thread = crate::browser_thread().unwrap();
     let page = thread.browser.create_page().unwrap();
     let origins = Rc::new(Origins(RefCell::new(Vec::new())));
     thread.browser.set_observer(Some(origins.clone()));
@@ -49,7 +49,7 @@ fn isolated_world_event_reports_the_document_origin() {
 
 #[test]
 fn bindings_exist_before_init_scripts_and_follow_document_lifecycle() {
-    let mut thread = BrowserThread::new().unwrap();
+    let mut thread = crate::browser_thread().unwrap();
     let page = thread.browser.create_page().unwrap();
     assert_eq!(eval(&thread, page, "document.body.tagName + ':' + document.readyState"), "BODY:complete");
     thread.browser.add_init_script(page, InitScript {
@@ -85,7 +85,7 @@ fn bindings_exist_before_init_scripts_and_follow_document_lifecycle() {
 
 #[test]
 fn isolated_worlds_share_dom_and_navigation_releases_old_binding_state() {
-    let mut thread = BrowserThread::new().unwrap();
+    let mut thread = crate::browser_thread().unwrap();
     let page = thread.browser.create_page().unwrap();
     let old = thread.browser.page(page).unwrap().main_frame.page_dom.as_ref().unwrap().clone();
     let weak = Rc::downgrade(&old);
@@ -116,7 +116,7 @@ fn isolated_worlds_share_dom_and_navigation_releases_old_binding_state() {
 
 #[test]
 fn binding_tasks_are_dropped_after_their_document_is_replaced() {
-    let mut thread = BrowserThread::new().unwrap();
+    let mut thread = crate::browser_thread().unwrap();
     let page = thread.browser.create_page().unwrap();
     let weak = Rc::downgrade(thread.browser.page(page).unwrap().main_frame.page_dom.as_ref().unwrap());
     eval(
@@ -134,7 +134,7 @@ fn binding_tasks_are_dropped_after_their_document_is_replaced() {
 
 #[test]
 fn async_module_graph_delays_load_until_evaluation_finishes() {
-    let mut thread = BrowserThread::new().unwrap();
+    let mut thread = crate::browser_thread().unwrap();
     let page = thread.browser.create_page().unwrap();
     let loader = Rc::new(StaticLoader::default());
     loader.insert("http://site.test/", "text/html", "<script>addEventListener('load', () => globalThis.atLoad = globalThis.moduleValue)</script><script async type=module src='/entry.js'></script>", Duration::ZERO);
@@ -158,7 +158,7 @@ fn async_module_graph_delays_load_until_evaluation_finishes() {
 
 #[test]
 fn storage_survives_navigation_with_context_and_page_partitions() {
-    let mut thread = BrowserThread::new().unwrap();
+    let mut thread = crate::browser_thread().unwrap();
     let loader = Rc::new(StaticLoader::default());
     for url in ["http://site.test/one", "http://site.test/two", "http://other.test/"] {
         loader.insert(url, "text/html", "<p>storage</p>", Duration::ZERO);
@@ -212,7 +212,7 @@ fn storage_survives_navigation_with_context_and_page_partitions() {
 /// awaits these before a dynamic `import()`.
 #[test]
 fn preload_links_fire_load_and_error() {
-    let mut thread = BrowserThread::new().unwrap();
+    let mut thread = crate::browser_thread().unwrap();
     let page = thread.browser.create_page().unwrap();
     let loader = Rc::new(StaticLoader::default());
     loader.insert("http://site.test/", "text/html", r#"<!doctype html><html><head>
@@ -244,7 +244,7 @@ fn preload_links_fire_load_and_error() {
 /// preload rejects the import.
 #[test]
 fn modulepreload_source_is_reused_by_import() {
-    let mut thread = BrowserThread::new().unwrap();
+    let mut thread = crate::browser_thread().unwrap();
     let page = thread.browser.create_page().unwrap();
     let loader = Rc::new(StaticLoader::default());
     loader.insert(

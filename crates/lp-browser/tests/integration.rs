@@ -25,6 +25,21 @@ mod stylesheets_http;
 mod user_agent;
 mod viewport;
 
+/// Loads nothing: the pages' sub-resources come from the loader.
+struct NoFetch;
+impl lp_render::Fetcher for NoFetch {
+    fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+        done(Err(format!("{url}: offline")));
+    }
+}
+
+/// A browser thread whose pages are styled and laid out by Blitz, as the
+/// binary's are (lp-cdp installs the same on its threads).
+pub(crate) fn browser_thread() -> Result<lp_browser::BrowserThread, lp_js::JsError> {
+    lp_layout::install(std::sync::Arc::new(NoFetch));
+    lp_browser::BrowserThread::new()
+}
+
 /// `autotests = false` means a file in tests/ that is neither a module here nor
 /// its own `[[test]]` target would silently never run.
 #[test]

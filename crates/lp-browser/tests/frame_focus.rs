@@ -10,7 +10,7 @@ fn eval(realm: &Realm, source: &str) -> String {
         .unwrap()
 }
 fn setup() -> (BrowserThread, PageId, Realm) {
-    let mut t = BrowserThread::new().unwrap();
+    let mut t = crate::browser_thread().unwrap();
     let page = t.browser.create_page().unwrap();
     let realm = t.browser.page(page).unwrap().main_frame.main_realm().unwrap().clone();
     eval(&realm, "globalThis.a=document.createElement('input');a.id='root';document.body.append(a);globalThis.f=document.createElement('iframe');f.id='owner';document.body.append(f);globalThis.c=f.contentDocument.createElement('input');c.id='child';f.contentDocument.body.append(c)");

@@ -27,7 +27,7 @@ fn eval(t: &BrowserThread, page: PageId, source: &str) -> String {
 #[test]
 fn blank_navigation_supersedes_started_document_success_and_failure() {
     for success in [true, false] {
-        let mut t = BrowserThread::new().unwrap();
+        let mut t = crate::browser_thread().unwrap();
         let page = t.browser.create_page().unwrap();
         let loader = Rc::new(StaticLoader::default());
         if success {
@@ -51,7 +51,7 @@ fn blank_navigation_supersedes_started_document_success_and_failure() {
 #[test]
 fn failed_replacement_does_not_replace_the_next_navigation_history_entry() {
     for asynchronous in [false, true] {
-        let mut t = BrowserThread::new().unwrap();
+        let mut t = crate::browser_thread().unwrap();
         let page = t.browser.create_page().unwrap();
         let loader = Rc::new(StaticLoader::default());
         loader.insert("http://new.test/", "text/html", "<p>new</p>", Duration::ZERO);
@@ -73,7 +73,7 @@ fn failed_replacement_does_not_replace_the_next_navigation_history_entry() {
 
 #[test]
 fn superseded_replacement_does_not_replace_the_winning_navigation_history_entry() {
-    let mut t = BrowserThread::new().unwrap();
+    let mut t = crate::browser_thread().unwrap();
     let page = t.browser.create_page().unwrap();
     let loader = Rc::new(StaticLoader::default());
     loader.insert("http://old.test/", "text/html", "<p>old</p>", Duration::ZERO);
@@ -87,7 +87,7 @@ fn superseded_replacement_does_not_replace_the_winning_navigation_history_entry(
 
 #[test]
 fn successful_replacement_still_replaces_exactly_one_entry() {
-    let mut t = BrowserThread::new().unwrap();
+    let mut t = crate::browser_thread().unwrap();
     let page = t.browser.create_page().unwrap();
     let loader = Rc::new(StaticLoader::default());
     for url in ["http://old.test/", "http://new.test/"] {

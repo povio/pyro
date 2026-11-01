@@ -12,7 +12,7 @@ fn settle(thread: &mut BrowserThread) {
     assert_ne!(thread.run_until_idle(Some(Instant::now() + Duration::from_secs(3))), lp_runtime::RunOutcome::TimedOut);
 }
 fn setup(html: &str) -> (BrowserThread, PageId, Rc<StaticLoader>) {
-    let mut thread = BrowserThread::new().unwrap();
+    let mut thread = crate::browser_thread().unwrap();
     let page = thread.browser.create_page().unwrap();
     thread.browser.add_init_script(page, InitScript {
         id: "events".into(), world: None,
