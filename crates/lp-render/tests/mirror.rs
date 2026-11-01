@@ -713,3 +713,42 @@ fn a_new_container_filled_in_one_delta_syncs_as_a_delta() {
         assert_eq!(boxes(&r, &page), boxes(&w, &page), "boxes after step {i}");
     }
 }
+
+/// Pagination scripts add a container, fill it and append to a `<style>` in
+/// one go: each sync must still be a delta, and give what syncing the whole
+/// tree gives.
+#[test]
+fn a_style_edit_after_a_new_container_syncs_as_deltas() {
+    let page = Page::new(
+        "<!doctype html><html><head><style id=s>.box{height:10px}</style></head><body><div id=a class=box></div></body></html>",
+    );
+    let (mut r, mut w) = (Renderer::new(), Renderer::new());
+    r.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+    let body = page.find("body");
+    let style = page.find("#s");
+    let steps: [&dyn Fn(&Page); 2] = [
+        &|p: &Page| {
+            let mut dom = p.dom.borrow_mut();
+            let c = dom.create_element(p.doc, "div").unwrap();
+            dom.append_child(body, c).unwrap();
+            // Filled after it was inserted, within the same delta.
+            let child = dom.create_element(p.doc, "div").unwrap();
+            dom.set_attribute(child, "class", "box").unwrap();
+            dom.append_child(c, child).unwrap();
+        },
+        &|p: &Page| {
+            p.dom.borrow_mut().set_text_content(style, ".box{height:30px}").unwrap();
+        },
+    ];
+    for (i, step) in steps.iter().enumerate() {
+        let since = page.dom.borrow().version();
+        step(&page);
+        let delta = page.dom.borrow().render_delta(page.doc, since, &Page::opts()).expect("a delta");
+        r.sync_delta(1, &delta_ops(delta), (640, 480, 1.0, false)).unwrap_or_else(|e| panic!("step {i}: {e:?}"));
+        w.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+        assert_eq!(r.mirrored_html(1), w.mirrored_html(1), "markup after step {i}");
+        assert_eq!(boxes(&r, &page), boxes(&w, &page), "boxes after step {i}");
+    }
+    let a = r.element_box(1, lp_dom::snapshot::render_key(page.find("#a"))).unwrap();
+    assert_eq!(a.height, 30.0, "the edited sheet applies");
+}

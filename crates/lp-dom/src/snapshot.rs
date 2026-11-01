@@ -406,8 +406,9 @@ impl Dom {
     /// changed in place, and the new render children of every node whose
     /// children changed, with the subtrees of those inserted. `None` when the
     /// journal does not cover `since` or a change needs the whole tree
-    /// (unknown changes, shadow trees, `<style>`/`<textarea>`/`<link>`/
-    /// frames, whose render content is not their DOM content).
+    /// (unknown changes, shadow trees, `<textarea>`/`<link>`/frames, whose
+    /// render content is not their DOM content). A change of a `<style>`'s
+    /// content gives its sheet text.
     pub fn render_delta(&self, doc: NodeId, since: u64, opts: &RenderHtml<'_>) -> Option<RenderDelta> {
         let d = self.check(doc).ok()?;
         if self.shadow_root_count() != 0 || opts.mark.is_some() {
@@ -489,6 +490,20 @@ impl Dom {
                 i = parent;
             }
         };
+        // The `<style>` element `i` is or is in: its render content is its
+        // sheet's text, which a change inside it replaces.
+        let style_owner = |mut i: u32| -> Option<u32> {
+            while i != NIL && i != d {
+                if let NodeKind::Element(e) = &self.n(i).kind {
+                    if e.is_html() && &*e.name.local == "style" {
+                        return Some(i);
+                    }
+                }
+                i = self.n(i).parent;
+            }
+            None
+        };
+        let mut styles: Vec<u32> = Vec::new();
         // Nodes inside a subtree that is serialized whole (an inserted one).
         let covered = |mut i: u32| {
             i = self.n(i).parent;
@@ -506,7 +521,13 @@ impl Dom {
         parents.dedup();
         for &p in &parents {
             match rendered(p) {
-                Err(()) => return None,
+                Err(()) => match style_owner(p) {
+                    Some(owner) => {
+                        styles.push(owner);
+                        continue;
+                    }
+                    None => return None,
+                },
                 Ok(false) => continue,
                 Ok(true) => {}
             }
@@ -535,7 +556,14 @@ impl Dom {
         changed.dedup();
         for i in changed {
             match rendered(i) {
-                Err(()) => return None,
+                // Inside a `<style>` (its own attributes still need the whole tree).
+                Err(()) => match style_owner(i).filter(|&owner| owner != i) {
+                    Some(owner) => {
+                        styles.push(owner);
+                        continue;
+                    }
+                    None => return None,
+                },
                 Ok(false) => continue,
                 Ok(true) => {}
             }
@@ -551,7 +579,39 @@ impl Dom {
             }
             ops.push(DeltaOp::Node { key: first.key, kind: first.kind });
         }
+        // A `<style>` whose content changed: its sheet text (unless the
+        // element itself is new, and serialized whole above).
+        styles.sort_unstable();
+        styles.dedup();
+        for owner in styles {
+            if covered(owner) || inserted.contains(&owner) {
+                continue;
+            }
+            let parent = self.n(owner).parent;
+            if parent == NIL {
+                continue;
+            }
+            match rendered(parent) {
+                Ok(true) => {}
+                Ok(false) => continue,
+                Err(()) => return None,
+            }
+            let id = self.id_of(owner);
+            let text = (opts.style_text)(id).unwrap_or_else(|| self.text_content(id).ok().flatten().unwrap_or_default());
+            ops.push(DeltaOp::Node { key: render_key(id) | SYNTHETIC_TEXT, kind: RenderNodeKind::Text(text) });
+        }
         Some(RenderDelta { ops })
+    }
+
+    /// The `<style>` sheet text the render tree gives `owner` (see
+    /// [`Dom::render_delta`]), as a delta op.
+    pub fn render_style_text(&self, owner: NodeId, opts: &RenderHtml<'_>) -> Option<DeltaOp> {
+        let e = self.node(owner).ok()?.element()?;
+        if !(e.is_html() && &*e.name.local == "style") {
+            return None;
+        }
+        let text = (opts.style_text)(owner).unwrap_or_else(|| self.text_content(owner).ok().flatten().unwrap_or_default());
+        Some(DeltaOp::Node { key: render_key(owner) | SYNTHETIC_TEXT, kind: RenderNodeKind::Text(text) })
     }
 
     /// The pseudo-class states of element `n` a renderer cannot derive from

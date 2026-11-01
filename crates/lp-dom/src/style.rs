@@ -3633,6 +3633,9 @@ pub struct StyleEngine {
     sheets: Vec<Sheet>,
     popover_open: FxHashSet<NodeId>,
     generation: u64,
+    /// Generation bumps by [`StyleEngine::invalidate`] (anything but a sheet
+    /// being added or filled).
+    invalidations: u64,
     /// Set by every generation bump except a sheet being added or filled
     /// (`add_sheet`, `discover_style_elements`): the next rebuild then clears
     /// every cached style instead of restyling the added rules' subjects.
@@ -3682,6 +3685,7 @@ impl StyleEngine {
             sheets: Vec::new(),
             popover_open: FxHashSet::default(),
             generation: 0,
+            invalidations: 0,
             full_restyle: Cell::new(true),
             cache: RefCell::new(Cache::default()),
             stylo: RefCell::new(None),
@@ -4047,7 +4051,15 @@ impl StyleEngine {
     /// doesn't cover (form state written through `control_state_mut`, ...).
     pub fn invalidate(&mut self) {
         self.generation += 1;
+        self.invalidations += 1;
         self.full_restyle.set(true);
+    }
+
+    /// How many generation bumps were not a sheet being added or filled
+    /// (viewport, removed sheets, popovers, state the DOM version does not
+    /// cover): while it is unchanged, the sheets' texts are all that changed.
+    pub fn invalidations(&self) -> u64 {
+        self.invalidations
     }
 
     /// A sheet was added, or an empty one got its text: the rule set must be

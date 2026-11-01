@@ -73,9 +73,9 @@ mod profile {
             if i == 0 && v[0].0 % 250 == 0 {
                 let ms = |a: &std::sync::atomic::AtomicU64| a.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1e6;
                 eprintln!(
-                    "lp-geometry-profile pid={} sync={}/{:?} rebuild={}/{:?} document={}/{:?} box={}/{:?} delta-build={:.0}ms blitz={:.0}ms mirror/settle/resolve={:?} phases(style,damage,construct,pconstruct,layout,transform,paint_tree,c_damage,subdocs)={:.0?} inline-rebuilds/bytes={:?}",
+                    "lp-geometry-profile pid={} sync={}/{:?} rebuild={}/{:?} document={}/{:?} box={}/{:?} delta-build={:.0}ms blitz={:.0}ms mirror/settle/resolve={:?} phases(style,damage,construct,pconstruct,layout,transform,paint_tree,c_damage,subdocs)={:.0?} inline-rebuilds/bytes={:?} calls/deltas={}/{}",
                     std::process::id(), v[0].0, v[0].1, v[1].0, v[1].1, v[2].0, v[2].1, v[3].0, v[3].1,
-                    ms(&super::SNAPSHOT_NS), ms(&super::LAYOUT_NS), lp_render::sync_profile::peek(), lp_render::blitz_phases(), lp_render::blitz_rebuilds()
+                    ms(&super::SNAPSHOT_NS), ms(&super::LAYOUT_NS), lp_render::sync_profile::peek(), lp_render::blitz_phases(), lp_render::blitz_rebuilds(), super::CALLS.load(std::sync::atomic::Ordering::Relaxed), super::DELTAS.load(std::sync::atomic::Ordering::Relaxed)
                 );
             }
         });
@@ -115,6 +115,7 @@ pub fn install(fetcher: Arc<dyn Fetcher>) {
         Rc::new(BlitzGeometry {
             page: NEXT_PAGE.fetch_add(1, Ordering::Relaxed),
             synced: Default::default(),
+            sheets: Default::default(),
             resources: std::cell::Cell::new(RESOURCES.load(Ordering::Relaxed)),
             base_url: RefCell::new(BLANK.into()),
             fetcher: fetcher.clone(),
@@ -127,10 +128,14 @@ pub struct BlitzGeometry {
     page: u64,
     base_url: RefCell<String>,
     fetcher: Arc<dyn Fetcher>,
-    /// The DOM version, style generation and viewport it was last synced at.
-    synced: std::cell::Cell<Option<(u64, u64, (u32, u32, u64, bool))>>,
+    /// The DOM version, style generation, viewport and style invalidations
+    /// it was last synced at.
+    synced: std::cell::Cell<Option<(u64, u64, (u32, u32, u64, bool), u64)>>,
     /// [`RESOURCES`] when its document was built.
     resources: std::cell::Cell<u64>,
+    /// Each style sheet's owner, whether it is a `<style>`, and its text's
+    /// hash, as last synced (see [`BlitzGeometry::changed_style_sheets`]).
+    sheets: RefCell<Vec<(NodeId, bool, u64)>>,
 }
 
 impl Drop for BlitzGeometry {
@@ -269,18 +274,30 @@ impl BlitzGeometry {
         let v = layout.viewport();
         let viewport =
             (v.width, v.height, v.device_scale_factor.to_bits(), v.color_scheme == lp_dom::media::ColorScheme::Dark);
-        let now = (dom.version(), layout.style().observation_stamp(dom).1, viewport);
+        let now = (dom.version(), layout.style().observation_stamp(dom).1, viewport, layout.style().invalidations());
         let last = self.synced.replace(Some(now));
         // The changes since the last sync, when the journal covers them and
         // neither sheets nor viewport changed: no whole-tree snapshot or diff.
-        if let Some((version, generation, vp)) = last {
-            if generation == now.1 && vp == viewport {
+        if let Some((version, generation, vp, invalidations)) = last {
+            // Sheets changed: when only `<style>` texts did (a script
+            // appending rules), their texts go with the delta.
+            let restyled = if generation == now.1 {
+                Some(Vec::new())
+            } else if invalidations == now.3 {
+                self.changed_style_sheets(dom, layout)
+            } else {
+                None
+            };
+            if let (Some(restyled), true) = (restyled, vp == viewport) {
                 let t = Instant::now();
                 let base_url = self.base_url.borrow().clone();
                 let sheets = RefCell::new(HashMap::new());
                 let (style_text, stylesheet_href) = Self::render_opts(dom, layout, &base_url, &sheets);
                 let opts = RenderHtml { style_text: &style_text, stylesheet_href: &stylesheet_href, mark: None };
-                let delta = dom.render_delta(layout.document(), version, &opts);
+                let delta = dom.render_delta(layout.document(), version, &opts).map(|mut delta| {
+                    delta.ops.extend(restyled.iter().filter_map(|&owner| dom.render_style_text(owner, &opts)));
+                    delta
+                });
                 SNAPSHOT_NS.fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
                 if let Some(delta) = delta {
                     let ops = convert_delta(delta);
@@ -298,6 +315,7 @@ impl BlitzGeometry {
                 }
             }
         }
+        *self.sheets.borrow_mut() = Self::sheet_hashes(dom, layout);
         let Some(snap) = self.snapshot(dom, layout) else { return };
         let fetcher = self.fetcher.clone();
         let timings = RENDERER.with(|r| {
@@ -312,6 +330,48 @@ impl BlitzGeometry {
 }
 
 impl BlitzGeometry {
+    /// Each style sheet's owner, whether it is a `<style>`, and its text's hash.
+    fn sheet_hashes(dom: &Dom, layout: &Layout) -> Vec<(NodeId, bool, u64)> {
+        use std::hash::{Hash, Hasher};
+        let style = layout.style();
+        style
+            .sheet_owners()
+            .into_iter()
+            .map(|owner| {
+                let is_style = dom.node(owner).ok().and_then(|n| n.element()).is_some_and(|e| e.is_html() && &*e.name.local == "style");
+                let mut h = std::hash::DefaultHasher::new();
+                match style.sheet_text(owner) {
+                    Some(text) => text.hash(&mut h),
+                    None => dom.text_content(owner).ok().flatten().hash(&mut h),
+                }
+                (owner, is_style, h.finish())
+            })
+            .collect()
+    }
+
+    /// The `<style>` elements whose sheet text changed since the last sync,
+    /// when nothing else about the sheets did (`None`: sync the whole tree).
+    /// Sheets added or removed with their elements come with the delta.
+    fn changed_style_sheets(&self, dom: &Dom, layout: &Layout) -> Option<Vec<NodeId>> {
+        let now = Self::sheet_hashes(dom, layout);
+        let mut last = self.sheets.borrow_mut();
+        let mut changed = Vec::new();
+        for &(owner, is_style, hash) in &now {
+            match last.iter().find(|s| s.0 == owner) {
+                Some(&(_, _, old)) if old == hash => {}
+                Some(_) if is_style => changed.push(owner),
+                Some(_) => return None,
+                None if is_style => {}
+                None => return None,
+            }
+        }
+        if last.iter().any(|s| !s.1 && !now.iter().any(|n| n.0 == s.0)) {
+            return None;
+        }
+        *last = now;
+        Some(changed)
+    }
+
     fn sync_inner(&self, dom: &Dom, layout: &Layout) {
         let resources = RESOURCES.load(Ordering::Relaxed);
         let rebuild = self.resources.replace(resources) != resources;
