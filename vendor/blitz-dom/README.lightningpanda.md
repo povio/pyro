@@ -63,3 +63,7 @@ lp-render's mirror tests (incremental documents against fresh builds after rando
   40x30 input is 48x36), textareas keep `1px solid` / `2px`.
 - `src/document.rs`: `set_hover_node` puts `:hover` on a node and its ancestors (an embedder that tracks
   the pointer itself: lightningpanda mirrors lp-dom's hovered element).
+- `src/document.rs`: Stylo's prefs for `:nth-child(An+B of S)`, container and style queries,
+  `@starting-style`, `@scope`, `line-clamp`, `fit-content()` and `@supports at-rule()` are on, as in
+  lp-dom's cascade. The prefs are process-wide and read while sheets are parsed, so Blitz used to drop
+  those rules unless lp-dom's cascade had been created first.

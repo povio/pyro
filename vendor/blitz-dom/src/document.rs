@@ -442,6 +442,17 @@ impl BaseDocument {
         #[cfg(feature = "writing-mode")]
         style_config::set_pref!("layout.writing-mode.enabled", true);
         style_config::set_pref!("layout.threads", -1);
+        // lightningpanda: the features lp-dom's cascade enables. Prefs are
+        // process-wide and read while parsing, so without these a sheet
+        // parsed here before lp-dom's first cascade dropped such rules.
+        style_config::set_pref!("layout.container-queries.enabled", true);
+        style_config::set_pref!("layout.css.nth-child-of.enabled", true);
+        style_config::set_pref!("layout.css.starting-style-at-rules.enabled", true);
+        style_config::set_pref!("layout.css.at-scope.enabled", true);
+        style_config::set_pref!("layout.css.style-queries.enabled", true);
+        style_config::set_pref!("layout.css.line-clamp.enabled", true);
+        style_config::set_pref!("layout.css.fit-content-function.enabled", true);
+        style_config::set_pref!("layout.css.supports.at-rule.enabled", true);
 
         let viewport = config.viewport.unwrap_or_default();
         let media_type = config.media_type.unwrap_or_else(MediaType::screen);
