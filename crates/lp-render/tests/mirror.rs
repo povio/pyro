@@ -726,7 +726,7 @@ fn a_style_edit_after_a_new_container_syncs_as_deltas() {
     r.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
     let body = page.find("body");
     let style = page.find("#s");
-    let steps: [&dyn Fn(&Page); 2] = [
+    let steps: [&dyn Fn(&Page); 4] = [
         &|p: &Page| {
             let mut dom = p.dom.borrow_mut();
             let c = dom.create_element(p.doc, "div").unwrap();
@@ -738,6 +738,13 @@ fn a_style_edit_after_a_new_container_syncs_as_deltas() {
         },
         &|p: &Page| {
             p.dom.borrow_mut().set_text_content(style, ".box{height:30px}").unwrap();
+        },
+        // Its own attributes: a media query that does not match.
+        &|p: &Page| {
+            p.dom.borrow_mut().set_attribute(style, "media", "print").unwrap();
+        },
+        &|p: &Page| {
+            p.dom.borrow_mut().remove_attribute(style, "media").unwrap();
         },
     ];
     for (i, step) in steps.iter().enumerate() {

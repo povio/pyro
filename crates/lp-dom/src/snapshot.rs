@@ -555,13 +555,18 @@ impl Dom {
         changed.sort_unstable();
         changed.dedup();
         for i in changed {
-            match rendered(i) {
-                // Inside a `<style>` (its own attributes still need the whole tree).
+            // A `<style>`'s own attributes: the element (its text stays its
+            // sheet's).
+            let is_style = style_owner(i) == Some(i);
+            let place = if is_style && self.n(i).parent != NIL { rendered(self.n(i).parent) } else { rendered(i) };
+            match place {
+                // Inside a `<style>`: its sheet text.
                 Err(()) => match style_owner(i).filter(|&owner| owner != i) {
                     Some(owner) => {
                         styles.push(owner);
                         continue;
                     }
+                    None if covered(i) || inserted.contains(&i) => continue,
                     None => return None,
                 },
                 Ok(false) => continue,
@@ -578,6 +583,9 @@ impl Dom {
                 return None;
             }
             ops.push(DeltaOp::Node { key: first.key, kind: first.kind });
+            if is_style {
+                styles.push(i);
+            }
         }
         // A `<style>` whose content changed: its sheet text (unless the
         // element itself is new, and serialized whole above).
