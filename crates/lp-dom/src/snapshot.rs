@@ -510,7 +510,8 @@ impl Dom {
                 Ok(false) => continue,
                 Ok(true) => {}
             }
-            if covered(p) || !seen.insert(p) {
+            // An inserted node's children are in its own serialized subtree.
+            if covered(p) || inserted.contains(&p) || !seen.insert(p) {
                 continue;
             }
             let kids: Vec<u32> = self.child_idx_iter(p).filter(|&k| self.render_child(k)).collect();
