@@ -5734,7 +5734,11 @@ mod screenshot {
         );
         load_html(&mut h, CARD);
         let r = h.page("Page.captureScreenshot", json!({}));
-        assert_eq!(mirror_of(&r), json!({"rebuilt": "first", "mutations": mirror_of(&r)["mutations"], "pages": 1}), "{r}");
+        assert_eq!(
+            mirror_of(&r),
+            json!({"rebuilt": "first", "mutations": mirror_of(&r)["mutations"], "pages": 1}),
+            "{r}"
+        );
         // Nothing changed: the same tree, not even diffed.
         let r = h.page("Page.captureScreenshot", json!({}));
         assert_eq!(mirror_of(&r), json!({"rebuilt": null, "mutations": 0, "pages": 1}), "{r}");

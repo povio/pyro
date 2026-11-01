@@ -924,4 +924,3 @@ impl PageDom {
         f(&mut self.dom.borrow_mut())
     }
 }
-

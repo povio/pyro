@@ -172,7 +172,10 @@ fn convert_delta(d: lp_dom::snapshot::RenderDelta) -> Vec<DeltaOp> {
             D::Children { parent, kids, nodes } => DeltaOp::Children {
                 parent,
                 kids,
-                nodes: nodes.into_iter().map(|n| TreeNode { key: n.key, parent: n.parent, kind: kind(n.kind) }).collect(),
+                nodes: nodes
+                    .into_iter()
+                    .map(|n| TreeNode { key: n.key, parent: n.parent, kind: kind(n.kind) })
+                    .collect(),
             },
         })
         .collect()
@@ -338,7 +341,11 @@ impl BlitzGeometry {
             .sheet_owners()
             .into_iter()
             .map(|owner| {
-                let is_style = dom.node(owner).ok().and_then(|n| n.element()).is_some_and(|e| e.is_html() && &*e.name.local == "style");
+                let is_style = dom
+                    .node(owner)
+                    .ok()
+                    .and_then(|n| n.element())
+                    .is_some_and(|e| e.is_html() && &*e.name.local == "style");
                 let mut h = std::hash::DefaultHasher::new();
                 match style.sheet_text(owner) {
                     Some(text) => text.hash(&mut h),
@@ -415,15 +422,28 @@ impl BlitzGeometry {
                 .words
                 .into_iter()
                 .map(|(k, w)| {
-                    (k, ExternalWord { x: w.x, y: w.y, width: w.width, height: w.height, fixed: w.fixed, edges: w.edges })
+                    (
+                        k,
+                        ExternalWord {
+                            x: w.x,
+                            y: w.y,
+                            width: w.width,
+                            height: w.height,
+                            fixed: w.fixed,
+                            edges: w.edges,
+                        },
+                    )
                 })
                 .collect(),
-            sticky: out.sticky.into_iter().map(|(k, s)| (k, ExternalSticky { insets: s.insets, limit: s.limit })).collect(),
+            sticky: out
+                .sticky
+                .into_iter()
+                .map(|(k, s)| (k, ExternalSticky { insets: s.insets, limit: s.limit }))
+                .collect(),
             document_width: out.document_width,
             document_height: out.document_height,
         })
     }
-
 }
 
 impl GeometrySource for BlitzGeometry {
@@ -481,12 +501,20 @@ impl GeometrySource for BlitzGeometry {
 /// `Page.printToPDF` from the page document's own Blitz document (the one
 /// its layout queries were answered from), on this thread. `None`: the
 /// document has no Blitz geometry.
-pub fn print_pdf(dom: &Dom, layout: &Layout, opts: &lp_render::PdfOptions) -> Option<Result<lp_render::PdfOutput, String>> {
+pub fn print_pdf(
+    dom: &Dom,
+    layout: &Layout,
+    opts: &lp_render::PdfOptions,
+) -> Option<Result<lp_render::PdfOutput, String>> {
     let source = layout.synced_geometry_source(dom)?;
     let page = source.as_any().downcast_ref::<BlitzGeometry>()?.page;
     let v = layout.viewport();
     RENDERER.with(|r| {
         let mut r = r.try_borrow_mut().ok()?;
-        Some(r.as_mut()?.print_pdf_page(page, (v.width, v.height), v.device_scale_factor, opts).map_err(|e| e.to_string()))
+        Some(
+            r.as_mut()?
+                .print_pdf_page(page, (v.width, v.height), v.device_scale_factor, opts)
+                .map_err(|e| e.to_string()),
+        )
     })
 }

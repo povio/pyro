@@ -183,10 +183,7 @@ impl TextRun {
     /// run's left edge, as Chromium places a caret under a point.
     pub fn offset_at(&self, dx: f64) -> u32 {
         let x = self.rect.x + dx;
-        self.edges
-            .iter()
-            .min_by(|a, b| (a.1 - x).abs().total_cmp(&(b.1 - x).abs()))
-            .map_or(self.start, |e| e.0)
+        self.edges.iter().min_by(|a, b| (a.1 - x).abs().total_cmp(&(b.1 - x).abs())).map_or(self.start, |e| e.0)
     }
 }
 

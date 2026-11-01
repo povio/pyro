@@ -380,13 +380,7 @@ impl EngineHost {
         let deliver = self.renders.deliver(self.thread.handle());
         let job = Job::Pdf { snapshot, opts, fetcher, done: Box::new(move |r| deliver(Finished::Pdf(token, r))) };
         self.renders.worker()?.submit(job).map_err(|_| CdpError::server("the render thread is gone"))?;
-        let wait = CaptureWait {
-            id: cmd.command.id,
-            session: cmd.session_id.to_owned(),
-            started,
-            snapshot_ms,
-            stream,
-        };
+        let wait = CaptureWait { id: cmd.command.id, session: cmd.session_id.to_owned(), started, snapshot_ms, stream };
         self.renders.captures.insert(token, wait);
         Ok(None)
     }

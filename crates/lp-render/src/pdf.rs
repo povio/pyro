@@ -184,8 +184,12 @@ impl Replay<'_, '_> {
             // hole out with a `DestOut` layer. PDF has no destination-out;
             // the same pixels are one even-odd fill of box minus hole (the
             // blur is dropped).
-            if let (RenderCommand::Fill(f), Some(RenderCommand::PushLayer(l)), Some(RenderCommand::BoxShadow(b)), Some(RenderCommand::PopLayer)) =
-                (cmd, cmds.get(i), cmds.get(i + 1), cmds.get(i + 2))
+            if let (
+                RenderCommand::Fill(f),
+                Some(RenderCommand::PushLayer(l)),
+                Some(RenderCommand::BoxShadow(b)),
+                Some(RenderCommand::PopLayer),
+            ) = (cmd, cmds.get(i), cmds.get(i + 1), cmds.get(i + 2))
             {
                 if l.blend.compose == peniko::Compose::DestOut {
                     i += 3;
@@ -241,7 +245,8 @@ impl Replay<'_, '_> {
                     // Zero-area shapes (the ring of a zero-width border) and
                     // invisible colors: a PDF rasterizer paints every pixel a
                     // fill touches, so these would show as hairlines.
-                    if c.shape.area().abs() < 1e-3 || matches!(&c.brush, Paint::Solid(col) if col.components[3] == 0.0) {
+                    if c.shape.area().abs() < 1e-3 || matches!(&c.brush, Paint::Solid(col) if col.components[3] == 0.0)
+                    {
                         self.stats.degenerate_skipped += 1;
                         continue;
                     }
@@ -351,7 +356,11 @@ impl Replay<'_, '_> {
     }
 
     /// The brush as a krilla paint and its opacity.
-    fn paint(&mut self, brush: &Paint, brush_transform: Option<Affine>) -> Option<(krilla::paint::Paint, NormalizedF32)> {
+    fn paint(
+        &mut self,
+        brush: &Paint,
+        brush_transform: Option<Affine>,
+    ) -> Option<(krilla::paint::Paint, NormalizedF32)> {
         match brush {
             Paint::Solid(c) => {
                 let c = c.to_rgba8();
@@ -517,7 +526,12 @@ fn transform(a: Affine) -> Transform {
 
 fn rect_path(r: Rect) -> Option<Path> {
     let mut b = PathBuilder::new();
-    b.push_rect(krilla::geom::Rect::from_ltrb(r.x0 as f32, r.y0 as f32, r.x1.max(r.x0 + 0.001) as f32, r.y1.max(r.y0 + 0.001) as f32)?);
+    b.push_rect(krilla::geom::Rect::from_ltrb(
+        r.x0 as f32,
+        r.y0 as f32,
+        r.x1.max(r.x0 + 0.001) as f32,
+        r.y1.max(r.y0 + 0.001) as f32,
+    )?);
     b.finish()
 }
 

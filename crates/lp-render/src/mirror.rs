@@ -410,7 +410,11 @@ impl Mirror {
                     created.extend(nodes.iter().map(|n| n.key));
                     if kids.iter().any(|k| !self.nodes.contains_key(k) && !created.contains(k)) {
                         if std::env::var_os("LP_MIRRORDBG").is_some() {
-                            eprintln!("mirror-profile unknown kid parent={parent:x?} kids={} new={}", kids.len(), nodes.len());
+                            eprintln!(
+                                "mirror-profile unknown kid parent={parent:x?} kids={} new={}",
+                                kids.len(),
+                                nodes.len()
+                            );
                         }
                         return Err(Rebuild::Changes);
                     }

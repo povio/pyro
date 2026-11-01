@@ -575,7 +575,10 @@ fn delta_ops(d: lp_dom::snapshot::RenderDelta) -> Vec<DeltaOp> {
             D::Children { parent, kids, nodes } => DeltaOp::Children {
                 parent,
                 kids,
-                nodes: nodes.into_iter().map(|n| TreeNode { key: n.key, parent: n.parent, kind: kind(n.kind) }).collect(),
+                nodes: nodes
+                    .into_iter()
+                    .map(|n| TreeNode { key: n.key, parent: n.parent, kind: kind(n.kind) })
+                    .collect(),
             },
         })
         .collect()
@@ -584,7 +587,11 @@ fn delta_ops(d: lp_dom::snapshot::RenderDelta) -> Vec<DeltaOp> {
 /// Runs random mutation sequences on the fixtures, syncing one renderer from
 /// lp-dom's change journal (`sync_delta`) and one from the whole tree
 /// (`sync_layout`), and calls `check(delta, whole, page, what)` after each.
-fn delta_sequences(steps_debug: u64, steps_release: u64, mut check: impl FnMut(&Renderer, &Renderer, &Page, &str)) -> (u32, u32) {
+fn delta_sequences(
+    steps_debug: u64,
+    steps_release: u64,
+    mut check: impl FnMut(&Renderer, &Renderer, &Page, &str),
+) -> (u32, u32) {
     let fixtures = ["login", "dashboard", "article"];
     let env = |k: &str| std::env::var(k).ok().and_then(|v| v.parse::<u64>().ok());
     let steps = env("LP_MIRROR_STEPS").unwrap_or(if cfg!(debug_assertions) { steps_debug } else { steps_release });
@@ -692,17 +699,15 @@ fn a_new_container_filled_in_one_delta_syncs_as_a_delta() {
     let (mut r, mut w) = (Renderer::new(), Renderer::new());
     r.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
     let body = page.find("body");
-    let steps: [&dyn Fn(&Page); 1] = [
-        &|p: &Page| {
-            let mut dom = p.dom.borrow_mut();
-            let c = dom.create_element(p.doc, "div").unwrap();
-            dom.append_child(body, c).unwrap();
-            // Filled after it was inserted, within the same delta.
-            let child = dom.create_element(p.doc, "div").unwrap();
-            dom.set_attribute(child, "class", "box").unwrap();
-            dom.append_child(c, child).unwrap();
-        },
-    ];
+    let steps: [&dyn Fn(&Page); 1] = [&|p: &Page| {
+        let mut dom = p.dom.borrow_mut();
+        let c = dom.create_element(p.doc, "div").unwrap();
+        dom.append_child(body, c).unwrap();
+        // Filled after it was inserted, within the same delta.
+        let child = dom.create_element(p.doc, "div").unwrap();
+        dom.set_attribute(child, "class", "box").unwrap();
+        dom.append_child(c, child).unwrap();
+    }];
     for (i, step) in steps.iter().enumerate() {
         let since = page.dom.borrow().version();
         step(&page);

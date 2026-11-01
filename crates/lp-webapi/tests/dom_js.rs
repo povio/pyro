@@ -2087,7 +2087,10 @@ fn intersection_observer_clips_ancestors_and_tracks_scroll_styles() {
     );
     e.page.after_task();
     tasks.drain();
-    assert_eq!(eval(&e.main,"records.length===1 && records[0].isIntersecting && records[0].intersectionRatio===.25"),"true");
+    assert_eq!(
+        eval(&e.main, "records.length===1 && records[0].isIntersecting && records[0].intersectionRatio===.25"),
+        "true"
+    );
     assert_eq!(eval(&e.main, "clip.style.overflow='visible'; 'ok'"), "ok");
     e.page.after_task();
     tasks.drain();
@@ -5461,7 +5464,10 @@ fn live_collections_follow_changes_in_their_own_subtree() {
     assert_eq!(eval(r, "kids.length + ':' + xs.length + ':' + nodes.length + ':' + ps.length"), "3:2:3:3");
     // Text written under a child keeps `children`, and a loop over it sees
     // every child once.
-    assert_eq!(eval(r, "let n = 0; for (const c of kids) { c.textContent = 'v' + n++; } n + ':' + kids[2].textContent"), "3:v2");
+    assert_eq!(
+        eval(r, "let n = 0; for (const c of kids) { c.textContent = 'v' + n++; } n + ':' + kids[2].textContent"),
+        "3:v2"
+    );
     // A change elsewhere in the document does not affect them...
     eval(r, "document.getElementById('other').append(document.createElement('p')); document.getElementById('other').className = 'y'");
     assert_eq!(eval(r, "kids.length + ':' + xs.length + ':' + ps.length"), "3:2:4");
@@ -5470,9 +5476,18 @@ fn live_collections_follow_changes_in_their_own_subtree() {
     assert_eq!(eval(r, "list.append(document.createElement('p')); kids.length + ':' + ps.length"), "4:5");
     assert_eq!(eval(r, "kids[0].remove(); kids.length + ':' + xs.length + ':' + xs[0].textContent"), "3:2:v1");
     assert_eq!(eval(r, "list.prepend(kids[1]); kids[0].textContent + ':' + xs[0].textContent"), "v2:v2");
-    assert_eq!(eval(r, "const before = nodes.length; list.append('text'); before + ':' + nodes.length + ':' + kids.length"), "3:4:3");
+    assert_eq!(
+        eval(r, "const before = nodes.length; list.append('text'); before + ':' + nodes.length + ':' + kids.length"),
+        "3:4:3"
+    );
     // A nested insertion counts for descendant collections.
-    assert_eq!(eval(r, "kids[0].append(Object.assign(document.createElement('p'), {className: 'x'})); xs.length + ':' + ps.length"), "3:5");
+    assert_eq!(
+        eval(
+            r,
+            "kids[0].append(Object.assign(document.createElement('p'), {className: 'x'})); xs.length + ':' + ps.length"
+        ),
+        "3:5"
+    );
 }
 
 #[test]
@@ -5492,7 +5507,10 @@ fn class_name_collections_ignore_case_in_quirks_mode() {
     {
         let e = env("<body><i class=Foo></i><i class=foo></i></body>");
         let r = &e.main;
-        assert_eq!(eval(r, "document.compatMode + ':' + document.getElementsByClassName('FOO').length"), "BackCompat:2");
+        assert_eq!(
+            eval(r, "document.compatMode + ':' + document.getElementsByClassName('FOO').length"),
+            "BackCompat:2"
+        );
     }
     let e = env("<!doctype html><body><i class=Foo></i><i class=foo></i></body>");
     let r = &e.main;
@@ -5514,5 +5532,11 @@ fn mutation_observers_still_see_every_mutation() {
         "1"
     );
     // After every observer disconnects, mutations are not recorded.
-    assert_eq!(eval(r, "mo.disconnect(); mo2.disconnect(); box.append('more'); mo.takeRecords().length + mo2.takeRecords().length"), "0");
+    assert_eq!(
+        eval(
+            r,
+            "mo.disconnect(); mo2.disconnect(); box.append('more'); mo.takeRecords().length + mo2.takeRecords().length"
+        ),
+        "0"
+    );
 }

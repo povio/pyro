@@ -168,21 +168,21 @@ fn measure(page: &PageDom, id: NodeId) -> Option<Sizes> {
         return Some(Sizes::default());
     }
     let pad = |side: &str| {
-            layout
-                .style()
-                .used_value(&dom, id, &format!("padding-{side}"))
-                .and_then(|v| v.trim().strip_suffix("px").and_then(|n| n.parse::<f64>().ok()))
-                .unwrap_or(0.0)
-        };
-        let width = (layout.client_width(&dom, id) - pad("left") - pad("right")).max(0.0);
-        let height = (layout.client_height(&dom, id) - pad("top") - pad("bottom")).max(0.0);
-        let dpr = layout.device_pixel_ratio();
-        return Some(Sizes {
-            origin: (pad("left"), pad("top")),
-            content: (width, height),
-            border: (layout.offset_width(&dom, id), layout.offset_height(&dom, id)),
-            device_pixel_content: ((width * dpr).round(), (height * dpr).round()),
-        });
+        layout
+            .style()
+            .used_value(&dom, id, &format!("padding-{side}"))
+            .and_then(|v| v.trim().strip_suffix("px").and_then(|n| n.parse::<f64>().ok()))
+            .unwrap_or(0.0)
+    };
+    let width = (layout.client_width(&dom, id) - pad("left") - pad("right")).max(0.0);
+    let height = (layout.client_height(&dom, id) - pad("top") - pad("bottom")).max(0.0);
+    let dpr = layout.device_pixel_ratio();
+    return Some(Sizes {
+        origin: (pad("left"), pad("top")),
+        content: (width, height),
+        border: (layout.offset_width(&dom, id), layout.offset_height(&dom, id)),
+        device_pixel_content: ((width * dpr).round(), (height * dpr).round()),
+    });
 }
 
 pub struct ResizeObserver;

@@ -43,8 +43,8 @@ use parley::fontique::{Blob, Collection, CollectionOptions, SourceCache};
 use parley::FontContext;
 use peniko::{Color, Fill};
 
-pub use geometry::{BoxPosition, LayoutBox, StickyBox, TextWord};
 pub use compare::{compare, decode_png, diff_image, encode_jpeg, encode_png, CompareResult};
+pub use geometry::{BoxPosition, LayoutBox, StickyBox, TextWord};
 pub use hash::scene_hash;
 pub use mirror::{DeltaOp, MirrorStats, Rebuild, Tree, TreeKind, TreeNode, TOP};
 pub use net::Fetcher;
@@ -422,8 +422,7 @@ const PREWARM_HTML: &str = r#"<!doctype html><html><body style="font-family: sys
 <svg width="8" height="8"><text x="0" y="8">s</text></svg></body></html>"#;
 
 /// UA rule that settles transitions and animations at their end values.
-const NO_TRANSITIONS: &str =
-    "*, *::before, *::after { transition: none !important; animation: none !important; }";
+const NO_TRANSITIONS: &str = "*, *::before, *::after { transition: none !important; animation: none !important; }";
 
 /// Fonts and raster backends, reused across renders on one thread.
 pub struct Renderer {
@@ -609,7 +608,11 @@ impl Renderer {
         timings.layout_passes = passes;
         let resolving = Instant::now();
         doc.resolve(0.0);
-        sync_profile::record(mirrored, started.elapsed().saturating_sub(mirrored + resolving.elapsed()), resolving.elapsed());
+        sync_profile::record(
+            mirrored,
+            started.elapsed().saturating_sub(mirrored + resolving.elapsed()),
+            resolving.elapsed(),
+        );
         timings.fetch = fetch;
         timings.layout = started.elapsed().saturating_sub(fetch);
         Ok((doc, clip))
@@ -699,7 +702,8 @@ impl Renderer {
     /// ([`Renderer::element_box`]): only what changed is applied and relaid
     /// out. `fetch`/`layout` time it.
     pub fn sync_layout(&mut self, snap: &Snapshot, fetcher: &Arc<dyn Fetcher>) -> Result<Timings, RenderError> {
-        let live = snap.live.as_ref().ok_or_else(|| RenderError::BadArea("layout queries need a live snapshot".into()))?;
+        let live =
+            snap.live.as_ref().ok_or_else(|| RenderError::BadArea("layout queries need a live snapshot".into()))?;
         let mut timings = Timings::default();
         let mut fresh = None;
         self.prepare(snap, fetcher, &mut fresh, &mut timings)?;
@@ -730,7 +734,11 @@ impl Renderer {
         let (fetch, passes) = bridge.settle(doc, started + self.fetch_timeout, self.first_layout_wait);
         let resolving = Instant::now();
         doc.resolve(0.0);
-        sync_profile::record(mirrored, started.elapsed().saturating_sub(mirrored + resolving.elapsed()), resolving.elapsed());
+        sync_profile::record(
+            mirrored,
+            started.elapsed().saturating_sub(mirrored + resolving.elapsed()),
+            resolving.elapsed(),
+        );
         timings.layout_passes = passes;
         timings.fetch = fetch;
         timings.layout = started.elapsed().saturating_sub(fetch);
@@ -999,8 +1007,7 @@ fn print_document(
     timings.scene = t.elapsed();
     let t = Instant::now();
     let rects: Vec<Rect> = pages.iter().map(|p| p.rect).collect();
-    let (bytes, stats) =
-        pdf::write(&scene, &rects, pdf::PX_TO_PT / dpr, cache).map_err(RenderError::Resource)?;
+    let (bytes, stats) = pdf::write(&scene, &rects, pdf::PX_TO_PT / dpr, cache).map_err(RenderError::Resource)?;
     timings.raster = t.elapsed();
     Ok(PdfOutput { bytes, pages, by_selector, stats, commands: scene.commands.len(), timings })
 }

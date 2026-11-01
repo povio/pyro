@@ -1516,8 +1516,7 @@ pub fn dispatch_mouse_intercepting_drags(
     intercept_drags: bool,
 ) -> Result<Option<DragData>, String> {
     // Empty viewport space targets the root element, as Chromium hit-tests it.
-    let target = pointer_target(page, m.x, m.y, true)
-        .ok_or_else(|| "no element at point".to_owned())?;
+    let target = pointer_target(page, m.x, m.y, true).ok_or_else(|| "no element at point".to_owned())?;
     let Some(tkey) = key_of(page, target) else { return Err("stale target".into()) };
     match kind {
         MouseKind::Moved => {

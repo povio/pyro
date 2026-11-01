@@ -136,9 +136,7 @@ impl Geometry {
             None => (Affine::IDENTITY, false),
         };
         let fixed = in_fixed
-            || node
-                .primary_styles()
-                .is_some_and(|s| s.clone_position() == style::computed_values::position::T::Fixed);
+            || node.primary_styles().is_some_and(|s| s.clone_position() == style::computed_values::position::T::Fixed);
         let location = node.unrounded_layout().location;
         let t = base
             * Affine::translate((location.x as f64, location.y as f64))
@@ -191,7 +189,19 @@ impl Geometry {
         // are, do).
         let atomic = matches!(
             tag(doc, id),
-            Some("img" | "input" | "textarea" | "select" | "button" | "video" | "canvas" | "iframe" | "object" | "embed" | "svg")
+            Some(
+                "img"
+                    | "input"
+                    | "textarea"
+                    | "select"
+                    | "button"
+                    | "video"
+                    | "canvas"
+                    | "iframe"
+                    | "object"
+                    | "embed"
+                    | "svg"
+            )
         );
         let inline = !atomic
             && doc.get_node(id).and_then(|n| n.primary_styles()).is_some_and(|s| s.clone_display().is_inline_flow());
@@ -239,7 +249,12 @@ impl Geometry {
         }
         let limit = cb.and_then(|c| {
             let b = self.element_box(doc, c)?;
-            let (t, r, bo, l) = (b.border[0] + b.padding[0], b.border[1] + b.padding[1], b.border[2] + b.padding[2], b.border[3] + b.padding[3]);
+            let (t, r, bo, l) = (
+                b.border[0] + b.padding[0],
+                b.border[1] + b.padding[1],
+                b.border[2] + b.padding[2],
+                b.border[3] + b.padding[3],
+            );
             Some((b.x + l, b.y + t, (b.width - l - r).max(0.0), (b.height - t - bo).max(0.0)))
         });
         StickyBox { insets, limit }
@@ -265,13 +280,17 @@ impl Geometry {
             }
             return Some(b);
         }
-        let inline = doc
-            .get_node(id)
-            .and_then(|n| n.primary_styles())
-            .is_some_and(|s| s.clone_display().is_inline_flow());
+        let inline =
+            doc.get_node(id).and_then(|n| n.primary_styles()).is_some_and(|s| s.clone_display().is_inline_flow());
         if inline {
             if let Some(r) = self.inline_union(doc, id) {
-                return Some(LayoutBox { client_width: 0.0, client_height: 0.0, scroll_width: 0.0, scroll_height: 0.0, ..LayoutBox::from_rect(r, b.fixed) });
+                return Some(LayoutBox {
+                    client_width: 0.0,
+                    client_height: 0.0,
+                    scroll_width: 0.0,
+                    scroll_height: 0.0,
+                    ..LayoutBox::from_rect(r, b.fixed)
+                });
             }
             // No fragment (an empty span among collapsed white space): a
             // zero box at the content-box origin of the nearest box around it.
@@ -280,7 +299,10 @@ impl Geometry {
                 if in_layout_tree(doc, p) {
                     let pb = self.laid_out(doc, p)?;
                     let (x, y) = (pb.x + pb.border[3] + pb.padding[3], pb.y + pb.border[0] + pb.padding[0]);
-                    return Some(LayoutBox { fixed: pb.fixed, ..LayoutBox::from_rect(Rect::new(x, y, x, y), pb.fixed) });
+                    return Some(LayoutBox {
+                        fixed: pb.fixed,
+                        ..LayoutBox::from_rect(Rect::new(x, y, x, y), pb.fixed)
+                    });
                 }
                 cur = doc.get_node(p).and_then(|n| n.parent);
             }
@@ -318,9 +340,10 @@ impl Geometry {
             if n.flags.is_inline_root() {
                 break r;
             }
-            let anon = n.anonymous_blocks.iter().copied().find(|&a| {
-                doc.get_node(a).is_some_and(|a| a.flags.is_inline_root() && a.children.contains(&child))
-            });
+            let anon =
+                n.anonymous_blocks.iter().copied().find(|&a| {
+                    doc.get_node(a).is_some_and(|a| a.flags.is_inline_root() && a.children.contains(&child))
+                });
             if let Some(a) = anon {
                 break a;
             }
@@ -373,8 +396,8 @@ impl Geometry {
                     ),
                 };
                 if within(start) {
-                    let r = origin
-                        .transform_rect_bbox(Rect::new(r.x0 / scale, r.y0 / scale, r.x1 / scale, r.y1 / scale));
+                    let r =
+                        origin.transform_rect_bbox(Rect::new(r.x0 / scale, r.y0 / scale, r.x1 / scale, r.y1 / scale));
                     acc = Some(acc.map_or(r, |a| a.union(r)));
                 }
             }
@@ -445,8 +468,14 @@ impl Geometry {
                     let mut flush = |word: &mut Option<(usize, Vec<(u32, f64)>)>| {
                         let Some((i, edges)) = word.take() else { return };
                         let (x0, x1) = (edges[0].1, edges[edges.len() - 1].1);
-                        let r = origin.transform_rect_bbox(Rect::new(x0 / scale, top / scale, x1 / scale, bottom / scale));
-                        let edges = edges.into_iter().map(|(o, ex)| (o, origin.transform_rect_bbox(Rect::new(ex / scale, 0.0, ex / scale, 0.0)).x0)).collect();
+                        let r =
+                            origin.transform_rect_bbox(Rect::new(x0 / scale, top / scale, x1 / scale, bottom / scale));
+                        let edges = edges
+                            .into_iter()
+                            .map(|(o, ex)| {
+                                (o, origin.transform_rect_bbox(Rect::new(ex / scale, 0.0, ex / scale, 0.0)).x0)
+                            })
+                            .collect();
                         out.push(TextWord {
                             node: text.text_nodes[i].0,
                             x: r.x0,
@@ -470,7 +499,8 @@ impl Geometry {
                             let base = text.text_nodes[i].1.start;
                             let map = &offsets[i];
                             let offset = |b: usize| map[(b - base).min(map.len() - 1)];
-                            let (start, end) = if cluster.is_rtl() { (range.end, range.start) } else { (range.start, range.end) };
+                            let (start, end) =
+                                if cluster.is_rtl() { (range.end, range.start) } else { (range.start, range.end) };
                             let w = word.get_or_insert_with(|| (i, vec![(offset(start), x)]));
                             w.1.push((offset(end), x + advance));
                         }
@@ -607,8 +637,10 @@ fn cell_gutters(doc: &BaseDocument, id: NodeId) -> Option<(f64, f64, f64)> {
     }
     let cell = doc.get_node(first_cell(doc, table)?)?.primary_styles()?;
     let b = cell.get_border();
-    let gx = side(b.border_left_width.0, b.border_left_style).max(side(b.border_right_width.0, b.border_right_style)) / 2.0;
-    let gy = side(b.border_top_width.0, b.border_top_style).max(side(b.border_bottom_width.0, b.border_bottom_style)) / 2.0;
+    let gx =
+        side(b.border_left_width.0, b.border_left_style).max(side(b.border_right_width.0, b.border_right_style)) / 2.0;
+    let gy =
+        side(b.border_top_width.0, b.border_top_style).max(side(b.border_bottom_width.0, b.border_bottom_style)) / 2.0;
     let (mut top, mut bottom) = (gy, gy);
     if let Some(rs) = doc.get_node(id)?.parent.and_then(|p| doc.get_node(p)).and_then(|r| r.primary_styles()) {
         let b = rs.get_border();

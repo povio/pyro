@@ -609,7 +609,8 @@ impl Dom {
                 Err(()) => return None,
             }
             let id = self.id_of(owner);
-            let text = (opts.style_text)(id).unwrap_or_else(|| self.text_content(id).ok().flatten().unwrap_or_default());
+            let text =
+                (opts.style_text)(id).unwrap_or_else(|| self.text_content(id).ok().flatten().unwrap_or_default());
             ops.push(DeltaOp::Node { key: render_key(id) | SYNTHETIC_TEXT, kind: RenderNodeKind::Text(text) });
         }
         Some(RenderDelta { ops })
@@ -622,7 +623,8 @@ impl Dom {
         if !(e.is_html() && &*e.name.local == "style") {
             return None;
         }
-        let text = (opts.style_text)(owner).unwrap_or_else(|| self.text_content(owner).ok().flatten().unwrap_or_default());
+        let text =
+            (opts.style_text)(owner).unwrap_or_else(|| self.text_content(owner).ok().flatten().unwrap_or_default());
         Some(DeltaOp::Node { key: render_key(owner) | SYNTHETIC_TEXT, kind: RenderNodeKind::Text(text) })
     }
 

@@ -2279,8 +2279,7 @@ fn added_rule_subjects(dom: &Dom, doc: NodeId, added: &RuleSet) -> Option<Vec<u3
                     || added.generic_by_attr_value.get(&key).is_some_and(|l| generic(l))
             });
         }
-        hit = hit
-            || added.customs.values().flatten().any(|c| dom.matches(id, &c.selector).unwrap_or(false));
+        hit = hit || added.customs.values().flatten().any(|c| dom.matches(id, &c.selector).unwrap_or(false));
         if hit {
             subjects.push(dom.check(id).ok()?);
         }

@@ -524,8 +524,12 @@ impl Layout {
             Metric::OffsetTop | Metric::OffsetLeft => round_layout_unit(raw),
             Metric::OffsetWidth => snap_size_to_pixel(raw, self.offset_left(dom, el)),
             Metric::OffsetHeight => snap_size_to_pixel(raw, self.offset_top(dom, el)),
-            Metric::ScrollWidth | Metric::ClientWidth => snap_size_to_pixel(raw, self.offset_left(dom, el) + border(LEFT)),
-            Metric::ScrollHeight | Metric::ClientHeight => snap_size_to_pixel(raw, self.offset_top(dom, el) + border(TOP)),
+            Metric::ScrollWidth | Metric::ClientWidth => {
+                snap_size_to_pixel(raw, self.offset_left(dom, el) + border(LEFT))
+            }
+            Metric::ScrollHeight | Metric::ClientHeight => {
+                snap_size_to_pixel(raw, self.offset_top(dom, el) + border(TOP))
+            }
         }
     }
 
@@ -840,7 +844,12 @@ impl Layout {
         );
         let inner = crate::svg_geometry::client_bounds(dom, &self.style, el, svg, viewport)?;
         let origin = self.bounding_client_rect_for_visible(dom, svg);
-        Some(Rect { x: origin.x + left + inner.x, y: origin.y + top + inner.y, width: inner.width, height: inner.height })
+        Some(Rect {
+            x: origin.x + left + inner.x,
+            y: origin.y + top + inner.y,
+            width: inner.width,
+            height: inner.height,
+        })
     }
 
     /// The scroll-dependent offset of `node`'s sticky ancestors (and itself):
@@ -927,29 +936,11 @@ impl Layout {
             Some(l) => (l.x, l.x + l.width, l.y, l.y + l.height),
             None => (f64::NEG_INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY),
         };
-        let dy = axis(
-            inset(TOP, port.height),
-            inset(BOTTOM, port.height),
-            r.y,
-            r.height,
-            port.y,
-            port.height,
-            lo_y,
-            hi_y,
-        );
-        let dx = axis(
-            inset(LEFT, port.width),
-            inset(RIGHT, port.width),
-            r.x,
-            r.width,
-            port.x,
-            port.width,
-            lo_x,
-            hi_x,
-        );
+        let dy =
+            axis(inset(TOP, port.height), inset(BOTTOM, port.height), r.y, r.height, port.y, port.height, lo_y, hi_y);
+        let dx = axis(inset(LEFT, port.width), inset(RIGHT, port.width), r.x, r.width, port.x, port.width, lo_x, hi_x);
         (dx, dy)
     }
-
 
     // ----- document ----------------------------------------------------------
 
@@ -1022,7 +1013,6 @@ impl Layout {
     pub fn element_from_vertical_point(&self, dom: &Dom, y: f64) -> Option<NodeId> {
         self.element_from_point_impl(dom, 0.0, y, true)
     }
-
 
     /// `document.elementsFromPoint(x, y)` (Document.zig:1034-1047): the hit
     /// and its hit-testable ancestors, always ending with the root.
@@ -1667,7 +1657,8 @@ impl Layout {
                 let border_box = self.style.computed_value(dom, el, "box-sizing").as_deref() == Some("border-box");
                 let (size, start, end) =
                     if name == "width" { (b.rect.width, LEFT, RIGHT) } else { (b.rect.height, TOP, BOTTOM) };
-                let inset = if border_box { 0.0 } else { b.border[start] + b.border[end] + b.padding[start] + b.padding[end] };
+                let inset =
+                    if border_box { 0.0 } else { b.border[start] + b.border[end] + b.padding[start] + b.padding[end] };
                 return format!("{}px", crate::computed::fmt_num((size - inset).max(0.0)));
             }
             if self.style.stylo_on() {
@@ -1749,7 +1740,6 @@ fn clamp_layout_units(value: &str) -> Option<String> {
     changed.then(|| out.join(" "))
 }
 
-
 // Default inline alignment uses the nearer edge. A box spanning both edges
 // stays put; an oversized box outside one edge aligns its opposite edge.
 fn nearest_scroll_offset(start: f64, size: f64, viewport: f64, current: u32) -> Option<i32> {
@@ -1802,7 +1792,6 @@ fn delta_to_scroll(d: f64) -> i32 {
 fn is_ascii_ws(c: char) -> bool {
     matches!(c, ' ' | '\t' | '\n' | '\r' | '\x0b' | '\x0c')
 }
-
 
 /// text_measure.zig:40-45.
 pub(crate) fn text_width(text: &str, font_size: f64) -> f64 {
@@ -1949,7 +1938,6 @@ fn default_display(e: &crate::node::ElementData) -> &'static str {
     }
     crate::style::ua_display(&e.name.local.to_ascii_lowercase())
 }
-
 
 pub(crate) mod flow_stats {
     use std::cell::RefCell;

@@ -1084,8 +1084,6 @@ fn flow_parity_text_align() {
     assert!(diffs.is_empty(), "text-align:\n{}", diffs.join("\n"));
 }
 
-
-
 #[test]
 fn flex_parity_cross_size_min_max() {
     // TOS positions header: a `max-h-[40vh] overflow-y-auto` flex item in a
@@ -1229,8 +1227,6 @@ fn flow_parity_br_line_boxes() {
         [800.0, 600.0],
     );
 }
-
-
 
 #[test]
 fn flow_parity_intrinsic_width_keywords() {
@@ -1872,7 +1868,7 @@ fn sibling_and_fragment_invalidation_stays_exact() {
     // index (its own page, since it makes every change reach siblings).
     let mut p = page(
         "<!doctype html><style>li{height:10px;width:10px} li:nth-child(2 of .x){width:240px}</style>\
-         <body style=\"margin:0\"><ul><li id=x1 class=x></li><li id=n2></li><li id=x3></li></ul></body>"
+         <body style=\"margin:0\"><ul><li id=x1 class=x></li><li id=n2></li><li id=x3></li></ul></body>",
     );
     assert_eq!(w(&p, "x3").width, 10.0);
     let n2 = p.id("n2");
@@ -1926,9 +1922,7 @@ fn incremental_style_survives_garbage_collected_removed_nodes() {
     // collect_garbage before the next style pass made invalidation_roots
     // dereference a dead slot ("live slot" panic). Its freed slot can also be
     // reused by a new node before the pass.
-    let mut p = page(
-        "<body style='margin:0'><div id=a class=x><span id=s>one</span></div><div id=b>two</div></body>"
-    );
+    let mut p = page("<body style='margin:0'><div id=a class=x><span id=s>one</span></div><div id=b>two</div></body>");
     p.dom.add_ref(p.doc).unwrap();
     let _ = p.metrics("a");
     let a = p.id("a");
@@ -1940,8 +1934,7 @@ fn incremental_style_survives_garbage_collected_removed_nodes() {
     let fresh = p.dom.create_element(doc, "i").unwrap();
     let b = p.id("b");
     p.dom.append_child(b, fresh).unwrap();
-    let fresh_layout =
-        page("<body style='margin:0'><div id=a class=x></div><div id=b>two<i></i></div></body>");
+    let fresh_layout = page("<body style='margin:0'><div id=a class=x></div><div id=b>two<i></i></div></body>");
     assert_eq!(p.metrics("a"), fresh_layout.metrics("a"));
     assert_eq!(p.metrics("b"), fresh_layout.metrics("b"));
 }
@@ -2645,9 +2638,6 @@ fn flex_wrap_compressible_controls_shrink_into_the_line() {
     assert_eq!(p.metrics("search")[1], p.metrics("multi")[1] + 2.0, "search input on the chips' line");
 }
 
-
-
-
 #[test]
 fn inline_custom_properties_resolve_through_var() {
     // An element's inline style is parsed for a custom property only when
@@ -2738,7 +2728,7 @@ fn css_zoom_scales_used_lengths_like_chromium() {
            <div id=text style='font-size:10px;line-height:12px'>zoomed</div></div>\
          <div id=pct style='zoom:50%;width:200px;height:10px'></div>\
          <div id=vw style='zoom:2;width:10vw;height:1px'></div>\
-         </body>"
+         </body>",
     );
     let z = 210.0 * 96.0 / 25.4 / 1536.0 * 1.5;
     let near = |a: f64, b: f64, what: &str| assert!((a - b).abs() < 0.05, "{what}: {a} vs {b}");
@@ -3879,7 +3869,7 @@ fn text_clip_facts_nested_block_and_inline_clippers() {
     let p = page(
         r#"<div id=outer style="width:200px"><div id=clip style="width:100px;overflow:hidden"><span id=s style="white-space:nowrap">a very long run of text that overflows its clipping container by far</span></div>
 <div id=open style="width:100px;padding-right:7px"><span style="white-space:nowrap">another very long run of text that overflows an open container</span></div>
-<div id=inl style="width:100px"><span id=ispan style="overflow:hidden;white-space:nowrap">inline overflow hidden does not clip in chromium but the walk sees the style</span></div></div>"#
+<div id=inl style="width:100px"><span id=ispan style="overflow:hidden;white-space:nowrap">inline overflow hidden does not clip in chromium but the walk sees the style</span></div></div>"#,
     );
     // Like Chromium, a clipping container's own scrollWidth reports its overflowing text, but the text is
     // clipped inside the outer box and does not extend it beyond its own open children.
@@ -3906,7 +3896,7 @@ fn text_clip_facts_fixed_absolute_and_contents_wrappers() {
 <div id=rel style="position:relative;width:120px;padding:4px"><div id=abs style="position:absolute;left:0;top:0;width:50px"><span style="white-space:nowrap">absolute child text that is long enough to overflow</span></div>
 <div style="display:contents"><span id=c style="white-space:nowrap">text under a display contents wrapper that overflows the relative box</span></div></div>
 <div id=fix style="position:fixed;left:0;top:0;width:40px"><span style="white-space:nowrap">fixed text that must not extend a non fixed ancestor</span></div>
-<div id=pad style="width:80px;padding:0 9px"><span style="white-space:nowrap">padded container with overflowing text</span></div></div>"#
+<div id=pad style="width:80px;padding:0 9px"><span style="white-space:nowrap">padded container with overflowing text</span></div></div>"#,
     );
     assert!(sw(&p, "abs") > 50.0);
     assert!(sw(&p, "rel") > 120.0);
@@ -3932,7 +3922,7 @@ fn text_clip_facts_deep_nesting_without_recursion() {
 #[test]
 fn text_clip_facts_are_per_pass_across_reparenting_and_style_changes() {
     let mut p = page(
-        r#"<div id=wrap style="width:120px"><div id=a style="width:120px;overflow:hidden"><span id=t style="white-space:nowrap">a long run of text that overflows whichever container holds it</span></div><div id=b style="width:120px"></div></div>"#
+        r#"<div id=wrap style="width:120px"><div id=a style="width:120px;overflow:hidden"><span id=t style="white-space:nowrap">a long run of text that overflows whichever container holds it</span></div><div id=b style="width:120px"></div></div>"#,
     );
     // Clipped inside `a`: the wrapper is not extended.
     assert!(sw(&p, "a") > 120.0);
@@ -3956,7 +3946,7 @@ fn text_clip_facts_cover_absolute_tables_inline_splits_generated_and_shadow_text
     // Absolute containing block above intervening (one clipping) wrappers; the absolute box's text is
     // clipped by the wrapper for every ancestor above it and extends only the absolute box itself.
     let p = page(
-        r#"<div id=cb style="position:relative;width:200px"><div id=w1 style="width:150px"><div id=w2 style="width:150px;overflow:hidden"><div><div id=abs style="position:absolute;left:0;top:0;width:30px"><span style="white-space:nowrap">absolute text behind two wrappers that overflows a lot</span></div></div></div></div></div>"#
+        r#"<div id=cb style="position:relative;width:200px"><div id=w1 style="width:150px"><div id=w2 style="width:150px;overflow:hidden"><div><div id=abs style="position:absolute;left:0;top:0;width:30px"><span style="white-space:nowrap">absolute text behind two wrappers that overflows a lot</span></div></div></div></div></div>"#,
     );
     assert!(sw(&p, "abs") > 30.0);
     // Wrappers record before the absolute box is placed, so their scroll sizes ignore it; the containing
@@ -3966,25 +3956,25 @@ fn text_clip_facts_cover_absolute_tables_inline_splits_generated_and_shadow_text
     assert!(sw(&p, "cb") >= 200.0);
     // Table cell text inside a clipping container, and a cell whose text overflows the table.
     let p = page(
-        r#"<div id=tc style="width:120px;overflow:hidden"><table id=tbl style="width:100px"><tr><td style="width:40px"><span style="white-space:nowrap">a long table cell text that overflows the cell and the table</span></td><td>x</td></tr></table></div><div id=after style="width:120px">after</div>"#
+        r#"<div id=tc style="width:120px;overflow:hidden"><table id=tbl style="width:100px"><tr><td style="width:40px"><span style="white-space:nowrap">a long table cell text that overflows the cell and the table</span></td><td>x</td></tr></table></div><div id=after style="width:120px">after</div>"#,
     );
     assert!(sw(&p, "tbl") >= 100.0);
     let _ = sw(&p, "tc");
     assert_eq!(sw(&p, "after"), 120.0);
     // Inline element split by a block child (anonymous block boxes around the inline runs).
     let p = page(
-        r#"<div id=split style="width:100px"><span id=sp>inline start text<div style="width:50px"><span style="white-space:nowrap">block inside the inline with overflowing text</span></div>inline end text</span></div>"#
+        r#"<div id=split style="width:100px"><span id=sp>inline start text<div style="width:50px"><span style="white-space:nowrap">block inside the inline with overflowing text</span></div>inline end text</span></div>"#,
     );
     assert!(sw(&p, "split") >= 100.0);
     // Generated ::before text through the real style engine (laid out as an inline item, not a text run).
     let p = page(
-        r#"<style>#gen::before{content:"generated text long enough to overflow its narrow host box"; white-space:nowrap}</style><div id=genwrap style="width:200px"><div id=gen style="width:60px;overflow:hidden"></div></div>"#
+        r#"<style>#gen::before{content:"generated text long enough to overflow its narrow host box"; white-space:nowrap}</style><div id=genwrap style="width:200px"><div id=gen style="width:60px;overflow:hidden"></div></div>"#,
     );
     let _ = (sw(&p, "gen"), sw(&p, "genwrap"));
     // Shadow root with a slot: the engine lays the light text out in its DOM position; the assertions
     // in `record` still hold for every pair.
     let mut p = page(
-        r#"<div id=shwrap style="width:200px"><div id=host style="width:80px"><span id=light style="white-space:nowrap">slotted light text that overflows the host</span></div></div>"#
+        r#"<div id=shwrap style="width:200px"><div id=host style="width:80px"><span id=light style="white-space:nowrap">slotted light text that overflows the host</span></div></div>"#,
     );
     let host = p.id("host");
     let root = p.dom.attach_shadow(host, lp_dom::ShadowRootMode::Open).unwrap();
@@ -4426,9 +4416,6 @@ fn table_structure_changes_relayout_like_a_fresh_pass() {
     p.dom.set_text_content(span, "x").unwrap();
     assert_matches_fresh(&p, "text again");
 }
-
-
-
 
 #[test]
 fn structural_selectors_follow_child_list_changes_without_stale_geometry() {
