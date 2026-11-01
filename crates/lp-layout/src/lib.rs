@@ -271,7 +271,7 @@ impl BlitzGeometry {
         RENDERER.with(|r| {
             if let Ok(mut r) = r.try_borrow_mut() {
                 if let Some(r) = r.as_mut() {
-                    r.set_interaction(self.page, hovered, focused);
+                    r.set_interaction(self.page, hovered, focused, false);
                 }
             }
         });
@@ -311,7 +311,7 @@ impl BlitzGeometry {
                     let dpr = v.device_scale_factor;
                     let timings = RENDERER.with(|r| {
                         let mut r = r.try_borrow_mut().ok()?;
-                        r.as_mut()?.sync_delta(self.page, &ops, (viewport.0, viewport.1, dpr, viewport.3)).ok()
+                        r.as_mut()?.sync_delta(self.page, &ops, (viewport.0, viewport.1, dpr, viewport.3), false).ok()
                     });
                     if let Some(t) = timings {
                         CALLS.fetch_add(1, Ordering::Relaxed);

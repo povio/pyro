@@ -725,6 +725,7 @@ impl Renderer {
         page: u64,
         ops: &[DeltaOp],
         viewport: (u32, u32, f64, bool),
+        style_only: bool,
     ) -> Result<Timings, RenderError> {
         let started = Instant::now();
         let mut timings = Timings::default();
@@ -738,7 +739,10 @@ impl Renderer {
         let mirror::Mirror { doc, bridge, .. } = m;
         let (fetch, passes) = bridge.settle(doc, started + self.fetch_timeout, self.first_layout_wait);
         let resolving = Instant::now();
-        doc.resolve(0.0);
+        match style_only {
+            true => doc.resolve_style(0.0),
+            false => doc.resolve(0.0),
+        }
         sync_profile::record(
             mirrored,
             started.elapsed().saturating_sub(mirrored + resolving.elapsed()),
@@ -747,7 +751,9 @@ impl Renderer {
         timings.layout_passes = passes;
         timings.fetch = fetch;
         timings.layout = started.elapsed().saturating_sub(fetch);
-        self.geometry.entry(page).or_default().clear();
+        if !style_only {
+            self.geometry.entry(page).or_default().clear();
+        }
         Ok(timings)
     }
 
@@ -755,7 +761,7 @@ impl Renderer {
     /// in `page`'s persistent document (the page's pointer and focus, which
     /// a node list does not carry), restyling and relaying out what that
     /// changes.
-    pub fn set_interaction(&mut self, page: u64, hovered: Option<u64>, focused: Option<u64>) {
+    pub fn set_interaction(&mut self, page: u64, hovered: Option<u64>, focused: Option<u64>, style_only: bool) {
         let Some(m) = self.mirrors.get_mut(&page) else { return };
         let hover = hovered.and_then(|k| m.node(k));
         let focus = focused.and_then(|k| m.node(k));
@@ -769,10 +775,25 @@ impl Renderer {
             }
             changed = true;
         }
-        if changed {
+        if changed && style_only {
+            m.doc.resolve_style(0.0);
+        } else if changed {
             m.doc.resolve(0.0);
             self.geometry.entry(page).or_default().clear();
         }
+    }
+
+    /// The computed style of the element keyed `key` in `page`'s persistent
+    /// document as of the last sync (`None`: not mirrored, or unstyled, as
+    /// under `display: none`).
+    pub fn element_style(
+        &self,
+        page: u64,
+        key: u64,
+    ) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
+        let m = self.mirrors.get(&page)?;
+        let node = m.doc.get_node(m.node(key)?)?;
+        node.primary_styles().map(|s| (*s).clone())
     }
 
     /// The box of the element keyed `key` in `page`'s persistent document,

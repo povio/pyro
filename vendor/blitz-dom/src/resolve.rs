@@ -36,6 +36,24 @@ use crate::{
 
 impl BaseDocument {
     /// Restyle the tree and then relayout it
+    /// Styles the document as [`Self::resolve`] does, leaving box
+    /// construction and layout (and the damage that drives them) to the
+    /// next `resolve`: style reads that need no geometry.
+    pub fn resolve_style(&mut self, current_time_for_animations: f64) {
+        if TDocument::as_node(&self.root_node())
+            .first_element_child()
+            .is_none()
+        {
+            return;
+        }
+        self.handle_messages();
+        if self.has_pending_critical_resources() {
+            return;
+        }
+        self.flush_pending_device_changes();
+        self.resolve_stylist(current_time_for_animations);
+    }
+
     pub fn resolve(&mut self, current_time_for_animations: f64) {
         if TDocument::as_node(&self.root_node())
             .first_element_child()

@@ -69,3 +69,6 @@ lp-render's mirror tests (incremental documents against fresh builds after rando
   those rules unless lp-dom's cascade had been created first.
 - `src/document.rs`, `src/mutator.rs`, `src/form.rs`: a URL that cannot be resolved against the
   document's (`src="x"` in a `data:` document) loads nothing instead of panicking, as in browsers.
+- `src/resolve.rs`: `resolve_style` runs the style pass of `resolve` alone (messages, device changes,
+  the traversal), leaving damage, box construction and layout to the next `resolve`: lightningpanda
+  answers `getComputedStyle` from Blitz's styles without laying the document out.
