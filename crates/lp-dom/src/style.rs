@@ -3652,6 +3652,13 @@ pub struct StyleEngine {
     /// The stamp the layout caches (`cache.flow`, `cache.generated`,
     /// `cache.restyled`) were last synced with Stylo's restyles at.
     stylo_synced: Cell<Option<Stamp>>,
+    /// The layout engine, whose styles reads answer from, and the
+    /// observation stamp its styles were last synced at.
+    external: RefCell<Option<(std::rc::Rc<dyn crate::geometry::GeometrySource>, Option<(u64, u64, u32, u32)>)>>,
+    /// Set while the engine syncs: reads then answer from this cascade.
+    external_syncing: Cell<bool>,
+    /// Whether `stylo_memo` holds answers from `external`, at that stamp.
+    memo_external: Cell<Option<(u64, u64, u32, u32)>>,
 }
 
 /// `text-transform: none` as the computed style holds it.
@@ -3692,6 +3699,9 @@ impl StyleEngine {
             stylo_memo: RefCell::default(),
             stylo_on: Cell::new(stylo_cascade()),
             stylo_synced: Cell::new(None),
+            external: RefCell::new(None),
+            external_syncing: Cell::new(false),
+            memo_external: Cell::new(None),
         }
     }
 
@@ -3807,7 +3817,61 @@ impl StyleEngine {
         el: NodeId,
     ) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
         let idx = self.owns(dom, el)?;
+        if let Some(style) = self.external_style(dom, el) {
+            return Some(style);
+        }
         self.stylo(dom).style(dom, idx)
+    }
+
+    /// The layout engine's style of `el` (its styles brought up to `dom`).
+    fn external_style(
+        &self,
+        dom: &Dom,
+        el: NodeId,
+    ) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
+        self.engine_styled(dom)?;
+        let external = self.external.borrow();
+        external.as_ref()?.0.element_style(crate::snapshot::render_key(el))
+    }
+
+    /// Makes `source` (the document's layout engine) the source of style
+    /// reads; `None`: this cascade answers them.
+    pub fn set_style_engine(&self, source: Option<std::rc::Rc<dyn crate::geometry::GeometrySource>>) {
+        *self.external.borrow_mut() = source.filter(|_| crate::layout::engine_styles()).map(|s| (s, None));
+    }
+
+    /// The layout engine synced `dom` (styles and layout).
+    pub fn engine_synced(&self, dom: &Dom) {
+        let stamp = self.observation_stamp(dom);
+        if let Some((_, at)) = self.external.borrow_mut().as_mut() {
+            *at = Some(stamp);
+        }
+    }
+
+    /// Brings the layout engine's styles up to `dom` (layout is left to the
+    /// next geometry query); the stamp they answer for, `None` when this
+    /// cascade answers instead (no engine, or it is inactive or syncing).
+    pub fn engine_styled(&self, dom: &Dom) -> Option<(u64, u64, u32, u32)> {
+        if self.external_syncing.get() {
+            return None;
+        }
+        let stamp = self.observation_stamp(dom);
+        let source = {
+            let external = self.external.borrow();
+            let (source, at) = external.as_ref()?;
+            if *at == Some(stamp) && !source.stale() {
+                return Some(stamp);
+            }
+            if !source.active() {
+                return None;
+            }
+            source.clone()
+        };
+        self.external_syncing.set(true);
+        source.sync_styles(dom, self);
+        self.external_syncing.set(false);
+        self.engine_synced(dom);
+        Some(stamp)
     }
 
     /// Styles the whole document now (tests, diagnostics); reads otherwise
@@ -3830,8 +3894,21 @@ impl StyleEngine {
     /// stamp.
     fn computed_stylo(&self, dom: &Dom, el: NodeId) -> Option<ComputedStyle> {
         let idx = self.owns(dom, el)?;
-        // Drops the answers of elements restyled since (and their subtrees).
-        self.sync_lazy(dom);
+        match self.engine_styled(dom) {
+            // Answers from the layout engine hold for its stamp only.
+            Some(stamp) => {
+                if self.memo_external.replace(Some(stamp)) != Some(stamp) {
+                    self.stylo_memo.borrow_mut().clear();
+                }
+            }
+            None => {
+                if self.memo_external.take().is_some() {
+                    self.stylo_memo.borrow_mut().clear();
+                }
+                // Drops the answers of elements restyled since (and their subtrees).
+                self.sync_lazy(dom);
+            }
+        }
         if let Some(c) = self.stylo_memo.borrow().get(&el) {
             return Some(*c);
         }

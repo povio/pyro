@@ -94,6 +94,10 @@ pub trait GeometrySource {
     /// Brings the engine's layout up to the document; the other queries
     /// answer from it.
     fn sync(&self, dom: &Dom, layout: &Layout);
+    /// Brings the engine's styles up to the document, leaving layout to
+    /// the next [`GeometrySource::sync`] ([`GeometrySource::element_style`]
+    /// answers from it).
+    fn sync_styles(&self, _dom: &Dom, _style: &crate::style::StyleEngine) {}
     /// One element's box as of the last sync (`None`: not rendered).
     fn element_box(&self, key: u64) -> Option<ExternalBox>;
     /// The whole document as of the last sync.
@@ -114,6 +118,11 @@ pub trait GeometrySource {
     /// change (a sub-resource it laid out without arrived since).
     fn stale(&self) -> bool {
         false
+    }
+    /// One element's computed style as of the last sync (`None`: the engine
+    /// has none for it, and the document's own cascade answers).
+    fn element_style(&self, _key: u64) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
+        None
     }
 }
 

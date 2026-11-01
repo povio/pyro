@@ -199,6 +199,14 @@ pub fn set_geometry_source_factory(factory: Option<GeometrySourceFactory>) {
     GEOMETRY_SOURCE.with(|f| *f.borrow_mut() = factory);
 }
 
+/// Whether computed styles come from the layout engine when it is synced
+/// (`LP_ENGINE_STYLES=0`: always from the document's own cascade).
+pub fn engine_styles() -> bool {
+    static ON: std::sync::LazyLock<bool> =
+        std::sync::LazyLock::new(|| std::env::var("LP_ENGINE_STYLES").map_or(true, |v| v != "0"));
+    *ON
+}
+
 impl Layout {
     pub fn new(doc: NodeId) -> Self {
         Self::with_style(StyleEngine::new(doc))
@@ -211,13 +219,15 @@ impl Layout {
     /// A layout of the style's document, with this thread's geometry source
     /// (see [`set_geometry_source_factory`]).
     pub fn with_style(style: StyleEngine) -> Self {
+        let external = GEOMETRY_SOURCE.with(|f| f.borrow().as_ref().map(|make| make()));
+        style.set_style_engine(external.clone());
         Layout {
             style,
             window_scroll: (0, 0),
             scroll_generation: 0,
             element_scroll: FxHashMap::default(),
             scroll_anchors: FxHashMap::default(),
-            external: GEOMETRY_SOURCE.with(|f| f.borrow().as_ref().map(|make| make())),
+            external,
             external_synced: std::cell::Cell::new(None),
             syncs: std::cell::Cell::new(0),
             result: RefCell::new(None),
@@ -227,6 +237,7 @@ impl Layout {
     /// Takes the geometry from `source` (see [`GeometrySource`]); `None`:
     /// nothing is laid out.
     pub fn set_geometry_source(&mut self, source: Option<Rc<dyn GeometrySource>>) {
+        self.style.set_style_engine(source.clone());
         self.external = source;
         self.external_synced.set(None);
         self.result.borrow_mut().take();
@@ -241,6 +252,7 @@ impl Layout {
             source.sync(dom, self);
             self.external_synced.set(Some(key));
             self.syncs.set(self.syncs.get() + 1);
+            self.style.engine_synced(dom);
         }
         Some(source)
     }
