@@ -419,3 +419,23 @@ fn has_selectors_match() {
     let b = element_width(html2);
     assert_eq!((a, b), (150, 77));
 }
+
+#[test]
+fn identical_text_keeps_each_elements_colour() {
+    // Layouts built from the same text and styles are reused (parley's build
+    // cache); each must still paint with its own element's colour.
+    let s = snap(
+        r#"<!doctype html><style>body{margin:0;background:white;font:bold 40px/50px Arial}</style><div style="color:#ff0000">WWWW</div><div style="color:#0000ff">WWWW</div>"#,
+    );
+    let (img, _, _) = Renderer::new().render(&s, Area::Viewport, Backend::Cpu, &fetcher()).unwrap();
+    let count = |y0: u32, y1: u32, rgb: [u8; 3]| {
+        (y0..y1)
+            .flat_map(|y| (0..img.width).map(move |x| (x, y)))
+            .filter(|&(x, y)| pixel(&img, x, y)[..3] == rgb)
+            .count()
+    };
+    assert!(count(0, 50, [255, 0, 0]) > 100, "first line is red");
+    assert!(count(50, 100, [0, 0, 255]) > 100, "second line is blue");
+    assert_eq!(count(0, 50, [0, 0, 255]), 0, "no blue on the first line");
+    assert_eq!(count(50, 100, [255, 0, 0]), 0, "no red on the second line");
+}

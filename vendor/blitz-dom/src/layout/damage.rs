@@ -481,6 +481,8 @@ pub(crate) fn sort_layout_children_by_order(
 impl BaseDocument {
     pub(crate) fn invalidate_inline_contexts(&mut self) {
         let scale = self.viewport.scale();
+        // Fonts or the scale changed: layouts built before are stale.
+        self.layout_ctx.clear_build_cache();
 
         let font_ctx = &self.font_ctx;
         let layout_ctx = &mut self.layout_ctx;
