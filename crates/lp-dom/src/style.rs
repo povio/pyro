@@ -3634,7 +3634,7 @@ pub struct StyleEngine {
     popover_open: FxHashSet<NodeId>,
     generation: u64,
     /// Generation bumps by [`StyleEngine::invalidate`] (anything but a sheet
-    /// being added or filled).
+    /// being added, filled or removed).
     invalidations: u64,
     /// Set by every generation bump except a sheet being added or filled
     /// (`add_sheet`, `discover_style_elements`): the next rebuild then clears
@@ -4055,9 +4055,9 @@ impl StyleEngine {
         self.full_restyle.set(true);
     }
 
-    /// How many generation bumps were not a sheet being added or filled
-    /// (viewport, removed sheets, popovers, state the DOM version does not
-    /// cover): while it is unchanged, the sheets' texts are all that changed.
+    /// How many generation bumps were not a sheet being added, filled or
+    /// removed (viewport, popovers, state the DOM version does not cover):
+    /// while it is unchanged, the sheets are all that changed.
     pub fn invalidations(&self) -> u64 {
         self.invalidations
     }
@@ -4094,7 +4094,11 @@ impl StyleEngine {
         let removed = self.sheets.len() != before;
         if removed {
             self.cache.get_mut().parsed.clear();
-            self.invalidate();
+            // Every cached style is dropped, but a removed sheet is a change
+            // of the sheets (not an `invalidations` one): its owner leaving
+            // the document says what changed.
+            self.generation += 1;
+            self.full_restyle.set(true);
         }
         removed
     }
