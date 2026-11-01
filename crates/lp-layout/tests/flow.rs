@@ -4511,3 +4511,19 @@ fn computed_styles_come_from_blitz_even_under_display_none() {
     assert_eq!(v(&p, "b", "color"), "rgb(7, 7, 7)");
     assert!(!p.layout.style().own_cascade_used(), "lp-dom's cascade answered nothing");
 }
+
+#[test]
+fn computed_styles_outside_a_rendered_document_are_empty() {
+    // As in Chromium: an element that is not connected reads "" for every
+    // property, including one that was connected when its declaration was
+    // taken (Chrome's getComputedStyle is live).
+    let mut p = page("<!doctype html><style>div{color:rgb(1, 2, 3)}</style><body><div id=c>x</div></body>");
+    let c = p.id("c");
+    assert_eq!(p.layout.computed_style_value(&p.dom, c, "color"), "rgb(1, 2, 3)");
+    let detached = p.dom.create_element(p.doc, "div").unwrap();
+    assert_eq!(p.layout.computed_style_value(&p.dom, detached, "display"), "");
+    let body = p.dom.body(p.doc).unwrap().unwrap();
+    p.dom.remove_child(body, c).unwrap();
+    assert_eq!(p.layout.computed_style_value(&p.dom, c, "color"), "");
+    assert_eq!(p.layout.computed_style_value(&p.dom, c, "display"), "");
+}

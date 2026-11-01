@@ -1622,74 +1622,78 @@ impl Layout {
     /// (`StyleEngine::computed_value`), width/height from a declared absolute
     /// length or the laid-out box, else the initial value.
     pub fn computed_style_value(&self, dom: &Dom, el: NodeId, name: &str) -> String {
+        // Chromium computes no style outside a rendered document: an element
+        // that is disconnected, or in a document without a browsing context
+        // (DOMParser, createHTMLDocument, template contents), reads "" for
+        // every property.
+        if self.owned(dom, el).is_none() || !dom.is_connected(el).unwrap_or(false) {
+            return String::new();
+        }
         let custom = name.starts_with("--");
         let name = if custom { name.to_owned() } else { name.to_ascii_lowercase() };
-        let owned = self.owned(dom, el).is_some();
-        if owned {
-            match name.as_str() {
-                "display" if self.style.has_display_none(dom, el) => return "none".into(),
-                "display" => return self.style.computed_display(dom, el).unwrap_or_default(),
-                "visibility" if self.style.has_visibility_hidden_inherited(dom, el) => return "hidden".into(),
-                "pointer-events" if self.style.has_pointer_events_none(dom, el) => return "none".into(),
-                "text-transform" => return self.style.text_transform(dom, el).keyword().into(),
-                "overflow-x" | "overflow-y" | "overflow" => {
-                    let x = self.style.used_value(dom, el, "overflow-x");
-                    let y = self.style.used_value(dom, el, "overflow-y");
-                    let (x, y) = crate::style::computed_overflow_keywords(x.as_deref(), y.as_deref());
-                    return match name.as_str() {
-                        "overflow-x" => x,
-                        "overflow-y" => y,
-                        _ if x == y => x,
-                        _ => format!("{x} {y}"),
-                    };
-                }
-                _ => {}
+        match name.as_str() {
+            "display" if self.style.has_display_none(dom, el) => return "none".into(),
+            "display" => return self.style.computed_display(dom, el).unwrap_or_default(),
+            "visibility" if self.style.has_visibility_hidden_inherited(dom, el) => return "hidden".into(),
+            "pointer-events" if self.style.has_pointer_events_none(dom, el) => return "none".into(),
+            "text-transform" => return self.style.text_transform(dom, el).keyword().into(),
+            "overflow-x" | "overflow-y" | "overflow" => {
+                let x = self.style.used_value(dom, el, "overflow-x");
+                let y = self.style.used_value(dom, el, "overflow-y");
+                let (x, y) = crate::style::computed_overflow_keywords(x.as_deref(), y.as_deref());
+                return match name.as_str() {
+                    "overflow-x" => x,
+                    "overflow-y" => y,
+                    _ if x == y => x,
+                    _ => format!("{x} {y}"),
+                };
             }
-            if custom {
-                return self.style.custom_property_value(dom, el, &name).unwrap_or_default();
+            _ => {}
+        }
+        if custom {
+            return self.style.custom_property_value(dom, el, &name).unwrap_or_default();
+        }
+        if name == "font-size" {
+            // The cascade (stylesheets, em/%/rem, keywords) when any author value applies; else the inline/attribute walk.
+            return self
+                .style
+                .computed_value(dom, el, "font-size")
+                .unwrap_or_else(|| format!("{}px", self.style.computed_font_size(dom, Some(el))));
+        }
+        let declared = self.style.computed_value(dom, el, &name);
+        if name == "width" || name == "height" {
+            if !self.is_visible(dom, el) {
+                return "auto".into();
             }
-            if name == "font-size" {
-                // The cascade (stylesheets, em/%/rem, keywords) when any author value applies; else the inline/attribute walk.
-                return self
-                    .style
-                    .computed_value(dom, el, "font-size")
-                    .unwrap_or_else(|| format!("{}px", self.style.computed_font_size(dom, Some(el))));
+            // A declared absolute length is the used size the renderless layout cannot derive.
+            if let Some(px) = declared.filter(|v| v.ends_with("px")) {
+                return px;
             }
-            let declared = self.style.computed_value(dom, el, &name);
-            if name == "width" || name == "height" {
-                if !self.is_visible(dom, el) {
-                    return "auto".into();
-                }
-                // A declared absolute length is the used size the renderless layout cannot derive.
-                if let Some(px) = declared.filter(|v| v.ends_with("px")) {
-                    return px;
-                }
-                // Stylo's computed value already accounts for the inline one.
-                if !self.style.stylo_on() {
-                    if let Some(v) = self.style.inline_style_value(dom, el, &name) {
-                        return v;
-                    }
-                }
-                // The used size: content box, or border box under `box-sizing: border-box`.
-                let Some(b) = self.layout_box(dom, el) else { return "auto".into() };
-                let border_box = self.style.computed_value(dom, el, "box-sizing").as_deref() == Some("border-box");
-                let (size, start, end) =
-                    if name == "width" { (b.rect.width, LEFT, RIGHT) } else { (b.rect.height, TOP, BOTTOM) };
-                let inset =
-                    if border_box { 0.0 } else { b.border[start] + b.border[end] + b.padding[start] + b.padding[end] };
-                return format!("{}px", crate::computed::fmt_num((size - inset).max(0.0)));
-            }
-            if self.style.stylo_on() {
-                if let Some(v) = declared.as_deref().and_then(|v| self.resolved_value(dom, el, &name, v)) {
+            // Stylo's computed value already accounts for the inline one.
+            if !self.style.stylo_on() {
+                if let Some(v) = self.style.inline_style_value(dom, el, &name) {
                     return v;
                 }
             }
-            if let Some(v) = declared {
+            // The used size: content box, or border box under `box-sizing: border-box`.
+            let Some(b) = self.layout_box(dom, el) else { return "auto".into() };
+            let border_box = self.style.computed_value(dom, el, "box-sizing").as_deref() == Some("border-box");
+            let (size, start, end) =
+                if name == "width" { (b.rect.width, LEFT, RIGHT) } else { (b.rect.height, TOP, BOTTOM) };
+            let inset =
+                if border_box { 0.0 } else { b.border[start] + b.border[end] + b.padding[start] + b.padding[end] };
+            return format!("{}px", crate::computed::fmt_num((size - inset).max(0.0)));
+        }
+        if self.style.stylo_on() {
+            if let Some(v) = declared.as_deref().and_then(|v| self.resolved_value(dom, el, &name, v)) {
                 return v;
             }
-            if let Some(v) = self.style.inline_style_value(dom, el, &name) {
-                return v;
-            }
+        }
+        if let Some(v) = declared {
+            return v;
+        }
+        if let Some(v) = self.style.inline_style_value(dom, el, &name) {
+            return v;
         }
         default_property_value(dom, el, &name).to_owned()
     }
