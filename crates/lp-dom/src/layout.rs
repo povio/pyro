@@ -199,14 +199,6 @@ pub fn set_geometry_source_factory(factory: Option<GeometrySourceFactory>) {
     GEOMETRY_SOURCE.with(|f| *f.borrow_mut() = factory);
 }
 
-/// Whether computed styles come from the layout engine when it is synced
-/// (`LP_ENGINE_STYLES=0`: always from the document's own cascade).
-pub fn engine_styles() -> bool {
-    static ON: std::sync::LazyLock<bool> =
-        std::sync::LazyLock::new(|| std::env::var("LP_ENGINE_STYLES").map_or(true, |v| v != "0"));
-    *ON
-}
-
 impl Layout {
     pub fn new(doc: NodeId) -> Self {
         Self::with_style(StyleEngine::new(doc))
@@ -1669,12 +1661,6 @@ impl Layout {
             if let Some(px) = declared.filter(|v| v.ends_with("px")) {
                 return px;
             }
-            // Stylo's computed value already accounts for the inline one.
-            if !self.style.stylo_on() {
-                if let Some(v) = self.style.inline_style_value(dom, el, &name) {
-                    return v;
-                }
-            }
             // The used size: content box, or border box under `box-sizing: border-box`.
             let Some(b) = self.layout_box(dom, el) else { return "auto".into() };
             let border_box = self.style.computed_value(dom, el, "box-sizing").as_deref() == Some("border-box");
@@ -1684,10 +1670,8 @@ impl Layout {
                 if border_box { 0.0 } else { b.border[start] + b.border[end] + b.padding[start] + b.padding[end] };
             return format!("{}px", crate::computed::fmt_num((size - inset).max(0.0)));
         }
-        if self.style.stylo_on() {
-            if let Some(v) = declared.as_deref().and_then(|v| self.resolved_value(dom, el, &name, v)) {
-                return v;
-            }
+        if let Some(v) = declared.as_deref().and_then(|v| self.resolved_value(dom, el, &name, v)) {
+            return v;
         }
         if let Some(v) = declared {
             return v;
@@ -1980,72 +1964,6 @@ pub(crate) mod flow_stats {
         viewport: u64,
         // Since the last print.
         window: Duration,
-        selective: u64,
-        dropped: u64,
-        full: [u64; Full::COUNT],
-        unknown: std::collections::BTreeMap<String, u64>,
-        /// The largest invalidation roots: (descendants dropped, root).
-        roots: Vec<(usize, String)>,
-    }
-
-    /// Why the style cache was cleared entirely.
-    #[derive(Clone, Copy)]
-    pub(crate) enum Full {
-        /// The rule set was rebuilt (stylesheet change).
-        Rules,
-        /// Style generation, focus or hover changed.
-        Stamp,
-        /// Unbounded or sibling-relative `:has()` in the stylesheet.
-        Relative,
-        ShadowRoots,
-        /// The journal no longer covers the cached version.
-        Journal,
-        /// An unjournaled change (or a document-level root).
-        Unknown,
-    }
-
-    impl Full {
-        const COUNT: usize = 6;
-        const NAMES: [&str; Full::COUNT] = ["rules", "stamp", "has", "shadow", "journal", "unknown"];
-    }
-
-    pub(crate) fn note_full(reason: Full) {
-        if enabled() {
-            STATS.with(|s| s.borrow_mut().full[reason as usize] += 1);
-        }
-    }
-
-    pub(crate) fn note_selective(dropped: usize) {
-        if enabled() {
-            STATS.with(|s| {
-                let mut s = s.borrow_mut();
-                s.selective += 1;
-                s.dropped += dropped as u64;
-            });
-        }
-    }
-
-    /// Where an unjournaled change came from (`file:line`, or `document`).
-    pub(crate) fn note_unknown(label: impl FnOnce() -> String) {
-        if enabled() {
-            STATS.with(|s| *s.borrow_mut().unknown.entry(label()).or_default() += 1);
-        }
-    }
-
-    /// One selective invalidation root and the descendants it dropped; the
-    /// three largest per window are printed.
-    pub(crate) fn note_root(size: usize, label: impl FnOnce() -> String) {
-        if !enabled() {
-            return;
-        }
-        STATS.with(|s| {
-            let roots = &mut s.borrow_mut().roots;
-            if roots.len() < 3 || roots.last().is_some_and(|(n, _)| size > *n) {
-                roots.push((size, label()));
-                roots.sort_by_key(|r| std::cmp::Reverse(r.0));
-                roots.truncate(3);
-            }
-        });
     }
 
     thread_local! {
@@ -2097,28 +2015,8 @@ pub(crate) mod flow_stats {
                     s.hover,
                     s.viewport
                 );
-                let full: Vec<String> = Full::NAMES
-                    .iter()
-                    .zip(s.full)
-                    .filter(|(_, n)| *n > 0)
-                    .map(|(name, n)| format!("{name}:{n}"))
-                    .collect();
-                eprintln!(
-                    "flow-stats last25 avg_ms={:.1} selective={} dropped={} full=[{}]",
-                    s.window.as_secs_f64() * 1000.0 / 25.0,
-                    s.selective,
-                    s.dropped,
-                    full.join(" "),
-                );
-                let unknown: Vec<String> = s.unknown.iter().map(|(at, n)| format!("{at}:{n}")).collect();
-                let roots: Vec<String> = s.roots.iter().map(|(n, r)| format!("{r}:{n}")).collect();
-                eprintln!("flow-stats last25 unknown=[{}] largest_roots=[{}]", unknown.join(" "), roots.join(" "));
-                s.unknown.clear();
-                s.roots.clear();
+                eprintln!("flow-stats last25 avg_ms={:.1}", s.window.as_secs_f64() * 1000.0 / 25.0);
                 s.window = Duration::ZERO;
-                s.selective = 0;
-                s.dropped = 0;
-                s.full = [0; Full::COUNT];
             }
         });
     }

@@ -54,9 +54,6 @@ pub(crate) struct Slot {
     /// An invalidation snapshot of this element is in the cascade's map.
     pub(crate) has_snapshot: Cell<bool>,
     pub(crate) handled_snapshot: Cell<bool>,
-    /// The element state its style was last computed with (the old state
-    /// of an invalidation snapshot).
-    pub(crate) state: Cell<ElementState>,
 }
 
 impl Slot {
@@ -67,7 +64,6 @@ impl Slot {
             dirty_descendants: Cell::new(false),
             has_snapshot: Cell::new(false),
             handled_snapshot: Cell::new(false),
-            state: Cell::new(ElementState::empty()),
         })
     }
 }
@@ -89,16 +85,6 @@ pub(crate) struct Store {
 }
 
 impl Store {
-    pub(crate) fn reserve(&mut self, len: usize) {
-        let slots = self.slots.get_mut();
-        if slots.len() < len {
-            slots.resize_with(len, || None);
-        }
-        if self.flags.len() < len {
-            self.flags.resize_with(len, Default::default);
-        }
-    }
-
     /// The selector flags of `idx` as the node of generation `gen`.
     pub(crate) fn flags(&self, idx: u32, gen: u32) -> ElementSelectorFlags {
         match self.flags.get(idx as usize).map(Cell::get) {
@@ -153,22 +139,6 @@ impl Store {
         }
         &mut entry.1
     }
-
-    /// Drops the data of elements that no longer exist (freed or reused).
-    pub(crate) fn sweep(&mut self, dom: &Dom) {
-        self.style_attrs.get_mut().retain(|&i, e| dom.slot_live(i) && dom.generation_at(i) == e.0);
-        for (i, slot) in self.slots.get_mut().iter_mut().enumerate() {
-            if slot.as_ref().is_some_and(|s| !dom.slot_live(i as u32) || dom.generation_at(i as u32) != s.gen) {
-                *slot = None;
-            }
-        }
-    }
-
-    /// Elements with style data (memory accounting).
-    pub(crate) fn len(&self) -> usize {
-        // SAFETY: read-only walk outside a traversal.
-        unsafe { &*self.slots.get() }.iter().filter(|s| s.is_some()).count()
-    }
 }
 
 /// What every node handle of one styling pass shares.
@@ -186,11 +156,6 @@ pub(crate) struct Cx<'a> {
 }
 
 impl<'a> Cx<'a> {
-    /// Makes this the context [`SNode`]s of this thread use until the
-    /// returned guard drops.
-    pub(crate) fn enter(&self) -> Entered {
-        Entered(CURRENT.with(|c| c.replace(self as *const Cx<'a> as *const ())))
-    }
     pub(crate) fn new(
         dom: &'a Dom,
         store: &'a Store,
@@ -273,14 +238,6 @@ thread_local! {
     static CURRENT: Cell<*const ()> = const { Cell::new(std::ptr::null()) };
 }
 
-/// Restores the previous pass context when dropped.
-pub(crate) struct Entered(*const ());
-impl Drop for Entered {
-    fn drop(&mut self) {
-        CURRENT.with(|c| c.set(self.0));
-    }
-}
-
 // SAFETY: the traversal is sequential (`traverse_dom` without a thread pool);
 // Stylo only requires these bounds for its parallel mode.
 unsafe impl<'a, C: CxSource<'a>> Send for SNode<'a, C> {}
@@ -306,13 +263,7 @@ impl<'a, C: CxSource<'a>> fmt::Debug for SNode<'a, C> {
     }
 }
 
-impl<'a> SNode<'a> {
-    /// A node of `cx`'s pass; `cx` must be [entered](Cx::enter).
-    pub(crate) fn new(cx: &'a Cx<'a>, idx: u32) -> Self {
-        debug_assert_eq!(CURRENT.with(|c| c.get()), cx as *const Cx<'a> as *const ());
-        SNode { idx: idx as usize, src: Tls(PhantomData), _cx: PhantomData }
-    }
-}
+impl<'a> SNode<'a> {}
 
 impl<'a> SNode<'a, &'a Cx<'a>> {
     /// A node of `cx`, carrying it (selector matching outside the traversal).

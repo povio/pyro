@@ -2429,13 +2429,12 @@ fn flow_whitespace_normal_span_wraps_inside_nowrap_cell() {
     let p = page(&html);
     // One line is the single-line span's height; each further line adds the
     // line pitch (the step from 2 to 3 lines).
-    // With Stylo the spans' `font` shorthand applies (500 18px; the legacy
-    // cascade left them at 14px), and the flow's glyph advances for that
-    // weight run wide enough that pkg's broken word takes a third line
-    // where Chromium fits two: a text-metrics gap, not a style one.
-    let stylo = p.layout.style().stylo_on();
+    // The spans' `font` shorthand applies (500 18px), and the glyph
+    // advances for that weight run wide enough that pkg's broken word takes
+    // a third line where Chromium fits two: a text-metrics gap, not a style
+    // one.
     let one = p.metrics("s-inherit")[3];
-    let pkg_lines = if stylo { 3.0 } else { 2.0 };
+    let pkg_lines = 3.0;
     let pitch = (p.metrics("s-hs")[3] - one) / 2.0;
     assert!(pitch >= one, "line pitch {pitch} vs line {one}");
     for (k, lines) in [("pkg", pkg_lines), ("hs", 3.0)] {
@@ -4509,7 +4508,6 @@ fn computed_styles_come_from_blitz_even_under_display_none() {
     let body = p.dom.body(p.doc).unwrap().unwrap();
     p.dom.set_attribute(body, "class", "on").unwrap();
     assert_eq!(v(&p, "b", "color"), "rgb(7, 7, 7)");
-    assert!(!p.layout.style().own_cascade_used(), "lp-dom's cascade answered nothing");
 }
 
 #[test]

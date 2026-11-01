@@ -1576,7 +1576,9 @@ dependencies = [
  "http",
  "lp-dom",
  "lp-js",
+ "lp-layout",
  "lp-net",
+ "lp-render",
  "lp-runtime",
  "lp-webapi",
  "percent-encoding",
@@ -1665,6 +1667,7 @@ dependencies = [
  "lp-dom",
  "lp-render",
  "rustc-hash 2.1.3",
+ "serde_json",
  "stylo",
  "url",
 ]

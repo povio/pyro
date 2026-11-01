@@ -353,7 +353,12 @@ impl Dom {
         saw_row: &mut bool,
     ) {
         let id = self.id_of(idx);
-        if state.style.has_display_none(self, id) {
+        // The layout engine's UA sheet hides a select's options (Blitz paints
+        // the control itself); Chromium lays them out as blocks.
+        let parent = self.n(idx).parent;
+        let in_select = matches!(tag, "option" | "optgroup")
+            && self.n(parent).element().is_some_and(|p| matches!(&*p.name.local, "select" | "optgroup"));
+        if !in_select && state.style.has_display_none(self, id) {
             return;
         }
         if tag == "br" {

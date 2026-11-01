@@ -3,12 +3,11 @@
 //! mostly link time. Add new test files as modules here.
 
 mod id_index;
-mod inner_text;
 mod loader;
 mod render_html;
 mod select_fast;
 mod select_forms;
-mod stylo_cascade;
+mod stylo_select;
 mod tree;
 mod xml;
 mod xpath;
