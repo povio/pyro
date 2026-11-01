@@ -391,6 +391,8 @@ impl Mirror {
     /// does not fit this document (the caller sends the whole tree).
     pub(crate) fn apply_delta(&mut self, ops: &[DeltaOp]) -> Result<u32, Rebuild> {
         // Check first: nothing is applied from a delta that does not fit.
+        // Nodes the ops before (and the current one) create.
+        let mut created: FxHashSet<u64> = FxHashSet::default();
         for op in ops {
             match op {
                 DeltaOp::Node { key, kind } => {
@@ -399,8 +401,17 @@ impl Mirror {
                         return Err(Rebuild::Changes);
                     }
                 }
-                DeltaOp::Children { parent, nodes, .. } => {
+                DeltaOp::Children { parent, nodes, kids } => {
                     if parent.is_some_and(|p| !self.nodes.contains_key(&p)) {
+                        return Err(Rebuild::Changes);
+                    }
+                    // Every kid is a node already mirrored or created by
+                    // this op or an earlier one.
+                    created.extend(nodes.iter().map(|n| n.key));
+                    if kids.iter().any(|k| !self.nodes.contains_key(k) && !created.contains(k)) {
+                        if std::env::var_os("LP_MIRRORDBG").is_some() {
+                            eprintln!("mirror-profile unknown kid parent={parent:x?} kids={} new={}", kids.len(), nodes.len());
+                        }
                         return Err(Rebuild::Changes);
                     }
                     for n in nodes {
