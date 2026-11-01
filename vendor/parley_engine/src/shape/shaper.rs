@@ -16,6 +16,29 @@ use crate::{
     shape::{CharCluster, cache},
 };
 
+/// Runs `$f` with the glyph cache. With `std` it is one per thread, shared
+/// by every `Shaper` (every document): its keys hold the font's blob id and
+/// the run's exact shaping inputs, so a document reusing a font blob (the
+/// system fonts; web fonts its embedder interns) reuses its glyphs, as
+/// Chromium's shape caches serve every document.
+#[cfg(feature = "std")]
+macro_rules! with_glyph_cache {
+    ($scx:expr, $f:expr) => {
+        GLYPH_CACHE.with(|cache| ($f)(&mut *cache.borrow_mut()))
+    };
+}
+#[cfg(not(feature = "std"))]
+macro_rules! with_glyph_cache {
+    ($scx:expr, $f:expr) => {
+        ($f)(&mut $scx.glyph_cache)
+    };
+}
+
+#[cfg(feature = "std")]
+std::thread_local! {
+    static GLYPH_CACHE: core::cell::RefCell<cache::GlyphCache> = Default::default();
+}
+
 /// Shaping options for one item.
 ///
 /// These are styling options relevant for shaping. They're styling, in that they're not derived
@@ -85,8 +108,9 @@ impl From<FontInstanceRef<'_>> for FontInstance {
 
 /// Reusable scratch to shape text using [`Self::shape_text`].
 pub struct Shaper {
-    /// Shaped runs by their shaping inputs: identical runs (cloned content,
-    /// paragraphs laid out again) reuse the glyphs instead of shaping again.
+    /// Shaped runs by their shaping inputs (see [`with_glyph_cache`]); only
+    /// without `std`, which keeps one per thread.
+    #[cfg(not(feature = "std"))]
     glyph_cache: cache::GlyphCache,
     shape_data_cache: LruCache<cache::ShapeDataKey, harfrust::ShaperData>,
     shape_instance_cache: LruCache<cache::ShapeInstanceId, harfrust::ShaperInstance>,
@@ -100,6 +124,7 @@ impl Default for Shaper {
     fn default() -> Self {
         const MAX_ENTRIES: usize = 16;
         Self {
+            #[cfg(not(feature = "std"))]
             glyph_cache: cache::GlyphCache::default(),
             shape_data_cache: LruCache::new(MAX_ENTRIES),
             shape_instance_cache: LruCache::new(MAX_ENTRIES),
@@ -324,10 +349,11 @@ fn shape_segment(
             pre_context,
             post_context,
         };
-        if let Some(glyphs) = scx.glyph_cache.get(&glyph_key) {
+        let cached = with_glyph_cache!(scx, |cache: &mut cache::GlyphCache| {
+            let glyphs = cache.get(&glyph_key)?;
             shaped_text.push_run(
                 text,
-                range,
+                range.clone(),
                 segment,
                 options,
                 char_info,
@@ -336,6 +362,9 @@ fn shape_segment(
                 glyphs,
                 harf_shaper.coords(),
             );
+            Some(())
+        });
+        if cached.is_some() {
             return;
         }
         let shaper_plan = scx.shape_plan_cache.entry(
@@ -408,7 +437,7 @@ fn shape_segment(
         );
 
         // The glyphs stay in the cache; the next run gets a new buffer.
-        scx.glyph_cache.insert(&glyph_key, glyph_buffer);
+        with_glyph_cache!(scx, |cache: &mut cache::GlyphCache| cache.insert(&glyph_key, glyph_buffer));
         scx.unicode_buffer = Some(harfrust::UnicodeBuffer::new());
     };
 
