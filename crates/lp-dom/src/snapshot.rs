@@ -555,6 +555,10 @@ impl Dom {
         changed.sort_unstable();
         changed.dedup();
         for i in changed {
+            // Removed since: nothing to render.
+            if !self.slot_live(i) {
+                continue;
+            }
             // A `<style>`'s own attributes: the element (its text stays its
             // sheet's).
             let is_style = style_owner(i) == Some(i);
