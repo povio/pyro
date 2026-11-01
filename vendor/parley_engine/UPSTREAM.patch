@@ -1,8 +1,126 @@
-diff --git a/src/shape/shaped_text.rs b/src/shape/shaped_text.rs
-index 63afadd..065900e 100644
+--- a/src/shape/cache.rs
++++ b/src/shape/cache.rs
+@@ -176,3 +176,117 @@
+         }
+     }
+ }
++
++/// The inputs of shaping one run (see [`GlyphCache`]).
++pub(crate) struct GlyphKey<'a> {
++    pub font_blob_id: u64,
++    pub font_index: u32,
++    pub synthesis: &'a fontique::Synthesis,
++    pub variations: &'a [FontVariation],
++    pub features: &'a [harfrust::Feature],
++    pub direction: harfrust::Direction,
++    pub script: harfrust::Script,
++    pub language: Option<&'a harfrust::Language>,
++    pub font_size: f32,
++    pub text: &'a str,
++    /// The text around the run that shaping looks at.
++    pub pre_context: &'a str,
++    pub post_context: &'a str,
++}
++
++impl GlyphKey<'_> {
++    fn hash(&self, hasher: &hashbrown::DefaultHashBuilder) -> u64 {
++        use core::hash::{BuildHasher, Hash, Hasher};
++        let mut h = hasher.build_hasher();
++        self.font_blob_id.hash(&mut h);
++        self.font_index.hash(&mut h);
++        self.features.hash(&mut h);
++        self.direction.hash(&mut h);
++        self.script.hash(&mut h);
++        self.language.hash(&mut h);
++        self.font_size.to_bits().hash(&mut h);
++        self.text.hash(&mut h);
++        self.pre_context.hash(&mut h);
++        self.post_context.hash(&mut h);
++        h.finish()
++    }
++}
++
++struct GlyphEntry {
++    font_blob_id: u64,
++    font_index: u32,
++    synthesis: fontique::Synthesis,
++    variations: Box<[FontVariation]>,
++    features: Box<[harfrust::Feature]>,
++    direction: harfrust::Direction,
++    script: harfrust::Script,
++    language: Option<harfrust::Language>,
++    font_size: u32,
++    text: Box<str>,
++    pre_context: Box<str>,
++    post_context: Box<str>,
++    glyphs: harfrust::GlyphBuffer,
++}
++
++impl GlyphEntry {
++    fn matches(&self, key: &GlyphKey<'_>) -> bool {
++        self.font_blob_id == key.font_blob_id
++            && self.font_index == key.font_index
++            && self.synthesis == *key.synthesis
++            && *self.variations == *key.variations
++            && *self.features == *key.features
++            && self.direction == key.direction
++            && self.script == key.script
++            && self.language.as_ref() == key.language
++            && self.font_size == key.font_size.to_bits()
++            && *self.text == *key.text
++            && *self.pre_context == *key.pre_context
++            && *self.post_context == *key.post_context
++    }
++}
++
++/// Shaped runs by their shaping inputs. Bounded: emptied when it holds
++/// [`GlyphCache::MAX_ENTRIES`] runs.
++#[derive(Default)]
++pub(crate) struct GlyphCache {
++    entries: hashbrown::HashMap<u64, alloc::vec::Vec<GlyphEntry>>,
++    len: usize,
++    /// One hasher for every key (each `DefaultHashBuilder` is seeded anew).
++    hasher: hashbrown::DefaultHashBuilder,
++}
++
++impl GlyphCache {
++    const MAX_ENTRIES: usize = 4096;
++
++    pub(crate) fn get(&self, key: &GlyphKey<'_>) -> Option<&harfrust::GlyphBuffer> {
++        self.entries
++            .get(&key.hash(&self.hasher))?
++            .iter()
++            .find(|e| e.matches(key))
++            .map(|e| &e.glyphs)
++    }
++
++    pub(crate) fn insert(&mut self, key: &GlyphKey<'_>, glyphs: harfrust::GlyphBuffer) {
++        if self.len >= Self::MAX_ENTRIES {
++            self.entries.clear();
++            self.len = 0;
++        }
++        self.len += 1;
++        let hash = key.hash(&self.hasher);
++        self.entries.entry(hash).or_default().push(GlyphEntry {
++            font_blob_id: key.font_blob_id,
++            font_index: key.font_index,
++            synthesis: *key.synthesis,
++            variations: key.variations.into(),
++            features: key.features.into(),
++            direction: key.direction,
++            script: key.script,
++            language: key.language.cloned(),
++            font_size: key.font_size.to_bits(),
++            text: key.text.into(),
++            pre_context: key.pre_context.into(),
++            post_context: key.post_context.into(),
++            glyphs,
++        });
++    }
++}
 --- a/src/shape/shaped_text.rs
 +++ b/src/shape/shaped_text.rs
-@@ -93,6 +93,7 @@ impl FontMetrics {
+@@ -93,6 +93,7 @@
                  ),
          );
          Some(Self::from_skrifa_metrics(
@@ -10,7 +128,7 @@ index 63afadd..065900e 100644
              &skrifa::metrics::Metrics::new(
                  &font_ref,
                  skrifa::prelude::Size::new(font_size),
-@@ -102,7 +103,11 @@ impl FontMetrics {
+@@ -102,7 +103,11 @@
          ))
      }
  
@@ -23,7 +141,7 @@ index 63afadd..065900e 100644
          // Default values from HarfBuzz: https://github.com/harfbuzz/harfbuzz/blob/12ee77ee00514c442bcd28f9aa9d56b708c37382/src/hb-ot-metrics.cc#L355-L372
          let fallback_decoration_size = font_size / 18.0;
  
-@@ -119,7 +124,7 @@ impl FontMetrics {
+@@ -119,7 +124,7 @@
          };
  
          Self {
@@ -32,10 +150,14 @@ index 63afadd..065900e 100644
              descent: -metrics.descent,
              leading: metrics.leading,
              underline_offset,
-@@ -132,6 +137,42 @@ impl FontMetrics {
-     }
- }
- 
+@@ -128,8 +133,44 @@
+             strikethrough_size,
+             x_height: metrics.x_height,
+             cap_height: metrics.cap_height,
++        }
++    }
++}
++
 +/// lightningpanda: WebKit's and Chromium's (macOS) extra ascent for Times,
 +/// Helvetica and Courier, "to closely match the vertical metrics of their
 +/// Microsoft counterparts": 15% of the rounded ascent plus descent, rounded
@@ -52,7 +174,7 @@ index 63afadd..065900e 100644
 +    let adjusted = ADJUSTED.with(|cache| {
 +        if let Some(&(_, v)) = cache.borrow().iter().find(|(k, _)| *k == key) {
 +            return v;
-+        }
+         }
 +        let family = font_ref
 +            .localized_strings(skrifa::string::StringId::FAMILY_NAME)
 +            .english_or_first()
@@ -67,15 +189,13 @@ index 63afadd..065900e 100644
 +    });
 +    if !adjusted {
 +        return 0.0;
-+    }
+     }
 +    let height = metrics.ascent.round() + (-metrics.descent).round();
 +    (height * 0.15 + 0.5).floor()
-+}
-+
+ }
+ 
  /// The result of shaping.
- ///
- /// After [analyzing][crate::Analysis] your text, [shape the text][crate::Shaper::shape_text],
-@@ -313,7 +354,12 @@ impl ShapedText {
+@@ -313,7 +354,12 @@
              )
          };
          let units_per_em = metrics.units_per_em as f32;
@@ -89,3 +209,103 @@ index 63afadd..065900e 100644
  
          // `HarfRust` returns glyphs in visual order, so we need to process them as such while
          // maintaining logical ordering of clusters.
+--- a/src/shape/shaper.rs
++++ b/src/shape/shaper.rs
+@@ -85,6 +85,9 @@
+ 
+ /// Reusable scratch to shape text using [`Self::shape_text`].
+ pub struct Shaper {
++    /// Shaped runs by their shaping inputs: identical runs (cloned content,
++    /// paragraphs laid out again) reuse the glyphs instead of shaping again.
++    glyph_cache: cache::GlyphCache,
+     shape_data_cache: LruCache<cache::ShapeDataKey, harfrust::ShaperData>,
+     shape_instance_cache: LruCache<cache::ShapeInstanceId, harfrust::ShaperInstance>,
+     shape_plan_cache: LruCache<cache::ShapePlanId, harfrust::ShapePlan>,
+@@ -97,6 +100,7 @@
+     fn default() -> Self {
+         const MAX_ENTRIES: usize = 16;
+         Self {
++            glyph_cache: cache::GlyphCache::default(),
+             shape_data_cache: LruCache::new(MAX_ENTRIES),
+             shape_instance_cache: LruCache::new(MAX_ENTRIES),
+             shape_plan_cache: LruCache::new(MAX_ENTRIES),
+@@ -301,6 +305,39 @@
+             .shaper(&font_ref)
+             .instance(Some(instance))
+             .build();
++
++        // Use the entire run text including newlines.
++        let run_text = &text[range.byte_range.clone()];
++        let pre_context = context_before(&text[..range.byte_range.start]);
++        let post_context = context_after(&text[range.byte_range.end..]);
++        let glyph_key = cache::GlyphKey {
++            font_blob_id: font.font.data.id(),
++            font_index: font.font.index,
++            synthesis: &font.synthesis,
++            variations: options.variations,
++            features: &scx.features,
++            direction,
++            script: hb_script,
++            language: language.as_ref(),
++            font_size: options.font_size,
++            text: run_text,
++            pre_context,
++            post_context,
++        };
++        if let Some(glyphs) = scx.glyph_cache.get(&glyph_key) {
++            shaped_text.push_run(
++                text,
++                range,
++                segment,
++                options,
++                char_info,
++                char_style_indices,
++                font,
++                glyphs,
++                harf_shaper.coords(),
++            );
++            return;
++        }
+         let shaper_plan = scx.shape_plan_cache.entry(
+             cache::ShapePlanKey::new(
+                 font.font.data.id(),
+@@ -328,8 +365,6 @@
+         buffer.clear();
+         buffer.set_cluster_level(harfrust::BufferClusterLevel::MonotoneCharacters);
+ 
+-        // Use the entire run text including newlines.
+-        let run_text = &text[range.byte_range.clone()];
+         buffer.reserve(run_text.len());
+         #[expect(clippy::cast_possible_truncation, reason = "Deferred")]
+         for (i, ch) in run_text.chars().enumerate() {
+@@ -372,8 +407,9 @@
+             harf_shaper.coords(),
+         );
+ 
+-        // Replace buffer to reuse allocation in the next run.
+-        scx.unicode_buffer = Some(glyph_buffer.clear());
++        // The glyphs stay in the cache; the next run gets a new buffer.
++        scx.glyph_cache.insert(&glyph_key, glyph_buffer);
++        scx.unicode_buffer = Some(harfrust::UnicodeBuffer::new());
+     };
+ 
+     // This is the run being accumulated, i.e., consecutive graphemes for which `select_font`
+@@ -429,6 +465,18 @@
+     Ok(())
+ }
+ 
++/// Up to harfrust's context length (5 characters) of `text`'s end.
++fn context_before(text: &str) -> &str {
++    let start = text.char_indices().rev().nth(4).map_or(0, |(i, _)| i);
++    &text[start..]
++}
++
++/// Up to harfrust's context length (5 characters) of `text`'s start.
++fn context_after(text: &str) -> &str {
++    let end = text.char_indices().nth(5).map_or(text.len(), |(i, _)| i);
++    &text[..end]
++}
++
+ #[inline]
+ fn variations_iter<'a>(
+     synthesis: &'a fontique::Synthesis,

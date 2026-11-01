@@ -79,6 +79,11 @@ pub mod sync_profile {
 }
 
 /// Milliseconds per Blitz `resolve` phase on this thread (profiling).
+/// Inline layouts Blitz built (shaped) on this thread, and their text bytes.
+pub fn blitz_rebuilds() -> (u64, u64) {
+    blitz_dom::phase_profile::rebuilds()
+}
+
 pub fn blitz_phases() -> [f64; 9] {
     blitz_dom::phase_profile::peek()
 }

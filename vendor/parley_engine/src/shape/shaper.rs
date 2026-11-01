@@ -85,6 +85,9 @@ impl From<FontInstanceRef<'_>> for FontInstance {
 
 /// Reusable scratch to shape text using [`Self::shape_text`].
 pub struct Shaper {
+    /// Shaped runs by their shaping inputs: identical runs (cloned content,
+    /// paragraphs laid out again) reuse the glyphs instead of shaping again.
+    glyph_cache: cache::GlyphCache,
     shape_data_cache: LruCache<cache::ShapeDataKey, harfrust::ShaperData>,
     shape_instance_cache: LruCache<cache::ShapeInstanceId, harfrust::ShaperInstance>,
     shape_plan_cache: LruCache<cache::ShapePlanId, harfrust::ShapePlan>,
@@ -97,6 +100,7 @@ impl Default for Shaper {
     fn default() -> Self {
         const MAX_ENTRIES: usize = 16;
         Self {
+            glyph_cache: cache::GlyphCache::default(),
             shape_data_cache: LruCache::new(MAX_ENTRIES),
             shape_instance_cache: LruCache::new(MAX_ENTRIES),
             shape_plan_cache: LruCache::new(MAX_ENTRIES),
@@ -301,6 +305,39 @@ fn shape_segment(
             .shaper(&font_ref)
             .instance(Some(instance))
             .build();
+
+        // Use the entire run text including newlines.
+        let run_text = &text[range.byte_range.clone()];
+        let pre_context = context_before(&text[..range.byte_range.start]);
+        let post_context = context_after(&text[range.byte_range.end..]);
+        let glyph_key = cache::GlyphKey {
+            font_blob_id: font.font.data.id(),
+            font_index: font.font.index,
+            synthesis: &font.synthesis,
+            variations: options.variations,
+            features: &scx.features,
+            direction,
+            script: hb_script,
+            language: language.as_ref(),
+            font_size: options.font_size,
+            text: run_text,
+            pre_context,
+            post_context,
+        };
+        if let Some(glyphs) = scx.glyph_cache.get(&glyph_key) {
+            shaped_text.push_run(
+                text,
+                range,
+                segment,
+                options,
+                char_info,
+                char_style_indices,
+                font,
+                glyphs,
+                harf_shaper.coords(),
+            );
+            return;
+        }
         let shaper_plan = scx.shape_plan_cache.entry(
             cache::ShapePlanKey::new(
                 font.font.data.id(),
@@ -328,8 +365,6 @@ fn shape_segment(
         buffer.clear();
         buffer.set_cluster_level(harfrust::BufferClusterLevel::MonotoneCharacters);
 
-        // Use the entire run text including newlines.
-        let run_text = &text[range.byte_range.clone()];
         buffer.reserve(run_text.len());
         #[expect(clippy::cast_possible_truncation, reason = "Deferred")]
         for (i, ch) in run_text.chars().enumerate() {
@@ -372,8 +407,9 @@ fn shape_segment(
             harf_shaper.coords(),
         );
 
-        // Replace buffer to reuse allocation in the next run.
-        scx.unicode_buffer = Some(glyph_buffer.clear());
+        // The glyphs stay in the cache; the next run gets a new buffer.
+        scx.glyph_cache.insert(&glyph_key, glyph_buffer);
+        scx.unicode_buffer = Some(harfrust::UnicodeBuffer::new());
     };
 
     // This is the run being accumulated, i.e., consecutive graphemes for which `select_font`
@@ -427,6 +463,18 @@ fn shape_segment(
     }
 
     Ok(())
+}
+
+/// Up to harfrust's context length (5 characters) of `text`'s end.
+fn context_before(text: &str) -> &str {
+    let start = text.char_indices().rev().nth(4).map_or(0, |(i, _)| i);
+    &text[start..]
+}
+
+/// Up to harfrust's context length (5 characters) of `text`'s start.
+fn context_after(text: &str) -> &str {
+    let end = text.char_indices().nth(5).map_or(text.len(), |(i, _)| i);
+    &text[..end]
 }
 
 #[inline]

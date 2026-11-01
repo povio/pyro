@@ -461,6 +461,7 @@ impl BaseDocument {
                         self.viewport.scale(),
                         task.node_id,
                     );
+                    phase_profile::rebuilt(layout.text.len());
 
                     #[cfg(feature = "parallel-construct")]
                     {
@@ -571,6 +572,20 @@ pub mod phase_profile {
             v[i] += d;
             ns.set(v);
         });
+    }
+    std::thread_local! {
+        static REBUILDS: Cell<(u64, u64)> = const { Cell::new((0, 0)) };
+    }
+    /// An inline layout of `bytes` text was built (shaped) again.
+    pub(crate) fn rebuilt(bytes: usize) {
+        REBUILDS.with(|r| {
+            let (n, b) = r.get();
+            r.set((n + 1, b + bytes as u64));
+        });
+    }
+    /// Inline layouts built on this thread so far, and their text bytes.
+    pub fn rebuilds() -> (u64, u64) {
+        REBUILDS.with(|r| r.get())
     }
     /// Milliseconds per phase on this thread so far.
     pub fn peek() -> [f64; 9] {

@@ -73,9 +73,9 @@ mod profile {
             if i == 0 && v[0].0 % 250 == 0 {
                 let ms = |a: &std::sync::atomic::AtomicU64| a.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1e6;
                 eprintln!(
-                    "lp-geometry-profile pid={} sync={}/{:?} rebuild={}/{:?} document={}/{:?} box={}/{:?} delta-build={:.0}ms blitz={:.0}ms mirror/settle/resolve={:?} phases(style,damage,construct,pconstruct,layout,transform,paint_tree,c_damage,subdocs)={:.0?}",
+                    "lp-geometry-profile pid={} sync={}/{:?} rebuild={}/{:?} document={}/{:?} box={}/{:?} delta-build={:.0}ms blitz={:.0}ms mirror/settle/resolve={:?} phases(style,damage,construct,pconstruct,layout,transform,paint_tree,c_damage,subdocs)={:.0?} inline-rebuilds/bytes={:?}",
                     std::process::id(), v[0].0, v[0].1, v[1].0, v[1].1, v[2].0, v[2].1, v[3].0, v[3].1,
-                    ms(&super::SNAPSHOT_NS), ms(&super::LAYOUT_NS), lp_render::sync_profile::peek(), lp_render::blitz_phases()
+                    ms(&super::SNAPSHOT_NS), ms(&super::LAYOUT_NS), lp_render::sync_profile::peek(), lp_render::blitz_phases(), lp_render::blitz_rebuilds()
                 );
             }
         });
