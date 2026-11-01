@@ -596,3 +596,40 @@ fn styles_under_display_none_follow_changes() {
     p.dom.borrow_mut().set_attribute(a, "class", "").unwrap();
     assert_eq!(p.value("#c", "width"), "auto");
 }
+
+#[test]
+fn edge_and_later_sibling_selectors_restyle_only_the_children_they_reach() {
+    if !lp_dom::style::stylo_cascade() {
+        return; // Stylo's bookkeeping
+    }
+    // `:first-child`/`:last-child` (and rules through them) and `:nth-child`
+    // follow insertions and removals; a parent with only such selectors
+    // restyles its edge children and the ones after the change, not every
+    // child (TOS pagination appends a row at a time).
+    let rows: String = (0..200).map(|i| format!("<li id=r{i}><b>row {i}</b></li>")).collect();
+    let p = Page::new(&format!(
+        "<!doctype html><style>li:first-child{{height:1px}} li:last-child{{height:3px}} li:last-child b{{width:5px}} \
+         ol > li:nth-child(2){{height:2px}}</style><ul id=u>{rows}</ul><ol id=o><li id=o1>1</li><li id=o2>2</li></ol>"
+    ));
+    p.layout.style().style_document(&p.dom.borrow());
+    let (u, o) = (p.find("#u"), p.find("#o"));
+    // Appended: the old last child (and its <b>) loses :last-child.
+    let new = p.dom.borrow_mut().create_element(p.doc, "li").unwrap();
+    after(&p, |d| d.append_child(u, new).unwrap(), "#r199", "height", "auto");
+    after(&p, |_| (), "#r199 b", "width", "auto");
+    let (_, _, visited) = p.layout.style().stylo_stats();
+    assert!(visited < 40, "the edges and the path to them, not 200 rows: {visited}");
+    // Removed again: #r199 is the last child.
+    after(&p, |d| d.remove_child(u, new).unwrap(), "#r199 b", "width", "5px");
+    // Prepended: #r0 is no longer the first child.
+    let first = p.dom.borrow_mut().create_element(p.doc, "li").unwrap();
+    let r0 = p.find("#r0");
+    after(&p, |d| d.insert_before(u, first, Some(r0)).unwrap(), "#r0", "height", "auto");
+    // :nth-child(2): inserting before #o1 moves it to #o1.
+    let lead = p.dom.borrow_mut().create_element(p.doc, "li").unwrap();
+    let o1 = p.find("#o1");
+    after(&p, |d| d.insert_before(o, lead, Some(o1)).unwrap(), "#o1", "height", "2px");
+    after(&p, |_| (), "#o2", "height", "3px");
+    // And removing it moves it back.
+    after(&p, |d| d.remove_child(o, lead).unwrap(), "#o2", "height", "2px");
+}

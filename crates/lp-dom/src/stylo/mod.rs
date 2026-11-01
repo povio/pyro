@@ -854,6 +854,9 @@ impl Cascade {
             | F::HAS_EMPTY_SELECTOR
             | F::MAY_HAVE_TREE_COUNTING_FUNCTION;
         let mut moved: Vec<u32> = Vec::new();
+        // Children a child list change can restyle through edge-child or
+        // later-sibling selectors on their parent.
+        let mut structural_kids: Vec<u32> = Vec::new();
         let mut unstored_moves = false;
         let mut own_rules: Vec<u32> = Vec::new();
         for (i, change) in changes.enumerate() {
@@ -936,7 +939,52 @@ impl Cascade {
                         return false;
                     }
                     if flags(p).intersects(structural) {
-                        subtrees.push(p);
+                        // Only edge-child (`:first-child`, `:last-child`) and
+                        // later-sibling (`:nth-*`, `+`, `~`) selectors: the
+                        // children they can restyle, not all of them (as
+                        // Servo and Gecko do).
+                        let f = flags(p);
+                        let narrow = !f.intersects(
+                            F::HAS_SLOW_SELECTOR | F::HAS_EMPTY_SELECTOR | F::MAY_HAVE_TREE_COUNTING_FUNCTION,
+                        );
+                        // Where the child list changed: the inserted child,
+                        // or the one after the removed child (NIL: the end).
+                        let anchor = match change {
+                            Change::Removed(_, _, next) => next,
+                            _ => c,
+                        };
+                        let kids: Vec<u32> = dom.child_idx_iter(p).filter(|&k| dom.n(k).is_element()).collect();
+                        // Its position among the element children (None: it
+                        // has moved away since, so restyle them all).
+                        let at = if anchor == NIL {
+                            Some(kids.len())
+                        } else if dom.n(anchor).parent != p {
+                            None
+                        } else {
+                            let mut a = anchor;
+                            while a != NIL && !dom.n(a).is_element() {
+                                a = dom.n(a).next;
+                            }
+                            Some(kids.iter().position(|&k| k == a).unwrap_or(kids.len()))
+                        };
+                        match (narrow, at) {
+                            (true, Some(at)) => {
+                                if f.contains(F::HAS_SLOW_SELECTOR_LATER_SIBLINGS) {
+                                    structural_kids.extend(kids[at.saturating_sub(1)..].iter().copied());
+                                }
+                                if f.contains(F::HAS_EDGE_CHILD_SELECTOR) {
+                                    structural_kids.extend(kids.first().copied());
+                                    structural_kids.extend(kids.last().copied());
+                                    structural_kids.extend(at.checked_sub(1).and_then(|i| kids.get(i)).copied());
+                                    // An inserted child's own neighbour after it
+                                    // (it is at `at`); a removed child's, at `at`.
+                                    structural_kids.extend(kids.get(at).copied());
+                                    structural_kids.extend(kids.get(at + 1).copied());
+                                }
+                                parents.push(p);
+                            }
+                            _ => subtrees.push(p),
+                        }
                     } else {
                         parents.push(p);
                     }
@@ -1124,7 +1172,16 @@ impl Cascade {
             }
             lead(n);
         }
-        self.touched.extend(own_rules.iter().chain(&moved).chain(&subtrees).chain(&selves).chain(&parents).copied());
+        self.touched.extend(
+            own_rules
+                .iter()
+                .chain(&moved)
+                .chain(&structural_kids)
+                .chain(&subtrees)
+                .chain(&selves)
+                .chain(&parents)
+                .copied(),
+        );
         for n in own_rules {
             if let Some(mut data) = SNode::new(&cx, n).mutate_data() {
                 data.hint.insert(RestyleHint::RESTYLE_SELF);
@@ -1132,7 +1189,9 @@ impl Cascade {
                 lead(n);
             }
         }
-        for n in moved {
+        structural_kids.sort_unstable();
+        structural_kids.dedup();
+        for n in moved.into_iter().chain(structural_kids) {
             if let Some(mut data) = SNode::new(&cx, n).mutate_data() {
                 data.hint.insert(RestyleHint::restyle_subtree());
                 drop(data);
