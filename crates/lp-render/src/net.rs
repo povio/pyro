@@ -61,12 +61,18 @@ impl NetProvider for Provider {
     fn fetch(&self, _doc_id: usize, request: Request, handler: Box<dyn NetHandler>) {
         let url = request.url.to_string();
         self.outstanding.fetch_add(1, Ordering::AcqRel);
-        let ready = self
-            .sheets
-            .lock()
-            .ok()
-            .and_then(|s| s.get(&url).map(|text| Bytes::from(text.clone().into_bytes())))
-            .or_else(|| self.cache.lock().ok().and_then(|c| c.get(&url).cloned()));
+        // A data: URL holds its body: neither the sheets nor the cache (keyed
+        // by the whole, possibly megabytes long, URL) can hold it for less.
+        let inline = url.starts_with("data:");
+        let ready = if inline {
+            None
+        } else {
+            self.sheets
+                .lock()
+                .ok()
+                .and_then(|s| s.get(&url).map(|text| Bytes::from(text.clone().into_bytes())))
+                .or_else(|| self.cache.lock().ok().and_then(|c| c.get(&url).cloned()))
+        };
         if let Some(bytes) = ready {
             let _ = self.tx.send((handler, url, bytes));
             return;
@@ -81,8 +87,10 @@ impl NetProvider for Provider {
                 let bytes = match result {
                     Ok(body) => {
                         let bytes = Bytes::from(body);
-                        if let Ok(mut c) = cache.lock() {
-                            c.insert(url.clone(), bytes.clone());
+                        if !inline {
+                            if let Ok(mut c) = cache.lock() {
+                                c.insert(url.clone(), bytes.clone());
+                            }
                         }
                         bytes
                     }

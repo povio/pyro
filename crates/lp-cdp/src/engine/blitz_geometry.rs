@@ -90,6 +90,10 @@ impl LocalFiles {
 impl Fetcher for LocalFiles {
     fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
         let body = (|| {
+            // A data: URL (as serialized by the url crate) holds its body.
+            if url.starts_with("data:") {
+                return lp_net::data_url::parse_str(&url).map(|(_, b)| b.to_vec());
+            }
             let u = lp_net::Url::parse(&url).ok()?;
             match u.scheme() {
                 "data" => lp_net::data_url::parse(&u).map(|(_, b)| b.to_vec()),
