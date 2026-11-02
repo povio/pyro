@@ -139,7 +139,8 @@ Network steps on the wire (engine side; the client builds them):
 `patch` implies `passthrough` (the real response is rewritten; `json` is a
 JSON merge patch onto a JSON object body); `hold` parks the request, or with
 `passthrough` its real response, until `release` (which waits for something
-to be held and returns `{"released": n}`); there is no clock control. A
+to be held and returns `{"released": n}`). Explicit `{"advanceTime":{"ms":2000}}`
+steps advance page Date and timers, bounded to one day per step. A
 `request` step (default `state: "finished"`) and the run's `requests` carry
 `requestHeaders`, `postData` (`postDataBase64` / `postDataTruncated` past
 1 MiB) and `responseHeaders`. `{"regex", "flags"}` patterns have ECMAScript

@@ -102,6 +102,7 @@ export type ConnectOptions = {
 
 export class Lightningpanda {
   private profiles = new Map<string, ProfileEntry>();
+  private profileMutation: Promise<void> = Promise.resolve();
   private turn = 0;
   /** `serve --fork`: one connection (a forked process) per page. */
   private fork = false;
@@ -162,31 +163,56 @@ export class Lightningpanda {
     }
   }
 
+  private updateProfiles<T>(change: () => Promise<T>): Promise<T> {
+    const result = this.profileMutation.then(change);
+    this.profileMutation = result.then(() => undefined, () => undefined);
+    return result;
+  }
+
   /** Declares a kind of page tests ask for by name (`lp.page({ as: name })`). */
   async profile(name: string, profile: Profile): Promise<void> {
-    const base = profile.base === undefined ? undefined : this.profiles.get(profile.base)?.ids?.[0];
-    if (profile.base !== undefined && base === undefined) throw new Error(`no prepared profile ${profile.base} to start from`);
-    const scripts = [...(profile.localStorage ? [storageScript(profile.localStorage)] : []), ...(profile.initScripts ?? [])];
-    if (profile.prepare === false) {
-      this.profiles.set(name, { ids: null, profile, scripts });
-      return;
-    }
-    // Fork mode: the server's template boots the profile once for every connection.
-    const conns = this.fork ? this.conns.slice(0, 1) : this.conns;
-    const ids = await Promise.all(
-      conns.map(async (c) => {
-        const { profileId } = await c.cdp.send('Lightningpanda.registerPreparedPage', {
-          url: profile.url,
-          initScripts: scripts,
-          ...(profile.viewport ? { viewport: profile.viewport } : {}),
-          pool: profile.pool ?? 2,
-          ...(profile.setup?.length ? { setup: profile.setup.map((s) => s.toStep()) } : {}),
-          ...(base !== undefined ? { base } : {}),
-        });
-        return profileId as number;
-      }),
-    );
-    this.profiles.set(name, { ids, profile, scripts });
+    return this.updateProfiles(async () => {
+      const base = profile.base === undefined ? undefined : this.profiles.get(profile.base)?.ids?.[0];
+      if (profile.base !== undefined && base === undefined) throw new Error(`no prepared profile ${profile.base} to start from`);
+      const scripts = [...(profile.localStorage ? [storageScript(profile.localStorage)] : []), ...(profile.initScripts ?? [])];
+      if (profile.prepare === false) {
+        this.profiles.set(name, { ids: null, profile, scripts });
+        return;
+      }
+      // Fork mode: the server's template boots the profile once for every connection.
+      const conns = this.fork ? this.conns.slice(0, 1) : this.conns;
+      const ids = await Promise.all(
+        conns.map(async (c) => {
+          const { profileId } = await c.cdp.send('Lightningpanda.registerPreparedPage', {
+            url: profile.url,
+            initScripts: scripts,
+            ...(profile.viewport ? { viewport: profile.viewport } : {}),
+            pool: profile.pool ?? 2,
+            ...(profile.setup?.length ? { setup: profile.setup.map((s) => s.toStep()) } : {}),
+            ...(base !== undefined ? { base } : {}),
+          });
+          return profileId as number;
+        }),
+      );
+      this.profiles.set(name, { ids, profile, scripts });
+    });
+  }
+
+  /** Releases one name, retiring shared native snapshots only after their last alias. Acquired pages remain independent. */
+  async releaseProfile(name: string): Promise<void> {
+    return this.updateProfiles(async () => {
+      const entry = this.profiles.get(name);
+      if (!entry) return;
+      if (entry.ids) {
+        const conns = this.fork ? this.conns.slice(0, 1) : this.conns;
+        await Promise.all(conns.map(async (conn, i) => {
+          const profileId = entry.ids![i];
+          const shared = [...this.profiles].some(([alias, other]) => alias !== name && other.ids?.[i] === profileId);
+          if (!shared) await conn.cdp.send('Lightningpanda.unregisterPreparedPage', { profileId });
+        }));
+      }
+      this.profiles.delete(name);
+    });
   }
 
   /** Waits until every connection's pool of profile `name` is fully booted. */

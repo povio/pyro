@@ -2277,6 +2277,15 @@ impl BaseDocument {
         let viewport_size_changed = old_device.au_viewport_size() != device.au_viewport_size();
         let styles_use_viewport_units = old_device.used_viewport_size();
 
+        // Percentage/auto boxes can resize without a computed-style change.
+        // Keep their geometry dirty until layout, even if a public device read
+        // flushes the queued update before resolve_style gets to inspect it.
+        if viewport_size_changed {
+            if let Some(root_id) = self.try_root_element().map(|root| root.id) {
+                self.nodes[root_id].insert_damage(crate::layout::damage::ONLY_RELAYOUT);
+            }
+        }
+
         let origins = {
             let guard = &self.guard;
             let guards = StylesheetGuards {

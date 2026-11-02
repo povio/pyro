@@ -34,7 +34,7 @@ pub use loader::{
 pub use nav::{History, HistoryEntry, Location, PageNav, Performance};
 pub use network_idle::NetworkIdle;
 pub use quiet::{PageWork, TIMER_HORIZON};
-pub use window::{note_client_activity, Window, WindowData};
+pub use window::{note_client_activity, request_native_frame, Window, WindowData};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct PageId(pub u32);
@@ -51,6 +51,7 @@ struct ContextState {
     loader: Option<Rc<dyn ResourceLoader>>,
     net: Option<lp_net::NetClient>,
     local_storage: lp_webapi::StorageNamespace,
+    init_scripts: Vec<InitScript>,
 }
 
 /// CDP frame id (upstream uses a stable string per frame).
@@ -202,6 +203,8 @@ pub enum PageEvent {
         url: String,
         opener: bool,
     },
+    /// A native download was initiated, before its bytes finish fetching.
+    DownloadStarted,
     /// A hyperlink download finished fetching (or failed).
     Download {
         frame_id: FrameId,
@@ -526,6 +529,7 @@ impl BrowserThread {
                 loader: None,
                 net: None,
                 local_storage: Default::default(),
+                init_scripts: Vec::new(),
             }],
             net_config: None,
             local_storage_seed: Default::default(),
@@ -579,6 +583,28 @@ impl Browser {
         clock::skip(by);
     }
 
+    /// Explicitly advances this browser thread's clock, without enabling automatic jumps.
+    pub fn advance_time_explicit(&self, by: Duration) -> Result<(), JsError> {
+        if !clock::page_clock_enabled() {
+            for page in &self.pages {
+                for info in self.frames(page.id) {
+                    if let Some(frame) = self.frame(page.id, &info.id) {
+                        for realm in &frame.realms {
+                            realm.realm.scope()?.eval(
+                                clock::DATE_SCRIPT,
+                                Some("lightningpanda://internal/clock.js"),
+                                1,
+                            )?;
+                        }
+                    }
+                }
+            }
+            clock::enable_manual();
+        }
+        self.advance_time(by);
+        Ok(())
+    }
+
     /// Cross-thread handle to this browser's loop.
     pub fn loop_handle(&self) -> LoopHandle<Browser> {
         self.handle.clone()
@@ -622,7 +648,7 @@ impl Browser {
     pub fn create_context(&mut self) -> std::io::Result<ContextId> {
         let id = ContextId(self.next() as u32);
         let local_storage = lp_webapi::StorageNamespace::seeded(&self.local_storage_seed);
-        self.contexts.push(ContextState { id, loader: None, net: None, local_storage });
+        self.contexts.push(ContextState { id, loader: None, net: None, local_storage, init_scripts: Vec::new() });
         if self.net_config.is_some() {
             self.attach_network(id)?;
         }
@@ -719,11 +745,13 @@ impl Browser {
         let nav = PageNav::new(id, frame.id.clone(), self.sched.clone(), self.observer.clone());
         let frames = FrameHost::new(self, id, context, frame.clone(), nav.clone());
         let session_storage = frames.settings.borrow().session.clone();
+        let init_scripts = self.contexts.iter().find(|c| c.id == context).unwrap().init_scripts.clone();
+        frames.settings.borrow_mut().scripts = init_scripts.clone();
         self.pages.push(Page {
             id,
             context,
             root_dirty: Cell::new(true),
-            init_scripts: Vec::new(),
+            init_scripts,
             frames,
             document: DocumentState {
                 main_frame: frame,
@@ -821,6 +849,17 @@ impl Browser {
         state.cache_disabled = disabled;
         state.request_defaults.cache_disabled = disabled;
         self.refresh_frame_settings(page);
+        true
+    }
+
+    /// Installs a profile script in existing and future pages of one context.
+    pub fn add_context_init_script(&mut self, context: ContextId, script: InitScript) -> bool {
+        let Some(state) = self.contexts.iter_mut().find(|c| c.id == context) else { return false };
+        state.init_scripts.push(script.clone());
+        for page in self.pages.iter_mut().filter(|p| p.context == context) {
+            page.init_scripts.push(script.clone());
+            page.frames.settings.borrow_mut().scripts = page.init_scripts.clone();
+        }
         true
     }
 

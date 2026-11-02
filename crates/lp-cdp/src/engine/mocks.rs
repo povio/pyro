@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use bytes::Bytes;
-use lp_net::http::{header, HeaderMap, HeaderName, HeaderValue};
+use lp_net::http::{HeaderMap, HeaderName, HeaderValue, header};
 use lp_net::{
     AuthChallenge, AuthDecision, InterceptDecision, Interceptor, PausedRequest, PausedResponse, RequestId, RequestInfo,
     ResponseDecision,
@@ -127,16 +127,26 @@ fn merge_patch(target: &mut Value, patch: &Value) {
 /// A reply parked under a hold name.
 enum Held {
     Request(oneshot::Sender<InterceptDecision>, InterceptDecision),
-    Response(oneshot::Sender<ResponseDecision>, ResponseDecision),
+    Response(oneshot::Sender<ResponseDecision>, ResponseDecision, PausedResponse),
 }
 
 impl Held {
-    fn release(self) {
+    fn release(self, body: Option<&Bytes>) {
         match self {
             Held::Request(tx, decision) => {
                 let _ = tx.send(decision);
             }
-            Held::Response(tx, decision) => {
+            Held::Response(tx, decision, mut original) => {
+                let decision = if let Some(body) = body {
+                    if let ResponseDecision::Fulfill { status, headers, body } = decision {
+                        original.status = status;
+                        original.headers = headers;
+                        original.body = body;
+                    }
+                    ResponsePatch { body: Some(body.clone()), ..Default::default() }.apply(&original)
+                } else {
+                    decision
+                };
                 let _ = tx.send(decision);
             }
         }
@@ -185,19 +195,58 @@ impl DriverMocks {
         self.rules.lock().unwrap().len()
     }
 
+    pub(super) fn held_responses(&self, name: &str) -> Vec<Value> {
+        self.holds
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|(n, _, held)| {
+                if n.as_deref() != Some(name) {
+                    return None;
+                }
+                match held {
+                    Held::Response(_, _, original) => {
+                        let mut response = serde_json::json!({"status": original.status, "size": original.body.len()});
+                        if original.body.len() <= 64 * 1024 {
+                            if let Ok(text) = std::str::from_utf8(&original.body) {
+                                response["body"] = Value::String(text.to_owned());
+                            }
+                            if let Ok(json) = serde_json::from_slice::<Value>(&original.body) {
+                                response["json"] = json;
+                            }
+                        }
+                        Some(response)
+                    }
+                    Held::Request(_, _) => None,
+                }
+            })
+            .collect()
+    }
+
     /// Releases every reply held under `name`; how many.
-    pub(super) fn release(&self, name: &str) -> usize {
+    pub(super) fn release(&self, name: &str, body: Option<&Bytes>) -> Result<usize, String> {
         let released: Vec<_> = {
             let mut holds = self.holds.lock().unwrap();
+            if body.is_some()
+                && holds.iter().any(|(n, _, held)| {
+                    n.as_deref() == Some(name)
+                        && !matches!(
+                            held,
+                            Held::Response(_, ResponseDecision::Continue | ResponseDecision::Fulfill { .. }, _)
+                        )
+                })
+            {
+                return Err("a replacement body requires a held successful passthrough response".into());
+            }
             let (out, keep) = std::mem::take(&mut *holds).into_iter().partition(|(n, ..)| n.as_deref() == Some(name));
             *holds = keep;
             out
         };
         let count = released.len();
         for (_, _, held) in released {
-            held.release();
+            held.release(body);
         }
-        count
+        Ok(count)
     }
 
     fn release_one(&self, id: u64) {
@@ -206,7 +255,7 @@ impl DriverMocks {
             holds.iter().position(|(_, i, _)| *i == id).map(|i| holds.remove(i).2)
         };
         if let Some(held) = held {
-            held.release();
+            held.release(None);
         }
     }
 
@@ -215,7 +264,7 @@ impl DriverMocks {
     /// released at once.
     fn hold(self: &Arc<Self>, name: Option<String>, held: Held, delay: Duration) {
         if name.is_none() && delay.is_zero() {
-            held.release();
+            held.release(None);
             return;
         }
         let id = self.next.fetch_add(1, Ordering::Relaxed) + 1;
@@ -302,7 +351,7 @@ impl Interceptor for ContextInterceptor {
             Some(patch) => patch.apply(&resp),
             None => ResponseDecision::Continue,
         };
-        self.mocks.hold(pending.hold, Held::Response(reply, decision), pending.delay);
+        self.mocks.hold(pending.hold, Held::Response(reply, decision, resp), pending.delay);
     }
 
     fn handles_auth(&self) -> bool {

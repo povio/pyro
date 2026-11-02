@@ -66,6 +66,15 @@ impl Server {
                                 if fail { "fetch('/fail').catch(() => {});" } else { "" }
                             )
                         }
+                        "/sse-doc" => "<script>fetch('/stream').then(r=>r.text())</script><p>stream</p>".to_string(),
+                        "/stream" => {
+                            stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n3\r\n:\n\n\r\n").unwrap();
+                            stream.flush().unwrap();
+                            let (lock,wake)=&*gate;
+                            let _open=wake.wait_timeout_while(lock.lock().unwrap(),Duration::from_secs(5),|o| !*o).unwrap();
+                            let _=stream.write_all(b"0\r\n\r\n");
+                            return;
+                        }
                         "/fail" => return, // dropped: the request fails
                         _ => {
                             let (lock, wake) = &*gate;
@@ -241,4 +250,25 @@ fn a_replaced_or_closed_document_reports_nothing_further() {
     assert!(thread.browser.close_page(other));
     run_for(&mut thread, 3 * QUIET);
     assert!(events.at("almost", &loader).is_none() && events.at("idle", &loader).is_none());
+}
+
+#[test]
+fn established_event_stream_is_quiet_but_still_blocks_network_idle() {
+    let (server, mut thread, events, page) = setup();
+    let loader =
+        thread.browser.navigate(page, NavigateOpts::address_bar(format!("{}/sse-doc", server.origin))).unwrap();
+    let outcome = thread.run_until(Some(Instant::now() + Duration::from_secs(5)), |browser| {
+        let context = browser.page(page).unwrap().context;
+        browser.context_net(context).and_then(|net| net.activity(&loader.0)).is_some_and(|a| a.event_streams == 1)
+    });
+    assert_eq!(outcome, lp_runtime::RunOutcome::Done);
+    run_for(&mut thread, 2 * QUIET);
+    let work = thread.browser.page_work(page).unwrap();
+    assert_eq!((work.requests, work.event_streams), (0, 1));
+    assert!(work.quiet(0), "{work:?}");
+    let context = thread.browser.page(page).unwrap().context;
+    assert_eq!(thread.browser.context_net(context).unwrap().activity(&loader.0).unwrap().inflight, 1);
+    assert!(events.at("idle", &loader).is_none());
+    server.release();
+    wait_for(&mut thread, &events, "idle", &loader);
 }

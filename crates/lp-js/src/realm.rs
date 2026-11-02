@@ -131,6 +131,9 @@ impl Drop for ModuleRequest {
 /// See [`Realm::set_native_callback_hook`] for borrowing and reentrancy rules.
 pub type NativeCallbackHook = Rc<dyn for<'s> Fn(&Scope<'s>)>;
 
+/// Browser notification for a rejected promise; true cancels default reporting.
+pub type UnhandledRejectionHandler = for<'s> fn(&Scope<'s>, Value<'s>, Value<'s>) -> JsResult<bool>;
+
 pub(crate) struct RealmInner {
     pub(crate) id: RealmId,
     name: String,
@@ -156,6 +159,7 @@ pub(crate) struct RealmInner {
     module_loader: Cell<*mut c_void>,
     module_fetcher: RefCell<Option<Rc<dyn ModuleFetcher>>>,
     native_callback_hook: RefCell<Option<NativeCallbackHook>>,
+    unhandled_rejection_handler: Cell<Option<UnhandledRejectionHandler>>,
     /// Optional cheap test of whether the hook has anything to do; when it
     /// says no, the hook (and the rooting of the callback result) is skipped.
     native_callback_pending: RefCell<Option<Rc<dyn Fn() -> bool>>>,
@@ -255,6 +259,7 @@ impl RealmInner {
         self.module_fetcher.borrow_mut().take();
         // Release captured embedder state without holding the hook cell borrow.
         drop(self.native_callback_hook.take());
+        self.unhandled_rejection_handler.set(None);
         drop(self.native_callback_pending.take());
         self.protos.borrow_mut().clear();
         self.ctors.borrow_mut().clear();
@@ -299,6 +304,10 @@ pub struct Realm {
 }
 
 impl Realm {
+    pub fn set_unhandled_rejection_handler(&self, handler: UnhandledRejectionHandler) {
+        self.inner.unhandled_rejection_handler.set(Some(handler));
+    }
+
     pub fn id(&self) -> RealmId {
         self.inner.id
     }
@@ -1095,6 +1104,7 @@ pub(crate) fn create(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResul
         module_loader: Cell::new(ptr::null_mut()),
         module_fetcher: RefCell::new(None),
         native_callback_hook: RefCell::new(None),
+        unhandled_rejection_handler: Cell::new(None),
         native_callback_pending: RefCell::new(None),
         native_callback_hook_active: Cell::new(false),
         inline_modules: RefCell::new(HashMap::new()),
@@ -1168,8 +1178,9 @@ fn install_classes(scope: &Scope<'_>) -> JsResult<()> {
     let natives = scope.array(&natives)?;
     let result = install.call(None, &[spec, natives.value(), object_proto, global.value(), populate.value()])?;
     let result = result.as_object().expect("installInterfaces result");
-    let lists: Vec<Object<'_>> =
-        (0..3).map(|k| result.get_index(k).map(|v| v.as_object().expect("installInterfaces list"))).collect::<JsResult<_>>()?;
+    let lists: Vec<Object<'_>> = (0..3)
+        .map(|k| result.get_index(k).map(|v| v.as_object().expect("installInterfaces list")))
+        .collect::<JsResult<_>>()?;
     let column = |list: &Object<'_>| -> JsResult<Vec<Option<Persistent>>> {
         (0..n as u32).map(|i| Ok(Some(Persistent::new(scope, list.get_index(i)?)))).collect()
     };
@@ -1548,9 +1559,22 @@ fn install_rejection_tracking(scope: &Scope<'_>) -> JsResult<()> {
         return Ok(());
     };
     let f = scope.function("unhandledRejection", |s, _this, args| {
-        if let Some(h) = s.realm.engine.hooks() {
-            let details = JsException::from_value(s, args.get(1));
-            h.unhandled_rejection(&s.realm(), &details);
+        let canceled = if let Some(handler) = s.realm.unhandled_rejection_handler.get() {
+            match handler(s, args.get(0), args.get(1)) {
+                Ok(canceled) => canceled,
+                Err(error) => {
+                    s.report_exception(&error);
+                    false
+                }
+            }
+        } else {
+            false
+        };
+        if !canceled {
+            if let Some(h) = s.realm.engine.hooks() {
+                let details = JsException::from_value(s, args.get(1));
+                h.unhandled_rejection(&s.realm(), &details);
+            }
         }
         Ok(s.undefined())
     })?;

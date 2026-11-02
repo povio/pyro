@@ -45,6 +45,8 @@ options:
   --static <ORIGIN>=<DIR>               serve GET requests for ORIGIN from DIR, no server
                                         needed there (repeatable; env LIGHTNINGPANDA_STATIC,
                                         entries separated by ';')
+  --static-fallback <spa|network>      missing navigation paths use index.html (default spa)
+                                        or the normal network at the unchanged URL
   --prepare <URL>                       keep one page booted at URL per connection, ready
                                         for Lightningpanda.acquirePreparedPage (repeatable;
                                         env LIGHTNINGPANDA_PREPARE, ';'-separated)
@@ -71,7 +73,9 @@ directory's index.html, and for navigations any path without a file falls
 back to DIR/index.html (single-page-app routes). Requests the directory cannot
 answer (no such file, POST, other origins) go to the network as usual, so API
 calls on the same origin still reach their server. Playwright routes still
-see these requests.
+see these requests. Use --static-fallback network for a files-only overlay:
+existing assets stay local, while missing paths (including document navigation)
+reach the server at their original URL. That server owns any SPA routing.
 
 --prepare: every connection boots a page at URL in its own browser context
 (with the --local-storage seed) before any command arrives, and boots the next
@@ -120,6 +124,7 @@ pub struct ServeOptions {
     /// `--static ORIGIN=DIR` (or `LIGHTNINGPANDA_STATIC`): directories served
     /// in place of origins.
     pub static_roots: Vec<(String, PathBuf)>,
+    pub static_spa_fallback: bool,
     /// `--prepare URL` (or `LIGHTNINGPANDA_PREPARE`): pages booted ahead.
     pub prepare: Vec<String>,
     /// `--prepare-refill after-close`: replacements wait for the acquired
@@ -157,6 +162,7 @@ impl Default for ServeOptions {
                     v.split(';').filter(|e| !e.trim().is_empty()).filter_map(|e| parse_static_root(e).ok()).collect()
                 })
                 .unwrap_or_default(),
+            static_spa_fallback: true,
             prepare: std::env::var(PREPARE_ENV)
                 .ok()
                 .map(|v| v.split(';').map(str::trim).filter(|e| !e.is_empty()).map(str::to_owned).collect())
@@ -239,6 +245,11 @@ pub fn parse_args(args: &[String]) -> Result<ServeOptions, String> {
             },
             "--local-storage" => o.local_storage = Some(PathBuf::from(value()?)),
             "--static" => o.static_roots.push(parse_static_root(&value()?)?),
+            "--static-fallback" => match value()?.as_str() {
+                "spa" => o.static_spa_fallback = true,
+                "network" => o.static_spa_fallback = false,
+                other => return Err(format!("--static-fallback: '{other}' is not spa or network")),
+            },
             "--prepare" => o.prepare.push(value()?),
             "--prepare-refill" => match value()?.as_str() {
                 "quiet" => o.prepare_refill_after_close = false,
@@ -291,8 +302,9 @@ pub fn browser_profile(options: &ServeOptions) -> Result<BrowserProfile, String>
             parse_local_storage(&text).map_err(|e| format!("--local-storage: {}: {e}", path.display()))?;
     }
     if !options.static_roots.is_empty() {
-        profile.net.static_files =
-            lp_net::StaticFiles::new(options.static_roots.clone()).map_err(|e| format!("--static: {e}"))?;
+        profile.net.static_files = lp_net::StaticFiles::new(options.static_roots.clone())
+            .map_err(|e| format!("--static: {e}"))?
+            .with_spa_fallback(options.static_spa_fallback);
     }
     for url in &options.prepare {
         lp_net::Url::parse(url).map_err(|e| format!("--prepare: '{url}' is not an absolute URL ({e})"))?;
@@ -793,5 +805,30 @@ mod tests {
             ..Default::default()
         };
         assert!(browser_profile(&o).is_err());
+    }
+}
+
+#[cfg(test)]
+mod static_fallback_tests {
+    use super::*;
+
+    #[test]
+    fn static_fallback_cli_preserves_spa_default_and_configures_network_misses() {
+        let dir = std::env::temp_dir().join(format!("lp-static-fallback-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("index.html"), "<p>SPA").unwrap();
+        let base = vec!["--static".to_owned(), format!("http://overlay.test={}", dir.display())];
+        let spa = parse_args(&base).unwrap();
+        assert!(spa.static_spa_fallback);
+        let mut args = base;
+        args.extend(["--static-fallback".to_owned(), "network".to_owned()]);
+        let network = parse_args(&args).unwrap();
+        assert!(!network.static_spa_fallback);
+        let missing = lp_net::Url::parse("http://overlay.test/api/media/proof?signature=value").unwrap();
+        assert!(browser_profile(&spa).unwrap().net.static_files.lookup(&missing, true).unwrap().spa_fallback);
+        assert!(browser_profile(&network).unwrap().net.static_files.lookup(&missing, true).is_none());
+        assert!(parse_args(&["--static-fallback".into(), "unknown".into()]).is_err());
+        assert!(parse_args(&["--static-fallback".into()]).is_err());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

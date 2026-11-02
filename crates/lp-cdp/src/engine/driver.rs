@@ -126,6 +126,7 @@ enum Action {
     Type,
     /// Set the files of an `<input type=file>` (`files`, or `value` as a path).
     Upload,
+    DropFiles,
     /// Drag the element onto `to`: native drag and drop when the element is
     /// a drag source, else pointer moves with the button held.
     Drag,
@@ -193,6 +194,8 @@ enum Assert {
     Checked,
     /// A computed style property (`property`) equals `expected`.
     Css,
+    Attribute,
+    Description,
     /// The element is the document's focused element.
     Focused,
     /// The accessible name equals `expected` (whitespace-normalized).
@@ -220,6 +223,8 @@ enum Read {
 #[derive(Deserialize, Serialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct RequestMatch {
+    /// Context scope includes prior runs of this same page, never sibling pages.
+    scope: Option<RequestScope>,
     method: Option<String>,
     /// Exact path (no query).
     path: Option<String>,
@@ -241,6 +246,13 @@ struct RequestMatch {
     /// Which requests count: `finished` (the default: finished or failed,
     /// as `status` needs) or `started` (sent, still in flight or done).
     state: Option<RequestState>,
+}
+
+#[derive(Deserialize, Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum RequestScope {
+    Batch,
+    Context,
 }
 
 #[derive(Deserialize, Serialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -369,6 +381,16 @@ enum Step {
     /// waits for one to be held.
     Release {
         hold: String,
+        body: Option<String>,
+    },
+    Held {
+        hold: String,
+        count: usize,
+        key: Option<String>,
+        status: StatusSet,
+    },
+    AdvanceTime {
+        ms: u64,
     },
     /// Waits for the next download the page starts (since the run began).
     Download {
@@ -378,6 +400,9 @@ enum Step {
     },
     /// Waits for the next popup this page opened; its target id.
     Popup {
+        key: Option<String>,
+    },
+    DownloadCount {
         key: Option<String>,
     },
     Goto {
@@ -491,15 +516,24 @@ impl Step {
             Step::Mock(m) => format!("mock {}", m.url.text),
             Step::Unmock(Some(p)) => format!("unmock {}", p.text),
             Step::Unmock(None) => "unmock".into(),
-            Step::Release { hold } => format!("release {hold}"),
+            Step::Release { hold, .. } => format!("release {hold}"),
+            Step::Held { hold, .. } => format!("held response {hold}"),
+            Step::AdvanceTime { ms } => format!("advanceTime {ms}"),
             Step::Download { .. } => "download".into(),
+            Step::DownloadCount { .. } => "downloadCount".into(),
             Step::Popup { .. } => "popup".into(),
             Step::Route { url, .. } => format!("route {url}"),
             Step::Eval { .. } => "eval".into(),
             Step::Viewport { width, height } => format!("viewport {width}x{height}"),
             Step::Media(m) => format!("media {m:?}"),
             Step::Page { target } => format!("page {target}"),
-            Step::Request(m) => format!("request {}", serde_json::to_value(m).map(prune).unwrap_or_default()),
+            Step::Request(m) => {
+                let mut value = serde_json::to_value(m).map(prune).unwrap_or_default();
+                if let Some(headers) = value.get_mut("headers") {
+                    *headers = super::network::redact_header_values(headers.take());
+                }
+                format!("request {value}")
+            }
             Step::Act { locator, action, .. } => format!("{action:?} {}", locator.describe()),
             Step::Mouse { action, x, y, .. } => match (x, y) {
                 (Some(x), Some(y)) => format!("mouse {action:?} at {x},{y}"),
@@ -517,6 +551,8 @@ enum Attempt {
     Done(Value),
     /// Not yet: the reason is reported if the deadline passes.
     Retry(String),
+    /// A focus handler replaced or redirected the target; reacquire after an event-loop turn.
+    RetrySoon(String),
     /// The action's first input event went out; the rest follow, one per
     /// event-loop turn.
     Continue(Box<Sequence>),
@@ -572,7 +608,8 @@ impl Job {
             return error;
         }
         let what = self.steps.get(self.index).map(|(s, _)| s.describe()).unwrap_or_default();
-        CdpError::server(format!("step {} ({what}): {}", self.index, error.message)).with_data(error.data)
+        let data = error.data;
+        CdpError::server(format!("step {} ({what}): {}", self.index, error.message)).with_data(data)
     }
 }
 
@@ -645,6 +682,13 @@ struct DragSeq {
     native: Option<input::DragData>,
 }
 
+#[derive(Default)]
+struct PointerStability {
+    frame: Option<Rc<Cell<bool>>>,
+    previous: Option<lp_dom::layout::Rect>,
+    ready: bool,
+}
+
 /// The input events of an action still to dispatch, each in its own task so
 /// that, as in Chromium, the tasks, timers and animation frames one event's
 /// handlers queued run before the next event (a React commit that swaps in a
@@ -658,6 +702,7 @@ pub(super) struct Sequence {
     m: MouseInput,
     events: std::collections::VecDeque<Input>,
     drag: Option<DragSeq>,
+    stability: Option<PointerStability>,
 }
 
 impl Sequence {
@@ -668,7 +713,7 @@ impl Sequence {
         m: MouseInput,
         events: impl IntoIterator<Item = Input>,
     ) -> Sequence {
-        Sequence { page: page.clone(), id, opts, m, events: events.into_iter().collect(), drag: None }
+        Sequence { page: page.clone(), id, opts, m, events: events.into_iter().collect(), drag: None, stability: None }
     }
 
     /// Dispatches the next event. `Ok(None)`: more follow; `Ok(Some)`: the
@@ -677,6 +722,17 @@ impl Sequence {
         let page = self.page.clone();
         if page.is_disposed() {
             return Err("document is gone".into());
+        }
+        if !self.opts.force
+            && matches!(self.events.front(), Some(Input::Mouse { kind: MouseKind::Pressed, at: At::Element, .. }))
+            && page.pending_resize_observer_work()
+        {
+            return Ok(None);
+        }
+        if matches!(self.events.front(), Some(Input::Mouse { kind: MouseKind::Pressed, at: At::Element, .. }))
+            && !self.stable_before_press()?
+        {
+            return Ok(None);
         }
         let Some(next) = self.events.pop_front() else { return Ok(Some(self.result())) };
         // The driver is the client driving the page: frames stay on the
@@ -743,6 +799,34 @@ impl Sequence {
             }
         }
         Ok(if self.events.is_empty() { Some(self.result()) } else { None })
+    }
+
+    fn stable_before_press(&mut self) -> Result<bool, String> {
+        let Some(stability) = &mut self.stability else { return Ok(true) };
+        if stability.ready || self.opts.force {
+            return Ok(true);
+        }
+        if let Some(frame) = &stability.frame {
+            if !frame.get() {
+                return Ok(false);
+            }
+            let connected = self.page.dom.borrow().is_connected(self.id).unwrap_or(false);
+            let target = if connected {
+                super::dom::reveal(&self.page, self.id);
+                self.id
+            } else {
+                lp_webapi::layout_api::hit_test(&self.page, self.m.x, self.m.y).ok_or("no replacement at pointer")?
+            };
+            let bounds = visible_box(&self.page, target).ok_or("element is not visible")?;
+            if stability.previous == Some(bounds) {
+                stability.ready = true;
+                return Ok(true);
+            }
+            stability.previous = Some(bounds);
+        }
+        let realm = self.page.main_world_realm().ok_or("page has no realm")?;
+        stability.frame = Some(lp_browser::request_native_frame(&realm).map_err(|error| error.to_string())?);
+        Ok(false)
     }
 
     fn native_drag(&self) -> bool {
@@ -852,9 +936,13 @@ impl Waiters {
         !self.list.is_empty()
             && self.list.iter().all(|w| {
                 matches!(w.phase, Phase::Settle { .. } | Phase::Await(_))
-                    && browser
-                        .page_work(w.job.pid)
-                        .is_some_and(|work| work.tasks == 0 && work.requests == 0 && work.navigations == 0)
+                    && browser.page_work(w.job.pid).is_some_and(|work| {
+                        work.tasks == 0
+                            && work.requests == 0
+                            && work.event_streams == 0
+                            && work.observers == 0
+                            && work.navigations == 0
+                    })
             })
     }
 
@@ -910,6 +998,7 @@ fn pending_json(work: &lp_browser::PageWork) -> Value {
         ("requests", work.requests),
         ("timers", work.timers),
         ("frames", work.frames),
+        ("observers", work.observers),
         ("navigations", work.navigations),
     ];
     Value::Object(all.into_iter().filter(|(_, n)| *n > 0).map(|(k, n)| (k.to_owned(), json!(n))).collect())
@@ -1912,12 +2001,28 @@ fn single(found: &[NodeId], dom: &Dom, locator: &Locator) -> Result<Option<NodeI
     }
 }
 
+fn valid_time_value(value: &str) -> bool {
+    let (clock, fraction) = value.split_once('.').map_or((value, None), |(clock, fraction)| (clock, Some(fraction)));
+    let parts: Vec<&str> = clock.split(':').collect();
+    if !(2..=3).contains(&parts.len()) || (fraction.is_some() && parts.len() != 3) {
+        return false;
+    }
+    if !parts.iter().enumerate().all(|(i, part)| {
+        part.len() == 2
+            && part.bytes().all(|b| b.is_ascii_digit())
+            && part.parse::<u8>().is_ok_and(|n| n < if i == 0 { 24 } else { 60 })
+    }) {
+        return false;
+    }
+    fraction.is_none_or(|part| (1..=3).contains(&part.len()) && part.bytes().all(|b| b.is_ascii_digit()))
+}
+
 fn fillable(dom: &Dom, id: NodeId) -> bool {
     match local(dom, id) {
         Some("textarea") => attr(dom, id, "readonly").is_none(),
         Some("input") => {
             let ty = attr(dom, id, "type").unwrap_or("").to_ascii_lowercase();
-            matches!(ty.as_str(), "" | "text" | "email" | "password" | "search" | "tel" | "url" | "number")
+            matches!(ty.as_str(), "" | "text" | "email" | "password" | "search" | "tel" | "url" | "number" | "time")
                 && attr(dom, id, "readonly").is_none()
         }
         _ => attr(dom, id, "contenteditable").is_some_and(|v| !v.eq_ignore_ascii_case("false")),
@@ -2016,7 +2121,7 @@ fn act(page: &Rc<PageDom>, id: NodeId, action: Action, value: &str, opts: Pointe
             if (checked == Checked::Yes) == (action == Action::Check) {
                 return Attempt::Done(json!({}));
             }
-            click(page, id, opts)
+            click(page, check_pointer_target(page, id, opts), opts)
         }
         Action::Click => click(page, id, opts),
         Action::Press => {
@@ -2042,7 +2147,7 @@ fn act(page: &Rc<PageDom>, id: NodeId, action: Action, value: &str, opts: Pointe
         Action::Hover => pointer(page, id, Pointer::Hover, opts),
         Action::DblClick => pointer(page, id, Pointer::DblClick, opts),
         Action::Wheel => pointer(page, id, Pointer::Wheel, opts),
-        Action::Upload | Action::Drag => unreachable!("handled by the host"),
+        Action::Upload | Action::DropFiles | Action::Drag => unreachable!("handled by the host"),
         Action::Type => {
             if input::key_target(page) != Some(id) {
                 input::focus_element(page, id);
@@ -2067,6 +2172,25 @@ fn act(page: &Rc<PageDom>, id: NodeId, action: Action, value: &str, opts: Pointe
                 matches!(local(&dom, id), Some("input" | "textarea"))
             };
             input::focus_element(page, id);
+            {
+                let dom = page.dom.borrow();
+                if dom.root_node(id, true).ok() != Some(page.document())
+                    || dom.focused(page.document()).ok().flatten() != Some(id)
+                {
+                    return Attempt::RetrySoon("the control changed during focus".into());
+                }
+            }
+            if page.dom.borrow().input_type(id).ok() == Some(lp_dom::forms::InputType::Time) {
+                if !value.is_empty() && !valid_time_value(value) {
+                    return Attempt::Retry("malformed time value".into());
+                }
+                if let Err(error) = page.dom.borrow_mut().set_value(id, value) {
+                    return Attempt::Retry(format!("{error:?}"));
+                }
+                input::fire_simple(page, id, "input", true, false);
+                input::fire_simple(page, id, "change", true, false);
+                return Attempt::Done(json!({}));
+            }
             if is_control {
                 let _ = page.dom.borrow_mut().set_selection_range(id, 0, u32::MAX);
             } else {
@@ -2077,6 +2201,32 @@ fn act(page: &Rc<PageDom>, id: NodeId, action: Action, value: &str, opts: Pointe
             Attempt::Done(json!({}))
         }
     }
+}
+
+/// Visually hidden native controls can expose their visible associated label.
+/// Other pointer failures (including overlays) still use the original control.
+fn check_pointer_target(page: &Rc<PageDom>, id: NodeId, opts: PointerOpts) -> NodeId {
+    if opts.force || opts.position.is_some() {
+        return id;
+    }
+    let native = {
+        let dom = page.dom.borrow();
+        local(&dom, id) == Some("input")
+            && matches!(
+                dom.input_type(id).ok(),
+                Some(lp_dom::forms::InputType::Checkbox | lp_dom::forms::InputType::Radio)
+            )
+    };
+    if !native {
+        return id;
+    }
+    super::dom::reveal(page, id);
+    let Some(rect) = visible_box(page, id) else { return id };
+    if clipped_box(page, id, rect).is_some() {
+        return id;
+    }
+    let associated = labels(&page.dom.borrow(), page.document(), id);
+    associated.into_iter().find(|label| visible_box(page, *label).is_some()).unwrap_or(id)
 }
 
 /// `key`, `code` and Windows key code of a key name (`Enter`, `ArrowDown`,
@@ -2194,37 +2344,7 @@ fn buttons_mask(button: MouseButton) -> u16 {
 /// overflow-clipping ancestor (what Playwright aims at: the center of the
 /// visible part, not of the whole box), or `None` when nothing shows.
 fn clipped_box(page: &PageDom, id: NodeId, rect: lp_dom::layout::Rect) -> Option<lp_dom::layout::Rect> {
-    let dom = page.dom.borrow();
-    let layout = page.layout.borrow();
-    let (mut left, mut top) = (rect.left().max(0.0), rect.top().max(0.0));
-    let (mut right, mut bottom) =
-        (rect.right().min(layout.inner_width() as f64), rect.bottom().min(layout.inner_height() as f64));
-    let mut cur = dom.parent_element(id).ok().flatten();
-    while let Some(a) = cur {
-        if layout.is_root_container(&dom, a) {
-            break;
-        }
-        let clips = layout.style().overflow_clip_axes(&dom, a);
-        if clips.x || clips.y {
-            if let Some(r) = layout.client_rect(&dom, a) {
-                if clips.x {
-                    left = left.max(r.left());
-                    right = right.min(r.right());
-                }
-                if clips.y {
-                    top = top.max(r.top());
-                    bottom = bottom.min(r.bottom());
-                }
-            }
-        }
-        cur = dom.parent_element(a).ok().flatten();
-    }
-    (right > left && bottom > top).then_some(lp_dom::layout::Rect {
-        x: left,
-        y: top,
-        width: right - left,
-        height: bottom - top,
-    })
+    page.layout.borrow().visible_client_rect(&page.dom.borrow(), id, rect)
 }
 
 /// Where a pointer action lands, once the element is revealed: `position`
@@ -2258,6 +2378,9 @@ fn pointer_target(page: &Rc<PageDom>, id: NodeId, opts: PointerOpts) -> Result<(
         Some(hit) if contains(&page.dom.borrow(), id, hit) => Ok((x, y)),
         Some(hit) => {
             let tag = local(&page.dom.borrow(), hit).unwrap_or("?").to_owned();
+            if opts.position.is_none() && super::dom::reveal_centered(page, id) {
+                return Err(Attempt::RetrySoon(format!("centered target after <{tag}> intercepted pointer events")));
+            }
             Err(Attempt::Retry(format!("<{tag}> intercepts pointer events")))
         }
         None => Err(Attempt::Retry(format!(
@@ -2297,7 +2420,11 @@ fn pointer(page: &Rc<PageDom>, id: NodeId, what: Pointer, opts: PointerOpts) -> 
         let buttons = if kind == MouseKind::Pressed { buttons_mask(button) } else { 0 };
         Input::Mouse { kind, button, buttons, count, at }
     });
-    start(Sequence::new(page, id, opts, m, events))
+    let mut sequence = Sequence::new(page, id, opts, m, events);
+    if matches!(what, Pointer::Click | Pointer::DblClick) {
+        sequence.stability = Some(PointerStability::default());
+    }
+    start(sequence)
 }
 
 /// Dispatches a sequence's first event now; the rest follow one per
@@ -2391,6 +2518,30 @@ fn upload(page: &Rc<PageDom>, id: NodeId, files: &[UploadFile]) -> Attempt {
     Attempt::Done(json!({ "files": files.len() }))
 }
 
+fn drop_files(page: &Rc<PageDom>, id: NodeId, files: &[UploadFile]) -> Attempt {
+    let (x, y) = match pointer_target(page, id, PointerOpts::default()) {
+        Ok(point) => point,
+        Err(retry) => return retry,
+    };
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_millis() as f64);
+    let entries: Vec<_> = files
+        .iter()
+        .map(|file| lp_webapi::file::FileEntry {
+            name: file.name.clone(),
+            mime: file.mime.clone(),
+            bytes: bytes::Bytes::from(file.bytes.clone()),
+            last_modified: now,
+        })
+        .collect();
+    let data = input::DragData { items: Vec::new(), drag_operations_mask: 1 };
+    for kind in [input::DragKind::Enter, input::DragKind::Over, input::DragKind::Drop] {
+        if let Err(error) = input::dispatch_drag_files(page, kind, x, y, &data, &entries, input::Modifiers::default()) {
+            return Attempt::Retry(error);
+        }
+    }
+    Attempt::Done(json!({ "files": files.len() }))
+}
+
 /// Drags `from` onto `to`. A native drag source (draggable, link, image)
 /// gets HTML drag and drop: dragstart on the move, then dragenter/dragover
 /// and drop on the target. Anything else gets pointer events with the
@@ -2431,7 +2582,7 @@ fn expect(
 ) -> CdpResult<Attempt> {
     let dom = page.dom.borrow();
     let (holds, actual) = match assert {
-        Assert::Css | Assert::Focused | Assert::Name | Assert::Enabled => {
+        Assert::Css | Assert::Attribute | Assert::Description | Assert::Focused | Assert::Name | Assert::Enabled => {
             let Some(el) = single(found, &dom, locator)? else {
                 return Ok(Attempt::Retry(format!("{} matched no element", locator.describe())));
             };
@@ -2441,6 +2592,42 @@ fn expect(
                     let want = expected.as_str().ok_or_else(|| CdpError::invalid_params("css needs a string"))?;
                     let have = page.layout.borrow().computed_style_value(&dom, el, property);
                     (have == want, json!(have))
+                }
+                Assert::Attribute | Assert::Description => {
+                    let have = if assert == Assert::Attribute {
+                        let property =
+                            property.ok_or_else(|| CdpError::invalid_params("attribute needs a property"))?;
+                        attr(&dom, el, property).map(str::to_owned)
+                    } else {
+                        let described = id_refs(&dom, page.document(), el, "aria-describedby")
+                            .filter(|ids| !ids.is_empty())
+                            .map(|ids| {
+                                ids.into_iter()
+                                    .filter_map(|id| dom.text_content(id).ok().flatten())
+                                    .collect::<Vec<_>>()
+                                    .join(" ")
+                            });
+                        Some(normalize(
+                            &described
+                                .or_else(|| attr(&dom, el, "aria-description").map(str::to_owned))
+                                .or_else(|| attr(&dom, el, "title").map(str::to_owned))
+                                .unwrap_or_default(),
+                        ))
+                    };
+                    let holds = if expected.is_null() {
+                        have.is_none()
+                    } else {
+                        let pattern: Pattern = serde_json::from_value(expected.clone())
+                            .map_err(|e| CdpError::invalid_params(e.to_string()))?;
+                        have.as_deref().is_some_and(|value| {
+                            if assert == Assert::Attribute {
+                                expected.as_str().map_or_else(|| pattern.matches_raw(value), |want| value == want)
+                            } else {
+                                pattern.matches(value, true)
+                            }
+                        })
+                    };
+                    (holds, json!(have))
                 }
                 Assert::Focused => {
                     let focused = dom.focused(page.document()).ok().flatten() == Some(el);
@@ -2626,7 +2813,7 @@ struct UploadParams {
 const MAX_UPLOAD_BYTES: usize = 64 * 1024 * 1024;
 
 fn upload_files(action: Action, value: &str, inline: Vec<UploadParams>) -> CdpResult<Vec<UploadFile>> {
-    if action != Action::Upload {
+    if !matches!(action, Action::Upload | Action::DropFiles) {
         return Ok(Vec::new());
     }
     let mut files = Vec::new();
@@ -2710,7 +2897,10 @@ enum StepParams {
     Mock(MockParams),
     Unmock(UnmockParams),
     Release(ReleaseParams),
+    Held(HeldParams),
+    AdvanceTime(AdvanceTimeParams),
     Download(DownloadParams),
+    DownloadCount(PopupParams),
     Popup(PopupParams),
     Route(RouteParams),
     Act(ActParams),
@@ -2875,7 +3065,25 @@ struct UnmockParams {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ReleaseParams {
     hold: String,
+    body: Option<String>,
     timeout: Option<u64>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct HeldParams {
+    hold: String,
+    #[serde(rename = "as")]
+    key: Option<String>,
+    count: usize,
+    status: StatusSet,
+    timeout: Option<u64>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AdvanceTimeParams {
+    ms: u64,
 }
 
 #[derive(Deserialize)]
@@ -3049,11 +3257,14 @@ impl ActParams {
             "blur" => Action::Blur,
             "type" => Action::Type,
             "upload" => Action::Upload,
+            "dropFiles" => Action::DropFiles,
             "drag" => Action::Drag,
             "wheel" => Action::Wheel,
-            _ => return Err(CdpError::invalid_params(
-                "action must be click, fill, focus, check, uncheck, press, hover, dblclick, blur, type, upload, drag or wheel",
-            )),
+            _ => {
+                return Err(CdpError::invalid_params(
+                    "action must be click, fill, focus, check, uncheck, press, hover, dblclick, blur, type, upload, dropFiles, drag or wheel",
+                ));
+            }
         };
         if action == Action::Drag {
             match &self.to {
@@ -3079,25 +3290,28 @@ impl ActParams {
 impl ExpectParams {
     fn step(self) -> CdpResult<(Step, Option<u64>)> {
         self.locator.validate()?;
-        let assert =
-            match self.assert.as_str() {
-                "visible" => Assert::Visible,
-                "hidden" => Assert::Hidden,
-                "text" => Assert::Text,
-                "containsText" => Assert::ContainsText,
-                "value" => Assert::Value,
-                "count" => Assert::Count,
-                "checked" => Assert::Checked,
-                "css" => Assert::Css,
-                "focused" => Assert::Focused,
-                "name" => Assert::Name,
-                "enabled" => Assert::Enabled,
-                _ => return Err(CdpError::invalid_params(
+        let assert = match self.assert.as_str() {
+            "visible" => Assert::Visible,
+            "hidden" => Assert::Hidden,
+            "text" => Assert::Text,
+            "containsText" => Assert::ContainsText,
+            "value" => Assert::Value,
+            "count" => Assert::Count,
+            "checked" => Assert::Checked,
+            "css" => Assert::Css,
+            "attribute" => Assert::Attribute,
+            "description" => Assert::Description,
+            "focused" => Assert::Focused,
+            "name" => Assert::Name,
+            "enabled" => Assert::Enabled,
+            _ => {
+                return Err(CdpError::invalid_params(
                     "assert must be visible, hidden, text, containsText, value, count, checked, css, focused, name or enabled",
-                )),
-            };
-        if assert == Assert::Css && self.property.is_none() {
-            return Err(CdpError::invalid_params("css needs a property"));
+                ));
+            }
+        };
+        if matches!(assert, Assert::Css | Assert::Attribute) && self.property.is_none() {
+            return Err(CdpError::invalid_params(format!("{} needs a property", self.assert)));
         }
         Ok((
             Step::Check {
@@ -3133,7 +3347,7 @@ impl QueryParams {
             _ => {
                 return Err(CdpError::invalid_params(
                     "read must be count, text, value, visible, box, css, name, focused or enabled",
-                ))
+                ));
             }
         })
     }
@@ -3156,8 +3370,23 @@ impl StepParams {
             StepParams::Url(p) => Ok((Step::Url(p.url), p.timeout)),
             StepParams::Mock(p) => p.step(),
             StepParams::Unmock(p) => Ok((Step::Unmock(p.url), None)),
-            StepParams::Release(p) => Ok((Step::Release { hold: p.hold }, p.timeout)),
+            StepParams::Release(p) => {
+                if p.body.as_ref().is_some_and(|body| body.len() > 32 * 1024 * 1024) {
+                    return Err(CdpError::invalid_params("replacement response body is too large"));
+                }
+                Ok((Step::Release { hold: p.hold, body: p.body }, p.timeout))
+            }
+            StepParams::Held(p) => {
+                Ok((Step::Held { hold: p.hold, key: p.key, count: p.count, status: p.status }, p.timeout))
+            }
+            StepParams::AdvanceTime(p) => {
+                if p.ms > 86_400_000 {
+                    return Err(CdpError::invalid_params("advanceTime is limited to one day per step"));
+                }
+                Ok((Step::AdvanceTime { ms: p.ms }, None))
+            }
             StepParams::Download(p) => Ok((Step::Download { save_to: p.save_to, key: p.key }, p.timeout)),
+            StepParams::DownloadCount(p) => Ok((Step::DownloadCount { key: p.key }, p.timeout)),
             StepParams::Popup(p) => Ok((Step::Popup { key: p.key }, p.timeout)),
             StepParams::Route(p) => Ok((Step::Route { url: p.url, settle: p.settle.unwrap_or(true) }, p.timeout)),
             StepParams::Eval(p) => Ok((Step::Eval { expression: p.expression, key: p.key }, p.timeout)),
@@ -3275,7 +3504,10 @@ impl EngineHost {
             | Step::Mock(_)
             | Step::Unmock(_)
             | Step::Release { .. }
+            | Step::AdvanceTime { .. }
+            | Step::Held { .. }
             | Step::Download { .. }
+            | Step::DownloadCount { .. }
             | Step::Popup { .. }
             | Step::Route { .. }
             | Step::Eval { .. }
@@ -3292,6 +3524,7 @@ impl EngineHost {
                 let Some(el) = single(&found, &page.dom.borrow(), locator)? else { return Ok(no_match(locator)) };
                 let result = match action {
                     Action::Upload => upload(page, el, files),
+                    Action::DropFiles => drop_files(page, el, files),
                     Action::Drag => {
                         let to = to.as_ref().ok_or_else(|| CdpError::invalid_params("drag needs `to`"))?;
                         let targets = to.resolve(page, &self.waiters.selectors)?;
@@ -3376,6 +3609,7 @@ impl EngineHost {
             Some(0)
         };
         let popups_from = self.popups.len();
+        if !single {}
         let now = Instant::now();
         let first = steps.first().map_or(Duration::ZERO, |(_, t)| *t);
         let job = Job {
@@ -3499,7 +3733,11 @@ impl EngineHost {
                         self.next_step(&mut w);
                         continue;
                     };
-                    let advanced = seq.advance();
+                    let advanced = if now >= w.step_deadline {
+                        Err("input action did not become ready before its deadline".into())
+                    } else {
+                        seq.advance()
+                    };
                     self.thread.browser.checkpoint();
                     match advanced {
                         Ok(None) => {
@@ -3610,6 +3848,10 @@ impl EngineHost {
                             (attempt, None)
                         }
                         Step::Download { save_to, .. } => (self.next_download(&mut w.job, save_to.as_deref()), None),
+                        Step::DownloadCount { .. } => {
+                            let state = self.pages.get(&w.job.page).ok_or_else(|| CdpError::server("page is gone"))?;
+                            (Attempt::Done(json!(state.download_count)), None)
+                        }
                         Step::Popup { .. } => (self.next_popup(&mut w.job), None),
                         Step::Viewport { width, height } => {
                             self.resize_viewport(w.job.page, *width, *height).map_err(|e| w.job.fail(e))?;
@@ -3625,8 +3867,37 @@ impl EngineHost {
                             let removed = self.remove_mocks(w.job.page, pattern.as_ref()).map_err(|e| w.job.fail(e))?;
                             (Attempt::Done(json!({ "removed": removed })), None)
                         }
-                        Step::Release { hold } => {
-                            (self.release_hold(w.job.page, hold).map_err(|e| w.job.fail(e))?, None)
+                        Step::Release { hold, body } => {
+                            (self.release_hold(w.job.page, hold, body.as_deref()).map_err(|e| w.job.fail(e))?, None)
+                        }
+                        Step::Held { hold, count, status, .. } => {
+                            let context =
+                                self.pages.get(&w.job.page).ok_or_else(|| CdpError::server("page is gone"))?.context;
+                            let mocks =
+                                &self.contexts.get(&context).ok_or_else(|| CdpError::server("context is gone"))?.mocks;
+                            let responses = mocks.held_responses(hold);
+                            let statuses: Vec<u16> = responses
+                                .iter()
+                                .filter_map(|response| response["status"].as_u64().map(|status| status as u16))
+                                .collect();
+                            let attempt = if statuses.len() == *count
+                                && statuses.iter().all(|s| status.accepts(Some(*s)))
+                            {
+                                Attempt::Done(json!({ "count": count, "statuses": statuses, "responses": responses }))
+                            } else {
+                                Attempt::Retry(format!(
+                                    "held response statuses {statuses:?}, want {count} matching {status:?}"
+                                ))
+                            };
+                            (attempt, None)
+                        }
+                        Step::AdvanceTime { ms } => {
+                            self.thread
+                                .browser
+                                .advance_time_explicit(Duration::from_millis(*ms))
+                                .map_err(|e| w.job.fail(CdpError::server(format!("clock advance failed: {e}"))))?;
+                            self.thread.browser.checkpoint();
+                            (Attempt::Done(json!({ "advanced": ms })), None)
                         }
                         Step::Eval { expression, .. } => {
                             match self.eval_step(pid, expression).map_err(|e| w.job.fail(e))? {
@@ -3705,8 +3976,15 @@ impl EngineHost {
                             w.phase = Phase::Act { seq: Some(seq), before, hop: None, at: Instant::now() + TURN };
                             return Ok(Drive::Park(Box::new(w)));
                         }
+                        Attempt::RetrySoon(reason) => {
+                            let mut parked = self.park_retry(w, &step, timeout, page.as_ref(), reason, now)?;
+                            if let Drive::Park(waiter) = &mut parked {
+                                waiter.poll_at = Some(now + TURN);
+                            }
+                            return Ok(parked);
+                        }
                         Attempt::Retry(reason) => {
-                            return self.park_retry(w, &step, timeout, page.as_ref(), reason, now)
+                            return self.park_retry(w, &step, timeout, page.as_ref(), reason, now);
                         }
                     }
                 }
@@ -3722,7 +4000,9 @@ impl EngineHost {
         if let Step::Read { key: Some(key), .. }
         | Step::Eval { key: Some(key), .. }
         | Step::Download { key: Some(key), .. }
-        | Step::Popup { key: Some(key) } = step
+        | Step::DownloadCount { key: Some(key) }
+        | Step::Popup { key: Some(key) }
+        | Step::Held { key: Some(key), .. } = step
         {
             w.job.reads.insert(key.clone(), value.clone());
         } else if let Step::MatchScreenshot(shot) = step {
@@ -3738,7 +4018,7 @@ impl EngineHost {
                 lp_browser::note_client_activity();
                 w.phase = Phase::Settle { requests, since: now, until: now + SETTLE_MAX };
             }
-            None if matches!(step, Step::Act { .. } | Step::Eval { .. }) => {
+            None if matches!(step, Step::Act { .. } | Step::Eval { .. } | Step::AdvanceTime { .. }) => {
                 w.phase = Phase::Act { seq: None, before: None, hop: None, at: now + TURN };
             }
             None => self.next_step(w),
@@ -3765,8 +4045,11 @@ impl EngineHost {
             w.seen = page.dom.borrow().version();
             w.doc = Rc::downgrade(page);
         }
-        w.poll_at = matches!(step, Step::Url(_) | Step::Route { .. } | Step::Release { .. } | Step::Page { .. })
-            .then(|| Instant::now() + URL_POLL);
+        w.poll_at = matches!(
+            step,
+            Step::Url(_) | Step::Route { .. } | Step::Release { .. } | Step::Held { .. } | Step::Page { .. }
+        )
+        .then(|| Instant::now() + URL_POLL);
         w.reason = reason;
         w.phase = Phase::Try;
         Ok(Drive::Park(Box::new(w)))
@@ -3884,13 +4167,18 @@ impl EngineHost {
 
     /// Releases what the context's mocks hold under `name`; waits (polling)
     /// until something is held.
-    fn release_hold(&mut self, page: PageKey, name: &str) -> CdpResult<Attempt> {
+    fn release_hold(&mut self, page: PageKey, name: &str, body: Option<&str>) -> CdpResult<Attempt> {
         let context = self.pages.get(&page).ok_or_else(|| CdpError::server("page is gone"))?.context;
         let mocks = &self.contexts.get(&context).ok_or_else(|| CdpError::server("context is gone"))?.mocks;
-        Ok(match mocks.release(name) {
-            0 => Attempt::Retry(format!("nothing is held under {name:?} yet")),
-            n => Attempt::Done(json!({ "released": n })),
-        })
+        Ok(
+            match mocks
+                .release(name, body.map(|body| bytes::Bytes::copy_from_slice(body.as_bytes())).as_ref())
+                .map_err(CdpError::invalid_params)?
+            {
+                0 => Attempt::Retry(format!("nothing is held under {name:?} yet")),
+                n => Attempt::Done(json!({ "released": n })),
+            },
+        )
     }
 
     fn remove_mocks(&mut self, page: PageKey, url: Option<&Pattern>) -> CdpResult<usize> {
@@ -3939,12 +4227,28 @@ impl EngineHost {
         let (Some(log), Some(from)) = (log, job.log_from) else {
             return Attempt::Retry("the page has no request log".into());
         };
+        let from = if m.scope == Some(RequestScope::Context) {
+            if log.history_truncated() {
+                return Attempt::Retry(
+                    "context request history was truncated; an exact assertion is unavailable".into(),
+                );
+            }
+            0
+        } else {
+            from
+        };
         let matching: Vec<_> = log.since(from).iter().filter(|r| m.accepts(r)).collect();
         let started = m.state == Some(RequestState::Started);
         let finished: Vec<_> = matching.iter().copied().filter(|r| r.done).collect();
         if let Some(n) = m.count {
-            return if matching.len() == n && (started || finished.len() == n) {
+            let status_matches = matching.iter().all(|r| m.status.as_ref().is_none_or(|s| s.accepts(r.status)));
+            return if matching.len() == n && (started || finished.len() == n) && status_matches {
                 Attempt::Done(json!({ "count": n }))
+            } else if !status_matches {
+                Attempt::Retry(format!(
+                    "matching request status differs: {}",
+                    matching.last().map(|r| r.to_json()).unwrap_or(Value::Null)
+                ))
             } else if started {
                 Attempt::Retry(format!("{} matching requests started, want {n}", matching.len()))
             } else {

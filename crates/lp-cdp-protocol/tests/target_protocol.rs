@@ -663,3 +663,52 @@ fn tab_targets_attach_their_page_from_the_tab_session() {
         .collect();
     assert_eq!(destroyed, [page.clone(), format!("tab-{page}")]);
 }
+
+#[test]
+fn retiring_prepared_profiles_preserves_acquired_targets_and_other_profiles() {
+    let mut b = Browser::with_prepared(
+        Recorder::loaded(),
+        vec![
+            serde_json::from_value(json!({"url":"http://app.test/a","pool":2})).unwrap(),
+            serde_json::from_value(json!({"url":"http://app.test/b"})).unwrap(),
+        ],
+    );
+    let acquired = send(&mut b, json!({"id":1,"method":"Lightningpanda.acquirePreparedPage","params":{"profileId":0}}));
+    let target = acquired.last().unwrap()["result"]["targetId"].as_str().unwrap().to_owned();
+    let retired =
+        send(&mut b, json!({"id":2,"method":"Lightningpanda.unregisterPreparedPage","params":{"profileId":0}}));
+    assert_eq!(retired[0]["result"]["removed"], true);
+    assert!(!b.needs_refill());
+    let pages = send(&mut b, json!({"id":3,"method":"Lightningpanda.preparedPages"}));
+    assert_eq!(pages[0]["result"]["pages"].as_array().unwrap().len(), 1);
+    let targets = send(&mut b, json!({"id":4,"method":"Target.getTargets"}));
+    assert_eq!(targets[0]["result"]["targetInfos"][0]["targetId"], target);
+    let again = send(&mut b, json!({"id":5,"method":"Lightningpanda.unregisterPreparedPage","params":{"profileId":0}}));
+    assert_eq!(again[0]["result"]["removed"], false);
+    let unavailable =
+        send(&mut b, json!({"id":6,"method":"Lightningpanda.acquirePreparedPage","params":{"profileId":0}}));
+    assert!(unavailable[0].get("error").is_some());
+    let fresh = send(
+        &mut b,
+        json!({"id":7,"method":"Lightningpanda.registerPreparedPage","params":{"url":"http://app.test/a"}}),
+    );
+    assert_eq!(fresh[0]["result"]["profileId"], 2, "retired identifiers are not recycled");
+    b.shutdown();
+}
+
+#[test]
+fn retiring_a_base_requires_its_live_derived_profiles_to_retire_first() {
+    let mut b = Browser::with_prepared(
+        Recorder::loaded(),
+        vec![serde_json::from_value(json!({"url":"http://app.test/base"})).unwrap()],
+    );
+    let child =
+        b.add_prepared_profile(serde_json::from_value(json!({"url":"http://app.test/child","base":0})).unwrap());
+    assert!(b.unregister_prepared_profile(0).is_err());
+    assert!(b.prepared_profile_active(0));
+    assert!(b.unregister_prepared_profile(child).unwrap());
+    assert!(b.unregister_prepared_profile(0).unwrap());
+    assert!(!b.prepared_profile_active(0));
+    assert!(b.unregister_prepared_profile(1000).is_err());
+    b.shutdown();
+}

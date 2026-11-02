@@ -129,9 +129,10 @@ pub fn fire_scroll(page: &Rc<PageDom>, target: Option<NodeId>) {
 
 fn queue_scroll(page: &Rc<PageDom>, target: Option<NodeId>, scrollend: bool) {
     // HTML "run the scroll steps": a scrolled target is queued once and its
-    // scroll event fires in the next rendering update, which ticks
-    // requestAnimationFrame here (16 ms). Chromium dispatches it in its next
-    // frame: on a page that just rendered (TOS react-aria autocomplete) that
+    // scroll event fires in the next rendering update before animation
+    // callbacks. A 16 ms fallback also delivers it when no frame was requested.
+    // Chromium dispatches it in its next frame: on a page that just rendered
+    // (TOS react-aria autocomplete) that
     // was 23-29 ms after Playwright's scroll step, after its click; on an
     // idle page a frame can run within ~1 ms. Fired as an immediate task, it
     // let close-on-scroll handlers close the popover before the click.
@@ -140,25 +141,42 @@ fn queue_scroll(page: &Rc<PageDom>, target: Option<NodeId>, scrollend: bool) {
     // Chromium fires it after instant programmatic scrolls (Gap 35); layout
     // clamps fire `scroll` only.
     let doc = page.document();
-    {
+    let token = {
         let mut pending = page.pending_scrolls.borrow_mut();
-        if let Some(end) = pending.get_mut(&(doc, target)) {
+        if let Some((_, end, _)) = pending.iter_mut().find(|(key, _, _)| *key == (doc, target)) {
             *end |= scrollend;
             return;
         }
-        pending.insert((doc, target), scrollend);
-    }
+        let token = Rc::new(());
+        pending.push(((doc, target), scrollend, token.clone()));
+        token
+    };
     let p = page.clone();
     page.post_delayed_task(
         std::time::Duration::from_millis(16),
         Box::new(move || {
-            let end = p.pending_scrolls.borrow_mut().remove(&(doc, target)).unwrap_or(false);
+            let pending = {
+                let mut pending = p.pending_scrolls.borrow_mut();
+                pending.iter().position(|(_, _, entry)| Rc::ptr_eq(entry, &token)).map(|i| pending.remove(i).1)
+            };
+            let Some(end) = pending else { return };
             dispatch_scroll(&p, doc, target, "scroll");
             if end {
                 dispatch_scroll(&p, doc, target, "scrollend");
             }
         }),
     );
+}
+
+/// Runs queued scroll steps before animation-frame callbacks in a rendering update.
+pub fn flush_pending_scrolls(page: &Rc<PageDom>) {
+    let pending = std::mem::take(&mut *page.pending_scrolls.borrow_mut());
+    for ((doc, target), end, _) in pending {
+        dispatch_scroll(page, doc, target, "scroll");
+        if end {
+            dispatch_scroll(page, doc, target, "scrollend");
+        }
+    }
 }
 
 fn dispatch_scroll(p: &Rc<PageDom>, doc: NodeId, target: Option<NodeId>, kind: &str) {
@@ -202,7 +220,7 @@ pub(crate) fn clamp_scrolls(page: &Rc<PageDom>, now: bool) {
         };
         if !now {
             queue_scroll(page, node, false);
-        } else if !page.pending_scrolls.borrow().contains_key(&(doc, node)) {
+        } else if !page.pending_scrolls.borrow().iter().any(|(key, _, _)| *key == (doc, node)) {
             dispatch_scroll(page, doc, node, "scroll");
         }
     }

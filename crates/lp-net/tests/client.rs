@@ -586,3 +586,44 @@ fn loader_activity_counts_synchronously_and_each_terminal_once() {
     c.cancel(new);
     settle("L2", 0);
 }
+
+#[test]
+fn event_stream_activity_is_separate_and_cancellation_clears_both_counts() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (stop, stopped) = mpsc::channel();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        read_request(&mut stream).unwrap();
+        stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n3\r\n:\n\n\r\n").unwrap();
+        stream.flush().unwrap();
+        let _ = stopped.recv_timeout(Duration::from_secs(5));
+    });
+    let client = NetClient::new(NetConfig::default()).unwrap();
+    let mut req = Request::get(Url::parse(&format!("http://127.0.0.1:{port}/events")).unwrap(), Destination::Fetch);
+    req.loader_id = Some("sse".into());
+    let (tx, rx) = mpsc::channel();
+    let id = client.fetch(
+        req,
+        Box::new(move |event| {
+            let _ = tx.send(event);
+        }),
+    );
+    loop {
+        if matches!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), ResponseEvent::Response(_)) {
+            break;
+        }
+    }
+    let active = client.activity("sse").unwrap();
+    assert_eq!((active.inflight, active.event_streams), (1, 1));
+    assert!(active.idle_since.is_none());
+    client.cancel(id);
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while client.activity("sse").unwrap().inflight != 0 {
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(client.activity("sse").unwrap().event_streams, 0);
+    let _ = stop.send(());
+    server.join().unwrap();
+}

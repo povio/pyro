@@ -1004,6 +1004,13 @@ impl Stylist {
         ExtraStyleDataIterator(self.cascade_data.iter_origins_rev())
     }
 
+    /// Whether active cascade data contains a container condition.
+    pub fn has_container_queries(&self) -> bool {
+        self.cascade_data
+            .iter_origins()
+            .any(|(data, _)| data.container_conditions.len() > 1)
+    }
+
     /// Returns the number of selectors.
     pub fn num_selectors(&self) -> usize {
         self.cascade_data

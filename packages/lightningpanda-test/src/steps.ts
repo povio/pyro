@@ -188,6 +188,11 @@ export class Locator {
       ? act(this, 'upload', files, opts)
       : act(this, 'upload', undefined, { ...opts, files });
   }
+  dropFiles(files: UploadFile[] | string, opts: ActOptions = {}): StepLike {
+    return typeof files === 'string'
+      ? act(this, 'dropFiles', files, opts)
+      : act(this, 'dropFiles', undefined, { ...opts, files });
+  }
   /** Drags the element onto `to`: native drag and drop when it is a drag source, else a pointer drag. */
   drag(to: Locator, opts: ActOptions = {}): StepLike {
     return act(this, 'drag', undefined, { ...opts, to: to.spec });
@@ -377,6 +382,10 @@ class RequestCheck implements StepLike {
   state(state: 'started' | 'finished'): RequestCheck {
     return new RequestCheck({ ...this.m, state });
   }
+  /** Include prior runs of this page only; batch scope is the default. */
+  scope(scope: 'batch' | 'context'): RequestCheck {
+    return new RequestCheck({ ...this.m, scope });
+  }
   timeout(timeout: number): RequestCheck {
     return new RequestCheck({ ...this.m, timeout });
   }
@@ -489,6 +498,10 @@ export const media = (opts: MediaOptions): StepLike => ({ toStep: () => ({ media
 
 // ---- downloads, popups and the raw mouse ----
 
+/** Reads this page's native initiated-download count without consuming download records. */
+export const downloadCount = (as: string): StepLike => ({
+  toStep: () => ({ downloadCount: { as } }),
+});
 /**
  * Waits for the next download the page starts during the run; its
  * `{ url, filename, text, ... }` lands in `values[as]`, and the file in

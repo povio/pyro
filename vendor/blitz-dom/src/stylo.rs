@@ -59,6 +59,21 @@ use style_dom::ElementState;
 
 use style::values::computed::text::TextAlign as StyloTextAlign;
 
+struct LayoutThreadScope;
+
+impl LayoutThreadScope {
+    fn enter() -> Self {
+        style::thread_state::enter(ThreadState::LAYOUT);
+        Self
+    }
+}
+
+impl Drop for LayoutThreadScope {
+    fn drop(&mut self) {
+        style::thread_state::exit(ThreadState::LAYOUT);
+    }
+}
+
 impl Node {
     /// lightningpanda: whether the element's `urn:x-lightningpanda:state`
     /// attribute (written by lp-dom's render tree) lists `state`: the
@@ -75,7 +90,7 @@ impl Node {
 
 impl crate::document::BaseDocument {
     pub fn resolve_stylist(&mut self, now: f64) {
-        style::thread_state::enter(ThreadState::LAYOUT);
+        let _layout_thread_scope = LayoutThreadScope::enter();
 
         let guard = &self.guard;
         let guards = StylesheetGuards {
@@ -194,8 +209,6 @@ impl crate::document::BaseDocument {
 
         // Maybe run garbage collection. Stylo has internal to determine whether to run or not.
         self.stylist.rule_tree().maybe_gc();
-
-        style::thread_state::exit(ThreadState::LAYOUT);
     }
 
     /// Compute the style of an element which the regular style traversal
@@ -212,7 +225,7 @@ impl crate::document::BaseDocument {
             return None;
         }
 
-        style::thread_state::enter(ThreadState::LAYOUT);
+        let _layout_thread_scope = LayoutThreadScope::enter();
 
         let guard = &self.guard;
         let guards = StylesheetGuards {
@@ -236,8 +249,6 @@ impl crate::document::BaseDocument {
             thread_local: &mut thread_local,
         };
         let styles = resolve_style(&mut context, node, RuleInclusion::All, None, None);
-
-        style::thread_state::exit(ThreadState::LAYOUT);
 
         Some(styles.primary().clone())
     }
@@ -1221,10 +1232,15 @@ impl<'a> TElement for BlitzNode<'a> {
 
     fn query_container_size(
         &self,
-        _display: &style::values::specified::Display,
+        display: &style::values::specified::Display,
     ) -> euclid::default::Size2D<Option<app_units::Au>> {
-        // FIXME: Implement container queries. For now this effectively disables them without panicking.
-        Default::default()
+        if !self.flags.is_in_document() || display.is_none() || display.is_contents() || display.is_inline_flow() {
+            return Default::default();
+        }
+        // Stylo can call while holding this element's mutable style data for
+        // a pseudo. Eligibility comes from its fresh originating-element style;
+        // axes and content-box dimensions are updated after traversal instead.
+        self.tree().container_query_sizes.lock().unwrap().entry(self.id).or_default().size
     }
 
     fn each_custom_state<F>(&self, _callback: F)

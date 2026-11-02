@@ -356,6 +356,20 @@ pub(super) fn reveal(page: &Rc<PageDom>, node: NodeId) {
     }
 }
 
+/// Tries center alignment without bypassing the driver's subsequent hit test.
+pub(super) fn reveal_centered(page: &Rc<PageDom>, node: NodeId) -> bool {
+    let moved = page.layout.borrow_mut().scroll_into_view_centered_targets(&page.dom.borrow(), node);
+    let changed = !moved.is_empty();
+    for target in moved {
+        let node = match target {
+            lp_dom::layout::ScrollTarget::Container(node) => Some(node),
+            lp_dom::layout::ScrollTarget::Viewport => None,
+        };
+        lp_webapi::layout_api::fire_scroll(page, node);
+    }
+    changed
+}
+
 /// Scrolls the window so the node-relative area is visible, as little as
 /// possible (nearest edge), queueing a scroll event when it moved.
 fn reveal_area(page: &Rc<PageDom>, node: NodeId, x: f64, y: f64, width: f64, height: f64) {

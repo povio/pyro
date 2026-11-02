@@ -9,6 +9,7 @@ use crate::node::TextBrush;
 // Module of type aliases so we can refer to stylo types with nicer names
 pub(crate) mod stylo {
     pub(crate) use style::computed_values::direction::T as Direction;
+    pub(crate) use style::computed_values::font_optical_sizing::T as FontOpticalSizing;
     pub(crate) use style::computed_values::font_variant_caps::T as FontVariantCaps;
     pub(crate) use style::computed_values::font_variant_position::T as FontVariantPosition;
     pub(crate) use style::computed_values::text_wrap_mode::T as TextWrapMode;
@@ -427,7 +428,13 @@ pub(crate) fn style(
     let font_weight = self::font_weight(font_styles.font_weight);
     let font_style = self::font_style(font_styles.font_style);
     let font_width = self::font_width(font_styles.font_width);
-    let font_variations = self::font_variations(&font_styles.font_variation_settings);
+    let mut font_variations = self::font_variations(&font_styles.font_variation_settings);
+    let optical_axis = parley::Tag::from_bytes(*b"opsz");
+    if font_styles.font_optical_sizing == stylo::FontOpticalSizing::Auto
+        && !font_variations.iter().any(|variation| variation.tag == optical_axis)
+    {
+        font_variations.push(parley::FontVariation { tag: optical_axis, value: font_size });
+    }
     let font_features = self::font_features(font_styles);
 
     // Convert font family

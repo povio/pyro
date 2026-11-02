@@ -275,6 +275,7 @@ pub(crate) struct PageState {
     dom_nodes: dom::BackendNodes,
     /// Downloads the page started, newest last (`LP.run` `download` steps).
     pub(crate) downloads: Vec<DownloadRecord>,
+    pub(crate) download_count: u64,
 }
 
 /// A download a page started, kept for `LP.run` whatever the
@@ -422,8 +423,8 @@ impl EngineHost {
                     break;
                 };
                 for (n, source) in profile.init_scripts.iter().enumerate() {
-                    thread.browser.add_init_script(
-                        page,
+                    thread.browser.add_context_init_script(
+                        context,
                         lp_browser::InitScript { id: format!("prebooted-{n}"), source: source.clone(), world: None },
                     );
                 }
@@ -480,6 +481,7 @@ impl EngineHost {
                 network: network::NetworkPage::new(self.body_budget.clone()),
                 dom_nodes: dom::BackendNodes::default(),
                 downloads: Vec::new(),
+                download_count: 0,
             },
         );
         let target_id = self.thread.browser.page(id).expect("page exists").main_frame.id.0.clone();
@@ -935,6 +937,12 @@ impl Host for EngineHost {
     }
 
     fn popup_opened(&mut self, opener: PageKey, page: PageKey, target_id: &str) {
+        if self.pages.get(&opener).is_some_and(|state| state.network.log.is_some()) {
+            if let Some(state) = self.pages.get_mut(&page) {
+                state.network.log.get_or_insert_with(Default::default);
+            }
+            self.update_network_subscriptions();
+        }
         self.popups.push(PopupRecord { opener, page, target_id: target_id.to_owned() });
         if self.popups.len() > 256 {
             self.popups.remove(0);
@@ -1040,9 +1048,10 @@ impl Host for EngineHost {
         let id = format!("prepared-{}", state.next_script_id);
         state.next_script_id += 1;
         let page_id = state.id;
+        let Some(context) = self.thread.browser.page(page_id).map(|p| p.context) else { return };
         self.thread
             .browser
-            .add_init_script(page_id, lp_browser::InitScript { id, source: source.to_owned(), world: None });
+            .add_context_init_script(context, lp_browser::InitScript { id, source: source.to_owned(), world: None });
     }
 
     fn settle_page(&mut self, page: PageKey) {

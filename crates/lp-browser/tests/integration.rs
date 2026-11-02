@@ -19,6 +19,7 @@ mod network_delivery;
 mod network_idle;
 mod remote_ordering;
 mod runloop_idle_finalization;
+mod static_plaintext;
 mod storage_events;
 mod stylesheets;
 mod stylesheets_http;

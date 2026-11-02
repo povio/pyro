@@ -307,6 +307,7 @@ pub struct DocumentParser {
     dom: DomRef,
     doc: NodeId,
     ended: bool,
+    plaintext: bool,
     /// Transport-layer charset label (Content-Type), used by `feed_bytes`.
     transport_charset: Option<&'static encoding_rs::Encoding>,
     decoder: Option<encoding_rs::Decoder>,
@@ -372,12 +373,32 @@ impl DocumentParser {
             dom,
             doc,
             ended: false,
+            plaintext: false,
             transport_charset: None,
             decoder: None,
             decoded: String::new(),
             sniff: Vec::new(),
             saved: Vec::new(),
         })
+    }
+
+    /// A text/plain document uses the normal decoder, but never interprets
+    /// markup or character references from the response as HTML.
+    pub fn new_plaintext(dom: DomRef, doc: NodeId) -> DomResult<Self> {
+        let mut parser = Self::new(dom.clone(), doc, false)?;
+        parser.plaintext = true;
+        // The synthetic LF consumes HTML's <pre> first-LF rule; response bytes
+        // keep their own leading newline when the tokenizer changes state.
+        parser.feed(
+            "<!doctype html><html><head></head><body><pre style=\"white-space: pre-wrap; word-wrap: break-word\">\n",
+        );
+        parser.tok.set_plaintext_state();
+        let mut dom = dom.borrow_mut();
+        let index = dom.check(doc)?;
+        if let NodeKind::Document(data) = &mut dom.n_mut(index).kind {
+            data.content_type = "text/plain".into();
+        }
+        Ok(parser)
     }
 
     /// Sets the Content-Type charset label for `feed_bytes`.
@@ -413,7 +434,7 @@ impl DocumentParser {
         let enc = encoding_rs::Encoding::for_bom(&self.sniff)
             .map(|(e, _)| e)
             .or(self.transport_charset)
-            .or_else(|| prescan_charset(&self.sniff))
+            .or_else(|| if self.plaintext { None } else { prescan_charset(&self.sniff) })
             .unwrap_or(encoding_rs::UTF_8);
         self.decoder = Some(enc.new_decoder_with_bom_removal());
         if let Ok(mut d) = self.dom.try_borrow_mut() {

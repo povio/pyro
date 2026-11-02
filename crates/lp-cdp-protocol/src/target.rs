@@ -135,6 +135,7 @@ struct ContextEntry {
 #[serde(rename_all = "camelCase")]
 pub struct PreparedProfile {
     pub url: String,
+    /// Run before document scripts in every page of this profile context, including popups.
     #[serde(default)]
     pub init_scripts: Vec<String>,
     #[serde(default)]
@@ -171,6 +172,7 @@ fn default_pool() -> usize {
 
 /// `serve --fork`: hands a profile to the template process; its id there.
 pub type RegisterPrepared = Box<dyn Fn(&PreparedProfile) -> Result<usize, String>>;
+pub type UnregisterPrepared = Box<dyn Fn(usize) -> Result<bool, String>>;
 
 /// At most this many pages booting ahead per profile.
 pub const MAX_POOL: usize = 8;
@@ -249,6 +251,7 @@ pub struct Browser<H: Host> {
     browser_sessions: HashSet<String>,
     next_id: u64,
     prepared_profiles: Vec<PreparedProfile>,
+    retired_profiles: HashSet<usize>,
     prepared: Vec<PreparedEntry>,
     /// The last refill could create nothing (limits, failures): wait for
     /// the next acquisition before trying again.
@@ -257,6 +260,7 @@ pub struct Browser<H: Host> {
     /// (see [`crate::fork`]), which boots prepared pages for every later
     /// connection. Nothing is booted here; registrations go to the template.
     fork: Option<RegisterPrepared>,
+    fork_unregister: Option<UnregisterPrepared>,
 }
 
 #[derive(Serialize)]
@@ -291,9 +295,11 @@ impl<H: Host> Browser<H> {
             browser_sessions: HashSet::new(),
             next_id: 1,
             prepared_profiles: Vec::new(),
+            retired_profiles: HashSet::new(),
             prepared: Vec::new(),
             refill_blocked: false,
             fork: None,
+            fork_unregister: None,
         }
     }
 
@@ -301,6 +307,56 @@ impl<H: Host> Browser<H> {
     /// refills, and `registerPreparedPage` goes through `register`.
     pub fn set_fork_child(&mut self, register: RegisterPrepared) {
         self.fork = Some(register);
+    }
+
+    pub fn set_fork_unregister(&mut self, unregister: UnregisterPrepared) {
+        self.fork_unregister = Some(unregister);
+    }
+
+    pub fn prepared_profile_active(&self, id: usize) -> bool {
+        id < self.prepared_profiles.len() && !self.retired_profiles.contains(&id)
+    }
+
+    pub fn check_profile_retirement(&self, id: usize) -> CdpResult<bool> {
+        if id >= self.prepared_profiles.len() {
+            return Err(CdpError::invalid_params("Unknown prepared profile"));
+        }
+        if self.retired_profiles.contains(&id) {
+            return Ok(false);
+        }
+        if self
+            .prepared_profiles
+            .iter()
+            .enumerate()
+            .any(|(child, profile)| self.prepared_profile_active(child) && profile.base == Some(id))
+        {
+            return Err(CdpError::invalid_params("Prepared profile still has dependent profiles"));
+        }
+        Ok(true)
+    }
+
+    /// Retires only waiting pages. Acquired targets remain valid until their owner closes them.
+    pub fn unregister_prepared_profile(&mut self, id: usize) -> CdpResult<bool> {
+        if !self.check_profile_retirement(id)? {
+            return Ok(false);
+        }
+        self.retired_profiles.insert(id);
+        let waiting = std::mem::take(&mut self.prepared);
+        for entry in waiting {
+            if entry.profile == id {
+                self.host.close_page(entry.page);
+                self.dispose_context(&entry.context_id, &mut Discard);
+            } else {
+                self.prepared.push(entry);
+            }
+        }
+        let profile = &mut self.prepared_profiles[id];
+        profile.url.clear();
+        profile.init_scripts.clear();
+        profile.setup.clear();
+        profile.viewport = None;
+        profile.base = None;
+        Ok(true)
     }
 
     /// `new`, then starts booting `profiles`' pages right away so the first
@@ -384,6 +440,9 @@ impl<H: Host> Browser<H> {
             .iter()
             .position(|t| t.id == target_id && t.prepared_profile.is_some())
             .ok_or_else(|| CdpError::invalid_params("not an acquired prepared page"))?;
+        if !self.prepared_profile_active(self.targets[pos].prepared_profile.expect("checked")) {
+            return Err(CdpError::invalid_params("Prepared profile was retired"));
+        }
         let sessions: Vec<String> =
             self.sessions.iter().filter(|(_, s)| s.target_id == target_id).map(|(id, _)| id.clone()).collect();
         for session in sessions {
@@ -422,6 +481,9 @@ impl<H: Host> Browser<H> {
 
     /// Whether profile `i` is below its pool and allowed to boot now.
     fn profile_wants_page(&self, i: usize) -> bool {
+        if !self.prepared_profile_active(i) {
+            return false;
+        }
         let profile = &self.prepared_profiles[i];
         if profile.base.is_some() {
             return false; // its page comes from the base profile's
@@ -527,6 +589,22 @@ impl<H: Host> Browser<H> {
                 self.refill_prepared();
                 let profile_id = self.prepared_profiles.len() - 1;
                 out.send(msg::result_frame(id, &serde_json::json!({ "profileId": profile_id }), cmd.session_id()));
+            }
+            "unregisterPreparedPage" => {
+                #[derive(Deserialize)]
+                #[serde(rename_all = "camelCase")]
+                struct P {
+                    profile_id: usize,
+                }
+                let p: P = cmd.params()?;
+                let removed = if let Some(unregister) = &self.fork_unregister {
+                    unregister(p.profile_id).map_err(CdpError::server)?
+                } else if self.fork.is_some() {
+                    return Err(CdpError::server("Profile retirement is unavailable on this fork connection"));
+                } else {
+                    self.unregister_prepared_profile(p.profile_id)?
+                };
+                out.send(msg::result_frame(id, &serde_json::json!({ "removed": removed }), cmd.session_id()));
             }
             "acquirePreparedPage" => {
                 #[derive(Deserialize)]
@@ -759,6 +837,7 @@ impl<H: Host> Browser<H> {
             return self.tab_session_command(session_id, &target_id, cmd, out);
         }
         match cmd.method.as_ref() {
+            "Target.getTargets" => self.target_command("getTargets", cmd, out)?,
             // Session-scoped Target commands Playwright sends on page sessions.
             "Target.setAutoAttach" => {
                 // Child targets (OOPIFs, workers) are not separate targets here:

@@ -22,12 +22,21 @@ pub const VIRTUAL_TIME_ENV: &str = "LIGHTNINGPANDA_VIRTUAL_TIME";
 thread_local! {
     /// How far the page clock is ahead of real time.
     static SKEW: Cell<Duration> = const { Cell::new(Duration::ZERO) };
+    static MANUAL: Cell<bool> = const { Cell::new(false) };
 }
 
 /// Whether the page clock may jump ahead (see the module docs).
 pub fn virtual_time() -> bool {
     static ON: LazyLock<bool> = LazyLock::new(|| std::env::var(VIRTUAL_TIME_ENV).is_ok_and(|v| v.trim() == "1"));
     *ON
+}
+
+pub(crate) fn page_clock_enabled() -> bool {
+    virtual_time() || MANUAL.get()
+}
+
+pub(crate) fn enable_manual() {
+    MANUAL.set(true);
 }
 
 /// The page clock now, as an `Instant` (comparable to timer deadlines kept

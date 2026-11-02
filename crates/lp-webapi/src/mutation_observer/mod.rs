@@ -415,7 +415,8 @@ pub(crate) fn install(s: &Scope<'_>, page: &Rc<PageDom>) -> JsResult<()> {
         }
     })))?;
     let weak = Rc::downgrade(page);
-    s.realm().set_native_callback_pending(Some(Rc::new(move || weak.upgrade().is_some_and(|page| hook_pending(&page)))))?;
+    s.realm()
+        .set_native_callback_pending(Some(Rc::new(move || weak.upgrade().is_some_and(|page| hook_pending(&page)))))?;
     Ok(())
 }
 

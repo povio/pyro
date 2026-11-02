@@ -1524,7 +1524,9 @@ fn input_boundary_events_carry_related_targets_and_follow_a_replaced_hovered_ele
     moved(&points[1]);
     assert_eq!(
         moved(&points[0]),
-        json!("pointerout@other<static pointerleave@other<static pointerover@static<other pointerenter@cell<other pointerenter@static<other mouseout@other<static mouseleave@other<static mouseover@static<other mouseenter@cell<other mouseenter@static<other mousemove@static<-")
+        json!(
+            "pointerout@other<static pointerleave@other<static pointerover@static<other pointerenter@cell<other pointerenter@static<other mouseout@other<static mouseleave@other<static mouseover@static<other mouseenter@cell<other mouseenter@static<other mousemove@static<-"
+        )
     );
     eval_value(
         &mut h,
@@ -1537,7 +1539,9 @@ fn input_boundary_events_carry_related_targets_and_follow_a_replaced_hovered_ele
     h.run_for(150);
     assert_eq!(
         eval_value(&mut h, "log.splice(0).join(' ')"),
-        json!("pointerover@live<static pointerenter@#document<static pointerenter@HTML<static pointerenter@BODY<static pointerenter@cell<static pointerenter@live<static mouseover@live<static mouseenter@#document<static mouseenter@HTML<static mouseenter@BODY<static mouseenter@cell<static mouseenter@live<static")
+        json!(
+            "pointerover@live<static pointerenter@#document<static pointerenter@HTML<static pointerenter@BODY<static pointerenter@cell<static pointerenter@live<static mouseover@live<static mouseenter@#document<static mouseenter@HTML<static mouseenter@BODY<static mouseenter@cell<static mouseenter@live<static"
+        )
     );
     assert_eq!(eval_value(&mut h, "document.getElementById('live').matches(':hover')"), json!(true));
 }
@@ -1767,7 +1771,10 @@ fn input_home_end_with_mac_scroll_commands_scroll_the_document() {
     // macOS. Outside editable content Chrome scrolls the document. Scroll
     // events arrive at the next frame, so each key waits past one.
     let mut h = Harness::new();
-    eval_value(&mut h, "document.body.innerHTML = '<div style=\"height:5000px\"></div>'; globalThis.scrolls = 0; document.addEventListener('scroll', () => scrolls++); 1");
+    eval_value(
+        &mut h,
+        "document.body.innerHTML = '<div style=\"height:5000px\"></div>'; globalThis.scrolls = 0; document.addEventListener('scroll', () => scrolls++); 1",
+    );
     for (key, command) in [("End", "scrollToEndOfDocument"), ("Home", "scrollToBeginningOfDocument")] {
         let r = h.page(
             "Input.dispatchKeyEvent",
@@ -3354,7 +3361,13 @@ fn scroll_into_view_if_needed_leaves_a_visible_node_alone() {
             document.querySelector('#b')"}),
     );
     let object = setup["result"]["result"]["objectId"].clone();
-    assert_eq!(eval_value(&mut h, "(() => { const r = document.querySelector('#b').getBoundingClientRect(); return r.top > 0 && r.bottom < innerHeight; })()"), json!(true));
+    assert_eq!(
+        eval_value(
+            &mut h,
+            "(() => { const r = document.querySelector('#b').getBoundingClientRect(); return r.top > 0 && r.bottom < innerHeight; })()"
+        ),
+        json!(true)
+    );
     let r = h.page("DOM.scrollIntoViewIfNeeded", json!({ "objectId": object }));
     assert_eq!(r["result"], json!({}), "{r}");
     h.run_for(60);
@@ -3409,7 +3422,12 @@ fn input_hover_after_scroll_carries_the_previous_element_like_chromium() {
     "#,
     );
     let moved = |h: &mut Harness, id: &str| {
-        let point = eval_value(h, &format!("(() => {{ const r = document.getElementById('{id}').getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; }})()"));
+        let point = eval_value(
+            h,
+            &format!(
+                "(() => {{ const r = document.getElementById('{id}').getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; }})()"
+            ),
+        );
         let r = h.page(
             "Input.dispatchMouseEvent",
             json!({"type":"mouseMoved","x":point[0],"y":point[1],"button":"none","buttons":0}),
@@ -3422,7 +3440,9 @@ fn input_hover_after_scroll_carries_the_previous_element_like_chromium() {
     moved(&mut h, "hs");
     assert_eq!(
         eval_value(&mut h, "log.join(' ')"),
-        json!("pointerout@span<hs pointerleave@span<hs pointerover@hs<span pointerenter@field<span pointerenter@hs<span mouseout@span<hs mouseleave@span<hs mouseover@hs<span mouseenter@field<span mouseenter@hs<span")
+        json!(
+            "pointerout@span<hs pointerleave@span<hs pointerover@hs<span pointerenter@field<span pointerenter@hs<span mouseout@span<hs mouseleave@span<hs mouseover@hs<span mouseenter@field<span mouseenter@hs<span"
+        )
     );
 }
 
@@ -3457,13 +3477,7 @@ fn select_then_insert_text_replaces_a_number_inputs_value_like_chromium() {
             "(() => { const n = document.getElementById('n'), n2 = document.getElementById('n2'); \
              return [n.value, n2.value, n.validity.valid, n.selectionStart, ev.filter(e => !e.includes(':select')).join(' ')]; })()"
         ),
-        json!([
-            "0.75",
-            "1.25",
-            true,
-            null,
-            "n:beforeinput=1 n:input=0.75 n2:beforeinput=1.26 n2:input=1.25"
-        ])
+        json!(["0.75", "1.25", true, null, "n:beforeinput=1 n:input=0.75 n2:beforeinput=1.26 n2:input=1.25"])
     );
     // The selection API stays unavailable on number inputs.
     assert_eq!(
@@ -3708,7 +3722,10 @@ fn native_drag_selection_follows_chromium_rules() {
     let at = text_point(&mut h, "#q", 1.0);
     mouse(&mut h, "mousePressed", &at, 0.0, 1);
     mouse(&mut h, "mouseReleased", &at, 0.0, 0);
-    let r = eval_value(&mut h, "(() => { const s = getSelection(); return `${s.type} ${d(s.anchorNode)}:${s.anchorOffset} ${log.filter(e => e !== 'selectionchange').join(',')}`; })()");
+    let r = eval_value(
+        &mut h,
+        "(() => { const s = getSelection(); return `${s.type} ${d(s.anchorNode)}:${s.anchorOffset} ${log.filter(e => e !== 'selectionchange').join(',')}`; })()",
+    );
     assert_eq!(r, json!("Caret #text(q):0 mousedown@q,selectstart@#text(q),mouseup@q,click@q"), "click collapses");
 }
 
@@ -3765,14 +3782,24 @@ fn native_drag_selection_resolves_hit_targets_and_removed_nodes_like_chromium() 
     // drag across user-select: none content keeps it inside the Range.
     let mut h = Harness::new();
     let lines: String = (0..8).map(|i| format!("<p id=l{i} style=\"margin:0\">line{i}text</p>")).collect();
-    let clipped = format!("<div id=sc style=\"height:90px;overflow:hidden\">{lines}</div><div style=\"height:100px\"></div><p id=v>visible text</p>");
+    let clipped = format!(
+        "<div id=sc style=\"height:90px;overflow:hidden\">{lines}</div><div style=\"height:100px\"></div><p id=v>visible text</p>"
+    );
     let below = |h: &mut Harness, dx: f64| {
-        eval_value(h, &format!("(() => {{ const r = document.getElementById('sc').getBoundingClientRect(); return [{dx}, r.bottom + 15]; }})()"))
+        eval_value(
+            h,
+            &format!(
+                "(() => {{ const r = document.getElementById('sc').getBoundingClientRect(); return [{dx}, r.bottom + 15]; }})()"
+            ),
+        )
     };
     let click = |h: &mut Harness, at: &Value| {
         mouse(h, "mousePressed", at, 0.0, 1);
         mouse(h, "mouseReleased", at, 0.0, 0);
-        eval_value(h, "(() => { const s = getSelection(); return `type=${s.type} anchor=${d(s.anchorNode)}:${s.anchorOffset} log=${log.filter(e => e !== 'selectionchange').join(',')}`; })()")
+        eval_value(
+            h,
+            "(() => { const s = getSelection(); return `type=${s.type} anchor=${d(s.anchorNode)}:${s.anchorOffset} log=${log.filter(e => e !== 'selectionchange').join(',')}`; })()",
+        )
     };
     selection_page(&mut h, &clipped, "document.getElementById('v').style.margin = '0'");
     let at = below(&mut h, 20.0);
@@ -3819,21 +3846,33 @@ fn native_drag_selection_resolves_hit_targets_and_removed_nodes_like_chromium() 
         "drag ending on covered text: {r}"
     );
     let two = "<p id=p style=\"margin:0\">abcdefghij</p><p id=q style=\"margin:0\">klmnopqrst</p>";
-    selection_page(&mut h, two, "hooks.selectstart = e => { if (e.target.nodeType === 3 && e.target.parentNode && e.target.parentNode.id === 'p') e.target.remove(); };");
+    selection_page(
+        &mut h,
+        two,
+        "hooks.selectstart = e => { if (e.target.nodeType === 3 && e.target.parentNode && e.target.parentNode.id === 'p') e.target.remove(); };",
+    );
     let (a, z) = (text_point(&mut h, "#p", 1.0), text_point(&mut h, "#q", -1.0));
     let r = drag_select_range(&mut h, &a, &z);
     assert!(
         r.starts_with("range=\"-\" type=None") && r.contains("selectstart@#text(p)"),
         "selectstart removes its text: {r}"
     );
-    selection_page(&mut h, two, "let n = 0; hooks.mousemove = () => { if (++n === 4) { const t = document.getElementById('p').firstChild; if (t) t.remove(); } };");
+    selection_page(
+        &mut h,
+        two,
+        "let n = 0; hooks.mousemove = () => { if (++n === 4) { const t = document.getElementById('p').firstChild; if (t) t.remove(); } };",
+    );
     let (a, z) = (text_point(&mut h, "#p", 1.0), text_point(&mut h, "#q", -1.0));
     let r = drag_select_range(&mut h, &a, &z);
     assert!(
         r.starts_with("range=\"klmnopqrst\" type=Range") && r.contains("focus=#text(q):10"),
         "anchor removed mid-drag: {r}"
     );
-    selection_page(&mut h, two, "let n = 0; hooks.mousemove = () => { if (++n === 4) document.getElementById('p').textContent = 'ABCDEFGHIJ'; };");
+    selection_page(
+        &mut h,
+        two,
+        "let n = 0; hooks.mousemove = () => { if (++n === 4) document.getElementById('p').textContent = 'ABCDEFGHIJ'; };",
+    );
     let (a, z) = (text_point(&mut h, "#p", 1.0), text_point(&mut h, "#q", -1.0));
     let r = drag_select_range(&mut h, &a, &z);
     assert!(
@@ -3872,7 +3911,10 @@ fn reported_geometry_is_in_layout_units_like_chromium() {
             json!({"expression": format!("document.body.style.margin = '0'; document.body.innerHTML = '<div id=e style=\"position:absolute;{style}\"></div>'; document.getElementById('e')")}),
         );
         let object = setup["result"]["result"]["objectId"].clone();
-        let rect = eval_value(&mut h, "(() => { const b = document.getElementById('e').getBoundingClientRect(); return [b.x, b.y, b.width, b.height]; })()");
+        let rect = eval_value(
+            &mut h,
+            "(() => { const b = document.getElementById('e').getBoundingClientRect(); return [b.x, b.y, b.width, b.height]; })()",
+        );
         let rect: Vec<f64> = rect.as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
         assert_eq!(rect, expected, "{style}: DOMRect");
         let model = h.page("DOM.getBoxModel", json!({ "objectId": object }));
@@ -4008,6 +4050,8 @@ fn driver_site() -> std::net::SocketAddr {
                 let (ty, body) = if let Some(name) = path.strip_prefix("/api?name=") {
                     std::thread::sleep(Duration::from_millis(100));
                     ("application/json", format!(r#"{{"greeting":"Hello, {name}"}}"#))
+                } else if path == "/eager-popup" {
+                    ("text/html", "<!doctype html><body><p id=ready>Loading</p><script>fetch('/api?name=PopupStartup').then(r=>r.json()).then(data=>{document.getElementById('ready').textContent=data.greeting;document.body.dataset.ready='yes';});</script>".to_owned())
                 } else if path == "/quiet" {
                     ("text/html", DRIVER_SITE_QUIET.to_owned())
                 } else {
@@ -5825,5 +5869,832 @@ mod screenshot {
             json!({"steps": [{"matchScreenshot": {"name": "x", "locator": {"css": "#missing"}, "timeout": 100}}]}),
         );
         assert!(r["error"]["message"].as_str().unwrap().contains("matches no element"), "{r}");
+    }
+}
+
+#[test]
+fn driver_attribute_and_description_checks_retry_and_reject_mismatches() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        "<input id='field' aria-describedby='help'><span id='help'>Must be greater than 0</span><script>setTimeout(()=>document.querySelector('#field').setAttribute('aria-invalid','true'),20)</script>",
+    );
+    let result = h.page(
+        "LP.run",
+        json!({"steps":[
+            {"check":{"locator":{"css":"#field"},"assert":"attribute","property":"aria-invalid","expected":"true"}},
+            {"check":{"locator":{"css":"#field"},"assert":"description","expected":{"regex":"greater than 0"}}},
+            {"check":{"locator":{"css":"#field"},"assert":"attribute","property":"missing","expected":null}}
+        ]}),
+    );
+    assert!(result.get("error").is_none(), "{result}");
+    let failed = h.page("LP.run",json!({"steps":[{"check":{"locator":{"css":"#field"},"assert":"attribute","property":"aria-invalid","expected":"false","timeout":50}}]}));
+    assert!(failed.get("error").is_some(), "{failed}");
+}
+
+#[test]
+fn driver_description_unresolved_references_fall_back_but_empty_targets_win() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<input id="aria" aria-describedby="missing" aria-description="ARIA description" title="Title description">
+        <input id="title" aria-describedby="missing" title="Title description">
+        <input id="empty" aria-describedby="empty-help" aria-description="ARIA description" title="Title description">
+        <span id="empty-help"></span>"#,
+    );
+    let result = h.page(
+        "LP.run",
+        json!({"steps":[
+            {"check":{"locator":{"css":"#aria"},"assert":"description","expected":"ARIA description"}},
+            {"check":{"locator":{"css":"#title"},"assert":"description","expected":"Title description"}},
+            {"check":{"locator":{"css":"#empty"},"assert":"description","expected":""}}
+        ]}),
+    );
+    assert!(result.get("error").is_none(), "{result}");
+}
+
+#[test]
+fn driver_right_click_preserves_context_menu_autofocus() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        "<button id='row'>Row</button><div id='menu' role='menu' tabindex='-1'>Menu</div><script>document.querySelector('#row').addEventListener('contextmenu',e=>{e.preventDefault();document.querySelector('#menu').focus()})</script>",
+    );
+    let result = h.page(
+        "LP.run",
+        json!({"steps":[
+            {"act":{"locator":{"css":"#row"},"action":"click","button":"right"}},
+            {"check":{"locator":{"css":"#menu"},"assert":"focused","expected":true}}
+        ]}),
+    );
+    assert!(result.get("error").is_none(), "{result}");
+}
+
+#[test]
+fn prepared_profile_init_scripts_capture_popup_errors_and_survive_navigation() {
+    let address = driver_site();
+    let mut h = Harness::new();
+    h.call(
+        None,
+        "Target.setAutoAttach",
+        json!({"autoAttach": false, "waitForDebuggerOnStart": false, "flatten": true}),
+    );
+    let r = h.call(None, "Lightningpanda.registerPreparedPage", json!({
+        "url": format!("http://{address}/form"), "pool": 1,
+        "initScripts": ["window.__errors=[];console.error=(...args)=>window.__errors.push(args.join(' '));window.__profileRuns=(window.__profileRuns||0)+1;"]
+    }));
+    let profile = r["result"]["profileId"].clone();
+    let r = h.call(None, "Lightningpanda.acquirePreparedPage", json!({"profileId": profile, "attach": true}));
+    let session = r["result"]["sessionId"].as_str().unwrap().to_owned();
+    let r = h.call(Some(&session), "LP.run", json!({"steps": [
+        {"loaded": {}},
+        {"eval": {"expression": "window.open('data:text/html,<script>console.error(%22popup-startup%22)</script>', '_blank', 'noopener');null"}},
+        {"popup": {"as": "child"}},
+        {"page": {"target": "child"}},
+        {"loaded": {}},
+        {"eval": {"expression": "[window.__profileRuns, ...window.__errors]", "as": "startup"}},
+        {"goto": {"url": "data:text/html,<script>console.error('popup-next')</script>"}},
+        {"eval": {"expression": "[window.__profileRuns, ...window.__errors]", "as": "next"}},
+        {"page": {"target": "main"}},
+        {"eval": {"expression": "[window.__profileRuns, ...window.__errors]", "as": "main"}}
+    ]}));
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(r["result"]["reads"]["startup"], json!([1, "popup-startup"]), "{r}");
+    assert_eq!(r["result"]["reads"]["next"], json!([1, "popup-next"]), "{r}");
+    assert_eq!(r["result"]["reads"]["main"], json!([1]), "{r}");
+    let context = h.call(None, "Target.createBrowserContext", json!({}));
+    let target = h.call(
+        None,
+        "Target.createTarget",
+        json!({"url": "about:blank", "browserContextId": context["result"]["browserContextId"]}),
+    );
+    let attached =
+        h.call(None, "Target.attachToTarget", json!({"targetId": target["result"]["targetId"], "flatten": true}));
+    let session = attached["result"]["sessionId"].as_str().unwrap().to_owned();
+    let r = h.call(
+        Some(&session),
+        "LP.run",
+        json!({"steps": [
+            {"goto": {"url": "data:text/html,<p>isolated</p>"}},
+            {"eval": {"expression": "typeof window.__errors", "as": "isolated"}}
+        ]}),
+    );
+    assert_eq!(r["result"]["reads"]["isolated"], "undefined", "{r}");
+}
+
+#[test]
+fn driver_clicks_through_display_contents_overflow_without_ignoring_real_clips() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><body style="margin:0">
+<button id=button style="display:flex;width:255px;height:28px;overflow:hidden;margin-left:740px;margin-top:200px"><span style="display:contents;overflow:hidden"><span id=label style="display:block;width:203px;height:20px;overflow:hidden">Conversation label</span></span></button><output id=out></output>
+<div style="width:0;height:0;overflow:hidden"><span id=hidden style="display:block;width:100px;height:20px">Actually clipped</span></div>
+"#,
+    );
+    let r = h.page(
+        "LP.run",
+        json!({"timeout": 100, "steps": [
+            {"eval": {"expression": "document.getElementById('button').addEventListener('click', () => document.getElementById('out').textContent='clicked');null"}},
+            {"act": {"locator": {"css": "#label"}, "action": "click"}},
+            {"check": {"locator": {"css": "#out"}, "assert": "text", "expected": "clicked"}}
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+    let r = h.page(
+        "LP.run",
+        json!({"timeout": 100, "steps": [
+            {"act": {"locator": {"css": "#hidden"}, "action": "click"}}
+        ]}),
+    );
+    assert!(r["error"]["message"].as_str().unwrap_or_default().contains("outside the viewport"), "{r}");
+}
+
+#[test]
+fn driver_fills_time_controls_with_input_change_and_rejects_invalid_or_readonly_values() {
+    let mut h = Harness::new();
+    load_html(&mut h, "<input id=time type=time value='09:00'><input id=readonly type=time readonly value='08:00'>");
+    let r = h.page("LP.run", json!({"steps": [
+        {"eval": {"expression": "window.events=[];for(const type of ['input','change'])document.querySelector('#time').addEventListener(type,e=>events.push(type+':'+e.target.value));null"}},
+        {"act": {"locator": {"css": "#time"}, "action": "fill", "value": "13:45"}},
+        {"check": {"locator": {"css": "#time"}, "assert": "value", "expected": "13:45"}},
+        {"act": {"locator": {"css": "#time"}, "action": "fill", "value": ""}},
+        {"eval": {"expression": "events", "as": "events"}}
+    ]}));
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(r["result"]["reads"]["events"], json!(["input:13:45", "change:13:45", "input:", "change:"]), "{r}");
+    for (selector, value, reason) in [("#time", "24:00", "malformed time"), ("#readonly", "10:00", "not editable")] {
+        let r = h.page(
+            "LP.run",
+            json!({"timeout": 50, "steps": [
+                {"act": {"locator": {"css": selector}, "action": "fill", "value": value}}
+            ]}),
+        );
+        assert!(r["error"]["message"].as_str().unwrap_or_default().contains(reason), "{r}");
+    }
+    let r = h.page(
+        "LP.run",
+        json!({"steps": [
+            {"check": {"locator": {"css": "#time"}, "assert": "value", "expected": ""}},
+            {"check": {"locator": {"css": "#readonly"}, "assert": "value", "expected": "08:00"}}
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+}
+
+#[test]
+fn driver_clicks_fixed_dialog_content_outside_overflow_ancestor() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><div style="width:20px;height:20px;overflow:hidden"><div style="position:fixed;left:100px;top:100px;width:200px;height:100px"><button id=inside>Dialog action</button></div></div><output id=out></output>"#,
+    );
+    let r = h.page("LP.run", json!({"timeout":100,"steps":[
+        {"eval":{"expression":"document.querySelector('#inside').addEventListener('click',()=>document.querySelector('#out').textContent='clicked');null"}},
+        {"act":{"locator":{"css":"#inside"},"action":"click"}},
+        {"check":{"locator":{"css":"#out"},"assert":"text","expected":"clicked"}}
+    ]}));
+    assert!(r.get("error").is_none(), "{r}");
+}
+
+#[test]
+fn driver_release_replaces_held_real_response_body_preserving_status_and_headers() {
+    let address = driver_api_site();
+    let mut h = Harness::new();
+    let r = h.page("LP.run", json!({"steps":[
+        {"goto":{"url":format!("http://{address}/")}},
+        {"mock":{"url":"/api","method":"PATCH","passthrough":true,"hold":"save","times":1}},
+        {"eval":{"expression":"window.held=null;fetch('/api',{method:'PATCH',headers:{'x-idempotency-key':'preserved'},body:'persisted'}).then(async r=>{window.held={status:r.status,key:r.headers.get('x-echo-key'),type:r.headers.get('content-type'),body:await r.json()};document.querySelector('#out').textContent='released'});null"}},
+        {"request":{"path":"/api","method":"PATCH","state":"started","count":1}},
+        {"held":{"hold":"save","count":1,"status":200,"as":"parked"}},
+        {"advanceTime":{"ms":120001}},
+        {"eval":{"expression":"fetch('/api?fresh').then(r=>r.json())","as":"fresh"}},
+        {"release":{"hold":"save","body":"{\"name\":\"fresh\",\"width\":77}"}},
+        {"check":{"locator":{"css":"#out"},"assert":"text","expected":"released"}},
+        {"eval":{"expression":"held","as":"held"}},
+        {"request":{"path":"/api","method":"PATCH","status":200,"count":1}}
+    ]}));
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(
+        r["result"]["reads"]["held"],
+        json!({"status":200,"key":"preserved","type":"application/json","body":{"name":"fresh","width":77}}),
+        "{r}"
+    );
+    assert_eq!(r["result"]["reads"]["fresh"]["method"], "GET", "{r}");
+    assert_eq!(r["result"]["reads"]["parked"]["responses"][0]["json"]["method"], "PATCH", "{r}");
+    assert_eq!(r["result"]["reads"]["parked"]["responses"][0]["json"]["body"], "persisted", "{r}");
+}
+
+#[test]
+fn driver_request_count_does_not_ignore_explicit_status() {
+    let address = driver_api_site();
+    let mut h = Harness::new();
+    let r = h.page(
+        "LP.run",
+        json!({"timeout":100,"steps":[
+            {"goto":{"url":format!("http://{address}/")}},
+            {"mock":{"url":"/api","status":500,"body":"failure"}},
+            {"eval":{"expression":"call('/api');null"}},
+            {"request":{"path":"/api","count":1,"status":200}}
+        ]}),
+    );
+    assert!(r["error"]["message"].as_str().unwrap_or_default().contains("status differs"), "{r}");
+    let r = h.page(
+        "LP.run",
+        json!({"steps":[
+            {"eval":{"expression":"call('/api');null"}},
+            {"request":{"path":"/api","count":1,"status":500}}
+        ]}),
+    );
+    assert!(r.get("error").is_none(), "{r}");
+}
+
+#[test]
+fn driver_request_diagnostics_redact_credentials_without_changing_matching() {
+    let address = driver_api_site();
+    let mut h = Harness::new();
+    let setup = json!([
+        {"goto":{"url":format!("http://{address}/")}},
+        {"mock":{"url":"/api","status":200,"headers":{"Set-Cookie":"session=private-cookie","x-test":"public"},"body":"ok"}},
+        {"eval":{"expression":"fetch('/api',{headers:{Authorization:'Bearer private-token','X-Api-Key':'private-api-key','X-Idempotency-Key':'public-id'}});null"}},
+        {"request":{"path":"/api","headers":{"Authorization":"Bearer private-token","X-Api-Key":"private-api-key"},"status":200}}
+    ]);
+    let r = h.page("LP.run", json!({"steps":setup}));
+    assert!(r.get("error").is_none(), "{r}");
+    let output = r.to_string();
+    for secret in ["private-token", "private-api-key", "private-cookie"] {
+        assert!(!output.contains(secret), "credential present in successful run output");
+    }
+    let request = &r["result"]["results"][3];
+    assert_eq!(request["requestHeaders"]["authorization"], "[REDACTED]");
+    assert_eq!(request["requestHeaders"]["x-api-key"], "[REDACTED]");
+    assert_eq!(request["requestHeaders"]["x-idempotency-key"], "public-id");
+    assert_eq!(request["responseHeaders"]["set-cookie"], "[REDACTED]");
+    for count in [Value::Null, json!(1)] {
+        let r = h.page("LP.run", json!({"timeout":75,"steps":[
+            {"eval":{"expression":"fetch('/api',{headers:{Authorization:'Bearer private-token'}});null"}},
+            {"request":{"path":"/api","headers":{"Authorization":"Bearer private-token"},"status":201,"count":count}}
+        ]}));
+        assert!(r.get("error").is_some(), "must reject wrong status");
+        assert!(!r.to_string().contains("private-token"), "credential present in failed run diagnostic");
+        assert!(r["error"]["message"].as_str().unwrap_or_default().contains("[REDACTED]"));
+    }
+}
+
+#[test]
+fn driver_clicks_rowspanning_cell_content_above_later_row_background() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><body style="margin:0"><table style="border-collapse:collapse;width:240px"><tbody><tr><td style="height:20px;width:120px;padding:0">First row</td><td rowspan=2 style="width:120px;padding:0;vertical-align:middle"><button id=action style="height:20px">action</button></td></tr><tr><td style="height:60px;padding:0">Second row</td></tr></tbody></table><output id=out></output>"#,
+    );
+    let r = h.page("LP.run",json!({"timeout":100,"steps":[
+        {"eval":{"expression":"document.querySelector('#action').addEventListener('click',()=>document.querySelector('#out').textContent='clicked');null"}},
+        {"act":{"locator":{"css":"#action"},"action":"click"}},
+        {"check":{"locator":{"css":"#out"},"assert":"text","expected":"clicked"}}
+    ]}));
+    assert!(r.get("error").is_none(), "{r}");
+}
+
+#[test]
+fn driver_tooltip_name_comes_from_visible_contents_and_respects_hidden_ancestors() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><body><button aria-describedby=tip>Action</button><div role=tooltip id=tip><span>Add reaction</span><svg aria-hidden=true width=10 height=10><path d="M0 0L10 10"/></svg></div><div aria-hidden=true><div role=tooltip>Hidden tooltip</div></div><div role=tooltip aria-label="Explicit tooltip">Different visible text</div></body>"#,
+    );
+    let reads = run_reads(
+        &mut h,
+        &[
+            ("visible", "name", json!({"css":"#tip"})),
+            ("matched", "count", json!({"role":"tooltip","name":"Add reaction","exact":true})),
+            ("hidden", "count", json!({"role":"tooltip","name":"Hidden tooltip","exact":true})),
+            ("explicit", "count", json!({"role":"tooltip","name":"Explicit tooltip","exact":true})),
+        ],
+    );
+    assert_eq!(reads, json!({"visible":"Add reaction","matched":1,"hidden":0,"explicit":1}));
+}
+
+#[test]
+fn driver_context_request_scope_observes_prior_batch_completion_without_weakening_matches() {
+    let address = driver_api_site();
+    let mut h = Harness::new();
+    let r = h.page("LP.run",json!({"steps":[
+        {"goto":{"url":format!("http://{address}/")}},
+        {"mock":{"url":"/api","method":"PATCH","passthrough":true,"hold":"save","times":1}},
+        {"eval":{"expression":"fetch('/api',{method:'PATCH',headers:{Authorization:'Bearer secret-cross-run','content-type':'application/json'},body:JSON.stringify({language:'hu'})}).then(()=>document.querySelector('#out').textContent='done');null"}},
+        {"request":{"path":"/api","method":"PATCH","state":"started","count":1}},
+        {"held":{"hold":"save","count":1,"status":200}}
+    ]}));
+    assert!(r.get("error").is_none(), "{r}");
+    let r = h.page("LP.run",json!({"steps":[
+        {"request":{"path":"/api","method":"PATCH","state":"started","count":0}},
+        {"release":{"hold":"save"}},
+        {"request":{"path":"/api","method":"PATCH","scope":"context","status":200,"bodyJson":{"language":"hu"},"bodyKeys":["language"],"count":1}},
+        {"request":{"path":"/api","method":"PATCH","scope":"context","headers":{"authorization":"Bearer secret-cross-run"},"status":200}},
+        {"request":{"path":"/api","method":"PATCH","count":0}}
+    ]}));
+    assert!(r.get("error").is_none(), "{r}");
+    assert!(!r.to_string().contains("secret-cross-run"));
+    assert_eq!(r["result"]["results"][3]["requestHeaders"]["authorization"], "[REDACTED]");
+    for mismatch in [
+        json!({"status":201,"count":1}),
+        json!({"status":200,"count":2}),
+        json!({"status":200,"bodyJson":{"language":"en"},"count":1}),
+    ] {
+        let mut request = json!({"path":"/api","method":"PATCH","scope":"context"});
+        request.as_object_mut().unwrap().extend(mismatch.as_object().unwrap().clone());
+        let r = h.page("LP.run", json!({"timeout":75,"steps":[{"request":request}]}));
+        assert!(r.get("error").is_some(), "mismatched request must fail: {r}");
+        assert!(!r.to_string().contains("secret-cross-run"));
+    }
+    let target = h.call(None, "Target.getTargetInfo", json!({"targetId":h.frame_id}));
+    let context = target["result"]["targetInfo"]["browserContextId"].clone();
+    let target = h.call(None, "Target.createTarget", json!({"url":"about:blank","browserContextId":context}));
+    let attached =
+        h.call(None, "Target.attachToTarget", json!({"targetId":target["result"]["targetId"],"flatten":true}));
+    let session = attached["result"]["sessionId"].as_str().unwrap().to_owned();
+    let r = h.call(
+        Some(&session),
+        "LP.run",
+        json!({"steps":[{"request":{"path":"/api","method":"PATCH","scope":"context","count":0}}]}),
+    );
+    assert!(r.get("error").is_none(), "sibling page must not see another page's history: {r}");
+}
+
+#[test]
+fn native_wheel_scroll_steps_run_before_animation_callbacks_and_are_not_duplicated() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        "<!doctype html><div id=scroller style='height:100px;width:200px;overflow:auto'><div style='height:2000px'>content</div></div>",
+    );
+    let r=h.page("LP.run",json!({"steps":[
+        {"eval":{"expression":"window.events=[];document.querySelector('#scroller').addEventListener('scroll',e=>events.push('scroll:'+e.target.scrollTop));null"}},
+        {"act":{"locator":{"css":"#scroller"},"action":"wheel","deltaY":450,"settle":false}},
+        {"eval":{"expression":"new Promise(resolve=>requestAnimationFrame(()=>{events.push('raf1');requestAnimationFrame(()=>{events.push('raf2');resolve(events.slice())})}))","as":"events"}}
+    ]}));
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(r["result"]["reads"]["events"], json!(["scroll:450", "raf1", "raf2"]), "{r}");
+    h.run_for(40);
+    assert_eq!(eval_value(&mut h, "events"), json!(["scroll:450", "raf1", "raf2"]));
+}
+
+#[test]
+fn fill_replaces_controlled_value_when_beforeinput_reassigns_unchanged_value() {
+    let mut h = Harness::new();
+    load_html(&mut h, "<input id=search value=Existing><textarea id=area>Existing area</textarea>");
+    let r=h.page("LP.run",json!({"steps":[
+        {"eval":{"expression":"window.values=[];for(const el of document.querySelectorAll('input,textarea')){el.addEventListener('beforeinput',()=>{el.value=el.value});el.addEventListener('input',()=>{values.push(el.value);el.value=el.value});el.addEventListener('focus',()=>{el.value=el.value});}null"}},
+        {"act":{"locator":{"css":"#search"},"action":"fill","value":"First replacement"}},
+        {"check":{"locator":{"css":"#search"},"assert":"value","expected":"First replacement"}},
+        {"act":{"locator":{"css":"#search"},"action":"fill","value":"Second replacement"}},
+        {"check":{"locator":{"css":"#search"},"assert":"value","expected":"Second replacement"}},
+        {"act":{"locator":{"css":"#area"},"action":"fill","value":"New area"}},
+        {"check":{"locator":{"css":"#area"},"assert":"value","expected":"New area"}},
+        {"eval":{"expression":"values","as":"values"}}
+    ]}));
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(r["result"]["reads"]["values"], json!(["First replacement", "Second replacement", "New area"]));
+}
+
+#[test]
+fn fill_replaces_value_after_focus_handler_replaces_the_control() {
+    let mut h = Harness::new();
+    load_html(&mut h, "<input id=search value=Existing>");
+    let r=h.page("LP.run",json!({"timeout":150,"steps":[
+        {"eval":{"expression":"const old=document.querySelector('#search');old.addEventListener('focus',()=>{const next=old.cloneNode(true);old.replaceWith(next);next.focus()},{once:true});null"}},
+        {"act":{"locator":{"css":"#search"},"action":"fill","value":"First replacement"}},
+        {"check":{"locator":{"css":"#search"},"assert":"value","expected":"First replacement"}},
+        {"act":{"locator":{"css":"#search"},"action":"fill","value":"Second replacement"}},
+        {"check":{"locator":{"css":"#search"},"assert":"value","expected":"Second replacement"}}
+    ]}));
+    assert!(r.get("error").is_none(), "{r}");
+}
+
+#[test]
+fn native_click_waits_for_hover_triggered_render_updates_before_pressing() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        "<!doctype html><button id=target style='position:absolute;left:100px;top:900px;width:140px;height:30px'>Choose</button><output id=out></output>",
+    );
+    let r=h.page("LP.run",json!({"timeout":250,"steps":[
+        {"eval":{"expression":"window.ready=false;let hovered=false;let frames=0;let warm=0;const b=document.querySelector('#target');b.addEventListener('mouseenter',()=>hovered=true,{once:true});b.addEventListener('click',()=>document.querySelector('#out').textContent=ready?'stable':'early');new Promise(resolve=>{const frame=()=>{if(hovered&&!ready&&++frames===2){b.style.top='200px';ready=true}requestAnimationFrame(frame);if(++warm===6)resolve(null)};requestAnimationFrame(frame)})"}},
+        {"act":{"locator":{"css":"#target"},"action":"click"}},
+        {"check":{"locator":{"css":"#out"},"assert":"text","expected":"stable"}}
+    ]}));
+    assert!(r.get("error").is_none(), "{r}");
+}
+
+#[test]
+fn click_waits_for_pending_resize_observer_popover_position() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        "<!doctype html><button id=open>Open</button><div id=popover style='position:absolute;left:100px;top:900px;width:200px;height:10px'></div><output id=out></output>",
+    );
+    let r=h.page("LP.run",json!({"timeout":250,"steps":[
+        {"eval":{"expression":"window.ready=false;const p=document.querySelector('#popover');new Promise(resolve=>{let initial=true;new ResizeObserver(()=>{if(initial){initial=false;resolve(null)}else{p.style.top='200px';ready=true}}).observe(p);document.querySelector('#open').onclick=()=>{p.style.height='40px';p.innerHTML='<button id=target>Choose</button>';document.querySelector('#target').onclick=()=>document.querySelector('#out').textContent=ready?'stable':'early'}})"}},
+        {"act":{"locator":{"css":"#open"},"action":"click"}},
+        {"act":{"locator":{"css":"#target"},"action":"click"}},
+        {"check":{"locator":{"css":"#out"},"assert":"text","expected":"stable"}}
+    ]}));
+    assert!(r.get("error").is_none(), "{r}");
+}
+
+#[test]
+fn driver_external_file_drop_preserves_bytes_names_and_acceptance() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<div id="accept" style="width:200px;height:100px">accept</div>
+<div id="reject" style="width:200px;height:100px">reject</div><output id="out"></output>
+<script>
+window.events=[];window.rejected=0;
+const accept=document.getElementById('accept'),reject=document.getElementById('reject'),out=document.getElementById('out');
+for(const type of ['dragenter','dragover','drop']) accept.addEventListener(type, async event=>{
+  events.push([type,event.dataTransfer.types.join(','),event.dataTransfer.files.length,event.dataTransfer.items[0].kind]);
+  event.preventDefault();
+  if(type==='drop') {
+    const file=event.dataTransfer.files[0];
+    const itemFile=event.dataTransfer.items[0].getAsFile();
+    const bytes=Array.from(new Uint8Array(await file.arrayBuffer()));
+    out.textContent=JSON.stringify({name:file.name,type:file.type,bytes,itemName:itemFile.name});
+  }
+});
+reject.addEventListener('drop',()=>rejected++);
+</script>"#,
+    );
+    let file = json!({"name":"invalid/drop-name.pdf","mimeType":"application/pdf","base64":"AAEC/w=="});
+    let result=h.page("LP.run",json!({"steps":[
+      {"act":{"locator":{"css":"#accept"},"action":"dropFiles","files":[file.clone()]}},
+      {"check":{"locator":{"css":"#out"},"assert":"text","expected":"{\"name\":\"invalid/drop-name.pdf\",\"type\":\"application/pdf\",\"bytes\":[0,1,2,255],\"itemName\":\"invalid/drop-name.pdf\"}"}},
+      {"act":{"locator":{"css":"#reject"},"action":"dropFiles","files":[file]}},
+      {"eval":{"expression":"JSON.stringify({events,rejected})","as":"events"}}
+    ]}));
+    assert!(result.get("error").is_none(), "{result}");
+    assert_eq!(
+        result["result"]["reads"]["events"],
+        r#"{"events":[["dragenter","Files",0,"file"],["dragover","Files",0,"file"],["drop","Files",1,"file"]],"rejected":0}"#,
+        "{result}"
+    );
+}
+
+#[test]
+fn driver_download_count_is_read_only_and_cross_batch() {
+    let address = driver_site();
+    let mut h = Harness::new();
+    let result = h.page("LP.run", json!({"steps":[
+      {"goto":{"url":format!("http://{address}/")}},
+      {"eval":{"expression":"document.body.innerHTML = `<a id=dl href='/export.csv' download='report.csv'>Export</a>`; null"}},
+      {"downloadCount":{"as":"before"}},
+      {"act":{"locator":{"css":"#dl"},"action":"click"}},
+      {"request":{"path":"/export.csv","method":"GET","status":200}},
+      {"downloadCount":{"as":"after"}},
+      {"download":{"as":"file"}},
+      {"downloadCount":{"as":"afterConsume"}}
+    ]}));
+    assert!(result.get("error").is_none(), "{result}");
+    assert_eq!(result["result"]["reads"]["before"], 0, "{result}");
+    assert_eq!(result["result"]["reads"]["after"], 1, "{result}");
+    assert_eq!(result["result"]["reads"]["afterConsume"], 1, "{result}");
+    assert_eq!(result["result"]["reads"]["file"]["filename"], "report.csv", "{result}");
+    let next = h.page("LP.run",json!({"steps":[{"downloadCount":{"as":"before"}},{"eval":{"expression":"document.body.textContent='preview'; null"}},{"downloadCount":{"as":"after"}}]}));
+    assert!(next.get("error").is_none(), "{next}");
+    assert_eq!(next["result"]["reads"]["before"], 1, "{next}");
+    assert_eq!(next["result"]["reads"]["after"], 1, "{next}");
+}
+
+#[test]
+fn driver_check_uses_visible_labels_for_clipped_native_controls() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><style>
+      .clip {position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%)}
+      .clip input {position:absolute;left:4px;top:4px;width:13px;height:13px}
+      label {display:block;width:150px;height:25px}
+    </style><label id="wrapping"><span class="clip"><input id="wrapped" type="checkbox" checked></span>Wrapping label</label>
+    <span class="clip"><input id="external" type="checkbox"></span><label id="forlabel" for="external" style="margin-top:1200px">External label</label>
+    <label><span class="clip"><input id="radio" type="radio"></span>Radio label</label>
+    <script>window.changes=[];for(const id of ['wrapped','external','radio'])document.getElementById(id).addEventListener('change',()=>changes.push(id));</script>"#,
+    );
+    let result = h.page(
+        "LP.run",
+        json!({"timeout":500,"steps":[
+          {"act":{"locator":{"css":"#wrapped"},"action":"uncheck"}},
+          {"check":{"locator":{"css":"#wrapped"},"assert":"checked","expected":false}},
+          {"act":{"locator":{"css":"#wrapped"},"action":"uncheck"}},
+          {"act":{"locator":{"css":"#wrapped"},"action":"check"}},
+          {"check":{"locator":{"css":"#wrapped"},"assert":"checked"}},
+          {"act":{"locator":{"css":"#external"},"action":"check"}},
+          {"check":{"locator":{"css":"#external"},"assert":"checked"}},
+          {"act":{"locator":{"css":"#external"},"action":"check"}},
+          {"act":{"locator":{"css":"#external"},"action":"uncheck"}},
+          {"check":{"locator":{"css":"#external"},"assert":"checked","expected":false}},
+          {"act":{"locator":{"css":"#radio"},"action":"check"}},
+          {"act":{"locator":{"css":"#radio"},"action":"check"}},
+          {"check":{"locator":{"css":"#radio"},"assert":"checked"}},
+          {"eval":{"expression":"({changes,scrollY})","as":"proof"}}
+        ]}),
+    );
+    assert!(result.get("error").is_none(), "{result}");
+    assert_eq!(
+        result["result"]["reads"]["proof"]["changes"],
+        json!(["wrapped", "wrapped", "external", "external", "radio"]),
+        "{result}"
+    );
+    assert!(result["result"]["reads"]["proof"]["scrollY"].as_f64().unwrap() > 0.0, "{result}");
+}
+
+#[test]
+fn driver_check_label_fallback_preserves_disabled_and_hit_target_guards() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><style>
+      .clip {position:absolute;width:1px;height:1px;overflow:hidden}
+      .clip input,.clip [role=checkbox] {position:absolute;left:4px;top:4px;width:13px;height:13px}
+      label {position:absolute;left:20px;width:150px;height:25px}
+      .cover {position:absolute;left:10px;width:180px;height:30px;z-index:5}
+    </style>
+    <label style="top:20px"><span class="clip"><input id="disabled" type="checkbox" disabled></span>Disabled label</label>
+    <label style="top:60px"><span class="clip"><input id="covered" type="checkbox"></span>Covered label</label><div class="cover" style="top:60px"></div>
+    <label id="ariaLabel" style="top:100px"><span class="clip"><div id="aria" role="checkbox" aria-checked="false"></div></span>ARIA label</label>
+    <input id="visible" type="checkbox" style="position:absolute;left:30px;top:150px;width:20px;height:20px"><label for="visible" style="left:300px;top:150px">Visible alternate label</label><div class="cover" style="top:150px"></div>
+    <script>document.getElementById('ariaLabel').onclick=()=>document.getElementById('aria').setAttribute('aria-checked','true');</script>"#,
+    );
+    for (id, expected_error) in [
+        ("disabled", "disabled"),
+        ("covered", "intercepts"),
+        ("aria", "outside the viewport"),
+        ("visible", "intercepts"),
+    ] {
+        let result = h.page(
+            "LP.run",
+            json!({"timeout":100,"steps":[{"act":{"locator":{"css":format!("#{id}")},"action":"check"}}]}),
+        );
+        assert!(result["error"]["message"].as_str().unwrap_or_default().contains(expected_error), "{id}: {result}");
+    }
+    let result=h.page("LP.run",json!({"steps":[{"eval":{"expression":"({disabled:document.getElementById('disabled').checked,covered:document.getElementById('covered').checked,aria:document.getElementById('aria').getAttribute('aria-checked'),visible:document.getElementById('visible').checked})","as":"states"}}]}));
+    assert_eq!(
+        result["result"]["reads"]["states"],
+        json!({"disabled":false,"covered":false,"aria":"false","visible":false}),
+        "{result}"
+    );
+}
+
+#[test]
+fn driver_check_visible_native_control_remains_the_direct_pointer_target() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><input id="visible" type="checkbox" style="width:30px;height:30px"><label for="visible">Visible label</label><script>window.targets=[];document.addEventListener('click',e=>targets.push(e.target.id));</script>"#,
+    );
+    let result=h.page("LP.run",json!({"steps":[{"act":{"locator":{"css":"#visible"},"action":"check"}},{"act":{"locator":{"css":"#visible"},"action":"check"}},{"check":{"locator":{"css":"#visible"},"assert":"checked"}},{"eval":{"expression":"targets","as":"targets"}}]}));
+    assert!(result.get("error").is_none(), "{result}");
+    assert_eq!(result["result"]["reads"]["targets"], json!(["visible"]), "{result}");
+}
+
+#[test]
+fn driver_popup_context_log_captures_initial_navigation_before_switch() {
+    let address = driver_site();
+    let mut h = Harness::new();
+    h.call(None, "Target.setAutoAttach", json!({"autoAttach":false,"waitForDebuggerOnStart":false,"flatten":true}));
+    let attached = h.call(None, "Target.attachToTarget", json!({"targetId":h.frame_id,"flatten":true}));
+    h.session = attached["result"]["sessionId"].as_str().unwrap().to_owned();
+    let opened = h.page(
+        "LP.run",
+        json!({"steps":[
+          {"goto":{"url":format!("http://{address}/form")}},
+          {"act":{"locator":{"css":"#name"},"action":"fill","value":"Parent"}},
+          {"act":{"locator":{"css":"#go"},"action":"click"}},
+          {"request":{"method":"GET","path":"/api","status":200,"count":1}},
+          {"eval":{"expression":"window.open('/eager-popup','_blank','noopener'); null"}},
+          {"popup":{"as":"popup"}}
+        ]}),
+    );
+    assert!(opened.get("error").is_none(), "{opened}");
+    let popup_id = opened["result"]["reads"]["popup"]["targetId"].as_str().unwrap().to_owned();
+    let attached = h.call(None, "Target.attachToTarget", json!({"targetId":popup_id,"flatten":true}));
+    let popup_session = attached["result"]["sessionId"].as_str().unwrap().to_owned();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        let ready = h.call(
+            Some(&popup_session),
+            "Runtime.evaluate",
+            json!({"expression":"document.body?.dataset.ready === 'yes'","returnByValue":true}),
+        );
+        if ready["result"]["result"]["value"] == true {
+            break;
+        }
+        assert!(Instant::now() < deadline, "popup bootstrap did not finish: {ready}");
+        let host = h.browser.host_mut();
+        host.run_until_work(Some(Instant::now() + Duration::from_millis(20)), || false);
+        host.flush();
+    }
+    let observed = h.page(
+        "LP.run",
+        json!({"timeout":100,"steps":[
+          {"page":{"target":popup_id}},
+          {"loaded":{}},
+          {"check":{"locator":{"css":"#ready"},"assert":"text","expected":"Hello, PopupStartup"}},
+          {"request":{"method":"GET","path":"/api","scope":"context","status":200,"count":1}},
+          {"request":{"method":"GET","path":"/eager-popup","scope":"context","status":200,"count":1}},
+          {"request":{"method":"GET","path":"/api","count":0}},
+          {"page":{"target":"main"}},
+          {"request":{"method":"GET","path":"/api","scope":"context","status":200,"count":1}},
+          {"check":{"locator":{"css":"#out"},"assert":"text","expected":"Hello, Parent"}}
+        ]}),
+    );
+    assert!(observed.get("error").is_none(), "{observed}");
+    assert_eq!(
+        observed["result"]["requests"],
+        json!([]),
+        "current batch reply must remain scoped to its opener: {observed}"
+    );
+}
+
+#[test]
+fn driver_check_reveals_a_row_occluded_by_its_sticky_header() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><style>
+      #scroll { width:120px; height:100px; overflow:auto }
+      #header { position:sticky; top:0; height:24px; background:white; z-index:2 }
+      .row { height:24px } input { display:block; width:24px; height:24px; margin:0 }
+    </style><div id=scroll><div id=header><input id=all type=checkbox></div>
+      <div class=row><input id=row type=checkbox></div><div class=row><input id=middle type=checkbox></div><div class=row></div><div class=row></div>
+    </div><script>document.getElementById('scroll').scrollTop=20;</script>"#,
+    );
+    let result = h.page(
+        "LP.run",
+        json!({"timeout":300,"steps":[
+          {"act":{"locator":{"css":"#middle"},"action":"check"}},
+          {"eval":{"expression":"document.getElementById('scroll').scrollTop","as":"initialTop"}},
+          {"act":{"locator":{"css":"#row"},"action":"check"}},
+          {"check":{"locator":{"css":"#row"},"assert":"checked"}},
+          {"check":{"locator":{"css":"#all"},"assert":"checked","expected":false}},
+          {"eval":{"expression":"document.getElementById('scroll').scrollTop","as":"top"}}
+        ]}),
+    );
+    assert!(result.get("error").is_none(), "{result}");
+    assert_eq!(result["result"]["reads"]["initialTop"], 20, "{result}");
+    assert_eq!(result["result"]["reads"]["top"], 0, "{result}");
+}
+
+#[test]
+fn driver_centered_retry_still_rejects_a_covering_overlay() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><style>
+      #scroll {width:120px;height:100px;overflow:auto} .row{height:24px}
+      input{display:block;width:24px;height:24px;margin:0}
+      #cover{position:fixed;inset:0;z-index:100;background:white}
+    </style><div id=scroll><div class=row></div><div class=row><input id=row type=checkbox></div><div class=row></div><div class=row></div><div class=row></div></div><div id=cover></div>
+    <script>document.getElementById('scroll').scrollTop=20;window.clicks=0;document.addEventListener('click',()=>clicks++);</script>"#,
+    );
+    let result = h.page("LP.act", json!({"locator":{"css":"#row"},"action":"check","timeout":60}));
+    assert!(result["error"]["message"].as_str().unwrap_or_default().contains("intercepts pointer events"), "{result}");
+    let proof = h.page(
+        "Runtime.evaluate",
+        json!({"expression":"[document.getElementById('row').checked,clicks]","returnByValue":true}),
+    );
+    assert_eq!(proof["result"]["result"]["value"], json!([false, 0]), "{proof}");
+}
+
+#[test]
+fn driver_explicit_clock_advances_dates_and_timers_without_automatic_time() {
+    let mut h = Harness::new();
+    load_html(&mut h, "<p id=out>waiting</p>");
+    let r = h.page("LP.run", json!({"steps":[
+        {"eval":{"expression":"window.clockBefore=Date.now();window.perfBefore=performance.now();setTimeout(()=>document.querySelector('#out').textContent='due',120000);null"}},
+        {"advanceTime":{"ms":120001}},
+        {"eval":{"expression":"({date:Date.now()-clockBefore,performance:performance.now()-perfBefore,state:document.querySelector('#out').textContent})","as":"elapsed"}}
+    ]}));
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(r["result"]["reads"]["elapsed"]["state"], "due", "timers must run before the next step: {r}");
+    for key in ["date", "performance"] {
+        let elapsed = r["result"]["reads"]["elapsed"][key].as_f64().unwrap();
+        assert!(elapsed >= 120001.0 && elapsed < 121001.0, "{key}: {r}");
+    }
+    assert!(!lp_browser::clock::virtual_time(), "explicit advance must not enable automatic jumps");
+}
+
+#[test]
+fn viewport_step_updates_resize_observer_table_measurements() {
+    let mut h = Harness::new();
+    h.page(
+        "Emulation.setDeviceMetricsOverride",
+        json!({"width":1920,"height":900,"deviceScaleFactor":1,"mobile":false}),
+    );
+    load_html(
+        &mut h,
+        r#"<!doctype html><style>body{margin:0}#container{margin-left:222px}table{table-layout:fixed}th{width:120px;min-width:120px}</style><div id=container><table id=table><tr><th>A</th><th>B</th><th>C</th><th>D</th><th>E</th><th>F</th></tr></table></div><script>const container=document.getElementById('container'),table=document.getElementById('table');window.events=[];function update(){table.style.width=container.clientWidth+'px';events.push(container.clientWidth)}update();new ResizeObserver(update).observe(container);</script>"#,
+    );
+    let result=h.page("LP.run",json!({"steps":[
+      {"viewport":{"width":1440,"height":900}},
+      {"eval":{"expression":"({width:innerWidth,container:container.clientWidth,inline:table.style.width,events})","as":"m"}}
+    ]}));
+    assert!(result.get("error").is_none(), "{result}");
+    assert_eq!(result["result"]["reads"]["m"]["width"], 1440, "{result}");
+    assert_eq!(result["result"]["reads"]["m"]["container"], 1218, "{result}");
+    assert_eq!(result["result"]["reads"]["m"]["inline"], "1218px", "{result}");
+}
+
+#[test]
+fn driver_checks_transparent_z_index_input_above_later_visual_sibling() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><style>label{position:relative;display:inline-flex;width:24px;height:24px}input{position:absolute;inset:0;z-index:10;margin:0;width:100%;height:100%;opacity:0}.visual{position:relative;width:16px;height:16px;background:white}</style><label><input id=native type=checkbox><div id=visual class=visual></div></label><script>window.clicks=[];document.addEventListener('click',e=>clicks.push(e.target.id))</script>"#,
+    );
+    let result = h.page(
+        "LP.run",
+        json!({"timeout":300,"steps":[
+          {"act":{"locator":{"css":"#native"},"action":"check"}},
+          {"check":{"locator":{"css":"#native"},"assert":"checked"}},
+          {"eval":{"expression":"clicks","as":"targets"}}
+        ]}),
+    );
+    assert!(result.get("error").is_none(), "{result}");
+    assert_eq!(result["result"]["reads"]["targets"], json!(["native"]), "{result}");
+}
+
+#[test]
+fn driver_checkbox_cannot_escape_an_ancestor_stacking_context() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><style>#low,#high{position:absolute;left:0;top:0;width:100px;height:100px}#low{z-index:1}#high{z-index:2;background:white}input{position:absolute;left:0;top:0;width:24px;height:24px;z-index:9999;margin:0;opacity:0}</style><div id=low><input id=native type=checkbox></div><div id=high></div><script>window.clicks=0;document.addEventListener('click',()=>clicks++)</script>"#,
+    );
+    let result = h.page("LP.act", json!({"locator":{"css":"#native"},"action":"check","timeout":60}));
+    assert!(result["error"]["message"].as_str().unwrap_or_default().contains("intercepts pointer events"), "{result}");
+    let proof=h.page("Runtime.evaluate",json!({"expression":"[document.getElementById('native').checked,clicks,document.elementFromPoint(12,12).id]","returnByValue":true}));
+    assert_eq!(proof["result"]["result"]["value"], json!([false, 0, "high"]), "{proof}");
+}
+
+#[test]
+fn driver_click_respects_modal_context_above_a_later_backdrop() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><style>#modal,#backdrop{position:fixed;inset:0}#modal{z-index:50;pointer-events:none}#dialog{position:relative;width:100%;height:100%;pointer-events:auto}#empty{width:100%;height:80vh;overflow:scroll}#backdrop{z-index:40;background:white}button{position:absolute;left:8px;top:8px;width:60px;height:24px}</style><div id=modal><div id=dialog><button id=close>Close</button><div id=empty>No Cargo</div></div></div><div id=backdrop></div><script>window.didClose=false;document.getElementById('close').onclick=()=>didClose=true;</script>"#,
+    );
+    let result = h.page(
+        "LP.run",
+        json!({"timeout":300,"steps":[
+          {"act":{"locator":{"css":"#close"},"action":"click"}},
+          {"eval":{"expression":"didClose","as":"closed"}}
+        ]}),
+    );
+    assert!(result.get("error").is_none(), "{result}");
+    assert_eq!(result["result"]["reads"]["closed"], true, "{result}");
+    h.page(
+        "Runtime.evaluate",
+        json!({"expression":"didClose=false;document.getElementById('backdrop').style.zIndex='60';"}),
+    );
+    let blocked = h.page("LP.act", json!({"locator":{"css":"#close"},"action":"click","timeout":60}));
+    assert!(
+        blocked["error"]["message"].as_str().unwrap_or_default().contains("intercepts pointer events"),
+        "{blocked}"
+    );
+    let proof = h.page("Runtime.evaluate", json!({"expression":"didClose","returnByValue":true}));
+    assert_eq!(proof["result"]["result"]["value"], false, "{proof}");
+}
+
+#[test]
+fn sticky_direct_child_stays_in_scroll_content_beyond_one_scrollport() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<!doctype html><style>body{margin:0}#scroller{width:300px;height:200px;overflow:auto}#toolbar{position:sticky;top:0;z-index:20;height:40px;background:white}#target{margin:0 0 0 200px;width:60px;height:30px}#content{height:800px}#field{position:relative}textarea{box-sizing:border-box;width:300px;height:100px}</style><div id=scroller><div id=toolbar><button id=target>Delete</button></div><div id=content><div style=height:160px></div><div id=field><textarea id=under></textarea></div></div></div>"#,
+    );
+    assert_eq!(eval_value(&mut h, "(() => { document.getElementById('scroller').scrollTop=200; const target=document.getElementById('target'); const r=target.getBoundingClientRect(); return [r.y,document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)===target]; })()"), json!([0,true]), "Chromium keeps the direct sticky child at the scrollport top and hit-testable");
+}
+
+#[test]
+fn sticky_scrollport_respects_padding_and_border() {
+    let mut h = Harness::new();
+    for nested in [false, true] {
+        let wrapper = if nested { "<section>" } else { "" };
+        let end = if nested { "</section>" } else { "" };
+        let html=format!("<!doctype html><style>body{{margin:0}}#sc{{width:300px;height:200px;overflow:auto;padding:20px;border:10px solid}}#bar{{position:sticky;top:0;height:40px}}</style><div id=sc>{wrapper}<div id=bar>Toolbar</div><div style=height:800px></div>{end}</div>");
+        load_html(&mut h, &html);
+        for scroll in [0, 200, 640] {
+            assert_eq!(eval_value(&mut h, &format!("document.getElementById('sc').scrollTop={scroll};document.getElementById('bar').getBoundingClientRect().y")), json!(30), "nested={nested}, scroll={scroll}");
+        }
+    }
+}
+
+#[test]
+fn sticky_footer_respects_scrollport_padding() {
+    let mut h = Harness::new();
+    load_html(&mut h, "<!doctype html><style>body{margin:0}#sc{width:300px;height:200px;overflow:auto;padding:20px;border:10px solid}#bar{position:sticky;bottom:0;height:40px}</style><div id=sc><section><div style=height:800px></div><div id=bar>Footer</div></section></div>");
+    for scroll in [0, 200, 640] {
+        assert_eq!(eval_value(&mut h, &format!("document.getElementById('sc').scrollTop={scroll};document.getElementById('bar').getBoundingClientRect().y")), json!(190), "scroll={scroll}");
     }
 }
