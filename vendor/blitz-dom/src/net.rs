@@ -567,8 +567,32 @@ impl NetHandler for ResourceHandler<ImageHandler> {
     }
 }
 
+/// lightningpanda: decoded raster images by encoded bytes, for every document
+/// of the process (a template's logo decoded once, not once per document):
+/// (encoded bytes, width, height, RGBA8 pixels). Bounded at 64 images and
+/// 64 MB of pixels.
+type DecodedImage = (Bytes, u32, u32, Arc<Vec<u8>>);
+static DECODED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<u64, Vec<DecodedImage>>>> =
+    std::sync::LazyLock::new(Default::default);
+
+fn decoded_key(bytes: &[u8]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::hash::DefaultHasher::new();
+    bytes.hash(&mut h);
+    h.finish()
+}
+
 impl ImageHandler {
     fn parse(&self, bytes: Bytes) -> Result<Resource, String> {
+        let key = decoded_key(&bytes);
+        if let Some((_, w, h, data)) = DECODED
+            .lock()
+            .unwrap()
+            .get(&key)
+            .and_then(|v| v.iter().find(|e| e.0[..] == bytes[..]).cloned())
+        {
+            return Ok(Resource::Image(self.kind, w, h, data));
+        }
         let image_err = match image::ImageReader::new(Cursor::new(&bytes))
             .with_guessed_format()
             .expect("IO errors impossible with Cursor")
@@ -577,13 +601,28 @@ impl ImageHandler {
             Ok(image) => {
                 let width = image.width();
                 let height = image.height();
-                let raw_rgba8_data = image.into_rgba8().into_raw();
-                return Ok(Resource::Image(
-                    self.kind,
-                    width,
-                    height,
-                    Arc::new(raw_rgba8_data),
-                ));
+                let raw_rgba8_data = Arc::new(image.into_rgba8().into_raw());
+                {
+                    const MAX_IMAGES: usize = 64;
+                    const MAX_BYTES: usize = 64 << 20;
+                    let mut cache = DECODED.lock().unwrap();
+                    let (count, size) = cache
+                        .values()
+                        .flatten()
+                        .fold((0, 0), |(n, b), e| (n + 1, b + e.3.len()));
+                    if count >= MAX_IMAGES || size + raw_rgba8_data.len() > MAX_BYTES {
+                        cache.clear();
+                    }
+                    if raw_rgba8_data.len() <= MAX_BYTES {
+                        cache.entry(key).or_default().push((
+                            bytes.clone(),
+                            width,
+                            height,
+                            raw_rgba8_data.clone(),
+                        ));
+                    }
+                }
+                return Ok(Resource::Image(self.kind, width, height, raw_rgba8_data));
             }
             Err(e) => e.to_string(),
         };

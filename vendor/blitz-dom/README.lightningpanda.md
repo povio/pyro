@@ -79,3 +79,5 @@ lp-render's mirror tests (incremental documents against fresh builds after rando
   without `@import` is parsed once per thread for its text and base URL (`make_stylesheet`): every
   document of a PDF template or a test suite carries the same bundle, which each new document parsed
   again. Sheets are not edited through Blitz's CSSOM in lightningpanda (its CSSOM edits the text).
+- `src/net.rs`: decoded raster images are kept by their encoded bytes for every document of the process
+  (64 images, 64 MB of pixels): a template's logo is decoded once, not once per document.
