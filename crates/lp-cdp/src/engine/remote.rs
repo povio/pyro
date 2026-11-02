@@ -69,9 +69,11 @@ pub(crate) fn describe(scope: &Scope<'_>, value: Value<'_>, by_value: bool) -> C
             value: Some(Json::Null.into()),
             ..RemoteObject::default()
         }),
-        JsType::Boolean => {
-            plain(RemoteObject { kind: "boolean", value: Some(Json::Bool(value.to_bool()).into()), ..RemoteObject::default() })
-        }
+        JsType::Boolean => plain(RemoteObject {
+            kind: "boolean",
+            value: Some(Json::Bool(value.to_bool()).into()),
+            ..RemoteObject::default()
+        }),
         JsType::Number => plain(RemoteObject::number(value.to_number().map_err(js_to_cdp)?)),
         JsType::String => plain(RemoteObject {
             kind: "string",

@@ -190,6 +190,21 @@ impl LayoutPassState<'_> {
         inputs: taffy::tree::LayoutInput,
         block_ctx: Option<&mut BlockContext<'_>>,
     ) -> taffy::tree::LayoutOutput {
+        let mut inputs = inputs;
+        // stylo_taffy cannot represent intrinsic keywords in min_size(), so
+        // min-width:max-content reaches Taffy as auto. Its flex minimum-size
+        // query consequently requests min-content. Preserve the authored
+        // keyword here before measuring the node's descendants.
+        if inputs.sizing_mode == taffy::SizingMode::ContentSize
+            && inputs.axis == taffy::RequestedAxis::Horizontal
+            && inputs.available_space.width == AvailableSpace::MinContent
+            && self.nodes[dom_node_id(node_id)].primary_styles().is_some_and(|style| {
+                !style.writing_mode.is_vertical()
+                    && matches!(style.clone_min_width(), style::values::computed::Size::MaxContent)
+            })
+        {
+            inputs.available_space.width = AvailableSpace::MaxContent;
+        }
         let mut output = self.dispatch_child_layout(node_id, inputs, block_ctx);
         if inputs.run_mode == RunMode::PerformLayout {
             compute_oof_layout(self, node_id, &mut output);
@@ -430,12 +445,27 @@ impl LayoutPassState<'_> {
                                 .and_then(|layout| layout.lines().next())
                                 .map(|line| *line.metrics());
                             let style = node.layout_style();
+                            // A cyclic percentage-width text control contributes zero to
+                            // min-content sizing (CSS Sizing 3 §5.2.2). This is the measured
+                            // content contribution, not a preferred width: ContentSize
+                            // measurements intentionally ignore preferred-width styles.
+                            // Keep the normal intrinsic width for auto/max-content sizing;
+                            // known dimensions and explicit minima remain the leaf/parent
+                            // layout algorithm's responsibility.
+                            let contribution_width = if inputs.available_space.width == AvailableSpace::MinContent
+                                && inputs.parent_size.width.is_none()
+                                && matches!(style.size().width.expand(), taffy::style::ExpandedDimension::Percent(_))
+                            {
+                                0.0
+                            } else {
+                                width
+                            };
                             let mut output = compute_leaf_layout(
                                 inputs,
                                 &style,
                                 resolve_calc_value,
                                 |_known_size, _available_space| taffy::Size {
-                                    width,
+                                    width: contribution_width,
                                     height: resolved_line_height.unwrap_or(16.0),
                                 },
                             );

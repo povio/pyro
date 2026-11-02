@@ -83,7 +83,7 @@ impl StyloData {
 
     /// Borrow the primary computed style directly (rather than the `Arc` containing it).
     pub fn computed_styles(&self) -> Option<ComputedStyleRef<'_>> {
-        self.primary_styles().map(ComputedStyleRef)
+        self.primary_styles().map(|primary| ComputedStyleRef { primary, layout: None })
     }
 
     /// Get a mutable reference to the data
@@ -131,12 +131,48 @@ impl Deref for StyleDataRef<'_> {
 /// Borrow of a node's stylo element data that `Deref`s directly to the primary
 /// [`ComputedValues`](style::properties::ComputedValues), suitable for wrapping
 /// in [`stylo_taffy::TaffyStyloStyle`].
-pub struct ComputedStyleRef<'a>(StyleDataRef<'a>);
+pub struct ComputedStyleRef<'a> {
+    primary: StyleDataRef<'a>,
+    // Layout-derived table internals never replace the authored primary style.
+    layout: Option<Box<style::properties::ComputedValues>>,
+}
+
+impl ComputedStyleRef<'_> {
+    pub(crate) fn for_table_cell_layout(mut self) -> Self {
+        use style::computed_values::border_collapse::T as BorderCollapse;
+        use style::values::specified::box_::DisplayInside;
+        if self.clone_display().inside() != DisplayInside::TableCell {
+            return self;
+        }
+        let numeric_height = stylo_taffy::convert::dimension(&self.clone_height()).into_option().is_some();
+        let collapsed = self.clone_border_collapse() == BorderCollapse::Collapse;
+        if !numeric_height && !collapsed {
+            return self;
+        }
+        let mut derived = Box::new((*self).clone());
+        // TableCell retains this length as an intrinsic border-box minimum.
+        // A definite height here would prevent the cell from growing to fit.
+        if numeric_height {
+            derived.mutate_position().height = style::values::computed::Size::auto();
+        }
+        // Collapsed borders live in the table's grid gutters. They must not
+        // also consume space inside the cell's own formatting context.
+        if collapsed {
+            let border = derived.mutate_border();
+            border.border_top_width.0 = app_units::Au(0);
+            border.border_right_width.0 = app_units::Au(0);
+            border.border_bottom_width.0 = app_units::Au(0);
+            border.border_left_width.0 = app_units::Au(0);
+        }
+        self.layout = Some(derived);
+        self
+    }
+}
 
 impl Deref for ComputedStyleRef<'_> {
     type Target = style::properties::ComputedValues;
 
     fn deref(&self) -> &Self::Target {
-        self.0.0.styles.get_primary().unwrap()
+        self.layout.as_deref().unwrap_or_else(|| self.primary.0.styles.get_primary().unwrap())
     }
 }

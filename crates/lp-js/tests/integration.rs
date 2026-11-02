@@ -26,3 +26,5 @@ fn every_test_file_is_built() {
         );
     }
 }
+
+mod foundation_fork;

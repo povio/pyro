@@ -1,18 +1,18 @@
 //! Per-context observations routed to the page sessions that enabled Network.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use bytes::Bytes;
 use lp_browser::ContextId;
 use lp_net::{NetEvent, RequestId};
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use super::EngineHost;
 use crate::msg::{CdpError, CdpResult};
-use crate::network_protocol::{BodyBudget, BodyStore, MAX_INFLIGHT, NetworkTranslator, base64_encode, headers_json};
+use crate::network_protocol::{base64_encode, headers_json, BodyBudget, BodyStore, NetworkTranslator, MAX_INFLIGHT};
 use crate::target::{ContextKey, PageCommand, PageKey};
 
 #[derive(Default)]

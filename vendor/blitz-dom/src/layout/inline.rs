@@ -456,7 +456,21 @@ impl LayoutPassState<'_> {
                 ibox.height = 0.0;
                 ibox.baseline = None;
             } else {
-                let output = self.compute_child_layout(taffy::NodeId::from(ibox.id), box_inputs);
+                let mut output = self.compute_child_layout(taffy::NodeId::from(ibox.id), box_inputs);
+                // Flex size-only layout omits its baseline. Atomic inline flex
+                // boxes need the content baseline even during line measurement;
+                // synthesizing a bottom-edge baseline adds a spurious descent.
+                if exports_baseline
+                    && box_inputs.run_mode == RunMode::ComputeSize
+                    && output.baselines.first.is_none()
+                    && output.baselines.last.is_none()
+                    && matches!(self.nodes[NodeId::from_u64(ibox.id)].primary_styles().map(|s| s.clone_display().inside()), Some(DisplayInside::Flex))
+                {
+                    output = self.compute_child_layout(
+                        taffy::NodeId::from(ibox.id),
+                        LayoutInput { run_mode: RunMode::PerformLayout, ..box_inputs },
+                    );
+                }
                 ibox.width = (margin.left + margin.right + output.size.width) * scale;
                 ibox.baseline = if exports_baseline {
                     let baseline = if uses_last_baseline {

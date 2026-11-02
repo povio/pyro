@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use bytes::Bytes;
-use lp_net::http::{HeaderMap, HeaderName, HeaderValue, header};
+use lp_net::http::{header, HeaderMap, HeaderName, HeaderValue};
 use lp_net::{
     AuthChallenge, AuthDecision, InterceptDecision, Interceptor, PausedRequest, PausedResponse, RequestId, RequestInfo,
     ResponseDecision,
