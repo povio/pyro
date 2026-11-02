@@ -45,7 +45,7 @@ fn main() -> ExitCode {
 fn version() -> ExitCode {
     println!("lightningpanda {}", env!("CARGO_PKG_VERSION"));
     let caps = lp_js::Capabilities::detect();
-    println!("engine: system JavaScriptCore; capabilities: {caps:?}");
+    println!("engine: JavaScriptCore; capabilities: {caps:?}");
     ExitCode::SUCCESS
 }
 
