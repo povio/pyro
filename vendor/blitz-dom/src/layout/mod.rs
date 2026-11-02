@@ -257,6 +257,21 @@ impl LayoutPassState<'_> {
             (font_size, line_height)
         });
         let font_size = font_styles.map(|s| s.0);
+        // In system-ui (SF Text on macOS) Chromium's width is
+        // exactly ceil(0.525em x size) + round(0.4375em) (measured
+        // at 10-16px; SF Display from 20px measures otherwise).
+        let system_ui = cfg!(target_os = "macos")
+            && node.primary_styles().is_some_and(|s| {
+                use style::values::computed::font::{GenericFontFamily, SingleFontFamily};
+                match s.get_font().font_family.families.iter().next() {
+                    Some(SingleFontFamily::Generic(GenericFontFamily::SystemUi)) => true,
+                    Some(SingleFontFamily::FamilyName(name)) => matches!(
+                        name.name.as_ref(),
+                        "ui-sans-serif" | "-apple-system" | "BlinkMacSystemFont"
+                    ),
+                    _ => false,
+                }
+            });
         let resolved_line_height = font_styles.map(|s| s.1);
 
         match &mut node.data {
@@ -404,7 +419,11 @@ impl LayoutPassState<'_> {
                                 .filter(|&size| size > 0)
                                 .unwrap_or(20) as f32;
                             let font_size = font_size.unwrap_or(13.333);
-                            let width = (size * 0.5 + 0.4) * font_size;
+                            let width = if system_ui && font_size < 20.0 {
+                                (0.525 * font_size * size).ceil() + (0.4375 * font_size).round()
+                            } else {
+                                (size * 0.5 + 0.4) * font_size
+                            };
                             let line = element_data
                                 .text_input_data()
                                 .and_then(|input| input.editor.try_layout())

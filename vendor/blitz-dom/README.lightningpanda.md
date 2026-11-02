@@ -85,3 +85,6 @@ lp-render's mirror tests (incremental documents against fresh builds after rando
   border and `line-height: normal`, sized from its longest option label (about half an em per character)
   plus the arrow, a line of its font tall (Chromium's menu list). It had no box at all: its options are
   hidden because Blitz paints the control.
+- `src/layout/mod.rs`: a text input in system-ui on macOS (SF Text) is `ceil(0.525em x size) +
+  round(0.4375em)` wide, Chromium's width there (measured at 10-16px); other fonts keep the
+  `(size / 2 + 0.4)em` approximation.
