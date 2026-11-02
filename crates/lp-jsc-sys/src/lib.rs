@@ -698,3 +698,13 @@ pub mod autorelease {
         pub fn objc_autoreleasePoolPop(pool: *mut c_void);
     }
 }
+
+/// Foundation class initialization needed before a macOS process first forks.
+pub mod foundation {
+    unsafe extern "C" {
+        /// Materializes and validates NSNumber's boolean/integer/floating class
+        /// clusters in an autorelease pool. Call in the parent before its first
+        /// fork; returns 1 when the number values round-trip correctly.
+        pub fn lp_foundation_initialize_numbers() -> std::os::raw::c_int;
+    }
+}

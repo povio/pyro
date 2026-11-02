@@ -1123,7 +1123,8 @@ impl Node {
         let styles = self
             .try_stylo_element_data()
             .and_then(|stylo| stylo.computed_styles())
-            .expect("layout_style() called on a node without computed styles");
+            .expect("layout_style() called on a node without computed styles")
+            .for_table_cell_layout();
 
         let mut flags = stylo_taffy::StyleFlags::empty();
         if let Some(el) = self.data.downcast_element() {

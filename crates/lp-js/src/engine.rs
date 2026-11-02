@@ -469,6 +469,21 @@ pub fn configure_process() {
     });
 }
 
+/// Complete Foundation number initialization in the parent before its first
+/// fork, preferably on the main thread before starting VM/network workers.
+/// macOS DNS can use these classes lazily through Network/Security entitlement
+/// checks; initializing them for the first time in a fork child aborts. Derived
+/// templates inherit the completed initialization, including this once guard.
+pub fn prepare_process_for_fork() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        // SAFETY: the ObjC shim owns its autorelease pool, returns no pointers,
+        // and only touches Foundation's thread-safe immutable number classes.
+        let valid = unsafe { sys::foundation::lp_foundation_initialize_numbers() };
+        assert_eq!(valid, 1, "Foundation number initialization failed before fork");
+    });
+}
+
 pub(crate) struct TerminateState {
     requested: AtomicBool,
 }

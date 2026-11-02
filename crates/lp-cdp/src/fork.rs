@@ -310,6 +310,8 @@ pub fn template_main(options: &ServeOptions, socket: &Path) -> ExitCode {
 }
 
 fn run_template(options: &ServeOptions, socket: &Path) -> Result<(), String> {
+    // Before profile preload, VM and network threads, and every template fork.
+    lp_js::prepare_process_for_fork();
     let profile = crate::serve::browser_profile(options)?;
     if !supported() {
         return Err("this JavaScriptCore cannot fork (build the patched one: scripts/jsc/build.sh)".into());

@@ -731,9 +731,28 @@ impl EngineHost {
             "LP" if action == "geometryStats" => {
                 let (layouts, deltas, snapshot_ms, layout_ms, read_ms) = blitz_geometry::take_stats();
                 let (mirror_ms, settle_ms, resolve_ms) = lp_render::sync_profile::take();
+                // Blitz counters are cumulative on this browser thread. Unlike
+                // the existing resettable fields, callers subtract snapshots.
+                let phases = lp_render::blitz_phases();
+                let (inline_rebuilds, inline_bytes) = lp_render::blitz_rebuilds();
+                let style_stats = lp_render::blitz_style_stats();
                 Ok(Some(serde_json::json!({
+                    "processId": std::process::id(),
                     "layouts": layouts, "deltas": deltas, "snapshotMs": snapshot_ms, "layoutMs": layout_ms, "readMs": read_ms,
                     "mirrorMs": mirror_ms, "settleMs": settle_ms, "resolveMs": resolve_ms,
+                    "blitzCumulative": {
+                        "phasesMs": {
+                            "style": phases[0], "damage": phases[1], "construct": phases[2],
+                            "postConstruct": phases[3], "layout": phases[4], "transform": phases[5],
+                            "paintTree": phases[6], "clearDamage": phases[7], "subdocs": phases[8],
+                        },
+                        "inlineRebuilds": inline_rebuilds, "inlineBytes": inline_bytes,
+                        "restyledNodes": lp_render::blitz_restyles(),
+                        "styleStats": {
+                            "styled": style_stats[0], "matched": style_stats[1],
+                            "shared": style_stats[2], "reused": style_stats[3],
+                        },
+                    },
                 })))
             }
             "LP" => self.driver_domain(action, cmd),

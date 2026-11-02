@@ -204,6 +204,9 @@ pub struct TableCell {
     /// min-content width of its cells, but not to their max-content width. Both of the
     /// cell's intrinsic widths are therefore its min-content width, and no less than this.
     min_width: Option<f32>,
+    /// A numeric author cell height is a minimum of its border box, not a
+    /// definite content height. Collapsed border gutters are excluded here.
+    min_height: Option<f32>,
     style: taffy::Style<Atom>,
 }
 
@@ -897,6 +900,20 @@ fn collect_table_cells(
                 }
             }
 
+            let min_height = style.size.height.into_option().map(|height| {
+                let gutter = if border_collapse == BorderCollapse::Collapse {
+                    first_cell_border.as_ref().map_or(0.0, |border| {
+                        side_width(border.border_top_width.0, border.border_top_style)
+                            .max(side_width(border.border_bottom_width.0, border.border_bottom_style))
+                    })
+                } else {
+                    0.0
+                };
+                (height - gutter).max(0.0)
+            });
+            if min_height.is_some() {
+                style.size.height = style_helpers::auto();
+            }
             style.size.width = style_helpers::auto();
             cells.push(TableCell {
                 node_id,
@@ -904,6 +921,7 @@ fn collect_table_cells(
                 column: col,
                 colspan,
                 min_width: if is_fixed { None } else { length_width },
+                min_height,
                 style,
             });
 
@@ -996,6 +1014,7 @@ impl taffy::LayoutPartialTree for TableTreeWrapper<'_, '_> {
         if self.ctx.is_fixed && inputs.known_dimensions.width.is_none() {
             let mut output = self.doc.compute_child_layout(node_id, inputs);
             output.size.width = 0.0;
+            output.size.height = output.size.height.max(cell.min_height.unwrap_or(0.0));
             return output;
         }
         // Measuring the intrinsic width of a cell with a minimum width (see
@@ -1027,9 +1046,12 @@ impl taffy::LayoutPartialTree for TableTreeWrapper<'_, '_> {
                 })
             };
             output.size.width = output.size.width.max(min_width).max(own_min.unwrap_or(0.0));
+            output.size.height = output.size.height.max(cell.min_height.unwrap_or(0.0));
             return output;
         }
-        self.doc.compute_child_layout(node_id, inputs)
+        let mut output = self.doc.compute_child_layout(node_id, inputs);
+        output.size.height = output.size.height.max(cell.min_height.unwrap_or(0.0));
+        output
     }
 }
 

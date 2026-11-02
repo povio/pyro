@@ -2378,7 +2378,10 @@ fn pointer_target(page: &Rc<PageDom>, id: NodeId, opts: PointerOpts) -> Result<(
         Some(hit) if contains(&page.dom.borrow(), id, hit) => Ok((x, y)),
         Some(hit) => {
             let tag = local(&page.dom.borrow(), hit).unwrap_or("?").to_owned();
-            if opts.position.is_none() && super::dom::reveal_centered(page, id) {
+            // A transient pointer block (e.g. a virtual list while scrolling)
+            // needs time, not another scroll that can dismiss its popover.
+            let hit_testable = page.layout.borrow().style().is_hit_testable(&page.dom.borrow(), id);
+            if opts.position.is_none() && hit_testable && super::dom::reveal_centered(page, id) {
                 return Err(Attempt::RetrySoon(format!("centered target after <{tag}> intercepted pointer events")));
             }
             Err(Attempt::Retry(format!("<{tag}> intercepts pointer events")))

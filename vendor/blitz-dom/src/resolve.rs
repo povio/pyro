@@ -21,17 +21,16 @@ thread_local! {
 use taffy::AvailableSpace;
 
 use crate::{
-    BaseDocument,
     layout::{
-        LayoutPassState,
         construct::{
-            ConstructionTask, ConstructionTaskData, ConstructionTaskResult,
-            ConstructionTaskResultData, LayoutChildren, build_inline_layout_into,
-            collect_layout_children,
+            build_inline_layout_into, collect_layout_children, ConstructionTask, ConstructionTaskData,
+            ConstructionTaskResult, ConstructionTaskResultData, LayoutChildren,
         },
         damage::{ALL_DAMAGE, CONSTRUCT_BOX, CONSTRUCT_DESCENDENT, CONSTRUCT_FC},
+        LayoutPassState,
     },
     node::TextBrush,
+    BaseDocument,
 };
 
 impl BaseDocument {
@@ -89,10 +88,7 @@ impl BaseDocument {
     }
 
     pub fn resolve(&mut self, current_time_for_animations: f64) {
-        if TDocument::as_node(&self.root_node())
-            .first_element_child()
-            .is_none()
-        {
+        if TDocument::as_node(&self.root_node()).first_element_child().is_none() {
             #[cfg(feature = "tracing")]
             tracing::warn!("No DOM - not resolving");
             return;
@@ -120,8 +116,7 @@ impl BaseDocument {
         // sheds entries for removed nodes).
         {
             use crate::node::scrollbar::{FADE_DELAY, FADE_DURATION};
-            self.scrollbar_activity
-                .retain(|_, last| last.elapsed() < FADE_DELAY + FADE_DURATION);
+            self.scrollbar_activity.retain(|_, last| last.elapsed() < FADE_DELAY + FADE_DURATION);
         }
 
         let root_node_id = self.root_element().id;
@@ -178,9 +173,8 @@ impl BaseDocument {
             if !self.refresh_container_query_sizes() || pass == 31 {
                 break;
             }
-            self.nodes[root_node_id].set_restyle_hint(
-                style::invalidation::element::restyle_hints::RestyleHint::restyle_subtree(),
-            );
+            self.nodes[root_node_id]
+                .set_restyle_hint(style::invalidation::element::restyle_hints::RestyleHint::restyle_subtree());
             for (_, node) in self.nodes.iter_mut() {
                 node.invalidate_layout_cache();
             }
@@ -229,10 +223,8 @@ impl BaseDocument {
                 sub_viewport.color_scheme = self.viewport.color_scheme;
 
                 let viewport_scale = self.viewport.scale();
-                sub_viewport.window_size = (
-                    (size.width * viewport_scale) as u32,
-                    (size.height * viewport_scale) as u32,
-                );
+                sub_viewport.window_size =
+                    ((size.width * viewport_scale) as u32, (size.height * viewport_scale) as u32);
                 drop(sub_viewport);
 
                 sub_doc.resolve(current_time_for_animations);
@@ -308,6 +300,15 @@ impl BaseDocument {
         }
 
         let scale = self.viewport.scale_f64();
+        // CSS scroll extents must use the same unrounded boxes as client sizes.
+        // Pixel-rounded paint widths can otherwise make fitting text overflow by 1px.
+        // Only vertical placement needs the containing-block physicalisation walk.
+        let node = &self.nodes[node_id];
+        let vertical = node.layout_data().writing_mode.is_vertical()
+            || node
+                .containing_block()
+                .is_some_and(|parent| self.nodes[parent].layout_data().writing_mode.is_vertical());
+        let layout = if vertical { self.physical_unrounded_geometry(node_id).1 } else { *node.unrounded_layout() };
 
         // The cached overflow holds only while nothing in the subtree changed:
         // a descendant's relayout (its overflow shrinking) reaches its
@@ -318,24 +319,24 @@ impl BaseDocument {
         };
         if unchanged {
             let node = &self.nodes[node_id];
-            let location = node.final_layout().location.map(|v| v as f64 * scale);
+            let location = layout.location.map(|v| v as f64 * scale);
 
             let mut transform = Affine::translate((location.x, location.y));
             if let Some(t) = node.transform().as_deref() {
                 transform *= *t
             }
 
-            let overflow = overflow_contribution(node, *node.scrollable_overflow(), scale);
+            let overflow = overflow_contribution(node, *node.scrollable_overflow(), layout.size, scale);
             return transform.transform_rect_bbox(overflow);
         }
 
         let transform = self.nodes[node_id].set_transform(scale as f32);
 
-        let w = self.nodes[node_id].final_layout().size.width as f64 * scale;
-        let h = self.nodes[node_id].final_layout().size.height as f64 * scale;
+        let w = layout.size.width as f64 * scale;
+        let h = layout.size.height as f64 * scale;
         // lightningpanda: the scrollable overflow starts at the padding box
         // (CSS Overflow 3 2.2), not the border box.
-        let b = self.nodes[node_id].final_layout().border;
+        let b = layout.border;
         let mut overflow = Rect::new(
             b.left as f64 * scale,
             b.top as f64 * scale,
@@ -357,8 +358,7 @@ impl BaseDocument {
                 overflow = overflow.union(child_rect_in_self);
             }
         }
-        let hoisted_children =
-            std::mem::take(&mut *self.nodes[node_id].hoisted_children.borrow_mut());
+        let hoisted_children = std::mem::take(&mut *self.nodes[node_id].hoisted_children.borrow_mut());
         for &child_id in &hoisted_children {
             if !self.nodes.contains_key(child_id) {
                 continue;
@@ -384,7 +384,7 @@ impl BaseDocument {
         let inline = element.and_then(|e| e.inline_layout_data.as_deref());
         let lines = inline.map(|t| (&t.layout, t.block_offset)).or(editor_layout.map(|l| (l, 0.0)));
         if let Some((text_layout, block_offset)) = lines {
-            let l = self.nodes[node_id].final_layout();
+            let l = &layout;
             let width = text_layout
                 .lines()
                 .map(|line| {
@@ -409,8 +409,11 @@ impl BaseDocument {
                         s.clone_overflow_x() != style::values::computed::Overflow::Visible
                             || s.clone_overflow_y() != style::values::computed::Overflow::Visible
                     });
-                let (end_x, end_y) =
-                    if scrolls { (l.padding.right as f64 * scale, l.padding.bottom as f64 * scale) } else { (0.0, 0.0) };
+                let (end_x, end_y) = if scrolls {
+                    (l.padding.right as f64 * scale, l.padding.bottom as f64 * scale)
+                } else {
+                    (0.0, 0.0)
+                };
                 overflow = overflow.union(Rect::new(x0, y0, x0 + width + end_x, y0 + height + end_y));
             }
         }
@@ -418,8 +421,8 @@ impl BaseDocument {
         *self.nodes[node_id].scrollable_overflow_mut() = overflow;
         *self.nodes[node_id].layout_children.get_mut() = layout_children;
 
-        let scaled_x = self.nodes[node_id].final_layout().location.x as f64 * scale;
-        let scaled_y = self.nodes[node_id].final_layout().location.y as f64 * scale;
+        let scaled_x = layout.location.x as f64 * scale;
+        let scaled_y = layout.location.y as f64 * scale;
 
         let full = if let Some(t) = transform {
             Affine::translate((scaled_x, scaled_y)) * t
@@ -427,7 +430,7 @@ impl BaseDocument {
             Affine::translate((scaled_x, scaled_y))
         };
 
-        let contribution = overflow_contribution(&self.nodes[node_id], overflow, scale);
+        let contribution = overflow_contribution(&self.nodes[node_id], overflow, layout.size, scale);
         full.transform_rect_bbox(contribution)
     }
 
@@ -466,12 +469,8 @@ impl BaseDocument {
                 for child_id in layout_children.iter().copied() {
                     resolve_layout_children_recursive(doc, child_id);
                     doc.nodes[child_id].layout_parent.set(Some(node_id));
-                    if let Some(mut data) = doc.nodes[child_id]
-                        .try_stylo_element_data_mut()
-                        .and_then(|s| s.get_mut())
-                    {
-                        data.damage
-                            .remove(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
+                    if let Some(mut data) = doc.nodes[child_id].try_stylo_element_data_mut().and_then(|s| s.get_mut()) {
+                        data.damage.remove(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                     }
                 }
 
@@ -557,9 +556,7 @@ impl BaseDocument {
             .map(|task: ConstructionTask| match task.data {
                 ConstructionTaskData::InlineLayout(mut layout) => {
                     #[cfg(feature = "parallel-construct")]
-                    let mut layout_ctx = LAYOUT_CTX
-                        .take()
-                        .unwrap_or_else(|| Box::new(LayoutContext::new()));
+                    let mut layout_ctx = LAYOUT_CTX.take().unwrap_or_else(|| Box::new(LayoutContext::new()));
                     #[cfg(feature = "parallel-construct")]
                     let layout_ctx_mut = &mut layout_ctx;
 
@@ -611,10 +608,7 @@ impl BaseDocument {
             match result.data {
                 ConstructionTaskResultData::InlineLayout(layout) => {
                     self.nodes[result.node_id].clear_layout_cache();
-                    self.nodes[result.node_id]
-                        .element_data_mut()
-                        .unwrap()
-                        .inline_layout_data = Some(layout);
+                    self.nodes[result.node_id].element_data_mut().unwrap().inline_layout_data = Some(layout);
                 }
             }
         }
@@ -663,9 +657,8 @@ impl BaseDocument {
 /// (its own coordinates): its border box, plus its own scrollable overflow
 /// on the axes it does not clip. A scroll container keeps its content's
 /// overflow to itself.
-fn overflow_contribution(node: &crate::Node, overflow: Rect, scale: f64) -> Rect {
+fn overflow_contribution(node: &crate::Node, overflow: Rect, size: taffy::Size<f32>, scale: f64) -> Rect {
     use style::values::computed::Overflow;
-    let size = node.final_layout().size;
     let border_box = Rect::new(0.0, 0.0, size.width as f64 * scale, size.height as f64 * scale);
     let mut out = overflow.union(border_box);
     if let Some(style) = node.primary_styles() {

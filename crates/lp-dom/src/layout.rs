@@ -41,6 +41,16 @@ enum ClipEscape {
     /// nearest positioned one.
     Positioned,
 }
+/// Geometry memoization is confined to one synchronous hit test. Input
+/// handlers can mutate the DOM before the next pointer event.
+#[derive(Default)]
+struct HitTestGeometry {
+    rects: FxHashMap<NodeId, Rect>,
+    scroll_offsets: FxHashMap<NodeId, (f64, f64)>,
+    has_element_scroll: bool,
+    has_sticky: bool,
+}
+
 use crate::media::Viewport;
 use crate::node::{DocumentKind, NodeId, NodeKind, NIL};
 use crate::style::{CheckVisibilityOptions, ScrollAxes, StyleEngine};
@@ -821,12 +831,79 @@ impl Layout {
         Rect { x: b.rect.x - sx - dx + kx, y: b.rect.y - sy - dy + ky, width: b.rect.width, height: b.rect.height }
     }
 
+    fn hit_test_client_rect(&self, dom: &Dom, result: &LayoutResult, el: NodeId, cache: &mut HitTestGeometry) -> Rect {
+        if let Some(rect) = cache.rects.get(&el) {
+            return *rect;
+        }
+        // SVG shapes retain their bbox mapping, rather than using the empty
+        // CSS box returned for inline SVG content by the external engine.
+        let rect = if let Some(rect) = self.svg_client_rect_with(dom, el, |svg| {
+            let bounds = *result.get(svg)?;
+            Some((bounds, self.hit_test_client_rect(dom, result, svg, cache)))
+        }) {
+            rect
+        } else if let Some(b) = result.get(el) {
+            let (dx, dy) = if cache.has_element_scroll {
+                self.hit_test_scroll_offset(dom, el, &mut cache.scroll_offsets)
+            } else {
+                (0.0, 0.0)
+            };
+            let (kx, ky) = if cache.has_sticky { self.sticky_shift(dom, result, el) } else { (0.0, 0.0) };
+            let (sx, sy) =
+                if b.fixed { (0.0, 0.0) } else { (self.window_scroll.0 as f64, self.window_scroll.1 as f64) };
+            Rect { x: b.rect.x - sx - dx + kx, y: b.rect.y - sy - dy + ky, width: b.rect.width, height: b.rect.height }
+        } else {
+            Rect::default()
+        };
+        cache.rects.insert(el, rect);
+        rect
+    }
+
+    fn hit_test_scroll_offset(&self, dom: &Dom, el: NodeId, cache: &mut FxHashMap<NodeId, (f64, f64)>) -> (f64, f64) {
+        let Ok(mut current) = dom.check(el) else { return (0.0, 0.0) };
+        let mut path = Vec::new();
+        let mut offset = loop {
+            let node = dom.id_of(current);
+            if let Some(&offset) = cache.get(&node) {
+                break offset;
+            }
+            path.push(node);
+            let parent = dom.n(current).parent;
+            if parent == NIL {
+                break (0.0, 0.0);
+            }
+            current = parent;
+        };
+        for node in path.into_iter().rev() {
+            let parent = dom.n(dom.check(node).expect("node in the current hit-test tree")).parent;
+            if parent != NIL {
+                if let Some(&(x, y)) = self.element_scroll.get(&dom.id_of(parent)) {
+                    offset.0 += x as f64;
+                    offset.1 += y as f64;
+                }
+            }
+            cache.insert(node, offset);
+        }
+        offset
+    }
+
     /// The client rect of an SVG element without a CSS box (a shape, text
     /// or container inside an `<svg>`): its bbox mapped into the content
     /// box of the nearest `<svg>` ancestor laid out as a box (Gap 34:
     /// Chromium reports the painted geometry; visibility checks rely on
     /// it). None for other elements or without geometry.
     fn svg_client_rect(&self, dom: &Dom, el: NodeId) -> Option<Rect> {
+        self.svg_client_rect_with(dom, el, |svg| {
+            Some((self.layout_box(dom, svg)?, self.bounding_client_rect_for_visible(dom, svg)))
+        })
+    }
+
+    fn svg_client_rect_with(
+        &self,
+        dom: &Dom,
+        el: NodeId,
+        mut geometry: impl FnMut(NodeId) -> Option<(LayoutBox, Rect)>,
+    ) -> Option<Rect> {
         if dom.element(el).ok()?.name.ns != markup5ever::ns!(svg) {
             return None;
         }
@@ -835,14 +912,15 @@ impl Layout {
         }
         // The nearest `<svg>` laid out as a box.
         let mut svg = dom.parent_element(el).ok().flatten()?;
-        let b = loop {
+        let (b, origin) = loop {
             let e = dom.element(svg).ok()?;
             if e.name.ns != markup5ever::ns!(svg) {
                 return None;
             }
             if e.name.local == local_name!("svg") {
-                if let Some(b) = self.layout_box(dom, svg).filter(|b| b.rect.width > 0.0 || b.rect.height > 0.0) {
-                    break b;
+                if let Some((bounds, origin)) = geometry(svg).filter(|(b, _)| b.rect.width > 0.0 || b.rect.height > 0.0)
+                {
+                    break (bounds, origin);
                 }
             }
             svg = dom.parent_element(svg).ok().flatten()?;
@@ -854,7 +932,6 @@ impl Layout {
             (b.client_height - b.padding[TOP] - b.padding[BOTTOM]).max(0.0),
         );
         let inner = crate::svg_geometry::client_bounds(dom, &self.style, el, svg, viewport)?;
-        let origin = self.bounding_client_rect_for_visible(dom, svg);
         Some(Rect {
             x: origin.x + left + inner.x,
             y: origin.y + top + inner.y,
@@ -1049,16 +1126,75 @@ impl Layout {
         key
     }
 
+    /// An inset clip-path clips the element and its descendants, including
+    /// positioned descendants that escape an ancestor's overflow clip.
+    fn outside_inset_clip_path(
+        &self,
+        dom: &Dom,
+        el: NodeId,
+        x: f64,
+        y: f64,
+        ignore_x: bool,
+        mut client_rect: impl FnMut(NodeId) -> Rect,
+    ) -> bool {
+        use style::values::computed::basic_shape::{BasicShape, ClipPath};
+        use style::values::computed::CSSPixelLength;
+        use style::values::generics::basic_shape::{ShapeBox, ShapeGeometryBox};
+
+        let mut current = Some(el);
+        while let Some(node) = current {
+            if let Some(style) = self.style.stylo_style(dom, node) {
+                if let ClipPath::Shape(shape, reference) = style.clone_clip_path() {
+                    // The default reference box for inset() is the border box.
+                    if matches!(
+                        reference,
+                        ShapeGeometryBox::ElementDependent | ShapeGeometryBox::ShapeBox(ShapeBox::BorderBox)
+                    ) {
+                        if let BasicShape::Rect(inset) = &*shape {
+                            let rect = client_rect(node);
+                            let horizontal = CSSPixelLength::new(rect.width as f32);
+                            let vertical = CSSPixelLength::new(rect.height as f32);
+                            let left = rect.x + inset.rect.3.resolve(horizontal).px() as f64;
+                            let right = rect.x + rect.width - inset.rect.1.resolve(horizontal).px() as f64;
+                            let top = rect.y + inset.rect.0.resolve(vertical).px() as f64;
+                            let bottom = rect.y + rect.height - inset.rect.2.resolve(vertical).px() as f64;
+                            if right <= left
+                                || bottom <= top
+                                || y < top
+                                || y > bottom
+                                || (!ignore_x && (x < left || x > right))
+                            {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+            current = dom.parent_element(node).ok().flatten();
+        }
+        false
+    }
+
     fn element_from_point_impl(&self, dom: &Dom, x: f64, y: f64, ignore_x: bool) -> Option<NodeId> {
         let result = self.layout_result(dom);
+        let mut geometry = HitTestGeometry {
+            has_element_scroll: self.element_scroll.values().any(|&(x, y)| x != 0 || y != 0),
+            has_sticky: self.external.as_ref().is_some_and(|source| source.has_sticky()),
+            ..Default::default()
+        };
         let inside = |r: &Rect| (ignore_x || (x >= r.x && x <= r.x + r.width)) && y >= r.y && y <= r.y + r.height;
         let mut best: Option<(Vec<(u8, i32, u32)>, NodeId)> = None;
         for (&el, b) in &result.boxes {
             if b.rect.width <= 0.0 && b.rect.height <= 0.0 {
                 continue;
             }
-            let r = self.bounding_client_rect_for_visible(dom, el);
+            let r = self.hit_test_client_rect(dom, &result, el, &mut geometry);
             if !inside(&r) || !self.is_visible(dom, el) || !self.style.is_hit_testable(dom, el) {
+                continue;
+            }
+            if self.outside_inset_clip_path(dom, el, x, y, ignore_x, |node| {
+                self.hit_test_client_rect(dom, &result, node, &mut geometry)
+            }) {
                 continue;
             }
             let key = self.paint_key(dom, &result, el);
@@ -1077,7 +1213,7 @@ impl Layout {
                 if result.get(a).is_none() {
                     return false;
                 }
-                let ar = self.bounding_client_rect_for_visible(dom, a);
+                let ar = self.hit_test_client_rect(dom, &result, a, &mut geometry);
                 let out_x = clips.x && !ignore_x && (x < ar.x || x > ar.x + ar.width);
                 let out_y = clips.y && (y < ar.y || y > ar.y + ar.height);
                 out_x || out_y
@@ -2134,5 +2270,101 @@ pub(crate) mod flow_stats {
                 s.window = Duration::ZERO;
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod hit_test_geometry_work {
+    use super::*;
+    use std::cell::Cell;
+
+    struct CountedGeometry {
+        data: RefCell<ExternalGeometry>,
+        reads: Cell<usize>,
+        style: style::servo_arc::Arc<style::properties::ComputedValues>,
+    }
+
+    impl GeometrySource for CountedGeometry {
+        fn sync(&self, _dom: &Dom, _layout: &Layout) {}
+        fn element_box(&self, key: u64) -> Option<ExternalBox> {
+            self.reads.set(self.reads.get() + 1);
+            self.data.borrow().boxes.iter().find(|(k, _)| *k == key).map(|(_, b)| *b)
+        }
+        fn geometry(&self) -> Option<ExternalGeometry> {
+            Some(self.data.borrow().clone())
+        }
+        fn document_size(&self) -> Option<(f64, f64)> {
+            Some((800.0, 600.0))
+        }
+        fn has_sticky(&self) -> bool {
+            false
+        }
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+        fn element_style(&self, _key: u64) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
+            Some(self.style.clone())
+        }
+    }
+
+    #[test]
+    fn dense_hit_testing_reports_geometry_reads_and_refreshes_after_mutation() {
+        use crate::parse::{parse_document, DomRef};
+        let html = format!(
+            "<!doctype html><body>{}</body>",
+            (0..1000).map(|i| format!("<div id=c{i}></div>")).collect::<String>()
+        );
+        let dom_ref: DomRef = Rc::new(RefCell::new(Dom::new()));
+        let doc = parse_document(&dom_ref, "http://test/", &html);
+        let mut dom = Rc::try_unwrap(dom_ref).ok().unwrap().into_inner();
+        let nodes: Vec<_> = (0..1000).map(|i| dom.get_element_by_id(doc, &format!("c{i}")).unwrap().unwrap()).collect();
+        let source = Rc::new(CountedGeometry {
+            data: RefCell::new(ExternalGeometry {
+                boxes: nodes
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &node)| {
+                        (
+                            crate::snapshot::render_key(node),
+                            ExternalBox {
+                                x: (i % 25 * 30) as f64,
+                                y: (i / 25 * 12) as f64,
+                                width: 30.0,
+                                height: 12.0,
+                                client_width: 30.0,
+                                client_height: 12.0,
+                                scroll_width: 30.0,
+                                scroll_height: 12.0,
+                                ..Default::default()
+                            },
+                        )
+                    })
+                    .collect(),
+                document_width: 800.0,
+                document_height: 600.0,
+                ..Default::default()
+            }),
+            reads: Cell::new(0),
+            style: style::properties::ComputedValues::initial_values_with_font_override(
+                style::properties::style_structs::Font::initial_values(),
+            ),
+        });
+        let mut layout = Layout::with_viewport(doc, Viewport::new(800, 600));
+        layout.set_geometry_source(Some(source.clone()));
+        let target = nodes[421];
+        for _ in 0..10 {
+            assert_eq!(layout.element_from_point(&dom, 635.0, 198.0), Some(target));
+        }
+        eprintln!("dense-hit-test: 1000 boxes, 10 hits, external element reads={}", source.reads.get());
+        // A handler between input events can move a box. No cached client
+        // rectangle from the previous hit test may survive the DOM change.
+        {
+            let mut geometry = source.data.borrow_mut();
+            geometry.boxes[421].1.x = 0.0;
+            geometry.boxes[421].1.y = 0.0;
+        }
+        dom.set_attribute(target, "data-moved", "yes").unwrap();
+        assert_eq!(layout.element_from_point(&dom, 635.0, 198.0), None);
+        assert_eq!(layout.element_from_point(&dom, 5.0, 5.0), Some(target));
     }
 }

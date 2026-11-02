@@ -5914,6 +5914,51 @@ fn driver_description_unresolved_references_fall_back_but_empty_targets_win() {
 }
 
 #[test]
+fn driver_svg_hover_ignores_fully_inset_clipped_label_and_descendants() {
+    let mut h = Harness::new();
+    load_html(
+        &mut h,
+        r#"<style>
+        button{display:inline-flex;align-items:center;justify-content:center;position:relative;width:20px;height:20px;padding:0;border:0}
+        .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+        </style><button aria-label="Dunning Blocked"><svg width="20" height="20"><circle cx="10" cy="10" r="9"/></svg><span class="sr-only"><span>Dunning Blocked</span></span></button>
+        <script>window.hovered=false;document.querySelector('button').addEventListener('mouseover',()=>window.hovered=true)</script>"#,
+    );
+    let result = h.page(
+        "LP.run",
+        json!({"steps":[
+            {"act":{"locator":{"css":"svg"},"action":"hover","timeout":200}},
+            {"eval":{"expression":"window.hovered","as":"hovered"}}
+        ]}),
+    );
+    assert!(result.get("error").is_none(), "{result}");
+    assert_eq!(result["result"]["reads"]["hovered"], true, "{result}");
+}
+
+#[test]
+fn driver_svg_hover_still_rejects_unclipped_label_and_overlay() {
+    for cover in [
+        "<span style='position:absolute;width:1px;height:1px;margin:-1px;overflow:hidden'>Label</span>",
+        "<span style='position:absolute;inset:0;background:red'>Overlay</span>",
+    ] {
+        let mut h = Harness::new();
+        load_html(
+            &mut h,
+            &format!(
+                r#"<style>button{{display:inline-flex;align-items:center;justify-content:center;position:relative;width:20px;height:20px;padding:0;border:0}}</style><button><svg width="20" height="20"><circle cx="10" cy="10" r="9"/></svg>{cover}</button>"#
+            ),
+        );
+        let result = h.page(
+            "LP.run",
+            json!({"steps":[
+                {"act":{"locator":{"css":"svg"},"action":"hover","timeout":100}}
+            ]}),
+        );
+        assert!(result["error"]["message"].as_str().unwrap().contains("intercepts pointer events"), "{result}");
+    }
+}
+
+#[test]
 fn driver_right_click_preserves_context_menu_autofocus() {
     let mut h = Harness::new();
     load_html(
@@ -6697,4 +6742,82 @@ fn sticky_footer_respects_scrollport_padding() {
     for scroll in [0, 200, 640] {
         assert_eq!(eval_value(&mut h, &format!("document.getElementById('sc').scrollTop={scroll};document.getElementById('bar').getBoundingClientRect().y")), json!(190), "scroll={scroll}");
     }
+}
+
+const DRIVER_TRANSIENT_POINTER_POPUP: &str = r#"<!doctype html><style>
+  html{overflow:hidden}body{margin:0;height:951px}
+  #list{box-sizing:border-box;position:absolute;left:460.65625px;top:526px;width:342.65625px;height:51px;border:1px solid;padding:4px;overflow-x:hidden;overflow-y:auto}
+  #inner{position:relative;width:341px;height:41px}#option{width:341px;height:41px}
+</style><input id=trigger style="position:absolute;left:460px;top:492px">
+<div id=list role=listbox><div id=inner><div id=option role=option>Quote</div></div></div>
+<script>
+  window.popupState={reactive:false,restored:false,clicks:0,pressPhase:null,viewportScrolls:0};
+  (()=>{
+    const list=document.getElementById('list'),inner=document.getElementById('inner'),option=document.getElementById('option');
+    // Searching a previously scrolled virtual list leaves an explicit zero offset.
+    list.scrollLeft=1;list.scrollLeft=0;
+    list.addEventListener('scroll',()=>{
+      if(popupState.reactive&&list.scrollLeft>0){
+        inner.style.pointerEvents='none';
+        setTimeout(()=>{inner.style.pointerEvents='auto';popupState.restored=true},300);
+      }
+    });
+    option.addEventListener('pointerdown',()=>popupState.pressPhase=popupState.restored?'restored':'early');
+    option.addEventListener('click',()=>popupState.clicks++);
+    document.addEventListener('scroll',event=>{
+      if(event.target===document){popupState.viewportScrolls++;list.remove()}
+    },true);
+  })();
+</script>"#;
+
+fn transient_pointer_popup_harness() -> Harness {
+    let mut h = Harness::new();
+    h.page(
+        "Emulation.setDeviceMetricsOverride",
+        json!({"width":1440,"height":900,"deviceScaleFactor":1,"mobile":false}),
+    );
+    load_html(&mut h, DRIVER_TRANSIENT_POINTER_POPUP);
+    h
+}
+
+#[test]
+fn driver_transient_pointer_block_waits_without_centering_visible_popup() {
+    let mut h = transient_pointer_popup_harness();
+    eval_value(&mut h, "popupState.reactive=true");
+    let result = h.page("LP.act", json!({"locator":{"css":"#option"},"action":"click","timeout":1000}));
+    assert!(result.get("error").is_none(), "{result}");
+    assert_eq!(
+        eval_value(&mut h, "[popupState.clicks,popupState.restored,popupState.pressPhase,popupState.viewportScrolls,scrollY,document.getElementById('list').isConnected,document.getElementById('list').scrollLeft]"),
+        json!([1,true,"restored",0,0,true,4]),
+        "the horizontal reveal must wait for pointer recovery without dismissing the popup"
+    );
+}
+
+#[test]
+fn driver_permanent_pointer_block_does_not_click_or_center_visible_popup() {
+    let mut h = transient_pointer_popup_harness();
+    eval_value(&mut h, "document.getElementById('inner').style.pointerEvents='none'");
+    let result = h.page("LP.act", json!({"locator":{"css":"#option"},"action":"click","timeout":80}));
+    assert!(result["error"]["message"].as_str().unwrap_or_default().contains("intercepts pointer events"), "{result}");
+    assert_eq!(
+        eval_value(&mut h, "[popupState.clicks,popupState.viewportScrolls,scrollY,document.getElementById('list').isConnected,getComputedStyle(document.getElementById('option')).pointerEvents]"),
+        json!([0,0,0,true,"none"]),
+        "an unclickable target must stay blocked without moving the viewport"
+    );
+}
+
+#[test]
+fn driver_pointer_auto_child_remains_clickable_in_pointer_none_parent() {
+    let mut h = transient_pointer_popup_harness();
+    eval_value(&mut h, "document.getElementById('inner').style.pointerEvents='none';document.getElementById('option').style.pointerEvents='auto'");
+    let result = h.page("LP.act", json!({"locator":{"css":"#option"},"action":"click","timeout":300}));
+    assert!(result.get("error").is_none(), "{result}");
+    assert_eq!(
+        eval_value(
+            &mut h,
+            "[popupState.clicks,popupState.viewportScrolls,scrollY,document.getElementById('list').isConnected]"
+        ),
+        json!([1, 0, 0, true]),
+        "the actual hit child overrides its parent's pointer block"
+    );
 }

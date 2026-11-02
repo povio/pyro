@@ -22,13 +22,23 @@ fn main() {
     }
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let inputs = manifest.join("webkit");
-    for f in ["shim/modules.m", "shim/modules_source.c", "webkit"] {
+    for f in ["shim/modules.m", "shim/modules_source.c", "shim/fork_foundation.m", "webkit"] {
         println!("cargo:rerun-if-changed={f}");
     }
     for v in ["LP_JSC", "LP_JSC_DIR", "LP_JSC_CACHE", "HOME"] {
         println!("cargo:rerun-if-env-changed={v}");
     }
     println!("cargo::rustc-check-cfg=cfg(lp_jsc_source)");
+
+    // Foundation initialization is needed by forked DNS workers for either
+    // JSC backend. Keep ObjC separate from the source build's plain C shim.
+    println!("cargo:rustc-link-lib=framework=Foundation");
+    cc::Build::new()
+        .file("shim/fork_foundation.m")
+        .flag("-fobjc-arc")
+        .flag("-Wall")
+        .flag("-Werror")
+        .compile("lp_foundation_fork");
 
     match source_jsc(&inputs) {
         Some(dir) => {
@@ -42,7 +52,6 @@ fn main() {
         }
         None => {
             println!("cargo:rustc-link-lib=framework=JavaScriptCore");
-            println!("cargo:rustc-link-lib=framework=Foundation");
             println!("cargo:jsc=system");
             cc::Build::new().file("shim/modules.m").flag("-fobjc-arc").flag("-Wall").flag("-Werror").compile("lp_jsc_shim");
         }
