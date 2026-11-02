@@ -46,8 +46,14 @@ impl BaseDocument {
         if self.has_pending_critical_resources() {
             return;
         }
+        // A viewport/device update can change percentage/auto content boxes
+        // without changing their computed styles. Remember it before flushing.
+        let device_changed = !self.pending_device_changes.is_empty();
         self.flush_pending_device_changes();
         self.resolve_stylist(current_time_for_animations);
+        let root = self.root_element();
+        let geometry_dirty =
+            device_changed || root.has_damaged_descendants() || root.damage().is_none_or(|damage| !damage.is_empty());
         // A size query is the exceptional style read which needs geometry.
         // Ordinary style reads leave construction/layout and damage untouched.
         if self.stylist.has_container_queries() {
@@ -66,7 +72,15 @@ impl BaseDocument {
                         })
                 })
             });
-            if !self.nodes.container_query_sizes.lock().unwrap().is_empty() {
+            let needs_layout = {
+                let queried = self.nodes.container_query_sizes.lock().unwrap();
+                !queried.is_empty()
+                    && (geometry_dirty || queried.values().any(|entry| !entry.axes.width && !entry.axes.height))
+            };
+            // New registrations need their first content-box sample. Known
+            // hidden containers have enabled axes with None sizes, so clean
+            // reads of them must not keep requesting layout.
+            if needs_layout {
                 self.resolve(current_time_for_animations);
             }
         } else {

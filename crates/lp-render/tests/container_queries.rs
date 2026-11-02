@@ -208,3 +208,63 @@ fn style_queries_on_normal_containers_preserve_style_only_no_layout() {
     doc.resolve(0.0);
     assert_eq!(size(&doc, "#target"), (120.0, 30.0));
 }
+
+#[test]
+fn clean_container_query_style_reads_reuse_layout_until_geometry_dependencies_change() {
+    let mut doc = HtmlDocument::from_html(SOURCE, DocumentConfig::default());
+    doc.viewport_mut().window_size = (800, 600);
+    doc.resolve(0.0);
+    let generation = doc.tree().geometry_generation();
+    let layout_phase = lp_render::blitz_phases()[4];
+    for _ in 0..3 {
+        doc.resolve_style(0.0);
+    }
+    assert_eq!(
+        (doc.tree().geometry_generation(), lp_render::blitz_phases()[4]),
+        (generation, layout_phase),
+        "clean style reads must reuse geometry without running layout",
+    );
+    assert_eq!(size(&doc, "#target"), (80.0, 20.0));
+
+    let outer = doc.query_selector("#outer").unwrap().unwrap();
+    doc.set_style_property(outer, "width", "180px");
+    doc.resolve_style(0.0);
+    assert_eq!(size(&doc, "#target"), (10.0, 20.0));
+    doc.viewport_mut().window_size = (500, 600);
+    doc.resolve_style(0.0);
+    assert_eq!(size(&doc, "#responsiveTarget"), (5.0, 5.0));
+
+    doc.set_style_property(outer, "display", "none");
+    doc.resolve_style(0.0);
+    let hidden_clean = (doc.tree().geometry_generation(), lp_render::blitz_phases()[4]);
+    for _ in 0..3 {
+        doc.resolve_style(0.0);
+    }
+    assert_eq!((doc.tree().geometry_generation(), lp_render::blitz_phases()[4]), hidden_clean);
+    doc.set_style_property(outer, "display", "block");
+    doc.resolve_style(0.0);
+    assert_eq!(size(&doc, "#target"), (10.0, 20.0));
+
+    // A newly added query can need its first size sample even when its rule
+    // leaves computed styles unchanged until that sample becomes available.
+    let mut added = HtmlDocument::from_html(
+        "<!doctype html><style>#c{container-type:inline-size;width:100%}#target{width:10px;height:20px}</style><div id=c><div id=target></div></div>",
+        DocumentConfig::default(),
+    );
+    added.viewport_mut().window_size = (800, 600);
+    added.resolve(0.0);
+    let sheet_node = added.query_selector("style").unwrap().unwrap();
+    let sheet = added.make_stylesheet(
+        "#c{container-type:inline-size;width:100%}#target{width:10px;height:20px}@container(width>600px){#target{width:80px}}",
+        style::stylesheets::Origin::Author,
+    );
+    added.add_stylesheet_for_node(sheet, sheet_node);
+    added.resolve_style(0.0);
+    assert_eq!(size(&added, "#target"), (80.0, 20.0));
+    // Percentage widths can change layout without changing computed style.
+    added.viewport_mut().window_size = (500, 600);
+    // Device inspection must not consume the pending geometry invalidation.
+    let _ = added.stylist_device().media_type();
+    added.resolve_style(0.0);
+    assert_eq!(size(&added, "#target"), (10.0, 20.0));
+}
