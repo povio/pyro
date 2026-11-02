@@ -665,6 +665,18 @@ impl PageDom {
         self.resizes.pending_work()
     }
 
+    /// Request a current gather for input actionability without bypassing
+    /// the observer callback task or changing ordinary background pacing.
+    pub fn request_resize_observer_update_for_input(&self) {
+        crate::resize_observer::request_update_for_input(self);
+    }
+
+    /// Failure-only input diagnostics: observers present, callback queued,
+    /// paced gather queued, and time until its pacing deadline.
+    pub fn resize_observer_work_state(&self) -> (bool, bool, bool, Option<std::time::Duration>) {
+        self.resizes.pending_work_state()
+    }
+
     /// Wrappers of active ResizeObservers kept alive (diagnostics/tests).
     pub fn resize_observer_pins(&self) -> usize {
         self.resizes.pins.borrow().len()

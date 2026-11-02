@@ -796,7 +796,16 @@ impl LayoutPartialTree for LayoutPassState<'_> {
     }
 
     fn set_unrounded_layout(&mut self, node_id: NodeId, layout: &Layout) {
-        *self.node_from_id_mut(node_id).unrounded_layout_mut() = *layout;
+        let node = self.node_from_id_mut(node_id);
+        if node.unrounded_layout() != layout {
+            *node.unrounded_layout_mut() = *layout;
+            // A parent's resize can relayout an otherwise style-clean child.
+            // Its cached scrollable overflow (and its ancestors' contribution)
+            // is no longer valid. Mark only the existing damage traversal flags:
+            // no restyle/reconstruction damage is introduced, and unchanged
+            // layouts continue to reuse their cached overflow.
+            node.mark_damaged();
+        }
     }
 
     fn resolve_calc_value(&self, calc_ptr: *const (), parent_size: f32) -> f32 {

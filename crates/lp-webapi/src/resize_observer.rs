@@ -44,17 +44,35 @@ pub(crate) struct BindingState {
     pub(crate) pins: RefCell<FxHashMap<u64, Persistent>>,
     stamp: Cell<Option<Stamp>>,
     queued: Cell<bool>,
-    /// Flow layout pacing: when the next gather may run, and whether a
-    /// delayed wake for it is pending.
+    /// Flow layout pacing: when the next gather may run, and the identity
+    /// of the delayed wake that may perform it.
     next_gather: Cell<Option<Instant>>,
-    wake_queued: Cell<bool>,
+    wake_queued: RefCell<Option<Rc<()>>>,
 }
 impl BindingState {
     pub(crate) fn has_observers(&self) -> bool {
         !self.observers.borrow().is_empty()
     }
     pub(crate) fn pending_work(&self) -> bool {
-        self.has_observers() && (self.queued.get() || self.wake_queued.get())
+        self.has_observers() && (self.queued.get() || self.wake_queued.borrow().is_some())
+    }
+    pub(crate) fn pending_work_state(&self) -> (bool, bool, bool, Option<Duration>) {
+        (
+            self.has_observers(),
+            self.queued.get(),
+            self.wake_queued.borrow().is_some(),
+            self.next_gather.get().map(|next| next.saturating_duration_since(Instant::now())),
+        )
+    }
+
+    fn take_wake(&self, token: &Rc<()>) -> bool {
+        let mut pending = self.wake_queued.borrow_mut();
+        if pending.as_ref().is_some_and(|current| Rc::ptr_eq(current, token)) {
+            pending.take();
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -322,6 +340,22 @@ fn entries<'s>(s: &Scope<'s>, page: &Rc<PageDom>, records: Vec<Pending>) -> JsRe
     Ok(s.array(&values.iter(s).collect::<Vec<_>>())?.value())
 }
 
+/// Input needs the current rendering update before pressing. Expedite a
+/// dirty gather, but leave already queued callback delivery to its own task.
+pub(crate) fn request_update_for_input(page: &PageDom) {
+    if page.is_disposed() || !page.resizes.has_observers() {
+        return;
+    }
+    let stamp = (page.document(), page.layout.borrow().observation_stamp(&page.dom.borrow()));
+    if page.resizes.stamp.get() == Some(stamp) && page.resizes.wake_queued.borrow().is_none() {
+        return;
+    }
+    // A stale delayed closure still exists, but cannot consume a later wake.
+    page.resizes.wake_queued.borrow_mut().take();
+    page.resizes.next_gather.set(None);
+    after_task(page);
+}
+
 /// Checkpoint from `PageDom::after_task`.
 pub(crate) fn after_task(page: &PageDom) {
     if page.is_disposed() {
@@ -336,20 +370,22 @@ pub(crate) fn after_task(page: &PageDom) {
         // once more so the final size is still delivered.
         let now = Instant::now();
         if let Some(next) = page.resizes.next_gather.get().filter(|&n| n > now) {
-            if !page.resizes.wake_queued.replace(true) {
+            let needs_wake = page.resizes.wake_queued.borrow().is_none();
+            if needs_wake {
                 if let Some(hooks) = page.hooks() {
+                    let token = Rc::new(());
+                    *page.resizes.wake_queued.borrow_mut() = Some(token.clone());
                     let weak = Rc::downgrade(&owner);
                     hooks.post_delayed_task(
                         next - now,
                         Box::new(move || {
                             if let Some(page) = weak.upgrade() {
-                                page.resizes.wake_queued.set(false);
-                                after_task(&page);
+                                if page.resizes.take_wake(&token) {
+                                    after_task(&page);
+                                }
                             }
                         }),
                     );
-                } else {
-                    page.resizes.wake_queued.set(false);
                 }
             }
             return;
@@ -454,4 +490,31 @@ pub(crate) fn register(engine: &lp_js::Engine) {
     engine.register::<ResizeObserver>();
     engine.register::<ResizeObserverEntry>();
     engine.register::<ResizeObserverSize>();
+}
+
+#[cfg(test)]
+mod input_priority_wake_tests {
+    use super::BindingState;
+    use std::rc::Rc;
+
+    #[test]
+    fn stale_paced_wake_cannot_consume_a_reentrant_replacement() {
+        let state = BindingState::default();
+        let old = Rc::new(());
+        *state.wake_queued.borrow_mut() = Some(old.clone());
+        // Input expedites this gather; its delayed closure still exists.
+        state.wake_queued.borrow_mut().take();
+        let replacement = Rc::new(());
+        *state.wake_queued.borrow_mut() = Some(replacement.clone());
+        assert!(!state.take_wake(&old));
+        assert!(state.wake_queued.borrow().as_ref().is_some_and(|token| Rc::ptr_eq(token, &replacement)));
+        assert!(state.take_wake(&replacement));
+        // Completing a wake can reenter gathering and queue another one.
+        let reentrant = Rc::new(());
+        *state.wake_queued.borrow_mut() = Some(reentrant.clone());
+        assert!(!state.take_wake(&old));
+        assert!(!state.take_wake(&replacement));
+        assert!(state.take_wake(&reentrant));
+        assert!(state.wake_queued.borrow().is_none());
+    }
 }

@@ -727,6 +727,7 @@ impl Sequence {
             && matches!(self.events.front(), Some(Input::Mouse { kind: MouseKind::Pressed, at: At::Element, .. }))
             && page.pending_resize_observer_work()
         {
+            page.request_resize_observer_update_for_input();
             return Ok(None);
         }
         if matches!(self.events.front(), Some(Input::Mouse { kind: MouseKind::Pressed, at: At::Element, .. }))
@@ -827,6 +828,20 @@ impl Sequence {
         let realm = self.page.main_world_realm().ok_or("page has no realm")?;
         stability.frame = Some(lp_browser::request_native_frame(&realm).map_err(|error| error.to_string())?);
         Ok(false)
+    }
+
+    fn wait_diagnostics(&self) -> String {
+        let press_next = matches!(self.events.front(), Some(Input::Mouse { kind: MouseKind::Pressed, .. }));
+        let stability = self
+            .stability
+            .as_ref()
+            .map(|state| (state.ready, state.frame.as_ref().map(|frame| frame.get()), state.previous));
+        let (observers, queued, wake, next) = self.page.resize_observer_work_state();
+        format!(
+            "press_next={press_next}, resize_pending={}, resize_observers={observers}, resize_callback_queued={queued}, resize_wake_queued={wake}, resize_next_gather_ms={:?}, stability(ready,frame_done,previous)={stability:?}",
+            self.page.pending_resize_observer_work(),
+            next.map(|delay| delay.as_secs_f64() * 1000.0),
+        )
     }
 
     fn native_drag(&self) -> bool {
@@ -3737,7 +3752,12 @@ impl EngineHost {
                         continue;
                     };
                     let advanced = if now >= w.step_deadline {
-                        Err("input action did not become ready before its deadline".into())
+                        let reason = "input action did not become ready before its deadline";
+                        Err(if std::env::var_os("LP_POINTER_WAIT_DIAGNOSTICS").is_some() {
+                            format!("{reason}: {}", seq.wait_diagnostics())
+                        } else {
+                            reason.into()
+                        })
                     } else {
                         seq.advance()
                     };

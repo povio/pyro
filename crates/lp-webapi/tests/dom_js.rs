@@ -5691,3 +5691,179 @@ fn unhandled_rejection_formats_reason_only_after_uncanceled_dispatch() {
     eval(&e.main, "Promise.reject(reason);null;");
     assert_eq!(eval(&e.main, "seen.join()+'|'+reads"), "0,0,1|1", "no default reporter means no reason conversion");
 }
+
+#[test]
+fn scroll_into_view_if_needed_matches_chromium_boolean_alignment() {
+    // Oracle: standards-mode Chrome at400x300. True/default centers only a
+    // wholly hidden axis; false uses the nearest edge. Visible axes stay put.
+    for (argument, center) in [
+        ("", true),
+        ("true", true),
+        ("undefined", true),
+        ("false", false),
+        ("0", false),
+        ("null", false),
+        ("''", false),
+        ("'false'", true),
+        ("({valueOf(){throw new Error('must not coerce an object')}})", true),
+    ] {
+        let e = env("<!doctype html><style>html{overflow:hidden}body{margin:0;width:2000px;height:2000px}#target{position:absolute;left:100px;top:500px;width:20px;height:20px}</style><div id=target>target</div>");
+        let mut viewport = e.page.viewport();
+        viewport.width = 400;
+        viewport.height = 300;
+        e.page.set_viewport(viewport);
+        for (initial_y, height, centered_y, nearest_y) in [
+            (400, 20, 400, 400),
+            (210, 20, 220, 220),
+            (0, 20, 360, 220),
+            (510, 20, 500, 500),
+            (900, 20, 360, 500),
+            (600, 500, 600, 600),
+        ] {
+            let expected = if center { centered_y } else { nearest_y };
+            assert_eq!(
+                eval(&e.main, &format!("(()=>{{const t=document.getElementById('target');t.style.left='100px';t.style.height='{height}px';window.scrollTo(0,{initial_y});t.scrollIntoViewIfNeeded({argument});return JSON.stringify([scrollX,scrollY])}})()")),
+                format!("[0,{expected}]"),
+                "argument={argument}, initial_y={initial_y}, height={height}"
+            );
+        }
+        assert_eq!(
+            eval(&e.main, &format!("(()=>{{const t=document.getElementById('target');t.style.left='500px';t.style.height='20px';window.scrollTo(0,400);t.scrollIntoViewIfNeeded({argument});return JSON.stringify([scrollX,scrollY])}})()")),
+            if center { "[310,400]" } else { "[120,400]" },
+            "horizontal alignment must preserve the already visible vertical axis: {argument}"
+        );
+        e.page.dispose();
+    }
+}
+
+#[test]
+fn scroll_into_view_if_needed_handles_nested_overflow_and_border_origins() {
+    for (overflow, border, padding, left, top, centered, nearest) in [
+        ("auto", 0, 0, 200, 200, [150, 160], [100, 120]),
+        ("hidden", 0, 0, 200, 200, [150, 160], [100, 120]),
+        ("clip", 0, 0, 200, 200, [0, 0], [0, 0]),
+        ("visible", 0, 0, 200, 200, [0, 0], [0, 0]),
+        ("auto", 0, 0, 105, 90, [5, 10], [5, 10]),
+        ("auto", 0, 0, 40, 40, [0, 0], [0, 0]),
+        ("auto", 10, 8, 200, 200, [150, 160], [92, 112]),
+    ] {
+        let e = env(&format!("<!doctype html><style>html{{overflow:hidden}}body{{margin:0;width:2000px;height:2000px}}#sc{{position:absolute;left:20px;top:20px;width:120px;height:100px;border:{border}px solid;padding:{padding}px;overflow:{overflow}}}#inner{{position:relative;width:500px;height:500px}}#target{{position:absolute;left:{left}px;top:{top}px;width:20px;height:20px}}</style><div id=sc><div id=inner><div id=target>target</div></div></div>"));
+        let mut viewport = e.page.viewport();
+        viewport.width = 400;
+        viewport.height = 300;
+        e.page.set_viewport(viewport);
+        for (argument, center) in [("", true), ("true", true), ("false", false)] {
+            let [x, y] = if center { centered } else { nearest };
+            assert_eq!(
+                eval(&e.main, &format!("(()=>{{const sc=document.getElementById('sc');sc.scrollTo(0,0);window.scrollTo(0,0);document.getElementById('target').scrollIntoViewIfNeeded({argument});return JSON.stringify([sc.scrollLeft,sc.scrollTop,scrollX,scrollY])}})()")),
+                format!("[{x},{y},0,0]"),
+                "overflow={overflow}, border={border}, padding={padding}, argument={argument}"
+            );
+        }
+        e.page.dispose();
+    }
+}
+
+#[test]
+fn scroll_into_view_if_needed_queues_only_actual_moves_and_preserves_default_scroll() {
+    let e = env("<!doctype html><style>html{overflow:hidden}body{margin:0;height:2000px}#target{position:absolute;left:100px;top:100px;width:20px;height:20px}</style><div id=target>target</div>");
+    let mut viewport = e.page.viewport();
+    viewport.width = 400;
+    viewport.height = 300;
+    e.page.set_viewport(viewport);
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    eval(&e.main, "window.seen=[];for(const type of ['scroll','scrollend'])document.addEventListener(type,event=>{if(event.target===document)seen.push(type)})");
+    assert_eq!(
+        eval(
+            &e.main,
+            "document.getElementById('target').scrollIntoViewIfNeeded();JSON.stringify([scrollY,seen.length])"
+        ),
+        "[0,0]"
+    );
+    assert!(tasks.0.borrow().is_empty(), "an already visible target must queue no scroll event");
+    assert_eq!(eval(&e.main, "document.getElementById('target').style.top='500px';document.getElementById('target').scrollIntoViewIfNeeded(false);JSON.stringify([scrollY,seen.length])"), "[220,0]");
+    tasks.drain();
+    assert_eq!(eval(&e.main, "seen.join(',')"), "scroll,scrollend");
+    assert_eq!(eval(&e.main, "seen.length=0;document.getElementById('target').scrollIntoViewIfNeeded();JSON.stringify([scrollY,seen.length])"), "[220,0]");
+    assert!(tasks.0.borrow().is_empty(), "true must not recenter an already visible target");
+    eval(&e.main, "window.scrollTo(0,0)");
+    tasks.drain();
+    assert_eq!(
+        eval(
+            &e.main,
+            "seen.length=0;document.getElementById('target').scrollIntoView();JSON.stringify([scrollY,seen.length])"
+        ),
+        "[500,0]",
+        "the separate default-start API keeps its existing behavior"
+    );
+    tasks.drain();
+    assert_eq!(eval(&e.main, "seen.join(',')"), "scroll,scrollend");
+    e.page.dispose();
+}
+
+#[test]
+fn resize_observer_input_update_preserves_queued_and_reentrant_callbacks() {
+    #[derive(Default)]
+    struct Tasks {
+        ready: RefCell<std::collections::VecDeque<Box<dyn FnOnce()>>>,
+        delayed: RefCell<Vec<Box<dyn FnOnce()>>>,
+    }
+    impl PageHooks for Tasks {
+        fn navigate(&self, _: NavigationRequest) {}
+        fn post_task(&self, task: Box<dyn FnOnce()>) {
+            self.ready.borrow_mut().push_back(task);
+        }
+        fn post_delayed_task(&self, _: std::time::Duration, task: Box<dyn FnOnce()>) {
+            self.delayed.borrow_mut().push(task);
+        }
+    }
+    impl Tasks {
+        fn drain_ready(&self) {
+            for _ in 0..20 {
+                let task = self.ready.borrow_mut().pop_front();
+                let Some(task) = task else { return };
+                task();
+            }
+            panic!("resize callback queue did not settle");
+        }
+    }
+    let e = env("<div id=target style='width:10px;height:10px'></div>");
+    let tasks = Rc::new(Tasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    eval(&e.main, "window.seen=[];window.target=document.getElementById('target');window.ro=new ResizeObserver(entries=>{for(const entry of entries){seen.push(entry.contentRect.width);if(entry.contentRect.width===20)target.style.width='30px'}});ro.observe(target)");
+    e.page.after_task();
+    assert!(e.page.pending_resize_observer_work());
+    e.page.request_resize_observer_update_for_input();
+    assert_eq!(eval(&e.main, "seen.join()"), "", "input must not deliver a queued callback inline");
+    tasks.drain_ready();
+    assert_eq!(eval(&e.main, "seen.join()"), "10");
+
+    eval(&e.main, "target.style.width='20px'");
+    e.page.after_task();
+    let old_wakes = tasks.delayed.take();
+    e.page.request_resize_observer_update_for_input();
+    assert!(e.page.pending_resize_observer_work(), "the real changed-size callback is still pending");
+    assert_eq!(eval(&e.main, "seen.join()"), "10");
+    tasks.drain_ready();
+    assert_eq!(eval(&e.main, "seen.join()"), "10,20");
+    assert_eq!(eval(&e.main, "target.style.width"), "30px", "the callback changed the observation again");
+
+    e.page.after_task();
+    let before = e.page.resize_observer_work_state();
+    for old in old_wakes {
+        old();
+    }
+    let after = e.page.resize_observer_work_state();
+    assert_eq!((after.1, after.2), (before.1, before.2), "obsolete wakes cannot consume newer pending work");
+    e.page.request_resize_observer_update_for_input();
+    assert!(e.page.pending_resize_observer_work());
+    assert_eq!(eval(&e.main, "seen.join()"), "10,20", "reentrant changes also retain asynchronous delivery");
+    tasks.drain_ready();
+    assert_eq!(eval(&e.main, "seen.join()"), "10,20,30");
+    assert!(!e.page.pending_resize_observer_work());
+    e.page.request_resize_observer_update_for_input();
+    tasks.drain_ready();
+    assert_eq!(eval(&e.main, "seen.join()"), "10,20,30", "a clean input checkpoint must not duplicate delivery");
+    e.page.dispose();
+}
