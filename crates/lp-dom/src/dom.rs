@@ -16,15 +16,6 @@ struct Slot {
     node: Option<Node>,
 }
 
-/// The old values of an element's attributes that selectors may read and
-/// that changed since the style cascade last read styles (`None`: it was
-/// absent), first change only; with the element's generation.
-#[derive(Default)]
-pub(crate) struct AttrChanges {
-    pub(crate) gen: u32,
-    pub(crate) old: Vec<(QualName, Option<Box<str>>)>,
-}
-
 /// Style invalidation's view of attribute writes (see `note_style_attr`).
 #[derive(Default)]
 pub(crate) struct StyleSnapshots {
@@ -238,10 +229,6 @@ impl Dom {
     pub(crate) fn generation_at(&self, idx: u32) -> u32 {
         self.slots.get(idx as usize).map_or(0, |s| s.gen)
     }
-    /// Number of node slots (live or free).
-    pub(crate) fn slot_len(&self) -> usize {
-        self.slots.len()
-    }
     pub(crate) fn slot_live(&self, idx: u32) -> bool {
         self.slots.get(idx as usize).is_some_and(|s| s.node.is_some())
     }
@@ -293,33 +280,6 @@ impl Dom {
     pub fn tree_version(&self) -> u64 {
         self.tree_version
     }
-    /// Starts keeping attribute snapshots (style invalidation) and returns
-    /// those of document `doc` (index) taken since the last call; other
-    /// documents' stay for their cascades, dead elements' go.
-    pub(crate) fn take_style_snapshots(&self, doc: u32) -> Option<rustc_hash::FxHashMap<u32, AttrChanges>> {
-        let mut all = self.style_snapshots.borrow_mut();
-        let state = all.get_or_insert_with(Default::default);
-        if std::mem::take(&mut state.overflowed) {
-            state.log.clear();
-            return None;
-        }
-        let mut mine: rustc_hash::FxHashMap<u32, AttrChanges> = rustc_hash::FxHashMap::default();
-        state.log.retain_mut(|(i, gen, name, old)| {
-            let (i, gen) = (*i, *gen);
-            if !self.slot_live(i) || self.generation_at(i) != gen {
-                return false;
-            }
-            if self.root_idx(i) != doc {
-                return true;
-            }
-            let entry = mine.entry(i).or_insert_with(|| AttrChanges { gen, old: Vec::new() });
-            if !entry.old.iter().any(|(n, _)| n == name) {
-                entry.old.push((name.clone(), old.take()));
-            }
-            false
-        });
-        Some(mine)
-    }
 
     /// Elements with recorded attribute snapshots (tests).
     #[doc(hidden)]
@@ -330,12 +290,6 @@ impl Dom {
             elements.dedup();
             elements.len()
         })
-    }
-
-    /// Attribute names some selector of a cascade over this DOM tests.
-    pub(crate) fn add_style_attr_names(&self, names: impl IntoIterator<Item = markup5ever::LocalName>) {
-        let mut all = self.style_snapshots.borrow_mut();
-        all.get_or_insert_with(Default::default).names.extend(names);
     }
 
     /// Records attribute `name`'s value before a write (`None`: absent)

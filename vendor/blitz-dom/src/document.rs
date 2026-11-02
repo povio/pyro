@@ -442,6 +442,17 @@ impl BaseDocument {
         #[cfg(feature = "writing-mode")]
         style_config::set_pref!("layout.writing-mode.enabled", true);
         style_config::set_pref!("layout.threads", -1);
+        // lightningpanda: the features lp-dom's cascade enables. Prefs are
+        // process-wide and read while parsing, so without these a sheet
+        // parsed here before lp-dom's first cascade dropped such rules.
+        style_config::set_pref!("layout.container-queries.enabled", true);
+        style_config::set_pref!("layout.css.nth-child-of.enabled", true);
+        style_config::set_pref!("layout.css.starting-style-at-rules.enabled", true);
+        style_config::set_pref!("layout.css.at-scope.enabled", true);
+        style_config::set_pref!("layout.css.style-queries.enabled", true);
+        style_config::set_pref!("layout.css.line-clamp.enabled", true);
+        style_config::set_pref!("layout.css.fit-content-function.enabled", true);
+        style_config::set_pref!("layout.css.supports.at-rule.enabled", true);
 
         let viewport = config.viewport.unwrap_or_default();
         let media_type = config.media_type.unwrap_or_else(MediaType::screen);
@@ -449,7 +460,9 @@ impl BaseDocument {
         let stylist = Stylist::new(device, QuirksMode::NoQuirks);
         let snapshots = SnapshotMap::new();
         let nodes = Box::new(NodeTree::new());
-        let guard = SharedRwLock::new();
+        // lightningpanda: one lock for the thread's documents, so a parsed
+        // sheet can serve them all (`make_stylesheet`).
+        let guard = crate::util::thread_style_lock();
         let nodes_to_id = HashMap::new();
 
         let base_url = config
@@ -1101,13 +1114,10 @@ impl BaseDocument {
         node
     }
 
-    pub(crate) fn resolve_url(&self, raw: &str) -> url::Url {
-        self.url.resolve_relative(raw).unwrap_or_else(|| {
-            panic!(
-                "to be able to resolve {raw} with the base_url: {:?}",
-                *self.url
-            )
-        })
+    /// `raw` against the document's URL; `None` when it cannot be resolved
+    /// (a relative URL under a `data:` document): nothing is fetched.
+    pub(crate) fn resolve_url(&self, raw: &str) -> Option<url::Url> {
+        self.url.resolve_relative(raw)
     }
 
     pub fn print_tree(&self) {
@@ -1129,7 +1139,9 @@ impl BaseDocument {
                 if let Some(href) = element.attr(local_name!("href")) {
                     // println!("Node {node_id} {href} {href_to_reload} {} {}", resolved_href.as_str(), resolved_href.as_str() == url_to_reload);
                     if href == href_to_reload {
-                        let resolved_href = self.resolve_url(href);
+                        let Some(resolved_href) = self.resolve_url(href) else {
+                            continue;
+                        };
                         self.net_provider.fetch(
                             self.id(),
                             self.build_request(resolved_href.clone()),
@@ -1192,6 +1204,26 @@ impl BaseDocument {
     }
 
     pub fn make_stylesheet(&self, css: impl AsRef<str>, origin: Origin) -> DocumentStyleSheet {
+        // lightningpanda: an author sheet without `@import` (whose loads are
+        // the document's) parses once per thread for its text and base URL:
+        // every document of a test suite or a PDF template carries the same
+        // bundle. Sheets are immutable here (lightningpanda's CSSOM edits
+        // the text and syncs it, not Blitz's rules).
+        let css = css.as_ref();
+        let shared = origin == Origin::Author && !css.contains("@import");
+        if shared {
+            if let Some(sheet) = crate::util::shared_sheet(css, self.url.as_str()) {
+                return sheet;
+            }
+        }
+        let sheet = self.parse_stylesheet(css, origin);
+        if shared {
+            crate::util::share_sheet(css, self.url.as_str(), &sheet);
+        }
+        sheet
+    }
+
+    fn parse_stylesheet(&self, css: &str, origin: Origin) -> DocumentStyleSheet {
         let data = Stylesheet::from_str(
             css.as_ref(),
             self.url.url_extra_data(),
@@ -1356,7 +1388,7 @@ impl BaseDocument {
                 self.apply_iframe_html(node_id, res.request_id, res.resolved_url, &html);
             }
             Resource::Font(bytes, overrides) => {
-                let font = Blob::new(Arc::new(bytes));
+                let font = crate::util::intern_font_blob(bytes);
 
                 // Build a `FontInfoOverride` from the `@font-face` descriptors
                 // captured during stylesheet parsing. Without this, parley

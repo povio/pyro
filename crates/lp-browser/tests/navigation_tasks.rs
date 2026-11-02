@@ -17,7 +17,7 @@ fn assert_blank(t: &BrowserThread, page: PageId) {
 
 #[test]
 fn old_fragment_notification_does_not_change_replacement_frame_url() {
-    let mut t = BrowserThread::new().unwrap();
+    let mut t = crate::browser_thread().unwrap();
     let page = t.browser.create_page().unwrap();
     eval(&t, page, "location.hash='stale'");
     t.browser.navigate(page, NavigateOpts::address_bar("about:blank")).unwrap();
@@ -28,7 +28,7 @@ fn old_fragment_notification_does_not_change_replacement_frame_url() {
 #[test]
 fn old_script_navigation_and_reload_are_cancelled_before_starting_transport() {
     for script in ["location.href='http://stale.test/'", "location.reload()"] {
-        let mut t = BrowserThread::new().unwrap();
+        let mut t = crate::browser_thread().unwrap();
         let page = t.browser.create_page().unwrap();
         let loader = Rc::new(StaticLoader::default());
         loader.insert("http://stale.test/", "text/html", "<p>stale</p>", Duration::ZERO);
@@ -45,7 +45,7 @@ fn old_script_navigation_and_reload_are_cancelled_before_starting_transport() {
 
 #[test]
 fn old_history_traversal_does_not_move_replacement_document_or_index() {
-    let mut t = BrowserThread::new().unwrap();
+    let mut t = crate::browser_thread().unwrap();
     let page = t.browser.create_page().unwrap();
     eval(&t, page, "location.hash='one';location.hash='two'");
     settle(&mut t);
@@ -59,7 +59,7 @@ fn old_history_traversal_does_not_move_replacement_document_or_index() {
 
 #[test]
 fn enormous_history_delta_is_ignored_without_overflow() {
-    let mut t = BrowserThread::new().unwrap();
+    let mut t = crate::browser_thread().unwrap();
     let page = t.browser.create_page().unwrap();
     eval(&t, page, "history.pushState({x:1},'')");
     assert_eq!(eval(&t, page, "history.go(Number.MAX_VALUE);history.go(-Number.MAX_VALUE);'ok'"), "ok");
@@ -70,7 +70,7 @@ fn enormous_history_delta_is_ignored_without_overflow() {
 
 #[test]
 fn queued_traversal_does_not_apply_a_forward_entry_replaced_by_push_state() {
-    let mut t = BrowserThread::new().unwrap();
+    let mut t = crate::browser_thread().unwrap();
     let page = t.browser.create_page().unwrap();
     eval(&t, page, "location.hash='one';location.hash='two'");
     settle(&mut t);

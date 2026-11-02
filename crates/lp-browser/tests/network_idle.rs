@@ -131,7 +131,7 @@ impl Events {
 
 fn setup() -> (Server, BrowserThread, Rc<Events>, PageId) {
     let server = Server::new();
-    let mut thread = BrowserThread::new().unwrap();
+    let mut thread = crate::browser_thread().unwrap();
     thread.enable_network(Default::default()).unwrap();
     let events = Rc::new(Events::default());
     thread.browser.set_observer(Some(events.clone()));

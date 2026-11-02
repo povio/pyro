@@ -610,7 +610,7 @@ fn delta_sequences(
             done.push(mutate(&page, &mut rng));
             total += 1;
             let delta = page.dom.borrow().render_delta(page.doc, since, &Page::opts());
-            if delta.is_some_and(|d| r.sync_delta(1, &delta_ops(d), (640, 480, 1.0, false)).is_ok()) {
+            if delta.is_some_and(|d| r.sync_delta(1, &delta_ops(d), (640, 480, 1.0, false), false).is_ok()) {
                 applied += 1;
             } else {
                 r.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
@@ -712,7 +712,7 @@ fn a_new_container_filled_in_one_delta_syncs_as_a_delta() {
         let since = page.dom.borrow().version();
         step(&page);
         let delta = page.dom.borrow().render_delta(page.doc, since, &Page::opts()).expect("a delta");
-        r.sync_delta(1, &delta_ops(delta), (640, 480, 1.0, false)).unwrap_or_else(|e| panic!("step {i}: {e:?}"));
+        r.sync_delta(1, &delta_ops(delta), (640, 480, 1.0, false), false).unwrap_or_else(|e| panic!("step {i}: {e:?}"));
         w.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
         assert_eq!(r.mirrored_html(1), w.mirrored_html(1), "markup after step {i}");
         assert_eq!(boxes(&r, &page), boxes(&w, &page), "boxes after step {i}");
@@ -756,7 +756,7 @@ fn a_style_edit_after_a_new_container_syncs_as_deltas() {
         let since = page.dom.borrow().version();
         step(&page);
         let delta = page.dom.borrow().render_delta(page.doc, since, &Page::opts()).expect("a delta");
-        r.sync_delta(1, &delta_ops(delta), (640, 480, 1.0, false)).unwrap_or_else(|e| panic!("step {i}: {e:?}"));
+        r.sync_delta(1, &delta_ops(delta), (640, 480, 1.0, false), false).unwrap_or_else(|e| panic!("step {i}: {e:?}"));
         w.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
         assert_eq!(r.mirrored_html(1), w.mirrored_html(1), "markup after step {i}");
         assert_eq!(boxes(&r, &page), boxes(&w, &page), "boxes after step {i}");

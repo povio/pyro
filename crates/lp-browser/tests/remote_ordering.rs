@@ -1,6 +1,6 @@
 //! Messages posted from other threads (CDP commands, network completions) run
 //! after the page tasks and timers that were ready before they were posted.
-use lp_browser::{Browser, BrowserThread, PageId};
+use lp_browser::{Browser, PageId};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -11,7 +11,7 @@ fn eval(b: &Browser, page: PageId, source: &str) -> String {
 
 #[test]
 fn page_work_ready_before_a_remote_message_runs_first() {
-    let mut t = BrowserThread::new().unwrap();
+    let mut t = crate::browser_thread().unwrap();
     let page = t.browser.create_page().unwrap();
     eval(
         &t.browser,

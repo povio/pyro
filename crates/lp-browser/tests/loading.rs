@@ -100,7 +100,7 @@ fn check_order(log: &[String], origin: &str) {
 
 #[test]
 fn script_ordering_with_static_loader() {
-    let mut thread = BrowserThread::new().unwrap();
+    let mut thread = crate::browser_thread().unwrap();
     let rec = Rc::new(Recorder::default());
     thread.browser.set_observer(Some(rec.clone()));
     thread.browser.set_engine_hooks(Some(rec.clone()));
@@ -125,7 +125,7 @@ fn script_ordering_with_static_loader() {
 
 #[test]
 fn network_errors_fail_navigation() {
-    let mut thread = BrowserThread::new().unwrap();
+    let mut thread = crate::browser_thread().unwrap();
     let rec = Rc::new(Recorder::default());
     thread.browser.set_observer(Some(rec.clone()));
     thread.browser.set_loader(Some(Rc::new(StaticLoader::default())));
@@ -181,7 +181,7 @@ fn serve() -> (String, std::thread::JoinHandle<()>) {
 #[test]
 fn script_ordering_over_real_http() {
     let (origin, _server) = serve();
-    let mut thread = BrowserThread::new().unwrap();
+    let mut thread = crate::browser_thread().unwrap();
     let rec = Rc::new(Recorder::default());
     thread.browser.set_observer(Some(rec.clone()));
     thread.browser.set_engine_hooks(Some(rec.clone()));
@@ -197,7 +197,7 @@ fn script_ordering_over_real_http() {
 
 #[test]
 fn contexts_have_isolated_network_state() {
-    let mut thread = BrowserThread::new().unwrap();
+    let mut thread = crate::browser_thread().unwrap();
     thread.enable_network(lp_net::NetConfig::default()).unwrap();
     let b = &mut thread.browser;
     let c1 = b.create_context().unwrap();
@@ -241,7 +241,7 @@ impl EngineHooks for NavRecorder {
 }
 
 fn nav_setup() -> (BrowserThread, Rc<NavRecorder>, PageId) {
-    let mut thread = BrowserThread::new().unwrap();
+    let mut thread = crate::browser_thread().unwrap();
     let rec = Rc::new(NavRecorder::default());
     thread.browser.set_observer(Some(rec.clone()));
     thread.browser.set_engine_hooks(Some(rec.clone()));

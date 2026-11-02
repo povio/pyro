@@ -256,7 +256,7 @@ pub(crate) struct GlyphCache {
 }
 
 impl GlyphCache {
-    const MAX_ENTRIES: usize = 4096;
+    const MAX_ENTRIES: usize = 16384;
 
     pub(crate) fn get(&self, key: &GlyphKey<'_>) -> Option<&harfrust::GlyphBuffer> {
         self.entries

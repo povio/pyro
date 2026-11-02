@@ -21,7 +21,7 @@ fn png(width: u32, height: u32) -> Vec<u8> {
     b
 }
 fn setup(html: &str) -> (BrowserThread, PageId, Rc<StaticLoader>) {
-    let mut thread = BrowserThread::new().unwrap();
+    let mut thread = crate::browser_thread().unwrap();
     let page = thread.browser.create_page().unwrap();
     thread.browser.add_init_script(page, InitScript {
         id: "events".into(), world: None,

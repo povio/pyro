@@ -9,10 +9,12 @@ autotests = false
 [dependencies]
 lp-dom = { workspace = true }
 lp-render = { workspace = true }
+style = { package = "stylo", version = "0.22.0" }
 url = "2"
 
 [dev-dependencies]
 rustc-hash = "2"
+serde_json = "1"
 
 [[test]]
 name = "integration"

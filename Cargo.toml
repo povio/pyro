@@ -22,7 +22,7 @@ default-members = [
 ]
 
 [workspace.package]
-version = "0.0.15"
+version = "0.0.16"
 edition = "2021"
 license = "AGPL-3.0-only"
 repository = "https://github.com/povio/lightningpanda"
@@ -161,3 +161,5 @@ taffy = { path = "vendor/taffy" }
 parley_engine = { path = "vendor/parley_engine" }
 # Built layouts reused for identical text and styles; see vendor/parley/README.lightningpanda.md.
 parley = { path = "vendor/parley" }
+# Style sharing; see vendor/stylo/README.lightningpanda.md.
+stylo = { path = "vendor/stylo" }

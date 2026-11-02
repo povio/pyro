@@ -63,3 +63,28 @@ lp-render's mirror tests (incremental documents against fresh builds after rando
   40x30 input is 48x36), textareas keep `1px solid` / `2px`.
 - `src/document.rs`: `set_hover_node` puts `:hover` on a node and its ancestors (an embedder that tracks
   the pointer itself: lightningpanda mirrors lp-dom's hovered element).
+- `src/document.rs`: Stylo's prefs for `:nth-child(An+B of S)`, container and style queries,
+  `@starting-style`, `@scope`, `line-clamp`, `fit-content()` and `@supports at-rule()` are on, as in
+  lp-dom's cascade. The prefs are process-wide and read while sheets are parsed, so Blitz used to drop
+  those rules unless lp-dom's cascade had been created first.
+- `src/document.rs`, `src/mutator.rs`, `src/form.rs`: a URL that cannot be resolved against the
+  document's (`src="x"` in a `data:` document) loads nothing instead of panicking, as in browsers.
+- `src/resolve.rs`: `resolve_style` runs the style pass of `resolve` alone (messages, device changes,
+  the traversal), leaving damage, box construction and layout to the next `resolve`: lightningpanda
+  answers `getComputedStyle` from Blitz's styles without laying the document out.
+- `src/mutator.rs`: a child moved to another parent leaves its old one as `remove_node` does: the old
+  parent's `:empty` and `:has()` anchors are restyled (they were not, so `ul:empty` stayed unmatched
+  after its last child moved out).
+- `src/document.rs`, `src/util.rs`: the documents of a thread share one Stylo lock, and an author sheet
+  without `@import` is parsed once per thread for its text and base URL (`make_stylesheet`): every
+  document of a PDF template or a test suite carries the same bundle, which each new document parsed
+  again. Sheets are not edited through Blitz's CSSOM in lightningpanda (its CSSOM edits the text).
+- `src/net.rs`: decoded raster images are kept by their encoded bytes for every document of the process
+  (64 images, 64 MB of pixels): a template's logo is decoded once, not once per document.
+- `assets/default.css`, `src/layout/mod.rs`: a drop-down `<select>` is an inline-block box with a 1px
+  border and `line-height: normal`, sized from its longest option label (about half an em per character)
+  plus the arrow, a line of its font tall (Chromium's menu list). It had no box at all: its options are
+  hidden because Blitz paints the control.
+- `src/layout/mod.rs`: a text input in system-ui on macOS (SF Text) is `ceil(0.525em x size) +
+  round(0.4375em)` wide, Chromium's width there (measured at 10-16px); other fonts keep the
+  `(size / 2 + 0.4)em` approximation.

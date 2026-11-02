@@ -101,6 +101,15 @@ button {
     font-family: system-ui, sans-serif;
 }
 
+/* lightningpanda: Chromium's menu list is an atomic inline box (its options
+   are not laid out: Blitz paints the control), 1px border, line-height normal. */
+select {
+    display: inline-block;
+    box-sizing: border-box;
+    border: 1px solid #767676;
+    line-height: normal !important;
+}
+
 textarea {
     font-family: monospace;
 }

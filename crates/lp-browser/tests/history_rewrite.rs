@@ -28,7 +28,7 @@ fn check(thread: &BrowserThread, page: PageId, cases: &[(&str, &str)]) {
 
 #[test]
 fn about_blank_may_change_its_query_and_fragment_only() {
-    let mut thread = BrowserThread::new().unwrap();
+    let mut thread = crate::browser_thread().unwrap();
     let page = thread.browser.create_page().unwrap();
     check(
         &thread,
@@ -58,7 +58,7 @@ fn about_blank_may_change_its_query_and_fragment_only() {
 
 #[test]
 fn http_documents_may_change_path_query_and_fragment_within_their_origin() {
-    let mut thread = BrowserThread::new().unwrap();
+    let mut thread = crate::browser_thread().unwrap();
     let loader = Rc::new(StaticLoader::default());
     loader.insert("http://site.test/a/b?x=1#h", "text/html", "<p>a</p>", Duration::ZERO);
     thread.browser.set_loader(Some(loader));

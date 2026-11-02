@@ -36,6 +36,24 @@ use crate::{
 
 impl BaseDocument {
     /// Restyle the tree and then relayout it
+    /// Styles the document as [`Self::resolve`] does, leaving box
+    /// construction and layout (and the damage that drives them) to the
+    /// next `resolve`: style reads that need no geometry.
+    pub fn resolve_style(&mut self, current_time_for_animations: f64) {
+        if TDocument::as_node(&self.root_node())
+            .first_element_child()
+            .is_none()
+        {
+            return;
+        }
+        self.handle_messages();
+        if self.has_pending_critical_resources() {
+            return;
+        }
+        self.flush_pending_device_changes();
+        self.resolve_stylist(current_time_for_animations);
+    }
+
     pub fn resolve(&mut self, current_time_for_animations: f64) {
         if TDocument::as_node(&self.root_node())
             .first_element_child()
@@ -598,6 +616,24 @@ pub mod phase_profile {
     /// Nodes the style traversal visited on this thread so far.
     pub fn restyles() -> u64 {
         RESTYLED.with(|r| r.get())
+    }
+    std::thread_local! {
+        static STYLE_STATS: Cell<[u64; 4]> = const { Cell::new([0; 4]) };
+    }
+    /// Adds an element's Stylo statistics: styled, matched, shared (style
+    /// sharing cache hit) and reused (rule node match).
+    pub(crate) fn style_stats(delta: [u32; 4]) {
+        STYLE_STATS.with(|s| {
+            let mut v = s.get();
+            for (a, d) in v.iter_mut().zip(delta) {
+                *a += d as u64;
+            }
+            s.set(v);
+        });
+    }
+    /// Elements styled, matched, shared and reused on this thread so far.
+    pub fn style_stats_peek() -> [u64; 4] {
+        STYLE_STATS.with(|s| s.get())
     }
     /// Milliseconds per phase on this thread so far.
     pub fn peek() -> [f64; 9] {

@@ -18,7 +18,7 @@ fn storage_changes_reach_other_same_origin_documents_only() {
     // Storage: a change fires a trusted StorageEvent at every other document
     // sharing the storage area (same origin, same browser context), never at
     // the one that made it; unchanged values and absent keys fire nothing.
-    let mut t = BrowserThread::new().unwrap();
+    let mut t = crate::browser_thread().unwrap();
     let loader = Rc::new(StaticLoader::default());
     for url in ["http://app.test/a", "http://app.test/b", "http://other.test/c"] {
         loader.insert(url, "text/html", "<p>page</p>", Duration::ZERO);

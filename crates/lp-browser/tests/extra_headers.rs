@@ -137,7 +137,7 @@ fn load_and_request(thread: &mut BrowserThread, page: PageId, server: &Server, t
 
 fn setup() -> (Server, BrowserThread) {
     let server = Server::new();
-    let mut thread = BrowserThread::new().unwrap();
+    let mut thread = crate::browser_thread().unwrap();
     thread.enable_network(Default::default()).unwrap();
     (server, thread)
 }

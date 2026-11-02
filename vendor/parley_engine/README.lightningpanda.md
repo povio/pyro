@@ -23,3 +23,10 @@ which blitz-dom keeps per document, so content cloned or laid out again (paginat
 rows and paragraphs into pages) is shaped once. Bounded at 4096 runs, emptied when full. On the
 `cmr-overflow` PDF case 79% of the text shaped was identical to text shaped before; with the cache
 pagination went from about 925 to 687 ms, and the PDF is byte-identical.
+
+With `std` the glyph cache is one per thread rather than per `Shaper`, shared by every document laid
+out on the thread (as Chromium's shape caches are): its keys hold the font's blob id and the run's exact
+inputs, so it serves a document only the glyphs of the very same font data. blitz-dom interns web font
+files per thread so documents loading the same font share its blob. Bounded at 16384 runs. On the
+`cmr-overflow` PDF case, laid out once per document after a reload, pagination went from about 460 to
+388 ms per run (interleaved A/B, load average 27-75); the PDFs of the long cases are byte-identical.

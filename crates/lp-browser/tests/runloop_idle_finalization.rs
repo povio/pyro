@@ -30,7 +30,7 @@ fn eval(thread: &BrowserThread, page: PageId, script: &str) -> String {
 #[test]
 #[ignore = "shipped-runtime integration; depends on JavaScriptCore's natural GC timing"]
 fn closed_page_wrappers_are_finalized_while_the_loop_idles() {
-    let mut thread = BrowserThread::new().unwrap();
+    let mut thread = crate::browser_thread().unwrap();
     let page = thread.browser.create_page().unwrap();
     let count = eval(&thread, page, "for (let i = 0; i < 50000; i++) { const d = document.createElement('div'); d.textContent = 'n' + i; d.onclick = () => i; document.body.appendChild(d); } document.body.childElementCount");
     assert_eq!(count, "50000");

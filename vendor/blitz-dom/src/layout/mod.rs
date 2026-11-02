@@ -224,6 +224,24 @@ impl LayoutPassState<'_> {
     ) -> taffy::tree::LayoutOutput {
         let orthogonal_percent_basis = self.orthogonal_percent_basis_of(dom_node_id(node_id));
         let scale = self.doc.viewport.scale();
+        // lightningpanda: the longest option label of a drop-down select (the
+        // control's intrinsic width; its options are not laid out).
+        let select_label_chars = {
+            let n = &self.nodes[dom_node_id(node_id)];
+            n.data.downcast_element().filter(|el| el.name.local == local_name!("select")).map(|el| {
+                let listbox = el.attr(local_name!("multiple")).is_some()
+                    || el.attr(local_name!("size")).and_then(|s| s.trim().parse::<u32>().ok()).is_some_and(|s| s > 1);
+                let longest = n
+                    .children
+                    .iter()
+                    .map(|&c| &self.nodes[c])
+                    .filter(|c| c.data.downcast_element().is_some_and(|e| e.name.local == local_name!("option")))
+                    .map(|c| c.text_content().trim().chars().count())
+                    .max()
+                    .unwrap_or(0);
+                (listbox, longest)
+            })
+        };
         let node = &mut self.nodes[dom_node_id(node_id)];
 
         let font_styles = node.primary_styles().map(|style| {
@@ -239,6 +257,21 @@ impl LayoutPassState<'_> {
             (font_size, line_height)
         });
         let font_size = font_styles.map(|s| s.0);
+        // In system-ui (SF Text on macOS) Chromium's width is
+        // exactly ceil(0.525em x size) + round(0.4375em) (measured
+        // at 10-16px; SF Display from 20px measures otherwise).
+        let system_ui = cfg!(target_os = "macos")
+            && node.primary_styles().is_some_and(|s| {
+                use style::values::computed::font::{GenericFontFamily, SingleFontFamily};
+                match s.get_font().font_family.families.iter().next() {
+                    Some(SingleFontFamily::Generic(GenericFontFamily::SystemUi)) => true,
+                    Some(SingleFontFamily::FamilyName(name)) => matches!(
+                        name.name.as_ref(),
+                        "ui-sans-serif" | "-apple-system" | "BlinkMacSystemFont"
+                    ),
+                    _ => false,
+                }
+            });
         let resolved_line_height = font_styles.map(|s| s.1);
 
         match &mut node.data {
@@ -327,6 +360,24 @@ impl LayoutPassState<'_> {
                     return output;
                 }
 
+                // lightningpanda: a drop-down select is an atomic box: its
+                // longest option's label (about half an em per character)
+                // plus the arrow, and a line of the control's font tall
+                // (Chromium's menu list: `line-height` is `normal`). Without
+                // this it had no box at all (its options are hidden).
+                if let Some((false, chars)) = select_label_chars {
+                    let font_size = font_size.unwrap_or(13.333);
+                    return compute_leaf_layout(
+                        inputs,
+                        &node.layout_style(),
+                        resolve_calc_value,
+                        |_known_size, _available_space| taffy::Size {
+                            width: (chars as f32 * 0.5 * font_size + 21.0).ceil(),
+                            height: (font_size * 1.25).ceil(),
+                        },
+                    );
+                }
+
                 if *element_data.name.local == *"input" {
                     match element_data.attr(local_name!("type")) {
                         // if the input type is hidden, hide it
@@ -367,7 +418,12 @@ impl LayoutPassState<'_> {
                                 .and_then(|val| val.trim().parse::<u32>().ok())
                                 .filter(|&size| size > 0)
                                 .unwrap_or(20) as f32;
-                            let width = (size * 0.5 + 0.4) * font_size.unwrap_or(13.333);
+                            let font_size = font_size.unwrap_or(13.333);
+                            let width = if system_ui && font_size < 20.0 {
+                                (0.525 * font_size * size).ceil() + (0.4375 * font_size).round()
+                            } else {
+                                (size * 0.5 + 0.4) * font_size
+                            };
                             let line = element_data
                                 .text_input_data()
                                 .and_then(|input| input.editor.try_layout())

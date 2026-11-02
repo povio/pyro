@@ -18,7 +18,7 @@ const SNAPSHOT: &str = "[navigator.userAgent,navigator.language,navigator.platfo
 
 #[test]
 fn identity_is_live_in_all_worlds_and_precedes_navigation_init_scripts() {
-    let mut t = BrowserThread::new().unwrap();
+    let mut t = crate::browser_thread().unwrap();
     t.enable_network(lp_net::NetConfig { user_agent: "Context-UA".into(), ..Default::default() }).unwrap();
     let page = t.browser.create_page().unwrap();
     let sibling = t.browser.create_page().unwrap();
@@ -160,7 +160,7 @@ impl Drop for Server {
 #[test]
 fn request_defaults_cover_all_loader_and_binding_requests_without_sibling_bleed() {
     let server = Server::new();
-    let mut t = BrowserThread::new().unwrap();
+    let mut t = crate::browser_thread().unwrap();
     t.enable_network(lp_net::NetConfig {
         user_agent: "Context-UA".into(),
         accept_language: "en-GB".into(),

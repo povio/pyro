@@ -83,7 +83,7 @@ fn eval(browser: &lp_browser::Browser, page: PageId, source: &str) -> String {
     scope.eval(source, None, 1).unwrap_or_else(|e| panic!("{}", e.details(&scope).text())).to_string().unwrap()
 }
 fn setup() -> (BrowserThread, PageId) {
-    let mut thread = BrowserThread::new().unwrap();
+    let mut thread = crate::browser_thread().unwrap();
     thread.enable_network(Default::default()).unwrap();
     let page = thread.browser.create_page().unwrap();
     thread.browser.add_init_script(page, InitScript { id: "css-events".into(), world: None, source: "globalThis.events=[]; for (const t of ['load','error']) document.addEventListener(t,e=>{if(e.target.tagName==='LINK')events.push(e.target.id+':'+t)},true)".into() });

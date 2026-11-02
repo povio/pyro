@@ -1,7 +1,5 @@
-use lp_browser::BrowserThread;
-
 fn evaluate(source: &str) -> String {
-    let mut browser = BrowserThread::new().unwrap();
+    let mut browser = crate::browser_thread().unwrap();
     let page = browser.browser.create_page().unwrap();
     let realm = browser.browser.page(page).unwrap().main_frame.main_realm().unwrap().clone();
     let scope = realm.scope().unwrap();

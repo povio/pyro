@@ -274,3 +274,82 @@ macro_rules! qual_name {
         }
     };
 }
+
+/// lightningpanda: the font a downloaded (or `data:`) font file becomes,
+/// one per distinct file on this thread. Documents that load the same web
+/// font then register the same blob (same id), so shaping caches keyed by
+/// the font's blob id serve every document; each document still registers
+/// it in its own font collection. Bounded at 64 files.
+pub(crate) fn intern_font_blob(bytes: blitz_traits::net::Bytes) -> linebender_resource_handle::Blob<u8> {
+    use std::hash::{Hash, Hasher};
+    std::thread_local! {
+        static FONTS: std::cell::RefCell<std::collections::HashMap<u64, Vec<linebender_resource_handle::Blob<u8>>>> =
+            Default::default();
+    }
+    const MAX_FILES: usize = 64;
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut h);
+    let key = h.finish();
+    FONTS.with(|fonts| {
+        let mut fonts = fonts.borrow_mut();
+        if let Some(blob) = fonts.get(&key).and_then(|v| v.iter().find(|b| b.data() == &bytes[..])) {
+            return blob.clone();
+        }
+        if fonts.values().map(Vec::len).sum::<usize>() >= MAX_FILES {
+            fonts.clear();
+        }
+        let blob = linebender_resource_handle::Blob::new(Arc::new(bytes));
+        fonts.entry(key).or_default().push(blob.clone());
+        blob
+    })
+}
+
+thread_local! {
+    /// The Stylo lock of this thread's documents (see `thread_style_lock`).
+    static STYLE_LOCK: style::shared_lock::SharedRwLock = style::shared_lock::SharedRwLock::new();
+    /// Parsed author sheets by text hash: (text, base URL, sheet).
+    static SHEETS: std::cell::RefCell<std::collections::HashMap<u64, Vec<(std::sync::Arc<str>, String, style::stylesheets::DocumentStyleSheet)>>> =
+        Default::default();
+}
+
+/// lightningpanda: the Stylo lock every document of this thread uses, so
+/// their sheets and rules can be shared (documents of a thread never style
+/// concurrently).
+pub(crate) fn thread_style_lock() -> style::shared_lock::SharedRwLock {
+    STYLE_LOCK.with(|l| l.clone())
+}
+
+fn sheet_key(css: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::hash::DefaultHasher::new();
+    css.hash(&mut h);
+    h.finish()
+}
+
+/// lightningpanda: the sheet parsed earlier on this thread for `css` with
+/// base URL `url`, if any.
+pub(crate) fn shared_sheet(css: &str, url: &str) -> Option<style::stylesheets::DocumentStyleSheet> {
+    let key = sheet_key(css);
+    SHEETS.with(|s| {
+        s.borrow()
+            .get(&key)?
+            .iter()
+            .find(|(text, base, _)| &**text == css && base == url)
+            .map(|(_, _, sheet)| sheet.clone())
+    })
+}
+
+/// lightningpanda: keeps `sheet` (parsed from `css` with base URL `url`) for
+/// later documents; bounded at 64 sheets and 32 MB of text.
+pub(crate) fn share_sheet(css: &str, url: &str, sheet: &style::stylesheets::DocumentStyleSheet) {
+    const MAX_SHEETS: usize = 64;
+    const MAX_BYTES: usize = 32 << 20;
+    SHEETS.with(|s| {
+        let mut s = s.borrow_mut();
+        let (count, bytes) = s.values().flatten().fold((0, 0), |(n, b), (t, _, _)| (n + 1, b + t.len()));
+        if count >= MAX_SHEETS || bytes + css.len() > MAX_BYTES {
+            s.clear();
+        }
+        s.entry(sheet_key(css)).or_default().push((css.into(), url.to_owned(), sheet.clone()));
+    });
+}

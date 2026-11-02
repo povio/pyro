@@ -2429,13 +2429,12 @@ fn flow_whitespace_normal_span_wraps_inside_nowrap_cell() {
     let p = page(&html);
     // One line is the single-line span's height; each further line adds the
     // line pitch (the step from 2 to 3 lines).
-    // With Stylo the spans' `font` shorthand applies (500 18px; the legacy
-    // cascade left them at 14px), and the flow's glyph advances for that
-    // weight run wide enough that pkg's broken word takes a third line
-    // where Chromium fits two: a text-metrics gap, not a style one.
-    let stylo = p.layout.style().stylo_on();
+    // The spans' `font` shorthand applies (500 18px), and the glyph
+    // advances for that weight run wide enough that pkg's broken word takes
+    // a third line where Chromium fits two: a text-metrics gap, not a style
+    // one.
     let one = p.metrics("s-inherit")[3];
-    let pkg_lines = if stylo { 3.0 } else { 2.0 };
+    let pkg_lines = 3.0;
     let pitch = (p.metrics("s-hs")[3] - one) / 2.0;
     assert!(pitch >= one, "line pitch {pitch} vs line {one}");
     for (k, lines) in [("pkg", pkg_lines), ("hs", 3.0)] {
@@ -4490,4 +4489,79 @@ fn an_attribute_change_over_a_new_child_restyles_without_stale_geometry() {
     p.dom.append_child(parent, child).unwrap();
     p.dom.set_attribute(parent, "class", "on").unwrap();
     assert_matches_fresh(&p, "class set over a new child");
+}
+
+#[test]
+fn computed_styles_come_from_blitz_even_under_display_none() {
+    // getComputedStyle answers from the page's Blitz document; elements the
+    // traversal skips (a display: none subtree) are resolved there on
+    // demand, and follow changes like the rest.
+    let mut p = page(
+        "<!doctype html><style>#h{display:none} #h b{color:rgb(4, 4, 4)} .on #h b{color:rgb(7, 7, 7)} li{color:rgb(1, 2, 3)}</style>\
+         <body><ul id=u><li id=l>x</li></ul><div id=h><b id=b>y</b></div></body>",
+    );
+    let v = |p: &Page, id: &str, prop: &str| p.layout.computed_style_value(&p.dom, p.id(id), prop);
+    assert_eq!(v(&p, "l", "color"), "rgb(1, 2, 3)");
+    assert_eq!(v(&p, "h", "display"), "none");
+    assert_eq!(v(&p, "b", "color"), "rgb(4, 4, 4)");
+    assert_eq!(v(&p, "b", "display"), "inline");
+    let body = p.dom.body(p.doc).unwrap().unwrap();
+    p.dom.set_attribute(body, "class", "on").unwrap();
+    assert_eq!(v(&p, "b", "color"), "rgb(7, 7, 7)");
+}
+
+#[test]
+fn computed_styles_outside_a_rendered_document_are_empty() {
+    // As in Chromium: an element that is not connected reads "" for every
+    // property, including one that was connected when its declaration was
+    // taken (Chrome's getComputedStyle is live).
+    let mut p = page("<!doctype html><style>div{color:rgb(1, 2, 3)}</style><body><div id=c>x</div></body>");
+    let c = p.id("c");
+    assert_eq!(p.layout.computed_style_value(&p.dom, c, "color"), "rgb(1, 2, 3)");
+    let detached = p.dom.create_element(p.doc, "div").unwrap();
+    assert_eq!(p.layout.computed_style_value(&p.dom, detached, "display"), "");
+    let body = p.dom.body(p.doc).unwrap().unwrap();
+    p.dom.remove_child(body, c).unwrap();
+    assert_eq!(p.layout.computed_style_value(&p.dom, c, "color"), "");
+    assert_eq!(p.layout.computed_style_value(&p.dom, c, "display"), "");
+}
+
+#[test]
+fn a_drop_down_select_has_a_box_like_chromium() {
+    // Blitz hides a select's options (it paints the control itself), and the
+    // select had no box at all (0x0): hit testing and visibility missed it.
+    // Values measured in Chromium (Playwright 1.59.1).
+    let p = page(
+        "<!doctype html><body><div><select id=w style=\"width:120px\"><option>x</option></select></div>\
+         <div><select id=a><option>x</option></select></div>",
+    );
+    let w = p.metrics("w");
+    assert_eq!((w[2], w[3]), (120.0, 19.0), "explicit width, UA border, 13.333px: {w:?}");
+    let a = p.metrics("a");
+    assert!(a[2] > 20.0 && a[3] == 19.0, "intrinsic box: {a:?}");
+    let pre = page(&format!(
+        "<!doctype html>{PREFLIGHT}<body><select id=s style=\"width:120px\"><option>x</option></select></body>"
+    ));
+    let s = pre.metrics("s");
+    assert_eq!((s[2], s[3]), (120.0, 20.0), "under Tailwind's preflight: {s:?}");
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn text_inputs_in_system_ui_are_as_wide_as_in_chromium() {
+    // Chromium (macOS, SF Text) sizes a text input in system-ui at
+    // ceil(0.525em x size) + round(0.4375em). Measured in Chrome with no border or
+    // padding: size 1/5/10/20/40 at 13.333px and 10/20 at 16px.
+    let mut html =
+        String::from("<!doctype html><style>*{margin:0} input{border:0;padding:0;display:block}</style><body>");
+    for s in [1, 5, 10, 20, 40] {
+        html.push_str(&format!("<input id=s{s} size={s}>"));
+    }
+    html.push_str("<input id=b10 size=10 style=\"font-size:16px\"><input id=b20 size=20 style=\"font-size:16px\">");
+    let p = page(&html);
+    for (id, want) in
+        [("s1", 13.0), ("s5", 41.0), ("s10", 76.0), ("s20", 146.0), ("s40", 286.0), ("b10", 91.0), ("b20", 175.0)]
+    {
+        assert_eq!(p.metrics(id)[2], want, "#{id}");
+    }
 }

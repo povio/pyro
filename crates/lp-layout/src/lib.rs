@@ -20,6 +20,7 @@ use std::time::Instant;
 use lp_dom::geometry::{BoxPosition, ExternalSticky, ExternalWord};
 use lp_dom::layout::{ExternalBox, ExternalGeometry, GeometrySource, Layout};
 use lp_dom::snapshot::RenderHtml;
+use lp_dom::style::StyleEngine;
 use lp_dom::{Dom, NodeId};
 use lp_render::{DeltaOp, Fetcher, Live, Renderer, Snapshot, Tree, TreeKind, TreeNode};
 
@@ -73,9 +74,9 @@ mod profile {
             if i == 0 && v[0].0 % 250 == 0 {
                 let ms = |a: &std::sync::atomic::AtomicU64| a.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1e6;
                 eprintln!(
-                    "lp-geometry-profile pid={} sync={}/{:?} rebuild={}/{:?} document={}/{:?} box={}/{:?} delta-build={:.0}ms blitz={:.0}ms mirror/settle/resolve={:?} phases(style,damage,construct,pconstruct,layout,transform,paint_tree,c_damage,subdocs)={:.0?} inline-rebuilds/bytes={:?} calls/deltas={}/{} restyled={}",
+                    "lp-geometry-profile pid={} sync={}/{:?} rebuild={}/{:?} document={}/{:?} box={}/{:?} delta-build={:.0}ms blitz={:.0}ms mirror/settle/resolve={:?} phases(style,damage,construct,pconstruct,layout,transform,paint_tree,c_damage,subdocs)={:.0?} inline-rebuilds/bytes={:?} calls/deltas={}/{} restyled={} styled/matched/shared/reused={:?}",
                     std::process::id(), v[0].0, v[0].1, v[1].0, v[1].1, v[2].0, v[2].1, v[3].0, v[3].1,
-                    ms(&super::SNAPSHOT_NS), ms(&super::LAYOUT_NS), lp_render::sync_profile::peek(), lp_render::blitz_phases(), lp_render::blitz_rebuilds(), super::CALLS.load(std::sync::atomic::Ordering::Relaxed), super::DELTAS.load(std::sync::atomic::Ordering::Relaxed), lp_render::blitz_restyles()
+                    ms(&super::SNAPSHOT_NS), ms(&super::LAYOUT_NS), lp_render::sync_profile::peek(), lp_render::blitz_phases(), lp_render::blitz_rebuilds(), super::CALLS.load(std::sync::atomic::Ordering::Relaxed), super::DELTAS.load(std::sync::atomic::Ordering::Relaxed), lp_render::blitz_restyles(), lp_render::blitz_style_stats()
                 );
             }
         });
@@ -218,11 +219,10 @@ impl BlitzGeometry {
     /// render tree uses.
     fn render_opts<'a>(
         dom: &'a Dom,
-        layout: &'a Layout,
+        style: &'a StyleEngine,
         base_url: &str,
         sheets: &'a RefCell<HashMap<String, String>>,
     ) -> (impl Fn(NodeId) -> Option<String> + 'a, impl Fn(NodeId) -> Option<String> + 'a) {
-        let style = layout.style();
         let base = url::Url::parse(base_url).ok();
         let style_text = move |owner: NodeId| style.sheet_text(owner).map(str::to_owned);
         let stylesheet_href = move |link: NodeId| {
@@ -236,16 +236,16 @@ impl BlitzGeometry {
     }
 
     /// The document as a keyed node list for this page's Blitz document.
-    fn snapshot(&self, dom: &Dom, layout: &Layout) -> Option<Snapshot> {
+    fn snapshot(&self, dom: &Dom, style: &StyleEngine) -> Option<Snapshot> {
         let t = Instant::now();
         let base_url = self.base_url.borrow().clone();
         let sheets = RefCell::new(HashMap::new());
         let tree = {
-            let (style_text, stylesheet_href) = Self::render_opts(dom, layout, &base_url, &sheets);
+            let (style_text, stylesheet_href) = Self::render_opts(dom, style, &base_url, &sheets);
             let opts = RenderHtml { style_text: &style_text, stylesheet_href: &stylesheet_href, mark: None };
-            Arc::new(convert(dom.render_tree(layout.document(), &opts).ok()?))
+            Arc::new(convert(dom.render_tree(style.document(), &opts).ok()?))
         };
-        let v = layout.viewport();
+        let v = style.viewport();
         let snap = Snapshot {
             html: String::new(),
             base_url,
@@ -264,24 +264,24 @@ impl BlitzGeometry {
     }
 
     /// The pointer's and focus's elements, which the node list does not carry.
-    fn sync_interaction(&self, dom: &Dom, layout: &Layout) {
-        let doc = layout.document();
+    fn sync_interaction(&self, dom: &Dom, style: &StyleEngine, style_only: bool) {
+        let doc = style.document();
         let hovered = dom.hovered(doc).map(lp_dom::snapshot::render_key);
         let focused = dom.focused(doc).ok().flatten().map(lp_dom::snapshot::render_key);
         RENDERER.with(|r| {
             if let Ok(mut r) = r.try_borrow_mut() {
                 if let Some(r) = r.as_mut() {
-                    r.set_interaction(self.page, hovered, focused);
+                    r.set_interaction(self.page, hovered, focused, style_only);
                 }
             }
         });
     }
 
-    fn sync_document(&self, dom: &Dom, layout: &Layout) {
-        let v = layout.viewport();
+    fn sync_document(&self, dom: &Dom, style: &StyleEngine, style_only: bool) {
+        let v = style.viewport();
         let viewport =
             (v.width, v.height, v.device_scale_factor.to_bits(), v.color_scheme == lp_dom::media::ColorScheme::Dark);
-        let now = (dom.version(), layout.style().observation_stamp(dom).1, viewport, layout.style().invalidations());
+        let now = (dom.version(), style.observation_stamp(dom).1, viewport, style.invalidations());
         let last = self.synced.replace(Some(now));
         // The changes since the last sync, when the journal covers them and
         // neither sheets nor viewport changed: no whole-tree snapshot or diff.
@@ -291,7 +291,7 @@ impl BlitzGeometry {
             let restyled = if generation == now.1 {
                 Some(Vec::new())
             } else if invalidations == now.3 {
-                self.changed_style_sheets(dom, layout)
+                self.changed_style_sheets(dom, style)
             } else {
                 None
             };
@@ -299,9 +299,9 @@ impl BlitzGeometry {
                 let t = Instant::now();
                 let base_url = self.base_url.borrow().clone();
                 let sheets = RefCell::new(HashMap::new());
-                let (style_text, stylesheet_href) = Self::render_opts(dom, layout, &base_url, &sheets);
+                let (style_text, stylesheet_href) = Self::render_opts(dom, style, &base_url, &sheets);
                 let opts = RenderHtml { style_text: &style_text, stylesheet_href: &stylesheet_href, mark: None };
-                let delta = dom.render_delta(layout.document(), version, &opts).map(|mut delta| {
+                let delta = dom.render_delta(style.document(), version, &opts).map(|mut delta| {
                     delta.ops.extend(restyled.iter().filter_map(|&owner| dom.render_style_text(owner, &opts)));
                     delta
                 });
@@ -311,7 +311,9 @@ impl BlitzGeometry {
                     let dpr = v.device_scale_factor;
                     let timings = RENDERER.with(|r| {
                         let mut r = r.try_borrow_mut().ok()?;
-                        r.as_mut()?.sync_delta(self.page, &ops, (viewport.0, viewport.1, dpr, viewport.3)).ok()
+                        r.as_mut()?
+                            .sync_delta(self.page, &ops, (viewport.0, viewport.1, dpr, viewport.3), style_only)
+                            .ok()
                     });
                     if let Some(t) = timings {
                         CALLS.fetch_add(1, Ordering::Relaxed);
@@ -322,8 +324,8 @@ impl BlitzGeometry {
                 }
             }
         }
-        *self.sheets.borrow_mut() = Self::sheet_hashes(dom, layout);
-        let Some(snap) = self.snapshot(dom, layout) else { return };
+        *self.sheets.borrow_mut() = Self::sheet_hashes(dom, style);
+        let Some(snap) = self.snapshot(dom, style) else { return };
         let fetcher = self.fetcher.clone();
         let timings = RENDERER.with(|r| {
             let mut r = r.try_borrow_mut().ok()?;
@@ -338,9 +340,8 @@ impl BlitzGeometry {
 
 impl BlitzGeometry {
     /// Each style sheet's owner, whether it is a `<style>`, and its text's hash.
-    fn sheet_hashes(dom: &Dom, layout: &Layout) -> Vec<(NodeId, bool, u64)> {
+    fn sheet_hashes(dom: &Dom, style: &StyleEngine) -> Vec<(NodeId, bool, u64)> {
         use std::hash::{Hash, Hasher};
-        let style = layout.style();
         style
             .sheet_owners()
             .into_iter()
@@ -363,8 +364,8 @@ impl BlitzGeometry {
     /// The `<style>` elements whose sheet text changed since the last sync,
     /// when nothing else about the sheets did (`None`: sync the whole tree).
     /// Sheets added or removed with their elements come with the delta.
-    fn changed_style_sheets(&self, dom: &Dom, layout: &Layout) -> Option<Vec<NodeId>> {
-        let now = Self::sheet_hashes(dom, layout);
+    fn changed_style_sheets(&self, dom: &Dom, style: &StyleEngine) -> Option<Vec<NodeId>> {
+        let now = Self::sheet_hashes(dom, style);
         let mut last = self.sheets.borrow_mut();
         let mut changed = Vec::new();
         for &(owner, is_style, hash) in &now {
@@ -383,7 +384,7 @@ impl BlitzGeometry {
         Some(changed)
     }
 
-    fn sync_inner(&self, dom: &Dom, layout: &Layout) {
+    fn sync_inner(&self, dom: &Dom, style: &StyleEngine, style_only: bool) {
         let resources = RESOURCES.load(Ordering::Relaxed);
         let rebuild = self.resources.replace(resources) != resources;
         if rebuild {
@@ -399,11 +400,11 @@ impl BlitzGeometry {
             self.synced.set(None);
         }
         let t = (rebuild && profile::on()).then(Instant::now);
-        self.sync_document(dom, layout);
+        self.sync_document(dom, style, style_only);
         if let Some(t) = t {
             profile::add(1, t.elapsed());
         }
-        self.sync_interaction(dom, layout);
+        self.sync_interaction(dom, style, style_only);
     }
 
     fn element_box_inner(&self, key: u64) -> Option<ExternalBox> {
@@ -469,7 +470,15 @@ impl GeometrySource for BlitzGeometry {
 
     fn sync(&self, dom: &Dom, layout: &Layout) {
         let t = profile::on().then(Instant::now);
-        self.sync_inner(dom, layout);
+        self.sync_inner(dom, layout.style(), false);
+        if let Some(t) = t {
+            profile::add(0, t.elapsed());
+        }
+    }
+
+    fn sync_styles(&self, dom: &Dom, style: &StyleEngine) {
+        let t = profile::on().then(Instant::now);
+        self.sync_inner(dom, style, true);
         if let Some(t) = t {
             profile::add(0, t.elapsed());
         }
@@ -495,6 +504,10 @@ impl GeometrySource for BlitzGeometry {
 
     fn document_size(&self) -> Option<(f64, f64)> {
         RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.document_size(self.page))
+    }
+
+    fn element_style(&self, key: u64) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
+        RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.element_style(self.page, key))
     }
 
     fn has_sticky(&self) -> bool {

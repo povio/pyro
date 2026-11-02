@@ -211,13 +211,15 @@ impl Layout {
     /// A layout of the style's document, with this thread's geometry source
     /// (see [`set_geometry_source_factory`]).
     pub fn with_style(style: StyleEngine) -> Self {
+        let external = GEOMETRY_SOURCE.with(|f| f.borrow().as_ref().map(|make| make()));
+        style.set_style_engine(external.clone());
         Layout {
             style,
             window_scroll: (0, 0),
             scroll_generation: 0,
             element_scroll: FxHashMap::default(),
             scroll_anchors: FxHashMap::default(),
-            external: GEOMETRY_SOURCE.with(|f| f.borrow().as_ref().map(|make| make())),
+            external,
             external_synced: std::cell::Cell::new(None),
             syncs: std::cell::Cell::new(0),
             result: RefCell::new(None),
@@ -227,6 +229,7 @@ impl Layout {
     /// Takes the geometry from `source` (see [`GeometrySource`]); `None`:
     /// nothing is laid out.
     pub fn set_geometry_source(&mut self, source: Option<Rc<dyn GeometrySource>>) {
+        self.style.set_style_engine(source.clone());
         self.external = source;
         self.external_synced.set(None);
         self.result.borrow_mut().take();
@@ -241,6 +244,7 @@ impl Layout {
             source.sync(dom, self);
             self.external_synced.set(Some(key));
             self.syncs.set(self.syncs.get() + 1);
+            self.style.engine_synced(dom);
         }
         Some(source)
     }
@@ -1610,74 +1614,70 @@ impl Layout {
     /// (`StyleEngine::computed_value`), width/height from a declared absolute
     /// length or the laid-out box, else the initial value.
     pub fn computed_style_value(&self, dom: &Dom, el: NodeId, name: &str) -> String {
+        // Chromium computes no style outside a rendered document: an element
+        // that is disconnected, or in a document without a browsing context
+        // (DOMParser, createHTMLDocument, template contents), reads "" for
+        // every property.
+        if self.owned(dom, el).is_none() || !dom.is_connected(el).unwrap_or(false) {
+            return String::new();
+        }
         let custom = name.starts_with("--");
         let name = if custom { name.to_owned() } else { name.to_ascii_lowercase() };
-        let owned = self.owned(dom, el).is_some();
-        if owned {
-            match name.as_str() {
-                "display" if self.style.has_display_none(dom, el) => return "none".into(),
-                "display" => return self.style.computed_display(dom, el).unwrap_or_default(),
-                "visibility" if self.style.has_visibility_hidden_inherited(dom, el) => return "hidden".into(),
-                "pointer-events" if self.style.has_pointer_events_none(dom, el) => return "none".into(),
-                "text-transform" => return self.style.text_transform(dom, el).keyword().into(),
-                "overflow-x" | "overflow-y" | "overflow" => {
-                    let x = self.style.used_value(dom, el, "overflow-x");
-                    let y = self.style.used_value(dom, el, "overflow-y");
-                    let (x, y) = crate::style::computed_overflow_keywords(x.as_deref(), y.as_deref());
-                    return match name.as_str() {
-                        "overflow-x" => x,
-                        "overflow-y" => y,
-                        _ if x == y => x,
-                        _ => format!("{x} {y}"),
-                    };
-                }
-                _ => {}
+        match name.as_str() {
+            "display" if self.style.has_display_none(dom, el) => return "none".into(),
+            "display" => return self.style.computed_display(dom, el).unwrap_or_default(),
+            "visibility" if self.style.has_visibility_hidden_inherited(dom, el) => return "hidden".into(),
+            "pointer-events" if self.style.has_pointer_events_none(dom, el) => return "none".into(),
+            "text-transform" => return self.style.text_transform(dom, el).keyword().into(),
+            "overflow-x" | "overflow-y" | "overflow" => {
+                let x = self.style.used_value(dom, el, "overflow-x");
+                let y = self.style.used_value(dom, el, "overflow-y");
+                let (x, y) = crate::style::computed_overflow_keywords(x.as_deref(), y.as_deref());
+                return match name.as_str() {
+                    "overflow-x" => x,
+                    "overflow-y" => y,
+                    _ if x == y => x,
+                    _ => format!("{x} {y}"),
+                };
             }
-            if custom {
-                return self.style.custom_property_value(dom, el, &name).unwrap_or_default();
+            _ => {}
+        }
+        if custom {
+            return self.style.custom_property_value(dom, el, &name).unwrap_or_default();
+        }
+        if name == "font-size" {
+            // The cascade (stylesheets, em/%/rem, keywords) when any author value applies; else the inline/attribute walk.
+            return self
+                .style
+                .computed_value(dom, el, "font-size")
+                .unwrap_or_else(|| format!("{}px", self.style.computed_font_size(dom, Some(el))));
+        }
+        let declared = self.style.computed_value(dom, el, &name);
+        if name == "width" || name == "height" {
+            if !self.is_visible(dom, el) {
+                return "auto".into();
             }
-            if name == "font-size" {
-                // The cascade (stylesheets, em/%/rem, keywords) when any author value applies; else the inline/attribute walk.
-                return self
-                    .style
-                    .computed_value(dom, el, "font-size")
-                    .unwrap_or_else(|| format!("{}px", self.style.computed_font_size(dom, Some(el))));
+            // A declared absolute length is the used size the renderless layout cannot derive.
+            if let Some(px) = declared.filter(|v| v.ends_with("px")) {
+                return px;
             }
-            let declared = self.style.computed_value(dom, el, &name);
-            if name == "width" || name == "height" {
-                if !self.is_visible(dom, el) {
-                    return "auto".into();
-                }
-                // A declared absolute length is the used size the renderless layout cannot derive.
-                if let Some(px) = declared.filter(|v| v.ends_with("px")) {
-                    return px;
-                }
-                // Stylo's computed value already accounts for the inline one.
-                if !self.style.stylo_on() {
-                    if let Some(v) = self.style.inline_style_value(dom, el, &name) {
-                        return v;
-                    }
-                }
-                // The used size: content box, or border box under `box-sizing: border-box`.
-                let Some(b) = self.layout_box(dom, el) else { return "auto".into() };
-                let border_box = self.style.computed_value(dom, el, "box-sizing").as_deref() == Some("border-box");
-                let (size, start, end) =
-                    if name == "width" { (b.rect.width, LEFT, RIGHT) } else { (b.rect.height, TOP, BOTTOM) };
-                let inset =
-                    if border_box { 0.0 } else { b.border[start] + b.border[end] + b.padding[start] + b.padding[end] };
-                return format!("{}px", crate::computed::fmt_num((size - inset).max(0.0)));
-            }
-            if self.style.stylo_on() {
-                if let Some(v) = declared.as_deref().and_then(|v| self.resolved_value(dom, el, &name, v)) {
-                    return v;
-                }
-            }
-            if let Some(v) = declared {
-                return v;
-            }
-            if let Some(v) = self.style.inline_style_value(dom, el, &name) {
-                return v;
-            }
+            // The used size: content box, or border box under `box-sizing: border-box`.
+            let Some(b) = self.layout_box(dom, el) else { return "auto".into() };
+            let border_box = self.style.computed_value(dom, el, "box-sizing").as_deref() == Some("border-box");
+            let (size, start, end) =
+                if name == "width" { (b.rect.width, LEFT, RIGHT) } else { (b.rect.height, TOP, BOTTOM) };
+            let inset =
+                if border_box { 0.0 } else { b.border[start] + b.border[end] + b.padding[start] + b.padding[end] };
+            return format!("{}px", crate::computed::fmt_num((size - inset).max(0.0)));
+        }
+        if let Some(v) = declared.as_deref().and_then(|v| self.resolved_value(dom, el, &name, v)) {
+            return v;
+        }
+        if let Some(v) = declared {
+            return v;
+        }
+        if let Some(v) = self.style.inline_style_value(dom, el, &name) {
+            return v;
         }
         default_property_value(dom, el, &name).to_owned()
     }
@@ -1964,72 +1964,6 @@ pub(crate) mod flow_stats {
         viewport: u64,
         // Since the last print.
         window: Duration,
-        selective: u64,
-        dropped: u64,
-        full: [u64; Full::COUNT],
-        unknown: std::collections::BTreeMap<String, u64>,
-        /// The largest invalidation roots: (descendants dropped, root).
-        roots: Vec<(usize, String)>,
-    }
-
-    /// Why the style cache was cleared entirely.
-    #[derive(Clone, Copy)]
-    pub(crate) enum Full {
-        /// The rule set was rebuilt (stylesheet change).
-        Rules,
-        /// Style generation, focus or hover changed.
-        Stamp,
-        /// Unbounded or sibling-relative `:has()` in the stylesheet.
-        Relative,
-        ShadowRoots,
-        /// The journal no longer covers the cached version.
-        Journal,
-        /// An unjournaled change (or a document-level root).
-        Unknown,
-    }
-
-    impl Full {
-        const COUNT: usize = 6;
-        const NAMES: [&str; Full::COUNT] = ["rules", "stamp", "has", "shadow", "journal", "unknown"];
-    }
-
-    pub(crate) fn note_full(reason: Full) {
-        if enabled() {
-            STATS.with(|s| s.borrow_mut().full[reason as usize] += 1);
-        }
-    }
-
-    pub(crate) fn note_selective(dropped: usize) {
-        if enabled() {
-            STATS.with(|s| {
-                let mut s = s.borrow_mut();
-                s.selective += 1;
-                s.dropped += dropped as u64;
-            });
-        }
-    }
-
-    /// Where an unjournaled change came from (`file:line`, or `document`).
-    pub(crate) fn note_unknown(label: impl FnOnce() -> String) {
-        if enabled() {
-            STATS.with(|s| *s.borrow_mut().unknown.entry(label()).or_default() += 1);
-        }
-    }
-
-    /// One selective invalidation root and the descendants it dropped; the
-    /// three largest per window are printed.
-    pub(crate) fn note_root(size: usize, label: impl FnOnce() -> String) {
-        if !enabled() {
-            return;
-        }
-        STATS.with(|s| {
-            let roots = &mut s.borrow_mut().roots;
-            if roots.len() < 3 || roots.last().is_some_and(|(n, _)| size > *n) {
-                roots.push((size, label()));
-                roots.sort_by_key(|r| std::cmp::Reverse(r.0));
-                roots.truncate(3);
-            }
-        });
     }
 
     thread_local! {
@@ -2081,28 +2015,8 @@ pub(crate) mod flow_stats {
                     s.hover,
                     s.viewport
                 );
-                let full: Vec<String> = Full::NAMES
-                    .iter()
-                    .zip(s.full)
-                    .filter(|(_, n)| *n > 0)
-                    .map(|(name, n)| format!("{name}:{n}"))
-                    .collect();
-                eprintln!(
-                    "flow-stats last25 avg_ms={:.1} selective={} dropped={} full=[{}]",
-                    s.window.as_secs_f64() * 1000.0 / 25.0,
-                    s.selective,
-                    s.dropped,
-                    full.join(" "),
-                );
-                let unknown: Vec<String> = s.unknown.iter().map(|(at, n)| format!("{at}:{n}")).collect();
-                let roots: Vec<String> = s.roots.iter().map(|(n, r)| format!("{r}:{n}")).collect();
-                eprintln!("flow-stats last25 unknown=[{}] largest_roots=[{}]", unknown.join(" "), roots.join(" "));
-                s.unknown.clear();
-                s.roots.clear();
+                eprintln!("flow-stats last25 avg_ms={:.1}", s.window.as_secs_f64() * 1000.0 / 25.0);
                 s.window = Duration::ZERO;
-                s.selective = 0;
-                s.dropped = 0;
-                s.full = [0; Full::COUNT];
             }
         });
     }

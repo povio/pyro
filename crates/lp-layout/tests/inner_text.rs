@@ -5,17 +5,36 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use lp_dom::layout::Layout;
 use lp_dom::parse::{parse_document, set_inner_html, DomRef};
 use lp_dom::style::StyleEngine;
 use lp_dom::*;
 
-fn page(html: &str) -> (Dom, NodeId, StyleEngine) {
+/// Loads nothing (the pages have no sub-resources).
+struct NoFetch;
+impl lp_render::Fetcher for NoFetch {
+    fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+        done(Err(format!("{url}: offline")));
+    }
+}
+
+/// The page's style engine, with its Blitz document (computed styles).
+struct Styles(Layout);
+impl std::ops::Deref for Styles {
+    type Target = StyleEngine;
+    fn deref(&self) -> &StyleEngine {
+        self.0.style()
+    }
+}
+
+fn page(html: &str) -> (Dom, NodeId, Styles) {
+    lp_layout::install(std::sync::Arc::new(NoFetch));
     let dom_ref: DomRef = Rc::new(RefCell::new(Dom::new()));
     let doc = parse_document(&dom_ref, "http://test/", html);
     let dom = Rc::try_unwrap(dom_ref).ok().expect("sole owner").into_inner();
-    let mut style = StyleEngine::new(doc);
-    style.discover_style_elements(&dom);
-    (dom, doc, style)
+    let mut layout = Layout::new(doc);
+    layout.style_mut().discover_style_elements(&dom);
+    (dom, doc, Styles(layout))
 }
 
 fn by_id(dom: &Dom, doc: NodeId, id: &str) -> Option<NodeId> {

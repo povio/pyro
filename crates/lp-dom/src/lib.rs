@@ -8,6 +8,7 @@ pub mod error;
 pub mod events;
 mod flow_font;
 pub mod forms;
+pub(crate) mod gecko_only;
 pub mod geometry;
 pub mod iframe;
 pub mod image;

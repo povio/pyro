@@ -96,7 +96,7 @@ fn eval(t: &BrowserThread, page: PageId, script: &str) -> String {
 #[test]
 fn native_child_requests_preserve_frame_loader_headers_origin_and_inherited_base() {
     let server = Server::new();
-    let mut t = BrowserThread::new().unwrap();
+    let mut t = crate::browser_thread().unwrap();
     t.enable_network(Default::default()).unwrap();
     let page = t.browser.create_page().unwrap();
     let net = t.browser.context_net(lp_browser::DEFAULT_CONTEXT).unwrap().clone();
@@ -197,7 +197,7 @@ fn detaching_uncommitted_http_child_forgets_pending_loader_activity() {
         let _ = rx.recv_timeout(Duration::from_secs(5));
     });
     let _server = PendingServer { release: Some(tx), thread: Some(worker) };
-    let mut t = BrowserThread::new().unwrap();
+    let mut t = crate::browser_thread().unwrap();
     t.enable_network(Default::default()).unwrap();
     let net = t.browser.context_net(lp_browser::DEFAULT_CONTEXT).unwrap().clone();
     let events = net.subscribe();
