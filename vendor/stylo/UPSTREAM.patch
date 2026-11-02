@@ -1,0 +1,105 @@
+diff --color -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
+--- a/properties/helpers.mako.rs	2026-11-02 08:53:22
++++ b/properties/helpers.mako.rs	2026-11-02 08:53:22
+@@ -64,7 +64,17 @@
+                     % endif
+                     CSSWideKeyword::Inherit => {
+                         % if not property.style_struct.inherited:
++                            % if property.name in ("box-sizing", "baseline-shift", "baseline-source", "alignment-baseline"):
++                            // lightningpanda: the parent's value is a cache condition.
++                            {
++                                let parent = context.builder.inherited_style.clone_${property.ident}();
++                                context.rule_cache_conditions.borrow_mut().add_inherited_reset(
++                                    crate::rule_cache::InheritedReset::${property.camel_case}(parent),
++                                );
++                            }
++                            % else:
+                             context.rule_cache_conditions.borrow_mut().set_uncacheable();
++                            % endif
+                         % endif
+                         % if property.is_zoom_dependent():
+                             if !context.builder.effective_zoom_for_inheritance.is_one() {
+diff --color -ruN a/rule_cache.rs b/rule_cache.rs
+--- a/rule_cache.rs	2026-11-02 08:53:22
++++ b/rule_cache.rs	2026-11-02 08:53:22
+@@ -26,9 +26,53 @@
+     line_height: Option<NonNegativeLength>,
+     writing_mode: Option<WritingMode>,
+     color_scheme: Option<ColorSchemeFlags>,
++    /// lightningpanda: reset properties the style inherits explicitly, with
++    /// the parent's values: `*, ::before, ::after { box-sizing: inherit }`
++    /// (MUI's and many resets' pattern, on every element) and the UA's
++    /// `td, th, tr { vertical-align: inherit }`. A cached style serves an
++    /// element whose parent has the same values.
++    inherited_resets: SmallVec<[InheritedReset; 1]>,
+ }
+ 
++macro_rules! inherited_resets {
++    ($($variant:ident, $clone:ident, $ty:ty;)*) => {
++        /// lightningpanda: a reset property inherited explicitly, with the parent's value.
++        #[derive(Clone, Debug, PartialEq)]
++        pub enum InheritedReset {
++            $(
++                #[allow(missing_docs)]
++                $variant($ty),
++            )*
++        }
++
++        impl InheritedReset {
++            /// Whether `parent` has the same value.
++            fn matches(&self, parent: &ComputedValues) -> bool {
++                match self {
++                    $(Self::$variant(v) => parent.$clone() == *v,)*
++                }
++            }
++        }
++    };
++}
++
++inherited_resets! {
++    BoxSizing, clone_box_sizing, crate::computed_values::box_sizing::T;
++    BaselineShift, clone_baseline_shift, crate::computed_values::baseline_shift::T;
++    BaselineSource, clone_baseline_source, crate::computed_values::baseline_source::T;
++    AlignmentBaseline, clone_alignment_baseline, crate::computed_values::alignment_baseline::T;
++}
++
+ impl RuleCacheConditions {
++    /// lightningpanda: sets the style as depending on its parent's value of
++    /// an explicitly inherited reset property, instead of making it
++    /// uncacheable.
++    pub fn add_inherited_reset(&mut self, reset: InheritedReset) {
++        if !self.inherited_resets.contains(&reset) {
++            self.inherited_resets.push(reset);
++        }
++    }
++
+     /// Sets the style as depending in the font-size value.
+     pub fn set_font_size_dependency(&mut self, font_size: NonNegativeLength) {
+         debug_assert!(self.font_size.is_none_or(|f| f == font_size));
+@@ -70,6 +114,7 @@
+     line_height: Option<NonNegativeLength>,
+     color_scheme: Option<ColorSchemeFlags>,
+     writing_mode: Option<WritingMode>,
++    inherited_resets: SmallVec<[InheritedReset; 1]>,
+ }
+ 
+ impl CachedConditions {
+@@ -116,6 +161,10 @@
+             return false;
+         }
+ 
++        if !self.inherited_resets.iter().all(|r| r.matches(style.inherited_style)) {
++            return false;
++        }
++
+         true
+     }
+ }
+@@ -257,6 +306,7 @@
+             font_size: conditions.font_size,
+             line_height: conditions.line_height,
+             color_scheme: conditions.color_scheme,
++            inherited_resets: conditions.inherited_resets.clone(),
+         };
+         self.map
+             .entry(rules)
