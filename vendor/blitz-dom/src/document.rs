@@ -460,7 +460,9 @@ impl BaseDocument {
         let stylist = Stylist::new(device, QuirksMode::NoQuirks);
         let snapshots = SnapshotMap::new();
         let nodes = Box::new(NodeTree::new());
-        let guard = SharedRwLock::new();
+        // lightningpanda: one lock for the thread's documents, so a parsed
+        // sheet can serve them all (`make_stylesheet`).
+        let guard = crate::util::thread_style_lock();
         let nodes_to_id = HashMap::new();
 
         let base_url = config
@@ -1202,6 +1204,26 @@ impl BaseDocument {
     }
 
     pub fn make_stylesheet(&self, css: impl AsRef<str>, origin: Origin) -> DocumentStyleSheet {
+        // lightningpanda: an author sheet without `@import` (whose loads are
+        // the document's) parses once per thread for its text and base URL:
+        // every document of a test suite or a PDF template carries the same
+        // bundle. Sheets are immutable here (lightningpanda's CSSOM edits
+        // the text and syncs it, not Blitz's rules).
+        let css = css.as_ref();
+        let shared = origin == Origin::Author && !css.contains("@import");
+        if shared {
+            if let Some(sheet) = crate::util::shared_sheet(css, self.url.as_str()) {
+                return sheet;
+            }
+        }
+        let sheet = self.parse_stylesheet(css, origin);
+        if shared {
+            crate::util::share_sheet(css, self.url.as_str(), &sheet);
+        }
+        sheet
+    }
+
+    fn parse_stylesheet(&self, css: &str, origin: Origin) -> DocumentStyleSheet {
         let data = Stylesheet::from_str(
             css.as_ref(),
             self.url.url_extra_data(),

@@ -75,3 +75,7 @@ lp-render's mirror tests (incremental documents against fresh builds after rando
 - `src/mutator.rs`: a child moved to another parent leaves its old one as `remove_node` does: the old
   parent's `:empty` and `:has()` anchors are restyled (they were not, so `ul:empty` stayed unmatched
   after its last child moved out).
+- `src/document.rs`, `src/util.rs`: the documents of a thread share one Stylo lock, and an author sheet
+  without `@import` is parsed once per thread for its text and base URL (`make_stylesheet`): every
+  document of a PDF template or a test suite carries the same bundle, which each new document parsed
+  again. Sheets are not edited through Blitz's CSSOM in lightningpanda (its CSSOM edits the text).
