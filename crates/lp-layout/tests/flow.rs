@@ -4552,13 +4552,16 @@ fn text_inputs_in_system_ui_are_as_wide_as_in_chromium() {
     // Chromium (macOS, SF Text) sizes a text input in system-ui at
     // ceil(0.525em x size) + round(0.4375em). Measured in Chrome with no border or
     // padding: size 1/5/10/20/40 at 13.333px and 10/20 at 16px.
-    let mut html = String::from("<!doctype html><style>*{margin:0} input{border:0;padding:0;display:block}</style><body>");
+    let mut html =
+        String::from("<!doctype html><style>*{margin:0} input{border:0;padding:0;display:block}</style><body>");
     for s in [1, 5, 10, 20, 40] {
         html.push_str(&format!("<input id=s{s} size={s}>"));
     }
     html.push_str("<input id=b10 size=10 style=\"font-size:16px\"><input id=b20 size=20 style=\"font-size:16px\">");
     let p = page(&html);
-    for (id, want) in [("s1", 13.0), ("s5", 41.0), ("s10", 76.0), ("s20", 146.0), ("s40", 286.0), ("b10", 91.0), ("b20", 175.0)] {
+    for (id, want) in
+        [("s1", 13.0), ("s5", 41.0), ("s10", 76.0), ("s20", 146.0), ("s40", 286.0), ("b10", 91.0), ("b20", 175.0)]
+    {
         assert_eq!(p.metrics(id)[2], want, "#{id}");
     }
 }
