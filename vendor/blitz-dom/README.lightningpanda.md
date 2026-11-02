@@ -81,3 +81,7 @@ lp-render's mirror tests (incremental documents against fresh builds after rando
   again. Sheets are not edited through Blitz's CSSOM in lightningpanda (its CSSOM edits the text).
 - `src/net.rs`: decoded raster images are kept by their encoded bytes for every document of the process
   (64 images, 64 MB of pixels): a template's logo is decoded once, not once per document.
+- `assets/default.css`, `src/layout/mod.rs`: a drop-down `<select>` is an inline-block box with a 1px
+  border and `line-height: normal`, sized from its longest option label (about half an em per character)
+  plus the arrow, a line of its font tall (Chromium's menu list). It had no box at all: its options are
+  hidden because Blitz paints the control.

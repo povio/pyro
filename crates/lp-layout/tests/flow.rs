@@ -4525,3 +4525,23 @@ fn computed_styles_outside_a_rendered_document_are_empty() {
     assert_eq!(p.layout.computed_style_value(&p.dom, c, "color"), "");
     assert_eq!(p.layout.computed_style_value(&p.dom, c, "display"), "");
 }
+
+#[test]
+fn a_drop_down_select_has_a_box_like_chromium() {
+    // Blitz hides a select's options (it paints the control itself), and the
+    // select had no box at all (0x0): hit testing and visibility missed it.
+    // Values measured in Chromium (Playwright 1.59.1).
+    let p = page(
+        "<!doctype html><body><div><select id=w style=\"width:120px\"><option>x</option></select></div>\
+         <div><select id=a><option>x</option></select></div>",
+    );
+    let w = p.metrics("w");
+    assert_eq!((w[2], w[3]), (120.0, 19.0), "explicit width, UA border, 13.333px: {w:?}");
+    let a = p.metrics("a");
+    assert!(a[2] > 20.0 && a[3] == 19.0, "intrinsic box: {a:?}");
+    let pre = page(&format!(
+        "<!doctype html>{PREFLIGHT}<body><select id=s style=\"width:120px\"><option>x</option></select></body>"
+    ));
+    let s = pre.metrics("s");
+    assert_eq!((s[2], s[3]), (120.0, 20.0), "under Tailwind's preflight: {s:?}");
+}
