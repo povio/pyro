@@ -1799,6 +1799,30 @@ impl Layout {
     fn scroll_into_view_aligned_targets(&mut self, dom: &Dom, el: NodeId, center: bool) -> Vec<ScrollTarget> {
         let offset: fn(f64, f64, f64, u32) -> Option<i32> =
             if center { centered_scroll_offset } else { center_if_needed_offset };
+        self.scroll_into_view_offset_targets(dom, el, offset, false)
+    }
+
+    /// Script-facing `Element.scrollIntoViewIfNeeded(centerIfNeeded)`.
+    /// Hidden overflow is programmatically scrollable; clip/visible is not.
+    /// Keep this policy separate from the automation driver's reveal helpers.
+    pub fn scroll_into_view_if_needed_script_targets(
+        &mut self,
+        dom: &Dom,
+        el: NodeId,
+        center_if_needed: bool,
+    ) -> Vec<ScrollTarget> {
+        let offset: fn(f64, f64, f64, u32) -> Option<i32> =
+            if center_if_needed { center_if_needed_offset } else { nearest_scroll_offset };
+        self.scroll_into_view_offset_targets(dom, el, offset, true)
+    }
+
+    fn scroll_into_view_offset_targets(
+        &mut self,
+        dom: &Dom,
+        el: NodeId,
+        offset: fn(f64, f64, f64, u32) -> Option<i32>,
+        script: bool,
+    ) -> Vec<ScrollTarget> {
         if !self.is_visible(dom, el) {
             return Vec::new();
         }
@@ -1808,15 +1832,23 @@ impl Layout {
             if self.is_root_container(dom, node) {
                 break;
             }
-            let axes = self.style.overflow_axes(dom, node);
-            let explicit = self.element_scroll.contains_key(&node);
+            let axes = if script {
+                let x = self.style.used_value(dom, node, "overflow-x");
+                let y = self.style.used_value(dom, node, "overflow-y");
+                let (x, y) = crate::style::computed_overflow_keywords(x.as_deref(), y.as_deref());
+                let scrolls = |value: &str| matches!(value, "auto" | "scroll" | "hidden");
+                ScrollAxes { x: scrolls(&x), y: scrolls(&y) }
+            } else {
+                self.style.overflow_axes(dom, node)
+            };
+            let explicit = !script && self.element_scroll.contains_key(&node);
             if axes.x || axes.y || explicit {
                 let target = self.bounding_client_rect(dom, el);
                 let container = self.bounding_client_rect(dom, node);
                 let left = (axes.x || explicit)
                     .then(|| {
                         offset(
-                            target.left() - container.left(),
+                            target.left() - container.left() - if script { self.client_left(dom, node) } else { 0.0 },
                             target.width,
                             self.client_width(dom, node),
                             self.scroll_left(node),
@@ -1826,7 +1858,7 @@ impl Layout {
                 let top = (axes.y || explicit)
                     .then(|| {
                         offset(
-                            target.top() - container.top(),
+                            target.top() - container.top() - if script { self.client_top(dom, node) } else { 0.0 },
                             target.height,
                             self.client_height(dom, node),
                             self.scroll_top(node),

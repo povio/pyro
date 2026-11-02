@@ -253,6 +253,20 @@ pub(crate) fn schedule_scroll_clamp(page: &Rc<PageDom>) {
 pub(crate) fn scroll_into_view<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
     let page = n.page();
     let moved = page.layout.borrow_mut().scroll_into_view_targets(&page.dom.borrow(), n.id);
+    fire_scroll_targets(page, moved);
+    Ok(s.undefined())
+}
+
+pub(crate) fn scroll_into_view_if_needed<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
+    let center_if_needed = a.get(0).is_undefined() || a.get(0).to_bool();
+    let page = n.page();
+    let moved =
+        page.layout.borrow_mut().scroll_into_view_if_needed_script_targets(&page.dom.borrow(), n.id, center_if_needed);
+    fire_scroll_targets(page, moved);
+    Ok(s.undefined())
+}
+
+fn fire_scroll_targets(page: &Rc<PageDom>, moved: Vec<lp_dom::layout::ScrollTarget>) {
     for target in moved {
         fire_scroll(
             page,
@@ -262,7 +276,6 @@ pub(crate) fn scroll_into_view<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Valu
             },
         );
     }
-    Ok(s.undefined())
 }
 
 pub(crate) fn check_visibility<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
