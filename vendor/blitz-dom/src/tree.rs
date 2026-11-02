@@ -1,7 +1,9 @@
 //! Versioned storage for the nodes of the DOM tree.
 
+use std::collections::HashMap;
 use std::ops::{Index, IndexMut};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 
 use blitz_traits::node_id::NodeId;
 use slotmap::{Key as _, KeyData, SlotMap};
@@ -24,6 +26,12 @@ fn to_id(key: NodeKey) -> NodeId {
     NodeId::from_u64(key.data().as_ffi())
 }
 
+#[derive(Clone, Copy, Default)]
+pub(crate) struct ContainerQuerySize {
+    pub axes: euclid::default::Size2D<bool>,
+    pub size: euclid::default::Size2D<Option<app_units::Au>>,
+}
+
 /// The versioned map in which the nodes of the DOM tree are stored, backed by
 /// a [`slotmap::SlotMap`].
 ///
@@ -33,6 +41,9 @@ fn to_id(key: NodeKey) -> NodeId {
 /// `None`, and indexing panics) instead of aliasing the new occupant.
 pub struct NodeTree {
     map: SlotMap<NodeKey, Node>,
+    // Sparse: only containers actually queried by Stylo occupy an entry. Style
+    // workers can ask about the same container concurrently.
+    pub(crate) container_query_sizes: Mutex<HashMap<NodeId, ContainerQuerySize>>,
     /// Bumped whenever box geometry may have moved (layout ran or a scroll
     /// offset changed). Values derived from `final_layout()` (e.g. hoisted
     /// paint child offsets) are memoised against it. Starts at 1 so that a
@@ -47,6 +58,7 @@ impl NodeTree {
     pub(crate) fn new() -> Self {
         Self {
             map: SlotMap::with_key(),
+            container_query_sizes: Mutex::new(HashMap::new()),
             geometry_generation: AtomicU64::new(1),
             viewport_scroll: crate::Point::ZERO,
         }
@@ -103,6 +115,7 @@ impl NodeTree {
 
     /// Remove the node with the given id, returning it if it was still live.
     pub(crate) fn remove(&mut self, id: NodeId) -> Option<Node> {
+        self.container_query_sizes.get_mut().unwrap().remove(&id);
         self.map.remove(to_key(id))
     }
 

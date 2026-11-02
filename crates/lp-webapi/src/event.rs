@@ -27,6 +27,7 @@ pub enum EventInterface {
     CompositionEvent,
     ProgressEvent,
     ErrorEvent,
+    PromiseRejectionEvent,
     SubmitEvent,
     PopStateEvent,
     HashChangeEvent,
@@ -86,6 +87,8 @@ pub struct EventFields {
     pub lineno: u32,
     pub colno: u32,
     pub error: Option<Persistent>,
+    pub promise: Option<Persistent>,
+    pub reason: Option<Persistent>,
     pub submitter: Option<TargetKey>,
     pub state: Option<Persistent>,
     pub old_url: String,
@@ -247,6 +250,7 @@ pub fn wrap_event<'s>(s: &Scope<'s>, core: &EventData) -> JsResult<Object<'s>> {
         EventInterface::CompositionEvent => s.wrap::<CompositionEvent>(d, Some(key)),
         EventInterface::ProgressEvent => s.wrap::<ProgressEvent>(d, Some(key)),
         EventInterface::ErrorEvent => s.wrap::<ErrorEvent>(d, Some(key)),
+        EventInterface::PromiseRejectionEvent => s.wrap::<PromiseRejectionEvent>(d, Some(key)),
         EventInterface::SubmitEvent => s.wrap::<SubmitEvent>(d, Some(key)),
         EventInterface::PopStateEvent => s.wrap::<PopStateEvent>(d, Some(key)),
         EventInterface::HashChangeEvent => s.wrap::<HashChangeEvent>(d, Some(key)),
@@ -876,6 +880,50 @@ impl JsClass for ErrorEvent {
     }
 }
 
+pub struct PromiseRejectionEvent;
+impl JsClass for PromiseRejectionEvent {
+    const NAME: &'static str = "PromiseRejectionEvent";
+    type Data = EventData;
+    type Parent = Event;
+    fn define(def: &mut ClassDef<Self>) {
+        def.constructor(2, |s, nt, a| {
+            construct::<PromiseRejectionEvent>(s, nt, a, EventInterface::PromiseRejectionEvent, fill_promise_rejection)
+        });
+        def.getter("promise", |s, e| Ok(e.fields.borrow().promise.as_ref().map_or(s.undefined(), |p| p.get(s))));
+        def.getter("reason", |s, e| Ok(e.fields.borrow().reason.as_ref().map_or(s.undefined(), |p| p.get(s))));
+    }
+}
+
+fn fill_promise_rejection<'s>(s: &Scope<'s>, fields: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
+    let init = init.ok_or_else(|| JsError::Type("PromiseRejectionEvent requires a promise".into()))?;
+    let promise = init.get("promise")?;
+    if promise.as_object().is_none() {
+        return Err(JsError::Type("PromiseRejectionEvent promise must be an object".into()));
+    }
+    fields.promise = Some(Persistent::new(s, promise));
+    fields.reason = Some(Persistent::new(s, init.get("reason")?));
+    Ok(())
+}
+
+pub(crate) fn dispatch_unhandled_rejection<'s>(
+    s: &Scope<'s>,
+    promise: lp_js::Value<'s>,
+    reason: lp_js::Value<'s>,
+) -> JsResult<bool> {
+    let page = page_of(s)?;
+    if page.is_disposed() {
+        return Ok(false);
+    }
+    let Some(target) = page.window_target() else { return Ok(false) };
+    let event = EventCore::trusted(&page, EventInterface::PromiseRejectionEvent, "unhandledrejection", false, true);
+    {
+        let mut fields = event.fields.borrow_mut();
+        fields.promise = Some(Persistent::new(s, promise));
+        fields.reason = Some(Persistent::new(s, reason));
+    }
+    Ok(!crate::target::fire(&page, target, &event))
+}
+
 pub struct SubmitEvent;
 impl JsClass for SubmitEvent {
     const NAME: &'static str = "SubmitEvent";
@@ -1007,6 +1055,7 @@ pub(crate) fn register(engine: &lp_js::Engine) {
     engine.register::<CompositionEvent>();
     engine.register::<ProgressEvent>();
     engine.register::<ErrorEvent>();
+    engine.register::<PromiseRejectionEvent>();
     engine.register::<SubmitEvent>();
     engine.register::<PopStateEvent>();
     engine.register::<HashChangeEvent>();

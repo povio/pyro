@@ -591,6 +591,11 @@ impl EngineHost {
             PageEvent::FileChooserOpened { frame_id, input, multiple } => {
                 self.file_chooser_opened(page, &frame_id, input, multiple);
             }
+            PageEvent::DownloadStarted => {
+                if let Some(state) = self.pages.get_mut(&page) {
+                    state.download_count += 1;
+                }
+            }
             PageEvent::Download { frame_id, url, suggested_filename, body } => {
                 if let Some(state) = self.pages.get_mut(&page) {
                     state.downloads.push(super::DownloadRecord {

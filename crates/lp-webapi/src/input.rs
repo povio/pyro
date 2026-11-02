@@ -1542,16 +1542,6 @@ pub fn dispatch_mouse_intercepting_drags(
             page.compat_mouse_suppressed.set(!pd);
             page.set_press_target(Some(target));
             note_buttons(page, m);
-            // Chromium on Linux and macOS opens the context menu on the
-            // press, whether or not the page canceled it (Windows waits for
-            // the release); the release still fires `mouseup` and `auxclick`.
-            if m.button == MouseButton::Right && !page.is_disposed() {
-                if let Some(k) = key_of(page, target) {
-                    let ev = mouse_event(page, EventInterface::PointerEvent, "contextmenu", m, true);
-                    ev.state.borrow_mut().composed = true;
-                    fire(page, k, &ev);
-                }
-            }
             let place_caret = m.button == MouseButton::Left && pd && md;
             // A canceled mousedown prevents dragging, as in Chrome.
             let source =
@@ -1584,6 +1574,16 @@ pub fn dispatch_mouse_intercepting_drags(
                             blur_element(page, f);
                         }
                     }
+                }
+            }
+            // Chromium on Linux and macOS opens the context menu on the
+            // press, whether or not the page canceled it (Windows waits for
+            // the release); the release still fires `mouseup` and `auxclick`.
+            if m.button == MouseButton::Right && !page.is_disposed() {
+                if let Some(k) = key_of(page, target) {
+                    let ev = mouse_event(page, EventInterface::PointerEvent, "contextmenu", m, true);
+                    ev.state.borrow_mut().composed = true;
+                    fire(page, k, &ev);
                 }
             }
             if place_caret {
@@ -1890,16 +1890,26 @@ fn fire_source_drag(page: &Rc<PageDom>, source: &Option<(NodeId, Rc<NativeTransf
 
 /// Blink UpdateDragAndDrop: drag on the source, then dragenter on a new
 /// target and dragleave on the old one, or dragover on the same target.
-fn update_drag(page: &Rc<PageDom>, m: &MouseInput, data: &DragData) -> Result<(), String> {
+fn update_drag(
+    page: &Rc<PageDom>,
+    m: &MouseInput,
+    data: &DragData,
+    files: &[crate::file::FileEntry],
+) -> Result<(), String> {
     let target = pointer_target(page, m.x, m.y, true);
     let (source, current, mut only_dragover) = {
         let drag = page.drag.borrow();
         let s = drag.as_ref().ok_or("no drag in progress")?;
         (s.source.clone(), s.target, s.only_dragover)
     };
-    let transfer =
-        NativeTransfer::new(page, &target_strings(data), effect_allowed_of(data.drag_operations_mask), Mode::Protected)
-            .ok_or("no script context for the drag")?;
+    let transfer = NativeTransfer::with_files(
+        page,
+        &target_strings(data),
+        files,
+        effect_allowed_of(data.drag_operations_mask),
+        Mode::Protected,
+    )
+    .ok_or("no script context for the drag")?;
     let mut accepted = false;
     if target != current {
         if let Some(t) = target {
@@ -1949,6 +1959,18 @@ pub fn dispatch_drag(
     data: &DragData,
     modifiers: Modifiers,
 ) -> Result<(), String> {
+    dispatch_drag_files(page, kind, x, y, data, &[], modifiers)
+}
+
+pub fn dispatch_drag_files(
+    page: &Rc<PageDom>,
+    kind: DragKind,
+    x: f64,
+    y: f64,
+    data: &DragData,
+    files: &[crate::file::FileEntry],
+    modifiers: Modifiers,
+) -> Result<(), String> {
     let m = MouseInput { x, y, modifiers, ..MouseInput::default() };
     if page.drag.borrow().is_none() {
         match kind {
@@ -1960,17 +1982,18 @@ pub fn dispatch_drag(
             Some(DragSession { source: None, target: None, only_dragover: false, operation: None });
     }
     match kind {
-        DragKind::Enter | DragKind::Over => update_drag(page, &m, data),
+        DragKind::Enter | DragKind::Over => update_drag(page, &m, data, files),
         DragKind::Drop => {
             if page.drag.borrow().as_ref().is_some_and(|s| s.only_dragover) {
-                update_drag(page, &m, data)?;
+                update_drag(page, &m, data, files)?;
             }
             let Some(session) = page.drag.borrow_mut().take() else { return Ok(()) };
             match (session.operation, session.target) {
                 (Some(operation), Some(target)) => {
-                    let transfer = NativeTransfer::new(
+                    let transfer = NativeTransfer::with_files(
                         page,
                         &target_strings(data),
+                        files,
                         effect_allowed_of(data.drag_operations_mask),
                         Mode::ReadOnly,
                     )
@@ -1982,9 +2005,10 @@ pub fn dispatch_drag(
                 (_, target) => {
                     fire_source_drag(page, &session.source, &m);
                     if let Some(t) = target {
-                        if let Some(transfer) = NativeTransfer::new(
+                        if let Some(transfer) = NativeTransfer::with_files(
                             page,
                             &target_strings(data),
+                            files,
                             effect_allowed_of(data.drag_operations_mask),
                             Mode::Protected,
                         ) {

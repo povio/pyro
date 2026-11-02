@@ -53,6 +53,9 @@ impl BindingState {
     pub(crate) fn has_observers(&self) -> bool {
         !self.observers.borrow().is_empty()
     }
+    pub(crate) fn pending_work(&self) -> bool {
+        self.has_observers() && (self.queued.get() || self.wake_queued.get())
+    }
 }
 
 /// Native node reference that does not keep the PageDom alive.

@@ -80,7 +80,7 @@ pub struct PageDom {
     /// targets"). Keyed by document: a task dropped by a navigation must not
     /// block the next document's events. The value: whether a `scrollend`
     /// follows (a scroll that ran to completion, not a layout clamp).
-    pub(crate) pending_scrolls: RefCell<FxHashMap<(NodeId, Option<NodeId>), bool>>,
+    pub(crate) pending_scrolls: RefCell<Vec<((NodeId, Option<NodeId>), bool, Rc<()>)>>,
     /// The DOM version scroll offsets were last re-clamped at, and whether a
     /// re-clamp is queued for the next frame (`layout_api::clamp_scrolls`).
     pub(crate) scroll_clamp: Cell<(Option<u64>, bool)>,
@@ -660,6 +660,11 @@ impl PageDom {
         }
     }
 
+    /// A scheduled resize gather or callback can still change layout.
+    pub fn pending_resize_observer_work(&self) -> bool {
+        self.resizes.pending_work()
+    }
+
     /// Wrappers of active ResizeObservers kept alive (diagnostics/tests).
     pub fn resize_observer_pins(&self) -> usize {
         self.resizes.pins.borrow().len()
@@ -740,7 +745,7 @@ impl PageDom {
     }
     /// The page's main-world realm: the earliest live realm without a world
     /// name (isolated worlds are named).
-    pub(crate) fn main_world_realm(&self) -> Option<lp_js::Realm> {
+    pub fn main_world_realm(&self) -> Option<lp_js::Realm> {
         let realms = self.realms.borrow();
         let mut live: Vec<_> = realms.iter().filter_map(|(id, r)| Some((id.0, r.upgrade()?))).collect();
         live.retain(|(_, r)| !r.is_disposed() && r.name().is_empty());

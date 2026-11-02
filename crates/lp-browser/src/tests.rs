@@ -323,3 +323,39 @@ fn window_globals() {
     );
     assert_eq!(*rec.console.borrow(), ["log:true true function true [object Window]"]);
 }
+
+#[test]
+fn unhandled_rejection_dispatches_window_event_with_original_values() {
+    let (mut t, rec, page) = setup();
+    assert!(t.browser.engine.capabilities().unhandled_rejections);
+    eval(&t, page, "globalThis.reason = {message:'owned'}; addEventListener('unhandledrejection', event => console.log(event instanceof PromiseRejectionEvent, event.promise === bad, event.reason === reason, event.cancelable, event.bubbles, event.isTrusted)); globalThis.bad = Promise.reject(reason); Promise.reject('handled').catch(() => {});");
+    t.run_until_idle(Some(Instant::now() + Duration::from_secs(2)));
+    assert_eq!(*rec.console.borrow(), ["log:true true true true false true"]);
+}
+
+#[test]
+fn promise_rejection_event_constructor_preserves_values() {
+    let (t, rec, page) = setup();
+    eval(&t, page, "const promise=Promise.resolve();const reason={x:1};const event=new PromiseRejectionEvent('custom',{promise,reason,cancelable:true});event.preventDefault();console.log(event.promise===promise,event.reason===reason,event.defaultPrevented,event.isTrusted);let rejected=false;try{new PromiseRejectionEvent('custom',{})}catch(e){rejected=e instanceof TypeError}console.log(rejected);");
+    assert_eq!(*rec.console.borrow(), ["log:true true true false", "log:true"]);
+    assert!(rec.errors.borrow().is_empty());
+}
+
+#[test]
+fn preventing_unhandled_rejection_suppresses_default_reporting() {
+    struct Counter(std::cell::Cell<usize>);
+    impl EngineHooks for Counter {
+        fn unhandled_rejection(&self, _realm: &Realm, _exception: &lp_js::JsException) {
+            self.0.set(self.0.get() + 1);
+        }
+    }
+    let (mut t, _rec, page) = setup();
+    let count = Rc::new(Counter(std::cell::Cell::new(0)));
+    t.browser.set_engine_hooks(Some(count.clone()));
+    eval(&t, page, "onunhandledrejection=e=>e.preventDefault();Promise.reject('canceled');");
+    t.run_until_idle(Some(Instant::now() + Duration::from_secs(2)));
+    assert_eq!(count.0.get(), 0);
+    eval(&t, page, "onunhandledrejection=null;Promise.reject('reported');");
+    t.run_until_idle(Some(Instant::now() + Duration::from_secs(2)));
+    assert_eq!(count.0.get(), 1);
+}

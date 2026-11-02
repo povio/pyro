@@ -35,15 +35,11 @@ use crate::{
 };
 
 impl BaseDocument {
-    /// Restyle the tree and then relayout it
-    /// Styles the document as [`Self::resolve`] does, leaving box
-    /// construction and layout (and the damage that drives them) to the
-    /// next `resolve`: style reads that need no geometry.
+    /// Resolve styles, leaving construction, layout and their damage for the
+    /// next [`Self::resolve`]. Size container queries are the exception: their
+    /// computed values require feedback from the queried content boxes.
     pub fn resolve_style(&mut self, current_time_for_animations: f64) {
-        if TDocument::as_node(&self.root_node())
-            .first_element_child()
-            .is_none()
-        {
+        if TDocument::as_node(&self.root_node()).first_element_child().is_none() {
             return;
         }
         self.handle_messages();
@@ -52,6 +48,30 @@ impl BaseDocument {
         }
         self.flush_pending_device_changes();
         self.resolve_stylist(current_time_for_animations);
+        // A size query is the exceptional style read which needs geometry.
+        // Ordinary style reads leave construction/layout and damage untouched.
+        if self.stylist.has_container_queries() {
+            // Style-only queries also call the size adapter, including on normal
+            // containers. Inspect final styles now that traversal has released
+            // element data, and only lay out real size-container dependencies.
+            self.nodes.container_query_sizes.lock().unwrap().retain(|id, _| {
+                self.nodes.get(*id).is_some_and(|node| {
+                    node.flags.is_in_document()
+                        && node.primary_styles().is_some_and(|style| {
+                            use style::values::specified::ContainerType;
+                            style
+                                .get_box()
+                                .clone_container_type()
+                                .intersects(ContainerType::SIZE | ContainerType::INLINE_SIZE)
+                        })
+                })
+            });
+            if !self.nodes.container_query_sizes.lock().unwrap().is_empty() {
+                self.resolve(current_time_for_animations);
+            }
+        } else {
+            self.nodes.container_query_sizes.lock().unwrap().clear();
+        }
     }
 
     pub fn resolve(&mut self, current_time_for_animations: f64) {
@@ -98,43 +118,60 @@ impl BaseDocument {
         // accumulated since the last resolve as a single device rebuild.
         self.flush_pending_device_changes();
 
-        // we need to resolve stylist first since it will need to drive our layout bits
-        self.resolve_stylist(current_time_for_animations);
-        timer.record_time("style");
-        phase_profile::mark(0, &mut phase_t);
+        // Container conditions consume content-box sizes from layout. Re-match
+        // only when an actually queried size changes; bound cyclic feedback.
+        for pass in 0..32 {
+            // we need to resolve stylist first since it will need to drive our layout bits
+            self.resolve_stylist(current_time_for_animations);
+            timer.record_time("style");
+            if !self.stylist.has_container_queries() {
+                self.nodes.container_query_sizes.lock().unwrap().clear();
+            }
+            phase_profile::mark(0, &mut phase_t);
 
-        // Non-incremental mode is "every node is damaged every frame": mark the
-        // whole tree and let the same damage pipeline reconstruct and relayout
-        // everything.
-        if !self.incremental_layout {
+            // Non-incremental mode is "every node is damaged every frame": mark the
+            // whole tree and let the same damage pipeline reconstruct and relayout
+            // everything.
+            if !self.incremental_layout {
+                self.mark_all_damaged();
+                timer.record_time("mark_all");
+            }
+
+            // Propagate damage flags (from mutation and restyles) up and down the tree
+            self.propagate_damage_flags(root_node_id);
+            timer.record_time("damage");
+            phase_profile::mark(1, &mut phase_t);
+
+            // Fix up tree for layout (insert anonymous blocks as necessary, etc)
+            self.resolve_layout_children();
+            #[cfg(debug_assertions)]
+            self.assert_layout_parents_consistent();
+            timer.record_time("construct");
+            phase_profile::mark(2, &mut phase_t);
+
+            self.resolve_deferred_tasks();
+            // Flush background/mask images from style to dedicated storage on the
+            // nodes whose style changed (queued by the style traversal and by
+            // pseudo-element box construction), fetching any not-yet-loaded images.
+            self.flush_pending_style_images();
+            timer.record_time("pconstruct");
+            phase_profile::mark(3, &mut phase_t);
+
+            // Next we resolve layout with the data resolved by stlist
+            self.resolve_layout();
+            timer.record_time("layout");
+            phase_profile::mark(4, &mut phase_t);
+            if !self.refresh_container_query_sizes() || pass == 31 {
+                break;
+            }
+            self.nodes[root_node_id].set_restyle_hint(
+                style::invalidation::element::restyle_hints::RestyleHint::restyle_subtree(),
+            );
+            for (_, node) in self.nodes.iter_mut() {
+                node.invalidate_layout_cache();
+            }
             self.mark_all_damaged();
-            timer.record_time("mark_all");
         }
-
-        // Propagate damage flags (from mutation and restyles) up and down the tree
-        self.propagate_damage_flags(root_node_id);
-        timer.record_time("damage");
-        phase_profile::mark(1, &mut phase_t);
-
-        // Fix up tree for layout (insert anonymous blocks as necessary, etc)
-        self.resolve_layout_children();
-        #[cfg(debug_assertions)]
-        self.assert_layout_parents_consistent();
-        timer.record_time("construct");
-        phase_profile::mark(2, &mut phase_t);
-
-        self.resolve_deferred_tasks();
-        // Flush background/mask images from style to dedicated storage on the
-        // nodes whose style changed (queued by the style traversal and by
-        // pseudo-element box construction), fetching any not-yet-loaded images.
-        self.flush_pending_style_images();
-        timer.record_time("pconstruct");
-        phase_profile::mark(3, &mut phase_t);
-
-        // Next we resolve layout with the data resolved by stlist
-        self.resolve_layout();
-        timer.record_time("layout");
-        phase_profile::mark(4, &mut phase_t);
         self.nodes.bump_geometry_generation();
 
         // Resolve transforms
@@ -194,6 +231,61 @@ impl BaseDocument {
         phase_profile::mark(8, &mut phase_t);
 
         timer.print_times(&format!("Resolve({}): ", self.id()));
+    }
+
+    fn refresh_container_query_sizes(&self) -> bool {
+        use style::values::specified::ContainerType;
+        let mut changed = false;
+        let mut queried = self.nodes.container_query_sizes.lock().unwrap();
+        queried.retain(|id, entry| {
+            let Some(node) = self.nodes.get(*id) else { return false };
+            if !node.flags.is_in_document() {
+                return false;
+            }
+            let Some(values) = node.primary_styles() else { return false };
+            let kind = values.get_box().clone_container_type();
+            let both = kind.intersects(ContainerType::SIZE);
+            let inline = kind.intersects(ContainerType::INLINE_SIZE);
+            if !both && !inline {
+                changed |= entry.size.width.is_some() || entry.size.height.is_some();
+                return false;
+            }
+            entry.axes = euclid::default::Size2D::new(
+                both || (inline && values.writing_mode.is_horizontal()),
+                both || (inline && !values.writing_mode.is_horizontal()),
+            );
+            let display = values.clone_display();
+            let mut rendered = node.flags.is_in_document()
+                && node.element_data().is_some_and(|element| element.layout_data.is_some())
+                && !display.is_none()
+                && !display.is_contents()
+                && !display.is_inline_flow();
+            let mut ancestor = node.parent;
+            while rendered {
+                let Some(id) = ancestor else { break };
+                let Some(parent) = self.nodes.get(id) else { break };
+                if parent.primary_styles().is_some_and(|style| style.clone_display().is_none()) {
+                    rendered = false;
+                    break;
+                }
+                ancestor = parent.parent;
+            }
+            let size = if rendered {
+                let layout = node.final_layout();
+                euclid::default::Size2D::new(
+                    entry.axes.width.then(|| app_units::Au::from_f32_px(layout.content_box_width())),
+                    entry.axes.height.then(|| app_units::Au::from_f32_px(layout.content_box_height())),
+                )
+            } else {
+                Default::default()
+            };
+            if entry.size != size {
+                entry.size = size;
+                changed = true;
+            }
+            true
+        });
+        changed
     }
 
     fn resolve_transforms(&mut self, node_id: NodeId) -> Rect {

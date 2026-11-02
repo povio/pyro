@@ -19,7 +19,7 @@
 //! `crates/lp-jsc-sys/webkit/patches/0002-fork-support.patch`), and both
 //! restart afterwards in the parent and in the child.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::io::{Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -70,12 +70,28 @@ pub fn supported() -> bool {
 enum Message {
     /// Serve a connection, from the snapshot of `profile` if given (else the
     /// root's): fds are the upgraded socket and the pipe's write end.
-    Connect { buffered: Vec<u8>, profile: Option<usize> },
+    Connect {
+        buffered: Vec<u8>,
+        profile: Option<usize>,
+    },
     /// Boot a profile for later connections (root only); replies `{"profileId": n}`.
-    Register { profile: PreparedProfile },
+    Register {
+        profile: PreparedProfile,
+    },
+    Unregister {
+        profile_id: usize,
+    },
+    RetireDerived {
+        profile_id: usize,
+    },
     /// Fork a template for profile `id` off this one's snapshot of `base`,
     /// listening on `socket` (root to the template holding `base`).
-    Derive { base: usize, id: usize, profile: PreparedProfile, socket: PathBuf },
+    Derive {
+        base: usize,
+        id: usize,
+        profile: PreparedProfile,
+        socket: PathBuf,
+    },
     /// A spare took a connection: wakes its template to fork a replacement.
     Taken,
 }
@@ -84,6 +100,12 @@ enum Message {
 #[serde(rename_all = "camelCase")]
 struct Registered {
     profile_id: Option<usize>,
+    error: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct Unregistered {
+    removed: bool,
     error: Option<String>,
 }
 
@@ -168,9 +190,14 @@ pub fn connect(
     let (read_end, write_end) = pipe()?;
     // A derived snapshot's template takes its connections directly; anything
     // else goes to the root's (which forwards what is not up yet).
+    // The root also takes one whose derived template is not listening
+    // (yet): its socket file can exist a moment before it does, and a
+    // connect then is refused.
     let derived = profile.map(|id| conn_socket(&PathBuf::from(format!("{}.{id}", template.display()))));
-    let target = derived.filter(|p| p.exists()).unwrap_or_else(|| conn_socket(template));
-    let mut stream = UnixStream::connect(target)?;
+    let mut stream = match derived.filter(|p| p.exists()).map(UnixStream::connect) {
+        Some(Ok(stream)) => stream,
+        _ => UnixStream::connect(conn_socket(template))?,
+    };
     send(&mut stream, &Message::Connect { buffered, profile }, &[socket.as_raw_fd(), write_end.as_raw_fd()])?;
     drop(write_end);
     let (tx, rx) = tokio::sync::oneshot::channel();
@@ -262,6 +289,7 @@ struct TemplateProcess {
     derives: VecDeque<Derive>,
     /// Root only: where each profile's snapshot is served (`None`: here).
     holders: Vec<Option<PathBuf>>,
+    derived_pids: HashMap<usize, libc::pid_t>,
     is_root: bool,
     /// Forked children waiting for a connection (accepting on `conns`), as
     /// our end of a pair: the spare closes its end once it has taken one,
@@ -286,8 +314,6 @@ fn run_template(options: &ServeOptions, socket: &Path) -> Result<(), String> {
     if !supported() {
         return Err("this JavaScriptCore cannot fork (build the patched one: scripts/jsc/build.sh)".into());
     }
-    // Children are never waited for: let the kernel reap them.
-    unsafe { libc::signal(libc::SIGCHLD, libc::SIG_IGN) };
     // The static-file preload runs on a thread of its own: let it finish.
     let _ = profile.net.static_files.preloaded();
     #[cfg(feature = "render")]
@@ -324,13 +350,16 @@ fn run_template(options: &ServeOptions, socket: &Path) -> Result<(), String> {
         forwards: VecDeque::new(),
         derives: VecDeque::new(),
         holders,
+        derived_pids: HashMap::new(),
         is_root: true,
         spares: VecDeque::new(),
         spares_generation: 0,
     };
     t.watch_listener();
 
+    install_child_notifications();
     'serve: loop {
+        t.reap_children();
         t.accept_all();
         // Spares that took a connection have closed their end.
         t.spares.retain(|spare| !readable(spare.as_raw_fd()));
@@ -405,6 +434,18 @@ impl TemplateProcess {
                     };
                     let _ = send(&mut stream, &reply, &[]);
                 }
+                Message::Unregister { profile_id } | Message::RetireDerived { profile_id } => {
+                    let result = if matches!(message, Message::Unregister { .. }) {
+                        self.unregister(profile_id)
+                    } else {
+                        self.retire_derived(profile_id)
+                    };
+                    let reply = match result {
+                        Ok(removed) => Unregistered { removed, error: None },
+                        Err(error) => Unregistered { removed: false, error: Some(error) },
+                    };
+                    let _ = send(&mut stream, &reply, &[]);
+                }
                 Message::Taken => {}
                 Message::Derive { base, id, profile, socket } => {
                     self.derives.push_back(Derive { base, id, profile, socket });
@@ -430,6 +471,9 @@ impl TemplateProcess {
     /// Forks for a connection here, or passes it to the template holding
     /// the snapshot it asked for.
     fn take_connection(&mut self, buffered: Vec<u8>, profile: Option<usize>, fds: Vec<OwnedFd>) {
+        if profile.is_some_and(|id| !self.snapshot.browser.prepared_profile_active(id)) {
+            return;
+        }
         match profile.and_then(|id| self.holders.get(id).cloned().flatten()) {
             Some(path) => self.forwards.push_back((path, buffered, profile, fds, Instant::now())),
             None => self.waiting.push_back((buffered, fds, Instant::now())),
@@ -457,11 +501,18 @@ impl TemplateProcess {
             return Err("registrations go to the root template".into());
         }
         let profile = one_page(&profile);
-        if let Some(id) = self.snapshot.browser.prepared_profiles().iter().position(|p| *p == profile) {
+        if let Some(id) = self
+            .snapshot
+            .browser
+            .prepared_profiles()
+            .iter()
+            .enumerate()
+            .find_map(|(id, p)| (self.snapshot.browser.prepared_profile_active(id) && *p == profile).then_some(id))
+        {
             return Ok(id);
         }
         if let Some(base) = profile.base {
-            if base >= self.snapshot.browser.prepared_profiles().len() {
+            if !self.snapshot.browser.prepared_profile_active(base) {
                 return Err(format!("no profile {base} to start from"));
             }
         }
@@ -493,6 +544,58 @@ impl TemplateProcess {
         Ok(id)
     }
 
+    fn reap_children(&mut self) {
+        loop {
+            let pid = unsafe { libc::waitpid(-1, std::ptr::null_mut(), libc::WNOHANG) };
+            if pid < 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::EINTR) {
+                continue;
+            }
+            if pid <= 0 {
+                break;
+            }
+            self.derived_pids.retain(|_, child| *child != pid);
+        }
+    }
+
+    fn retire_derived(&mut self, id: usize) -> Result<bool, String> {
+        let before = self.derives.len();
+        self.derives.retain(|derive| derive.id != id);
+        let mut removed = self.derives.len() != before;
+        if let Some(pid) = self.derived_pids.get(&id).copied() {
+            terminate_owned_child(pid)?;
+            self.derived_pids.remove(&id);
+            removed = true;
+        }
+        let path = PathBuf::from(format!("{}.{id}", self.root.display()));
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(conn_socket(&path));
+        Ok(removed)
+    }
+
+    fn unregister(&mut self, id: usize) -> Result<bool, String> {
+        if !self.is_root {
+            return Err("profile retirement goes to the root template".into());
+        }
+        if !self.snapshot.browser.check_profile_retirement(id).map_err(|e| e.message)? {
+            return Ok(false);
+        }
+        if let Some(base) = self.snapshot.browser.prepared_profiles()[id].base {
+            match self.holders.get(base).cloned().flatten() {
+                Some(holder) => {
+                    retire_with(&holder, Message::RetireDerived { profile_id: id })?;
+                }
+                None => {
+                    self.retire_derived(id)?;
+                }
+            }
+        }
+        self.snapshot.browser.unregister_prepared_profile(id).map_err(|e| e.message)?;
+        self.holders[id] = None;
+        self.snapshot.generation += 1;
+        self.spares.clear();
+        Ok(true)
+    }
+
     /// Forks a derived template: the child continues as the template of
     /// `derive.id`, listening on its own socket. Whether this process is now
     /// that child.
@@ -507,13 +610,18 @@ impl TemplateProcess {
             }
         };
         match fork_process(&self.snapshot) {
-            Forked::Parent | Forked::Failed => false, // the parent's copy of the listener closes here
+            Forked::Parent(pid) => {
+                self.derived_pids.insert(derive.id, pid);
+                false
+            }
+            Forked::Failed => false,
             Forked::Child => {
                 self.listener = listener; // closes this child's copies of the parent's
                 self.conns = conns;
                 self.socket = derive.socket;
                 self.is_root = false;
                 self.holders.clear();
+                self.derived_pids.clear();
                 self.waiting.clear();
                 self.forwards.clear();
                 self.derives.clear();
@@ -539,7 +647,7 @@ impl TemplateProcess {
     /// `None`; in the child, serves the connection and returns its exit code.
     fn fork_connection(&mut self, config: &ServerConfig, buffered: Vec<u8>, fds: Vec<OwnedFd>) -> Option<i32> {
         match fork_process(&self.snapshot) {
-            Forked::Parent | Forked::Failed => None, // the parent's copies of the fds close here
+            Forked::Parent(_) | Forked::Failed => None, // the parent's copies of the fds close here
             Forked::Child => {
                 self.leave_template();
                 unsafe { libc::close(self.conns.as_raw_fd()) };
@@ -559,7 +667,7 @@ impl TemplateProcess {
             let Ok((ours, theirs)) = UnixStream::pair() else { return None };
             match fork_process(&self.snapshot) {
                 Forked::Failed => return None,
-                Forked::Parent => self.spares.push_back(ours),
+                Forked::Parent(_) => self.spares.push_back(ours),
                 Forked::Child => {
                     drop(ours);
                     self.leave_template();
@@ -597,12 +705,21 @@ impl TemplateProcess {
             if fds.len() != 2 {
                 continue;
             }
-            if profile.is_some_and(|id| self.holders.get(id).is_some_and(|h| h.is_some())) {
-                // A derived snapshot that was not up when the server looked: the
-                // template queues it until that snapshot's template listens.
+            // This spare cannot serve the connection when it is out of date (the
+            // template dropped it for a newer profile while it was accepting;
+            // its pages miss that profile) or when the profile is a derived
+            // snapshot that was not up when the server looked. The template
+            // gets it instead, and queues it until that snapshot's template
+            // listens if need be.
+            let stale = readable(to_template.as_raw_fd());
+            let unknown = profile.is_some_and(|id| !self.snapshot.browser.prepared_profile_active(id));
+            if stale || unknown || profile.is_some_and(|id| self.holders.get(id).is_some_and(|h| h.is_some())) {
                 let raw: Vec<RawFd> = fds.iter().map(|f| f.as_raw_fd()).collect();
                 if let Ok(mut s) = UnixStream::connect(&self.socket) {
                     let _ = send(&mut s, &Message::Connect { buffered, profile }, &raw);
+                }
+                if stale {
+                    return 0;
                 }
                 continue;
             }
@@ -646,7 +763,10 @@ impl TemplateProcess {
                 std::ptr::read(&self.snapshot.outbound),
             )
         };
+        let retire_root = root.clone();
         browser.set_fork_child(Box::new(move |p: &PreparedProfile| register_with(&root, p)));
+        browser
+            .set_fork_unregister(Box::new(move |id| retire_with(&retire_root, Message::Unregister { profile_id: id })));
         crate::serve::serve_browser(browser, outbox, outbound, socket, &buffered, config.clone());
         drop(finished);
         0
@@ -654,7 +774,7 @@ impl TemplateProcess {
 }
 
 enum Forked {
-    Parent,
+    Parent(libc::pid_t),
     Child,
     Failed,
 }
@@ -686,6 +806,7 @@ fn fork_process(snapshot: &Snapshot) -> Forked {
         }
     }
     engine.did_fork(pid == 0);
+    install_child_notifications();
     if let Err(e) = lp_net::client::resume_after_fork() {
         eprintln!("lightningpanda: network restart failed: {e}");
         if pid == 0 {
@@ -698,7 +819,7 @@ fn fork_process(snapshot: &Snapshot) -> Forked {
             eprintln!("lightningpanda: template: fork failed: {}", std::io::Error::last_os_error());
             Forked::Failed
         }
-        _ => Forked::Parent,
+        p => Forked::Parent(p),
     }
 }
 
@@ -829,6 +950,84 @@ fn ready_to_fork(snapshot: &mut Snapshot, waiting_since: Option<Instant>) -> boo
         }
     }
     ready
+}
+
+extern "C" fn child_notification(_: libc::c_int) {}
+
+fn install_child_notifications() {
+    // Keep exited children waitable, and interrupt idle polling so templates reap promptly.
+    unsafe {
+        let mut action: libc::sigaction = std::mem::zeroed();
+        action.sa_sigaction = child_notification as *const () as usize;
+        action.sa_flags = libc::SA_NOCLDSTOP;
+        libc::sigemptyset(&mut action.sa_mask);
+        libc::sigaction(libc::SIGCHLD, &action, std::ptr::null_mut());
+    }
+}
+
+fn terminate_owned_child(pid: libc::pid_t) -> Result<(), String> {
+    // Only a still-waitable child can be signalled; a reused unrelated PID is never touched.
+    let status = unsafe { libc::waitpid(pid, std::ptr::null_mut(), libc::WNOHANG) };
+    if status == pid {
+        return Ok(());
+    }
+    if status < 0 {
+        let error = std::io::Error::last_os_error();
+        return if error.raw_os_error() == Some(libc::ECHILD) { Ok(()) } else { Err(error.to_string()) };
+    }
+    if unsafe { libc::kill(pid, libc::SIGTERM) } != 0 {
+        let error = std::io::Error::last_os_error();
+        if error.raw_os_error() != Some(libc::ESRCH) {
+            return Err(error.to_string());
+        }
+    }
+    let deadline = Instant::now() + Duration::from_millis(500);
+    loop {
+        let result = unsafe { libc::waitpid(pid, std::ptr::null_mut(), libc::WNOHANG) };
+        if result == pid {
+            return Ok(());
+        }
+        if result < 0 {
+            let error = std::io::Error::last_os_error();
+            if error.raw_os_error() == Some(libc::ECHILD) {
+                return Ok(());
+            }
+            if error.raw_os_error() != Some(libc::EINTR) {
+                return Err(error.to_string());
+            }
+        }
+        if Instant::now() >= deadline {
+            unsafe {
+                libc::kill(pid, libc::SIGKILL);
+            }
+            loop {
+                let result = unsafe { libc::waitpid(pid, std::ptr::null_mut(), 0) };
+                if result == pid {
+                    return Ok(());
+                }
+                let error = std::io::Error::last_os_error();
+                if error.raw_os_error() == Some(libc::ECHILD) {
+                    return Ok(());
+                }
+                if error.raw_os_error() != Some(libc::EINTR) {
+                    return Err(error.to_string());
+                }
+            }
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
+fn retire_with(template: &Path, message: Message) -> Result<bool, String> {
+    let mut stream = UnixStream::connect(template).map_err(|e| format!("template: {e}"))?;
+    stream.set_read_timeout(Some(Duration::from_secs(5))).map_err(|e| e.to_string())?;
+    stream.set_write_timeout(Some(Duration::from_secs(5))).map_err(|e| e.to_string())?;
+    send(&mut stream, &message, &[]).map_err(|e| e.to_string())?;
+    let (reply, _): (Unregistered, _) = recv(&mut stream).map_err(|e| e.to_string())?;
+    match reply.error {
+        Some(error) => Err(error),
+        None => Ok(reply.removed),
+    }
 }
 
 /// Sends a registration to the template; its profile id there.
@@ -994,4 +1193,68 @@ fn recv<T: for<'de> Deserialize<'de>>(stream: &mut UnixStream) -> std::io::Resul
     }
     let message = serde_json::from_slice(&bytes[4..4 + len]).map_err(std::io::Error::other)?;
     Ok((message, fds))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct SocketFiles(PathBuf);
+
+    impl Drop for SocketFiles {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn connection_fixture() -> (SocketFiles, PathBuf, UnixListener, std::net::TcpStream) {
+        let suffix = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let dir = PathBuf::from(format!("/tmp/lp-fork-{}-{suffix}", std::process::id()));
+        std::fs::create_dir(&dir).unwrap();
+        let template = dir.join("root");
+        let root = UnixListener::bind(conn_socket(&template)).unwrap();
+        root.set_nonblocking(true).unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let peer = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (socket, _) = listener.accept().unwrap();
+        drop(peer);
+        (SocketFiles(dir), template, root, socket)
+    }
+
+    #[test]
+    fn refused_derived_socket_forwards_connection_to_root() {
+        let (_files, template, root, socket) = connection_fixture();
+        let derived = conn_socket(&PathBuf::from(format!("{}.7", template.display())));
+        drop(UnixListener::bind(&derived).unwrap());
+        assert!(derived.exists());
+        assert_eq!(UnixStream::connect(&derived).unwrap_err().kind(), std::io::ErrorKind::ConnectionRefused);
+        let completion =
+            connect(&template, socket, vec![1, 2, 3], Some(7)).expect("root accepts while derived is not listening");
+        let (mut stream, _) = root.accept().unwrap();
+        let (message, fds): (Message, _) = recv(&mut stream).unwrap();
+        match message {
+            Message::Connect { buffered, profile } => {
+                assert_eq!(buffered, [1, 2, 3]);
+                assert_eq!(profile, Some(7));
+            }
+            _ => panic!("expected forwarded connection"),
+        }
+        assert_eq!(fds.len(), 2);
+        drop(fds);
+        completion.blocking_recv().unwrap();
+    }
+
+    #[test]
+    fn listening_derived_socket_receives_connection_directly() {
+        let (_files, template, root, socket) = connection_fixture();
+        let derived = UnixListener::bind(conn_socket(&PathBuf::from(format!("{}.7", template.display())))).unwrap();
+        derived.set_nonblocking(true).unwrap();
+        let completion = connect(&template, socket, Vec::new(), Some(7)).unwrap();
+        let (mut stream, _) = derived.accept().unwrap();
+        let (message, fds): (Message, _) = recv(&mut stream).unwrap();
+        assert!(matches!(message, Message::Connect { profile: Some(7), .. }));
+        assert_eq!(root.accept().unwrap_err().kind(), std::io::ErrorKind::WouldBlock);
+        drop(fds);
+        completion.blocking_recv().unwrap();
+    }
 }

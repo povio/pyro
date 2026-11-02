@@ -255,7 +255,20 @@ impl Geometry {
                 b.border[2] + b.padding[2],
                 b.border[3] + b.padding[3],
             );
-            Some((b.x + l, b.y + t, (b.width - l - r).max(0.0), (b.height - t - bo).max(0.0)))
+            // A direct child of a scrolling box is bounded by its scrolling
+            // content, rather than its unscrolled viewport-sized border box.
+            let scroll_container = doc.get_node(c).and_then(|n| n.primary_styles()).is_some_and(|style| {
+                use style::values::computed::Overflow;
+                [style.clone_overflow_x(), style.clone_overflow_y()]
+                    .into_iter()
+                    .any(|overflow| overflow != Overflow::Visible)
+            });
+            let (width, height) = if scroll_container {
+                (b.scroll_width + b.border[3] + b.border[1], b.scroll_height + b.border[0] + b.border[2])
+            } else {
+                (b.width, b.height)
+            };
+            Some((b.x + l, b.y + t, (width - l - r).max(0.0), (height - t - bo).max(0.0)))
         });
         StickyBox { insets, limit }
     }

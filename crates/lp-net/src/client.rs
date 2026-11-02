@@ -283,6 +283,8 @@ struct Inner {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NetActivity {
     pub inflight: usize,
+    /// Established successful text/event-stream responses that remain in flight.
+    pub event_streams: usize,
     /// When `inflight` last reached 0, if it is 0 now.
     pub idle_since: Option<Instant>,
     /// When `inflight` last reached at most 2, if it is at most 2 now.
@@ -299,6 +301,7 @@ struct ActivityMap {
 /// request's sink after the terminal event (finished, failed, canceled, aborted
 /// or shutdown). A forgotten loader's late terminals do not touch a newer entry.
 struct ActivityGuard {
+    event_stream: bool,
     map: Arc<Mutex<ActivityMap>>,
     loader: String,
     generation: u64,
@@ -310,6 +313,9 @@ impl Drop for ActivityGuard {
         if let Some((generation, a)) = map.loaders.get_mut(&self.loader) {
             if *generation == self.generation {
                 a.inflight = a.inflight.saturating_sub(1);
+                if self.event_stream {
+                    a.event_streams = a.event_streams.saturating_sub(1);
+                }
                 let now = Instant::now();
                 if a.inflight == 0 && a.idle_since.is_none() {
                     a.idle_since = Some(now);
@@ -471,10 +477,9 @@ impl NetClient {
         let generation = {
             let mut map = self.inner.activity.lock().unwrap();
             let next = map.generation + 1;
-            let (generation, a) = map
-                .loaders
-                .entry(loader.clone())
-                .or_insert_with(|| (next, NetActivity { inflight: 0, idle_since: None, almost_idle_since: None }));
+            let (generation, a) = map.loaders.entry(loader.clone()).or_insert_with(|| {
+                (next, NetActivity { inflight: 0, event_streams: 0, idle_since: None, almost_idle_since: None })
+            });
             let generation = *generation;
             a.inflight += 1;
             a.idle_since = None;
@@ -486,9 +491,19 @@ impl NetClient {
             }
             generation
         };
-        let guard = ActivityGuard { map: self.inner.activity.clone(), loader, generation };
+        let mut guard = ActivityGuard { event_stream: false, map: self.inner.activity.clone(), loader, generation };
         Box::new(move |ev| {
-            let _guard = &guard;
+            if !guard.event_stream
+                && matches!(&ev, ResponseEvent::Response(head) if head.status.is_success() && head.mime == "text/event-stream")
+            {
+                let mut map = guard.map.lock().unwrap();
+                if let Some((generation, activity)) = map.loaders.get_mut(&guard.loader) {
+                    if *generation == guard.generation {
+                        activity.event_streams += 1;
+                        guard.event_stream = true;
+                    }
+                }
+            }
             sink(ev)
         })
     }

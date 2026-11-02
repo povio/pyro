@@ -85,8 +85,7 @@ pub(crate) struct MemberCall {
 
 /// Calls `f` (a member callback, cast back to its real fn-pointer type) for
 /// `this` with `args`.
-pub(crate) type InvokeFn =
-    unsafe fn(&Scope<'_>, sys::JSObjectRef, Args<'_>, *const ()) -> JsResult<sys::JSValueRef>;
+pub(crate) type InvokeFn = unsafe fn(&Scope<'_>, sys::JSObjectRef, Args<'_>, *const ()) -> JsResult<sys::JSValueRef>;
 
 /// Member callback types: plain fn pointers. Non-capturing closures coerce.
 pub type MethodFn<C> = for<'s> fn(&Scope<'s>, &<C as JsClass>::Data, Args<'s>) -> JsResult<Value<'s>>;
@@ -187,7 +186,11 @@ impl<C: JsClass> ClassDef<C> {
 
     /// Adds an operation on the prototype.
     pub fn method(&mut self, name: &'static str, length: u32, f: MethodFn<C>) -> &mut Self {
-        self.methods.push(MethodSpec { name, length, call: MemberCall { invoke: method_invoke::<C>, f: f as *const () } });
+        self.methods.push(MethodSpec {
+            name,
+            length,
+            call: MemberCall { invoke: method_invoke::<C>, f: f as *const () },
+        });
         self
     }
 

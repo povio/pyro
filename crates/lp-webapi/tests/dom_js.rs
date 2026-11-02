@@ -217,6 +217,63 @@ fn keyboard_and_focus_through_native_input() {
 }
 
 #[test]
+fn controlled_unchanged_sanitized_values_preserve_selection() {
+    let e = env("<body><input id=t value=abcd><textarea id=ta>ab\ncd</textarea></body>");
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"(() => {
+                const input = document.getElementById('t');
+                const textarea = document.getElementById('ta');
+                input.setSelectionRange(1, 3);
+                textarea.setSelectionRange(1, 4);
+                input.value = 'ab\ncd';
+                textarea.value = 'ab\r\ncd';
+                return JSON.stringify([input.value, input.selectionStart, input.selectionEnd,
+                    textarea.value, textarea.selectionStart, textarea.selectionEnd]);
+            })()"#,
+        ),
+        r#"["abcd",1,3,"ab\ncd",1,4]"#,
+    );
+}
+
+#[test]
+fn controlled_unchanged_values_still_set_the_dirty_value_flag() {
+    let e = env("<body><input id=t value=abcd><textarea id=ta>abcd</textarea></body>");
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"JSON.stringify(['t', 'ta'].map(id => {
+                const control = document.getElementById(id);
+                control.setSelectionRange(1, 3);
+                control.value = control.value;
+                control.defaultValue = 'replacement';
+                return [control.value, control.defaultValue, control.selectionStart, control.selectionEnd];
+            }))"#,
+        ),
+        r#"[["abcd","replacement",1,3],["abcd","replacement",1,3]]"#,
+    );
+}
+
+#[test]
+fn controlled_changed_values_reset_selection_to_the_utf16_end() {
+    let e = env("<body><input id=t value=abcdef><textarea id=ta>abcdef</textarea></body>");
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"JSON.stringify(['t', 'ta'].map(id => {
+                const control = document.getElementById(id);
+                control.setSelectionRange(1, 3);
+                control.value = '\u{1f600}xy';
+                control.defaultValue = 'replacement';
+                return [control.value, control.selectionStart, control.selectionEnd];
+            }))"#,
+        ),
+        r#"[["😀xy",4,4],["😀xy",4,4]]"#,
+    );
+}
+
+#[test]
 fn arrow_up_and_down_move_the_caret_in_text_controls() {
     let e = env("<body><input id=t value=hello><textarea id=ta></textarea><input id=n type=number value=5></body>");
     let r = &e.main;
@@ -2422,7 +2479,9 @@ fn resize_observer_reports_the_flow_content_box() {
         "window.seen=[]; new ResizeObserver(l => { for (const en of l) seen.push(en.contentRect.width + 'x' + en.contentRect.height) }).observe(document.getElementById('a'))",
     );
     e.page.after_task();
+    assert!(e.page.pending_resize_observer_work(), "queued initial delivery must prevent quiescence");
     tasks.drain();
+    assert!(!e.page.pending_resize_observer_work(), "completed delivery must not prevent quiescence");
     // 300 - 2 * (6 padding + 2 border) wide; one line tall.
     let seen = eval(&e.main, "seen.join()");
     assert!(seen.starts_with("284x"), "{seen}");
@@ -2431,7 +2490,9 @@ fn resize_observer_reports_the_flow_content_box() {
     // after a gather is still delivered by the delayed wake.
     eval(&e.main, "document.getElementById('a').parentElement.style.width='200px'");
     e.page.after_task();
+    assert!(e.page.pending_resize_observer_work(), "paced gather must prevent quiescence until its wake runs");
     tasks.drain();
+    assert!(!e.page.pending_resize_observer_work(), "paced gather and delivery finished");
     let seen = eval(&e.main, "seen.join()");
     assert!(seen.contains(",184x"), "{seen}");
     e.page.dispose();
@@ -5539,4 +5600,94 @@ fn mutation_observers_still_see_every_mutation() {
         ),
         "0"
     );
+}
+
+#[test]
+fn queued_scroll_flush_preserves_target_order_and_does_not_repeat_at_fallback() {
+    let e = env("<body><div id=a style='height:20px;width:20px;overflow:auto'><div style='height:200px'></div></div><div id=b style='height:20px;width:20px;overflow:auto'><div style='height:200px'></div></div></body>");
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    eval(&e.main,"window.seen=[];var a=document.getElementById('a'),b=document.getElementById('b');for(const el of [a,b])for(const type of ['scroll','scrollend'])el.addEventListener(type,()=>seen.push(el.id+':'+type+':'+el.scrollTop));a.scrollTop=10;b.scrollTop=20;a.scrollTop=30;");
+    assert_eq!(eval(&e.main, "seen.join()"), "");
+    lp_webapi::layout_api::flush_pending_scrolls(&e.page);
+    let expected = "a:scroll:30,a:scrollend:30,b:scroll:20,b:scrollend:20";
+    assert_eq!(eval(&e.main, "seen.join()"), expected);
+    tasks.drain();
+    assert_eq!(eval(&e.main, "seen.join()"), expected, "timer fallback must not redeliver a rendering-update flush");
+}
+
+#[test]
+fn intersection_observer_fractional_full_containment_is_exact_and_partial_clipping_is_not() {
+    let e = env(
+        r#"<body style="margin:0"><div id="clip" style="position:absolute;left:1700px;top:10px;width:208px;height:40px;overflow:hidden"><div style="display:flex;width:208px"><div id="target" style="flex:1;height:20px"></div><div style="flex:1;height:20px"></div><div style="flex:1;height:20px"></div></div></div></body>"#,
+    );
+    let mut viewport = e.page.viewport();
+    viewport.width = 1920;
+    e.page.set_viewport(viewport);
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    eval(
+        &e.main,
+        r#"var records=[]; var clipper=document.getElementById('clip');
+        var observer=new IntersectionObserver(entries=>records.push(...entries),{threshold:[1]});
+        observer.observe(document.getElementById('target'));"#,
+    );
+    e.page.after_task();
+    tasks.drain();
+    assert_eq!(eval(&e.main, "records.map(entry=>entry.intersectionRatio).join()"), "1");
+    assert_eq!(eval(&e.main, "records[0].intersectionRect.width===records[0].boundingClientRect.width && records[0].intersectionRect.height===records[0].boundingClientRect.height"), "true");
+
+    eval(&e.main, "clipper.style.width='30px'");
+    e.page.after_task();
+    tasks.drain();
+    assert_eq!(eval(&e.main, "records.length===2 && records[1].isIntersecting && records[1].intersectionRatio>0 && records[1].intersectionRatio<1 && records[1].intersectionRect.width===30"), "true");
+
+    eval(&e.main, "clipper.style.width='208px'");
+    e.page.after_task();
+    tasks.drain();
+    assert_eq!(eval(&e.main, "records.length===3 && records[2].intersectionRatio===1"), "true");
+    e.page.dispose();
+}
+
+#[test]
+fn queued_scroll_old_fallback_cannot_consume_requeued_target() {
+    let e = env(
+        "<body><div id=a style='height:20px;width:20px;overflow:auto'><div style='height:200px'></div></div></body>",
+    );
+    let tasks = Rc::new(ObserverTasks::default());
+    e.page.set_hooks(Some(tasks.clone()));
+    eval(&e.main, "window.seen=[];var a=document.getElementById('a');a.addEventListener('scroll',()=>{seen.push(a.scrollTop);if(a.scrollTop===10)a.scrollTop=20});a.scrollTop=10;");
+    let old_fallback = tasks.0.borrow_mut().pop_front().expect("first scroll fallback");
+    lp_webapi::layout_api::flush_pending_scrolls(&e.page);
+    assert_eq!(eval(&e.main, "seen.join()"), "10");
+    old_fallback();
+    assert_eq!(eval(&e.main, "seen.join()"), "10", "the previous entry's timer cannot deliver the reentrant scroll");
+    lp_webapi::layout_api::flush_pending_scrolls(&e.page);
+    assert_eq!(eval(&e.main, "seen.join()"), "10,20");
+    tasks.drain();
+    assert_eq!(eval(&e.main, "seen.join()"), "10,20", "neither old nor new fallback may duplicate a flushed event");
+}
+
+#[test]
+fn unhandled_rejection_formats_reason_only_after_uncanceled_dispatch() {
+    #[derive(Default)]
+    struct Reports(RefCell<Vec<String>>);
+    impl lp_js::EngineHooks for Reports {
+        fn unhandled_rejection(&self, _realm: &Realm, exception: &lp_js::JsException) {
+            self.0.borrow_mut().push(exception.message.clone());
+        }
+    }
+    let e = env("<body></body>");
+    assert!(e.engine.capabilities().unhandled_rejections);
+    let reports = Rc::new(Reports::default());
+    e.engine.set_hooks(Some(reports.clone()));
+    eval(&e.main, "globalThis.reads=0;globalThis.seen=[];globalThis.reason={get message(){reads++;return 'owned'}};globalThis.cancel=e=>{seen.push(reads);e.preventDefault()};addEventListener('unhandledrejection',cancel);Promise.reject(reason);null;");
+    assert_eq!(eval(&e.main, "seen.join()+'|'+reads"), "0|0");
+    assert!(reports.0.borrow().is_empty());
+    eval(&e.main, "removeEventListener('unhandledrejection',cancel);addEventListener('unhandledrejection',()=>seen.push(reads));Promise.reject(reason);null;");
+    assert_eq!(eval(&e.main, "seen.join()+'|'+reads"), "0,0|1");
+    assert_eq!(*reports.0.borrow(), ["owned"]);
+    e.engine.set_hooks(None);
+    eval(&e.main, "Promise.reject(reason);null;");
+    assert_eq!(eval(&e.main, "seen.join()+'|'+reads"), "0,0,1|1", "no default reporter means no reason conversion");
 }

@@ -737,6 +737,7 @@ impl Renderer {
         m.apply_delta(ops).map_err(|_| RenderError::BadArea("the delta does not fit the document".into()))?;
         let mirrored = started.elapsed();
         let mirror::Mirror { doc, bridge, .. } = m;
+        let geometry_generation = doc.root_node().tree().geometry_generation();
         let (fetch, passes) = bridge.settle(doc, started + self.fetch_timeout, self.first_layout_wait);
         let resolving = Instant::now();
         match style_only {
@@ -751,7 +752,7 @@ impl Renderer {
         timings.layout_passes = passes;
         timings.fetch = fetch;
         timings.layout = started.elapsed().saturating_sub(fetch);
-        if !style_only {
+        if !style_only || doc.root_node().tree().geometry_generation() != geometry_generation {
             self.geometry.entry(page).or_default().clear();
         }
         Ok(timings)
@@ -776,7 +777,11 @@ impl Renderer {
             changed = true;
         }
         if changed && style_only {
+            let generation = m.doc.root_node().tree().geometry_generation();
             m.doc.resolve_style(0.0);
+            if m.doc.root_node().tree().geometry_generation() != generation {
+                self.geometry.entry(page).or_default().clear();
+            }
         } else if changed {
             m.doc.resolve(0.0);
             self.geometry.entry(page).or_default().clear();

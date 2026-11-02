@@ -28,8 +28,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::dom::Dom;
-use crate::geometry::{BoxPosition, LayoutBox, LayoutResult, BOTTOM, LEFT, RIGHT, TOP};
 pub use crate::geometry::{ExternalBox, ExternalGeometry, ExternalSticky, ExternalWord, GeometrySource};
+use crate::geometry::{LayoutBox, LayoutResult, BOTTOM, LEFT, RIGHT, TOP};
 /// Overflow clips an out-of-flow box escapes while walking up to its
 /// containing block (`Layout::clip_escape`).
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -697,14 +697,18 @@ impl Layout {
     /// viewport; transforms are not laid out), the non-positioned ones below
     /// the nearest positioned ancestor for `position: absolute`. In-flow
     /// content escapes with its out-of-flow ancestors.
-    fn clipped_by_ancestor(&self, dom: &Dom, node: NodeId, out: impl Fn(NodeId, ScrollAxes) -> bool) -> bool {
+    fn clipped_by_ancestor(&self, dom: &Dom, node: NodeId, mut out: impl FnMut(NodeId, ScrollAxes) -> bool) -> bool {
         let mut escape = self.clip_escape(dom, node);
         let mut cur = dom.parent_element(node).ok().flatten();
         while let Some(a) = cur {
             if self.is_root_container(dom, a) {
                 break;
             }
-            let positioned = self.box_position(dom, a) != BoxPosition::Static;
+            if self.style.computed_display(dom, a).as_deref() == Some("contents") {
+                cur = dom.parent_element(a).ok().flatten();
+                continue;
+            }
+            let positioned = self.style.computed_value(dom, a, "position").is_some_and(|position| position != "static");
             let applies = match escape {
                 ClipEscape::None => true,
                 ClipEscape::Viewport => false,
@@ -730,17 +734,14 @@ impl Layout {
         if dom.node_type(el).ok() != Some(crate::node::NodeType::Element) {
             return ClipEscape::None;
         }
-        match self.box_position(dom, el) {
-            BoxPosition::Fixed => ClipEscape::Viewport,
-            BoxPosition::Absolute => ClipEscape::Positioned,
+        match self.style.computed_value(dom, el, "position").as_deref() {
+            Some("fixed") => ClipEscape::Viewport,
+            Some("absolute") => ClipEscape::Positioned,
             _ => ClipEscape::None,
         }
     }
 
     /// `el`'s `position` as laid out (`Static` when it has no box).
-    fn box_position(&self, dom: &Dom, el: NodeId) -> BoxPosition {
-        self.layout_box(dom, el).map_or(BoxPosition::Static, |b| b.position)
-    }
 
     /// Whether `node` (or a text node's parent) cannot be selected: the
     /// nearest element up the tree with a `user-select` other than `auto`
@@ -902,10 +903,10 @@ impl Layout {
             if axes.x || axes.y {
                 if let Some(pb) = result.get(p) {
                     port = Some(Rect {
-                        x: pb.rect.x + pb.border[LEFT] + self.scroll_left(p) as f64,
-                        y: pb.rect.y + pb.border[TOP] + self.scroll_top(p) as f64,
-                        width: pb.client_width,
-                        height: pb.client_height,
+                        x: pb.rect.x + pb.border[LEFT] + pb.padding[LEFT] + self.scroll_left(p) as f64,
+                        y: pb.rect.y + pb.border[TOP] + pb.padding[TOP] + self.scroll_top(p) as f64,
+                        width: (pb.client_width - pb.padding[LEFT] - pb.padding[RIGHT]).max(0.0),
+                        height: (pb.client_height - pb.padding[TOP] - pb.padding[BOTTOM]).max(0.0),
                     });
                 }
                 break;
@@ -969,33 +970,109 @@ impl Layout {
 
     // ----- hit testing -------------------------------------------------------
 
-    /// Hit test in viewport coordinates: the topmost hit-testable box
-    /// (positioned above in-flow, later above earlier) whose rect and every
-    /// overflow-clipping ancestor's rect contain the point.
+    /// CSS stacking-context order, with source order breaking ties inside a layer.
+    fn paint_key(&self, dom: &Dom, result: &LayoutResult, el: NodeId) -> Vec<(u8, i32, u32)> {
+        let mut ancestors = vec![el];
+        let mut parent = dom.parent_element(el).ok().flatten();
+        while let Some(node) = parent {
+            ancestors.push(node);
+            parent = dom.parent_element(node).ok().flatten();
+        }
+        ancestors.reverse();
+        let mut key = Vec::new();
+        let mut positioned_layer: Option<(u8, i32, u32)> = None;
+        let mut own_layer = false;
+        for (index, node) in ancestors.into_iter().enumerate() {
+            let Some(bounds) = result.get(node) else { continue };
+            let position = self.style.computed_value(dom, node, "position").unwrap_or_else(|| "static".into());
+            let specified_z =
+                self.style.computed_value(dom, node, "z-index").and_then(|value| value.parse::<i32>().ok());
+            let flex_or_grid_item = dom
+                .parent_element(node)
+                .ok()
+                .flatten()
+                .and_then(|parent| self.style.computed_display(dom, parent))
+                .is_some_and(|display| matches!(display.as_str(), "flex" | "inline-flex" | "grid" | "inline-grid"));
+            let z = if position != "static" || flex_or_grid_item { specified_z } else { None };
+            let transformed = self
+                .style
+                .computed_value(dom, node, "transform")
+                .is_some_and(|value| !value.is_empty() && value != "none");
+            let translucent = self
+                .style
+                .computed_value(dom, node, "opacity")
+                .and_then(|value| value.parse::<f64>().ok())
+                .is_some_and(|value| value < 1.0);
+            let isolated = self.style.computed_value(dom, node, "isolation").as_deref() == Some("isolate");
+            let context = index == 0
+                || matches!(position.as_str(), "fixed" | "sticky")
+                || (z.is_some() && (position != "static" || flex_or_grid_item))
+                || transformed
+                || translucent
+                || isolated;
+            if context {
+                if index != 0 {
+                    let z = z.unwrap_or(0);
+                    key.push((
+                        if z < 0 {
+                            1
+                        } else if z > 0 {
+                            4
+                        } else {
+                            3
+                        },
+                        z,
+                        bounds.order,
+                    ));
+                }
+                positioned_layer = None;
+                own_layer = true;
+            } else if position != "static" {
+                // z-auto positioned boxes group their normal content, but their
+                // positioned descendants belong to the enclosing real context.
+                positioned_layer = Some((3, 0, bounds.order));
+                own_layer = true;
+            } else {
+                own_layer = false;
+            }
+        }
+        // Context backgrounds precede negative contexts, normal flow, positioned
+        // zero-level content, then positive contexts. Nested contexts stay atomic.
+        if let Some(layer) = positioned_layer {
+            key.push(layer);
+        }
+        key.push((
+            if own_layer { 0 } else { 2 },
+            0,
+            if own_layer { 0 } else { result.get(el).map_or(0, |bounds| bounds.order) },
+        ));
+        key
+    }
+
     fn element_from_point_impl(&self, dom: &Dom, x: f64, y: f64, ignore_x: bool) -> Option<NodeId> {
         let result = self.layout_result(dom);
         let inside = |r: &Rect| (ignore_x || (x >= r.x && x <= r.x + r.width)) && y >= r.y && y <= r.y + r.height;
-        let mut best: Option<(bool, u32, NodeId)> = None;
+        let mut best: Option<(Vec<(u8, i32, u32)>, NodeId)> = None;
         for (&el, b) in &result.boxes {
             if b.rect.width <= 0.0 && b.rect.height <= 0.0 {
-                continue;
-            }
-            // A descendant paints over its ancestor whatever their orders.
-            let positioned = b.positioned();
-            let same_level = |k: &(bool, u32, NodeId)| k.0 == positioned;
-            if best.is_some_and(|k| (k.0, k.1) > (positioned, b.order))
-                && !best.is_some_and(|k| same_level(&k) && dom.contains(k.2, el).unwrap_or(false))
-            {
                 continue;
             }
             let r = self.bounding_client_rect_for_visible(dom, el);
             if !inside(&r) || !self.is_visible(dom, el) || !self.style.is_hit_testable(dom, el) {
                 continue;
             }
-            if best.is_some_and(|k| same_level(&k) && dom.contains(el, k.2).unwrap_or(false)) {
-                continue;
+            let key = self.paint_key(dom, &result, el);
+            if let Some((top_key, top_node)) = &best {
+                let same_layer = key.len() == top_key.len()
+                    && key[..key.len() - 1] == top_key[..top_key.len() - 1]
+                    && key.last().map(|value| (value.0, value.1)) == top_key.last().map(|value| (value.0, value.1));
+                if same_layer && dom.contains(el, *top_node).unwrap_or(false) {
+                    continue;
+                }
+                if *top_key > key && !(same_layer && dom.contains(*top_node, el).unwrap_or(false)) {
+                    continue;
+                }
             }
-            // Clipped by an overflow ancestor of its containing block chain.
             let clipped = self.clipped_by_ancestor(dom, el, |a, clips| {
                 if result.get(a).is_none() {
                     return false;
@@ -1006,10 +1083,36 @@ impl Layout {
                 out_x || out_y
             });
             if !clipped {
-                best = Some((positioned, b.order, el));
+                best = Some((key, el));
             }
         }
-        best.map(|k| k.2)
+        best.map(|(_, node)| node)
+    }
+
+    /// Visible viewport rectangle, using the same containing-block clips as hit testing.
+    pub fn visible_client_rect(&self, dom: &Dom, node: NodeId, rect: Rect) -> Option<Rect> {
+        let (mut left, mut top) = (rect.left().max(0.0), rect.top().max(0.0));
+        let (mut right, mut bottom) =
+            (rect.right().min(self.inner_width() as f64), rect.bottom().min(self.inner_height() as f64));
+        self.clipped_by_ancestor(dom, node, |ancestor, clips| {
+            if self.style.computed_display(dom, ancestor).as_deref() == Some("contents")
+                || self.layout_box(dom, ancestor).is_none()
+            {
+                return false;
+            }
+            if let Some(bounds) = self.client_rect(dom, ancestor) {
+                if clips.x {
+                    left = left.max(bounds.left());
+                    right = right.min(bounds.right());
+                }
+                if clips.y {
+                    top = top.max(bounds.top());
+                    bottom = bottom.min(bounds.bottom());
+                }
+            }
+            right <= left || bottom <= top
+        });
+        (right > left && bottom > top).then_some(Rect { x: left, y: top, width: right - left, height: bottom - top })
     }
 
     /// `document.elementFromPoint(x, y)` (Document.zig:953-1032), viewport
@@ -1550,6 +1653,16 @@ impl Layout {
     /// covers the scrollport) alone, center a box that is entirely hidden and
     /// bring a partly visible one in by its nearest edge. The approximate
     pub fn scroll_into_view_if_needed_targets(&mut self, dom: &Dom, el: NodeId) -> Vec<ScrollTarget> {
+        self.scroll_into_view_aligned_targets(dom, el, false)
+    }
+
+    pub fn scroll_into_view_centered_targets(&mut self, dom: &Dom, el: NodeId) -> Vec<ScrollTarget> {
+        self.scroll_into_view_aligned_targets(dom, el, true)
+    }
+
+    fn scroll_into_view_aligned_targets(&mut self, dom: &Dom, el: NodeId, center: bool) -> Vec<ScrollTarget> {
+        let offset: fn(f64, f64, f64, u32) -> Option<i32> =
+            if center { centered_scroll_offset } else { center_if_needed_offset };
         if !self.is_visible(dom, el) {
             return Vec::new();
         }
@@ -1566,7 +1679,7 @@ impl Layout {
                 let container = self.bounding_client_rect(dom, node);
                 let left = (axes.x || explicit)
                     .then(|| {
-                        center_if_needed_offset(
+                        offset(
                             target.left() - container.left(),
                             target.width,
                             self.client_width(dom, node),
@@ -1576,7 +1689,7 @@ impl Layout {
                     .flatten();
                 let top = (axes.y || explicit)
                     .then(|| {
-                        center_if_needed_offset(
+                        offset(
                             target.top() - container.top(),
                             target.height,
                             self.client_height(dom, node),
@@ -1595,10 +1708,8 @@ impl Layout {
             return moved;
         }
         let target = self.bounding_client_rect(dom, el);
-        let left =
-            center_if_needed_offset(target.left(), target.width, self.inner_width() as f64, self.window_scroll.0);
-        let top =
-            center_if_needed_offset(target.top(), target.height, self.inner_height() as f64, self.window_scroll.1);
+        let left = offset(target.left(), target.width, self.inner_width() as f64, self.window_scroll.0);
+        let top = offset(target.top(), target.height, self.inner_height() as f64, self.window_scroll.1);
         if self.window_scroll_to(dom, left, top) {
             moved.push(ScrollTarget::Viewport);
         }
@@ -1756,6 +1867,10 @@ fn nearest_scroll_offset(start: f64, size: f64, viewport: f64, current: u32) -> 
     let delta =
         if (start < 0.0 && size <= viewport) || (end > viewport && size > viewport) { start } else { end - viewport };
     Some((current as f64 + delta).round().clamp(0.0, i32::MAX as f64) as i32)
+}
+
+fn centered_scroll_offset(start: f64, size: f64, viewport: f64, current: u32) -> Option<i32> {
+    Some((current as f64 + start + size / 2.0 - viewport / 2.0).round().clamp(0.0, i32::MAX as f64) as i32)
 }
 
 // Blink's center-if-needed on one axis: a fully visible box, or one covering

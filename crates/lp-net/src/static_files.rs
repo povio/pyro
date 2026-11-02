@@ -7,7 +7,9 @@
 //! path without a file falls back to `DIR/index.html` (single-page-app
 //! routing). A request the overlay cannot answer (no file, non-GET, other
 //! origin) goes to the network as usual, so API calls on the same origin
-//! still reach their server.
+//! still reach their server. With SPA fallback disabled, all missing paths,
+//! including navigation URLs, reach the network; this is the files-only overlay
+//! mode for an origin whose server owns both app routes and dynamic documents.
 //!
 //! The overlay runs after CDP `Fetch` interception (routes still see and can
 //! override these requests) and before the HTTP cache; responses are not
@@ -68,8 +70,17 @@ impl Preloaded {
 }
 
 /// The configured static roots of a process; `Clone` shares them.
-#[derive(Clone, Debug, Default)]
-pub struct StaticFiles(Arc<Vec<StaticRoot>>);
+#[derive(Clone, Debug)]
+pub struct StaticFiles {
+    roots: Arc<Vec<StaticRoot>>,
+    spa_fallback: bool,
+}
+
+impl Default for StaticFiles {
+    fn default() -> Self {
+        Self { roots: Arc::new(Vec::new()), spa_fallback: true }
+    }
+}
 
 /// A request answered from memory (`StaticFiles::lookup`).
 #[derive(Clone, Debug)]
@@ -124,12 +135,19 @@ impl StaticFiles {
         {
             read();
         }
-        Ok(Self(roots))
+        Ok(Self { roots, spa_fallback: true })
+    }
+
+    /// When disabled, missing navigation paths fall through to normal HTTP,
+    /// just like missing subresources. Existing files still come from the mount.
+    pub fn with_spa_fallback(mut self, enabled: bool) -> Self {
+        self.spa_fallback = enabled;
+        self
     }
 
     /// (files, bytes) held in memory across all roots; waits for the preload.
     pub fn preloaded(&self) -> (usize, usize) {
-        let maps: Vec<Arc<FileMap>> = self.0.iter().map(|r| r.files.get()).collect();
+        let maps: Vec<Arc<FileMap>> = self.roots.iter().map(|r| r.files.get()).collect();
         let files = maps.iter().map(|m| m.len()).sum();
         let bytes = maps.iter().flat_map(|m| m.values()).map(|f| f.body.len()).sum();
         (files, bytes)
@@ -144,7 +162,7 @@ impl StaticFiles {
             return None;
         }
         let origin = origin.ascii_serialization();
-        let root = self.0.iter().find(|r| r.origin == origin)?;
+        let root = self.roots.iter().find(|r| r.origin == origin)?;
         let relative = relative_path(url.path())?;
         let key = relative.to_str()?.replace(std::path::MAIN_SEPARATOR, "/");
         let files = root.files.get();
@@ -155,7 +173,7 @@ impl StaticFiles {
                 return Some(StaticMemoryHit { file: file.clone(), spa_fallback: false });
             }
         }
-        if document {
+        if document && self.spa_fallback {
             if let Some(file) = files.get("index.html") {
                 return Some(StaticMemoryHit { file: file.clone(), spa_fallback: true });
             }
@@ -164,12 +182,12 @@ impl StaticFiles {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        self.roots.is_empty()
     }
 
     /// (origin, directory) per root.
     pub fn summary(&self) -> Vec<(String, PathBuf)> {
-        self.0.iter().map(|r| (r.origin.clone(), r.dir.clone())).collect()
+        self.roots.iter().map(|r| (r.origin.clone(), r.dir.clone())).collect()
     }
 
     /// The file answering `url`, if its origin has a root and a file exists.
@@ -180,14 +198,14 @@ impl StaticFiles {
             return None;
         }
         let origin = origin.ascii_serialization();
-        let root = self.0.iter().find(|r| r.origin == origin)?;
+        let root = self.roots.iter().find(|r| r.origin == origin)?;
         let relative = relative_path(url.path())?;
         let candidate = root.dir.join(&relative);
         let candidate = if candidate.is_dir() { candidate.join("index.html") } else { candidate };
         if candidate.is_file() {
             return Some(StaticHit { path: candidate, spa_fallback: false });
         }
-        if document {
+        if document && self.spa_fallback {
             let index = root.dir.join("index.html");
             if index.is_file() {
                 return Some(StaticHit { path: index, spa_fallback: true });
@@ -399,6 +417,23 @@ mod tests {
         .unwrap();
         assert_eq!(files.summary(), vec![("http://a.test".to_string(), dir.path().join("assets"))]);
         assert!(StaticFiles::default().is_empty());
+    }
+
+    #[test]
+    fn network_fallback_serves_files_but_not_missing_documents() {
+        let (_dir, files) = fixture();
+        let network = files.clone().with_spa_fallback(false);
+        let dynamic = Url::parse("http://app.test:3000/reports/dynamic?signature=value&disposition=inline").unwrap();
+        assert!(files.lookup(&dynamic, true).unwrap().spa_fallback);
+        assert!(files.resolve(&dynamic, true).unwrap().spa_fallback);
+        assert!(network.lookup(&dynamic, true).is_none());
+        assert!(network.resolve(&dynamic, true).is_none());
+        for document in [false, true] {
+            let asset = Url::parse("http://app.test:3000/assets/app.js?v=1").unwrap();
+            assert!(!network.lookup(&asset, document).unwrap().spa_fallback);
+            assert!(!network.resolve(&asset, document).unwrap().spa_fallback);
+        }
+        assert!(network.lookup(&Url::parse("http://app.test:3000/").unwrap(), true).is_some());
     }
 
     #[test]

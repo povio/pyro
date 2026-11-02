@@ -109,6 +109,7 @@ reuse them.
 | `loc.type('text')` | focuses, then one key press per character (`pressSequentially`) |
 | `loc.blur()` | moves focus away (`blur` / `focusout`) |
 | `loc.upload([{ name, text \| base64, mimeType? }])` | sets the files of an `<input type=file>`; a string is a path on the browser's machine |
+| `loc.dropFiles([{ name, text \| base64, mimeType? }])` | external file drag into a visible target; real dragenter/dragover/drop and File data, preserving inline names |
 | `loc.drag(target)` | native drag and drop onto `target`, else a pointer drag |
 | `loc.wheel(deltaX, deltaY)` / `mouse('click', { x, y })` | mouse wheel over the element / raw mouse at viewport coordinates (`click`, `dblclick`, `move`, `down`, `up`, `wheel`) |
 | `loc.fill('text')` | replaces the value of an input, textarea or contenteditable |
@@ -175,7 +176,8 @@ requests never finish (polling, streaming) or that you do not want to wait for.
   option); with `passthrough: true` (or `patch`) the request reaches the
   backend and its response is held instead. `release` waits until something
   is held, so it can come before the action's request starts; holds outlive
-  the run. There is no clock control: `delay` is real time.
+  the run. The native `advanceTime` step explicitly advances page Date and timers;
+  mock `delay` remains a network delay.
 
 ## Porting from Playwright
 
@@ -252,3 +254,5 @@ await page.matchScreenshot('dashboard', { maxDiffPixels: 20 });  // one-step for
   pixels, iframe contents, element scroll offsets, `:hover`/`:focus` styles,
   the caret, running animations. Pixels come from lightningpanda's renderer
   (Blitz), never compare them with Chromium screenshots.
+
+`downloadCount(as)` reads the current page's native initiated-download count without consuming positive download waits. Compare snapshots before and after a settled preview action to assert no new downloads; the count persists across batches on the same page.

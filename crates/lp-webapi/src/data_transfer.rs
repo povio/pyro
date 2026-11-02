@@ -417,6 +417,23 @@ impl NativeTransfer {
         Some(NativeTransfer { store, reference, _root: root })
     }
 
+    pub(crate) fn with_files(
+        page: &crate::page::PageDom,
+        items: &[(String, String)],
+        files: &[crate::file::FileEntry],
+        effect_allowed: &str,
+        mode: Mode,
+    ) -> Option<NativeTransfer> {
+        let transfer = Self::new(page, items, effect_allowed, mode)?;
+        for file in files {
+            transfer.store.push(
+                file.mime.to_ascii_lowercase(),
+                Kind::File { bytes: file.bytes.clone(), name: file.name.clone(), last_modified: file.last_modified },
+            );
+        }
+        Some(transfer)
+    }
+
     pub(crate) fn set_mode(&self, mode: Mode) {
         self.store.mode.set(mode);
     }

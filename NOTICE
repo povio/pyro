@@ -11,7 +11,13 @@ lightningpanda is distributed under the same license, AGPL-3.0-only; see
 LICENSE. Network users of a modified version must be offered its source
 (AGPL section 13).
 
-It links the platform JavaScriptCore (WebKit, LGPL-2.0+/BSD) dynamically.
+It dynamically links JavaScriptCore (WebKit, LGPL-2.0+/BSD). Standard macOS
+archives use the operating-system framework. The optional macOS ARM64 fork
+archive includes a separately built, patched JavaScriptCore shared library.
+That variant includes upstream license files and identifies the matching
+JavaScriptCore source archive supplied with the same release. The source
+archive retains upstream notices and includes the exact WebKit revision,
+Lightningpanda patches and build instructions.
 
 crates/lp-dom/src/stylo/ua.css is the HTML user-agent stylesheet of
 blitz-dom (https://github.com/DioxusLabs/blitz), derived from Mozilla

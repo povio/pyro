@@ -461,7 +461,7 @@ impl Dom {
         })
     }
 
-    /// `.value` setter. For text controls the selection moves to the end.
+    /// `.value` setter. A changed text value moves selection to the end; an unchanged value preserves it.
     pub fn set_value(&mut self, id: NodeId, v: &str) -> DomResult<()> {
         let i = self.check(id)?;
         let local = self.html_local(i).cloned().ok_or(DomError::Type("not an HTML element"))?;
@@ -471,11 +471,15 @@ impl Dom {
                 match ty.value_mode() {
                     ValueMode::Value => {
                         let v = sanitize(ty, v);
+                        let changed = self.value(id)? != v;
                         let end = utf16_len(&v);
                         let c = self.control_state_mut(id)?;
                         c.value = Some(v);
                         c.dirty_value = true;
-                        c.selection = (end, end);
+                        if changed {
+                            c.selection = (end, end);
+                            c.selection_set = true;
+                        }
                     }
                     ValueMode::Default | ValueMode::DefaultOn => self.set_attribute(id, "value", v)?,
                     ValueMode::Filename => {
@@ -491,11 +495,15 @@ impl Dom {
             }
             "textarea" => {
                 let v = v.replace("\r\n", "\n").replace('\r', "\n");
+                let changed = self.value(id)? != v;
                 let end = utf16_len(&v);
                 let c = self.control_state_mut(id)?;
                 c.value = Some(v);
                 c.dirty_value = true;
-                c.selection = (end, end);
+                if changed {
+                    c.selection = (end, end);
+                    c.selection_set = true;
+                }
             }
             "select" => {
                 let opts = self.select_options_idx(i);

@@ -532,6 +532,7 @@ impl Browser {
                                     .unwrap_or(""),
                                 &resource.url,
                             );
+                            b.emit(page.page, PageEvent::DownloadStarted);
                             b.emit(
                                 page.page,
                                 PageEvent::Download {
@@ -607,8 +608,12 @@ impl Browser {
         let page_dom = self.doc(page).and_then(|p| p.main_frame.page_dom.clone()).ok_or(JsError::ContextDestroyed)?;
         let dom = page_dom.dom.clone();
         let doc = page_dom.document();
-        let mut parser = DocumentParser::new(dom.clone(), doc, !page_dom.scripting_disabled())
-            .map_err(|e| JsError::Type(format!("{e:?}")))?;
+        let mut parser = if resource.mime == "text/plain" {
+            DocumentParser::new_plaintext(dom.clone(), doc)
+        } else {
+            DocumentParser::new(dom.clone(), doc, !page_dom.scripting_disabled())
+        }
+        .map_err(|e| JsError::Type(format!("{e:?}")))?;
         parser.set_transport_charset(resource.charset.as_deref());
         let mut p = self.doc_mut(page).ok_or(JsError::Type("no such page".into()))?;
         p.main_frame.dom = Some(dom.clone());
@@ -902,6 +907,7 @@ impl Browser {
         let suggested = suggested_filename(&request.filename, &request.url);
         let attribute = request.filename.clone();
         let lp_webapi::DownloadRequest { url, data, .. } = request;
+        self.emit(page.page, PageEvent::DownloadStarted);
         match data {
             Some((bytes, _mime)) => {
                 self.emit(

@@ -61,6 +61,7 @@ struct AnimationFrame {
     /// Handle, callback, and how many frame callbacks it was requested
     /// from in a chain (0: from outside a frame).
     callbacks: Vec<(u32, Persistent, u32)>,
+    native_callbacks: Vec<Rc<Cell<bool>>>,
     timer: Option<TimerId>,
     /// Chain depth of the frame callback running now, if any.
     running: Option<u32>,
@@ -131,7 +132,9 @@ impl WindowData {
     pub fn pending_work(&self, now: Instant) -> (usize, usize) {
         let horizon = now + TIMER_HORIZON;
         let timers = self.timers.borrow().values().filter(|(_, due)| due.is_some_and(|d| d <= horizon)).count();
-        let frames = self.animation.borrow().callbacks.iter().filter(|(_, _, depth)| *depth < LOOP_DEPTH).count();
+        let animation = self.animation.borrow();
+        let frames = animation.callbacks.iter().filter(|(_, _, depth)| *depth < LOOP_DEPTH).count()
+            + animation.native_callbacks.len();
         (timers, frames)
     }
 }
@@ -319,6 +322,11 @@ fn request_animation_frame<'s>(s: &Scope<'s>, w: &WindowData, cb: Persistent) ->
     let mut frame = w.animation.borrow_mut();
     let depth = frame.running.map_or(0, |d| d.saturating_add(1));
     frame.callbacks.push((handle, cb, depth));
+    schedule_animation_frame(s, w, &mut frame);
+    Ok(s.number(handle as f64))
+}
+
+fn schedule_animation_frame(s: &Scope<'_>, w: &WindowData, frame: &mut AnimationFrame) {
     if frame.timer.is_none() {
         // Timers must not keep a disposed realm alive: hold it weakly.
         let realm_weak = s.realm().downgrade();
@@ -333,15 +341,26 @@ fn request_animation_frame<'s>(s: &Scope<'s>, w: &WindowData, cb: Persistent) ->
             w.sched.set_timer(Duration::from_millis(FRAME_MS), false, true, run)
         });
     }
-    Ok(s.number(handle as f64))
+}
+
+/// A native actionability observer of the next real rendering update.
+pub fn request_native_frame(realm: &Realm) -> JsResult<Rc<Cell<bool>>> {
+    let scope = realm.scope()?;
+    let window = scope.global_data::<Window>().ok_or_else(|| JsError::Type("page has no Window".into()))?;
+    let ready = Rc::new(Cell::new(false));
+    let mut frame = window.animation.borrow_mut();
+    frame.native_callbacks.push(ready.clone());
+    schedule_animation_frame(&scope, window, &mut frame);
+    Ok(ready)
 }
 
 fn run_animation_frame(scope: &Scope<'_>) {
     let Some(w) = scope.global_data::<Window>() else { return };
-    let handles: Vec<u32> = {
+    lp_webapi::layout_api::flush_pending_scrolls(&w.target.page);
+    let (handles, native): (Vec<u32>, _) = {
         let mut frame = w.animation.borrow_mut();
         frame.timer = None;
-        frame.callbacks.iter().map(|(h, _, _)| *h).collect()
+        (frame.callbacks.iter().map(|(h, _, _)| *h).collect(), std::mem::take(&mut frame.native_callbacks))
     };
     let now = scope.number(w.now_ms());
     for handle in handles {
@@ -359,6 +378,9 @@ fn run_animation_frame(scope: &Scope<'_>) {
         }
     }
     w.animation.borrow_mut().running = None;
+    for ready in native {
+        ready.set(true);
+    }
 }
 
 fn clear_timer<'s>(s: &Scope<'s>, w: &WindowData, a: Args<'s>) -> JsResult<Value<'s>> {
@@ -373,7 +395,7 @@ fn clear_timer<'s>(s: &Scope<'s>, w: &WindowData, a: Args<'s>) -> JsResult<Value
             let mut frame = w.animation.borrow_mut();
             if let Some(i) = frame.callbacks.iter().position(|(h, _, _)| *h == handle) {
                 frame.callbacks.remove(i);
-                if frame.callbacks.is_empty() {
+                if frame.callbacks.is_empty() && frame.native_callbacks.is_empty() {
                     if let Some(id) = frame.timer.take() {
                         w.sched.clear_timer(id);
                     }
@@ -393,6 +415,9 @@ pub(crate) fn cancel_timers(realm: &Realm) {
         }
         let mut frame = w.animation.borrow_mut();
         frame.callbacks.clear();
+        for ready in frame.native_callbacks.drain(..) {
+            ready.set(true);
+        }
         if let Some(id) = frame.timer.take() {
             w.sched.clear_timer(id);
         }

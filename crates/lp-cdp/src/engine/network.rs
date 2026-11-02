@@ -1,18 +1,18 @@
 //! Per-context observations routed to the page sessions that enabled Network.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use bytes::Bytes;
 use lp_browser::ContextId;
 use lp_net::{NetEvent, RequestId};
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::EngineHost;
 use crate::msg::{CdpError, CdpResult};
-use crate::network_protocol::{base64_encode, headers_json, BodyBudget, BodyStore, NetworkTranslator, MAX_INFLIGHT};
+use crate::network_protocol::{BodyBudget, BodyStore, MAX_INFLIGHT, NetworkTranslator, base64_encode, headers_json};
 use crate::target::{ContextKey, PageCommand, PageKey};
 
 #[derive(Default)]
@@ -113,6 +113,33 @@ pub(super) struct LoggedRequest {
     pub(super) response_headers: Option<http::HeaderMap>,
 }
 
+pub(super) fn redact_header_values(mut headers: Value) -> Value {
+    if let Some(values) = headers.as_object_mut() {
+        for (name, value) in values {
+            if matches!(
+                name.to_ascii_lowercase().as_str(),
+                "authorization"
+                    | "proxy-authorization"
+                    | "cookie"
+                    | "cookie2"
+                    | "set-cookie"
+                    | "set-cookie2"
+                    | "x-api-key"
+                    | "x-auth-token"
+                    | "x-csrf-token"
+                    | "x-xsrf-token"
+            ) {
+                *value = Value::String("[REDACTED]".into());
+            }
+        }
+    }
+    headers
+}
+
+fn diagnostic_headers(headers: &http::HeaderMap) -> Value {
+    redact_header_values(headers_json(headers))
+}
+
 impl LoggedRequest {
     pub(super) fn path(&self) -> &str {
         let rest = self.url.split_once("://").map_or(self.url.as_str(), |(_, r)| r);
@@ -143,8 +170,8 @@ impl LoggedRequest {
             "status": self.status,
             "error": self.error,
             "ms": self.end.map(|e| (e - self.start) * 1e3),
-            "requestHeaders": headers_json(&self.request_headers),
-            "responseHeaders": self.response_headers.as_ref().map(headers_json),
+            "requestHeaders": diagnostic_headers(&self.request_headers),
+            "responseHeaders": self.response_headers.as_ref().map(diagnostic_headers),
         });
         if let Some(body) = &self.post_data {
             match std::str::from_utf8(body) {
@@ -166,6 +193,10 @@ impl RequestLog {
     /// Sequence number of the next request.
     pub(super) fn seq(&self) -> usize {
         self.dropped + self.entries.len()
+    }
+
+    pub(super) fn history_truncated(&self) -> bool {
+        self.dropped != 0
     }
 
     /// Requests started at or after `seq`.
