@@ -11,8 +11,8 @@
 //! Paper-cut documents (no page boxes) also pass [`Extras`]: the text runs
 //! as painted, with their source text (ligatures copy as the characters
 //! they stand for) and elements, which give link annotations, a tag tree
-//! (headings, paragraphs, links) and blurred outset box shadows. Page-box
-//! documents are written exactly as before.
+//! (headings, paragraphs, links). Blurred outset box shadows are drawn on
+//! both (`LIGHTNINGPANDA_PDF_SHADOWS=0` skips them).
 
 use std::collections::HashMap;
 
@@ -61,6 +61,9 @@ pub struct PdfStats {
     pub links: u32,
     /// Glyph runs written with their source text (ligatures, tags).
     pub runs_with_source: u32,
+    /// Blurred outset shadows hidden on the page by their element's opaque
+    /// background: not drawn.
+    pub box_shadows_covered: u32,
     /// Layer filters and backdrop filters: content drawn unfiltered.
     pub filters_skipped: u32,
     /// Compositing other than source-over: drawn as source-over.
@@ -577,13 +580,22 @@ impl Replay<'_, '_> {
                     self.glyph_run(c, source);
                 }
                 RenderCommand::BoxShadow(c) => {
-                    if self.extras.is_some() {
+                    if shadows_enabled() {
                         // Chrome's blur: a Gaussian of standard deviation blur / 2.
                         let sigma = c.std_dev / 2.0 * self.dpr;
-                        let reach = c.rect.inflate(sigma * 3.0, sigma * 3.0);
-                        if self.visible(c.transform.transform_rect_bbox(reach)) {
-                            self.box_shadow(c, sigma);
+                        let reach = c.transform.transform_rect_bbox(c.rect.inflate(sigma * 3.0, sigma * 3.0));
+                        if !self.visible(reach) {
+                            continue;
                         }
+                        // The element's own opaque background is painted right
+                        // after its shadows: what of the shadow it covers on
+                        // this page (a page box's shadow on its own page) is
+                        // not drawn.
+                        if covered(&cmds[i..], reach.intersect(self.page)) {
+                            self.stats.box_shadows_covered += 1;
+                            continue;
+                        }
+                        self.box_shadow(c, sigma);
                     } else if self.visible(c.transform.transform_rect_bbox(c.rect.inflate(c.radius, c.radius))) {
                         self.stats.box_shadows_skipped += 1;
                     }
@@ -622,7 +634,11 @@ impl Replay<'_, '_> {
             self.fill(&path, c.transform, Fill::NonZero, &Paint::Solid(c.brush), None);
             return;
         }
-        let Some((image, area)) = shadow_image(c.rect, c.radius, sigma, [color.r, color.g, color.b, color.a]) else {
+        // Only the part on this page (a page-sized shadow crossing pages
+        // becomes one image per page).
+        let limit = c.transform.inverse().transform_rect_bbox(self.page.inflate(1.0, 1.0));
+        let Some((image, area)) = shadow_image(c.rect, c.radius, sigma, [color.r, color.g, color.b, color.a], limit)
+        else {
             return;
         };
         let Some(size) = Size::from_wh(area.width() as f32, area.height() as f32) else { return };
@@ -862,6 +878,33 @@ impl Replay<'_, '_> {
     }
 }
 
+/// Whether `area` (device px) is under the opaque rectangular fill that
+/// follows the box shadows at the start of `next` (an element paints its
+/// outset shadows, then its background; a shadow clipped to outside the box
+/// is in a layer, and the layer comes first).
+fn covered(next: &[RenderCommand], area: Rect) -> bool {
+    let Some(RenderCommand::Fill(f)) = next.iter().find(|c| !matches!(c, RenderCommand::BoxShadow(_))) else {
+        return false;
+    };
+    let opaque = matches!(&f.brush, Paint::Solid(c) if c.components[3] >= 1.0);
+    if !opaque || area.width() <= 0.0 || area.height() <= 0.0 {
+        return false;
+    }
+    // Only an axis-aligned rectangle: its bounding box is what it covers.
+    let b = f.shape.bounding_box();
+    let corners = f.shape.elements().iter().all(|el| match el {
+        PathEl::MoveTo(p) | PathEl::LineTo(p) => (p.x == b.x0 || p.x == b.x1) && (p.y == b.y0 || p.y == b.y1),
+        PathEl::ClosePath => true,
+        _ => false,
+    });
+    let [sx, ky, kx, sy, _, _] = f.transform.as_coeffs();
+    if !corners || ky != 0.0 || kx != 0.0 || sx <= 0.0 || sy <= 0.0 {
+        return false;
+    }
+    let cover = f.transform.transform_rect_bbox(b);
+    cover.x0 <= area.x0 && cover.y0 <= area.y0 && cover.x1 >= area.x1 && cover.y1 >= area.y1
+}
+
 /// A shadow's alpha as an image: color channels constant, drawn with
 /// interpolation so the low-resolution mask stays smooth.
 #[derive(Clone, Hash)]
@@ -896,8 +939,28 @@ impl CustomImage for ShadowImage {
 /// standard deviation `sigma`, as an image and the area it covers (both in
 /// the shadow's coordinates). The shape is sampled at three cells per sigma
 /// (at most 512 cells a side), then blurred with a separable kernel.
-fn shadow_image(rect: Rect, radius: f64, sigma: f64, color: [u8; 4]) -> Option<(krilla::image::Image, Rect)> {
-    let area = rect.inflate(sigma * 3.0, sigma * 3.0);
+fn shadow_image(
+    rect: Rect,
+    radius: f64,
+    sigma: f64,
+    color: [u8; 4],
+    limit: Rect,
+) -> Option<(krilla::image::Image, Rect)> {
+    let (image, area) = shadow_mask(rect, radius, sigma, color, limit)?;
+    Some((krilla::image::Image::from_custom(image, true).ok()?, area))
+}
+
+/// Whether blurred outset box shadows are drawn (`LIGHTNINGPANDA_PDF_SHADOWS=0`
+/// skips them, counted in [`PdfStats::box_shadows_skipped`], as before).
+fn shadows_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("LIGHTNINGPANDA_PDF_SHADOWS").map_or(true, |v| v != "0"))
+}
+
+/// [`shadow_image`]'s pixels: straight (not premultiplied) alpha over a
+/// constant color, for the part of the blur inside `limit`.
+fn shadow_mask(rect: Rect, radius: f64, sigma: f64, color: [u8; 4], limit: Rect) -> Option<(ShadowImage, Rect)> {
+    let area = rect.inflate(sigma * 3.0, sigma * 3.0).intersect(limit);
     if !(area.width() > 0.0 && area.height() > 0.0 && sigma.is_finite()) {
         return None;
     }
@@ -945,8 +1008,7 @@ fn shadow_image(rect: Rect, radius: f64, sigma: f64, color: [u8; 4]) -> Option<(
     let a = color[3] as f32 / 255.0;
     let alpha: Vec<u8> = cov.iter().map(|v| (v * a * 255.0).round().clamp(0.0, 255.0) as u8).collect();
     let rgb: Vec<u8> = std::iter::repeat_n([color[0], color[1], color[2]], w * h).flatten().collect();
-    let image = ShadowImage { rgb: rgb.into(), alpha: alpha.into(), size: (w as u32, h as u32) };
-    Some((krilla::image::Image::from_custom(image, true).ok()?, area))
+    Some((ShadowImage { rgb: rgb.into(), alpha: alpha.into(), size: (w as u32, h as u32) }, area))
 }
 
 fn norm(v: f32) -> NormalizedF32 {
@@ -1109,5 +1171,27 @@ fn gradient(g: &Gradient, bt: Affine) -> krilla::paint::Paint {
             anti_alias: true,
         }
         .into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shadow_masks_are_straight_alpha_and_limited_to_the_page() {
+        // A 50% black shadow: full coverage well inside the shape keeps
+        // alpha 128 over color 0 (straight alpha, nothing premultiplied).
+        let rect = Rect::new(0.0, 0.0, 400.0, 400.0);
+        let (img, area) = shadow_mask(rect, 0.0, 4.0, [10, 20, 30, 128], Rect::new(-1e9, -1e9, 1e9, 1e9)).unwrap();
+        let (w, h) = img.size;
+        let center = (h / 2 * w + w / 2) as usize;
+        assert_eq!(img.alpha[center], 128);
+        assert_eq!(&img.rgb[center * 3..center * 3 + 3], &[10, 20, 30]);
+        assert_eq!(img.alpha[0], 0, "transparent past three sigma");
+        assert_eq!(area, Rect::new(-12.0, -12.0, 412.0, 412.0));
+        // Limited to a page: only that part is sampled.
+        let (_, part) = shadow_mask(rect, 0.0, 4.0, [0, 0, 0, 255], Rect::new(0.0, 200.0, 1000.0, 1000.0)).unwrap();
+        assert_eq!((part.y0, part.y1), (200.0, 412.0));
     }
 }

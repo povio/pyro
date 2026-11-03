@@ -111,7 +111,9 @@ fn headings_paragraphs_and_links_are_tagged() {
     assert!(pdf.contains("BDC"), "marked content in the page");
     let untagged = print_with(html, |o| o.tagged = false);
     let pdf = inflated(&untagged.bytes);
-    assert!(!pdf.contains("/StructTreeRoot") && !pdf.contains("BDC"), "generateTaggedPDF: false");
+    for absent in ["/StructTreeRoot", "/MarkInfo", "/StructParents", "BDC"] {
+        assert!(!pdf.contains(absent), "generateTaggedPDF: false writes no {absent}");
+    }
     assert_eq!(untagged.stats.links, 1, "links without tags");
 }
 
@@ -142,15 +144,30 @@ fn blurred_outset_shadows_are_drawn() {
 
 #[test]
 fn page_boxes_keep_their_output() {
-    // `.pz-page` documents: no tags, no recorded text, no shadow images.
+    // `.pz-page` documents: no tags, no recorded text, no links; blurred
+    // shadows are drawn (LIGHTNINGPANDA_PDF_SHADOWS=0 skips them).
     let out = print(
         r#"<!doctype html><style>body{margin:0}.pz-page{width:400px;height:500px;box-shadow:0 0 20px #000}</style>
         <div class="pz-page"><h1>One</h1><a href="https://example.com/">x</a></div>"#,
     );
     assert!(out.by_selector);
-    assert_eq!((out.stats.links, out.stats.runs_with_source, out.stats.box_shadows), (0, 0, 0));
-    assert_eq!(out.stats.box_shadows_skipped, 1);
-    assert!(!inflated(&out.bytes).contains("/StructTreeRoot"));
+    assert_eq!((out.stats.links, out.stats.runs_with_source), (0, 0));
+    assert_eq!((out.stats.box_shadows, out.stats.box_shadows_skipped), (1, 0));
+    let pdf = inflated(&out.bytes);
+    for absent in ["/StructTreeRoot", "/MarkInfo", "/StructParents", "BDC"] {
+        assert!(!pdf.contains(absent), "untagged: no {absent}");
+    }
+}
+
+#[test]
+fn a_page_box_shadow_under_its_own_background_is_not_drawn() {
+    // Paprize's page shadow falls outside the printed page box, and the
+    // box's white background covers the rest: nothing of it shows.
+    let out = print(
+        r#"<!doctype html><style>body{margin:0}.pz-page{width:400px;height:500px;margin-bottom:100px;background:#fff;box-shadow:0 4px 16px rgba(0,0,0,.3)}</style>
+        <div class="pz-page">one</div><div class="pz-page">two</div>"#,
+    );
+    assert_eq!((out.stats.box_shadows, out.stats.box_shadows_covered), (0, 2), "{:?}", out.stats);
 }
 
 #[test]

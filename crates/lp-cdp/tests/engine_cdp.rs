@@ -5759,6 +5759,9 @@ mod screenshot {
         // Letter with 0.4in margins is 739 px of content, laid out at that
         // width for printing only.
         assert_eq!(eval_value(&mut h, width), before, "the screen layout is restored");
+        let r = h.page("Page.printToPDF", json!({"pageRanges": "9"}));
+        assert!(r.get("error").is_some(), "{r}");
+        assert_eq!(eval_value(&mut h, width), before, "restored after a failed print too");
     }
 
     /// A layout sub-resource still downloading delays the PDF, not the

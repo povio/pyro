@@ -1275,7 +1275,17 @@ fn paint_paper(
         });
         y = end;
     }
-    let pages = keep_ranges(pages, &opts.page_ranges)?;
+    let pages = match keep_ranges(pages, &opts.page_ranges) {
+        Ok(pages) => pages,
+        Err(e) => {
+            // The screen layout comes back whatever happens to the print.
+            if let Some(v) = saved {
+                doc.set_viewport(v);
+                doc.resolve(0.0);
+            }
+            return Err(e);
+        }
+    };
     let extent_h = pages.iter().map(|p| p.rect.y1).fold(doc_h, f64::max);
     let extent_w = pages.iter().map(|p| p.rect.x1).fold(doc_w, f64::max);
     let mut scene = Scene::new();
