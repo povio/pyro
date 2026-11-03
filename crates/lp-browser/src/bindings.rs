@@ -264,6 +264,7 @@ impl Browser {
             extra_headers: state.extra_http_headers.clone(),
             cache_disabled: state.cache_disabled,
             scripts: state.init_scripts.clone(),
+            bindings: state.bindings.clone(),
         };
         *state.frames.settings.borrow_mut() = settings;
         if page.child.is_none() {

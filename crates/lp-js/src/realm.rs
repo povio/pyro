@@ -654,6 +654,24 @@ impl<'s> Scope<'s> {
         Ok(obj)
     }
 
+    /// Defines `name` on the global (not enumerable) as a function taking one
+    /// string, reported to [`EngineHooks::binding_called`] (CDP
+    /// `Runtime.addBinding`).
+    pub fn install_binding(&self, name: &str) -> JsResult<()> {
+        let binding = name.to_owned();
+        let f = self.function(name, move |scope, _this, args| {
+            let payload = match (args.len(), args.get(0).as_string()) {
+                (1, Some(payload)) => payload,
+                _ => return Err(JsError::Type("Invalid arguments: should be exactly one string.".into())),
+            };
+            if let Some(hooks) = scope.realm.engine.hooks() {
+                hooks.binding_called(&scope.realm(), &binding, &payload);
+            }
+            Ok(scope.undefined())
+        })?;
+        self.global().set_with(&JsString::new(name), f.value(), sys::kJSPropertyAttributeDontEnum)
+    }
+
     /// `new Promise` with externally controlled settlement.
     pub fn deferred(&self) -> JsResult<Deferred> {
         let mut resolve: sys::JSObjectRef = ptr::null_mut();

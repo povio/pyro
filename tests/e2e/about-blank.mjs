@@ -790,6 +790,19 @@ try {
       await cdp.detach();
     } finally { await p.close(); }
   });
+  await check('page.exposeFunction and exposeBinding survive navigation (Runtime.addBinding)', async () => {
+    const p = await context.newPage();
+    try {
+      const calls = [];
+      await p.exposeFunction('compatSum', (a, b) => { calls.push([a, b]); return a + b; });
+      await p.exposeBinding('compatFrame', ({ frame }) => frame === p.mainFrame());
+      assert.equal(await p.evaluate(() => compatSum(2, 3)), 5, 'exposed on the open page');
+      await p.goto(`${fixtureOrigin}/document`, { timeout: 5000 });
+      assert.equal(await p.evaluate(() => compatSum(10, 20)), 30, 'kept across navigation');
+      assert.equal(await p.evaluate(() => compatFrame()), true);
+      assert.deepEqual(calls, [[2, 3], [10, 20]]);
+    } finally { await p.close(); }
+  });
   await check('nested child removal preserves sibling worlds and invalidates old handles', async () => {
     const p = await context.newPage();
     p.setDefaultTimeout(5000);
