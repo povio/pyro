@@ -140,3 +140,112 @@ fn nested_tables_keep_each_tables_border_model_and_intrinsic_height() {
         }
     }
 }
+
+#[test]
+fn table_row_rectangles_use_tracks_instead_of_spanning_edge_cell_union() {
+    let b = boxes(
+        r#"<!doctype html><style>
+        *{box-sizing:border-box}body{margin:0}table{table-layout:fixed;width:280px;border-spacing:0}
+        td{height:26px;padding:2px;border:1px solid;overflow:hidden}
+        input,button{display:block;height:20px;padding:0;border:0;width:100%}
+        .drag{height:24px;width:16px}.left{position:sticky;left:0}.right{position:sticky;right:0}
+        </style><table><colgroup><col style='width:40px'><col style='width:200px'><col style='width:40px'></colgroup>
+        <tbody id=body><tr id=first><td id=left class=left rowspan=2><div class=drag></div></td><td id=ordinary1><input value=one></td><td id=right class=right rowspan=2><button>Act</button></td></tr>
+        <tr id=second><td id=ordinary2><input value=two></td></tr></tbody></table>"#,
+        &["first", "second", "ordinary1", "ordinary2", "left", "right", "body"],
+    );
+    assert_eq!((b[2].height, b[3].height), (26.0, 26.0), "ordinary cells establish true26px tracks");
+    assert_eq!((b[4].height, b[5].height), (52.0, 52.0), "edge cells retain their real rowspan height");
+    eprintln!(
+        "rowspan projection: first={:?}, second={:?}, ordinary={:?}/{:?}, spans={:?}/{:?}",
+        b[0], b[1], b[2], b[3], b[4], b[5]
+    );
+    assert_eq!((b[0].height, b[1].height), (26.0, 26.0), "TR rectangles must describe individual tracks");
+    assert_eq!(b[1].y, b[0].y + 26.0, "the second row starts directly after the first track");
+    assert_eq!(b[6].height, 52.0, "row group still covers both tracks");
+}
+
+fn row_projection_controls(collapse: &str, spacing: u32, second_height: u32) -> String {
+    format!(
+        r#"<!doctype html><style>
+    *{{box-sizing:border-box}}body{{margin:0}}table{{table-layout:fixed;width:400px;border-collapse:{collapse};border-spacing:{spacing}px}}
+    td{{height:26px;padding:2px;border:1px solid;overflow:hidden}}#ordinary2{{height:{second_height}px}}
+    input,button{{display:block;height:20px;padding:0;border:0;width:100%}}.drag{{height:24px;width:16px}}
+    .left{{position:sticky;left:0}}.right{{position:sticky;right:0}}
+    </style><table><colgroup><col style='width:40px'><col style='width:200px'><col style='width:40px'></colgroup>
+    <tbody id=body><tr id=first><td id=left class=left rowspan=2><div class=drag></div></td><td id=ordinary1><input></td><td id=right class=right rowspan=2><button></button></td></tr>
+    <tr id=second><td id=ordinary2><input></td></tr></tbody></table>"#
+    )
+}
+
+#[test]
+fn row_track_projection_preserves_unequal_heights_and_border_spacing() {
+    for (collapse, spacing) in [("separate", 0), ("separate", 4), ("collapse", 4)] {
+        let b = boxes(
+            &row_projection_controls(collapse, spacing, 42),
+            &["first", "second", "ordinary1", "ordinary2", "left", "right", "body"],
+        );
+        let gap = if collapse == "separate" { spacing as f64 } else { 0.0 };
+        assert_eq!((b[2].height, b[3].height), (26.0, 42.0), "true tracks: {collapse}/{spacing}");
+        assert_eq!((b[0].height, b[1].height), (26.0, 42.0), "row projection: {collapse}/{spacing}");
+        assert_eq!(b[1].y - b[0].y, 26.0 + gap, "row spacing: {collapse}/{spacing}");
+        assert_eq!((b[4].height, b[5].height), (68.0 + gap, 68.0 + gap), "spanning cells stay unchanged");
+        for row in &b[..2] {
+            assert_eq!(row.x, b[4].x, "full grid row starts at the first column");
+            // CSSOM snaps x and width independently to 1/64px. Their sum
+            // can differ from the projected outer edge by one layout unit.
+            assert!(
+                ((row.x + row.width) - (b[5].x + b[5].width)).abs() <= 1.0 / 32.0,
+                "full grid row reaches the last column within snapped layout units"
+            );
+        }
+        assert_eq!(b[6].height, 68.0 + gap, "row group covers the actual tracks");
+    }
+}
+
+#[test]
+fn row_track_projection_handles_rows_without_nonspanning_cells() {
+    for normal_sibling in [false, true] {
+        let ordinary = if normal_sibling { "<td><input style='display:block;height:20px'></td>" } else { "" };
+        let html=format!("<!doctype html><style>*{{box-sizing:border-box}}body{{margin:0}}table{{table-layout:fixed;width:400px;border-spacing:0}}td{{height:26px;padding:0;border:0}}</style><table><colgroup><col style='width:200px'><col style='width:200px'></colgroup><tbody id=body><tr id=first style='height:26px'><td id=span rowspan=2 style='position:sticky;left:0'><div style='height:24px'></div></td></tr><tr id=second style='height:42px'>{ordinary}</tr></tbody></table>");
+        let b = boxes(&html, &["first", "second", "span", "body"]);
+        assert_eq!(
+            (b[0].height, b[1].height),
+            (26.0, 42.0),
+            "tracks without ordinary originating cells, sibling={normal_sibling}"
+        );
+        assert_eq!(b[1].y - b[0].y, 26.0);
+        assert_eq!((b[0].width, b[1].width), (400.0, 400.0));
+        assert_eq!((b[2].height, b[3].height), (68.0, 68.0));
+    }
+}
+
+#[test]
+fn row_track_projection_preserves_oversized_rowspan_cell_extent() {
+    for rowspan in [2, 3] {
+        let html = format!(
+            "<!doctype html><style>body{{margin:0}}table{{table-layout:fixed;width:200px;border-spacing:0}}td{{padding:0;border:0}}</style><table><tbody id=body><tr id=row><td id=cell rowspan={rowspan}><div style='height:60px'></div></td></tr></tbody></table>"
+        );
+        let b = boxes(&html, &["row", "cell", "body"]);
+        assert_eq!((b[1].width, b[1].height), (200.0, 60.0), "rowspan={rowspan}: {b:?}");
+        assert_eq!(
+            (b[0].x, b[0].y, b[0].width, b[0].height),
+            (b[1].x, b[1].y, b[1].width, b[1].height),
+            "implicit grid rows must not truncate the only DOM row, rowspan={rowspan}: {b:?}"
+        );
+        assert_eq!((b[2].y, b[2].height), (b[1].y, b[1].height));
+    }
+}
+
+#[test]
+fn row_track_projection_preserves_table_ancestor_translation_and_scale() {
+    let html = row_projection_controls("separate", 0, 26)
+        .replace("<table>", "<div style='transform:translate(10px,20px) scale(2);transform-origin:0 0'><table>")
+        .replace("</table>", "</table></div>");
+    let b = boxes(&html, &["first", "second", "left", "body"]);
+    assert_eq!((b[0].x, b[0].y), (10.0, 20.0));
+    assert_eq!((b[0].width, b[1].width), (800.0, 800.0));
+    assert_eq!((b[0].height, b[1].height), (52.0, 52.0));
+    assert_eq!(b[1].y - b[0].y, 52.0);
+    assert_eq!((b[2].height, b[3].height), (104.0, 104.0));
+}

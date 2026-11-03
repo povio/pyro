@@ -155,6 +155,7 @@ impl Bridge {
         doc: &mut BaseDocument,
         deadline: Instant,
         first_layout_wait: Duration,
+        style_only: bool,
     ) -> (Duration, u32, bool) {
         let mut waited = Duration::ZERO;
         let mut passes = 0;
@@ -193,7 +194,10 @@ impl Bridge {
                 continue;
             }
             first_layout = None;
-            doc.resolve(0.0);
+            match style_only {
+                true => doc.resolve_style(0.0),
+                false => doc.resolve(0.0),
+            }
             passes += 1;
             if self.outstanding.load(Ordering::Acquire) == 0 {
                 // A resolve may refresh hover after clearing damage, leaving

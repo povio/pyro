@@ -609,7 +609,8 @@ impl Renderer {
             }
         };
         let mirrored = started.elapsed();
-        let (fetch, passes, resolved_latest) = bridge.settle(doc, started + self.fetch_timeout, self.first_layout_wait);
+        let (fetch, passes, resolved_latest) =
+            bridge.settle(doc, started + self.fetch_timeout, self.first_layout_wait, false);
         timings.layout_passes = passes;
         let resolving = Instant::now();
         if !resolved_latest {
@@ -740,12 +741,14 @@ impl Renderer {
         let mirrored = started.elapsed();
         let mirror::Mirror { doc, bridge, .. } = m;
         let geometry_generation = doc.root_node().tree().geometry_generation();
-        let (fetch, passes, _resolved_latest) =
-            bridge.settle(doc, started + self.fetch_timeout, self.first_layout_wait);
+        let (fetch, passes, resolved_latest) =
+            bridge.settle(doc, started + self.fetch_timeout, self.first_layout_wait, style_only);
         let resolving = Instant::now();
-        match style_only {
-            true => doc.resolve_style(0.0),
-            false => doc.resolve(0.0),
+        if !resolved_latest {
+            match style_only {
+                true => doc.resolve_style(0.0),
+                false => doc.resolve(0.0),
+            }
         }
         sync_profile::record(
             mirrored,
@@ -1299,5 +1302,140 @@ mod settle_resolution_tests {
             (60.0, 20.0),
             "newly handled image bytes need their final layout even with prior passes"
         );
+    }
+
+    #[test]
+    fn style_only_color_delta_updates_style_without_full_resolve() {
+        let source = "<!doctype html><style>body{margin:0}</style><div id=box style='width:50px;height:20px;color:blue'>text</div>";
+        let (snap, key) = fixture(source);
+        let (red, red_key) = fixture(&source.replace("color:blue", "color:red"));
+        assert_eq!(key, red_key);
+        let fetcher: Arc<dyn Fetcher> = Arc::new(NoFetch);
+        let mut renderer = Renderer::new();
+        renderer.sync_layout(&snap, &fetcher).unwrap();
+        let old_color = renderer.element_style(1, key).unwrap().clone_color();
+        let before = renderer.element_box(1, key).unwrap();
+        let generation = renderer.mirrors[&1].doc.root_node().tree().geometry_generation();
+        let kind = red.live.as_ref().unwrap().tree.nodes.iter().find(|n| n.key == key).unwrap().kind.clone();
+        renderer.sync_delta(1, &[DeltaOp::Node { key, kind }], (200, 100, 1.0, false), true).unwrap();
+        let advances = renderer.mirrors[&1].doc.root_node().tree().geometry_generation() - generation;
+        let color = renderer.element_style(1, key).unwrap().clone_color();
+        let mut whole = Renderer::new();
+        whole.sync_layout(&red, &fetcher).unwrap();
+        assert_ne!(color, old_color);
+        assert_eq!(color, whole.element_style(1, key).unwrap().clone_color());
+        assert_eq!(renderer.element_box(1, key).unwrap(), before);
+        eprintln!("style-only color delta full resolve generation advances={advances}");
+        assert_eq!(advances, 0, "a color-only style read must not perform a full layout");
+    }
+
+    #[test]
+    fn style_only_width_delta_keeps_dirty_geometry_for_the_next_full_sync() {
+        let source = "<!doctype html><div id=box style='width:50px;height:20px'></div>";
+        let (snap, key) = fixture(source);
+        let (wide, _) = fixture(&source.replace("width:50px", "width:130px"));
+        let fetcher: Arc<dyn Fetcher> = Arc::new(NoFetch);
+        let mut renderer = Renderer::new();
+        renderer.sync_layout(&snap, &fetcher).unwrap();
+        let kind = wide.live.as_ref().unwrap().tree.nodes.iter().find(|n| n.key == key).unwrap().kind.clone();
+        renderer.sync_delta(1, &[DeltaOp::Node { key, kind }], (200, 100, 1.0, false), true).unwrap();
+        let root = renderer.mirrors[&1].doc.root_element();
+        assert!(
+            root.has_damaged_descendants() || root.damage().is_some_and(|d| !d.is_empty()),
+            "style-only sync must retain the width's layout damage"
+        );
+        renderer.sync_delta(1, &[], (200, 100, 1.0, false), false).unwrap();
+        assert_eq!(renderer.element_box(1, key).unwrap().width, 130.0);
+    }
+
+    #[test]
+    fn style_only_delta_still_resolves_used_container_query_geometry() {
+        let source="<!doctype html><style>#box{container-type:inline-size;height:20px}#inner{width:10px;height:10px}@container(width>=150px){#inner{width:60px}}</style><div id=box style='width:200px'><div id=inner></div></div>";
+        let (snap, key) = fixture(source);
+        let (narrow, _) = fixture(&source.replace("width:200px", "width:100px"));
+        let inner = snap
+            .live
+            .as_ref()
+            .unwrap()
+            .tree
+            .nodes
+            .iter()
+            .find_map(|n| match &n.kind {
+                TreeKind::Element { attrs, .. }
+                    if attrs.iter().any(|(name, value)| &*name.local == "id" && value == "inner") =>
+                {
+                    Some(n.key)
+                }
+                _ => None,
+            })
+            .unwrap();
+        let fetcher: Arc<dyn Fetcher> = Arc::new(NoFetch);
+        let mut renderer = Renderer::new();
+        renderer.sync_layout(&snap, &fetcher).unwrap();
+        assert_eq!(renderer.element_box(1, inner).unwrap().width, 60.0);
+        let kind = narrow.live.as_ref().unwrap().tree.nodes.iter().find(|n| n.key == key).unwrap().kind.clone();
+        renderer.sync_delta(1, &[DeltaOp::Node { key, kind }], (200, 100, 1.0, false), true).unwrap();
+        assert_eq!(renderer.element_box(1, key).unwrap().width, 100.0);
+        assert_eq!(
+            renderer.element_box(1, inner).unwrap().width,
+            10.0,
+            "query-dependent styles must use current container geometry"
+        );
+    }
+    #[derive(Default)]
+    struct RecordedResources(Mutex<Vec<String>>);
+    impl Fetcher for RecordedResources {
+        fn fetch(&self, url: String, done: Delivery) {
+            self.0.lock().unwrap().push(url);
+            done(Err("offline asset guard".into()));
+        }
+    }
+
+    #[test]
+    fn style_only_delta_discovers_background_and_mask_resources_without_layout() {
+        let source = "<!doctype html><div id=box style='width:50px;height:20px'></div>";
+        let (snap, key) = fixture(source);
+        let (images, _) = fixture(
+            &source.replace("height:20px", "height:20px;background-image:url(bg.svg);mask-image:url(mask.svg)"),
+        );
+        let recorded = Arc::new(RecordedResources::default());
+        let fetcher: Arc<dyn Fetcher> = recorded.clone();
+        let mut renderer = Renderer::new();
+        renderer.sync_layout(&snap, &fetcher).unwrap();
+        let before = renderer.element_box(1, key).unwrap();
+        let generation = renderer.mirrors[&1].doc.root_node().tree().geometry_generation();
+        let kind = images.live.as_ref().unwrap().tree.nodes.iter().find(|n| n.key == key).unwrap().kind.clone();
+        renderer.sync_delta(1, &[DeltaOp::Node { key, kind }], (200, 100, 1.0, false), true).unwrap();
+        let calls = recorded.0.lock().unwrap();
+        assert!(calls.iter().any(|url| url.ends_with("bg.svg")), "style-only background resource must be discovered");
+        assert!(calls.iter().any(|url| url.ends_with("mask.svg")), "style-only mask resource must be discovered");
+        assert_eq!(renderer.mirrors[&1].doc.root_node().tree().geometry_generation() - generation, 0);
+        assert_eq!(renderer.element_box(1, key).unwrap(), before);
+    }
+    #[test]
+    fn settled_full_delta_resolves_once_with_current_geometry_and_paint() {
+        let source="<!doctype html><style>body{margin:0}</style><div id=box style='width:50px;height:20px;background:blue'></div>";
+        let (snap, key) = fixture(source);
+        let (wide, _) = fixture(&source.replace("width:50px", "width:130px"));
+        let fetcher: Arc<dyn Fetcher> = Arc::new(NoFetch);
+        let mut renderer = Renderer::new();
+        renderer.sync_layout(&snap, &fetcher).unwrap();
+        let before = renderer.element_box(1, key).unwrap();
+        let generation = renderer.mirrors[&1].doc.root_node().tree().geometry_generation();
+        let kind = wide.live.as_ref().unwrap().tree.nodes.iter().find(|n| n.key == key).unwrap().kind.clone();
+        renderer.sync_delta(1, &[DeltaOp::Node { key, kind }], (200, 100, 1.0, false), false).unwrap();
+        let advances = renderer.mirrors[&1].doc.root_node().tree().geometry_generation() - generation;
+        let after = renderer.element_box(1, key).unwrap();
+        let mut whole = Renderer::new();
+        whole.sync_layout(&wide, &fetcher).unwrap();
+        assert_ne!(before, after, "real width mutation must be applied");
+        assert_eq!(after, whole.element_box(1, key).unwrap());
+        assert_eq!((after.width, after.height), (130.0, 20.0));
+        assert_eq!(
+            renderer.paint(&wide, Area::Viewport, &fetcher).unwrap().hash,
+            whole.paint(&wide, Area::Viewport, &fetcher).unwrap().hash
+        );
+        eprintln!("clean full delta resolve generation advances={advances}");
+        assert_eq!(advances, 1, "normal successful settling already resolved this mutation");
     }
 }

@@ -415,11 +415,27 @@ impl Dom {
             return None;
         }
         let mut changed: Vec<u32> = Vec::new();
+        // Attribute-only textarea patches do not replace the synthetic value
+        // child. A state change in the same interval must keep the fallback.
+        let mut textarea_attributes = rustc_hash::FxHashMap::<u32, bool>::default();
+        let is_textarea =
+            |i| self.slot_live(i) && self.n(i).element().is_some_and(|e| e.is_html() && &*e.name.local == "textarea");
         let mut parents: Vec<u32> = Vec::new();
         let mut inserted: rustc_hash::FxHashSet<u32> = rustc_hash::FxHashSet::default();
         for c in self.changes_since(since)? {
             match c {
-                Change::Attr(i, _, _) | Change::State(i) | Change::Text(i) => changed.push(i),
+                Change::Attr(i, _, _) => {
+                    if is_textarea(i) {
+                        textarea_attributes.entry(i).or_insert(true);
+                    }
+                    changed.push(i);
+                }
+                Change::State(i) | Change::Text(i) => {
+                    if is_textarea(i) {
+                        textarea_attributes.insert(i, false);
+                    }
+                    changed.push(i);
+                }
                 Change::Inserted(p, c) => {
                     parents.push(p);
                     inserted.insert(c);
@@ -559,7 +575,9 @@ impl Dom {
             // A `<style>`'s own attributes: the element (its text stays its
             // sheet's).
             let is_style = style_owner(i) == Some(i);
-            let place = if is_style && self.n(i).parent != NIL { rendered(self.n(i).parent) } else { rendered(i) };
+            let own_attributes = is_style || textarea_attributes.get(&i) == Some(&true);
+            let place =
+                if own_attributes && self.n(i).parent != NIL { rendered(self.n(i).parent) } else { rendered(i) };
             match place {
                 // Inside a `<style>`: its sheet text.
                 Err(()) => match style_owner(i).filter(|&owner| owner != i) {

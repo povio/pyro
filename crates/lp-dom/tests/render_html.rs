@@ -170,3 +170,85 @@ fn render_tree_has_the_html_content_with_stable_keys() {
     let changed: Vec<u64> = again.nodes.iter().zip(&tree.nodes).filter(|(a, b)| a != b).map(|(a, _)| a.key).collect();
     assert_eq!(changed, [render_key(p)]);
 }
+
+#[test]
+fn textarea_attribute_delta_preserves_typed_value_and_synthetic_child() {
+    use lp_dom::snapshot::{render_key, DeltaOp, SYNTHETIC_TEXT};
+    let (dom, d) = doc("<form><textarea id=t>default</textarea></form>");
+    let textarea = find(&dom.borrow(), d, "#t");
+    let opts = RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None };
+    dom.borrow_mut().set_value(textarea, "typed\n<keep>").unwrap();
+    let before = dom.borrow().render_tree(d, &opts).unwrap();
+    let version = dom.borrow().version();
+    for (name, value) in [
+        ("class", "highlighted"),
+        ("style", "width:180px;height:60px"),
+        ("aria-label", "Updated notes"),
+        ("data-tracking", "stable-value"),
+    ] {
+        dom.borrow_mut().set_attribute(textarea, name, value).unwrap();
+    }
+    let after = dom.borrow().render_tree(d, &opts).unwrap();
+    let delta =
+        dom.borrow().render_delta(d, version, &opts).expect("attribute-only textarea updates must remain incremental");
+    let key = render_key(textarea);
+    let rendered = after.nodes.iter().find(|node| node.key == key).unwrap();
+    assert!(delta
+        .ops
+        .iter()
+        .any(|op| matches!(op, DeltaOp::Node { key: k, kind } if *k == key && *kind == rendered.kind)));
+    assert!(
+        delta.ops.iter().all(|op| matches!(op, DeltaOp::Node { .. })),
+        "attribute updates must not replace the value child"
+    );
+    let value = |tree: &lp_dom::snapshot::RenderTree| {
+        tree.nodes.iter().find(|node| node.key == key | SYNTHETIC_TEXT).unwrap().kind.clone()
+    };
+    assert_eq!(value(&after), value(&before));
+    assert_eq!(dom.borrow().value(textarea).unwrap(), "typed\n<keep>");
+}
+
+#[test]
+fn textarea_non_attribute_changes_and_special_trees_keep_the_full_snapshot_fallback() {
+    let opts = RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None };
+    for case in ["value-then-attribute", "attribute-then-value", "text", "children", "shadow", "link"] {
+        let (dom, d) =
+            doc("<div id=host></div><textarea id=t>default</textarea><link id=sheet rel=stylesheet href=a.css>");
+        let textarea = find(&dom.borrow(), d, "#t");
+        let version = dom.borrow().version();
+        {
+            let mut dom = dom.borrow_mut();
+            match case {
+                "value-then-attribute" => {
+                    dom.set_value(textarea, "new typed value").unwrap();
+                    dom.set_attribute(textarea, "class", "updated").unwrap();
+                }
+                "attribute-then-value" => {
+                    dom.set_attribute(textarea, "class", "updated").unwrap();
+                    dom.set_value(textarea, "new typed value").unwrap();
+                }
+                "text" => {
+                    dom.set_text_content(textarea, "new default").unwrap();
+                }
+                "children" => {
+                    let child = dom.create_text(d, "appended").unwrap();
+                    dom.append_child(textarea, child).unwrap();
+                }
+                "shadow" => {
+                    let host = find(&dom, d, "#host");
+                    dom.attach_shadow(host, ShadowRootMode::Open).unwrap();
+                    dom.set_attribute(textarea, "class", "updated").unwrap();
+                }
+                "link" => {
+                    let link = find(&dom, d, "#sheet");
+                    dom.set_attribute(link, "media", "print").unwrap();
+                }
+                _ => unreachable!(),
+            }
+        }
+        assert!(
+            dom.borrow().render_delta(d, version, &opts).is_none(),
+            "{case}: special content/state must retain its fallback"
+        );
+    }
+}
