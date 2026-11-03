@@ -11,7 +11,7 @@ Rewrite status:
 - **conditional:** succeeds only when the request is already true of the engine; otherwise it returns an explicit error.
 - **pending:** returns an explicit CDP error (`-32000 … is not supported by lightningpanda`) and never a fabricated success.
 
-HTTP and `data:` document loading now use the real loader. `Network` emits request/redirect/response/data/completion/failure events to enabled page sessions, with response-body capture. Browser contexts own distinct network clients. DOM automation node/geometry commands are implemented; frontend DOM mirrors and file-input commands remain pending; native child-frame discovery, worlds, navigation and frame-owner identity are implemented ([frame scope](FRAMES.md)); basic native Input dispatch is implemented; this is not TOS compatibility. Fetch request-stage interception supports continue overrides, fulfill, abort, disable/detach cleanup and server Basic-auth challenges. Response-stage interception, custom status phrases, proxy credentials and non-Basic credential schemes are explicitly unsupported. Fulfillment accepts text headers or base64 NUL-separated binary headers, preserving native value bytes and duplicate entries; the existing Network JSON header display uses UTF-8 replacement for invalid text. Redirect hops have distinct linked Fetch IDs; auth retries retain the hop ID. Only one session per page can own interception; different pages in a context may have separate owners.
+HTTP and `data:` document loading now use the real loader. `Network` emits request/redirect/response/data/completion/failure events to enabled page sessions, with response-body capture. Browser contexts own distinct network clients. DOM automation node/geometry commands are implemented; frontend DOM mirrors and file-input commands remain pending; native child-frame discovery, worlds, navigation and frame-owner identity are implemented ([frame scope](FRAMES.md)); basic native Input dispatch is implemented; this is not TOS compatibility. Fetch request-stage interception supports continue overrides, fulfill, abort, disable/detach cleanup and server Basic-auth challenges. Response-stage interception pauses matched responses (lp-net buffers only those) for `getResponseBody`, `continueResponse`, `fulfillRequest` and `failRequest`. Custom status phrases, proxy credentials and non-Basic credential schemes are explicitly unsupported. Fulfillment accepts text headers or base64 NUL-separated binary headers, preserving native value bytes and duplicate entries; the existing Network JSON header display uses UTF-8 replacement for invalid text. Redirect hops have distinct linked Fetch IDs; auth retries retain the hop ID. Only one session per page can own interception; different pages in a context may have separate owners.
 
 Storage cookie commands use the network cookie jar, including HTTP response cookies, expiry and context isolation. Negative CDP expiry values mean session cookies. Invalid batches are validated before modifying the real jar. Partitioned/SameParty cookies, non-default priority and source overrides return explicit errors. Browser WebAPI installation separately supplies the DOM and Web Storage in main and isolated realms.
 
@@ -19,7 +19,7 @@ Capture uses a shared process payload budget (default 64 MiB, 8 MiB/body), at mo
 
 The browser integration smoke also exercises DOM access before init scripts, shared DOM across isolated worlds, page fetch with exact Network frame/loader correlation, route fulfillment/abort after headers, and Web Storage context/page/navigation isolation. These checks use local HTTP and JavaScript evaluation; The full DOM protocol and actual TOS workflows remain unvalidated. A separate Input check covers keyboard typing/text insertion and mouse checkbox activation; editing commands and pen/touch remain unsupported; native drag-and-drop works under Playwright's drag interception; wheel default scrolling follows the synthetic layout. Mouse coordinates follow the native synthetic layout, not full CSS positioning; the smoke derives its click point from the reported rectangle and verifies the exact hit target.
 
-Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 53 engine, 7 accepted/recorded only, 2 conditional, 39 pending (counts from the table below).
+Methods: 110 (Playwright 1.59.1's static list plus the session methods it sends that the list misses). Upstream implements 88 of them. Rewrite: 65 engine, 7 accepted/recorded only, 2 conditional, 36 pending (counts from the table below).
 
 | Method | Upstream 2ad38773f | Rewrite | Notes |
 | --- | --- | --- | --- |
@@ -56,11 +56,13 @@ Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 53 engi
 | `Emulation.setTimezoneOverride` | yes | conditional | succeeds only when it equals the process time zone; otherwise an explicit error |
 | `Emulation.setTouchEmulationEnabled` | yes | pending |  |
 | `Emulation.setUserAgentOverride` | yes | engine | page-local navigator and request defaults, persistent across navigation; client hints unsupported |
-| `Fetch.continueRequest` | yes | engine | request stage; see supported scope above |
-| `Fetch.disable` | yes | engine | request stage; see supported scope above |
-| `Fetch.enable` | yes | engine | request stage; see supported scope above |
-| `Fetch.failRequest` | yes | engine | request stage; see supported scope above |
-| `Fetch.fulfillRequest` | yes | engine | request stage; see supported scope above |
+| `Fetch.continueRequest` | yes | engine | request stage; `interceptResponse: true` pauses the same request again at the response stage (same interception id); see supported scope above |
+| `Fetch.continueResponse` | **no** | engine | response stage: the real response, or a new `responseCode`/`responseHeaders` (text or binary) with the real body |
+| `Fetch.disable` | yes | engine | request and response stages; see supported scope above |
+| `Fetch.enable` | yes | engine | request and response stages; see supported scope above |
+| `Fetch.failRequest` | yes | engine | request and response stages; see supported scope above |
+| `Fetch.fulfillRequest` | yes | engine | request and response stages; see supported scope above |
+| `Fetch.getResponseBody` | **no** | engine | a response paused at the response stage (text, else base64); requests paused at the request stage get Chrome's error |
 | `HeapProfiler.collectGarbage` | **no** | pending |  |
 | `IO.close` | yes | pending |  |
 | `IO.read` | yes | pending |  |
@@ -72,11 +74,17 @@ Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 53 engi
 | `Input.setInterceptDrags` | **no** | engine | while enabled, a left-button `mouseMoved` at least 3px (Chrome's macOS threshold) from a press on a draggable source (`draggable=true`, or a link with href) fires `dragstart` and, unless canceled, `pointercancel` and `Input.dragIntercepted` with the drag data (links prefill uri-list/plain/html as Chrome) and mask. Pointer-driven drags keep plain mouse events. Without interception no native drag starts (no OS drag loop); images are not draggable (no image decoding) |
 | `Log.enable` | yes | accepted, recorded only | console goes through Runtime.consoleAPICalled; no Log entries are produced |
 | `Network.clearBrowserCache` | yes | engine | empties the HTTP cache of the page's browser context (shared by its pages, as in Chrome 147) via `NetClient::clear_http_cache()`, and, when the opt-in shared public-asset cache is on (`LIGHTNINGPANDA_SHARED_ASSET_CACHE_MB`), its process-wide store via `clear_shared_asset_cache()`; cache hits, including shared ones, report `fromDiskCache: true` with `encodedDataLength: 0` |
-| `Network.emulateNetworkConditions` | yes | pending |  |
+| `Network.clearBrowserCookies` | yes | engine | empties the page's browser context's jar |
+| `Network.deleteCookies` | yes | engine | by `name` and `url` or `domain`, optionally `path` |
+| `Network.emulateNetworkConditions` | yes | engine | `offline` for the page's browser context (Chrome scopes it to the target): requests fail with net::ERR_INTERNET_DISCONNECTED and navigator.onLine is false; latency and throughput are accepted and ignored |
 | `Network.enable` | yes | engine | subscribes to bounded per-context events; filters by page/session; buffer options unsupported |
+| `Network.getCookies` | yes | engine | `urls` (default: the page's frame URLs) through the page's browser context's jar, as HTTP sees them |
+| `Network.getRequestPostData` | yes | engine | request bodies of the page's requests while a session has Network enabled, up to 1 MiB each and 8 MiB per page (oldest dropped); `hasPostData` stays true past 64 KiB |
 | `Network.getResponseBody` | yes | engine | text/base64 completed captures; explicit errors for unavailable or evicted bodies |
 | `Network.loadNetworkResource` | **no** | pending |  |
 | `Network.setCacheDisabled` | yes | engine | per page, as in Chrome 147: the page's requests bypass the per-context HTTP cache (no lookup or store, `Pragma`/`Cache-Control: no-cache` added) while its session has Network enabled; sibling pages of the same context still use the cache |
+| `Network.setCookie` | yes | engine | the page's browser context's jar; `{success}` |
+| `Network.setCookies` | yes | engine | the page's browser context's jar; all or none, as Storage.setCookies |
 | `Network.setExtraHTTPHeaders` | yes | engine | per page (sibling pages, even in the same browser context, are unaffected); each call replaces the map and {} clears it; applied to navigations, subresources, fetch and XHR only while the session has Network enabled (kept while disabled), as in Chrome 147; page headers override same-name request headers including User-Agent; invalid names/values rejected with Chrome's messages |
 | `Page.addScriptToEvaluateOnNewDocument` | yes | engine |  |
 | `Page.bringToFront` | yes | accepted, recorded only | single foreground page per target |
@@ -85,8 +93,8 @@ Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 53 engi
 | `Page.enable` | yes | engine |  |
 | `Page.getFrameTree` | yes | engine | nested native frames with per-document loader and actual security origin |
 | `Page.getLayoutMetrics` | yes | engine | main frame, CSS px: emulated viewport, window scroll offset and document scroll size (at least the viewport); no pinch zoom, so the visual viewport equals the layout viewport with `scale`/`zoom` 1; the deprecated fields repeat the CSS values, as headless Chromium on macOS reports at DPR 1 and 2. The document size comes from lightningpanda's approximate layout, not the renderer's, so a full-page `clip` built from it can differ from `captureBeyondViewport` |
-| `Page.getNavigationHistory` | yes | engine | main-frame session history with stable entry ids; `title` is empty and `transitionType` is `other`; the initial about:blank entry is kept by the first navigation (Chrome replaces it) |
-| `Page.handleJavaScriptDialog` | yes | pending |  |
+| `Page.getNavigationHistory` | yes | engine | main-frame session history with stable entry ids; the current entry's `title` is its document's `<title>` (others are empty); `transitionType` is `other`; the first navigation replaces the initial about:blank entry, as in Chrome |
+| `Page.handleJavaScriptDialog` | yes | engine | `alert`/`confirm`/`prompt` never block: they return what a dismissed dialog gives (undefined, false, null) and report Page.javascriptDialogOpening then Page.javascriptDialogClosed; this answers a dialog reported earlier ({}) or fails with "No dialog is showing"; `accept`/`promptText` cannot change the result |
 | `Page.navigate` | yes | engine | about:blank, data and HTTP documents; frameId supports native children; explicit failures, no joint child history |
 | `Page.navigateToHistoryEntry` | yes | engine | answers once the traversal is queued, like Chrome; same-document entries commit as `navigatedWithinDocument` with `popstate`, others re-fetch the document (no bfcache); unknown ids are invalid params |
 | `Page.printToPDF` | yes | pending |  |
@@ -97,6 +105,7 @@ Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 53 engi
 | `Page.setInterceptFileChooserDialog` | yes | engine | per session; activating an `<input type=file>` (click, label, script `click()`) emits `Page.fileChooserOpened` {frameId, mode selectSingle/selectMultiple, backendNodeId} to intercepting sessions; no native picker exists |
 | `Page.setLifecycleEventsEnabled` | yes | engine | per-frame lifecycle events and replay of reached milestones |
 | `Page.startScreencast` | **no** | pending |  |
+| `Performance.getMetrics` | yes | engine | Timestamp, Documents, Frames, Nodes, LayoutCount and RecalcStyleCount (both the process's Blitz layout syncs, which restyle and lay out what changed), LayoutDuration and RecalcStyleDuration (Blitz layout and style phases, seconds); no JS heap metrics; does not reset LP.geometryStats (`render` feature) |
 | `Profiler.disable` | **no** | pending |  |
 | `Profiler.enable` | **no** | pending |  |
 | `Profiler.startPreciseCoverage` | **no** | pending |  |
@@ -141,8 +150,6 @@ Upstream also implements domains Playwright does not send:
 - `WebMCP.*`.
 - `Accessibility.*`: `getFullAXTree`, `queryAXTree`.
 - `Debugger.*` beyond enable/disable, backed by v8_inspector.
-- `Network` cookie helpers.
-- `Fetch.continueResponse` and `Fetch.getResponseBody`.
 - `DOM.getDocument`, `DOM.querySelector*` and `DOM.getOuterHTML`.
 
 These are out of scope for the first TOS milestone. They stay listed as uncovered until they are implemented.

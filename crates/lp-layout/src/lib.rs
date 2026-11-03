@@ -46,6 +46,8 @@ pub fn set_fork_template(template: bool) {
 }
 
 static CALLS: AtomicU64 = AtomicU64::new(0);
+/// Every layout sync of the process (not reset; CDP Performance.getMetrics).
+static TOTAL_CALLS: AtomicU64 = AtomicU64::new(0);
 /// Syncs from lp-dom's change journal (the rest sent the whole tree).
 static DELTAS: AtomicU64 = AtomicU64::new(0);
 static SNAPSHOT_NS: AtomicU64 = AtomicU64::new(0);
@@ -107,6 +109,12 @@ pub fn take_stats() -> (u64, u64, f64, f64, f64) {
         ms(&LAYOUT_NS),
         ms(&READ_NS),
     )
+}
+
+/// Layout syncs (each a restyle and relayout of what changed) since the
+/// process started; unlike [`take_stats`], nothing resets it.
+pub fn peek_layout_count() -> u64 {
+    TOTAL_CALLS.load(Ordering::Relaxed)
 }
 
 /// Makes this thread's new documents take their geometry from Blitz,
@@ -317,6 +325,8 @@ impl BlitzGeometry {
                     });
                     if let Some(t) = timings {
                         CALLS.fetch_add(1, Ordering::Relaxed);
+                        TOTAL_CALLS.fetch_add(1, Ordering::Relaxed);
+                        TOTAL_CALLS.fetch_add(1, Ordering::Relaxed);
                         DELTAS.fetch_add(1, Ordering::Relaxed);
                         LAYOUT_NS.fetch_add((t.fetch + t.layout).as_nanos() as u64, Ordering::Relaxed);
                         return;
@@ -333,6 +343,7 @@ impl BlitzGeometry {
         });
         if let Some(t) = timings {
             CALLS.fetch_add(1, Ordering::Relaxed);
+            TOTAL_CALLS.fetch_add(1, Ordering::Relaxed);
             LAYOUT_NS.fetch_add((t.fetch + t.layout).as_nanos() as u64, Ordering::Relaxed);
         }
     }

@@ -383,7 +383,6 @@ fn unsupported_commands_fail_explicitly() {
     for method in [
         "DOM.getDocument",
         "Input.dispatchTouchEvent",
-        "Fetch.getResponseBody",
         // With the `render` feature it renders (see `mod screenshot`).
         #[cfg(not(feature = "render"))]
         "Page.captureScreenshot",
@@ -392,8 +391,6 @@ fn unsupported_commands_fail_explicitly() {
         let r = h.page(method, json!({}));
         assert_eq!(r["error"]["code"], -32000, "{method}: {r}");
     }
-    let r = h.page("Fetch.enable", json!({"patterns":[{"requestStage":"Response"}]}));
-    assert!(r["error"]["message"].as_str().unwrap().contains("not supported"), "{r}");
     let r = h.page("Emulation.setLocaleOverride", json!({"locale":"xx-XX"}));
     assert!(r["error"]["message"].as_str().unwrap().contains("not supported"), "{r}");
 }
@@ -2603,23 +2600,14 @@ fn navigation_history_traverses_same_document_entries_with_popstate() {
     let (index, entries) = history(&mut h);
     let urls: Vec<_> = entries.iter().map(|(_, u)| u.as_str()).collect();
     let base = format!("http://{address}");
-    // The initial about:blank entry is kept (Chrome replaces it; see nav.rs).
-    assert_eq!(
-        urls,
-        [
-            "about:blank".to_string(),
-            format!("{base}/start"),
-            format!("{base}/one"),
-            format!("{base}/two"),
-            format!("{base}/two#x")
-        ]
-    );
-    assert_eq!(index, 4);
+    // The first navigation replaced the initial about:blank entry (Chrome).
+    assert_eq!(urls, [format!("{base}/start"), format!("{base}/one"), format!("{base}/two"), format!("{base}/two#x")]);
+    assert_eq!(index, 3);
 
     let error = h.page("Page.navigateToHistoryEntry", json!({"entryId": 999_999}));
     assert_eq!(error["error"]["code"], -32602, "{error}");
 
-    let one = entries[2].0;
+    let one = entries[1].0;
     let messages = h.page_with_events("Page.navigateToHistoryEntry", json!({"entryId": one}));
     assert!(messages.iter().any(|m| m["result"] == json!({})), "{messages:#?}");
     let mut messages = messages;
@@ -2628,15 +2616,15 @@ fn navigation_history_traverses_same_document_entries_with_popstate() {
     assert_eq!(messages[within]["params"]["url"], format!("{base}/one"));
     assert!(!messages.iter().any(|m| m["method"] == "Page.frameNavigated"), "same-document: {messages:#?}");
     assert_eq!(eval_value(&mut h, "seen.slice(1)"), json!([["popstate", "/one", {"n": 1}]]));
-    assert_eq!(history(&mut h).0, 2);
+    assert_eq!(history(&mut h).0, 1);
 
     // Forward to the fragment entry of the same pushState entry: popstate (no
     // state), then hashchange.
-    let fragment = entries[4].0;
+    let fragment = entries[3].0;
     assert_eq!(h.page("Page.navigateToHistoryEntry", json!({"entryId": fragment}))["result"], json!({}));
     h.run_for(50);
     assert_eq!(eval_value(&mut h, "location.href"), format!("{base}/two#x"));
-    assert_eq!(history(&mut h).0, 4);
+    assert_eq!(history(&mut h).0, 3);
     let frame = h.page("Page.getFrameTree", json!({}));
     assert_eq!(frame["result"]["frameTree"]["frame"]["url"], format!("{base}/two#x"));
     // /one -> /two#x is not a fragment-only change: no hashchange.
@@ -2658,23 +2646,23 @@ fn navigation_history_traverses_across_documents() {
         assert!(r["result"].get("errorText").is_none(), "{r}");
     }
     let (index, entries) = history(&mut h);
-    assert_eq!(index, 2);
-    assert_eq!(entries.len(), 3);
-    let first = entries[1].0;
+    assert_eq!(index, 1);
+    assert_eq!(entries.len(), 2, "the first navigation replaced the initial about:blank entry");
+    let first = entries[0].0;
     assert_eq!(h.page("Page.navigateToHistoryEntry", json!({"entryId": first}))["result"], json!({}));
     let messages = h.run_for(100);
     let navigated = position(&messages, "frameNavigated", |m| m["method"] == "Page.frameNavigated");
     assert_eq!(messages[navigated]["params"]["frame"]["url"], "data:text/html,<p>first</p>");
     assert_eq!(eval_value(&mut h, "document.body.textContent"), "first");
     let (index, after) = history(&mut h);
-    assert_eq!(index, 1);
+    assert_eq!(index, 0);
     assert_eq!(after, entries, "traversal keeps the entry list and ids");
     // Forward again.
-    let second = entries[2].0;
+    let second = entries[1].0;
     assert_eq!(h.page("Page.navigateToHistoryEntry", json!({"entryId": second}))["result"], json!({}));
     h.run_for(100);
     assert_eq!(eval_value(&mut h, "document.body.textContent"), "second");
-    assert_eq!(history(&mut h).0, 2);
+    assert_eq!(history(&mut h).0, 1);
 
     // Page.reload keeps the entry (id and state); Page.navigate to the same
     // URL replaces it with a new entry.
@@ -2683,14 +2671,14 @@ fn navigation_history_traverses_across_documents() {
     assert!(h.page("Page.reload", json!({}))["result"].get("errorText").is_none());
     h.run_for(50);
     assert_eq!(eval_value(&mut h, "JSON.stringify(history.state)"), r#"{"k":1}"#);
-    assert_eq!(history(&mut h), (2, before.clone()));
+    assert_eq!(history(&mut h), (1, before.clone()));
     let r = h.page("Page.navigate", json!({"url": "data:text/html,<p>second</p>"}));
     assert!(r["result"].get("errorText").is_none(), "{r}");
     h.run_for(50);
     assert_eq!(eval_value(&mut h, "history.state"), Value::Null);
     let (index, after) = history(&mut h);
-    assert_eq!((index, &after[..2], after[2].1.as_str()), (2, &before[..2], before[2].1.as_str()));
-    assert_ne!(after[2].0, before[2].0, "a same-URL navigation is a new (replacing) entry");
+    assert_eq!((index, &after[..1], after[1].1.as_str()), (1, &before[..1], before[1].1.as_str()));
+    assert_ne!(after[1].0, before[1].0, "a same-URL navigation is a new (replacing) entry");
 }
 
 /// Network and page events of one page as "method url" in emission order.
@@ -7144,4 +7132,244 @@ fn driver_stage_trace_bounds_retries_and_keeps_exact_attempt_totals() {
     let detailed_ms: f64 =
         stages.iter().filter(|r| r["event"] == "end").map(|r| r["durationMs"].as_f64().unwrap()).sum();
     assert!(summary["attemptMs"].as_f64().unwrap() >= detailed_ms);
+}
+
+#[test]
+fn dialogs_return_dismissed_results_and_are_reported() {
+    let mut h = Harness::new();
+    h.page("Page.enable", json!({}));
+    let mut messages = h.page_with_events(
+        "Runtime.evaluate",
+        json!({"expression": "JSON.stringify([alert('hi'), confirm('sure?'), prompt('name', 'x')])", "returnByValue": true}),
+    );
+    messages.extend(h.run_for(50));
+    let reply = messages.iter().find(|m| m.get("id").is_some()).unwrap();
+    assert_eq!(reply["result"]["result"]["value"], "[null,false,null]", "{reply}");
+    let opened: Vec<_> = messages
+        .iter()
+        .filter(|m| m["method"] == "Page.javascriptDialogOpening")
+        .map(|m| (m["params"]["type"].clone(), m["params"]["message"].clone(), m["params"]["defaultPrompt"].clone()))
+        .collect();
+    assert_eq!(
+        opened,
+        [
+            (json!("alert"), json!("hi"), json!("")),
+            (json!("confirm"), json!("sure?"), json!("")),
+            (json!("prompt"), json!("name"), json!("x")),
+        ]
+    );
+    assert_eq!(messages.iter().filter(|m| m["method"] == "Page.javascriptDialogClosed").count(), 3);
+    for _ in 0..3 {
+        let r = h.page("Page.handleJavaScriptDialog", json!({"accept": false}));
+        assert_eq!(r["result"], json!({}), "{r}");
+    }
+    let r = h.page("Page.handleJavaScriptDialog", json!({"accept": true}));
+    assert_eq!(r["error"]["message"], "No dialog is showing", "{r}");
+}
+
+#[test]
+fn history_and_target_info_report_the_document_title() {
+    let mut h = Harness::new();
+    load_html(&mut h, "<!doctype html><title> Order   42 </title><p>x</p>");
+    let r = h.page("Page.getNavigationHistory", json!({}));
+    let index = r["result"]["currentIndex"].as_u64().unwrap() as usize;
+    assert_eq!(r["result"]["entries"][index]["title"], "Order 42", "{r}");
+    assert_eq!(r["result"]["entries"].as_array().unwrap().len(), 1, "the initial about:blank entry was replaced");
+    let frame = h.frame_id.clone();
+    let info = h.call(None, "Target.getTargetInfo", json!({"targetId": frame}));
+    assert_eq!(info["result"]["targetInfo"]["title"], "Order 42", "{info}");
+}
+
+#[test]
+fn network_offline_emulation_fails_requests_and_flips_on_line() {
+    let (address, server) = serve_html(2, "<!doctype html><p>online</p>");
+    let mut h = Harness::new();
+    h.page("Page.enable", json!({}));
+    h.page("Page.navigate", json!({"url": format!("http://{address}/")}));
+    h.until_event(|m| m["method"] == "Page.loadEventFired");
+    h.page("Network.enable", json!({}));
+    let r = h.page(
+        "Network.emulateNetworkConditions",
+        json!({"offline": true, "latency": 0, "downloadThroughput": -1, "uploadThroughput": -1}),
+    );
+    assert_eq!(r["result"], json!({}), "{r}");
+    assert_eq!(eval_value(&mut h, "navigator.onLine"), false);
+    let url = format!("http://{address}/");
+    let r = h.page(
+        "Runtime.evaluate",
+        json!({"expression": format!("fetch('{url}').then(() => 'ok', e => e.name)"), "awaitPromise": true, "returnByValue": true}),
+    );
+    assert_eq!(r["result"]["result"]["value"], "TypeError", "{r}");
+    h.page(
+        "Network.emulateNetworkConditions",
+        json!({"offline": false, "latency": 0, "downloadThroughput": -1, "uploadThroughput": -1}),
+    );
+    assert_eq!(eval_value(&mut h, "navigator.onLine"), true);
+    let r = h.page(
+        "Runtime.evaluate",
+        json!({"expression": format!("fetch('{url}').then(r => r.text())"), "awaitPromise": true, "returnByValue": true}),
+    );
+    assert!(r["result"]["result"]["value"].as_str().unwrap_or_default().contains("online"), "{r}");
+    server.join().unwrap();
+}
+
+#[test]
+fn network_cookie_commands_use_the_page_context_jar() {
+    let mut h = Harness::new();
+    let r = h.page("Network.setCookie", json!({"name": "a", "value": "1", "url": "http://example.test/path"}));
+    assert_eq!(r["result"]["success"], true, "{r}");
+    let r = h.page(
+        "Network.setCookies",
+        json!({"cookies": [{"name": "b", "value": "2", "domain": ".example.test", "path": "/"}, {"name": "c", "value": "3", "url": "http://other.test/"}]}),
+    );
+    assert_eq!(r["result"], json!({}), "{r}");
+    let names = |h: &mut Harness, params: Value| {
+        let r = h.page("Network.getCookies", params);
+        let mut n: Vec<String> =
+            r["result"]["cookies"].as_array().unwrap().iter().map(|c| c["name"].as_str().unwrap().to_owned()).collect();
+        n.sort();
+        n
+    };
+    assert_eq!(names(&mut h, json!({"urls": ["http://example.test/path/x"]})), ["a", "b"]);
+    assert_eq!(names(&mut h, json!({"urls": ["http://other.test/"]})), ["c"]);
+    assert!(names(&mut h, json!({})).is_empty(), "about:blank has no cookies");
+    let r = h.page("Network.deleteCookies", json!({"name": "a", "url": "http://example.test/"}));
+    assert_eq!(r["result"], json!({}), "{r}");
+    assert_eq!(names(&mut h, json!({"urls": ["http://example.test/path/x"]})), ["b"]);
+    let r = h.page("Network.deleteCookies", json!({"name": "a"}));
+    assert_eq!(r["error"]["code"], -32602, "{r}");
+    h.page("Network.clearBrowserCookies", json!({}));
+    assert!(names(&mut h, json!({"urls": ["http://example.test/", "http://other.test/"]})).is_empty());
+}
+
+#[test]
+fn network_get_request_post_data_returns_the_body() {
+    let (address, server) = serve_html(1, "ok");
+    let mut h = Harness::new();
+    h.page("Network.enable", json!({}));
+    let url = format!("http://{address}/submit");
+    let mut messages = h.page_with_events(
+        "Runtime.evaluate",
+        json!({"expression": format!("fetch('{url}', {{method: 'POST', body: JSON.stringify({{a: 1}})}}).then(r => r.text())"), "awaitPromise": true}),
+    );
+    messages.extend(h.run_for(50));
+    let sent = messages
+        .iter()
+        .find(|m| m["method"] == "Network.requestWillBeSent" && m["params"]["request"]["url"] == url)
+        .expect("requestWillBeSent");
+    let id = sent["params"]["requestId"].clone();
+    let r = h.page("Network.getRequestPostData", json!({"requestId": id}));
+    assert_eq!(r["result"]["postData"], r#"{"a":1}"#, "{r}");
+    let r = h.page("Network.getRequestPostData", json!({"requestId": "nope"}));
+    assert_eq!(r["error"]["message"], "No post data available for the request", "{r}");
+    server.join().unwrap();
+}
+
+#[cfg(feature = "render")]
+#[test]
+fn performance_get_metrics_reports_chrome_names() {
+    let mut h = Harness::new();
+    load_html(&mut h, "<!doctype html><div><p>a</p><p>b</p></div>");
+    h.page("Performance.enable", json!({}));
+    eval_value(&mut h, "document.querySelector('p').getBoundingClientRect().width");
+    let stats = h.page("LP.geometryStats", json!({}));
+    let r = h.page("Performance.getMetrics", json!({}));
+    let metrics: std::collections::HashMap<String, f64> = r["result"]["metrics"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{r}"))
+        .iter()
+        .map(|m| (m["name"].as_str().unwrap().to_owned(), m["value"].as_f64().unwrap()))
+        .collect();
+    for name in [
+        "Timestamp",
+        "Documents",
+        "Frames",
+        "Nodes",
+        "LayoutCount",
+        "RecalcStyleCount",
+        "LayoutDuration",
+        "RecalcStyleDuration",
+    ] {
+        assert!(metrics.contains_key(name), "{name}: {r}");
+    }
+    assert!(metrics["Nodes"] >= 5.0 && metrics["Frames"] == 1.0, "{r}");
+    assert!(metrics["LayoutCount"] >= 1.0, "geometryStats ({stats}) did not reset it: {r}");
+}
+
+#[test]
+fn fetch_response_stage_pauses_reads_and_overrides_responses() {
+    let (address, server) = serve_html(5, "<!doctype html><p>payload</p>");
+    let mut h = Harness::new();
+    h.page("Page.enable", json!({}));
+    h.page("Page.navigate", json!({"url": format!("http://{address}/")}));
+    h.until_event(|m| m["method"] == "Page.loadEventFired");
+    let session = h.session.clone();
+    let r = h.page(
+        "Fetch.enable",
+        json!({"patterns": [{"urlPattern": "*/resp*", "requestStage": "Response"}, {"urlPattern": "*/req*", "requestStage": "Request"}]}),
+    );
+    assert_eq!(r["result"], json!({}), "{r}");
+    let fetch = |h: &mut Harness, path: &str| {
+        h.send(
+            Some(&session),
+            "Runtime.evaluate",
+            json!({"expression": format!("fetch('/{path}').then(async r => r.status + ':' + r.headers.get('x-added') + ':' + (await r.text()))"), "awaitPromise": true, "returnByValue": true}),
+        )
+    };
+    let paused = |h: &mut Harness| h.until_event(|m| m["method"] == "Fetch.requestPaused");
+
+    // Response stage: status, headers and body, then a new status and header.
+    let eval = fetch(&mut h, "resp1");
+    let p = paused(&mut h);
+    assert_eq!(p["params"]["responseStatusCode"], 200, "{p}");
+    assert!(p["params"]["responseHeaders"].as_array().unwrap().iter().any(|h| h["name"] == "content-type"), "{p}");
+    let id = p["params"]["requestId"].clone();
+    let body = h.page("Fetch.getResponseBody", json!({"requestId": id}));
+    assert_eq!(body["result"]["body"], "<!doctype html><p>payload</p>", "{body}");
+    assert_eq!(body["result"]["base64Encoded"], false);
+    let r = h.page("Fetch.continueRequest", json!({"requestId": id}));
+    assert_eq!(r["error"]["code"], -32602, "continueRequest at the response stage: {r}");
+    let r = h.page(
+        "Fetch.continueResponse",
+        json!({"requestId": id, "responseCode": 201, "responseHeaders": [{"name": "x-added", "value": "yes"}]}),
+    );
+    assert_eq!(r["result"], json!({}), "{r}");
+    let reply = h.until_response(eval).into_iter().find(|m| m["id"] == eval).unwrap();
+    assert_eq!(reply["result"]["result"]["value"], "201:yes:<!doctype html><p>payload</p>", "{reply}");
+
+    // Response stage: fulfill replaces the response.
+    let eval = fetch(&mut h, "resp2");
+    let id = paused(&mut h)["params"]["requestId"].clone();
+    let r = h.page(
+        "Fetch.fulfillRequest",
+        json!({"requestId": id, "responseCode": 200, "body": lp_cdp::network_protocol::base64_encode(b"mocked")}),
+    );
+    assert_eq!(r["result"], json!({}), "{r}");
+    let reply = h.until_response(eval).into_iter().find(|m| m["id"] == eval).unwrap();
+    assert_eq!(reply["result"]["result"]["value"], "200:null:mocked", "{reply}");
+
+    // Request stage, then the response through interceptResponse.
+    let eval = fetch(&mut h, "req3");
+    let p = paused(&mut h);
+    assert!(p["params"].get("responseStatusCode").is_none(), "{p}");
+    let id = p["params"]["requestId"].clone();
+    let r = h.page("Fetch.getResponseBody", json!({"requestId": id}));
+    assert!(r.get("error").is_some(), "no body at the request stage: {r}");
+    assert_eq!(
+        h.page("Fetch.continueRequest", json!({"requestId": id, "interceptResponse": true}))["result"],
+        json!({})
+    );
+    let p = paused(&mut h);
+    assert_eq!(p["params"]["requestId"], id, "the same interception id at the response stage");
+    assert_eq!(p["params"]["responseStatusCode"], 200);
+    assert_eq!(h.page("Fetch.failRequest", json!({"requestId": id, "errorReason": "Failed"}))["result"], json!({}));
+    let reply = h.until_response(eval).into_iter().find(|m| m["id"] == eval).unwrap();
+    assert!(reply["result"].get("exceptionDetails").is_some(), "failed at the response stage: {reply}");
+
+    // Unmatched requests are not paused.
+    let eval = fetch(&mut h, "other");
+    let reply = h.until_response(eval).into_iter().find(|m| m["id"] == eval).unwrap();
+    assert_eq!(reply["result"]["result"]["value"], "200:null:<!doctype html><p>payload</p>", "{reply}");
+    h.page("Fetch.disable", json!({}));
+    server.join().unwrap();
 }

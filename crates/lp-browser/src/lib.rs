@@ -189,6 +189,11 @@ pub enum PageEvent {
         message: String,
         default_prompt: Option<String>,
     },
+    /// The dialog [`PageEvent::JavascriptDialogOpening`] reported was
+    /// dismissed (dialogs never block).
+    JavascriptDialogClosed {
+        frame_id: FrameId,
+    },
     /// An `<input type=file>` was activated (no native picker opens).
     FileChooserOpened {
         frame_id: FrameId,

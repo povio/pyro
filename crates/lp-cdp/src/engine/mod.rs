@@ -262,6 +262,9 @@ pub(crate) struct PageState {
     /// Bounds recorded by Browser.setWindowBounds, reported back by getWindowForTarget.
     pub(crate) window_bounds: Option<serde_json::Value>,
     pub(crate) emulated_media: Option<serde_json::Value>,
+    /// Dialogs reported by Page.javascriptDialogOpening and not yet
+    /// answered by Page.handleJavaScriptDialog (they never block).
+    pub(crate) unanswered_dialogs: u8,
     pub(crate) next_script_id: u64,
     /// Paused popup before its first navigation (`Page.getFrameTree` url ":").
     pub(crate) initial_popup: bool,
@@ -474,6 +477,7 @@ impl EngineHost {
                 pending_navigations: Vec::new(),
                 window_bounds: None,
                 emulated_media: None,
+                unanswered_dialogs: 0,
                 next_script_id: 1,
                 initial_popup: false,
                 suppress_next_char: false,
@@ -759,11 +763,40 @@ impl EngineHost {
             #[cfg(feature = "render")]
             "IO" => self.io_domain(action, cmd),
             "Log" if matches!(action, "enable" | "disable") => Ok(Some(serde_json::json!({}))),
-            // puppeteer enables both on every page; there are no issues or
-            // metrics to report (`Performance.getMetrics` stays unsupported).
+            // puppeteer enables both on every page; there are no issues to
+            // report.
             "Audits" | "Performance" if matches!(action, "enable" | "disable") => Ok(Some(serde_json::json!({}))),
+            #[cfg(feature = "render")]
+            "Performance" if action == "getMetrics" => self.performance_metrics(cmd).map(Some),
             _ => Err(CdpError::unsupported(&cmd.command.method)),
         }
+    }
+
+    /// `Performance.getMetrics`: Chrome's names for what the engine counts.
+    /// Layout and style counts and durations are the process's Blitz syncs
+    /// (each restyles and relays out what changed, so `RecalcStyleCount`
+    /// equals `LayoutCount`); JS heap metrics are not reported.
+    #[cfg(feature = "render")]
+    fn performance_metrics(&mut self, cmd: &PageCommand<'_, '_>) -> CdpResult<serde_json::Value> {
+        let pid = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?.id;
+        let page = self.thread.browser.page(pid).ok_or_else(|| CdpError::server("page is gone"))?;
+        let nodes = page.main_frame.page_dom.as_ref().map_or(0, |d| d.dom.borrow().live_nodes());
+        let frames = self.thread.browser.frames(pid).len();
+        let layouts = lp_layout::peek_layout_count();
+        let phases = lp_render::blitz_phases();
+        let metrics = [
+            ("Timestamp", self.thread.browser.timestamp()),
+            ("Documents", frames as f64),
+            ("Frames", frames as f64),
+            ("Nodes", nodes as f64),
+            ("LayoutCount", layouts as f64),
+            ("RecalcStyleCount", layouts as f64),
+            ("LayoutDuration", phases[4] / 1000.0),
+            ("RecalcStyleDuration", phases[0] / 1000.0),
+        ];
+        let metrics: Vec<_> =
+            metrics.iter().map(|(name, value)| serde_json::json!({ "name": name, "value": value })).collect();
+        Ok(serde_json::json!({ "metrics": metrics }))
     }
 
     /// Headless window metadata. Explicit bounds are recorded separately from
@@ -1020,9 +1053,10 @@ impl Host for EngineHost {
             .map_or_else(|| "about:blank".to_owned(), |p| p.main_frame.url.clone())
     }
 
-    fn page_title(&self, _page: PageKey) -> String {
-        // No document model yet: about:blank has an empty title.
-        String::new()
+    fn page_title(&self, page: PageKey) -> String {
+        let Some(state) = self.pages.get(&page) else { return String::new() };
+        let page = self.thread.browser.page(state.id);
+        page.and_then(|p| p.main_frame.page_dom.as_ref().map(|d| d.document_title())).unwrap_or_default()
     }
 
     fn session_attached(&mut self, page: PageKey, session_id: &str) {
