@@ -396,7 +396,7 @@ impl EngineHost {
             header_template: Option<String>,
             #[allow(dead_code)]
             footer_template: Option<String>,
-            #[allow(dead_code)]
+            #[serde(rename = "generateTaggedPDF")]
             generate_tagged_pdf: Option<bool>,
             #[allow(dead_code)]
             generate_document_outline: Option<bool>,
@@ -449,6 +449,8 @@ impl EngineHost {
             scale,
             print_background: p.print_background,
             page_ranges,
+            // Chrome's default: tagged.
+            tagged: p.generate_tagged_pdf.unwrap_or(true),
         };
         let pid = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?.id;
         let started = Instant::now();

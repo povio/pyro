@@ -38,6 +38,8 @@ skrifa = "0.42"
 [dev-dependencies]
 # Trees for the mirror tests come from lp-dom (lp-render itself does not depend on it).
 lp-dom = { workspace = true }
+# Inflates PDF streams in the PDF tests.
+miniz_oxide = "0.8"
 
 [lints]
 workspace = true

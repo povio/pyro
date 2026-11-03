@@ -30,6 +30,9 @@ under new elements. On the `cmr-overflow` PDF case Blitz's inline construction w
 ms and pagination from about 597 to 485 ms per run; the PDF is byte-identical. lp-render's
 `identical_text_keeps_each_elements_colour` covers the brush swap.
 
+`GlyphRun::atom_texts` (`src/layout/line.rs`) gives each atom's source text range and glyph count
+in glyph order, so PDF output can map a ligature glyph to all the characters it stands for.
+
 ## Updating or dropping the patch
 
 Copy the published crate from `~/.cargo/registry/src/*/parley-<version>` and re-apply

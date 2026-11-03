@@ -275,6 +275,8 @@ pub(crate) struct DrawTextContext {
     path_scratch: Vec<NodeId>,
     deco_boxes: Vec<LineDecoration>,
     win_ascent_ratios: WinAscentCache,
+    /// The glyph runs drawn, when recording ([`crate::paint_scene_recording_text`]).
+    pub(crate) runs: Option<Vec<crate::TextRun>>,
 }
 
 /// Resolve the CSS `text-decoration-thickness` to a device-pixel size.
@@ -595,6 +597,7 @@ pub(crate) fn stroke_text<'a>(
     transform: Affine,
     scale: f64,
     inline_root_id: NodeId,
+    source: Option<&str>,
     context: &mut DrawTextContext,
 ) {
     let DrawTextContext {
@@ -602,6 +605,7 @@ pub(crate) fn stroke_text<'a>(
         path_scratch,
         deco_boxes,
         win_ascent_ratios,
+        runs,
     } = context;
     stack.clear();
     path_scratch.clear();
@@ -671,6 +675,9 @@ pub(crate) fn stroke_text<'a>(
                 };
 
                 let normalized_coords: &[i16] = bytemuck::cast_slice(run.normalized_coords());
+                if let Some(runs) = runs.as_mut() {
+                    runs.push(crate::TextRun::new(&glyph_run, source, transform));
+                }
                 scene.draw_glyphs(
                     font,
                     font_size,

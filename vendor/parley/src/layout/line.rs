@@ -299,6 +299,28 @@ impl<'a, B: Brush> GlyphRun<'a, B> {
         &self.run
     }
 
+    /// The atoms of the glyph run in the order [`Self::glyphs`] yields their glyphs: each
+    /// atom's source text byte range and its number of glyphs (a ligature is one atom whose
+    /// text spans all the characters it stands for).
+    pub fn atom_texts(&self) -> impl Iterator<Item = (Range<usize>, usize)> + 'a {
+        let slice = self.run.full_slice().narrow(self.shaped_clusters.clone());
+        let rtl = self.run.is_rtl();
+        let mut atoms = if rtl {
+            slice.atoms_end()
+        } else {
+            slice.atoms_start()
+        };
+        core::iter::from_fn(move || {
+            let atom = if rtl { atoms.prev() } else { atoms.next() }?;
+            let glyphs = atom
+                .shaped_clusters()
+                .iter()
+                .map(|cluster| usize::from(cluster.glyph_len()))
+                .sum();
+            Some((slice.text_byte_range(atom.char_range()), glyphs))
+        })
+    }
+
     /// Returns the associated style.
     ///
     /// See also [`Self::style_index`].

@@ -196,6 +196,9 @@ pub struct PdfOptions {
     pub print_background: bool,
     /// Pages to keep, 1-based inclusive ranges in order; empty keeps all.
     pub page_ranges: Vec<(usize, usize)>,
+    /// Write a tag tree (headings, paragraphs, links) when no element
+    /// matches (`generateTaggedPDF`, Chrome's default).
+    pub tagged: bool,
 }
 
 impl PdfOptions {
@@ -209,6 +212,7 @@ impl PdfOptions {
             scale: 1.0,
             print_background: true,
             page_ranges: Vec::new(),
+            tagged: true,
         }
     }
 }
@@ -236,6 +240,10 @@ pub struct PdfPaint {
     /// Device px to points.
     scale: f64,
     placement: Option<pdf::Placement>,
+    /// Paper cuts: text runs, links and structure ([`pdf::Extras`]).
+    extras: Option<Box<pdf::Extras>>,
+    /// The document was laid out again at the paper's width (and back).
+    relaid: bool,
     timings: Timings,
 }
 
@@ -1053,8 +1061,8 @@ impl Renderer {
         dpr: f64,
         opts: &PdfOptions,
     ) -> Result<PdfOutput, RenderError> {
-        let m = self.mirrors.get_mut(&page).ok_or(RenderError::NoElement)?;
-        print_document(&mut m.doc, viewport, dpr.clamp(0.1, 16.0), opts, Timings::default(), &mut self.pdf_cache)
+        let paint = self.paint_pdf_page(page, viewport, dpr, opts)?;
+        write_pdf(paint, &mut self.pdf_cache)
     }
 
     /// [`Renderer::print_pdf_page`] up to the PDF writing, which
@@ -1067,7 +1075,11 @@ impl Renderer {
         opts: &PdfOptions,
     ) -> Result<PdfPaint, RenderError> {
         let m = self.mirrors.get_mut(&page).ok_or(RenderError::NoElement)?;
-        paint_document(&mut m.doc, viewport, dpr.clamp(0.1, 16.0), opts, Timings::default())
+        let paint = paint_document(&mut m.doc, viewport, dpr.clamp(0.1, 16.0), opts, Timings::default())?;
+        if paint.relaid {
+            self.geometry.entry(page).or_default().clear();
+        }
+        Ok(paint)
     }
 
     /// The PDF of [`Renderer::paint_pdf_page`]'s pages.
@@ -1158,10 +1170,6 @@ fn paint_document(
 ) -> Result<PdfPaint, RenderError> {
     let t = Instant::now();
     doc.set_viewport_scroll(blitz_dom::Point { x: 0.0, y: 0.0 });
-    let root = doc.root_element();
-    let (size, overflow) = (root.final_layout().size, *root.scrollable_overflow());
-    let doc_w = (size.width as f64).max(overflow.x1).max(viewport.0 as f64) * dpr;
-    let doc_h = (size.height as f64).max(overflow.y1).max(viewport.1 as f64) * dpr;
     let mut pages = Vec::new();
     for id in doc.query_selector_all(&opts.page_selector).unwrap_or_default() {
         let Some(rect) = element_bounds(doc, id, dpr) else { continue };
@@ -1179,56 +1187,358 @@ fn paint_document(
             culprit,
         });
     }
-    let by_selector = !pages.is_empty();
-    let [top, right, bottom, left] = opts.margins;
-    let scale = opts.scale.clamp(0.1, 2.0);
-    // Paper cuts with margins or a scale put each cut into the paper's
-    // content box (the page box stays the paper).
-    let placement = (!by_selector && (opts.margins != [0.0; 4] || scale != 1.0)).then(|| pdf::Placement {
-        paper: (opts.paper.0 * pdf::PX_TO_PT, opts.paper.1 * pdf::PX_TO_PT),
-        offset: (left * pdf::PX_TO_PT, top * pdf::PX_TO_PT),
-        scale,
-    });
-    if !by_selector {
-        let content = ((opts.paper.0 - left - right).max(1.0), (opts.paper.1 - top - bottom).max(1.0));
-        let (pw, ph) = (content.0 / scale * dpr, content.1 / scale * dpr);
-        let mut y = 0.0;
-        while y < doc_h - 0.5 || y == 0.0 {
-            pages.push(PdfPage {
-                rect: Rect::new(0.0, y, pw, y + ph),
-                overflow_right: 0.0,
-                overflow_bottom: 0.0,
-                culprit: None,
-            });
-            y += ph;
-        }
+    if pages.is_empty() {
+        return paint_paper(doc, viewport, dpr, opts, timings, t);
     }
-    if !opts.page_ranges.is_empty() {
-        let count = pages.len();
-        if opts.page_ranges.iter().any(|&(from, _)| from > count) {
-            return Err(RenderError::BadArea("Page range exceeds page count".into()));
-        }
-        let mut kept = Vec::new();
-        for &(from, to) in &opts.page_ranges {
-            kept.extend(pages[from - 1..to.min(count)].iter().cloned());
-        }
-        pages = kept;
-    }
+    let root = doc.root_element();
+    let (size, overflow) = (root.final_layout().size, *root.scrollable_overflow());
+    let doc_w = (size.width as f64).max(overflow.x1).max(viewport.0 as f64) * dpr;
+    let doc_h = (size.height as f64).max(overflow.y1).max(viewport.1 as f64) * dpr;
+    let pages = keep_ranges(pages, &opts.page_ranges)?;
     let extent_h = pages.iter().map(|p| p.rect.y1).fold(doc_h, f64::max);
     let extent_w = pages.iter().map(|p| p.rect.x1).fold(doc_w, f64::max);
     let mut scene = Scene::new();
     let (w, h) = (extent_w.ceil() as u32, extent_h.ceil() as u32);
     blitz_paint::paint_scene_with(&mut scene, doc, dpr, w, h, 0, 0, opts.print_background);
     timings.scene = t.elapsed();
-    Ok(PdfPaint { scene, pages, by_selector, scale: pdf::PX_TO_PT / dpr, placement, timings })
+    Ok(PdfPaint {
+        scene,
+        pages,
+        by_selector: true,
+        scale: pdf::PX_TO_PT / dpr,
+        placement: None,
+        extras: None,
+        relaid: false,
+        timings,
+    })
+}
+
+/// `pages` restricted to `ranges` (1-based, inclusive; empty keeps all).
+fn keep_ranges(pages: Vec<PdfPage>, ranges: &[(usize, usize)]) -> Result<Vec<PdfPage>, RenderError> {
+    if ranges.is_empty() {
+        return Ok(pages);
+    }
+    let count = pages.len();
+    if ranges.iter().any(|&(from, _)| from > count) {
+        return Err(RenderError::BadArea("Page range exceeds page count".into()));
+    }
+    let mut kept = Vec::new();
+    for &(from, to) in ranges {
+        kept.extend(pages[from - 1..to.min(count)].iter().cloned());
+    }
+    Ok(kept)
+}
+
+/// [`paint_document`] without page boxes: the document cut into the paper's
+/// content box. When the content box is not the viewport's width, the
+/// document is styled and laid out once at that width for printing (and back
+/// afterwards), as Chrome lays out the print document at the paper's width.
+/// Cuts are moved up to the top of a line box, replaced element or
+/// `break-inside: avoid` block they would cross, and to forced breaks
+/// (`break-before`/`break-after: page`).
+fn paint_paper(
+    doc: &mut blitz_dom::BaseDocument,
+    viewport: (u32, u32),
+    dpr: f64,
+    opts: &PdfOptions,
+    mut timings: Timings,
+    t: Instant,
+) -> Result<PdfPaint, RenderError> {
+    let [top, right, bottom, left] = opts.margins;
+    let scale = opts.scale.clamp(0.1, 2.0);
+    let content = ((opts.paper.0 - left - right).max(1.0), (opts.paper.1 - top - bottom).max(1.0));
+    // The print layout's viewport (CSS px).
+    let (cw, ch) = (content.0 / scale, content.1 / scale);
+    let saved = ((cw - viewport.0 as f64).abs() > 0.5).then(|| doc.viewport().clone());
+    if let Some(v) = &saved {
+        let mut print = v.clone();
+        print.window_size = ((cw * dpr).round().max(1.0) as u32, (ch * dpr).round().max(1.0) as u32);
+        doc.set_viewport(print);
+        doc.resolve(0.0);
+    }
+    let width = if saved.is_some() { cw } else { viewport.0 as f64 };
+    let root = doc.root_element();
+    let (size, overflow) = (root.final_layout().size, *root.scrollable_overflow());
+    let doc_w = (size.width as f64).max(overflow.x1).max(width) * dpr;
+    let doc_h = (size.height as f64).max(overflow.y1).max(viewport.1 as f64) * dpr;
+    let (pw, ph) = (cw * dpr, ch * dpr);
+    let (avoid, forced) = break_constraints(doc, dpr, ph);
+    let mut pages = Vec::new();
+    let mut y = 0.0;
+    while y < doc_h - 0.5 || pages.is_empty() {
+        let end = page_end(y, ph, doc_h, &avoid, &forced);
+        pages.push(PdfPage {
+            rect: Rect::new(0.0, y, pw, end),
+            overflow_right: 0.0,
+            overflow_bottom: 0.0,
+            culprit: None,
+        });
+        y = end;
+    }
+    let pages = keep_ranges(pages, &opts.page_ranges)?;
+    let extent_h = pages.iter().map(|p| p.rect.y1).fold(doc_h, f64::max);
+    let extent_w = pages.iter().map(|p| p.rect.x1).fold(doc_w, f64::max);
+    let mut scene = Scene::new();
+    let (w, h) = (extent_w.ceil() as u32, extent_h.ceil() as u32);
+    let runs = blitz_paint::paint_scene_recording_text(&mut scene, doc, dpr, w, h, 0, 0, opts.print_background);
+    let mut extras = pdf_extras(doc, runs, dpr, opts.tagged);
+    extras.slice_height = ph;
+    extras.canvas = if opts.print_background { canvas_color(doc) } else { None };
+    let relaid = saved.is_some();
+    if let Some(v) = saved {
+        doc.set_viewport(v);
+        doc.resolve(0.0);
+    }
+    timings.scene = t.elapsed();
+    let placement = pdf::Placement {
+        paper: (opts.paper.0 * pdf::PX_TO_PT, opts.paper.1 * pdf::PX_TO_PT),
+        offset: (left * pdf::PX_TO_PT, top * pdf::PX_TO_PT),
+        scale,
+    };
+    Ok(PdfPaint {
+        scene,
+        pages,
+        by_selector: false,
+        scale: pdf::PX_TO_PT / dpr,
+        placement: Some(placement),
+        extras: Some(Box::new(extras)),
+        relaid,
+        timings,
+    })
+}
+
+/// Where the page starting at `y` (device px) ends: at the first forced
+/// break inside it, else `ph` further, moved up to the top of any span of
+/// `avoid` the cut would cross (when that leaves the page some content).
+fn page_end(y: f64, ph: f64, doc_h: f64, avoid: &[(f64, f64)], forced: &[f64]) -> f64 {
+    let mut end = y + ph;
+    let first = forced.partition_point(|&f| f <= y + 0.5);
+    if let Some(&f) = forced.get(first).filter(|&&f| f < end - 0.5) {
+        return f;
+    }
+    if end >= doc_h {
+        return end;
+    }
+    // `avoid` is sorted by top; a span crossing `end` starts before it.
+    loop {
+        let upto = avoid.partition_point(|&(a, _)| a < end - 0.01);
+        let crossing = avoid[..upto]
+            .iter()
+            .filter(|&&(a, b)| a > y + 0.5 && b > end + 0.01)
+            .map(|&(a, _)| a)
+            .fold(f64::MAX, f64::min);
+        if crossing == f64::MAX {
+            return end;
+        }
+        end = crossing;
+    }
+}
+
+/// What printing should not cut, in device px down the document: the line
+/// boxes of inline formatting contexts, replaced elements and
+/// `break-inside: avoid` boxes no taller than a page (`ph`), sorted by top;
+/// and the forced breaks (`break-before`/`break-after: page`), sorted.
+fn break_constraints(doc: &blitz_dom::BaseDocument, dpr: f64, ph: f64) -> (Vec<(f64, f64)>, Vec<f64>) {
+    use style::values::computed::{BreakBetween, BreakWithin};
+    let forces = |b: BreakBetween| {
+        matches!(b, BreakBetween::Page | BreakBetween::Always | BreakBetween::Left | BreakBetween::Right)
+    };
+    let mut avoid = Vec::new();
+    let mut forced = Vec::new();
+    let mut stack = vec![(doc.root_element().id, 0.0f64)];
+    while let Some((id, parent_y)) = stack.pop() {
+        let Some(node) = doc.get_node(id) else { continue };
+        let l = node.final_layout();
+        let y = parent_y + l.location.y as f64;
+        let (top, bottom) = (y * dpr, (y + l.size.height as f64) * dpr);
+        if let Some(styles) = node.primary_styles() {
+            let b = styles.get_box();
+            if forces(b.clone_break_before()) {
+                forced.push(top);
+            }
+            if forces(b.clone_break_after()) {
+                forced.push(bottom);
+            }
+            let avoids = matches!(b.clone_break_inside(), BreakWithin::Avoid | BreakWithin::AvoidPage);
+            let replaced = node
+                .element_data()
+                .is_some_and(|e| matches!(&*e.name.local, "img" | "svg" | "canvas" | "video" | "iframe"));
+            if (avoids || replaced) && bottom - top <= ph {
+                avoid.push((top, bottom));
+            }
+        }
+        let text = node.element_data().and_then(|e| e.inline_layout_data.as_ref());
+        if let Some(text) = text.filter(|_| node.flags.is_inline_root()) {
+            let origin = y + (l.border.top + l.padding.top) as f64 + text.block_offset as f64;
+            let scale = text.layout.scale() as f64;
+            for line in text.layout.lines() {
+                let m = line.metrics();
+                let (a, b) = (origin + m.block_min_coord as f64 / scale, origin + m.block_max_coord as f64 / scale);
+                if b > a {
+                    avoid.push((a * dpr, b * dpr));
+                }
+            }
+        }
+        if let Some(children) = node.layout_children.borrow().as_ref() {
+            for &c in children.iter() {
+                stack.push((c, y));
+            }
+        }
+    }
+    avoid.sort_by(|a, b| a.0.total_cmp(&b.0));
+    forced.sort_by(f64::total_cmp);
+    (avoid, forced)
+}
+
+/// The canvas background (the root's, else the body's), when not transparent.
+fn canvas_color(doc: &blitz_dom::BaseDocument) -> Option<[u8; 4]> {
+    use blitz_dom::util::ToColorColor;
+    let color = |id: blitz_dom::NodeId| {
+        let styles = doc.get_node(id)?.primary_styles()?;
+        let c = styles.get_background().background_color.resolve_to_absolute(&styles.clone_color());
+        let c = c.as_color_color().to_rgba8();
+        (c.a > 0).then_some([c.r, c.g, c.b, c.a])
+    };
+    let root = doc.root_element();
+    color(root.id).or_else(|| {
+        let body = root
+            .children
+            .iter()
+            .copied()
+            .find(|&c| doc.get_node(c).and_then(|n| n.element_data()).is_some_and(|e| &*e.name.local == "body"))?;
+        color(body)
+    })
+}
+
+/// The structure (headings, paragraphs, links) and link targets behind the
+/// painted text `runs`.
+fn pdf_extras(doc: &blitz_dom::BaseDocument, runs: Vec<blitz_paint::TextRun>, dpr: f64, tagged: bool) -> pdf::Extras {
+    use blitz_dom::local_name;
+    let mut ex = pdf::Extras { tagged, ..pdf::Extras::default() };
+    let root = doc.root_element();
+    ex.lang = root.element_data().and_then(|e| e.attr(local_name!("lang"))).map(str::to_owned);
+    // Element to its structure element.
+    let mut structs: HashMap<blitz_dom::NodeId, u32> = HashMap::new();
+    let kind_of = |id: blitz_dom::NodeId| -> Option<pdf::StructKind> {
+        let e = doc.get_node(id)?.element_data()?;
+        match &*e.name.local {
+            "p" => Some(pdf::StructKind::Paragraph),
+            "a" if e.attr(local_name!("href")).is_some() => Some(pdf::StructKind::Link(0)),
+            h @ ("h1" | "h2" | "h3" | "h4" | "h5" | "h6") => Some(pdf::StructKind::Heading(h.as_bytes()[1] - b'0')),
+            _ => None,
+        }
+    };
+    let link_target = |id: blitz_dom::NodeId| -> Option<pdf::LinkTarget> {
+        let href = doc.get_node(id)?.element_data()?.attr(local_name!("href"))?.trim();
+        if let Some(fragment) = href.strip_prefix('#') {
+            if fragment.is_empty() || fragment.eq_ignore_ascii_case("top") {
+                return Some(pdf::LinkTarget::Internal(0.0, 0.0));
+            }
+            let target = doc
+                .tree()
+                .iter()
+                .find_map(|(tid, n)| (n.element_data()?.attr(local_name!("id"))? == fragment).then_some(tid))?;
+            let r = element_bounds(doc, target, dpr)?;
+            return Some(pdf::LinkTarget::Internal(r.x0, r.y0));
+        }
+        let url = doc.base_url().join(href).ok()?;
+        matches!(url.scheme(), "http" | "https" | "mailto" | "file" | "tel" | "ftp")
+            .then(|| pdf::LinkTarget::Uri(url.to_string()))
+    };
+    // The structure element of `id` (made with its ancestors' first).
+    fn structure(
+        id: blitz_dom::NodeId,
+        doc: &blitz_dom::BaseDocument,
+        ex: &mut pdf::Extras,
+        structs: &mut HashMap<blitz_dom::NodeId, u32>,
+        kind_of: &dyn Fn(blitz_dom::NodeId) -> Option<pdf::StructKind>,
+        link_target: &dyn Fn(blitz_dom::NodeId) -> Option<pdf::LinkTarget>,
+        dpr: f64,
+    ) -> Option<u32> {
+        let mut cur = Some(id);
+        while let Some(c) = cur {
+            if let Some(&s) = structs.get(&c) {
+                return Some(s);
+            }
+            if let Some(mut kind) = kind_of(c) {
+                let parent = doc
+                    .get_node(c)
+                    .and_then(|n| n.parent)
+                    .and_then(|p| structure(p, doc, ex, structs, kind_of, link_target, dpr));
+                let index = ex.structs.len() as u32;
+                if let pdf::StructKind::Link(_) = kind {
+                    let node = doc.get_node(c)?;
+                    // Boxes of their own (block, inline-block): the border box;
+                    // inline links get their text's.
+                    let boxed = node.primary_styles().is_some_and(|s| !s.clone_display().is_inline_flow());
+                    let rects: Vec<Rect> = boxed.then(|| element_bounds(doc, c, dpr)).flatten().into_iter().collect();
+                    let boxed = !rects.is_empty();
+                    match link_target(c) {
+                        Some(target) => {
+                            kind = pdf::StructKind::Link(ex.links.len());
+                            ex.links.push(pdf::Link { rects, target, structure: index, boxed });
+                        }
+                        // Not a link we can write: its content goes to its parent.
+                        None => {
+                            structs.insert(c, parent?);
+                            return parent;
+                        }
+                    }
+                }
+                ex.structs.push(pdf::Struct { kind, parent });
+                structs.insert(c, index);
+                return Some(index);
+            }
+            cur = doc.get_node(c).and_then(|n| n.parent);
+        }
+        None
+    }
+    for run in &runs {
+        let s = structure(run.node, doc, &mut ex, &mut structs, &kind_of, &link_target, dpr);
+        ex.run_struct.push(s);
+        // Inline links cover their text, one area per line.
+        let mut cur = s;
+        while let Some(i) = cur {
+            let st = &ex.structs[i as usize];
+            if let pdf::StructKind::Link(l) = st.kind {
+                if !ex.links[l].boxed && run.bounds.width() > 0.0 {
+                    let rects = &mut ex.links[l].rects;
+                    match rects.last_mut() {
+                        Some(last)
+                            if last.y0 < run.bounds.y1 && run.bounds.y0 < last.y1 && run.bounds.x0 <= last.x1 + 1.0 =>
+                        {
+                            *last = last.union(run.bounds)
+                        }
+                        _ => rects.push(run.bounds),
+                    }
+                }
+                break;
+            }
+            cur = st.parent;
+        }
+    }
+    // Links with no text (images, empty boxes) that have a box.
+    for id in doc.query_selector_all("a[href]").unwrap_or_default() {
+        if !structs.contains_key(&id) {
+            let boxed =
+                doc.get_node(id).and_then(|n| n.primary_styles()).is_some_and(|s| !s.clone_display().is_inline_flow());
+            if boxed {
+                structure(id, doc, &mut ex, &mut structs, &kind_of, &link_target, dpr);
+            }
+        }
+    }
+    ex.links.retain(|l| !l.rects.is_empty());
+    ex.runs = runs;
+    ex
 }
 
 /// The PDF of painted pages.
 fn write_pdf(paint: PdfPaint, cache: &mut pdf::PdfCache) -> Result<PdfOutput, RenderError> {
-    let PdfPaint { scene, pages, by_selector, scale, placement, mut timings } = paint;
+    let PdfPaint { scene, pages, by_selector, scale, placement, extras, mut timings, .. } = paint;
     let t = Instant::now();
     let rects: Vec<Rect> = pages.iter().map(|p| p.rect).collect();
-    let (bytes, stats) = pdf::write(&scene, &rects, scale, placement, cache).map_err(RenderError::Resource)?;
+    let (bytes, stats) =
+        pdf::write(&scene, &rects, scale, placement, extras.as_deref(), cache).map_err(RenderError::Resource)?;
     timings.raster = t.elapsed();
     Ok(PdfOutput { bytes, pages, by_selector, stats, commands: scene.commands.len(), timings })
 }

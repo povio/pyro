@@ -17,6 +17,11 @@ crate (`diff -ruN`).
   rule cache was nearly dead on such pages: 195 hits of 46218 lookups on a ToS invoice (80% after),
   5.5% on a long ToS CMR (71% after). The computed values are the same (44 ToS PDFs byte-identical).
 
+- `properties/longhands.toml`, `properties/shorthands.toml`: `break-before`, `break-after` and
+  `break-inside` (and the legacy `page-break-*` shorthands) are parsed and computed for servo too
+  (upstream: gecko only). lp-render's PDF output reads them to place page cuts of paper-cut
+  documents. Nothing else reads them; computed values of other properties are unchanged.
+
 ## Updating or dropping the patch
 
 - When upstream has the change: delete this directory and the `[patch.crates-io]` entry.

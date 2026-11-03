@@ -1719,6 +1719,7 @@ dependencies = [
  "krilla",
  "kurbo",
  "lp-dom",
+ "miniz_oxide 0.8.9",
  "parley",
  "peniko",
  "png",
