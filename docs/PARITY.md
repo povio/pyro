@@ -1,7 +1,21 @@
 # Parity with upstream Lightpanda (2ad38773)
 
-Upstream is about 266k lines of Zig. This rewrite is at an early milestone. Each status below reflects code that exists
+Upstream is about 266k lines of Zig. This matrix records implemented code and known gaps at the revision it accompanies; it is not a complete upstream API claim. Each status below reflects code that exists
 and is tested in this repository, not plans.
+
+### How to read this matrix
+
+This is a feature-by-feature comparison with the upstream Lightpanda browser, not a statement that the Rust rewrite is missing the whole area or cannot run TOS flows. **Partial** means the implementation covers a subset and the Notes column names known upstream differences. A feature may be implemented and useful for TOS while its broader web-platform/API surface remains partial.
+
+The “Required for the TOS E2E milestone” list names capabilities the TOS suite needs; it is not proof that the complete suite has passed. Source presence, focused unit/integration tests, and a full TOS E2E run are separate evidence levels. Record qualification results with the tested Lightningpanda commit, TOS branch, routing counts, and pass/fail totals.
+
+### TOS E2E qualification snapshot (2026-10-20)
+
+| Rust Lightpanda | TOS checkout | Routing and result | Runner |
+|---|---|---|---|
+| v0.0.1 at 39ab1f9109ac6f97b04bf2677f722fcca095ad10 | ce7819527ff30427e005028c6116023a6c6e42fc | All 1,734 FE E2E cases temporarily routed to Rust Lightpanda: 982 passed, 649 failed, 103 skipped, 0 flaky. This is characterization evidence, not a passing qualification. | W1, 10 Playwright workers; 22m21s wall time; 87.3% average system CPU from 84 samples. |
+
+The temporary all-Lightpanda route was restored after the run. CPU and memory readings include the whole runner and its FE/backend services. During sampling, unused memory fell as low as 59 MiB and swap usage peaked at 7.1 GiB, so this worker setting is CPU-saturating and memory-constrained. A parallel 8-worker run completed in 25m37s with 992 passes, 638 failures, and 104 skips; 18 cases passed at 8 workers but failed at 10, while 8 cases changed the other way.
 
 Status values:
 - **Done**: implemented and tested here.
