@@ -89,6 +89,8 @@ lp-render's mirror tests (incremental documents against fresh builds after rando
 - `src/layout/mod.rs`: a text input in system-ui on macOS (SF Text) is `ceil(0.525em x size) +
   round(0.4375em)` wide, Chromium's width there (measured at 10-16px); other fonts keep the
   `(size / 2 + 0.4)em` approximation.
+- `assets/default.css`: checkboxes and radios are Chromium's 13x13 border boxes (radios with Chromium's
+  `3px 3px 0 5px` margin); Blitz had 14x14.
 - `src/layout/mod.rs`: a textarea or select with a percentage width contributes zero to min-content sizing,
   as text inputs already did (CSS Sizing 3 §5.2.2, compressible): in a flex-wrap row it shrinks into the
   space left on the line instead of wrapping below.
