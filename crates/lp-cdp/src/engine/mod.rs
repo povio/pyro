@@ -7,6 +7,7 @@
 //! while JavaScript is on the stack.
 
 #[cfg(feature = "render")]
+mod accessibility;
 mod blitz_geometry;
 #[cfg(feature = "render")]
 pub(crate) use blitz_geometry::set_fork_template;
@@ -806,6 +807,7 @@ impl EngineHost {
             "Fetch" => self.fetch_domain(action, cmd),
             "Input" => self.input_domain(action, cmd),
             "Security" => self.security_domain(action, cmd),
+            "Accessibility" => self.accessibility_domain(action, cmd),
             // Blitz-backed layout queries since the last call.
             #[cfg(feature = "render")]
             "LP" if action == "geometryStats" => {

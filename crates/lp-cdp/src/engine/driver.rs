@@ -1314,7 +1314,7 @@ fn post_marker(sched: Scheduler<Browser>, done: Rc<Cell<bool>>, hops: u32) {
     });
 }
 
-fn normalize(s: &str) -> String {
+pub(super) fn normalize(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
@@ -1389,14 +1389,14 @@ impl Pattern {
     }
 }
 
-fn local(dom: &Dom, id: NodeId) -> Option<&str> {
+pub(super) fn local(dom: &Dom, id: NodeId) -> Option<&str> {
     match &dom.node(id).ok()?.kind {
         NodeKind::Element(e) if e.is_html() => Some(&e.name.local),
         _ => None,
     }
 }
 
-fn attr<'d>(dom: &'d Dom, id: NodeId, name: &str) -> Option<&'d str> {
+pub(super) fn attr<'d>(dom: &'d Dom, id: NodeId, name: &str) -> Option<&'d str> {
     dom.element(id).ok()?.attr(name)
 }
 
@@ -1405,7 +1405,7 @@ fn json_of(v: lp_js::Value<'_>) -> Value {
     v.to_json(0).ok().flatten().and_then(|j| serde_json::from_str(&j).ok()).unwrap_or(Value::Null)
 }
 
-fn text_of(dom: &Dom, id: NodeId) -> String {
+pub(super) fn text_of(dom: &Dom, id: NodeId) -> String {
     dom.text_content(id).ok().flatten().unwrap_or_default()
 }
 
@@ -1414,7 +1414,7 @@ fn elements(dom: &Dom, root: NodeId) -> impl Iterator<Item = NodeId> + '_ {
 }
 
 /// `aria-*` boolean attribute: `true` case-insensitively.
-fn aria_true(dom: &Dom, id: NodeId, name: &str) -> bool {
+pub(super) fn aria_true(dom: &Dom, id: NodeId, name: &str) -> bool {
     attr(dom, id, name).is_some_and(|v| v.trim().eq_ignore_ascii_case("true"))
 }
 
@@ -1431,7 +1431,7 @@ fn has_explicit_name(dom: &Dom, id: NodeId) -> bool {
 
 /// The elements an IDREF list names, in order, each once (Playwright's
 /// `getIdRefs`), or `None` without the attribute.
-fn id_refs(dom: &Dom, doc: NodeId, id: NodeId, name: &str) -> Option<Vec<NodeId>> {
+pub(super) fn id_refs(dom: &Dom, doc: NodeId, id: NodeId, name: &str) -> Option<Vec<NodeId>> {
     let refs = attr(dom, id, name)?;
     let mut out = Vec::new();
     for r in refs.split_ascii_whitespace() {
@@ -1446,7 +1446,7 @@ fn id_refs(dom: &Dom, doc: NodeId, id: NodeId, name: &str) -> Option<Vec<NodeId>
 
 /// Implicit ARIA role, by Playwright's `kImplicitRoleByTagName`, or the
 /// first token of an explicit `role`.
-fn role_of(dom: &Dom, id: NodeId) -> Option<String> {
+pub(super) fn role_of(dom: &Dom, id: NodeId) -> Option<String> {
     if let Some(role) = attr(dom, id, "role").and_then(|r| r.split_whitespace().next()) {
         return Some(role.to_ascii_lowercase());
     }
@@ -1650,7 +1650,7 @@ fn labelable(dom: &Dom, id: NodeId) -> bool {
 
 /// The `<label>`s of a form control: `label[for=id]` in document order and
 /// the nearest enclosing label without `for`.
-fn labels(dom: &Dom, doc: NodeId, id: NodeId) -> Vec<NodeId> {
+pub(super) fn labels(dom: &Dom, doc: NodeId, id: NodeId) -> Vec<NodeId> {
     let mut out = Vec::new();
     if !labelable(dom, id) {
         return out;
@@ -2020,7 +2020,7 @@ impl Names<'_> {
 }
 
 /// The accessible name of an element, whitespace-normalized.
-fn accessible_name(dom: &Dom, layout: &Layout, doc: NodeId, id: NodeId) -> String {
+pub(super) fn accessible_name(dom: &Dom, layout: &Layout, doc: NodeId, id: NodeId) -> String {
     // Playwright's `getElementAccessibleName`: these roles prohibit naming.
     let prohibits = matches!(
         role_of(dom, id).as_deref(),

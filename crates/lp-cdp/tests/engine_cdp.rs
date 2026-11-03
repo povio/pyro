@@ -3236,6 +3236,9 @@ fn network_idle_waits_for_in_flight_requests() {
     assert_eq!(order.iter().filter(|n| *n == "networkIdle").count(), 1, "{order:?}");
 }
 
+#[path = "engine_cdp/accessibility.rs"]
+mod accessibility;
+
 #[path = "engine_cdp/frames.rs"]
 mod frames;
 

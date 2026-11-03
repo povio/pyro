@@ -474,6 +474,30 @@ try {
     await page.locator('#dom-button').click({ timeout: 5000 });
     assert.equal(await page.evaluate(() => domClicks), 1);
   });
+  await check('Accessibility AX trees over CDP agree with getByRole', async () => {
+    await page.setContent('<title>AX</title><nav aria-label="Main"><a href="#a">Home</a></nav><h2>Title <b>here</b></h2><label for="ax-n">Name</label><input id="ax-n" value="v"><button aria-hidden="true">Hidden</button><button>Save</button>');
+    const session = await context.newCDPSession(page);
+    try {
+      const { nodes } = await session.send('Accessibility.getFullAXTree');
+      assert.equal(nodes[0].role.value, 'RootWebArea');
+      assert.equal(nodes[0].name.value, 'AX');
+      const byId = new Map(nodes.map((n) => [n.nodeId, n]));
+      for (const n of nodes) for (const c of n.childIds) assert.equal(byId.get(c)?.parentId, n.nodeId, `child ${c} of ${n.nodeId}`);
+      const named = nodes.filter((n) => !n.ignored && n.role.type === 'role').map((n) => `${n.role.value}:${n.name.value}`);
+      assert.deepEqual(named.sort(), ['button:Save', 'heading:Title here', 'link:Home', 'navigation:Main', 'textbox:Name']);
+      const root = await session.send('Runtime.evaluate', { expression: 'document.body' });
+      const { nodes: found } = await session.send('Accessibility.queryAXTree', { objectId: root.result.objectId, role: 'button' });
+      assert.deepEqual(found.map((n) => [n.name.value, n.ignored]), [['', true], ['Save', false]]);
+      const save = found[1];
+      const { nodes: partial } = await session.send('Accessibility.getPartialAXTree', { backendNodeId: save.backendDOMNodeId });
+      assert.equal(partial[0].nodeId, save.nodeId);
+      assert.equal(partial.at(-1).role.value, 'RootWebArea');
+      // getByRole (injected script) sees the same roles and names.
+      await page.getByRole('button', { name: 'Save' }).click({ timeout: 5000 });
+      assert.equal(await page.getByRole('heading', { name: 'Title here' }).count(), 1);
+      assert.equal(await page.getByRole('textbox', { name: 'Name' }).inputValue(), 'v');
+    } finally { await session.detach(); }
+  });
   await check('synchronous CDP DOM insertion starts stylesheet loading while idle', async () => {
     const isolated = await context.newPage();
     let timeout;
