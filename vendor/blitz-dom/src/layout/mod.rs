@@ -257,6 +257,23 @@ impl LayoutPassState<'_> {
                 (listbox, longest)
             })
         };
+        // A drop-down select's text line (its font at `line-height: normal`):
+        // the control's baseline is the line's, centred in the content box.
+        let select_line = if matches!(select_label_chars, Some((false, _))) {
+            let doc = &mut *self.doc;
+            let styles = doc.nodes[dom_node_id(node_id)].primary_styles();
+            styles.and_then(|styles| {
+                let parley_style = crate::stylo_to_parley::style(dom_node_id(node_id), &styles);
+                let mut font_ctx = doc.font_ctx.lock().unwrap();
+                let mut builder = doc.layout_ctx.tree_builder(&mut font_ctx, scale, true, &parley_style);
+                builder.push_text("x");
+                let mut layout = builder.build().0;
+                layout.break_all_lines(None);
+                layout.lines().next().map(|line| *line.metrics())
+            })
+        } else {
+            None
+        };
         let node = &mut self.nodes[dom_node_id(node_id)];
 
         let font_styles = node.primary_styles().map(|style| {
@@ -394,9 +411,10 @@ impl LayoutPassState<'_> {
                 // this it had no box at all (its options are hidden).
                 if let Some((false, chars)) = select_label_chars {
                     let font_size = font_size.unwrap_or(13.333);
-                    return compute_leaf_layout(
+                    let style = node.layout_style();
+                    let mut output = compute_leaf_layout(
                         inputs,
-                        &node.layout_style(),
+                        &style,
                         resolve_calc_value,
                         |_known_size, _available_space| taffy::Size {
                             width: if compressible_min_content {
@@ -407,6 +425,17 @@ impl LayoutPassState<'_> {
                             height: (font_size * 1.25).ceil(),
                         },
                     );
+                    if let Some(line) = select_line {
+                        let parent = inputs.parent_size.width;
+                        let padding = style.padding().resolve_or_zero(parent, resolve_calc_value);
+                        let border = style.border().resolve_or_zero(parent, resolve_calc_value);
+                        let content_top = padding.top + border.top;
+                        let content_height = output.size.height - content_top - padding.bottom - border.bottom;
+                        let (line_height, baseline) = (line.line_height / scale, line.baseline / scale);
+                        let baseline = content_top + (content_height - line_height) / 2.0 + baseline;
+                        output.baselines = taffy::Baselines { first: Some(baseline), last: Some(baseline) };
+                    }
+                    return output;
                 }
 
                 if *element_data.name.local == *"input" {

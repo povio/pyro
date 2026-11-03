@@ -85,7 +85,8 @@ lp-render's mirror tests (incremental documents against fresh builds after rando
 - `assets/default.css`, `src/layout/mod.rs`: a drop-down `<select>` is an inline-block box with a 1px
   border and `line-height: normal`, sized from its longest option label (about half an em per character)
   plus the arrow, a line of its font tall (Chromium's menu list). It had no box at all: its options are
-  hidden because Blitz paints the control.
+  hidden because Blitz paints the control. Its baseline is its text line's, centred in the content box
+  (as for text inputs), not its bottom edge.
 - `src/layout/mod.rs`: a text input in system-ui on macOS (SF Text) is `ceil(0.525em x size) +
   round(0.4375em)` wide, Chromium's width there (measured at 10-16px); other fonts keep the
   `(size / 2 + 0.4)em` approximation.
