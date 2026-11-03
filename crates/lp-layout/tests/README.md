@@ -6,7 +6,6 @@ exercised flow internals (its style source, reuse caches, result diffing) were d
 
 Ignored tests (`Blitz parity gap`) fail against Blitz today, grouped:
 
-- Inline layout: an atomic inline wider than its line is followed by an empty line (text-align).
 - Flex: a percentage flex-basis in a column of indefinite height should behave as content.
 - Tables: rowspan (row heights and row boxes around a spanning cell).
 

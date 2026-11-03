@@ -1103,15 +1103,15 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                         if self.state.line.text_wrap_mode == TextWrapMode::Wrap {
                             self.state.mark_line_break_opportunity();
                         }
+                    } else if self.state.line.x == 0.0 {
+                        // lightningpanda: at the start of the line this box will never fit, so
+                        // consume it, accept the overflow and mark the soft wrap opportunity after
+                        // it: content that follows breaks there, and a box ending the paragraph
+                        // ends its last line (Chromium) rather than leaving an empty line behind.
+                        self.append_layout_inline_box(item.index, next_x);
+                        self.state.mark_line_break_opportunity();
                     } else {
-                        // If we're at the start of the line, this box will never fit, so consume it and accept the overflow.
-                        let reason = if self.state.line.x == 0.0 {
-                            self.append_layout_inline_box(item.index, next_x);
-                            BreakReason::Emergency
-                        } else {
-                            BreakReason::Regular
-                        };
-                        return self.start_new_line(reason, max_advance, line_indent);
+                        return self.start_new_line(BreakReason::Regular, max_advance, line_indent);
                     }
                 }
                 LayoutItemKind::TextRun => {

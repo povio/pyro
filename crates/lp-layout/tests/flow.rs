@@ -1046,7 +1046,6 @@ fn flex_parity_auto_margins() {
 // ----- text-align -------------------------------------------------------------
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn flow_parity_text_align() {
     // Chromium 1.59.1, 800x600, system UI font. Atomic boxes with explicit sizes; the inline
     // span's own height is font-metric dependent, so it is checked on x/width.
@@ -4226,6 +4225,36 @@ fn line_height_below_the_content_area_like_chromium() {
             ("c", [0.0, 20.0, 800.0, 20.0]),
             ("d", [0.0, 40.0, 800.0, 20.0]),
             ("e", [0.0, 40.0, 800.0, 20.0]),
+        ],
+    );
+}
+
+#[test]
+fn an_atomic_inline_wider_than_its_line_ends_it() {
+    // Chromium (800x600, 16px/20px Arial): a 500px inline-block in a 400px
+    // line overflows it; content after it breaks to the next line, and a box
+    // that ends the paragraph leaves no empty line behind.
+    let box_ = |id: &str| format!("<span id={id} style=\"display:inline-block;width:500px;height:10px\"></span>");
+    let html = format!(
+        "<!doctype html><body style=\"margin:0;font:16px/20px Arial\"><div id=a style=\"width:400px\">{} hello world</div><div id=b style=\"width:400px\">abc{}def</div><div id=c style=\"width:400px\">abc {}{}</div><div id=d style=\"width:400px;white-space:nowrap\">abc {} x</div></body>",
+        box_("a1"),
+        box_("b1"),
+        box_("c1"),
+        box_("c2"),
+        box_("d1")
+    );
+    check_rects(
+        "oversized-inline",
+        &html,
+        &[
+            ("a", [0.0, 0.0, 400.0, 40.0]),
+            ("a1", [0.0, 5.0, 500.0, 10.0]),
+            ("b", [0.0, 40.0, 400.0, 60.0]),
+            ("b1", [0.0, 65.0, 500.0, 10.0]),
+            ("c", [0.0, 100.0, 400.0, 60.0]),
+            ("c1", [0.0, 125.0, 500.0, 10.0]),
+            ("c2", [0.0, 145.0, 500.0, 10.0]),
+            ("d", [0.0, 160.0, 400.0, 20.0]),
         ],
     );
 }
