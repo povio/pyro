@@ -1192,6 +1192,9 @@ impl Layout {
             if !inside(&r) || !self.is_visible(dom, el) || !self.style.is_hit_testable(dom, el) {
                 continue;
             }
+            if self.is_table_row_box(dom, el) {
+                continue;
+            }
             if self.outside_inset_clip_path(dom, el, x, y, ignore_x, |node| {
                 self.hit_test_client_rect(dom, &result, node, &mut geometry)
             }) {
@@ -1223,6 +1226,21 @@ impl Layout {
             }
         }
         best.map(|(_, node)| node)
+    }
+
+    /// A table row or row group, which Chromium hits only through its
+    /// cells: a later row's box overlaps a cell spanning into it from an
+    /// earlier row, whose content must still be hit (the tag is checked
+    /// before the computed display).
+    fn is_table_row_box(&self, dom: &Dom, el: NodeId) -> bool {
+        let tag = dom.element(el).map(|e| e.local_name().clone());
+        if !tag.is_ok_and(|t| matches!(&*t, "tr" | "tbody" | "thead" | "tfoot")) {
+            return false;
+        }
+        matches!(
+            self.style.computed_display(dom, el).as_deref(),
+            Some("table-row" | "table-row-group" | "table-header-group" | "table-footer-group")
+        )
     }
 
     /// Visible viewport rectangle, using the same containing-block clips as hit testing.

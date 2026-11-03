@@ -117,17 +117,10 @@ impl TableTreeWrapper<'_, '_> {
                 available_space: taffy::Size { width: space, height: taffy::AvailableSpace::MaxContent },
                 vertical_margins_are_collapsible: taffy::Line::FALSE,
             };
-            if all_hinted && matches!(space, taffy::AvailableSpace::MaxContent) && this.ctx.cells[idx].min_width.is_some() {
-                // The grid fallback intentionally caps hinted cells at their
-                // minimum contribution. Auto allocation needs the natural
-                // preferred width too; the caller clamps it to measured min.
-                let node = crate::taffy_node_id(this.ctx.cells[idx].node_id);
-                this.doc.compute_child_layout(node, taffy::tree::LayoutInput {
-                    sizing_mode: taffy::SizingMode::ContentSize, ..input
-                }).size.width
-            } else {
-                this.compute_child_layout(taffy::NodeId::from(idx), input).size.width
-            }
+            // A width-hinted cell's preferred width is its hint or its
+            // min-content width, whichever is larger (Chromium's automatic
+            // table layout), which the grid's capped contribution gives.
+            this.compute_child_layout(taffy::NodeId::from(idx), input).size.width
         };
         let mut min: Vec<f32> = style.grid_template_columns.iter().map(|column| match column {
             taffy::GridTemplateComponent::Single(track) if track.max.into_raw().tag() == taffy::CompactLength::FIT_CONTENT_PX_TAG => track.max.into_raw().value(),
@@ -940,15 +933,37 @@ fn collect_table_cells(
                 }
             }
 
+            // `box-sizing: content-box` (the initial value) adds the cell's
+            // vertical padding and border to its height, as in Chromium.
+            let content_box_extra = {
+                use taffy::ResolveOrZero as _;
+                match style.box_sizing {
+                    taffy::BoxSizing::ContentBox => {
+                        let padding = style.padding.resolve_or_zero(None, resolve_calc_value);
+                        let border = style.border.resolve_or_zero(None, resolve_calc_value);
+                        padding.top + padding.bottom + border.top + border.bottom
+                    }
+                    taffy::BoxSizing::BorderBox => 0.0,
+                }
+            };
             let min_height = style.size.height.into_option().map(|height| {
-                let gutter = if border_collapse == BorderCollapse::Collapse {
-                    first_cell_border.as_ref().map_or(0.0, |border| {
-                        side_width(border.border_top_width.0, border.border_top_style)
-                            .max(side_width(border.border_bottom_width.0, border.border_bottom_style))
-                    })
-                } else {
-                    0.0
+                let (top, bottom) = match border_collapse {
+                    BorderCollapse::Collapse => first_cell_border.as_ref().map_or((0.0, 0.0), |border| {
+                        (
+                            side_width(border.border_top_width.0, border.border_top_style),
+                            side_width(border.border_bottom_width.0, border.border_bottom_style),
+                        )
+                    }),
+                    BorderCollapse::Separate => (0.0, 0.0),
                 };
+                // A content-box cell in a collapsed table also has half of
+                // each collapsed border inside its border box.
+                let collapsed_half = match style.box_sizing {
+                    taffy::BoxSizing::ContentBox => (top + bottom) / 2.0,
+                    taffy::BoxSizing::BorderBox => 0.0,
+                };
+                let height = height + content_box_extra + collapsed_half;
+                let gutter = top.max(bottom);
                 (height - gutter).max(0.0)
             });
             if min_height.is_some() {
