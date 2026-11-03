@@ -44,11 +44,15 @@ impl PumpStep {
 /// (returns true) or the connection ends (returns false).
 pub type DialogPump = Rc<dyn Fn(&mut dyn FnMut(&str) -> PumpStep) -> bool>;
 
+/// A page's target id, its browserContextId and its Page-enabled sessions.
+type PageSessions = (String, String, Vec<String>);
+
 #[derive(Default)]
 pub(crate) struct DialogGate {
     pump: RefCell<Option<DialogPump>>,
-    /// Per engine page: its target id and the sessions with Page enabled.
-    sessions: RefCell<HashMap<PageId, (String, Vec<String>)>>,
+    /// Per engine page: its target id, its browserContextId and the
+    /// sessions with Page enabled.
+    sessions: RefCell<HashMap<PageId, PageSessions>>,
     /// An `LP.*` driver command is running or waiting: dialogs do not block.
     pub(super) driver_busy: Cell<bool>,
     /// A dialog is showing (the nested loop is running).
@@ -79,12 +83,12 @@ impl DialogGate {
     }
 
     /// Records the sessions of `page` that have Page enabled.
-    pub(super) fn set_sessions(&self, page: PageId, target_id: String, sessions: Vec<String>) {
+    pub(super) fn set_sessions(&self, page: PageId, target_id: String, context_id: String, sessions: Vec<String>) {
         let mut map = self.sessions.borrow_mut();
         if sessions.is_empty() {
             map.remove(&page);
         } else {
-            map.insert(page, (target_id, sessions));
+            map.insert(page, (target_id, context_id, sessions));
         }
     }
 
@@ -117,7 +121,7 @@ impl DialogGate {
             return None;
         }
         let pump = self.pump.borrow().clone()?;
-        let (target_id, sessions) = self.sessions.borrow().get(&page).cloned()?;
+        let (target_id, context_id, sessions) = self.sessions.borrow().get(&page).cloned()?;
         self.open.set(true);
         let opening = json!({
             "url": url, "frameId": frame_id, "message": message, "type": kind,
@@ -127,7 +131,7 @@ impl DialogGate {
             out.push(msg::event_frame("Page.javascriptDialogOpening", &opening, Some(s)));
         }
         let mut answer: Option<lp_webapi::DialogAnswer> = None;
-        pump(&mut |text: &str| step(text, &target_id, &sessions, out, &mut answer));
+        pump(&mut |text: &str| step(text, &target_id, &context_id, &sessions, out, &mut answer));
         self.open.set(false);
         let answer = answer.unwrap_or_default();
         let closed = json!({ "frameId": frame_id, "result": answer.accept, "userInput": answer.prompt_text });
@@ -144,12 +148,19 @@ impl DialogGate {
 fn step(
     text: &str,
     target_id: &str,
+    context_id: &str,
     sessions: &[String],
     out: &Outbox,
     answer: &mut Option<lp_webapi::DialogAnswer>,
 ) -> PumpStep {
-    const WATCHED: [&str; 5] =
-        ["handleJavaScriptDialog", "detachFromTarget", "closeTarget", "Page.disable", "Page.close"];
+    const WATCHED: [&str; 6] = [
+        "handleJavaScriptDialog",
+        "detachFromTarget",
+        "closeTarget",
+        "disposeBrowserContext",
+        "Page.disable",
+        "Page.close",
+    ];
     if !WATCHED.iter().any(|m| text.contains(m)) {
         return PumpStep::HOLD;
     }
@@ -186,6 +197,11 @@ fn step(
             dismiss
         }
         Some("Target.closeTarget") if param("targetId") == Some(target_id) => dismiss,
+        Some("Target.disposeBrowserContext")
+            if !context_id.is_empty() && param("browserContextId") == Some(context_id) =>
+        {
+            dismiss
+        }
         _ => PumpStep::HOLD,
     }
 }
@@ -200,7 +216,7 @@ mod tests {
         let sessions = vec!["S1".to_owned()];
         let mut answer = None;
         {
-            let mut run = |t: &str| step(t, "T1", &sessions, &out, &mut answer);
+            let mut run = |t: &str| step(t, "T1", "C1", &sessions, &out, &mut answer);
             assert_eq!(run(r#"{"id":1,"method":"Runtime.evaluate","sessionId":"S1","params":{}}"#), PumpStep::HOLD);
             assert_eq!(
                 run(r#"{"id":2,"method":"Page.handleJavaScriptDialog","sessionId":"OTHER","params":{"accept":true}}"#),
@@ -208,6 +224,14 @@ mod tests {
             );
             assert_eq!(
                 run(r#"{"id":3,"method":"Target.closeTarget","params":{"targetId":"T1"}}"#),
+                PumpStep { hold: true, done: true }
+            );
+            assert_eq!(
+                run(r#"{"id":3,"method":"Target.disposeBrowserContext","params":{"browserContextId":"C2"}}"#),
+                PumpStep::HOLD
+            );
+            assert_eq!(
+                run(r#"{"id":3,"method":"Target.disposeBrowserContext","params":{"browserContextId":"C1"}}"#),
                 PumpStep { hold: true, done: true }
             );
             assert_eq!(

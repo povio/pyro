@@ -318,10 +318,7 @@
     // and returns the reader.
     internals(obj, withPrototype) {
       const out = [];
-      if (withPrototype) {
-        const proto = getPrototypeOf(obj);
-        if (proto !== null) apply(arrayPush, out, [['[[Prototype]]', proto]]);
-      }
+      if (withPrototype) apply(arrayPush, out, [['[[Prototype]]', getPrototypeOf(obj)]]);
       const prim = primitiveOf(obj);
       if (prim) apply(arrayPush, out, [['[[PrimitiveValue]]', prim.value]]);
       const kind = collectionKind(obj);
@@ -454,7 +451,13 @@
       const keys = getOwnPropertyNames(v);
       for (let i = 0; i < keys.length; i++) {
         const desc = getOwnPropertyDescriptor(v, keys[i]);
-        if (!desc || !desc.enumerable || !('value' in desc)) continue;
+        if (!desc || !desc.enumerable) continue;
+        if (!('value' in desc)) {
+          // An accessor: its getter is never run.
+          if (props.length >= limit) { out.overflow = true; break; }
+          apply(arrayPush, props, [{ name: keys[i], type: 'accessor' }]);
+          continue;
+        }
         if (!push(keys[i], desc.value)) break;
       }
     } catch (_) {}

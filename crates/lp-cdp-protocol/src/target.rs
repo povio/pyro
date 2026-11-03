@@ -81,6 +81,8 @@ pub trait Host {
     fn take_close_requests(&mut self) -> Vec<PageKey> {
         Vec::new()
     }
+    /// The `browserContextId` the protocol gave the host's context `key`.
+    fn context_named(&mut self, _key: ContextKey, _id: &str) {}
     /// Marks a paused popup that has not started its first navigation.
     /// Chrome reports such a frame's URL as ":" in `Page.getFrameTree`, which
     /// is how clients know to wait for the first real navigation.
@@ -376,6 +378,7 @@ impl<H: Host> Browser<H> {
                 continue;
             }
             let context_id = browser.mint("");
+            browser.host.context_named(e.context, &context_id);
             browser.contexts.push(ContextEntry {
                 id: context_id.clone(),
                 key: e.context,
@@ -1294,6 +1297,7 @@ impl<H: Host> Browser<H> {
         }
         let key = self.host.create_context()?;
         let id = self.mint("");
+        self.host.context_named(key, &id);
         self.contexts.push(ContextEntry { id: id.clone(), key, is_default, hidden });
         Ok(id)
     }

@@ -287,6 +287,8 @@ struct GetPropertiesParams {
     #[serde(default)]
     accessor_properties_only: bool,
     #[serde(default)]
+    non_indexed_properties_only: bool,
+    #[serde(default)]
     generate_preview: bool,
 }
 
@@ -381,18 +383,16 @@ impl EngineHost {
                 }
                 Ok(Some(json!({})))
             }
-            // No async stacks are recorded; a positive depth asks for the
-            // synchronous stack of console calls (Runtime.consoleAPICalled
-            // stackTrace), captured only while some session asks.
+            // No async stacks are recorded (console calls carry their
+            // synchronous stack regardless).
             "setAsyncCallStackDepth" => {
                 #[derive(Deserialize)]
                 #[serde(rename_all = "camelCase")]
+                #[allow(dead_code)]
                 struct P {
                     max_depth: i64,
                 }
-                let depth = cmd.command.params::<P>()?.max_depth;
-                self.session_mut(cmd.session_id)?.console_stacks = depth > 0;
-                self.update_runtime_wanted();
+                cmd.command.params::<P>()?;
                 Ok(Some(json!({})))
             }
             // A script running when it arrives was already stopped by the
@@ -402,6 +402,24 @@ impl EngineHost {
             // JavaScriptCore's public API has no heap iteration (V8's
             // inspector walks the heap for this).
             "queryObjects" => {
+                #[derive(Deserialize)]
+                #[serde(rename_all = "camelCase")]
+                struct P {
+                    prototype_object_id: String,
+                }
+                let id = cmd.command.params::<P>()?.prototype_object_id;
+                let handles = self.sessions.get(cmd.session_id).ok_or_else(|| CdpError::server("session is gone"))?;
+                let (context, handle) = {
+                    let table = handles.handles.borrow();
+                    let (context, handle) =
+                        table.get(&id).map_err(|_| CdpError::server("Could not find object with given id"))?;
+                    (context, handle.clone())
+                };
+                let realm = self.target_realm(cmd.page, Some(context))?;
+                let scope = realm.scope().map_err(remote::js_to_cdp)?;
+                if !handle.get(&scope).is_object() {
+                    return Err(CdpError::server("Prototype should be instance of Object"));
+                }
                 Err(CdpError::server("Runtime.queryObjects is not supported: JavaScriptCore exposes no heap iteration"))
             }
             "evaluate" => self.evaluate(cmd).map(|()| None),
@@ -576,6 +594,12 @@ impl EngineHost {
                 continue;
             }
             let name = entry.get("name").ok().and_then(|n| n.as_string()).unwrap_or_default();
+            if p.non_indexed_properties_only
+                && !present("symbol")
+                && name.parse::<u32>().is_ok_and(|i| i.to_string() == name)
+            {
+                continue;
+            }
             let mut parts = Vec::new();
             for (key, slot) in
                 [("value", Slot::Value), ("get", Slot::Get), ("set", Slot::Set), ("symbol", Slot::Symbol)]
@@ -607,7 +631,7 @@ impl EngineHost {
         // a promise's state); not with accessorPropertiesOnly, as Chrome.
         let mut internal: Vec<(String, Described)> = Vec::new();
         if !p.accessor_properties_only {
-            let pairs = scope.internal_properties(object, p.own_properties).map_err(remote::js_to_cdp)?;
+            let pairs = scope.internal_properties(object, true).map_err(remote::js_to_cdp)?;
             let n = pairs.get("length").and_then(|l| l.to_number()).map_err(remote::js_to_cdp)? as u32;
             for i in 0..n {
                 let Some(pair) = pairs.get_index(i).ok().and_then(|v| v.as_object()) else { continue };
@@ -691,13 +715,11 @@ impl EngineHost {
                 Some((d.remote, d.keep))
             })
             .collect();
-        // Only sessions that asked for stacks (Runtime.setAsyncCallStackDepth)
-        // get the trace; it is captured only while one does.
+        // Parsed once for every session.
         let stack_trace = stack.map(|s| console_stack(&s));
         for session_id in sessions {
             let Some(session) = self.sessions.get(&session_id) else { continue };
             let handles = session.handles.clone();
-            let wants_stack = session.console_stacks;
             let mut remote_args = Vec::with_capacity(args.len());
             for d in &described {
                 let remote = d
@@ -712,7 +734,7 @@ impl EngineHost {
                 "executionContextId": context,
                 "timestamp": timestamp,
             });
-            if let (true, Some(trace)) = (wants_stack, stack_trace.as_ref()) {
+            if let Some(trace) = stack_trace.as_ref() {
                 params["stackTrace"] = json!(trace);
             }
             self.event("Runtime.consoleAPICalled", &params, &session_id);
@@ -755,7 +777,10 @@ fn terminated() -> CdpError {
 /// it (helpers.js `stack`): the frames above the console method's own
 /// native frame (the capturing helper's and the method's are dropped).
 fn console_stack(stack: &str) -> crate::runtime_protocol::StackTrace {
-    let frames = crate::runtime_protocol::parse_jsc_stack(stack);
-    let start = frames.iter().position(|f| f.url.is_empty() && f.line_number < 0).map_or(1, |i| i + 1);
-    crate::runtime_protocol::StackTrace { call_frames: frames.into_iter().skip(start).collect() }
+    // The helper's frame, then the console method's native one; matched by
+    // location, never by function name.
+    let lines: Vec<&str> = stack.lines().filter(|l| !l.trim().is_empty()).collect();
+    let start = lines.iter().position(|l| l.ends_with("@[native code]")).map_or(1, |i| i + 1);
+    let rest = lines[start.min(lines.len())..].join("\n");
+    crate::runtime_protocol::StackTrace { call_frames: crate::runtime_protocol::parse_jsc_stack(&rest) }
 }

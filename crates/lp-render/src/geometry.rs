@@ -138,9 +138,14 @@ impl Geometry {
         let fixed = in_fixed
             || node.primary_styles().is_some_and(|s| s.clone_position() == style::computed_values::position::T::Fixed);
         let location = node.unrounded_layout().location;
-        let t = base
-            * Affine::translate((location.x as f64, location.y as f64))
-            * node.transform().as_deref().copied().unwrap_or_default();
+        // Blitz keeps the CSS transform's translation in device px
+        // (`Node::set_transform`); this chain is in CSS px.
+        let own = node.transform().as_deref().copied().map_or(Affine::IDENTITY, |t| {
+            let scale = doc.viewport().scale_f64();
+            let [a, b, c, d, e, f] = t.as_coeffs();
+            Affine::new([a, b, c, d, e / scale, f / scale])
+        });
+        let t = base * Affine::translate((location.x as f64, location.y as f64)) * own;
         self.transforms.borrow_mut().insert(id, (t, fixed));
         Some((t, fixed))
     }

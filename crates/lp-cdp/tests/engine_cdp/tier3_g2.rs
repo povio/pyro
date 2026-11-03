@@ -1,5 +1,5 @@
 //! Tier 3 (G2): transformed box models and line fragments, Runtime previews
-//! and internal properties, console stack traces on request,
+//! and internal properties, console stack traces,
 //! terminateExecution, blocking dialogs, Page.setDocumentContent and
 //! Page.close with beforeunload. Expected values were measured in Chrome.
 use super::*;
@@ -217,7 +217,7 @@ fn get_properties_reports_symbols_accessors_and_internal_slots() {
 }
 
 #[test]
-fn console_calls_carry_previews_and_stacks_only_when_asked() {
+fn console_calls_carry_previews_and_stacks() {
     let mut h = Harness::new();
     h.page("Runtime.enable", json!({}));
     let console = |h: &mut Harness, e: &str| {
@@ -225,7 +225,7 @@ fn console_calls_carry_previews_and_stacks_only_when_asked() {
         events.into_iter().find(|m| m["method"] == "Runtime.consoleAPICalled").expect("console event")
     };
     let c = console(&mut h, "function f1() { console.log('hi', {a: 1}) } f1()");
-    assert!(c["params"].get("stackTrace").is_none(), "no stack unless asked: {c}");
+    assert_eq!(c["params"]["stackTrace"]["callFrames"][0]["functionName"], "f1", "Runtime enabled is enough: {c}");
     assert_eq!(c["params"]["args"][1]["preview"]["properties"], json!([{"name":"a","type":"number","value":"1"}]));
     assert_eq!(h.page("Runtime.setAsyncCallStackDepth", json!({"maxDepth": 32}))["result"], json!({}));
     let c = console(&mut h, "function f2() { console.log('hi2') }\nf2()");
@@ -239,9 +239,6 @@ fn console_calls_carry_previews_and_stacks_only_when_asked() {
     let top = &c["params"]["stackTrace"]["callFrames"][0];
     assert_eq!((top["functionName"].clone(), top["lineNumber"].clone()), (json!("f3"), json!(1)), "{c}");
     assert!(top["url"].as_str().unwrap().starts_with("data:"), "{c}");
-    h.page("Runtime.setAsyncCallStackDepth", json!({"maxDepth": 0}));
-    let c = console(&mut h, "console.log(1)");
-    assert!(c["params"].get("stackTrace").is_none(), "{c}");
 }
 
 #[test]
@@ -398,4 +395,133 @@ fn page_close_without_a_cancelling_handler_closes() {
     messages.extend(h.run_for(20));
     assert!(closed_target(&messages, &target), "{messages:#?}");
     assert!(!messages.iter().any(|m| m["method"] == "Page.javascriptDialogOpening"));
+}
+
+#[cfg(feature = "render")]
+#[test]
+fn transforms_are_css_px_at_device_scale_two() {
+    let mut h = Harness::new();
+    let r = h.page(
+        "Emulation.setDeviceMetricsOverride",
+        json!({"width": 800, "height": 600, "deviceScaleFactor": 2, "mobile": false}),
+    );
+    assert_eq!(r["result"], json!({}), "{r}");
+    load_html(
+        &mut h,
+        "<style>body{margin:0}</style><div id=d style='position:absolute;left:20px;top:5px;width:50px;height:10px;transform:translate(10px,4px) rotate(0.0001deg)'></div><div id=e style='position:absolute;left:20px;top:50px;width:50px;height:10px;transform:translate(10px,4px)'></div>",
+    );
+    for sel in ["#d", "#e"] {
+        let id = node_object(&mut h, sel);
+        let q = h.page("DOM.getContentQuads", json!({"objectId": id}));
+        let x = q["result"]["quads"][0][0].as_f64().unwrap_or_else(|| panic!("{q}"));
+        assert!((x - 30.0).abs() < 0.01, "{sel}: translate is CSS px: {q}");
+    }
+    assert_eq!(eval_value(&mut h, "document.getElementById('e').getBoundingClientRect().x"), json!(30));
+}
+
+#[test]
+fn set_document_content_keeps_the_document_and_reports_init_with_its_loader() {
+    let mut h = Harness::new();
+    h.page("Page.enable", json!({}));
+    h.page("Page.setLifecycleEventsEnabled", json!({"enabled": true}));
+    h.page("Runtime.enable", json!({}));
+    h.page("Page.addScriptToEvaluateOnNewDocument", json!({"source": "window.inits = (window.inits || 0) + 1"}));
+    load_html(&mut h, "<p>old</p><script>addEventListener('click', () => window.clicked = 1)</script>");
+    let tree = h.page("Page.getFrameTree", json!({}));
+    let loader_id = tree["result"]["frameTree"]["frame"]["loaderId"].clone();
+    let frame = h.frame_id.clone();
+    let mut events =
+        h.page_with_events("Page.setDocumentContent", json!({"frameId": frame, "html": "<p id=n>new</p>"}));
+    events.extend(h.run_for(100));
+    let names = methods(&events);
+    for absent in [
+        "Page.frameNavigated",
+        "Runtime.executionContextsCleared",
+        "Runtime.executionContextCreated",
+        "Page.frameStartedLoading",
+    ] {
+        assert!(!names.iter().any(|n| n == absent), "{absent}: {names:?}");
+    }
+    let lifecycle: Vec<_> = events
+        .iter()
+        .filter(|m| m["method"] == "Page.lifecycleEvent")
+        .map(|m| (m["params"]["name"].as_str().unwrap().to_owned(), m["params"]["loaderId"].clone()))
+        .collect();
+    assert_eq!(lifecycle.first().map(|l| l.0.as_str()), Some("init"), "{lifecycle:?}");
+    assert!(lifecycle.iter().all(|l| l.1 == loader_id), "same loader: {lifecycle:?} vs {loader_id}");
+    assert!(lifecycle.iter().any(|l| l.0 == "load"), "{lifecycle:?}");
+    assert_eq!(
+        eval_value(
+            &mut h,
+            "document.body.click(); [document.getElementById('n').textContent, window.inits, window.clicked ?? null]"
+        ),
+        json!(["new", 1, null]),
+        "listeners erased, init scripts not rerun"
+    );
+}
+
+#[test]
+fn page_close_answers_before_beforeunload_runs() {
+    let mut h = Harness::new();
+    h.page("Page.enable", json!({}));
+    h.page("Runtime.enable", json!({}));
+    eval_value(&mut h, "addEventListener('beforeunload', () => console.log('unloading')); 0");
+    let id = h.next_id;
+    let mut messages = h.page_with_events("Page.close", json!({}));
+    messages.extend(h.run_for(20));
+    let reply = messages.iter().position(|m| m["id"] == id).expect("reply");
+    let console = messages.iter().position(|m| m["method"] == "Runtime.consoleAPICalled").expect("handler ran");
+    assert!(reply < console, "{messages:#?}");
+}
+
+#[test]
+fn console_stacks_come_with_runtime_enabled_and_page_disable_dismisses_a_dialog() {
+    let mut h = Harness::new();
+    h.page("Runtime.enable", json!({}));
+    let events = h.page_with_events("Runtime.evaluate", json!({"expression": "function g() { console.log(1) } g()"}));
+    let c = events.iter().find(|m| m["method"] == "Runtime.consoleAPICalled").unwrap();
+    assert_eq!(c["params"]["stackTrace"]["callFrames"][0]["functionName"], "g", "{c}");
+
+    let pump = ScriptedPump::install(&mut h);
+    h.page("Page.enable", json!({}));
+    pump.push(&h, 960, "Page.disable", json!({}));
+    let messages = h.page_with_events("Runtime.evaluate", json!({"expression": "prompt('x')", "returnByValue": true}));
+    let closed = messages.iter().find(|m| m["method"] == "Page.javascriptDialogClosed").expect("closed");
+    assert_eq!(closed["params"]["result"], false);
+    let reply = messages.iter().find(|m| m["id"].as_u64() == Some(h.next_id - 1)).unwrap();
+    assert_eq!(reply["result"]["result"]["value"], Value::Null, "{reply}");
+    assert!(pump.held.borrow()[0].contains("Page.disable"), "Page.disable runs after the dialog");
+    let r = h.page("Page.handleJavaScriptDialog", json!({"accept": true}));
+    assert_eq!(r["error"]["code"], -32602, "{r}");
+}
+
+#[test]
+fn get_properties_flags_and_preview_accessors() {
+    let mut h = Harness::new();
+    let object = |h: &mut Harness, e: &str| evaluate(h, e, json!({}))["objectId"].clone();
+    let id = object(&mut h, "({a: 1})");
+    let r = h.page("Runtime.getProperties", json!({"objectId": id, "ownProperties": false}));
+    assert_eq!(r["result"]["internalProperties"][0]["name"], "[[Prototype]]", "{r}");
+    let id = object(&mut h, "Object.create(null)");
+    let r = h.page("Runtime.getProperties", json!({"objectId": id, "ownProperties": true}));
+    assert_eq!(r["result"]["internalProperties"][0]["value"], json!({"type":"object","subtype":"null","value":null}));
+    let id = object(&mut h, "[1, 2]");
+    let r = h.page(
+        "Runtime.getProperties",
+        json!({"objectId": id, "ownProperties": true, "nonIndexedPropertiesOnly": true}),
+    );
+    let names: Vec<_> = r["result"]["result"].as_array().unwrap().iter().map(|p| p["name"].clone()).collect();
+    assert_eq!(names, [json!("length")], "{r}");
+    let p =
+        evaluate(&mut h, "({get x() { throw 1 }, y: undefined})", json!({"generatePreview": true}))["preview"].clone();
+    assert_eq!(
+        p["properties"],
+        json!([{"name":"x","type":"accessor"},{"name":"y","type":"undefined","value":"undefined"}]),
+        "{p}"
+    );
+    assert!(evaluate(&mut h, "({a: 1})", json!({"generatePreview": true, "returnByValue": true}))
+        .get("preview")
+        .is_none());
+    let r = h.page("Runtime.queryObjects", json!({"prototypeObjectId": "nope"}));
+    assert_eq!(r["error"]["message"], "Could not find object with given id", "{r}");
 }

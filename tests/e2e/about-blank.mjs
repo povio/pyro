@@ -620,6 +620,15 @@ try {
       assert.deepEqual(await p.evaluate(() => [confirm('sure?'), 'after']), [true, 'after']);
       p.once('dialog', d => d.accept());
       assert.equal(await p.evaluate(() => prompt('empty')), '');
+      // Opened from a timer task.
+      p.once('dialog', d => d.accept('later'));
+      assert.equal(await p.evaluate(() => new Promise(r => setTimeout(() => r(prompt('q')), 10))), 'later');
+      // Console messages carry their location (Runtime enabled is enough).
+      await p.setContent('<script>\nfunction logIt() { console.log("here") }\n</script>');
+      const logged = p.waitForEvent('console');
+      await p.evaluate(() => logIt());
+      const location = (await logged).location();
+      assert.equal(location.lineNumber, 1, JSON.stringify(location));
       // setContent is unaffected; a rotated box's quad (Chrome: x 196.967,
       // y -18.033, 106.066 x 106.066).
       await p.setContent('<style>body{margin:0}</style><div id=r style="position:absolute;left:200px;top:10px;width:100px;height:50px;transform:rotate(45deg)"></div>');

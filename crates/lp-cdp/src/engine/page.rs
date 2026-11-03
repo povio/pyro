@@ -269,7 +269,7 @@ impl EngineHost {
                 cmd.command.params::<P>()?;
                 let state = self.pages.get_mut(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?;
                 if state.unanswered_dialogs == 0 {
-                    return Err(CdpError::server("No dialog is showing"));
+                    return Err(CdpError::invalid_params("No dialog is showing"));
                 }
                 state.unanswered_dialogs -= 1;
                 Ok(Some(json!({})))
@@ -300,7 +300,16 @@ impl EngineHost {
                     .browser
                     .frame(page_id, &FrameId(p.frame_id))
                     .ok_or_else(|| CdpError::server("No frame for given id found"))?;
-                let realm = frame.main_realm().cloned().ok_or_else(|| CdpError::server("Frame has no document"))?;
+                let realm = frame
+                    .main_realm()
+                    .cloned()
+                    .ok_or_else(|| CdpError::server("No Document instance to set its content"))?;
+                // Chrome restarts the document's lifecycle under its loader:
+                // init, then DOMContentLoaded and load as the write finishes.
+                let now = self.thread.browser.timestamp();
+                for s in self.sessions_of(cmd.page, |s| s.page_enabled && s.lifecycle_events) {
+                    self.lifecycle(&s, "init", &frame.id.0, &frame.loader_id.0, now);
+                }
                 let scope = realm.scope().map_err(super::remote::js_to_cdp)?;
                 let mut args = lp_js::RootedVec::new();
                 args.push(&scope, scope.string(&p.html));
@@ -328,6 +337,8 @@ impl EngineHost {
             let page = self.thread.browser.page(page_id).ok_or_else(|| CdpError::server("page is gone"))?;
             (page.main_frame.id.0.clone(), page.main_frame.url.clone(), page.main_frame.main_realm().cloned())
         };
+        // Chrome answers Page.close before beforeunload runs.
+        self.reply(cmd, &json!({}));
         let cancelled = realm.is_some_and(|realm| {
             realm.scope().is_ok_and(|scope| {
                 match scope.call_function_rooted(FIRE_BEFOREUNLOAD, None, &lp_js::RootedVec::new()) {
@@ -340,20 +351,17 @@ impl EngineHost {
             })
         });
         let mut close = true;
-        let mut replied = false;
         if cancelled && self.collector.dialogs.would_block(page_id) {
-            // Chrome answers Page.close at once; the dialog follows.
+            // Events the handlers caused go out ahead of the dialog.
             self.thread.browser.checkpoint();
             self.flush();
-            self.reply(cmd, &json!({}));
-            replied = true;
             let answer = self.collector.dialogs.show(&self.out, page_id, &frame_id, &url, "beforeunload", "", "");
             close = answer.is_none_or(|a| a.accept);
         }
         if close {
             self.close_requests.push(cmd.page);
         }
-        Ok((!replied).then(|| json!({})))
+        Ok(None)
     }
 
     fn main_frame(&self, page: PageKey) -> CdpResult<(String, String, String)> {

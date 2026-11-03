@@ -82,8 +82,7 @@ pub(crate) enum Queued {
         level: ConsoleLevel,
         args: Vec<Persistent>,
         timestamp: f64,
-        /// The caller's stack, captured only while a session asked for
-        /// console stack traces (`Runtime.setAsyncCallStackDepth`).
+        /// The caller's stack (JavaScriptCore format).
         stack: Option<String>,
     },
     Exception {
@@ -117,8 +116,6 @@ pub(crate) struct Collector {
     /// Whether any session wants console/exception events; when none does,
     /// console arguments are not rooted at all.
     runtime_wanted: Cell<bool>,
-    /// Whether a session with Runtime enabled wants console stack traces.
-    console_stacks: Cell<bool>,
     network: RefCell<Vec<NetworkWatch>>,
     /// Shared reservation covers staging and queued events across contexts.
     network_budget: Arc<network_delivery::Budget>,
@@ -132,7 +129,6 @@ impl Collector {
             queue: RefCell::new(VecDeque::new()),
             out,
             runtime_wanted: Cell::new(false),
-            console_stacks: Cell::new(false),
             network: RefCell::new(Vec::new()),
             network_budget: Arc::new(network_delivery::Budget::default()),
             dialogs: dialog::DialogGate::default(),
@@ -242,7 +238,9 @@ impl EngineHooks for Collector {
         }
         let Ok(scope) = realm.scope() else { return };
         let args = args.iter().map(|v| Persistent::new(&scope, *v)).collect();
-        let stack = if self.console_stacks.get() { scope.current_stack().ok() } else { None };
+        // Chrome reports the caller's stack with every console call
+        // (Playwright's ConsoleMessage.location() reads it).
+        let stack = scope.current_stack().ok();
         self.push(Queued::Console { realm: realm.id(), level, args, timestamp: epoch_ms(), stack });
     }
 
@@ -284,9 +282,6 @@ pub(crate) struct Session {
     pub(crate) intercept_file_chooser: bool,
     /// Runtime.addBinding names: their calls are reported to this session.
     pub(crate) bindings: Vec<String>,
-    /// Runtime.setAsyncCallStackDepth with a positive depth: console calls
-    /// carry a stack trace for this session.
-    pub(crate) console_stacks: bool,
     fetch: fetch::FetchSession,
     pub(crate) handles: Rc<RefCell<HandleTable<Persistent>>>,
 }
@@ -384,6 +379,9 @@ pub struct EngineHost {
     pub(crate) popup_requests: Vec<crate::target::PopupRequest>,
     /// Pages `Page.close` closes, taken by the protocol layer after `flush`.
     pub(crate) close_requests: Vec<PageKey>,
+    /// `browserContextId`s of the contexts (a dialog's context disposed
+    /// dismisses it).
+    context_names: HashMap<ContextKey, String>,
     /// Pages booted before the connection (`preboot`), handed to the
     /// protocol layer once by `Host::take_prebooted`.
     prebooted: Vec<crate::target::PrebootedEntry>,
@@ -569,6 +567,7 @@ impl EngineHost {
             pending: runtime::PendingReplies::default(),
             popup_requests: Vec::new(),
             close_requests: Vec::new(),
+            context_names: HashMap::new(),
             prebooted: Vec::new(),
             popups: Vec::new(),
             waiters: driver::Waiters::default(),
@@ -652,13 +651,13 @@ impl EngineHost {
         let Some(state) = self.pages.get(&page) else { return };
         let sessions = self.sessions_of(page, |s| s.page_enabled);
         let target = self.thread.browser.page(state.id).map(|p| p.main_frame.id.0.clone()).unwrap_or_default();
-        self.collector.dialogs.set_sessions(state.id, target, sessions);
+        let context = self.context_names.get(&state.context).cloned().unwrap_or_default();
+        self.collector.dialogs.set_sessions(state.id, target, context, sessions);
     }
 
     /// Recomputes whether console/exception notifications are collected.
     pub(crate) fn update_runtime_wanted(&self) {
         self.collector.runtime_wanted.set(self.sessions.values().any(|s| s.runtime_enabled));
-        self.collector.console_stacks.set(self.sessions.values().any(|s| s.runtime_enabled && s.console_stacks));
     }
 
     /// Unanswered `awaitPromise` evaluations held for settlement, context
@@ -1136,6 +1135,10 @@ impl Host for EngineHost {
         std::mem::take(&mut self.close_requests)
     }
 
+    fn context_named(&mut self, key: ContextKey, id: &str) {
+        self.context_names.insert(key, id.to_owned());
+    }
+
     fn popup_opened(&mut self, opener: PageKey, page: PageKey, target_id: &str) {
         if self.pages.get(&opener).is_some_and(|state| state.network.log.is_some()) {
             if let Some(state) = self.pages.get_mut(&page) {
@@ -1224,7 +1227,6 @@ impl Host for EngineHost {
                 cache_disabled: false,
                 intercept_file_chooser: false,
                 bindings: Vec::new(),
-                console_stacks: false,
                 fetch: fetch::FetchSession::default(),
                 handles: Rc::new(RefCell::new(HandleTable::new(self.handle_budget.clone()))),
             },
