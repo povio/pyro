@@ -439,3 +439,51 @@ fn identical_text_keeps_each_elements_colour() {
     assert_eq!(count(0, 50, [0, 0, 255]), 0, "no blue on the first line");
     assert_eq!(count(50, 100, [255, 0, 0]), 0, "no red on the second line");
 }
+
+fn print_with(html: &str, f: impl FnOnce(&mut PdfOptions)) -> PdfOutput {
+    let mut opts = PdfOptions::new(".pz-page", (816.0, 1056.0));
+    f(&mut opts);
+    Renderer::new().print_pdf(&snap(html), &fetcher(), &opts).unwrap()
+}
+
+const TALL: &str =
+    r#"<!doctype html><body style="margin:0;background:#eee"><div style="height:3000px;background:#ddd"></div>"#;
+
+#[test]
+fn print_pdf_cuts_the_paper_content_box_by_margins_and_scale() {
+    assert_eq!(print_with(TALL, |_| {}).pages.len(), 3);
+    let margins = print_with(TALL, |o| o.margins = [96.0, 48.0, 96.0, 48.0]);
+    assert_eq!(margins.pages.len(), 3000usize.div_ceil(1056 - 192), "content box height");
+    assert_eq!(margins.pages[0].rect.width(), 816.0 - 96.0);
+    let half = print_with(TALL, |o| o.scale = 0.5);
+    assert_eq!(half.pages.len(), 2, "at 50% a page holds twice the document");
+    assert_eq!(half.pages[0].rect.height(), 2112.0);
+}
+
+#[test]
+fn print_pdf_keeps_the_requested_page_ranges() {
+    let all = print_with(TALL, |_| {});
+    let some = print_with(TALL, |o| o.page_ranges = vec![(1, 1), (3, usize::MAX)]);
+    assert_eq!(some.pages.len(), 2);
+    assert_eq!((some.pages[0].rect, some.pages[1].rect), (all.pages[0].rect, all.pages[2].rect));
+    let opts = PdfOptions { page_ranges: vec![(4, 4)], ..PdfOptions::new(".pz-page", (816.0, 1056.0)) };
+    assert!(Renderer::new().print_pdf(&snap(TALL), &fetcher(), &opts).is_err(), "past the last page");
+}
+
+#[test]
+fn print_pdf_without_backgrounds_drops_their_fills() {
+    let with = print_with(TALL, |_| {});
+    let without = print_with(TALL, |o| o.print_background = false);
+    assert!(without.stats.fills < with.stats.fills, "{:?} vs {:?}", without.stats, with.stats);
+}
+
+#[test]
+fn print_media_applies_print_rules() {
+    let html = "<!doctype html><style>body{margin:0;background:#00f}@media print{body{background:#f00}}</style>";
+    let mut r = Renderer::new();
+    let (screen, _, _) = r.render(&snap(html), Area::Viewport, Backend::Cpu, &fetcher()).unwrap();
+    assert_eq!(pixel(&screen, 5, 5), [0, 0, 255, 255]);
+    let (print, _, _) =
+        r.render(&Snapshot { print: true, ..snap(html) }, Area::Viewport, Backend::Cpu, &fetcher()).unwrap();
+    assert_eq!(pixel(&print, 5, 5), [255, 0, 0, 255]);
+}

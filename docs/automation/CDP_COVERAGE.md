@@ -19,7 +19,7 @@ Capture uses a shared process payload budget (default 64 MiB, 8 MiB/body), at mo
 
 The browser integration smoke also exercises DOM access before init scripts, shared DOM across isolated worlds, page fetch with exact Network frame/loader correlation, route fulfillment/abort after headers, and Web Storage context/page/navigation isolation. These checks use local HTTP and JavaScript evaluation; The full DOM protocol and actual TOS workflows remain unvalidated. A separate Input check covers keyboard typing/text insertion and mouse checkbox activation; editing commands and pen/touch remain unsupported; native drag-and-drop works under Playwright's drag interception; wheel default scrolling follows the synthetic layout. Mouse coordinates follow the native synthetic layout, not full CSS positioning; the smoke derives its click point from the reported rectangle and verifies the exact hit target.
 
-Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 53 engine, 7 accepted/recorded only, 2 conditional, 39 pending (counts from the table below).
+Methods: 101 (Playwright 1.59.1's static list plus the session methods it sends that the list misses). Upstream implements 81 of them. Rewrite: 56 engine, 6 accepted/recorded only, 2 conditional, 37 pending (counts from the table below).
 
 | Method | Upstream 2ad38773f | Rewrite | Notes |
 | --- | --- | --- | --- |
@@ -48,7 +48,7 @@ Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 53 engi
 | `Debugger.setSkipAllPauses` | yes | pending |  |
 | `Emulation.setDefaultBackgroundColorOverride` | yes | pending |  |
 | `Emulation.setDeviceMetricsOverride` | yes | engine | persistent native width/height/DPR/screen and resize; mobile, transforms and non-native orientation explicitly unsupported |
-| `Emulation.setEmulatedMedia` | yes | accepted, recorded only | stored; mapping to native media preferences remains pending |
+| `Emulation.setEmulatedMedia` | yes | engine | each call replaces the emulation: `print` media type and `prefers-color-scheme`/`prefers-reduced-motion` drive matchMedia, @media in the style engine, Blitz layout and screenshots/PDFs; other features are accepted and not evaluated |
 | `Emulation.setFocusEmulationEnabled` | yes | accepted, recorded only | headless pages always behave as focused |
 | `Emulation.setGeolocationOverride` | yes | pending |  |
 | `Emulation.setLocaleOverride` | yes | conditional | succeeds only when the requested locale equals the engine (process) locale; otherwise an explicit error |
@@ -89,7 +89,7 @@ Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 53 engi
 | `Page.handleJavaScriptDialog` | yes | pending |  |
 | `Page.navigate` | yes | engine | about:blank, data and HTTP documents; frameId supports native children; explicit failures, no joint child history |
 | `Page.navigateToHistoryEntry` | yes | engine | answers once the traversal is queued, like Chrome; same-document entries commit as `navigatedWithinDocument` with `popstate`, others re-fetch the document (no bfcache); unknown ids are invalid params |
-| `Page.printToPDF` | yes | pending |  |
+| `Page.printToPDF` | yes | engine (`render` feature) | rendered by lp-render from the page's Blitz document after the fonts and images its layout fetches arrive (up to 10 s; the browser thread keeps serving commands, and the PDF is written on the render thread): one PDF page per `.pz-page` box (Paprize), else the document cut into the paper's content box (`paperWidth`/`paperHeight`, `landscape`, margins default 0.4 in, `scale` 0.1-2); `printBackground` (default false) leaves out background colors and images; `pageRanges` ("1-3, 5, 7-") keeps those pages ("Page range syntax error", "Page range exceeds page count"); `displayHeaderFooter`/templates, `preferCSSPageSize`, `generateTaggedPDF` and `generateDocumentOutline` are accepted and not produced; `transferMode: ReturnAsStream` returns an `IO` stream; invalid sizes, margins and scales fail with Chrome's messages. Deviation: the document prints with the page's emulated media (screen unless `Emulation.setEmulatedMedia` set print), not Chrome's print media, because ToS emulates screen. Without the feature: an explicit error |
 | `Page.reload` | yes | engine | same limits as Page.navigate |
 | `Page.removeScriptToEvaluateOnNewDocument` | yes | engine |  |
 | `Page.setBypassCSP` | yes | accepted, recorded only | no CSP enforcement exists |

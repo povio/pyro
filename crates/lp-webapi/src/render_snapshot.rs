@@ -29,6 +29,8 @@ pub struct RenderSnapshot {
     pub height: u32,
     pub device_scale_factor: f64,
     pub dark: bool,
+    /// Emulated `print` media.
+    pub print: bool,
     pub scroll_x: f64,
     pub scroll_y: f64,
 }
@@ -112,6 +114,7 @@ fn snapshot_of(
             height: viewport.height,
             device_scale_factor: viewport.device_scale_factor,
             dark: viewport.color_scheme == lp_dom::media::ColorScheme::Dark,
+            print: viewport.print,
             scroll_x: layout.scroll_x() as f64,
             scroll_y: layout.scroll_y() as f64,
         }

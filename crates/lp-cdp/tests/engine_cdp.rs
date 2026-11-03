@@ -5672,6 +5672,114 @@ mod screenshot {
     }
 
     #[test]
+    fn print_to_pdf_validates_and_applies_margins_scale_and_ranges() {
+        let mut h = Harness::new();
+        load_html(&mut h, "<!doctype html><body style=margin:0><div style=height:3000px></div>");
+        let pages = |h: &mut Harness, params: Value| {
+            let r = h.page("Page.printToPDF", params);
+            r["result"]["lp"]["pages"].as_array().map(Vec::len).unwrap_or_else(|| panic!("{r}"))
+        };
+        // Letter, no margins: 3000 / 1056 px.
+        let none = json!({"marginTop": 0, "marginBottom": 0, "marginLeft": 0, "marginRight": 0});
+        assert_eq!(pages(&mut h, none.clone()), 3);
+        assert_eq!(pages(&mut h, json!({})), 3000usize.div_ceil(1056 - 77), "Chrome's 0.4in default margins");
+        let mut half = none.clone();
+        half["scale"] = json!(0.5);
+        assert_eq!(pages(&mut h, half), 2);
+        let mut ranges = none.clone();
+        ranges["pageRanges"] = json!("2-");
+        assert_eq!(pages(&mut h, ranges), 2);
+        for (params, message) in [
+            (json!({"scale": 3}), "scale is outside [0.1 - 2] range"),
+            (json!({"pageRanges": "2-1"}), "Page range syntax error"),
+            (json!({"marginTop": -1}), "marginTop is negative"),
+            (json!({"marginLeft": 5, "marginRight": 5}), "invalid print parameters: content area is empty"),
+            (json!({"paperWidth": 0}), "paperWidth is zero or negative"),
+        ] {
+            let r = h.page("Page.printToPDF", params.clone());
+            assert_eq!(r["error"]["message"], message, "{params}: {r}");
+        }
+        let r = h.page("Page.printToPDF", json!({"pageRanges": "9"}));
+        assert!(r["error"]["message"].as_str().unwrap_or_default().contains("Page range exceeds page count"), "{r}");
+    }
+
+    /// A layout sub-resource still downloading delays the PDF, not the
+    /// browser thread: commands sent after printToPDF answer first.
+    #[test]
+    fn print_to_pdf_waits_for_layout_fetches_without_blocking() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                std::thread::spawn(move || {
+                    let mut request = Vec::new();
+                    let mut chunk = [0; 1024];
+                    while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                        match stream.read(&mut chunk) {
+                            Ok(n) if n > 0 => request.extend_from_slice(&chunk[..n]),
+                            _ => return,
+                        }
+                    }
+                    let (kind, body) = if request.starts_with(b"GET /slow.svg") {
+                        std::thread::sleep(Duration::from_millis(400));
+                        (
+                            "image/svg+xml",
+                            r#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="red"/></svg>"#,
+                        )
+                    } else {
+                        (
+                            "text/html",
+                            r#"<!doctype html><body style=margin:0><img src="/slow.svg" style="width:50px;height:50px">"#,
+                        )
+                    };
+                    let head = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    );
+                    let _ = stream.write_all(head.as_bytes());
+                    let _ = stream.write_all(body.as_bytes());
+                });
+            }
+        });
+        let mut h = Harness::new();
+        h.page("Page.enable", json!({}));
+        h.page("Page.navigate", json!({"url": format!("http://{address}/")}));
+        h.until_event(|m| m["method"] == "Page.loadEventFired");
+        let session = h.session.clone();
+        let started = Instant::now();
+        let pdf = h.send(Some(&session), "Page.printToPDF", json!({}));
+        let eval = h.send(Some(&session), "Runtime.evaluate", json!({"expression": "1 + 1", "returnByValue": true}));
+        let messages = h.until_response(pdf);
+        let at = |id: u64| messages.iter().position(|m| m["id"] == id);
+        let pdf_reply = &messages[at(pdf).unwrap()];
+        assert!(pdf_reply["result"]["data"].as_str().is_some_and(|d| !d.is_empty()), "{pdf_reply}");
+        let waited = started.elapsed();
+        assert!(at(eval).unwrap() < at(pdf).unwrap(), "the evaluate answered while the PDF waited");
+        assert!(waited >= Duration::from_millis(300) && waited < Duration::from_secs(5), "{waited:?}");
+    }
+
+    #[test]
+    fn emulated_print_media_reaches_screenshots() {
+        let mut h = Harness::new();
+        h.page(
+            "Emulation.setDeviceMetricsOverride",
+            json!({"width": 100, "height": 100, "deviceScaleFactor": 1, "mobile": false}),
+        );
+        load_html(
+            &mut h,
+            "<!doctype html><style>body{margin:0;background:#00f}@media print{body{background:#f00}}</style>",
+        );
+        let shot = |h: &mut Harness| png_of(&h.page("Page.captureScreenshot", json!({}))["result"]["data"]);
+        assert_eq!(pixel(&shot(&mut h), 5, 5), [0, 0, 255, 255]);
+        h.page("Emulation.setEmulatedMedia", json!({"media": "print"}));
+        assert_eq!(pixel(&shot(&mut h), 5, 5), [255, 0, 0, 255]);
+        h.page("Emulation.setEmulatedMedia", json!({"media": ""}));
+        assert_eq!(pixel(&shot(&mut h), 5, 5), [0, 0, 255, 255]);
+    }
+
+    #[test]
     fn capture_screenshot_renders_the_viewport_clip_and_full_page() {
         let mut h = Harness::new();
         h.page(
