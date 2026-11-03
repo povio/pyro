@@ -384,7 +384,8 @@ try {
     }
   });
   await check('keyboard.press arrows, selection, select-all and Backspace with macOS editing commands (TOS docubox case)', async () => {
-    // On macOS Playwright attaches editing commands (ArrowRight -> moveRight); on Linux it sends none.
+    // On macOS Playwright attaches editing commands (ArrowRight -> moveRight), which are advisory:
+    // the key's default action runs as on Linux, where Playwright sends none.
     await page.evaluate(() => {
       document.body.innerHTML = '<input id="caret" value="abcd"><button id="tree">tree</button>';
       globalThis.treeKeys = [];

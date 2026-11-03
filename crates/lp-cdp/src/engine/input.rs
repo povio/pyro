@@ -29,8 +29,7 @@ struct KeyParams {
     windows_virtual_key_code: u32,
     #[serde(default)]
     auto_repeat: bool,
-    #[serde(default)]
-    commands: Vec<String>,
+    // `commands` (macOS editing commands) is advisory and not read.
     timestamp: Option<f64>,
     #[serde(default)]
     is_system_key: bool,
@@ -123,58 +122,6 @@ fn drag_data_json(data: &DragData) -> Value {
     json!({"data": {"items": items, "dragOperationsMask": data.drag_operations_mask}})
 }
 
-/// macOS editing commands accepted with a key event, keyed by the shortcut
-/// Playwright 1.59 builds (`Shift+Control+Alt+Meta+code`, crInput
-/// `_commandsForCode` over playwright-core `macEditingCommands.js`). Only
-/// shortcuts whose command the engine's key default action performs for the
-/// same key (lp-webapi `default_key_action`) are listed, with the DOM `key`
-/// values that action is keyed on. Aliases such as Control+KeyD
-/// (deleteForward), Control+KeyH (deleteBackward), Control+KeyB/F/N/P or
-/// Alt/Meta+Arrow are absent on purpose: the engine performs nothing for them.
-const NATIVE_KEY_COMMANDS: &[(&str, &[&str], &str)] = &[
-    ("ArrowLeft", &["ArrowLeft"], "moveLeft"),
-    ("ArrowRight", &["ArrowRight"], "moveRight"),
-    ("Shift+ArrowLeft", &["ArrowLeft"], "moveLeftAndModifySelection"),
-    ("Shift+ArrowRight", &["ArrowRight"], "moveRightAndModifySelection"),
-    ("ArrowUp", &["ArrowUp"], "moveUp"),
-    ("ArrowDown", &["ArrowDown"], "moveDown"),
-    ("Shift+ArrowUp", &["ArrowUp"], "moveUpAndModifySelection"),
-    ("Shift+ArrowDown", &["ArrowDown"], "moveDownAndModifySelection"),
-    ("Backspace", &["Backspace"], "deleteBackward"),
-    ("Shift+Backspace", &["Backspace"], "deleteBackward"),
-    ("Delete", &["Delete"], "deleteForward"),
-    ("Shift+Delete", &["Delete"], "deleteForward"),
-    ("Meta+KeyA", &["a", "A"], "selectAll"),
-    // Escape's command edits nothing (Blink has no editor command for it), so
-    // like the engine's default action (none) it only delivers the key events.
-    // Playwright's macOS Home/End commands scroll the document; the engine's
-    // key default action moves the caret in editable content, as Chrome's
-    // does for contenteditable hosts and text controls.
-    ("Home", &["Home"], "scrollToBeginningOfDocument"),
-    ("End", &["End"], "scrollToEndOfDocument"),
-    ("Shift+Home", &["Home"], "moveToBeginningOfDocumentAndModifySelection"),
-    ("Shift+End", &["End"], "moveToEndOfDocumentAndModifySelection"),
-    ("Escape", &["Escape"], "cancelOperation"),
-    ("Shift+Escape", &["Escape"], "cancelOperation"),
-];
-
-/// Whether `commands` is exactly the macOS encoding of this key event and the
-/// engine's own default action for the key performs it.
-fn native_key_commands(code: &str, key: &str, bits: u32, commands: &[String]) -> bool {
-    let mut shortcut = String::new();
-    // Playwright's order: Shift, Control, Alt, Meta (CDP bits 8, 2, 1, 4).
-    for (bit, name) in [(8, "Shift"), (2, "Control"), (1, "Alt"), (4, "Meta")] {
-        if bits & bit != 0 {
-            shortcut.push_str(name);
-            shortcut.push('+');
-        }
-    }
-    shortcut.push_str(code);
-    NATIVE_KEY_COMMANDS.iter().any(|(entry, keys, command)| {
-        *entry == shortcut && keys.contains(&key) && matches!(commands, [c] if c == command)
-    })
-}
-
 fn modifiers(bits: u32) -> CdpResult<Modifiers> {
     if bits > 15 {
         return Err(CdpError::invalid_params("Invalid modifier mask"));
@@ -228,24 +175,18 @@ impl EngineHost {
                     p.location = 3;
                 }
                 // Playwright on macOS attaches the editing commands its table
-                // derives from the key (e.g. ArrowRight -> ["moveRight"]). They
-                // are accepted only for shortcuts whose command the engine's own
-                // key default action performs (upstream ignores commands
-                // entirely). Anything else (scrolling, clipboard, undo,
-                // word/line movement, Emacs-style Control aliases, or commands
-                // not implied by the key) is refused explicitly.
-                let derived_from_key =
-                    p.commands.is_empty() || native_key_commands(&p.code, &p.key, p.modifiers, &p.commands);
-                if !derived_from_key
-                    || p.timestamp.is_some()
+                // derives from the key (e.g. ArrowRight -> ["moveRight"]).
+                // They are advisory: the key's own default action runs, as for
+                // the same key on Linux, where Playwright sends none (Home/End,
+                // arrows, Backspace/Delete, Meta+A act; clipboard, undo, word
+                // movement and Emacs-style aliases do nothing).
+                if p.timestamp.is_some()
                     || p.is_system_key
                     || p.native_virtual_key_code != 0
                     || !p.key_identifier.is_empty()
                     || p.unmodified_text.as_ref().is_some_and(|text| *text != p.text)
                 {
-                    return Err(CdpError::unsupported(
-                        "Input editing commands, timestamps, system keys or alternate key metadata",
-                    ));
+                    return Err(CdpError::unsupported("Input timestamps, system keys or alternate key metadata"));
                 }
                 let key = KeyInput {
                     key: p.key,

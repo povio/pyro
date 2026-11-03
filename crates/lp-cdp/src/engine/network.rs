@@ -357,6 +357,25 @@ impl EngineHost {
         }
     }
 
+    /// Security domain on a page session: certificate errors are ignored for
+    /// the page's browser context (no security state events are reported).
+    pub(super) fn security_domain(&mut self, action: &str, cmd: &PageCommand<'_, '_>) -> CdpResult<Option<Value>> {
+        match action {
+            "enable" | "disable" => Ok(Some(json!({}))),
+            "setIgnoreCertificateErrors" => {
+                let params: IgnoreCertificateErrors = cmd.command.params()?;
+                let state = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?;
+                let context =
+                    self.contexts.get(&state.context).ok_or_else(|| CdpError::server("Browser context is gone"))?;
+                if let Some(net) = self.thread.browser.context_net(context.id) {
+                    net.set_ignore_certificate_errors(params.ignore);
+                }
+                Ok(Some(json!({})))
+            }
+            _ => Err(CdpError::unsupported(&cmd.command.method)),
+        }
+    }
+
     /// Hands the page the request overrides of its sessions that have Network
     /// enabled (Chrome applies a session's settings only while its Network
     /// domain is enabled): the merged extra headers (later sessions override
@@ -502,4 +521,10 @@ fn parse_extra_headers(headers: &serde_json::Map<String, Value>) -> CdpResult<ht
         map.insert(name, value);
     }
     Ok(map)
+}
+
+/// `Security.setIgnoreCertificateErrors` parameters.
+#[derive(Deserialize)]
+pub(super) struct IgnoreCertificateErrors {
+    pub(super) ignore: bool,
 }

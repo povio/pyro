@@ -439,3 +439,56 @@ fn identical_text_keeps_each_elements_colour() {
     assert_eq!(count(0, 50, [0, 0, 255]), 0, "no blue on the first line");
     assert_eq!(count(50, 100, [255, 0, 0]), 0, "no red on the second line");
 }
+
+#[test]
+fn a_clip_within_the_viewport_keeps_the_scroll_and_fixed_elements() {
+    let html = r#"<!doctype html><style>body{margin:0}
+      header{position:fixed;top:0;left:0;width:100%;height:40px;background:#f00}
+      main{height:3000px;background:#00f}</style><header></header><main></main>"#;
+    let mut r = Renderer::new();
+    let mut s = snap(html);
+    s.scroll_y = 500.0;
+    let clip =
+        |beyond_viewport| Area::Clip { x: 0.0, y: 500.0, width: 400.0, height: 300.0, scale: 1.0, beyond_viewport };
+    let (img, _, _) = r.render(&s, clip(false), Backend::Cpu, &fetcher()).unwrap();
+    assert_eq!(pixel(&img, 10, 10), [255, 0, 0, 255], "the fixed header at the top of the visible viewport");
+    assert_eq!(pixel(&img, 10, 100), [0, 0, 255, 255]);
+    let (viewport, _, _) = r.render(&s, Area::Viewport, Backend::Cpu, &fetcher()).unwrap();
+    assert_eq!(img.data, viewport.data, "the viewport's rect equals the viewport capture");
+    let (img, _, _) = r.render(&s, clip(true), Backend::Cpu, &fetcher()).unwrap();
+    assert_eq!(pixel(&img, 10, 10), [0, 0, 255, 255], "beyond the viewport: the header stays at the document top");
+}
+
+fn print(html: &str) -> PdfOutput {
+    let opts = PdfOptions { page_selector: ".pz-page".into(), paper: (816.0, 1056.0) };
+    Renderer::new().print_pdf(&snap(html), &fetcher(), &opts).unwrap()
+}
+
+#[test]
+fn print_pdf_makes_one_page_per_page_box() {
+    let out = print(
+        r#"<!doctype html><style>body{margin:0}.pz-page{width:400px;height:500px;background:#eee}</style>
+        <div class="pz-page">one</div><div class="pz-page">two</div>"#,
+    );
+    assert!(out.bytes.starts_with(b"%PDF"));
+    assert!(out.by_selector);
+    assert_eq!(out.pages.len(), 2);
+    assert_eq!((out.pages[1].rect.y0, out.pages[1].rect.height()), (500.0, 500.0));
+}
+
+#[test]
+fn print_pdf_cuts_a_plain_document_by_the_paper() {
+    let out = print(r#"<!doctype html><body style="margin:0"><div style="height:3000px;background:#ddd"></div>"#);
+    assert!(out.bytes.starts_with(b"%PDF"));
+    assert!(!out.by_selector);
+    assert_eq!(out.pages.len(), 3000usize.div_ceil(1056));
+}
+
+#[test]
+fn print_pdf_skips_degenerate_fills() {
+    let out = print(
+        r#"<!doctype html><body style="margin:0"><div style="width:200px;height:100px;border:0 solid red;border-top-width:2px"></div>
+        <div style="width:200px;height:100px;background:rgba(0,255,0,0)"></div>"#,
+    );
+    assert!(out.stats.degenerate_skipped > 0, "{:?}", out.stats);
+}
