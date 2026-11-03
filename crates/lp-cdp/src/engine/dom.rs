@@ -217,13 +217,34 @@ impl EngineHost {
                 )?;
                 return Ok(Some(json!({"backendNodeId": backend})));
             }
-            "describeNode" | "resolveNode" | "getBoxModel" | "getContentQuads" | "scrollIntoViewIfNeeded" | "focus" => {
-            }
+            "describeNode"
+            | "resolveNode"
+            | "getBoxModel"
+            | "getContentQuads"
+            | "scrollIntoViewIfNeeded"
+            | "focus"
+            | "setFileInputFiles" => {}
             _ => return Err(CdpError::unsupported(&cmd.command.method)),
         }
         let p: NodeParams = cmd.command.params()?;
         let (page, node) = self.resolve_dom_node(cmd, &p)?;
         let result = match action {
+            // Files by path, as Playwright sends for a local browser; input
+            // and change fire as when a user picks them.
+            "setFileInputFiles" => {
+                #[derive(Deserialize)]
+                struct P {
+                    files: Vec<String>,
+                }
+                let p: P = cmd.command.params()?;
+                if super::driver::not_a_file_input(&page, node).is_some() {
+                    return Err(CdpError::server("Node is not a file input element"));
+                }
+                let files =
+                    p.files.iter().map(|f| super::driver::read_upload_path(f)).collect::<CdpResult<Vec<_>>>()?;
+                super::driver::set_file_input(&page, node, &files).map_err(CdpError::server)?;
+                json!({})
+            }
             "describeNode" => {
                 #[derive(Deserialize)]
                 struct P {

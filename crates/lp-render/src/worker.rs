@@ -135,6 +135,8 @@ pub enum Job {
         fetcher: Arc<dyn Fetcher>,
         done: Box<dyn FnOnce(Result<crate::PdfOutput, String>) + Send>,
     },
+    /// Writes pages painted elsewhere ([`crate::Renderer::paint_pdf_page`]).
+    PdfWrite { paint: Box<crate::PdfPaint>, done: Box<dyn FnOnce(Result<crate::PdfOutput, String>) + Send> },
     /// Drops a page's persistent document ([`crate::Live`]).
     Forget { page: u64 },
 }
@@ -181,6 +183,11 @@ fn run(r: &mut Renderer, job: Job) {
         }
         Job::Pdf { snapshot, opts, fetcher, done } => {
             let out = guarded(r, &snapshot, |r| r.print_pdf(&snapshot, &fetcher, &opts).map_err(|e| e.to_string()));
+            done(out);
+        }
+        Job::PdfWrite { paint, done } => {
+            let out = catch_unwind(AssertUnwindSafe(|| r.write_pdf(*paint).map_err(|e| e.to_string())))
+                .unwrap_or_else(|_| Err("the PDF writer panicked".into()));
             done(out);
         }
         Job::Forget { page } => r.forget(page),

@@ -192,11 +192,15 @@ impl EngineHost {
                 let page_id = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?.id;
                 let p = self.thread.browser.page(page_id).ok_or_else(|| CdpError::server("page is gone"))?;
                 let (index, entries) = p.nav.history_entries();
-                // Titles are not tracked per entry (page_title is empty too).
+                // The current entry's title is read from its document now;
+                // titles of other entries are not kept.
+                let title = p.main_frame.page_dom.as_ref().map(|d| d.document_title()).unwrap_or_default();
                 let entries: Vec<_> = entries
                     .into_iter()
-                    .map(|e| {
-                        json!({ "id": e.id, "url": e.url, "userTypedURL": e.url, "title": "", "transitionType": "other" })
+                    .enumerate()
+                    .map(|(i, e)| {
+                        let title = if i == index { title.as_str() } else { "" };
+                        json!({ "id": e.id, "url": e.url, "userTypedURL": e.url, "title": title, "transitionType": "other" })
                     })
                     .collect();
                 Ok(Some(json!({ "currentIndex": index, "entries": entries })))
@@ -226,8 +230,30 @@ impl EngineHost {
             "captureScreenshot" => {
                 Err(CdpError::server("Page.captureScreenshot: lightningpanda was built without the render feature"))
             }
+            #[cfg(not(feature = "render"))]
+            "printToPDF" => {
+                Err(CdpError::server("Page.printToPDF: lightningpanda was built without the render feature"))
+            }
             // Accepted because there is nothing to change: the engine enforces
             // no CSP, opens no file chooser and has a single foreground page.
+            // The dialog was already dismissed (dialogs never block); this
+            // only answers the client that reacts to javascriptDialogOpening.
+            "handleJavaScriptDialog" => {
+                #[derive(Deserialize)]
+                #[serde(rename_all = "camelCase")]
+                #[allow(dead_code)]
+                struct P {
+                    accept: bool,
+                    prompt_text: Option<String>,
+                }
+                cmd.command.params::<P>()?;
+                let state = self.pages.get_mut(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?;
+                if state.unanswered_dialogs == 0 {
+                    return Err(CdpError::server("No dialog is showing"));
+                }
+                state.unanswered_dialogs -= 1;
+                Ok(Some(json!({})))
+            }
             "setInterceptFileChooserDialog" => {
                 #[derive(Deserialize)]
                 struct P {
@@ -618,6 +644,9 @@ impl EngineHost {
                 self.deliver_download(page, &frame_id.0, &url, &suggested_filename, body);
             }
             PageEvent::JavascriptDialogOpening { kind, message, default_prompt, .. } => {
+                if let Some(state) = self.pages.get_mut(&page) {
+                    state.unanswered_dialogs = state.unanswered_dialogs.saturating_add(1).min(16);
+                }
                 let (_, _, url) = self.main_frame(page).unwrap_or_default();
                 for s in &all {
                     self.event(
@@ -626,6 +655,15 @@ impl EngineHost {
                             "url": url, "message": message, "type": kind,
                             "hasBrowserHandler": false, "defaultPrompt": default_prompt.clone().unwrap_or_default(),
                         }),
+                        s,
+                    );
+                }
+            }
+            PageEvent::JavascriptDialogClosed { frame_id } => {
+                for s in &all {
+                    self.event(
+                        "Page.javascriptDialogClosed",
+                        &json!({ "frameId": frame_id.0, "result": false, "userInput": "" }),
                         s,
                     );
                 }

@@ -6,9 +6,9 @@
 //! a task, as navigation is asynchronous in browsers too.
 //!
 //! Known gaps (see docs/PARITY.md): history state is stored as JSON (not a
-//! full structured clone); traversal across documents re-fetches (no bfcache);
-//! the initial about:blank entry is kept by the first navigation (browsers
-//! replace it), so `history.length` counts it.
+//! full structured clone); traversal across documents re-fetches (no bfcache).
+//! As in browsers, the first navigation replaces the initial about:blank
+//! entry.
 
 use crate::{
     Browser, FrameId, HistoryHandling, NavigateOpts, NavigationReason, ObserverCell, PageEvent, PageId,
@@ -54,6 +54,9 @@ struct NavState {
     /// deserialized object per realm until it changes.
     state_version: u64,
     scroll_restoration_manual: bool,
+    /// The only entry is the page's initial about:blank document, which the
+    /// next navigation replaces.
+    initial: bool,
 }
 
 impl NavState {
@@ -99,6 +102,7 @@ impl PageNav {
                 entry_seq: 0,
                 state_version: 0,
                 scroll_restoration_manual: false,
+                initial: false,
             }),
             document: RefCell::new(None),
             time_origin: Cell::new(crate::clock::now()),
@@ -145,9 +149,15 @@ impl PageNav {
         // A push to the current entry's URL replaces it (HTML navigate step:
         // "url equals the active document's URL" -> replace).
         let same_url = st.entries.get(st.index).is_some_and(|e| e.url == url);
+        let initial = std::mem::take(&mut st.initial);
         match history {
             _ if st.entries.is_empty() => {
+                st.initial = url == "about:blank";
                 st.entries.push(entry);
+                st.index = 0;
+            }
+            HistoryHandling::Push if initial && st.entries.len() == 1 => {
+                st.entries[0] = entry;
                 st.index = 0;
             }
             HistoryHandling::Traverse | HistoryHandling::Reload => {
@@ -198,6 +208,7 @@ impl PageNav {
             let doc = st.entries.get(st.index).map_or(st.doc_seq, |e| e.doc);
             let id = st.next_entry_id();
             let entry = Entry { url: url.to_string(), state, doc, id };
+            st.initial = false;
             if st.entries.is_empty() {
                 st.entries.push(entry);
             } else if kind == SameDocumentKind::Replace {

@@ -12,7 +12,9 @@ use serde_json::{json, Value};
 
 use super::EngineHost;
 use crate::msg::{CdpError, CdpResult};
-use crate::network_protocol::{base64_encode, headers_json, BodyBudget, BodyStore, NetworkTranslator, MAX_INFLIGHT};
+use crate::network_protocol::{
+    base64_encode, headers_json, protocol_request_id, BodyBudget, BodyStore, NetworkTranslator, MAX_INFLIGHT,
+};
 use crate::target::{ContextKey, PageCommand, PageKey};
 
 #[derive(Default)]
@@ -67,6 +69,8 @@ impl NetworkContext {
 
 pub(super) struct NetworkPage {
     pub(super) bodies: BodyStore,
+    /// Request bodies for `Network.getRequestPostData`.
+    pub(super) post_data: PostDataStore,
     translator: NetworkTranslator,
     /// The page's requests, kept once an `LP.run` asked for them.
     pub(super) log: Option<RequestLog>,
@@ -74,7 +78,54 @@ pub(super) struct NetworkPage {
 
 impl NetworkPage {
     pub(super) fn new(budget: BodyBudget) -> Self {
-        Self { bodies: BodyStore::new(budget), translator: NetworkTranslator::default(), log: None }
+        Self {
+            bodies: BodyStore::new(budget),
+            post_data: PostDataStore::default(),
+            translator: NetworkTranslator::default(),
+            log: None,
+        }
+    }
+}
+
+/// Request bodies of a page's routed requests (`Network.getRequestPostData`)
+/// by protocol request id, each at most [`MAX_LOGGED_POST_DATA`]; the oldest
+/// go first past [`PostDataStore::MAX_BYTES`]. The bodies are shared with
+/// the network layer's request (no copy).
+#[derive(Default)]
+pub(super) struct PostDataStore {
+    bodies: HashMap<String, Bytes>,
+    order: std::collections::VecDeque<String>,
+    bytes: usize,
+}
+
+impl PostDataStore {
+    const MAX_BYTES: usize = 8 * 1024 * 1024;
+
+    fn observe(&mut self, event: &NetEvent) {
+        let NetEvent::RequestWillBeSent { id, request, .. } = event else { return };
+        let Some(body) = request.post_data.as_ref().filter(|b| !b.is_empty()) else { return };
+        let body = body.slice(..body.len().min(MAX_LOGGED_POST_DATA));
+        let key = protocol_request_id(*id, request.destination, request.loader_id.as_deref());
+        if let Some(old) = self.bodies.insert(key.clone(), body.clone()) {
+            self.bytes -= old.len();
+            self.order.retain(|k| *k != key);
+        }
+        self.bytes += body.len();
+        self.order.push_back(key);
+        while self.bytes > Self::MAX_BYTES {
+            let Some(oldest) = self.order.pop_front() else { break };
+            if let Some(b) = self.bodies.remove(&oldest) {
+                self.bytes -= b.len();
+            }
+        }
+    }
+
+    fn get(&self, id: &str) -> Option<&Bytes> {
+        self.bodies.get(id)
+    }
+
+    pub(super) fn clear(&mut self) {
+        *self = Self::default();
     }
 }
 
@@ -274,6 +325,25 @@ impl EngineHost {
         match action {
             // The same override as Emulation's (puppeteer sends this one).
             "setUserAgentOverride" => self.emulation_domain(action, cmd),
+            "getCookies" | "setCookie" | "setCookies" | "deleteCookies" | "clearBrowserCookies" => {
+                self.network_cookies(action, cmd)
+            }
+            // Offline only, for the page's browser context (Chrome scopes it
+            // to the target); throttling fields are accepted and ignored.
+            "emulateNetworkConditions" => {
+                #[derive(Deserialize)]
+                struct Params {
+                    offline: bool,
+                }
+                let params: Params = cmd.command.params()?;
+                let state = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?;
+                let context =
+                    self.contexts.get(&state.context).ok_or_else(|| CdpError::server("Browser context is gone"))?;
+                if let Some(net) = self.thread.browser.context_net(context.id) {
+                    net.update_settings(|s| s.offline = params.offline);
+                }
+                Ok(Some(json!({})))
+            }
             "enable" => {
                 // The server's process budget is currently configured by its
                 // embedder. Refuse per-session options rather than ignore them.
@@ -324,6 +394,21 @@ impl EngineHost {
                 let state = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?;
                 state.network.bodies.get_by_protocol_id(&params.request_id).map(Some)
             }
+            "getRequestPostData" => {
+                #[derive(Deserialize)]
+                #[serde(rename_all = "camelCase")]
+                struct Params {
+                    request_id: String,
+                }
+                let params: Params = cmd.command.params()?;
+                let state = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?;
+                let body = state
+                    .network
+                    .post_data
+                    .get(&params.request_id)
+                    .ok_or_else(|| CdpError::server("No post data available for the request"))?;
+                Ok(Some(json!({ "postData": String::from_utf8_lossy(body) })))
+            }
             "setCacheDisabled" => {
                 #[derive(Deserialize)]
                 #[serde(rename_all = "camelCase")]
@@ -357,6 +442,25 @@ impl EngineHost {
         }
     }
 
+    /// Security domain on a page session: certificate errors are ignored for
+    /// the page's browser context (no security state events are reported).
+    pub(super) fn security_domain(&mut self, action: &str, cmd: &PageCommand<'_, '_>) -> CdpResult<Option<Value>> {
+        match action {
+            "enable" | "disable" => Ok(Some(json!({}))),
+            "setIgnoreCertificateErrors" => {
+                let params: IgnoreCertificateErrors = cmd.command.params()?;
+                let state = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?;
+                let context =
+                    self.contexts.get(&state.context).ok_or_else(|| CdpError::server("Browser context is gone"))?;
+                if let Some(net) = self.thread.browser.context_net(context.id) {
+                    net.set_ignore_certificate_errors(params.ignore);
+                }
+                Ok(Some(json!({})))
+            }
+            _ => Err(CdpError::unsupported(&cmd.command.method)),
+        }
+    }
+
     /// Hands the page the request overrides of its sessions that have Network
     /// enabled (Chrome applies a session's settings only while its Network
     /// domain is enabled): the merged extra headers (later sessions override
@@ -382,6 +486,7 @@ impl EngineHost {
         for page in self.pages.values_mut() {
             if !page.sessions.iter().any(|s| self.sessions.get(s).is_some_and(|s| s.network_enabled)) {
                 page.network.bodies.clear();
+                page.network.post_data.clear();
                 page.network.translator = NetworkTranslator::default();
             }
         }
@@ -482,6 +587,13 @@ impl EngineHost {
             self.waiters.log_changed = true;
         }
         state.network.bodies.observe(&event);
+        // Request bodies only for requests that have one, while a session
+        // of the page has Network enabled.
+        if matches!(&event, NetEvent::RequestWillBeSent { request, .. } if request.post_data.is_some())
+            && state.sessions.iter().any(|s| self.sessions.get(s).is_some_and(|s| s.network_enabled))
+        {
+            state.network.post_data.observe(&event);
+        }
         if let Some((method, params)) = state.network.translator.translate(&event) {
             for session in self.sessions_of(page, |s| s.network_enabled) {
                 self.event(method, &params, &session);
@@ -502,4 +614,10 @@ fn parse_extra_headers(headers: &serde_json::Map<String, Value>) -> CdpResult<ht
         map.insert(name, value);
     }
     Ok(map)
+}
+
+/// `Security.setIgnoreCertificateErrors` parameters.
+#[derive(Deserialize)]
+pub(super) struct IgnoreCertificateErrors {
+    pub(super) ignore: bool,
 }

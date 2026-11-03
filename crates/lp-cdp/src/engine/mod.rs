@@ -85,6 +85,11 @@ pub(crate) enum Queued {
         exception: JsException,
         timestamp: f64,
     },
+    BindingCalled {
+        realm: RealmId,
+        name: String,
+        payload: String,
+    },
     /// A request announcement or response delivered on the browser thread.
     Network(ContextKey, network_delivery::Observed),
 }
@@ -223,6 +228,11 @@ impl EngineHooks for Collector {
         self.push(Queued::Exception { realm: realm.id(), exception: exception.clone(), timestamp: epoch_ms() });
     }
 
+    // Only pages a session added a binding to call this.
+    fn binding_called(&self, realm: &Realm, name: &str, payload: &str) {
+        self.push(Queued::BindingCalled { realm: realm.id(), name: name.to_owned(), payload: payload.to_owned() });
+    }
+
     fn unhandled_rejection(&self, realm: &Realm, exception: &JsException) {
         if !self.runtime_wanted.get() {
             return;
@@ -247,6 +257,8 @@ pub(crate) struct Session {
     /// Page.setInterceptFileChooserDialog: file inputs report
     /// Page.fileChooserOpened to this session.
     pub(crate) intercept_file_chooser: bool,
+    /// Runtime.addBinding names: their calls are reported to this session.
+    pub(crate) bindings: Vec<String>,
     fetch: fetch::FetchSession,
     pub(crate) handles: Rc<RefCell<HandleTable<Persistent>>>,
 }
@@ -262,6 +274,18 @@ pub(crate) struct PageState {
     /// Bounds recorded by Browser.setWindowBounds, reported back by getWindowForTarget.
     pub(crate) window_bounds: Option<serde_json::Value>,
     pub(crate) emulated_media: Option<serde_json::Value>,
+    /// Dialogs reported by Page.javascriptDialogOpening and not yet
+    /// answered by Page.handleJavaScriptDialog (they never block).
+    pub(crate) unanswered_dialogs: u8,
+    /// Emulation.setUserAgentOverride as sent (the locale override fills in
+    /// its Accept-Language when it has none).
+    user_agent_override: Option<lp_webapi::UserAgentOverride>,
+    /// Emulation.setLocaleOverride / setTimezoneOverride. Recorded only:
+    /// JavaScriptCore's Intl and Date use the process locale and time zone.
+    pub(crate) locale_override: Option<String>,
+    pub(crate) timezone_override: Option<String>,
+    /// Emulation.setDefaultBackgroundColorOverride (RGBA), for screenshots.
+    pub(crate) background_override: Option<[u8; 4]>,
     pub(crate) next_script_id: u64,
     /// Paused popup before its first navigation (`Page.getFrameTree` url ":").
     pub(crate) initial_popup: bool,
@@ -474,6 +498,11 @@ impl EngineHost {
                 pending_navigations: Vec::new(),
                 window_bounds: None,
                 emulated_media: None,
+                unanswered_dialogs: 0,
+                user_agent_override: None,
+                locale_override: None,
+                timezone_override: None,
+                background_override: None,
                 next_script_id: 1,
                 initial_popup: false,
                 suppress_next_char: false,
@@ -699,6 +728,7 @@ impl EngineHost {
                 Queued::Frame(frame) => self.out.push(frame),
                 Queued::Console { realm, level, args, timestamp } => self.on_console(realm, level, args, timestamp),
                 Queued::Exception { realm, exception, timestamp } => self.on_exception(realm, exception, timestamp),
+                Queued::BindingCalled { realm, name, payload } => self.on_binding_called(realm, name, payload),
             }
         }
     }
@@ -726,7 +756,8 @@ impl EngineHost {
             "Network" => self.network_domain(action, cmd),
             "Fetch" => self.fetch_domain(action, cmd),
             "Input" => self.input_domain(action, cmd),
-            // Blitz-backed layout queries since the last call (LIGHTNINGPANDA_GEOMETRY=blitz).
+            "Security" => self.security_domain(action, cmd),
+            // Blitz-backed layout queries since the last call.
             #[cfg(feature = "render")]
             "LP" if action == "geometryStats" => {
                 let (layouts, deltas, snapshot_ms, layout_ms, read_ms) = blitz_geometry::take_stats();
@@ -759,11 +790,40 @@ impl EngineHost {
             #[cfg(feature = "render")]
             "IO" => self.io_domain(action, cmd),
             "Log" if matches!(action, "enable" | "disable") => Ok(Some(serde_json::json!({}))),
-            // puppeteer enables both on every page; there are no issues or
-            // metrics to report (`Performance.getMetrics` stays unsupported).
+            // puppeteer enables both on every page; there are no issues to
+            // report.
             "Audits" | "Performance" if matches!(action, "enable" | "disable") => Ok(Some(serde_json::json!({}))),
+            #[cfg(feature = "render")]
+            "Performance" if action == "getMetrics" => self.performance_metrics(cmd).map(Some),
             _ => Err(CdpError::unsupported(&cmd.command.method)),
         }
+    }
+
+    /// `Performance.getMetrics`: Chrome's names for what the engine counts.
+    /// Layout and style counts and durations are the process's Blitz syncs
+    /// (each restyles and relays out what changed, so `RecalcStyleCount`
+    /// equals `LayoutCount`); JS heap metrics are not reported.
+    #[cfg(feature = "render")]
+    fn performance_metrics(&mut self, cmd: &PageCommand<'_, '_>) -> CdpResult<serde_json::Value> {
+        let pid = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?.id;
+        let page = self.thread.browser.page(pid).ok_or_else(|| CdpError::server("page is gone"))?;
+        let nodes = page.main_frame.page_dom.as_ref().map_or(0, |d| d.dom.borrow().live_nodes());
+        let frames = self.thread.browser.frames(pid).len();
+        let layouts = lp_layout::peek_layout_count();
+        let phases = lp_render::blitz_phases();
+        let metrics = [
+            ("Timestamp", self.thread.browser.timestamp()),
+            ("Documents", frames as f64),
+            ("Frames", frames as f64),
+            ("Nodes", nodes as f64),
+            ("LayoutCount", layouts as f64),
+            ("RecalcStyleCount", layouts as f64),
+            ("LayoutDuration", phases[4] / 1000.0),
+            ("RecalcStyleDuration", phases[0] / 1000.0),
+        ];
+        let metrics: Vec<_> =
+            metrics.iter().map(|(name, value)| serde_json::json!({ "name": name, "value": value })).collect();
+        Ok(serde_json::json!({ "metrics": metrics }))
     }
 
     /// Headless window metadata. Explicit bounds are recorded separately from
@@ -875,7 +935,6 @@ impl EngineHost {
                 if p.user_agent_metadata.is_some() {
                     return Err(CdpError::unsupported("Emulation user agent client hints"));
                 }
-                let id = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?.id;
                 // Empty UA alone resets the override; with locale/platform it
                 // retains the browser's default UA while applying those fields.
                 let override_ = if p.user_agent.is_empty() && p.accept_language.is_none() && p.platform.is_none() {
@@ -887,43 +946,105 @@ impl EngineHost {
                         platform: p.platform,
                     })
                 };
-                self.thread.browser.set_user_agent_override(id, override_).map_err(|error| match error {
-                    lp_js::JsError::Type(message) => CdpError::invalid_params(message),
-                    other => remote::js_to_cdp(other),
+                let state = self.pages.get_mut(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?;
+                let previous = std::mem::replace(&mut state.user_agent_override, override_);
+                self.apply_identity(cmd.page).inspect_err(|_| {
+                    if let Some(state) = self.pages.get_mut(&cmd.page) {
+                        state.user_agent_override = previous;
+                    }
                 })?;
                 Ok(Some(serde_json::json!({})))
             }
-            // JavaScriptCore's Intl/Date use the process locale and time zone;
-            // per-page overrides are not implemented. Requests that match the
-            // current values are true no-ops; others are refused.
-            "setLocaleOverride" | "setTimezoneOverride" => {
+            // Recorded, not applied to Intl/Date: JavaScriptCore uses the
+            // process locale and time zone. navigator.language(s) and
+            // Accept-Language follow the locale unless an explicit
+            // acceptLanguage override is active. Empty or absent resets.
+            "setLocaleOverride" => {
+                #[derive(Deserialize)]
+                struct P {
+                    locale: Option<String>,
+                }
+                let p: P = cmd.command.params()?;
+                let state = self.pages.get_mut(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?;
+                let locale = p.locale.filter(|l| !l.is_empty());
+                if locale.as_deref().is_some_and(|l| {
+                    lp_net::http::HeaderValue::from_str(l).is_err()
+                        || !l.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
+                }) {
+                    return Err(CdpError::invalid_params("Invalid locale name"));
+                }
+                state.locale_override = locale;
+                self.apply_identity(cmd.page)?;
+                Ok(Some(serde_json::json!({})))
+            }
+            // Screenshots paint this under the document instead of white.
+            "setDefaultBackgroundColorOverride" => {
+                #[derive(Deserialize)]
+                struct Rgba {
+                    r: f64,
+                    g: f64,
+                    b: f64,
+                    a: Option<f64>,
+                }
+                #[derive(Deserialize)]
+                struct P {
+                    color: Option<Rgba>,
+                }
+                let p = cmd.command.params::<Option<P>>()?;
+                let byte = |v: f64| v.clamp(0.0, 255.0).round() as u8;
+                let color = p
+                    .and_then(|p| p.color)
+                    .map(|c| [byte(c.r), byte(c.g), byte(c.b), byte(c.a.unwrap_or(1.0).clamp(0.0, 1.0) * 255.0)]);
+                let state = self.pages.get_mut(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?;
+                state.background_override = color;
+                Ok(Some(serde_json::json!({})))
+            }
+            "setTimezoneOverride" => {
                 #[derive(Deserialize)]
                 #[serde(rename_all = "camelCase")]
                 struct P {
-                    locale: Option<String>,
-                    timezone_id: Option<String>,
+                    timezone_id: String,
                 }
                 let p: P = cmd.command.params()?;
-                let (wanted, probe) = match action {
-                    "setLocaleOverride" => (p.locale, "new Intl.DateTimeFormat().resolvedOptions().locale"),
-                    _ => (p.timezone_id, "new Intl.DateTimeFormat().resolvedOptions().timeZone"),
+                // Without a time zone database only obviously malformed IDs
+                // are rejected (Chrome checks the ID against ICU).
+                let valid = |id: &str| {
+                    id.starts_with(|c: char| c.is_ascii_alphabetic())
+                        && id.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '_' | '-' | '+'))
+                        && !id.contains("//")
+                        && !id.ends_with('/')
                 };
-                let Some(wanted) = wanted.filter(|w| !w.is_empty()) else { return Ok(Some(serde_json::json!({}))) };
-                let current = self
-                    .main_realm(cmd.page)
-                    .and_then(|r| r.scope().ok().and_then(|s| s.eval(probe, None, 1).ok().and_then(|v| v.as_string())));
-                if current.as_deref() == Some(wanted.as_str()) {
-                    Ok(Some(serde_json::json!({})))
-                } else {
-                    Err(CdpError::server(format!(
-                        "{} to '{wanted}' is not supported (engine uses '{}')",
-                        cmd.command.method,
-                        current.unwrap_or_default()
-                    )))
+                if !p.timezone_id.is_empty() && !valid(&p.timezone_id) {
+                    return Err(CdpError::invalid_params(format!("Invalid timezone id: {}", p.timezone_id)));
                 }
+                let state = self.pages.get_mut(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?;
+                state.timezone_override = Some(p.timezone_id).filter(|t| !t.is_empty());
+                Ok(Some(serde_json::json!({})))
             }
             _ => Err(CdpError::unsupported(&cmd.command.method)),
         }
+    }
+}
+
+impl EngineHost {
+    /// Hands lp-browser the page's navigator identity: the user agent
+    /// override, with the locale override as Accept-Language when the
+    /// override has none.
+    fn apply_identity(&mut self, page: PageKey) -> CdpResult<()> {
+        let state = self.pages.get(&page).ok_or_else(|| CdpError::server("page is gone"))?;
+        let mut value = state.user_agent_override.clone();
+        if let Some(locale) = &state.locale_override {
+            let value = value.get_or_insert_with(|| lp_webapi::UserAgentOverride {
+                user_agent: String::new(),
+                accept_language: None,
+                platform: None,
+            });
+            value.accept_language.get_or_insert_with(|| locale.clone());
+        }
+        self.thread.browser.set_user_agent_override(state.id, value).map_err(|error| match error {
+            lp_js::JsError::Type(message) => CdpError::invalid_params(message),
+            other => remote::js_to_cdp(other),
+        })
     }
 }
 
@@ -1020,9 +1141,10 @@ impl Host for EngineHost {
             .map_or_else(|| "about:blank".to_owned(), |p| p.main_frame.url.clone())
     }
 
-    fn page_title(&self, _page: PageKey) -> String {
-        // No document model yet: about:blank has an empty title.
-        String::new()
+    fn page_title(&self, page: PageKey) -> String {
+        let Some(state) = self.pages.get(&page) else { return String::new() };
+        let page = self.thread.browser.page(state.id);
+        page.and_then(|p| p.main_frame.page_dom.as_ref().map(|d| d.document_title())).unwrap_or_default()
     }
 
     fn session_attached(&mut self, page: PageKey, session_id: &str) {
@@ -1040,6 +1162,7 @@ impl Host for EngineHost {
                 extra_headers: http::HeaderMap::new(),
                 cache_disabled: false,
                 intercept_file_chooser: false,
+                bindings: Vec::new(),
                 fetch: fetch::FetchSession::default(),
                 handles: Rc::new(RefCell::new(HandleTable::new(self.handle_budget.clone()))),
             },
@@ -1124,6 +1247,18 @@ impl Host for EngineHost {
 
     fn browser_command(&mut self, command: &Command<'_>, context: Option<ContextKey>, out: &mut dyn Sink) {
         match command.method.as_ref() {
+            // Puppeteer's acceptInsecureCerts sends this on the browser
+            // session before any target is attached; it covers every context.
+            "Security.enable" | "Security.disable" => {
+                out.send(msg::result_frame(command.id, &Empty {}, command.session_id()))
+            }
+            "Security.setIgnoreCertificateErrors" => match command.params::<network::IgnoreCertificateErrors>() {
+                Ok(p) => {
+                    self.thread.browser.set_ignore_certificate_errors(p.ignore);
+                    out.send(msg::result_frame(command.id, &Empty {}, command.session_id()))
+                }
+                Err(e) => out.send(msg::error_frame(Some(command.id), &e, command.session_id())),
+            },
             "Storage.getCookies" | "Storage.setCookies" | "Storage.clearCookies" => {
                 match self.storage_command(command, context) {
                     Ok(result) => out.send(msg::result_frame(command.id, &result, command.session_id())),

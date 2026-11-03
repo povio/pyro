@@ -627,3 +627,61 @@ fn event_stream_activity_is_separate_and_cancellation_clears_both_counts() {
     let _ = stop.send(());
     server.join().unwrap();
 }
+
+/// HTTPS server with a self-signed certificate for `127.0.0.1` (checked in
+/// under tests/data, valid until 2126), answering every request with "secure".
+fn start_tls_server() -> u16 {
+    use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+    let cert = CertificateDer::from(include_bytes!("data/self-signed.der").to_vec());
+    let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(include_bytes!("data/self-signed.key.der").to_vec()));
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let config = rustls::ServerConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_no_client_auth()
+        .with_single_cert(vec![cert], key)
+        .unwrap();
+    let config = Arc::new(config);
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(stream) = stream else { continue };
+            let config = config.clone();
+            std::thread::spawn(move || {
+                let conn = rustls::ServerConnection::new(config).unwrap();
+                let mut tls = rustls::StreamOwned::new(conn, stream);
+                let mut reader = BufReader::new(&mut tls);
+                let mut line = String::new();
+                // A client rejecting the certificate aborts the handshake here.
+                while reader.read_line(&mut line).is_ok_and(|n| n > 0) && line != "\r\n" {
+                    line.clear();
+                }
+                if line == "\r\n" {
+                    let _ = tls.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nsecure");
+                    tls.conn.send_close_notify();
+                    let _ = tls.flush();
+                }
+            });
+        }
+    });
+    port
+}
+
+#[test]
+fn self_signed_certificate_fails_unless_errors_are_ignored() {
+    let port = start_tls_server();
+    let url = Url::parse(&format!("https://127.0.0.1:{port}/")).unwrap();
+    let c = NetClient::new(NetConfig::default()).unwrap();
+    let (_, _, _, e) = collect(&c, Request::get(url.clone(), Destination::Fetch));
+    let e = e.expect("untrusted certificate fails");
+    assert_eq!(e.error_text(), "net::ERR_CERT_AUTHORITY_INVALID", "{e}");
+
+    c.set_ignore_certificate_errors(true);
+    let (k, _, b, e) = collect(&c, Request::get(url.clone(), Destination::Fetch));
+    assert_eq!((k, b, e), (vec!["response 200".to_owned(), "finished".to_owned()], b"secure".to_vec(), None));
+
+    c.set_ignore_certificate_errors(false);
+    let (_, _, _, e) = collect(&c, Request::get(url, Destination::Fetch));
+    assert_eq!(e.map(|e| e.error_text().to_owned()).as_deref(), Some("net::ERR_CERT_AUTHORITY_INVALID"));
+}

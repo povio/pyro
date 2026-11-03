@@ -136,6 +136,23 @@ where
     });
     def.method("blur", 0, |s, _w, _a| Ok(s.undefined()));
     def.method("print", 0, |s, _w, _a| Ok(s.undefined()));
+    // Dialogs never block: each returns what a dismissed one gives (Chrome's
+    // results when Playwright auto-dismisses) and is reported to the
+    // embedder (CDP Page.javascriptDialogOpening).
+    def.method("alert", 0, |s, w, a| {
+        dialog(w.page(), "alert", a.get(0), None)?;
+        Ok(s.undefined())
+    });
+    def.method("confirm", 0, |s, w, a| {
+        dialog(w.page(), "confirm", a.get(0), None)?;
+        Ok(s.boolean(false))
+    });
+    def.method("prompt", 0, |s, w, a| {
+        let default = a.get(1);
+        let default = if default.is_undefined() { String::new() } else { default.to_string()? };
+        dialog(w.page(), "prompt", a.get(0), Some(default))?;
+        Ok(s.null())
+    });
     def.method("stop", 0, |s, _w, _a| Ok(s.undefined()));
     def.method("postMessage", 1, |s, w, a| {
         // Same-window postMessage: queue a MessageEvent on the window.
@@ -258,6 +275,19 @@ impl JsClass for Navigator {
         def.method("sendBeacon", 1, |s, _p, _a| Ok(s.boolean(true)));
         def.method("vibrate", 0, |s, _p, _a| Ok(s.boolean(false)));
     }
+}
+
+fn dialog(
+    page: &PageDom,
+    kind: &'static str,
+    message: lp_js::Value<'_>,
+    default: Option<String>,
+) -> lp_js::JsResult<()> {
+    let message = if message.is_undefined() { String::new() } else { message.to_string()? };
+    if let Some(hooks) = page.hooks() {
+        hooks.javascript_dialog(kind, message, default);
+    }
+    Ok(())
 }
 
 fn languages(p: &PageDom) -> Vec<String> {

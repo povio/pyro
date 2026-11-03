@@ -384,7 +384,8 @@ try {
     }
   });
   await check('keyboard.press arrows, selection, select-all and Backspace with macOS editing commands (TOS docubox case)', async () => {
-    // On macOS Playwright attaches editing commands (ArrowRight -> moveRight); on Linux it sends none.
+    // On macOS Playwright attaches editing commands (ArrowRight -> moveRight), which are advisory:
+    // the key's default action runs as on Linux, where Playwright sends none.
     await page.evaluate(() => {
       document.body.innerHTML = '<input id="caret" value="abcd"><button id="tree">tree</button>';
       globalThis.treeKeys = [];
@@ -585,6 +586,27 @@ try {
       assert.equal(await spa.goForward({ timeout: 5000 }), null);
       assert.equal(spa.url(), `${fixtureOrigin}/spa-next`);
     } finally { await spa.close(); }
+  });
+  await check('dialogs auto-dismiss, first-navigation history, offline and context cookies', async () => {
+    const p = await context.newPage();
+    try {
+      await p.goto(`${fixtureOrigin}/document`, { timeout: 5000 });
+      // The initial about:blank entry was replaced: nothing to go back to.
+      assert.equal(await p.goBack({ timeout: 2000 }), null);
+      assert.equal(p.url(), `${fixtureOrigin}/document`);
+      // Without a listener Playwright dismisses dialogs; with one it sees them.
+      assert.deepEqual(await p.evaluate(() => [confirm('ok?'), prompt('name', 'x')]), [false, null]);
+      const seen = [];
+      p.on('dialog', d => { seen.push([d.type(), d.message(), d.defaultValue()]); d.dismiss().catch(() => {}); });
+      await p.evaluate(() => alert('hello'));
+      await p.waitForTimeout(50);
+      assert.deepEqual(seen, [['alert', 'hello', '']]);
+      await p.context().setOffline(true);
+      assert.equal(await p.evaluate(() => navigator.onLine), false);
+      assert.equal(await p.evaluate(() => fetch('/document').then(() => 'ok', e => e.name)), 'TypeError');
+      await p.context().setOffline(false);
+      assert.equal(await p.evaluate(() => navigator.onLine), true);
+    } finally { await p.close(); }
   });
   await check('page.setExtraHTTPHeaders is page-scoped, replaces and clears (TOS positions-overview case)', async () => {
     const shared = await browser.newContext();
@@ -799,6 +821,19 @@ try {
       assert.equal(await p.evaluate(() => document.activeElement.tagName), 'BODY');
       assert.equal(await f.evaluate(() => document.activeElement.tagName), 'BODY');
       await cdp.detach();
+    } finally { await p.close(); }
+  });
+  await check('page.exposeFunction and exposeBinding survive navigation (Runtime.addBinding)', async () => {
+    const p = await context.newPage();
+    try {
+      const calls = [];
+      await p.exposeFunction('compatSum', (a, b) => { calls.push([a, b]); return a + b; });
+      await p.exposeBinding('compatFrame', ({ frame }) => frame === p.mainFrame());
+      assert.equal(await p.evaluate(() => compatSum(2, 3)), 5, 'exposed on the open page');
+      await p.goto(`${fixtureOrigin}/document`, { timeout: 5000 });
+      assert.equal(await p.evaluate(() => compatSum(10, 20)), 30, 'kept across navigation');
+      assert.equal(await p.evaluate(() => compatFrame()), true);
+      assert.deepEqual(calls, [[2, 3], [10, 20]]);
     } finally { await p.close(); }
   });
   await check('nested child removal preserves sibling worlds and invalidates old handles', async () => {

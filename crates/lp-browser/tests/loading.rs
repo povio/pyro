@@ -378,18 +378,18 @@ fn location_assignment_navigates_cross_document_and_back_returns() {
     let r = thread
         .run_until(Some(Instant::now() + Duration::from_secs(5)), |_| rec.log.borrow().iter().any(|l| l == "load"));
     assert_eq!(r, lp_runtime::RunOutcome::Done, "{:?}", rec.log.borrow());
-    assert_eq!(js(&thread, page, "location.href + ' ' + history.length"), "http://site.test/other 3");
+    assert_eq!(js(&thread, page, "location.href + ' ' + history.length"), "http://site.test/other 2");
     rec.log.borrow_mut().clear();
     js(&thread, page, "history.back()");
     let r = thread
         .run_until(Some(Instant::now() + Duration::from_secs(5)), |_| rec.log.borrow().iter().any(|l| l == "load"));
     assert_eq!(r, lp_runtime::RunOutcome::Done, "{:?}", rec.log.borrow());
-    assert_eq!(js(&thread, page, "location.href + ' ' + history.length"), "http://site.test/a/b?x=1#h 3");
+    assert_eq!(js(&thread, page, "location.href + ' ' + history.length"), "http://site.test/a/b?x=1#h 2");
     assert_eq!(rec.log.borrow()[0], "navigated http://site.test/a/b?x=1#h");
     js(&thread, page, "location.replace('/other')");
     rec.log.borrow_mut().clear();
     thread.run_until(Some(Instant::now() + Duration::from_secs(5)), |_| rec.log.borrow().iter().any(|l| l == "load"));
-    assert_eq!(js(&thread, page, "history.length"), "3", "replace keeps the entry count");
+    assert_eq!(js(&thread, page, "history.length"), "2", "replace keeps the entry count");
 }
 
 #[test]
@@ -427,9 +427,9 @@ fn same_url_navigations_keep_state_only_for_reload() {
     wait_load(&mut thread);
     let state = "location.href + ' ' + history.length + ' ' + JSON.stringify(history.state)";
     for (navigation, expected) in [
-        ("location.reload()", r#"http://site.test/other 3 {"k":1}"#),
-        ("location.replace(location.href)", "http://site.test/other 3 null"),
-        ("location.href = location.href", "http://site.test/other 3 null"),
+        ("location.reload()", r#"http://site.test/other 2 {"k":1}"#),
+        ("location.replace(location.href)", "http://site.test/other 2 null"),
+        ("location.href = location.href", "http://site.test/other 2 null"),
     ] {
         js(&thread, page, "history.replaceState({k: 1}, '')");
         js(&thread, page, navigation);

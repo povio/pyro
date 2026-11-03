@@ -1520,6 +1520,19 @@ impl Layout {
         }
     }
 
+    /// Elements scrolled away from their origin, by render key
+    /// (`snapshot::render_key`), with their offset (CSS px).
+    pub fn scrolled_elements(&self) -> Vec<(u64, (f64, f64))> {
+        if !self.has_scroll_offsets() {
+            return Vec::new();
+        }
+        self.element_scroll
+            .iter()
+            .filter(|(_, &o)| o != (0, 0))
+            .map(|(&el, &(x, y))| (crate::snapshot::render_key(el), (x as f64, y as f64)))
+            .collect()
+    }
+
     pub fn has_scroll_offsets(&self) -> bool {
         self.window_scroll != (0, 0) || self.element_scroll.values().any(|&o| o != (0, 0))
     }

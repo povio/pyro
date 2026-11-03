@@ -125,6 +125,9 @@ pub struct Snapshot {
     pub height: u32,
     pub device_scale_factor: f64,
     pub dark: bool,
+    /// `print` media (CDP `Emulation.setEmulatedMedia`): `@media print`
+    /// rules apply instead of `screen` ones.
+    pub print: bool,
     /// Window scroll position (CSS px).
     pub scroll_x: f64,
     pub scroll_y: f64,
@@ -134,6 +137,12 @@ pub struct Snapshot {
     /// The page as a keyed tree, rendered with the page's persistent
     /// document instead of `html` (see [`Live`]).
     pub live: Option<Live>,
+    /// Scroll offsets (CSS px) of elements of a [`Live`] document by key;
+    /// those of other elements are reset. `None` leaves the document's.
+    pub element_scroll: Option<Vec<(u64, (f64, f64))>>,
+    /// Straight RGBA painted under the document where it has no background
+    /// (CDP `Emulation.setDefaultBackgroundColorOverride`); `None`: white.
+    pub background: Option<[u8; 4]>,
 }
 
 /// A snapshot of a page whose Blitz document the renderer keeps between
@@ -149,6 +158,10 @@ pub struct Live {
     pub tree: Arc<Tree>,
     /// Key of the element [`Area::Element`] captures.
     pub clip: Option<u64>,
+    /// Keys of the hovered and focused elements, put on the document before
+    /// it is laid out ([`Renderer::set_interaction`]); `None` leaves the
+    /// document's pointer and focus as they are.
+    pub interaction: Option<(Option<u64>, Option<u64>)>,
 }
 
 /// Attribute the snapshot puts on the element a screenshot is clipped to.
@@ -174,6 +187,30 @@ pub struct PdfOptions {
     pub page_selector: String,
     /// Page size (CSS px) when no element matches.
     pub paper: (f64, f64),
+    /// Paper margins when no element matches (CSS px: top, right, bottom,
+    /// left): the document is cut into the content box's height.
+    pub margins: [f64; 4],
+    /// Content scale when no element matches (1 = 100%).
+    pub scale: f64,
+    /// Paint background colors and images.
+    pub print_background: bool,
+    /// Pages to keep, 1-based inclusive ranges in order; empty keeps all.
+    pub page_ranges: Vec<(usize, usize)>,
+}
+
+impl PdfOptions {
+    /// `page_selector` pages, else `paper` cuts without margins, at 100%,
+    /// with backgrounds, every page.
+    pub fn new(page_selector: impl Into<String>, paper: (f64, f64)) -> PdfOptions {
+        PdfOptions {
+            page_selector: page_selector.into(),
+            paper,
+            margins: [0.0; 4],
+            scale: 1.0,
+            print_background: true,
+            page_ranges: Vec::new(),
+        }
+    }
 }
 
 /// One page of a [`PdfOutput`].
@@ -187,6 +224,19 @@ pub struct PdfPage {
     pub overflow_bottom: f64,
     /// The box reaching furthest past the page (`<tag class>` x,y wxh), when one does.
     pub culprit: Option<String>,
+}
+
+/// A document's PDF pages painted but not written yet
+/// ([`Renderer::paint_pdf_page`]): plain data, so another thread (the
+/// render thread, [`Renderer::write_pdf`]) can write it.
+pub struct PdfPaint {
+    scene: Scene,
+    pages: Vec<PdfPage>,
+    by_selector: bool,
+    /// Device px to points.
+    scale: f64,
+    placement: Option<pdf::Placement>,
+    timings: Timings,
 }
 
 pub struct PdfOutput {
@@ -211,8 +261,11 @@ pub enum Area {
     /// `captureBeyondViewport`).
     FullPage,
     /// A rectangle in CSS px, relative to the document (CDP `clip`), with
-    /// its own scale factor.
-    Clip { x: f64, y: f64, width: f64, height: f64, scale: f64 },
+    /// its own scale factor. Without `beyond_viewport` the page keeps the
+    /// snapshot's scroll position (fixed elements stay where the viewport
+    /// shows them); with it the document is painted from its top-left
+    /// corner (`captureBeyondViewport`).
+    Clip { x: f64, y: f64, width: f64, height: f64, scale: f64, beyond_viewport: bool },
     /// The border box of the element marked with [`CLIP_ATTRIBUTE`].
     Element,
 }
@@ -254,7 +307,8 @@ impl Timings {
     }
 }
 
-/// Straight RGBA8 (the canvas is opaque white, so premultiplied equals straight).
+/// Straight (not premultiplied) RGBA8. Opaque unless the snapshot's
+/// [`Snapshot::background`] is translucent.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RgbaImage {
     pub width: u32,
@@ -265,6 +319,8 @@ pub struct RgbaImage {
 /// Stages 1 and 2: the display list, not rasterized yet.
 pub struct Painted {
     scene: Scene,
+    /// Every pixel is opaque (raster output needs no un-premultiplying).
+    opaque: bool,
     pub hash: u64,
     pub width: u32,
     pub height: u32,
@@ -442,6 +498,9 @@ pub struct Renderer {
     pdf_cache: pdf::PdfCache,
     /// Layout-query memos of persistent documents, by page.
     geometry: HashMap<u64, geometry::Geometry>,
+    /// External SVG sprite files of persistent documents, by resource
+    /// scope and URL.
+    sprites: HashMap<(String, String), Arc<String>>,
     /// Longest wait for sub-resources per render.
     pub fetch_timeout: Duration,
     /// Longest wait, before the first layout, for the fonts and images the
@@ -468,6 +527,7 @@ impl Renderer {
             mirrors: HashMap::new(),
             pdf_cache: pdf::PdfCache::default(),
             geometry: HashMap::new(),
+            sprites: HashMap::new(),
             fetch_timeout: Duration::from_secs(10),
             first_layout_wait: Duration::from_secs(3),
         }
@@ -528,6 +588,7 @@ impl Renderer {
             viewport: Some(viewport_of(snap)),
             font_ctx: Some(self.font_ctx.clone()),
             style_threading: StyleThreading::Sequential,
+            media_type: Some(media_type(snap.print)),
             ..DocumentConfig::default()
         };
         // Documents are resolved at time 0: a CSS transition or animation
@@ -547,6 +608,7 @@ impl Renderer {
                 m.bridge.retarget(snap, fetcher.clone());
                 if m.viewport != key {
                     m.doc.set_viewport(viewport_of(snap));
+                    m.doc.set_media_type(media_type(snap.print));
                     m.viewport = key;
                 }
                 match m.apply(&live.tree, &snap.sheets) {
@@ -589,8 +651,27 @@ impl Renderer {
             Some(live) => {
                 let stats = self.mirror(snap, live, fetcher);
                 timings.mirror = Some(stats);
+                let hrefs = mirror::take_sprite_hrefs();
+                if let (false, Some(m)) = (hrefs.is_empty(), self.mirrors.get_mut(&live.page)) {
+                    svg_use::resolve_sprites(
+                        &mut m.doc,
+                        hrefs,
+                        &snap.base_url,
+                        &snap.resource_scope,
+                        &mut self.sprites,
+                        fetcher,
+                        self.fetch_timeout,
+                    );
+                }
+                if let Some((hovered, focused)) = live.interaction {
+                    // Restyled and laid out by the settle below.
+                    self.mark_interaction(live.page, hovered, focused);
+                }
                 match self.mirrors.get_mut(&live.page) {
                     Some(m) => {
+                        if let Some(offsets) = &snap.element_scroll {
+                            m.set_element_scroll(offsets);
+                        }
                         let clip = live.clip.and_then(|k| m.node(k));
                         (&mut m.doc, &m.bridge, clip)
                     }
@@ -638,8 +719,9 @@ impl Renderer {
 
         let t = Instant::now();
         // A persistent document keeps the scroll of its last capture; only
-        // a viewport capture is scrolled.
-        if area != Area::Viewport {
+        // a viewport capture and a clip within the viewport are scrolled.
+        let scrolled = matches!(area, Area::Viewport | Area::Clip { beyond_viewport: false, .. });
+        if !scrolled {
             doc.set_viewport_scroll(blitz_dom::Point { x: 0.0, y: 0.0 });
         }
         let root = {
@@ -666,9 +748,17 @@ impl Renderer {
                 let height = root.1.max(vh as f64);
                 ((0.0, 0.0), dpr, physical(vw as f64), physical(height))
             }
-            Area::Clip { x, y, width, height, scale } => {
+            Area::Clip { x, y, width, height, scale, beyond_viewport } => {
                 let s = dpr * scale.clamp(0.01, 16.0);
-                ((x, y), s, (width * s).round() as u32, (height * s).round() as u32)
+                // Blitz paints a scrolled document shifted by the scroll.
+                let origin = match beyond_viewport {
+                    true => (x, y),
+                    false => {
+                        doc.set_viewport_scroll(blitz_dom::Point { x: snap.scroll_x, y: snap.scroll_y });
+                        (x - snap.scroll_x, y - snap.scroll_y)
+                    }
+                };
+                (origin, s, (width * s).round() as u32, (height * s).round() as u32)
             }
             Area::Element => {
                 let id = clip.ok_or(RenderError::NoElement)?;
@@ -694,7 +784,11 @@ impl Renderer {
         // Blitz paints the document at its own scale; the area's origin and
         // a clip scale are applied as a transform of the recorded scene.
         let mut scene = Scene::new();
-        scene.fill(Fill::NonZero, Affine::IDENTITY, Color::WHITE, None, &Rect::new(0.0, 0.0, w as f64, h as f64));
+        let [r, g, b, a] = snap.background.unwrap_or([255; 4]);
+        if a > 0 {
+            let color = Color::from_rgba8(r, g, b, a);
+            scene.fill(Fill::NonZero, Affine::IDENTITY, color, None, &Rect::new(0.0, 0.0, w as f64, h as f64));
+        }
         let mut page = Scene::new();
         let extent_w = ((origin.0 * dpr) as u32).saturating_add((w as f64 * dpr / scale).ceil() as u32);
         let extent_h = ((origin.1 * dpr) as u32).saturating_add((h as f64 * dpr / scale).ceil() as u32);
@@ -703,7 +797,7 @@ impl Renderer {
         scene.append_scene(page, transform);
         let hash = scene_hash(&scene, w, h, &mut self.font_hashes);
         timings.scene = t.elapsed();
-        Ok(Painted { scene, hash, width: w, height: h, timings })
+        Ok(Painted { scene, opaque: a == 255, hash, width: w, height: h, timings })
     }
 
     /// Brings `snap`'s persistent document up to date for layout queries
@@ -727,14 +821,14 @@ impl Renderer {
         &mut self,
         page: u64,
         ops: &[DeltaOp],
-        viewport: (u32, u32, f64, bool),
+        viewport: (u32, u32, f64, bool, bool),
         style_only: bool,
     ) -> Result<Timings, RenderError> {
         let started = Instant::now();
         let mut timings = Timings::default();
         let m = self.mirrors.get_mut(&page).ok_or(RenderError::NoElement)?;
-        let (w, h, dpr, dark) = viewport;
-        if m.viewport != (w, h, dpr.to_bits(), dark) {
+        let (w, h, dpr, dark, print) = viewport;
+        if m.viewport != (w, h, dpr.to_bits(), dark, print) {
             return Err(RenderError::BadArea("the viewport changed".into()));
         }
         m.apply_delta(ops).map_err(|_| RenderError::BadArea("the delta does not fit the document".into()))?;
@@ -769,7 +863,23 @@ impl Renderer {
     /// a node list does not carry), restyling and relaying out what that
     /// changes.
     pub fn set_interaction(&mut self, page: u64, hovered: Option<u64>, focused: Option<u64>, style_only: bool) {
+        let changed = self.mark_interaction(page, hovered, focused);
         let Some(m) = self.mirrors.get_mut(&page) else { return };
+        if changed && style_only {
+            let generation = m.doc.root_node().tree().geometry_generation();
+            m.doc.resolve_style(0.0);
+            if m.doc.root_node().tree().geometry_generation() != generation {
+                self.geometry.entry(page).or_default().clear();
+            }
+        } else if changed {
+            m.doc.resolve(0.0);
+            self.geometry.entry(page).or_default().clear();
+        }
+    }
+
+    /// [`Renderer::set_interaction`] without the restyle: whether anything changed.
+    fn mark_interaction(&mut self, page: u64, hovered: Option<u64>, focused: Option<u64>) -> bool {
+        let Some(m) = self.mirrors.get_mut(&page) else { return false };
         let hover = hovered.and_then(|k| m.node(k));
         let focus = focused.and_then(|k| m.node(k));
         let mut changed = m.doc.set_hover_node(hover);
@@ -782,16 +892,7 @@ impl Renderer {
             }
             changed = true;
         }
-        if changed && style_only {
-            let generation = m.doc.root_node().tree().geometry_generation();
-            m.doc.resolve_style(0.0);
-            if m.doc.root_node().tree().geometry_generation() != generation {
-                self.geometry.entry(page).or_default().clear();
-            }
-        } else if changed {
-            m.doc.resolve(0.0);
-            self.geometry.entry(page).or_default().clear();
-        }
+        changed
     }
 
     /// The computed style of the element keyed `key` in `page`'s persistent
@@ -948,9 +1049,27 @@ impl Renderer {
         print_document(&mut m.doc, viewport, dpr.clamp(0.1, 16.0), opts, Timings::default(), &mut self.pdf_cache)
     }
 
+    /// [`Renderer::print_pdf_page`] up to the PDF writing, which
+    /// [`Renderer::write_pdf`] does (on any renderer).
+    pub fn paint_pdf_page(
+        &mut self,
+        page: u64,
+        viewport: (u32, u32),
+        dpr: f64,
+        opts: &PdfOptions,
+    ) -> Result<PdfPaint, RenderError> {
+        let m = self.mirrors.get_mut(&page).ok_or(RenderError::NoElement)?;
+        paint_document(&mut m.doc, viewport, dpr.clamp(0.1, 16.0), opts, Timings::default())
+    }
+
+    /// The PDF of [`Renderer::paint_pdf_page`]'s pages.
+    pub fn write_pdf(&mut self, paint: PdfPaint) -> Result<PdfOutput, RenderError> {
+        write_pdf(paint, &mut self.pdf_cache)
+    }
+
     /// Stage 3.
     pub fn raster(&mut self, painted: Painted, backend: Backend) -> (RgbaImage, Timings) {
-        let Painted { scene, width, height, mut timings, .. } = painted;
+        let Painted { scene, opaque, width, height, mut timings, .. } = painted;
         let mut data = vec![0u8; width as usize * height as usize * 4];
         let t = Instant::now();
         match backend {
@@ -976,6 +1095,9 @@ impl Renderer {
                 );
             }
         }
+        if !opaque {
+            unpremultiply(&mut data);
+        }
         timings.raster = t.elapsed();
         (RgbaImage { width, height, data }, timings)
     }
@@ -994,15 +1116,38 @@ impl Renderer {
     }
 }
 
+/// Premultiplied RGBA8 (the rasterizers' output) to straight alpha.
+fn unpremultiply(data: &mut [u8]) {
+    for p in data.chunks_exact_mut(4) {
+        let a = p[3] as u32;
+        if a != 0 && a != 255 {
+            for c in &mut p[..3] {
+                *c = ((*c as u32 * 255 + a / 2) / a).min(255) as u8;
+            }
+        }
+    }
+}
+
 /// Pages and PDF of a laid-out document ([`Renderer::print_pdf`]).
 fn print_document(
     doc: &mut blitz_dom::BaseDocument,
     viewport: (u32, u32),
     dpr: f64,
     opts: &PdfOptions,
-    mut timings: Timings,
+    timings: Timings,
     cache: &mut pdf::PdfCache,
 ) -> Result<PdfOutput, RenderError> {
+    write_pdf(paint_document(doc, viewport, dpr, opts, timings)?, cache)
+}
+
+/// The pages of a laid-out document and its display list.
+fn paint_document(
+    doc: &mut blitz_dom::BaseDocument,
+    viewport: (u32, u32),
+    dpr: f64,
+    opts: &PdfOptions,
+    mut timings: Timings,
+) -> Result<PdfPaint, RenderError> {
     let t = Instant::now();
     doc.set_viewport_scroll(blitz_dom::Point { x: 0.0, y: 0.0 });
     let root = doc.root_element();
@@ -1027,8 +1172,18 @@ fn print_document(
         });
     }
     let by_selector = !pages.is_empty();
+    let [top, right, bottom, left] = opts.margins;
+    let scale = opts.scale.clamp(0.1, 2.0);
+    // Paper cuts with margins or a scale put each cut into the paper's
+    // content box (the page box stays the paper).
+    let placement = (!by_selector && (opts.margins != [0.0; 4] || scale != 1.0)).then(|| pdf::Placement {
+        paper: (opts.paper.0 * pdf::PX_TO_PT, opts.paper.1 * pdf::PX_TO_PT),
+        offset: (left * pdf::PX_TO_PT, top * pdf::PX_TO_PT),
+        scale,
+    });
     if !by_selector {
-        let (pw, ph) = (opts.paper.0 * dpr, opts.paper.1 * dpr);
+        let content = ((opts.paper.0 - left - right).max(1.0), (opts.paper.1 - top - bottom).max(1.0));
+        let (pw, ph) = (content.0 / scale * dpr, content.1 / scale * dpr);
         let mut y = 0.0;
         while y < doc_h - 0.5 || y == 0.0 {
             pages.push(PdfPage {
@@ -1040,14 +1195,32 @@ fn print_document(
             y += ph;
         }
     }
+    if !opts.page_ranges.is_empty() {
+        let count = pages.len();
+        if opts.page_ranges.iter().any(|&(from, _)| from > count) {
+            return Err(RenderError::BadArea("Page range exceeds page count".into()));
+        }
+        let mut kept = Vec::new();
+        for &(from, to) in &opts.page_ranges {
+            kept.extend(pages[from - 1..to.min(count)].iter().cloned());
+        }
+        pages = kept;
+    }
     let extent_h = pages.iter().map(|p| p.rect.y1).fold(doc_h, f64::max);
     let extent_w = pages.iter().map(|p| p.rect.x1).fold(doc_w, f64::max);
     let mut scene = Scene::new();
-    blitz_paint::paint_scene(&mut scene, doc, dpr, extent_w.ceil() as u32, extent_h.ceil() as u32, 0, 0);
+    let (w, h) = (extent_w.ceil() as u32, extent_h.ceil() as u32);
+    blitz_paint::paint_scene_with(&mut scene, doc, dpr, w, h, 0, 0, opts.print_background);
     timings.scene = t.elapsed();
+    Ok(PdfPaint { scene, pages, by_selector, scale: pdf::PX_TO_PT / dpr, placement, timings })
+}
+
+/// The PDF of painted pages.
+fn write_pdf(paint: PdfPaint, cache: &mut pdf::PdfCache) -> Result<PdfOutput, RenderError> {
+    let PdfPaint { scene, pages, by_selector, scale, placement, mut timings } = paint;
     let t = Instant::now();
     let rects: Vec<Rect> = pages.iter().map(|p| p.rect).collect();
-    let (bytes, stats) = pdf::write(&scene, &rects, pdf::PX_TO_PT / dpr, cache).map_err(RenderError::Resource)?;
+    let (bytes, stats) = pdf::write(&scene, &rects, scale, placement, cache).map_err(RenderError::Resource)?;
     timings.raster = t.elapsed();
     Ok(PdfOutput { bytes, pages, by_selector, stats, commands: scene.commands.len(), timings })
 }
@@ -1136,8 +1309,15 @@ fn viewport_of(snap: &Snapshot) -> BlitzViewport {
     )
 }
 
-fn viewport_key(snap: &Snapshot) -> (u32, u32, u64, bool) {
-    (snap.width, snap.height, snap.device_scale_factor.to_bits(), snap.dark)
+fn viewport_key(snap: &Snapshot) -> (u32, u32, u64, bool, bool) {
+    (snap.width, snap.height, snap.device_scale_factor.to_bits(), snap.dark, snap.print)
+}
+
+fn media_type(print: bool) -> style::media_queries::MediaType {
+    match print {
+        true => style::media_queries::MediaType::print(),
+        false => style::media_queries::MediaType::screen(),
+    }
 }
 
 fn ensure<R: ImageRenderer>(slot: &mut Option<(R, (u32, u32))>, w: u32, h: u32) -> &mut R {
@@ -1193,7 +1373,7 @@ mod settle_resolution_tests {
                 width: 200,
                 height: 100,
                 device_scale_factor: 1.0,
-                live: Some(Live { page: 1, tree: Arc::new(tree), clip: None }),
+                live: Some(Live { page: 1, tree: Arc::new(tree), clip: None, interaction: None }),
                 ..Default::default()
             },
             target,
@@ -1231,7 +1411,7 @@ mod settle_resolution_tests {
             .sync_delta(
                 1,
                 &[DeltaOp::Children { parent: None, kids: Vec::new(), nodes: Vec::new() }],
-                (200, 100, 1.0, false),
+                (200, 100, 1.0, false, false),
                 false,
             )
             .unwrap();
@@ -1317,7 +1497,7 @@ mod settle_resolution_tests {
         let before = renderer.element_box(1, key).unwrap();
         let generation = renderer.mirrors[&1].doc.root_node().tree().geometry_generation();
         let kind = red.live.as_ref().unwrap().tree.nodes.iter().find(|n| n.key == key).unwrap().kind.clone();
-        renderer.sync_delta(1, &[DeltaOp::Node { key, kind }], (200, 100, 1.0, false), true).unwrap();
+        renderer.sync_delta(1, &[DeltaOp::Node { key, kind }], (200, 100, 1.0, false, false), true).unwrap();
         let advances = renderer.mirrors[&1].doc.root_node().tree().geometry_generation() - generation;
         let color = renderer.element_style(1, key).unwrap().clone_color();
         let mut whole = Renderer::new();
@@ -1338,13 +1518,13 @@ mod settle_resolution_tests {
         let mut renderer = Renderer::new();
         renderer.sync_layout(&snap, &fetcher).unwrap();
         let kind = wide.live.as_ref().unwrap().tree.nodes.iter().find(|n| n.key == key).unwrap().kind.clone();
-        renderer.sync_delta(1, &[DeltaOp::Node { key, kind }], (200, 100, 1.0, false), true).unwrap();
+        renderer.sync_delta(1, &[DeltaOp::Node { key, kind }], (200, 100, 1.0, false, false), true).unwrap();
         let root = renderer.mirrors[&1].doc.root_element();
         assert!(
             root.has_damaged_descendants() || root.damage().is_some_and(|d| !d.is_empty()),
             "style-only sync must retain the width's layout damage"
         );
-        renderer.sync_delta(1, &[], (200, 100, 1.0, false), false).unwrap();
+        renderer.sync_delta(1, &[], (200, 100, 1.0, false, false), false).unwrap();
         assert_eq!(renderer.element_box(1, key).unwrap().width, 130.0);
     }
 
@@ -1374,7 +1554,7 @@ mod settle_resolution_tests {
         renderer.sync_layout(&snap, &fetcher).unwrap();
         assert_eq!(renderer.element_box(1, inner).unwrap().width, 60.0);
         let kind = narrow.live.as_ref().unwrap().tree.nodes.iter().find(|n| n.key == key).unwrap().kind.clone();
-        renderer.sync_delta(1, &[DeltaOp::Node { key, kind }], (200, 100, 1.0, false), true).unwrap();
+        renderer.sync_delta(1, &[DeltaOp::Node { key, kind }], (200, 100, 1.0, false, false), true).unwrap();
         assert_eq!(renderer.element_box(1, key).unwrap().width, 100.0);
         assert_eq!(
             renderer.element_box(1, inner).unwrap().width,
@@ -1405,7 +1585,7 @@ mod settle_resolution_tests {
         let before = renderer.element_box(1, key).unwrap();
         let generation = renderer.mirrors[&1].doc.root_node().tree().geometry_generation();
         let kind = images.live.as_ref().unwrap().tree.nodes.iter().find(|n| n.key == key).unwrap().kind.clone();
-        renderer.sync_delta(1, &[DeltaOp::Node { key, kind }], (200, 100, 1.0, false), true).unwrap();
+        renderer.sync_delta(1, &[DeltaOp::Node { key, kind }], (200, 100, 1.0, false, false), true).unwrap();
         let calls = recorded.0.lock().unwrap();
         assert!(calls.iter().any(|url| url.ends_with("bg.svg")), "style-only background resource must be discovered");
         assert!(calls.iter().any(|url| url.ends_with("mask.svg")), "style-only mask resource must be discovered");
@@ -1423,7 +1603,7 @@ mod settle_resolution_tests {
         let before = renderer.element_box(1, key).unwrap();
         let generation = renderer.mirrors[&1].doc.root_node().tree().geometry_generation();
         let kind = wide.live.as_ref().unwrap().tree.nodes.iter().find(|n| n.key == key).unwrap().kind.clone();
-        renderer.sync_delta(1, &[DeltaOp::Node { key, kind }], (200, 100, 1.0, false), false).unwrap();
+        renderer.sync_delta(1, &[DeltaOp::Node { key, kind }], (200, 100, 1.0, false, false), false).unwrap();
         let advances = renderer.mirrors[&1].doc.root_node().tree().geometry_generation() - generation;
         let after = renderer.element_box(1, key).unwrap();
         let mut whole = Renderer::new();

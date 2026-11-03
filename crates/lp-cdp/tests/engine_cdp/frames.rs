@@ -262,8 +262,8 @@ fn child_http_navigation_fetch_and_body_capture_preserve_other_frames() {
     let history = h.page("Page.getNavigationHistory", json!({}));
     assert_eq!(
         history["result"]["entries"].as_array().unwrap().len(),
-        2,
-        "child navigation does not alter root history: {history}"
+        1,
+        "child navigation does not alter root history (the root's first navigation replaced about:blank): {history}"
     );
     server.join().unwrap();
 }

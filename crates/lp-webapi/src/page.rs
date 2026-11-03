@@ -259,6 +259,9 @@ pub trait PageHooks {
     /// An `<input type=file>` was activated: the embedder may report a file
     /// chooser (CDP Page.fileChooserOpened). There is no native picker.
     fn file_chooser(&self, _input: NodeId, _multiple: bool) {}
+    /// `alert`, `confirm` or `prompt` (`kind`) was called. Dialogs do not
+    /// block: the call has already returned what a dismissed dialog gives.
+    fn javascript_dialog(&self, _kind: &'static str, _message: String, _default_prompt: Option<String>) {}
     /// `document.open()` replaced the loaded document's content: the frame is
     /// loading again, so DOMContentLoaded/load can be reported anew.
     fn document_reopened(&self) {}
@@ -915,6 +918,15 @@ impl PageDom {
         // CSSOM edits replace the sheet text (as upstream does).
         self.layout.borrow_mut().style_mut().set_sheet_text(owner, &rules.join("\n"));
         self.sheet_rules.borrow_mut().insert(owner, rules);
+    }
+
+    /// `document.title`: the first `<title>`'s text, whitespace collapsed.
+    pub fn document_title(&self) -> String {
+        let dom = self.dom.borrow();
+        let Ok(sel) = lp_dom::select::parse_selectors("title") else { return String::new() };
+        let title = dom.query_selector(self.document(), &sel).ok().flatten();
+        let text = title.and_then(|t| dom.text_content(t).ok().flatten()).unwrap_or_default();
+        text.split_ascii_whitespace().collect::<Vec<_>>().join(" ")
     }
 
     /// Sets the files of an `<input type=file>` (CDP DOM.setFileInputFiles).
