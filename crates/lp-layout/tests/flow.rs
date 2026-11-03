@@ -4297,7 +4297,6 @@ fn an_atomic_inline_wider_than_its_line_ends_it() {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn table_rowspan_like_chromium() {
     // Chromium (800x600): a spanning cell takes the first free column of
     // later rows; when it is taller than its rows, they grow in proportion

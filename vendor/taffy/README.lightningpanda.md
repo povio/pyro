@@ -39,6 +39,15 @@ is used as `content`, still counted the item's `height`. Covered by
 `a_column_flex_container_is_as_tall_as_its_hypothetical_items` and
 `flow_percentage_flex_basis_in_an_indefinite_column_is_content` in `crates/lp-layout/tests/flow.rs`.
 
+`compute/grid/mod.rs`, `compute/grid/track_sizing.rs` and `tree/traits.rs`:
+`LayoutGridContainer::grid_rows_are_table_rows` (default false) marks a grid whose rows are a table's;
+blitz-dom's table answers true. There an item spanning several rows grows them as Chromium grows the rows
+under a rowspan cell (`DistributeExcessBlockSizeToRows`, percentage rows aside) instead of by the grid
+algorithm's even distribution: the excess goes to the rows where another rowspan starts, else to the
+unconstrained rows with a size in proportion to it, else (all rows empty) to the last row, else to the
+rows with a size in proportion to it. Covered by `table_rowspan_like_chromium` in
+`crates/lp-layout/tests/flow.rs`.
+
 `compute/grid/track_sizing.rs`, `expand_flexible_tracks`: flexible tracks are sized as Chromium's
 `ExpandFlexibleTracks` sizes them. Each track's share of the flex fraction is truncated to 1/64 px (a
 layout unit) in f32 raw units after an epsilon, and the fraction it loses carries into the next flexible

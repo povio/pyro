@@ -4,9 +4,8 @@
 The expected values were measured in headless Chromium (Playwright 1.59.1, 800x600). Tests that only
 exercised flow internals (its style source, reuse caches, result diffing) were dropped.
 
-Ignored tests (`Blitz parity gap`) fail against Blitz today, grouped:
-
-- Tables: rowspan (row heights and row boxes around a spanning cell).
+Every parity test runs; none is ignored. Where a test's expectation differed from Chromium (rounded
+values, a behaviour assumed rather than measured), it was re-measured in Chrome and corrected.
 
 `pending/layout.rs`: lp-dom's faux-layout tests (upstream's renderless geometry). Most expectations are that
 layout's synthetic numbers; the scroll/visibility behaviour among them is still to be ported.

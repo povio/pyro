@@ -458,6 +458,18 @@ pub(crate) fn build_table_context(
             );
         }
     }
+    // lightningpanda: a rowspan stops at the end of its row group (the HTML table model;
+    // Chromium's effective rowspan), rather than adding implicit rows past it.
+    for cell in cells.iter_mut() {
+        let start = cell.row as usize;
+        let Some(group) = rows.get(start).map(|row| row.group) else { continue };
+        let group_rows = rows[start..].iter().take_while(|row| row.group == group).count() as u16;
+        if let taffy::GridPlacement::Span(span) = cell.style.grid_row.end {
+            if span > group_rows {
+                cell.style.grid_row.end = style_helpers::span(group_rows.max(1));
+            }
+        }
+    }
     let remaining_column = if is_fixed {
         style_helpers::minmax(style_helpers::length(0.0), style_helpers::fr(1.0))
     } else {
@@ -1127,6 +1139,10 @@ impl taffy::LayoutGridContainer for TableTreeWrapper<'_, '_> {
 
     fn get_grid_child_style(&self, child_node_id: taffy::NodeId) -> Self::GridItemStyle<'_> {
         &self.ctx.cells[usize::from(child_node_id)].style
+    }
+
+    fn grid_rows_are_table_rows(&self, _node_id: taffy::NodeId) -> bool {
+        true
     }
 
     fn set_detailed_grid_info(
