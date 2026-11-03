@@ -331,9 +331,15 @@ impl EngineHost {
             let Some(node) = lp_webapi::layout_api::hit_test(&page, x, y) else { break };
             let Some(frame_id) = self.thread.browser.frame_of_owner(page_id, node) else { break };
             let Some(child) = self.thread.browser.frame(page_id, &frame_id).and_then(|f| f.page_dom) else { break };
-            let Some(r) = page.layout().client_rect(&page.dom.borrow(), node) else { break };
-            x -= r.x;
-            y -= r.y;
+            // The child viewport starts at the iframe's content box.
+            let (r, inset) = {
+                let layout = page.layout();
+                let dom = page.dom.borrow();
+                let Some(r) = layout.client_rect(&dom, node) else { break };
+                (r, layout.content_offset(&dom, node).unwrap_or_default())
+            };
+            x -= r.x + inset.0;
+            y -= r.y + inset.1;
             page = child;
         }
         (page, x, y)

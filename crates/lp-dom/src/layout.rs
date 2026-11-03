@@ -421,6 +421,13 @@ impl Layout {
         Some(((b.rect.width - edges(LEFT, RIGHT)).max(0.0), (b.rect.height - edges(TOP, BOTTOM)).max(0.0)))
     }
 
+    /// The content box's offset inside `el`'s border box (left and top
+    /// border plus padding): where an iframe's child viewport starts.
+    pub fn content_offset(&self, dom: &Dom, el: NodeId) -> Option<(f64, f64)> {
+        let b = self.layout_box(dom, el)?;
+        Some((b.border[LEFT] + b.padding[LEFT], b.border[TOP] + b.padding[TOP]))
+    }
+
     /// Element.zig:1677-1692: the root scroller (html in standards mode, body
     /// in quirks mode) reports the viewport for clientWidth/Height.
     fn viewport_axis(&self, dom: &Dom, el: NodeId, axis: Axis) -> Option<f64> {

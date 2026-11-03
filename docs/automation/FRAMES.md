@@ -61,15 +61,20 @@ uses the native current document. Remembered editing selection after explicit
 blur/window focus, complete cross-frame Tab traversal, OS focus and IME are not
 claimed by this increment; frame identity does not substitute for those APIs.
 
-## Explicit geometry boundary
+## Child-frame geometry
 
-`DOM.getBoxModel`, `getContentQuads` and `scrollIntoViewIfNeeded` still reject
-nodes inside child documents. Mouse dispatch rejects a hit on an iframe owner.
-No parent/child coordinate translation is inferred. Playwright child locator
-focus/fill/press is covered through native focus and keyboard dispatch; child
-locator clicks and cross-frame scrolling remain unsupported. Playwright converts
-`DOM.getBoxModel` errors into a null bounding box, also checked by direct CDP
-error assertions. There is no fake child geometry.
+A child document's viewport is its iframe element's content box in the
+parent's layout (Chrome's: a default iframe gives 300x150), with the parent
+viewport's device pixel ratio and media features. `innerWidth`/`innerHeight`,
+`clientWidth` of the root, `matchMedia` and every layout query inside the
+child reflect it. The iframe box is read again, when the child's layout is
+next read, only after the parent's layout inputs changed (a parent restyle or
+relayout, an emulated resize); pages without iframes do no work. The child
+`window` gets no `resize` event when its iframe is resized.
+
+`DOM.getBoxModel`, `getContentQuads` and Playwright bounding boxes report child
+geometry in main-frame viewport coordinates, as Chrome does, and mouse input at
+main-frame coordinates reaches child content.
 
 Stable WindowProxy behavior across replacement, cross-frame messages, full
 sandbox/permissions policy, cross-frame coordinates, joint history, and frame

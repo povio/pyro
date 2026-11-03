@@ -122,7 +122,7 @@ fn top_level_origin(h: &mut Harness, frame_id: &str, context: i64, expr: &str) -
     let owner = eval_value(
         h,
         &format!(
-            "(() => {{ const r = document.getElementById({}).getBoundingClientRect(); return [r.x, r.y]; }})()",
+            "(() => {{ const f = document.getElementById({}); const r = f.getBoundingClientRect(); return [r.x + f.clientLeft, r.y + f.clientTop]; }})()",
             json!(frame_id)
         ),
     );
@@ -333,10 +333,11 @@ fn child_backend_ids_are_document_scoped_and_geometry_uses_main_frame_coordinate
     assert!(h.page("DOM.resolveNode", json!({"backendNodeId":backend,"executionContextId":root_context}))["error"]
         .is_object());
     // Child-frame geometry is in main-frame viewport coordinates (Chrome's
-    // same-process iframes): the owner's client rect plus the node's rect.
+    // same-process iframes): the owner's content box origin plus the node's
+    // rect.
     let owner = eval_value(
         &mut h,
-        "(() => { const r = document.getElementById('nodes').getBoundingClientRect(); return [r.x, r.y]; })()",
+        "(() => { const f = document.getElementById('nodes'); const r = f.getBoundingClientRect(); return [r.x + f.clientLeft, r.y + f.clientTop]; })()",
     );
     let inner = eval_in(
         &mut h,
@@ -741,7 +742,7 @@ fn mouse_input_at_main_frame_coordinates_reaches_child_frame_content() {
     );
     let owner = eval_value(
         &mut h,
-        "(() => { const r = document.getElementById('clicky').getBoundingClientRect(); return [r.x, r.y]; })()",
+        "(() => { const f = document.getElementById('clicky'); const r = f.getBoundingClientRect(); return [r.x + f.clientLeft, r.y + f.clientTop]; })()",
     );
     let inner = eval_in(&mut h, context, "(() => { const r = document.getElementById('b').getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()");
     let x = owner[0].as_f64().unwrap() + inner[0].as_f64().unwrap();

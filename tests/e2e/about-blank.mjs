@@ -706,14 +706,16 @@ try {
       const resolvedOwner = await f.frameElement();
       assert.equal(await resolvedOwner.evaluate(el => el.id), 'sandbox');
       await resolvedOwner.dispose(); await owner.dispose();
-      // Child-frame geometry is in main-frame viewport coordinates, as in
-      // Chrome (measured: iframe at 8,26 304x154; <p> at 16,42, 284x18). The
-      // child document's viewport is the iframe's 300x150 content box.
+      // Child-frame geometry is in main-frame viewport coordinates (measured
+      // in Chrome: iframe at 8,26 304x154; <p> 284x18 at 16,42). The child
+      // viewport starts inside the iframe's 2px border, at 18,44 for a
+      // same-process frame (the field check below); Chrome runs this opaque
+      // sandboxed frame out of process and reports it 2px up and left.
       const frameBox = await p.locator('#sandbox').boundingBox();
       assert.deepEqual(frameBox, { x: 8, y: 26, width: 304, height: 154 });
       const pBox = await f.locator('p').boundingBox();
       assert.ok(pBox, 'child geometry is reported');
-      assert.deepEqual([pBox.x, pBox.y, Math.round(pBox.height)], [16, 42, 18]);
+      assert.deepEqual([pBox.x, pBox.y, Math.round(pBox.height)], [18, 44, 18]);
       assert.ok(Math.abs(pBox.width - 284) <= 1, JSON.stringify(pBox));
       assert.deepEqual(await f.evaluate(() => [innerWidth, innerHeight, matchMedia('(max-width: 300px)').matches]),
         [300, 150, true]);
@@ -785,10 +787,11 @@ try {
         assert.equal(await a.inputValue(), 'childx');
         assert.equal(await b.inputValue(), 'sibling!');
         // Child-frame geometry in main-frame coordinates: Chrome puts #a's
-        // field at about 169-171,34-36 (153x21) and #b's 304px further right.
+        // field at 171,36 (153x21): iframe at 161,26 + 2px border + 8px body
+        // margin. #b's is 304px further right.
         const [boxA, boxB] = [await a.boundingBox(), await b.boundingBox()];
         assert.ok(boxA && boxB, 'child geometry is reported');
-        assert.ok(Math.abs(boxA.x - 170) <= 2 && Math.abs(boxA.y - 35) <= 2, JSON.stringify(boxA));
+        assert.ok(Math.abs(boxA.x - 171) <= 1 && Math.abs(boxA.y - 36) <= 1, JSON.stringify(boxA));
         assert.ok(Math.abs(boxA.width - 153) <= 2 && Math.abs(boxA.height - 21) <= 2, JSON.stringify(boxA));
         assert.equal(boxB.x - boxA.x, 304, 'the second iframe is one iframe width (300 + 2 x 2 border) further');
       }
