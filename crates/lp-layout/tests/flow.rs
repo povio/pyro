@@ -2398,7 +2398,6 @@ fn flow_overflow_wrap_breaks_long_words_like_chromium() {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn flow_whitespace_normal_span_wraps_inside_nowrap_cell() {
     // TOS FE CMR cargo editor table (TP-4194/4195): the cell is `whitespace-
     // nowrap overflow-hidden text-ellipsis`, the value a Typography span with
@@ -2427,12 +2426,10 @@ fn flow_whitespace_normal_span_wraps_inside_nowrap_cell() {
     let p = page(&html);
     // One line is the single-line span's height; each further line adds the
     // line pitch (the step from 2 to 3 lines).
-    // The spans' `font` shorthand applies (500 18px), and the glyph
-    // advances for that weight run wide enough that pkg's broken word takes
-    // a third line where Chromium fits two: a text-metrics gap, not a style
-    // one.
+    // The spans' `font` shorthand applies (500 18px): `line-height` is
+    // `normal`, 21px (rounded ascent 17 + descent 4), as Chromium has it.
     let one = p.metrics("s-inherit")[3];
-    let pkg_lines = 3.0;
+    let pkg_lines = 2.0;
     let pitch = (p.metrics("s-hs")[3] - one) / 2.0;
     assert!(pitch >= one, "line pitch {pitch} vs line {one}");
     for (k, lines) in [("pkg", pkg_lines), ("hs", 3.0)] {
@@ -2449,7 +2446,6 @@ fn flow_whitespace_normal_span_wraps_inside_nowrap_cell() {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn flow_max_content_keeps_whitespace_between_inline_pieces() {
     // TOS quote document preview (pdfgen PageCounter): the page counter is
     // `<p class="absolute bottom-0 right-0">Page <span>1</span>/<span>1</span></p>`

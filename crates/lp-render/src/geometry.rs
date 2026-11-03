@@ -385,7 +385,7 @@ impl Geometry {
     }
 
     /// Union of the fragments of inline element `id` in its inline root's
-    /// text layout: glyph runs (content area: ascent to descent) and atomic
+    /// text layout: glyph runs (content area: rounded ascent to descent) and atomic
     /// inlines inside it.
     fn inline_union(&self, doc: &BaseDocument, id: NodeId) -> Option<Rect> {
         // The nearest ancestor laying the element out inline: a DOM ancestor,
@@ -436,15 +436,20 @@ impl Geometry {
             for item in line.items() {
                 let (start, r) = match item {
                     parley::PositionedLayoutItem::GlyphRun(run) => {
+                        // The content area from whole-pixel ascent and descent, as
+                        // Chromium's font metrics and Parley's quantized lines round them
+                        // (18px SF: 17 + 4, not 21.1875).
                         let metrics = run.run().font_metrics();
                         let (x, baseline) = (run.offset() as f64, run.baseline() as f64);
                         (
                             Some(run.style().brush.id),
                             Rect::new(
                                 x,
-                                baseline - metrics.ascent as f64,
-                                x + run.advance() as f64,
-                                baseline + metrics.descent as f64,
+                                baseline - metrics.ascent.round() as f64,
+                                // Chromium's text fragments are their advance ceiled to
+                                // a layout unit (1/64 px).
+                                x + ((run.advance() as f64 / scale * 64.0 - 0.01).ceil() / 64.0) * scale,
+                                baseline + metrics.descent.round() as f64,
                             ),
                         )
                     }
