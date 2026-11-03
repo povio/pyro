@@ -1160,7 +1160,6 @@ fn flow_parity_shrink_to_fit_min_content_floor() {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn flex_parity_compressible_percentage_inputs() {
     // TOS cargo form: `w-full` inputs in flex:1 items shrink with the row
     // (no min-content contribution); inputs with auto width keep their
@@ -2346,7 +2345,6 @@ fn batched_changes_reach_depth_bounded_anchors_at_their_lowest_level() {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn flow_overflow_wrap_breaks_long_words_like_chromium() {
     // TOS CMR cargo cells (TP-4194/4195): `wrap-anywhere` (overflow-wrap:
     // anywhere) on "ReinforcedIndustrialTransportPallet …" in a 120px cell.
