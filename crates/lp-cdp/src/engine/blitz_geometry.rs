@@ -18,6 +18,12 @@ static NETWORK_BODIES: std::sync::LazyLock<std::sync::Mutex<std::collections::Ha
 /// Network fetches for layouts still in flight.
 static IN_FLIGHT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
+/// A `printToPDF` waits for the fetches in flight: the last one to finish
+/// calls [`PDF_WAKER`] (from the network thread).
+static PDF_WAITING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+type Waker = Box<dyn FnOnce() + Send>;
+static PDF_WAKER: std::sync::Mutex<Option<Waker>> = std::sync::Mutex::new(None);
+
 /// Makes this thread's new documents take their geometry from Blitz.
 pub(crate) fn install(statics: lp_net::StaticFiles, net: Option<lp_net::NetClient>) {
     lp_layout::install(Arc::new(LocalFiles { statics, net }));
@@ -52,7 +58,10 @@ impl LocalFiles {
         struct Done;
         impl Drop for Done {
             fn drop(&mut self) {
-                IN_FLIGHT.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+                let last = IN_FLIGHT.fetch_sub(1, std::sync::atomic::Ordering::AcqRel) == 1;
+                if last && PDF_WAITING.load(std::sync::atomic::Ordering::Acquire) {
+                    wake_pdf();
+                }
             }
         }
         let done = Done;
@@ -112,23 +121,46 @@ impl Fetcher for LocalFiles {
     }
 }
 
-/// `Page.printToPDF` from the page document's own Blitz document (the one
-/// its layout queries were answered from), on this thread. `None`: the
-/// document has no Blitz geometry (print through the render thread).
-pub(crate) fn print_pdf(
+fn wake_pdf() {
+    PDF_WAITING.store(false, std::sync::atomic::Ordering::Release);
+    let waker = PDF_WAKER.lock().ok().and_then(|mut w| w.take());
+    if let Some(wake) = waker {
+        wake();
+    }
+}
+
+/// Whether layout sub-resources are still being fetched (a PDF printed now
+/// would lack them).
+pub(crate) fn fetching() -> bool {
+    IN_FLIGHT.load(std::sync::atomic::Ordering::Acquire) > 0
+}
+
+/// Calls `wake` once no layout fetch is in flight (at once if none is),
+/// replacing an earlier waker.
+pub(crate) fn wake_when_fetched(wake: Waker) {
+    if let Ok(mut w) = PDF_WAKER.lock() {
+        *w = Some(wake);
+    }
+    PDF_WAITING.store(true, std::sync::atomic::Ordering::Release);
+    if !fetching() {
+        wake_pdf();
+    }
+}
+
+/// Brings the page document's own Blitz document (the one its layout
+/// queries were answered from) up to date for `printToPDF`, which starts
+/// its sub-resource fetches ([`fetching`]). `None`: the document has no
+/// Blitz geometry (print through the render thread).
+pub(crate) fn sync_for_pdf(page_dom: &lp_webapi::PageDom) -> Option<()> {
+    let dom = page_dom.dom.borrow();
+    page_dom.layout.borrow().synced_geometry_source(&dom).map(|_| ())
+}
+
+/// The PDF pages of the page document's Blitz document, painted on this
+/// thread; the render thread writes them.
+pub(crate) fn paint_pdf(
     page_dom: &lp_webapi::PageDom,
     opts: &lp_render::PdfOptions,
-) -> Option<Result<lp_render::PdfOutput, String>> {
-    // The document as laid out now starts its sub-resource fetches; a page
-    // prints with its web fonts and images, so wait for them (bounded),
-    // after which the document is built again with them.
-    {
-        let dom = page_dom.dom.borrow();
-        page_dom.layout.borrow().synced_geometry_source(&dom)?;
-    }
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while IN_FLIGHT.load(std::sync::atomic::Ordering::Relaxed) > 0 && std::time::Instant::now() < deadline {
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
-    lp_layout::print_pdf(&page_dom.dom.borrow(), &page_dom.layout.borrow(), opts)
+) -> Option<Result<lp_render::PdfPaint, String>> {
+    lp_layout::paint_pdf(&page_dom.dom.borrow(), &page_dom.layout.borrow(), opts)
 }

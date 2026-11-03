@@ -94,7 +94,7 @@ pub(crate) struct Mirror {
     pub(crate) bridge: crate::net::Bridge,
     pub(crate) scope: String,
     pub(crate) base_url: String,
-    pub(crate) viewport: (u32, u32, u64, bool),
+    pub(crate) viewport: (u32, u32, u64, bool, bool),
     sheets: HashMap<String, String>,
     tree: Arc<Tree>,
     nodes: FxHashMap<u64, Entry>,
@@ -165,7 +165,7 @@ impl Mirror {
         bridge: crate::net::Bridge,
         scope: String,
         sheets: HashMap<String, String>,
-        viewport: (u32, u32, u64, bool),
+        viewport: (u32, u32, u64, bool, bool),
     ) -> Result<Mirror, Rebuild> {
         let base_url = config.base_url.clone().unwrap_or_default();
         let mut doc = BaseDocument::new(config);
