@@ -854,9 +854,9 @@ fn grid_parity_basic() {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn grid_parity_tailwind_columns() {
-    // Fractional widths: Chromium snaps client sizes to integers.
+    // Fractional widths: Chromium sizes fr tracks in 1/64 px (LayoutUnit),
+    // so a third of 668px is 222.65625.
     let close = |name: &str, html: &str, expected: &[(&str, [f64; 4])]| {
         let p = page(html);
         let result = p.layout.layout_result(&p.dom);
@@ -874,10 +874,10 @@ fn grid_parity_tailwind_columns() {
         "<!doctype html><body style=\"margin:0\"><div id=g style=\"display:grid;grid-template-columns:repeat(3,minmax(0,1fr));column-gap:16px;row-gap:8px;width:700px;padding:12px\"><div id=a style=\"height:30px\"></div><div id=b style=\"grid-column:span 2 / span 2;height:40px\"></div><div id=c style=\"grid-column:1 / -1;height:20px\"></div><div id=d style=\"height:25px\"></div></div><div id=p style=\"display:grid;grid-template-columns:48.65% 51.35%;width:500px\"><div id=p1 style=\"height:10px\"></div><div id=p2 style=\"height:12px\"></div></div></body>",
         &[
             ("g", [0.0, 0.0, 724.0, 125.0]),
-            ("a", [12.0, 12.0, 222.67, 30.0]),
-            ("b", [250.67, 12.0, 461.33, 40.0]),
+            ("a", [12.0, 12.0, 222.65625, 30.0]),
+            ("b", [250.65625, 12.0, 461.34375, 40.0]),
             ("c", [12.0, 60.0, 700.0, 20.0]),
-            ("d", [12.0, 88.0, 222.67, 25.0]),
+            ("d", [12.0, 88.0, 222.65625, 25.0]),
             ("p", [0.0, 125.0, 500.0, 12.0]),
             ("p1", [0.0, 125.0, 243.25, 10.0]),
             ("p2", [243.25, 125.0, 256.75, 12.0]),
@@ -886,7 +886,6 @@ fn grid_parity_tailwind_columns() {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn grid_parity_calendar_fr_rows_with_min_height() {
     let cells = |n: usize| "<div></div>".repeat(n);
     let html = format!(
@@ -897,14 +896,15 @@ fn grid_parity_calendar_fr_rows_with_min_height() {
     );
     let p = page(&html);
     let result = p.layout.layout_result(&p.dom);
-    let col = (800.0 - 84.0 - 7.0) / 7.0;
+    // (800 - 84 - 7) / 7 floored to 1/64 px, as Chromium's LayoutUnit does.
+    let col = 101.28125;
     for (id, want) in [
         ("g", [0.0, 0.0, 800.0, 383.0]),
         ("h0", [0.0, 0.0, 84.0, 20.0]),
         ("h1", [85.0, 0.0, col, 20.0]),
         ("w1", [0.0, 21.0, 84.0, 120.0]),
         ("c11", [85.0, 21.0, col, 24.0]),
-        ("c17", [85.0 + 6.0 * (col + 1.0), 21.0, col, 120.0]),
+        ("c17", [698.703125, 21.0, col, 120.0]),
         ("w2", [0.0, 142.0, 84.0, 120.0]),
         ("c21", [85.0, 142.0, col, 120.0]),
         ("w3", [0.0, 263.0, 84.0, 120.0]),

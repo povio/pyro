@@ -30,3 +30,13 @@ layout at the same offset is rounded as before. Without it, every layout query r
 (default false) lets a tree keep a block-level child's `auto` width at its content size, as for tables and
 replaced elements. blitz-dom answers true for form controls (`input`, `select`, `textarea`, `button`),
 which Chromium does not stretch in block layout.
+
+`compute/grid/track_sizing.rs`, `expand_flexible_tracks`: flexible tracks are sized as Chromium's
+`ExpandFlexibleTracks` sizes them. Each track's share of the flex fraction is truncated to 1/64 px (a
+layout unit) in f32 raw units after an epsilon, and the fraction it loses carries into the next flexible
+track, so `repeat(3, 1fr)` over 668px is 222.65625, 222.671875, 222.671875, as Chromium reports.
+Chromium sizes a run of identical tracks (a "set") as one; this sizes every track on its own, which agrees
+whenever grid items start in each track. The layout unit is 1/64 of a Taffy unit: a CSS px at scale 1.
+Upstream's generated tests expect exact fractions and are not run against this change.
+`grid_parity_tailwind_columns` and `grid_parity_calendar_fr_rows_with_min_height` in
+`crates/lp-layout/tests/flow.rs` cover it.

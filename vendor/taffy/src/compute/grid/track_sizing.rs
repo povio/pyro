@@ -1334,9 +1334,20 @@ fn expand_flexible_tracks<Tree: LayoutPartialTree>(
 
     // For each flexible track, if the product of the used flex fraction and the track’s flex factor is greater
     // than the track’s base size, set its base size to that product.
+    //
+    // lightningpanda: as Chromium does (`ExpandFlexibleTracks`), the product is truncated to 1/64 px (a layout
+    // unit) in f32 raw units, after an epsilon, and the fraction it loses carries into the next flexible track:
+    // a third of 668px is 222.65625, 222.671875, 222.671875.
+    let fr_raw = flex_fraction * 64.0;
+    let mut leftover = 0.0f32;
     for track in axis_tracks.iter_mut().filter(|track| track.max_track_sizing_function.is_fr()) {
         let track_flex_factor = track.max_track_sizing_function.0.value();
-        track.base_size = f32_max(track.base_size, track_flex_factor * flex_fraction);
+        let share = fr_raw * track_flex_factor + leftover;
+        let expanded = (share + f32::EPSILON).trunc();
+        if expanded.is_finite() && expanded / 64.0 >= track.base_size {
+            track.base_size = expanded / 64.0;
+            leftover = (share - expanded).max(0.0);
+        }
     }
 }
 
