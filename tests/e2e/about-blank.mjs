@@ -726,6 +726,32 @@ try {
       assert.ok(Math.abs((await f.locator('p').boundingBox()).width - 484) <= 1);
     } finally { await p.close(); }
   });
+  await check('child window resize follows its iframe box like Chrome', async () => {
+    const p = await context.newPage();
+    p.setDefaultTimeout(5000);
+    try {
+      await p.goto(`${fixtureOrigin}/frame-parent`, { timeout: 5000 });
+      await p.evaluate(() => {
+        const f = document.createElement('iframe'); f.id = 'resized'; f.name = 'resized'; f.srcdoc = '<p>x</p>';
+        document.body.appendChild(f);
+      });
+      assert.equal(await p.frameLocator('#resized').locator('p').textContent(), 'x');
+      const f = p.frame({ name: 'resized' });
+      await f.evaluate(() => { globalThis.seen = []; onresize = () => seen.push([innerWidth, innerHeight]); });
+      // Chrome: [[500,150]] after the restyle, nothing more after a 900px
+      // viewport (the box is unchanged), then [442,150] and [392,150].
+      await p.evaluate(() => { document.getElementById('resized').style.width = '500px'; });
+      await f.waitForFunction(() => seen.length === 1);
+      await p.setViewportSize({ width: 900, height: 600 });
+      await p.waitForTimeout(100);
+      assert.deepEqual(await f.evaluate(() => seen), [[500, 150]]);
+      await p.evaluate(() => { document.getElementById('resized').style.width = '50%'; });
+      await f.waitForFunction(() => seen.length === 2);
+      await p.setViewportSize({ width: 800, height: 600 });
+      await f.waitForFunction(() => seen.length === 3);
+      assert.deepEqual(await f.evaluate(() => seen), [[500, 150], [442, 150], [392, 150]]);
+    } finally { await p.close(); }
+  });
   await check('child HTTP navigation, response body, fetch and route retain frame identity', async () => {
     const p = await context.newPage();
     p.setDefaultTimeout(5000);

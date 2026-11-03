@@ -148,6 +148,14 @@ pub struct PageDom {
     /// A child frame's viewport (its iframe's content box): `None` for top
     /// documents, which keep the emulated viewport.
     frame_viewport: RefCell<Option<FrameViewportSource>>,
+    /// Child frames: the viewport was sized from the iframe once (later
+    /// changes are resizes), a `resize` task is queued, and the earliest a
+    /// listening window re-reads its iframe after a task (with a wake queued).
+    frame_sized: Cell<bool>,
+    frame_resize_queued: Cell<bool>,
+    frame_resize_next: Cell<Option<std::time::Instant>>,
+    frame_resize_wake: Cell<bool>,
+    this: std::rc::Weak<PageDom>,
 }
 
 /// Computes a child frame's viewport from its iframe; `None`: unknown yet,
@@ -306,7 +314,12 @@ pub trait PageHooks {
 impl PageDom {
     pub fn new(dom: DomRef, document: NodeId) -> Rc<PageDom> {
         dom.borrow_mut().watch_iframes(document).expect("page document");
-        Rc::new(PageDom {
+        Rc::new_cyclic(|this| PageDom {
+            this: this.clone(),
+            frame_sized: Cell::new(false),
+            frame_resize_queued: Cell::new(false),
+            frame_resize_next: Cell::new(None),
+            frame_resize_wake: Cell::new(false),
             dom,
             id: NEXT_PAGE.fetch_add(1, Ordering::Relaxed),
             disposed: Cell::new(false),
@@ -583,17 +596,89 @@ impl PageDom {
         self.layout.try_borrow().ok()
     }
 
-    fn sync_frame_viewport(&self) {
+    /// Re-reads a child frame's viewport (see [`PageDom::layout`]). A
+    /// changed size after the first queues one `resize` task for the
+    /// child's window, as Chrome fires it after the layout that resized the
+    /// iframe.
+    pub fn sync_frame_viewport(&self) {
         let Some(source) = self.frame_viewport.borrow().clone() else { return };
         let Some(viewport) = source() else { return };
-        if self.layout.try_borrow().is_ok_and(|l| *l.viewport() == viewport) {
-            return;
-        }
+        let old = match self.layout.try_borrow() {
+            Ok(l) if *l.viewport() == viewport => return,
+            Ok(l) => (l.viewport().width, l.viewport().height),
+            Err(_) => return,
+        };
         // A query already holding the layout keeps the old size; the next
         // one picks it up.
-        if let Ok(mut layout) = self.layout.try_borrow_mut() {
-            layout.set_viewport(viewport);
+        let Ok(mut layout) = self.layout.try_borrow_mut() else { return };
+        layout.set_viewport(viewport.clone());
+        drop(layout);
+        let resized = self.frame_sized.replace(true) && old != (viewport.width, viewport.height);
+        if resized && !self.frame_resize_queued.replace(true) {
+            let page = self.this.clone();
+            self.post_task(Box::new(move || {
+                if let Some(page) = page.upgrade() {
+                    page.frame_resize_queued.set(false);
+                    page.fire_frame_resize();
+                }
+            }));
         }
+    }
+
+    /// The child window's `resize` (and its visual viewport's), then the
+    /// media query lists whose `matches` flipped.
+    fn fire_frame_resize(self: &Rc<Self>) {
+        if self.is_disposed() {
+            return;
+        }
+        if let Some(window) = self.window_target() {
+            let event =
+                crate::event::EventCore::trusted(self, crate::event::EventInterface::Event, "resize", false, false);
+            crate::target::fire(self, window, &event);
+        }
+        for target in self.viewport_targets(crate::window::ViewportTarget::VisualViewport) {
+            let event =
+                crate::event::EventCore::trusted(self, crate::event::EventInterface::Event, "resize", false, false);
+            crate::target::fire(self, target, &event);
+        }
+        for (target, query, matches) in self.media_query_changes() {
+            self.fire_media_query_change(target, &query, matches);
+        }
+    }
+
+    /// After a task: a child frame whose window listens for events re-reads
+    /// its iframe's box, so a parent restyle fires `resize` without a read
+    /// in the child. At most every max(16 ms, twice the re-read's cost), as
+    /// ResizeObserver gathers; top documents and windows without listeners
+    /// return at once.
+    fn frame_resize_after_task(self: &Rc<Self>) {
+        if !self.frame_sized.get() {
+            return;
+        }
+        let Some(window) = self.window_target() else { return };
+        if !self.dom.try_borrow().is_ok_and(|d| d.has_listeners(window)) {
+            return;
+        }
+        let now = std::time::Instant::now();
+        if let Some(next) = self.frame_resize_next.get().filter(|&n| n > now) {
+            if !self.frame_resize_wake.replace(true) {
+                let page = self.this.clone();
+                self.post_delayed_task(
+                    next - now,
+                    Box::new(move || {
+                        if let Some(page) = page.upgrade() {
+                            page.frame_resize_wake.set(false);
+                            page.frame_resize_after_task();
+                        }
+                    }),
+                );
+            }
+            return;
+        }
+        self.sync_frame_viewport();
+        let cost = now.elapsed();
+        self.frame_resize_next
+            .set(Some(std::time::Instant::now() + (cost * 2).max(std::time::Duration::from_millis(16))));
     }
 
     /// Applies a resource event to the style engine (`<style>` text and
@@ -740,6 +825,7 @@ impl PageDom {
         crate::mutation_observer::after_task(self);
         crate::intersection_observer::after_task(self);
         crate::resize_observer::after_task(self);
+        self.frame_resize_after_task();
         crate::layout_api::schedule_scroll_clamp(self);
         crate::input::update_hover_after_task(self);
         self.url_params_helpers.borrow_mut().retain(|realm, _| {

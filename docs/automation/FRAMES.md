@@ -69,8 +69,17 @@ viewport's device pixel ratio and media features. `innerWidth`/`innerHeight`,
 `clientWidth` of the root, `matchMedia` and every layout query inside the
 child reflect it. The iframe box is read again, when the child's layout is
 next read, only after the parent's layout inputs changed (a parent restyle or
-relayout, an emulated resize); pages without iframes do no work. The child
-`window` gets no `resize` event when its iframe is resized.
+relayout, an emulated resize); pages without iframes do no work.
+
+When the box changes after the first sizing, the child `window` (and its
+`visualViewport`) gets one `resize` task, then `change` on media query lists
+that flipped, matching Chrome's sequence for restyles and
+`Emulation.setDeviceMetricsOverride`. The change is noticed where the child
+viewport is re-read: a layout read in the child, the parent's emulated resize
+task, and, for a child window with event listeners, the child's after-task
+checkpoint (at most every max(16 ms, twice the re-read's cost), like
+ResizeObserver; top documents and listener-less child windows return at
+once).
 
 `DOM.getBoxModel`, `getContentQuads` and Playwright bounding boxes report child
 geometry in main-frame viewport coordinates, as Chrome does, and mouse input at

@@ -786,3 +786,33 @@ fn child_frame_viewport_is_its_iframe_content_box() {
     );
     assert_eq!(eval_in(&mut h, context, "innerWidth"), json!(392));
 }
+
+#[test]
+fn child_window_gets_resize_when_its_iframe_box_changes() {
+    let mut h = Harness::new();
+    enable(&mut h);
+    let events = add_srcdoc(&mut h, "resized", "inside", None);
+    let frame = child(&mut h, "resized")["frame"]["id"].as_str().unwrap().to_owned();
+    let context = default_context(&events, &frame);
+    eval_in(&mut h, context, "globalThis.seen = []; onresize = () => seen.push([innerWidth, innerHeight]); innerWidth");
+    // The parent restyles the iframe; nothing in the child reads its layout.
+    eval_value(&mut h, "document.getElementById('resized').style.width = '500px'; 0");
+    h.run_for(100);
+    assert_eq!(eval_in(&mut h, context, "seen"), json!([[500, 150]]));
+    // An emulated resize that leaves the iframe's box alone fires nothing
+    // in the child; one that changes it fires once.
+    h.page(
+        "Emulation.setDeviceMetricsOverride",
+        json!({"width":900,"height":600,"deviceScaleFactor":1,"mobile":false}),
+    );
+    h.run_for(100);
+    assert_eq!(eval_in(&mut h, context, "seen.length"), json!(1));
+    eval_value(&mut h, "document.getElementById('resized').style.width = '50%'; 0");
+    h.run_for(100);
+    h.page(
+        "Emulation.setDeviceMetricsOverride",
+        json!({"width":800,"height":600,"deviceScaleFactor":1,"mobile":false}),
+    );
+    h.run_for(100);
+    assert_eq!(eval_in(&mut h, context, "seen"), json!([[500, 150], [442, 150], [392, 150]]));
+}
