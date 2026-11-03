@@ -41,6 +41,8 @@ use crate::network_protocol::base64_encode;
 use crate::target::PageCommand;
 
 enum Finished {
+    /// Layout sub-resources arrived or a parked PDF's deadline passed.
+    Fetched,
     Capture(u64, Result<Captured, String>),
     Pdf(u64, Result<lp_render::PdfOutput, String>),
     Match(u64, Result<MatchOutcome, String>),
@@ -55,6 +57,18 @@ struct CaptureWait {
     /// an `IO` stream.
     stream: bool,
 }
+
+/// A `printToPDF` waiting for its page's layout sub-resources (web fonts,
+/// images) before it paints.
+struct PdfWait {
+    capture: CaptureWait,
+    pid: PageId,
+    opts: lp_render::PdfOptions,
+    deadline: Instant,
+}
+
+/// Longest a `printToPDF` waits for layout sub-resources.
+const PDF_FETCH_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
 
 struct MatchWait {
     name: String,
@@ -86,6 +100,7 @@ pub(crate) struct Renders {
     next: u64,
     /// `IO` streams by handle: bytes and the read offset.
     streams: HashMap<String, (Vec<u8>, usize)>,
+    pdf_waits: Vec<PdfWait>,
 }
 
 impl Renders {
@@ -252,7 +267,7 @@ pub(super) struct ClipParams {
 }
 
 impl ClipParams {
-    pub(super) fn area(self) -> CdpResult<Area> {
+    pub(super) fn area(self, beyond_viewport: bool) -> CdpResult<Area> {
         if !(self.width > 0.0 && self.height > 0.0) {
             return Err(CdpError::invalid_params("clip width and height must be positive"));
         }
@@ -262,6 +277,7 @@ impl ClipParams {
             width: self.width,
             height: self.height,
             scale: self.scale.unwrap_or(1.0),
+            beyond_viewport,
         })
     }
 }
@@ -295,10 +311,18 @@ impl EngineHost {
             height: s.height,
             device_scale_factor: s.device_scale_factor,
             dark: s.dark,
+            print: s.print,
             scroll_x: s.scroll_x,
             scroll_y: s.scroll_y,
             resource_scope: frame.loader_id.0.clone(),
-            live: Some(Live { page: pid.0 as u64, tree: live, clip: mark.map(lp_dom::snapshot::render_key) }),
+            live: Some(Live {
+                page: pid.0 as u64,
+                tree: live,
+                clip: mark.map(lp_dom::snapshot::render_key),
+                interaction: Some((s.hovered, s.focused)),
+            }),
+            background: self.pages.values().find(|p| p.id == pid).and_then(|p| p.background_override),
+            element_scroll: Some(s.element_scroll),
         })
     }
 
@@ -317,7 +341,7 @@ impl EngineHost {
             }
         };
         let area = match (p.clip, p.capture_beyond_viewport) {
-            (Some(clip), _) => clip.area()?,
+            (Some(clip), beyond_viewport) => clip.area(beyond_viewport)?,
             (None, true) => Area::FullPage,
             (None, false) => Area::Viewport,
         };
@@ -344,9 +368,9 @@ impl EngineHost {
     }
 
     /// `Page.printToPDF`: one PDF page per Paprize page box (`.pz-page`),
-    /// else the document cut to the paper size; replied to from
-    /// `flush_renders`. Margins, scale, header/footer and page ranges are
-    /// not applied.
+    /// else the document cut into the paper's content box (margins, scale);
+    /// replied to from `flush_renders`. Header/footer templates, tagged PDF
+    /// and the document outline are accepted and not produced.
     pub(super) fn print_to_pdf(&mut self, cmd: &PageCommand<'_, '_>) -> CdpResult<Option<Value>> {
         #[derive(Deserialize, Default)]
         #[serde(rename_all = "camelCase")]
@@ -354,24 +378,100 @@ impl EngineHost {
             landscape: Option<bool>,
             paper_width: Option<f64>,
             paper_height: Option<f64>,
+            margin_top: Option<f64>,
+            margin_bottom: Option<f64>,
+            margin_left: Option<f64>,
+            margin_right: Option<f64>,
+            scale: Option<f64>,
+            #[serde(default)]
+            print_background: bool,
+            page_ranges: Option<String>,
             transfer_mode: Option<String>,
+            // Accepted, not produced.
+            #[allow(dead_code)]
+            prefer_css_page_size: Option<bool>,
+            #[allow(dead_code)]
+            display_header_footer: Option<bool>,
+            #[allow(dead_code)]
+            header_template: Option<String>,
+            #[allow(dead_code)]
+            footer_template: Option<String>,
+            #[allow(dead_code)]
+            generate_tagged_pdf: Option<bool>,
+            #[allow(dead_code)]
+            generate_document_outline: Option<bool>,
         }
         let p = cmd.command.params::<Option<P>>()?.unwrap_or_default();
         let (mut w, mut h) = (p.paper_width.unwrap_or(8.5) * 96.0, p.paper_height.unwrap_or(11.0) * 96.0);
+        if !(w > 0.0 && w.is_finite()) {
+            return Err(CdpError::invalid_params("paperWidth is zero or negative"));
+        }
+        if !(h > 0.0 && h.is_finite()) {
+            return Err(CdpError::invalid_params("paperHeight is zero or negative"));
+        }
+        let scale = p.scale.unwrap_or(1.0);
+        if !(0.1..=2.0).contains(&scale) {
+            return Err(CdpError::invalid_params("scale is outside [0.1 - 2] range"));
+        }
         if p.landscape == Some(true) {
             std::mem::swap(&mut w, &mut h);
         }
-        let opts = lp_render::PdfOptions { page_selector: ".pz-page".into(), paper: (w, h) };
+        // Chrome's default margin is about 1 cm (0.4 in).
+        let mut margins = [0.0; 4];
+        for (i, (name, v)) in [
+            ("marginTop", p.margin_top),
+            ("marginRight", p.margin_right),
+            ("marginBottom", p.margin_bottom),
+            ("marginLeft", p.margin_left),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let v = v.unwrap_or(0.4);
+            if !(v >= 0.0 && v.is_finite()) {
+                return Err(CdpError::invalid_params(format!("{name} is negative")));
+            }
+            margins[i] = v * 96.0;
+        }
+        if w - margins[1] - margins[3] < 1.0 || h - margins[0] - margins[2] < 1.0 {
+            return Err(CdpError::invalid_params("invalid print parameters: content area is empty"));
+        }
+        let page_ranges = match p.page_ranges.as_deref().map(str::trim) {
+            None | Some("") => Vec::new(),
+            Some(ranges) => {
+                parse_page_ranges(ranges).ok_or_else(|| CdpError::invalid_params("Page range syntax error"))?
+            }
+        };
+        let opts = lp_render::PdfOptions {
+            page_selector: ".pz-page".into(),
+            paper: (w, h),
+            margins,
+            scale,
+            print_background: p.print_background,
+            page_ranges,
+        };
         let pid = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?.id;
         let started = Instant::now();
         let stream = p.transfer_mode.as_deref() == Some("ReturnAsStream");
         // Blitz geometry: print the document layout queries were answered
-        // from, here (one Blitz document per page document).
+        // from (one Blitz document per page document), once the fonts and
+        // images its layout started fetching are in. The browser thread
+        // keeps running meanwhile.
         let page_dom = self.thread.browser.page(pid).and_then(|p| p.main_frame.page_dom.clone());
-        if let Some(out) = page_dom.and_then(|d| super::blitz_geometry::print_pdf(&d, &opts)) {
-            let o = out.map_err(CdpError::server)?;
-            let token = self.renders.token();
-            return Ok(Some(self.pdf_body(o, stream, token, 0.0, ms(started.elapsed()))));
+        if page_dom.is_some_and(|d| super::blitz_geometry::sync_for_pdf(&d).is_some()) {
+            let capture = CaptureWait {
+                id: cmd.command.id,
+                session: cmd.session_id.to_owned(),
+                started,
+                snapshot_ms: 0.0,
+                stream,
+            };
+            let wait = PdfWait { capture, pid, opts, deadline: started + PDF_FETCH_WAIT };
+            if super::blitz_geometry::fetching() {
+                self.park_pdf(wait);
+                return Ok(None);
+            }
+            return self.paint_pdf(wait).map(|()| None);
         }
         let snapshot = self.snapshot(pid, None)?;
         let snapshot_ms = ms(started.elapsed());
@@ -383,6 +483,62 @@ impl EngineHost {
         let wait = CaptureWait { id: cmd.command.id, session: cmd.session_id.to_owned(), started, snapshot_ms, stream };
         self.renders.captures.insert(token, wait);
         Ok(None)
+    }
+
+    /// Waits for the layout fetches in flight (woken by the last one, or
+    /// at the deadline) before printing.
+    fn park_pdf(&mut self, wait: PdfWait) {
+        let deliver = self.renders.deliver(self.thread.handle());
+        let at_deadline = deliver.clone();
+        let deadline = wait.deadline;
+        let first = self.renders.pdf_waits.is_empty();
+        self.renders.pdf_waits.push(wait);
+        super::blitz_geometry::wake_when_fetched(Box::new(move || deliver(Finished::Fetched)));
+        if first {
+            // The deadline of the first parked wait; later ones get theirs
+            // from a waker that fires before, or this one.
+            let _ = std::thread::Builder::new().name("lp-pdf-deadline".into()).spawn(move || {
+                std::thread::sleep(deadline.saturating_duration_since(Instant::now()));
+                at_deadline(Finished::Fetched);
+            });
+        }
+    }
+
+    /// Prints the parked PDFs whose fetches are done or whose deadline
+    /// passed; the rest keep waiting.
+    fn resume_pdfs(&mut self) {
+        let now = Instant::now();
+        let fetching = super::blitz_geometry::fetching();
+        let waits = std::mem::take(&mut self.renders.pdf_waits);
+        let mut parked = Vec::new();
+        for wait in waits {
+            if fetching && now < wait.deadline {
+                parked.push(wait);
+                continue;
+            }
+            let (id, session) = (wait.capture.id, wait.capture.session.clone());
+            if let Err(e) = self.paint_pdf(wait) {
+                self.out.push(msg::error_frame(Some(id), &e, Some(&session)));
+            }
+        }
+        for wait in parked {
+            self.park_pdf(wait);
+        }
+    }
+
+    /// Paints `wait`'s page here and has the render thread write the PDF.
+    fn paint_pdf(&mut self, wait: PdfWait) -> CdpResult<()> {
+        let page_dom = self.thread.browser.page(wait.pid).and_then(|p| p.main_frame.page_dom.clone());
+        let paint = page_dom
+            .and_then(|d| super::blitz_geometry::paint_pdf(&d, &wait.opts))
+            .ok_or_else(|| CdpError::server("page is gone"))?
+            .map_err(CdpError::server)?;
+        let token = self.renders.token();
+        let deliver = self.renders.deliver(self.thread.handle());
+        let job = Job::PdfWrite { paint: Box::new(paint), done: Box::new(move |r| deliver(Finished::Pdf(token, r))) };
+        self.renders.worker()?.submit(job).map_err(|_| CdpError::server("the render thread is gone"))?;
+        self.renders.captures.insert(token, wait.capture);
+        Ok(())
     }
 
     /// The `printToPDF` reply: the PDF (inline, or as an `IO` stream) and
@@ -465,7 +621,9 @@ impl EngineHost {
             return Ok(std::rc::Rc::new(std::cell::RefCell::new(Some(Ok(value)))));
         }
         let area = match (spec.clip, spec.full_page, element) {
-            (Some((x, y, width, height)), _, _) => Area::Clip { x, y, width, height, scale: 1.0 },
+            (Some((x, y, width, height)), _, _) => {
+                Area::Clip { x, y, width, height, scale: 1.0, beyond_viewport: false }
+            }
             (None, true, _) => Area::FullPage,
             (None, false, Some(_)) => Area::Element,
             (None, false, None) => Area::Viewport,
@@ -522,8 +680,10 @@ impl EngineHost {
             return;
         }
         let finished = std::mem::take(&mut *self.renders.finished.lock().unwrap_or_else(|e| e.into_inner()));
+        let mut fetched = false;
         for f in finished {
             match f {
+                Finished::Fetched => fetched = true,
                 Finished::Capture(token, result) => {
                     let Some(wait) = self.renders.captures.remove(&token) else { continue };
                     let frame = match result {
@@ -560,6 +720,9 @@ impl EngineHost {
                 }
             }
         }
+        if fetched && !self.renders.pdf_waits.is_empty() {
+            self.resume_pdfs();
+        }
     }
 }
 
@@ -589,4 +752,39 @@ fn match_result(name: &str, o: MatchOutcome, wait: &MatchWait, total_ms: f64) ->
         o.diff_pixels, o.width, o.height
     );
     Err(CdpError::server(message).with_data(Some(v)))
+}
+
+/// `printToPDF` `pageRanges` ("1-5, 8, 11-13"; "-3" from the first page,
+/// "4-" to the last) as 1-based inclusive ranges; `None` when malformed.
+fn parse_page_ranges(ranges: &str) -> Option<Vec<(usize, usize)>> {
+    let page = |s: &str| s.trim().parse::<usize>().ok().filter(|&n| n > 0);
+    ranges
+        .split(',')
+        .map(|range| {
+            let range = range.trim();
+            let (from, to) = match range.split_once('-') {
+                Some((from, to)) if from.trim().is_empty() && to.trim().is_empty() => return None,
+                Some((from, to)) => (
+                    if from.trim().is_empty() { 1 } else { page(from)? },
+                    if to.trim().is_empty() { usize::MAX } else { page(to)? },
+                ),
+                None => (page(range)?, page(range)?),
+            };
+            (from <= to).then_some((from, to))
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_page_ranges;
+
+    #[test]
+    fn page_ranges_parse_like_chrome() {
+        assert_eq!(parse_page_ranges("1-3, 5"), Some(vec![(1, 3), (5, 5)]));
+        assert_eq!(parse_page_ranges("-2,4-"), Some(vec![(1, 2), (4, usize::MAX)]));
+        for bad in ["0", "3-1", "a", "1-2-3", "1,,2", "-"] {
+            assert_eq!(parse_page_ranges(bad), None, "{bad}");
+        }
+    }
 }

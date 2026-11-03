@@ -337,6 +337,9 @@ struct Shared {
     interceptor: Mutex<Option<Arc<dyn Interceptor>>>,
     cache: Mutex<crate::cache::HttpCache>,
     epoch: Instant,
+    /// `Security.setIgnoreCertificateErrors`: HTTPS requests skip certificate
+    /// verification (handshake signatures are still checked).
+    ignore_certificate_errors: std::sync::atomic::AtomicBool,
 }
 
 impl Shared {
@@ -382,6 +385,7 @@ impl NetClient {
             interceptor: Mutex::new(None),
             cache: Mutex::new(cache),
             epoch: Instant::now(),
+            ignore_certificate_errors: std::sync::atomic::AtomicBool::new(false),
         });
         let cookies = Arc::new(Mutex::new(CookieJar::new()));
         let (s2, c2) = (shared.clone(), cookies.clone());
@@ -417,6 +421,12 @@ impl NetClient {
     }
     pub fn update_settings(&self, f: impl FnOnce(&mut NetSettings)) {
         f(&mut self.inner.shared.settings.lock().unwrap());
+    }
+    /// Accepts any server certificate on later HTTPS connections (CDP
+    /// `Security.setIgnoreCertificateErrors`). Connections opened while it
+    /// was off stay pooled for requests made while it is off.
+    pub fn set_ignore_certificate_errors(&self, ignore: bool) {
+        self.inner.shared.ignore_certificate_errors.store(ignore, Ordering::Relaxed);
     }
     /// Subscribes with bounded defaults (1024 events / 8 MiB logical bytes).
     pub fn subscribe(&self) -> NetSubscription {
@@ -577,6 +587,76 @@ fn tls_config() -> Arc<rustls::ClientConfig> {
         .clone()
 }
 
+/// [`tls_config`] without certificate verification, for
+/// [`NetClient::set_ignore_certificate_errors`].
+fn tls_config_insecure() -> Arc<rustls::ClientConfig> {
+    static CONFIG: std::sync::OnceLock<Arc<rustls::ClientConfig>> = std::sync::OnceLock::new();
+    CONFIG
+        .get_or_init(|| {
+            let provider = Arc::new(rustls::crypto::ring::default_provider());
+            let verifier = Arc::new(AnyCertificate(provider.clone()));
+            let config = rustls::ClientConfig::builder_with_provider(provider)
+                .with_safe_default_protocol_versions()
+                .expect("rustls protocol versions")
+                .dangerous()
+                .with_custom_certificate_verifier(verifier)
+                .with_no_client_auth();
+            Arc::new(config)
+        })
+        .clone()
+}
+
+/// Accepts every server certificate; handshake signatures are still verified
+/// with the provider's algorithms.
+#[derive(Debug)]
+struct AnyCertificate(Arc<rustls::crypto::CryptoProvider>);
+
+impl rustls::client::danger::ServerCertVerifier for AnyCertificate {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        _server_name: &rustls::pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(message, cert, dss, &self.0.signature_verification_algorithms)
+    }
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(message, cert, dss, &self.0.signature_verification_algorithms)
+    }
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        self.0.signature_verification_algorithms.supported_schemes()
+    }
+}
+
+/// An HTTP(S) client over `tls`, with this context's connect settings.
+fn http_client(config: &NetConfig, tls: &rustls::ClientConfig) -> HttpClient {
+    let mut connector = HttpConnector::new();
+    connector.set_connect_timeout(Some(config.connect_timeout));
+    connector.set_nodelay(true);
+    connector.enforce_http(false);
+    let connector = hyper_rustls::HttpsConnectorBuilder::new()
+        .with_tls_config(tls.clone())
+        .https_or_http()
+        .enable_http1()
+        .wrap_connector(connector);
+    Client::builder(TokioExecutor::new()).pool_idle_timeout(Duration::from_secs(30)).build(connector)
+}
+
 /// Every client of the process, for [`suspend_for_fork`].
 static CLIENTS: Mutex<Vec<std::sync::Weak<Inner>>> = Mutex::new(Vec::new());
 
@@ -619,6 +699,8 @@ struct Io {
     shared: Arc<Shared>,
     cookies: Arc<Mutex<CookieJar>>,
     client: HttpClient,
+    /// Built at the first request made while certificate errors are ignored.
+    insecure: std::cell::OnceCell<HttpClient>,
     preflight: Mutex<PreflightCache>,
     per_origin: Mutex<HashMap<String, Arc<Semaphore>>>,
 }
@@ -639,20 +721,12 @@ fn io_main(mut rx: mpsc::UnboundedReceiver<Cmd>, shared: Arc<Shared>, cookies: A
     };
     let local = tokio::task::LocalSet::new();
     local.block_on(&rt, async move {
-        let mut connector = HttpConnector::new();
-        connector.set_connect_timeout(Some(shared.config.connect_timeout));
-        connector.set_nodelay(true);
-        connector.enforce_http(false);
-        let connector = hyper_rustls::HttpsConnectorBuilder::new()
-            .with_tls_config((*tls_config()).clone())
-            .https_or_http()
-            .enable_http1()
-            .wrap_connector(connector);
-        let client = Client::builder(TokioExecutor::new()).pool_idle_timeout(Duration::from_secs(30)).build(connector);
+        let client = http_client(&shared.config, &tls_config());
         let io = std::rc::Rc::new(Io {
             shared,
             cookies,
             client,
+            insecure: std::cell::OnceCell::new(),
             preflight: Mutex::new(PreflightCache::default()),
             per_origin: Mutex::new(HashMap::new()),
         });
@@ -801,11 +875,24 @@ impl Decoder {
     }
 }
 
+/// The rustls certificate error inside `io` (hyper-rustls wraps the TLS
+/// stream's `io::Error` in another one).
+fn certificate_error(io: &std::io::Error) -> Option<String> {
+    let inner = io.get_ref()?;
+    if let Some(rustls::Error::InvalidCertificate(c)) = inner.downcast_ref::<rustls::Error>() {
+        return Some(format!("{c:?}"));
+    }
+    certificate_error(inner.downcast_ref::<std::io::Error>()?)
+}
+
 fn classify(e: &hyper_util::client::legacy::Error) -> NetError {
     let mut src: Option<&(dyn std::error::Error + 'static)> = std::error::Error::source(e);
     let mut text = e.to_string();
     while let Some(s) = src {
         if let Some(io) = s.downcast_ref::<std::io::Error>() {
+            if let Some(c) = certificate_error(io) {
+                return NetError::Certificate(c);
+            }
             match io.kind() {
                 std::io::ErrorKind::ConnectionRefused => return NetError::ConnectionRefused,
                 std::io::ErrorKind::TimedOut => return NetError::Timeout,
@@ -927,7 +1014,12 @@ impl Io {
             *h = headers;
         }
         let r = b.body(Full::new(body.unwrap_or_default())).map_err(|_| NetError::InvalidUrl)?;
-        self.client.request(r).await.map_err(|e| classify(&e))
+        let client = if self.shared.ignore_certificate_errors.load(Ordering::Relaxed) {
+            self.insecure.get_or_init(|| http_client(&self.shared.config, &tls_config_insecure()))
+        } else {
+            &self.client
+        };
+        client.request(r).await.map_err(|e| classify(&e))
     }
 
     async fn run(&self, id: RequestId, mut req: Request, sink: &SharedSink) -> Result<(), NetError> {

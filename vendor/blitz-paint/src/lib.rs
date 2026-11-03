@@ -49,6 +49,22 @@ pub fn paint_scene(
     x_offset: u32,
     y_offset: u32,
 ) {
+    paint_scene_with(scene, doc, scale, width, height, x_offset, y_offset, true)
+}
+
+/// [`paint_scene`], with background colors and images left out when
+/// `backgrounds` is false (printing without `printBackground`).
+#[allow(clippy::too_many_arguments)]
+pub fn paint_scene_with(
+    scene: &mut impl PaintScene,
+    doc: &mut BaseDocument,
+    scale: f64,
+    width: u32,
+    height: u32,
+    x_offset: u32,
+    y_offset: u32,
+    backgrounds: bool,
+) {
     // Run `.paint()` on every custom widget in the document (and all subdocuments) ahead of time.
     // This helps us avoid borrow-checker issues as we recurse down the tree (`.paint()` require `&mut self`).
     //
@@ -58,7 +74,7 @@ pub fn paint_scene(
     #[cfg(feature = "custom-widget")]
     build_custom_widget_scenes(&mut custom_widget_scenes, doc, scene, scale);
 
-    let generator = BlitzDomPainter::new(
+    let mut generator = BlitzDomPainter::new(
         doc,
         scale,
         width,
@@ -67,6 +83,7 @@ pub fn paint_scene(
         y_offset as f64,
         &custom_widget_scenes,
     );
+    generator.backgrounds = backgrounds;
     generator.paint_scene(scene);
 
     // println!(

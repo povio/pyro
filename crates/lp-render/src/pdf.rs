@@ -125,16 +125,45 @@ impl PdfCache {
     }
 }
 
+/// Where a page's content goes on paper larger than it (printing with
+/// margins or a scale).
+#[derive(Clone, Copy, Debug)]
+pub struct Placement {
+    /// The page box (pt).
+    pub paper: (f64, f64),
+    /// Top-left corner of the content (pt).
+    pub offset: (f64, f64),
+    /// Content scale (1 = 100%).
+    pub scale: f64,
+}
+
 /// Writes `scene` (device px, document coordinates) as a PDF with one page
-/// per rectangle of `pages`; `scale` converts device px to points.
-pub fn write(scene: &Scene, pages: &[Rect], scale: f64, cache: &mut PdfCache) -> Result<(Vec<u8>, PdfStats), String> {
+/// per rectangle of `pages`; `scale` converts device px to points. Without
+/// a `placement` each page is its rectangle's size.
+pub fn write(
+    scene: &Scene,
+    pages: &[Rect],
+    scale: f64,
+    placement: Option<Placement>,
+    cache: &mut PdfCache,
+) -> Result<(Vec<u8>, PdfStats), String> {
     let mut stats = PdfStats::default();
     let mut doc = krilla::Document::new();
     for page in pages {
-        let (w, h) = ((page.width() * scale) as f32, (page.height() * scale) as f32);
+        let (w, h) = match placement {
+            Some(p) => (p.paper.0 as f32, p.paper.1 as f32),
+            None => ((page.width() * scale) as f32, (page.height() * scale) as f32),
+        };
         let settings = PageSettings::from_wh(w.max(1.0), h.max(1.0)).ok_or("bad page size")?;
         let mut p = doc.start_page_with(settings);
         let mut s = p.surface();
+        let scale = match placement {
+            Some(p) => {
+                s.push_transform(&Transform::from_translate(p.offset.0 as f32, p.offset.1 as f32));
+                scale * p.scale
+            }
+            None => scale,
+        };
         s.push_transform(&Transform::from_scale(scale as f32, scale as f32));
         s.push_transform(&Transform::from_translate(-page.x0 as f32, -page.y0 as f32));
         if let Some(clip) = rect_path(*page) {
@@ -144,6 +173,9 @@ pub fn write(scene: &Scene, pages: &[Rect], scale: f64, cache: &mut PdfCache) ->
         s.pop();
         s.pop();
         s.pop();
+        if placement.is_some() {
+            s.pop();
+        }
         s.finish();
         p.finish();
     }

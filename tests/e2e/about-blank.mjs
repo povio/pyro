@@ -384,7 +384,8 @@ try {
     }
   });
   await check('keyboard.press arrows, selection, select-all and Backspace with macOS editing commands (TOS docubox case)', async () => {
-    // On macOS Playwright attaches editing commands (ArrowRight -> moveRight); on Linux it sends none.
+    // On macOS Playwright attaches editing commands (ArrowRight -> moveRight), which are advisory:
+    // the key's default action runs as on Linux, where Playwright sends none.
     await page.evaluate(() => {
       document.body.innerHTML = '<input id="caret" value="abcd"><button id="tree">tree</button>';
       globalThis.treeKeys = [];
@@ -808,6 +809,19 @@ try {
       assert.equal(await p.evaluate(() => document.activeElement.tagName), 'BODY');
       assert.equal(await f.evaluate(() => document.activeElement.tagName), 'BODY');
       await cdp.detach();
+    } finally { await p.close(); }
+  });
+  await check('page.exposeFunction and exposeBinding survive navigation (Runtime.addBinding)', async () => {
+    const p = await context.newPage();
+    try {
+      const calls = [];
+      await p.exposeFunction('compatSum', (a, b) => { calls.push([a, b]); return a + b; });
+      await p.exposeBinding('compatFrame', ({ frame }) => frame === p.mainFrame());
+      assert.equal(await p.evaluate(() => compatSum(2, 3)), 5, 'exposed on the open page');
+      await p.goto(`${fixtureOrigin}/document`, { timeout: 5000 });
+      assert.equal(await p.evaluate(() => compatSum(10, 20)), 30, 'kept across navigation');
+      assert.equal(await p.evaluate(() => compatFrame()), true);
+      assert.deepEqual(calls, [[2, 3], [10, 20]]);
     } finally { await p.close(); }
   });
   await check('nested child removal preserves sibling worlds and invalidates old handles', async () => {
