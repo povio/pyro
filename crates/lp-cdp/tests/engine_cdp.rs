@@ -387,7 +387,6 @@ fn unsupported_commands_fail_explicitly() {
         // With the `render` feature it renders (see `mod screenshot`).
         #[cfg(not(feature = "render"))]
         "Page.captureScreenshot",
-        "Runtime.addBinding",
     ] {
         let r = h.page(method, json!({}));
         assert_eq!(r["error"]["code"], -32000, "{method}: {r}");
@@ -7144,4 +7143,64 @@ fn driver_stage_trace_bounds_retries_and_keeps_exact_attempt_totals() {
     let detailed_ms: f64 =
         stages.iter().filter(|r| r["event"] == "end").map(|r| r["durationMs"].as_f64().unwrap()).sum();
     assert!(summary["attemptMs"].as_f64().unwrap() >= detailed_ms);
+}
+
+#[test]
+fn runtime_bindings_report_calls_and_survive_navigation() {
+    let mut h = Harness::new();
+    h.page("Runtime.enable", json!({}));
+    let r = h.page("Runtime.addBinding", json!({"name": "sendToHost"}));
+    assert_eq!(r["result"], json!({}), "{r}");
+    assert_eq!(eval_value(&mut h, "typeof sendToHost"), "function", "defined in the live main world");
+    assert_eq!(eval_value(&mut h, "Object.keys(window).includes('sendToHost')"), false, "not enumerable");
+    let messages = h.page_with_events("Runtime.evaluate", json!({"expression": "sendToHost('hi'); 1"}));
+    let called = messages.iter().find(|m| m["method"] == "Runtime.bindingCalled").expect("bindingCalled");
+    assert_eq!(called["params"]["name"], "sendToHost");
+    assert_eq!(called["params"]["payload"], "hi");
+    let r = h.page(
+        "Runtime.evaluate",
+        json!({"expression": "try { sendToHost(1); 'ok' } catch (e) { e.constructor.name }", "returnByValue": true}),
+    );
+    assert_eq!(r["result"]["result"]["value"], "TypeError", "one string only");
+
+    // Kept across navigation, defined before init scripts run.
+    h.page("Page.addScriptToEvaluateOnNewDocument", json!({"source": "window.early = typeof sendToHost"}));
+    load_html(&mut h, "<!doctype html><p>next</p>");
+    assert_eq!(eval_value(&mut h, "early"), "function");
+    let messages = h.page_with_events("Runtime.evaluate", json!({"expression": "sendToHost('after'); 1"}));
+    let called =
+        messages.iter().find(|m| m["method"] == "Runtime.bindingCalled").expect("bindingCalled after navigation");
+    assert_eq!(called["params"]["payload"], "after");
+
+    // A named world only.
+    h.page("Runtime.addBinding", json!({"name": "worldOnly", "executionContextName": "utility"}));
+    assert_eq!(eval_value(&mut h, "typeof worldOnly"), "undefined", "not in the main world");
+    let world = h.page("Page.createIsolatedWorld", json!({"frameId": h.frame_id.clone(), "worldName": "utility"}));
+    let id = world["result"]["executionContextId"].clone();
+    let r =
+        h.page("Runtime.evaluate", json!({"expression": "typeof worldOnly", "contextId": id, "returnByValue": true}));
+    assert_eq!(r["result"]["result"]["value"], "function", "{r}");
+
+    let r = h.page("Runtime.removeBinding", json!({"name": "sendToHost"}));
+    assert_eq!(r["result"], json!({}), "{r}");
+    assert_eq!(eval_value(&mut h, "typeof sendToHost"), "undefined");
+    load_html(&mut h, "<!doctype html><p>again</p>");
+    assert_eq!(eval_value(&mut h, "typeof sendToHost"), "undefined", "not re-added on navigation");
+}
+
+#[test]
+fn runtime_binding_event_carries_the_calling_context() {
+    let mut h = Harness::new();
+    let created = h.page_with_events("Runtime.enable", json!({}));
+    let main = created
+        .iter()
+        .find(|m| {
+            m["method"] == "Runtime.executionContextCreated" && m["params"]["context"]["auxData"]["isDefault"] == true
+        })
+        .map(|m| m["params"]["context"]["id"].clone())
+        .expect("main context");
+    h.page("Runtime.addBinding", json!({"name": "b"}));
+    let messages = h.page_with_events("Runtime.evaluate", json!({"expression": "b('x'); 1"}));
+    let called = messages.iter().find(|m| m["method"] == "Runtime.bindingCalled").expect("bindingCalled");
+    assert_eq!(called["params"]["executionContextId"], main);
 }

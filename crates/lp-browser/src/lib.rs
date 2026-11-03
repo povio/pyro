@@ -254,6 +254,23 @@ pub(crate) fn emit_to(cell: &ObserverCell, page: PageId, event: &PageEvent) {
 
 /// Script evaluated in every new document before page scripts
 /// (`Page.addScriptToEvaluateOnNewDocument`).
+/// A global function reporting its calls to the engine hooks (CDP
+/// `Runtime.addBinding`), defined in every new realm of a page before its
+/// init scripts run.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Binding {
+    pub name: String,
+    /// `None`: every world; `Some(name)`: realms of that world ("" is the
+    /// main world).
+    pub world: Option<String>,
+}
+
+impl Binding {
+    pub(crate) fn applies_to(&self, world: Option<&str>) -> bool {
+        self.world.as_deref().is_none_or(|w| w == world.unwrap_or(""))
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct InitScript {
     pub id: String,
@@ -358,6 +375,8 @@ pub struct Page {
     pub(crate) root_dirty: Cell<bool>,
     pub context: ContextId,
     pub init_scripts: Vec<InitScript>,
+    /// `Runtime.addBinding` functions, kept across navigation.
+    pub bindings: Vec<Binding>,
     document: DocumentState,
     pub(crate) frames: Rc<FrameHost>,
     session_storage: lp_webapi::StorageNamespace,
@@ -752,6 +771,7 @@ impl Browser {
             context,
             root_dirty: Cell::new(true),
             init_scripts,
+            bindings: Vec::new(),
             frames,
             document: DocumentState {
                 main_frame: frame,
@@ -872,6 +892,49 @@ impl Browser {
             }
             None => false,
         }
+    }
+
+    /// Adds `binding` to the page's future realms and defines it in its
+    /// live ones it applies to. A binding of the same name and world is
+    /// replaced. False if there is no such page.
+    pub fn add_binding(&mut self, page: PageId, binding: Binding) -> bool {
+        let Some(p) = self.page_mut(page) else { return false };
+        p.bindings.retain(|b| *b != binding);
+        p.bindings.push(binding.clone());
+        p.frames.settings.borrow_mut().bindings = p.bindings.clone();
+        for realm in self.page_realms(page) {
+            if binding.applies_to(realm.world.as_deref()) {
+                if let Ok(scope) = realm.realm.scope() {
+                    if let Err(e) = scope.install_binding(&binding.name) {
+                        scope.report_exception(&e);
+                    }
+                }
+            }
+        }
+        true
+    }
+
+    /// Removes every binding named `name` from the page and deletes the
+    /// global from its live realms. False if the page has no such binding.
+    pub fn remove_binding(&mut self, page: PageId, name: &str) -> bool {
+        let Some(p) = self.page_mut(page) else { return false };
+        let before = p.bindings.len();
+        p.bindings.retain(|b| b.name != name);
+        if before == p.bindings.len() {
+            return false;
+        }
+        p.frames.settings.borrow_mut().bindings = p.bindings.clone();
+        for realm in self.page_realms(page) {
+            if let Ok(scope) = realm.realm.scope() {
+                let _ = scope.global().delete(name);
+            }
+        }
+        true
+    }
+
+    /// Every live realm of every frame of `page`.
+    fn page_realms(&self, page: PageId) -> Vec<FrameRealm> {
+        self.frames(page).iter().filter_map(|info| self.frame(page, &info.id)).flat_map(|f| f.realms).collect()
     }
 
     pub fn remove_init_script(&mut self, page: PageId, id: &str) -> bool {

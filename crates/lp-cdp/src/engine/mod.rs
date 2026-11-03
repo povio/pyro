@@ -85,6 +85,11 @@ pub(crate) enum Queued {
         exception: JsException,
         timestamp: f64,
     },
+    BindingCalled {
+        realm: RealmId,
+        name: String,
+        payload: String,
+    },
     /// A request announcement or response delivered on the browser thread.
     Network(ContextKey, network_delivery::Observed),
 }
@@ -223,6 +228,11 @@ impl EngineHooks for Collector {
         self.push(Queued::Exception { realm: realm.id(), exception: exception.clone(), timestamp: epoch_ms() });
     }
 
+    // Only pages a session added a binding to call this.
+    fn binding_called(&self, realm: &Realm, name: &str, payload: &str) {
+        self.push(Queued::BindingCalled { realm: realm.id(), name: name.to_owned(), payload: payload.to_owned() });
+    }
+
     fn unhandled_rejection(&self, realm: &Realm, exception: &JsException) {
         if !self.runtime_wanted.get() {
             return;
@@ -247,6 +257,8 @@ pub(crate) struct Session {
     /// Page.setInterceptFileChooserDialog: file inputs report
     /// Page.fileChooserOpened to this session.
     pub(crate) intercept_file_chooser: bool,
+    /// Runtime.addBinding names: their calls are reported to this session.
+    pub(crate) bindings: Vec<String>,
     fetch: fetch::FetchSession,
     pub(crate) handles: Rc<RefCell<HandleTable<Persistent>>>,
 }
@@ -699,6 +711,7 @@ impl EngineHost {
                 Queued::Frame(frame) => self.out.push(frame),
                 Queued::Console { realm, level, args, timestamp } => self.on_console(realm, level, args, timestamp),
                 Queued::Exception { realm, exception, timestamp } => self.on_exception(realm, exception, timestamp),
+                Queued::BindingCalled { realm, name, payload } => self.on_binding_called(realm, name, payload),
             }
         }
     }
@@ -1040,6 +1053,7 @@ impl Host for EngineHost {
                 extra_headers: http::HeaderMap::new(),
                 cache_disabled: false,
                 intercept_file_chooser: false,
+                bindings: Vec::new(),
                 fetch: fetch::FetchSession::default(),
                 handles: Rc::new(RefCell::new(HandleTable::new(self.handle_budget.clone()))),
             },

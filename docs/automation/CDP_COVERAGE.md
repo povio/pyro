@@ -19,7 +19,7 @@ Capture uses a shared process payload budget (default 64 MiB, 8 MiB/body), at mo
 
 The browser integration smoke also exercises DOM access before init scripts, shared DOM across isolated worlds, page fetch with exact Network frame/loader correlation, route fulfillment/abort after headers, and Web Storage context/page/navigation isolation. These checks use local HTTP and JavaScript evaluation; The full DOM protocol and actual TOS workflows remain unvalidated. A separate Input check covers keyboard typing/text insertion and mouse checkbox activation; editing commands and pen/touch remain unsupported; native drag-and-drop works under Playwright's drag interception; wheel default scrolling follows the synthetic layout. Mouse coordinates follow the native synthetic layout, not full CSS positioning; the smoke derives its click point from the reported rectangle and verifies the exact hit target.
 
-Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 53 engine, 7 accepted/recorded only, 2 conditional, 39 pending (counts from the table below).
+Methods: 102 (Playwright 1.59.1's static list plus the session methods it sends that the list misses). Upstream implements 81 of them. Rewrite: 56 engine, 7 accepted/recorded only, 2 conditional, 37 pending (counts from the table below).
 
 | Method | Upstream 2ad38773f | Rewrite | Notes |
 | --- | --- | --- | --- |
@@ -102,12 +102,13 @@ Playwright 1.59.1 methods: 101. Upstream implements 81 of them. Rewrite: 53 engi
 | `Profiler.startPreciseCoverage` | **no** | pending |  |
 | `Profiler.stopPreciseCoverage` | **no** | pending |  |
 | `Profiler.takePreciseCoverage` | **no** | pending |  |
-| `Runtime.addBinding` | yes | pending |  |
+| `Runtime.addBinding` | yes | engine | defines a non-enumerable global taking one string in the page's realms (every world, or `executionContextName`'s; `executionContextId` covers that context only), now and in every later realm before init scripts run, so it survives navigation; calls emit `Runtime.bindingCalled` {name, payload, executionContextId} to the sessions that added it (Playwright `exposeFunction`/`exposeBinding`) |
 | `Runtime.callFunctionOn` | yes | engine |  |
 | `Runtime.enable` | yes | engine |  |
 | `Runtime.evaluate` | yes | engine |  |
 | `Runtime.getProperties` | yes | engine |  |
 | `Runtime.releaseObject` | yes | engine |  |
+| `Runtime.removeBinding` | **no** | engine | removes the binding from the page's future realms and deletes the global from live ones once no session of the page uses it |
 | `Runtime.runIfWaitingForDebugger` | yes | engine | starts a paused popup's navigation; other targets never start paused |
 | `Security.setIgnoreCertificateErrors` | yes | pending |  |
 | `Storage.clearCookies` | yes | engine | per-context native cookie jar; omitted context uses a distinct default context |

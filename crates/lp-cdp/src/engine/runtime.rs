@@ -312,6 +312,54 @@ impl EngineHost {
                 self.update_runtime_wanted();
                 Ok(Some(json!({})))
             }
+            // Defined in the page's matching realms now and in every new one
+            // (before init scripts); calls come back as Runtime.bindingCalled.
+            "addBinding" => {
+                #[derive(Deserialize)]
+                #[serde(rename_all = "camelCase")]
+                struct P {
+                    name: String,
+                    execution_context_id: Option<ExecutionContextId>,
+                    execution_context_name: Option<String>,
+                }
+                let p: P = cmd.command.params()?;
+                if p.name.is_empty() {
+                    return Err(CdpError::invalid_params("binding name must not be empty"));
+                }
+                if p.execution_context_id.is_some() && p.execution_context_name.is_some() {
+                    return Err(CdpError::invalid_params(
+                        "executionContextName is mutually exclusive with executionContextId",
+                    ));
+                }
+                if let Some(id) = p.execution_context_id {
+                    // Deprecated in Chrome: that context only, not kept.
+                    let realm = self.target_realm(cmd.page, Some(id))?;
+                    realm.scope().and_then(|s| s.install_binding(&p.name)).map_err(remote::js_to_cdp)?;
+                } else {
+                    let pid = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?.id;
+                    let binding = lp_browser::Binding { name: p.name.clone(), world: p.execution_context_name };
+                    self.thread.browser.add_binding(pid, binding);
+                }
+                let session = self.session_mut(cmd.session_id)?;
+                if !session.bindings.contains(&p.name) {
+                    session.bindings.push(p.name);
+                }
+                Ok(Some(json!({})))
+            }
+            "removeBinding" => {
+                #[derive(Deserialize)]
+                struct P {
+                    name: String,
+                }
+                let name = cmd.command.params::<P>()?.name;
+                self.session_mut(cmd.session_id)?.bindings.retain(|b| *b != name);
+                // Other sessions of the page may still use it.
+                if self.sessions_of(cmd.page, |s| s.bindings.contains(&name)).is_empty() {
+                    let pid = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?.id;
+                    self.thread.browser.remove_binding(pid, &name);
+                }
+                Ok(Some(json!({})))
+            }
             "evaluate" => self.evaluate(cmd).map(|()| None),
             "callFunctionOn" => self.call_function_on(cmd).map(|()| None),
             "getProperties" => self.get_properties(cmd).map(Some),
@@ -517,6 +565,15 @@ impl EngineHost {
         let id = self.next_exception_id;
         self.next_exception_id += 1;
         id
+    }
+
+    /// `Runtime.bindingCalled` to the page's sessions that added the binding.
+    pub(super) fn on_binding_called(&mut self, realm_id: RealmId, name: String, payload: String) {
+        let Some(page) = self.page_of_realm(realm_id) else { return };
+        let params = json!({ "name": name, "payload": payload, "executionContextId": context_id(realm_id) });
+        for session_id in self.sessions_of(page, |s| s.bindings.contains(&name)) {
+            self.event("Runtime.bindingCalled", &params, &session_id);
+        }
     }
 
     pub(super) fn on_console(&mut self, realm_id: RealmId, level: ConsoleLevel, args: Vec<Persistent>, timestamp: f64) {
