@@ -609,10 +609,12 @@ impl Renderer {
             }
         };
         let mirrored = started.elapsed();
-        let (fetch, passes) = bridge.settle(doc, started + self.fetch_timeout, self.first_layout_wait);
+        let (fetch, passes, resolved_latest) = bridge.settle(doc, started + self.fetch_timeout, self.first_layout_wait);
         timings.layout_passes = passes;
         let resolving = Instant::now();
-        doc.resolve(0.0);
+        if !resolved_latest {
+            doc.resolve(0.0);
+        }
         sync_profile::record(
             mirrored,
             started.elapsed().saturating_sub(mirrored + resolving.elapsed()),
@@ -738,7 +740,8 @@ impl Renderer {
         let mirrored = started.elapsed();
         let mirror::Mirror { doc, bridge, .. } = m;
         let geometry_generation = doc.root_node().tree().geometry_generation();
-        let (fetch, passes) = bridge.settle(doc, started + self.fetch_timeout, self.first_layout_wait);
+        let (fetch, passes, _resolved_latest) =
+            bridge.settle(doc, started + self.fetch_timeout, self.first_layout_wait);
         let resolving = Instant::now();
         match style_only {
             true => doc.resolve_style(0.0),
@@ -1144,4 +1147,157 @@ fn ensure<R: ImageRenderer>(slot: &mut Option<(R, (u32, u32))>, w: u32, h: u32) 
         None => *slot = Some((R::new(w, h), (w, h))),
     }
     &mut slot.as_mut().expect("renderer").0
+}
+
+#[cfg(test)]
+mod settle_resolution_tests {
+    use super::*;
+    use lp_dom::parse::{parse_document, DomRef};
+    use lp_dom::snapshot::{render_key, RenderHtml, RenderNodeKind};
+    use std::{cell::RefCell, rc::Rc};
+
+    struct NoFetch;
+    impl Fetcher for NoFetch {
+        fn fetch(&self, _url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+            done(Err("offline".into()));
+        }
+    }
+
+    fn fixture(html: &str) -> (Snapshot, u64) {
+        let dom: DomRef = Rc::new(RefCell::new(lp_dom::Dom::new()));
+        let doc = parse_document(&dom, "http://test/", html);
+        let d = dom.borrow();
+        let target = render_key(d.get_element_by_id(doc, "box").unwrap().unwrap());
+        let tree =
+            d.render_tree(doc, &RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None }).unwrap();
+        let tree = Tree {
+            nodes: tree
+                .nodes
+                .into_iter()
+                .map(|node| TreeNode {
+                    key: node.key,
+                    parent: node.parent,
+                    kind: match node.kind {
+                        RenderNodeKind::Element { name, attrs } => TreeKind::Element { name, attrs },
+                        RenderNodeKind::Text(text) => TreeKind::Text(text),
+                    },
+                })
+                .collect(),
+        };
+        (
+            Snapshot {
+                base_url: "http://test/".into(),
+                width: 200,
+                height: 100,
+                device_scale_factor: 1.0,
+                live: Some(Live { page: 1, tree: Arc::new(tree), clip: None }),
+                ..Default::default()
+            },
+            target,
+        )
+    }
+
+    #[test]
+    fn settled_clean_prepare_resolves_once_with_identical_geometry_and_paint() {
+        let (snap, key) = fixture("<!doctype html><style>body{margin:0}#box{width:50px;height:20px;background:blue}</style><div id=box></div>");
+        let fetcher: Arc<dyn Fetcher> = Arc::new(NoFetch);
+        let mut renderer = Renderer::new();
+        let before = renderer.paint(&snap, Area::Viewport, &fetcher).unwrap().hash;
+        let generation = renderer.mirrors[&1].doc.root_node().tree().geometry_generation();
+        renderer.sync_layout(&snap, &fetcher).unwrap();
+        let advances = renderer.mirrors[&1].doc.root_node().tree().geometry_generation() - generation;
+        let bounds = renderer.element_box(1, key).unwrap();
+        assert_eq!((bounds.x, bounds.y, bounds.width, bounds.height), (0.0, 0.0, 50.0, 20.0));
+        assert_eq!(renderer.paint(&snap, Area::Viewport, &fetcher).unwrap().hash, before);
+        eprintln!("clean prepare full resolve generation advances={advances}");
+        assert_eq!(advances, 1, "settle already resolved the unchanged resource-free document");
+    }
+
+    #[test]
+    fn rootless_live_prepare_and_delta_remain_safe() {
+        let (snap, _) = fixture("<!doctype html><div id=box></div>");
+        let fetcher: Arc<dyn Fetcher> = Arc::new(NoFetch);
+        let mut renderer = Renderer::new();
+        renderer.sync_layout(&snap, &fetcher).unwrap();
+        let mut empty = snap.clone();
+        empty.live.as_mut().unwrap().tree = Arc::new(Tree::default());
+        renderer.sync_layout(&empty, &fetcher).unwrap();
+        let mut renderer = Renderer::new();
+        renderer.sync_layout(&snap, &fetcher).unwrap();
+        renderer
+            .sync_delta(
+                1,
+                &[DeltaOp::Children { parent: None, kids: Vec::new(), nodes: Vec::new() }],
+                (200, 100, 1.0, false),
+                false,
+            )
+            .unwrap();
+    }
+
+    type Delivery = Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>;
+    #[derive(Default)]
+    struct PartialState {
+        trigger: bool,
+        delivered: bool,
+        image: Option<Delivery>,
+    }
+    #[derive(Default)]
+    struct PartialResources {
+        state: Mutex<PartialState>,
+        held: Mutex<Vec<Delivery>>,
+    }
+    impl Fetcher for PartialResources {
+        fn fetch(&self, url: String, done: Delivery) {
+            let image = if url.ends_with("late.svg") {
+                let mut state = self.state.lock().unwrap();
+                if state.trigger {
+                    state.delivered = true;
+                    Some(done)
+                } else {
+                    state.image = Some(done);
+                    None
+                }
+            } else if url.ends_with("trigger.ttf") {
+                let image = {
+                    let mut state = self.state.lock().unwrap();
+                    state.trigger = true;
+                    let image = state.image.take();
+                    state.delivered |= image.is_some();
+                    image
+                };
+                self.held.lock().unwrap().push(done);
+                image
+            } else {
+                self.held.lock().unwrap().push(done);
+                None
+            };
+            if let Some(done) = image {
+                done(Ok(br#"<svg xmlns="http://www.w3.org/2000/svg" width="60" height="20"><rect width="60" height="20" fill="blue"/></svg>"#.to_vec()));
+            }
+        }
+    }
+
+    #[test]
+    fn late_resource_after_fallback_is_resolved_when_another_resource_times_out() {
+        // The font is first requested during fallback resolution. Deliver A
+        // into Bridge's channel then, while B/font remain pending. Bridge
+        // handles A on its next receive, then reaches the deadline with prior
+        // positive passes: the final resolve must apply A's intrinsic size.
+        let (snap,key) = fixture("<!doctype html><style>@font-face{font-family:SettlePartial;src:url(trigger.ttf)}body{margin:0;font-family:SettlePartial,serif}img{display:block}</style>font trigger<img id=box src=late.svg><img src=never.svg>");
+        let partial = Arc::new(PartialResources::default());
+        let fetcher: Arc<dyn Fetcher> = partial.clone();
+        let mut renderer = Renderer::new();
+        renderer.fetch_timeout = Duration::from_millis(80);
+        renderer.first_layout_wait = Duration::ZERO;
+        let timings = renderer.sync_layout(&snap, &fetcher).unwrap();
+        let state = partial.state.lock().unwrap();
+        assert!(state.trigger && state.delivered, "the late-resource control must actually deliver A during layout");
+        assert!(timings.layout_passes > 0, "the timeout must follow a fallback pass");
+        let bounds = renderer.element_box(1, key).unwrap();
+        assert_eq!(
+            (bounds.width, bounds.height),
+            (60.0, 20.0),
+            "newly handled image bytes need their final layout even with prior passes"
+        );
+    }
 }

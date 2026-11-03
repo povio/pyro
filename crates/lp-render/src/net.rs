@@ -141,7 +141,8 @@ impl Bridge {
     /// Resolves the document until no sub-resource is outstanding (styles
     /// can request images and fonts, sheets can request more), or until
     /// `deadline`. Returns the time spent waiting for fetches and the number
-    /// of style and layout passes.
+    /// of style and layout passes, and whether the latest resource state
+    /// was fully resolved with no follow-up style/layout damage.
     ///
     /// The first layout waits for what the document has asked for so far
     /// (sheets, `@font-face` fonts, images), at most `first_layout_wait`
@@ -154,7 +155,7 @@ impl Bridge {
         doc: &mut BaseDocument,
         deadline: Instant,
         first_layout_wait: Duration,
-    ) -> (Duration, u32) {
+    ) -> (Duration, u32, bool) {
         let mut waited = Duration::ZERO;
         let mut passes = 0;
         let mut first_layout = Some(Instant::now() + first_layout_wait);
@@ -180,7 +181,9 @@ impl Bridge {
                         // Render with what arrived; pending sheets would block
                         // painting, so they are dropped.
                         doc.handle_messages();
-                        return (waited, passes);
+                        // Even prior positive passes can precede these newly
+                        // handled bytes. The caller must resolve them now.
+                        return (waited, passes, false);
                     }
                 }
             }
@@ -193,7 +196,15 @@ impl Bridge {
             doc.resolve(0.0);
             passes += 1;
             if self.outstanding.load(Ordering::Acquire) == 0 {
-                return (waited, passes);
+                // A resolve may refresh hover after clearing damage, leaving
+                // another style pass necessary. Only elide a truly clean pass.
+                let clean = doc.try_root_element().is_some_and(|root| {
+                    !root.has_dirty_descendants()
+                        && !root.has_damaged_descendants()
+                        && !root.has_snapshot()
+                        && root.damage().is_some_and(|damage| damage.is_empty())
+                });
+                return (waited, passes, clean);
             }
         }
     }

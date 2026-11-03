@@ -593,6 +593,10 @@ enum Attempt {
 struct RunStepTrace {
     process_id: u32,
     active: Cell<Option<usize>>,
+    attempts_started: Cell<u64>,
+    attempts_completed: Cell<u64>,
+    attempt_ms: Cell<f64>,
+    post_eval_turn: Cell<Option<Instant>>,
 }
 
 impl RunStepTrace {
@@ -611,6 +615,91 @@ impl RunStepTrace {
         );
         // An unavailable diagnostic sink must not fail the browser action.
         let _ = std::io::stderr().lock().write_all(line.as_bytes());
+    }
+}
+
+// Detailed records are bounded independently of retries. A terminal summary
+// still reports every completed attempt; cancellation never fabricates one.
+const TRACE_ATTEMPT_LIMIT: u64 = 8;
+
+#[derive(Clone, Copy)]
+struct RunStageContext {
+    process_id: u32,
+    run_id: u64,
+    step: usize,
+    started: Instant,
+}
+
+impl RunStageContext {
+    fn record(self, stage: &'static str, event: &'static str) -> Value {
+        json!({ "pid": self.process_id, "runId": self.run_id, "step": self.step,
+            "stage": stage, "event": event, "elapsedMs": self.started.elapsed().as_secs_f64() * 1e3 })
+    }
+
+    fn span(self, stage: &'static str) -> RunStageSpan {
+        emit_run_stage(self.record(stage, "start"));
+        RunStageSpan { context: self, stage, started: Instant::now(), finished: false }
+    }
+}
+
+fn emit_run_stage(record: Value) {
+    use std::io::Write;
+    let line = format!("lp-run-stage {}\n", record);
+    let _ = std::io::stderr().lock().write_all(line.as_bytes());
+}
+
+struct RunStageSpan {
+    context: RunStageContext,
+    stage: &'static str,
+    started: Instant,
+    finished: bool,
+}
+impl RunStageSpan {
+    fn finish(mut self, outcome: &'static str) {
+        self.finished = true;
+        self.emit("end", outcome);
+    }
+    fn emit(&self, event: &'static str, outcome: &'static str) {
+        let mut record = self.context.record(self.stage, event);
+        record["durationMs"] = json!(self.started.elapsed().as_secs_f64() * 1e3);
+        record["outcome"] = json!(outcome);
+        emit_run_stage(record);
+    }
+}
+impl Drop for RunStageSpan {
+    fn drop(&mut self) {
+        if !self.finished {
+            self.emit("error", "error");
+        }
+    }
+}
+
+struct RunAttemptSpan<'a> {
+    trace: &'a RunStepTrace,
+    context: RunStageContext,
+    stage: &'static str,
+    number: u64,
+    started: Instant,
+}
+impl RunAttemptSpan<'_> {
+    fn finish(self, attempt: Option<&Attempt>) {
+        let ms = self.started.elapsed().as_secs_f64() * 1e3;
+        self.trace.attempts_completed.set(self.trace.attempts_completed.get() + 1);
+        self.trace.attempt_ms.set(self.trace.attempt_ms.get() + ms);
+        if self.number <= TRACE_ATTEMPT_LIMIT {
+            let outcome = match attempt {
+                Some(Attempt::Done(_)) => "done",
+                Some(Attempt::Retry(_)) => "retry",
+                Some(Attempt::RetrySoon(_)) => "retrySoon",
+                Some(Attempt::Continue(_)) => "continue",
+                None => "error",
+            };
+            let mut record = self.context.record(self.stage, if attempt.is_some() { "end" } else { "error" });
+            record["attempt"] = json!(self.number);
+            record["durationMs"] = json!(ms);
+            record["outcome"] = json!(outcome);
+            emit_run_stage(record);
+        }
     }
 }
 
@@ -654,7 +743,56 @@ impl Job {
             return;
         }
         trace.active.set(Some(self.index));
+        trace.attempts_started.set(0);
+        trace.attempts_completed.set(0);
+        trace.attempt_ms.set(0.0);
+        trace.post_eval_turn.set(None);
         trace.emit(self, step.trace_kind(), "start");
+    }
+
+    fn trace_stage_context(&self) -> Option<RunStageContext> {
+        self.trace.as_ref().map(|trace| RunStageContext {
+            process_id: trace.process_id,
+            run_id: self.id,
+            step: self.index,
+            started: self.started,
+        })
+    }
+
+    fn trace_attempt(&self, stage: &'static str) -> Option<RunAttemptSpan<'_>> {
+        let trace = self.trace.as_ref()?;
+        let context = self.trace_stage_context()?;
+        let number = trace.attempts_started.get() + 1;
+        trace.attempts_started.set(number);
+        if number <= TRACE_ATTEMPT_LIMIT {
+            let mut record = context.record(stage, "start");
+            record["attempt"] = json!(number);
+            emit_run_stage(record);
+        } else if number == TRACE_ATTEMPT_LIMIT + 1 {
+            let mut record = context.record(stage, "truncated");
+            record["completedAttempts"] = json!(trace.attempts_completed.get());
+            record["attemptMs"] = json!(trace.attempt_ms.get());
+            emit_run_stage(record);
+        }
+        Some(RunAttemptSpan { trace, context, stage, number, started: Instant::now() })
+    }
+
+    fn trace_post_eval_turn_start(&self) {
+        if let (Some(trace), Some(context)) = (&self.trace, self.trace_stage_context()) {
+            emit_run_stage(context.record("post_eval_turn", "start"));
+            trace.post_eval_turn.set(Some(Instant::now()));
+        }
+    }
+
+    fn trace_post_eval_turn_finish(&self, event: &'static str) {
+        if let (Some(trace), Some(context)) = (&self.trace, self.trace_stage_context()) {
+            if let Some(started) = trace.post_eval_turn.take() {
+                let mut record = context.record("post_eval_turn", event);
+                record["durationMs"] = json!(started.elapsed().as_secs_f64() * 1e3);
+                record["outcome"] = json!(if event == "error" { "error" } else { "done" });
+                emit_run_stage(record);
+            }
+        }
     }
 
     fn trace_step_end(&self) {
@@ -668,6 +806,17 @@ impl Job {
     fn trace_step_finish(&self, event: &'static str) {
         let (Some(trace), Some((step, _))) = (&self.trace, self.steps.get(self.index)) else { return };
         if trace.active.take() == Some(self.index) {
+            self.trace_post_eval_turn_finish(event);
+            if trace.attempts_started.get() > 0 {
+                let stage = if matches!(step, Step::Request(_)) { "request_attempt" } else { "check_attempt" };
+                let mut record = self.trace_stage_context().expect("trace present").record(stage, "summary");
+                record["startedAttempts"] = json!(trace.attempts_started.get());
+                record["completedAttempts"] = json!(trace.attempts_completed.get());
+                record["attemptMs"] = json!(trace.attempt_ms.get());
+                record["recordedAttempts"] = json!(trace.attempts_started.get().min(TRACE_ATTEMPT_LIMIT));
+                record["truncated"] = json!(trace.attempts_started.get() > TRACE_ATTEMPT_LIMIT);
+                emit_run_stage(record);
+            }
             trace.emit(self, step.trace_kind(), event);
         }
     }
@@ -3724,8 +3873,16 @@ impl EngineHost {
             single,
             started: now,
             // Read once for this LP.run; never on a DOM read or retry.
-            trace: (!single && std::env::var("LP_RUN_STEP_TRACE").is_ok_and(|value| value == "1"))
-                .then(|| RunStepTrace { process_id: std::process::id(), active: Cell::new(None) }),
+            trace: (!single && std::env::var("LP_RUN_STEP_TRACE").is_ok_and(|value| value == "1")).then(|| {
+                RunStepTrace {
+                    process_id: std::process::id(),
+                    active: Cell::new(None),
+                    attempts_started: Cell::new(0),
+                    attempts_completed: Cell::new(0),
+                    attempt_ms: Cell::new(0.0),
+                    post_eval_turn: Cell::new(None),
+                }
+            }),
             log_from,
             downloads_from,
             popups_from,
@@ -3834,6 +3991,7 @@ impl EngineHost {
                     }
                     let Some(mut seq) = seq else {
                         // The turn after a step.
+                        w.job.trace_post_eval_turn_finish("end");
                         self.next_step(&mut w);
                         continue;
                     };
@@ -3945,7 +4103,14 @@ impl EngineHost {
                     )
                     .then(|| requests_of(&self.thread.browser, pid));
                     let (attempt, page) = match &step {
-                        Step::Request(m) => (self.match_request(&w.job, m), None),
+                        Step::Request(m) => {
+                            let span = w.job.trace_attempt("request_attempt");
+                            let attempt = self.match_request(&w.job, m);
+                            if let Some(span) = span {
+                                span.finish(Some(&attempt));
+                            }
+                            (attempt, None)
+                        }
                         Step::Url(pattern) => {
                             let url =
                                 self.thread.browser.page(pid).map(|p| p.main_frame.url.clone()).unwrap_or_default();
@@ -4009,7 +4174,10 @@ impl EngineHost {
                             (Attempt::Done(json!({ "advanced": ms })), None)
                         }
                         Step::Eval { expression, .. } => {
-                            match self.eval_step(pid, expression).map_err(|e| w.job.fail(e))? {
+                            match self
+                                .eval_step(pid, expression, w.job.trace_stage_context())
+                                .map_err(|e| w.job.fail(e))?
+                            {
                                 Evaluated::Value(value) => (Attempt::Done(value), None),
                                 Evaluated::Pending(settled) => {
                                     w.phase = Phase::Await(settled);
@@ -4061,7 +4229,7 @@ impl EngineHost {
                                     "history.pushState(null, '', {url}); \
                                      dispatchEvent(new PopStateEvent('popstate', {{ state: history.state }})); null"
                                 );
-                                self.eval_step(pid, &src).map_err(|e| w.job.fail(e))?;
+                                self.eval_step(pid, &src, None).map_err(|e| w.job.fail(e))?;
                                 (Attempt::Done(json!({})), None)
                             }
                         }
@@ -4075,7 +4243,16 @@ impl EngineHost {
                         }
                         _ => {
                             let page = self.main_document(w.job.page).map_err(|e| w.job.fail(e))?;
-                            let (attempt, scope) = self.attempt(pid, &page, &step).map_err(|e| w.job.fail(e))?;
+                            let span = if matches!(&step, Step::Check { .. }) {
+                                w.job.trace_attempt("check_attempt")
+                            } else {
+                                None
+                            };
+                            let attempted = self.attempt(pid, &page, &step);
+                            if let Some(span) = span {
+                                span.finish(attempted.as_ref().ok().map(|(attempt, _)| attempt));
+                            }
+                            let (attempt, scope) = attempted.map_err(|e| w.job.fail(e))?;
                             (attempt, Some(scope))
                         }
                     };
@@ -4129,6 +4306,9 @@ impl EngineHost {
             }
             None if matches!(step, Step::Act { .. } | Step::Eval { .. } | Step::AdvanceTime { .. }) => {
                 w.phase = Phase::Act { seq: None, before: None, hop: None, at: now + TURN };
+                if matches!(step, Step::Eval { .. }) {
+                    w.job.trace_post_eval_turn_start();
+                }
             }
             None => self.next_step(w),
         }
@@ -4300,13 +4480,14 @@ impl EngineHost {
 
     /// Evaluates `src` in the page's main world; its JSON value, or the
     /// settlement of the promise it returned (as `page.evaluate` awaits one).
-    fn eval_step(&mut self, pid: PageId, src: &str) -> CdpResult<Evaluated> {
+    fn eval_step(&mut self, pid: PageId, src: &str, trace: Option<RunStageContext>) -> CdpResult<Evaluated> {
         let realm = self
             .thread
             .browser
             .page(pid)
             .and_then(|p| p.main_frame.main_realm().cloned())
             .ok_or_else(|| CdpError::server("page has no realm"))?;
+        let api = trace.map(|context| context.span("eval_api"));
         let value = {
             let scope = realm.scope().map_err(super::remote::js_to_cdp)?;
             match scope.eval(src, Some("lp-run"), 1) {
@@ -4326,7 +4507,14 @@ impl EngineHost {
                 Err(e) => return Err(CdpError::server(format!("threw: {}", e.details(&scope).message))),
             }
         };
+        if let Some(api) = api {
+            api.finish(if matches!(&value, Evaluated::Pending(_)) { "pending" } else { "done" });
+        }
+        let checkpoint = trace.map(|context| context.span("eval_checkpoint"));
         self.thread.browser.checkpoint();
+        if let Some(checkpoint) = checkpoint {
+            checkpoint.finish("done");
+        }
         Ok(value)
     }
 
