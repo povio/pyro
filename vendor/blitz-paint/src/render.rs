@@ -123,6 +123,8 @@ pub struct BlitzDomPainter<'dom, 'a> {
     pub(crate) draw_text_context: RefCell<DrawTextContext>,
     /// Cached selection ranges for O(1) lookup: node_id -> (start_offset, end_offset)
     pub(crate) selection_ranges: HashMap<NodeId, (usize, usize)>,
+    /// Paint background colors and images (false: printing without them).
+    pub backgrounds: bool,
 
     // Pre-computed `Scene`s for each CustomWidget
     pub(crate) custom_widget_scenes: &'a CustomWidgetSceneMap,
@@ -163,6 +165,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             layer_manager,
             draw_text_context: RefCell::new(DrawTextContext::default()),
             selection_ranges,
+            backgrounds: true,
             custom_widget_scenes,
         }
     }
@@ -218,7 +221,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             }
         };
 
-        if let Some(bg_color) = background_color {
+        if let Some(bg_color) = background_color.filter(|_| self.backgrounds) {
             let bg_color = bg_color.as_srgb_color();
             let rect = Rect::from_origin_size(
                 (self.initial_x, self.initial_y),
@@ -526,9 +529,13 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                     filter,
                     backdrop_filter,
                     |scene| {
-                        cx.draw_background(scene);
+                        if cx.context.backgrounds {
+                            cx.draw_background(scene);
+                        }
                         cx.draw_inset_box_shadow(scene);
-                        cx.draw_table_row_backgrounds(scene);
+                        if cx.context.backgrounds {
+                            cx.draw_table_row_backgrounds(scene);
+                        }
                         cx.draw_table_borders(scene);
                         cx.draw_border(scene);
                         cx.stroke_devtools(scene);
@@ -865,13 +872,15 @@ impl ElementCx<'_, '_> {
 
             // Render inline element backgrounds (e.g. `<span style="background: ...">`)
             // behind the text and selection highlight.
-            crate::text::draw_inline_backgrounds(
-                scene,
-                text_layout.layout.lines(),
-                self.context.dom,
-                transform,
-                self.node.id,
-            );
+            if self.context.backgrounds {
+                crate::text::draw_inline_backgrounds(
+                    scene,
+                    text_layout.layout.lines(),
+                    self.context.dom,
+                    transform,
+                    self.node.id,
+                );
+            }
 
             // Render text selection highlight (if any) using cached selection ranges
             if let Some(&(sel_start, sel_end)) = self.context.selection_ranges.get(&self.node.id) {

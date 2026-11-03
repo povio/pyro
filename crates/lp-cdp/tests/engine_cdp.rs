@@ -387,15 +387,62 @@ fn unsupported_commands_fail_explicitly() {
         // With the `render` feature it renders (see `mod screenshot`).
         #[cfg(not(feature = "render"))]
         "Page.captureScreenshot",
-        "Runtime.addBinding",
     ] {
         let r = h.page(method, json!({}));
         assert_eq!(r["error"]["code"], -32000, "{method}: {r}");
     }
     let r = h.page("Fetch.enable", json!({"patterns":[{"requestStage":"Response"}]}));
     assert!(r["error"]["message"].as_str().unwrap().contains("not supported"), "{r}");
-    let r = h.page("Emulation.setLocaleOverride", json!({"locale":"xx-XX"}));
-    assert!(r["error"]["message"].as_str().unwrap().contains("not supported"), "{r}");
+}
+
+#[test]
+fn locale_and_timezone_overrides_are_recorded_and_locale_sets_languages() {
+    let mut h = Harness::new();
+    let langs = |h: &mut Harness| {
+        let r = h.page("Runtime.evaluate", json!({"expression":"navigator.languages.join()","returnByValue":true}));
+        r["result"]["result"]["value"].as_str().unwrap().to_owned()
+    };
+    let default = langs(&mut h);
+    let r = h.page("Emulation.setLocaleOverride", json!({"locale":"de-DE"}));
+    assert_eq!(r["result"], json!({}), "{r}");
+    assert_eq!(langs(&mut h), "de-DE");
+    // An explicit acceptLanguage wins over the locale.
+    h.page("Emulation.setUserAgentOverride", json!({"userAgent":"", "acceptLanguage":"fr-FR,fr"}));
+    assert_eq!(langs(&mut h), "fr-FR,fr");
+    h.page("Emulation.setUserAgentOverride", json!({"userAgent":""}));
+    assert_eq!(langs(&mut h), "de-DE", "locale applies again once the explicit override is cleared");
+    let r = h.page("Emulation.setLocaleOverride", json!({}));
+    assert_eq!(r["result"], json!({}), "{r}");
+    assert_eq!(langs(&mut h), default, "absent locale resets");
+    let r = h.page("Emulation.setLocaleOverride", json!({"locale":"de DE"}));
+    assert_eq!(r["error"]["code"], -32602, "{r}");
+
+    for id in ["Europe/Ljubljana", "America/Argentina/Buenos_Aires", "Etc/GMT+5", "UTC", ""] {
+        let r = h.page("Emulation.setTimezoneOverride", json!({"timezoneId": id}));
+        assert_eq!(r["result"], json!({}), "{id}: {r}");
+    }
+    for id in ["Europe//Paris", "../etc", "Europe/", " UTC"] {
+        let r = h.page("Emulation.setTimezoneOverride", json!({"timezoneId": id}));
+        assert!(r["error"]["message"].as_str().unwrap().starts_with("Invalid timezone"), "{id}: {r}");
+    }
+}
+
+#[test]
+fn security_ignores_certificate_errors_on_page_and_browser_sessions() {
+    let mut h = Harness::new();
+    for (method, params) in [
+        ("Security.enable", json!({})),
+        ("Security.setIgnoreCertificateErrors", json!({"ignore": true})),
+        ("Security.setIgnoreCertificateErrors", json!({"ignore": false})),
+        ("Security.disable", json!({})),
+    ] {
+        let r = h.page(method, params.clone());
+        assert_eq!(r["result"], json!({}), "page {method}: {r}");
+        let r = h.call(None, method, params);
+        assert_eq!(r["result"], json!({}), "browser {method}: {r}");
+    }
+    let r = h.call(None, "Security.setIgnoreCertificateErrors", json!({}));
+    assert_eq!(r["error"]["code"], -32602, "ignore is required: {r}");
 }
 
 #[test]
@@ -1127,7 +1174,6 @@ fn input_validation_rejects_before_delivering_events() {
         json!({"type":"invalid"}),
         json!({"type":"keyDown","modifiers":16}),
         json!({"type":"keyDown","location":4}),
-        json!({"type":"keyDown","commands":["undo"]}),
         json!({"type":"keyDown","timestamp":1}),
         json!({"type":"keyDown","windowsVirtualKeyCode":256}),
     ] {
@@ -2430,42 +2476,30 @@ fn input_accepts_mac_key_derived_editing_commands() {
             "ArrowDown"
         ])
     );
-    // Commands the engine would not carry out (Playwright derives scrolling,
-    // clipboard, undo and word movement too), and commands that are not the
-    // key's own encoding, are refused without delivering events.
-    for (key, code, modifiers, commands) in [
+    // Commands are advisory (Playwright derives scrolling, clipboard, undo
+    // and word movement too, and Emacs-style aliases): the key events are
+    // delivered and the key's own default action runs, as on Linux.
+    let advisory = [
         ("ArrowLeft", "ArrowLeft", 1, json!(["moveWordLeft"])),
         ("z", "KeyZ", 4, json!(["undo"])),
-        ("ArrowRight", "ArrowRight", 0, json!(["moveLeft"])),
         ("c", "KeyC", 4, json!(["copy"])),
-        ("ArrowRight", "ArrowRight", 0, json!(["moveRight", "selectAll"])),
-        ("a", "KeyA", 0, json!(["selectAll"])),
-        // Emacs-style aliases in Playwright's table: the engine's deletion and
-        // caret defaults are keyed on Backspace/Delete/Arrow keys, not these.
         ("d", "KeyD", 2, json!(["deleteForward"])),
-        ("h", "KeyH", 2, json!(["deleteBackward"])),
-        ("b", "KeyB", 2, json!(["moveBackward"])),
-        ("f", "KeyF", 2, json!(["moveForward"])),
-        // Right shortcut and command, but a key the default action is not keyed on.
-        ("x", "Backspace", 0, json!(["deleteBackward"])),
-        // Escape's command on a key that is not Escape.
-        ("q", "Escape", 0, json!(["cancelOperation"])),
-        // Vertical commands only with their own key and modifiers.
-        ("ArrowDown", "ArrowDown", 0, json!(["moveUp"])),
-        ("ArrowDown", "ArrowDown", 4, json!(["moveToEndOfDocument"])),
+        ("PageDown", "PageDown", 0, json!(["scrollPageDown"])),
         ("j", "KeyJ", 0, json!(["moveDown"])),
-    ] {
+    ];
+    for (key, code, modifiers, commands) in &advisory {
         let r = h.page(
             "Input.dispatchKeyEvent",
             json!({"type":"rawKeyDown","key":key,"code":code,"modifiers":modifiers,"commands":commands}),
         );
-        assert_eq!(r["error"]["code"], -32000, "{key} {commands}: {r}");
+        assert_eq!(r["result"], json!({}), "{key} {commands}: {r}");
+        h.page("Input.dispatchKeyEvent", json!({"type":"keyUp","key":key,"code":code,"modifiers":modifiers}));
     }
     assert_eq!(
-        h.page("Runtime.evaluate", json!({"expression":"keys.length","returnByValue":true}))["result"]["result"]
+        h.page("Runtime.evaluate", json!({"expression":"keys.slice(10)","returnByValue":true}))["result"]["result"]
             ["value"],
-        10,
-        "rejected commands deliver no events"
+        json!(advisory.iter().map(|a| a.0).collect::<Vec<_>>()),
+        "advisory commands deliver the key events"
     );
     // The supported deletions keep their behavior with their own commands.
     h.page(
@@ -5672,6 +5706,196 @@ mod screenshot {
     }
 
     #[test]
+    fn print_to_pdf_validates_and_applies_margins_scale_and_ranges() {
+        let mut h = Harness::new();
+        load_html(&mut h, "<!doctype html><body style=margin:0><div style=height:3000px></div>");
+        let pages = |h: &mut Harness, params: Value| {
+            let r = h.page("Page.printToPDF", params);
+            r["result"]["lp"]["pages"].as_array().map(Vec::len).unwrap_or_else(|| panic!("{r}"))
+        };
+        // Letter, no margins: 3000 / 1056 px.
+        let none = json!({"marginTop": 0, "marginBottom": 0, "marginLeft": 0, "marginRight": 0});
+        assert_eq!(pages(&mut h, none.clone()), 3);
+        assert_eq!(pages(&mut h, json!({})), 3000usize.div_ceil(1056 - 77), "Chrome's 0.4in default margins");
+        let mut half = none.clone();
+        half["scale"] = json!(0.5);
+        assert_eq!(pages(&mut h, half), 2);
+        let mut ranges = none.clone();
+        ranges["pageRanges"] = json!("2-");
+        assert_eq!(pages(&mut h, ranges), 2);
+        for (params, message) in [
+            (json!({"scale": 3}), "scale is outside [0.1 - 2] range"),
+            (json!({"pageRanges": "2-1"}), "Page range syntax error"),
+            (json!({"marginTop": -1}), "marginTop is negative"),
+            (json!({"marginLeft": 5, "marginRight": 5}), "invalid print parameters: content area is empty"),
+            (json!({"paperWidth": 0}), "paperWidth is zero or negative"),
+        ] {
+            let r = h.page("Page.printToPDF", params.clone());
+            assert_eq!(r["error"]["message"], message, "{params}: {r}");
+        }
+        let r = h.page("Page.printToPDF", json!({"pageRanges": "9"}));
+        assert!(r["error"]["message"].as_str().unwrap_or_default().contains("Page range exceeds page count"), "{r}");
+    }
+
+    /// A layout sub-resource still downloading delays the PDF, not the
+    /// browser thread: commands sent after printToPDF answer first.
+    #[test]
+    fn print_to_pdf_waits_for_layout_fetches_without_blocking() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                std::thread::spawn(move || {
+                    let mut request = Vec::new();
+                    let mut chunk = [0; 1024];
+                    while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                        match stream.read(&mut chunk) {
+                            Ok(n) if n > 0 => request.extend_from_slice(&chunk[..n]),
+                            _ => return,
+                        }
+                    }
+                    let (kind, body) = if request.starts_with(b"GET /slow.svg") {
+                        std::thread::sleep(Duration::from_millis(400));
+                        (
+                            "image/svg+xml",
+                            r#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="red"/></svg>"#,
+                        )
+                    } else {
+                        (
+                            "text/html",
+                            r#"<!doctype html><body style=margin:0><img src="/slow.svg" style="width:50px;height:50px">"#,
+                        )
+                    };
+                    let head = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    );
+                    let _ = stream.write_all(head.as_bytes());
+                    let _ = stream.write_all(body.as_bytes());
+                });
+            }
+        });
+        let mut h = Harness::new();
+        h.page("Page.enable", json!({}));
+        h.page("Page.navigate", json!({"url": format!("http://{address}/")}));
+        h.until_event(|m| m["method"] == "Page.loadEventFired");
+        let session = h.session.clone();
+        let started = Instant::now();
+        let pdf = h.send(Some(&session), "Page.printToPDF", json!({}));
+        let eval = h.send(Some(&session), "Runtime.evaluate", json!({"expression": "1 + 1", "returnByValue": true}));
+        let messages = h.until_response(pdf);
+        let at = |id: u64| messages.iter().position(|m| m["id"] == id);
+        let pdf_reply = &messages[at(pdf).unwrap()];
+        assert!(pdf_reply["result"]["data"].as_str().is_some_and(|d| !d.is_empty()), "{pdf_reply}");
+        let waited = started.elapsed();
+        assert!(at(eval).unwrap() < at(pdf).unwrap(), "the evaluate answered while the PDF waited");
+        assert!(waited >= Duration::from_millis(300) && waited < Duration::from_secs(5), "{waited:?}");
+    }
+
+    #[test]
+    fn emulated_print_media_reaches_screenshots() {
+        let mut h = Harness::new();
+        h.page(
+            "Emulation.setDeviceMetricsOverride",
+            json!({"width": 100, "height": 100, "deviceScaleFactor": 1, "mobile": false}),
+        );
+        load_html(
+            &mut h,
+            "<!doctype html><style>body{margin:0;background:#00f}@media print{body{background:#f00}}</style>",
+        );
+        let shot = |h: &mut Harness| png_of(&h.page("Page.captureScreenshot", json!({}))["result"]["data"]);
+        assert_eq!(pixel(&shot(&mut h), 5, 5), [0, 0, 255, 255]);
+        h.page("Emulation.setEmulatedMedia", json!({"media": "print"}));
+        assert_eq!(pixel(&shot(&mut h), 5, 5), [255, 0, 0, 255]);
+        h.page("Emulation.setEmulatedMedia", json!({"media": ""}));
+        assert_eq!(pixel(&shot(&mut h), 5, 5), [0, 0, 255, 255]);
+    }
+
+    #[test]
+    fn default_background_override_paints_under_the_document() {
+        let mut h = Harness::new();
+        h.page(
+            "Emulation.setDeviceMetricsOverride",
+            json!({"width": 200, "height": 100, "deviceScaleFactor": 1, "mobile": false}),
+        );
+        load_html(
+            &mut h,
+            "<!doctype html><style>body{margin:0}div{width:50px;height:50px;background:#ff0000}</style><div></div>",
+        );
+        let shot = |h: &mut Harness| {
+            let r = h.page("Page.captureScreenshot", json!({}));
+            png_of(&r["result"]["data"])
+        };
+        assert_eq!(pixel(&shot(&mut h), 150, 80), [255, 255, 255, 255], "white by default");
+        let r =
+            h.page("Emulation.setDefaultBackgroundColorOverride", json!({"color": {"r": 0, "g": 0, "b": 0, "a": 0}}));
+        assert_eq!(r["result"], json!({}), "{r}");
+        let img = shot(&mut h);
+        assert_eq!(pixel(&img, 150, 80)[3], 0, "transparent where the document has no background");
+        assert_eq!(pixel(&img, 10, 10), [255, 0, 0, 255], "the document still paints");
+        h.page("Emulation.setDefaultBackgroundColorOverride", json!({"color": {"r": 0, "g": 0, "b": 255, "a": 0.5}}));
+        let p = pixel(&shot(&mut h), 150, 80);
+        assert!(p[2] >= 254 && p[0] == 0 && (127..=128).contains(&p[3]), "straight alpha: {p:?}");
+        h.page("Emulation.setDefaultBackgroundColorOverride", json!({}));
+        assert_eq!(pixel(&shot(&mut h), 150, 80), [255, 255, 255, 255], "absent color resets");
+    }
+
+    #[test]
+    fn print_to_pdf_streams_through_io_and_validates_the_paper() {
+        let mut h = Harness::new();
+        load_html(&mut h, "<!doctype html><body style=margin:0><div style=height:2500px>pdf</div>");
+        let inline = h.page("Page.printToPDF", json!({}));
+        let inline = lp_cdp::fetch_protocol::base64_decode(inline["result"]["data"].as_str().unwrap()).unwrap();
+        assert!(inline.starts_with(b"%PDF"));
+        let r = h.page("Page.printToPDF", json!({"transferMode": "ReturnAsStream"}));
+        assert_eq!(r["result"]["data"], "", "{r}");
+        let handle = r["result"]["stream"].as_str().unwrap().to_owned();
+        let mut streamed = Vec::new();
+        loop {
+            let r = h.page("IO.read", json!({"handle": handle, "size": 4096}));
+            assert_eq!(r["result"]["base64Encoded"], true, "{r}");
+            streamed.extend(lp_cdp::fetch_protocol::base64_decode(r["result"]["data"].as_str().unwrap()).unwrap());
+            if r["result"]["eof"] == true {
+                break;
+            }
+        }
+        assert_eq!(streamed, inline, "the stream holds the same document");
+        assert_eq!(h.page("IO.close", json!({"handle": handle}))["result"], json!({}));
+        let r = h.page("IO.read", json!({"handle": handle}));
+        assert_eq!(r["error"]["code"], -32602, "closed: {r}");
+        for (w, hh) in [(0.0, 11.0), (8.5, -1.0)] {
+            let r = h.page("Page.printToPDF", json!({"paperWidth": w, "paperHeight": hh}));
+            assert_eq!(r["error"]["code"], -32602, "{w}x{hh}: {r}");
+        }
+    }
+
+    #[test]
+    fn screenshots_show_hover_styles() {
+        let mut h = Harness::new();
+        h.page(
+            "Emulation.setDeviceMetricsOverride",
+            json!({"width": 200, "height": 200, "deviceScaleFactor": 1, "mobile": false}),
+        );
+        load_html(
+            &mut h,
+            "<!doctype html><style>body{margin:0}#cell{width:100px;height:50px;background:#00f}\
+             #tip{display:none;width:100px;height:50px;background:#f00}#cell:hover + #tip{display:block}</style>\
+             <div id=cell></div><div id=tip></div>",
+        );
+        let shot = |h: &mut Harness| {
+            let r = h.page("Page.captureScreenshot", json!({}));
+            png_of(&r["result"]["data"])
+        };
+        assert_eq!(pixel(&shot(&mut h), 50, 75), [255, 255, 255, 255], "tip hidden");
+        h.page("Input.dispatchMouseEvent", json!({"type": "mouseMoved", "x": 50, "y": 25}));
+        assert_eq!(pixel(&shot(&mut h), 50, 75), [255, 0, 0, 255], "hovering the cell shows the tip");
+        h.page("Input.dispatchMouseEvent", json!({"type": "mouseMoved", "x": 150, "y": 150}));
+        assert_eq!(pixel(&shot(&mut h), 50, 75), [255, 255, 255, 255], "tip hidden again");
+    }
+
+    #[test]
     fn screenshots_show_scrolled_containers() {
         let mut h = Harness::new();
         h.page(
@@ -7218,4 +7442,100 @@ fn driver_stage_trace_bounds_retries_and_keeps_exact_attempt_totals() {
     let detailed_ms: f64 =
         stages.iter().filter(|r| r["event"] == "end").map(|r| r["durationMs"].as_f64().unwrap()).sum();
     assert!(summary["attemptMs"].as_f64().unwrap() >= detailed_ms);
+}
+
+#[test]
+fn runtime_bindings_report_calls_and_survive_navigation() {
+    let mut h = Harness::new();
+    h.page("Runtime.enable", json!({}));
+    let r = h.page("Runtime.addBinding", json!({"name": "sendToHost"}));
+    assert_eq!(r["result"], json!({}), "{r}");
+    assert_eq!(eval_value(&mut h, "typeof sendToHost"), "function", "defined in the live main world");
+    assert_eq!(eval_value(&mut h, "Object.keys(window).includes('sendToHost')"), false, "not enumerable");
+    let messages = h.page_with_events("Runtime.evaluate", json!({"expression": "sendToHost('hi'); 1"}));
+    let called = messages.iter().find(|m| m["method"] == "Runtime.bindingCalled").expect("bindingCalled");
+    assert_eq!(called["params"]["name"], "sendToHost");
+    assert_eq!(called["params"]["payload"], "hi");
+    let r = h.page(
+        "Runtime.evaluate",
+        json!({"expression": "try { sendToHost(1); 'ok' } catch (e) { e.constructor.name }", "returnByValue": true}),
+    );
+    assert_eq!(r["result"]["result"]["value"], "TypeError", "one string only");
+
+    // Kept across navigation, defined before init scripts run.
+    h.page("Page.addScriptToEvaluateOnNewDocument", json!({"source": "window.early = typeof sendToHost"}));
+    load_html(&mut h, "<!doctype html><p>next</p>");
+    assert_eq!(eval_value(&mut h, "early"), "function");
+    let messages = h.page_with_events("Runtime.evaluate", json!({"expression": "sendToHost('after'); 1"}));
+    let called =
+        messages.iter().find(|m| m["method"] == "Runtime.bindingCalled").expect("bindingCalled after navigation");
+    assert_eq!(called["params"]["payload"], "after");
+
+    // A named world only.
+    h.page("Runtime.addBinding", json!({"name": "worldOnly", "executionContextName": "utility"}));
+    assert_eq!(eval_value(&mut h, "typeof worldOnly"), "undefined", "not in the main world");
+    let world = h.page("Page.createIsolatedWorld", json!({"frameId": h.frame_id.clone(), "worldName": "utility"}));
+    let id = world["result"]["executionContextId"].clone();
+    let r =
+        h.page("Runtime.evaluate", json!({"expression": "typeof worldOnly", "contextId": id, "returnByValue": true}));
+    assert_eq!(r["result"]["result"]["value"], "function", "{r}");
+
+    let r = h.page("Runtime.removeBinding", json!({"name": "sendToHost"}));
+    assert_eq!(r["result"], json!({}), "{r}");
+    assert_eq!(eval_value(&mut h, "typeof sendToHost"), "undefined");
+    load_html(&mut h, "<!doctype html><p>again</p>");
+    assert_eq!(eval_value(&mut h, "typeof sendToHost"), "undefined", "not re-added on navigation");
+}
+
+#[test]
+fn runtime_binding_event_carries_the_calling_context() {
+    let mut h = Harness::new();
+    let created = h.page_with_events("Runtime.enable", json!({}));
+    let main = created
+        .iter()
+        .find(|m| {
+            m["method"] == "Runtime.executionContextCreated" && m["params"]["context"]["auxData"]["isDefault"] == true
+        })
+        .map(|m| m["params"]["context"]["id"].clone())
+        .expect("main context");
+    h.page("Runtime.addBinding", json!({"name": "b"}));
+    let messages = h.page_with_events("Runtime.evaluate", json!({"expression": "b('x'); 1"}));
+    let called = messages.iter().find(|m| m["method"] == "Runtime.bindingCalled").expect("bindingCalled");
+    assert_eq!(called["params"]["executionContextId"], main);
+}
+
+#[test]
+fn dom_set_file_input_files_reads_paths_and_fires_input_and_change() {
+    let mut h = Harness::new();
+    load_html(&mut h, "<!doctype html><input type=file id=f multiple><input id=text>");
+    let dir = std::env::temp_dir().join(format!("lp-set-files-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let (a, b) = (dir.join("notes.txt"), dir.join("data.json"));
+    std::fs::write(&a, "hello").unwrap();
+    std::fs::write(&b, "{}").unwrap();
+    eval_value(
+        &mut h,
+        "window.f = document.getElementById('f'); window.seen = []; for (const t of ['input', 'change']) f.addEventListener(t, e => seen.push(e.type + ':' + e.bubbles)); 0",
+    );
+    let object = |h: &mut Harness, id: &str| {
+        let r = h.page("Runtime.evaluate", json!({"expression": format!("document.getElementById('{id}')")}));
+        r["result"]["result"]["objectId"].as_str().unwrap().to_owned()
+    };
+    let input = object(&mut h, "f");
+    let r = h.page("DOM.setFileInputFiles", json!({"objectId": input, "files": [a, b]}));
+    assert_eq!(r["result"], json!({}), "{r}");
+    assert_eq!(
+        eval_value(&mut h, "[...f.files].map(f => [f.name, f.size, f.type, f.lastModified > 1e12])"),
+        json!([["notes.txt", 5, "text/plain", true], ["data.json", 2, "application/json", true]])
+    );
+    assert_eq!(eval_value(&mut h, "seen"), json!(["input:true", "change:true"]));
+    let text = object(&mut h, "text");
+    let r = h.page("DOM.setFileInputFiles", json!({"objectId": text, "files": [a]}));
+    assert_eq!(r["error"]["message"], "Node is not a file input element", "{r}");
+    let r = h.page("DOM.setFileInputFiles", json!({"objectId": input, "files": [dir.join("missing")]}));
+    assert_eq!(r["error"]["code"], -32602, "{r}");
+    let r = h.page("DOM.setFileInputFiles", json!({"objectId": input, "files": []}));
+    assert_eq!(r["result"], json!({}), "{r}");
+    assert_eq!(eval_value(&mut h, "f.files.length"), 0, "no files clears the selection");
+    let _ = std::fs::remove_dir_all(&dir);
 }

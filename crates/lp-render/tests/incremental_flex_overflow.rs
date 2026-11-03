@@ -50,7 +50,7 @@ impl Page {
             width,
             height: 768,
             device_scale_factor: 1.0,
-            live: Some(Live { page: 1, tree: Arc::new(tree), clip: None }),
+            live: Some(Live { page: 1, tree: Arc::new(tree), clip: None, interaction: None }),
             ..Default::default()
         };
         self.renderer.sync_layout(&snap, &(Arc::new(NoFetch) as Arc<dyn Fetcher>)).unwrap();

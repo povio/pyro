@@ -226,6 +226,10 @@ impl EngineHost {
             "captureScreenshot" => {
                 Err(CdpError::server("Page.captureScreenshot: lightningpanda was built without the render feature"))
             }
+            #[cfg(not(feature = "render"))]
+            "printToPDF" => {
+                Err(CdpError::server("Page.printToPDF: lightningpanda was built without the render feature"))
+            }
             // Accepted because there is nothing to change: the engine enforces
             // no CSP, opens no file chooser and has a single foreground page.
             "setInterceptFileChooserDialog" => {

@@ -99,6 +99,7 @@ pub(crate) struct Settings {
     pub extra_headers: lp_net::http::HeaderMap,
     pub cache_disabled: bool,
     pub scripts: Vec<InitScript>,
+    pub bindings: Vec<crate::Binding>,
 }
 
 thread_local! {
@@ -169,6 +170,7 @@ impl FrameHost {
                 extra_headers: Default::default(),
                 cache_disabled: false,
                 scripts: Vec::new(),
+                bindings: Vec::new(),
             }),
             page,
             context,
@@ -279,6 +281,19 @@ impl FrameHost {
             }
         }
         window::refresh_frame_indices(&realm, self, key)?;
+        let bindings = {
+            let settings = self.settings.borrow();
+            match settings.bindings.is_empty() {
+                true => Vec::new(),
+                false => settings.bindings.clone(),
+            }
+        };
+        for binding in bindings.iter().filter(|b| b.applies_to(world.as_deref())) {
+            let scope = realm.scope()?;
+            if let Err(e) = scope.install_binding(&binding.name) {
+                scope.report_exception(&e);
+            }
+        }
         let scripts = self.settings.borrow().scripts.clone();
         for script in scripts.iter().filter(|s| s.world == world) {
             let scope = realm.scope()?;

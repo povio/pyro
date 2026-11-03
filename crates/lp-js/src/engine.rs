@@ -102,6 +102,9 @@ pub trait EngineHooks {
     fn unhandled_rejection(&self, _realm: &Realm, _exception: &JsException) {}
     fn realm_created(&self, _realm: &Realm) {}
     fn realm_destroyed(&self, _id: RealmId) {}
+    /// Page JavaScript called a binding [`Scope::install_binding`] defined
+    /// (CDP `Runtime.bindingCalled`).
+    fn binding_called(&self, _realm: &Realm, _name: &str, _payload: &str) {}
 }
 
 pub(crate) struct EngineInner {

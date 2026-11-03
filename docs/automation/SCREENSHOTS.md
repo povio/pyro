@@ -100,7 +100,7 @@ are ignored. The reply also carries `lp: {width, height, sceneHash, ms}`.
 
 - Canvas, video and WebGL pixels.
 - Iframe contents (frames render as empty boxes).
-- `:hover`, `:focus` and `:active` state, the caret, the selection.
+- `:active` state, the caret, the selection. (`:hover` and `:focus` follow the page's pointer and focus.)
 - Running CSS animations and transitions (rendered at their computed values).
 - Shadow-tree style scoping: shadow `<style>` applies document-wide.
 - `srcset`/`<picture>` selection is Blitz's own.

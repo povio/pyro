@@ -83,6 +83,12 @@ mod profile {
     }
 }
 
+/// `LP_GEOMETRY_DEBUG=1`: describe elements whose box is empty (diagnostic).
+fn geometry_debug() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("LP_GEOMETRY_DEBUG").is_some())
+}
+
 /// Bumped when a sub-resource arrives that documents may have been laid out
 /// without (a font or image fetched in the background): each page's
 /// document is built again at its next layout query.
@@ -127,7 +133,7 @@ pub fn install(fetcher: Arc<dyn Fetcher>) {
 /// The Blitz document of one page document.
 /// DOM version, style generation, viewport (width, height, device pixel
 /// ratio bits, dark) and style invalidations.
-type SyncedAt = (u64, u64, (u32, u32, u64, bool), u64);
+type SyncedAt = (u64, u64, (u32, u32, u64, bool, bool), u64);
 
 pub struct BlitzGeometry {
     page: u64,
@@ -254,10 +260,12 @@ impl BlitzGeometry {
             height: v.height,
             device_scale_factor: v.device_scale_factor,
             dark: v.color_scheme == lp_dom::media::ColorScheme::Dark,
+            print: v.print,
             scroll_x: 0.0,
             scroll_y: 0.0,
             resource_scope: format!("geometry-{}", self.page),
-            live: Some(Live { page: self.page, tree, clip: None }),
+            live: Some(Live { page: self.page, tree, clip: None, interaction: None }),
+            background: None,
             element_scroll: None,
         };
         SNAPSHOT_NS.fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
@@ -280,8 +288,13 @@ impl BlitzGeometry {
 
     fn sync_document(&self, dom: &Dom, style: &StyleEngine, style_only: bool) {
         let v = style.viewport();
-        let viewport =
-            (v.width, v.height, v.device_scale_factor.to_bits(), v.color_scheme == lp_dom::media::ColorScheme::Dark);
+        let viewport = (
+            v.width,
+            v.height,
+            v.device_scale_factor.to_bits(),
+            v.color_scheme == lp_dom::media::ColorScheme::Dark,
+            v.print,
+        );
         let now = (dom.version(), style.observation_stamp(dom).1, viewport, style.invalidations());
         let last = self.synced.replace(Some(now));
         // The changes since the last sync, when the journal covers them and
@@ -313,7 +326,12 @@ impl BlitzGeometry {
                     let timings = RENDERER.with(|r| {
                         let mut r = r.try_borrow_mut().ok()?;
                         r.as_mut()?
-                            .sync_delta(self.page, &ops, (viewport.0, viewport.1, dpr, viewport.3), style_only)
+                            .sync_delta(
+                                self.page,
+                                &ops,
+                                (viewport.0, viewport.1, dpr, viewport.3, viewport.4),
+                                style_only,
+                            )
                             .ok()
                     });
                     if let Some(t) = timings {
@@ -412,7 +430,7 @@ impl BlitzGeometry {
         let t = Instant::now();
         let b = RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.element_box(self.page, key));
         READ_NS.fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
-        if std::env::var_os("LP_GEOMETRY_DEBUG").is_some() && b.is_some_and(|b| b.width == 0.0 || b.height == 0.0) {
+        if b.is_some_and(|b| b.width == 0.0 || b.height == 0.0) && geometry_debug() {
             let what = RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.describe_element(self.page, key));
             eprintln!("lp-geometry: empty box {b:?}\n  {}", what.unwrap_or_default());
         }
@@ -524,6 +542,23 @@ pub fn print_pdf(
     layout: &Layout,
     opts: &lp_render::PdfOptions,
 ) -> Option<Result<lp_render::PdfOutput, String>> {
+    let paint = match paint_pdf(dom, layout, opts)? {
+        Ok(paint) => paint,
+        Err(e) => return Some(Err(e)),
+    };
+    RENDERER.with(|r| {
+        let mut r = r.try_borrow_mut().ok()?;
+        Some(r.as_mut()?.write_pdf(paint).map_err(|e| e.to_string()))
+    })
+}
+
+/// [`print_pdf`] up to the PDF writing ([`lp_render::Renderer::write_pdf`],
+/// which another thread can do).
+pub fn paint_pdf(
+    dom: &Dom,
+    layout: &Layout,
+    opts: &lp_render::PdfOptions,
+) -> Option<Result<lp_render::PdfPaint, String>> {
     let source = layout.synced_geometry_source(dom)?;
     let page = source.as_any().downcast_ref::<BlitzGeometry>()?.page;
     let v = layout.viewport();
@@ -531,7 +566,7 @@ pub fn print_pdf(
         let mut r = r.try_borrow_mut().ok()?;
         Some(
             r.as_mut()?
-                .print_pdf_page(page, (v.width, v.height), v.device_scale_factor, opts)
+                .paint_pdf_page(page, (v.width, v.height), v.device_scale_factor, opts)
                 .map_err(|e| e.to_string()),
         )
     })
