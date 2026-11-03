@@ -1,6 +1,7 @@
 //! CDP input dispatch into the document's native event/default-action path.
 use lp_webapi::input::{
-    self, DragData, DragItem, DragKind, KeyInput, KeyKind, Modifiers, MouseButton, MouseInput, MouseKind,
+    self, DragData, DragItem, DragKind, KeyInput, KeyKind, Modifiers, MouseButton, MouseInput, MouseKind, TouchInput,
+    TouchKind,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -71,6 +72,34 @@ struct MouseParams {
     #[serde(default)]
     twist: u32,
     timestamp: Option<f64>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TouchPointParams {
+    x: f64,
+    y: f64,
+    radius_x: Option<f64>,
+    radius_y: Option<f64>,
+    rotation_angle: Option<f64>,
+    force: Option<f64>,
+    // Pen properties: range-checked as in Chrome, not reported by Touch.
+    tangential_pressure: Option<f64>,
+    tilt_x: Option<f64>,
+    tilt_y: Option<f64>,
+    twist: Option<f64>,
+    id: Option<f64>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TouchParams {
+    #[serde(rename = "type")]
+    kind: String,
+    touch_points: Vec<TouchPointParams>,
+    #[serde(default)]
+    modifiers: u32,
+    // `timestamp` is accepted and not used (events carry the page clock's).
 }
 
 #[derive(Deserialize)]
@@ -274,6 +303,7 @@ impl EngineHost {
                     self.event("Input.dragIntercepted", &drag_data_json(&data), cmd.session_id);
                 }
             }
+            "dispatchTouchEvent" => self.dispatch_touch(cmd, native_id, page)?,
             "dispatchDragEvent" => {
                 let p: DragParams = cmd.command.params()?;
                 let kind = match p.kind.as_str() {
@@ -318,6 +348,122 @@ impl EngineHost {
 }
 
 impl EngineHost {
+    /// Input.dispatchTouchEvent, validated as Chrome does (same messages)
+    /// before anything is dispatched. The first touch of a sequence picks
+    /// the (innermost frame) document under it; every touch of the sequence
+    /// goes to that document.
+    fn dispatch_touch(
+        &mut self,
+        cmd: &PageCommand<'_, '_>,
+        native_id: lp_browser::PageId,
+        main: Rc<lp_webapi::PageDom>,
+    ) -> CdpResult<()> {
+        let p: TouchParams = cmd.command.params()?;
+        let kind = match p.kind.as_str() {
+            "touchStart" => TouchKind::Start,
+            "touchMove" => TouchKind::Move,
+            "touchEnd" => TouchKind::End,
+            "touchCancel" => TouchKind::Cancel,
+            other => return Err(CdpError::invalid_params(format!("Unexpected event type '{other}'"))),
+        };
+        if matches!(kind, TouchKind::Start | TouchKind::Move) && p.touch_points.is_empty() {
+            return Err(CdpError::invalid_params("TouchStart and TouchMove must have at least one touch point."));
+        }
+        if kind == TouchKind::Cancel && !p.touch_points.is_empty() {
+            return Err(CdpError::invalid_params("TouchCancel must not have any touch points."));
+        }
+        let state = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?;
+        let active =
+            state.touches.is_active() && state.touch_document.as_ref().is_some_and(|(d, _, _)| !d.is_disposed());
+        if kind != TouchKind::Start && !active {
+            return Err(CdpError::invalid_params("Must send a TouchStart first to start a new touch."));
+        }
+        for t in &p.touch_points {
+            if let Some(id) = t.id.filter(|id| *id < 0.0 || *id >= (i32::MAX - 1) as f64) {
+                return Err(CdpError::invalid_params(format!("TouchPoint id '{}' is out of valid range.", id as i64)));
+            }
+            let outside = |v: Option<f64>, lo: f64, hi: f64| v.is_some_and(|v| !(lo..=hi).contains(&v));
+            if outside(t.force, 0.0, 1.0) {
+                return Err(CdpError::invalid_params("'force' should be in the range of [0,1]"));
+            }
+            if outside(t.tangential_pressure, -1.0, 1.0) {
+                return Err(CdpError::invalid_params("'tangentialPressure' should be in the range of [-1,1]"));
+            }
+            if outside(t.tilt_x, -90.0, 90.0) {
+                return Err(CdpError::invalid_params("'tiltX' should be in the range of [-90,90]"));
+            }
+            if outside(t.tilt_y, -90.0, 90.0) {
+                return Err(CdpError::invalid_params("'tiltY' should be in the range of [-90,90]"));
+            }
+            if outside(t.twist, 0.0, 359.0) {
+                return Err(CdpError::invalid_params("'twist' should be in the range of [0,359]"));
+            }
+        }
+        let with_id = p.touch_points.iter().filter(|t| t.id.is_some()).count();
+        if with_id != 0 && with_id != p.touch_points.len() {
+            return Err(CdpError::invalid_params("All or none of the provided TouchPoints must supply ids."));
+        }
+        let numbers = |t: &TouchPointParams| {
+            [Some(t.x), Some(t.y), t.radius_x, t.radius_y, t.rotation_angle, t.force, t.id]
+                .into_iter()
+                .flatten()
+                .all(f64::is_finite)
+        };
+        if !p.touch_points.iter().all(numbers) {
+            return Err(CdpError::invalid_params("Invalid touch point coordinates"));
+        }
+        let mut points: Vec<TouchInput> = p
+            .touch_points
+            .iter()
+            .enumerate()
+            .map(|(i, t)| TouchInput {
+                id: t.id.map_or(i as i64, |id| id as i64),
+                x: t.x,
+                y: t.y,
+                radius_x: t.radius_x.unwrap_or(1.0),
+                radius_y: t.radius_y.unwrap_or(1.0),
+                rotation_angle: t.rotation_angle.unwrap_or(0.0),
+                force: t.force.unwrap_or(1.0),
+            })
+            .collect();
+        let state = self.pages.get_mut(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?;
+        if kind == TouchKind::End && points.iter().any(|t| !state.touches.has(t.id)) {
+            return Err(CdpError::invalid_params("Must send a TouchStart first to start a new touch."));
+        }
+        let mut ids: Vec<i64> = if active { state.touches.ids() } else { Vec::new() };
+        if matches!(kind, TouchKind::Start | TouchKind::Move) {
+            ids.extend(points.iter().map(|t| t.id));
+            ids.sort_unstable();
+            ids.dedup();
+            if ids.len() > 16 {
+                return Err(CdpError::server("Exceeded maximum touch points limit of 16"));
+            }
+        }
+        let (document, dx, dy) = match state.touch_document.clone().filter(|_| active) {
+            Some(found) => found,
+            None => {
+                // Touches left down in a document since navigated away from.
+                state.touches.clear();
+                let first = &points[0];
+                let (document, x, y) = self.descend_into_frames(native_id, main, first.x, first.y);
+                (document, first.x - x, first.y - y)
+            }
+        };
+        for t in &mut points {
+            t.x -= dx;
+            t.y -= dy;
+        }
+        let state = self.pages.get_mut(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?;
+        let mut touches = std::mem::take(&mut state.touches);
+        let result =
+            input::dispatch_touch(&document, &mut touches, kind, &points, Modifiers::from_cdp(p.modifiers & 15));
+        if let Some(state) = self.pages.get_mut(&cmd.page) {
+            state.touch_document = touches.is_active().then_some((document, dx, dy));
+            state.touches = touches;
+        }
+        result.map_err(CdpError::server)
+    }
+
     /// The innermost frame document under (x, y) and the point in its
     /// viewport coordinates.
     fn descend_into_frames(

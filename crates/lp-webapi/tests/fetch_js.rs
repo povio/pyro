@@ -638,6 +638,7 @@ fn page_extra_http_headers_are_page_scoped_replaced_and_cleared() {
             user_agent: "page-a-agent".into(),
             accept_language: None,
             platform: None,
+            metadata: None,
         }))
         .unwrap();
     first.page.set_extra_http_headers(map);

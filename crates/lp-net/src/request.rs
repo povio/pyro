@@ -87,6 +87,10 @@ pub struct RequestDefaults {
     /// no-cache` / `Cache-Control: no-cache` like DevTools. Sibling pages in the
     /// same context keep using the context cache.
     pub cache_disabled: bool,
+    /// Low-entropy User-Agent client hints (`Sec-CH-UA`, `-Mobile`,
+    /// `-Platform`) of a page whose agent override carries metadata. Sent
+    /// only to potentially trustworthy origins, never over request headers.
+    pub client_hints: Option<std::sync::Arc<Vec<(http::HeaderName, HeaderValue)>>>,
 }
 
 #[derive(Clone, Debug)]

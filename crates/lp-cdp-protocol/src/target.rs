@@ -812,7 +812,12 @@ impl<H: Host> Browser<H> {
                 }
                 let context = if matches!(
                     cmd.method.as_ref(),
-                    "Storage.getCookies" | "Storage.setCookies" | "Storage.clearCookies"
+                    "Storage.getCookies"
+                        | "Storage.setCookies"
+                        | "Storage.clearCookies"
+                        | "Browser.grantPermissions"
+                        | "Browser.resetPermissions"
+                        | "Browser.setPermission"
                 ) {
                     let params: ContextParam = cmd.params()?;
                     let id = match params.browser_context_id {

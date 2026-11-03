@@ -20,7 +20,7 @@ and `UserAgentOverride::request_defaults()` result per Page, apply the override
 to each new PageDom before realm installation, and copy defaults into
 `lp_net::Request.defaults` for document/script/stylesheet loads. The integrated
 [browser setter](../browser/USER_AGENT.md) and CDP mapper now provide this wiring.
-Never change the shared NetClient's settings to implement a page override. Unsupported CDP `userAgentMetadata` must be rejected explicitly.
+Never change the shared NetClient's settings to implement a page override. CDP `userAgentMetadata` becomes `UserAgentOverride::metadata`, which `navigator.userAgentData` reports (an override without it reports empty hints, as Chrome); its low-entropy hints become `RequestDefaults::client_hints` (Sec-CH-UA, -Mobile, -Platform), which lp-net sends only to potentially trustworthy origins and never over request-authored headers.
 
 The unchanged TOS smoke after IndexedDB discovery (browser86ff4ee, TOSf9fde4aa0d)
 progressed past storage-state setup but failed both tests at newPage because

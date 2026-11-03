@@ -382,6 +382,9 @@ struct Inner<S> {
     idle: RefCell<VecDeque<TimerId>>,
     /// Remote tasks posted and not started yet, shared with the handles.
     remote_pending: Arc<AtomicUsize>,
+    /// Virtual time ([`Scheduler::set_virtual_now`]): the instant delayed
+    /// timers count from instead of the real time.
+    virtual_now: Cell<Option<Instant>>,
 }
 
 impl<S> Inner<S> {
@@ -460,7 +463,11 @@ impl<S: 'static> Scheduler<S> {
         let id = TimerId(self.inner.next_timer.get());
         self.inner.next_timer.set(id.0.wrapping_add(1).max(1));
         self.inner.insert_timer(id, Timer { task: Rc::new(task), interval: repeat.then_some(delay), keeps_alive });
-        self.push_deadline(Instant::now() + delay, id);
+        let base = match self.inner.virtual_now.get() {
+            Some(now) if repeat || !delay.is_zero() => now,
+            _ => Instant::now(),
+        };
+        self.push_deadline(base + delay, id);
         id
     }
 
@@ -502,6 +509,26 @@ impl<S: 'static> Scheduler<S> {
         let shifted: Vec<_> =
             heap.drain().map(|Reverse((at, seq, id))| Reverse((at.checked_sub(by).unwrap_or(at), seq, id))).collect();
         heap.extend(shifted);
+    }
+
+    /// Makes every pending timer due `by` later; their order is kept.
+    pub fn delay_timers(&self, by: Duration) {
+        let mut heap = self.inner.heap.borrow_mut();
+        let shifted: Vec<_> = heap.drain().map(|Reverse((at, seq, id))| Reverse((at + by, seq, id))).collect();
+        heap.extend(shifted);
+    }
+
+    /// Virtual time: delayed timers set from now on count from `now`
+    /// (`None`: from the real time again). With `now` far enough ahead of
+    /// the real time, no delayed timer comes due on its own; the embedder
+    /// runs them with [`EventLoop::run_timer_due_by`]. Zero-delay one-shot
+    /// timers still run as soon as the loop gets to them.
+    pub fn set_virtual_now(&self, now: Option<Instant>) {
+        self.inner.virtual_now.set(now);
+    }
+
+    pub fn virtual_now(&self) -> Option<Instant> {
+        self.inner.virtual_now.get()
     }
 
     /// Asks the loop to return from `run*` after the current task.
@@ -677,6 +704,7 @@ impl<S: LoopState + 'static> EventLoop<S> {
                     keepalive: Cell::new(0),
                     idle: RefCell::new(VecDeque::new()),
                     remote_pending: Arc::default(),
+                    virtual_now: Cell::new(None),
                 }),
             },
             tx: Some(tx),
@@ -835,7 +863,16 @@ impl<S: LoopState + 'static> EventLoop<S> {
     }
 
     fn run_due_timer(&mut self, state: &mut S) -> bool {
-        let now = Instant::now();
+        self.run_due_timer_at(state, Instant::now())
+    }
+
+    /// Virtual time: runs the earliest timer if it is due by `at` (an
+    /// interval is rescheduled from `at`), then the embedder's checkpoint.
+    pub fn run_timer_due_by(&mut self, state: &mut S, at: Instant) -> bool {
+        self.run_due_timer_at(state, at)
+    }
+
+    fn run_due_timer_at(&mut self, state: &mut S, now: Instant) -> bool {
         loop {
             self.sched.inner.clean_heap_top();
             let top = self.sched.inner.heap.borrow().peek().map(|r| r.0);

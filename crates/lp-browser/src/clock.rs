@@ -9,6 +9,10 @@
 //! delayed save then costs no wall time. The jump is per browser thread, so
 //! it is meant for fork mode (one page per process). Time never goes back.
 //!
+//! `Emulation.setVirtualTimePolicy` freezes the page clock instead: from
+//! then on it only moves when virtual time advances
+//! ([`Browser::pause_virtual_time`](crate::Browser::pause_virtual_time)).
+//!
 //! `Date` follows the page clock through a wrapper installed in every realm
 //! (`Date.now()`, `new Date()` and `Date()`); its prototype is unchanged.
 
@@ -23,6 +27,9 @@ thread_local! {
     /// How far the page clock is ahead of real time.
     static SKEW: Cell<Duration> = const { Cell::new(Duration::ZERO) };
     static MANUAL: Cell<bool> = const { Cell::new(false) };
+    /// Virtual time policy: the frozen page clock and its wall time (ms
+    /// since the Unix epoch).
+    static FROZEN: Cell<Option<(Instant, f64)>> = const { Cell::new(None) };
 }
 
 /// Whether the page clock may jump ahead (see the module docs).
@@ -42,17 +49,36 @@ pub(crate) fn enable_manual() {
 /// The page clock now, as an `Instant` (comparable to timer deadlines kept
 /// on this clock).
 pub fn now() -> Instant {
-    Instant::now() + SKEW.get()
+    match FROZEN.get() {
+        Some((now, _)) => now,
+        None => Instant::now() + SKEW.get(),
+    }
 }
 
 /// The page clock's wall time, in milliseconds since the Unix epoch.
 pub fn wall_ms() -> f64 {
+    if let Some((_, wall)) = FROZEN.get() {
+        return wall;
+    }
     let real = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64() * 1000.0);
     real + SKEW.get().as_secs_f64() * 1000.0
 }
 
 pub(crate) fn skip(by: Duration) {
     SKEW.set(SKEW.get() + by);
+    if let Some((now, wall)) = FROZEN.get() {
+        FROZEN.set(Some((now + by, wall + by.as_secs_f64() * 1000.0)));
+    }
+}
+
+/// Stops the page clock at its current reading (`wall_ms`: its wall time
+/// instead of the current one).
+pub(crate) fn freeze(wall_ms: Option<f64>) {
+    FROZEN.set(Some((now(), wall_ms.unwrap_or_else(self::wall_ms))));
+}
+
+pub(crate) fn frozen() -> bool {
+    FROZEN.get().is_some()
 }
 
 /// Makes `Date` read the page clock: `performance.timeOrigin +

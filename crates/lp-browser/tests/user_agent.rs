@@ -8,7 +8,12 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 fn identity(ua: &str, language: &str, platform: &str) -> UserAgentOverride {
-    UserAgentOverride { user_agent: ua.into(), accept_language: Some(language.into()), platform: Some(platform.into()) }
+    UserAgentOverride {
+        user_agent: ua.into(),
+        accept_language: Some(language.into()),
+        platform: Some(platform.into()),
+        metadata: None,
+    }
 }
 fn eval(t: &BrowserThread, page: PageId, script: &str) -> String {
     let scope = t.browser.page(page).unwrap().main_frame.main_realm().unwrap().scope().unwrap();

@@ -92,6 +92,8 @@ pub struct FrameInfo {
 #[derive(Clone)]
 pub(crate) struct Settings {
     pub local: lp_webapi::StorageNamespace,
+    pub services: Rc<lp_webapi::ContextServices>,
+    pub max_touch_points: u32,
     pub session: lp_webapi::StorageNamespace,
     pub net: Option<lp_net::NetClient>,
     pub viewport: lp_dom::media::Viewport,
@@ -155,7 +157,8 @@ pub(crate) struct FrameHost {
 }
 impl FrameHost {
     pub fn new(browser: &Browser, page: PageId, context: ContextId, root: Frame, nav: Rc<PageNav>) -> Rc<Self> {
-        let local = browser.contexts.iter().find(|c| c.id == context).expect("context").local_storage.clone();
+        let state = browser.contexts.iter().find(|c| c.id == context).expect("context");
+        let (local, services) = (state.local_storage.clone(), state.services.clone());
         Rc::new(Self {
             children: RefCell::new(BTreeMap::new()),
             root: RefCell::new(root),
@@ -163,6 +166,8 @@ impl FrameHost {
             dom: Rc::new(RefCell::new(lp_dom::Dom::new())),
             settings: RefCell::new(Settings {
                 local,
+                services,
+                max_touch_points: 0,
                 session: Default::default(),
                 net: browser.context_net(context).cloned(),
                 viewport: Default::default(),
@@ -877,6 +882,7 @@ impl Browser {
             settings.extra_headers = p.extra_http_headers.clone();
             settings.cache_disabled = p.cache_disabled;
             settings.viewport = p.viewport.clone();
+            settings.max_touch_points = p.max_touch_points;
         }
         let settings = host.settings.borrow().clone();
         let bindings: Vec<_> = host.children.borrow().values().filter_map(|d| d.main_frame.page_dom.clone()).collect();
@@ -884,6 +890,7 @@ impl Browser {
             let _ = dom.set_user_agent_override(settings.user_agent.clone());
             dom.set_extra_http_headers(settings.extra_headers.clone());
             dom.set_cache_disabled(settings.cache_disabled);
+            dom.set_max_touch_points(settings.max_touch_points);
         }
     }
 }

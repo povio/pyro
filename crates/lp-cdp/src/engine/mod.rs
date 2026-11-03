@@ -21,10 +21,12 @@ mod mocks;
 mod network;
 mod network_delivery;
 mod page;
+mod permissions;
 mod remote;
 mod runtime;
 #[cfg(feature = "render")]
 mod screenshot;
+mod virtual_time;
 #[cfg(not(feature = "render"))]
 mod screenshot {
     //! Built without the `render` feature: screenshots are refused.
@@ -319,6 +321,11 @@ pub(crate) struct PageState {
     /// Input.setInterceptDrags: native drags started by mouse input are
     /// reported through Input.dragIntercepted.
     pub(crate) intercept_drags: bool,
+    /// Input.dispatchTouchEvent: the touches down, and the frame document
+    /// the sequence's first touch landed in with its offset in the page's
+    /// viewport (all touches of a sequence go to that document).
+    pub(crate) touches: lp_webapi::input::TouchSequence,
+    pub(crate) touch_document: Option<(Rc<lp_webapi::PageDom>, f64, f64)>,
     network: network::NetworkPage,
     dom_nodes: dom::BackendNodes,
     /// Downloads the page started, newest last (`LP.run` `download` steps).
@@ -390,6 +397,9 @@ pub struct EngineHost {
     pub(crate) popups: Vec<PopupRecord>,
     /// `LP.act` / `LP.expect` commands waiting for their page to change.
     waiters: driver::Waiters,
+    /// Emulation.setVirtualTimePolicy (none until a page sets one).
+    virtual_time: Option<virtual_time::VirtualTime>,
+    virtual_ticks_base: f64,
 }
 
 /// A page booted on a thread before any connection, with its context.
@@ -536,6 +546,8 @@ impl EngineHost {
                 initial_popup: false,
                 suppress_next_char: false,
                 intercept_drags: false,
+                touches: Default::default(),
+                touch_document: None,
                 network: network::NetworkPage::new(self.body_budget.clone()),
                 dom_nodes: dom::BackendNodes::default(),
                 downloads: Vec::new(),
@@ -572,6 +584,8 @@ impl EngineHost {
             prebooted: Vec::new(),
             popups: Vec::new(),
             waiters: driver::Waiters::default(),
+            virtual_time: None,
+            virtual_ticks_base: 0.0,
         })
     }
 
@@ -621,6 +635,13 @@ impl EngineHost {
                 }
                 thread.browser.advance_time(by);
             }
+        }
+        // Emulation.setVirtualTimePolicy advancing: jump through timers
+        // whenever nothing else is ready (virtual_time.rs).
+        if self.virtual_time.as_ref().is_some_and(virtual_time::VirtualTime::advancing)
+            && virtual_time::run(thread, &mut self.virtual_time, &self.out, &mut ready)
+        {
+            return lp_runtime::RunOutcome::Done;
         }
         thread.event_loop.run_until(&mut thread.browser, deadline, false, ready)
     }
@@ -927,15 +948,33 @@ impl EngineHost {
         match action {
             // Headless pages always behave as focused; there is no window focus to emulate.
             "setFocusEmulationEnabled" => Ok(Some(serde_json::json!({}))),
-            // puppeteer's setViewport sends it with every viewport. Pages have
-            // no touch input, which is what `enabled: false` asks for.
+            "setVirtualTimePolicy" => self.set_virtual_time_policy(cmd),
+            // Touch input (Input.dispatchTouchEvent) is always accepted, as in
+            // Chrome; this sets `navigator.maxTouchPoints` (default 1) and,
+            // as Chrome does, makes the primary pointer coarse and unable to
+            // hover (`(pointer: coarse)`, `(hover: none)`). puppeteer sends
+            // `enabled: false` with every setViewport: a no-op unless enabled.
             "setTouchEmulationEnabled" => {
                 #[derive(Deserialize)]
+                #[serde(rename_all = "camelCase")]
                 struct P {
                     enabled: bool,
+                    max_touch_points: Option<u32>,
                 }
-                if cmd.command.params::<P>()?.enabled {
-                    return Err(CdpError::unsupported("Emulation.setTouchEmulationEnabled enabled: true"));
+                let p = cmd.command.params::<P>()?;
+                let points = if p.enabled { p.max_touch_points.unwrap_or(1) } else { 0 };
+                if p.enabled && !(1..=16).contains(&points) {
+                    return Err(CdpError::invalid_params("Touch points must be between 1 and 16"));
+                }
+                let id = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?.id;
+                self.thread.browser.set_max_touch_points(id, points);
+                let mut viewport =
+                    self.thread.browser.page(id).ok_or_else(|| CdpError::server("page is gone"))?.viewport().clone();
+                let pointer = if p.enabled { lp_dom::media::Pointer::Coarse } else { lp_dom::media::Pointer::Fine };
+                if viewport.pointer != pointer || viewport.hover == p.enabled {
+                    viewport.pointer = pointer;
+                    viewport.hover = !p.enabled;
+                    self.thread.browser.set_viewport(id, viewport).map_err(remote::js_to_cdp)?;
                 }
                 Ok(Some(serde_json::json!({})))
             }
@@ -989,18 +1028,24 @@ impl EngineHost {
                     user_agent_metadata: Option<serde_json::Value>,
                 }
                 let p: P = cmd.command.params()?;
-                if p.user_agent_metadata.is_some() {
-                    return Err(CdpError::unsupported("Emulation user agent client hints"));
+                let metadata = p.user_agent_metadata.map(metrics::user_agent_metadata).transpose()?;
+                if metadata.is_some() && p.user_agent.is_empty() {
+                    return Err(CdpError::invalid_params("Empty userAgent invalid with userAgentMetadata provided"));
                 }
                 // Empty UA alone resets the override; with locale/platform it
                 // retains the browser's default UA while applying those fields.
-                let override_ = if p.user_agent.is_empty() && p.accept_language.is_none() && p.platform.is_none() {
+                let override_ = if p.user_agent.is_empty()
+                    && p.accept_language.is_none()
+                    && p.platform.is_none()
+                    && metadata.is_none()
+                {
                     None
                 } else {
                     Some(lp_webapi::UserAgentOverride {
                         user_agent: p.user_agent,
                         accept_language: p.accept_language,
                         platform: p.platform,
+                        metadata,
                     })
                 };
                 let state = self.pages.get_mut(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?;
@@ -1095,6 +1140,7 @@ impl EngineHost {
                 user_agent: String::new(),
                 accept_language: None,
                 platform: None,
+                metadata: None,
             });
             value.accept_language.get_or_insert_with(|| locale.clone());
         }
@@ -1330,6 +1376,13 @@ impl Host for EngineHost {
                 match self.storage_command(command, context) {
                     Ok(result) => out.send(msg::result_frame(command.id, &result, command.session_id())),
                     Err(error) => out.send(msg::error_frame(Some(command.id), &error, command.session_id())),
+                }
+            }
+            "Browser.grantPermissions" | "Browser.resetPermissions" | "Browser.setPermission" => {
+                let result = self.permissions_command(command, context);
+                match result {
+                    Ok(()) => out.send(msg::result_frame(command.id, &Empty {}, command.session_id())),
+                    Err(e) => out.send(msg::error_frame(Some(command.id), &e, command.session_id())),
                 }
             }
             "Browser.setDownloadBehavior" => {

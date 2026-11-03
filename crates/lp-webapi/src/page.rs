@@ -86,6 +86,13 @@ pub struct PageDom {
     pub(crate) scroll_clamp: Cell<(Option<u64>, bool)>,
     pub(crate) mutations: crate::mutation_observer::BindingState,
     pub(crate) identity: RefCell<crate::identity::IdentityState>,
+    /// The browser context's permissions and clipboard.
+    context_services: RefCell<Rc<crate::navigator_extras::ContextServices>>,
+    /// `navigator.maxTouchPoints` (Emulation.setTouchEmulationEnabled).
+    max_touch_points: Cell<u32>,
+    /// Per realm with PermissionStatus change listeners: the function that
+    /// re-reads their states (navigator_extras).
+    pub(crate) permission_watchers: RefCell<Vec<(lp_js::WeakRealm, lp_js::Persistent)>>,
     pub(crate) fetch_state: crate::fetch::FetchState,
     pub(crate) xhr_state: crate::xhr::XhrState,
     pub(crate) file_readers: crate::file_reader::ReaderState,
@@ -367,6 +374,9 @@ impl PageDom {
             next_event: Cell::new(1),
             net: RefCell::new(None),
             identity: RefCell::new(Default::default()),
+            context_services: Default::default(),
+            max_touch_points: Cell::new(0),
+            permission_watchers: RefCell::new(Vec::new()),
             mutations: Default::default(),
             intersections: Default::default(),
             resizes: Default::default(),
@@ -425,6 +435,22 @@ impl PageDom {
         *self.session_storage.borrow_mut() = session;
     }
 
+    /// Shares the browser context's permissions and clipboard.
+    pub fn set_context_services(&self, services: Rc<crate::navigator_extras::ContextServices>) {
+        *self.context_services.borrow_mut() = services;
+    }
+    pub fn context_services(&self) -> Rc<crate::navigator_extras::ContextServices> {
+        self.context_services.borrow().clone()
+    }
+    /// `navigator.maxTouchPoints`; nonzero also means touch input is
+    /// emulated (`Emulation.setTouchEmulationEnabled`).
+    pub fn set_max_touch_points(&self, points: u32) {
+        self.max_touch_points.set(points);
+    }
+    pub fn max_touch_points(&self) -> u32 {
+        self.max_touch_points.get()
+    }
+
     pub fn id(&self) -> u64 {
         self.id
     }
@@ -467,6 +493,7 @@ impl PageDom {
         drop(self.pinned.take());
         drop(self.window_holders.take());
         drop(self.same_objects.take());
+        drop(self.permission_watchers.take());
         drop(self.structured_clones.take());
         drop(self.define_properties.take());
         drop(self.pending_port_reconcile.take());

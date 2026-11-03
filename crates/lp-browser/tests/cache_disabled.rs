@@ -183,7 +183,8 @@ fn the_bypass_applies_to_the_live_document_and_survives_other_page_options() {
     let mut headers = HeaderMap::new();
     headers.insert("x-a", HeaderValue::from_static("1"));
     thread.browser.set_extra_http_headers(page, headers);
-    let ua = UserAgentOverride { user_agent: "CacheUA/1".into(), accept_language: None, platform: None };
+    let ua =
+        UserAgentOverride { user_agent: "CacheUA/1".into(), accept_language: None, platform: None, metadata: None };
     thread.browser.set_user_agent_override(page, Some(ua)).unwrap();
     load_and_request(&mut thread, page, &server, "after-options");
     let seen = server.take();

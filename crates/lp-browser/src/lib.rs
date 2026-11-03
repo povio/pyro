@@ -51,6 +51,8 @@ struct ContextState {
     loader: Option<Rc<dyn ResourceLoader>>,
     net: Option<lp_net::NetClient>,
     local_storage: lp_webapi::StorageNamespace,
+    /// Permissions and clipboard its pages share.
+    services: Rc<lp_webapi::ContextServices>,
     init_scripts: Vec<InitScript>,
 }
 
@@ -407,6 +409,8 @@ pub struct Page {
     pub(crate) frames: Rc<FrameHost>,
     session_storage: lp_webapi::StorageNamespace,
     user_agent_override: Option<lp_webapi::UserAgentOverride>,
+    /// `navigator.maxTouchPoints` of its documents (touch emulation).
+    max_touch_points: u32,
     extra_http_headers: lp_net::http::HeaderMap,
     cache_disabled: bool,
     request_defaults: lp_net::RequestDefaults,
@@ -577,6 +581,7 @@ impl BrowserThread {
                 loader: None,
                 net: None,
                 local_storage: Default::default(),
+                services: Default::default(),
                 init_scripts: Vec::new(),
             }],
             net_config: None,
@@ -634,6 +639,14 @@ impl Browser {
 
     /// Explicitly advances this browser thread's clock, without enabling automatic jumps.
     pub fn advance_time_explicit(&self, by: Duration) -> Result<(), JsError> {
+        self.enable_page_clock()?;
+        self.advance_time(by);
+        Ok(())
+    }
+
+    /// Makes `Date` read the page clock in every realm (new realms do once
+    /// it is on).
+    fn enable_page_clock(&self) -> Result<(), JsError> {
         if !clock::page_clock_enabled() {
             for page in &self.pages {
                 for info in self.frames(page.id) {
@@ -650,8 +663,42 @@ impl Browser {
             }
             clock::enable_manual();
         }
-        self.advance_time(by);
         Ok(())
+    }
+
+    /// Virtual time policy (`Emulation.setVirtualTimePolicy`), for this
+    /// browser thread: freezes the page clock (`Date`, `performance.now()`)
+    /// and holds every delayed timer; from then on time only moves through
+    /// [`Browser::advance_virtual_time`]. `initial_wall_ms` sets `Date`'s
+    /// time the first time. Returns false if it was already paused.
+    pub fn pause_virtual_time(&self, initial_wall_ms: Option<f64>) -> Result<bool, JsError> {
+        if clock::frozen() {
+            return Ok(false);
+        }
+        self.enable_page_clock()?;
+        clock::freeze(initial_wall_ms);
+        // Held timers keep their distance to the virtual now, a year ahead
+        // of the real time, so none comes due on its own.
+        const HOLD: Duration = Duration::from_secs(365 * 24 * 3600);
+        self.sched.delay_timers(HOLD);
+        self.sched.set_virtual_now(Some(Instant::now() + HOLD));
+        Ok(true)
+    }
+
+    /// Virtual time: how far ahead the next delayed timer is (zero when
+    /// one is due); `None` without virtual time or timers.
+    pub fn next_virtual_timer(&self) -> Option<Duration> {
+        let now = self.sched.virtual_now()?;
+        Some(self.sched.next_timer_deadline()?.saturating_duration_since(now))
+    }
+
+    /// Virtual time: moves the page clock `by` ahead. Returns the virtual
+    /// now, by which timers are due ([`lp_runtime::EventLoop::run_timer_due_by`]).
+    pub fn advance_virtual_time(&self, by: Duration) -> Option<Instant> {
+        let now = self.sched.virtual_now()? + by;
+        self.sched.set_virtual_now(Some(now));
+        clock::skip(by);
+        Some(now)
     }
 
     /// Cross-thread handle to this browser's loop.
@@ -697,7 +744,14 @@ impl Browser {
     pub fn create_context(&mut self) -> std::io::Result<ContextId> {
         let id = ContextId(self.next() as u32);
         let local_storage = lp_webapi::StorageNamespace::seeded(&self.local_storage_seed);
-        self.contexts.push(ContextState { id, loader: None, net: None, local_storage, init_scripts: Vec::new() });
+        self.contexts.push(ContextState {
+            id,
+            loader: None,
+            net: None,
+            local_storage,
+            services: Default::default(),
+            init_scripts: Vec::new(),
+        });
         if self.net_config.is_some() {
             self.attach_network(id)?;
         }
@@ -826,6 +880,7 @@ impl Browser {
             },
             session_storage,
             user_agent_override: None,
+            max_touch_points: 0,
             extra_http_headers: Default::default(),
             cache_disabled: false,
             request_defaults: Default::default(),
@@ -880,6 +935,23 @@ impl Browser {
         state.request_defaults = defaults;
         self.refresh_frame_settings(page);
         Ok(())
+    }
+
+    /// The permissions and clipboard of `context`'s pages.
+    pub fn context_services(&self, context: ContextId) -> Option<Rc<lp_webapi::ContextServices>> {
+        self.contexts.iter().find(|c| c.id == context).map(|c| c.services.clone())
+    }
+
+    /// `navigator.maxTouchPoints` of this page's current and future
+    /// documents (0: no touch input). Returns false if there is no such page.
+    pub fn set_max_touch_points(&mut self, page: PageId, points: u32) -> bool {
+        let Some(state) = self.page_mut(page) else { return false };
+        state.max_touch_points = points;
+        if let Some(bindings) = &state.main_frame.page_dom {
+            bindings.set_max_touch_points(points);
+        }
+        self.refresh_frame_settings(page);
+        true
     }
 
     /// Replaces this page's extra request headers (an empty map clears them).
