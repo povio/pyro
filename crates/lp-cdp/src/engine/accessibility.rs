@@ -30,6 +30,10 @@ use super::EngineHost;
 use crate::msg::{CdpError, CdpResult};
 use crate::target::PageCommand;
 
+/// Most nodes one command builds; past it the command fails explicitly
+/// instead of serializing an unbounded reply.
+const MAX_AX_NODES: usize = 16384;
+
 /// Why a node is in the tree but ignored (Chromium's `ignoredReasons`).
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Ignored {
@@ -271,6 +275,7 @@ struct Builder<'a> {
     /// attaches to, for `getPartialAXTree` on them.
     flattened: Option<HashMap<NodeId, usize>>,
     stack: Vec<Work>,
+    over_budget: bool,
 }
 
 /// A DOM node waiting to be added under tree node `parent`.
@@ -282,7 +287,16 @@ enum Work {
 impl<'a> Builder<'a> {
     fn new(dom: &'a Dom, layout: &'a Layout, doc: NodeId, track: bool) -> Self {
         let focused = dom.focused(doc).ok().flatten();
-        Builder { dom, layout, doc, focused, nodes: Vec::new(), flattened: track.then(HashMap::new), stack: Vec::new() }
+        Builder {
+            dom,
+            layout,
+            doc,
+            focused,
+            nodes: Vec::new(),
+            flattened: track.then(HashMap::new),
+            stack: Vec::new(),
+            over_budget: false,
+        }
     }
 
     fn push(&mut self, parent: Option<usize>, n: AxNode) -> usize {
@@ -309,6 +323,10 @@ impl<'a> Builder<'a> {
         self.children(idx, self.doc, Ctx::default());
         // An explicit stack, so arbitrarily deep documents do not recurse.
         while let Some(work) = self.stack.pop() {
+            if self.nodes.len() > MAX_AX_NODES {
+                self.over_budget = true;
+                return;
+            }
             match work {
                 Work::Element { parent, id, ctx } => self.element(parent, id, ctx),
                 Work::Text { parent, id, prev, next, ctx } => {
@@ -462,7 +480,7 @@ impl<'a> Builder<'a> {
                     | "track"
             )
         ) || tag == Some("input") && dom.input_type(el).is_ok_and(|t| t == InputType::Hidden)
-            || if in_select { attr(dom, el, "hidden").is_some() } else { style.has_display_none(dom, el) };
+            || if in_select { attr(dom, el, "hidden").is_some() } else { style.is_hidden(dom, el, Default::default()) };
         if skipped {
             self.flatten(el, parent);
             return;
@@ -956,18 +974,51 @@ struct Out<'h> {
     host: &'h mut EngineHost,
     key: crate::target::PageKey,
     page: Rc<PageDom>,
-    ids: HashMap<NodeId, u64>,
+    ids: HashMap<NodeId, Option<u64>>,
+    /// The page's backend id table is full: stop asking (each failed
+    /// `identify` sweeps the table).
+    exhausted: bool,
 }
 
-impl Out<'_> {
-    fn id(&mut self, node: NodeId) -> CdpResult<u64> {
+/// The AX node id: the DOM node's slot and generation, stable while the
+/// node lives and needing no table.
+fn ax_id(node: NodeId) -> String {
+    ((u64::from(node.generation()) << 32) | u64::from(node.index())).to_string()
+}
+
+impl<'h> Out<'h> {
+    fn new(host: &'h mut EngineHost, key: crate::target::PageKey, page: Rc<PageDom>) -> Self {
+        Out { host, key, page, ids: HashMap::new(), exhausted: false }
+    }
+
+    /// The DOM domain's backend node id, or `None` once the page's backend id
+    /// budget is spent (the node is then reported without one).
+    fn backend(&mut self, node: NodeId) -> CdpResult<Option<u64>> {
         if let Some(id) = self.ids.get(&node) {
             return Ok(*id);
         }
-        let state = self.host.pages.get_mut(&self.key).ok_or_else(|| CdpError::server("page is gone"))?;
-        let id = state.dom_nodes.identify(&self.page, node, &mut self.host.next_backend_node)?;
+        let id = if self.exhausted {
+            None
+        } else {
+            let state = self.host.pages.get_mut(&self.key).ok_or_else(|| CdpError::server("page is gone"))?;
+            match state.dom_nodes.identify(&self.page, node, &mut self.host.next_backend_node) {
+                Ok(id) => Some(id),
+                Err(_) => {
+                    self.exhausted = true;
+                    None
+                }
+            }
+        };
         self.ids.insert(node, id);
         Ok(id)
+    }
+
+    fn related_node(&mut self, node: NodeId) -> CdpResult<serde_json::Map<String, Value>> {
+        let mut m = serde_json::Map::new();
+        if let Some(id) = self.backend(node)? {
+            m.insert("backendDOMNodeId".into(), json!(id));
+        }
+        Ok(m)
     }
 
     fn related(&mut self, nodes: &[(NodeId, String)], idrefs: bool) -> CdpResult<Vec<Value>> {
@@ -975,13 +1026,13 @@ impl Out<'_> {
         nodes
             .iter()
             .map(|(n, text)| {
-                let id = self.id(*n)?;
-                Ok(if idrefs {
-                    let idref = attr(&dom.borrow(), *n, "id").unwrap_or_default().to_owned();
-                    json!({"backendDOMNodeId":id,"idref":idref})
+                let mut m = self.related_node(*n)?;
+                if idrefs {
+                    m.insert("idref".into(), json!(attr(&dom.borrow(), *n, "id").unwrap_or_default()));
                 } else {
-                    json!({"backendDOMNodeId":id,"text":text})
-                })
+                    m.insert("text".into(), json!(text));
+                }
+                Ok(Value::Object(m))
             })
             .collect()
     }
@@ -990,9 +1041,9 @@ impl Out<'_> {
     /// Chromium's `queryAXTree` does; the tree commands report them as `none`.
     fn node(&mut self, tree: &[AxNode], idx: usize, frame: Option<&str>, query: bool) -> CdpResult<Value> {
         let n = &tree[idx];
-        let id = self.id(n.node)?;
+        let backend = self.backend(n.node)?;
         let mut v = serde_json::Map::new();
-        v.insert("nodeId".into(), json!(id.to_string()));
+        v.insert("nodeId".into(), json!(ax_id(n.node)));
         v.insert("ignored".into(), json!(n.ignored.is_some()));
         if let Some(why) = n.ignored {
             let reason = match why {
@@ -1003,10 +1054,10 @@ impl Out<'_> {
                 }
                 Ignored::NotRendered => json!({"name":"notRendered","value":{"type":"boolean","value":true}}),
                 Ignored::AriaHiddenSubtree(root) => {
-                    json!({"name":"ariaHiddenSubtree","value":{"type":"idref","relatedNodes":[{"backendDOMNodeId":self.id(root)?}]}})
+                    json!({"name":"ariaHiddenSubtree","value":{"type":"idref","relatedNodes":[self.related_node(root)?]}})
                 }
                 Ignored::LabelFor(control) => {
-                    json!({"name":"labelFor","value":{"type":"idref","relatedNodes":[{"backendDOMNodeId":self.id(control)?}]}})
+                    json!({"name":"labelFor","value":{"type":"idref","relatedNodes":[self.related_node(control)?]}})
                 }
             };
             v.insert("ignoredReasons".into(), json!([reason]));
@@ -1039,14 +1090,16 @@ impl Out<'_> {
             v.insert("properties".into(), json!(props));
         }
         if let Some(p) = n.parent {
-            v.insert("parentId".into(), json!(self.id(tree[p].node)?.to_string()));
+            v.insert("parentId".into(), json!(ax_id(tree[p].node)));
         }
         let mut children = Vec::with_capacity(n.children.len());
         for c in &n.children {
-            children.push(json!(self.id(tree[*c].node)?.to_string()));
+            children.push(json!(ax_id(tree[*c].node)));
         }
         v.insert("childIds".into(), json!(children));
-        v.insert("backendDOMNodeId".into(), json!(id));
+        if let Some(id) = backend {
+            v.insert("backendDOMNodeId".into(), json!(id));
+        }
         if let Some(frame) = frame.filter(|_| n.parent.is_none()) {
             v.insert("frameId".into(), json!(frame));
         }
@@ -1087,12 +1140,7 @@ impl EngineHost {
     }
 
     /// The tree of one document, plus its frame id.
-    fn build_ax(
-        &self,
-        cmd: &PageCommand<'_, '_>,
-        page: &Rc<PageDom>,
-        track: bool,
-    ) -> CdpResult<BuiltTree> {
+    fn build_ax(&self, cmd: &PageCommand<'_, '_>, page: &Rc<PageDom>, track: bool) -> CdpResult<BuiltTree> {
         let frame = self
             .frame_for_document(cmd.page, page)
             .ok_or_else(|| CdpError::server("Could not find node with given id"))?;
@@ -1101,6 +1149,9 @@ impl EngineHost {
         let layout = page.layout.borrow();
         let mut b = Builder::new(&dom, &layout, page.document(), track);
         b.build(title, Some(frame.url.clone()).filter(|u| !u.is_empty()));
+        if b.over_budget {
+            return Err(CdpError::server("Accessibility tree exceeds node budget"));
+        }
         Ok((b.nodes, b.flattened, Some(frame.id.0)))
     }
 
@@ -1113,15 +1164,15 @@ impl EngineHost {
         }
         let p: P = cmd.command.params()?;
         let pid = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?.id;
-        let page = match &p.frame_id {
+        let frame = match &p.frame_id {
             Some(id) => self.thread.browser.frame(pid, &lp_browser::FrameId(id.clone())),
             None => self.thread.browser.page(pid).map(|p| p.main_frame.clone()),
         }
-        .and_then(|f| f.page_dom)
-        .ok_or_else(|| CdpError::server("Frame with the given frameId is not found."))?;
+        .ok_or_else(|| CdpError::invalid_params("Frame with the given frameId is not found."))?;
+        let page = frame.page_dom.ok_or_else(|| CdpError::invalid_params("No document for given frame found"))?;
         let (tree, _, frame) = self.build_ax(cmd, &page, false)?;
         let order = walk_to_depth(&tree, p.depth.map(|d| d.clamp(0, u32::MAX as i64) as u32));
-        let mut out = Out { host: self, key: cmd.page, page, ids: HashMap::new() };
+        let mut out = Out::new(self, cmd.page, page);
         let nodes =
             order.into_iter().map(|i| out.node(&tree, i, frame.as_deref(), false)).collect::<CdpResult<Vec<_>>>()?;
         Ok(json!({ "nodes": nodes }))
@@ -1141,7 +1192,8 @@ impl EngineHost {
             return i;
         }
         let dom = page.dom.borrow();
-        let rendered = flattened.contains_key(&node) && !page.layout.borrow().style().has_display_none(&dom, node);
+        let rendered =
+            flattened.contains_key(&node) && !page.layout.borrow().style().is_hidden(&dom, node, Default::default());
         let mut cur = dom.parent(node).ok().flatten();
         let parent = loop {
             let Some(c) = cur else { break 0 };
@@ -1193,7 +1245,7 @@ impl EngineHost {
                 cur = tree[a].parent;
             }
         }
-        let mut out = Out { host: self, key: cmd.page, page, ids: HashMap::new() };
+        let mut out = Out::new(self, cmd.page, page);
         let nodes =
             order.into_iter().map(|i| out.node(&tree, i, frame.as_deref(), false)).collect::<CdpResult<Vec<_>>>()?;
         Ok(json!({ "nodes": nodes }))
@@ -1216,6 +1268,7 @@ impl EngineHost {
         let target: NodeParams = cmd.command.params()?;
         let (page, root) = self.resolve_dom_node(cmd, &target)?;
         let (tree, _, frame) = self.build_ax(cmd, &page, false)?;
+        let want_name = p.accessible_name.as_deref().map(normalize);
         let matches: Vec<usize> = {
             let dom = page.dom.borrow();
             // Tree order is document order: a pre-order walk from the root.
@@ -1230,13 +1283,12 @@ impl EngineHost {
                 .filter(|&i| {
                     let n = &tree[i];
                     (n.node == root || dom.contains(root, n.node).unwrap_or(false))
-                        && n.ignored != Some(Ignored::Uninteresting)
                         && p.role.as_deref().is_none_or(|r| r == n.role())
-                        && p.accessible_name.as_deref().is_none_or(|name| name == n.name)
+                        && want_name.as_deref().is_none_or(|name| *name == normalize(&n.name))
                 })
                 .collect()
         };
-        let mut out = Out { host: self, key: cmd.page, page, ids: HashMap::new() };
+        let mut out = Out::new(self, cmd.page, page);
         let nodes =
             matches.into_iter().map(|i| out.node(&tree, i, frame.as_deref(), true)).collect::<CdpResult<Vec<_>>>()?;
         Ok(json!({ "nodes": nodes }))

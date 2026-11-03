@@ -136,7 +136,7 @@ fn full_ax_tree_matches_chrome_structure() {
         for c in n["childIds"].as_array().unwrap() {
             assert_eq!(map[c.as_str().unwrap()]["parentId"], n["nodeId"], "{n}");
         }
-        assert_eq!(n["nodeId"].as_str().unwrap(), n["backendDOMNodeId"].to_string());
+        assert!(n["backendDOMNodeId"].is_u64(), "{n}");
     }
 }
 
@@ -169,6 +169,7 @@ fn full_ax_tree_depth_counts_unignored_levels_like_chrome() {
     assert_eq!(count(&mut h, 3), 11);
     assert_eq!(count(&mut h, 4), 13);
     let r = h.page("Accessibility.getFullAXTree", json!({"frameId": "nope"}));
+    assert_eq!(r["error"]["code"], -32602, "{r}");
     assert_eq!(r["error"]["message"], "Frame with the given frameId is not found.", "{r}");
 }
 
@@ -230,4 +231,86 @@ fn ax_tree_reads_live_form_state() {
     assert_eq!(prop(&find("checkbox"), "checked")["value"], "true");
     assert_eq!(prop(&find("button"), "focused")["value"], true);
     assert!(prop(&tree[0], "focused").is_null(), "the root is not focused when an element is");
+}
+
+fn accessibility_events(messages: &[Value]) -> Vec<&Value> {
+    messages.iter().filter(|m| m["method"].as_str().is_some_and(|m| m.starts_with("Accessibility."))).collect()
+}
+
+#[test]
+fn enable_and_disable_ack_without_events() {
+    let mut h = Harness::new();
+    load_html(&mut h, "<button>b</button>");
+    for method in ["Accessibility.enable", "Accessibility.disable"] {
+        let messages = h.page_with_events(method, json!({}));
+        let reply = messages.iter().find(|m| m.get("id").is_some()).unwrap();
+        assert_eq!(reply["result"], json!({}), "{reply}");
+        assert!(accessibility_events(&messages).is_empty(), "{messages:#?}");
+    }
+    h.page("Accessibility.enable", json!({}));
+    eval_value(&mut h, "document.body.append(document.createElement('button')); 1");
+    let later = h.run_for(50);
+    assert!(accessibility_events(&later).is_empty(), "{later:#?}");
+}
+
+#[test]
+fn child_frame_tree_by_frame_id() {
+    let mut h = Harness::new();
+    load_html(&mut h, "<title>top</title><iframe name=kid srcdoc='<title>inner</title><button>In</button>'></iframe>");
+    h.run_for(150);
+    let tree = h.page("Page.getFrameTree", json!({}));
+    let child = tree["result"]["frameTree"]["childFrames"][0]["frame"]["id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{tree}"))
+        .to_owned();
+    let top = nodes(&h.page("Accessibility.getFullAXTree", json!({})));
+    let iframe = top.iter().find(|n| n["role"]["value"] == "Iframe").unwrap();
+    assert_eq!(iframe["childIds"], json!([]), "child frame contents are not inlined: {iframe}");
+    let inner = nodes(&h.page("Accessibility.getFullAXTree", json!({"frameId": child})));
+    assert_eq!(inner[0]["frameId"], json!(child));
+    assert_eq!(inner[0]["name"]["value"], "inner");
+    assert!(inner.iter().any(|n| n["role"]["value"] == "button" && n["name"]["value"] == "In"), "{inner:#?}");
+}
+
+#[test]
+fn stale_and_missing_selectors_fail_like_dom() {
+    let mut h = Harness::new();
+    load_html(&mut h, "<button id=b>b</button>");
+    let r = h.page("Accessibility.getPartialAXTree", json!({}));
+    assert_eq!(r["error"]["message"], "Specify exactly one nodeId, backendNodeId or objectId", "{r}");
+    let b = object(&mut h, "#b");
+    let backend =
+        h.page("DOM.describeNode", json!({"objectId": b}))["result"]["node"]["backendNodeId"].as_u64().unwrap();
+    load_html(&mut h, "<p>next</p>");
+    let r = h.page("Accessibility.getPartialAXTree", json!({"backendNodeId": backend}));
+    assert_eq!(r["error"]["message"], "Could not find node with given id", "{r}");
+    let root = object(&mut h, "body");
+    let r = nodes(&h.page("Accessibility.queryAXTree", json!({"objectId": root, "accessibleName": "missing"})));
+    assert!(r.is_empty());
+    let root = object(&mut h, "body");
+    let r = nodes(&h.page("Accessibility.queryAXTree", json!({"objectId": root, "accessibleName": "  next "})));
+    assert_eq!(r.len(), 1, "names compare whitespace-normalized: {r:#?}");
+}
+
+#[test]
+fn large_pages_keep_stable_ids_past_the_backend_budget() {
+    let mut h = Harness::new();
+    load_html(&mut h, "<body></body>");
+    eval_value(
+        &mut h,
+        "for (let i = 0; i < 5000; i++) { const d = document.createElement('div'); d.textContent = 'row ' + i; document.body.append(d); } 1",
+    );
+    let ids = |h: &mut Harness| -> Vec<(String, Value)> {
+        nodes(&h.page("Accessibility.getFullAXTree", json!({})))
+            .into_iter()
+            .map(|n| (n["nodeId"].as_str().unwrap().to_owned(), n["backendDOMNodeId"].clone()))
+            .collect()
+    };
+    let first = ids(&mut h);
+    assert_eq!(first.len(), 3 + 2 * 5000, "root, html, body, a generic and a text per row");
+    // The backend id table holds 4096 entries: later nodes come without one,
+    // but the tree is complete and AX ids do not depend on it.
+    assert!(first.iter().any(|(_, b)| b.is_null()));
+    assert!(first[..100].iter().all(|(_, b)| b.is_u64()));
+    assert_eq!(ids(&mut h), first, "a second call reports identical ids");
 }

@@ -12,7 +12,7 @@ use super::{remote, runtime::context_id, EngineHost};
 use crate::msg::{CdpError, CdpResult};
 use crate::target::{PageCommand, PageKey};
 
-const MAX_BACKEND_NODES: usize = 1 << 16;
+const MAX_BACKEND_NODES: usize = 4096;
 const MAX_DESCRIPTION_NODES: usize = 1024;
 
 struct BackendNode {
