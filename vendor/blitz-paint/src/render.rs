@@ -902,6 +902,7 @@ impl ElementCx<'_, '_> {
                 transform,
                 self.scale,
                 self.node.id,
+                Some(&text_layout.text),
                 &mut draw_text_context,
             );
         }
@@ -968,6 +969,7 @@ impl ElementCx<'_, '_> {
                 transform,
                 self.scale,
                 self.node.id,
+                None,
                 &mut draw_text_context,
             );
         }
@@ -1023,6 +1025,7 @@ impl ElementCx<'_, '_> {
                 transform,
                 self.scale,
                 self.node.id,
+                None,
                 &mut draw_text_context,
             );
         }

@@ -7,13 +7,20 @@
 //! display list carries no source text, so the text a glyph stands for is
 //! recovered from the font's cmap (reverse lookup): plain text extracts and
 //! copies, ligatures and glyphs reached only through GSUB do not.
+//!
+//! Paper-cut documents (no page boxes) also pass [`Extras`]: the text runs
+//! as painted, with their source text (ligatures copy as the characters
+//! they stand for) and elements, which give link annotations, a tag tree
+//! (headings, paragraphs, links). Blurred outset box shadows are drawn on
+//! both (`LIGHTNINGPANDA_PDF_SHADOWS=0` skips them).
 
 use std::collections::HashMap;
 
 use anyrender::recording::{RenderCommand, Scene};
 use anyrender::Paint;
 use krilla::color::rgb;
-use krilla::geom::{Path, PathBuilder, Point as KPoint, Size, Transform};
+use krilla::geom::{Path, PathBuilder, Point as KPoint, Quadrilateral, Rect as KRect, Size, Transform};
+use krilla::image::{BitsPerComponent, CustomImage, ImageColorspace};
 use krilla::num::NormalizedF32;
 use krilla::page::PageSettings;
 use krilla::paint::{
@@ -48,6 +55,15 @@ pub struct PdfStats {
     pub culled: u32,
     /// Blurred shadows: outset ones not drawn, inset ones drawn unblurred.
     pub box_shadows_skipped: u32,
+    /// Blurred outset shadows drawn (as an image of the blurred shape).
+    pub box_shadows: u32,
+    /// Link annotations written.
+    pub links: u32,
+    /// Glyph runs written with their source text (ligatures, tags).
+    pub runs_with_source: u32,
+    /// Blurred outset shadows hidden on the page by their element's opaque
+    /// background: not drawn.
+    pub box_shadows_covered: u32,
     /// Layer filters and backdrop filters: content drawn unfiltered.
     pub filters_skipped: u32,
     /// Compositing other than source-over: drawn as source-over.
@@ -137,6 +153,63 @@ pub struct Placement {
     pub scale: f64,
 }
 
+/// What a structure element of the tag tree is.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum StructKind {
+    /// `h1`-`h6`.
+    Heading(u8),
+    Paragraph,
+    /// The link of [`Extras::links`] at this index.
+    Link(usize),
+}
+
+/// A structure element: its kind and the element it sits in (`None`: the
+/// document).
+#[derive(Clone, Debug)]
+pub struct Struct {
+    pub kind: StructKind,
+    pub parent: Option<u32>,
+}
+
+/// Where a link goes.
+#[derive(Clone, Debug)]
+pub enum LinkTarget {
+    Uri(String),
+    /// A point in the document (device px, document coordinates).
+    Internal(f64, f64),
+}
+
+/// A link: the areas it covers (device px, document coordinates) and its
+/// structure element.
+#[derive(Clone, Debug)]
+pub struct Link {
+    pub rects: Vec<Rect>,
+    pub target: LinkTarget,
+    pub structure: u32,
+    /// It covers its border box (else its text, line by line).
+    pub boxed: bool,
+}
+
+/// What a paper-cut document carries besides its display list.
+#[derive(Clone, Debug, Default)]
+pub struct Extras {
+    /// The text runs in the order they were painted.
+    pub runs: Vec<blitz_paint::TextRun>,
+    /// Each run's innermost structure element.
+    pub run_struct: Vec<Option<u32>>,
+    pub structs: Vec<Struct>,
+    pub links: Vec<Link>,
+    /// Write a tag tree.
+    pub tagged: bool,
+    pub lang: Option<String>,
+    /// A full slice's height (device px) and the canvas background: pages
+    /// cut short (at a break) are filled with it to the slice's height.
+    pub slice_height: f64,
+    pub canvas: Option<[u8; 4]>,
+}
+
+type Leaves = Vec<(krilla::tagging::Identifier, Option<u32>)>;
+
 /// Writes `scene` (device px, document coordinates) as a PDF with one page
 /// per rectangle of `pages`; `scale` converts device px to points. Without
 /// a `placement` each page is its rectangle's size.
@@ -145,10 +218,19 @@ pub fn write(
     pages: &[Rect],
     scale: f64,
     placement: Option<Placement>,
+    extras: Option<&Extras>,
     cache: &mut PdfCache,
 ) -> Result<(Vec<u8>, PdfStats), String> {
     let mut stats = PdfStats::default();
-    let mut doc = krilla::Document::new();
+    let tagged = extras.is_some_and(|e| e.tagged);
+    let mut doc = match extras {
+        Some(_) => {
+            krilla::Document::new_with(krilla::SerializeSettings { enable_tagging: tagged, ..Default::default() })
+        }
+        None => krilla::Document::new(),
+    };
+    let dpr = PX_TO_PT / scale;
+    let mut leaves: Leaves = Vec::new();
     for page in pages {
         let (w, h) = match placement {
             Some(p) => (p.paper.0 as f32, p.paper.1 as f32),
@@ -166,10 +248,24 @@ pub fn write(
         };
         s.push_transform(&Transform::from_scale(scale as f32, scale as f32));
         s.push_transform(&Transform::from_translate(-page.x0 as f32, -page.y0 as f32));
+        if let Some(ex) = extras {
+            fill_short_page(&mut s, *page, ex);
+        }
         if let Some(clip) = rect_path(*page) {
             s.push_clip_path(&clip, &FillRule::NonZero);
         }
-        Replay { s: &mut s, page: *page, cache, stats: &mut stats, layers: Vec::new() }.run(scene);
+        Replay {
+            s: &mut s,
+            page: *page,
+            cache,
+            stats: &mut stats,
+            layers: Vec::new(),
+            extras,
+            dpr,
+            next_run: 0,
+            leaves: if tagged { Some(&mut leaves) } else { None },
+        }
+        .run(scene);
         s.pop();
         s.pop();
         s.pop();
@@ -177,10 +273,159 @@ pub fn write(
             s.pop();
         }
         s.finish();
+        if let Some(ex) = extras {
+            let (offset, content_scale) = match placement {
+                Some(p) => (p.offset, scale * p.scale),
+                None => ((0.0, 0.0), scale),
+            };
+            for link in &ex.links {
+                let Some(annotation) = link_annotation(link, *page, pages, offset, content_scale) else { continue };
+                stats.links += 1;
+                if tagged {
+                    leaves.push((p.add_tagged_annotation(annotation), Some(link.structure)));
+                } else {
+                    p.add_annotation(annotation);
+                }
+            }
+        }
         p.finish();
+    }
+    if let (true, Some(ex)) = (tagged, extras) {
+        doc.set_tag_tree(tag_tree(ex, leaves));
     }
     let bytes = doc.finish().map_err(|e| format!("krilla: {e:?}"))?;
     Ok((bytes, stats))
+}
+
+/// A page cut short at a break: the rest of the slice in the canvas color.
+fn fill_short_page(s: &mut Surface<'_>, page: Rect, ex: &Extras) {
+    let Some(color) = ex.canvas else { return };
+    if page.height() >= ex.slice_height - 0.5 {
+        return;
+    }
+    let Some(rest) = rect_path(Rect::new(page.x0, page.y1, page.x1, page.y0 + ex.slice_height)) else { return };
+    s.set_stroke(None);
+    s.set_fill(Some(KFill {
+        paint: rgb::Color::new(color[0], color[1], color[2]).into(),
+        opacity: norm(color[3] as f32 / 255.0),
+        rule: FillRule::NonZero,
+    }));
+    s.draw_path(&rest);
+}
+
+/// `link`'s annotation on `page` (`None`: it is not on it). `offset` and
+/// `content_scale` place the page's content on paper (pt).
+fn link_annotation(
+    link: &Link,
+    page: Rect,
+    pages: &[Rect],
+    offset: (f64, f64),
+    content_scale: f64,
+) -> Option<krilla::annotation::Annotation> {
+    use krilla::annotation::{Annotation, LinkAnnotation, Target};
+    let rects: Vec<KRect> = link
+        .rects
+        .iter()
+        .filter_map(|r| {
+            let r = r.intersect(page);
+            if r.width() <= 0.0 || r.height() <= 0.0 {
+                return None;
+            }
+            let x = |v: f64| ((v - page.x0) * content_scale + offset.0) as f32;
+            let y = |v: f64| ((v - page.y0) * content_scale + offset.1) as f32;
+            KRect::from_ltrb(x(r.x0), y(r.y0), x(r.x1), y(r.y1))
+        })
+        .collect();
+    if rects.is_empty() {
+        return None;
+    }
+    let target = match &link.target {
+        LinkTarget::Uri(uri) => Target::Action(krilla::action::LinkAction::new(uri.clone()).into()),
+        LinkTarget::Internal(x, y) => {
+            let i = pages.iter().position(|p| *y >= p.y0 && *y < p.y1)?;
+            let px = (x - pages[i].x0).max(0.0) * content_scale + offset.0;
+            let py = (y - pages[i].y0) * content_scale + offset.1;
+            let dest = krilla::destination::XyzDestination::new(i, KPoint::from_xy(px as f32, py as f32));
+            Target::Destination(krilla::destination::Destination::Xyz(dest))
+        }
+    };
+    // One area: its rect, as Chrome writes them; several (a link wrapping
+    // across lines): quad points.
+    let annotation = match rects.as_slice() {
+        [rect] => LinkAnnotation::new(*rect, target),
+        _ => LinkAnnotation::new_with_quad_points(rects.into_iter().map(Quadrilateral::from).collect(), target),
+    };
+    Some(Annotation::new_link(annotation, None))
+}
+
+/// The tag tree of `ex`'s structure elements holding `leaves` (marked
+/// content and annotations, in reading order). Structure elements come in
+/// the order their first content does; text outside any is grouped in
+/// `NonStruct` elements, as Chrome does.
+fn tag_tree(ex: &Extras, leaves: Leaves) -> krilla::tagging::TagTree {
+    use krilla::tagging::{Identifier, Node, Tag, TagGroup, TagKind, TagTree};
+    enum Child {
+        Leaf(Identifier),
+        Struct(u32),
+        Loose(Vec<Identifier>),
+    }
+    fn place(s: u32, ex: &Extras, placed: &mut [bool], children: &mut [Vec<Child>], root: &mut Vec<Child>) {
+        let i = s as usize;
+        if placed[i] {
+            return;
+        }
+        placed[i] = true;
+        match ex.structs[i].parent {
+            Some(parent) => {
+                place(parent, ex, placed, children, root);
+                children[parent as usize].push(Child::Struct(s));
+            }
+            None => root.push(Child::Struct(s)),
+        }
+    }
+    fn build(child: Child, ex: &Extras, children: &mut Vec<Vec<Child>>) -> Node {
+        match child {
+            Child::Leaf(id) => id.into(),
+            Child::Loose(ids) => {
+                TagGroup::with_children(Tag::NonStruct, ids.into_iter().map(Node::from).collect()).into()
+            }
+            Child::Struct(s) => {
+                let kind: TagKind = match ex.structs[s as usize].kind {
+                    StructKind::Heading(level) => {
+                        let level =
+                            std::num::NonZeroU16::new(level.clamp(1, 6) as u16).unwrap_or(std::num::NonZeroU16::MIN);
+                        Tag::Hn(level, None).into()
+                    }
+                    StructKind::Paragraph => Tag::P.into(),
+                    StructKind::Link(_) => Tag::Link.into(),
+                };
+                let kids = std::mem::take(&mut children[s as usize]);
+                let nodes = kids.into_iter().map(|c| build(c, ex, children)).collect();
+                TagGroup::with_children(kind, nodes).into()
+            }
+        }
+    }
+    let n = ex.structs.len();
+    let mut children: Vec<Vec<Child>> = (0..n).map(|_| Vec::new()).collect();
+    let mut placed = vec![false; n];
+    let mut root: Vec<Child> = Vec::new();
+    for (id, s) in leaves {
+        match s.filter(|&s| (s as usize) < n) {
+            Some(s) => {
+                place(s, ex, &mut placed, &mut children, &mut root);
+                children[s as usize].push(Child::Leaf(id));
+            }
+            None => match root.last_mut() {
+                Some(Child::Loose(ids)) => ids.push(id),
+                _ => root.push(Child::Loose(vec![id])),
+            },
+        }
+    }
+    let mut tree = TagTree::new().with_lang(ex.lang.clone());
+    for child in root {
+        tree.push(build(child, ex, &mut children));
+    }
+    tree
 }
 
 enum Layer {
@@ -203,6 +448,13 @@ struct Replay<'a, 'b> {
     cache: &'a mut PdfCache,
     stats: &'a mut PdfStats,
     layers: Vec<Pending>,
+    extras: Option<&'a Extras>,
+    /// Device px per CSS px.
+    dpr: f64,
+    /// The next of `extras.runs` to match a glyph run command with.
+    next_run: usize,
+    /// Tagged content written, with its structure element.
+    leaves: Option<&'a mut Leaves>,
 }
 
 impl Replay<'_, '_> {
@@ -303,6 +555,7 @@ impl Replay<'_, '_> {
                     });
                 }
                 RenderCommand::GlyphRun(c) => {
+                    let source = self.match_run(c);
                     if c.glyphs.is_empty() {
                         continue;
                     }
@@ -315,13 +568,35 @@ impl Replay<'_, '_> {
                         y1 = y1.max(g.y as f64);
                     }
                     let bounds = Rect::new(x0 - size, y0 - size * 1.5, x1 + size * 2.0, y1 + size);
-                    if !self.visible(c.transform.transform_rect_bbox(bounds)) {
+                    // A recorded run's content area: a line on the next page
+                    // (cuts are at line tops) is not written on this one.
+                    let bounds = match source.and_then(|i| self.extras?.runs.get(i)) {
+                        Some(r) => r.bounds.inflate(-0.5, -0.5),
+                        None => c.transform.transform_rect_bbox(bounds),
+                    };
+                    if !self.visible(bounds) {
                         continue;
                     }
-                    self.glyph_run(c);
+                    self.glyph_run(c, source);
                 }
                 RenderCommand::BoxShadow(c) => {
-                    if self.visible(c.transform.transform_rect_bbox(c.rect.inflate(c.radius, c.radius))) {
+                    if shadows_enabled() {
+                        // Chrome's blur: a Gaussian of standard deviation blur / 2.
+                        let sigma = c.std_dev / 2.0 * self.dpr;
+                        let reach = c.transform.transform_rect_bbox(c.rect.inflate(sigma * 3.0, sigma * 3.0));
+                        if !self.visible(reach) {
+                            continue;
+                        }
+                        // The element's own opaque background is painted right
+                        // after its shadows: what of the shadow it covers on
+                        // this page (a page box's shadow on its own page) is
+                        // not drawn.
+                        if covered(&cmds[i..], reach.intersect(self.page)) {
+                            self.stats.box_shadows_covered += 1;
+                            continue;
+                        }
+                        self.box_shadow(c, sigma);
+                    } else if self.visible(c.transform.transform_rect_bbox(c.rect.inflate(c.radius, c.radius))) {
                         self.stats.box_shadows_skipped += 1;
                     }
                 }
@@ -332,6 +607,44 @@ impl Replay<'_, '_> {
                 self.s.pop();
             }
         }
+    }
+
+    /// The painted text run `c` is (`extras.runs` are in paint order; glyph
+    /// runs Blitz's text painting did not draw, such as SVG text, match none).
+    fn match_run(&mut self, c: &anyrender::recording::GlyphRunCommand) -> Option<usize> {
+        let run = self.extras?.runs.get(self.next_run)?;
+        let first = c.glyphs.first().map(|g| (g.id, g.x, g.y));
+        if run.glyphs != c.glyphs.len() || (run.glyphs != 0 && first != Some(run.first)) {
+            return None;
+        }
+        self.next_run += 1;
+        Some(self.next_run - 1)
+    }
+
+    /// A blurred outset box shadow: its rounded rectangle blurred by `sigma`
+    /// (device px) into an image's alpha, drawn in the shadow's color.
+    fn box_shadow(&mut self, c: &anyrender::recording::BoxShadowCommand, sigma: f64) {
+        let color = c.brush.to_rgba8();
+        if color.a == 0 {
+            return;
+        }
+        if sigma < 0.25 {
+            let path = kurbo::RoundedRect::from_rect(c.rect, c.radius).to_path(0.1);
+            self.stats.box_shadows += 1;
+            self.fill(&path, c.transform, Fill::NonZero, &Paint::Solid(c.brush), None);
+            return;
+        }
+        // Only the part on this page (a page-sized shadow crossing pages
+        // becomes one image per page).
+        let limit = c.transform.inverse().transform_rect_bbox(self.page.inflate(1.0, 1.0));
+        let Some((image, area)) = shadow_image(c.rect, c.radius, sigma, [color.r, color.g, color.b, color.a], limit)
+        else {
+            return;
+        };
+        let Some(size) = Size::from_wh(area.width() as f32, area.height() as f32) else { return };
+        self.stats.box_shadows += 1;
+        self.flush();
+        self.with_transform(c.transform * Affine::translate((area.x0, area.y0)), |s| s.draw_image(image, size));
     }
 
     fn visible(&mut self, bounds: Rect) -> bool {
@@ -472,7 +785,7 @@ impl Replay<'_, '_> {
         });
     }
 
-    fn glyph_run(&mut self, c: &anyrender::recording::GlyphRunCommand) {
+    fn glyph_run(&mut self, c: &anyrender::recording::GlyphRunCommand, source: Option<usize>) {
         if !c.normalized_coords.is_empty() {
             self.stats.variable_runs += 1;
         }
@@ -490,11 +803,27 @@ impl Replay<'_, '_> {
         let mut text = String::new();
         let mut glyphs = Vec::with_capacity(c.glyphs.len());
         let (gx, gy) = (c.glyphs[0].x, c.glyphs[0].y);
+        // The run's source text when it was recorded: each glyph stands for
+        // its cluster's characters (all of them for a ligature).
+        let ex = self.extras;
+        let recorded = source.and_then(|i| ex?.runs.get(i)).filter(|r| !r.text.is_empty());
+        if let Some(r) = recorded {
+            text.push_str(&r.text);
+            self.stats.runs_with_source += 1;
+        }
         for (i, g) in c.glyphs.iter().enumerate() {
-            let start = text.len();
-            match entry.chars.get(&g.id) {
-                Some(ch) => text.push(*ch),
-                None => self.stats.glyphs_without_text += 1,
+            let range = match recorded {
+                Some(r) => r.glyph_text[i].start as usize..r.glyph_text[i].end as usize,
+                None => {
+                    let start = text.len();
+                    if let Some(ch) = entry.chars.get(&g.id) {
+                        text.push(*ch);
+                    }
+                    start..text.len()
+                }
+            };
+            if range.is_empty() {
+                self.stats.glyphs_without_text += 1;
             }
             let advance = c.glyphs.get(i + 1).map_or(0.0, |n| n.x - g.x);
             glyphs.push(KrillaGlyph::new(
@@ -503,16 +832,20 @@ impl Replay<'_, '_> {
                 0.0,
                 -(g.y - gy) / size,
                 0.0,
-                start..text.len(),
+                range,
                 None,
             ));
         }
+        let structure = source.and_then(|i| ex?.run_struct.get(i).copied().flatten());
         self.stats.glyph_runs += 1;
         self.stats.glyphs += glyphs.len() as u32;
         self.flush();
         let style = c.style.clone();
         let glyph_transform = c.glyph_transform;
+        let mut leaves = self.leaves.take();
         self.with_transform(c.transform, |s| {
+            let span = krilla::tagging::ContentTag::Span(krilla::tagging::SpanTag::empty());
+            let tag = leaves.as_deref_mut().map(|l| (l, s.start_tagged(span)));
             match &style {
                 Style::Fill(f) => {
                     s.set_stroke(None);
@@ -536,8 +869,146 @@ impl Replay<'_, '_> {
                 None => s.draw_glyphs(KPoint::from_xy(gx, gy), &glyphs, font, &text, size, false),
             }
             s.set_stroke(None);
+            if let Some((leaves, id)) = tag {
+                s.end_tagged();
+                leaves.push((id, structure));
+            }
         });
+        self.leaves = leaves;
     }
+}
+
+/// Whether `area` (device px) is under the opaque rectangular fill that
+/// follows the box shadows at the start of `next` (an element paints its
+/// outset shadows, then its background; a shadow clipped to outside the box
+/// is in a layer, and the layer comes first).
+fn covered(next: &[RenderCommand], area: Rect) -> bool {
+    let Some(RenderCommand::Fill(f)) = next.iter().find(|c| !matches!(c, RenderCommand::BoxShadow(_))) else {
+        return false;
+    };
+    let opaque = matches!(&f.brush, Paint::Solid(c) if c.components[3] >= 1.0);
+    if !opaque || area.width() <= 0.0 || area.height() <= 0.0 {
+        return false;
+    }
+    // Only an axis-aligned rectangle: its bounding box is what it covers.
+    let b = f.shape.bounding_box();
+    let corners = f.shape.elements().iter().all(|el| match el {
+        PathEl::MoveTo(p) | PathEl::LineTo(p) => (p.x == b.x0 || p.x == b.x1) && (p.y == b.y0 || p.y == b.y1),
+        PathEl::ClosePath => true,
+        _ => false,
+    });
+    let [sx, ky, kx, sy, _, _] = f.transform.as_coeffs();
+    if !corners || ky != 0.0 || kx != 0.0 || sx <= 0.0 || sy <= 0.0 {
+        return false;
+    }
+    let cover = f.transform.transform_rect_bbox(b);
+    cover.x0 <= area.x0 && cover.y0 <= area.y0 && cover.x1 >= area.x1 && cover.y1 >= area.y1
+}
+
+/// A shadow's alpha as an image: color channels constant, drawn with
+/// interpolation so the low-resolution mask stays smooth.
+#[derive(Clone, Hash)]
+struct ShadowImage {
+    rgb: std::sync::Arc<Vec<u8>>,
+    alpha: std::sync::Arc<Vec<u8>>,
+    size: (u32, u32),
+}
+
+impl CustomImage for ShadowImage {
+    fn color_channel(&self) -> &[u8] {
+        &self.rgb
+    }
+    fn alpha_channel(&self) -> Option<&[u8]> {
+        Some(&self.alpha)
+    }
+    fn bits_per_component(&self) -> BitsPerComponent {
+        BitsPerComponent::Eight
+    }
+    fn size(&self) -> (u32, u32) {
+        self.size
+    }
+    fn icc_profile(&self) -> Option<&[u8]> {
+        None
+    }
+    fn color_space(&self) -> ImageColorspace {
+        ImageColorspace::Rgb
+    }
+}
+
+/// The rounded rectangle `rect` (radius `radius`) blurred by a Gaussian of
+/// standard deviation `sigma`, as an image and the area it covers (both in
+/// the shadow's coordinates). The shape is sampled at three cells per sigma
+/// (at most 512 cells a side), then blurred with a separable kernel.
+fn shadow_image(
+    rect: Rect,
+    radius: f64,
+    sigma: f64,
+    color: [u8; 4],
+    limit: Rect,
+) -> Option<(krilla::image::Image, Rect)> {
+    let (image, area) = shadow_mask(rect, radius, sigma, color, limit)?;
+    Some((krilla::image::Image::from_custom(image, true).ok()?, area))
+}
+
+/// Whether blurred outset box shadows are drawn (`LIGHTNINGPANDA_PDF_SHADOWS=0`
+/// skips them, counted in [`PdfStats::box_shadows_skipped`], as before).
+fn shadows_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("LIGHTNINGPANDA_PDF_SHADOWS").map_or(true, |v| v != "0"))
+}
+
+/// [`shadow_image`]'s pixels: straight (not premultiplied) alpha over a
+/// constant color, for the part of the blur inside `limit`.
+fn shadow_mask(rect: Rect, radius: f64, sigma: f64, color: [u8; 4], limit: Rect) -> Option<(ShadowImage, Rect)> {
+    let area = rect.inflate(sigma * 3.0, sigma * 3.0).intersect(limit);
+    if !(area.width() > 0.0 && area.height() > 0.0 && sigma.is_finite()) {
+        return None;
+    }
+    let cell = (sigma / 3.0).max(0.5).max(area.width().max(area.height()) / 512.0);
+    let (w, h) = ((area.width() / cell).ceil() as usize, (area.height() / cell).ceil() as usize);
+    let area = Rect::new(area.x0, area.y0, area.x0 + w as f64 * cell, area.y0 + h as f64 * cell);
+    let r = radius.clamp(0.0, rect.width().min(rect.height()) / 2.0);
+    let (cx, cy) = (rect.center().x, rect.center().y);
+    let (hw, hh) = (rect.width() / 2.0 - r, rect.height() / 2.0 - r);
+    // Coverage of each cell, from the shape's signed distance.
+    let mut cov = vec![0f32; w * h];
+    for y in 0..h {
+        let py = area.y0 + (y as f64 + 0.5) * cell;
+        for x in 0..w {
+            let px = area.x0 + (x as f64 + 0.5) * cell;
+            let (dx, dy) = ((px - cx).abs() - hw, (py - cy).abs() - hh);
+            let outside = (dx.max(0.0).powi(2) + dy.max(0.0).powi(2)).sqrt();
+            let d = outside + dx.max(dy).min(0.0) - r;
+            cov[y * w + x] = (0.5 - d / cell).clamp(0.0, 1.0) as f32;
+        }
+    }
+    let s = sigma / cell;
+    let half = (s * 3.0).ceil() as isize;
+    let kernel: Vec<f32> = (-half..=half).map(|i| (-(i as f64).powi(2) / (2.0 * s * s)).exp() as f32).collect();
+    let total: f32 = kernel.iter().sum();
+    let kernel: Vec<f32> = kernel.iter().map(|k| k / total).collect();
+    // One pass along lines of `len` samples `step` apart, `count` lines `stride` apart.
+    let blur = |src: &[f32], dst: &mut [f32], len: usize, count: usize, stride: usize, step: usize| {
+        for line in 0..count {
+            for i in 0..len {
+                let mut acc = 0.0;
+                for (k, weight) in kernel.iter().enumerate() {
+                    let j = i as isize + k as isize - half;
+                    if j >= 0 && (j as usize) < len {
+                        acc += src[line * stride + j as usize * step] * weight;
+                    }
+                }
+                dst[line * stride + i * step] = acc;
+            }
+        }
+    };
+    let mut tmp = vec![0f32; w * h];
+    blur(&cov, &mut tmp, w, h, w, 1);
+    blur(&tmp, &mut cov, h, w, 1, w);
+    let a = color[3] as f32 / 255.0;
+    let alpha: Vec<u8> = cov.iter().map(|v| (v * a * 255.0).round().clamp(0.0, 255.0) as u8).collect();
+    let rgb: Vec<u8> = std::iter::repeat_n([color[0], color[1], color[2]], w * h).flatten().collect();
+    Some((ShadowImage { rgb: rgb.into(), alpha: alpha.into(), size: (w as u32, h as u32) }, area))
 }
 
 fn norm(v: f32) -> NormalizedF32 {
@@ -700,5 +1171,27 @@ fn gradient(g: &Gradient, bt: Affine) -> krilla::paint::Paint {
             anti_alias: true,
         }
         .into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shadow_masks_are_straight_alpha_and_limited_to_the_page() {
+        // A 50% black shadow: full coverage well inside the shape keeps
+        // alpha 128 over color 0 (straight alpha, nothing premultiplied).
+        let rect = Rect::new(0.0, 0.0, 400.0, 400.0);
+        let (img, area) = shadow_mask(rect, 0.0, 4.0, [10, 20, 30, 128], Rect::new(-1e9, -1e9, 1e9, 1e9)).unwrap();
+        let (w, h) = img.size;
+        let center = (h / 2 * w + w / 2) as usize;
+        assert_eq!(img.alpha[center], 128);
+        assert_eq!(&img.rgb[center * 3..center * 3 + 3], &[10, 20, 30]);
+        assert_eq!(img.alpha[0], 0, "transparent past three sigma");
+        assert_eq!(area, Rect::new(-12.0, -12.0, 412.0, 412.0));
+        // Limited to a page: only that part is sampled.
+        let (_, part) = shadow_mask(rect, 0.0, 4.0, [0, 0, 0, 255], Rect::new(0.0, 200.0, 1000.0, 1000.0)).unwrap();
+        assert_eq!((part.y0, part.y1), (200.0, 412.0));
     }
 }

@@ -94,6 +94,102 @@ pub fn paint_scene_with(
     // );
 }
 
+/// One glyph run [`paint_scene_recording_text`] drew.
+#[derive(Clone, Debug)]
+pub struct TextRun {
+    /// The node whose style the run has (the innermost element around the text).
+    pub node: NodeId,
+    /// The number of glyphs and the first one (id, x, y) as drawn: identifies the run's
+    /// `draw_glyphs` call.
+    pub glyphs: usize,
+    pub first: (u32, f32, f32),
+    /// The source text the run shows and each glyph's byte range in it (a ligature's range
+    /// spans all the characters it stands for). Empty when the source is unknown.
+    pub text: String,
+    pub glyph_text: Vec<std::ops::Range<u32>>,
+    /// The run's content area (ascent to descent), in the scene's coordinates.
+    pub bounds: kurbo::Rect,
+}
+
+impl TextRun {
+    pub(crate) fn new(
+        run: &parley::GlyphRun<'_, blitz_dom::node::TextBrush>,
+        source: Option<&str>,
+        transform: kurbo::Affine,
+    ) -> TextRun {
+        let mut glyphs = run.positioned_glyphs();
+        let count = glyphs.clone().count();
+        let first = glyphs.next().map_or((0, 0.0, 0.0), |g| (g.id, g.x, g.y));
+        let mut text = String::new();
+        let mut glyph_text = Vec::new();
+        if let Some(source) = source {
+            let atoms: Vec<_> = run.atom_texts().collect();
+            let start = atoms.iter().map(|(r, _)| r.start).min().unwrap_or(0);
+            let end = atoms.iter().map(|(r, _)| r.end).max().unwrap_or(0);
+            if let Some(t) = source.get(start..end) {
+                text.push_str(t);
+                for (r, n) in atoms {
+                    let r = (r.start - start) as u32..(r.end - start) as u32;
+                    glyph_text.extend(std::iter::repeat_n(r, n));
+                }
+            }
+            if glyph_text.len() != count {
+                text.clear();
+                glyph_text.clear();
+            }
+        }
+        let metrics = run.run().font_metrics();
+        let (x, baseline) = (run.offset() as f64, run.baseline() as f64);
+        let rect = kurbo::Rect::new(
+            x,
+            baseline - metrics.ascent as f64,
+            x + run.advance() as f64,
+            baseline + metrics.descent as f64,
+        );
+        TextRun {
+            node: run.style().brush.id,
+            glyphs: count,
+            first,
+            text,
+            glyph_text,
+            bounds: transform.transform_rect_bbox(rect),
+        }
+    }
+}
+
+/// [`paint_scene_with`], also returning the glyph runs of the document's text in the order
+/// they were drawn (PDF output maps them back to their text and elements).
+#[allow(clippy::too_many_arguments)]
+pub fn paint_scene_recording_text(
+    scene: &mut impl PaintScene,
+    doc: &mut BaseDocument,
+    scale: f64,
+    width: u32,
+    height: u32,
+    x_offset: u32,
+    y_offset: u32,
+    backgrounds: bool,
+) -> Vec<TextRun> {
+    #[allow(unused_mut)]
+    let mut custom_widget_scenes: CustomWidgetSceneMap = HashMap::new();
+    #[cfg(feature = "custom-widget")]
+    build_custom_widget_scenes(&mut custom_widget_scenes, doc, scene, scale);
+    let mut generator = BlitzDomPainter::new(
+        doc,
+        scale,
+        width,
+        height,
+        x_offset as f64,
+        y_offset as f64,
+        &custom_widget_scenes,
+    );
+    generator.backgrounds = backgrounds;
+    generator.draw_text_context.borrow_mut().runs = Some(Vec::new());
+    generator.paint_scene(scene);
+    let runs = generator.draw_text_context.borrow_mut().runs.take();
+    runs.unwrap_or_default()
+}
+
 #[cfg(feature = "custom-widget")]
 fn build_custom_widget_scenes(
     custom_widget_scenes: &mut CustomWidgetSceneMap,

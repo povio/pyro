@@ -5731,6 +5731,39 @@ mod screenshot {
         assert!(r["error"]["message"].as_str().unwrap_or_default().contains("Page range exceeds page count"), "{r}");
     }
 
+    /// Paper-cut PDFs carry link annotations and (by default, as Chrome)
+    /// a tag tree; printing at the paper's width leaves the page's layout
+    /// as it was.
+    #[test]
+    fn print_to_pdf_links_tags_and_keeps_the_screen_layout() {
+        let mut h = Harness::new();
+        load_html(
+            &mut h,
+            r#"<!doctype html><body style="margin:0"><h1>Title</h1><p>See <a href="https://example.com/x">x</a></p><div id="w" style="height:10px"></div>"#,
+        );
+        let width = "document.getElementById('w').getBoundingClientRect().width";
+        let before = eval_value(&mut h, width);
+        let print = |h: &mut Harness, params: Value| {
+            let r = h.page("Page.printToPDF", params);
+            let pdf =
+                lp_cdp::fetch_protocol::base64_decode(r["result"]["data"].as_str().unwrap_or_else(|| panic!("{r}")))
+                    .unwrap();
+            (String::from_utf8_lossy(&pdf).into_owned(), r["result"]["lp"]["stats"].clone())
+        };
+        let (pdf, stats) = print(&mut h, json!({}));
+        assert_eq!(stats["links"], 1, "{stats}");
+        assert!(pdf.contains("/URI(https://example.com/x)"), "the link's URI");
+        assert!(pdf.contains("/StructTreeRoot") && pdf.contains("/S/H1"), "tagged by default");
+        let (pdf, _) = print(&mut h, json!({"generateTaggedPDF": false}));
+        assert!(!pdf.contains("/StructTreeRoot"), "generateTaggedPDF: false");
+        // Letter with 0.4in margins is 739 px of content, laid out at that
+        // width for printing only.
+        assert_eq!(eval_value(&mut h, width), before, "the screen layout is restored");
+        let r = h.page("Page.printToPDF", json!({"pageRanges": "9"}));
+        assert!(r.get("error").is_some(), "{r}");
+        assert_eq!(eval_value(&mut h, width), before, "restored after a failed print too");
+    }
+
     /// A layout sub-resource still downloading delays the PDF, not the
     /// browser thread: commands sent after printToPDF answer first.
     #[test]
