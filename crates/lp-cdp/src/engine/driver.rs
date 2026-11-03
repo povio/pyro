@@ -506,6 +506,36 @@ pub(super) struct ShotStep {
 }
 
 impl Step {
+    /// Fixed enum labels only: never serialize a selector, URL or payload.
+    fn trace_kind(&self) -> &'static str {
+        match self {
+            Step::Loaded => "loaded",
+            Step::Reload => "reload",
+            Step::Url(_) => "url",
+            Step::Mock(_) => "mock",
+            Step::Unmock(_) => "unmock",
+            Step::Release { .. } => "release",
+            Step::Held { .. } => "held",
+            Step::AdvanceTime { .. } => "advanceTime",
+            Step::Download { .. } => "download",
+            Step::Popup { .. } => "popup",
+            Step::DownloadCount { .. } => "downloadCount",
+            Step::Goto { .. } => "goto",
+            Step::Idle => "idle",
+            Step::Route { .. } => "route",
+            Step::Eval { .. } => "eval",
+            Step::Viewport { .. } => "viewport",
+            Step::Media(_) => "media",
+            Step::Page { .. } => "page",
+            Step::Request(_) => "request",
+            Step::Act { .. } => "act",
+            Step::Mouse { .. } => "mouse",
+            Step::Check { .. } => "check",
+            Step::Read { .. } => "read",
+            Step::MatchScreenshot(_) => "matchScreenshot",
+        }
+    }
+
     fn describe(&self) -> String {
         match self {
             Step::Goto { url, .. } => format!("goto {url}"),
@@ -558,6 +588,32 @@ enum Attempt {
     Continue(Box<Sequence>),
 }
 
+/// Diagnostic only. No Drop record: cancellation must leave the last
+/// started step unmatched rather than falsely marking it complete.
+struct RunStepTrace {
+    process_id: u32,
+    active: Cell<Option<usize>>,
+}
+
+impl RunStepTrace {
+    fn emit(&self, job: &Job, kind: &'static str, event: &'static str) {
+        use std::io::Write;
+        let line = format!(
+            "lp-run-step {}\n",
+            json!({
+                "pid": self.process_id,
+                "runId": job.id,
+                "step": job.index,
+                "kind": kind,
+                "event": event,
+                "elapsedMs": job.started.elapsed().as_secs_f64() * 1e3,
+            })
+        );
+        // An unavailable diagnostic sink must not fail the browser action.
+        let _ = std::io::stderr().lock().write_all(line.as_bytes());
+    }
+}
+
 /// A command's steps and what they produced so far.
 struct Job {
     id: u64,
@@ -571,6 +627,7 @@ struct Job {
     /// `LP.act` / `LP.expect`: reply with the step's own result.
     single: bool,
     started: Instant,
+    trace: Option<RunStepTrace>,
     /// Request log sequence when the run started (`LP.run` only).
     log_from: Option<usize>,
     /// Downloads and popups recorded before the run started are not its.
@@ -591,6 +648,30 @@ struct PageCursor {
 }
 
 impl Job {
+    fn trace_step_start(&self) {
+        let (Some(trace), Some((step, _))) = (&self.trace, self.steps.get(self.index)) else { return };
+        if trace.active.get() == Some(self.index) {
+            return;
+        }
+        trace.active.set(Some(self.index));
+        trace.emit(self, step.trace_kind(), "start");
+    }
+
+    fn trace_step_end(&self) {
+        self.trace_step_finish("end");
+    }
+
+    fn trace_step_error(&self) {
+        self.trace_step_finish("error");
+    }
+
+    fn trace_step_finish(&self, event: &'static str) {
+        let (Some(trace), Some((step, _))) = (&self.trace, self.steps.get(self.index)) else { return };
+        if trace.active.take() == Some(self.index) {
+            trace.emit(self, step.trace_kind(), event);
+        }
+    }
+
     fn reply(mut self, requests: Vec<Value>) -> Value {
         if self.single {
             return self.results.pop().unwrap_or_else(|| json!({}));
@@ -604,6 +685,7 @@ impl Job {
     }
 
     fn fail(&self, error: CdpError) -> CdpError {
+        self.trace_step_error();
         if self.single {
             return error;
         }
@@ -3641,6 +3723,9 @@ impl EngineHost {
             reads: Default::default(),
             single,
             started: now,
+            // Read once for this LP.run; never on a DOM read or retry.
+            trace: (!single && std::env::var("LP_RUN_STEP_TRACE").is_ok_and(|value| value == "1"))
+                .then(|| RunStepTrace { process_id: std::process::id(), active: Cell::new(None) }),
             log_from,
             downloads_from,
             popups_from,
@@ -3672,6 +3757,7 @@ impl EngineHost {
     /// Runs a job's steps until one has to wait or the last one is done.
     fn drive(&mut self, mut w: Waiter) -> CdpResult<Drive> {
         loop {
+            w.job.trace_step_start();
             let now = Instant::now();
             let pid = w.job.pid;
             match std::mem::replace(&mut w.phase, Phase::Try) {
@@ -4354,6 +4440,7 @@ impl EngineHost {
     }
 
     fn next_step(&mut self, w: &mut Waiter) {
+        w.job.trace_step_end();
         w.job.index += 1;
         w.phase = Phase::Try;
         if let Some((_, timeout)) = w.job.steps.get(w.job.index) {

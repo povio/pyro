@@ -6821,3 +6821,171 @@ fn driver_pointer_auto_child_remains_clickable_in_pointer_none_parent() {
         "the actual hit child overrides its parent's pointer block"
     );
 }
+
+fn driver_trace_child_mode(mode: &str) -> bool {
+    std::env::var("LP_DRIVER_TRACE_TEST_CHILD").is_ok_and(|value| value == mode)
+}
+
+fn driver_trace_scenario(mode: &str) {
+    let mut h = Harness::new();
+    let run_id = h.next_id;
+    if mode == "error" {
+        let result = h.page(
+            "LP.run",
+            json!({"steps":[{"eval":{"expression":"throw new Error('trace-private-error-message')"}}]}),
+        );
+        assert!(result.get("error").is_some(), "the error control must fail");
+    } else if mode == "cancel" {
+        let session = h.session.clone();
+        let id = h.send(Some(&session), "LP.run", json!({"steps":[{"eval":{"expression":"new Promise(() => { const value = 'trace-private-pending-script'; })"}}]}));
+        assert_eq!(id, run_id);
+        assert!(h.drain().iter().all(|message| message["id"] != id), "pending work must not have replied");
+        // Connection teardown uses this same public close_all path. It must
+        // drop the waiter without fabricating successful completion.
+        h.browser.host_mut().close_all();
+    } else {
+        let url = html_url(
+            "<!doctype html><input id=trace-private-selector data-url='https://trace.invalid/trace-private-url'>",
+        );
+        let result = h.page("LP.run", json!({"steps":[
+            {"goto":{"url":url}},
+            {"eval":{"expression":"setTimeout(() => document.querySelector('#trace-private-selector').setAttribute('data-ready','yes'), 15); 'trace-private-script'"}},
+            {"check":{"locator":{"css":"#trace-private-selector[data-ready]"},"assert":"count","expected":1}},
+            {"act":{"locator":{"css":"#trace-private-selector"},"action":"fill","value":"trace-private-fill-value"}},
+            {"check":{"locator":{"css":"#trace-private-selector"},"assert":"value","expected":"trace-private-fill-value"}},
+            {"eval":{"expression":"new Promise(resolve => setTimeout(() => resolve('trace-private-promise-value'), 15))","as":"trace-private-read-key"}},
+            {"read":{"locator":{"css":"#trace-private-selector"},"read":"value","as":"trace-private-result-key"}}
+        ]}));
+        assert!(result.get("error").is_none(), "the complete control must pass: {result}");
+        assert_eq!(result["result"]["reads"]["trace-private-result-key"], "trace-private-fill-value");
+    }
+    println!("lp-run-trace-test-id {run_id}");
+}
+
+fn driver_trace_subprocess(test: &str, mode: &str, enabled: bool) -> (u32, std::process::Output) {
+    use std::process::{Command, Stdio};
+    let mut command = Command::new(std::env::current_exe().unwrap());
+    command
+        .args(["--exact", test, "--nocapture", "--test-threads=1"])
+        .env("LP_DRIVER_TRACE_TEST_CHILD", mode)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if enabled {
+        command.env("LP_RUN_STEP_TRACE", "1");
+    } else {
+        command.env_remove("LP_RUN_STEP_TRACE");
+    }
+    let child = command.spawn().unwrap();
+    let pid = child.id();
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "isolated trace scenario failed:\n{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    (pid, output)
+}
+
+fn driver_trace_records(pid: u32, output: &std::process::Output) -> Vec<Value> {
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let run_id: u64 = stdout
+        .split("lp-run-trace-test-id ")
+        .nth(1)
+        .and_then(|tail| tail.split_whitespace().next())
+        .unwrap()
+        .parse()
+        .unwrap();
+    String::from_utf8_lossy(&output.stderr)
+        .lines()
+        .filter_map(|line| {
+            let record = line.strip_prefix("lp-run-step ")?;
+            assert!(
+                !record.contains("trace-private") && !record.contains("https://"),
+                "private data entered trace: {record}"
+            );
+            let value: Value = serde_json::from_str(record).unwrap();
+            let mut keys: Vec<_> = value.as_object().unwrap().keys().map(String::as_str).collect();
+            keys.sort_unstable();
+            assert_eq!(keys, ["elapsedMs", "event", "kind", "pid", "runId", "step"]);
+            assert_eq!(value["pid"], pid);
+            assert_eq!(value["runId"], run_id);
+            assert!(value["elapsedMs"].as_f64().unwrap().is_finite());
+            Some(value)
+        })
+        .collect()
+}
+
+#[test]
+fn driver_step_trace_default_off_preserves_scenario() {
+    if driver_trace_child_mode("off") {
+        driver_trace_scenario("off");
+        return;
+    }
+    let (pid, output) =
+        driver_trace_subprocess("engine_cdp::driver_step_trace_default_off_preserves_scenario", "off", false);
+    assert!(driver_trace_records(pid, &output).is_empty());
+}
+
+#[test]
+fn driver_step_trace_completion_is_private_and_pairs_after_waits() {
+    if driver_trace_child_mode("complete") {
+        driver_trace_scenario("complete");
+        return;
+    }
+    let (pid, output) = driver_trace_subprocess(
+        "engine_cdp::driver_step_trace_completion_is_private_and_pairs_after_waits",
+        "complete",
+        true,
+    );
+    let records = driver_trace_records(pid, &output);
+    assert_eq!(records.len(), 14, "one start/end per step, including delayed checks and promises");
+    let kinds = ["goto", "eval", "check", "act", "check", "eval", "read"];
+    let mut previous = 0.0;
+    for (step, pair) in records.chunks_exact(2).enumerate() {
+        assert_eq!(pair[0]["step"], step);
+        assert_eq!(pair[1]["step"], step);
+        assert_eq!(pair[0]["kind"], kinds[step]);
+        assert_eq!(pair[1]["kind"], kinds[step]);
+        assert_eq!(pair[0]["event"], "start");
+        assert_eq!(pair[1]["event"], "end");
+        for record in pair {
+            let elapsed = record["elapsedMs"].as_f64().unwrap();
+            assert!(elapsed >= previous, "timestamps must follow actual step/wait completion");
+            previous = elapsed;
+        }
+    }
+}
+
+#[test]
+fn driver_step_trace_errors_are_terminal_without_error_text() {
+    if driver_trace_child_mode("error") {
+        driver_trace_scenario("error");
+        return;
+    }
+    let (pid, output) =
+        driver_trace_subprocess("engine_cdp::driver_step_trace_errors_are_terminal_without_error_text", "error", true);
+    let records = driver_trace_records(pid, &output);
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[0]["event"], "start");
+    assert_eq!(records[1]["event"], "error");
+    assert_eq!(records[1]["kind"], "eval");
+}
+
+#[test]
+fn driver_step_trace_cancellation_leaves_started_work_unfinished() {
+    if driver_trace_child_mode("cancel") {
+        driver_trace_scenario("cancel");
+        return;
+    }
+    let (pid, output) = driver_trace_subprocess(
+        "engine_cdp::driver_step_trace_cancellation_leaves_started_work_unfinished",
+        "cancel",
+        true,
+    );
+    let records = driver_trace_records(pid, &output);
+    assert_eq!(records.len(), 1, "teardown must not fabricate end/error records");
+    assert_eq!(records[0]["step"], 0);
+    assert_eq!(records[0]["kind"], "eval");
+    assert_eq!(records[0]["event"], "start");
+}
