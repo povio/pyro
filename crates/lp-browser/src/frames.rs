@@ -281,7 +281,13 @@ impl FrameHost {
             }
         }
         window::refresh_frame_indices(&realm, self, key)?;
-        let bindings = self.settings.borrow().bindings.clone();
+        let bindings = {
+            let settings = self.settings.borrow();
+            match settings.bindings.is_empty() {
+                true => Vec::new(),
+                false => settings.bindings.clone(),
+            }
+        };
         for binding in bindings.iter().filter(|b| b.applies_to(world.as_deref())) {
             let scope = realm.scope()?;
             if let Err(e) = scope.install_binding(&binding.name) {
