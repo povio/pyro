@@ -344,7 +344,12 @@ impl Interceptor for ContextInterceptor {
 
     fn response(&self, resp: PausedResponse, reply: oneshot::Sender<ResponseDecision>) {
         let Some(pending) = self.mocks.pending.lock().unwrap().remove(&resp.id) else {
-            let _ = reply.send(ResponseDecision::Continue);
+            match &self.fetch {
+                Some(fetch) => fetch.response(resp, reply),
+                None => {
+                    let _ = reply.send(ResponseDecision::Continue);
+                }
+            }
             return;
         };
         let decision = match &pending.patch {

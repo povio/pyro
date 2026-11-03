@@ -1,12 +1,17 @@
-//! Request-stage Fetch interception. Network callbacks only enqueue owned
-//! decisions; protocol state stays on the browser thread.
+//! Fetch interception at the request and response stages. Network
+//! callbacks only enqueue owned decisions; protocol state stays on the
+//! browser thread. Response bodies are buffered (by lp-net) only for
+//! requests paused at the response stage.
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode};
-use lp_net::{AuthChallenge, AuthDecision, InterceptDecision, Interceptor, PausedRequest, RequestId, RequestInfo};
+use lp_net::{
+    AuthChallenge, AuthDecision, InterceptDecision, Interceptor, PausedRequest, PausedResponse, RequestId, RequestInfo,
+    ResponseDecision,
+};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::sync::oneshot;
@@ -22,6 +27,8 @@ use crate::target::{ContextKey, PageCommand};
 pub(super) struct FetchSession {
     pub(super) rules: InterceptState<Pending>,
     ids: HashMap<RequestId, String>,
+    /// Requests continued with `interceptResponse: true`.
+    intercept_response: std::collections::HashSet<RequestId>,
 }
 
 impl FetchSession {
@@ -38,6 +45,8 @@ pub(super) struct Pending {
 enum Decision {
     Request(oneshot::Sender<InterceptDecision>),
     Auth(oneshot::Sender<AuthDecision>),
+    /// Paused at the response stage, with the response it holds.
+    Response(oneshot::Sender<ResponseDecision>, Box<PausedResponse>),
 }
 
 impl Decision {
@@ -48,6 +57,9 @@ impl Decision {
             }
             Self::Auth(tx) => {
                 let _ = tx.send(AuthDecision::Default);
+            }
+            Self::Response(tx, _) => {
+                let _ = tx.send(ResponseDecision::Continue);
             }
         }
     }
@@ -60,6 +72,7 @@ fn continue_unmodified() -> InterceptDecision {
 enum Queued {
     Request(PausedRequest, oneshot::Sender<InterceptDecision>),
     Auth(AuthChallenge, oneshot::Sender<AuthDecision>),
+    Response(Box<PausedResponse>, oneshot::Sender<ResponseDecision>),
 }
 
 impl Queued {
@@ -67,18 +80,21 @@ impl Queued {
         match self {
             Self::Request(request, _) => (&request.request, request.id),
             Self::Auth(challenge, _) => (&challenge.request, challenge.id),
+            Self::Response(response, _) => (&response.request, response.id),
         }
     }
     fn is_closed(&self) -> bool {
         match self {
             Self::Request(_, tx) => tx.is_closed(),
             Self::Auth(_, tx) => tx.is_closed(),
+            Self::Response(_, tx) => tx.is_closed(),
         }
     }
     fn resume(self) {
         match self {
             Self::Request(_, tx) => Decision::Request(tx).resume(),
             Self::Auth(_, tx) => Decision::Auth(tx).resume(),
+            Self::Response(response, tx) => Decision::Response(tx, response).resume(),
         }
     }
 }
@@ -103,6 +119,7 @@ impl FetchQueue {
         let extra = match &item {
             Queued::Auth(challenge, _) => challenge.origin.len() + challenge.scheme.len() + challenge.realm.len(),
             Queued::Request(..) => 0,
+            Queued::Response(response, _) => response.body.len() + response.headers.len() * 64,
         };
         let bytes = request
             .url
@@ -174,6 +191,9 @@ impl Interceptor for FetchQueue {
     fn auth_required(&self, challenge: AuthChallenge, reply: oneshot::Sender<AuthDecision>) {
         self.push(Queued::Auth(challenge, reply));
     }
+    fn response(&self, response: PausedResponse, reply: oneshot::Sender<ResponseDecision>) {
+        self.push(Queued::Response(Box::new(response), reply));
+    }
 }
 
 #[derive(Deserialize)]
@@ -232,6 +252,7 @@ impl EngineHost {
                 pending.decision.resume();
             }
             session.fetch.ids.clear();
+            session.fetch.intercept_response.clear();
         }
     }
 
@@ -290,6 +311,7 @@ impl EngineHost {
         for page in self.pages.values().filter(|p| p.context == context) {
             for session in &page.sessions {
                 if let Some(session) = self.sessions.get_mut(session) {
+                    session.fetch.intercept_response.remove(&id);
                     if let Some(id) = session.fetch.ids.remove(&id) {
                         let _ = session.fetch.rules.take(&id);
                         observation_finished |= !session.fetch.needs_observation();
@@ -318,19 +340,34 @@ impl EngineHost {
                     item.resume();
                     continue;
                 };
+                let resource_type = fetch_resource_type(request.destination);
                 let session_id = self
                     .sessions_of(page, |s| match &item {
-                        Queued::Request(..) => s.fetch.rules.matches(
-                            RequestStage::Request,
-                            request.url.as_str(),
-                            fetch_resource_type(request.destination),
-                        ),
+                        Queued::Request(..) => {
+                            s.fetch.rules.matches(RequestStage::Request, request.url.as_str(), resource_type)
+                        }
                         Queued::Auth(..) => s.fetch.rules.handle_auth_requests,
+                        Queued::Response(..) => {
+                            s.fetch.intercept_response.contains(&native_id)
+                                || s.fetch.rules.matches(RequestStage::Response, request.url.as_str(), resource_type)
+                        }
                     })
                     .into_iter()
                     .next();
                 let Some(session_id) = session_id else {
-                    item.resume();
+                    // Matched by a response-stage pattern only: let it run
+                    // and pause its response.
+                    let url = request.url.as_str().to_owned();
+                    if let Queued::Request(_, tx) = item {
+                        let wanted = self
+                            .sessions_of(page, |s| s.fetch.rules.matches(RequestStage::Response, &url, resource_type));
+                        let _ = tx.send(match wanted.is_empty() {
+                            true => continue_unmodified(),
+                            false => InterceptDecision::PauseResponse,
+                        });
+                    } else {
+                        item.resume();
+                    }
                     continue;
                 };
                 let mut request_json = json!({"url":request.url.as_str(),"method":request.method.as_str(),"headers":headers_json(&request.headers),
@@ -342,6 +379,20 @@ impl EngineHost {
                     json!(protocol_request_id(native_id, request.destination, request.loader_id.as_deref()));
                 let (method, decision) = match item {
                     Queued::Request(_, tx) => ("Fetch.requestPaused", Decision::Request(tx)),
+                    Queued::Response(response, tx) => {
+                        params["responseStatusCode"] = json!(response.status);
+                        if let Some(phrase) =
+                            StatusCode::from_u16(response.status).ok().and_then(|s| s.canonical_reason())
+                        {
+                            params["responseStatusText"] = json!(phrase);
+                        }
+                        params["responseHeaders"] = json!(response
+                            .headers
+                            .iter()
+                            .map(|(n, v)| json!({"name": n.as_str(), "value": String::from_utf8_lossy(v.as_bytes())}))
+                            .collect::<Vec<_>>());
+                        ("Fetch.requestPaused", Decision::Response(tx, response))
+                    }
                     Queued::Auth(challenge, tx) => {
                         params["authChallenge"] = json!({"source":if challenge.proxy {"Proxy"} else {"Server"},
                             "origin":challenge.origin,"scheme":challenge.scheme,"realm":challenge.realm});
@@ -351,7 +402,11 @@ impl EngineHost {
                 let fetch = &mut self.sessions.get_mut(&session_id).expect("selected session").fetch;
                 let pending = Pending { native_id, decision };
                 let previous = fetch.ids.get(&native_id).cloned();
-                let id = if let Some(id) = previous.as_ref().filter(|_| method == "Fetch.authRequired") {
+                let again = method == "Fetch.authRequired" || matches!(pending.decision, Decision::Response(..));
+                if matches!(pending.decision, Decision::Response(..)) {
+                    fetch.intercept_response.remove(&native_id);
+                }
+                let id = if let Some(id) = previous.as_ref().filter(|_| again) {
                     if fetch.rules.pause_again(id, pending).is_err() {
                         self.out.exceed();
                         continue;
@@ -387,10 +442,6 @@ impl EngineHost {
         match action {
             "enable" => {
                 let params: EnableParams = cmd.command.params()?;
-                if params.patterns.as_ref().is_some_and(|p| p.iter().any(|p| p.request_stage != RequestStage::Request))
-                {
-                    return Err(CdpError::server("Fetch response-stage interception is not supported"));
-                }
                 if self.sessions_of(cmd.page, |s| s.fetch.rules.is_enabled()).iter().any(|s| s != cmd.session_id) {
                     return Err(CdpError::server("Fetch is already enabled by another session of this page"));
                 }
@@ -406,8 +457,28 @@ impl EngineHost {
                 self.disable_fetch(cmd.session_id);
                 self.update_network_subscriptions();
             }
-            "continueRequest" | "fulfillRequest" | "failRequest" | "continueWithAuth" => {
+            "continueRequest" | "fulfillRequest" | "failRequest" | "continueWithAuth" | "continueResponse" => {
                 self.fetch_decision(action, cmd)?
+            }
+            "getResponseBody" => {
+                #[derive(Deserialize)]
+                #[serde(rename_all = "camelCase")]
+                struct Params {
+                    request_id: String,
+                }
+                let p: Params = cmd.command.params()?;
+                let session = self.sessions.get(cmd.session_id).ok_or_else(|| CdpError::server("session is gone"))?;
+                let Decision::Response(_, response) = &session.fetch.rules.pending(&p.request_id)?.decision else {
+                    return Err(CdpError::server(
+                        "Can only get response body on HeadersReceived pattern matched requests.",
+                    ));
+                };
+                return Ok(Some(match std::str::from_utf8(&response.body) {
+                    Ok(text) => json!({ "body": text, "base64Encoded": false }),
+                    Err(_) => {
+                        json!({ "body": crate::network_protocol::base64_encode(&response.body), "base64Encoded": true })
+                    }
+                }));
             }
             _ => return Err(CdpError::unsupported(&cmd.command.method)),
         }
@@ -441,16 +512,57 @@ impl EngineHost {
         let p: Params = cmd.command.params()?;
         let session = self.sessions.get_mut(cmd.session_id).ok_or_else(|| CdpError::server("session is gone"))?;
         let pending = session.fetch.rules.pending(&p.request_id)?;
-        if matches!(&pending.decision, Decision::Auth(_)) != (action == "continueWithAuth") {
+        let at_response = matches!(&pending.decision, Decision::Response(..));
+        if matches!(&pending.decision, Decision::Auth(_)) != (action == "continueWithAuth")
+            || (action == "continueRequest" && at_response)
+            || (action == "continueResponse" && !at_response)
+        {
             return Err(CdpError::invalid_params("Decision does not match the paused request stage"));
         }
+        let native_id = pending.native_id;
         let mut request_decision = None;
         let mut auth_decision = None;
+        let mut response_decision = None;
         match action {
-            "continueRequest" => {
-                if p.intercept_response == Some(true) {
-                    return Err(CdpError::server("Fetch response-stage interception is not supported"));
+            "continueRequest" if p.intercept_response == Some(true) => {
+                if p.url.is_some() || p.method.is_some() || p.headers.is_some() || p.post_data.is_some() {
+                    return Err(CdpError::invalid_params("Overrides are not supported with interceptResponse"));
                 }
+                session.fetch.intercept_response.insert(native_id);
+                request_decision = Some(InterceptDecision::PauseResponse);
+            }
+            "continueResponse" => {
+                let Some(Decision::Response(_, response)) =
+                    session.fetch.rules.pending(&p.request_id).ok().map(|p| &p.decision)
+                else {
+                    unreachable!("checked above")
+                };
+                if p.response_phrase.is_some() {
+                    return Err(CdpError::server("Custom response phrases are not supported"));
+                }
+                let overridden =
+                    p.response_code.is_some() || p.response_headers.is_some() || p.binary_response_headers.is_some();
+                response_decision = Some(if overridden {
+                    let headers = match (p.response_headers, p.binary_response_headers) {
+                        (Some(_), Some(_)) => {
+                            return Err(CdpError::invalid_params(
+                                "Specify responseHeaders or binaryResponseHeaders, not both",
+                            ))
+                        }
+                        (None, Some(binary)) => binary_headers(&binary)?,
+                        (Some(text), None) => headers(Some(text))?.unwrap_or_default(),
+                        (None, None) => response.headers.clone(),
+                    };
+                    let status = p.response_code.unwrap_or(response.status);
+                    if StatusCode::from_u16(status).is_err() || status < 200 {
+                        return Err(CdpError::invalid_params("Invalid http status code or phrase"));
+                    }
+                    ResponseDecision::Fulfill { status, headers, body: response.body.clone() }
+                } else {
+                    ResponseDecision::Continue
+                });
+            }
+            "continueRequest" => {
                 request_decision = Some(InterceptDecision::Continue {
                     url: p
                         .url
@@ -485,11 +597,11 @@ impl EngineHost {
                     (None, Some(binary)) => binary_headers(&binary)?,
                     (text, None) => headers(text)?.unwrap_or_default(),
                 };
-                request_decision = Some(InterceptDecision::Fulfill {
-                    status: code,
-                    headers,
-                    body: base64_decode(p.body.as_deref().unwrap_or(""))?.into(),
-                });
+                let body: bytes::Bytes = base64_decode(p.body.as_deref().unwrap_or(""))?.into();
+                match at_response {
+                    true => response_decision = Some(ResponseDecision::Fulfill { status: code, headers, body }),
+                    false => request_decision = Some(InterceptDecision::Fulfill { status: code, headers, body }),
+                }
             }
             "failRequest" => {
                 let reason = p.error_reason.ok_or_else(|| CdpError::invalid_params("errorReason is required"))?;
@@ -512,7 +624,10 @@ impl EngineHost {
                 ) {
                     return Err(CdpError::invalid_params("Invalid errorReason"));
                 }
-                request_decision = Some(InterceptDecision::Fail(reason));
+                match at_response {
+                    true => response_decision = Some(ResponseDecision::Fail(reason)),
+                    false => request_decision = Some(InterceptDecision::Fail(reason)),
+                }
             }
             "continueWithAuth" => {
                 let auth = p
@@ -534,6 +649,7 @@ impl EngineHost {
         let sent = match pending.decision {
             Decision::Request(tx) => tx.send(request_decision.expect("validated stage")).is_ok(),
             Decision::Auth(tx) => tx.send(auth_decision.expect("validated stage")).is_ok(),
+            Decision::Response(tx, _) => tx.send(response_decision.expect("validated stage")).is_ok(),
         };
         if sent {
             Ok(())

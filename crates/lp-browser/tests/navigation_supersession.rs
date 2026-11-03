@@ -64,10 +64,9 @@ fn failed_replacement_does_not_replace_the_next_navigation_history_entry() {
         t.browser.set_loader(Some(loader));
         t.browser.navigate(page, NavigateOpts::address_bar("http://new.test/")).unwrap();
         settle(&mut t);
-        assert_eq!(eval(&t, page, "history.length"), "2", "failed replacement leaked into next navigation");
-        eval(&t, page, "history.back()");
-        settle(&mut t);
-        assert_eq!(eval(&t, page, "location.href"), "about:blank");
+        // The navigation replaced the initial about:blank entry (Chrome);
+        // the failed replacement left no entry of its own.
+        assert_eq!(eval(&t, page, "history.length"), "1", "failed replacement leaked into next navigation");
     }
 }
 
@@ -82,7 +81,7 @@ fn superseded_replacement_does_not_replace_the_winning_navigation_history_entry(
     t.browser.navigate_with_history(page, NavigateOpts::address_bar("http://old.test/"), true).unwrap();
     t.browser.navigate(page, NavigateOpts::address_bar("http://new.test/")).unwrap();
     settle(&mut t);
-    assert_eq!(eval(&t, page, "location.href+'|'+history.length"), "http://new.test/|2");
+    assert_eq!(eval(&t, page, "location.href+'|'+history.length"), "http://new.test/|1");
 }
 
 #[test]
@@ -98,8 +97,6 @@ fn successful_replacement_still_replaces_exactly_one_entry() {
     settle(&mut t);
     t.browser.navigate_with_history(page, NavigateOpts::address_bar("http://new.test/"), true).unwrap();
     settle(&mut t);
-    assert_eq!(eval(&t, page, "location.href+'|'+history.length"), "http://new.test/|2");
-    eval(&t, page, "history.back()");
-    settle(&mut t);
-    assert_eq!(eval(&t, page, "location.href"), "about:blank");
+    // old.test replaced the initial about:blank entry; new.test replaced old.test.
+    assert_eq!(eval(&t, page, "location.href+'|'+history.length"), "http://new.test/|1");
 }

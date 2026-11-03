@@ -587,6 +587,27 @@ try {
       assert.equal(spa.url(), `${fixtureOrigin}/spa-next`);
     } finally { await spa.close(); }
   });
+  await check('dialogs auto-dismiss, first-navigation history, offline and context cookies', async () => {
+    const p = await context.newPage();
+    try {
+      await p.goto(`${fixtureOrigin}/document`, { timeout: 5000 });
+      // The initial about:blank entry was replaced: nothing to go back to.
+      assert.equal(await p.goBack({ timeout: 2000 }), null);
+      assert.equal(p.url(), `${fixtureOrigin}/document`);
+      // Without a listener Playwright dismisses dialogs; with one it sees them.
+      assert.deepEqual(await p.evaluate(() => [confirm('ok?'), prompt('name', 'x')]), [false, null]);
+      const seen = [];
+      p.on('dialog', d => { seen.push([d.type(), d.message(), d.defaultValue()]); d.dismiss().catch(() => {}); });
+      await p.evaluate(() => alert('hello'));
+      await p.waitForTimeout(50);
+      assert.deepEqual(seen, [['alert', 'hello', '']]);
+      await p.context().setOffline(true);
+      assert.equal(await p.evaluate(() => navigator.onLine), false);
+      assert.equal(await p.evaluate(() => fetch('/document').then(() => 'ok', e => e.name)), 'TypeError');
+      await p.context().setOffline(false);
+      assert.equal(await p.evaluate(() => navigator.onLine), true);
+    } finally { await p.close(); }
+  });
   await check('page.setExtraHTTPHeaders is page-scoped, replaces and clears (TOS positions-overview case)', async () => {
     const shared = await browser.newContext();
     try {
