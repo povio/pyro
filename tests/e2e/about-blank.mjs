@@ -608,6 +608,58 @@ try {
       assert.equal(await p.evaluate(() => navigator.onLine), true);
     } finally { await p.close(); }
   });
+  await check('blocking dialogs, rotated boundingBox, terminateExecution and page.close runBeforeUnload', async () => {
+    const p = await context.newPage();
+    try {
+      // The script waits for the answer (Chrome's results for each).
+      p.once('dialog', d => d.accept('typed'));
+      assert.equal(await p.evaluate(() => prompt('name', 'def')), 'typed');
+      p.once('dialog', d => d.dismiss());
+      assert.equal(await p.evaluate(() => confirm('sure?')), false);
+      p.once('dialog', d => d.accept());
+      assert.deepEqual(await p.evaluate(() => [confirm('sure?'), 'after']), [true, 'after']);
+      p.once('dialog', d => d.accept());
+      assert.equal(await p.evaluate(() => prompt('empty')), '');
+      // Opened from a timer task.
+      p.once('dialog', d => d.accept('later'));
+      assert.equal(await p.evaluate(() => new Promise(r => setTimeout(() => r(prompt('q')), 10))), 'later');
+      // Console messages carry their location (Runtime enabled is enough).
+      await p.setContent('<script>\nfunction logIt() { console.log("here") }\n</script>');
+      const logged = p.waitForEvent('console');
+      await p.evaluate(() => logIt());
+      const location = (await logged).location();
+      assert.equal(location.lineNumber, 1, JSON.stringify(location));
+      // setContent is unaffected; a rotated box's quad (Chrome: x 196.967,
+      // y -18.033, 106.066 x 106.066).
+      await p.setContent('<style>body{margin:0}</style><div id=r style="position:absolute;left:200px;top:10px;width:100px;height:50px;transform:rotate(45deg)"></div>');
+      const box = await p.locator('#r').boundingBox();
+      for (const [k, v] of [['x', 196.967], ['y', -18.033], ['width', 106.066], ['height', 106.066]])
+        assert.ok(Math.abs(box[k] - v) < 0.05, `${k}: ${JSON.stringify(box)}`);
+      const cdp = await context.newCDPSession(p);
+      const quads = await cdp.send('DOM.getContentQuads', { objectId: (await cdp.send('Runtime.evaluate', { expression: 'document.getElementById("r")' })).result.objectId });
+      assert.ok(Math.abs(quads.quads[0][0] - 232.322) < 0.05, JSON.stringify(quads));
+      // Runtime.terminateExecution stops a running script.
+      const looping = cdp.send('Runtime.evaluate', { expression: 'for (;;) {}' }).then(() => 'finished', e => e.message);
+      await new Promise(r => setTimeout(r, 100));
+      await cdp.send('Runtime.terminateExecution');
+      assert.match(await looping, /Execution was terminated/);
+      assert.equal(await p.evaluate(() => 1 + 1), 2);
+      await cdp.detach();
+      // beforeunload: dismissing keeps the page, accepting closes it.
+      await p.evaluate(() => addEventListener('beforeunload', e => { e.preventDefault(); e.returnValue = 'x'; }));
+      const seen = [];
+      p.once('dialog', d => { seen.push(d.type()); d.dismiss(); });
+      await p.close({ runBeforeUnload: true });
+      await p.waitForTimeout(200);
+      assert.deepEqual(seen, ['beforeunload']);
+      assert.equal(p.isClosed(), false);
+      const closed = p.waitForEvent('close', { timeout: 5000 });
+      p.once('dialog', d => d.accept());
+      await p.close({ runBeforeUnload: true });
+      await closed;
+      assert.equal(p.isClosed(), true);
+    } finally { if (!p.isClosed()) await p.close(); }
+  });
   await check('page.setExtraHTTPHeaders is page-scoped, replaces and clears (TOS positions-overview case)', async () => {
     const shared = await browser.newContext();
     try {

@@ -523,6 +523,21 @@ impl GeometrySource for BlitzGeometry {
         b
     }
 
+    fn element_quads(&self, key: u64) -> Option<lp_dom::layout::ExternalQuads> {
+        let q = RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.element_quads(self.page, key))?;
+        Some(lp_dom::layout::ExternalQuads {
+            border: q.border,
+            transformed: q.transformed,
+            border_widths: q.border_widths,
+            padding: q.padding,
+            margin: q.margin,
+            width: q.width,
+            height: q.height,
+            fragments: q.fragments,
+            fixed: q.fixed,
+        })
+    }
+
     fn geometry(&self) -> Option<ExternalGeometry> {
         let t = profile::on().then(Instant::now);
         let g = self.geometry_inner();

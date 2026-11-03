@@ -378,3 +378,91 @@ async fn pings_are_answered_in_order_while_the_page_is_busy() {
     assert_eq!(pongs, (0..20).collect::<Vec<u8>>());
     assert_eq!(ids, (100..120).collect::<Vec<u64>>());
 }
+
+async fn send(s: &mut TcpStream, message: Value) {
+    s.write_all(&masked(message.to_string().as_bytes())).await.unwrap();
+}
+
+/// Reads messages until `pred` matches one; returns everything read.
+async fn read_until(s: &mut TcpStream, pred: impl Fn(&Value) -> bool) -> Vec<Value> {
+    let mut seen = Vec::new();
+    loop {
+        let m = tokio::time::timeout(Duration::from_secs(10), read_text(s))
+            .await
+            .unwrap_or_else(|_| panic!("timed out; saw {seen:#?}"))
+            .expect("frame");
+        let done = pred(&m);
+        seen.push(m);
+        if done {
+            return seen;
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_dialog_blocks_its_script_until_answered_over_the_socket() {
+    let addr = serve(ServerConfig::default()).await;
+    let mut s = connect(addr).await;
+    let session = page_session(&mut s).await;
+    call(&mut s, json!({"id":3,"method":"Page.enable","sessionId":session})).await;
+    send(&mut s, json!({"id":4,"method":"Runtime.evaluate","params":{"expression":"confirm('sure?')","returnByValue":true},"sessionId":session})).await;
+    // Pipelined behind the dialog: it waits for it.
+    send(&mut s, json!({"id":5,"method":"Runtime.evaluate","params":{"expression":"'next'","returnByValue":true},"sessionId":session})).await;
+    let seen = read_until(&mut s, |m| m["method"] == "Page.javascriptDialogOpening").await;
+    assert!(
+        seen.iter().all(|m| m.get("id").is_none() || m["id"] == 3),
+        "nothing answered before the dialog: {seen:#?}"
+    );
+    assert_eq!(seen.last().unwrap()["params"]["message"], "sure?");
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    send(&mut s, json!({"id":6,"method":"Page.handleJavaScriptDialog","params":{"accept":true},"sessionId":session}))
+        .await;
+    let seen = read_until(&mut s, |m| m["id"] == 5).await;
+    let order: Vec<String> = seen
+        .iter()
+        .filter_map(|m| m["id"].as_u64().map(|id| format!("#{id}")).or_else(|| m["method"].as_str().map(str::to_owned)))
+        .collect();
+    assert_eq!(order, ["#6", "Page.javascriptDialogClosed", "#4", "#5"], "{seen:#?}");
+    assert_eq!(seen[2]["result"]["result"]["value"], true);
+    assert_eq!(seen[3]["result"]["result"]["value"], "next");
+    let _ = s.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn closing_the_socket_while_a_dialog_shows_frees_the_slot() {
+    let addr = serve(ServerConfig { max_connections: 1, ..ServerConfig::default() }).await;
+    let mut s = connect(addr).await;
+    let session = page_session(&mut s).await;
+    call(&mut s, json!({"id":3,"method":"Page.enable","sessionId":session})).await;
+    send(&mut s, json!({"id":4,"method":"Runtime.evaluate","params":{"expression":"alert('x')"},"sessionId":session}))
+        .await;
+    read_until(&mut s, |m| m["method"] == "Page.javascriptDialogOpening").await;
+    drop(s);
+    let mut second = tokio::time::timeout(Duration::from_secs(10), async {
+        let mut s = connect(addr).await;
+        let v = call(&mut s, json!({"id":1,"method":"Browser.getVersion"})).await;
+        assert!(v["result"]["product"].is_string());
+        s
+    })
+    .await
+    .expect("the dialog was dismissed and the connection torn down");
+    let _ = second.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn terminate_execution_stops_a_running_script() {
+    let addr = serve(ServerConfig::default()).await;
+    let mut s = connect(addr).await;
+    let session = page_session(&mut s).await;
+    send(&mut s, json!({"id":3,"method":"Runtime.evaluate","params":{"expression":"for (;;) {}"},"sessionId":session}))
+        .await;
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    send(&mut s, json!({"id":4,"method":"Runtime.terminateExecution","sessionId":session})).await;
+    let seen = read_until(&mut s, |m| m["id"] == 4).await;
+    let evaluated = seen.iter().find(|m| m["id"] == 3).expect("the evaluation was answered");
+    assert_eq!(evaluated["error"]["message"], "Execution was terminated", "{evaluated}");
+    assert!(evaluated.get("result").is_none(), "no exceptionDetails: {evaluated}");
+    let next = call(&mut s, json!({"id":5,"method":"Runtime.evaluate","params":{"expression":"1 + 1","returnByValue":true},"sessionId":session})).await;
+    assert_eq!(next["result"]["result"]["value"], 2, "only that script stopped: {next}");
+    let _ = s.shutdown().await;
+}

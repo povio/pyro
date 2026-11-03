@@ -138,9 +138,14 @@ impl Geometry {
         let fixed = in_fixed
             || node.primary_styles().is_some_and(|s| s.clone_position() == style::computed_values::position::T::Fixed);
         let location = node.unrounded_layout().location;
-        let t = base
-            * Affine::translate((location.x as f64, location.y as f64))
-            * node.transform().as_deref().copied().unwrap_or_default();
+        // Blitz keeps the CSS transform's translation in device px
+        // (`Node::set_transform`); this chain is in CSS px.
+        let own = node.transform().as_deref().copied().map_or(Affine::IDENTITY, |t| {
+            let scale = doc.viewport().scale_f64();
+            let [a, b, c, d, e, f] = t.as_coeffs();
+            Affine::new([a, b, c, d, e / scale, f / scale])
+        });
+        let t = base * Affine::translate((location.x as f64, location.y as f64)) * own;
         self.transforms.borrow_mut().insert(id, (t, fixed));
         Some((t, fixed))
     }
@@ -388,6 +393,19 @@ impl Geometry {
     /// text layout: glyph runs (content area: rounded ascent to descent) and atomic
     /// inlines inside it.
     fn inline_union(&self, doc: &BaseDocument, id: NodeId) -> Option<Rect> {
+        let mut acc: Option<Rect> = None;
+        self.inline_items(doc, id, &mut |origin, _, r| {
+            let r = origin.transform_rect_bbox(r);
+            acc = Some(acc.map_or(r, |a| a.union(r)));
+        })?;
+        acc
+    }
+
+    /// Calls `f` with each fragment of inline element `id` in its inline
+    /// root's text layout (see [`Geometry::inline_union`]): the transform
+    /// from the root's text space to the document, the line index and the
+    /// fragment in text space (CSS px). `None` when `id` has no inline root.
+    fn inline_items(&self, doc: &BaseDocument, id: NodeId, f: &mut dyn FnMut(Affine, usize, Rect)) -> Option<()> {
         // The nearest ancestor laying the element out inline: a DOM ancestor,
         // or an anonymous block one wraps its inline children in.
         let mut child = id;
@@ -431,8 +449,7 @@ impl Geometry {
             }
             false
         };
-        let mut acc: Option<Rect> = None;
-        for line in text.layout.lines() {
+        for (index, line) in text.layout.lines().enumerate() {
             for item in line.items() {
                 let (start, r) = match item {
                     parley::PositionedLayoutItem::GlyphRun(run) => {
@@ -459,14 +476,152 @@ impl Geometry {
                     ),
                 };
                 if within(start) {
-                    let r =
-                        origin.transform_rect_bbox(Rect::new(r.x0 / scale, r.y0 / scale, r.x1 / scale, r.y1 / scale));
-                    acc = Some(acc.map_or(r, |a| a.union(r)));
+                    f(origin, index, Rect::new(r.x0 / scale, r.y0 / scale, r.x1 / scale, r.y1 / scale));
                 }
             }
         }
-        acc
+        Some(())
     }
+
+    /// `id`'s CSS boxes as quads (CDP `DOM.getBoxModel`/`getContentQuads`),
+    /// document coordinates. A box under a transform other than a
+    /// translation maps its own border box through the transforms of its
+    /// containing-block chain (the points, not their bounding box, as
+    /// Chromium's quads); other boxes keep [`Geometry::element_box`]. An
+    /// inline box wrapping lines gets one quad per line: its fragments on
+    /// that line, grown by its vertical border and padding, and by its
+    /// start (end) border and padding on its first (last) line.
+    pub(crate) fn element_quads(&self, doc: &BaseDocument, id: NodeId) -> Option<BoxQuads> {
+        let node = doc.get_node(id)?;
+        let style = node.primary_styles();
+        // Margins as laid out; an inline box's from its style (its block
+        // margins do not apply, as Chromium reports them).
+        let side = |v: &style::values::computed::LengthPercentage| {
+            v.resolve(style::values::computed::Length::new(0.0)).px() as f64
+        };
+        if !in_layout_tree(doc, id) {
+            let style = style?;
+            let (b, p, m) = (style.get_border(), style.get_padding(), style.get_margin());
+            let border = [
+                b.border_top_width.0.to_f64_px(),
+                b.border_right_width.0.to_f64_px(),
+                b.border_bottom_width.0.to_f64_px(),
+                b.border_left_width.0.to_f64_px(),
+            ];
+            let padding =
+                [side(&p.padding_top.0), side(&p.padding_right.0), side(&p.padding_bottom.0), side(&p.padding_left.0)];
+            let margin_side = |v: &style::values::computed::Margin| match v {
+                style::values::generics::length::GenericMargin::LengthPercentage(lp) => side(lp),
+                _ => 0.0,
+            };
+            let margin = [0.0, margin_side(&m.margin_right), 0.0, margin_side(&m.margin_left)];
+            let mut lines: Vec<(Affine, Rect)> = Vec::new();
+            let mut last_line = usize::MAX;
+            self.inline_items(doc, id, &mut |origin, line, r| {
+                if line == last_line {
+                    if let Some((_, acc)) = lines.last_mut() {
+                        *acc = acc.union(r);
+                    }
+                } else {
+                    last_line = line;
+                    lines.push((origin, r));
+                }
+            })?;
+            let count = lines.len();
+            let fragments: Vec<[f64; 8]> = lines
+                .into_iter()
+                .enumerate()
+                .map(|(i, (origin, r))| {
+                    let left = if i == 0 { border[3] + padding[3] } else { 0.0 };
+                    let right = if i + 1 == count { border[1] + padding[1] } else { 0.0 };
+                    let r = Rect::new(
+                        r.x0 - left,
+                        r.y0 - border[0] - padding[0],
+                        r.x1 + right,
+                        r.y1 + border[2] + padding[2],
+                    );
+                    quad(origin, r)
+                })
+                .collect();
+            let bounds = fragments.iter().map(quad_bounds).reduce(|a, b| a.union(b))?;
+            let fixed = self.transform(doc, id).is_some_and(|(_, fixed)| fixed);
+            return Some(BoxQuads {
+                border: quad(Affine::IDENTITY, bounds),
+                transformed: false,
+                border_widths: border,
+                padding,
+                margin,
+                width: bounds.width(),
+                height: bounds.height(),
+                fragments: if count > 1 { fragments } else { Vec::new() },
+                fixed,
+            });
+        }
+        let l = node.unrounded_layout();
+        let margin = [l.margin.top, l.margin.right, l.margin.bottom, l.margin.left].map(f64::from);
+        let (t, fixed) = self.transform(doc, id)?;
+        let [a, b, c, d, _, _] = t.as_coeffs();
+        let translation_only = a == 1.0 && b == 0.0 && c == 0.0 && d == 1.0;
+        if translation_only || is_cell(doc, id) || is_table_part(doc, id) {
+            let e = self.element_box(doc, id)?;
+            return Some(BoxQuads {
+                border: quad(Affine::IDENTITY, e.rect()),
+                transformed: false,
+                border_widths: e.border,
+                padding: e.padding,
+                margin,
+                width: e.width,
+                height: e.height,
+                fragments: Vec::new(),
+                fixed: e.fixed,
+            });
+        }
+        let (w, h) = (l.size.width as f64, l.size.height as f64);
+        Some(BoxQuads {
+            border: quad(t, Rect::new(0.0, 0.0, w, h)),
+            transformed: true,
+            border_widths: [l.border.top, l.border.right, l.border.bottom, l.border.left].map(f64::from),
+            padding: [l.padding.top, l.padding.right, l.padding.bottom, l.padding.left].map(f64::from),
+            margin,
+            width: w,
+            height: h,
+            fragments: Vec::new(),
+            fixed,
+        })
+    }
+}
+
+/// An element's CSS boxes as quads (see [`Geometry::element_quads`]).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct BoxQuads {
+    /// Border box: four (x, y) points clockwise from the top-left corner.
+    pub border: [f64; 8],
+    /// A transform other than a translation applies.
+    pub transformed: bool,
+    /// Border, padding and margin widths: top, right, bottom, left.
+    pub border_widths: [f64; 4],
+    pub padding: [f64; 4],
+    pub margin: [f64; 4],
+    /// Untransformed border box size.
+    pub width: f64,
+    pub height: f64,
+    /// One border-box quad per line of an inline box over several lines.
+    pub fragments: Vec<[f64; 8]>,
+    pub fixed: bool,
+}
+
+/// `r`'s corners through `t`, clockwise from the top-left one.
+fn quad(t: Affine, r: Rect) -> [f64; 8] {
+    let p = [(r.x0, r.y0), (r.x1, r.y0), (r.x1, r.y1), (r.x0, r.y1)].map(|(x, y)| t * kurbo::Point::new(x, y));
+    [p[0].x, p[0].y, p[1].x, p[1].y, p[2].x, p[2].y, p[3].x, p[3].y]
+}
+
+fn quad_bounds(q: &[f64; 8]) -> Rect {
+    let xs = [q[0], q[2], q[4], q[6]];
+    let ys = [q[1], q[3], q[5], q[7]];
+    let min = |v: [f64; 4]| v.into_iter().fold(f64::INFINITY, f64::min);
+    let max = |v: [f64; 4]| v.into_iter().fold(f64::NEG_INFINITY, f64::max);
+    Rect::new(min(xs), min(ys), max(xs), max(ys))
 }
 
 /// One word of a text node on a line (or the part of it in one glyph run):

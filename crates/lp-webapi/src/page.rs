@@ -177,6 +177,14 @@ pub struct NavigationRequest {
     pub opener: bool,
 }
 
+/// How a blocking `alert`/`confirm`/`prompt` was answered.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DialogAnswer {
+    pub accept: bool,
+    /// The text a `prompt` returns when accepted (empty when not given).
+    pub prompt_text: String,
+}
+
 /// HTML "download the hyperlink" for a `download` link.
 #[derive(Clone, Debug)]
 pub struct DownloadRequest {
@@ -275,9 +283,19 @@ pub trait PageHooks {
     /// An `<input type=file>` was activated: the embedder may report a file
     /// chooser (CDP Page.fileChooserOpened). There is no native picker.
     fn file_chooser(&self, _input: NodeId, _multiple: bool) {}
-    /// `alert`, `confirm` or `prompt` (`kind`) was called. Dialogs do not
-    /// block: the call has already returned what a dismissed dialog gives.
-    fn javascript_dialog(&self, _kind: &'static str, _message: String, _default_prompt: Option<String>) {}
+    /// `alert`, `confirm` or `prompt` (`kind`) was called from the document
+    /// at `url`. An embedder that shows the dialog blocks here until it is
+    /// answered and returns the answer; `None` reports it without blocking
+    /// (the call then returns what a dismissed dialog gives).
+    fn javascript_dialog(
+        &self,
+        _kind: &'static str,
+        _message: String,
+        _default_prompt: Option<String>,
+        _url: String,
+    ) -> Option<DialogAnswer> {
+        None
+    }
     /// `document.open()` replaced the loaded document's content: the frame is
     /// loading again, so DOMContentLoaded/load can be reported anew.
     fn document_reopened(&self) {}

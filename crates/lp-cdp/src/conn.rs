@@ -171,17 +171,26 @@ impl Conn {
     /// cannot take messages meanwhile). Keeps reading and decoding, up to the
     /// read-ahead bound and [`INFLIGHT`] held messages, answers pings, and
     /// returns true when the running script must stop: the client closed or
-    /// left, the outbound budget was exceeded, or the session took nothing
-    /// for `stall_timeout` while the read-ahead buffer was full.
+    /// left, the outbound budget was exceeded, the session took nothing
+    /// for `stall_timeout` while the read-ahead buffer was full, or the
+    /// client sent `Runtime.terminateExecution`.
     pub(crate) fn check_during_script(&mut self) -> bool {
         if self.state == State::Open && self.out.is_exceeded() {
             // The writer would close (1008) at once; the script must stop too.
             self.start_close(1008, "outbound buffer limit exceeded");
         }
         let now = Instant::now();
+        let mut terminate = false;
         while self.state == State::Open {
             let mut held = std::mem::take(&mut self.held);
+            let before = held.len();
             self.decode(&mut held);
+            // Runtime.terminateExecution stops the running script; the
+            // command itself is answered once the session takes it.
+            terminate |= held
+                .iter()
+                .skip(before)
+                .any(|m| matches!(m, Inbound::Text(t) if t.contains("\"Runtime.terminateExecution\"")));
             self.held = held;
             if self.state != State::Open {
                 break;
@@ -204,7 +213,106 @@ impl Conn {
         }
         // Pongs (and a close frame) go out now, as an I/O thread would send them.
         self.write();
-        self.state != State::Open
+        self.state != State::Open || terminate
+    }
+
+    /// Serves the connection while a JavaScript dialog suspends the page
+    /// ([`crate::engine::DialogPump`]): writes what is queued and reads,
+    /// offering every command already held or newly decoded to `take`,
+    /// which consumes the ones it answers and leaves the rest held, in
+    /// order, for the session once the dialog closes. Blocks in `poll(2)`
+    /// on the socket (no page task or timer runs meanwhile). Returns true
+    /// once `take` reports the dialog done, false when the connection ended.
+    pub(crate) fn pause(&mut self, take: &mut dyn FnMut(&str) -> crate::engine::PumpStep) -> bool {
+        // Most commands a client may queue behind a dialog before it is dropped.
+        const MAX_HELD: usize = 4096;
+        let mut offered = 0;
+        loop {
+            // Offer the held commands not offered yet, oldest first.
+            let mut index = offered;
+            while index < self.held.len() {
+                match &self.held[index] {
+                    Inbound::Closed => return false,
+                    Inbound::Text(text) => {
+                        let step = take(text);
+                        if !step.hold {
+                            self.held.remove(index);
+                        } else {
+                            index += 1;
+                        }
+                        if step.done {
+                            return true;
+                        }
+                    }
+                }
+            }
+            offered = index;
+            self.write();
+            let now = Instant::now();
+            if self.write_blocked_since.is_some_and(|t| now.duration_since(t) >= self.config.write_timeout) {
+                self.state = State::Gone;
+                self.current = None;
+            }
+            if self.state == State::Closing && self.close_written {
+                self.state = State::Gone;
+            }
+            if self.state == State::Gone {
+                let mut held = std::mem::take(&mut self.held);
+                self.tell_closed(&mut held);
+                self.held = held;
+                return false;
+            }
+            if self.held.len() >= MAX_HELD {
+                self.start_close(1008, "session is not accepting messages");
+                continue;
+            }
+            // Decode what is buffered, then read more or wait for the socket.
+            let before = self.held.len();
+            let mut held = std::mem::take(&mut self.held);
+            while self.state == State::Open {
+                let len = held.len();
+                let mut fresh = VecDeque::new();
+                self.decode(&mut fresh);
+                held.extend(fresh);
+                if held.len() == len {
+                    break;
+                }
+            }
+            self.held = held;
+            if self.held.len() > before {
+                continue;
+            }
+            if self.state != State::Open {
+                // Closing: only the close frame is left to write.
+                self.wait_socket(true);
+                continue;
+            }
+            match (&self.sock).read(&mut self.chunk) {
+                Ok(0) => self.state = State::Gone,
+                Ok(n) => self.decoder.feed(&self.chunk[..n]),
+                Err(e) if e.kind() == ErrorKind::WouldBlock => self.wait_socket(self.write_blocked_since.is_some()),
+                Err(e) if e.kind() == ErrorKind::Interrupted => {}
+                Err(_) => self.state = State::Gone,
+            }
+        }
+    }
+
+    /// Waits (at most 50 ms) for the socket to become readable, or writable
+    /// when `write` is set.
+    #[cfg(unix)]
+    fn wait_socket(&self, write: bool) {
+        let mut events = libc::POLLIN;
+        if write {
+            events |= libc::POLLOUT;
+        }
+        let mut fd = libc::pollfd { fd: raw_fd(&self.sock), events, revents: 0 };
+        // SAFETY: one valid pollfd for the duration of the call.
+        unsafe { libc::poll(&mut fd, 1, 50) };
+    }
+
+    #[cfg(not(unix))]
+    fn wait_socket(&self, _write: bool) {
+        std::thread::sleep(Duration::from_millis(1));
     }
 
     /// Ends the connection after the session has stopped: writes what is

@@ -634,6 +634,12 @@ pub(crate) fn serve_browser(
         .browser
         .engine
         .set_interrupt_check(Some(Rc::new(move || check.try_borrow_mut().is_ok_and(|mut c| c.check_during_script()))));
+    // A JavaScript dialog suspends its script while this connection is
+    // served by a nested read loop until a session answers it (engine/dialog.rs).
+    let paused = conn.clone();
+    browser.host().set_dialog_pump(Some(Rc::new(move |take: &mut dyn FnMut(&str) -> crate::engine::PumpStep| {
+        paused.try_borrow_mut().is_ok_and(|mut c| c.pause(take))
+    })));
 
     let mut sink = outbox;
     let mut inbox: VecDeque<Inbound> = VecDeque::new();
@@ -707,6 +713,7 @@ pub(crate) fn serve_browser(
         }
     }
     browser.host().thread.browser.engine.set_interrupt_check(None);
+    browser.host().set_dialog_pump(None);
     browser.host_mut().thread.event_loop.watch_fd(None);
     browser.shutdown();
     browser.host_mut().close_all();

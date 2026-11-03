@@ -1242,6 +1242,10 @@ impl Waiters {
     pub(super) fn clear(&mut self) {
         self.list.clear();
     }
+
+    pub(super) fn is_empty(&self) -> bool {
+        self.list.is_empty()
+    }
 }
 
 /// Where a `Phase::Load` wait for `loader`'s document stands.
@@ -4700,6 +4704,7 @@ impl EngineHost {
             };
             self.collector.push(Queued::Frame(frame));
         }
+        self.collector.dialogs.driver_busy.set(!self.waiters.list.is_empty());
     }
 }
 

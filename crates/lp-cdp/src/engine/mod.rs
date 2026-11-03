@@ -10,6 +10,7 @@
 mod blitz_geometry;
 #[cfg(feature = "render")]
 pub(crate) use blitz_geometry::set_fork_template;
+mod dialog;
 mod dom;
 mod driver;
 mod fetch;
@@ -62,6 +63,8 @@ use crate::runtime_protocol::{HandleBudget, HandleTable};
 use crate::target::{ContextKey, Host, PageCommand, PageKey, Sink};
 use crate::ws::OutFrame;
 
+pub use dialog::{DialogPump, PumpStep};
+
 /// The longest jump virtual time makes at once. A run waiting on a page whose
 /// next timer is further off sleeps as usual (or times out).
 const VIRTUAL_JUMP_MAX: std::time::Duration = std::time::Duration::from_secs(10);
@@ -79,6 +82,8 @@ pub(crate) enum Queued {
         level: ConsoleLevel,
         args: Vec<Persistent>,
         timestamp: f64,
+        /// The caller's stack (JavaScriptCore format).
+        stack: Option<String>,
     },
     Exception {
         realm: RealmId,
@@ -114,6 +119,8 @@ pub(crate) struct Collector {
     network: RefCell<Vec<NetworkWatch>>,
     /// Shared reservation covers staging and queued events across contexts.
     network_budget: Arc<network_delivery::Budget>,
+    /// Blocking JavaScript dialogs (`dialog.rs`).
+    pub(crate) dialogs: dialog::DialogGate,
 }
 
 impl Collector {
@@ -124,6 +131,7 @@ impl Collector {
             runtime_wanted: Cell::new(false),
             network: RefCell::new(Vec::new()),
             network_budget: Arc::new(network_delivery::Budget::default()),
+            dialogs: dialog::DialogGate::default(),
         }
     }
 
@@ -209,6 +217,18 @@ impl PageObserver for Collector {
             self.drain_network();
         }
     }
+
+    fn javascript_dialog(
+        &self,
+        page: PageId,
+        frame: &FrameId,
+        url: &str,
+        kind: &str,
+        message: &str,
+        default_prompt: Option<&str>,
+    ) -> Option<lp_webapi::DialogAnswer> {
+        self.dialogs.show(&self.out, page, &frame.0, url, kind, message, default_prompt.unwrap_or_default())
+    }
 }
 
 impl EngineHooks for Collector {
@@ -218,7 +238,10 @@ impl EngineHooks for Collector {
         }
         let Ok(scope) = realm.scope() else { return };
         let args = args.iter().map(|v| Persistent::new(&scope, *v)).collect();
-        self.push(Queued::Console { realm: realm.id(), level, args, timestamp: epoch_ms() });
+        // Chrome reports the caller's stack with every console call
+        // (Playwright's ConsoleMessage.location() reads it).
+        let stack = scope.current_stack().ok();
+        self.push(Queued::Console { realm: realm.id(), level, args, timestamp: epoch_ms(), stack });
     }
 
     fn exception_thrown(&self, realm: &Realm, exception: &JsException) {
@@ -354,6 +377,11 @@ pub struct EngineHost {
     pub(crate) pending: runtime::PendingReplies,
     /// Popups requested by pages, taken by the protocol layer after `flush`.
     pub(crate) popup_requests: Vec<crate::target::PopupRequest>,
+    /// Pages `Page.close` closes, taken by the protocol layer after `flush`.
+    pub(crate) close_requests: Vec<PageKey>,
+    /// `browserContextId`s of the contexts (a dialog's context disposed
+    /// dismisses it).
+    context_names: HashMap<ContextKey, String>,
     /// Pages booted before the connection (`preboot`), handed to the
     /// protocol layer once by `Host::take_prebooted`.
     prebooted: Vec<crate::target::PrebootedEntry>,
@@ -538,6 +566,8 @@ impl EngineHost {
             next_backend_node: 1,
             pending: runtime::PendingReplies::default(),
             popup_requests: Vec::new(),
+            close_requests: Vec::new(),
+            context_names: HashMap::new(),
             prebooted: Vec::new(),
             popups: Vec::new(),
             waiters: driver::Waiters::default(),
@@ -598,6 +628,7 @@ impl EngineHost {
     pub fn close_all(&mut self) {
         self.pending.cancel_all();
         self.waiters.clear();
+        self.collector.dialogs.driver_busy.set(false);
         self.renders.clear();
         self.sessions.clear();
         self.pages.clear();
@@ -606,6 +637,22 @@ impl EngineHost {
             self.thread.browser.close_context(context.id);
         }
         self.collector.clear();
+    }
+
+    /// Installs (or removes) the nested read loop blocking JavaScript dialogs
+    /// run while they show (`serve` installs one per connection; without it
+    /// dialogs never block). See `dialog.rs`.
+    pub fn set_dialog_pump(&self, pump: Option<DialogPump>) {
+        self.collector.dialogs.set_pump(pump);
+    }
+
+    /// Tells the dialog gate which sessions of `page` have Page enabled.
+    pub(crate) fn sync_dialog_sessions(&self, page: PageKey) {
+        let Some(state) = self.pages.get(&page) else { return };
+        let sessions = self.sessions_of(page, |s| s.page_enabled);
+        let target = self.thread.browser.page(state.id).map(|p| p.main_frame.id.0.clone()).unwrap_or_default();
+        let context = self.context_names.get(&state.context).cloned().unwrap_or_default();
+        self.collector.dialogs.set_sessions(state.id, target, context, sessions);
     }
 
     /// Recomputes whether console/exception notifications are collected.
@@ -726,7 +773,9 @@ impl EngineHost {
                 }
                 Queued::Network(context, event) => self.on_network_event(context, event.event),
                 Queued::Frame(frame) => self.out.push(frame),
-                Queued::Console { realm, level, args, timestamp } => self.on_console(realm, level, args, timestamp),
+                Queued::Console { realm, level, args, timestamp, stack } => {
+                    self.on_console(realm, level, args, timestamp, stack)
+                }
                 Queued::Exception { realm, exception, timestamp } => self.on_exception(realm, exception, timestamp),
                 Queued::BindingCalled { realm, name, payload } => self.on_binding_called(realm, name, payload),
             }
@@ -786,7 +835,13 @@ impl EngineHost {
                     },
                 })))
             }
-            "LP" => self.driver_domain(action, cmd),
+            "LP" => {
+                // Dialogs opened by driver steps do not block (dialog.rs).
+                self.collector.dialogs.driver_busy.set(true);
+                let result = self.driver_domain(action, cmd);
+                self.collector.dialogs.driver_busy.set(!self.waiters.is_empty());
+                result
+            }
             #[cfg(feature = "render")]
             "IO" => self.io_domain(action, cmd),
             "Log" if matches!(action, "enable" | "disable") => Ok(Some(serde_json::json!({}))),
@@ -1076,6 +1131,14 @@ impl Host for EngineHost {
         std::mem::take(&mut self.popup_requests)
     }
 
+    fn take_close_requests(&mut self) -> Vec<PageKey> {
+        std::mem::take(&mut self.close_requests)
+    }
+
+    fn context_named(&mut self, key: ContextKey, id: &str) {
+        self.context_names.insert(key, id.to_owned());
+    }
+
     fn popup_opened(&mut self, opener: PageKey, page: PageKey, target_id: &str) {
         if self.pages.get(&opener).is_some_and(|state| state.network.log.is_some()) {
             if let Some(state) = self.pages.get_mut(&page) {
@@ -1128,6 +1191,7 @@ impl Host for EngineHost {
             }
         }
         self.renders.forget(state.id);
+        self.collector.dialogs.forget(state.id);
         self.thread.browser.close_page(state.id);
         self.update_network_subscriptions();
         // Realm/frame teardown events have no session left to go to.
@@ -1225,6 +1289,7 @@ impl Host for EngineHost {
         self.update_runtime_wanted();
         self.update_network_subscriptions();
         self.apply_network_overrides(page);
+        self.sync_dialog_sessions(page);
     }
 
     fn page_command(&mut self, cmd: PageCommand<'_, '_>, _out: &mut dyn Sink) {

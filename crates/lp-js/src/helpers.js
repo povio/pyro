@@ -62,6 +62,20 @@
   const RegExpC = RegExp, DateC = Date, MapC = Map, SetC = Set, WeakMapC = WeakMap, WeakSetC = WeakSet;
   const ArrayBufferC = ArrayBuffer, DataViewC = DataView;
   const isView = ArrayBuffer.isView;
+  // Remote-object previews and internal properties (CDP Runtime).
+  const jsonStringify = JSON.stringify;
+  const objectIs = O.is;
+  const symbolToString = Symbol.prototype.toString;
+  const mapEntries = MapC.prototype.entries, setValues = SetC.prototype.values;
+  const mapSize = getOwnPropertyDescriptor(MapC.prototype, 'size').get;
+  const setSize = getOwnPropertyDescriptor(SetC.prototype, 'size').get;
+  const mapIterNext = getPrototypeOf(new MapC().entries()).next;
+  const setIterNext = getPrototypeOf(new SetC().values()).next;
+  const PRIMITIVE_VALUE_OF = { __proto__: null,
+    '[object Number]': Number.prototype.valueOf, '[object String]': String.prototype.valueOf,
+    '[object Boolean]': Boolean.prototype.valueOf, '[object Symbol]': Symbol.prototype.valueOf,
+    '[object BigInt]': BigInt.prototype.valueOf,
+  };
   const StringC = String;
 
   const DOM_EXCEPTION_CODES = { __proto__: null,
@@ -130,10 +144,17 @@
       else if (subtype === 'error') { try { description = StringC(v.stack || v); } catch (_) { description = className; } }
       else if (subtype === 'node') description = apply(stringToLowerCase, StringC(v.nodeName), []);
       else if (subtype === 'regexp' || subtype === 'date') description = StringC(v);
+      else if (subtype === 'map' || subtype === 'set') {
+        // Chrome's `Map(2)`; a subclass instance without the internal slot keeps its name.
+        try { description = `${className}(${apply(subtype === 'map' ? mapSize : setSize, v, [])})`; }
+        catch (_) { description = className; }
+      } else if (subtype === 'typedarray' && !(v instanceof DataViewC)) description = `${className}(${v.length})`;
       else description = className;
     } else if (type === 'function') {
       className = 'Function';
       try { description = apply(fnToString, v, []); } catch (_) { description = 'function'; }
+    } else if (type === 'symbol') {
+      try { description = apply(symbolToString, v, []); } catch (_) {}
     }
     return { type, subtype, className, description };
   }
@@ -283,6 +304,165 @@
       }
       return out;
     },
+    // CDP `Runtime.ObjectPreview` of `v` as JSON text (V8's shape: up to 5
+    // properties of an object, 100 of an array, 5 entries of a Map/Set;
+    // internal slots as `[[PrimitiveValue]]`/`[[PromiseState]]`).
+    // `description` replaces the computed one (the caller's RemoteObject);
+    // `promise` is a promise's [state, result] read by `promiseProbe`.
+    preview(v, description, promise) {
+      return jsonStringify(objectPreview(v, description, true, promise));
+    },
+    // `Runtime.getProperties` internalProperties of `obj`: [name, value]
+    // pairs. A promise's state is read by a reaction, which runs once the
+    // native caller's outermost call returns: `promiseProbe` attaches it
+    // and returns the reader.
+    internals(obj, withPrototype) {
+      const out = [];
+      if (withPrototype) apply(arrayPush, out, [['[[Prototype]]', getPrototypeOf(obj)]]);
+      const prim = primitiveOf(obj);
+      if (prim) apply(arrayPush, out, [['[[PrimitiveValue]]', prim.value]]);
+      const kind = collectionKind(obj);
+      if (kind) {
+        const entries = [];
+        const it = apply(kind === 'map' ? mapEntries : setValues, obj, []);
+        for (;;) {
+          const r = apply(kind === 'map' ? mapIterNext : setIterNext, it, []);
+          if (r.done) break;
+          apply(arrayPush, entries, [kind === 'map' ? { key: r.value[0], value: r.value[1] } : { value: r.value }]);
+        }
+        apply(arrayPush, out, [['[[Entries]]', entries]]);
+      }
+      return out;
+    },
+    promiseProbe(p) {
+      if (!(p instanceof P)) return undefined;
+      let state = 'pending', result;
+      apply(promiseThen, p, [(v) => { state = 'fulfilled'; result = v; }, (e) => { state = 'rejected'; result = e; }]);
+      return () => [state, result];
+    },
+    // The current stack (JSC format), for console stack traces.
+    stack() {
+      return new ErrorCtor().stack;
+    },
   };
+
+  function primitiveOf(v) {
+    if (v === null || typeof v !== 'object') return undefined;
+    const tag = apply(objToString, v, []);
+    const f = PRIMITIVE_VALUE_OF[tag];
+    if (!f) return undefined;
+    try { return { value: apply(f, v, []) }; } catch (_) { return undefined; }
+  }
+
+  function collectionKind(v) {
+    try { apply(mapSize, v, []); return 'map'; } catch (_) {}
+    try { apply(setSize, v, []); return 'set'; } catch (_) {}
+    return undefined;
+  }
+
+  function previewText(x) {
+    switch (typeof x) {
+      case 'string': return x.length > 100 ? apply(stringSlice, x, [0, 50]) + '…' + apply(stringSlice, x, [-49]) : x;
+      case 'number': return objectIs(x, -0) ? '-0' : StringC(x);
+      case 'bigint': return StringC(x) + 'n';
+      case 'symbol': return apply(symbolToString, x, []);
+      case 'function': return '';
+      case 'undefined': return 'undefined';
+      case 'boolean': return x ? 'true' : 'false';
+    }
+    if (x === null) return 'null';
+    return describe(x).description || '';
+  }
+
+  function propertyPreview(name, x) {
+    const p = { name, type: x === null ? 'object' : typeof x, value: previewText(x) };
+    if (x === null) p.subtype = 'null';
+    else if (p.type === 'object') {
+      const s = describe(x).subtype;
+      if (s) p.subtype = s;
+    }
+    return p;
+  }
+
+  function entryPreview(x) {
+    if (x === null || typeof x !== 'object') {
+      const p = { type: x === null ? 'object' : typeof x, description: previewText(x), overflow: false, properties: [] };
+      if (x === null) p.subtype = 'null';
+      return p;
+    }
+    return objectPreview(x, undefined, false, undefined);
+  }
+
+  function objectPreview(v, description, withEntries, promise) {
+    const d = describe(v);
+    const out = { type: d.type, description: description !== undefined ? description : (d.description || ''),
+                  overflow: false, properties: [] };
+    if (d.subtype) out.subtype = d.subtype;
+    const props = out.properties;
+    const isArray = d.subtype === 'array' || d.subtype === 'typedarray';
+    const limit = isArray ? 100 : 5;
+    const push = (name, x) => {
+      if (props.length >= limit) { out.overflow = true; return false; }
+      apply(arrayPush, props, [propertyPreview(name, x)]);
+      return true;
+    };
+    try {
+      const prim = primitiveOf(v);
+      if (prim) { push('[[PrimitiveValue]]', prim.value); return out; }
+      if (v instanceof P) {
+        if (promise) {
+          push('[[PromiseState]]', promise[0]);
+          if (promise[0] !== 'pending') push('[[PromiseResult]]', promise[1]);
+        }
+        return out;
+      }
+      const kind = collectionKind(v);
+      if (kind) {
+        push('size', apply(kind === 'map' ? mapSize : setSize, v, []));
+        if (withEntries) {
+          out.entries = [];
+          const it = apply(kind === 'map' ? mapEntries : setValues, v, []);
+          for (let n = 0; ; n++) {
+            const r = apply(kind === 'map' ? mapIterNext : setIterNext, it, []);
+            if (r.done) break;
+            if (n >= 5) { out.overflow = true; break; }
+            apply(arrayPush, out.entries, [kind === 'map'
+              ? { key: entryPreview(r.value[0]), value: entryPreview(r.value[1]) }
+              : { value: entryPreview(r.value) }]);
+          }
+        }
+        return out;
+      }
+      if (isArray) {
+        const length = v.length;
+        for (let i = 0; i < length; i++) {
+          if (!(i in v)) continue;
+          if (!push(StringC(i), v[i])) break;
+        }
+        return out;
+      }
+      if (d.subtype === 'error') {
+        for (const k of ['stack', 'message']) {
+          const desc = getOwnPropertyDescriptor(v, k);
+          if (desc && 'value' in desc) push(k, desc.value);
+        }
+        return out;
+      }
+      const keys = getOwnPropertyNames(v);
+      for (let i = 0; i < keys.length; i++) {
+        const desc = getOwnPropertyDescriptor(v, keys[i]);
+        if (!desc || !desc.enumerable) continue;
+        if (!('value' in desc)) {
+          // An accessor: its getter is never run.
+          if (props.length >= limit) { out.overflow = true; break; }
+          apply(arrayPush, props, [{ name: keys[i], type: 'accessor' }]);
+          continue;
+        }
+        if (!push(keys[i], desc.value)) break;
+      }
+    } catch (_) {}
+    return out;
+  }
+
   return H;
 })()

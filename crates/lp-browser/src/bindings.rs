@@ -123,7 +123,27 @@ impl PageHooks for Hooks {
         });
     }
 
-    fn javascript_dialog(&self, kind: &'static str, message: String, default_prompt: Option<String>) {
+    fn javascript_dialog(
+        &self,
+        kind: &'static str,
+        message: String,
+        default_prompt: Option<String>,
+        url: String,
+    ) -> Option<lp_webapi::DialogAnswer> {
+        // A live document's dialog may block in the embedder (its observer).
+        let observer = self.observer.borrow().clone();
+        let frame = self
+            .frames
+            .upgrade()
+            .filter(|host| host.matches(self.page, &self.loader))
+            .and_then(|host| host.with_frame(self.page, |f| f.id.clone()));
+        if let (Some(observer), Some(frame)) = (observer, frame) {
+            let answer =
+                observer.javascript_dialog(self.page.page, &frame, &url, kind, &message, default_prompt.as_deref());
+            if answer.is_some() {
+                return answer;
+            }
+        }
         let page = self.page;
         let loader = self.loader.clone();
         self.sched.post(TaskSource::UserInteraction, move |b| {
@@ -143,6 +163,7 @@ impl PageHooks for Hooks {
             );
             b.emit(page.page, crate::PageEvent::JavascriptDialogClosed { frame_id });
         });
+        None
     }
 
     fn download(&self, request: lp_webapi::DownloadRequest) {

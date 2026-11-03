@@ -89,6 +89,31 @@ pub struct ExternalGeometry {
     pub document_height: f64,
 }
 
+/// An element's CSS boxes as quads (CDP `DOM.getBoxModel` and
+/// `getContentQuads`), document CSS px (viewport ones inside a fixed box).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ExternalQuads {
+    /// The border box as four points (x, y), clockwise from its top-left
+    /// corner, after the transforms of the element and its containing
+    /// blocks.
+    pub border: [f64; 8],
+    /// Whether a transform other than a translation applies (else `border`
+    /// is the element's axis-aligned box).
+    pub transformed: bool,
+    /// Border, padding and margin widths ([`TOP`], [`RIGHT`], [`BOTTOM`],
+    /// [`LEFT`]), in the element's own (untransformed) space.
+    pub border_widths: [f64; 4],
+    pub padding: [f64; 4],
+    pub margin: [f64; 4],
+    /// The untransformed border box size (`offsetWidth`/`offsetHeight`).
+    pub width: f64,
+    pub height: f64,
+    /// One border-box quad per line fragment of an inline box laid out over
+    /// several lines (empty for other boxes).
+    pub fragments: Vec<[f64; 8]>,
+    pub fixed: bool,
+}
+
 /// The engine laying the document out (Blitz in `render` builds).
 pub trait GeometrySource {
     /// Brings the engine's layout up to the document; the other queries
@@ -100,6 +125,11 @@ pub trait GeometrySource {
     fn sync_styles(&self, _dom: &Dom, _style: &crate::style::StyleEngine) {}
     /// One element's box as of the last sync (`None`: not rendered).
     fn element_box(&self, key: u64) -> Option<ExternalBox>;
+    /// One element's boxes as quads as of the last sync (`None`: not
+    /// rendered, or the engine does not report them).
+    fn element_quads(&self, _key: u64) -> Option<ExternalQuads> {
+        None
+    }
     /// The whole document as of the last sync.
     fn geometry(&self) -> Option<ExternalGeometry>;
     /// The document's scroll size as of the last sync.

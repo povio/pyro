@@ -136,22 +136,25 @@ where
     });
     def.method("blur", 0, |s, _w, _a| Ok(s.undefined()));
     def.method("print", 0, |s, _w, _a| Ok(s.undefined()));
-    // Dialogs never block: each returns what a dismissed one gives (Chrome's
-    // results when Playwright auto-dismisses) and is reported to the
-    // embedder (CDP Page.javascriptDialogOpening).
+    // The embedder may block until the dialog is answered (CDP with a
+    // session that has Page enabled); otherwise each returns what a
+    // dismissed one gives (Chrome's results when Playwright auto-dismisses)
+    // and is reported (CDP Page.javascriptDialogOpening).
     def.method("alert", 0, |s, w, a| {
         dialog(w.page(), "alert", a.get(0), None)?;
         Ok(s.undefined())
     });
     def.method("confirm", 0, |s, w, a| {
-        dialog(w.page(), "confirm", a.get(0), None)?;
-        Ok(s.boolean(false))
+        let answer = dialog(w.page(), "confirm", a.get(0), None)?;
+        Ok(s.boolean(answer.is_some_and(|a| a.accept)))
     });
     def.method("prompt", 0, |s, w, a| {
         let default = a.get(1);
         let default = if default.is_undefined() { String::new() } else { default.to_string()? };
-        dialog(w.page(), "prompt", a.get(0), Some(default))?;
-        Ok(s.null())
+        match dialog(w.page(), "prompt", a.get(0), Some(default))? {
+            Some(answer) if answer.accept => Ok(s.string(&answer.prompt_text)),
+            _ => Ok(s.null()),
+        }
     });
     def.method("stop", 0, |s, _w, _a| Ok(s.undefined()));
     def.method("postMessage", 1, |s, w, a| {
@@ -282,12 +285,11 @@ fn dialog(
     kind: &'static str,
     message: lp_js::Value<'_>,
     default: Option<String>,
-) -> lp_js::JsResult<()> {
+) -> lp_js::JsResult<Option<crate::page::DialogAnswer>> {
     let message = if message.is_undefined() { String::new() } else { message.to_string()? };
-    if let Some(hooks) = page.hooks() {
-        hooks.javascript_dialog(kind, message, default);
-    }
-    Ok(())
+    let Some(hooks) = page.hooks() else { return Ok(None) };
+    let url = page.dom.borrow().document_data(page.document()).map(|d| d.url.to_string()).unwrap_or_default();
+    Ok(hooks.javascript_dialog(kind, message, default, url))
 }
 
 fn languages(p: &PageDom) -> Vec<String> {
