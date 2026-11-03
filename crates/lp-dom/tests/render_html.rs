@@ -209,6 +209,25 @@ fn textarea_attribute_delta_preserves_typed_value_and_synthetic_child() {
 }
 
 #[test]
+fn iframe_attribute_delta_carries_the_frame_element() {
+    use lp_dom::snapshot::{render_key, DeltaOp};
+    let (dom, d) = doc("<body><iframe id=f></iframe></body>");
+    let frame = find(&dom.borrow(), d, "#f");
+    let opts = RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None };
+    let version = dom.borrow().version();
+    dom.borrow_mut().set_attribute(frame, "style", "width:500px").unwrap();
+    let after = dom.borrow().render_tree(d, &opts).unwrap();
+    let delta = dom.borrow().render_delta(d, version, &opts).expect("incremental");
+    let key = render_key(frame);
+    let rendered = after.nodes.iter().find(|node| node.key == key).unwrap();
+    assert!(
+        delta.ops.iter().any(|op| matches!(op, DeltaOp::Node { key: k, kind } if *k == key && *kind == rendered.kind)),
+        "{:?}",
+        delta.ops.len()
+    );
+}
+
+#[test]
 fn textarea_non_attribute_changes_and_special_trees_keep_the_full_snapshot_fallback() {
     let opts = RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None };
     for case in ["value-then-attribute", "attribute-then-value", "text", "children", "shadow", "link"] {

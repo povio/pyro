@@ -331,7 +331,7 @@ impl EngineHost {
             let Some(node) = lp_webapi::layout_api::hit_test(&page, x, y) else { break };
             let Some(frame_id) = self.thread.browser.frame_of_owner(page_id, node) else { break };
             let Some(child) = self.thread.browser.frame(page_id, &frame_id).and_then(|f| f.page_dom) else { break };
-            let Some(r) = page.layout.borrow().client_rect(&page.dom.borrow(), node) else { break };
+            let Some(r) = page.layout().client_rect(&page.dom.borrow(), node) else { break };
             x -= r.x;
             y -= r.y;
             page = child;

@@ -142,9 +142,17 @@ pub struct PageDom {
     sheet_rules: RefCell<FxHashMap<NodeId, Vec<String>>>,
     /// Files selected into `<input type=file>` (CDP DOM.setFileInputFiles).
     pub(crate) files: RefCell<FxHashMap<NodeId, Vec<crate::file::FileEntry>>>,
-    /// Faux layout + style engine of the displayed document.
+    /// Faux layout + style engine of the displayed document. Read it with
+    /// [`PageDom::layout`], which first sizes a child frame's viewport.
     pub layout: RefCell<lp_dom::layout::Layout>,
+    /// A child frame's viewport (its iframe's content box): `None` for top
+    /// documents, which keep the emulated viewport.
+    frame_viewport: RefCell<Option<FrameViewportSource>>,
 }
+
+/// Computes a child frame's viewport from its iframe; `None`: unknown yet,
+/// keep the current one.
+pub type FrameViewportSource = Rc<dyn Fn() -> Option<lp_dom::media::Viewport>>;
 
 /// A navigation requested by the document (link activation, form
 /// submission, `location` assignment is lp-browser's own).
@@ -368,6 +376,7 @@ impl PageDom {
             sheet_rules: RefCell::new(FxHashMap::default()),
             files: RefCell::new(FxHashMap::default()),
             layout: RefCell::new(lp_dom::layout::Layout::new(document)),
+            frame_viewport: RefCell::new(None),
         })
     }
 
@@ -550,7 +559,41 @@ impl PageDom {
         self.layout.borrow_mut().set_viewport(viewport);
     }
     pub fn viewport(&self) -> lp_dom::media::Viewport {
-        self.layout.borrow().viewport().clone()
+        self.layout().viewport().clone()
+    }
+
+    /// Sizes this child frame's viewport from its iframe (see
+    /// [`PageDom::layout`]); `None` for a top document.
+    pub fn set_frame_viewport_source(&self, source: Option<FrameViewportSource>) {
+        *self.frame_viewport.borrow_mut() = source;
+    }
+
+    /// The document's layout, after a child frame's viewport is brought up
+    /// to its iframe's content box (which lays the parent out when it
+    /// changed since). Top documents pay one empty check.
+    pub fn layout(&self) -> std::cell::Ref<'_, lp_dom::layout::Layout> {
+        self.sync_frame_viewport();
+        self.layout.borrow()
+    }
+
+    /// [`PageDom::layout`] without panicking while the layout is borrowed
+    /// mutably.
+    pub fn try_layout(&self) -> Option<std::cell::Ref<'_, lp_dom::layout::Layout>> {
+        self.sync_frame_viewport();
+        self.layout.try_borrow().ok()
+    }
+
+    fn sync_frame_viewport(&self) {
+        let Some(source) = self.frame_viewport.borrow().clone() else { return };
+        let Some(viewport) = source() else { return };
+        if self.layout.try_borrow().is_ok_and(|l| *l.viewport() == viewport) {
+            return;
+        }
+        // A query already holding the layout keeps the old size; the next
+        // one picks it up.
+        if let Ok(mut layout) = self.layout.try_borrow_mut() {
+            layout.set_viewport(viewport);
+        }
     }
 
     /// Applies a resource event to the style engine (`<style>` text and
@@ -602,7 +645,7 @@ impl PageDom {
     /// the targets whose `matches` flipped, with the query text and the new
     /// value, for the embedder to fire `change` at (`fire_media_query_change`).
     pub fn media_query_changes(&self) -> Vec<(TargetKey, String, bool)> {
-        let layout = self.layout.borrow();
+        let layout = self.layout();
         let mut out = Vec::new();
         for entry in self.media_queries.borrow().iter() {
             let now = layout.style().match_media(&entry.query);

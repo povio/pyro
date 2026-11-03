@@ -1666,7 +1666,7 @@ simple_class!(SvgGraphicsElement, "SVGGraphicsElement", SvgElement, |def| {
     def.method("getBBox", 0, |s, n, _a| {
         let page = n.page();
         let dom = page.dom.borrow();
-        let layout = page.layout.borrow();
+        let layout = page.layout();
         crate::layout_api::rect_value(s, lp_dom::svg_geometry::bbox(&dom, layout.style(), n.id))
     });
 });

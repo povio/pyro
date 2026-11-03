@@ -65,13 +65,13 @@ impl JsClass for DomRect {
 
 pub(crate) fn bounding_rect<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
     let page = n.page();
-    let r = page.layout.borrow().bounding_client_rect(&page.dom.borrow(), n.id);
+    let r = page.layout().bounding_client_rect(&page.dom.borrow(), n.id);
     rect_value(s, r.layout_units())
 }
 
 pub(crate) fn client_rects<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
     let page = n.page();
-    let rects = page.layout.borrow().client_rects(&page.dom.borrow(), n.id);
+    let rects = page.layout().client_rects(&page.dom.borrow(), n.id);
     let mut vals = lp_js::RootedVec::new();
     for r in rects {
         vals.push(s, rect_value(s, r.layout_units())?);
@@ -102,7 +102,7 @@ pub(crate) fn range_rect<'s>(
         }
     };
     if let Some(t) = text {
-        if let Some(r) = page.layout.borrow().text_rect(&page.dom.borrow(), t) {
+        if let Some(r) = page.layout().text_rect(&page.dom.borrow(), t) {
             return rect_value(s, r.layout_units());
         }
     }
@@ -115,7 +115,7 @@ pub(crate) fn range_rect<'s>(
         }
     };
     let r = match el {
-        Some(e) => page.layout.borrow().bounding_client_rect(&page.dom.borrow(), e),
+        Some(e) => page.layout().bounding_client_rect(&page.dom.borrow(), e),
         None => lp_dom::layout::Rect::default(),
     };
     rect_value(s, r.layout_units())
@@ -280,7 +280,7 @@ fn fire_scroll_targets(page: &Rc<PageDom>, moved: Vec<lp_dom::layout::ScrollTarg
 
 pub(crate) fn check_visibility<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
     let page = n.page();
-    let v = page.layout.borrow().check_visibility(&page.dom.borrow(), n.id, CheckVisibilityOptions::default());
+    let v = page.layout().check_visibility(&page.dom.borrow(), n.id, CheckVisibilityOptions::default());
     Ok(s.boolean(v))
 }
 
@@ -320,7 +320,7 @@ pub(crate) fn scroll_to<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>, by: bool) 
 pub(crate) fn scroll_get<'s>(s: &Scope<'s>, n: &NodeData, top: bool) -> JsResult<Value<'s>> {
     // Reading a scroll offset sees the current layout (clamped to it).
     clamp_scrolls(n.page(), false);
-    let layout = n.page().layout.borrow();
+    let layout = n.page().layout();
     Ok(s.number(if top { layout.scroll_top(n.id) } else { layout.scroll_left(n.id) } as f64))
 }
 
@@ -345,7 +345,7 @@ pub(crate) fn scroll_set(_s: &Scope<'_>, n: &NodeData, v: Value<'_>, top: bool) 
 pub(crate) fn metric<'s>(s: &Scope<'s>, n: &NodeData, which: &str) -> JsResult<Value<'s>> {
     let page = n.page();
     let dom = page.dom.borrow();
-    let l = page.layout.borrow();
+    let l = page.layout();
     let metric = match which {
         "scrollWidth" => Metric::ScrollWidth,
         "scrollHeight" => Metric::ScrollHeight,
@@ -363,13 +363,13 @@ pub(crate) fn metric<'s>(s: &Scope<'s>, n: &NodeData, which: &str) -> JsResult<V
 
 pub(crate) fn offset_parent<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
     let page = n.page();
-    let p = page.layout.borrow().offset_parent(&page.dom.borrow(), n.id);
+    let p = page.layout().offset_parent(&page.dom.borrow(), n.id);
     opt_node(s, page, p)
 }
 
 pub(crate) fn inner_text<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
     let page = n.page();
-    let t = page.dom.borrow().inner_text(page.layout.borrow().style(), n.id).js()?;
+    let t = page.dom.borrow().inner_text(page.layout().style(), n.id).js()?;
     Ok(s.string(&t))
 }
 
@@ -380,7 +380,7 @@ pub(crate) fn set_inner_text(_s: &Scope<'_>, n: &NodeData, v: Value<'_>) -> JsRe
 
 /// Element hit-testing for CDP input (top-most element at the point).
 pub fn hit_test(page: &PageDom, x: f64, y: f64) -> Option<NodeId> {
-    page.layout.borrow().element_from_point(&page.dom.borrow(), x, y)
+    page.layout().element_from_point(&page.dom.borrow(), x, y)
 }
 
 pub(crate) fn element_from_point<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value<'s>> {
@@ -398,11 +398,8 @@ pub(crate) fn elements_from_point<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) 
     a.require(2, "Document.elementsFromPoint")?;
     let (x, y) = (a.get(0).to_number()?, a.get(1).to_number()?);
     let page = n.page();
-    let ids = if n.id == page.document() {
-        page.layout.borrow().elements_from_point(&page.dom.borrow(), x, y)
-    } else {
-        Vec::new()
-    };
+    let ids =
+        if n.id == page.document() { page.layout().elements_from_point(&page.dom.borrow(), x, y) } else { Vec::new() };
     let mut vals = lp_js::RootedVec::new();
     for id in ids {
         vals.push(s, wrap_node(s, page, id)?.value());
@@ -425,7 +422,7 @@ impl JsClass for ComputedStyle {
         def.method("getPropertyValue", 1, |s, c, a| {
             let name = arg_string(&a, 0, "CSSStyleDeclaration.getPropertyValue")?;
             let page = &c.el.page;
-            let v = page.layout.borrow().computed_style_value(&page.dom.borrow(), c.el.id, &name);
+            let v = page.layout().computed_style_value(&page.dom.borrow(), c.el.id, &name);
             Ok(s.string(&v))
         });
         def.method("getPropertyPriority", 1, |s, _c, _a| Ok(s.string("")));
@@ -446,7 +443,7 @@ impl JsClass for ComputedStyle {
             }
             let prop = crate::css::camel_to_css(name);
             let page = &c.el.page;
-            let v = page.layout.borrow().computed_style_value(&page.dom.borrow(), c.el.id, &prop);
+            let v = page.layout().computed_style_value(&page.dom.borrow(), c.el.id, &prop);
             Ok(Some(s.string(&v)))
         });
     }
@@ -493,7 +490,7 @@ impl JsClass for MediaQueryList {
     fn define(def: &mut ClassDef<Self>) {
         def.upcast(|d: &MqlData| &d.target);
         def.getter("media", |s, m| Ok(s.string(&m.query)));
-        def.getter("matches", |s, m| Ok(s.boolean(m.target.page.layout.borrow().style().match_media(&m.query))));
+        def.getter("matches", |s, m| Ok(s.boolean(m.target.page.layout().style().match_media(&m.query))));
         // Legacy aliases of addEventListener/removeEventListener('change').
         def.method("addListener", 1, |s, m, a| mql_listener(s, m, "addEventListener", a.get(0)));
         def.method("removeListener", 1, |s, m, a| mql_listener(s, m, "removeEventListener", a.get(0)));
@@ -527,7 +524,7 @@ pub fn match_media<'s>(s: &Scope<'s>, page: &Rc<PageDom>, query: String) -> JsRe
     let key = media_query_identity(page, &query);
     let value = crate::window::same_object(s, page, key, || {
         let target = crate::target::EventTargetData::new(page);
-        let last = page.layout.borrow().style().match_media(&query);
+        let last = page.layout().style().match_media(&query);
         page.media_queries.borrow_mut().push(MediaQueryEntry {
             target: target.key,
             query: query.clone(),

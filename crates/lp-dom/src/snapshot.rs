@@ -575,7 +575,10 @@ impl Dom {
             // A `<style>`'s own attributes: the element (its text stays its
             // sheet's).
             let is_style = style_owner(i) == Some(i);
-            let own_attributes = is_style || textarea_attributes.get(&i) == Some(&true);
+            // A frame's own attributes (its children are not rendered, it is).
+            let is_frame = matches!(&self.n(i).kind, NodeKind::Element(e)
+                if e.is_html() && matches!(&*e.name.local, "iframe" | "frame"));
+            let own_attributes = is_style || is_frame || textarea_attributes.get(&i) == Some(&true);
             let place =
                 if own_attributes && self.n(i).parent != NIL { rendered(self.n(i).parent) } else { rendered(i) };
             match place {

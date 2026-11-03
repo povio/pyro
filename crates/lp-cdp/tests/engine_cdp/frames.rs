@@ -755,3 +755,33 @@ fn mouse_input_at_main_frame_coordinates_reaches_child_frame_content() {
     }
     assert_eq!(eval_in(&mut h, context, "hits"), json!([true]));
 }
+
+#[test]
+fn child_frame_viewport_is_its_iframe_content_box() {
+    let mut h = Harness::new();
+    enable(&mut h);
+    let events = add_srcdoc(&mut h, "sized", "inside", None);
+    let frame = child(&mut h, "sized")["frame"]["id"].as_str().unwrap().to_owned();
+    let context = default_context(&events, &frame);
+    // A default iframe's content box is 300x150 (Chrome: the same).
+    let metrics = "(() => [innerWidth, innerHeight, document.documentElement.clientWidth, \
+                   document.querySelector('p').getBoundingClientRect().width, \
+                   matchMedia('(max-width: 300px)').matches, matchMedia('(min-width: 301px)').matches])()";
+    assert_eq!(eval_in(&mut h, context, metrics), json!([300, 150, 300, 284, true, false]));
+    // The parent resizing the iframe resizes the child's viewport; padding
+    // and borders are outside it.
+    eval_value(
+        &mut h,
+        "(() => { const f = document.getElementById('sized'); f.style.cssText = 'width: 500px; height: 80px; padding: 3px; border: 4px solid'; return 0 })()",
+    );
+    assert_eq!(eval_in(&mut h, context, metrics), json!([500, 80, 500, 484, false, true]));
+    // The top document keeps the emulated viewport; a percentage-sized
+    // iframe follows it.
+    assert_eq!(eval_value(&mut h, "innerWidth > 500"), true);
+    eval_value(&mut h, "document.getElementById('sized').style.width = '50%'");
+    h.page(
+        "Emulation.setDeviceMetricsOverride",
+        json!({"width":800,"height":600,"deviceScaleFactor":1,"mobile":false}),
+    );
+    assert_eq!(eval_in(&mut h, context, "innerWidth"), json!(392));
+}

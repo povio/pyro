@@ -707,14 +707,21 @@ try {
       assert.equal(await resolvedOwner.evaluate(el => el.id), 'sandbox');
       await resolvedOwner.dispose(); await owner.dispose();
       // Child-frame geometry is in main-frame viewport coordinates, as in
-      // Chrome (measured: iframe at 8,26 304x154; <p> at 16,42, 18px tall).
-      // The child document is laid out at the top-level viewport's width,
-      // not its iframe's, so the block's width is not checked.
+      // Chrome (measured: iframe at 8,26 304x154; <p> at 16,42, 284x18). The
+      // child document's viewport is the iframe's 300x150 content box.
       const frameBox = await p.locator('#sandbox').boundingBox();
       assert.deepEqual(frameBox, { x: 8, y: 26, width: 304, height: 154 });
       const pBox = await f.locator('p').boundingBox();
       assert.ok(pBox, 'child geometry is reported');
       assert.deepEqual([pBox.x, pBox.y, Math.round(pBox.height)], [16, 42, 18]);
+      assert.ok(Math.abs(pBox.width - 284) <= 1, JSON.stringify(pBox));
+      assert.deepEqual(await f.evaluate(() => [innerWidth, innerHeight, matchMedia('(max-width: 300px)').matches]),
+        [300, 150, true]);
+      // Chrome: restyling the iframe resizes the child viewport (500x80,
+      // the <p> 484 wide); padding and borders are outside it.
+      await p.evaluate(() => { document.getElementById('sandbox').style.cssText = 'width: 500px; height: 80px; padding: 3px; border: 4px solid'; });
+      assert.deepEqual(await f.evaluate(() => [innerWidth, innerHeight]), [500, 80]);
+      assert.ok(Math.abs((await f.locator('p').boundingBox()).width - 484) <= 1);
     } finally { await p.close(); }
   });
   await check('child HTTP navigation, response body, fetch and route retain frame identity', async () => {

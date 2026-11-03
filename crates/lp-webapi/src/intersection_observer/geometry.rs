@@ -14,7 +14,7 @@ fn clip(rect: Rect, bounds: Rect, x: bool, y: bool) -> Option<Rect> {
 }
 pub(super) fn measure(page: &PageDom, options: &options::Options, target: NodeId) -> Geometry {
     let dom = page.dom.borrow();
-    let layout = page.layout.borrow();
+    let layout = page.layout();
     let root = options.root.as_ref().map_or(page.document(), |r| r.id);
     let root_is_document = dom.node_type(root).ok() == Some(lp_dom::NodeType::Document);
     let root_rect = if root_is_document {
