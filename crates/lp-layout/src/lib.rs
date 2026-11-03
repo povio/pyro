@@ -258,6 +258,7 @@ impl BlitzGeometry {
             scroll_y: 0.0,
             resource_scope: format!("geometry-{}", self.page),
             live: Some(Live { page: self.page, tree, clip: None }),
+            element_scroll: None,
         };
         SNAPSHOT_NS.fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
         Some(snap)

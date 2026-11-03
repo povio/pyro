@@ -134,6 +134,9 @@ pub struct Snapshot {
     /// The page as a keyed tree, rendered with the page's persistent
     /// document instead of `html` (see [`Live`]).
     pub live: Option<Live>,
+    /// Scroll offsets (CSS px) of elements of a [`Live`] document by key;
+    /// those of other elements are reset. `None` leaves the document's.
+    pub element_scroll: Option<Vec<(u64, (f64, f64))>>,
 }
 
 /// A snapshot of a page whose Blitz document the renderer keeps between
@@ -442,6 +445,9 @@ pub struct Renderer {
     pdf_cache: pdf::PdfCache,
     /// Layout-query memos of persistent documents, by page.
     geometry: HashMap<u64, geometry::Geometry>,
+    /// External SVG sprite files of persistent documents, by resource
+    /// scope and URL.
+    sprites: HashMap<(String, String), Arc<String>>,
     /// Longest wait for sub-resources per render.
     pub fetch_timeout: Duration,
     /// Longest wait, before the first layout, for the fonts and images the
@@ -468,6 +474,7 @@ impl Renderer {
             mirrors: HashMap::new(),
             pdf_cache: pdf::PdfCache::default(),
             geometry: HashMap::new(),
+            sprites: HashMap::new(),
             fetch_timeout: Duration::from_secs(10),
             first_layout_wait: Duration::from_secs(3),
         }
@@ -589,8 +596,23 @@ impl Renderer {
             Some(live) => {
                 let stats = self.mirror(snap, live, fetcher);
                 timings.mirror = Some(stats);
+                let hrefs = mirror::take_sprite_hrefs();
+                if let (false, Some(m)) = (hrefs.is_empty(), self.mirrors.get_mut(&live.page)) {
+                    svg_use::resolve_sprites(
+                        &mut m.doc,
+                        hrefs,
+                        &snap.base_url,
+                        &snap.resource_scope,
+                        &mut self.sprites,
+                        fetcher,
+                        self.fetch_timeout,
+                    );
+                }
                 match self.mirrors.get_mut(&live.page) {
                     Some(m) => {
+                        if let Some(offsets) = &snap.element_scroll {
+                            m.set_element_scroll(offsets);
+                        }
                         let clip = live.clip.and_then(|k| m.node(k));
                         (&mut m.doc, &m.bridge, clip)
                     }

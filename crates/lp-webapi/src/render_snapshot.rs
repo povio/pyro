@@ -4,7 +4,7 @@
 //! data, so another thread can render it.
 //!
 //! Not captured: canvas and video pixels, iframe contents (empty boxes),
-//! element scroll offsets (only the window's), `:hover`/`:focus`/`:active`
+//! `:hover`/`:focus`/`:active`
 //! state, selection and caret, CSS animations/transitions (rendered at
 //! their final values), shadow-tree style scoping (shadow `<style>` applies
 //! document-wide).
@@ -31,6 +31,9 @@ pub struct RenderSnapshot {
     pub dark: bool,
     pub scroll_x: f64,
     pub scroll_y: f64,
+    /// Scrolled elements by render key, with their offset (CSS px), in
+    /// every form.
+    pub element_scroll: Vec<(u64, (f64, f64))>,
 }
 
 /// How a snapshot carries the document.
@@ -114,6 +117,7 @@ fn snapshot_of(
             dark: viewport.color_scheme == lp_dom::media::ColorScheme::Dark,
             scroll_x: layout.scroll_x() as f64,
             scroll_y: layout.scroll_y() as f64,
+            element_scroll: layout.scrolled_elements(),
         }
     }
 }

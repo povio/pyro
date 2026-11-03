@@ -99,6 +99,8 @@ pub(crate) struct Mirror {
     tree: Arc<Tree>,
     nodes: FxHashMap<u64, Entry>,
     top: Vec<u64>,
+    /// Nodes given a scroll offset by [`Mirror::set_element_scroll`].
+    scrolled: Vec<NodeId>,
 }
 
 fn hash_kind(kind: &TreeKind) -> u64 {
@@ -126,7 +128,32 @@ fn hash_kind(kind: &TreeKind) -> u64 {
     h.finish()
 }
 
+thread_local! {
+    /// External `<use href>` values seen by the mirrors since the last
+    /// [`take_sprite_hrefs`].
+    static SPRITE_HREFS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Notes `kind`'s href when it is a `<use>` referring to another document.
+fn note_sprite(kind: &TreeKind) {
+    let TreeKind::Element { name, attrs } = kind else { return };
+    if name.local != blitz_dom::local_name!("use") {
+        return;
+    }
+    for (attr, value) in attrs {
+        if attr.local == blitz_dom::local_name!("href") && !value.starts_with('#') && !value.is_empty() {
+            SPRITE_HREFS.with(|h| h.borrow_mut().push(value.clone()));
+        }
+    }
+}
+
+/// The external `<use href>` values created or changed since the last call.
+pub(crate) fn take_sprite_hrefs() -> Vec<String> {
+    SPRITE_HREFS.with(|h| std::mem::take(&mut *h.borrow_mut()))
+}
+
 fn create(m: &mut DocumentMutator<'_>, kind: &TreeKind) -> NodeId {
+    note_sprite(kind);
     match kind {
         TreeKind::Text(t) => m.create_text_node(t),
         TreeKind::Element { name, attrs } => m.create_element(
@@ -201,10 +228,33 @@ impl Mirror {
                 }
             }
         }
-        Ok(Mirror { doc, bridge, scope, base_url, viewport, sheets, tree, nodes, top })
+        Ok(Mirror { doc, bridge, scope, base_url, viewport, sheets, tree, nodes, top, scrolled: Vec::new() })
     }
 
     /// The Blitz node of `key`.
+    /// Scrolls the elements keyed in `offsets` (CSS px) and puts the ones
+    /// scrolled last time and absent now back at the origin.
+    pub(crate) fn set_element_scroll(&mut self, offsets: &[(u64, (f64, f64))]) {
+        if offsets.is_empty() && self.scrolled.is_empty() {
+            return;
+        }
+        let now: Vec<(NodeId, (f64, f64))> =
+            offsets.iter().filter_map(|&(key, o)| Some((self.node(key)?, o))).collect();
+        for id in std::mem::take(&mut self.scrolled) {
+            if !now.iter().any(|(n, _)| *n == id) {
+                if let Some(node) = self.doc.get_node_mut(id) {
+                    *node.scroll_offset_mut() = blitz_dom::Point { x: 0.0, y: 0.0 };
+                }
+            }
+        }
+        for (id, (x, y)) in now {
+            if let Some(node) = self.doc.get_node_mut(id) {
+                *node.scroll_offset_mut() = blitz_dom::Point { x, y };
+                self.scrolled.push(id);
+            }
+        }
+    }
+
     pub(crate) fn node(&self, key: u64) -> Option<NodeId> {
         self.nodes.get(&key).map(|e| e.id)
     }
@@ -552,6 +602,7 @@ impl Mirror {
 
 /// Brings an existing node to `kind` (same element name or both text).
 fn update(m: &mut DocumentMutator<'_>, id: NodeId, kind: &TreeKind) {
+    note_sprite(kind);
     match kind {
         TreeKind::Text(t) => m.set_node_text(id, t),
         TreeKind::Element { name: tag, attrs } => {

@@ -5672,6 +5672,80 @@ mod screenshot {
     }
 
     #[test]
+    fn screenshots_show_scrolled_containers() {
+        let mut h = Harness::new();
+        h.page(
+            "Emulation.setDeviceMetricsOverride",
+            json!({"width": 200, "height": 200, "deviceScaleFactor": 1, "mobile": false}),
+        );
+        load_html(
+            &mut h,
+            "<!doctype html><style>body{margin:0}#box{width:100px;height:100px;overflow:auto}\
+             .a{height:100px;background:#f00}.b{height:100px;background:#00f}</style>\
+             <div id=box><div class=a></div><div class=b></div></div>",
+        );
+        let shot = |h: &mut Harness| png_of(&h.page("Page.captureScreenshot", json!({}))["result"]["data"]);
+        assert_eq!(pixel(&shot(&mut h), 20, 50), [255, 0, 0, 255], "top of the content");
+        h.page("Runtime.evaluate", json!({"expression": "document.getElementById('box').scrollTop = 100"}));
+        assert_eq!(pixel(&shot(&mut h), 20, 50), [0, 0, 255, 255], "scrolled to the second block");
+        h.page("Runtime.evaluate", json!({"expression": "document.getElementById('box').scrollTop = 0"}));
+        assert_eq!(pixel(&shot(&mut h), 20, 50), [255, 0, 0, 255], "back at the origin");
+    }
+
+    #[test]
+    fn screenshots_draw_external_svg_sprites() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                std::thread::spawn(move || {
+                    let mut request = Vec::new();
+                    let mut chunk = [0; 1024];
+                    while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                        match stream.read(&mut chunk) {
+                            Ok(n) if n > 0 => request.extend_from_slice(&chunk[..n]),
+                            _ => return,
+                        }
+                    }
+                    let (kind, body) = if request.starts_with(b"GET /sprite.svg") {
+                        (
+                            "image/svg+xml",
+                            r#"<svg xmlns="http://www.w3.org/2000/svg"><symbol id="icon" viewBox="0 0 10 10"><rect width="10" height="10" fill="red"/></symbol></svg>"#,
+                        )
+                    } else {
+                        (
+                            "text/html",
+                            r#"<!doctype html><body style=margin:0><svg width="50" height="50"><use href="/sprite.svg#icon"/></svg>"#,
+                        )
+                    };
+                    let head = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    );
+                    let _ = stream.write_all(head.as_bytes());
+                    let _ = stream.write_all(body.as_bytes());
+                });
+            }
+        });
+        let mut h = Harness::new();
+        h.page(
+            "Emulation.setDeviceMetricsOverride",
+            json!({"width": 100, "height": 100, "deviceScaleFactor": 1, "mobile": false}),
+        );
+        h.page("Page.enable", json!({}));
+        h.page("Page.navigate", json!({"url": format!("http://{address}/")}));
+        h.until_event(|m| m["method"] == "Page.loadEventFired");
+        let img = png_of(&h.page("Page.captureScreenshot", json!({}))["result"]["data"]);
+        assert_eq!(pixel(&img, 25, 25), [255, 0, 0, 255], "the sprite's symbol is drawn");
+        assert_eq!(pixel(&img, 75, 75), [255, 255, 255, 255]);
+        // A second capture reuses the resolved sprite.
+        let again = png_of(&h.page("Page.captureScreenshot", json!({}))["result"]["data"]);
+        assert_eq!(pixel(&again, 25, 25), [255, 0, 0, 255]);
+    }
+
+    #[test]
     fn capture_screenshot_renders_the_viewport_clip_and_full_page() {
         let mut h = Harness::new();
         h.page(

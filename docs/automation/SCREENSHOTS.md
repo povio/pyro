@@ -100,7 +100,6 @@ are ignored. The reply also carries `lp: {width, height, sceneHash, ms}`.
 
 - Canvas, video and WebGL pixels.
 - Iframe contents (frames render as empty boxes).
-- Element scroll offsets (only the window's).
 - `:hover`, `:focus` and `:active` state, the caret, the selection.
 - Running CSS animations and transitions (rendered at their computed values).
 - Shadow-tree style scoping: shadow `<style>` applies document-wide.
@@ -133,6 +132,6 @@ The `lp-snapshot-compare` worker consumes immutable HTML captures and writes PNG
 
 Full-page bounds respect root overflow clipping. A viewport-locked app with independently scrolling drawers can therefore have a full-page image equal to its viewport size; ordinary tall documents include content below the viewport.
 
-HTML snapshot rendering resolves external SVG references to self-contained symbols through the provided resource loader, preserving SVG currentColor/stroke/viewBox behavior. Missing resources or symbols fail explicitly. The renderer's live-tree mirror path and external symbols depending on definitions elsewhere in the sprite are not covered by this implementation.
+HTML snapshot rendering resolves external SVG references to self-contained symbols through the provided resource loader, preserving SVG currentColor/stroke/viewBox behavior. Missing resources or symbols fail explicitly. The live-tree mirror path (screenshots, `matchScreenshot`, `printToPDF`) resolves them too, without changing the mirrored nodes: each external `<use href>` the mirror creates or changes is loaded once per resource scope and handed to Blitz, which adds the symbol to the `<svg>` when it renders it; a sprite that cannot be loaded draws nothing there (no error). Element scroll offsets (`scrollTop`/`scrollLeft` of overflow containers) are applied to the mirrored document before each capture. External symbols depending on definitions elsewhere in the sprite are not covered.
 
 The engine now uses computed stylesheet positioning for offsetParent. This keeps overlay libraries from positioning a popover in viewport coordinates when its actual offset parent is a CSS-positioned drawer.

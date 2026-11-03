@@ -299,6 +299,7 @@ impl EngineHost {
             scroll_y: s.scroll_y,
             resource_scope: frame.loader_id.0.clone(),
             live: Some(Live { page: pid.0 as u64, tree: live, clip: mark.map(lp_dom::snapshot::render_key) }),
+            element_scroll: Some(s.element_scroll),
         })
     }
 
