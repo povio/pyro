@@ -300,7 +300,7 @@ impl EngineHost {
                     if dom.node_type(node).map_err(dom_error)? != NodeType::Element {
                         return Err(CdpError::server("Node does not have a layout object"));
                     }
-                    let layout = page.layout.borrow();
+                    let layout = page.layout();
                     let rect = layout
                         .client_rect(&dom, node)
                         .ok_or_else(|| CdpError::server("Node does not have a layout object"))?;
