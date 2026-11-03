@@ -2569,7 +2569,6 @@ fn large_react_like_batches_invalidate_without_stale_geometry() {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn flex_wrap_compressible_controls_shrink_into_the_line() {
     // TOS calendar filters (calendar-filters.e2e.ts L96): the multi-select
     // Employee field holds its chips and a `w-full flex-1` search input in a
