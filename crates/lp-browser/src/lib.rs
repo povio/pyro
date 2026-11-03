@@ -409,6 +409,9 @@ pub struct Browser {
     contexts: Vec<ContextState>,
     /// When set, every new context gets its own NetClient with this config.
     net_config: Option<lp_net::NetConfig>,
+    /// `Security.setIgnoreCertificateErrors` sent browser-wide: applies to
+    /// contexts created later too.
+    ignore_certificate_errors: bool,
     /// Entries every context's local storage starts with.
     local_storage_seed: lp_webapi::StorageSeed,
     /// Completions of in-flight fetches, keyed by completion id.
@@ -532,6 +535,7 @@ impl BrowserThread {
                 init_scripts: Vec::new(),
             }],
             net_config: None,
+            ignore_certificate_errors: false,
             local_storage_seed: Default::default(),
             completions: std::collections::HashMap::new(),
         };
@@ -658,6 +662,7 @@ impl Browser {
     fn attach_network(&mut self, id: ContextId) -> std::io::Result<()> {
         let config = self.net_config.clone().unwrap_or_default();
         let client = lp_net::NetClient::new(config)?;
+        client.set_ignore_certificate_errors(self.ignore_certificate_errors);
         if let Some(c) = self.contexts.iter_mut().find(|c| c.id == id) {
             c.loader = Some(Rc::new(NetLoader::new(client.clone())));
             c.net = Some(client);
@@ -678,6 +683,15 @@ impl Browser {
         let before = self.contexts.len();
         self.contexts.retain(|c| c.id != id);
         before != self.contexts.len()
+    }
+
+    /// Accepts any HTTPS certificate in every context, including contexts
+    /// created later (browser-wide `Security.setIgnoreCertificateErrors`).
+    pub fn set_ignore_certificate_errors(&mut self, ignore: bool) {
+        self.ignore_certificate_errors = ignore;
+        for net in self.contexts.iter().filter_map(|c| c.net.as_ref()) {
+            net.set_ignore_certificate_errors(ignore);
+        }
     }
 
     /// The context's network client (cookies, interception, events).

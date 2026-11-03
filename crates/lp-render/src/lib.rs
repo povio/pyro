@@ -134,6 +134,9 @@ pub struct Snapshot {
     /// The page as a keyed tree, rendered with the page's persistent
     /// document instead of `html` (see [`Live`]).
     pub live: Option<Live>,
+    /// Straight RGBA painted under the document where it has no background
+    /// (CDP `Emulation.setDefaultBackgroundColorOverride`); `None`: white.
+    pub background: Option<[u8; 4]>,
 }
 
 /// A snapshot of a page whose Blitz document the renderer keeps between
@@ -149,6 +152,10 @@ pub struct Live {
     pub tree: Arc<Tree>,
     /// Key of the element [`Area::Element`] captures.
     pub clip: Option<u64>,
+    /// Keys of the hovered and focused elements, put on the document before
+    /// it is laid out ([`Renderer::set_interaction`]); `None` leaves the
+    /// document's pointer and focus as they are.
+    pub interaction: Option<(Option<u64>, Option<u64>)>,
 }
 
 /// Attribute the snapshot puts on the element a screenshot is clipped to.
@@ -211,8 +218,11 @@ pub enum Area {
     /// `captureBeyondViewport`).
     FullPage,
     /// A rectangle in CSS px, relative to the document (CDP `clip`), with
-    /// its own scale factor.
-    Clip { x: f64, y: f64, width: f64, height: f64, scale: f64 },
+    /// its own scale factor. Without `beyond_viewport` the page keeps the
+    /// snapshot's scroll position (fixed elements stay where the viewport
+    /// shows them); with it the document is painted from its top-left
+    /// corner (`captureBeyondViewport`).
+    Clip { x: f64, y: f64, width: f64, height: f64, scale: f64, beyond_viewport: bool },
     /// The border box of the element marked with [`CLIP_ATTRIBUTE`].
     Element,
 }
@@ -254,7 +264,8 @@ impl Timings {
     }
 }
 
-/// Straight RGBA8 (the canvas is opaque white, so premultiplied equals straight).
+/// Straight (not premultiplied) RGBA8. Opaque unless the snapshot's
+/// [`Snapshot::background`] is translucent.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RgbaImage {
     pub width: u32,
@@ -265,6 +276,8 @@ pub struct RgbaImage {
 /// Stages 1 and 2: the display list, not rasterized yet.
 pub struct Painted {
     scene: Scene,
+    /// Every pixel is opaque (raster output needs no un-premultiplying).
+    opaque: bool,
     pub hash: u64,
     pub width: u32,
     pub height: u32,
@@ -589,6 +602,10 @@ impl Renderer {
             Some(live) => {
                 let stats = self.mirror(snap, live, fetcher);
                 timings.mirror = Some(stats);
+                if let Some((hovered, focused)) = live.interaction {
+                    // Restyled and laid out by the settle below.
+                    self.mark_interaction(live.page, hovered, focused);
+                }
                 match self.mirrors.get_mut(&live.page) {
                     Some(m) => {
                         let clip = live.clip.and_then(|k| m.node(k));
@@ -638,8 +655,9 @@ impl Renderer {
 
         let t = Instant::now();
         // A persistent document keeps the scroll of its last capture; only
-        // a viewport capture is scrolled.
-        if area != Area::Viewport {
+        // a viewport capture and a clip within the viewport are scrolled.
+        let scrolled = matches!(area, Area::Viewport | Area::Clip { beyond_viewport: false, .. });
+        if !scrolled {
             doc.set_viewport_scroll(blitz_dom::Point { x: 0.0, y: 0.0 });
         }
         let root = {
@@ -666,9 +684,17 @@ impl Renderer {
                 let height = root.1.max(vh as f64);
                 ((0.0, 0.0), dpr, physical(vw as f64), physical(height))
             }
-            Area::Clip { x, y, width, height, scale } => {
+            Area::Clip { x, y, width, height, scale, beyond_viewport } => {
                 let s = dpr * scale.clamp(0.01, 16.0);
-                ((x, y), s, (width * s).round() as u32, (height * s).round() as u32)
+                // Blitz paints a scrolled document shifted by the scroll.
+                let origin = match beyond_viewport {
+                    true => (x, y),
+                    false => {
+                        doc.set_viewport_scroll(blitz_dom::Point { x: snap.scroll_x, y: snap.scroll_y });
+                        (x - snap.scroll_x, y - snap.scroll_y)
+                    }
+                };
+                (origin, s, (width * s).round() as u32, (height * s).round() as u32)
             }
             Area::Element => {
                 let id = clip.ok_or(RenderError::NoElement)?;
@@ -694,7 +720,11 @@ impl Renderer {
         // Blitz paints the document at its own scale; the area's origin and
         // a clip scale are applied as a transform of the recorded scene.
         let mut scene = Scene::new();
-        scene.fill(Fill::NonZero, Affine::IDENTITY, Color::WHITE, None, &Rect::new(0.0, 0.0, w as f64, h as f64));
+        let [r, g, b, a] = snap.background.unwrap_or([255; 4]);
+        if a > 0 {
+            let color = Color::from_rgba8(r, g, b, a);
+            scene.fill(Fill::NonZero, Affine::IDENTITY, color, None, &Rect::new(0.0, 0.0, w as f64, h as f64));
+        }
         let mut page = Scene::new();
         let extent_w = ((origin.0 * dpr) as u32).saturating_add((w as f64 * dpr / scale).ceil() as u32);
         let extent_h = ((origin.1 * dpr) as u32).saturating_add((h as f64 * dpr / scale).ceil() as u32);
@@ -703,7 +733,7 @@ impl Renderer {
         scene.append_scene(page, transform);
         let hash = scene_hash(&scene, w, h, &mut self.font_hashes);
         timings.scene = t.elapsed();
-        Ok(Painted { scene, hash, width: w, height: h, timings })
+        Ok(Painted { scene, opaque: a == 255, hash, width: w, height: h, timings })
     }
 
     /// Brings `snap`'s persistent document up to date for layout queries
@@ -769,7 +799,23 @@ impl Renderer {
     /// a node list does not carry), restyling and relaying out what that
     /// changes.
     pub fn set_interaction(&mut self, page: u64, hovered: Option<u64>, focused: Option<u64>, style_only: bool) {
+        let changed = self.mark_interaction(page, hovered, focused);
         let Some(m) = self.mirrors.get_mut(&page) else { return };
+        if changed && style_only {
+            let generation = m.doc.root_node().tree().geometry_generation();
+            m.doc.resolve_style(0.0);
+            if m.doc.root_node().tree().geometry_generation() != generation {
+                self.geometry.entry(page).or_default().clear();
+            }
+        } else if changed {
+            m.doc.resolve(0.0);
+            self.geometry.entry(page).or_default().clear();
+        }
+    }
+
+    /// [`Renderer::set_interaction`] without the restyle: whether anything changed.
+    fn mark_interaction(&mut self, page: u64, hovered: Option<u64>, focused: Option<u64>) -> bool {
+        let Some(m) = self.mirrors.get_mut(&page) else { return false };
         let hover = hovered.and_then(|k| m.node(k));
         let focus = focused.and_then(|k| m.node(k));
         let mut changed = m.doc.set_hover_node(hover);
@@ -782,16 +828,7 @@ impl Renderer {
             }
             changed = true;
         }
-        if changed && style_only {
-            let generation = m.doc.root_node().tree().geometry_generation();
-            m.doc.resolve_style(0.0);
-            if m.doc.root_node().tree().geometry_generation() != generation {
-                self.geometry.entry(page).or_default().clear();
-            }
-        } else if changed {
-            m.doc.resolve(0.0);
-            self.geometry.entry(page).or_default().clear();
-        }
+        changed
     }
 
     /// The computed style of the element keyed `key` in `page`'s persistent
@@ -950,7 +987,7 @@ impl Renderer {
 
     /// Stage 3.
     pub fn raster(&mut self, painted: Painted, backend: Backend) -> (RgbaImage, Timings) {
-        let Painted { scene, width, height, mut timings, .. } = painted;
+        let Painted { scene, opaque, width, height, mut timings, .. } = painted;
         let mut data = vec![0u8; width as usize * height as usize * 4];
         let t = Instant::now();
         match backend {
@@ -976,6 +1013,9 @@ impl Renderer {
                 );
             }
         }
+        if !opaque {
+            unpremultiply(&mut data);
+        }
         timings.raster = t.elapsed();
         (RgbaImage { width, height, data }, timings)
     }
@@ -991,6 +1031,18 @@ impl Renderer {
         let hash = painted.hash;
         let (image, timings) = self.raster(painted, backend);
         Ok((image, hash, timings))
+    }
+}
+
+/// Premultiplied RGBA8 (the rasterizers' output) to straight alpha.
+fn unpremultiply(data: &mut [u8]) {
+    for p in data.chunks_exact_mut(4) {
+        let a = p[3] as u32;
+        if a != 0 && a != 255 {
+            for c in &mut p[..3] {
+                *c = ((*c as u32 * 255 + a / 2) / a).min(255) as u8;
+            }
+        }
     }
 }
 
@@ -1193,7 +1245,7 @@ mod settle_resolution_tests {
                 width: 200,
                 height: 100,
                 device_scale_factor: 1.0,
-                live: Some(Live { page: 1, tree: Arc::new(tree), clip: None }),
+                live: Some(Live { page: 1, tree: Arc::new(tree), clip: None, interaction: None }),
                 ..Default::default()
             },
             target,
