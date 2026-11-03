@@ -420,7 +420,7 @@ fn reveal_area(page: &Rc<PageDom>, node: NodeId, x: f64, y: f64, width: f64, hei
 
 impl EngineHost {
     /// The viewport origin of `frame`'s document in main-frame viewport
-    /// coordinates: the sum of its owning iframes' client rects.
+    /// coordinates: the sum of its owning iframes' content box origins.
     pub(super) fn frame_offset(&self, page: PageKey, frame: &lp_browser::Frame) -> CdpResult<(f64, f64)> {
         let page_id = self.pages.get(&page).ok_or_else(stale)?.id;
         let (mut x, mut y) = (0.0, 0.0);
@@ -428,14 +428,17 @@ impl EngineHost {
         while let (Some(parent_id), Some(owner)) = (cur.parent.clone(), cur.owner) {
             let parent = self.thread.browser.frame(page_id, &parent_id).ok_or_else(stale)?;
             let dom = parent.page_dom.clone().ok_or_else(stale)?;
-            let r = dom
-                .layout
-                .borrow()
-                .client_rect(&dom.dom.borrow(), owner)
-                .ok_or_else(|| CdpError::server("Frame owner does not have a layout object"))?;
+            let (r, inset) = {
+                let layout = dom.layout();
+                let tree = dom.dom.borrow();
+                let r = layout
+                    .client_rect(&tree, owner)
+                    .ok_or_else(|| CdpError::server("Frame owner does not have a layout object"))?;
+                (r, layout.content_offset(&tree, owner).unwrap_or_default())
+            };
             // Each frame's offset in layout units (Chromium sums them).
-            x += lp_dom::layout::layout_unit(r.x);
-            y += lp_dom::layout::layout_unit(r.y);
+            x += lp_dom::layout::layout_unit(r.x + inset.0);
+            y += lp_dom::layout::layout_unit(r.y + inset.1);
             cur = parent;
         }
         Ok((x, y))

@@ -706,15 +706,50 @@ try {
       const resolvedOwner = await f.frameElement();
       assert.equal(await resolvedOwner.evaluate(el => el.id), 'sandbox');
       await resolvedOwner.dispose(); await owner.dispose();
-      // Child-frame geometry is in main-frame viewport coordinates, as in
-      // Chrome (measured: iframe at 8,26 304x154; <p> at 16,42, 18px tall).
-      // The child document is laid out at the top-level viewport's width,
-      // not its iframe's, so the block's width is not checked.
+      // Child-frame geometry is in main-frame viewport coordinates (measured
+      // in Chrome: iframe at 8,26 304x154; <p> 284x18 at 16,42). The child
+      // viewport starts inside the iframe's 2px border, at 18,44 for a
+      // same-process frame (the field check below); Chrome runs this opaque
+      // sandboxed frame out of process and reports it 2px up and left.
       const frameBox = await p.locator('#sandbox').boundingBox();
       assert.deepEqual(frameBox, { x: 8, y: 26, width: 304, height: 154 });
       const pBox = await f.locator('p').boundingBox();
       assert.ok(pBox, 'child geometry is reported');
-      assert.deepEqual([pBox.x, pBox.y, Math.round(pBox.height)], [16, 42, 18]);
+      assert.deepEqual([pBox.x, pBox.y, Math.round(pBox.height)], [18, 44, 18]);
+      assert.ok(Math.abs(pBox.width - 284) <= 1, JSON.stringify(pBox));
+      assert.deepEqual(await f.evaluate(() => [innerWidth, innerHeight, matchMedia('(max-width: 300px)').matches]),
+        [300, 150, true]);
+      // Chrome: restyling the iframe resizes the child viewport (500x80,
+      // the <p> 484 wide); padding and borders are outside it.
+      await p.evaluate(() => { document.getElementById('sandbox').style.cssText = 'width: 500px; height: 80px; padding: 3px; border: 4px solid'; });
+      assert.deepEqual(await f.evaluate(() => [innerWidth, innerHeight]), [500, 80]);
+      assert.ok(Math.abs((await f.locator('p').boundingBox()).width - 484) <= 1);
+    } finally { await p.close(); }
+  });
+  await check('child window resize follows its iframe box like Chrome', async () => {
+    const p = await context.newPage();
+    p.setDefaultTimeout(5000);
+    try {
+      await p.goto(`${fixtureOrigin}/frame-parent`, { timeout: 5000 });
+      await p.evaluate(() => {
+        const f = document.createElement('iframe'); f.id = 'resized'; f.name = 'resized'; f.srcdoc = '<p>x</p>';
+        document.body.appendChild(f);
+      });
+      assert.equal(await p.frameLocator('#resized').locator('p').textContent(), 'x');
+      const f = p.frame({ name: 'resized' });
+      await f.evaluate(() => { globalThis.seen = []; onresize = () => seen.push([innerWidth, innerHeight]); });
+      // Chrome: [[500,150]] after the restyle, nothing more after a 900px
+      // viewport (the box is unchanged), then [442,150] and [392,150].
+      await p.evaluate(() => { document.getElementById('resized').style.width = '500px'; });
+      await f.waitForFunction(() => seen.length === 1);
+      await p.setViewportSize({ width: 900, height: 600 });
+      await p.waitForTimeout(100);
+      assert.deepEqual(await f.evaluate(() => seen), [[500, 150]]);
+      await p.evaluate(() => { document.getElementById('resized').style.width = '50%'; });
+      await f.waitForFunction(() => seen.length === 2);
+      await p.setViewportSize({ width: 800, height: 600 });
+      await f.waitForFunction(() => seen.length === 3);
+      assert.deepEqual(await f.evaluate(() => seen), [[500, 150], [442, 150], [392, 150]]);
     } finally { await p.close(); }
   });
   await check('child HTTP navigation, response body, fetch and route retain frame identity', async () => {
@@ -778,10 +813,11 @@ try {
         assert.equal(await a.inputValue(), 'childx');
         assert.equal(await b.inputValue(), 'sibling!');
         // Child-frame geometry in main-frame coordinates: Chrome puts #a's
-        // field at about 169-171,34-36 (153x21) and #b's 304px further right.
+        // field at 171,36 (153x21): iframe at 161,26 + 2px border + 8px body
+        // margin. #b's is 304px further right.
         const [boxA, boxB] = [await a.boundingBox(), await b.boundingBox()];
         assert.ok(boxA && boxB, 'child geometry is reported');
-        assert.ok(Math.abs(boxA.x - 170) <= 2 && Math.abs(boxA.y - 35) <= 2, JSON.stringify(boxA));
+        assert.ok(Math.abs(boxA.x - 171) <= 1 && Math.abs(boxA.y - 36) <= 1, JSON.stringify(boxA));
         assert.ok(Math.abs(boxA.width - 153) <= 2 && Math.abs(boxA.height - 21) <= 2, JSON.stringify(boxA));
         assert.equal(boxB.x - boxA.x, 304, 'the second iframe is one iframe width (300 + 2 x 2 border) further');
       }

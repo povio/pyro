@@ -401,8 +401,14 @@ pub(crate) fn define_element_extras(def: &mut ClassDef<Element>) {
     def.getter("scrollHeight", |s, n| crate::layout_api::metric(s, n, "scrollHeight"));
     def.getter("clientWidth", |s, n| crate::layout_api::metric(s, n, "clientWidth"));
     def.getter("clientHeight", |s, n| crate::layout_api::metric(s, n, "clientHeight"));
-    def.getter("clientTop", |s, _n| Ok(s.number(0.0)));
-    def.getter("clientLeft", |s, _n| Ok(s.number(0.0)));
+    def.getter("clientTop", |s, n| {
+        let page = n.page();
+        Ok(s.number(page.layout().client_top(&page.dom.borrow(), n.id)))
+    });
+    def.getter("clientLeft", |s, n| {
+        let page = n.page();
+        Ok(s.number(page.layout().client_left(&page.dom.borrow(), n.id)))
+    });
     def.method("setPointerCapture", 1, |s, _n, _a| Ok(s.undefined()));
     def.method("releasePointerCapture", 1, |s, _n, _a| Ok(s.undefined()));
     def.method("hasPointerCapture", 1, |s, _n, _a| Ok(s.boolean(false)));
@@ -1666,7 +1672,7 @@ simple_class!(SvgGraphicsElement, "SVGGraphicsElement", SvgElement, |def| {
     def.method("getBBox", 0, |s, n, _a| {
         let page = n.page();
         let dom = page.dom.borrow();
-        let layout = page.layout.borrow();
+        let layout = page.layout();
         crate::layout_api::rect_value(s, lp_dom::svg_geometry::bbox(&dom, layout.style(), n.id))
     });
 });

@@ -82,7 +82,7 @@ impl PageDom {
 
     fn snapshot_as(&self, base_url: &str, mark: Option<(NodeId, &str)>, form: Form) -> RenderSnapshot {
         let dom = self.dom.borrow();
-        let layout = self.layout.borrow();
+        let layout = self.layout();
         snapshot_of(&dom, &layout, self.document(), base_url, mark, form)
     }
 }

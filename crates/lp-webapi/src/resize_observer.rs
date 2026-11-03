@@ -181,7 +181,7 @@ impl Observer {
 /// (Gap 47: Chromium delivers no entry for it).
 fn measure(page: &PageDom, id: NodeId) -> Option<Sizes> {
     let dom = page.dom.borrow();
-    let layout = page.layout.borrow();
+    let layout = page.layout();
     if !dom.is_connected(id).unwrap_or(false) {
         return None;
     }
@@ -346,7 +346,7 @@ pub(crate) fn request_update_for_input(page: &PageDom) {
     if page.is_disposed() || !page.resizes.has_observers() {
         return;
     }
-    let stamp = (page.document(), page.layout.borrow().observation_stamp(&page.dom.borrow()));
+    let stamp = (page.document(), page.layout().observation_stamp(&page.dom.borrow()));
     if page.resizes.stamp.get() == Some(stamp) && page.resizes.wake_queued.borrow().is_none() {
         return;
     }
@@ -362,7 +362,7 @@ pub(crate) fn after_task(page: &PageDom) {
         return;
     }
     let Some(owner) = page.resizes.owner.borrow().upgrade() else { return };
-    let stamp = (page.document(), page.layout.borrow().observation_stamp(&page.dom.borrow()));
+    let stamp = (page.document(), page.layout().observation_stamp(&page.dom.borrow()));
     if page.resizes.stamp.get() != Some(stamp) && !page.resizes.observers.borrow().is_empty() {
         // Each gather lays out the whole document under the flow layout.
         // Chromium gathers once per rendering update, not per task: gather

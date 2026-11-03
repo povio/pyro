@@ -70,6 +70,15 @@ impl Browser {
             for (target, query, matches) in bindings.media_query_changes() {
                 bindings.fire_media_query_change(target, &query, matches);
             }
+            // Child frames sized from their iframes: one that changed size
+            // gets its own `resize` task.
+            if let Some(host) = browser.page(page).map(|p| p.frames.clone()).filter(|h| h.has_children()) {
+                for key in host.keys().into_iter().filter(|k| k.child.is_some()) {
+                    if let Some(child) = host.page_dom(key) {
+                        child.sync_frame_viewport();
+                    }
+                }
+            }
             // Media matching can stop a pending sheet from blocking a parser
             // script even when CSS width/height did not change.
             browser.stylesheets_changed(page.into());

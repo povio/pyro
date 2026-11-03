@@ -2212,7 +2212,7 @@ impl Locator {
             }
         } else if let Some(role) = &self.role {
             let role = role.to_ascii_lowercase();
-            let layout = page.layout.borrow();
+            let layout = page.layout();
             found = elements(&dom, root)
                 .filter(inside)
                 .filter(|n| role_of(&dom, *n).as_deref() == Some(role.as_str()))
@@ -2385,7 +2385,7 @@ fn contains(dom: &Dom, ancestor: NodeId, mut node: NodeId) -> bool {
 /// Visible box with area, in viewport coordinates.
 fn visible_box(page: &PageDom, id: NodeId) -> Option<lp_dom::layout::Rect> {
     let dom = page.dom.borrow();
-    page.layout.borrow().client_rect(&dom, id).filter(|r| r.width > 0.0 && r.height > 0.0)
+    page.layout().client_rect(&dom, id).filter(|r| r.width > 0.0 && r.height > 0.0)
 }
 
 fn act(page: &Rc<PageDom>, id: NodeId, action: Action, value: &str, opts: PointerOpts) -> Attempt {
@@ -2396,7 +2396,7 @@ fn act(page: &Rc<PageDom>, id: NodeId, action: Action, value: &str, opts: Pointe
         }
     }
     if visible_box(page, id).is_none() {
-        let rect = page.layout.borrow().client_rect(&page.dom.borrow(), id);
+        let rect = page.layout().client_rect(&page.dom.borrow(), id);
         let detail = match rect {
             Some(r) => format!(" (box {:.1},{:.1} {:.1}x{:.1})", r.x, r.y, r.width, r.height),
             None => " (not rendered)".into(),
@@ -2637,7 +2637,7 @@ fn buttons_mask(button: MouseButton) -> u16 {
 /// overflow-clipping ancestor (what Playwright aims at: the center of the
 /// visible part, not of the whole box), or `None` when nothing shows.
 fn clipped_box(page: &PageDom, id: NodeId, rect: lp_dom::layout::Rect) -> Option<lp_dom::layout::Rect> {
-    page.layout.borrow().visible_client_rect(&page.dom.borrow(), id, rect)
+    page.layout().visible_client_rect(&page.dom.borrow(), id, rect)
 }
 
 /// Where a pointer action lands, once the element is revealed: `position`
@@ -2650,7 +2650,7 @@ fn pointer_target(page: &Rc<PageDom>, id: NodeId, opts: PointerOpts) -> Result<(
         Some((dx, dy)) => (rect.x + dx, rect.y + dy),
         None => {
             let Some(shown) = clipped_box(page, id, rect) else {
-                let layout = page.layout.borrow();
+                let layout = page.layout();
                 return Err(Attempt::Retry(format!(
                     "element is outside the viewport (box {:.1},{:.1} {:.1}x{:.1}; viewport {}x{})",
                     rect.x,
@@ -2673,7 +2673,7 @@ fn pointer_target(page: &Rc<PageDom>, id: NodeId, opts: PointerOpts) -> Result<(
             let tag = local(&page.dom.borrow(), hit).unwrap_or("?").to_owned();
             // A transient pointer block (e.g. a virtual list while scrolling)
             // needs time, not another scroll that can dismiss its popover.
-            let hit_testable = page.layout.borrow().style().is_hit_testable(&page.dom.borrow(), id);
+            let hit_testable = page.layout().style().is_hit_testable(&page.dom.borrow(), id);
             if opts.position.is_none() && hit_testable && super::dom::reveal_centered(page, id) {
                 return Err(Attempt::RetrySoon(format!("centered target after <{tag}> intercepted pointer events")));
             }
@@ -2869,7 +2869,7 @@ fn expect(
                 Assert::Css => {
                     let property = property.ok_or_else(|| CdpError::invalid_params("css needs a property"))?;
                     let want = expected.as_str().ok_or_else(|| CdpError::invalid_params("css needs a string"))?;
-                    let have = page.layout.borrow().computed_style_value(&dom, el, property);
+                    let have = page.layout().computed_style_value(&dom, el, property);
                     (have == want, json!(have))
                 }
                 Assert::Attribute | Assert::Description => {
@@ -2918,7 +2918,7 @@ fn expect(
                 }
                 _ => {
                     let want = expected.as_str().ok_or_else(|| CdpError::invalid_params("name needs a string"))?;
-                    let have = accessible_name(&dom, &page.layout.borrow(), page.document(), el);
+                    let have = accessible_name(&dom, &page.layout(), page.document(), el);
                     (have == normalize(want), json!(have))
                 }
             }
@@ -3682,11 +3682,11 @@ fn read_value(page: &PageDom, el: NodeId, read: Read, property: Option<&str>) ->
     match read {
         Read::Count => Value::Null,
         Read::Css => match property {
-            Some(p) => json!(page.layout.borrow().computed_style_value(&page.dom.borrow(), el, p)),
+            Some(p) => json!(page.layout().computed_style_value(&page.dom.borrow(), el, p)),
             None => Value::Null,
         },
         Read::Name => {
-            json!(accessible_name(&page.dom.borrow(), &page.layout.borrow(), page.document(), el))
+            json!(accessible_name(&page.dom.borrow(), &page.layout(), page.document(), el))
         }
         Read::Focused => json!(page.dom.borrow().focused(page.document()).ok().flatten() == Some(el)),
         Read::Enabled => json!(!disabled(&page.dom.borrow(), el)),

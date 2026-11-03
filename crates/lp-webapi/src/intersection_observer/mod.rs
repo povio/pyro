@@ -242,7 +242,7 @@ pub(crate) fn after_task(page: &PageDom) {
         return;
     }
     let Some(owner) = page.intersections.owner.borrow().upgrade() else { return };
-    let stamp = (page.document(), page.layout.borrow().observation_stamp(&page.dom.borrow()));
+    let stamp = (page.document(), page.layout().observation_stamp(&page.dom.borrow()));
     if page.intersections.stamp.replace(Some(stamp)) != Some(stamp) {
         let observers: Vec<_> = page.intersections.observers.borrow().iter().filter_map(Weak::upgrade).collect();
         for observer in observers {

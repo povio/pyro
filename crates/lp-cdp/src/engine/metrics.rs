@@ -173,7 +173,7 @@ impl EngineHost {
         let (scroll_x, scroll_y, content_width, content_height) = match &page.main_frame.page_dom {
             Some(bindings) => {
                 let dom = bindings.dom.borrow();
-                let layout = bindings.layout.borrow();
+                let layout = bindings.layout();
                 let (w, h) = layout.document_scroll_size(&dom);
                 (layout.scroll_x(), layout.scroll_y(), w, h)
             }

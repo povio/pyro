@@ -1408,7 +1408,7 @@ pub(crate) struct TextDrag {
 /// position (offset 0), as in Chromium.
 fn caret_in(page: &Rc<PageDom>, target: NodeId, m: &MouseInput, selectable: bool) -> ((NodeId, u32), NodeId) {
     let dom = page.dom.borrow();
-    let layout = page.layout.borrow();
+    let layout = page.layout();
     let filter = |n: NodeId| !selectable || !layout.user_select_none(&dom, n);
     match layout.caret_from_point(&dom, target, m.x, m.y, &filter) {
         Some((node, offset, on_text)) => ((node, offset), if on_text { node } else { target }),
@@ -1425,7 +1425,7 @@ fn caret_in(page: &Rc<PageDom>, target: NodeId, m: &MouseInput, selectable: bool
 fn text_select_press(page: &Rc<PageDom>, target: NodeId, m: &MouseInput) {
     {
         let dom = page.dom.borrow();
-        if !press_selects_text(&dom, target) || page.layout.borrow().user_select_none(&dom, target) {
+        if !press_selects_text(&dom, target) || page.layout().user_select_none(&dom, target) {
             return;
         }
     }
@@ -1482,7 +1482,7 @@ fn text_select_move(page: &Rc<PageDom>, target: NodeId, m: &MouseInput) {
     let (hit, _) = caret_in(page, target, m, false);
     let focus = {
         let dom = page.dom.borrow();
-        let layout = page.layout.borrow();
+        let layout = page.layout();
         if !layout.user_select_none(&dom, hit.0) {
             Some(hit)
         } else {
@@ -1811,7 +1811,7 @@ fn link_items(page: &PageDom, link: NodeId) -> Vec<DragItem> {
     }
     let Some(href) = e.attr("href") else { return Vec::new() };
     let url = crate::html::resolve_url(&dom, link, href);
-    let title = dom.inner_text(page.layout.borrow().style(), link).unwrap_or_default();
+    let title = dom.inner_text(page.layout().style(), link).unwrap_or_default();
     let html = dom.outer_html(link).unwrap_or_default();
     vec![
         DragItem { mime_type: "text/uri-list".into(), data: url.clone(), title: Some(title), base_url: None },

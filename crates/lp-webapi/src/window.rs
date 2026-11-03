@@ -101,11 +101,11 @@ where
     });
     def.method("getSelection", 0, |s, w, _a| crate::range::get_selection(s, w.page()));
     def.method("open", 0, |s, w, a| window_open(s, w.page(), &a));
-    def.getter("innerWidth", |s, w| Ok(s.number(w.page().layout.borrow().inner_width() as f64)));
-    def.getter("innerHeight", |s, w| Ok(s.number(w.page().layout.borrow().inner_height() as f64)));
-    def.getter("outerWidth", |s, w| Ok(s.number(w.page().layout.borrow().inner_width() as f64)));
-    def.getter("outerHeight", |s, w| Ok(s.number(w.page().layout.borrow().inner_height() as f64)));
-    def.getter("devicePixelRatio", |s, w| Ok(s.number(w.page().layout.borrow().device_pixel_ratio())));
+    def.getter("innerWidth", |s, w| Ok(s.number(w.page().layout().inner_width() as f64)));
+    def.getter("innerHeight", |s, w| Ok(s.number(w.page().layout().inner_height() as f64)));
+    def.getter("outerWidth", |s, w| Ok(s.number(w.page().layout().inner_width() as f64)));
+    def.getter("outerHeight", |s, w| Ok(s.number(w.page().layout().inner_height() as f64)));
+    def.getter("devicePixelRatio", |s, w| Ok(s.number(w.page().layout().device_pixel_ratio())));
     def.getter("scrollX", |s, w| Ok(s.number(w.page().layout.borrow().scroll_x() as f64)));
     def.getter("scrollY", |s, w| Ok(s.number(w.page().layout.borrow().scroll_y() as f64)));
     def.getter("pageXOffset", |s, w| Ok(s.number(w.page().layout.borrow().scroll_x() as f64)));
@@ -448,8 +448,8 @@ impl JsClass for VisualViewport {
     type Parent = crate::target::EventTarget;
     fn define(def: &mut ClassDef<Self>) {
         def.upcast(|d: &ViewportTargetData| &d.target);
-        def.getter("width", |s, d| Ok(s.number(d.page().layout.borrow().inner_width() as f64)));
-        def.getter("height", |s, d| Ok(s.number(d.page().layout.borrow().inner_height() as f64)));
+        def.getter("width", |s, d| Ok(s.number(d.page().layout().inner_width() as f64)));
+        def.getter("height", |s, d| Ok(s.number(d.page().layout().inner_height() as f64)));
         def.getter("offsetLeft", |s, _d| Ok(s.number(0.0)));
         def.getter("offsetTop", |s, _d| Ok(s.number(0.0)));
         def.getter("pageLeft", |s, d| Ok(s.number(d.page().layout.borrow().scroll_x() as f64)));

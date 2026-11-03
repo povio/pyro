@@ -122,7 +122,7 @@ fn top_level_origin(h: &mut Harness, frame_id: &str, context: i64, expr: &str) -
     let owner = eval_value(
         h,
         &format!(
-            "(() => {{ const r = document.getElementById({}).getBoundingClientRect(); return [r.x, r.y]; }})()",
+            "(() => {{ const f = document.getElementById({}); const r = f.getBoundingClientRect(); return [r.x + f.clientLeft, r.y + f.clientTop]; }})()",
             json!(frame_id)
         ),
     );
@@ -333,10 +333,11 @@ fn child_backend_ids_are_document_scoped_and_geometry_uses_main_frame_coordinate
     assert!(h.page("DOM.resolveNode", json!({"backendNodeId":backend,"executionContextId":root_context}))["error"]
         .is_object());
     // Child-frame geometry is in main-frame viewport coordinates (Chrome's
-    // same-process iframes): the owner's client rect plus the node's rect.
+    // same-process iframes): the owner's content box origin plus the node's
+    // rect.
     let owner = eval_value(
         &mut h,
-        "(() => { const r = document.getElementById('nodes').getBoundingClientRect(); return [r.x, r.y]; })()",
+        "(() => { const f = document.getElementById('nodes'); const r = f.getBoundingClientRect(); return [r.x + f.clientLeft, r.y + f.clientTop]; })()",
     );
     let inner = eval_in(
         &mut h,
@@ -741,7 +742,7 @@ fn mouse_input_at_main_frame_coordinates_reaches_child_frame_content() {
     );
     let owner = eval_value(
         &mut h,
-        "(() => { const r = document.getElementById('clicky').getBoundingClientRect(); return [r.x, r.y]; })()",
+        "(() => { const f = document.getElementById('clicky'); const r = f.getBoundingClientRect(); return [r.x + f.clientLeft, r.y + f.clientTop]; })()",
     );
     let inner = eval_in(&mut h, context, "(() => { const r = document.getElementById('b').getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()");
     let x = owner[0].as_f64().unwrap() + inner[0].as_f64().unwrap();
@@ -754,4 +755,64 @@ fn mouse_input_at_main_frame_coordinates_reaches_child_frame_content() {
         assert_eq!(r["result"], json!({}), "{r}");
     }
     assert_eq!(eval_in(&mut h, context, "hits"), json!([true]));
+}
+
+#[test]
+fn child_frame_viewport_is_its_iframe_content_box() {
+    let mut h = Harness::new();
+    enable(&mut h);
+    let events = add_srcdoc(&mut h, "sized", "inside", None);
+    let frame = child(&mut h, "sized")["frame"]["id"].as_str().unwrap().to_owned();
+    let context = default_context(&events, &frame);
+    // A default iframe's content box is 300x150 (Chrome: the same).
+    let metrics = "(() => [innerWidth, innerHeight, document.documentElement.clientWidth, \
+                   document.querySelector('p').getBoundingClientRect().width, \
+                   matchMedia('(max-width: 300px)').matches, matchMedia('(min-width: 301px)').matches])()";
+    assert_eq!(eval_in(&mut h, context, metrics), json!([300, 150, 300, 284, true, false]));
+    // The parent resizing the iframe resizes the child's viewport; padding
+    // and borders are outside it.
+    eval_value(
+        &mut h,
+        "(() => { const f = document.getElementById('sized'); f.style.cssText = 'width: 500px; height: 80px; padding: 3px; border: 4px solid'; return 0 })()",
+    );
+    assert_eq!(eval_in(&mut h, context, metrics), json!([500, 80, 500, 484, false, true]));
+    // The top document keeps the emulated viewport; a percentage-sized
+    // iframe follows it.
+    assert_eq!(eval_value(&mut h, "innerWidth > 500"), true);
+    eval_value(&mut h, "document.getElementById('sized').style.width = '50%'");
+    h.page(
+        "Emulation.setDeviceMetricsOverride",
+        json!({"width":800,"height":600,"deviceScaleFactor":1,"mobile":false}),
+    );
+    assert_eq!(eval_in(&mut h, context, "innerWidth"), json!(392));
+}
+
+#[test]
+fn child_window_gets_resize_when_its_iframe_box_changes() {
+    let mut h = Harness::new();
+    enable(&mut h);
+    let events = add_srcdoc(&mut h, "resized", "inside", None);
+    let frame = child(&mut h, "resized")["frame"]["id"].as_str().unwrap().to_owned();
+    let context = default_context(&events, &frame);
+    eval_in(&mut h, context, "globalThis.seen = []; onresize = () => seen.push([innerWidth, innerHeight]); innerWidth");
+    // The parent restyles the iframe; nothing in the child reads its layout.
+    eval_value(&mut h, "document.getElementById('resized').style.width = '500px'; 0");
+    h.run_for(100);
+    assert_eq!(eval_in(&mut h, context, "seen"), json!([[500, 150]]));
+    // An emulated resize that leaves the iframe's box alone fires nothing
+    // in the child; one that changes it fires once.
+    h.page(
+        "Emulation.setDeviceMetricsOverride",
+        json!({"width":900,"height":600,"deviceScaleFactor":1,"mobile":false}),
+    );
+    h.run_for(100);
+    assert_eq!(eval_in(&mut h, context, "seen.length"), json!(1));
+    eval_value(&mut h, "document.getElementById('resized').style.width = '50%'; 0");
+    h.run_for(100);
+    h.page(
+        "Emulation.setDeviceMetricsOverride",
+        json!({"width":800,"height":600,"deviceScaleFactor":1,"mobile":false}),
+    );
+    h.run_for(100);
+    assert_eq!(eval_in(&mut h, context, "seen"), json!([[500, 150], [442, 150], [392, 150]]));
 }

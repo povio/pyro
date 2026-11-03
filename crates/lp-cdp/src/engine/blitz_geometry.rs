@@ -153,7 +153,7 @@ pub(crate) fn wake_when_fetched(wake: Waker) {
 /// Blitz geometry (print through the render thread).
 pub(crate) fn sync_for_pdf(page_dom: &lp_webapi::PageDom) -> Option<()> {
     let dom = page_dom.dom.borrow();
-    page_dom.layout.borrow().synced_geometry_source(&dom).map(|_| ())
+    page_dom.layout().synced_geometry_source(&dom).map(|_| ())
 }
 
 /// The PDF pages of the page document's Blitz document, painted on this
@@ -162,5 +162,5 @@ pub(crate) fn paint_pdf(
     page_dom: &lp_webapi::PageDom,
     opts: &lp_render::PdfOptions,
 ) -> Option<Result<lp_render::PdfPaint, String>> {
-    lp_layout::paint_pdf(&page_dom.dom.borrow(), &page_dom.layout.borrow(), opts)
+    lp_layout::paint_pdf(&page_dom.dom.borrow(), &page_dom.layout(), opts)
 }

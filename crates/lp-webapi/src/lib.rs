@@ -70,7 +70,8 @@ pub use file_reader::FileReaderLimits;
 pub use identity::UserAgentOverride;
 pub use node::{wrap_node, NodeData};
 pub use page::{
-    DownloadRequest, FocusTarget, FocusTransition, IframeAttribute, NavigationRequest, PageDom, PageHooks, RemotePoster,
+    DownloadRequest, FocusTarget, FocusTransition, FrameViewportSource, IframeAttribute, NavigationRequest, PageDom,
+    PageHooks, RemotePoster,
 };
 pub use storage::{StorageNamespace, StorageSeed};
 pub use target::{EventTarget, EventTargetData};

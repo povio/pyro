@@ -367,6 +367,9 @@ pub(crate) fn create(
     let bindings = PageDom::new(dom, doc);
     bindings.set_storage_namespaces(settings.local, settings.session);
     bindings.set_viewport(settings.viewport);
+    if page.child.is_some() {
+        bindings.set_frame_viewport_source(frame_viewport_source(host, &frame));
+    }
     bindings
         .set_user_agent_override(settings.user_agent)
         .map_err(|e| JsError::Type(format!("invalid request defaults: {e}")))?;
@@ -390,6 +393,39 @@ pub(crate) fn create(
         frames: Rc::downgrade(host),
     })));
     Ok(bindings)
+}
+
+/// A child document's viewport: its iframe's content box in the parent's
+/// layout, with the parent viewport's other metrics. Read again only when
+/// the parent's layout inputs changed; `None` before the parent lays the
+/// iframe out (or while either document is borrowed).
+fn frame_viewport_source(
+    host: &Rc<crate::frames::FrameHost>,
+    frame: &crate::Frame,
+) -> Option<lp_webapi::FrameViewportSource> {
+    let owner = frame.owner?;
+    let parent = host.key(frame.parent.as_ref()?)?;
+    let parent = Rc::downgrade(&host.page_dom(parent)?);
+    type Synced = (((u64, u64, u32, u32), u64), lp_dom::media::Viewport);
+    let last: std::cell::RefCell<Option<Synced>> = Default::default();
+    Some(Rc::new(move || {
+        let parent = parent.upgrade()?;
+        let layout = parent.try_layout()?;
+        let dom = parent.dom.try_borrow().ok()?;
+        let stamp = layout.observation_stamp(&dom);
+        if let Some((s, v)) = last.borrow().as_ref() {
+            // The stamp covers the parent's viewport (a style generation).
+            if *s == stamp {
+                return Some(v.clone());
+            }
+        }
+        let (width, height) = layout.content_size(&dom, owner)?;
+        let mut viewport = layout.viewport().clone();
+        viewport.width = width.round() as u32;
+        viewport.height = height.round() as u32;
+        *last.borrow_mut() = Some((stamp, viewport.clone()));
+        Some(viewport)
+    }))
 }
 
 #[cfg(test)]
