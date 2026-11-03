@@ -148,7 +148,7 @@ Methods: 122 (Playwright 1.59.1's static list plus the session methods it sends 
 
 Session methods not in Playwright's list but implemented: `Page.setDocumentContent` (document.open/write/close on the existing document in the frame's main world: URL, loader, window and contexts stay; `Page.lifecycleEvent` init with the same loaderId, then DOMContentLoaded/load; no frameNavigated; init scripts do not run again), `Runtime.setAsyncCallStackDepth` (accepted; no async stacks are recorded), `Runtime.terminateExecution` (the connection's watchdog check stops a running script when it arrives). `Runtime.queryObjects` fails explicitly: JavaScriptCore's API has no heap iteration. `Runtime.consoleAPICalled` arguments that are objects carry a preview and every call carries the caller's synchronous `stackTrace` (captured only while a session has Runtime enabled), as in Chrome (Playwright's `ConsoleMessage.location()`); frames of code run through `Runtime.evaluate` have no URL or line in JavaScriptCore.
 
-Browser-level methods not in Playwright's list but implemented: `Target.getTargets`, `Target.getBrowserContexts`, `Target.setDiscoverTargets` (page filters honored), `Target.activateTarget` (validates the target), `Runtime.releaseObjectGroup`, `Emulation.clearDeviceMetricsOverride`, `Page.disable`, `Runtime.disable`, `Network.disable`. Session methods outside that static list include `Fetch.continueWithAuth` (server Basic).
+Browser-level methods not in Playwright's list but implemented: `Target.getTargets`, `Target.getBrowserContexts`, `Target.setDiscoverTargets` (page filters honored), `Target.activateTarget` (validates the target), `Runtime.releaseObjectGroup`, `Emulation.clearDeviceMetricsOverride`, `Page.disable`, `Runtime.disable`, `Network.disable`. Session methods outside that static list include `Fetch.continueWithAuth` (server Basic) and the Accessibility methods below.
 
 ## Deliberate differences from upstream
 
@@ -162,17 +162,29 @@ Browser-level methods not in Playwright's list but implemented: `Target.getTarge
 Upstream also implements domains Playwright does not send:
 - `LP.*`: markdown, semantic tree, agent helpers.
 - `WebMCP.*`.
-- `Accessibility.*`: `getFullAXTree`, `queryAXTree`.
 - `Debugger.*` beyond enable/disable, backed by v8_inspector.
 - `DOM.getDocument`, `DOM.querySelector*` and `DOM.getOuterHTML`.
 
 These are out of scope for the first TOS milestone. They stay listed as uncovered until they are implemented.
 
+## Accessibility
+
+Playwright 1.59.1 sends no Accessibility commands (`getByRole` and `ariaSnapshot` run in the injected script); Puppeteer's `page.accessibility` and `aria/` selectors and other CDP clients do.
+
+| Method | Upstream 2ad38773f | Rewrite | Notes |
+| --- | --- | --- | --- |
+| `Accessibility.enable` / `disable` | **no** | accepted, recorded only | the trees are computed per command, so there is nothing to start or stop |
+| `Accessibility.getFullAXTree` | yes | engine | `depth` and `frameId` as in Chrome (depth counts unignored levels; the root is always expanded) |
+| `Accessibility.getPartialAXTree` | **no** | engine | `nodeId` (frontend) unsupported; `backendNodeId`/`objectId`; `fetchRelatives` adds children and ancestors; nodes outside the tree come back ignored (`notRendered`/`uninteresting`) |
+| `Accessibility.queryAXTree` | yes | engine | `accessibleName`/`role` exact match in the DOM subtree, document order; like Chrome, aria-hidden matches are returned ignored |
+
+Each call walks the document once and builds Chrome's node shape from the driver's ARIA role and accname code (the one `getByRole` uses): `RootWebArea` root with `frameId`, `<html>`/`<body>` and layout-only blocks ignored (`uninteresting`), unsemantic inline elements flattened, `StaticText` per rendered text run, `display:none` left out, `aria-hidden`/`inert` subtrees ignored, and the properties Chrome reports (focusable, focused, disabled, invalid, editable, settable, hasPopup, level, multiselectable, orientation, multiline, readonly, required, value range, checked, expanded, modal, pressed, selected, describedby, labelledby, url, live regions). `nodeId` is the backend node id as a string. Nothing is tracked between calls. Compared against Chrome 1:1 on fixture pages; intentional differences: no `InlineTextBox` nodes (Chrome's StaticText `childIds` list them; ours are empty), no synthesized nodes (list markers, the `<select>` popup, text-field inner editors, `<input type=submit>` label text), no name `sources` or `chromeRole`, shadow trees and child-frame contents are not inlined (an `<iframe>` is an `Iframe` leaf, as in Chrome's per-frame trees), `<q>` quote pseudo-content and `<meter>` internals are not modelled, `term` is unnamed (Playwright's accname), ARIA roles are not demoted to `generic` outside their required context (a lone `treeitem` stays `treeitem`), `aria-hidden` content is always kept as ignored nodes (Chrome drops some of it), and `<pre>` whitespace is collapsed. Backend node ids are bounded to 65536 live entries per page, so a larger tree fails explicitly.
+
 ## Native DOM automation scope
 
 `DOM.describeNode`, `resolveNode`, `getBoxModel`, `getContentQuads`, `scrollIntoViewIfNeeded` and
 `focus` use native nodes and binding worlds. `resolveNode` can adopt a backend node into another
-world of the same page. IDs are connection-unique, bounded to 4096 per page, generation-checked,
+world of the same page. IDs are connection-unique, bounded to 65536 per page, generation-checked,
 and do not retain nodes or old documents. Descriptions allow depths 0–32 with at most 1024 nodes.
 Frontend node IDs, full-subtree depth -1, pierced traversal, frontend mirrors and mutation events
 are unsupported. Enabling DOM supplies documentUpdated notifications on navigation.

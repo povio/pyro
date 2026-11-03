@@ -12,7 +12,7 @@ use super::{remote, runtime::context_id, EngineHost};
 use crate::msg::{CdpError, CdpResult};
 use crate::target::{PageCommand, PageKey};
 
-const MAX_BACKEND_NODES: usize = 4096;
+const MAX_BACKEND_NODES: usize = 1 << 16;
 const MAX_DESCRIPTION_NODES: usize = 1024;
 
 struct BackendNode {
@@ -27,7 +27,7 @@ pub(super) struct BackendNodes {
 }
 
 impl BackendNodes {
-    fn identify(&mut self, page: &Rc<PageDom>, node: NodeId, next: &mut u64) -> CdpResult<u64> {
+    pub(super) fn identify(&mut self, page: &Rc<PageDom>, node: NodeId, next: &mut u64) -> CdpResult<u64> {
         let key = (Rc::as_ptr(page) as usize, node);
         if let Some(id) = self.reverse.get(&key) {
             if self.ids.get(id).is_some_and(|entry| entry.document.upgrade().is_some_and(|old| Rc::ptr_eq(&old, page)))
@@ -60,7 +60,7 @@ impl BackendNodes {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct NodeParams {
+pub(super) struct NodeParams {
     node_id: Option<u64>,
     backend_node_id: Option<u64>,
     object_id: Option<String>,
@@ -74,7 +74,11 @@ fn dom_error(error: lp_dom::DomError) -> CdpError {
 }
 
 impl EngineHost {
-    fn resolve_dom_node(&mut self, cmd: &PageCommand<'_, '_>, p: &NodeParams) -> CdpResult<(Rc<PageDom>, NodeId)> {
+    pub(super) fn resolve_dom_node(
+        &mut self,
+        cmd: &PageCommand<'_, '_>,
+        p: &NodeParams,
+    ) -> CdpResult<(Rc<PageDom>, NodeId)> {
         if usize::from(p.node_id.is_some())
             + usize::from(p.backend_node_id.is_some())
             + usize::from(p.object_id.is_some())
