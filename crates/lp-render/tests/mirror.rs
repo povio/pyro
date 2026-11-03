@@ -53,7 +53,7 @@ impl Page {
             height: 480,
             device_scale_factor: 1.0,
             resource_scope: "doc".into(),
-            live: Some(Live { page, tree, clip: None }),
+            live: Some(Live { page, tree, clip: None, interaction: None }),
             ..Default::default()
         }
     }
@@ -508,8 +508,10 @@ fn element_captures_find_their_element_by_key() {
     let page = Page::new(PAGE);
     let key = lp_dom::snapshot::render_key(page.find("#t"));
     let mut r = Renderer::new();
-    let s =
-        Snapshot { live: Some(Live { page: 1, tree: page.tree(), clip: Some(key) }), ..page.snapshot(1, page.tree()) };
+    let s = Snapshot {
+        live: Some(Live { page: 1, tree: page.tree(), clip: Some(key), interaction: None }),
+        ..page.snapshot(1, page.tree())
+    };
     let painted = r.paint(&s, Area::Element, &fetcher()).unwrap();
     let html = Snapshot {
         html: page

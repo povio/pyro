@@ -11,18 +11,19 @@ Rewrite status:
 - **conditional:** succeeds only when the request is already true of the engine; otherwise it returns an explicit error.
 - **pending:** returns an explicit CDP error (`-32000 … is not supported by lightningpanda`) and never a fabricated success.
 
-HTTP and `data:` document loading now use the real loader. `Network` emits request/redirect/response/data/completion/failure events to enabled page sessions, with response-body capture. Browser contexts own distinct network clients. DOM automation node/geometry commands are implemented; frontend DOM mirrors and file-input commands remain pending; native child-frame discovery, worlds, navigation and frame-owner identity are implemented ([frame scope](FRAMES.md)); basic native Input dispatch is implemented; this is not TOS compatibility. Fetch request-stage interception supports continue overrides, fulfill, abort, disable/detach cleanup and server Basic-auth challenges. Response-stage interception, custom status phrases, proxy credentials and non-Basic credential schemes are explicitly unsupported. Fulfillment accepts text headers or base64 NUL-separated binary headers, preserving native value bytes and duplicate entries; the existing Network JSON header display uses UTF-8 replacement for invalid text. Redirect hops have distinct linked Fetch IDs; auth retries retain the hop ID. Only one session per page can own interception; different pages in a context may have separate owners.
+HTTP and `data:` document loading now use the real loader. `Network` emits request/redirect/response/data/completion/failure events to enabled page sessions, with response-body capture. Browser contexts own distinct network clients. DOM automation node/geometry and file-input commands are implemented; frontend DOM mirrors remain pending; native child-frame discovery, worlds, navigation and frame-owner identity are implemented ([frame scope](FRAMES.md)); basic native Input dispatch is implemented; this is not TOS compatibility. Fetch request-stage interception supports continue overrides, fulfill, abort, disable/detach cleanup and server Basic-auth challenges. Response-stage interception, custom status phrases, proxy credentials and non-Basic credential schemes are explicitly unsupported. Fulfillment accepts text headers or base64 NUL-separated binary headers, preserving native value bytes and duplicate entries; the existing Network JSON header display uses UTF-8 replacement for invalid text. Redirect hops have distinct linked Fetch IDs; auth retries retain the hop ID. Only one session per page can own interception; different pages in a context may have separate owners.
 
 Storage cookie commands use the network cookie jar, including HTTP response cookies, expiry and context isolation. Negative CDP expiry values mean session cookies. Invalid batches are validated before modifying the real jar. Partitioned/SameParty cookies, non-default priority and source overrides return explicit errors. Browser WebAPI installation separately supplies the DOM and Web Storage in main and isolated realms.
 
 Capture uses a shared process payload budget (default 64 MiB, 8 MiB/body), at most 4096 response records per page, and bounded network subscriptions (1024 events/8 MiB logical bytes per context). Observer overflow closes the CDP connection instead of silently losing events. Disabling the last Network session, main navigation, or page teardown releases retained bodies; child navigation/removal releases only that frame's captures. Per-session `Network.enable` buffer options are explicitly unsupported. These are logical retention limits, not an RSS measurement; shared chunk allocations and metadata contribute additional memory.
 
-The browser integration smoke also exercises DOM access before init scripts, shared DOM across isolated worlds, page fetch with exact Network frame/loader correlation, route fulfillment/abort after headers, and Web Storage context/page/navigation isolation. These checks use local HTTP and JavaScript evaluation; The full DOM protocol and actual TOS workflows remain unvalidated. A separate Input check covers keyboard typing/text insertion and mouse checkbox activation; editing commands and pen/touch remain unsupported; native drag-and-drop works under Playwright's drag interception; wheel default scrolling follows the synthetic layout. Mouse coordinates follow the native synthetic layout, not full CSS positioning; the smoke derives its click point from the reported rectangle and verifies the exact hit target.
+The browser integration smoke also exercises DOM access before init scripts, shared DOM across isolated worlds, page fetch with exact Network frame/loader correlation, route fulfillment/abort after headers, and Web Storage context/page/navigation isolation. These checks use local HTTP and JavaScript evaluation; The full DOM protocol and actual TOS workflows remain unvalidated. A separate Input check covers keyboard typing/text insertion and mouse checkbox activation; editing commands are advisory and pen/touch remain unsupported; native drag-and-drop works under Playwright's drag interception; wheel default scrolling follows the synthetic layout. Mouse coordinates follow the native synthetic layout, not full CSS positioning; the smoke derives its click point from the reported rectangle and verifies the exact hit target.
 
-Methods: 102 (Playwright 1.59.1's static list plus the session methods it sends that the list misses). Upstream implements 81 of them. Rewrite: 56 engine, 7 accepted/recorded only, 2 conditional, 37 pending (counts from the table below).
+Methods: 113 (Playwright 1.59.1's static list plus the session methods it sends that the list misses). Upstream implements 88 of them. Rewrite: 72 engine, 10 accepted/recorded only, 1 conditional, 30 pending (counts from the table below).
 
 | Method | Upstream 2ad38773f | Rewrite | Notes |
 | --- | --- | --- | --- |
+| `Audits.enable` | **no** | accepted, recorded only | no issues are reported |
 | `Browser.cancelDownload` | **no** | pending |  |
 | `Browser.getVersion` | yes | engine |  |
 | `Browser.getWindowBounds` | **no** | pending |  |
@@ -39,33 +40,38 @@ Methods: 102 (Playwright 1.59.1's static list plus the session methods it sends 
 | `DOM.describeNode` | yes | engine | native Node wrappers/backend IDs; bounded depth and node count; no frontend mirror IDs or pierced traversal |
 | `DOM.disable` | **no** | engine | stops documentUpdated notifications |
 | `DOM.enable` | yes | engine | documentUpdated notifications; frontend mirror/mutation tracking unsupported |
+| `DOM.focus` | yes | engine | native focusability check and focus steps |
+| `DOM.getBoxModel` | yes | engine | one border-box quad for every box (no separate margin/padding geometry); main-frame viewport coordinates in layout units |
+| `DOM.getContentQuads` | yes | engine | see `DOM.getBoxModel` |
 | `DOM.getFrameOwner` | yes | engine | native child owner backend ID in the same page session; missing/main frame rejected |
+| `DOM.resolveNode` | yes | engine | wraps the node in the requested execution context of its frame (or its main world) |
 | `DOM.scrollIntoViewIfNeeded` | yes | engine | in a child frame, also reveals each owning iframe in its parent; connected visible elements over native synthetic layout; `rect` (node-relative area, sent by Playwright for positional clicks) scrolls the window to the nearest edge after revealing the node |
-| `DOM.setFileInputFiles` | yes | pending |  |
+| `DOM.setFileInputFiles` | yes | engine | `files` are paths read from disk (64 MiB each; name from the last path component, type from the extension, `lastModified` from the file's modification time), then trusted `input` and `change` as when a user picks them; a node that is not an `<input type=file>` fails with Chrome's "Node is not a file input element"; `[]` clears the selection |
 | `Debugger.disable` | yes | pending |  |
 | `Debugger.enable` | yes | pending |  |
 | `Debugger.resume` | yes | pending |  |
 | `Debugger.setSkipAllPauses` | yes | pending |  |
-| `Emulation.setDefaultBackgroundColorOverride` | yes | pending |  |
+| `Emulation.setDefaultBackgroundColorOverride` | yes | engine (`render` feature) | screenshots paint `color` (RGBA, `a` defaults to 1) instead of white under the document; `a: 0` gives transparent PNG pixels (straight alpha; JPEG drops alpha); absent color resets |
 | `Emulation.setDeviceMetricsOverride` | yes | engine | persistent native width/height/DPR/screen and resize; mobile, transforms and non-native orientation explicitly unsupported |
-| `Emulation.setEmulatedMedia` | yes | accepted, recorded only | stored; mapping to native media preferences remains pending |
+| `Emulation.setEmulatedMedia` | yes | engine | each call replaces the emulation: `print` media type and `prefers-color-scheme`/`prefers-reduced-motion` drive matchMedia and @media in the style engine; other features are accepted and not evaluated; screenshot rendering of print media is pending |
 | `Emulation.setFocusEmulationEnabled` | yes | accepted, recorded only | headless pages always behave as focused |
 | `Emulation.setGeolocationOverride` | yes | pending |  |
-| `Emulation.setLocaleOverride` | yes | conditional | succeeds only when the requested locale equals the engine (process) locale; otherwise an explicit error |
+| `Emulation.setLocaleOverride` | yes | accepted, recorded only | stored per page; navigator.language(s) and Accept-Language follow the locale unless an explicit acceptLanguage override is active; Intl and Date keep the process locale (JavaScriptCore is process-wide); empty or absent resets; a malformed tag is invalid params |
 | `Emulation.setScriptExecutionDisabled` | yes | pending |  |
-| `Emulation.setTimezoneOverride` | yes | conditional | succeeds only when it equals the process time zone; otherwise an explicit error |
-| `Emulation.setTouchEmulationEnabled` | yes | pending |  |
+| `Emulation.setTimezoneOverride` | yes | accepted, recorded only | stored per page; Date and Intl keep the process time zone (JavaScriptCore is process-wide); empty resets; an obviously malformed id fails with "Invalid timezone id" (no tz database check) |
+| `Emulation.setTouchEmulationEnabled` | yes | conditional | `enabled: false` succeeds (no touch is emulated); `enabled: true` is an explicit error |
 | `Emulation.setUserAgentOverride` | yes | engine | page-local navigator and request defaults, persistent across navigation; client hints unsupported |
 | `Fetch.continueRequest` | yes | engine | request stage; see supported scope above |
+| `Fetch.continueWithAuth` | yes | engine | server Basic challenges; proxy credentials and other schemes unsupported |
 | `Fetch.disable` | yes | engine | request stage; see supported scope above |
 | `Fetch.enable` | yes | engine | request stage; see supported scope above |
 | `Fetch.failRequest` | yes | engine | request stage; see supported scope above |
 | `Fetch.fulfillRequest` | yes | engine | request stage; see supported scope above |
 | `HeapProfiler.collectGarbage` | **no** | pending |  |
-| `IO.close` | yes | pending |  |
-| `IO.read` | yes | pending |  |
+| `IO.close` | yes | engine (`render` feature) | closes a `printToPDF` stream; reads of a closed handle are invalid params |
+| `IO.read` | yes | engine (`render` feature) | reads a `printToPDF` `ReturnAsStream` stream as base64 chunks (`offset`, `size`, default 1 MiB) until `eof` |
 | `Input.dispatchDragEvent` | **no** | engine | drives the page's native drag session as Blink does: dragEnter/dragOver fire `drag` on the source, then `dragenter`/`dragleave` on a changed target or `dragover` on the same one; drop fires `drop` (read-only data) when the last dragenter/dragover was canceled, else `drag` + `dragleave`, then `dragend` with the accepted operation; dragCancel fires `dragend` only. Target data follows the CDP items and operations mask (protected mode in dragenter/dragover/dragleave). A dragEnter without a session is a drag entering from outside. Drags carrying `files` and child-frame targets are unsupported |
-| `Input.dispatchKeyEvent` | yes | engine | native focused-frame keyboard routing, trusted events and control default actions; raw-key cross-document char suppression. The macOS editing commands Playwright derives are accepted only where the engine's default action matches: ArrowLeft/Right/Up/Down with or without Shift (Up/Down in single-line text inputs and textareas), Backspace, Delete, Meta+A, and Escape (`cancelOperation`, events only). Other commands and alternate metadata are unsupported |
+| `Input.dispatchKeyEvent` | yes | engine | native focused-frame keyboard routing, trusted events and control default actions; raw-key cross-document char suppression. The macOS editing `commands` Playwright derives are advisory: the key's own default action runs as on Linux (arrows with or without Shift, Home/End, Backspace, Delete, Meta+A; Escape delivers events only; clipboard, undo, word movement and Emacs-style aliases do nothing). Timestamps, system keys and alternate metadata are unsupported |
 | `Input.dispatchMouseEvent` | yes | engine | hit testing descends into iframes (the point is translated into the innermost frame document, which alone receives the events), trusted mouse/pointer events and activation; `mouseWheel` fires a trusted cancelable `wheel` and, unless canceled, scrolls the nearest container that can still move per axis, else the viewport (wheel/touch listeners on window, document, html and body default to passive); a wheel or move over empty viewport space targets the root element (as Chrome hit-tests it; presses there and points outside the viewport stay errors); moves fire Chrome's boundary events (out, leave inner to outer, over, enter outer to inner, for pointer then mouse); pen and custom pressure unsupported |
 | `Input.dispatchTouchEvent` | yes | pending |  |
 | `Input.insertText` | yes | engine | native focus/selection and cancellable beforeinput/input |
@@ -78,18 +84,20 @@ Methods: 102 (Playwright 1.59.1's static list plus the session methods it sends 
 | `Network.loadNetworkResource` | **no** | pending |  |
 | `Network.setCacheDisabled` | yes | engine | per page, as in Chrome 147: the page's requests bypass the per-context HTTP cache (no lookup or store, `Pragma`/`Cache-Control: no-cache` added) while its session has Network enabled; sibling pages of the same context still use the cache |
 | `Network.setExtraHTTPHeaders` | yes | engine | per page (sibling pages, even in the same browser context, are unaffected); each call replaces the map and {} clears it; applied to navigations, subresources, fetch and XHR only while the session has Network enabled (kept while disabled), as in Chrome 147; page headers override same-name request headers including User-Agent; invalid names/values rejected with Chrome's messages |
+| `Network.setUserAgentOverride` | yes | engine | same as `Emulation.setUserAgentOverride` |
 | `Page.addScriptToEvaluateOnNewDocument` | yes | engine |  |
 | `Page.bringToFront` | yes | accepted, recorded only | single foreground page per target |
-| `Page.captureScreenshot` | yes | engine (`render` feature) | rendered by lp-render (Blitz: Stylo, Taffy, Parley, vello_cpu) from a snapshot of the live DOM, off the browser thread; `png` and `jpeg` (`quality`), `clip` (document CSS px, `scale`), `captureBeyondViewport` (whole document); `webp`, `fromSurface: false` and `optimizeForSpeed` are ignored or refused; pixels differ from Chromium's (no hinting, Blitz layout); see [SCREENSHOTS.md](SCREENSHOTS.md). Without the feature: an explicit error |
+| `Page.captureScreenshot` | yes | engine (`render` feature) | rendered by lp-render (Blitz: Stylo, Taffy, Parley, vello_cpu) from a snapshot of the live DOM, off the browser thread; `png` and `jpeg` (`quality`), `clip` (document CSS px, `scale`; the viewport keeps its scroll, so fixed elements appear where the viewport shows them, unless `captureBeyondViewport`), `captureBeyondViewport` (whole document); hover and focus styles of the page's pointer and focus; `Emulation.setDefaultBackgroundColorOverride`; `webp`, `fromSurface: false` and `optimizeForSpeed` are ignored or refused; pixels differ from Chromium's (no hinting, Blitz layout); see [SCREENSHOTS.md](SCREENSHOTS.md). Without the feature: an explicit error |
 | `Page.close` | yes | pending |  |
+| `Page.createIsolatedWorld` | yes | engine | named isolated worlds per frame, with init scripts for that world |
 | `Page.enable` | yes | engine |  |
 | `Page.getFrameTree` | yes | engine | nested native frames with per-document loader and actual security origin |
-| `Page.getLayoutMetrics` | yes | engine | main frame, CSS px: emulated viewport, window scroll offset and document scroll size (at least the viewport); no pinch zoom, so the visual viewport equals the layout viewport with `scale`/`zoom` 1; the deprecated fields repeat the CSS values, as headless Chromium on macOS reports at DPR 1 and 2. The document size comes from lightningpanda's approximate layout, not the renderer's, so a full-page `clip` built from it can differ from `captureBeyondViewport` |
+| `Page.getLayoutMetrics` | yes | engine | main frame, CSS px: emulated viewport, window scroll offset and document scroll size (at least the viewport); no pinch zoom, so the visual viewport equals the layout viewport with `scale`/`zoom` 1; the deprecated fields repeat the CSS values, as headless Chromium on macOS reports at DPR 1 and 2. The document size comes from the page's Blitz document (the renderer's layout), as `captureBeyondViewport` uses |
 | `Page.getNavigationHistory` | yes | engine | main-frame session history with stable entry ids; `title` is empty and `transitionType` is `other`; the initial about:blank entry is kept by the first navigation (Chrome replaces it) |
 | `Page.handleJavaScriptDialog` | yes | pending |  |
 | `Page.navigate` | yes | engine | about:blank, data and HTTP documents; frameId supports native children; explicit failures, no joint child history |
 | `Page.navigateToHistoryEntry` | yes | engine | answers once the traversal is queued, like Chrome; same-document entries commit as `navigatedWithinDocument` with `popstate`, others re-fetch the document (no bfcache); unknown ids are invalid params |
-| `Page.printToPDF` | yes | pending |  |
+| `Page.printToPDF` | yes | engine (`render` feature) | rendered by lp-render from the page's Blitz document: one PDF page per `.pz-page` box (Paprize), else the document cut into `paperWidth`x`paperHeight` pages (default Letter, `landscape` swaps); `marginTop/Bottom/Left/Right`, `scale`, `printBackground` (backgrounds always paint), header/footer templates and `pageRanges` are ignored; `transferMode: ReturnAsStream` returns an `IO` stream handle; non-positive paper sizes are invalid params; print media is not emulated (screen styles print). Without the feature: an explicit error |
 | `Page.reload` | yes | engine | same limits as Page.navigate |
 | `Page.removeScriptToEvaluateOnNewDocument` | yes | engine |  |
 | `Page.setBypassCSP` | yes | accepted, recorded only | no CSP enforcement exists |
@@ -97,6 +105,7 @@ Methods: 102 (Playwright 1.59.1's static list plus the session methods it sends 
 | `Page.setInterceptFileChooserDialog` | yes | engine | per session; activating an `<input type=file>` (click, label, script `click()`) emits `Page.fileChooserOpened` {frameId, mode selectSingle/selectMultiple, backendNodeId} to intercepting sessions; no native picker exists |
 | `Page.setLifecycleEventsEnabled` | yes | engine | per-frame lifecycle events and replay of reached milestones |
 | `Page.startScreencast` | **no** | pending |  |
+| `Performance.enable` | **no** | accepted, recorded only | metrics through `Performance.getMetrics` are pending |
 | `Profiler.disable` | **no** | pending |  |
 | `Profiler.enable` | **no** | pending |  |
 | `Profiler.startPreciseCoverage` | **no** | pending |  |
@@ -110,7 +119,9 @@ Methods: 102 (Playwright 1.59.1's static list plus the session methods it sends 
 | `Runtime.releaseObject` | yes | engine |  |
 | `Runtime.removeBinding` | **no** | engine | removes the binding from the page's future realms and deletes the global from live ones once no session of the page uses it |
 | `Runtime.runIfWaitingForDebugger` | yes | engine | starts a paused popup's navigation; other targets never start paused |
-| `Security.setIgnoreCertificateErrors` | yes | pending |  |
+| `Security.disable` | **no** | engine | no security state is reported |
+| `Security.enable` | **no** | engine | no security state events are emitted |
+| `Security.setIgnoreCertificateErrors` | yes | engine | on a page session: that page's browser context; on the browser session (Puppeteer `acceptInsecureCerts`): every context, including later ones. HTTPS then accepts any server certificate (handshake signatures still verified); otherwise an untrusted certificate fails with net::ERR_CERT_AUTHORITY_INVALID |
 | `Storage.clearCookies` | yes | engine | per-context native cookie jar; omitted context uses a distinct default context |
 | `Storage.getCookies` | yes | engine | per-context native cookie jar; omitted context uses a distinct default context |
 | `Storage.setCookies` | yes | engine | per-context native cookie jar; omitted context uses a distinct default context |

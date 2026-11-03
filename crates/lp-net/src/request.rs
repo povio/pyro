@@ -202,6 +202,8 @@ pub enum NetError {
     Decode(String),
     /// Request blocked or failed by CDP Fetch.failRequest.
     Blocked(String),
+    /// The server certificate did not verify; message is diagnostic only.
+    Certificate(String),
     Other(String),
 }
 
@@ -221,6 +223,7 @@ impl NetError {
             NetError::TooLarge => "net::ERR_INSUFFICIENT_RESOURCES",
             NetError::Decode(_) => "net::ERR_CONTENT_DECODING_FAILED",
             NetError::Blocked(r) => r,
+            NetError::Certificate(_) => "net::ERR_CERT_AUTHORITY_INVALID",
             NetError::Other(_) => "net::ERR_FAILED",
         }
     }
@@ -229,7 +232,9 @@ impl NetError {
 impl std::fmt::Display for NetError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            NetError::Cors(m) | NetError::Decode(m) | NetError::Other(m) => write!(f, "{}: {m}", self.error_text()),
+            NetError::Cors(m) | NetError::Decode(m) | NetError::Certificate(m) | NetError::Other(m) => {
+                write!(f, "{}: {m}", self.error_text())
+            }
             NetError::UnsupportedScheme(s) => write!(f, "{}: {s}", self.error_text()),
             _ => f.write_str(self.error_text()),
         }

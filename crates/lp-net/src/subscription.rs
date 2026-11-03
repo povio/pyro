@@ -239,6 +239,7 @@ fn event_bytes(event: &NetEvent) -> usize {
                 crate::NetError::Cors(s)
                 | crate::NetError::Decode(s)
                 | crate::NetError::Other(s)
+                | crate::NetError::Certificate(s)
                 | crate::NetError::Blocked(s)
                 | crate::NetError::UnsupportedScheme(s) => s.capacity(),
                 _ => 0,
