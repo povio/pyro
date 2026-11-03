@@ -764,3 +764,57 @@ fn a_style_edit_after_a_new_container_syncs_as_deltas() {
     let a = r.element_box(1, lp_dom::snapshot::render_key(page.find("#a"))).unwrap();
     assert_eq!(a.height, 30.0, "the edited sheet applies");
 }
+
+#[test]
+fn textarea_attribute_deltas_match_whole_tree_value_geometry_and_paint() {
+    use lp_dom::snapshot::render_key;
+    let semantic_tree = |html: &str| {
+        let parsed = Page::new(html);
+        let mut tree = (*parsed.tree()).clone();
+        for node in &mut tree.nodes {
+            if let TreeKind::Element { attrs, .. } = &mut node.kind {
+                attrs.sort_by_key(|(name, _)| {
+                    (name.ns.to_string(), name.local.to_string(), name.prefix.as_ref().map(ToString::to_string))
+                });
+            }
+        }
+        tree
+    };
+    let page = Page::new("<!doctype html><style>body{margin:0}textarea{box-sizing:border-box;width:100px;height:40px;padding:0;border:0}.wide{width:180px}</style><form><textarea id=t>default</textarea></form>");
+    let textarea = page.find("#t");
+    page.dom.borrow_mut().set_value(textarea, "typed preserved\nline").unwrap();
+    let (mut delta_renderer, mut whole_renderer) = (Renderer::new(), Renderer::new());
+    delta_renderer.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+    whole_renderer.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+    for (name, value, width, height) in [
+        ("class", "wide", 180.0, 40.0),
+        ("style", "width:210px;height:60px", 210.0, 60.0),
+        ("aria-label", "Updated notes", 210.0, 60.0),
+        ("data-tracking", "kept", 210.0, 60.0),
+    ] {
+        let since = page.dom.borrow().version();
+        page.dom.borrow_mut().set_attribute(textarea, name, value).unwrap();
+        let delta = page
+            .dom
+            .borrow()
+            .render_delta(page.doc, since, &Page::opts())
+            .expect("textarea attributes must sync as deltas");
+        delta_renderer.sync_delta(1, &delta_ops(delta), (640, 480, 1.0, false), false).unwrap();
+        whole_renderer.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+        assert_eq!(
+            semantic_tree(&delta_renderer.mirrored_html(1).unwrap()),
+            semantic_tree(&whole_renderer.mirrored_html(1).unwrap()),
+            "semantic attributes, text/value and node order after {name}"
+        );
+        assert!(delta_renderer.mirrored_html(1).unwrap().contains("typed preserved"));
+        assert_eq!(boxes(&delta_renderer, &page), boxes(&whole_renderer, &page), "geometry after {name}");
+        let bounds = delta_renderer.element_box(1, render_key(textarea)).unwrap();
+        assert_eq!((bounds.width, bounds.height), (width, height), "updated textarea size after {name}");
+        assert_eq!(page.dom.borrow().value(textarea).unwrap(), "typed preserved\nline");
+        assert_eq!(
+            paint(&mut delta_renderer, &page.snapshot(1, page.tree())).hash,
+            paint(&mut whole_renderer, &page.snapshot(1, page.tree())).hash,
+            "paint after {name}"
+        );
+    }
+}

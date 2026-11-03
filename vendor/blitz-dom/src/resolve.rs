@@ -50,6 +50,10 @@ impl BaseDocument {
         let device_changed = !self.pending_device_changes.is_empty();
         self.flush_pending_device_changes();
         self.resolve_stylist(current_time_for_animations);
+        // Style reads must still discover background/mask resources. This
+        // consumes only already-styled nodes, leaving construction/layout
+        // damage intact for the next geometry query.
+        self.flush_pending_style_images();
         let root = self.root_element();
         let geometry_dirty =
             device_changed || root.has_damaged_descendants() || root.damage().is_none_or(|damage| !damage.is_empty());

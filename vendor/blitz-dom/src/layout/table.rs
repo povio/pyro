@@ -39,8 +39,8 @@ pub struct TableTreeWrapper<'a, 'doc> {
 
 impl TableTreeWrapper<'_, '_> {
     /// The table's style for a layout at `inputs`, with the column widths the
-    /// automatic table layout algorithm gives its columns when they all have
-    /// an auto width: a table wider than its columns' min-content widths
+    /// automatic table layout algorithm gives its columns when they are all
+    /// auto or all simple length-hinted tracks: a table wider than its columns' min-content widths
     /// shares the extra space in proportion to their max-content widths
     /// (from min-content up to max-content, then beyond it), where a grid
     /// shares it equally. `None`: the table's own grid tracks apply.
@@ -55,7 +55,29 @@ impl TableTreeWrapper<'_, '_> {
         let all_auto = style.grid_template_columns.iter().all(|c| {
             matches!(c, taffy::GridTemplateComponent::Single(t) if t.min.is_auto() && t.max.is_auto())
         });
-        if ctx.is_fixed || n == 0 || !all_auto {
+        let all_hinted = style.grid_template_columns.iter().all(|c| {
+            matches!(c, taffy::GridTemplateComponent::Single(t)
+                if t.min.is_min_content() && t.max.into_raw().tag() == taffy::CompactLength::FIT_CONTENT_PX_TAG)
+        });
+        if ctx.is_fixed || n == 0 || !(all_auto || all_hinted) {
+            return None;
+        }
+        // The new hinted-track path inspects physical widths. Keep vertical
+        // and orthogonal cells on the existing logical-axis grid fallback.
+        #[cfg(feature = "writing-mode")]
+        if all_hinted && (self.doc.layout_wm.is_vertical() || ctx.cells.iter().any(|cell| {
+            self.doc.nodes[cell.node_id].primary_styles().is_some_and(|style| style.writing_mode.is_vertical())
+        })) {
+            return None;
+        }
+        // Keep percentage/calc cell sizing on the existing grid fallback
+        // when extending allocation to previously unsupported hinted tracks.
+        if all_hinted && ctx.cells.iter().any(|cell| {
+            self.doc.nodes[cell.node_id].primary_styles().is_some_and(|style| {
+                let width = stylo_taffy::convert::dimension(&style.clone_width());
+                !matches!(width.tag(), taffy::CompactLength::AUTO_TAG | taffy::CompactLength::LENGTH_TAG)
+            })
+        }) {
             return None;
         }
         let parent = inputs.parent_size.width;
@@ -95,9 +117,23 @@ impl TableTreeWrapper<'_, '_> {
                 available_space: taffy::Size { width: space, height: taffy::AvailableSpace::MaxContent },
                 vertical_margins_are_collapsible: taffy::Line::FALSE,
             };
-            this.compute_child_layout(taffy::NodeId::from(idx), input).size.width
+            if all_hinted && matches!(space, taffy::AvailableSpace::MaxContent) && this.ctx.cells[idx].min_width.is_some() {
+                // The grid fallback intentionally caps hinted cells at their
+                // minimum contribution. Auto allocation needs the natural
+                // preferred width too; the caller clamps it to measured min.
+                let node = crate::taffy_node_id(this.ctx.cells[idx].node_id);
+                this.doc.compute_child_layout(node, taffy::tree::LayoutInput {
+                    sizing_mode: taffy::SizingMode::ContentSize, ..input
+                }).size.width
+            } else {
+                this.compute_child_layout(taffy::NodeId::from(idx), input).size.width
+            }
         };
-        let (mut min, mut max) = (vec![0f32; n], vec![0f32; n]);
+        let mut min: Vec<f32> = style.grid_template_columns.iter().map(|column| match column {
+            taffy::GridTemplateComponent::Single(track) if track.max.into_raw().tag() == taffy::CompactLength::FIT_CONTENT_PX_TAG => track.max.into_raw().value(),
+            _ => 0.0,
+        }).collect();
+        let mut max = min.clone();
         let mut spanning = Vec::new();
         for (idx, cell) in ctx.cells.iter().enumerate() {
             let column = cell.column as usize;

@@ -288,6 +288,11 @@ impl Geometry {
             return Some(b);
         }
         if is_table_part(doc, id) {
+            if tag(doc, id) == Some("tr") {
+                if let Some(row) = self.row_track_box(doc, id) {
+                    return Some(row);
+                }
+            }
             if let Some(r) = self.children_union(doc, id) {
                 return Some(LayoutBox::from_rect(r, b.fixed));
             }
@@ -321,6 +326,46 @@ impl Geometry {
             }
         }
         Some(b)
+    }
+
+    /// Rows have no Blitz box. Project their actual grid track instead of
+    /// unioning cells, since a cell originating here may span later rows.
+    fn row_track_box(&self, doc: &BaseDocument, id: NodeId) -> Option<LayoutBox> {
+        let mut table = doc.get_node(id)?.parent?;
+        while tag(doc, table) != Some("table") {
+            table = doc.get_node(table)?.parent?;
+        }
+        if doc.get_node(table)?.primary_styles()?.writing_mode.is_vertical() {
+            return None;
+        }
+        // Table/ancestor transforms are handled below. Keep the old child
+        // projection for independently transformed row parts.
+        let mut ancestor = id;
+        while ancestor != table {
+            let node = doc.get_node(ancestor)?;
+            if node.transform().as_deref().is_some_and(|transform| *transform != Affine::IDENTITY) {
+                return None;
+            }
+            ancestor = node.parent?;
+        }
+        let element = doc.get_node(table)?.element_data()?;
+        let blitz_dom::node::SpecialElementData::TableRoot(context) = &element.special_data else { return None };
+        let index = context.rows.iter().position(|row| row.node_id == id)?;
+        let info = context.computed_grid_info.try_borrow().ok()?;
+        let info = info.as_ref()?;
+        // Oversized rowspans can create grid tracks without corresponding DOM
+        // rows. In that case a single track is not the row's complete box;
+        // preserve the existing cell-union projection instead.
+        if info.rows.positions.len() > context.rows.len() {
+            return None;
+        }
+        let row = info.rows.positions.get(index)?;
+        let left = info.columns.positions.first()?.start as f64;
+        let right = info.columns.positions.last()?.end as f64;
+        let (gx, top, bottom) = table_gutters(doc, table, Some(id)).unwrap_or((0.0, 0.0, 0.0));
+        let local = Rect::new(left - gx, row.start as f64 - top, right + gx, row.end as f64 + bottom);
+        let (transform, fixed) = self.transform(doc, table)?;
+        Some(LayoutBox::from_rect(transform.transform_rect_bbox(local), fixed))
     }
 
     /// Union of the (adjusted) boxes of a table part's children.
@@ -643,7 +688,10 @@ fn cell_gutters(doc: &BaseDocument, id: NodeId) -> Option<(f64, f64, f64)> {
         }
         table = doc.get_node(t)?.parent;
     }
-    let table = table?;
+    table_gutters(doc, table?, doc.get_node(id)?.parent)
+}
+
+fn table_gutters(doc: &BaseDocument, table: NodeId, row: Option<NodeId>) -> Option<(f64, f64, f64)> {
     let styles = doc.get_node(table)?.primary_styles()?;
     if styles.clone_border_collapse() != style::computed_values::border_collapse::T::Collapse {
         return None;
@@ -655,7 +703,7 @@ fn cell_gutters(doc: &BaseDocument, id: NodeId) -> Option<(f64, f64, f64)> {
     let gy =
         side(b.border_top_width.0, b.border_top_style).max(side(b.border_bottom_width.0, b.border_bottom_style)) / 2.0;
     let (mut top, mut bottom) = (gy, gy);
-    if let Some(rs) = doc.get_node(id)?.parent.and_then(|p| doc.get_node(p)).and_then(|r| r.primary_styles()) {
+    if let Some(rs) = row.and_then(|p| doc.get_node(p)).and_then(|r| r.primary_styles()) {
         let b = rs.get_border();
         top = top.max(side(b.border_top_width.0, b.border_top_style) / 2.0);
         bottom = bottom.max(side(b.border_bottom_width.0, b.border_bottom_style) / 2.0);
