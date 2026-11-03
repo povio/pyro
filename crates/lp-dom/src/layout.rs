@@ -28,7 +28,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::dom::Dom;
-pub use crate::geometry::{ExternalBox, ExternalGeometry, ExternalSticky, ExternalWord, GeometrySource};
+pub use crate::geometry::{ExternalBox, ExternalGeometry, ExternalQuads, ExternalSticky, ExternalWord, GeometrySource};
 use crate::geometry::{LayoutBox, LayoutResult, BOTTOM, LEFT, RIGHT, TOP};
 /// Overflow clips an out-of-flow box escapes while walking up to its
 /// containing block (`Layout::clip_escape`).
@@ -796,6 +796,32 @@ impl Layout {
     /// The bounding rect, or `None` when the element isn't rendered.
     pub fn client_rect(&self, dom: &Dom, el: NodeId) -> Option<Rect> {
         self.is_visible(dom, el).then(|| self.bounding_client_rect_for_visible(dom, el))
+    }
+
+    /// `el`'s CSS boxes as quads in client coordinates (CDP
+    /// `DOM.getBoxModel`/`getContentQuads`): the engine's quads moved by the
+    /// same scroll and sticky offsets as its client rect. `None` when it is
+    /// not rendered, has no CSS box (SVG content) or the engine reports none.
+    pub fn box_quads(&self, dom: &Dom, el: NodeId) -> Option<ExternalQuads> {
+        if !self.is_visible(dom, el) || self.svg_client_rect(dom, el).is_some() {
+            return None;
+        }
+        let source = self.synced_geometry_source(dom)?;
+        let mut q = source.element_quads(crate::snapshot::render_key(el))?;
+        let (dx, dy) = self.ancestor_scroll_offset(dom, el);
+        let (kx, ky) = match source.has_sticky() {
+            true => self.sticky_shift(dom, &self.layout_result(dom), el),
+            false => (0.0, 0.0),
+        };
+        let (sx, sy) = if q.fixed { (0.0, 0.0) } else { (self.window_scroll.0 as f64, self.window_scroll.1 as f64) };
+        let (ox, oy) = (kx - sx - dx, ky - sy - dy);
+        for quad in std::iter::once(&mut q.border).chain(q.fragments.iter_mut()) {
+            for i in 0..4 {
+                quad[2 * i] += ox;
+                quad[2 * i + 1] += oy;
+            }
+        }
+        Some(q)
     }
 
     /// `getClientRects` (Element.zig:1744-1751): one rect, or none when not

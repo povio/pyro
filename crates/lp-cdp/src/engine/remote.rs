@@ -182,6 +182,43 @@ fn error_description(value: Value<'_>) -> Option<String> {
     })
 }
 
+/// A promise's `[[PromiseState]]` and, once settled, `[[PromiseResult]]`.
+/// `None` for anything else. JavaScriptCore offers no synchronous view of a
+/// promise's state: reactions attached by the probe run when its native call
+/// returns to the top level (microtasks drain then), so a settled promise
+/// reads as settled unless JavaScript is already on the stack (inside a
+/// microtask it reads "pending"). Attaching the reaction marks a rejected
+/// promise as handled, which Chrome's inspector does not.
+pub(crate) fn promise_state(scope: &Scope<'_>, value: Value<'_>) -> Option<(String, Option<Persistent>)> {
+    let reader = scope.promise_probe(value).ok().flatten()?;
+    let pair = reader.call(None, &[]).ok()?.as_object()?;
+    let state = pair.get_index(0).ok()?.as_string()?;
+    let result = (state != "pending").then(|| pair.get_index(1).ok().map(|v| Persistent::new(scope, v))).flatten();
+    Some((state, result))
+}
+
+/// Adds a `Runtime.ObjectPreview` to an object's remote description
+/// (`generatePreview`, console arguments). Best effort: a preview that
+/// cannot be built is left out.
+pub(crate) fn add_preview(scope: &Scope<'_>, value: Value<'_>, remote: &mut RemoteObject) {
+    if remote.kind != "object" || remote.subtype == Some("null") {
+        return;
+    }
+    let promise = if remote.subtype == Some("promise") {
+        promise_state(scope, value).and_then(|(state, result)| {
+            let result = result.map_or_else(|| scope.undefined(), |r| r.get(scope));
+            let pair = scope.array(&[scope.string(&state), result]).ok()?;
+            Some(Persistent::new(scope, pair.value()))
+        })
+    } else {
+        None
+    };
+    let promise = promise.as_ref().map(|p| p.get(scope));
+    if let Ok(text) = scope.object_preview(value, remote.description.as_deref(), promise) {
+        remote.preview = serde_json::value::RawValue::from_string(text).ok().map(RemoteValue::Raw);
+    }
+}
+
 /// Finishes a [`Described`] by registering its handle (if any).
 pub(crate) fn register(
     described: Described,

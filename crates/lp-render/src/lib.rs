@@ -44,7 +44,7 @@ use parley::FontContext;
 use peniko::{Color, Fill};
 
 pub use compare::{compare, decode_png, diff_image, encode_jpeg, encode_png, CompareResult};
-pub use geometry::{BoxPosition, LayoutBox, StickyBox, TextWord};
+pub use geometry::{BoxPosition, BoxQuads, LayoutBox, StickyBox, TextWord};
 pub use hash::scene_hash;
 pub use mirror::{DeltaOp, MirrorStats, Rebuild, Tree, TreeKind, TreeNode, TOP};
 pub use net::Fetcher;
@@ -916,6 +916,14 @@ impl Renderer {
     pub fn element_box(&self, page: u64, key: u64) -> Option<LayoutBox> {
         let m = self.mirrors.get(&page)?;
         self.geometry.get(&page)?.element_box(&m.doc, m.node(key)?)
+    }
+
+    /// The CSS boxes of the element keyed `key` in `page`'s persistent
+    /// document as quads, as of the last [`Renderer::sync_layout`] (see
+    /// [`BoxQuads`]).
+    pub fn element_quads(&self, page: u64, key: u64) -> Option<BoxQuads> {
+        let m = self.mirrors.get(&page)?;
+        self.geometry.get(&page)?.element_quads(&m.doc, m.node(key)?)
     }
 
     /// The element keyed `key` and its ancestors as Blitz laid them out

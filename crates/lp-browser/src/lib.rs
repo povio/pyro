@@ -190,7 +190,8 @@ pub enum PageEvent {
         default_prompt: Option<String>,
     },
     /// The dialog [`PageEvent::JavascriptDialogOpening`] reported was
-    /// dismissed (dialogs never block).
+    /// dismissed (reported dialogs do not block; see
+    /// [`PageObserver::javascript_dialog`]).
     JavascriptDialogClosed {
         frame_id: FrameId,
     },
@@ -244,6 +245,26 @@ pub trait PageObserver {
         _request: lp_net::RequestId,
         _frontier: lp_net::NetworkDelivery,
     ) {
+    }
+
+    /// Page JavaScript in frame `frame` (document `url`) opened an `alert`,
+    /// `confirm` or `prompt` dialog (`kind`). Called synchronously with the
+    /// script on the stack, so like the other callbacks it must not run
+    /// script or re-enter the browser. An embedder that shows the dialog
+    /// (CDP with a session that has Page enabled) waits for its answer here
+    /// and returns it: the script stays suspended meanwhile. `None` (the
+    /// default) reports the dialog as [`PageEvent::JavascriptDialogOpening`]
+    /// and the call returns what a dismissed dialog gives.
+    fn javascript_dialog(
+        &self,
+        _page: PageId,
+        _frame: &FrameId,
+        _url: &str,
+        _kind: &str,
+        _message: &str,
+        _default_prompt: Option<&str>,
+    ) -> Option<lp_webapi::DialogAnswer> {
+        None
     }
 }
 

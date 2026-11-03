@@ -76,6 +76,11 @@ pub trait Host {
     fn take_popup_requests(&mut self) -> Vec<PopupRequest> {
         Vec::new()
     }
+    /// Pages the engine asked to close since the last call (`Page.close`),
+    /// oldest first: their targets are closed like `Target.closeTarget`.
+    fn take_close_requests(&mut self) -> Vec<PageKey> {
+        Vec::new()
+    }
     /// Marks a paused popup that has not started its first navigation.
     /// Chrome reports such a frame's URL as ":" in `Page.getFrameTree`, which
     /// is how clients know to wait for the first real navigation.
@@ -1459,6 +1464,11 @@ impl<H: Host> Browser<H> {
     /// `Runtime.runIfWaitingForDebugger`, as Chrome does; otherwise it
     /// navigates immediately. Requests from closed openers are dropped.
     pub fn adopt_popups(&mut self, out: &mut dyn Sink) {
+        for page in self.host.take_close_requests() {
+            if let Some(id) = self.targets.iter().find(|t| t.page == page).map(|t| t.id.clone()) {
+                self.close_target(&id, out);
+            }
+        }
         for request in self.host.take_popup_requests() {
             let Some(opener) = self.targets.iter().find(|t| t.page == request.opener) else { continue };
             let (opener_id, context_id) = (opener.id.clone(), opener.context_id.clone());

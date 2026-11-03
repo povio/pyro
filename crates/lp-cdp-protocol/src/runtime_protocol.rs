@@ -35,6 +35,9 @@ pub struct RemoteObject {
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub object_id: Option<String>,
+    /// `Runtime.ObjectPreview` (JSON text from the engine), when asked for.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preview: Option<RemoteValue>,
 }
 
 /// `RemoteObject.value`: a JSON value, or JSON text already produced by the

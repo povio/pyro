@@ -11,6 +11,22 @@ use super::EngineHost;
 use crate::msg::{self, CdpError, CdpResult};
 use crate::target::{PageCommand, PageKey};
 
+/// `Page.setDocumentContent` in the frame's main world.
+const SET_DOCUMENT_CONTENT: &str = "function (html) { const d = document; d.open(); d.write(html); d.close(); }";
+
+/// `Page.close` with `beforeunload`: dispatches a cancelable event whose
+/// `returnValue` is a string, as `BeforeUnloadEvent`'s is; returns whether a
+/// handler asked to stay.
+const FIRE_BEFOREUNLOAD: &str = "function () {
+  let returnValue = '';
+  const e = new Event('beforeunload', { cancelable: true });
+  Object.defineProperty(e, 'returnValue', {
+    get() { return returnValue; }, set(v) { returnValue = String(v); }, configurable: true,
+  });
+  dispatchEvent(e);
+  return e.defaultPrevented || returnValue !== '';
+}";
+
 fn reason_name(reason: NavigationReason) -> Option<&'static str> {
     match reason {
         NavigationReason::AddressBar => None,
@@ -78,10 +94,12 @@ impl EngineHost {
         match action {
             "enable" => {
                 self.session_mut(cmd.session_id)?.page_enabled = true;
+                self.sync_dialog_sessions(cmd.page);
                 Ok(Some(json!({})))
             }
             "disable" => {
                 self.session_mut(cmd.session_id)?.page_enabled = false;
+                self.sync_dialog_sessions(cmd.page);
                 Ok(Some(json!({})))
             }
             "getFrameTree" => {
@@ -236,8 +254,10 @@ impl EngineHost {
             }
             // Accepted because there is nothing to change: the engine enforces
             // no CSP, opens no file chooser and has a single foreground page.
-            // The dialog was already dismissed (dialogs never block); this
-            // only answers the client that reacts to javascriptDialogOpening.
+            // A blocking dialog is answered by its nested read loop
+            // (dialog.rs). A reported one was already dismissed (it did not
+            // block); this only answers the client that reacts to its
+            // javascriptDialogOpening.
             "handleJavaScriptDialog" => {
                 #[derive(Deserialize)]
                 #[serde(rename_all = "camelCase")]
@@ -264,8 +284,76 @@ impl EngineHost {
                 Ok(Some(json!({})))
             }
             "setBypassCSP" | "bringToFront" => Ok(Some(json!({}))),
+            // Like document.open(); document.write(html); document.close() in
+            // the frame's main world (Chrome keeps the URL too).
+            "setDocumentContent" => {
+                #[derive(Deserialize)]
+                #[serde(rename_all = "camelCase")]
+                struct P {
+                    frame_id: String,
+                    html: String,
+                }
+                let p: P = cmd.command.params()?;
+                let page_id = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?.id;
+                let frame = self
+                    .thread
+                    .browser
+                    .frame(page_id, &FrameId(p.frame_id))
+                    .ok_or_else(|| CdpError::server("No frame for given id found"))?;
+                let realm = frame.main_realm().cloned().ok_or_else(|| CdpError::server("Frame has no document"))?;
+                let scope = realm.scope().map_err(super::remote::js_to_cdp)?;
+                let mut args = lp_js::RootedVec::new();
+                args.push(&scope, scope.string(&p.html));
+                scope
+                    .call_function_rooted(SET_DOCUMENT_CONTENT, None, &args)
+                    .map_err(|e| CdpError::server(e.details(&scope).message))?;
+                Ok(Some(json!({})))
+            }
+            "close" => self.close_running_beforeunload(cmd),
             _ => Err(CdpError::unsupported(&cmd.command.method)),
         }
+    }
+
+    /// `Page.close`: fires `beforeunload` at the main window first. When a
+    /// handler cancels it (`preventDefault()` or a `returnValue`), Chrome
+    /// asks with a "beforeunload" dialog: answered by
+    /// `Page.handleJavaScriptDialog` while a session has Page enabled
+    /// (dialog.rs), the page closes on accept and stays on dismiss. Without
+    /// such a session it closes. Chrome additionally shows the dialog only
+    /// after a user gesture on the page; the engine tracks no user
+    /// activation, so any cancelling handler asks.
+    fn close_running_beforeunload(&mut self, cmd: &PageCommand<'_, '_>) -> CdpResult<Option<serde_json::Value>> {
+        let page_id = self.pages.get(&cmd.page).ok_or_else(|| CdpError::server("page is gone"))?.id;
+        let (frame_id, url, realm) = {
+            let page = self.thread.browser.page(page_id).ok_or_else(|| CdpError::server("page is gone"))?;
+            (page.main_frame.id.0.clone(), page.main_frame.url.clone(), page.main_frame.main_realm().cloned())
+        };
+        let cancelled = realm.is_some_and(|realm| {
+            realm.scope().is_ok_and(|scope| {
+                match scope.call_function_rooted(FIRE_BEFOREUNLOAD, None, &lp_js::RootedVec::new()) {
+                    Ok(v) => v.to_bool(),
+                    Err(e) => {
+                        scope.report_exception(&e);
+                        false
+                    }
+                }
+            })
+        });
+        let mut close = true;
+        let mut replied = false;
+        if cancelled && self.collector.dialogs.would_block(page_id) {
+            // Chrome answers Page.close at once; the dialog follows.
+            self.thread.browser.checkpoint();
+            self.flush();
+            self.reply(cmd, &json!({}));
+            replied = true;
+            let answer = self.collector.dialogs.show(&self.out, page_id, &frame_id, &url, "beforeunload", "", "");
+            close = answer.is_none_or(|a| a.accept);
+        }
+        if close {
+            self.close_requests.push(cmd.page);
+        }
+        Ok((!replied).then(|| json!({})))
     }
 
     fn main_frame(&self, page: PageKey) -> CdpResult<(String, String, String)> {

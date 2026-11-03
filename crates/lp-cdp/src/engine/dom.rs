@@ -292,7 +292,7 @@ impl EngineHost {
                 // Child frames report main-frame viewport coordinates, as Chrome
                 // does for same-process iframes.
                 let (ox, oy) = if action == "focus" { (0.0, 0.0) } else { self.frame_offset(cmd.page, &frame)? };
-                let rect = {
+                let (rect, quads) = {
                     let dom = page.dom.borrow();
                     if dom.root_node(node, true).map_err(dom_error)? != page.document() {
                         return Err(CdpError::server("Node is detached from document"));
@@ -300,10 +300,14 @@ impl EngineHost {
                     if dom.node_type(node).map_err(dom_error)? != NodeType::Element {
                         return Err(CdpError::server("Node does not have a layout object"));
                     }
-                    page.layout
-                        .borrow()
+                    let layout = page.layout.borrow();
+                    let rect = layout
                         .client_rect(&dom, node)
-                        .ok_or_else(|| CdpError::server("Node does not have a layout object"))?
+                        .ok_or_else(|| CdpError::server("Node does not have a layout object"))?;
+                    let quads = matches!(action, "getBoxModel" | "getContentQuads")
+                        .then(|| layout.box_quads(&dom, node))
+                        .flatten();
+                    (rect, quads)
                 };
                 // In layout units, as Chromium reports untransformed geometry:
                 // the frame's offset and the element's rect each quantized,
@@ -313,19 +317,38 @@ impl EngineHost {
                 let (ox, oy) = (lp_dom::layout::layout_unit(ox), lp_dom::layout::layout_unit(oy));
                 let (rx, ry) = (rect.x + ox, rect.y + oy);
                 let quad = [rx, ry, rx + rect.width, ry, rx + rect.width, ry + rect.height, rx, ry + rect.height];
-                match action {
-                    "getBoxModel" => {
+                match (action, quads) {
+                    ("getBoxModel", Some(q)) => {
+                        let border = offset_quad(q.border, ox, oy, !q.transformed);
+                        let unit = |v: [f64; 4]| if q.transformed { v } else { v.map(lp_dom::layout::layout_unit) };
+                        let (b, p, m) = (unit(q.border_widths), unit(q.padding), unit(q.margin));
+                        let inset = |by: [f64; 4]| inset_quad(&border, q.width, q.height, by, q.transformed);
+                        let padding = inset(b);
+                        let content = inset([b[0] + p[0], b[1] + p[1], b[2] + p[2], b[3] + p[3]]);
+                        let margin = inset(m.map(|v| -v));
+                        json!({"model":{"content":content,"padding":padding,"border":border,"margin":margin,
+                            "width":q.width.round() as i64,"height":q.height.round() as i64}})
+                    }
+                    ("getContentQuads", Some(q)) => {
+                        let quads: Vec<[f64; 8]> = if q.fragments.is_empty() {
+                            vec![offset_quad(q.border, ox, oy, !q.transformed)]
+                        } else {
+                            q.fragments.iter().map(|f| offset_quad(*f, ox, oy, true)).collect()
+                        };
+                        json!({ "quads": quads })
+                    }
+                    ("getBoxModel", None) => {
                         json!({"model":{"content":quad,"padding":quad,"border":quad,"margin":quad,"width":rect.width.round() as i64,"height":rect.height.round() as i64}})
                     }
-                    "getContentQuads" => json!({"quads":[quad]}),
-                    "focus" => {
+                    ("getContentQuads", None) => json!({"quads":[quad]}),
+                    ("focus", _) => {
                         if !page.dom.borrow().is_focusable(node).map_err(dom_error)? {
                             return Err(CdpError::server("Node is not focusable"));
                         }
                         lp_webapi::input::focus_element(&page, node);
                         json!({})
                     }
-                    "scrollIntoViewIfNeeded" => {
+                    ("scrollIntoViewIfNeeded", _) => {
                         #[derive(Deserialize)]
                         struct Area {
                             x: f64,
@@ -363,6 +386,42 @@ impl EngineHost {
         };
         Ok(Some(result))
     }
+}
+
+/// A quad moved by a child frame's offset; `units` quantizes the points to
+/// layout units, as Chromium reports untransformed geometry.
+fn offset_quad(q: [f64; 8], ox: f64, oy: f64, units: bool) -> [f64; 8] {
+    let mut out = q;
+    for i in 0..4 {
+        out[2 * i] += ox;
+        out[2 * i + 1] += oy;
+    }
+    if units {
+        out = out.map(lp_dom::layout::layout_unit);
+    }
+    out
+}
+
+/// `border` (clockwise from its top-left corner, an affine image of a
+/// `width` x `height` box when `transformed`, else that box itself) inset by
+/// `by` (top, right, bottom, left; negative grows it), mapped like the box.
+fn inset_quad(border: &[f64; 8], width: f64, height: f64, by: [f64; 4], transformed: bool) -> [f64; 8] {
+    // What one CSS px along the box's own x and y axes moves in the page.
+    let axis = |dx: f64, dy: f64, len: f64, fallback: (f64, f64)| {
+        if transformed && len > 0.0 {
+            (dx / len, dy / len)
+        } else {
+            fallback
+        }
+    };
+    let ux = axis(border[2] - border[0], border[3] - border[1], width, (1.0, 0.0));
+    let uy = axis(border[6] - border[0], border[7] - border[1], height, (0.0, 1.0));
+    let (width, height) = if transformed { (width, height) } else { (border[2] - border[0], border[7] - border[1]) };
+    let at = |u: f64, v: f64| (border[0] + u * ux.0 + v * uy.0, border[1] + u * ux.1 + v * uy.1);
+    let (top, right, bottom, left) = (by[0], by[1], by[2], by[3]);
+    let corners =
+        [at(left, top), at(width - right, top), at(width - right, height - bottom), at(left, height - bottom)];
+    [corners[0].0, corners[0].1, corners[1].0, corners[1].1, corners[2].0, corners[2].1, corners[3].0, corners[3].1]
 }
 
 /// `DOM.scrollIntoViewIfNeeded` for `node` in its document, queueing the scroll events.

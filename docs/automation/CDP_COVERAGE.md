@@ -19,7 +19,7 @@ Capture uses a shared process payload budget (default 64 MiB, 8 MiB/body), at mo
 
 The browser integration smoke also exercises DOM access before init scripts, shared DOM across isolated worlds, page fetch with exact Network frame/loader correlation, route fulfillment/abort after headers, and Web Storage context/page/navigation isolation. These checks use local HTTP and JavaScript evaluation; The full DOM protocol and actual TOS workflows remain unvalidated. A separate Input check covers keyboard typing/text insertion and mouse checkbox activation; editing commands are advisory and pen/touch remain unsupported; native drag-and-drop works under Playwright's drag interception; wheel default scrolling follows the synthetic layout. Mouse coordinates follow the native synthetic layout, not full CSS positioning; the smoke derives its click point from the reported rectangle and verifies the exact hit target.
 
-Methods: 122 (Playwright 1.59.1's static list plus the session methods it sends that the list misses). Upstream implements 95 of them. Rewrite: 83 engine, 10 accepted/recorded only, 1 conditional, 28 pending (counts from the table below).
+Methods: 122 (Playwright 1.59.1's static list plus the session methods it sends that the list misses). Upstream implements 95 of them. Rewrite: 84 engine, 10 accepted/recorded only, 1 conditional, 27 pending (counts from the table below).
 
 | Method | Upstream 2ad38773f | Rewrite | Notes |
 | --- | --- | --- | --- |
@@ -41,8 +41,8 @@ Methods: 122 (Playwright 1.59.1's static list plus the session methods it sends 
 | `DOM.disable` | **no** | engine | stops documentUpdated notifications |
 | `DOM.enable` | yes | engine | documentUpdated notifications; frontend mirror/mutation tracking unsupported |
 | `DOM.focus` | yes | engine | native focusability check and focus steps |
-| `DOM.getBoxModel` | yes | engine | one border-box quad for every box (no separate margin/padding geometry); main-frame viewport coordinates in layout units |
-| `DOM.getContentQuads` | yes | engine | see `DOM.getBoxModel` |
+| `DOM.getBoxModel` | yes | engine | separate content, padding, border and margin quads from the laid-out border/padding/margin widths; the transforms of the element and its containing blocks map them (a rotated box reports its rotated points, as Chrome); `width`/`height` are the untransformed border box; main-frame viewport coordinates, untransformed boxes in layout units. An inline box over several lines reports the bounding box of its line fragments (Chrome uses the line boxes, so its top/bottom can differ by the line gap) and only inline margins |
+| `DOM.getContentQuads` | yes | engine | the border-box quad after transforms (Playwright `boundingBox` is its bounding box); an inline box over several lines reports one quad per line, the first starting after its start border/padding and the last ending after its end ones |
 | `DOM.getFrameOwner` | yes | engine | native child owner backend ID in the same page session; missing/main frame rejected |
 | `DOM.resolveNode` | yes | engine | wraps the node in the requested execution context of its frame (or its main world) |
 | `DOM.scrollIntoViewIfNeeded` | yes | engine | in a child frame, also reveals each owning iframe in its parent; connected visible elements over native synthetic layout; `rect` (node-relative area, sent by Playwright for positional clicks) scrolls the window to the nearest edge after revealing the node |
@@ -96,13 +96,13 @@ Methods: 122 (Playwright 1.59.1's static list plus the session methods it sends 
 | `Page.addScriptToEvaluateOnNewDocument` | yes | engine |  |
 | `Page.bringToFront` | yes | accepted, recorded only | single foreground page per target |
 | `Page.captureScreenshot` | yes | engine (`render` feature) | rendered by lp-render (Blitz: Stylo, Taffy, Parley, vello_cpu) from a snapshot of the live DOM, off the browser thread; `png` and `jpeg` (`quality`), `clip` (document CSS px, `scale`; the viewport keeps its scroll, so fixed elements appear where the viewport shows them, unless `captureBeyondViewport`), `captureBeyondViewport` (whole document); hover and focus styles of the page's pointer and focus; `Emulation.setDefaultBackgroundColorOverride`; `webp`, `fromSurface: false` and `optimizeForSpeed` are ignored or refused; pixels differ from Chromium's (no hinting, Blitz layout); see [SCREENSHOTS.md](SCREENSHOTS.md). Without the feature: an explicit error |
-| `Page.close` | yes | pending |  |
+| `Page.close` | yes | engine | fires `beforeunload` at the main window first; a handler that cancels it (`preventDefault()` or a `returnValue`) opens a `beforeunload` dialog answered by `Page.handleJavaScriptDialog` (accept closes, dismiss keeps the page) while a session has Page enabled, and the page closes when none has. Chrome additionally requires a user gesture before it asks; the engine tracks no user activation. `onbeforeunload` returning a string is not honoured (handler return values are not implemented) |
 | `Page.createIsolatedWorld` | yes | engine | named isolated worlds per frame, with init scripts for that world |
 | `Page.enable` | yes | engine |  |
 | `Page.getFrameTree` | yes | engine | nested native frames with per-document loader and actual security origin |
 | `Page.getLayoutMetrics` | yes | engine | main frame, CSS px: emulated viewport, window scroll offset and document scroll size (at least the viewport); no pinch zoom, so the visual viewport equals the layout viewport with `scale`/`zoom` 1; the deprecated fields repeat the CSS values, as headless Chromium on macOS reports at DPR 1 and 2. The document size comes from lightningpanda's approximate layout, not the renderer's, so a full-page `clip` built from it can differ from `captureBeyondViewport` |
 | `Page.getNavigationHistory` | yes | engine | main-frame session history with stable entry ids; the current entry's `title` is its document's `<title>` (others are empty); `transitionType` is `other`; the first navigation replaces the initial about:blank entry, as in Chrome |
-| `Page.handleJavaScriptDialog` | yes | engine | `alert`/`confirm`/`prompt` never block: they return what a dismissed dialog gives (undefined, false, null) and report Page.javascriptDialogOpening then Page.javascriptDialogClosed; this answers a dialog reported earlier ({}) or fails with "No dialog is showing"; `accept`/`promptText` cannot change the result |
+| `Page.handleJavaScriptDialog` | yes | engine | while a session has Page enabled on the page, `alert`/`confirm`/`prompt` suspend the script (Page.javascriptDialogOpening with `hasBrowserHandler: true`) and the connection is served by a nested read loop until this command answers: `confirm` returns `accept`, `prompt` returns `promptText` (empty when omitted) or null on dismiss, then Page.javascriptDialogClosed {frameId, result, userInput}. No page task or timer runs meanwhile; every other command waits in order until the dialog closes (Chrome likewise answers `Runtime.evaluate` on the page only afterwards). The session detaching or disabling Page, its target closing or the connection ending dismisses it. Without such a session, and during `LP.*` driver commands, dialogs do not block: they return dismissed results (undefined, false, null) and are reported, and this answers such a dialog ({}) or fails with "No dialog is showing" |
 | `Page.navigate` | yes | engine | about:blank, data and HTTP documents; frameId supports native children; explicit failures, no joint child history |
 | `Page.navigateToHistoryEntry` | yes | engine | answers once the traversal is queued, like Chrome; same-document entries commit as `navigatedWithinDocument` with `popstate`, others re-fetch the document (no bfcache); unknown ids are invalid params |
 | `Page.printToPDF` | yes | engine (`render` feature) | rendered by lp-render from the page's Blitz document after the fonts and images its layout fetches arrive (up to 10 s; the browser thread keeps serving commands, and the PDF is written on the render thread): one PDF page per `.pz-page` box (Paprize), else the document cut into the paper's content box (`paperWidth`/`paperHeight`, `landscape`, margins default 0.4 in, `scale` 0.1-2); `printBackground` (default false) leaves out background colors and images; `pageRanges` ("1-3, 5, 7-") keeps those pages ("Page range syntax error", "Page range exceeds page count"); `displayHeaderFooter`/templates, `preferCSSPageSize`, `generateTaggedPDF` and `generateDocumentOutline` are accepted and not produced; `transferMode: ReturnAsStream` returns an `IO` stream; invalid sizes, margins and scales fail with Chrome's messages. Deviation: the document prints with the page's emulated media (screen unless `Emulation.setEmulatedMedia` set print), not Chrome's print media, because ToS emulates screen. Without the feature: an explicit error |
@@ -121,10 +121,10 @@ Methods: 122 (Playwright 1.59.1's static list plus the session methods it sends 
 | `Profiler.stopPreciseCoverage` | **no** | pending |  |
 | `Profiler.takePreciseCoverage` | **no** | pending |  |
 | `Runtime.addBinding` | yes | engine | defines a non-enumerable global taking one string in the page's realms (every world, or `executionContextName`'s; `executionContextId` covers that context only), now and in every later realm before init scripts run, so it survives navigation; calls emit `Runtime.bindingCalled` {name, payload, executionContextId} to the sessions that added it (Playwright `exposeFunction`/`exposeBinding`) |
-| `Runtime.callFunctionOn` | yes | engine |  |
+| `Runtime.callFunctionOn` | yes | engine | `generatePreview` adds `Runtime.ObjectPreview` (see `Runtime.evaluate`) |
 | `Runtime.enable` | yes | engine |  |
-| `Runtime.evaluate` | yes | engine |  |
-| `Runtime.getProperties` | yes | engine |  |
+| `Runtime.evaluate` | yes | engine | `generatePreview`: V8's `ObjectPreview` shape (5 own enumerable data properties of an object, 100 elements of an array, Map/Set `size` and 5 `entries`, `[[PrimitiveValue]]`, `[[PromiseState]]`/`[[PromiseResult]]`, `overflow`, `subtype`); DOM nodes preview no prototype accessors and a Proxy is previewed as its target (JavaScriptCore cannot tell a Proxy apart). A script stopped by `Runtime.terminateExecution` answers "Execution was terminated" |
+| `Runtime.getProperties` | yes | engine | `ownProperties`, `accessorPropertiesOnly` and `generatePreview`; symbol-keyed properties carry `symbol`; accessors report both `get` and `set` (undefined when missing); `internalProperties`: `[[Prototype]]` (own properties), `[[PrimitiveValue]]`, `[[Entries]]` of a Map/Set and a promise's `[[PromiseState]]`/`[[PromiseResult]]` (read through a reaction, which marks a rejected promise handled; inside a running microtask it reads "pending"). Not available from JavaScriptCore's API: a Proxy's `[[Target]]`/`[[Handler]]`, bound functions' `[[TargetFunction]]`, `[[FunctionLocation]]` and `[[Scopes]]` |
 | `Runtime.releaseObject` | yes | engine |  |
 | `Runtime.removeBinding` | **no** | engine | removes the binding from the page's future realms and deletes the global from live ones once no session of the page uses it |
 | `Runtime.runIfWaitingForDebugger` | yes | engine | starts a paused popup's navigation; other targets never start paused |
@@ -145,6 +145,8 @@ Methods: 122 (Playwright 1.59.1's static list plus the session methods it sends 
 | `Target.setAutoAttach` | yes | engine |  |
 | `Tracing.end` | **no** | pending |  |
 | `Tracing.start` | **no** | pending |  |
+
+Session methods not in Playwright's list but implemented: `Page.setDocumentContent` (document.open/write/close in the frame's main world), `Runtime.setAsyncCallStackDepth` (no async stacks are recorded; a positive depth adds the synchronous `stackTrace` to that session's `Runtime.consoleAPICalled`, captured only while a session asks), `Runtime.terminateExecution` (the connection's watchdog check stops a running script when it arrives). `Runtime.queryObjects` fails explicitly: JavaScriptCore's API has no heap iteration. `Runtime.consoleAPICalled` arguments that are objects carry a preview, as in Chrome.
 
 Browser-level methods not in Playwright's list but implemented: `Target.getTargets`, `Target.getBrowserContexts`, `Target.setDiscoverTargets` (page filters honored), `Target.activateTarget` (validates the target), `Runtime.releaseObjectGroup`, `Emulation.clearDeviceMetricsOverride`, `Page.disable`, `Runtime.disable`, `Network.disable`. Session methods outside that static list include `Fetch.continueWithAuth` (server Basic).
 
@@ -175,8 +177,8 @@ and do not retain nodes or old documents. Descriptions allow depths 0–32 with 
 Frontend node IDs, full-subtree depth -1, pierced traversal, frontend mirrors and mutation events
 are unsupported. Enabling DOM supplies documentUpdated notifications on navigation.
 
-Geometry is the existing synthetic native layout. Its single rectangle supplies every box-model
-quad; this is not full CSS margin/border/padding layout. Scroll rectangle overrides are explicitly
+Geometry is Blitz's layout (lp-render): box-model quads come from its border, padding and margin
+widths and the transforms of the element's containing-block chain. Scroll rectangle overrides are explicitly
 unsupported. Detached/hidden elements reject geometry/scroll commands. Raw handle owner-frame
 and bounding-box checks pass through real Playwright. With the native MutationObserver dependency,
 the retained locator fill/click regression also passes unchanged. This focused local fixture does

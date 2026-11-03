@@ -3239,6 +3239,9 @@ fn network_idle_waits_for_in_flight_requests() {
 #[path = "engine_cdp/frames.rs"]
 mod frames;
 
+#[path = "engine_cdp/tier3_g2.rs"]
+mod tier3_g2;
+
 #[test]
 fn links_and_window_open_targeting_blank_open_paused_popups() {
     let mut h = Harness::new();

@@ -1009,6 +1009,44 @@ impl<'s> Scope<'s> {
         let r = self.realm.helper(self, "properties")?.call(None, &[object.value(), self.boolean(own_only)])?;
         r.as_object().ok_or_else(|| JsError::Type("properties helper failed".into()))
     }
+
+    /// CDP `Runtime.ObjectPreview` of an object as JSON text. `description`
+    /// replaces the computed one; `promise` is a `[state, result]` array
+    /// read through [`Scope::promise_probe`].
+    pub fn object_preview(
+        &self,
+        value: Value<'_>,
+        description: Option<&str>,
+        promise: Option<Value<'_>>,
+    ) -> JsResult<String> {
+        let description = description.map_or_else(|| self.undefined(), |d| self.string(d));
+        let promise = promise.unwrap_or_else(|| self.undefined());
+        self.realm.helper(self, "preview")?.call(None, &[value, description, promise])?.to_string()
+    }
+
+    /// CDP `internalProperties` of an object as an array of `[name, value]`
+    /// pairs: `[[Prototype]]` (when asked), `[[PrimitiveValue]]` of
+    /// primitive wrappers and `[[Entries]]` of a Map or Set.
+    pub fn internal_properties(&self, object: Object<'_>, with_prototype: bool) -> JsResult<Object<'s>> {
+        let r = self.realm.helper(self, "internals")?.call(None, &[object.value(), self.boolean(with_prototype)])?;
+        r.as_object().ok_or_else(|| JsError::Type("internals helper failed".into()))
+    }
+
+    /// For a promise, attaches reactions recording its settlement and
+    /// returns a function reading `[state, result]`. A settled promise's
+    /// reaction runs once the outermost native call into the engine returns
+    /// (JavaScriptCore drains microtasks then), so read it after that.
+    pub fn promise_probe(&self, value: Value<'_>) -> JsResult<Option<Object<'s>>> {
+        let r = self.realm.helper(self, "promiseProbe")?.call(None, &[value])?;
+        Ok(r.as_object())
+    }
+
+    /// The JavaScript stack at this point, in JavaScriptCore's format (one
+    /// `function@url:line:column` per line, innermost first, the helper's
+    /// own frame included).
+    pub fn current_stack(&self) -> JsResult<String> {
+        self.realm.helper(self, "stack")?.call(None, &[])?.to_string()
+    }
 }
 
 /// Borrow of a wrapper payload that keeps the wrapper GC-protected.
