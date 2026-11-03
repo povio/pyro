@@ -267,7 +267,7 @@ pub(super) struct ClipParams {
 }
 
 impl ClipParams {
-    pub(super) fn area(self) -> CdpResult<Area> {
+    pub(super) fn area(self, beyond_viewport: bool) -> CdpResult<Area> {
         if !(self.width > 0.0 && self.height > 0.0) {
             return Err(CdpError::invalid_params("clip width and height must be positive"));
         }
@@ -277,6 +277,7 @@ impl ClipParams {
             width: self.width,
             height: self.height,
             scale: self.scale.unwrap_or(1.0),
+            beyond_viewport,
         })
     }
 }
@@ -314,7 +315,13 @@ impl EngineHost {
             scroll_x: s.scroll_x,
             scroll_y: s.scroll_y,
             resource_scope: frame.loader_id.0.clone(),
-            live: Some(Live { page: pid.0 as u64, tree: live, clip: mark.map(lp_dom::snapshot::render_key) }),
+            live: Some(Live {
+                page: pid.0 as u64,
+                tree: live,
+                clip: mark.map(lp_dom::snapshot::render_key),
+                interaction: Some((s.hovered, s.focused)),
+            }),
+            background: self.pages.values().find(|p| p.id == pid).and_then(|p| p.background_override),
         })
     }
 
@@ -333,7 +340,7 @@ impl EngineHost {
             }
         };
         let area = match (p.clip, p.capture_beyond_viewport) {
-            (Some(clip), _) => clip.area()?,
+            (Some(clip), beyond_viewport) => clip.area(beyond_viewport)?,
             (None, true) => Area::FullPage,
             (None, false) => Area::Viewport,
         };
@@ -613,7 +620,9 @@ impl EngineHost {
             return Ok(std::rc::Rc::new(std::cell::RefCell::new(Some(Ok(value)))));
         }
         let area = match (spec.clip, spec.full_page, element) {
-            (Some((x, y, width, height)), _, _) => Area::Clip { x, y, width, height, scale: 1.0 },
+            (Some((x, y, width, height)), _, _) => {
+                Area::Clip { x, y, width, height, scale: 1.0, beyond_viewport: false }
+            }
             (None, true, _) => Area::FullPage,
             (None, false, Some(_)) => Area::Element,
             (None, false, None) => Area::Viewport,

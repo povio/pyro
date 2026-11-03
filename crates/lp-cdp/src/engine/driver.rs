@@ -354,12 +354,59 @@ struct PatchSpec {
     body: Option<String>,
 }
 
-/// A file for `upload`.
+/// A file for `upload` (and `DOM.setFileInputFiles`).
 #[derive(Clone, Debug)]
-struct UploadFile {
+pub(super) struct UploadFile {
     name: String,
     mime: String,
     bytes: Vec<u8>,
+    /// `File.lastModified` (ms since the epoch); `None`: now.
+    last_modified: Option<f64>,
+}
+
+fn now_ms() -> f64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_millis() as f64)
+}
+
+/// The file at `path`, at most [`MAX_UPLOAD_BYTES`], named by its last
+/// component, typed by its extension and dated by its modification time.
+pub(super) fn read_upload_path(path: &str) -> CdpResult<UploadFile> {
+    let meta = std::fs::metadata(path).map_err(|e| CdpError::invalid_params(format!("upload {path}: {e}")))?;
+    if meta.len() as usize > MAX_UPLOAD_BYTES {
+        return Err(CdpError::invalid_params(format!("upload {path}: file is too large")));
+    }
+    let bytes = std::fs::read(path).map_err(|e| CdpError::invalid_params(format!("upload {path}: {e}")))?;
+    let name = std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let mime = mime_of(&name);
+    let last_modified =
+        meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_millis() as f64);
+    Ok(UploadFile { name, mime, bytes, last_modified })
+}
+
+/// Why `id` cannot take files, if it cannot: not an `<input type=file>`.
+pub(super) fn not_a_file_input(page: &PageDom, id: NodeId) -> Option<&'static str> {
+    let dom = page.dom.borrow();
+    let is_file_input =
+        local(&dom, id) == Some("input") && attr(&dom, id, "type").is_some_and(|t| t.eq_ignore_ascii_case("file"));
+    (!is_file_input).then_some("element is not an <input type=file>")
+}
+
+/// Gives the file input `id` `files`, then fires `input` and `change`.
+pub(super) fn set_file_input(page: &Rc<PageDom>, id: NodeId, files: &[UploadFile]) -> Result<(), String> {
+    let now = now_ms();
+    let entries: Vec<lp_webapi::file::FileEntry> = files
+        .iter()
+        .map(|f| lp_webapi::file::FileEntry {
+            name: f.name.clone(),
+            mime: f.mime.clone(),
+            bytes: bytes::Bytes::from(f.bytes.clone()),
+            last_modified: f.last_modified.unwrap_or(now),
+        })
+        .collect();
+    page.set_input_files(id, entries).map_err(|e| format!("{e:?}"))?;
+    input::fire_simple(page, id, "input", true, false);
+    input::fire_simple(page, id, "change", true, false);
+    Ok(())
 }
 
 /// A run holds a few steps; the large `Act` variant is not worth boxing.
@@ -2738,32 +2785,15 @@ fn mouse_step(
 
 /// Sets the files of an `<input type=file>`, then `input` and `change`.
 fn upload(page: &Rc<PageDom>, id: NodeId, files: &[UploadFile]) -> Attempt {
-    {
-        let dom = page.dom.borrow();
-        let is_file_input =
-            local(&dom, id) == Some("input") && attr(&dom, id, "type").is_some_and(|t| t.eq_ignore_ascii_case("file"));
-        if !is_file_input {
-            return Attempt::Retry("element is not an <input type=file>".into());
-        }
-        if disabled(&dom, id) {
-            return Attempt::Retry("element is disabled".into());
-        }
+    if let Some(why) = not_a_file_input(page, id) {
+        return Attempt::Retry(why.into());
     }
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_millis() as f64);
-    let entries: Vec<lp_webapi::file::FileEntry> = files
-        .iter()
-        .map(|f| lp_webapi::file::FileEntry {
-            name: f.name.clone(),
-            mime: f.mime.clone(),
-            bytes: bytes::Bytes::from(f.bytes.clone()),
-            last_modified: now,
-        })
-        .collect();
-    if let Err(e) = page.set_input_files(id, entries) {
-        return Attempt::Retry(format!("{e:?}"));
+    if disabled(&page.dom.borrow(), id) {
+        return Attempt::Retry("element is disabled".into());
     }
-    input::fire_simple(page, id, "input", true, false);
-    input::fire_simple(page, id, "change", true, false);
+    if let Err(e) = set_file_input(page, id, files) {
+        return Attempt::Retry(e);
+    }
     Attempt::Done(json!({ "files": files.len() }))
 }
 
@@ -2772,14 +2802,14 @@ fn drop_files(page: &Rc<PageDom>, id: NodeId, files: &[UploadFile]) -> Attempt {
         Ok(point) => point,
         Err(retry) => return retry,
     };
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_millis() as f64);
+    let now = now_ms();
     let entries: Vec<_> = files
         .iter()
         .map(|file| lp_webapi::file::FileEntry {
             name: file.name.clone(),
             mime: file.mime.clone(),
             bytes: bytes::Bytes::from(file.bytes.clone()),
-            last_modified: now,
+            last_modified: file.last_modified.unwrap_or(now),
         })
         .collect();
     let data = input::DragData { items: Vec::new(), drag_operations_mask: 1 };
@@ -3077,17 +3107,10 @@ fn upload_files(action: Action, value: &str, inline: Vec<UploadParams>) -> CdpRe
             return Err(CdpError::invalid_params(format!("file {} is too large", f.name)));
         }
         let mime = f.mime_type.unwrap_or_else(|| mime_of(&f.name));
-        files.push(UploadFile { name: f.name, mime, bytes });
+        files.push(UploadFile { name: f.name, mime, bytes, last_modified: None });
     }
     for path in value.lines().map(str::trim).filter(|l| !l.is_empty()) {
-        let meta = std::fs::metadata(path).map_err(|e| CdpError::invalid_params(format!("upload {path}: {e}")))?;
-        if meta.len() as usize > MAX_UPLOAD_BYTES {
-            return Err(CdpError::invalid_params(format!("upload {path}: file is too large")));
-        }
-        let bytes = std::fs::read(path).map_err(|e| CdpError::invalid_params(format!("upload {path}: {e}")))?;
-        let name = std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-        let mime = mime_of(&name);
-        files.push(UploadFile { name, mime, bytes });
+        files.push(read_upload_path(path)?);
     }
     if files.is_empty() {
         return Err(CdpError::invalid_params("upload needs files or a path in value"));
@@ -3858,7 +3881,6 @@ impl EngineHost {
             Some(0)
         };
         let popups_from = self.popups.len();
-        if !single {}
         let now = Instant::now();
         let first = steps.first().map_or(Duration::ZERO, |(_, t)| *t);
         let job = Job {

@@ -83,6 +83,12 @@ mod profile {
     }
 }
 
+/// `LP_GEOMETRY_DEBUG=1`: describe elements whose box is empty (diagnostic).
+fn geometry_debug() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("LP_GEOMETRY_DEBUG").is_some())
+}
+
 /// Bumped when a sub-resource arrives that documents may have been laid out
 /// without (a font or image fetched in the background): each page's
 /// document is built again at its next layout query.
@@ -258,7 +264,8 @@ impl BlitzGeometry {
             scroll_x: 0.0,
             scroll_y: 0.0,
             resource_scope: format!("geometry-{}", self.page),
-            live: Some(Live { page: self.page, tree, clip: None }),
+            live: Some(Live { page: self.page, tree, clip: None, interaction: None }),
+            background: None,
         };
         SNAPSHOT_NS.fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
         Some(snap)
@@ -422,7 +429,7 @@ impl BlitzGeometry {
         let t = Instant::now();
         let b = RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.element_box(self.page, key));
         READ_NS.fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
-        if std::env::var_os("LP_GEOMETRY_DEBUG").is_some() && b.is_some_and(|b| b.width == 0.0 || b.height == 0.0) {
+        if b.is_some_and(|b| b.width == 0.0 || b.height == 0.0) && geometry_debug() {
             let what = RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.describe_element(self.page, key));
             eprintln!("lp-geometry: empty box {b:?}\n  {}", what.unwrap_or_default());
         }
