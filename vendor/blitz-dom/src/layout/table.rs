@@ -535,7 +535,11 @@ pub(crate) fn build_table_context(
         .map(|row| {
             let min = match row.height {
                 Some(height) => style_helpers::length(height),
-                None => style_helpers::auto(),
+                // Table rows retain their cells' intrinsic minimum even when
+                // a cell clips overflow. Grid's `auto` minimum would use zero
+                // for that cell, allowing a column-flex ancestor to compress
+                // the row below its content and authored cell-height minimum.
+                None => style_helpers::min_content(),
             };
             let max = if row.is_constrained && has_unconstrained_rows {
                 style_helpers::max_content()

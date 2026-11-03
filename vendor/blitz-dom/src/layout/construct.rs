@@ -1076,13 +1076,19 @@ fn build_inline_layout_with(
             .and_then(|parent_id| nodes[parent_id].primary_styles())
     });
 
-    let parley_style = root_node_style
+    let mut parley_style = root_node_style
         .as_ref()
         .map(|s| stylo_to_parley::style(inline_context_root_node_id, s))
         .unwrap_or_else(|| parley::TextStyle {
             white_space_collapse: WhiteSpaceCollapse::Collapse,
             ..Default::default()
         });
+
+    // The formatting-context root's vertical alignment positions its box in
+    // its parent's context (for example a middle-aligned table cell). It does
+    // not shift that box's own line strut or inherited direct text. Descendant
+    // spans and atomic inline boxes retain their separately collected styles.
+    parley_style.vertical_align = parley::VerticalAlign::BASELINE;
 
     // Create a parley tree builder
     let mut builder = layout_ctx.tree_builder(font_ctx, scale, true, &parley_style);
