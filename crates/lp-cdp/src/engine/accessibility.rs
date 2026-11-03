@@ -1146,7 +1146,7 @@ impl EngineHost {
             .ok_or_else(|| CdpError::server("Could not find node with given id"))?;
         let title = page.document_title();
         let dom = page.dom.borrow();
-        let layout = page.layout.borrow();
+        let layout = page.layout();
         let mut b = Builder::new(&dom, &layout, page.document(), track);
         b.build(title, Some(frame.url.clone()).filter(|u| !u.is_empty()));
         if b.over_budget {
@@ -1193,7 +1193,7 @@ impl EngineHost {
         }
         let dom = page.dom.borrow();
         let rendered =
-            flattened.contains_key(&node) && !page.layout.borrow().style().is_hidden(&dom, node, Default::default());
+            flattened.contains_key(&node) && !page.layout().style().is_hidden(&dom, node, Default::default());
         let mut cur = dom.parent(node).ok().flatten();
         let parent = loop {
             let Some(c) = cur else { break 0 };
