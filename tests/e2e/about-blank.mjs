@@ -706,9 +706,15 @@ try {
       const resolvedOwner = await f.frameElement();
       assert.equal(await resolvedOwner.evaluate(el => el.id), 'sandbox');
       await resolvedOwner.dispose(); await owner.dispose();
-      // Playwright converts DOM.getBoxModel protocol errors into null.
-      // The native CDP regression separately asserts the explicit child-frame error.
-      assert.equal(await f.locator('p').boundingBox(), null);
+      // Child-frame geometry is in main-frame viewport coordinates, as in
+      // Chrome (measured: iframe at 8,26 304x154; <p> at 16,42, 18px tall).
+      // The child document is laid out at the top-level viewport's width,
+      // not its iframe's, so the block's width is not checked.
+      const frameBox = await p.locator('#sandbox').boundingBox();
+      assert.deepEqual(frameBox, { x: 8, y: 26, width: 304, height: 154 });
+      const pBox = await f.locator('p').boundingBox();
+      assert.ok(pBox, 'child geometry is reported');
+      assert.deepEqual([pBox.x, pBox.y, Math.round(pBox.height)], [16, 42, 18]);
     } finally { await p.close(); }
   });
   await check('child HTTP navigation, response body, fetch and route retain frame identity', async () => {
@@ -771,7 +777,13 @@ try {
         assert.equal(await p.locator('#root').inputValue(), 'parentR');
         assert.equal(await a.inputValue(), 'childx');
         assert.equal(await b.inputValue(), 'sibling!');
-        assert.equal(await a.boundingBox(), null, 'child geometry remains explicitly unsupported');
+        // Child-frame geometry in main-frame coordinates: Chrome puts #a's
+        // field at about 169-171,34-36 (153x21) and #b's 304px further right.
+        const [boxA, boxB] = [await a.boundingBox(), await b.boundingBox()];
+        assert.ok(boxA && boxB, 'child geometry is reported');
+        assert.ok(Math.abs(boxA.x - 170) <= 2 && Math.abs(boxA.y - 35) <= 2, JSON.stringify(boxA));
+        assert.ok(Math.abs(boxA.width - 153) <= 2 && Math.abs(boxA.height - 21) <= 2, JSON.stringify(boxA));
+        assert.equal(boxB.x - boxA.x, 304, 'the second iframe is one iframe width (300 + 2 x 2 border) further');
       }
     } finally { await p.close(); }
   });

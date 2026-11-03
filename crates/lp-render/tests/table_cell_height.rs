@@ -63,14 +63,19 @@ fn table_cell_height_is_a_content_minimum_in_fixed_and_auto_tables() {
             for sizing in ["border-box", "content-box"] {
                 for height in ["26px", "auto", "40px"] {
                     let b = boxes(&cell_html(collapse, layout, sizing, height), &["cell", "row", "child"]);
-                    // Chrome treats table-cell height as a border-box minimum even
-                    // for content-box. Collapsed 1px borders contribute half each.
-                    let expected = if height == "40px" {
-                        40.0
-                    } else if collapse == "collapse" {
-                        29.0
-                    } else {
-                        30.0
+                    // Measured in Chrome 156: a cell's height is a minimum of
+                    // its border box per `box-sizing`, so a content-box cell
+                    // adds its padding (4px) and borders (2px; half of each
+                    // collapsed 1px border, 1px) to it. Collapsed 1px borders
+                    // contribute half each to the content minimum too.
+                    let expected = match (collapse, sizing, height) {
+                        (_, "border-box", "40px") => 40.0,
+                        ("separate", "content-box", "40px") => 46.0,
+                        ("collapse", "content-box", "40px") => 45.0,
+                        ("separate", "content-box", "26px") => 32.0,
+                        ("collapse", "content-box", "26px") => 31.0,
+                        ("collapse", _, _) => 29.0,
+                        _ => 30.0,
                     };
                     if b[0].height != expected
                         || b[1].height != expected
