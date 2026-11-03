@@ -59,18 +59,22 @@ input[type="hidden" i] {
     display: none !important;
 }
 
+/* lightningpanda: Chromium's sizes: 13x13 border boxes, radios with a
+   0 bottom and 5px left margin. */
 input[type="checkbox"] {
-    width: 14px;
-    height: 14px;
+    box-sizing: border-box;
+    width: 13px;
+    height: 13px;
     margin: 3px 3px 3px 4px;
 }
 
 input[type="radio"] {
-    width: 14px;
-    height: 14px;
-    border-radius: 14px;
+    box-sizing: border-box;
+    width: 13px;
+    height: 13px;
+    border-radius: 13px;
     border: none;
-    margin: 3px 3px 3px 4px;
+    margin: 3px 3px 0 5px;
 }
 
 /* Chromium's UA sheet: text inputs are 2px-inset-bordered with 1px 2px
@@ -112,6 +116,13 @@ select {
 
 textarea {
     font-family: monospace;
+}
+
+/* lightningpanda: Chromium's UA sheet wraps a textarea's text and breaks
+   words longer than a line. */
+textarea {
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
 }
 
 input:focus,

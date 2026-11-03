@@ -354,6 +354,13 @@ pub trait LayoutGridContainer: LayoutPartialTree {
     /// Interpreted in the container's axes (see [`LayoutPartialTree::get_core_container_style`]).
     fn get_grid_child_style(&self, child_node_id: NodeId) -> Self::GridItemStyle<'_>;
 
+    /// Whether `node_id`'s rows are a table's (lightningpanda): an item spanning several rows grows them
+    /// as Chromium grows the rows under a rowspan cell (`DistributeExcessBlockSizeToRows`) rather than
+    /// as a grid distributes a spanning item. The default is false.
+    fn grid_rows_are_table_rows(&self, _node_id: NodeId) -> bool {
+        false
+    }
+
     /// Set the node's detailed grid information
     ///
     /// Implementing this method is optional. Doing so allows you to access details about the the grid such as

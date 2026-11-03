@@ -18,6 +18,13 @@ Layouts with inline boxes or a line-break override are not cached. Bounded at 40
 when full; `LayoutContext::clear_build_cache` empties it, and blitz-dom calls it when fonts or the
 scale change (`invalidate_inline_contexts`).
 
+`layout/line_break.rs`: an in-flow inline box wider than the line at the start of a line is appended
+and followed by a soft wrap opportunity, as for a box that fits. Content after it breaks there; a box
+ending the paragraph ends its last line. Upstream broke the line right after the box, which left an
+empty line below a box that ended the paragraph (Chromium has none). Covered by
+`an_atomic_inline_wider_than_its_line_ends_it` and `flow_parity_text_align` in
+`crates/lp-layout/tests/flow.rs`.
+
 Pagination scripts clone rows and paragraphs into pages, so the same text is built again and again
 under new elements. On the `cmr-overflow` PDF case Blitz's inline construction went from 222 to 107
 ms and pagination from about 597 to 485 ms per run; the PDF is byte-identical. lp-render's

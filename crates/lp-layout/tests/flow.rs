@@ -745,7 +745,6 @@ fn table_parity_spanmiddle() {
 const PREFLIGHT: &str = "<style>*,::before,::after{box-sizing:border-box;border:0 solid;margin:0;padding:0}input,button,textarea,select{font:inherit;color:inherit}html{font-size:16px;line-height:24px;font-family:ui-sans-serif,system-ui,sans-serif}</style>";
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn flow_parity_form_controls() {
     let html = format!(
         "<!doctype html>{PREFLIGHT}<body><div id=bar style=\"display:flex;align-items:center;gap:8px;height:40px;padding:0 12px\"><input id=filter style=\"width:100%\"></div><div id=col style=\"display:flex;flex-direction:column;width:300px\"><input id=stretched><textarea id=ta rows=3></textarea></div><div id=line><input id=inl size=10><input id=cb type=checkbox></div><input id=blk style=\"display:block\"><select id=sel style=\"width:120px\"><option>x</option></select><button id=empty></button></body>"
@@ -854,9 +853,9 @@ fn grid_parity_basic() {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn grid_parity_tailwind_columns() {
-    // Fractional widths: Chromium snaps client sizes to integers.
+    // Fractional widths: Chromium sizes fr tracks in 1/64 px (LayoutUnit),
+    // so a third of 668px is 222.65625.
     let close = |name: &str, html: &str, expected: &[(&str, [f64; 4])]| {
         let p = page(html);
         let result = p.layout.layout_result(&p.dom);
@@ -874,10 +873,10 @@ fn grid_parity_tailwind_columns() {
         "<!doctype html><body style=\"margin:0\"><div id=g style=\"display:grid;grid-template-columns:repeat(3,minmax(0,1fr));column-gap:16px;row-gap:8px;width:700px;padding:12px\"><div id=a style=\"height:30px\"></div><div id=b style=\"grid-column:span 2 / span 2;height:40px\"></div><div id=c style=\"grid-column:1 / -1;height:20px\"></div><div id=d style=\"height:25px\"></div></div><div id=p style=\"display:grid;grid-template-columns:48.65% 51.35%;width:500px\"><div id=p1 style=\"height:10px\"></div><div id=p2 style=\"height:12px\"></div></div></body>",
         &[
             ("g", [0.0, 0.0, 724.0, 125.0]),
-            ("a", [12.0, 12.0, 222.67, 30.0]),
-            ("b", [250.67, 12.0, 461.33, 40.0]),
+            ("a", [12.0, 12.0, 222.65625, 30.0]),
+            ("b", [250.65625, 12.0, 461.34375, 40.0]),
             ("c", [12.0, 60.0, 700.0, 20.0]),
-            ("d", [12.0, 88.0, 222.67, 25.0]),
+            ("d", [12.0, 88.0, 222.65625, 25.0]),
             ("p", [0.0, 125.0, 500.0, 12.0]),
             ("p1", [0.0, 125.0, 243.25, 10.0]),
             ("p2", [243.25, 125.0, 256.75, 12.0]),
@@ -886,7 +885,6 @@ fn grid_parity_tailwind_columns() {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn grid_parity_calendar_fr_rows_with_min_height() {
     let cells = |n: usize| "<div></div>".repeat(n);
     let html = format!(
@@ -897,14 +895,15 @@ fn grid_parity_calendar_fr_rows_with_min_height() {
     );
     let p = page(&html);
     let result = p.layout.layout_result(&p.dom);
-    let col = (800.0 - 84.0 - 7.0) / 7.0;
+    // (800 - 84 - 7) / 7 floored to 1/64 px, as Chromium's LayoutUnit does.
+    let col = 101.28125;
     for (id, want) in [
         ("g", [0.0, 0.0, 800.0, 383.0]),
         ("h0", [0.0, 0.0, 84.0, 20.0]),
         ("h1", [85.0, 0.0, col, 20.0]),
         ("w1", [0.0, 21.0, 84.0, 120.0]),
         ("c11", [85.0, 21.0, col, 24.0]),
-        ("c17", [85.0 + 6.0 * (col + 1.0), 21.0, col, 120.0]),
+        ("c17", [698.703125, 21.0, col, 120.0]),
         ("w2", [0.0, 142.0, 84.0, 120.0]),
         ("c21", [85.0, 142.0, col, 120.0]),
         ("w3", [0.0, 263.0, 84.0, 120.0]),
@@ -1047,7 +1046,6 @@ fn flex_parity_auto_margins() {
 // ----- text-align -------------------------------------------------------------
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn flow_parity_text_align() {
     // Chromium 1.59.1, 800x600, system UI font. Atomic boxes with explicit sizes; the inline
     // span's own height is font-metric dependent, so it is checked on x/width.
@@ -1160,7 +1158,6 @@ fn flow_parity_shrink_to_fit_min_content_floor() {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn flex_parity_compressible_percentage_inputs() {
     // TOS cargo form: `w-full` inputs in flex:1 items shrink with the row
     // (no min-content contribution); inputs with auto width keep their
@@ -2265,7 +2262,44 @@ fn flow_default_ignorable_characters_take_no_width() {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
+fn a_column_flex_container_is_as_tall_as_its_hypothetical_items() {
+    // Chromium (800x600): an auto-height column container is the sum of its
+    // items' flex base sizes clamped by their minimum and maximum. `height`
+    // only counts through the flex basis (auto), a `0px` basis gives the
+    // item's minimum, and a percentage basis of the indefinite container is
+    // `content`.
+    let html = "<!doctype html><body style=\"margin:0\">\
+        <div id=c1 style=\"display:flex;flex-direction:column\"><div style=\"flex:1 1 0%;min-height:0;height:10px\"></div></div>\
+        <div id=c2 style=\"display:flex;flex-direction:column\"><div style=\"flex:1 1 0px;min-height:0;height:10px\"></div></div>\
+        <div id=c3 style=\"display:flex;flex-direction:column\"><div style=\"flex:0 0 0px;min-height:0;height:10px\"></div></div>\
+        <div id=c4 style=\"display:flex;flex-direction:column\"><div style=\"flex:1 1 auto;height:10px\"></div></div>\
+        <div id=c5 style=\"display:flex;flex-direction:column\"><div id=j5 style=\"flex:1 1 0%;height:10px\"><div style=\"height:30px\"></div></div></div>\
+        <div id=c6 style=\"display:flex;flex-direction:column\"><div id=j6 style=\"flex:1 1 0px;height:10px\"><div style=\"height:30px\"></div></div></div>\
+        <div id=c7 style=\"display:flex;flex-direction:column\"><div id=j7 style=\"flex:1 1 20%;height:50px;min-height:0\"><div style=\"height:30px\"></div></div></div>\
+        <div id=c8 style=\"display:flex;flex-direction:column\"><div id=j8 style=\"flex:1 1 0px;min-height:0;height:10px\"></div><div id=k8 style=\"height:20px\"></div></div>\
+        </body>";
+    check_rects(
+        "column-hypothetical",
+        html,
+        &[
+            ("c1", [0.0, 0.0, 800.0, 0.0]),
+            ("c2", [0.0, 0.0, 800.0, 0.0]),
+            ("c3", [0.0, 0.0, 800.0, 0.0]),
+            ("c4", [0.0, 0.0, 800.0, 10.0]),
+            ("c5", [0.0, 10.0, 800.0, 30.0]),
+            ("j5", [0.0, 10.0, 800.0, 30.0]),
+            ("c6", [0.0, 40.0, 800.0, 10.0]),
+            ("j6", [0.0, 40.0, 800.0, 10.0]),
+            ("c7", [0.0, 50.0, 800.0, 30.0]),
+            ("j7", [0.0, 50.0, 800.0, 30.0]),
+            ("c8", [0.0, 80.0, 800.0, 20.0]),
+            ("j8", [0.0, 80.0, 800.0, 0.0]),
+            ("k8", [0.0, 80.0, 800.0, 20.0]),
+        ],
+    );
+}
+
+#[test]
 fn flow_percentage_flex_basis_in_an_indefinite_column_is_content() {
     // TOS business-partner-invoices drawer: a `flex: 1 1 0%; min-height: 0`
     // column item inside an auto-height `overflow: hidden` column flex
@@ -2346,7 +2380,6 @@ fn batched_changes_reach_depth_bounded_anchors_at_their_lowest_level() {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn flow_overflow_wrap_breaks_long_words_like_chromium() {
     // TOS CMR cargo cells (TP-4194/4195): `wrap-anywhere` (overflow-wrap:
     // anywhere) on "ReinforcedIndustrialTransportPallet …" in a 120px cell.
@@ -2400,7 +2433,6 @@ fn flow_overflow_wrap_breaks_long_words_like_chromium() {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn flow_whitespace_normal_span_wraps_inside_nowrap_cell() {
     // TOS FE CMR cargo editor table (TP-4194/4195): the cell is `whitespace-
     // nowrap overflow-hidden text-ellipsis`, the value a Typography span with
@@ -2429,12 +2461,10 @@ fn flow_whitespace_normal_span_wraps_inside_nowrap_cell() {
     let p = page(&html);
     // One line is the single-line span's height; each further line adds the
     // line pitch (the step from 2 to 3 lines).
-    // The spans' `font` shorthand applies (500 18px), and the glyph
-    // advances for that weight run wide enough that pkg's broken word takes
-    // a third line where Chromium fits two: a text-metrics gap, not a style
-    // one.
+    // The spans' `font` shorthand applies (500 18px): `line-height` is
+    // `normal`, 21px (rounded ascent 17 + descent 4), as Chromium has it.
     let one = p.metrics("s-inherit")[3];
-    let pkg_lines = 3.0;
+    let pkg_lines = 2.0;
     let pitch = (p.metrics("s-hs")[3] - one) / 2.0;
     assert!(pitch >= one, "line pitch {pitch} vs line {one}");
     for (k, lines) in [("pkg", pkg_lines), ("hs", 3.0)] {
@@ -2451,7 +2481,6 @@ fn flow_whitespace_normal_span_wraps_inside_nowrap_cell() {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn flow_max_content_keeps_whitespace_between_inline_pieces() {
     // TOS quote document preview (pdfgen PageCounter): the page counter is
     // `<p class="absolute bottom-0 right-0">Page <span>1</span>/<span>1</span></p>`
@@ -2575,7 +2604,6 @@ fn large_react_like_batches_invalidate_without_stale_geometry() {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn flex_wrap_compressible_controls_shrink_into_the_line() {
     // TOS calendar filters (calendar-filters.e2e.ts L96): the multi-select
     // Employee field holds its chips and a `w-full flex-1` search input in a
@@ -4100,7 +4128,6 @@ fn textarea_scroll_height_in_autosize_composers() {
 /// A text input's `scrollWidth` is its value's width when the value is
 /// longer than the box (truncation detectors compare it with offsetWidth).
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn text_input_scroll_width_follows_its_value() {
     {
         let geometry = "blitz";
@@ -4116,8 +4143,14 @@ fn text_input_scroll_width_follows_its_value() {
         assert!(p.layout.client_width(&p.dom, i) <= 81.0, "{geometry:?}: the box stays 80px");
         let ta = p.id("ta");
         p.dom.set_value(ta, "a\nE2E-ISO-DEBTOR-9C70E3E9D4\nb").unwrap();
+        // A textarea wraps (Chromium's UA sheet: `white-space: pre-wrap;
+        // overflow-wrap: break-word`), breaking the long word: Chromium reads
+        // scrollWidth 80 and scrollHeight 96 (six lines).
         let w = p.layout.scroll_width(&p.dom, ta);
-        assert!(w > 150.0, "{geometry:?}: the longest textarea line, got {w}");
+        assert!(w <= 81.0, "{geometry:?}: the textarea's lines wrap, got {w}");
+        // At least four lines: twice the two rows the box shows.
+        let (h, rows) = (p.layout.scroll_height(&p.dom, ta), p.layout.client_height(&p.dom, ta));
+        assert!(h >= 2.0 * rows, "{geometry:?}: the long word breaks onto lines, got {h} in {rows}");
     }
 }
 
@@ -4234,7 +4267,36 @@ fn line_height_below_the_content_area_like_chromium() {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
+fn an_atomic_inline_wider_than_its_line_ends_it() {
+    // Chromium (800x600, 16px/20px Arial): a 500px inline-block in a 400px
+    // line overflows it; content after it breaks to the next line, and a box
+    // that ends the paragraph leaves no empty line behind.
+    let box_ = |id: &str| format!("<span id={id} style=\"display:inline-block;width:500px;height:10px\"></span>");
+    let html = format!(
+        "<!doctype html><body style=\"margin:0;font:16px/20px Arial\"><div id=a style=\"width:400px\">{} hello world</div><div id=b style=\"width:400px\">abc{}def</div><div id=c style=\"width:400px\">abc {}{}</div><div id=d style=\"width:400px;white-space:nowrap\">abc {} x</div></body>",
+        box_("a1"),
+        box_("b1"),
+        box_("c1"),
+        box_("c2"),
+        box_("d1")
+    );
+    check_rects(
+        "oversized-inline",
+        &html,
+        &[
+            ("a", [0.0, 0.0, 400.0, 40.0]),
+            ("a1", [0.0, 5.0, 500.0, 10.0]),
+            ("b", [0.0, 40.0, 400.0, 60.0]),
+            ("b1", [0.0, 65.0, 500.0, 10.0]),
+            ("c", [0.0, 100.0, 400.0, 60.0]),
+            ("c1", [0.0, 125.0, 500.0, 10.0]),
+            ("c2", [0.0, 145.0, 500.0, 10.0]),
+            ("d", [0.0, 160.0, 400.0, 20.0]),
+        ],
+    );
+}
+
+#[test]
 fn table_rowspan_like_chromium() {
     // Chromium (800x600): a spanning cell takes the first free column of
     // later rows; when it is taller than its rows, they grow in proportion
@@ -4565,3 +4627,4 @@ fn text_inputs_in_system_ui_are_as_wide_as_in_chromium() {
         assert_eq!(p.metrics(id)[2], want, "#{id}");
     }
 }
+

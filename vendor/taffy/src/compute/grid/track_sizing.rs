@@ -1,6 +1,6 @@
 //! Implements the track sizing algorithm
 //! <https://www.w3.org/TR/css-grid-1/#layout-algorithm>
-use super::types::{GridItem, GridTrack, TrackCounts};
+use super::types::{GridItem, GridTrack, GridTrackKind, TrackCounts};
 use crate::compute::common::alignment::child_first_baseline;
 use crate::geometry::{AbstractAxis, Line, Size};
 use crate::style::{AlignContent, AlignContentKeyword, AvailableSpace};
@@ -269,6 +269,7 @@ pub(super) fn track_sizing_algorithm<Tree: LayoutPartialTree>(
     items: &mut [GridItem],
     get_track_size_estimate: fn(&GridTrack, Option<f32>, &Tree) -> Option<f32>,
     has_baseline_aligned_item: bool,
+    table_rows: bool,
 ) {
     // 11.4 Initialise Track sizes
     // Initialize each track’s base size and growth limit.
@@ -328,6 +329,7 @@ pub(super) fn track_sizing_algorithm<Tree: LayoutPartialTree>(
         available_grid_space.get(axis),
         inner_node_size,
         get_track_size_estimate,
+        table_rows && axis == AbstractAxis::Block,
     );
 
     // 11.6. Maximise Tracks
@@ -551,7 +553,20 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
     axis_available_grid_space: AvailableSpace,
     inner_node_size: Size<Option<f32>>,
     get_track_size_estimate: impl Fn(&GridTrack, Option<f32>, &Tree) -> Option<f32>,
+    table_rows: bool,
 ) {
+    // lightningpanda: the first tracks of the items spanning several table rows (rows where a
+    // rowspan starts, for `distribute_rowspan_to_table_rows`).
+    let rowspan_starts: Vec<usize> = if table_rows {
+        items
+            .iter()
+            .filter(|item| item.span(axis) > 1)
+            .map(|item| item.track_range_excluding_lines(axis).start)
+            .collect()
+    } else {
+        Vec::new()
+    };
+
     // Step 1. Shim baseline-aligned items so their intrinsic size contributions reflect their baseline alignment.
 
     // Already done at this point. See resolve_item_baselines function.
@@ -601,6 +616,15 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
         // 2. Size tracks to fit non-spanning items: For each track with an intrinsic track sizing function and not a flexible sizing function,
         // consider the items in it with a span of 1:
         let batch_span = batch[0].placement(axis).span();
+        // lightningpanda: a cell spanning several table rows grows them as in Chromium.
+        if table_rows && !is_flex && batch_span > 1 {
+            for item in batch.iter_mut() {
+                let space = item_sizer.min_content_contribution(item, axis_tracks);
+                let range = item.track_range_excluding_lines(axis);
+                distribute_rowspan_to_table_rows(space, &mut axis_tracks[range.clone()], range.start, &rowspan_starts);
+            }
+            continue;
+        }
         if !is_flex && batch_span == 1 {
             for item in batch.iter_mut() {
                 let track_index = item.placement_indexes(axis).start + 1;
@@ -998,6 +1022,56 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
         .for_each(|track| track.growth_limit = track.base_size);
 }
 
+/// lightningpanda: grows the table rows `tracks` (with the gutters between them; the first track is
+/// `axis_tracks[first]`) to fit a cell of block size `space` spanning them, as Chromium's
+/// `DistributeExcessBlockSizeToRows` does for a rowspan cell (percentage rows aside): the excess goes
+/// to the rows where another rowspan starts, evenly; else to the unconstrained rows with a size, in
+/// proportion to it; else, when every row is empty, to the last; else to the rows with a size, in
+/// proportion to it. A constrained row has a fixed height: a length minimum, or the `max-content`
+/// maximum blitz-dom gives a row whose cell has a length height among unconstrained rows.
+fn distribute_rowspan_to_table_rows(space: f32, tracks: &mut [GridTrack], first: usize, rowspan_starts: &[usize]) {
+    let excess = space - tracks.iter().map(|track| track.base_size).sum::<f32>();
+    if excess <= 0.0 {
+        return;
+    }
+    let rows: Vec<usize> = (0..tracks.len()).filter(|&i| tracks[i].kind == GridTrackKind::Track).collect();
+    let Some(&last) = rows.last() else { return };
+    let constrained = |track: &GridTrack| {
+        track.max_track_sizing_function.is_max_content()
+            || track.min_track_sizing_function.0.tag() == CompactLength::LENGTH_TAG
+    };
+    let originating: Vec<usize> =
+        rows.iter().copied().skip(1).filter(|i| rowspan_starts.contains(&(first + i))).collect();
+    let unconstrained: Vec<usize> =
+        rows.iter().copied().filter(|&i| tracks[i].base_size > 0.0 && !constrained(&tracks[i])).collect();
+    let non_empty: Vec<usize> = rows.iter().copied().filter(|&i| tracks[i].base_size > 0.0).collect();
+    let mut grow = |targets: &[usize], weights: &dyn Fn(&GridTrack) -> f32| {
+        let total: f32 = targets.iter().map(|&i| weights(&tracks[i])).sum();
+        let mut remaining = excess;
+        for &i in targets {
+            let delta = excess * weights(&tracks[i]) / total;
+            tracks[i].base_size += delta;
+            remaining -= delta;
+        }
+        let i = *targets.last().unwrap();
+        tracks[i].base_size += remaining;
+    };
+    if !originating.is_empty() {
+        grow(&originating, &|_| 1.0);
+    } else if !unconstrained.is_empty() {
+        grow(&unconstrained, &|track| track.base_size);
+    } else if non_empty.is_empty() {
+        tracks[last].base_size += excess;
+    } else {
+        grow(&non_empty, &|track| track.base_size);
+    }
+    for track in tracks.iter_mut() {
+        if track.growth_limit < track.base_size {
+            track.growth_limit = track.base_size;
+        }
+    }
+}
+
 /// The sum of the flex factors of the flexible tracks in an item's spanned track range
 #[inline(always)]
 fn crossed_flex_factor_sum(tracks: &[GridTrack]) -> f32 {
@@ -1334,9 +1408,20 @@ fn expand_flexible_tracks<Tree: LayoutPartialTree>(
 
     // For each flexible track, if the product of the used flex fraction and the track’s flex factor is greater
     // than the track’s base size, set its base size to that product.
+    //
+    // lightningpanda: as Chromium does (`ExpandFlexibleTracks`), the product is truncated to 1/64 px (a layout
+    // unit) in f32 raw units, after an epsilon, and the fraction it loses carries into the next flexible track:
+    // a third of 668px is 222.65625, 222.671875, 222.671875.
+    let fr_raw = flex_fraction * 64.0;
+    let mut leftover = 0.0f32;
     for track in axis_tracks.iter_mut().filter(|track| track.max_track_sizing_function.is_fr()) {
         let track_flex_factor = track.max_track_sizing_function.0.value();
-        track.base_size = f32_max(track.base_size, track_flex_factor * flex_fraction);
+        let share = fr_raw * track_flex_factor + leftover;
+        let expanded = (share + f32::EPSILON).trunc();
+        if expanded.is_finite() && expanded / 64.0 >= track.base_size {
+            track.base_size = expanded / 64.0;
+            leftover = (share - expanded).max(0.0);
+        }
     }
 }
 

@@ -223,6 +223,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
 ) -> LayoutOutput {
     let LayoutInput { known_dimensions, run_mode, .. } = inputs;
 
+    let table_rows = tree.grid_rows_are_table_rows(node);
     let style = tree.get_grid_container_style(node);
     let constants = compute_container_constants(tree, &style, inputs);
     let GridContainerConstants {
@@ -432,6 +433,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
             track.max_track_sizing_function.definite_value(parent_size, |val, basis| tree.calc(val, basis))
         },
         has_baseline_aligned_item,
+        false,
     );
     let initial_column_sum = columns.iter().map(|track| track.base_size).sum::<f32>();
     inner_node_size.width = inner_node_size.width.or_else(|| initial_column_sum.into());
@@ -463,6 +465,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
         &mut items,
         |track: &GridTrack, _, _| Some(track.base_size),
         false, // TODO: Support baseline alignment in the vertical axis
+        table_rows,
     );
     let initial_row_sum = rows.iter().map(|track| track.base_size).sum::<f32>();
 
@@ -581,6 +584,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
             &mut items,
             |track: &GridTrack, _, _| Some(track.base_size),
             has_baseline_aligned_item,
+            false,
         );
 
         // The column widths may have changed, so the items' intrinsic height contributions need to be recomputed
@@ -630,6 +634,7 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
             &mut items,
             |track: &GridTrack, _, _| Some(track.base_size),
             false, // TODO: Support baseline alignment in the vertical axis
+            table_rows,
         );
     }
 

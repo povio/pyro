@@ -257,6 +257,23 @@ impl LayoutPassState<'_> {
                 (listbox, longest)
             })
         };
+        // A drop-down select's text line (its font at `line-height: normal`):
+        // the control's baseline is the line's, centred in the content box.
+        let select_line = if matches!(select_label_chars, Some((false, _))) {
+            let doc = &mut *self.doc;
+            let styles = doc.nodes[dom_node_id(node_id)].primary_styles();
+            styles.and_then(|styles| {
+                let parley_style = crate::stylo_to_parley::style(dom_node_id(node_id), &styles);
+                let mut font_ctx = doc.font_ctx.lock().unwrap();
+                let mut builder = doc.layout_ctx.tree_builder(&mut font_ctx, scale, true, &parley_style);
+                builder.push_text("x");
+                let mut layout = builder.build().0;
+                layout.break_all_lines(None);
+                layout.lines().next().map(|line| *line.metrics())
+            })
+        } else {
+            None
+        };
         let node = &mut self.nodes[dom_node_id(node_id)];
 
         let font_styles = node.primary_styles().map(|style| {
@@ -288,6 +305,16 @@ impl LayoutPassState<'_> {
                 }
             });
         let resolved_line_height = font_styles.map(|s| s.1);
+        // A form control with a cyclic percentage width contributes zero to
+        // min-content sizing (CSS Sizing 3 §5.2.2, compressible): text
+        // inputs, textareas and selects shrink into a flex-wrap line. This is
+        // the measured content contribution, not a preferred width:
+        // ContentSize measurements ignore preferred-width styles. Auto and
+        // max-content sizing keep the intrinsic width; known dimensions and
+        // explicit minima remain the leaf/parent layout algorithm's.
+        let compressible_min_content = inputs.available_space.width == AvailableSpace::MinContent
+            && inputs.parent_size.width.is_none()
+            && matches!(node.layout_style().size().width.expand(), taffy::style::ExpandedDimension::Percent(_));
 
         match &mut node.data {
             NodeData::Text(data) => {
@@ -340,9 +367,11 @@ impl LayoutPassState<'_> {
                         &node.layout_style(),
                         resolve_calc_value,
                         |_known_size, _available_space| taffy::Size {
-                            width: cols
-                                .map(|cols| cols * font_size.unwrap_or(16.0) * 0.6)
-                                .unwrap_or(300.0),
+                            width: if compressible_min_content {
+                                0.0
+                            } else {
+                                cols.map(|cols| cols * font_size.unwrap_or(16.0) * 0.6).unwrap_or(300.0)
+                            },
                             height: resolved_line_height.unwrap_or(16.0) * rows,
                         },
                     );
@@ -382,15 +411,31 @@ impl LayoutPassState<'_> {
                 // this it had no box at all (its options are hidden).
                 if let Some((false, chars)) = select_label_chars {
                     let font_size = font_size.unwrap_or(13.333);
-                    return compute_leaf_layout(
+                    let style = node.layout_style();
+                    let mut output = compute_leaf_layout(
                         inputs,
-                        &node.layout_style(),
+                        &style,
                         resolve_calc_value,
                         |_known_size, _available_space| taffy::Size {
-                            width: (chars as f32 * 0.5 * font_size + 21.0).ceil(),
+                            width: if compressible_min_content {
+                                0.0
+                            } else {
+                                (chars as f32 * 0.5 * font_size + 21.0).ceil()
+                            },
                             height: (font_size * 1.25).ceil(),
                         },
                     );
+                    if let Some(line) = select_line {
+                        let parent = inputs.parent_size.width;
+                        let padding = style.padding().resolve_or_zero(parent, resolve_calc_value);
+                        let border = style.border().resolve_or_zero(parent, resolve_calc_value);
+                        let content_top = padding.top + border.top;
+                        let content_height = output.size.height - content_top - padding.bottom - border.bottom;
+                        let (line_height, baseline) = (line.line_height / scale, line.baseline / scale);
+                        let baseline = content_top + (content_height - line_height) / 2.0 + baseline;
+                        output.baselines = taffy::Baselines { first: Some(baseline), last: Some(baseline) };
+                    }
+                    return output;
                 }
 
                 if *element_data.name.local == *"input" {
@@ -445,21 +490,7 @@ impl LayoutPassState<'_> {
                                 .and_then(|layout| layout.lines().next())
                                 .map(|line| *line.metrics());
                             let style = node.layout_style();
-                            // A cyclic percentage-width text control contributes zero to
-                            // min-content sizing (CSS Sizing 3 §5.2.2). This is the measured
-                            // content contribution, not a preferred width: ContentSize
-                            // measurements intentionally ignore preferred-width styles.
-                            // Keep the normal intrinsic width for auto/max-content sizing;
-                            // known dimensions and explicit minima remain the leaf/parent
-                            // layout algorithm's responsibility.
-                            let contribution_width = if inputs.available_space.width == AvailableSpace::MinContent
-                                && inputs.parent_size.width.is_none()
-                                && matches!(style.size().width.expand(), taffy::style::ExpandedDimension::Percent(_))
-                            {
-                                0.0
-                            } else {
-                                width
-                            };
+                            let contribution_width = if compressible_min_content { 0.0 } else { width };
                             let mut output = compute_leaf_layout(
                                 inputs,
                                 &style,

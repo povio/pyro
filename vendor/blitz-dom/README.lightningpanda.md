@@ -60,7 +60,8 @@ these additional local changes are covered by lp-render's rendering tests.
 
 lp-render's mirror tests (incremental documents against fresh builds after random mutations) cover both.
 - `assets/default.css`: text inputs take Chromium's UA box (`border: 2px inset`, `padding: 1px 2px`; a
-  40x30 input is 48x36), textareas keep `1px solid` / `2px`.
+  40x30 input is 48x36), textareas keep `1px solid` / `2px` and wrap like Chromium's
+  (`white-space: pre-wrap; overflow-wrap: break-word`: a word longer than the box breaks).
 - `src/document.rs`: `set_hover_node` puts `:hover` on a node and its ancestors (an embedder that tracks
   the pointer itself: lightningpanda mirrors lp-dom's hovered element).
 - `src/document.rs`: Stylo's prefs for `:nth-child(An+B of S)`, container and style queries,
@@ -84,7 +85,16 @@ lp-render's mirror tests (incremental documents against fresh builds after rando
 - `assets/default.css`, `src/layout/mod.rs`: a drop-down `<select>` is an inline-block box with a 1px
   border and `line-height: normal`, sized from its longest option label (about half an em per character)
   plus the arrow, a line of its font tall (Chromium's menu list). It had no box at all: its options are
-  hidden because Blitz paints the control.
+  hidden because Blitz paints the control. Its baseline is its text line's, centred in the content box
+  (as for text inputs), not its bottom edge.
 - `src/layout/mod.rs`: a text input in system-ui on macOS (SF Text) is `ceil(0.525em x size) +
   round(0.4375em)` wide, Chromium's width there (measured at 10-16px); other fonts keep the
   `(size / 2 + 0.4)em` approximation.
+- `src/layout/table.rs`: table rows grow under a rowspan cell as in Chromium (through taffy's
+  `grid_rows_are_table_rows`), and a rowspan stops at the end of its row group instead of adding implicit
+  rows past it.
+- `assets/default.css`: checkboxes and radios are Chromium's 13x13 border boxes (radios with Chromium's
+  `3px 3px 0 5px` margin); Blitz had 14x14.
+- `src/layout/mod.rs`: a textarea or select with a percentage width contributes zero to min-content sizing,
+  as text inputs already did (CSS Sizing 3 §5.2.2, compressible): in a flex-wrap row it shrinks into the
+  space left on the line instead of wrapping below.
