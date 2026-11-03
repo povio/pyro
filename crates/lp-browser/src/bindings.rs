@@ -300,6 +300,8 @@ impl Browser {
                 .ok_or(JsError::ContextDestroyed)?
                 .local_storage
                 .clone(),
+            services: self.context_services(state.context).ok_or(JsError::ContextDestroyed)?,
+            max_touch_points: state.max_touch_points,
             session: state.session_storage.clone(),
             net: self.context_net(state.context).cloned(),
             viewport: state.viewport.clone(),
@@ -391,6 +393,8 @@ pub(crate) fn create(
     if page.child.is_some() {
         bindings.set_frame_viewport_source(frame_viewport_source(host, &frame));
     }
+    bindings.set_context_services(settings.services);
+    bindings.set_max_touch_points(settings.max_touch_points);
     bindings
         .set_user_agent_override(settings.user_agent)
         .map_err(|e| JsError::Type(format!("invalid request defaults: {e}")))?;

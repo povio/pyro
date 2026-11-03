@@ -254,7 +254,7 @@ await check('context cookies reach HTTP and stay isolated', async () => {
 const identityHeaders = [];
 const cacheableHits = [];
 const fixture = http.createServer((req, res) => {
-  identityHeaders.push({ url: req.url, agent: req.headers['user-agent'], language: req.headers['accept-language'], extra: req.headers['x-extra'] ?? null });
+  identityHeaders.push({ url: req.url, agent: req.headers['user-agent'], language: req.headers['accept-language'], extra: req.headers['x-extra'] ?? null, chUa: req.headers['sec-ch-ua'] ?? null, chMobile: req.headers['sec-ch-ua-mobile'] ?? null, chPlatform: req.headers['sec-ch-ua-platform'] ?? null });
   if (req.url.startsWith('/cacheable')) {
     cacheableHits.push(req.url);
     res.writeHead(200, { 'content-type': 'text/javascript', 'cache-control': 'public, max-age=3600' });
@@ -585,6 +585,48 @@ try {
         assert.equal(identityHeaders.find(r => r.url === '/identity-reset').agent, defaultAgent);
       } finally { await session.detach(); }
     } finally { await identities.close(); }
+  });
+  await check('client hints from Playwright userAgent, grantPermissions clipboard round trip and hasTouch tap', async () => {
+    // Playwright derives userAgentMetadata (no brands, mobile from isMobile)
+    // from the agent string; Chrome fills the brands with its own, which
+    // for lightningpanda's own agent are none.
+    const agent = 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Mobile Safari/537.36';
+    const touchContext = await browser.newContext({ hasTouch: true, userAgent: agent });
+    try {
+      const p = await touchContext.newPage();
+      await p.goto(`${fixtureOrigin}/tier3`, { timeout: 5000 });
+      const hints = await p.evaluate(() => JSON.parse(JSON.stringify(navigator.userAgentData)));
+      assert.equal(hints.platform, 'Android');
+      assert.equal(hints.mobile, false);
+      assert.ok(Array.isArray(hints.brands), JSON.stringify(hints));
+      const high = await p.evaluate(() => navigator.userAgentData.getHighEntropyValues(['architecture', 'platformVersion']));
+      assert.deepEqual([high.architecture, high.platformVersion], ['arm', '14']);
+      assert.equal(await p.evaluate(() => navigator.platform), 'Linux armv8l');
+      const session = await touchContext.newCDPSession(p);
+      try {
+        await session.send('Emulation.setUserAgentOverride', { userAgent: 'Plain/1', userAgentMetadata: { brands: [{ brand: 'X', version: '1' }], platform: 'Linux', platformVersion: '6', architecture: 'x86', model: '', mobile: false } });
+        assert.deepEqual(await p.evaluate(() => navigator.userAgentData.getHighEntropyValues(['architecture', 'bitness'])), { architecture: 'x86', bitness: '64', brands: [{ brand: 'X', version: '1' }], mobile: false, platform: 'Linux' });
+        await p.goto(fixtureOrigin + '/tier3-hints', { timeout: 5000 });
+        const sent = identityHeaders.find(r => r.url === '/tier3-hints');
+        assert.deepEqual([sent.chUa, sent.chMobile, sent.chPlatform], ['"X";v="1"', '?0', '"Linux"']);
+      } finally { await session.detach(); }
+
+      await assert.rejects(p.evaluate(() => navigator.clipboard.readText()), /Read permission denied/);
+      await touchContext.grantPermissions(['clipboard-read', 'clipboard-write']);
+      assert.deepEqual(await p.evaluate(() => Promise.all(['clipboard-read', 'clipboard-write'].map(name => navigator.permissions.query({ name }).then(s => s.state)))), ['granted', 'granted']);
+      assert.equal(await p.evaluate(async () => { await navigator.clipboard.writeText('round trip'); return navigator.clipboard.readText(); }), 'round trip');
+      const second = await touchContext.newPage();
+      assert.equal(await second.evaluate(() => navigator.clipboard.readText()), 'round trip', 'the clipboard is per context');
+      await second.close();
+      await touchContext.clearPermissions();
+      await assert.rejects(p.evaluate(() => navigator.clipboard.readText()), /Read permission denied/);
+
+      await p.setContent('<button id="b" style="width:120px;height:40px">tap</button><script>window.log = [];' +
+        'for (const t of ["pointerdown", "touchstart", "pointerup", "touchend", "mousedown", "mouseup", "click"]) document.addEventListener(t, e => log.push(t + ":" + (e.pointerType ?? "")), true);</script>');
+      assert.equal(await p.evaluate(() => navigator.maxTouchPoints), 1);
+      await p.locator('#b').tap({ timeout: 5000 });
+      assert.deepEqual(await p.evaluate(() => log), ['pointerdown:touch', 'touchstart:', 'pointerup:touch', 'touchend:', 'mousedown:', 'mouseup:', 'click:touch']);
+    } finally { await touchContext.close(); }
   });
   await check('goBack/goForward traverse SPA and document history (TOS email-logs Back/Forward case)', async () => {
     const spa = await context.newPage();

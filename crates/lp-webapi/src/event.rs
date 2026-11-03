@@ -35,6 +35,30 @@ pub enum EventInterface {
     MessageEvent,
     StorageEvent,
     MediaQueryListEvent,
+    TouchEvent,
+}
+
+/// One touch point (`Touch`): its target and viewport/screen position.
+#[derive(Clone, Debug, Default)]
+pub struct TouchPoint {
+    pub identifier: i64,
+    pub target: Option<TargetKey>,
+    pub client_x: f64,
+    pub client_y: f64,
+    pub screen_x: f64,
+    pub screen_y: f64,
+    pub radius_x: f64,
+    pub radius_y: f64,
+    pub rotation_angle: f64,
+    pub force: f64,
+}
+
+/// `TouchEvent.touches`, `targetTouches` and `changedTouches`.
+#[derive(Clone, Debug, Default)]
+pub struct TouchLists {
+    pub touches: Vec<TouchPoint>,
+    pub target_touches: Vec<TouchPoint>,
+    pub changed_touches: Vec<TouchPoint>,
 }
 
 /// `StorageEvent.storageArea`: the receiving window's own `Storage` (resolved
@@ -108,6 +132,7 @@ pub struct EventFields {
     /// `MediaQueryListEvent.media` / `.matches`.
     pub media_query: String,
     pub media_matches: bool,
+    pub touch: Option<Rc<TouchLists>>,
 }
 
 pub struct EventCore {
@@ -168,6 +193,7 @@ impl EventCore {
                     | EventInterface::WheelEvent
                     | EventInterface::DragEvent
                     | EventInterface::UiEvent
+                    | EventInterface::TouchEvent
             ),
         );
         e.state.borrow_mut().is_trusted = true;
@@ -258,6 +284,7 @@ pub fn wrap_event<'s>(s: &Scope<'s>, core: &EventData) -> JsResult<Object<'s>> {
         EventInterface::MessageEvent => s.wrap::<MessageEvent>(d, Some(key)),
         EventInterface::StorageEvent => s.wrap::<StorageEvent>(d, Some(key)),
         EventInterface::MediaQueryListEvent => s.wrap::<MediaQueryListEvent>(d, Some(key)),
+        EventInterface::TouchEvent => s.wrap::<TouchEvent>(d, Some(key)),
     }?;
     core.trace_targets(s, wrapper)?;
     Ok(wrapper)
@@ -1063,4 +1090,146 @@ pub(crate) fn register(engine: &lp_js::Engine) {
     engine.register::<MessageEvent>();
     engine.register::<StorageEvent>();
     engine.register::<MediaQueryListEvent>();
+}
+
+/// `Touch` and `TouchEvent`, registered after every other class.
+pub(crate) fn register_touch(engine: &lp_js::Engine) {
+    engine.register::<Touch>();
+    engine.register::<TouchEvent>();
+}
+
+/// A `Touch` wrapper's state.
+pub struct TouchData {
+    page: Rc<PageDom>,
+    point: TouchPoint,
+}
+
+pub struct Touch;
+impl JsClass for Touch {
+    const NAME: &'static str = "Touch";
+    type Data = Rc<TouchData>;
+    type Parent = lp_js::NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        def.constructor(1, |s, nt, a| {
+            let page = page_of(s)?;
+            let init = a
+                .get(0)
+                .as_object()
+                .ok_or_else(|| JsError::Type("Failed to construct 'Touch': 1 argument required, but only 0 present.".into()))?;
+            let identifier = init.get("identifier")?;
+            if identifier.is_undefined() {
+                return Err(JsError::Type(
+                    "Failed to construct 'Touch': Failed to read the 'identifier' property from 'TouchInit': Required member is undefined.".into(),
+                ));
+            }
+            let target = init.get("target")?;
+            if target.is_undefined() {
+                return Err(JsError::Type(
+                    "Failed to construct 'Touch': Failed to read the 'target' property from 'TouchInit': Required member is undefined.".into(),
+                ));
+            }
+            let target = event_target_key(s, target).ok_or_else(|| {
+                JsError::Type("Failed to construct 'Touch': Failed to read the 'target' property from 'TouchInit': Failed to convert value to 'EventTarget'.".into())
+            })?;
+            let num = |name: &str, default: f64| get_num(Some(init), name, default);
+            let point = TouchPoint {
+                identifier: identifier.to_number()? as i64,
+                target: Some(target),
+                client_x: num("clientX", 0.0)?,
+                client_y: num("clientY", 0.0)?,
+                screen_x: num("screenX", 0.0)?,
+                screen_y: num("screenY", 0.0)?,
+                radius_x: num("radiusX", 0.0)?,
+                radius_y: num("radiusY", 0.0)?,
+                rotation_angle: num("rotationAngle", 0.0)?,
+                force: num("force", 0.0)?,
+            };
+            s.wrap_new::<Touch>(Rc::new(TouchData { page, point }), nt, None)
+        });
+        def.getter("identifier", |s, t| Ok(s.number(t.point.identifier as f64)));
+        def.getter("target", |s, t| target_value(s, &t.page, t.point.target));
+        def.getter("clientX", |s, t| Ok(s.number(t.point.client_x)));
+        def.getter("clientY", |s, t| Ok(s.number(t.point.client_y)));
+        def.getter("screenX", |s, t| Ok(s.number(t.point.screen_x)));
+        def.getter("screenY", |s, t| Ok(s.number(t.point.screen_y)));
+        def.getter("pageX", |s, t| Ok(s.number(t.point.client_x)));
+        def.getter("pageY", |s, t| Ok(s.number(t.point.client_y)));
+        def.getter("radiusX", |s, t| Ok(s.number(t.point.radius_x)));
+        def.getter("radiusY", |s, t| Ok(s.number(t.point.radius_y)));
+        def.getter("rotationAngle", |s, t| Ok(s.number(t.point.rotation_angle)));
+        def.getter("force", |s, t| Ok(s.number(t.point.force)));
+        def.getter("altitudeAngle", |s, _t| Ok(s.number(std::f64::consts::FRAC_PI_2)));
+        def.getter("azimuthAngle", |s, _t| Ok(s.number(0.0)));
+        def.getter("touchType", |s, _t| Ok(s.string("direct")));
+    }
+}
+
+fn event_target_key(s: &Scope<'_>, v: lp_js::Value<'_>) -> Option<TargetKey> {
+    if let Some(n) = s.unwrap::<crate::node::Node>(v) {
+        return Some(n.target.key);
+    }
+    s.unwrap::<crate::target::EventTarget>(v).map(|t| t.key)
+}
+
+/// A `TouchList`: an array of `Touch` wrappers with `item()`.
+fn touch_list<'s>(s: &Scope<'s>, page: &Rc<PageDom>, points: &[TouchPoint]) -> JsResult<lp_js::Value<'s>> {
+    let mut items = lp_js::RootedVec::new();
+    for point in points {
+        let touch = s.wrap::<Touch>(Rc::new(TouchData { page: page.clone(), point: point.clone() }), None)?;
+        items.push(s, touch.value());
+    }
+    let list = s.array(&items.iter(s).collect::<Vec<_>>())?;
+    let item = s.eval("(function item(i) { return this[i >>> 0] ?? null; })", None, 1)?;
+    list.set_with(&lp_js::JsString::new("item"), item, lp_js::sys::kJSPropertyAttributeDontEnum)?;
+    Ok(list.value())
+}
+
+fn touch_points<'s>(s: &Scope<'s>, init: Option<Object<'s>>, name: &str) -> JsResult<Vec<TouchPoint>> {
+    let Some(list) = init.map(|o| o.get(name)).transpose()?.and_then(|v| v.as_object()) else { return Ok(Vec::new()) };
+    let mut out = Vec::new();
+    for i in 0..list.get("length")?.to_number()? as u32 {
+        let v = list.get_index(i)?;
+        let touch = s.unwrap::<Touch>(v).ok_or_else(|| {
+            JsError::Type(format!("Failed to construct 'TouchEvent': Failed to read the '{name}' property from 'TouchEventInit': Failed to convert value to 'Touch'."))
+        })?;
+        out.push(touch.point.clone());
+    }
+    Ok(out)
+}
+
+fn fill_touch<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
+    fill_ui(s, f, init)?;
+    fill_modifiers(f, init)?;
+    f.touch = Some(Rc::new(TouchLists {
+        touches: touch_points(s, init, "touches")?,
+        target_touches: touch_points(s, init, "targetTouches")?,
+        changed_touches: touch_points(s, init, "changedTouches")?,
+    }));
+    Ok(())
+}
+
+pub struct TouchEvent;
+impl JsClass for TouchEvent {
+    const NAME: &'static str = "TouchEvent";
+    type Data = EventData;
+    type Parent = UiEvent;
+    fn define(def: &mut ClassDef<Self>) {
+        def.constructor(1, |s, nt, a| construct::<TouchEvent>(s, nt, a, EventInterface::TouchEvent, fill_touch));
+        def.getter("touches", |s, e| {
+            let lists = e.fields.borrow().touch.clone().unwrap_or_default();
+            touch_list(s, &e.page, &lists.touches)
+        });
+        def.getter("targetTouches", |s, e| {
+            let lists = e.fields.borrow().touch.clone().unwrap_or_default();
+            touch_list(s, &e.page, &lists.target_touches)
+        });
+        def.getter("changedTouches", |s, e| {
+            let lists = e.fields.borrow().touch.clone().unwrap_or_default();
+            touch_list(s, &e.page, &lists.changed_touches)
+        });
+        def.getter("ctrlKey", |s, e| Ok(s.boolean(e.fields.borrow().ctrl_key)));
+        def.getter("shiftKey", |s, e| Ok(s.boolean(e.fields.borrow().shift_key)));
+        def.getter("altKey", |s, e| Ok(s.boolean(e.fields.borrow().alt_key)));
+        def.getter("metaKey", |s, e| Ok(s.boolean(e.fields.borrow().meta_key)));
+    }
 }

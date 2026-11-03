@@ -382,7 +382,6 @@ fn unsupported_commands_fail_explicitly() {
     let mut h = Harness::new();
     for method in [
         "DOM.getDocument",
-        "Input.dispatchTouchEvent",
         // With the `render` feature it renders (see `mod screenshot`).
         #[cfg(not(feature = "render"))]
         "Page.captureScreenshot",
@@ -2090,7 +2089,7 @@ fn user_agent_override_validates_atomically_and_updates_page_worlds() {
         assert_eq!(response["error"]["code"], -32602, "{params}: {response}");
     }
     let metadata = h.page("Emulation.setUserAgentOverride", json!({"userAgent":"ignored","userAgentMetadata":{}}));
-    assert_eq!(metadata["error"]["code"], -32000, "unsupported client hints: {metadata}");
+    assert_eq!(metadata["error"]["code"], -32602, "client hints without required members: {metadata}");
     assert_eq!(
         h.page("Runtime.evaluate", json!({"expression":probe,"returnByValue":true}))["result"]["result"]["value"],
         expected,
@@ -3244,6 +3243,9 @@ mod frames;
 
 #[path = "engine_cdp/tier3_g2.rs"]
 mod tier3_g2;
+
+#[path = "engine_cdp/tier3_g1.rs"]
+mod tier3_g1;
 
 #[test]
 fn links_and_window_open_targeting_blank_open_paused_popups() {

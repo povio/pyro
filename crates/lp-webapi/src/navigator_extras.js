@@ -1,0 +1,301 @@
+// navigator.userAgentData, navigator.permissions, navigator.clipboard and
+// ClipboardItem for one realm, made on first use. `native` reads the page's
+// client hints, its context's permission table and clipboard:
+//   uaData() -> JSON {brands, fullVersionList, mobile, platform, ...}
+//   permissionState(name) -> 'granted' | 'denied' | 'prompt'
+//   watchPermissions(refresh): refresh() runs in a task after a permission
+//     change (once per realm, from the first status with a change listener)
+//   clipboardRead() -> JSON [[type, data, binary]] or null (not granted)
+//   clipboardWritable() -> false when writing is denied
+//   clipboardWrite(json) stores [[type, data, binary]]
+// Binary data travels as a string of byte-valued characters. Shapes, order
+// and messages follow Chrome 156.
+(function (native) {
+  'use strict';
+  const token = Symbol('lightningpanda');
+  const O = Object;
+  const freeze = O.freeze;
+  const defineProperty = O.defineProperty;
+  const parse = JSON.parse;
+  const stringify = JSON.stringify;
+  const PromiseC = Promise;
+  const resolved = (v) => PromiseC.resolve(v);
+  const rejected = (e) => PromiseC.reject(e);
+  const DOMExceptionC = DOMException;
+  const BlobC = Blob;
+  const EventTargetC = EventTarget;
+  const EventC = Event;
+  const TypeErrorC = TypeError;
+  const fromCharCode = String.fromCharCode;
+  const illegal = (name) => new TypeErrorC(`Failed to construct '${name}': Illegal constructor`);
+  const tag = (C, name) => defineProperty(C.prototype, Symbol.toStringTag, { value: name, configurable: true });
+  // Host EventTarget instances answer Symbol.toStringTag themselves; own
+  // tags keep subclasses reporting their own name.
+  const ownTag = (o, name) => defineProperty(o, Symbol.toStringTag, { value: name, configurable: true });
+  const iterable = (v) => v !== null && typeof v === 'object' && typeof v[Symbol.iterator] === 'function';
+
+  let uaJson = null;
+  let uaParsed = null;
+  const ua = () => {
+    const json = native.uaData();
+    if (json !== uaJson) {
+      uaJson = json;
+      uaParsed = parse(json);
+    }
+    return uaParsed;
+  };
+  // Chrome returns fresh brand objects each time: a frozen array from
+  // `brands`, a plain one from getHighEntropyValues.
+  const brandList = (list) => list.map((b) => ({ brand: b.brand, version: b.version }));
+
+  class NavigatorUAData {
+    constructor(t) {
+      if (t !== token) throw illegal('NavigatorUAData');
+    }
+    get brands() {
+      return freeze(brandList(ua().brands));
+    }
+    get mobile() {
+      return ua().mobile;
+    }
+    get platform() {
+      return ua().platform;
+    }
+    getHighEntropyValues(hints) {
+      if (arguments.length === 0) {
+        return rejected(new TypeErrorC("Failed to execute 'getHighEntropyValues' on 'NavigatorUAData': 1 argument required, but only 0 present."));
+      }
+      if (!iterable(hints)) {
+        return rejected(new TypeErrorC("Failed to execute 'getHighEntropyValues' on 'NavigatorUAData': The provided value cannot be converted to a sequence."));
+      }
+      const data = ua();
+      const values = { brands: this.brands, mobile: data.mobile, platform: data.platform };
+      for (const hint of hints) {
+        switch (String(hint)) {
+          case 'architecture': values.architecture = data.architecture; break;
+          case 'bitness': values.bitness = data.bitness; break;
+          case 'formFactors': values.formFactors = data.formFactors.slice(); break;
+          case 'fullVersionList': values.fullVersionList = brandList(data.fullVersionList); break;
+          case 'model': values.model = data.model; break;
+          case 'platformVersion': values.platformVersion = data.platformVersion; break;
+          case 'uaFullVersion': values.uaFullVersion = data.uaFullVersion; break;
+          case 'wow64': values.wow64 = data.wow64; break;
+        }
+      }
+      // Chrome reports the keys in sorted order.
+      const out = {};
+      for (const key of O.keys(values).sort()) out[key] = values[key];
+      return resolved(out);
+    }
+    toJSON() {
+      return { brands: this.brands, mobile: this.mobile, platform: this.platform };
+    }
+  }
+  tag(NavigatorUAData, 'NavigatorUAData');
+
+  const NAMES = new Set([
+    'accelerometer', 'background-fetch', 'background-sync', 'camera', 'captured-surface-control',
+    'clipboard-read', 'clipboard-write', 'display-capture', 'geolocation', 'gyroscope', 'idle-detection',
+    'keyboard-lock', 'local-fonts', 'magnetometer', 'microphone', 'midi', 'nfc', 'notifications',
+    'payment-handler', 'periodic-background-sync', 'persistent-storage', 'pointer-lock', 'push',
+    'screen-wake-lock', 'speaker-selection', 'storage-access', 'system-wake-lock',
+    'top-level-storage-access', 'window-management',
+  ]);
+
+  const statusData = new WeakMap();
+  // Statuses with change listeners stay alive (and are re-read after each
+  // permission change) even when the page keeps no reference to them.
+  const watched = new Set();
+  let watching = false;
+  const refresh = () => {
+    for (const status of watched) {
+      const d = statusData.get(status);
+      const state = native.permissionState(d.name);
+      if (state !== d.state) {
+        d.state = state;
+        status.dispatchEvent(new EventC('change'));
+      }
+    }
+  };
+  const watch = (status) => {
+    watched.add(status);
+    if (!watching) {
+      watching = true;
+      native.watchPermissions(refresh);
+    }
+  };
+  const addListener = EventTargetC.prototype.addEventListener;
+  class PermissionStatus extends EventTargetC {
+    constructor(t, name) {
+      if (t !== token) throw illegal('PermissionStatus');
+      super();
+      ownTag(this, 'PermissionStatus');
+      const d = { name, onchange: null, state: native.permissionState(name), handler: false };
+      statusData.set(this, d);
+      defineProperty(this, 'addEventListener', {
+        value: function addEventListener(type, ...rest) {
+          if (String(type) === 'change') watch(this);
+          return addListener.call(this, type, ...rest);
+        },
+        writable: true,
+        configurable: true,
+      });
+    }
+    get name() {
+      return statusData.get(this).name;
+    }
+    get state() {
+      return native.permissionState(statusData.get(this).name);
+    }
+    get onchange() {
+      return statusData.get(this).onchange;
+    }
+    set onchange(v) {
+      const d = statusData.get(this);
+      d.onchange = typeof v === 'function' || (v !== null && typeof v === 'object') ? v : null;
+      if (d.onchange !== null && !d.handler) {
+        d.handler = true;
+        watch(this);
+        addListener.call(this, 'change', (e) => {
+          if (typeof d.onchange === 'function') d.onchange.call(this, e);
+        });
+      }
+    }
+  }
+  tag(PermissionStatus, 'PermissionStatus');
+
+  const queryError = (rest) => new TypeErrorC(`Failed to execute 'query' on 'Permissions': ${rest}`);
+  class Permissions {
+    constructor(t) {
+      if (t !== token) throw illegal('Permissions');
+    }
+    query(descriptor) {
+      if (arguments.length === 0) return rejected(queryError('1 argument required, but only 0 present.'));
+      if (descriptor === null || typeof descriptor !== 'object') {
+        return rejected(queryError('parameter 1 is not of type \'object\'.'));
+      }
+      const name = descriptor.name;
+      if (name === undefined) {
+        return rejected(queryError("Failed to read the 'name' property from 'PermissionDescriptor': Required member is undefined."));
+      }
+      if (!NAMES.has(String(name))) {
+        return rejected(queryError(`Failed to read the 'name' property from 'PermissionDescriptor': The provided value '${String(name)}' is not a valid enum value of type PermissionName.`));
+      }
+      if (String(name) === 'push' && !descriptor.userVisibleOnly) {
+        return rejected(new DOMExceptionC("Failed to execute 'query' on 'Permissions': Push Permission without userVisibleOnly:true isn't supported yet.", 'NotSupportedError'));
+      }
+      return resolved(new PermissionStatus(token, String(name)));
+    }
+  }
+  tag(Permissions, 'Permissions');
+
+  const itemData = new WeakMap();
+  const itemError = (rest) => new TypeErrorC(`Failed to construct 'ClipboardItem': ${rest}`);
+  class ClipboardItem {
+    constructor(items) {
+      if (arguments.length === 0) throw itemError('1 argument required, but only 0 present.');
+      if (items === null || typeof items !== 'object') {
+        throw itemError('Only objects can be converted to record<K,V> types');
+      }
+      const entries = O.keys(items).map((type) => [type, items[type]]);
+      if (entries.length === 0) throw itemError('Empty dictionary argument');
+      itemData.set(this, { entries, types: freeze(entries.map((e) => e[0])) });
+    }
+    get types() {
+      return itemData.get(this).types;
+    }
+    getType(type) {
+      const entry = itemData.get(this).entries.find((e) => e[0] === String(type));
+      if (!entry) {
+        return rejected(new DOMExceptionC("Failed to execute 'getType' on 'ClipboardItem': The type was not found", 'NotFoundError'));
+      }
+      return resolved(entry[1]).then((v) => (v instanceof BlobC ? v : new BlobC([String(v)], { type: entry[0] })));
+    }
+    static supports(type) {
+      type = String(type);
+      return type === 'text/plain' || type === 'text/html' || type === 'image/png' || type === 'image/svg+xml' || type.startsWith('web ');
+    }
+  }
+  tag(ClipboardItem, 'ClipboardItem');
+
+  const bytesToString = (buffer) => {
+    const bytes = new Uint8Array(buffer);
+    let out = '';
+    for (let i = 0; i < bytes.length; i += 8192) out += fromCharCode.apply(null, bytes.subarray(i, i + 8192));
+    return out;
+  };
+  const stringToBytes = (s) => {
+    const bytes = new Uint8Array(s.length);
+    for (let i = 0; i < s.length; i++) bytes[i] = s.charCodeAt(i);
+    return bytes;
+  };
+  const isText = (type) => type.startsWith('text/') || type === 'image/svg+xml';
+  const denied = (method, what) => new DOMExceptionC(`Failed to execute '${method}' on 'Clipboard': ${what} permission denied.`, 'NotAllowedError');
+  const store = (method, entries) => {
+    if (!native.clipboardWritable()) return rejected(denied(method, 'Write'));
+    native.clipboardWrite(stringify(entries));
+    return undefined;
+  };
+
+  class Clipboard extends EventTargetC {
+    constructor(t) {
+      if (t !== token) throw illegal('Clipboard');
+      super();
+      ownTag(this, 'Clipboard');
+    }
+    readText() {
+      const json = native.clipboardRead();
+      if (json === null) return rejected(denied('readText', 'Read'));
+      const entry = parse(json).find((e) => e[0] === 'text/plain');
+      return resolved(entry ? entry[1] : '');
+    }
+    writeText(text) {
+      if (arguments.length === 0) {
+        return rejected(new TypeErrorC("Failed to execute 'writeText' on 'Clipboard': 1 argument required, but only 0 present."));
+      }
+      text = String(text);
+      return resolved().then(() => store('writeText', [['text/plain', text, false]]));
+    }
+    read() {
+      const json = native.clipboardRead();
+      if (json === null) return rejected(denied('read', 'Read'));
+      const items = {};
+      for (const [type, data, binary] of parse(json)) {
+        items[type] = new BlobC([binary ? stringToBytes(data) : data], { type });
+      }
+      return resolved(O.keys(items).length ? [new ClipboardItem(items)] : []);
+    }
+    write(items) {
+      if (arguments.length === 0) {
+        return rejected(new TypeErrorC("Failed to execute 'write' on 'Clipboard': 1 argument required, but only 0 present."));
+      }
+      if (!iterable(items)) {
+        return rejected(new TypeErrorC("Failed to execute 'write' on 'Clipboard': The provided value cannot be converted to a sequence."));
+      }
+      const list = Array.from(items);
+      if (list.some((item) => !itemData.has(item))) {
+        return rejected(new TypeErrorC("Failed to execute 'write' on 'Clipboard': Failed to convert value to 'ClipboardItem'."));
+      }
+      const pending = [];
+      for (const item of list) {
+        for (const type of item.types) {
+          if (!ClipboardItem.supports(type)) {
+            return rejected(new DOMExceptionC(`Failed to execute 'write' on 'Clipboard': Type ${type} not supported on write.`, 'NotAllowedError'));
+          }
+          pending.push(item.getType(type).then((blob) => (isText(type)
+            ? blob.text().then((data) => [type, data, false])
+            : blob.arrayBuffer().then((buffer) => [type, bytesToString(buffer), true]))));
+        }
+      }
+      return PromiseC.all(pending).then((entries) => store('write', entries));
+    }
+  }
+  tag(Clipboard, 'Clipboard');
+
+  return {
+    userAgentData: new NavigatorUAData(token),
+    permissions: new Permissions(token),
+    clipboard: new Clipboard(token),
+    ClipboardItem,
+  };
+})

@@ -17,8 +17,11 @@ Explicit request and context extra-header precedence remains the native client's
 contract; this API never mutates shared client settings.
 
 Protocol parameter validation and Emulation.setUserAgentOverride mapping are
-separate CDP work. This API does not implement userAgentMetadata, Client Hints,
-locale/timezone emulation or a platform change outside navigator.platform.
+separate CDP work. `UserAgentOverride::metadata` (CDP userAgentMetadata) drives
+`navigator.userAgentData` and the low-entropy Sec-CH-UA request defaults
+(`RequestDefaults::client_hints`, potentially trustworthy origins only). This API
+does not implement locale/timezone emulation or a platform change outside
+navigator.platform.
 Custom ResourceLoader implementations remain responsible for their transport.
 
 Tests cover current/new isolated worlds, init scripts across navigation, reset

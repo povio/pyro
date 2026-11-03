@@ -204,7 +204,8 @@ fn headers_persist_across_navigation_and_user_agent_changes() {
     load_and_request(&mut thread, page, &server, "one");
     server.take();
     // Changing (and clearing) the user agent override keeps the extra headers.
-    let ua = UserAgentOverride { user_agent: "ExtraUA/1".into(), accept_language: None, platform: None };
+    let ua =
+        UserAgentOverride { user_agent: "ExtraUA/1".into(), accept_language: None, platform: None, metadata: None };
     thread.browser.set_user_agent_override(page, Some(ua)).unwrap();
     load_and_request(&mut thread, page, &server, "two");
     let seen = server.take();

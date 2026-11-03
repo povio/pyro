@@ -10,6 +10,9 @@ pub struct UserAgentOverride {
     pub accept_language: Option<String>,
     /// Navigator only; never sent as a request header.
     pub platform: Option<String>,
+    /// Client hints (`navigator.userAgentData`); `None` derives them from
+    /// the user agent string.
+    pub metadata: Option<crate::navigator_extras::UserAgentMetadata>,
 }
 impl UserAgentOverride {
     /// Validate before changing any page/browser state. Cache the result in
@@ -20,8 +23,38 @@ impl UserAgentOverride {
             accept_language: self.accept_language.as_deref().map(HeaderValue::from_str).transpose()?,
             extra_headers: HeaderMap::new(),
             cache_disabled: false,
+            client_hints: self.metadata.as_ref().map(|m| std::sync::Arc::new(client_hint_headers(m))),
         })
     }
+}
+
+/// Chrome's low-entropy client hint headers for `metadata` (no Accept-CH
+/// opt-in to the high-entropy ones). `Sec-CH-UA` is left out when there
+/// are no brands (metadata without brands, as Playwright sends, takes the
+/// browser's own, which lightningpanda's default agent has none of).
+pub(crate) fn client_hint_headers(
+    metadata: &crate::navigator_extras::UserAgentMetadata,
+) -> Vec<(lp_net::http::HeaderName, HeaderValue)> {
+    use lp_net::http::HeaderName;
+    // Structured-header strings: quotes and backslashes escaped. Metadata
+    // strings are printable ASCII (validated), so the values are valid.
+    let item = |s: &str| format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""));
+    let mut out = Vec::with_capacity(3);
+    let brands = metadata.brands.as_deref().unwrap_or_default();
+    if !brands.is_empty() {
+        let list: Vec<String> = brands.iter().map(|(b, v)| format!("{};v={}", item(b), item(v))).collect();
+        if let Ok(v) = HeaderValue::from_str(&list.join(", ")) {
+            out.push((HeaderName::from_static("sec-ch-ua"), v));
+        }
+    }
+    out.push((
+        HeaderName::from_static("sec-ch-ua-mobile"),
+        HeaderValue::from_static(if metadata.mobile { "?1" } else { "?0" }),
+    ));
+    if let Ok(v) = HeaderValue::from_str(&item(&metadata.platform)) {
+        out.push((HeaderName::from_static("sec-ch-ua-platform"), v));
+    }
+    out
 }
 
 #[derive(Default)]

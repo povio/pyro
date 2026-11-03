@@ -931,6 +931,13 @@ impl Io {
         if let Some(v) = req.defaults.accept_language.clone().or_else(|| HeaderValue::from_str(lang).ok()) {
             h.entry(header::ACCEPT_LANGUAGE).or_insert(v);
         }
+        if let Some(hints) = &req.defaults.client_hints {
+            if crate::cookies::is_trustworthy(&req.url) {
+                for (name, value) in hints.iter() {
+                    h.entry(name.clone()).or_insert_with(|| value.clone());
+                }
+            }
+        }
         h.insert(header::ACCEPT_ENCODING, HeaderValue::from_static("gzip, deflate, br"));
         if let Some(origin) = &req.origin {
             if cors_cross || !matches!(req.method, Method::GET | Method::HEAD) {

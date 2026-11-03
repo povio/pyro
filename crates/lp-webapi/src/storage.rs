@@ -308,7 +308,7 @@ fn broadcast(source: &Source, key: Option<String>, old: Option<String>, new: Opt
 }
 
 /// The tuple origin of a page's current document, if any.
-fn document_origin(page: &PageDom) -> Option<String> {
+pub(crate) fn document_origin(page: &PageDom) -> Option<String> {
     let url = page.dom.borrow().document_data(page.document()).ok().map(|d| d.url.to_string())?;
     url::Url::parse(&url)
         .ok()

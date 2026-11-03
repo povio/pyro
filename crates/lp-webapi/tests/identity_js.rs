@@ -18,6 +18,7 @@ fn identity_is_page_scoped_validated_atomically_and_snapshotted_per_request() {
             user_agent: "Mozilla/5.0 UA-one".into(),
             accept_language: Some("sl-SI,en;q=0.8".into()),
             platform: Some("TestPlatform".into()),
+            metadata: None,
         }))
         .unwrap();
     assert_eq!(
@@ -34,6 +35,7 @@ fn identity_is_page_scoped_validated_atomically_and_snapshotted_per_request() {
             user_agent: "valid-but-not-applied".into(),
             accept_language: Some("en\r\nX-Bad: yes".into()),
             platform: Some("not-applied".into()),
+            metadata: None,
         }))
         .is_err());
     assert_eq!(first.eval("navigator.platform"), "TestPlatform");
@@ -49,6 +51,7 @@ fn identity_is_page_scoped_validated_atomically_and_snapshotted_per_request() {
             user_agent: String::new(),
             accept_language: Some("fr-FR".into()),
             platform: None,
+            metadata: None,
         }))
         .unwrap();
     first.until("result!=='pending'");
@@ -93,6 +96,7 @@ fn browser_identity_defaults_do_not_turn_simple_cross_origin_requests_into_prefl
             user_agent: "Page-agent".into(),
             accept_language: Some("de-DE".into()),
             platform: None,
+            metadata: None,
         }))
         .unwrap();
     env.eval(&format!(

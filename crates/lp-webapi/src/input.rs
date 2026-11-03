@@ -1282,7 +1282,16 @@ fn boundary_chains(page: &PageDom, prev: Option<NodeId>, next: NodeId) -> (Vec<N
 /// and leave carry `target` as `relatedTarget`, over and enter carry `prev`.
 /// A `prev` that is no longer connected gets no out or leave events
 /// (BoundaryEventDispatcher::SendBoundaryEvents).
-fn dispatch_boundary_events(page: &Rc<PageDom>, prev: Option<NodeId>, target: NodeId, tkey: TargetKey, m: &MouseInput) {
+/// Compatibility mouse events of a touch tap (`touch`: its pointer id) fire
+/// no mouse-type pointer events.
+fn dispatch_boundary_events(
+    page: &Rc<PageDom>,
+    prev: Option<NodeId>,
+    target: NodeId,
+    tkey: TargetKey,
+    m: &MouseInput,
+    touch: Option<i32>,
+) {
     let prev_connected = prev.is_some_and(|p| page.dom.borrow().is_connected(p).unwrap_or(false));
     let (left, entered) = boundary_chains(page, prev, target);
     let prev_key = prev.and_then(|p| key_of(page, p));
@@ -1291,6 +1300,9 @@ fn dispatch_boundary_events(page: &Rc<PageDom>, prev: Option<NodeId>, target: No
         ev
     };
     for (iface, prefix) in [(EventInterface::PointerEvent, "pointer"), (EventInterface::MouseEvent, "mouse")] {
+        if touch.is_some() && iface == EventInterface::PointerEvent {
+            continue;
+        }
         if let Some(p) = prev_key.filter(|_| prev_connected) {
             fire(page, p, &related(mouse_event(page, iface, &format!("{prefix}out"), m, true), Some(tkey)));
         }
@@ -1356,7 +1368,7 @@ fn update_hover_now(page: &Rc<PageDom>) {
     let Some(m) = page.pointer.borrow().clone() else { return };
     let Some(target) = pointer_target(page, m.x, m.y, true) else { return };
     let Some(tkey) = key_of(page, target) else { return };
-    dispatch_boundary_events(page, Some(prev), target, tkey, &m);
+    dispatch_boundary_events(page, Some(prev), target, tkey, &m, None);
 }
 
 /// CDP `Input.dispatchMouseEvent`. Returns an error when hit testing is not
@@ -1515,6 +1527,19 @@ pub fn dispatch_mouse_intercepting_drags(
     m: &MouseInput,
     intercept_drags: bool,
 ) -> Result<Option<DragData>, String> {
+    dispatch_mouse_inner(page, kind, m, intercept_drags, None)
+}
+
+/// Mouse input; `touch` (the touch's pointer id) makes it the compatibility
+/// mouse events of a tap: no mouse-type pointer events, and a `click` whose
+/// pointerType is "touch", as Chrome's gesture tap.
+fn dispatch_mouse_inner(
+    page: &Rc<PageDom>,
+    kind: MouseKind,
+    m: &MouseInput,
+    intercept_drags: bool,
+    touch: Option<i32>,
+) -> Result<Option<DragData>, String> {
     // Empty viewport space targets the root element, as Chromium hit-tests it.
     let target = pointer_target(page, m.x, m.y, true).ok_or_else(|| "no element at point".to_owned())?;
     let Some(tkey) = key_of(page, target) else { return Err("stale target".into()) };
@@ -1523,9 +1548,11 @@ pub fn dispatch_mouse_intercepting_drags(
             *page.pointer.borrow_mut() = Some(m.clone());
             let prev = page.hovered();
             if prev != Some(target) {
-                dispatch_boundary_events(page, prev, target, tkey, m);
+                dispatch_boundary_events(page, prev, target, tkey, m, touch);
             }
-            fire(page, tkey, &mouse_event(page, EventInterface::PointerEvent, "pointermove", m, true));
+            if touch.is_none() {
+                fire(page, tkey, &mouse_event(page, EventInterface::PointerEvent, "pointermove", m, true));
+            }
             if !(page.compat_mouse_suppressed.get() && m.buttons != 0) {
                 fire(page, tkey, &mouse_event(page, EventInterface::MouseEvent, "mousemove", m, true));
             }
@@ -1537,7 +1564,8 @@ pub fn dispatch_mouse_intercepting_drags(
             }
         }
         MouseKind::Pressed => {
-            let pd = fire(page, tkey, &mouse_event(page, EventInterface::PointerEvent, "pointerdown", m, true));
+            let pd = touch.is_some()
+                || fire(page, tkey, &mouse_event(page, EventInterface::PointerEvent, "pointerdown", m, true));
             let md = !pd || fire(page, tkey, &mouse_event(page, EventInterface::MouseEvent, "mousedown", m, true));
             page.compat_mouse_suppressed.set(!pd);
             page.set_press_target(Some(target));
@@ -1598,7 +1626,9 @@ pub fn dispatch_mouse_intercepting_drags(
             note_buttons(page, m);
             page.drag_candidate.set(None);
             page.text_drag.set(None);
-            fire(page, tkey, &mouse_event(page, EventInterface::PointerEvent, "pointerup", m, true));
+            if touch.is_none() {
+                fire(page, tkey, &mouse_event(page, EventInterface::PointerEvent, "pointerup", m, true));
+            }
             // Only a canceled pointerdown holds back the mouseup (an app's
             // pointerup handler that calls preventDefault does not).
             if !page.compat_mouse_suppressed.replace(false) {
@@ -1618,6 +1648,12 @@ pub fn dispatch_mouse_intercepting_drags(
                 };
                 let ev = mouse_event(page, EventInterface::PointerEvent, name, m, true);
                 ev.state.borrow_mut().composed = true;
+                if let Some(id) = touch {
+                    let mut f = ev.fields.borrow_mut();
+                    f.pointer_id = id;
+                    f.pointer_type = "touch".into();
+                    f.is_primary = false;
+                }
                 dispatch_with_activation(page, ct, &ev);
                 if name == "click" && m.click_count == 2 {
                     if let Some(k) = key_of(page, ct) {
@@ -1648,6 +1684,427 @@ pub fn dispatch_mouse_intercepting_drags(
         }
     }
     Ok(None)
+}
+
+// ----- touch ---------------------------------------------------------------------
+//
+// CDP `Input.dispatchTouchEvent`, checked against headless Chrome 156 driven
+// by Playwright 1.59.1 (`hasTouch` + `tap()`, and raw touch sequences): per
+// changed touch, pointer events of pointerType "touch" (implicit capture
+// included), then trusted TouchEvents; a tap then fires the compatibility
+// mouse events and a click.
+
+/// Chrome's touch slop (`max_touch_move_in_pixels_for_click`), CSS px: a
+/// single touch that stays within it is a tap and gets no touchmove; one that
+/// leaves it starts a scroll unless the touchmove is canceled.
+const TOUCH_SLOP: f64 = 15.0;
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum TouchKind {
+    Start,
+    Move,
+    End,
+    Cancel,
+}
+
+/// One CDP touch point, in the document's viewport coordinates.
+#[derive(Clone, Debug)]
+pub struct TouchInput {
+    pub id: i64,
+    pub x: f64,
+    pub y: f64,
+    pub radius_x: f64,
+    pub radius_y: f64,
+    pub rotation_angle: f64,
+    pub force: f64,
+}
+
+struct ActiveTouch {
+    input: TouchInput,
+    pointer_id: i32,
+    primary: bool,
+    /// The touchstart target: the touch's events go there for the whole
+    /// sequence (implicit pointer capture).
+    target: NodeId,
+    captured: bool,
+    /// A scroll took the touch over: no more pointer events for it.
+    pointer_cancelled: bool,
+}
+
+/// A page's touch input state across `dispatch_touch` calls: the touches
+/// down, and whether the sequence (first press to last release) is a tap.
+#[derive(Default)]
+pub struct TouchSequence {
+    doc: Option<NodeId>,
+    active: Vec<ActiveTouch>,
+    /// More than one touch was down at once.
+    multi: bool,
+    start: (f64, f64),
+    left_slop: bool,
+    /// A scroll took over: later touch events are not cancelable.
+    scrolling: bool,
+    /// touchstart or touchend was canceled: no tap.
+    no_tap: bool,
+    /// pointerdown was canceled: the tap fires no compatibility mouse events.
+    mouse_suppressed: bool,
+    next_pointer_id: i32,
+}
+
+impl TouchSequence {
+    /// Whether any touch is down (a new sequence starts with the next press).
+    pub fn is_active(&self) -> bool {
+        !self.active.is_empty()
+    }
+
+    /// The ids of the touches down.
+    pub fn ids(&self) -> Vec<i64> {
+        self.active.iter().map(|t| t.input.id).collect()
+    }
+
+    pub fn has(&self, id: i64) -> bool {
+        self.active.iter().any(|t| t.input.id == id)
+    }
+
+    /// Forgets the touches down (their document went away).
+    pub fn clear(&mut self) {
+        self.reset();
+    }
+
+    fn reset(&mut self) {
+        let next = self.next_pointer_id;
+        *self = TouchSequence { next_pointer_id: next, ..Default::default() };
+    }
+}
+
+/// Pointer fields of one touch pointer event.
+struct PointerState {
+    x: f64,
+    y: f64,
+    button: i16,
+    buttons: u16,
+    width: f64,
+    height: f64,
+    pressure: f64,
+}
+
+impl PointerState {
+    /// Down and enter: the touch's contact geometry.
+    fn pressed(t: &TouchInput) -> Self {
+        PointerState {
+            x: t.x,
+            y: t.y,
+            button: 0,
+            buttons: 1,
+            width: 2.0 * t.radius_x,
+            height: 2.0 * t.radius_y,
+            pressure: t.force,
+        }
+    }
+    fn moved(t: &TouchInput) -> Self {
+        PointerState { button: -1, ..Self::pressed(t) }
+    }
+    /// Up and what follows it: Chrome reports a 1x1 contact without pressure.
+    fn released(t: &TouchInput) -> Self {
+        PointerState { x: t.x, y: t.y, button: 0, buttons: 0, width: 1.0, height: 1.0, pressure: 0.0 }
+    }
+    /// touchCancel's pointercancel keeps the contact size.
+    fn cancelled(t: &TouchInput) -> Self {
+        PointerState { button: -1, buttons: 0, pressure: 0.0, ..Self::pressed(t) }
+    }
+    /// A scroll's pointercancel carries no position (Chrome: 0,0, 1x1).
+    fn scrolled() -> Self {
+        PointerState { x: 0.0, y: 0.0, button: 0, buttons: 0, width: 1.0, height: 1.0, pressure: 0.0 }
+    }
+}
+
+fn touch_pointer_event(
+    page: &Rc<PageDom>,
+    ty: &str,
+    t: &ActiveTouch,
+    p: &PointerState,
+    modifiers: Modifiers,
+    related: Option<TargetKey>,
+) -> EventData {
+    let boundary = matches!(ty, "pointerenter" | "pointerleave");
+    let cancelable = !boundary && !matches!(ty, "pointercancel" | "gotpointercapture" | "lostpointercapture");
+    let ev = EventCore::trusted(page, EventInterface::PointerEvent, ty, !boundary, cancelable);
+    {
+        let mut f = ev.fields.borrow_mut();
+        f.client_x = p.x;
+        f.client_y = p.y;
+        f.screen_x = p.x;
+        f.screen_y = p.y;
+        f.button = p.button;
+        f.buttons = p.buttons;
+        f.ctrl_key = modifiers.ctrl;
+        f.shift_key = modifiers.shift;
+        f.alt_key = modifiers.alt;
+        f.meta_key = modifiers.meta;
+        f.pointer_id = t.pointer_id;
+        f.pointer_type = "touch".into();
+        f.is_primary = t.primary;
+        f.width = p.width;
+        f.height = p.height;
+        f.pressure = p.pressure;
+        f.related_target = related;
+    }
+    ev
+}
+
+fn fire_touch_pointer(page: &Rc<PageDom>, ty: &str, t: &ActiveTouch, p: &PointerState, modifiers: Modifiers) -> bool {
+    match key_of(page, t.target) {
+        Some(key) => fire(page, key, &touch_pointer_event(page, ty, t, p, modifiers, None)),
+        None => true,
+    }
+}
+
+/// gotpointercapture before the touch's first event after pointerdown.
+fn capture(page: &Rc<PageDom>, t: &mut ActiveTouch, p: &PointerState, modifiers: Modifiers) {
+    if !t.captured {
+        t.captured = true;
+        fire_touch_pointer(page, "gotpointercapture", t, p, modifiers);
+    }
+}
+
+/// pointerover and pointerenter (outer to inner) for a touch coming down.
+fn touch_enter(page: &Rc<PageDom>, t: &ActiveTouch, p: &PointerState, modifiers: Modifiers) {
+    fire_touch_pointer(page, "pointerover", t, p, modifiers);
+    for n in hover_chain(page, t.target).into_iter().rev() {
+        if let Some(k) = key_of(page, n) {
+            fire(page, k, &touch_pointer_event(page, "pointerenter", t, p, modifiers, None));
+        }
+    }
+}
+
+/// `last` (pointerup or pointercancel), then lostpointercapture,
+/// pointerout and pointerleave (inner to outer) for a touch going away.
+fn touch_leave(page: &Rc<PageDom>, last: &str, t: &mut ActiveTouch, p: &PointerState, modifiers: Modifiers) {
+    capture(page, t, p, modifiers);
+    fire_touch_pointer(page, last, t, p, modifiers);
+    fire_touch_pointer(page, "lostpointercapture", t, p, modifiers);
+    fire_touch_pointer(page, "pointerout", t, p, modifiers);
+    for n in hover_chain(page, t.target) {
+        if let Some(k) = key_of(page, n) {
+            fire(page, k, &touch_pointer_event(page, "pointerleave", t, p, modifiers, None));
+        }
+    }
+}
+
+fn touch_point(page: &PageDom, t: &ActiveTouch) -> crate::event::TouchPoint {
+    crate::event::TouchPoint {
+        identifier: t.input.id,
+        target: key_of(page, t.target),
+        client_x: t.input.x,
+        client_y: t.input.y,
+        screen_x: t.input.x,
+        screen_y: t.input.y,
+        radius_x: t.input.radius_x,
+        radius_y: t.input.radius_y,
+        rotation_angle: t.input.rotation_angle,
+        force: t.input.force,
+    }
+}
+
+/// Fires `ty` at `target` with `changed` and the touches down (`active`).
+/// Returns false if it was canceled.
+fn fire_touch_event(
+    page: &Rc<PageDom>,
+    ty: &str,
+    target: NodeId,
+    active: &[ActiveTouch],
+    changed: &[&ActiveTouch],
+    cancelable: bool,
+    modifiers: Modifiers,
+) -> bool {
+    let Some(key) = key_of(page, target) else { return true };
+    let ev = EventCore::trusted(page, EventInterface::TouchEvent, ty, true, cancelable);
+    {
+        let mut f = ev.fields.borrow_mut();
+        f.ctrl_key = modifiers.ctrl;
+        f.shift_key = modifiers.shift;
+        f.alt_key = modifiers.alt;
+        f.meta_key = modifiers.meta;
+        f.touch = Some(Rc::new(crate::event::TouchLists {
+            touches: active.iter().map(|t| touch_point(page, t)).collect(),
+            target_touches: active.iter().filter(|t| t.target == target).map(|t| touch_point(page, t)).collect(),
+            changed_touches: changed.iter().map(|t| touch_point(page, t)).collect(),
+        }));
+    }
+    fire(page, key, &ev)
+}
+
+/// Whether the target's `touch-action` lets a move by (dx, dy) scroll.
+fn touch_pans(page: &PageDom, target: NodeId, dx: f64, dy: f64) -> bool {
+    let style = page.layout().style().computed(&page.dom.borrow(), target);
+    style.is_none_or(|c| if dx.abs() > dy.abs() { !c.pan_x_blocked } else { !c.pan_y_blocked })
+}
+
+/// CDP `Input.dispatchTouchEvent` in this document. `points` are the
+/// touches the command lists (ids resolved, coordinates in this document's
+/// viewport): for touchStart and touchMove, new ids come down and known
+/// ones move; touchEnd releases the listed ones (all when empty); touchCancel
+/// cancels all. Moves fire first (one touchmove per target, listing every
+/// moved touch), then presses and releases one touch at a time, as Chrome
+/// does. Errors (no element under a new touch) change nothing.
+pub fn dispatch_touch(
+    page: &Rc<PageDom>,
+    seq: &mut TouchSequence,
+    kind: TouchKind,
+    points: &[TouchInput],
+    modifiers: Modifiers,
+) -> Result<(), String> {
+    // A navigation since the sequence began leaves its touches behind.
+    if seq.doc.is_some_and(|d| d != page.document()) {
+        seq.reset();
+    }
+    let mut moved = Vec::new();
+    let mut pressed = Vec::new();
+    let mut released = Vec::new();
+    match kind {
+        TouchKind::Start | TouchKind::Move => {
+            for p in points {
+                match seq.active.iter().position(|t| t.input.id == p.id) {
+                    Some(i) => {
+                        let t = &seq.active[i].input;
+                        if (t.x, t.y, t.radius_x, t.radius_y, t.force) != (p.x, p.y, p.radius_x, p.radius_y, p.force) {
+                            moved.push((i, p.clone()));
+                        }
+                    }
+                    None => {
+                        let target =
+                            pointer_target(page, p.x, p.y, true).ok_or_else(|| "no element at point".to_owned())?;
+                        pressed.push((p.clone(), target));
+                    }
+                }
+            }
+        }
+        TouchKind::End if points.is_empty() => released.extend(seq.active.iter().map(|t| t.input.id)),
+        TouchKind::End => released.extend(points.iter().map(|p| p.id)),
+        TouchKind::Cancel => {}
+    }
+    let pointer_moves: Vec<usize> = moved.iter().map(|(i, _)| *i).collect();
+    for (i, p) in moved {
+        seq.active[i].input = p;
+    }
+    if !pointer_moves.is_empty() {
+        for &i in &pointer_moves {
+            let t = &mut seq.active[i];
+            if t.pointer_cancelled {
+                continue;
+            }
+            let state = PointerState::moved(&t.input);
+            capture(page, t, &state, modifiers);
+            fire_touch_pointer(page, "pointermove", t, &state, modifiers);
+        }
+        // A single touch within the slop region is still a tap: no
+        // touchmove (Chrome's touchmove slop suppression).
+        let first = &seq.active[0].input;
+        let (dx, dy) = (first.x - seq.start.0, first.y - seq.start.1);
+        if !seq.multi && !seq.left_slop && dx.hypot(dy) > TOUCH_SLOP {
+            seq.left_slop = true;
+        }
+        if seq.multi || seq.left_slop {
+            let mut targets: Vec<NodeId> = Vec::new();
+            for &i in &pointer_moves {
+                if !targets.contains(&seq.active[i].target) {
+                    targets.push(seq.active[i].target);
+                }
+            }
+            let changed: Vec<&ActiveTouch> = pointer_moves.iter().map(|&i| &seq.active[i]).collect();
+            let cancelable = !seq.scrolling;
+            let mut canceled = false;
+            for target in targets {
+                canceled |= !fire_touch_event(page, "touchmove", target, &seq.active, &changed, cancelable, modifiers);
+            }
+            // An uncanceled touchmove out of the slop region starts a scroll
+            // (unless touch-action forbids it), which cancels the pointer.
+            if !seq.multi && !seq.scrolling && !canceled && touch_pans(page, seq.active[0].target, dx, dy) {
+                seq.scrolling = true;
+                let t = &mut seq.active[0];
+                t.pointer_cancelled = true;
+                touch_leave(page, "pointercancel", t, &PointerState::scrolled(), modifiers);
+            }
+        }
+    }
+    for (input, target) in pressed {
+        if seq.active.is_empty() {
+            seq.reset();
+            seq.doc = Some(page.document());
+            seq.start = (input.x, input.y);
+        } else {
+            seq.multi = true;
+        }
+        if seq.next_pointer_id < 2 {
+            seq.next_pointer_id = 2;
+        }
+        let t = ActiveTouch {
+            input,
+            pointer_id: seq.next_pointer_id,
+            primary: seq.active.is_empty(),
+            target,
+            captured: false,
+            pointer_cancelled: false,
+        };
+        seq.next_pointer_id += 1;
+        let state = PointerState::pressed(&t.input);
+        touch_enter(page, &t, &state, modifiers);
+        if !fire_touch_pointer(page, "pointerdown", &t, &state, modifiers) {
+            seq.mouse_suppressed = true;
+        }
+        seq.active.push(t);
+        let t = seq.active.last().expect("pushed");
+        if !fire_touch_event(page, "touchstart", target, &seq.active, &[t], !seq.scrolling, modifiers) {
+            seq.no_tap = true;
+        }
+    }
+    let mut tap = None;
+    for id in released {
+        let Some(i) = seq.active.iter().position(|t| t.input.id == id) else { continue };
+        let mut t = seq.active.remove(i);
+        if !t.pointer_cancelled {
+            let state = PointerState::released(&t.input);
+            touch_leave(page, "pointerup", &mut t, &state, modifiers);
+        }
+        if !fire_touch_event(page, "touchend", t.target, &seq.active, &[&t], !seq.scrolling, modifiers) {
+            seq.no_tap = true;
+        }
+        if seq.active.is_empty() && !seq.multi && !seq.left_slop && !seq.scrolling && !seq.no_tap {
+            tap = Some((t.input.x, t.input.y, t.pointer_id, seq.mouse_suppressed));
+        }
+    }
+    if kind == TouchKind::Cancel {
+        for mut t in std::mem::take(&mut seq.active) {
+            if !t.pointer_cancelled {
+                let state = PointerState::cancelled(&t.input);
+                touch_leave(page, "pointercancel", &mut t, &state, modifiers);
+            }
+            fire_touch_event(page, "touchcancel", t.target, &[], &[&t], false, modifiers);
+        }
+    }
+    if seq.active.is_empty() {
+        seq.reset();
+    }
+    // A tap: Chrome's gesture tap at the release point (mousemove,
+    // mousedown, mouseup, click; the mouse events not when pointerdown was
+    // canceled).
+    if let Some((x, y, pointer_id, suppressed)) = tap {
+        if !page.is_disposed() {
+            let m = MouseInput { x, y, modifiers, ..Default::default() };
+            let down = MouseInput { button: MouseButton::Left, buttons: 1, click_count: 1, ..m.clone() };
+            let up = MouseInput { buttons: 0, ..down.clone() };
+            if suppressed {
+                // Only the click: the release sees the press target and a
+                // suppressed mouseup.
+                page.set_press_target(pointer_target(page, x, y, true));
+                page.compat_mouse_suppressed.set(true);
+            } else {
+                let _ = dispatch_mouse_inner(page, MouseKind::Moved, &m, false, Some(pointer_id));
+                let _ = dispatch_mouse_inner(page, MouseKind::Pressed, &down, false, Some(pointer_id));
+            }
+            let _ = dispatch_mouse_inner(page, MouseKind::Released, &up, false, Some(pointer_id));
+        }
+    }
+    Ok(())
 }
 
 // ----- native drag and drop ------------------------------------------------------

@@ -81,6 +81,7 @@ where
     def.getter("navigator", |s, w| navigator(s, w.page()));
     def.getter("crypto", |s, _w| crate::crypto::crypto_value(s));
     def.getter("clientInformation", |s, w| navigator(s, w.page()));
+    def.getter("ClipboardItem", |s, w| crate::navigator_extras::member(s, w.page(), "ClipboardItem"));
     def.getter("screen", |s, w| {
         let key = lp_js::IdentityKey(w.page().id() | (1 << 57), 1);
         same_object(s, w.page(), key, || s.wrap::<Screen>(w.page().clone(), Some(key)))
@@ -220,16 +221,26 @@ pub(crate) fn same_object<'s>(
     Ok(object.value())
 }
 
-fn navigator<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Value<'s>> {
+pub(crate) fn navigator<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Value<'s>> {
     let key = lp_js::IdentityKey(page.id() | (1 << 57), 0);
     same_object(s, page, key, || s.wrap::<Navigator>(page.clone(), Some(key)))
 }
 
-fn user_agent(page: &PageDom) -> String {
+pub(crate) fn user_agent(page: &PageDom) -> String {
     if let Some(ua) = page.identity.borrow().value.as_ref().map(|v| &v.user_agent).filter(|s| !s.is_empty()) {
         return ua.clone();
     }
     page.net.borrow().as_ref().map(|n| n.user_agent()).unwrap_or_else(|| lp_net::NetConfig::default().user_agent)
+}
+
+/// `navigator.platform`: the override's, else the host's.
+pub(crate) fn platform(page: &PageDom) -> String {
+    let identity = page.identity.borrow();
+    identity
+        .value
+        .as_ref()
+        .and_then(|v| v.platform.clone())
+        .unwrap_or_else(|| if cfg!(target_os = "macos") { "MacIntel" } else { "Linux x86_64" }.into())
 }
 
 pub struct Navigator;
@@ -249,15 +260,7 @@ impl JsClass for Navigator {
         def.getter("productSub", |s, _p| Ok(s.string("20030107")));
         def.getter("vendor", |s, _p| Ok(s.string("")));
         def.getter("vendorSub", |s, _p| Ok(s.string("")));
-        def.getter("platform", |s, p| {
-            let identity = p.identity.borrow();
-            let platform = identity
-                .value
-                .as_ref()
-                .and_then(|v| v.platform.as_deref())
-                .unwrap_or(if cfg!(target_os = "macos") { "MacIntel" } else { "Linux x86_64" });
-            Ok(s.string(platform))
-        });
+        def.getter("platform", |s, p| Ok(s.string(&platform(p))));
         def.getter("language", |s, p| Ok(s.string(&languages(p)[0])));
         def.getter("languages", |s, p| {
             let langs = languages(p);
@@ -270,7 +273,10 @@ impl JsClass for Navigator {
         def.getter("onLine", |s, p| Ok(s.boolean(!p.net.borrow().as_ref().is_some_and(|n| n.settings().offline))));
         def.getter("cookieEnabled", |s, _p| Ok(s.boolean(true)));
         def.getter("hardwareConcurrency", |s, _p| Ok(s.number(4.0)));
-        def.getter("maxTouchPoints", |s, _p| Ok(s.number(0.0)));
+        def.getter("maxTouchPoints", |s, p| Ok(s.number(p.max_touch_points() as f64)));
+        def.getter("userAgentData", |s, p| crate::navigator_extras::member(s, p, "userAgentData"));
+        def.getter("permissions", |s, p| crate::navigator_extras::member(s, p, "permissions"));
+        def.getter("clipboard", |s, p| crate::navigator_extras::member(s, p, "clipboard"));
         def.getter("webdriver", |s, _p| Ok(s.boolean(true)));
         def.getter("doNotTrack", |s, _p| Ok(s.null()));
         def.getter("pdfViewerEnabled", |s, _p| Ok(s.boolean(false)));

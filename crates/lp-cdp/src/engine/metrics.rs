@@ -196,3 +196,66 @@ impl EngineHost {
         })))
     }
 }
+
+/// `Emulation.UserAgentMetadata` as navigator.userAgentData reports it.
+/// Required fields as in Chrome (a missing one is invalid params); the
+/// optional ones left out take the browser's own values.
+pub(super) fn user_agent_metadata(raw: Value) -> CdpResult<lp_webapi::UserAgentMetadata> {
+    #[derive(Deserialize)]
+    struct Brand {
+        brand: String,
+        version: String,
+    }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct M {
+        brands: Option<Vec<Brand>>,
+        full_version_list: Option<Vec<Brand>>,
+        full_version: Option<String>,
+        platform: String,
+        platform_version: String,
+        architecture: String,
+        model: String,
+        mobile: bool,
+        bitness: Option<String>,
+        #[serde(default)]
+        wow64: bool,
+        form_factors: Option<Vec<String>>,
+    }
+    let m: M = serde_json::from_value(raw).map_err(|e| CdpError::invalid_params(format!("userAgentMetadata: {e}")))?;
+    // Chrome's checks (printable ASCII), here before anything changes.
+    let printable = |v: &str, what: &str| -> CdpResult<()> {
+        if v.bytes().all(|b| (0x20..=0x7e).contains(&b)) {
+            Ok(())
+        } else {
+            Err(CdpError::invalid_params(format!("Invalid {what} string")))
+        }
+    };
+    for b in m.brands.iter().chain(&m.full_version_list).flatten() {
+        printable(&b.brand, "brand")?;
+        printable(&b.version, "brand version")?;
+    }
+    printable(m.full_version.as_deref().unwrap_or(""), "full version")?;
+    printable(&m.platform, "platform")?;
+    printable(&m.platform_version, "platform version")?;
+    printable(&m.architecture, "architecture")?;
+    printable(&m.model, "model")?;
+    printable(m.bitness.as_deref().unwrap_or(""), "bitness")?;
+    for f in m.form_factors.iter().flatten() {
+        printable(f, "form factors")?;
+    }
+    let pairs = |list: Option<Vec<Brand>>| list.map(|l| l.into_iter().map(|b| (b.brand, b.version)).collect());
+    Ok(lp_webapi::UserAgentMetadata {
+        brands: pairs(m.brands),
+        full_version_list: pairs(m.full_version_list),
+        full_version: m.full_version,
+        platform: m.platform,
+        platform_version: m.platform_version,
+        architecture: m.architecture,
+        model: m.model,
+        mobile: m.mobile,
+        bitness: m.bitness,
+        wow64: m.wow64,
+        form_factors: m.form_factors,
+    })
+}
