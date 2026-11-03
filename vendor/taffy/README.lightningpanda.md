@@ -31,6 +31,14 @@ layout at the same offset is rounded as before. Without it, every layout query r
 replaced elements. blitz-dom answers true for form controls (`input`, `select`, `textarea`, `button`),
 which Chromium does not stretch in block layout.
 
+`compute/flexbox.rs`, `determine_container_main_size`: a column container's automatic block size is the
+sum of its items' hypothetical main sizes (flex base size clamped by the resolved minimum and the max
+size), as Chromium has it. An item's `height` counted on its own before: `flex: 1 1 0px; height: 10px`
+made its container 10px tall (Chromium: 0), and a percentage basis of the indefinite container, which
+is used as `content`, still counted the item's `height`. Covered by
+`a_column_flex_container_is_as_tall_as_its_hypothetical_items` and
+`flow_percentage_flex_basis_in_an_indefinite_column_is_content` in `crates/lp-layout/tests/flow.rs`.
+
 `compute/grid/track_sizing.rs`, `expand_flexible_tracks`: flexible tracks are sized as Chromium's
 `ExpandFlexibleTracks` sizes them. Each track's share of the flex fraction is truncated to 1/64 px (a
 layout unit) in f32 raw units after an epsilon, and the fraction it loses carries into the next flexible

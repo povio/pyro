@@ -55,6 +55,21 @@
                  }
              }
              AvailableSpace::MinContent if constants.is_wrap => {
+@@ -1549,6 +1582,14 @@
+                             style_max.maybe_min(flex_basis_max).or(flex_basis_max).unwrap_or(f32::INFINITY);
+ 
+                         let content_contribution = match (min_main_size, style_preferred, max_main_size) {
++                            // lightningpanda: a column container's automatic block size is the sum of its
++                            // items' hypothetical main sizes, as in Chromium: the flex base size clamped by
++                            // the resolved minimum and the max size. An item's `height` only counts through
++                            // its flex basis, so a `0px` basis contributes its minimum and a percentage basis
++                            // of an indefinite container (used as `content`) its content height.
++                            _ if !constants.is_row => {
++                                item.flex_basis.max(item.resolved_minimum_main_size).maybe_min(style_max) + margin_sum
++                            }
+                             // If the clamping values are such that max <= min, then we can avoid the expensive step of computing the content size
+                             // as we know that the clamping values will override it anyway
+                             (min, Some(pref), max) if max <= min || max <= pref => pref.min(max).max(min) + margin_sum,
 --- a/src/compute/grid/track_sizing.rs
 +++ b/src/compute/grid/track_sizing.rs
 @@ -1334,9 +1334,20 @@

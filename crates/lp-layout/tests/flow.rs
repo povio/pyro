@@ -2262,7 +2262,44 @@ fn flow_default_ignorable_characters_take_no_width() {
 }
 
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
+fn a_column_flex_container_is_as_tall_as_its_hypothetical_items() {
+    // Chromium (800x600): an auto-height column container is the sum of its
+    // items' flex base sizes clamped by their minimum and maximum. `height`
+    // only counts through the flex basis (auto), a `0px` basis gives the
+    // item's minimum, and a percentage basis of the indefinite container is
+    // `content`.
+    let html = "<!doctype html><body style=\"margin:0\">\
+        <div id=c1 style=\"display:flex;flex-direction:column\"><div style=\"flex:1 1 0%;min-height:0;height:10px\"></div></div>\
+        <div id=c2 style=\"display:flex;flex-direction:column\"><div style=\"flex:1 1 0px;min-height:0;height:10px\"></div></div>\
+        <div id=c3 style=\"display:flex;flex-direction:column\"><div style=\"flex:0 0 0px;min-height:0;height:10px\"></div></div>\
+        <div id=c4 style=\"display:flex;flex-direction:column\"><div style=\"flex:1 1 auto;height:10px\"></div></div>\
+        <div id=c5 style=\"display:flex;flex-direction:column\"><div id=j5 style=\"flex:1 1 0%;height:10px\"><div style=\"height:30px\"></div></div></div>\
+        <div id=c6 style=\"display:flex;flex-direction:column\"><div id=j6 style=\"flex:1 1 0px;height:10px\"><div style=\"height:30px\"></div></div></div>\
+        <div id=c7 style=\"display:flex;flex-direction:column\"><div id=j7 style=\"flex:1 1 20%;height:50px;min-height:0\"><div style=\"height:30px\"></div></div></div>\
+        <div id=c8 style=\"display:flex;flex-direction:column\"><div id=j8 style=\"flex:1 1 0px;min-height:0;height:10px\"></div><div id=k8 style=\"height:20px\"></div></div>\
+        </body>";
+    check_rects(
+        "column-hypothetical",
+        html,
+        &[
+            ("c1", [0.0, 0.0, 800.0, 0.0]),
+            ("c2", [0.0, 0.0, 800.0, 0.0]),
+            ("c3", [0.0, 0.0, 800.0, 0.0]),
+            ("c4", [0.0, 0.0, 800.0, 10.0]),
+            ("c5", [0.0, 10.0, 800.0, 30.0]),
+            ("j5", [0.0, 10.0, 800.0, 30.0]),
+            ("c6", [0.0, 40.0, 800.0, 10.0]),
+            ("j6", [0.0, 40.0, 800.0, 10.0]),
+            ("c7", [0.0, 50.0, 800.0, 30.0]),
+            ("j7", [0.0, 50.0, 800.0, 30.0]),
+            ("c8", [0.0, 80.0, 800.0, 20.0]),
+            ("j8", [0.0, 80.0, 800.0, 0.0]),
+            ("k8", [0.0, 80.0, 800.0, 20.0]),
+        ],
+    );
+}
+
+#[test]
 fn flow_percentage_flex_basis_in_an_indefinite_column_is_content() {
     // TOS business-partner-invoices drawer: a `flex: 1 1 0%; min-height: 0`
     // column item inside an auto-height `overflow: hidden` column flex
@@ -4591,3 +4628,4 @@ fn text_inputs_in_system_ui_are_as_wide_as_in_chromium() {
         assert_eq!(p.metrics(id)[2], want, "#{id}");
     }
 }
+
