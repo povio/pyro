@@ -114,6 +114,13 @@ textarea {
     font-family: monospace;
 }
 
+/* lightningpanda: Chromium's UA sheet wraps a textarea's text and breaks
+   words longer than a line. */
+textarea {
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+}
+
 input:focus,
 textarea:focus {
     outline: 2px solid #4D90FE;

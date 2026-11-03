@@ -4094,7 +4094,6 @@ fn textarea_scroll_height_in_autosize_composers() {
 /// A text input's `scrollWidth` is its value's width when the value is
 /// longer than the box (truncation detectors compare it with offsetWidth).
 #[test]
-#[ignore = "Blitz parity gap: crates/lp-layout/tests/README.md"]
 fn text_input_scroll_width_follows_its_value() {
     {
         let geometry = "blitz";
@@ -4110,8 +4109,14 @@ fn text_input_scroll_width_follows_its_value() {
         assert!(p.layout.client_width(&p.dom, i) <= 81.0, "{geometry:?}: the box stays 80px");
         let ta = p.id("ta");
         p.dom.set_value(ta, "a\nE2E-ISO-DEBTOR-9C70E3E9D4\nb").unwrap();
+        // A textarea wraps (Chromium's UA sheet: `white-space: pre-wrap;
+        // overflow-wrap: break-word`), breaking the long word: Chromium reads
+        // scrollWidth 80 and scrollHeight 96 (six lines).
         let w = p.layout.scroll_width(&p.dom, ta);
-        assert!(w > 150.0, "{geometry:?}: the longest textarea line, got {w}");
+        assert!(w <= 81.0, "{geometry:?}: the textarea's lines wrap, got {w}");
+        // At least four lines: twice the two rows the box shows.
+        let (h, rows) = (p.layout.scroll_height(&p.dom, ta), p.layout.client_height(&p.dom, ta));
+        assert!(h >= 2.0 * rows, "{geometry:?}: the long word breaks onto lines, got {h} in {rows}");
     }
 }
 

@@ -60,7 +60,8 @@ these additional local changes are covered by lp-render's rendering tests.
 
 lp-render's mirror tests (incremental documents against fresh builds after random mutations) cover both.
 - `assets/default.css`: text inputs take Chromium's UA box (`border: 2px inset`, `padding: 1px 2px`; a
-  40x30 input is 48x36), textareas keep `1px solid` / `2px`.
+  40x30 input is 48x36), textareas keep `1px solid` / `2px` and wrap like Chromium's
+  (`white-space: pre-wrap; overflow-wrap: break-word`: a word longer than the box breaks).
 - `src/document.rs`: `set_hover_node` puts `:hover` on a node and its ancestors (an embedder that tracks
   the pointer itself: lightningpanda mirrors lp-dom's hovered element).
 - `src/document.rs`: Stylo's prefs for `:nth-child(An+B of S)`, container and style queries,
