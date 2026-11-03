@@ -88,6 +88,7 @@ fn compare(worker: &RenderWorker, request: Request) -> Result<serde_json::Value,
         scroll_y: s.scroll_y,
         resource_scope: request.id.to_string(),
         live: None,
+        element_scroll: None,
         background: None,
     };
     let errors = Arc::new(Mutex::new(Vec::new()));

@@ -322,6 +322,7 @@ impl EngineHost {
                 interaction: Some((s.hovered, s.focused)),
             }),
             background: self.pages.values().find(|p| p.id == pid).and_then(|p| p.background_override),
+            element_scroll: Some(s.element_scroll),
         })
     }
 

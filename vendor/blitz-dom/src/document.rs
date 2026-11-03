@@ -238,6 +238,10 @@ pub struct BaseDocument {
     pub(crate) viewport: Viewport,
     /// CSS media type used to evaluate `@media` rules.
     pub(crate) media_type: MediaType,
+    /// External `<use href>` targets, by href as written: the local id that
+    /// replaces it and the definition (SVG source with that id). Added to
+    /// each `<svg>` that refers to them when it is rendered.
+    pub svg_sprites: HashMap<String, (String, String)>,
     /// Changes to the stylist [`Device`] that have been requested since the
     /// last [`resolve`](Self::resolve), to be applied (coalesced into a single
     /// device rebuild) at the start of the next resolve.
@@ -499,6 +503,7 @@ impl BaseDocument {
             nodes_to_id,
             viewport,
             media_type,
+            svg_sprites: HashMap::new(),
             pending_device_changes: DeviceChanges::empty(),
             style_threading: config.style_threading,
             incremental_layout: config.incremental.unwrap_or(true),
@@ -2113,6 +2118,27 @@ impl BaseDocument {
         let changes = DeviceChanges::from_viewports(&self.viewport, &viewport);
         self.viewport = viewport;
         self.queue_device_changes(changes);
+    }
+
+    /// `svg` (an `<svg>` element's source) with its external `<use>`
+    /// references pointing at local copies of their targets
+    /// ([`BaseDocument::svg_sprites`]), put in a `<defs>` first in it.
+    pub(crate) fn with_svg_sprites(&self, mut svg: String) -> String {
+        if self.svg_sprites.is_empty() {
+            return svg;
+        }
+        let mut defs = String::new();
+        for (href, (local, definition)) in &self.svg_sprites {
+            let attr = format!("href=\"{}\"", href.replace('&', "&amp;").replace('"', "&quot;"));
+            if svg.contains(&attr) {
+                svg = svg.replace(&attr, &format!("href=\"#{local}\""));
+                defs.push_str(definition);
+            }
+        }
+        if let (false, Some(end)) = (defs.is_empty(), svg.find('>')) {
+            svg.insert_str(end + 1, &format!("<defs>{defs}</defs>"));
+        }
+        svg
     }
 
     /// Returns the current CSS media type used to evaluate `@media` rules.

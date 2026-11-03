@@ -4,7 +4,7 @@
 //! data, so another thread can render it.
 //!
 //! Not captured: canvas and video pixels, iframe contents (empty boxes),
-//! element scroll offsets (only the window's), `:active` state (the hovered
+//! `:active` state (the hovered
 //! and focused elements are carried as render keys for the renderer to
 //! apply), selection and caret, CSS animations/transitions (rendered at
 //! their final values), shadow-tree style scoping (shadow `<style>` applies
@@ -34,6 +34,9 @@ pub struct RenderSnapshot {
     pub print: bool,
     pub scroll_x: f64,
     pub scroll_y: f64,
+    /// Scrolled elements by render key, with their offset (CSS px), in
+    /// every form.
+    pub element_scroll: Vec<(u64, (f64, f64))>,
     /// Render keys (`lp_dom::snapshot::render_key`) of the element under the
     /// pointer and the focused element, in every form.
     pub hovered: Option<u64>,
@@ -122,6 +125,7 @@ fn snapshot_of(
             print: viewport.print,
             scroll_x: layout.scroll_x() as f64,
             scroll_y: layout.scroll_y() as f64,
+            element_scroll: layout.scrolled_elements(),
             hovered: dom.hovered(document).map(lp_dom::snapshot::render_key),
             focused: dom.focused(document).ok().flatten().map(lp_dom::snapshot::render_key),
         }
