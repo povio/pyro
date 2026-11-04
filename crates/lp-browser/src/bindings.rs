@@ -217,6 +217,17 @@ impl PageHooks for Hooks {
         true
     }
 
+    fn written_script_queued(&self) -> bool {
+        let page = self.page;
+        let loader = self.loader.clone();
+        self.sched.post(TaskSource::Networking, move |b| {
+            if b.doc(page).is_some_and(|p| p.main_frame.loader_id == loader) {
+                b.prepare_written_scripts(page);
+            }
+        });
+        true
+    }
+
     fn network_delivery(&self, id: lp_net::RequestId, frontier: lp_net::NetworkDelivery) {
         // Clone the observer out of the cell first, as `emit_to` does: the
         // callback must not run under the cell borrow.
