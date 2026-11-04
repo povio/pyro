@@ -104,6 +104,11 @@ impl JsClass for Blob {
             d.resolve(s, ab)?;
             Ok(d.promise.get(s))
         });
+        def.method("stream", 0, |s, b, _a| {
+            let page = crate::target::page_of(s)?;
+            let bytes = crate::encoding::uint8_array(s, &b.bytes)?;
+            crate::streams::helper(s, &page, "fromBytes", &[bytes])
+        });
     }
 }
 

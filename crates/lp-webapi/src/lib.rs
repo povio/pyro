@@ -51,6 +51,7 @@ pub mod render_snapshot;
 pub mod resize_observer;
 pub mod response;
 pub mod storage;
+mod streams;
 mod structured_clone;
 pub mod target;
 pub mod traversal;
@@ -118,7 +119,7 @@ pub fn register(engine: &lp_js::Engine) {
     engine.register::<url_search_params::URLSearchParams>();
     engine.register::<url_search_params::ParamsIterator>();
     engine.register::<response::Response>();
-    response::register_streams(engine);
+    engine.register::<response::BodySource>();
     engine.register::<xhr::XMLHttpRequest>();
     engine.register::<xhr::XMLHttpRequestUpload>();
 }
