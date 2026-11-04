@@ -508,7 +508,8 @@ impl EngineHost {
         let exception_id = self.next_exception_id();
         let scope = realm.scope().map_err(remote::js_to_cdp)?;
         let eval = crate::perf::span("js.eval");
-        let evaluated = scope.eval(&p.expression, None, 1);
+        let expression = super::playwright::rewrite_injected_script(&p.expression);
+        let evaluated = scope.eval(&expression, None, 1);
         drop(eval);
         match evaluated {
             Ok(value) => reply.settle(&self.pending, &scope, value, p.await_promise, exception_id),

@@ -22,6 +22,7 @@ mod network;
 mod network_delivery;
 mod page;
 mod permissions;
+mod playwright;
 mod remote;
 mod runtime;
 #[cfg(feature = "render")]
