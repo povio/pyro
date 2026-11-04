@@ -60,6 +60,7 @@ pub mod url_search_params;
 pub mod util;
 pub mod validity;
 pub mod window;
+pub mod worker;
 pub mod xhr;
 pub mod xpath;
 
@@ -98,6 +99,7 @@ pub fn register(engine: &lp_js::Engine) {
     range::register(engine);
     abort::register(engine);
     message_channel::register(engine);
+    worker::register(engine);
     custom::register(engine);
     file::register(engine);
     engine.register::<file_reader::FileReader>();
