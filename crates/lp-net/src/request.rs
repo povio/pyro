@@ -115,6 +115,9 @@ pub struct Request {
     pub max_body: Option<usize>,
     /// Fetch "cache mode" for the context's HTTP cache.
     pub cache: CacheMode,
+    /// Never offered to the [`crate::Interceptor`]: the caller's thread, which
+    /// answers interception decisions, is blocked on this request (sync XHR).
+    pub skip_interception: bool,
 }
 
 /// Fetch request cache mode (WHATWG Fetch, "cache mode"), applied to the
@@ -159,6 +162,7 @@ impl Request {
             loader_id: None,
             max_body: None,
             cache: CacheMode::Default,
+            skip_interception: false,
         }
     }
 }

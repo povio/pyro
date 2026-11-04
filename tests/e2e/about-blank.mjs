@@ -329,6 +329,11 @@ const fixture = http.createServer((req, res) => {
     res.end('seen.push("ext"); document.write(\'<p id=ext></p>\'); seen.push("ext:" + !!document.getElementById("ext"));');
     return;
   }
+  if (req.url === '/feed.xml') {
+    res.writeHead(200, { 'content-type': 'application/xml' });
+    res.end('<feed><item>one</item></feed>');
+    return;
+  }
   if (req.url === '/checkpoint.css') {
     res.writeHead(200, { 'content-type': 'text/css' });
     res.end('#message { display: none }');
@@ -1194,6 +1199,35 @@ try {
       // setContent writes through document.write: its external scripts run too.
       await p.setContent(`<script>window.seen = []</script><script src="${fixtureOrigin}/doc-write.js"></script><p id=y></p>`);
       assert.equal(await p.evaluate(() => [...document.querySelectorAll('p')].map(el => el.id).join('')), 'exty');
+    } finally { await p.close(); }
+  });
+  await check('synchronous XHR and document responses', async () => {
+    const p = await context.newPage();
+    try {
+      await p.goto(`${fixtureOrigin}/`, { timeout: 5000 });
+      assert.deepEqual(await p.evaluate(async () => {
+        const sync = new XMLHttpRequest();
+        const order = [];
+        sync.onload = () => order.push('load');
+        setTimeout(() => order.push('timer'));
+        sync.open('GET', '/feed.xml', false);
+        sync.send();
+        order.push('sent');
+        const asyncDoc = await new Promise((resolve, reject) => {
+          const x = new XMLHttpRequest();
+          x.onload = () => resolve(x.response.querySelector('#message').textContent);
+          x.onerror = () => reject(new Error('XHR failed'));
+          x.open('GET', '/');
+          x.responseType = 'document';
+          x.send();
+        });
+        return [order.slice(0, 2).join(), sync.status, sync.responseXML.querySelector('item').textContent, asyncDoc];
+      }), ['load,sent', 200, 'one', 'native DOM']);
+      // Fetch interception is not offered the request: the page cannot deadlock.
+      await p.route('**/feed.xml', route => route.abort());
+      assert.equal(await p.evaluate(() => {
+        const x = new XMLHttpRequest(); x.open('GET', '/feed.xml', false); x.send(); return x.status;
+      }), 200);
     } finally { await p.close(); }
   });
 } finally {

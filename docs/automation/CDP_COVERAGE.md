@@ -65,7 +65,7 @@ Methods: 122 (Playwright 1.59.1's static list plus the session methods it sends 
 | `Fetch.continueResponse` | **no** | engine | response stage: the real response, or a new `responseCode`/`responseHeaders` (text or binary) with the real body |
 | `Fetch.continueWithAuth` | yes | engine | server and proxy Basic challenges; other schemes unsupported |
 | `Fetch.disable` | yes | engine | request and response stages; see supported scope above |
-| `Fetch.enable` | yes | engine | request and response stages; see supported scope above |
+| `Fetch.enable` | yes | engine | request and response stages; see supported scope above; synchronous XHR is not offered for interception (the browser thread is parked on it) |
 | `Fetch.failRequest` | yes | engine | request and response stages; see supported scope above |
 | `Fetch.fulfillRequest` | yes | engine | request and response stages; see supported scope above |
 | `Fetch.getResponseBody` | **no** | engine | a response paused at the response stage (text, else base64); requests paused at the request stage get Chrome's error |
